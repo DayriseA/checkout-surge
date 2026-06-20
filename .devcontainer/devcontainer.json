@@ -4,6 +4,40 @@
   "service": "workspace",
   "runServices": ["workspace"],
   "workspaceFolder": "/workspaces/checkout-surge",
+  "forwardPorts": [8080, 3000, 4000, 4100, 4200, 4300, 5432, 6379, 56432, 6380],
+  "portsAttributes": {
+    "8080": {
+      "label": "dashboard-proxy",
+      "onAutoForward": "notify"
+    },
+    "3000": {
+      "label": "web-debug"
+    },
+    "4000": {
+      "label": "api-debug"
+    },
+    "4100": {
+      "label": "mock-erp-debug"
+    },
+    "4200": {
+      "label": "load-orchestrator-debug"
+    },
+    "4300": {
+      "label": "worker-health"
+    },
+    "5432": {
+      "label": "postgres"
+    },
+    "6379": {
+      "label": "redis"
+    },
+    "56432": {
+      "label": "test-postgres"
+    },
+    "6380": {
+      "label": "test-redis"
+    }
+  },
   "remoteEnv": {
     "CLAUDE_CODE_OAUTH_TOKEN": "${localEnv:CLAUDE_CODE_OAUTH_TOKEN}"
   },

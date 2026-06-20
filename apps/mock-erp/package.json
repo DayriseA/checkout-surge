@@ -7,9 +7,9 @@
     "build": "tsc -p tsconfig.json",
     "type-check": "tsc -p tsconfig.json --noEmit",
     "lint": "biome lint .",
-    "dev": "node ../../scripts/not-implemented.mjs dev:mock-erp \"A later service task will add the Mock ERP HTTP runtime.\"",
-    "test": "node ../../scripts/not-implemented.mjs mock-erp:test \"Mock ERP tests land after the HTTP surface exists.\"",
-    "test:unit": "node ../../scripts/not-implemented.mjs mock-erp:test:unit \"Mock ERP unit tests land after configurable ERP behavior exists.\""
+    "dev": "node ../../scripts/run-with-env.mjs node ../../scripts/not-implemented.mjs dev:mock-erp \"A later service task will add the Mock ERP HTTP runtime.\"",
+    "test": "node ../../scripts/run-with-test-env.mjs node ../../scripts/not-implemented.mjs mock-erp:test \"Mock ERP tests land after the HTTP surface exists.\"",
+    "test:unit": "node ../../scripts/run-with-test-env.mjs node ../../scripts/not-implemented.mjs mock-erp:test:unit \"Mock ERP unit tests land after configurable ERP behavior exists.\""
   },
   "dependencies": {
     "@checkout-surge/contracts": "workspace:*",

@@ -7,9 +7,9 @@
     "build": "tsc -p tsconfig.json",
     "type-check": "tsc -p tsconfig.json --noEmit",
     "lint": "biome lint .",
-    "dev": "node ../../scripts/not-implemented.mjs dev:load-orchestrator \"A later load-orchestrator task will add the k6 wrapper runtime.\"",
-    "test": "node ../../scripts/not-implemented.mjs load-orchestrator:test \"Load-orchestrator tests land after the traffic execution API exists.\"",
-    "test:api": "node ../../scripts/not-implemented.mjs load-orchestrator:test:api \"Load-orchestrator API tests land after the control API exists.\""
+    "dev": "node ../../scripts/run-with-env.mjs node ../../scripts/not-implemented.mjs dev:load-orchestrator \"A later load-orchestrator task will add the k6 wrapper runtime.\"",
+    "test": "node ../../scripts/run-with-test-env.mjs node ../../scripts/not-implemented.mjs load-orchestrator:test \"Load-orchestrator tests land after the traffic execution API exists.\"",
+    "test:api": "node ../../scripts/run-with-test-env.mjs node ../../scripts/not-implemented.mjs load-orchestrator:test:api \"Load-orchestrator API tests land after the control API exists.\""
   },
   "dependencies": {
     "@checkout-surge/contracts": "workspace:*",

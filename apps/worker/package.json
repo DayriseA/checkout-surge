@@ -7,9 +7,9 @@
     "build": "tsc -p tsconfig.json",
     "type-check": "tsc -p tsconfig.json --noEmit",
     "lint": "biome lint .",
-    "dev": "node ../../scripts/not-implemented.mjs dev:worker \"Task 4.1 will add the BullMQ worker runtime.\"",
-    "test": "node ../../scripts/not-implemented.mjs worker:test \"Worker tests land after queue processing behavior exists.\"",
-    "test:integration": "node ../../scripts/not-implemented.mjs worker:test:integration \"Worker integration tests land after the queue and ERP boundaries exist.\""
+    "dev": "node ../../scripts/run-with-env.mjs node ../../scripts/not-implemented.mjs dev:worker \"Task 4.1 will add the BullMQ worker runtime.\"",
+    "test": "node ../../scripts/run-with-test-env.mjs node ../../scripts/not-implemented.mjs worker:test \"Worker tests land after queue processing behavior exists.\"",
+    "test:integration": "node ../../scripts/run-with-test-env.mjs node ../../scripts/not-implemented.mjs worker:test:integration \"Worker integration tests land after the queue and ERP boundaries exist.\""
   },
   "dependencies": {
     "@checkout-surge/contracts": "workspace:*",

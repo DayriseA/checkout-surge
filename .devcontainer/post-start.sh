@@ -15,4 +15,4 @@ until docker info >/dev/null 2>&1; do
   sleep 2
 done
 
-echo "Docker daemon is ready. Start project infrastructure explicitly after the workspace is scaffolded."
+echo "Docker daemon is ready. Start infrastructure explicitly with pnpm infra:up or pnpm test:infra:up."

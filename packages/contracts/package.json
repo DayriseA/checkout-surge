@@ -19,7 +19,7 @@
     "build": "tsc -p tsconfig.json",
     "type-check": "tsc -p tsconfig.json --noEmit",
     "lint": "biome lint .",
-    "test": "node ../../scripts/not-implemented.mjs @checkout-surge/contracts:test \"Task 1.6 will add contract tests.\"",
-    "test:unit": "node ../../scripts/not-implemented.mjs @checkout-surge/contracts:test:unit \"Task 1.6 will add unit tests for contract schemas and vocabulary.\""
+    "test": "node ../../scripts/run-with-test-env.mjs node ../../scripts/not-implemented.mjs @checkout-surge/contracts:test \"Task 1.6 will add contract tests.\"",
+    "test:unit": "node ../../scripts/run-with-test-env.mjs node ../../scripts/not-implemented.mjs @checkout-surge/contracts:test:unit \"Task 1.6 will add unit tests for contract schemas and vocabulary.\""
   }
 }
