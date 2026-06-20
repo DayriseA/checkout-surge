@@ -37,7 +37,7 @@
     "runtime:smoke:load": "node scripts/not-implemented.mjs runtime:smoke:load \"Load smoke checks depend on dashboard, API, and load-orchestrator implementations from later phases.\"",
     "maintenance:cleanup-runs": "node scripts/not-implemented.mjs maintenance:cleanup-runs \"Run cleanup depends on demo-run persistence added in later phases.\"",
     "dev": "node scripts/not-implemented.mjs dev \"Workspace dev processes land as app runtimes are implemented in later tasks.\"",
-    "dev:dashboard": "pnpm --filter web dev",
+    "dev:dashboard": "pnpm --filter @checkout-surge/contracts build && pnpm --filter web dev",
     "dev:api": "pnpm --filter api dev",
     "dev:worker": "pnpm --filter worker dev",
     "dev:mock-erp": "pnpm --filter mock-erp dev",

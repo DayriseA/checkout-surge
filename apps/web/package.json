@@ -4,14 +4,23 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "type-check": "tsc -p tsconfig.json --noEmit",
+    "build": "next build",
+    "type-check": "next typegen && tsc -p tsconfig.json --noEmit",
     "lint": "biome lint .",
-    "dev": "node ../../scripts/run-with-env.mjs node ../../scripts/not-implemented.mjs dev:dashboard \"Task 2.1 will add the Next.js dashboard runtime.\"",
-    "test": "node ../../scripts/run-with-test-env.mjs node ../../scripts/not-implemented.mjs web:test \"Dashboard tests land after dashboard routes and controls exist.\"",
+    "dev": "node ../../scripts/run-with-env.mjs next dev -p 3000",
+    "start": "next start -p 3000",
+    "test": "pnpm test:unit",
+    "test:unit": "node ../../scripts/run-with-test-env.mjs vitest run --config vitest.config.ts",
     "test:api": "node ../../scripts/run-with-test-env.mjs node ../../scripts/not-implemented.mjs web:test:api \"Dashboard control-route tests land after the web app API routes exist.\""
   },
   "dependencies": {
-    "@checkout-surge/contracts": "workspace:*"
+    "@checkout-surge/contracts": "workspace:*",
+    "next": "^16.2.9",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3"
   }
 }
