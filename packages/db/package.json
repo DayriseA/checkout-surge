@@ -10,6 +10,11 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "default": "./dist/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing.d.ts",
+      "import": "./dist/testing.js",
+      "default": "./dist/testing.js"
     }
   },
   "files": [
@@ -21,8 +26,8 @@
     "lint": "biome lint .",
     "db:migrate": "node ../../scripts/run-with-env.mjs tsx src/scripts/migrate.ts",
     "seed": "node ../../scripts/run-with-env.mjs tsx src/scripts/seed.ts",
-    "test": "node ../../scripts/run-with-test-env.mjs node ../../scripts/not-implemented.mjs @checkout-surge/db:test \"Task 1.6 will add db package tests after schema and seed behavior land.\"",
-    "test:integration": "node ../../scripts/run-with-test-env.mjs node ../../scripts/not-implemented.mjs @checkout-surge/db:test:integration \"Task 1.6 will add database integration tests against isolated infrastructure.\"",
+    "test": "pnpm test:integration",
+    "test:integration": "node ../../scripts/run-with-test-env.mjs vitest run --config vitest.integration.config.ts",
     "test:db:migrate": "node ../../scripts/run-with-test-env.mjs tsx src/scripts/test-db-migrate.ts"
   },
   "dependencies": {

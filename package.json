@@ -11,17 +11,17 @@
   "scripts": {
     "build": "turbo run build",
     "type-check": "turbo run type-check",
-    "type-check:test": "node scripts/not-implemented.mjs type-check:test \"Task 1.6 will add test TypeScript project checks.\"",
+    "type-check:test": "tsc -p tsconfig.test.json --noEmit",
     "lint": "biome lint .",
     "lint:fix": "biome check --write .",
     "format": "biome check --write .",
     "format:check": "biome check .",
-    "test": "node scripts/not-implemented.mjs test \"Task 1.6 will add automated test suites and Turbo test tasks.\"",
-    "test:unit": "node scripts/not-implemented.mjs test:unit \"Task 1.6 will add unit test coverage for shared platform foundations.\"",
-    "test:integration": "node scripts/not-implemented.mjs test:integration \"Task 1.6 and later service tasks will add infrastructure-backed integration tests.\"",
-    "test:api": "node scripts/not-implemented.mjs test:api \"Phase 2 and later service tasks will add API/service-boundary tests.\"",
-    "test:watch": "node scripts/not-implemented.mjs test:watch \"Task 1.6 will add the root Vitest watch configuration.\"",
-    "test:coverage": "node scripts/not-implemented.mjs test:coverage \"Task 1.6 will add coverage reporting.\"",
+    "test": "pnpm test:unit && pnpm test:integration",
+    "test:unit": "turbo run test:unit --filter @checkout-surge/contracts --filter @checkout-surge/logger",
+    "test:integration": "turbo run test:integration --filter @checkout-surge/db",
+    "test:api": "node scripts/no-tests-yet.mjs test:api \"API/service-boundary tests land after service boundaries exist in Phase 2.\"",
+    "test:watch": "vitest --watch --config vitest.unit.config.ts",
+    "test:coverage": "pnpm --filter @checkout-surge/contracts exec vitest run --config vitest.config.ts --coverage && pnpm --filter @checkout-surge/logger exec vitest run --config vitest.config.ts --coverage",
     "test:infra:up": "node scripts/run-with-test-env.mjs docker compose -f docker-compose.test.yml up -d postgres-test redis-test",
     "test:infra:down": "node scripts/run-with-test-env.mjs docker compose -f docker-compose.test.yml down --volumes --remove-orphans",
     "test:infra:reset": "node scripts/reset-test-infra.mjs",
@@ -45,9 +45,11 @@
     "health:check": "node scripts/not-implemented.mjs health:check \"Task 1.5 and later service tasks will add readiness endpoints and the polling script.\""
   },
   "devDependencies": {
-    "@types/node": "^22.19.21",
     "@biomejs/biome": "^2.5.0",
+    "@types/node": "^22.19.21",
+    "@vitest/coverage-v8": "^4.1.9",
     "turbo": "^2.9.18",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.9"
   }
 }

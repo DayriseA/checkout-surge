@@ -59,7 +59,14 @@ export function aggregateHealthStatus(checks: ReadinessCheck[]): HealthStatus {
 }
 
 export function createLivenessPayload(options: HealthResponseOptions) {
-  return livenessResponseSchema.parse(createLivenessResponse(options));
+  const now = options.now ?? new Date();
+
+  return livenessResponseSchema.parse({
+    service: serviceNameSchema.parse(options.service),
+    status: "ok",
+    timestamp: now.toISOString(),
+    uptimeSeconds: uptimeSeconds(options.startedAt, now),
+  });
 }
 
 function uptimeSeconds(startedAt: Date | undefined, now: Date): number {
