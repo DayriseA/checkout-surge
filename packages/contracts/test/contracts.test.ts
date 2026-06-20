@@ -10,6 +10,8 @@ import {
   orderStatusValues,
   publicRuntimePolicySchema,
   reservationStatusValues,
+  securedReservationHoldSchema,
+  stockReservationDecisionSchema,
 } from "../src/index.js";
 
 const timestamp = "2026-06-20T12:00:00.000Z";
@@ -89,6 +91,33 @@ describe("buy and dashboard contracts", () => {
         simulatedStatus: "sold_out",
       }).outcome,
     ).toBe("sold_out");
+  });
+
+  it("validates stable Redis stock reservation decisions", () => {
+    const reservation = securedReservationHoldSchema.parse({
+      id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      saleOfferId,
+      correlationId,
+      runId,
+      quantity: 2,
+      status: "secured",
+      reservationToken: "reservation-token",
+      securedAt: timestamp,
+      expiresAt: "2026-06-20T12:15:00.000Z",
+    });
+
+    expect(
+      stockReservationDecisionSchema.parse({
+        outcome: "reservation_secured",
+        reservation,
+      }),
+    ).toEqual({ outcome: "reservation_secured", reservation });
+    expect(
+      stockReservationDecisionSchema.parse({
+        outcome: "idempotency_conflict",
+        reservation: null,
+      }).outcome,
+    ).toBe("idempotency_conflict");
   });
 
   it("validates transport-neutral dashboard events", () => {

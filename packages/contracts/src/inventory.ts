@@ -1,9 +1,16 @@
 import { z } from "zod";
-import { metricNameSchema, orderEventNameSchema } from "./lifecycle.js";
 import {
+  metricNameSchema,
+  orderEventNameSchema,
+  reservationDecisionSchema,
+  reservationStatusSchema,
+} from "./lifecycle.js";
+import {
+  correlationIdSchema,
   isoTimestampSchema,
   nonnegativeIntegerSchema,
   nonnegativeNumberSchema,
+  positiveIntegerSchema,
   uuidSchema,
 } from "./primitives.js";
 
@@ -48,6 +55,50 @@ export const inventoryUpdatedEventPayloadSchema = z
   })
   .strict();
 export type InventoryUpdatedEventPayload = z.infer<typeof inventoryUpdatedEventPayloadSchema>;
+
+export const securedReservationHoldSchema = z
+  .object({
+    id: uuidSchema,
+    saleOfferId: uuidSchema,
+    correlationId: correlationIdSchema,
+    runId: uuidSchema.optional(),
+    quantity: positiveIntegerSchema,
+    status: reservationStatusSchema.extract(["secured"]),
+    reservationToken: z.string().trim().min(1),
+    expiresAt: isoTimestampSchema,
+    securedAt: isoTimestampSchema,
+  })
+  .strict();
+export type SecuredReservationHold = z.infer<typeof securedReservationHoldSchema>;
+
+const acceptedStockReservationDecisionSchema = z
+  .object({
+    outcome: reservationDecisionSchema.extract([
+      "reservation_secured",
+      "idempotent_replay",
+      "reservation_pending_persistence",
+    ]),
+    reservation: securedReservationHoldSchema,
+  })
+  .strict();
+
+const rejectedStockReservationDecisionSchema = z
+  .object({
+    outcome: reservationDecisionSchema.extract([
+      "sold_out",
+      "inventory_not_initialized",
+      "idempotency_conflict",
+      "quantity_invalid",
+    ]),
+    reservation: z.null(),
+  })
+  .strict();
+
+export const stockReservationDecisionSchema = z.discriminatedUnion("outcome", [
+  acceptedStockReservationDecisionSchema,
+  rejectedStockReservationDecisionSchema,
+]);
+export type StockReservationDecision = z.infer<typeof stockReservationDecisionSchema>;
 
 export const metricSampleSchema = z
   .object({

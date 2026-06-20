@@ -24,6 +24,7 @@ export const reservationDecisionValues = [
   "inventory_not_initialized",
   "idempotent_replay",
   "idempotency_conflict",
+  "quantity_invalid",
   "reservation_pending_persistence",
 ] as const;
 export const reservationDecisionSchema = z.enum(reservationDecisionValues);

@@ -11,6 +11,7 @@ import {
   InventoryNotInitializedError,
   initializeInventory,
   inventoryKeys,
+  reserveInventoryStock,
 } from "../../src/index.js";
 import { resetTestDatabase } from "../../src/testing.js";
 
@@ -18,6 +19,33 @@ const execFileAsync = promisify(execFile);
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const migrationsFolder = path.join(packageRoot, "drizzle");
 const seededSaleOfferId = "22222222-2222-4222-8222-222222222222";
+const reservationSecuredAt = "2026-06-20T12:00:00.000Z";
+const reservationExpiresAt = "2026-06-20T12:15:00.000Z";
+
+function buildReservationInput(options: {
+  saleOfferId: string;
+  sequence: number;
+  quantity?: number;
+  idempotencyKey?: string;
+}) {
+  const suffix = options.sequence.toString(16).padStart(12, "0");
+
+  return {
+    idempotencyKey: options.idempotencyKey ?? `reservation-attempt-${options.sequence}`,
+    idempotencyTtlSeconds: 1800,
+    reservation: {
+      id: `aaaaaaaa-aaaa-4aaa-8aaa-${suffix}`,
+      saleOfferId: options.saleOfferId,
+      correlationId: `corr-reservation-${options.sequence}`,
+      runId: "99999999-9999-4999-8999-999999999999",
+      quantity: options.quantity ?? 1,
+      status: "secured" as const,
+      reservationToken: `reservation-token-${options.sequence}`,
+      securedAt: reservationSecuredAt,
+      expiresAt: reservationExpiresAt,
+    },
+  };
+}
 
 function requireTestEnv(name: "TEST_DATABASE_URL" | "TEST_REDIS_URL"): string {
   const value = process.env[name];
@@ -255,6 +283,216 @@ describe("database migrations, seed data, and reset behavior", () => {
     await expect(getInventoryStatus(redis, missingSaleOfferId)).rejects.toEqual(
       new InventoryNotInitializedError(missingSaleOfferId),
     );
+  });
+
+  it("atomically secures stock and writes the complete replayable hold", async () => {
+    const saleOfferId = "10000000-0000-4000-8000-000000000001";
+    const keys = inventoryKeys(saleOfferId);
+    const input = buildReservationInput({ saleOfferId, sequence: 1, quantity: 2 });
+    await initializeInventory(redis, { saleOfferId, allocatedStock: 5 });
+
+    const result = await reserveInventoryStock(redis, input);
+
+    expect(result).toEqual({ outcome: "reservation_secured", reservation: input.reservation });
+    expect(await redis.hgetall(keys.state)).toMatchObject({
+      remainingStock: "3",
+      reservedStock: "2",
+      lastUpdatedAt: reservationSecuredAt,
+    });
+    expect(
+      JSON.parse((await redis.hget(keys.reservations, input.reservation.id)) ?? "null"),
+    ).toEqual(input.reservation);
+    expect(await redis.zscore(keys.reservationExpirations, input.reservation.id)).toBe(
+      new Date(reservationExpiresAt).getTime().toString(),
+    );
+    const idempotencyTtl = await redis.ttl(keys.idempotency(input.idempotencyKey));
+    expect(idempotencyTtl).toBeGreaterThan(1790);
+    expect(idempotencyTtl).toBeLessThanOrEqual(1800);
+    expect(JSON.parse((await redis.get(keys.idempotency(input.idempotencyKey))) ?? "null")).toEqual(
+      {
+        status: "pending_persistence",
+        quantity: input.reservation.quantity,
+        reservation: input.reservation,
+      },
+    );
+    expect(await redis.llen(keys.events)).toBe(2);
+  });
+
+  it("returns sold out without per-loser records or events", async () => {
+    const saleOfferId = "10000000-0000-4000-8000-000000000002";
+    const keys = inventoryKeys(saleOfferId);
+    const input = buildReservationInput({ saleOfferId, sequence: 2, quantity: 3 });
+    await initializeInventory(redis, { saleOfferId, allocatedStock: 2 });
+
+    const result = await reserveInventoryStock(redis, input);
+
+    expect(result).toEqual({ outcome: "sold_out", reservation: null });
+    expect(await redis.hgetall(keys.state)).toMatchObject({
+      remainingStock: "2",
+      reservedStock: "0",
+    });
+    expect(await redis.exists(keys.idempotency(input.idempotencyKey))).toBe(0);
+    expect(await redis.exists(keys.reservations, keys.reservationExpirations)).toBe(0);
+    expect(await redis.llen(keys.events)).toBe(1);
+    expect(await redis.hgetall(keys.reservationOutcomes)).toEqual({
+      api_sold_out_decision: "1",
+      api_sold_out_decision_latest_observed_at: reservationSecuredAt,
+    });
+  });
+
+  it("returns inventory not initialized without creating side keys", async () => {
+    const saleOfferId = "10000000-0000-4000-8000-000000000003";
+    const keys = inventoryKeys(saleOfferId);
+
+    const result = await reserveInventoryStock(
+      redis,
+      buildReservationInput({ saleOfferId, sequence: 3 }),
+    );
+
+    expect(result).toEqual({ outcome: "inventory_not_initialized", reservation: null });
+    expect(await redis.keys(`${keys.prefix}:*`)).toEqual([]);
+  });
+
+  it("returns pending for a pre-durable retry and replays after accepted promotion", async () => {
+    const saleOfferId = "10000000-0000-4000-8000-000000000004";
+    const keys = inventoryKeys(saleOfferId);
+    const firstInput = buildReservationInput({
+      saleOfferId,
+      sequence: 4,
+      idempotencyKey: "replay-key",
+    });
+    await initializeInventory(redis, { saleOfferId, allocatedStock: 1 });
+    const firstDecision = await reserveInventoryStock(redis, firstInput);
+    expect(firstDecision).toEqual({
+      outcome: "reservation_secured",
+      reservation: firstInput.reservation,
+    });
+
+    const immediateRetry = await reserveInventoryStock(redis, {
+      ...buildReservationInput({ saleOfferId, sequence: 40, idempotencyKey: "replay-key" }),
+      reservation: {
+        ...buildReservationInput({ saleOfferId, sequence: 40 }).reservation,
+        quantity: 1,
+      },
+    });
+
+    expect(immediateRetry).toEqual({
+      outcome: "reservation_pending_persistence",
+      reservation: firstInput.reservation,
+    });
+    expect(await redis.hget(keys.state, "reservedStock")).toBe("1");
+    expect(await redis.hlen(keys.reservations)).toBe(1);
+    expect(await redis.llen(keys.events)).toBe(2);
+
+    const idempotencyKey = keys.idempotency(firstInput.idempotencyKey);
+    const ttlBeforePromotion = await redis.ttl(idempotencyKey);
+    const record = JSON.parse((await redis.get(idempotencyKey)) ?? "null") as Record<
+      string,
+      unknown
+    >;
+    await redis.set(idempotencyKey, JSON.stringify({ ...record, status: "accepted" }), "KEEPTTL");
+    const ttlAfterPromotion = await redis.ttl(idempotencyKey);
+    expect(ttlAfterPromotion).toBeGreaterThan(ttlBeforePromotion - 5);
+    expect(ttlAfterPromotion).toBeLessThanOrEqual(ttlBeforePromotion);
+
+    const acceptedReplay = await reserveInventoryStock(redis, firstInput);
+    expect(acceptedReplay).toEqual({
+      outcome: "idempotent_replay",
+      reservation: firstInput.reservation,
+    });
+    expect(await redis.hget(keys.state, "reservedStock")).toBe("1");
+    expect(await redis.hlen(keys.reservations)).toBe(1);
+    expect(await redis.llen(keys.events)).toBe(2);
+  });
+
+  it("rejects an idempotency quantity conflict without changing stock", async () => {
+    const saleOfferId = "10000000-0000-4000-8000-000000000005";
+    const keys = inventoryKeys(saleOfferId);
+    await initializeInventory(redis, { saleOfferId, allocatedStock: 5 });
+    await reserveInventoryStock(
+      redis,
+      buildReservationInput({ saleOfferId, sequence: 5, idempotencyKey: "conflict-key" }),
+    );
+
+    const conflict = await reserveInventoryStock(
+      redis,
+      buildReservationInput({
+        saleOfferId,
+        sequence: 50,
+        quantity: 2,
+        idempotencyKey: "conflict-key",
+      }),
+    );
+
+    expect(conflict).toEqual({ outcome: "idempotency_conflict", reservation: null });
+    expect(await redis.hgetall(keys.state)).toMatchObject({
+      remainingStock: "4",
+      reservedStock: "1",
+    });
+    expect(await redis.hlen(keys.reservations)).toBe(1);
+    expect(await redis.llen(keys.events)).toBe(2);
+  });
+
+  it("rejects invalid quantities before Redis without mutating inventory", async () => {
+    const saleOfferId = "10000000-0000-4000-8000-000000000006";
+    const keys = inventoryKeys(saleOfferId);
+    await initializeInventory(redis, { saleOfferId, allocatedStock: 5 });
+
+    for (const [index, quantity] of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1].entries()) {
+      const input = buildReservationInput({ saleOfferId, sequence: 60 + index });
+      const result = await reserveInventoryStock(redis, {
+        ...input,
+        reservation: { ...input.reservation, quantity },
+      });
+      expect(result).toEqual({ outcome: "quantity_invalid", reservation: null });
+    }
+
+    expect(await redis.hgetall(keys.state)).toMatchObject({
+      remainingStock: "5",
+      reservedStock: "0",
+    });
+    expect(await redis.exists(keys.reservations, keys.reservationExpirations)).toBe(0);
+    expect(await redis.llen(keys.events)).toBe(1);
+    expect(await redis.hget(keys.reservationOutcomes, "api_sold_out_decision")).toBe("0");
+  });
+
+  it("does not oversell under concurrent reservations and bounds event history", async () => {
+    const saleOfferId = "10000000-0000-4000-8000-000000000007";
+    const keys = inventoryKeys(saleOfferId);
+    const clients = Array.from(
+      { length: 8 },
+      () => new Redis(requireTestEnv("TEST_REDIS_URL"), { maxRetriesPerRequest: 3 }),
+    );
+    await initializeInventory(redis, { saleOfferId, allocatedStock: 100 });
+
+    try {
+      const decisions = await Promise.all(
+        Array.from({ length: 250 }, (_, index) =>
+          reserveInventoryStock(
+            clients[index % clients.length] ?? redis,
+            buildReservationInput({ saleOfferId, sequence: 1000 + index }),
+          ),
+        ),
+      );
+      const securedCount = decisions.filter(
+        (decision) => decision.outcome === "reservation_secured",
+      ).length;
+      const soldOutCount = decisions.filter((decision) => decision.outcome === "sold_out").length;
+
+      expect({ securedCount, soldOutCount }).toEqual({ securedCount: 100, soldOutCount: 150 });
+      expect(await redis.hgetall(keys.state)).toMatchObject({
+        remainingStock: "0",
+        reservedStock: "100",
+      });
+      expect(await redis.hlen(keys.reservations)).toBe(100);
+      expect(await redis.zcard(keys.reservationExpirations)).toBe(100);
+      expect(await redis.hget(keys.reservationOutcomes, "api_sold_out_decision")).toBe("150");
+      expect(await redis.llen(keys.events)).toBe(100);
+    } finally {
+      for (const client of clients) {
+        client.disconnect();
+      }
+    }
   });
 
   it("resets only business tables in the isolated test database", async () => {
