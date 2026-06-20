@@ -4,13 +4,20 @@
 *.swp
 *.swo
 
-# Node / Vite / React
+# Node / web build
 node_modules/
 node_modules_wsl/
 dist/
 .temp/
 .cache/
+
+# Environment
+.env
+.env.*
+*.env
 *.local
+!.env.example
+!**/.env.example
 
 # DB
 *.sqlite3
@@ -47,10 +54,6 @@ jspm_packages/
 
 # Output of 'npm pack'
 *.tgz
-
-# Vite
-*.env
-.env.test
 
 # Test output
 coverage/

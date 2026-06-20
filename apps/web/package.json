@@ -1,0 +1,17 @@
+{
+  "name": "web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "type-check": "tsc -p tsconfig.json --noEmit",
+    "lint": "biome lint .",
+    "dev": "node ../../scripts/not-implemented.mjs dev:dashboard \"Task 2.1 will add the Next.js dashboard runtime.\"",
+    "test": "node ../../scripts/not-implemented.mjs web:test \"Dashboard tests land after dashboard routes and controls exist.\"",
+    "test:api": "node ../../scripts/not-implemented.mjs web:test:api \"Dashboard control-route tests land after the web app API routes exist.\""
+  },
+  "dependencies": {
+    "@checkout-surge/contracts": "workspace:*"
+  }
+}

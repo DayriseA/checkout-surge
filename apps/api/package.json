@@ -1,0 +1,19 @@
+{
+  "name": "api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "type-check": "tsc -p tsconfig.json --noEmit",
+    "lint": "biome lint .",
+    "dev": "node ../../scripts/not-implemented.mjs dev:api \"Task 2.2 will add the Fastify API runtime.\"",
+    "test": "node ../../scripts/not-implemented.mjs api:test \"API tests land after the API service boundary exists.\"",
+    "test:api": "node ../../scripts/not-implemented.mjs api:test:api \"Task 2.5 will add API route and service-boundary tests.\""
+  },
+  "dependencies": {
+    "@checkout-surge/contracts": "workspace:*",
+    "@checkout-surge/db": "workspace:*",
+    "@checkout-surge/logger": "workspace:*"
+  }
+}

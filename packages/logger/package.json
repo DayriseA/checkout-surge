@@ -1,0 +1,25 @@
+{
+  "name": "@checkout-surge/logger",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "type-check": "tsc -p tsconfig.json --noEmit",
+    "lint": "biome lint .",
+    "test": "node ../../scripts/not-implemented.mjs @checkout-surge/logger:test \"Task 1.6 will add logger tests after Task 1.5 implements logger behavior.\"",
+    "test:unit": "node ../../scripts/not-implemented.mjs @checkout-surge/logger:test:unit \"Task 1.6 will add unit tests for logger metadata and correlation IDs.\""
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "name": "checkout-surge",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.33.2",
+  "engines": {
+    "node": ">=22.0.0",
+    "pnpm": ">=10.0.0"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "type-check": "turbo run type-check",
+    "type-check:test": "node scripts/not-implemented.mjs type-check:test \"Task 1.6 will add test TypeScript project checks.\"",
+    "lint": "biome lint .",
+    "lint:fix": "biome check --write .",
+    "format": "biome check --write .",
+    "format:check": "biome check .",
+    "test": "node scripts/not-implemented.mjs test \"Task 1.6 will add automated test suites and Turbo test tasks.\"",
+    "test:unit": "node scripts/not-implemented.mjs test:unit \"Task 1.6 will add unit test coverage for shared platform foundations.\"",
+    "test:integration": "node scripts/not-implemented.mjs test:integration \"Task 1.6 and later service tasks will add infrastructure-backed integration tests.\"",
+    "test:api": "node scripts/not-implemented.mjs test:api \"Phase 2 and later service tasks will add API/service-boundary tests.\"",
+    "test:watch": "node scripts/not-implemented.mjs test:watch \"Task 1.6 will add the root Vitest watch configuration.\"",
+    "test:coverage": "node scripts/not-implemented.mjs test:coverage \"Task 1.6 will add coverage reporting.\"",
+    "test:infra:up": "node scripts/not-implemented.mjs test:infra:up \"Task 1.2 will add docker-compose.test.yml for isolated PostgreSQL and Redis.\"",
+    "test:infra:down": "node scripts/not-implemented.mjs test:infra:down \"Task 1.2 will add isolated test infrastructure teardown.\"",
+    "test:infra:reset": "node scripts/not-implemented.mjs test:infra:reset \"Task 1.2 will add isolated test infrastructure reset behavior.\"",
+    "test:db:migrate": "pnpm --filter @checkout-surge/db test:db:migrate",
+    "infra:up": "node scripts/not-implemented.mjs infra:up \"Task 1.2 will add docker-compose.yml for development PostgreSQL and Redis.\"",
+    "infra:down": "node scripts/not-implemented.mjs infra:down \"Task 1.2 will add development infrastructure teardown.\"",
+    "runtime:up": "node scripts/not-implemented.mjs runtime:up \"Task 1.2 will add the compose reference runtime.\"",
+    "runtime:down": "node scripts/not-implemented.mjs runtime:down \"Task 1.2 will add reference runtime teardown.\"",
+    "runtime:setup": "node scripts/not-implemented.mjs runtime:setup \"Tasks 1.2 and 1.3 will add compose wiring, migrations, seed data, and Redis inventory setup.\"",
+    "runtime:wipe": "node scripts/not-implemented.mjs runtime:wipe \"Tasks 1.2 and 1.3 will add data wipe and rebuild behavior.\"",
+    "runtime:reset": "node scripts/not-implemented.mjs runtime:reset \"Later service tasks will add API and Mock ERP admin reset endpoints.\"",
+    "runtime:smoke": "node scripts/not-implemented.mjs runtime:smoke \"Runtime smoke checks depend on the compose topology and service health endpoints from later tasks.\"",
+    "runtime:smoke:load": "node scripts/not-implemented.mjs runtime:smoke:load \"Load smoke checks depend on dashboard, API, and load-orchestrator implementations from later phases.\"",
+    "maintenance:cleanup-runs": "node scripts/not-implemented.mjs maintenance:cleanup-runs \"Run cleanup depends on demo-run persistence added in later phases.\"",
+    "dev": "node scripts/not-implemented.mjs dev \"Workspace dev processes land as app runtimes are implemented in later tasks.\"",
+    "dev:dashboard": "pnpm --filter web dev",
+    "dev:api": "pnpm --filter api dev",
+    "dev:worker": "pnpm --filter worker dev",
+    "dev:mock-erp": "pnpm --filter mock-erp dev",
+    "dev:load-orchestrator": "pnpm --filter load-orchestrator dev",
+    "health:check": "node scripts/not-implemented.mjs health:check \"Task 1.5 and later service tasks will add readiness endpoints and the polling script.\""
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.0",
+    "turbo": "^2.9.18",
+    "typescript": "^6.0.3"
+  }
+}
