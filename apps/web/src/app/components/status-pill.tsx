@@ -7,6 +7,21 @@ interface StatusPillProps {
   tone: Tone;
 }
 
+const toneClassNames: Record<Tone, string> = {
+  blocked: "bg-danger-soft text-danger",
+  degraded: "bg-warning-soft text-warning",
+  idle: "bg-surface-muted text-muted-strong",
+  ok: "bg-accent-soft text-accent",
+  pending: "bg-warning-soft text-warning",
+  unavailable: "bg-danger-soft text-danger",
+};
+
 export function StatusPill({ label, tone }: StatusPillProps) {
-  return <span className={`statusPill statusPill-${tone}`}>{label}</span>;
+  return (
+    <span
+      className={`inline-flex min-h-7 items-center whitespace-nowrap rounded-full px-2 text-xs font-bold ${toneClassNames[tone]}`}
+    >
+      {label}
+    </span>
+  );
 }

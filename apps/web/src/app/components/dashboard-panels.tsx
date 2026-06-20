@@ -2,6 +2,23 @@ import type { DashboardRecoveryResponse } from "@checkout-surge/contracts";
 import type { BackendRead, DashboardBackendSnapshot } from "../lib/api";
 import { StatusPill } from "./status-pill";
 
+const panelClassName =
+  "min-w-0 rounded-lg border border-border bg-surface p-4 max-[900px]:col-span-full";
+const panelNarrowClassName = `${panelClassName} col-span-4`;
+const panelWideClassName = `${panelClassName} col-span-8`;
+const panelHeaderClassName = "mb-4 flex items-start justify-between gap-3";
+const eyebrowClassName = "m-0 text-xs font-bold uppercase text-muted";
+const panelTitleClassName = "m-0 mt-1 text-base font-bold leading-tight text-ink";
+const emptyStateClassName = "m-0 leading-6 text-muted";
+const factGridClassName = "m-0 grid grid-cols-3 gap-3 max-[560px]:grid-cols-2";
+const wideFactGridClassName = "m-0 grid grid-cols-5 gap-3 max-[560px]:grid-cols-2";
+const stackedFactGridClassName = "m-0 grid gap-3";
+const factItemClassName = "min-w-0";
+const factTermClassName = "mb-1 text-xs font-bold text-muted";
+const factValueClassName = "m-0 [overflow-wrap:anywhere] text-base font-bold text-ink";
+const controlButtonClassName =
+  "min-h-10 rounded-lg border border-border bg-surface px-3.5 py-2.5 font-semibold text-muted-strong disabled:cursor-not-allowed disabled:opacity-60";
+
 function formatNumber(value: number): string {
   return new Intl.NumberFormat("en-US").format(value);
 }
@@ -20,7 +37,7 @@ function formatTime(value: string | undefined): string {
 }
 
 function EmptyState({ children }: { children: React.ReactNode }) {
-  return <p className="emptyState">{children}</p>;
+  return <p className={emptyStateClassName}>{children}</p>;
 }
 
 function UnavailableState({ read }: { read: BackendRead<unknown> }) {
@@ -29,7 +46,7 @@ function UnavailableState({ read }: { read: BackendRead<unknown> }) {
   }
 
   return (
-    <div className="unavailableBox">
+    <div className="grid gap-1 rounded-lg border border-[#f7b4ad] bg-danger-soft p-3 leading-6 text-danger">
       <strong>Unavailable</strong>
       <span>{read.reason}</span>
       {read.httpStatus ? <span>HTTP {read.httpStatus}</span> : null}
@@ -43,21 +60,26 @@ export function ApiStatusPanel({ snapshot }: { snapshot: DashboardBackendSnapsho
   const status = readiness?.status ?? liveness?.status ?? "unavailable";
 
   return (
-    <section className="panel panelWide">
-      <div className="panelHeader">
+    <section className={panelWideClassName}>
+      <div className={panelHeaderClassName}>
         <div>
-          <p className="eyebrow">API gateway</p>
-          <h2>Service readiness</h2>
+          <p className={eyebrowClassName}>API gateway</p>
+          <h2 className={panelTitleClassName}>Service readiness</h2>
         </div>
         <StatusPill label={status} tone={status} />
       </div>
       {snapshot.readiness.status === "available" ? (
-        <div className="checkGrid">
+        <div className="grid gap-2.5">
           {snapshot.readiness.data.checks.map((check) => (
-            <div className="checkItem" key={check.name}>
+            <div
+              className="grid grid-cols-[1fr_auto] items-center gap-x-3 gap-y-1 border-t border-border pt-3"
+              key={check.name}
+            >
               <span>{check.name}</span>
               <StatusPill label={check.status} tone={check.status} />
-              {check.message ? <small>{check.message}</small> : null}
+              {check.message ? (
+                <small className="col-span-full text-muted">{check.message}</small>
+              ) : null}
             </div>
           ))}
           {snapshot.readiness.data.checks.length === 0 ? (
@@ -67,18 +89,22 @@ export function ApiStatusPanel({ snapshot }: { snapshot: DashboardBackendSnapsho
       ) : (
         <UnavailableState read={snapshot.readiness} />
       )}
-      <dl className="metaGrid">
-        <div>
-          <dt>Liveness</dt>
-          <dd>{liveness ? liveness.status : "unavailable"}</dd>
+      <dl className={factGridClassName}>
+        <div className={factItemClassName}>
+          <dt className={factTermClassName}>Liveness</dt>
+          <dd className={factValueClassName}>{liveness ? liveness.status : "unavailable"}</dd>
         </div>
-        <div>
-          <dt>Uptime</dt>
-          <dd>{liveness ? `${Math.round(liveness.uptimeSeconds)}s` : "n/a"}</dd>
+        <div className={factItemClassName}>
+          <dt className={factTermClassName}>Uptime</dt>
+          <dd className={factValueClassName}>
+            {liveness ? `${Math.round(liveness.uptimeSeconds)}s` : "n/a"}
+          </dd>
         </div>
-        <div>
-          <dt>Read timestamp</dt>
-          <dd>{readiness ? formatTime(readiness.timestamp) : "n/a"}</dd>
+        <div className={factItemClassName}>
+          <dt className={factTermClassName}>Read timestamp</dt>
+          <dd className={factValueClassName}>
+            {readiness ? formatTime(readiness.timestamp) : "n/a"}
+          </dd>
         </div>
       </dl>
     </section>
@@ -93,27 +119,27 @@ export function RecoveryStatusPanel({
   const run = recovery.status === "available" ? recovery.data.currentRun : null;
 
   return (
-    <section className="panel">
-      <div className="panelHeader">
+    <section className={panelNarrowClassName}>
+      <div className={panelHeaderClassName}>
         <div>
-          <p className="eyebrow">Recovery</p>
-          <h2>Latest backend snapshot</h2>
+          <p className={eyebrowClassName}>Recovery</p>
+          <h2 className={panelTitleClassName}>Latest backend snapshot</h2>
         </div>
         <StatusPill label={run?.status ?? "idle"} tone={run ? "pending" : "idle"} />
       </div>
       {recovery.status === "available" ? (
-        <dl className="stackedFacts">
-          <div>
-            <dt>Current run</dt>
-            <dd>{run ? run.presetName : "No active run"}</dd>
+        <dl className={stackedFactGridClassName}>
+          <div className={factItemClassName}>
+            <dt className={factTermClassName}>Current run</dt>
+            <dd className={factValueClassName}>{run ? run.presetName : "No active run"}</dd>
           </div>
-          <div>
-            <dt>Traffic</dt>
-            <dd>{run?.trafficStatus ?? "Not active"}</dd>
+          <div className={factItemClassName}>
+            <dt className={factTermClassName}>Traffic</dt>
+            <dd className={factValueClassName}>{run?.trafficStatus ?? "Not active"}</dd>
           </div>
-          <div>
-            <dt>Recovered at</dt>
-            <dd>{formatTime(recovery.data.recoveredAt)}</dd>
+          <div className={factItemClassName}>
+            <dt className={factTermClassName}>Recovered at</dt>
+            <dd className={factValueClassName}>{formatTime(recovery.data.recoveredAt)}</dd>
           </div>
         </dl>
       ) : (
@@ -125,22 +151,22 @@ export function RecoveryStatusPanel({
 
 export function LoadRunControlsPanel() {
   return (
-    <section className="panel">
-      <div className="panelHeader">
+    <section className={panelNarrowClassName}>
+      <div className={panelHeaderClassName}>
         <div>
-          <p className="eyebrow">Run controls</p>
-          <h2>Preset traffic</h2>
+          <p className={eyebrowClassName}>Run controls</p>
+          <h2 className={panelTitleClassName}>Preset traffic</h2>
         </div>
         <StatusPill label="idle" tone="idle" />
       </div>
-      <div className="controlGrid">
-        <button type="button" disabled>
+      <div className="grid gap-2.5">
+        <button className={controlButtonClassName} type="button" disabled>
           preview-1k
         </button>
-        <button type="button" disabled>
+        <button className={controlButtonClassName} type="button" disabled>
           surge-5k
         </button>
-        <button type="button" disabled>
+        <button className={controlButtonClassName} type="button" disabled>
           surge-10k
         </button>
       </div>
@@ -161,11 +187,11 @@ export function InventoryDrainPanel({
       : 0;
 
   return (
-    <section className="panel">
-      <div className="panelHeader">
+    <section className={panelNarrowClassName}>
+      <div className={panelHeaderClassName}>
         <div>
-          <p className="eyebrow">Inventory drain</p>
-          <h2>Stock hold path</h2>
+          <p className={eyebrowClassName}>Inventory drain</p>
+          <h2 className={panelTitleClassName}>Stock hold path</h2>
         </div>
         <StatusPill label={inventory ? "active" : "no data"} tone={inventory ? "ok" : "idle"} />
       </div>
@@ -173,23 +199,25 @@ export function InventoryDrainPanel({
         <>
           <meter
             aria-label="Remaining inventory"
-            className="meter"
+            className="meter mb-4 block h-2 w-full rounded-full border-0 bg-surface-muted"
             max={100}
             min={0}
             value={percentRemaining}
           />
-          <dl className="metricRow">
-            <div>
-              <dt>Remaining</dt>
-              <dd>{formatNumber(inventory.remainingStock)}</dd>
+          <dl className={factGridClassName}>
+            <div className={factItemClassName}>
+              <dt className={factTermClassName}>Remaining</dt>
+              <dd className={factValueClassName}>{formatNumber(inventory.remainingStock)}</dd>
             </div>
-            <div>
-              <dt>Reserved</dt>
-              <dd>{formatNumber(inventory.reservedStock)}</dd>
+            <div className={factItemClassName}>
+              <dt className={factTermClassName}>Reserved</dt>
+              <dd className={factValueClassName}>{formatNumber(inventory.reservedStock)}</dd>
             </div>
-            <div>
-              <dt>Pending</dt>
-              <dd>{formatNumber(inventory.pendingPersistenceCount)}</dd>
+            <div className={factItemClassName}>
+              <dt className={factTermClassName}>Pending</dt>
+              <dd className={factValueClassName}>
+                {formatNumber(inventory.pendingPersistenceCount)}
+              </dd>
             </div>
           </dl>
         </>
@@ -208,23 +236,23 @@ export function QueuePressurePanel({
   const queue = recovery.status === "available" ? recovery.data.queue : null;
 
   return (
-    <section className="panel">
-      <div className="panelHeader">
+    <section className={panelNarrowClassName}>
+      <div className={panelHeaderClassName}>
         <div>
-          <p className="eyebrow">Queue pressure</p>
-          <h2>orders:process</h2>
+          <p className={eyebrowClassName}>Queue pressure</p>
+          <h2 className={panelTitleClassName}>orders:process</h2>
         </div>
         <StatusPill label={queue ? "active" : "no data"} tone={queue ? "ok" : "idle"} />
       </div>
       {queue ? (
-        <dl className="metricRow">
-          <div>
-            <dt>Depth</dt>
-            <dd>{formatNumber(queue.depth)}</dd>
+        <dl className={factGridClassName}>
+          <div className={factItemClassName}>
+            <dt className={factTermClassName}>Depth</dt>
+            <dd className={factValueClassName}>{formatNumber(queue.depth)}</dd>
           </div>
-          <div>
-            <dt>Updated</dt>
-            <dd>{formatTime(queue.updatedAt)}</dd>
+          <div className={factItemClassName}>
+            <dt className={factTermClassName}>Updated</dt>
+            <dd className={factValueClassName}>{formatTime(queue.updatedAt)}</dd>
           </div>
         </dl>
       ) : (
@@ -236,26 +264,26 @@ export function QueuePressurePanel({
 
 export function ErpHealthPanel() {
   return (
-    <section className="panel">
-      <div className="panelHeader">
+    <section className={panelNarrowClassName}>
+      <div className={panelHeaderClassName}>
         <div>
-          <p className="eyebrow">ERP health</p>
-          <h2>Downstream dependency</h2>
+          <p className={eyebrowClassName}>ERP health</p>
+          <h2 className={panelTitleClassName}>Downstream dependency</h2>
         </div>
         <StatusPill label="no data" tone="idle" />
       </div>
-      <dl className="metricRow">
-        <div>
-          <dt>Latency</dt>
-          <dd>n/a</dd>
+      <dl className={factGridClassName}>
+        <div className={factItemClassName}>
+          <dt className={factTermClassName}>Latency</dt>
+          <dd className={factValueClassName}>n/a</dd>
         </div>
-        <div>
-          <dt>TPS cap</dt>
-          <dd>n/a</dd>
+        <div className={factItemClassName}>
+          <dt className={factTermClassName}>TPS cap</dt>
+          <dd className={factValueClassName}>n/a</dd>
         </div>
-        <div>
-          <dt>Outage</dt>
-          <dd>n/a</dd>
+        <div className={factItemClassName}>
+          <dt className={factTermClassName}>Outage</dt>
+          <dd className={factValueClassName}>n/a</dd>
         </div>
       </dl>
       <EmptyState>No ERP health data.</EmptyState>
@@ -271,34 +299,34 @@ export function RunOutcomesPanel({
   const metricCount = recovery.status === "available" ? recovery.data.recentMetrics.length : 0;
 
   return (
-    <section className="panel panelWide">
-      <div className="panelHeader">
+    <section className={panelWideClassName}>
+      <div className={panelHeaderClassName}>
         <div>
-          <p className="eyebrow">Run outcomes</p>
-          <h2>Reservation and confirmation summary</h2>
+          <p className={eyebrowClassName}>Run outcomes</p>
+          <h2 className={panelTitleClassName}>Reservation and confirmation summary</h2>
         </div>
         <StatusPill label="no data" tone="idle" />
       </div>
-      <dl className="metricRow metricRowFive">
-        <div>
-          <dt>Accepted</dt>
-          <dd>0</dd>
+      <dl className={wideFactGridClassName}>
+        <div className={factItemClassName}>
+          <dt className={factTermClassName}>Accepted</dt>
+          <dd className={factValueClassName}>0</dd>
         </div>
-        <div>
-          <dt>Sold out</dt>
-          <dd>0</dd>
+        <div className={factItemClassName}>
+          <dt className={factTermClassName}>Sold out</dt>
+          <dd className={factValueClassName}>0</dd>
         </div>
-        <div>
-          <dt>Queued</dt>
-          <dd>0</dd>
+        <div className={factItemClassName}>
+          <dt className={factTermClassName}>Queued</dt>
+          <dd className={factValueClassName}>0</dd>
         </div>
-        <div>
-          <dt>Confirmed</dt>
-          <dd>0</dd>
+        <div className={factItemClassName}>
+          <dt className={factTermClassName}>Confirmed</dt>
+          <dd className={factValueClassName}>0</dd>
         </div>
-        <div>
-          <dt>Metrics</dt>
-          <dd>{formatNumber(metricCount)}</dd>
+        <div className={factItemClassName}>
+          <dt className={factTermClassName}>Metrics</dt>
+          <dd className={factValueClassName}>{formatNumber(metricCount)}</dd>
         </div>
       </dl>
     </section>
