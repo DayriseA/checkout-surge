@@ -1,0 +1,24 @@
+name: checkout-surge-devcontainer
+
+services:
+  workspace:
+    image: mcr.microsoft.com/devcontainers/universal:linux
+    command: sleep infinity
+    init: true
+    privileged: true
+    volumes:
+      - ..:/workspaces/checkout-surge:cached
+      - checkout-surge-codex-config:/mnt/codex-config
+      - checkout-surge-claude-config:/mnt/claude-config
+      - checkout-surge-pnpm-store:/pnpm-store
+      - checkout-surge-root-node-modules:/workspaces/checkout-surge/node_modules
+
+volumes:
+  checkout-surge-codex-config:
+    name: checkout-surge-codex-config
+  checkout-surge-claude-config:
+    name: checkout-surge-claude-config
+  checkout-surge-pnpm-store:
+    name: checkout-surge-pnpm-store
+  checkout-surge-root-node-modules:
+    name: checkout-surge-root-node-modules
