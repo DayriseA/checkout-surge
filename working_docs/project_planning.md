@@ -139,7 +139,7 @@ Subtasks:
 
 ---
 
-## ⬜ Phase 2 - Thin End-to-End Vertical Slice
+## ✅ Phase 2 - Thin End-to-End Vertical Slice
 
 ### Goal
 
@@ -152,46 +152,64 @@ Primary references:
 - `docs/core_business_entities.md`
 - `docs/cross_service_conventions.md`
 
-### ⬜ Task 2.1 - Scaffold the initial dashboard UI shell
+Completion commits:
+
+- `cb8f680` - `feat(api): add Phase 2 gateway slice`
+- `4722995` - `feat(web): add Phase 2 dashboard shell`
+- `56fe589` - `test: wire Phase 2 verification commands`
+
+Final verification completed:
+
+- `pnpm build`
+- `pnpm type-check`
+- `pnpm type-check:test`
+- `pnpm lint`
+- `pnpm format:check`
+- `pnpm test`
+- `pnpm test:coverage`
+
+Phase 2 intentionally leaves Redis atomic inventory, queue processing, worker behavior, mock ERP calls, load orchestration, browser-facing SSE/realtime fan-out, demo-run start/finalization lifecycle, and full runtime smoke checks to later phases.
+
+### ✅ Task 2.1 - Scaffold the initial dashboard UI shell
 
 Subtasks:
 
-- Build an initial Next.js dashboard shell with public demo, live watch, admin, run-history, and static `/about` explainer route placeholders.
-- Add placeholder areas for load-run controls, inventory drain, queue pressure, ERP health, run outcomes, and recovery status.
-- Avoid building a customer storefront; synthetic buyers are generated through k6/API traffic.
+- ✅ Build an initial Next.js dashboard shell with public demo, live watch, admin, run-history, and static `/about` explainer route placeholders.
+- ✅ Add placeholder areas for load-run controls, inventory drain, queue pressure, ERP health, run outcomes, and recovery status.
+- ✅ Avoid building a customer storefront; synthetic buyers are generated through k6/API traffic.
 
-### ⬜ Task 2.2 - Scaffold the API gateway service
-
-Subtasks:
-
-- Stand up the Fastify service with routing, validation, shared error handling, correlation ID propagation, and health/readiness endpoints.
-- Add a first buy endpoint with stubbed or simplified behavior behind a thin route and application service boundary.
-- Return response shapes validated against `packages/contracts` so k6, API tests, and dashboard projections have a stable early target.
-
-### ⬜ Task 2.3 - Connect the dashboard shell to initial backend reads
+### ✅ Task 2.2 - Scaffold the API gateway service
 
 Subtasks:
 
-- Wire the dashboard shell to API health/status information where useful.
-- Display placeholder system state while Redis, queue, realtime, and load-orchestrator behavior are still landing.
-- Keep direct buy-flow validation in API tests and preset traffic runs rather than adding a customer UI.
+- ✅ Stand up the Fastify service with routing, validation, shared error handling, correlation ID propagation, and health/readiness endpoints.
+- ✅ Add a first buy endpoint with stubbed or simplified behavior behind a thin route and application service boundary.
+- ✅ Return response shapes validated against `packages/contracts` so k6, API tests, and dashboard projections have a stable early target.
 
-### ⬜ Task 2.4 - Persist a simple first order or reservation record
-
-Subtasks:
-
-- Replace purely mocked buy behavior with a minimal persisted reservation/order path in PostgreSQL.
-- Ensure a request becomes visible through a durable record and a stable read path.
-- Keep this slice intentionally narrow; do not add Redis atomic inventory, queue processing, or ERP calls before their phases.
-
-### ⬜ Task 2.5 - Add automated tests for the thin vertical slice
+### ✅ Task 2.3 - Connect the dashboard shell to initial backend reads
 
 Subtasks:
 
-- Add API/service-boundary tests for the first buy endpoint, validation failures, correlation IDs, and stable response shapes.
-- Add persistence integration tests proving a successful request creates the expected record.
-- Add read-path tests for any API response consumed by the dashboard shell.
-- Add a frontend smoke or component test if the UI contains behavior beyond static placeholders.
+- ✅ Wire the dashboard shell to API health/status information where useful.
+- ✅ Display placeholder system state while Redis, queue, realtime, and load-orchestrator behavior are still landing.
+- ✅ Keep direct buy-flow validation in API tests and preset traffic runs rather than adding a customer UI.
+
+### ✅ Task 2.4 - Persist a simple first order or reservation record
+
+Subtasks:
+
+- ✅ Replace purely mocked buy behavior with a minimal persisted reservation/order path in PostgreSQL.
+- ✅ Ensure a request becomes visible through a durable record and a stable read path.
+- ✅ Keep this slice intentionally narrow; do not add Redis atomic inventory, queue processing, or ERP calls before their phases.
+
+### ✅ Task 2.5 - Add automated tests for the thin vertical slice
+
+Subtasks:
+
+- ✅ Add API/service-boundary tests for the first buy endpoint, validation failures, correlation IDs, and stable response shapes.
+- ✅ Add persistence integration tests proving a successful request creates the expected record.
+- ✅ Add read-path tests for any API response consumed by the dashboard shell.
+- ✅ Add a frontend smoke or component test if the UI contains behavior beyond static placeholders.
 
 ---
 
