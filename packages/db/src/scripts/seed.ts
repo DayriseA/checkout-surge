@@ -9,7 +9,7 @@ import {
   publicRuntimePolicies,
   saleOffers,
 } from "../schema.js";
-import { optionalIntegerEnv, requireEnv } from "./env.js";
+import { optionalIntegerEnv, optionalNumberEnv, requireEnv } from "./env.js";
 
 const seedIds = {
   product: "11111111-1111-4111-8111-111111111111",
@@ -444,9 +444,13 @@ function buildPublicRuntimePolicy(): JsonRecord {
         "PUBLIC_CUSTOM_MAX_TRAFFIC_START_DELAY_SECONDS",
         10,
       ),
-      maxStartingStock: 10_000,
-      maxErpLatencyMs: 2000,
-      maxErpErrorRate: 0.25,
+      maxPreAllocatedVus: optionalIntegerEnv("PUBLIC_CUSTOM_MAX_PRE_ALLOCATED_VUS", 1000),
+      maxVus: optionalIntegerEnv("PUBLIC_CUSTOM_MAX_VUS", 1000),
+      maxStartingStock: optionalIntegerEnv("PUBLIC_CUSTOM_MAX_STARTING_STOCK", 1000),
+      maxErpLatencyMs: optionalIntegerEnv("PUBLIC_CUSTOM_MAX_ERP_LATENCY_MS", 2000),
+      minErpMaxTps: optionalIntegerEnv("PUBLIC_CUSTOM_MIN_ERP_MAX_TPS", 1),
+      maxErpMaxTps: optionalIntegerEnv("PUBLIC_CUSTOM_MAX_ERP_MAX_TPS", 100),
+      maxErpErrorRate: optionalNumberEnv("PUBLIC_CUSTOM_MAX_ERP_ERROR_RATE", 0.25),
       allowForcedOutage: false,
       allowedTrafficModes: ["buyer-spike", "steady-arrival-rate"],
     },

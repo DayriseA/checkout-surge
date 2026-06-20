@@ -21,5 +21,8 @@
     "lint": "biome lint .",
     "test": "node ../../scripts/run-with-test-env.mjs node ../../scripts/not-implemented.mjs @checkout-surge/contracts:test \"Task 1.6 will add contract tests.\"",
     "test:unit": "node ../../scripts/run-with-test-env.mjs node ../../scripts/not-implemented.mjs @checkout-surge/contracts:test:unit \"Task 1.6 will add unit tests for contract schemas and vocabulary.\""
+  },
+  "dependencies": {
+    "zod": "^4.4.3"
   }
 }
