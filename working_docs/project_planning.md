@@ -42,7 +42,7 @@ Notes:
 
 ---
 
-## ⬜ Phase 1 - Repository and Shared Platform Baseline
+## ✅ Phase 1 - Repository and Shared Platform Baseline
 
 ### Goal
 
@@ -56,64 +56,86 @@ Primary references:
 - `docs/core_business_entities.md`
 - `docs/cross_service_conventions.md`
 
-### ⬜ Task 1.1 - Scaffold the monorepo baseline
+Completion commits:
+
+- `5e46e9e` - `feat: scaffold monorepo baseline`
+- `7c49239` - `feat: add local and test infrastructure scaffolding`
+- `c119ebd` - `feat: add initial database schema and seed path`
+- `8f91542` - `feat: add shared service contracts`
+- `b4a9486` - `feat: add platform logging helpers`
+- `dc1e4fe` - `test: add shared platform test foundation`
+
+Final verification completed:
+
+- `pnpm build`
+- `pnpm type-check`
+- `pnpm type-check:test`
+- `pnpm lint`
+- `pnpm format:check`
+- `pnpm test:unit`
+- `pnpm test:coverage`
+- `pnpm test:infra:up && pnpm test && pnpm test:api && pnpm test:infra:down`
+
+Phase 1 intentionally leaves full service runtimes, API routes, dashboard UI, queue/worker processing, mock ERP behavior, load orchestration behavior, Redis atomic reservation behavior, and full reference runtime smoke checks to later phases. Root commands for those later surfaces remain explicit placeholders where the implementation has not landed.
+
+### ✅ Task 1.1 - Scaffold the monorepo baseline
 
 Subtasks:
 
-- Initialize the pnpm workspace root with `package.json`, `pnpm-workspace.yaml`, `turbo.json`, baseline TypeScript config, formatting/linting config, and ignore files.
-- Create the `apps/` and `packages/` skeletons described in `docs/repository_layout.md`.
-- Add package and app manifests for `apps/web`, `apps/api`, `apps/worker`, `apps/mock-erp`, `apps/load-orchestrator`, `packages/contracts`, `packages/logger`, and `packages/db`.
-- Configure the Turborepo pipeline so shared packages build before services that consume them.
-- Add stable root command names from `docs/local_development.md`, using honest placeholders only where the implementation behind a command has not landed yet.
-- Preserve the reset-project expectation that commands, paths, and packages described in docs are target contracts that implementation work must create.
+- ✅ Initialize the pnpm workspace root with `package.json`, `pnpm-workspace.yaml`, `turbo.json`, baseline TypeScript config, formatting/linting config, and ignore files.
+- ✅ Create the `apps/` and `packages/` skeletons described in `docs/repository_layout.md`.
+- ✅ Add package and app manifests for `apps/web`, `apps/api`, `apps/worker`, `apps/mock-erp`, `apps/load-orchestrator`, `packages/contracts`, `packages/logger`, and `packages/db`.
+- ✅ Configure the Turborepo pipeline so shared packages build before services that consume them.
+- ✅ Add stable root command names from `docs/local_development.md`, using honest placeholders only where the implementation behind a command has not landed yet.
+- ✅ Preserve the reset-project expectation that commands, paths, and packages described in docs are target contracts that implementation work must create.
 
-### ⬜ Task 1.2 - Materialize local and test infrastructure scaffolding
-
-Subtasks:
-
-- Add `.env.example` files for root and per-service configuration surfaces.
-- Add the initial Docker Compose files for development PostgreSQL/Redis and isolated test PostgreSQL/Redis.
-- Add root scripts for `infra:up`, `infra:down`, `test:infra:up`, `test:infra:down`, and `test:infra:reset`.
-- Add test environment loading conventions so package tests use isolated `TEST_DATABASE_URL` and `TEST_REDIS_URL` values rather than normal development state.
-- Add baseline Dev Container and Codespaces configuration with Docker-in-Docker readiness checks and dependency isolation through named volumes.
-- Keep Dev Container and Codespaces startup explicit: do not auto-start the full reference runtime.
-
-### ⬜ Task 1.3 - Create the initial database schema and seed path
+### ✅ Task 1.2 - Materialize local and test infrastructure scaffolding
 
 Subtasks:
 
-- Create the first migrations for the core entities described in `docs/core_business_entities.md`.
-- Add Drizzle schema exports through `packages/db` without leaking private test helpers across package boundaries.
-- Seed a small but realistic demo dataset: product, baseline sale offer, durable public/admin presets, public custom base preset, public runtime policy, and Redis inventory for the seeded active offer.
-- Ensure seeded data supports happy-path, sold-out, failure-path, and later run-history demos.
-- Add reset helpers only behind explicit test or local-maintenance entry points.
+- ✅ Add `.env.example` files for root and per-service configuration surfaces.
+- ✅ Add the initial Docker Compose files for development PostgreSQL/Redis and isolated test PostgreSQL/Redis.
+- ✅ Add root scripts for `infra:up`, `infra:down`, `test:infra:up`, `test:infra:down`, and `test:infra:reset`.
+- ✅ Add test environment loading conventions so package tests use isolated `TEST_DATABASE_URL` and `TEST_REDIS_URL` values rather than normal development state.
+- ✅ Add baseline Dev Container and Codespaces configuration with Docker-in-Docker readiness checks and dependency isolation through named volumes.
+- ✅ Keep Dev Container and Codespaces startup explicit: do not auto-start the full reference runtime.
 
-### ⬜ Task 1.4 - Implement shared request/response contracts
-
-Subtasks:
-
-- Create Zod schemas and public TypeScript types in `packages/contracts`.
-- Cover buy requests/responses, error payloads, order and reservation statuses, dashboard events, ERP requests/responses, demo preset/run control, load execution, run history, public runtime policy, and health/readiness responses.
-- Keep lifecycle and vocabulary choices aligned with `docs/cross_service_conventions.md`.
-- Make contract exports the shared source of truth for services and frontend code.
-
-### ⬜ Task 1.5 - Add baseline platform observability
+### ✅ Task 1.3 - Create the initial database schema and seed path
 
 Subtasks:
 
-- Implement `packages/logger` with service names, structured log fields, and correlation ID helpers.
-- Add correlation ID normalization helpers that can be shared by API, worker, mock ERP, and load orchestrator code.
-- Add health and readiness response helpers that match the shared contracts.
-- Keep infrastructure construction in composition roots; do not create PostgreSQL, Redis, BullMQ, or HTTP clients at module import time in route or service modules.
+- ✅ Create the first migrations for the core entities described in `docs/core_business_entities.md`.
+- ✅ Add Drizzle schema exports through `packages/db` without leaking private test helpers across package boundaries.
+- ✅ Seed a small but realistic demo dataset: product, baseline sale offer, durable public/admin presets, public custom base preset, public runtime policy, and Redis inventory for the seeded active offer.
+- ✅ Ensure seeded data supports happy-path, sold-out, failure-path, and later run-history demos.
+- ✅ Add reset helpers only behind explicit test or local-maintenance entry points.
 
-### ⬜ Task 1.6 - Add automated tests for shared platform foundations
+### ✅ Task 1.4 - Implement shared request/response contracts
 
 Subtasks:
 
-- Add unit tests for contracts, domain enums, validation rules, and error payload conventions.
-- Add database integration tests for migrations, seed data, and reset behavior against isolated test infrastructure.
-- Add focused tests for logger metadata, correlation ID handling, and health/readiness response shapes.
-- Ensure root and package test commands follow the taxonomy in `docs/automated_testing_infrastructure.md`.
+- ✅ Create Zod schemas and public TypeScript types in `packages/contracts`.
+- ✅ Cover buy requests/responses, error payloads, order and reservation statuses, dashboard events, ERP requests/responses, demo preset/run control, load execution, run history, public runtime policy, and health/readiness responses.
+- ✅ Keep lifecycle and vocabulary choices aligned with `docs/cross_service_conventions.md`.
+- ✅ Make contract exports the shared source of truth for services and frontend code.
+
+### ✅ Task 1.5 - Add baseline platform observability
+
+Subtasks:
+
+- ✅ Implement `packages/logger` with service names, structured log fields, and correlation ID helpers.
+- ✅ Add correlation ID normalization helpers that can be shared by API, worker, mock ERP, and load orchestrator code.
+- ✅ Add health and readiness response helpers that match the shared contracts.
+- ✅ Keep infrastructure construction in composition roots; do not create PostgreSQL, Redis, BullMQ, or HTTP clients at module import time in route or service modules.
+
+### ✅ Task 1.6 - Add automated tests for shared platform foundations
+
+Subtasks:
+
+- ✅ Add unit tests for contracts, domain enums, validation rules, and error payload conventions.
+- ✅ Add database integration tests for migrations, seed data, and reset behavior against isolated test infrastructure.
+- ✅ Add focused tests for logger metadata, correlation ID handling, and health/readiness response shapes.
+- ✅ Ensure root and package test commands follow the taxonomy in `docs/automated_testing_infrastructure.md`.
 
 ---
 
