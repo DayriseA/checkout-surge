@@ -19,7 +19,7 @@
     "test": "pnpm test:unit && pnpm test:integration",
     "test:unit": "turbo run test:unit --filter @checkout-surge/contracts --filter @checkout-surge/logger",
     "test:integration": "turbo run test:integration --filter @checkout-surge/db",
-    "test:api": "node scripts/no-tests-yet.mjs test:api \"API/service-boundary tests land after service boundaries exist in Phase 2.\"",
+    "test:api": "turbo run test:api --filter api",
     "test:watch": "vitest --watch --config vitest.unit.config.ts",
     "test:coverage": "pnpm --filter @checkout-surge/contracts exec vitest run --config vitest.config.ts --coverage && pnpm --filter @checkout-surge/logger exec vitest run --config vitest.config.ts --coverage",
     "test:infra:up": "node scripts/run-with-test-env.mjs docker compose -f docker-compose.test.yml up -d postgres-test redis-test",
