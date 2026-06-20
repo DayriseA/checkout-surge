@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
-import { Redis } from "ioredis";
 import { createDatabaseConnection } from "../client.js";
+import { createRedisClient } from "../redis.js";
+import { initializeInventory } from "../redis-inventory.js";
 import {
   type DemoPresetVisibility,
   demoPresets,
@@ -470,67 +471,15 @@ async function seedRedisInventory(
   redisUrl: string,
   offer: { saleOfferId: string; allocatedStock: number },
 ): Promise<void> {
-  const redis = new Redis(redisUrl, {
+  const redis = createRedisClient(redisUrl, {
     lazyConnect: true,
     maxRetriesPerRequest: 3,
   });
 
-  const keys = inventoryKeys(offer.saleOfferId);
-  const timestamp = new Date().toISOString();
-  const state: Record<string, string> = {
-    saleOfferId: offer.saleOfferId,
-    allocatedStock: offer.allocatedStock.toString(),
-    remainingStock: offer.allocatedStock.toString(),
-    reservedStock: "0",
-    lastUpdatedAt: timestamp,
-    pendingPersistenceCount: "0",
-    expiredReservationCount: "0",
-    oldestPendingPersistenceAgeSeconds: "0",
-  };
-
   try {
     await redis.connect();
-
-    await redis
-      .multi()
-      .del(
-        keys.state,
-        keys.reservations,
-        keys.reservationExpirations,
-        keys.pendingPersistence,
-        keys.events,
-        keys.reservationOutcomes,
-      )
-      .hset(keys.state, state)
-      .hset(keys.reservationOutcomes, "api_sold_out_decision", "0")
-      .rpush(
-        keys.events,
-        JSON.stringify({
-          eventName: "inventory.updated",
-          saleOfferId: offer.saleOfferId,
-          allocatedStock: offer.allocatedStock,
-          remainingStock: offer.allocatedStock,
-          reservedStock: 0,
-          source: "seed",
-          occurredAt: timestamp,
-        }),
-      )
-      .ltrim(keys.events, -100, -1)
-      .exec();
+    await initializeInventory(redis, { ...offer, source: "seed" });
   } finally {
     redis.disconnect();
   }
-}
-
-function inventoryKeys(saleOfferId: string) {
-  const prefix = `inventory:${saleOfferId}`;
-
-  return {
-    state: `${prefix}:state`,
-    reservations: `${prefix}:reservations`,
-    reservationExpirations: `${prefix}:reservation-expirations`,
-    pendingPersistence: `${prefix}:pending-persistence`,
-    events: `${prefix}:events`,
-    reservationOutcomes: `${prefix}:reservation-outcomes`,
-  };
 }

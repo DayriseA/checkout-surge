@@ -5,7 +5,13 @@ import { promisify } from "node:util";
 import { publicRuntimePolicySchema } from "@checkout-surge/contracts";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createDatabaseConnection } from "../../src/index.js";
+import {
+  createDatabaseConnection,
+  getInventoryStatus,
+  InventoryNotInitializedError,
+  initializeInventory,
+  inventoryKeys,
+} from "../../src/index.js";
 import { resetTestDatabase } from "../../src/testing.js";
 
 const execFileAsync = promisify(execFile);
@@ -145,6 +151,110 @@ describe("database migrations, seed data, and reset behavior", () => {
       remainingStock: "1000",
       reservedStock: "0",
     });
+  });
+
+  it("initializes and resets only the targeted inventory namespace", async () => {
+    const targetOfferId = "55555555-5555-4555-8555-555555555555";
+    const otherOfferId = "66666666-6666-4666-8666-666666666666";
+    const targetKeys = inventoryKeys(targetOfferId);
+    const otherKeys = inventoryKeys(otherOfferId);
+    const staleTargetIdempotencyKeys = Array.from({ length: 250 }, (_, index) =>
+      targetKeys.idempotency(`old-key-${index}`),
+    );
+    const preservedOtherOfferKeys = Array.from({ length: 3 }, (_, index) =>
+      otherKeys.idempotency(`keep-key-${index}`),
+    );
+
+    await initializeInventory(redis, {
+      saleOfferId: targetOfferId,
+      allocatedStock: 12,
+      source: "integration-test",
+      initializedAt: new Date("2026-06-20T10:00:00.000Z"),
+    });
+    const staleKeySetup = redis.pipeline();
+    for (const key of staleTargetIdempotencyKeys) {
+      staleKeySetup.set(key, "stale");
+    }
+    for (const key of preservedOtherOfferKeys) {
+      staleKeySetup.set(key, "preserved");
+    }
+    await staleKeySetup.exec();
+    await redis.hset(targetKeys.reservations, "old-reservation", "stale");
+
+    const status = await initializeInventory(redis, {
+      saleOfferId: targetOfferId,
+      allocatedStock: 8,
+      source: "generated-run",
+      initializedAt: new Date("2026-06-20T11:00:00.000Z"),
+    });
+
+    expect(status).toMatchObject({
+      saleOfferId: targetOfferId,
+      allocatedStock: 8,
+      remainingStock: 8,
+      reservedStock: 0,
+    });
+    expect(await redis.exists(...staleTargetIdempotencyKeys)).toBe(0);
+    expect(await redis.exists(targetKeys.reservations)).toBe(0);
+    expect(await redis.mget(...preservedOtherOfferKeys)).toEqual([
+      "preserved",
+      "preserved",
+      "preserved",
+    ]);
+    expect(await redis.llen(targetKeys.events)).toBe(1);
+  });
+
+  it("derives pending and expired status fields from Redis source collections", async () => {
+    const saleOfferId = "77777777-7777-4777-8777-777777777777";
+    const keys = inventoryKeys(saleOfferId);
+    const now = new Date("2026-06-20T12:00:00.000Z");
+
+    await initializeInventory(redis, {
+      saleOfferId,
+      allocatedStock: 20,
+      initializedAt: new Date("2026-06-20T11:59:00.000Z"),
+    });
+    await redis.hset(keys.state, {
+      remainingStock: "13",
+      reservedStock: "7",
+      pendingPersistenceCount: "99",
+      expiredReservationCount: "99",
+      oldestPendingPersistenceAgeSeconds: "99",
+    });
+    await redis.zadd(
+      keys.pendingPersistence,
+      now.getTime() - 4_500,
+      "pending-oldest",
+      now.getTime() - 1_000,
+      "pending-newest",
+    );
+    await redis.zadd(
+      keys.reservationExpirations,
+      now.getTime() - 1,
+      "expired",
+      now.getTime() + 1,
+      "active",
+    );
+
+    const status = await getInventoryStatus(redis, saleOfferId, now);
+
+    expect(status).toMatchObject({
+      allocatedStock: 20,
+      remainingStock: 13,
+      reservedStock: 7,
+      pendingPersistenceCount: 2,
+      expiredReservationCount: 1,
+      oldestPendingPersistenceAgeSeconds: 4.5,
+    });
+  });
+
+  it("rejects missing inventory state instead of fabricating zero stock", async () => {
+    const missingSaleOfferId = "88888888-8888-4888-8888-888888888888";
+    await redis.set(inventoryKeys(missingSaleOfferId).pendingPersistence, "orphaned-state");
+
+    await expect(getInventoryStatus(redis, missingSaleOfferId)).rejects.toEqual(
+      new InventoryNotInitializedError(missingSaleOfferId),
+    );
   });
 
   it("resets only business tables in the isolated test database", async () => {

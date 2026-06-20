@@ -5,12 +5,14 @@ import {
   dashboardRecoveryResponseSchema,
   errorPayloadSchema,
   healthResponseSchema,
+  inventoryStatusSchema,
   livenessResponseSchema,
   type OrderSummary,
   type ReservationSummary,
 } from "@checkout-surge/contracts";
 import {
   createDatabaseConnection,
+  InventoryNotInitializedError,
   orderEvents,
   orders,
   products,
@@ -24,6 +26,10 @@ import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { loadApiConfig } from "../src/runtime/config.js";
 import type { ApiFastifyInstance } from "../src/runtime/fastify.js";
 import { buildApiServer } from "../src/server.js";
+import {
+  type InventoryStatusReader,
+  InventoryStatusService,
+} from "../src/services/inventory-status-service.js";
 import { PostgresBuyPersistence } from "../src/services/postgres-buy-persistence.js";
 import {
   type BuyPersistence,
@@ -60,8 +66,25 @@ function baseConfig() {
 
 async function buildTestServer(options: {
   persistence: BuyPersistence;
+  inventoryReader?: InventoryStatusReader | null;
   readiness?: "ok" | "unavailable";
 }): Promise<ApiFastifyInstance> {
+  const inventoryReader =
+    options.inventoryReader === undefined
+      ? {
+          getStatus: async (saleOfferId: string) => ({
+            saleOfferId,
+            allocatedStock: 10,
+            remainingStock: 7,
+            reservedStock: 3,
+            pendingPersistenceCount: 1,
+            expiredReservationCount: 2,
+            oldestPendingPersistenceAgeSeconds: 4.5,
+            lastUpdatedAt: "2026-06-20T00:00:00.000Z",
+          }),
+        }
+      : options.inventoryReader;
+
   return buildApiServer({
     config: baseConfig(),
     logger: createSilentLogger("api"),
@@ -77,6 +100,7 @@ async function buildTestServer(options: {
         },
       ],
     },
+    inventoryStatusService: new InventoryStatusService(inventoryReader),
     reserveOrderService: new ReserveOrderService({
       persistence: options.persistence,
       reservationHoldMinutes: 15,
@@ -137,6 +161,7 @@ describe("API gateway routes", () => {
 
   async function trackedServer(options: {
     persistence: BuyPersistence;
+    inventoryReader?: InventoryStatusReader | null;
     readiness?: "ok" | "unavailable";
   }) {
     const server = await buildTestServer(options);
@@ -184,6 +209,57 @@ describe("API gateway routes", () => {
     expect(payload.inventory).toBeNull();
     expect(payload.queue).toBeNull();
     expect(payload.recentMetrics).toEqual([]);
+  });
+
+  it("returns the shared inventory status contract", async () => {
+    const server = await trackedServer({ persistence: new AcceptingPersistence() });
+
+    const response = await server.inject({
+      method: "GET",
+      url: `/inventory/${fixtureIds.saleOffer}/status`,
+    });
+    const payload = inventoryStatusSchema.parse(response.json());
+
+    expect(response.statusCode).toBe(200);
+    expect(payload).toMatchObject({
+      saleOfferId: fixtureIds.saleOffer,
+      allocatedStock: 10,
+      remainingStock: 7,
+      reservedStock: 3,
+      pendingPersistenceCount: 1,
+      expiredReservationCount: 2,
+    });
+  });
+
+  it("returns a stable shared error when inventory is not initialized", async () => {
+    const server = await trackedServer({
+      persistence: new AcceptingPersistence(),
+      inventoryReader: {
+        getStatus: async (saleOfferId) => {
+          throw new InventoryNotInitializedError(saleOfferId);
+        },
+      },
+    });
+
+    const response = await server.inject({
+      method: "GET",
+      url: `/inventory/${fixtureIds.saleOffer}/status`,
+    });
+    const payload = errorPayloadSchema.parse(response.json());
+
+    expect(response.statusCode).toBe(404);
+    expect(payload.code).toBe("inventory_not_initialized");
+    expect(payload.details).toEqual({ saleOfferId: fixtureIds.saleOffer });
+  });
+
+  it("rejects invalid inventory status sale offer IDs", async () => {
+    const server = await trackedServer({ persistence: new AcceptingPersistence() });
+
+    const response = await server.inject({ method: "GET", url: "/inventory/not-a-uuid/status" });
+    const payload = errorPayloadSchema.parse(response.json());
+
+    expect(response.statusCode).toBe(400);
+    expect(payload.code).toBe("invalid_request");
   });
 
   it("returns shared error shape for invalid buy requests", async () => {

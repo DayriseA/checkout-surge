@@ -6,10 +6,12 @@ import { ZodError } from "zod";
 import { registerBuyRoutes } from "./routes/buy-routes.js";
 import { registerDashboardRoutes } from "./routes/dashboard-routes.js";
 import { registerHealthRoutes } from "./routes/health-routes.js";
+import { registerInventoryRoutes } from "./routes/inventory-routes.js";
 import type { ApiConfig } from "./runtime/config.js";
 import { ApiHttpError, createErrorPayload } from "./runtime/errors.js";
 import type { ApiFastifyInstance } from "./runtime/fastify.js";
 import type { ApiReadiness } from "./runtime/readiness.js";
+import type { InventoryStatusService } from "./services/inventory-status-service.js";
 import type { ReserveOrderService } from "./services/reserve-order-service.js";
 
 declare module "fastify" {
@@ -22,6 +24,7 @@ export interface BuildApiServerOptions {
   config: ApiConfig;
   logger: CheckoutSurgeLogger;
   readiness: ApiReadiness;
+  inventoryStatusService: InventoryStatusService;
   reserveOrderService: ReserveOrderService;
   startedAt?: Date;
 }
@@ -83,6 +86,7 @@ export async function buildApiServer(options: BuildApiServerOptions): Promise<Ap
     ...(options.startedAt ? { startedAt: options.startedAt } : {}),
   });
   registerBuyRoutes(app, { reserveOrderService: options.reserveOrderService });
+  registerInventoryRoutes(app, { inventoryStatusService: options.inventoryStatusService });
   registerDashboardRoutes(app);
 
   return app;
