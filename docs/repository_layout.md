@@ -49,6 +49,7 @@ checkout-surge/
 - Owns the public demo picker (`/`), current-run spectator (`/watch`), admin console (`/admin`), run history (`/run-history`), and a static "how it works" explainer (`/about`).
 - Exposes public-safe starts and live observation separately from admin preset editing, ERP diagnostics, recovery, and cleanup controls.
 - Must not be treated as the source of high-volume traffic; load generation belongs to `apps/load-orchestrator` and k6.
+- Should use established frontend primitives instead of inventing a custom styling or component system: Tailwind CSS for utility styling, shadcn/ui and Radix UI for accessible component building blocks, sonner for toast notifications, and react-icons for iconography unless a scoped, documented need proves those libraries are insufficient.
 - Consumes `packages/contracts` for API request/response types.
 - Communicates with `apps/api` over same-origin HTTP routes and the live SSE stream at `/dashboard/events`.
 - May call `apps/mock-erp` admin-only chaos endpoints directly in local simulation mode so the API gateway does not couple itself to ERP control behavior.
