@@ -7,7 +7,7 @@ import {
   stockReservationDecisionSchema,
 } from "@checkout-surge/contracts";
 import type { CheckoutSurgeRedis } from "./redis.js";
-import { inventoryKeys } from "./redis-inventory.js";
+import { inventoryKeys, reservationThroughputWindowSeconds } from "./redis-inventory.js";
 
 const inventoryEventHistoryLimit = 100;
 
@@ -78,7 +78,7 @@ if not quantity or quantity <= 0 or quantity ~= math.floor(quantity) or quantity
   return cjson.encode({ outcome = "quantity_invalid", reservation = cjson.null })
 end
 
-local existingIdempotencyJson = redis.call("GET", KEYS[6])
+local existingIdempotencyJson = redis.call("GET", KEYS[7])
 if existingIdempotencyJson then
   local existingIdempotency = cjson.decode(existingIdempotencyJson)
   if existingIdempotency.quantity ~= quantity then
@@ -119,6 +119,16 @@ redis.call("HSET", KEYS[1], "lastUpdatedAt", ARGV[4])
 redis.call("HSET", KEYS[2], reservation.id, ARGV[2])
 redis.call("ZADD", KEYS[3], ARGV[3], reservation.id)
 
+local throughputSecond = math.floor(tonumber(ARGV[8]) / 1000)
+local throughputSlot = tostring(throughputSecond % tonumber(ARGV[9]))
+local throughputSecondField = throughputSlot .. ":second"
+local throughputCountField = throughputSlot .. ":count"
+if tonumber(redis.call("HGET", KEYS[6], throughputSecondField)) == throughputSecond then
+  redis.call("HINCRBY", KEYS[6], throughputCountField, 1)
+else
+  redis.call("HSET", KEYS[6], throughputSecondField, throughputSecond, throughputCountField, 1)
+end
+
 local allocatedStock = tonumber(redis.call("HGET", KEYS[1], "allocatedStock"))
 local inventoryEvent = {
   eventName = "inventory.updated",
@@ -126,6 +136,8 @@ local inventoryEvent = {
   allocatedStock = allocatedStock,
   remainingStock = newRemainingStock,
   reservedStock = newReservedStock,
+  reservationCount = 1,
+  reservedQuantity = quantity,
   source = ARGV[5],
   occurredAt = ARGV[4]
 }
@@ -139,7 +151,7 @@ local preDurableIdempotencyRecord = {
   quantity = quantity,
   reservation = reservation
 }
-redis.call("SET", KEYS[6], cjson.encode(preDurableIdempotencyRecord), "EX", ARGV[6])
+redis.call("SET", KEYS[7], cjson.encode(preDurableIdempotencyRecord), "EX", ARGV[6])
 
 return cjson.encode({ outcome = "reservation_secured", reservation = reservation })
 `;
@@ -169,12 +181,13 @@ export async function reserveInventoryStock(
   const keys = inventoryKeys(reservation.saleOfferId);
   const rawDecision = await redis.eval(
     reserveInventoryScript,
-    6,
+    7,
     keys.state,
     keys.reservations,
     keys.reservationExpirations,
     keys.events,
     keys.reservationOutcomes,
+    keys.reservationThroughput,
     keys.idempotency(idempotencyKey),
     reservation.quantity.toString(),
     JSON.stringify(reservation),
@@ -183,6 +196,8 @@ export async function reserveInventoryStock(
     "reservation",
     idempotencyTtlSeconds.toString(),
     inventoryEventHistoryLimit.toString(),
+    new Date(reservation.securedAt).getTime().toString(),
+    reservationThroughputWindowSeconds.toString(),
   );
 
   if (typeof rawDecision !== "string") {

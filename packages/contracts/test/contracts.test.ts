@@ -6,6 +6,8 @@ import {
   demoRunStatusValues,
   errorPayloadSchema,
   healthResponseSchema,
+  inventoryStatusSchema,
+  inventoryUpdatedEventPayloadSchema,
   metricNameValues,
   orderStatusValues,
   publicRuntimePolicySchema,
@@ -67,6 +69,62 @@ describe("shared error and health contracts", () => {
 });
 
 describe("buy and dashboard contracts", () => {
+  it("defines bounded inventory drain and sold-out projections without conflating units", () => {
+    expect(
+      inventoryStatusSchema.parse({
+        saleOfferId,
+        allocatedStock: 20,
+        remainingStock: 12,
+        reservedStock: 8,
+        pendingPersistenceCount: 0,
+        expiredReservationCount: 0,
+        oldestPendingPersistenceAgeSeconds: 0,
+        reservationThroughput: {
+          windowSeconds: 60,
+          successfulReservationCount: 4,
+          rate: 4 / 60,
+          unit: "reservations_per_second",
+          measuredAt: timestamp,
+        },
+        soldOutPressure: {
+          rejectionCount: 9,
+          latestObservedAt: timestamp,
+        },
+        lastUpdatedAt: timestamp,
+      }).reservationThroughput.successfulReservationCount,
+    ).toBe(4);
+  });
+
+  it("keeps initialization events valid and gives reservation events explicit count and quantity", () => {
+    const baseEvent = {
+      eventName: "inventory.updated" as const,
+      saleOfferId,
+      allocatedStock: 20,
+      remainingStock: 20,
+      reservedStock: 0,
+      source: "initialization",
+      occurredAt: timestamp,
+    };
+
+    expect(() => inventoryUpdatedEventPayloadSchema.parse(baseEvent)).not.toThrow();
+    expect(() =>
+      inventoryUpdatedEventPayloadSchema.parse({
+        ...baseEvent,
+        remainingStock: 18,
+        reservedStock: 2,
+        reservationCount: 1,
+        reservedQuantity: 2,
+        source: "reservation",
+      }),
+    ).not.toThrow();
+    expect(() =>
+      inventoryUpdatedEventPayloadSchema.parse({ ...baseEvent, reservationCount: 1 }),
+    ).toThrow();
+    expect(() =>
+      inventoryUpdatedEventPayloadSchema.parse({ ...baseEvent, source: "reservation" }),
+    ).toThrow();
+  });
+
   it("defaults buy quantity while preserving caller identifiers", () => {
     const request = buyRequestSchema.parse({
       saleOfferId,

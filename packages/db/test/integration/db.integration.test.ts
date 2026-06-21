@@ -320,6 +320,85 @@ describe("database migrations, seed data, and reset behavior", () => {
       },
     );
     expect(await redis.llen(keys.events)).toBe(2);
+    expect(JSON.parse((await redis.lindex(keys.events, -1)) ?? "null")).toMatchObject({
+      eventName: "inventory.updated",
+      remainingStock: 3,
+      reservedStock: 2,
+      reservationCount: 1,
+      reservedQuantity: 2,
+      occurredAt: reservationSecuredAt,
+    });
+  });
+
+  it("projects exact rolling successful-reservation throughput and aggregate sold-out pressure", async () => {
+    const saleOfferId = "10000000-0000-4000-8000-000000000009";
+    const keys = inventoryKeys(saleOfferId);
+    const first = buildReservationInput({ saleOfferId, sequence: 91, quantity: 2 });
+    const second = buildReservationInput({ saleOfferId, sequence: 92, quantity: 1 });
+    await initializeInventory(redis, {
+      saleOfferId,
+      allocatedStock: 3,
+      initializedAt: new Date("2026-06-20T11:59:00.000Z"),
+    });
+
+    await reserveInventoryStock(redis, first);
+    await reserveInventoryStock(redis, second);
+    await reserveInventoryStock(redis, first);
+    await reserveInventoryStock(
+      redis,
+      buildReservationInput({ saleOfferId, sequence: 93, quantity: 1 }),
+    );
+
+    const activeWindow = await getInventoryStatus(
+      redis,
+      saleOfferId,
+      new Date("2026-06-20T12:00:30.000Z"),
+    );
+    const expiredWindow = await getInventoryStatus(
+      redis,
+      saleOfferId,
+      new Date("2026-06-20T12:01:00.000Z"),
+    );
+
+    expect(activeWindow).toMatchObject({
+      remainingStock: 0,
+      reservedStock: 3,
+      reservationThroughput: {
+        windowSeconds: 60,
+        successfulReservationCount: 2,
+        rate: 2 / 60,
+        unit: "reservations_per_second",
+        measuredAt: "2026-06-20T12:00:30.000Z",
+      },
+      soldOutPressure: {
+        rejectionCount: 1,
+        latestObservedAt: reservationSecuredAt,
+      },
+    });
+    expect(expiredWindow.reservationThroughput.successfulReservationCount).toBe(0);
+    expect(await redis.hlen(keys.reservationThroughput)).toBe(2);
+  });
+
+  it("rejects half-populated reservation-throughput slots as malformed state", async () => {
+    const saleOfferId = "10000000-0000-4000-8000-000000000010";
+    const keys = inventoryKeys(saleOfferId);
+    await initializeInventory(redis, { saleOfferId, allocatedStock: 3 });
+
+    await redis.hset(keys.reservationThroughput, "0:second", "1781956800");
+    await expect(getInventoryStatus(redis, saleOfferId)).rejects.toThrow(
+      "Malformed reservation throughput state at slot 0: second and count must both be present.",
+    );
+
+    await redis.del(keys.reservationThroughput);
+    await redis.hset(keys.reservationThroughput, "0:count", "1");
+    await expect(getInventoryStatus(redis, saleOfferId)).rejects.toThrow(
+      "Malformed reservation throughput state at slot 0: second and count must both be present.",
+    );
+
+    await redis.hset(keys.reservationThroughput, "0:second", "0", "0:count", "not-an-integer");
+    await expect(getInventoryStatus(redis, saleOfferId)).rejects.toThrow(
+      "Malformed reservation throughput state at slot 0: count must be a nonnegative safe integer.",
+    );
   });
 
   it("returns sold out without per-loser records or events", async () => {
@@ -535,6 +614,11 @@ describe("database migrations, seed data, and reset behavior", () => {
       expect(await redis.zcard(keys.reservationExpirations)).toBe(100);
       expect(await redis.hget(keys.reservationOutcomes, "api_sold_out_decision")).toBe("150");
       expect(await redis.llen(keys.events)).toBe(100);
+      expect(await redis.hlen(keys.reservationThroughput)).toBeLessThanOrEqual(120);
+      expect(
+        (await getInventoryStatus(redis, saleOfferId, new Date("2026-06-20T12:00:30.000Z")))
+          .reservationThroughput.successfulReservationCount,
+      ).toBe(100);
     } finally {
       for (const client of clients) {
         client.disconnect();

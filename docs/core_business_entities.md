@@ -137,6 +137,8 @@ Live Redis status fields:
 - `pendingPersistenceCount`
 - `expiredReservationCount`
 - `oldestPendingPersistenceAgeSeconds`
+- `reservationThroughput` (`windowSeconds`, `successfulReservationCount`, `rate`, `unit`, `measuredAt`)
+- `soldOutPressure` (`rejectionCount`, `latestObservedAt`)
 
 Terminal run-history snapshot fields:
 

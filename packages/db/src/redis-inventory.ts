@@ -7,6 +7,7 @@ import type { CheckoutSurgeRedis } from "./redis.js";
 
 const inventoryEventHistoryLimit = 100;
 const inventoryNamespaceScanBatchSize = 100;
+export const reservationThroughputWindowSeconds = 60;
 
 export interface InventoryKeys {
   prefix: string;
@@ -16,6 +17,7 @@ export interface InventoryKeys {
   pendingPersistence: string;
   events: string;
   reservationOutcomes: string;
+  reservationThroughput: string;
   idempotency: (idempotencyKey: string) => string;
 }
 
@@ -82,6 +84,7 @@ export function inventoryKeys(saleOfferId: string): InventoryKeys {
     pendingPersistence: `${prefix}:pending-persistence`,
     events: `${prefix}:events`,
     reservationOutcomes: `${prefix}:reservation-outcomes`,
+    reservationThroughput: `${prefix}:reservation-throughput`,
     idempotency: (idempotencyKey) => `${prefix}:idempotency:${idempotencyKey}`,
   };
 }
@@ -128,6 +131,11 @@ export async function initializeInventory(
     pendingPersistenceCount: 0,
     expiredReservationCount: 0,
     oldestPendingPersistenceAgeSeconds: 0,
+    reservationThroughput: buildReservationThroughput([], initializedAt),
+    soldOutPressure: {
+      rejectionCount: 0,
+      latestObservedAt: null,
+    },
     lastUpdatedAt: timestamp,
   });
 }
@@ -144,10 +152,23 @@ export async function getInventoryStatus(
     throw new InventoryNotInitializedError(saleOfferId);
   }
 
-  const [pendingPersistenceCount, oldestPending, expiredReservationCount] = await Promise.all([
+  const throughputFields = buildThroughputFields();
+  const [
+    pendingPersistenceCount,
+    oldestPending,
+    expiredReservationCount,
+    reservationOutcomeValues,
+    throughputValues,
+  ] = await Promise.all([
     redis.zcard(keys.pendingPersistence),
     redis.zrange(keys.pendingPersistence, 0, 0, "WITHSCORES"),
     redis.zcount(keys.reservationExpirations, "-inf", now.getTime()),
+    redis.hmget(
+      keys.reservationOutcomes,
+      "api_sold_out_decision",
+      "api_sold_out_decision_latest_observed_at",
+    ),
+    redis.hmget(keys.reservationThroughput, ...throughputFields),
   ]);
   const stateSaleOfferId = requireStateValue(state, "saleOfferId");
 
@@ -163,8 +184,90 @@ export async function getInventoryStatus(
     pendingPersistenceCount,
     expiredReservationCount,
     oldestPendingPersistenceAgeSeconds: calculateOldestPendingAgeSeconds(oldestPending, now),
+    reservationThroughput: buildReservationThroughput(throughputValues, now),
+    soldOutPressure: {
+      rejectionCount: parseOptionalNonnegativeInteger(
+        reservationOutcomeValues[0] ?? null,
+        "api_sold_out_decision",
+      ),
+      latestObservedAt: reservationOutcomeValues[1] ?? null,
+    },
     lastUpdatedAt: requireStateValue(state, "lastUpdatedAt"),
   });
+}
+
+function buildThroughputFields(): string[] {
+  return Array.from({ length: reservationThroughputWindowSeconds }, (_, slot) => [
+    `${slot}:second`,
+    `${slot}:count`,
+  ]).flat();
+}
+
+function buildReservationThroughput(values: Array<string | null>, measuredAt: Date) {
+  const currentSecond = Math.floor(measuredAt.getTime() / 1000);
+  const firstIncludedSecond = currentSecond - reservationThroughputWindowSeconds + 1;
+  let successfulReservationCount = 0;
+
+  for (let index = 0; index < values.length; index += 2) {
+    const slot = index / 2;
+    const parsedSlot = parseReservationThroughputSlot(
+      values[index] ?? null,
+      values[index + 1] ?? null,
+      slot,
+    );
+
+    if (parsedSlot === null) {
+      continue;
+    }
+
+    const { observedSecond, count } = parsedSlot;
+
+    if (observedSecond >= firstIncludedSecond && observedSecond <= currentSecond) {
+      successfulReservationCount += count;
+      assertNonnegativeInteger(successfulReservationCount, "successfulReservationCount");
+    }
+  }
+
+  return {
+    windowSeconds: reservationThroughputWindowSeconds,
+    successfulReservationCount,
+    rate: successfulReservationCount / reservationThroughputWindowSeconds,
+    unit: "reservations_per_second" as const,
+    measuredAt: measuredAt.toISOString(),
+  };
+}
+
+function parseReservationThroughputSlot(
+  secondValue: string | null,
+  countValue: string | null,
+  slot: number,
+): { observedSecond: number; count: number } | null {
+  if (secondValue === null && countValue === null) {
+    return null;
+  }
+
+  if (secondValue === null || countValue === null) {
+    throw new Error(
+      `Malformed reservation throughput state at slot ${slot}: second and count must both be present.`,
+    );
+  }
+
+  const observedSecond = parseThroughputInteger(secondValue, slot, "second");
+  const count = parseThroughputInteger(countValue, slot, "count");
+
+  return { observedSecond, count };
+}
+
+function parseThroughputInteger(value: string, slot: number, field: "second" | "count"): number {
+  const parsed = Number(value);
+
+  if (value.trim().length === 0 || !Number.isSafeInteger(parsed) || parsed < 0) {
+    throw new Error(
+      `Malformed reservation throughput state at slot ${slot}: ${field} must be a nonnegative safe integer.`,
+    );
+  }
+
+  return parsed;
 }
 
 async function deleteInventoryNamespace(
@@ -209,6 +312,16 @@ function parseStateInteger(state: Record<string, string>, field: string): number
   const value = Number(requireStateValue(state, field));
   assertNonnegativeInteger(value, field);
   return value;
+}
+
+function parseOptionalNonnegativeInteger(value: string | null, field: string): number {
+  if (value === null) {
+    return 0;
+  }
+
+  const parsed = Number(value);
+  assertNonnegativeInteger(parsed, field);
+  return parsed;
 }
 
 function requireStateValue(state: Record<string, string>, field: string): string {

@@ -14,6 +14,25 @@ import {
   uuidSchema,
 } from "./primitives.js";
 
+export const reservationThroughputSchema = z
+  .object({
+    windowSeconds: positiveIntegerSchema,
+    successfulReservationCount: nonnegativeIntegerSchema,
+    rate: nonnegativeNumberSchema,
+    unit: z.literal("reservations_per_second"),
+    measuredAt: isoTimestampSchema,
+  })
+  .strict();
+export type ReservationThroughput = z.infer<typeof reservationThroughputSchema>;
+
+export const soldOutPressureSchema = z
+  .object({
+    rejectionCount: nonnegativeIntegerSchema,
+    latestObservedAt: isoTimestampSchema.nullable(),
+  })
+  .strict();
+export type SoldOutPressure = z.infer<typeof soldOutPressureSchema>;
+
 export const inventoryStatusSchema = z
   .object({
     saleOfferId: uuidSchema,
@@ -23,6 +42,8 @@ export const inventoryStatusSchema = z
     pendingPersistenceCount: nonnegativeIntegerSchema,
     expiredReservationCount: nonnegativeIntegerSchema,
     oldestPendingPersistenceAgeSeconds: nonnegativeNumberSchema,
+    reservationThroughput: reservationThroughputSchema,
+    soldOutPressure: soldOutPressureSchema,
     lastUpdatedAt: isoTimestampSchema,
   })
   .strict();
@@ -50,10 +71,31 @@ export const inventoryUpdatedEventPayloadSchema = z
     allocatedStock: nonnegativeIntegerSchema,
     remainingStock: nonnegativeIntegerSchema,
     reservedStock: nonnegativeIntegerSchema,
+    reservationCount: z.literal(1).optional(),
+    reservedQuantity: positiveIntegerSchema.optional(),
     source: z.string().trim().min(1),
     occurredAt: isoTimestampSchema,
   })
-  .strict();
+  .strict()
+  .superRefine((event, context) => {
+    if (
+      event.source === "reservation" &&
+      event.reservationCount === undefined &&
+      event.reservedQuantity === undefined
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "Reservation inventory events must include count and quantity.",
+      });
+    }
+
+    if ((event.reservationCount === undefined) !== (event.reservedQuantity === undefined)) {
+      context.addIssue({
+        code: "custom",
+        message: "Reservation inventory events must include both count and quantity.",
+      });
+    }
+  });
 export type InventoryUpdatedEventPayload = z.infer<typeof inventoryUpdatedEventPayloadSchema>;
 
 export const securedReservationHoldSchema = z

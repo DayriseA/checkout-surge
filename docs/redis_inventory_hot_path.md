@@ -11,6 +11,7 @@ Inventory keys are scoped per sale offer:
 - `inventory:{saleOfferId}:reservation-expirations` stores reservation IDs scored by hold expiry time.
 - `inventory:{saleOfferId}:pending-persistence` stores reservation IDs that have a Redis hold but still need durable PostgreSQL reconciliation.
 - `inventory:{saleOfferId}:events` stores recent hot-path inventory events.
+- `inventory:{saleOfferId}:reservation-throughput` stores an exact fixed 60-slot ring of per-second successful reservation-request counts.
 - `inventory:{saleOfferId}:reservation-outcomes` stores run-scoped aggregate reservation-outcome counters, initially the `api_sold_out_decision` count and its latest-observed time, for durable sold-out accounting at finalization.
 - `inventory:{saleOfferId}:idempotency:{idempotencyKey}` stores per-sale idempotency outcomes.
 
@@ -37,6 +38,12 @@ The Lua operation:
 - rejects sold-out attempts without decrementing stock or storing a per-request sold-out idempotency response, incrementing only the run-scoped `api_sold_out_decision` aggregate counter;
 - decrements `remainingStock` and increments `reservedStock` atomically when stock is available;
 - records the reservation hold, expiration score, and `inventory.updated` event before returning success.
+
+Each successful `inventory.updated` event carries `reservationCount: 1`, `reservedQuantity`, remaining stock, reserved stock, and the event time. Initialization events intentionally omit the reservation-only fields. The event list remains capped at 100 and is suitable for bounded recent updates, but throughput does not depend on the list retaining every surge event.
+
+The successful reservation-request throughput projection uses a 60-second ring with one slot per epoch second. A successful non-replay reservation increments one request regardless of its reserved quantity; idempotent replays do not increment it. Reads sum only slots in the inclusive interval from the measurement second minus 59 through the measurement second, then report the count, fixed 60-second window, `reservations_per_second` unit, rate as `count / 60`, and measurement time. The ring has at most 120 hash fields and is reset with the inventory namespace, so write and read cost do not grow with run volume.
+
+Sold-out pressure remains one aggregate rejection count plus its latest-observed timestamp. Sold-out attempts do not create per-loser records or events.
 
 ## Durable Persistence Behavior
 
@@ -74,7 +81,9 @@ Operators can inspect:
 - reserved stock;
 - expired reservation count;
 - pending persistence count;
-- oldest pending persistence age.
+- oldest pending persistence age;
+- successful reservation-request throughput over the fixed rolling window;
+- aggregate sold-out rejection count and latest-observed time.
 
 The API exposes these signals through `GET /inventory/:saleOfferId/status`.
 

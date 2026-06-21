@@ -89,6 +89,17 @@ async function buildTestServer(options: {
             pendingPersistenceCount: 1,
             expiredReservationCount: 2,
             oldestPendingPersistenceAgeSeconds: 4.5,
+            reservationThroughput: {
+              windowSeconds: 60,
+              successfulReservationCount: 6,
+              rate: 0.1,
+              unit: "reservations_per_second" as const,
+              measuredAt: "2026-06-20T00:00:10.000Z",
+            },
+            soldOutPressure: {
+              rejectionCount: 4,
+              latestObservedAt: "2026-06-20T00:00:09.000Z",
+            },
             lastUpdatedAt: "2026-06-20T00:00:00.000Z",
           }),
         }
@@ -269,6 +280,16 @@ describe("API gateway routes", () => {
       reservedStock: 3,
       pendingPersistenceCount: 1,
       expiredReservationCount: 2,
+      reservationThroughput: {
+        windowSeconds: 60,
+        successfulReservationCount: 6,
+        rate: 0.1,
+        unit: "reservations_per_second",
+      },
+      soldOutPressure: {
+        rejectionCount: 4,
+        latestObservedAt: "2026-06-20T00:00:09.000Z",
+      },
     });
   });
 
