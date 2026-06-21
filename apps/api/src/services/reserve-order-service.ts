@@ -20,7 +20,6 @@ export interface BuyPersistence {
 }
 
 export interface StockReservationGateway {
-  isRunSaleEligible(input: { runId: string; saleOfferId: string }): Promise<boolean>;
   reserve(input: {
     idempotencyKey: string;
     idempotencyTtlSeconds: number;
@@ -99,13 +98,14 @@ export class ReserveOrderService {
   }): Promise<BuyResponse> {
     const now = input.now ?? new Date();
 
-    if (
-      input.request.runId &&
-      !(await this.stockReservations.isRunSaleEligible({
-        runId: input.request.runId,
-        saleOfferId: input.request.saleOfferId,
-      }))
-    ) {
+    const reservation = this.createReservationHold(input.request, input.correlationId, now);
+    const decision = await this.stockReservations.reserve({
+      idempotencyKey: input.request.idempotencyKey,
+      idempotencyTtlSeconds: this.idempotencyTtlSeconds,
+      reservation,
+    });
+
+    if (decision.outcome === "run_not_accepting_traffic") {
       return this.rejectedResponse(
         "inventory_not_initialized",
         "run_not_accepting_traffic",
@@ -113,13 +113,6 @@ export class ReserveOrderService {
         now,
       );
     }
-
-    const reservation = this.createReservationHold(input.request, input.correlationId, now);
-    const decision = await this.stockReservations.reserve({
-      idempotencyKey: input.request.idempotencyKey,
-      idempotencyTtlSeconds: this.idempotencyTtlSeconds,
-      reservation,
-    });
 
     if (
       decision.outcome === "sold_out" ||

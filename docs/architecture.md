@@ -44,10 +44,10 @@ Every run-scoped purchase attempt follows the same two-phase flow.
 
 **Phase 1 — Fast path (API, synchronous reservation)**
 
-1. Starting a public or admin preset creates a `demo_runs` record with an immutable configuration snapshot, clones the baseline sale offer into a generated run sale offer, initializes durable inventory, initializes Redis inventory, and caches run/sale eligibility.
+1. Starting a public or admin preset creates a `demo_runs` record with an immutable configuration snapshot, clones the baseline sale offer into a generated run sale offer, initializes durable inventory, and initializes Redis inventory with authoritative run identity and accepting state plus a lifecycle/read cache projection.
 2. k6 sends the `runId` and generated `saleOfferId` with each synthetic buy attempt.
-3. The API validates the request against the run sale-eligibility cache, failing closed when the run/sale pair is missing, mismatched, or no longer accepting traffic.
-4. A Redis Lua script atomically checks accepted idempotency records, decrements `remainingStock`, and creates the pending-persistence visibility sentinel for the generated sale offer.
+3. A Redis Lua script atomically validates inventory scope, the request's run identity, and the authoritative accepting state, failing closed when the run ID is omitted, mismatched, or closed and rejecting run IDs on catalog inventory.
+4. The same uninterrupted Lua operation checks idempotency, decrements `remainingStock`, and creates the pending-persistence visibility sentinel for the generated sale offer. Eligibility is ordered before idempotency replay. Run closure updates the state inspected by this script atomically, so reservations before closure may succeed and reservations after closure reject without mutation.
 5. On success: the API writes the reservation and initial order record to PostgreSQL, publishes a BullMQ job, atomically promotes the accepted idempotency response while removing the pending sentinel, publishes bounded dashboard updates, and returns `202 Accepted` with a `reservation_secured` response immediately.
 6. On sold-out: the API returns a `409 sold_out` response directly from the Redis stock decision without querying PostgreSQL, writing per-loser idempotency records, or emitting per-loser dashboard events. Sold-out pressure is aggregated and flushed as periodic `inventory.sold_out_rejection` metrics instead.
 7. On duplicate accepted requests or idempotency conflicts: the API replays or rejects from the Redis idempotency record without changing stock.
@@ -84,7 +84,7 @@ The Redis Lua script is the exclusive gate for stock decisions. It reads and dec
 
 ### 2. Duplicate or retried buy requests
 
-Each accepted request carries a client-supplied idempotency key scoped to the generated run sale offer. The Lua script checks this key before any accepted stock decision. Retries for accepted or pending reservations replay the stored outcome without consuming additional stock. Retries with the same key but different parameters are rejected as an idempotency conflict rather than silently producing a different accepted result. Sold-out responses are intentionally not stored per request, which keeps the losing side cheap during public scarcity-driven spikes.
+Each accepted request carries a client-supplied idempotency key scoped to the generated run sale offer. After the Lua script confirms that the inventory still accepts that run, it checks this key before any accepted stock decision. Retries for accepted or pending reservations replay the stored outcome without consuming additional stock while the run remains accepting; closure fails closed before replay. Retries with the same key but different parameters are rejected as an idempotency conflict rather than silently producing a different accepted result. Sold-out responses are intentionally not stored per request, which keeps the losing side cheap during public scarcity-driven spikes.
 
 For duplicate buyer-spike traffic, repeated accepted idempotency replays can increase the raw accepted HTTP response count without increasing durable stock reservations. Finalization and terminal run summaries therefore count complete duplicate buyer-spike deliveries by durable unique reservations, while planned attempts still show the full emitted duplicate-attempt total.
 
@@ -116,7 +116,7 @@ Public-facing controls are narrowly scoped: curated read-only preset starts, bou
 
 - The API never calls the mock ERP directly. All downstream confirmation interaction passes through the BullMQ queue.
 - Inventory state lives in Redis as the fast authoritative source; PostgreSQL holds the durable business record.
-- Run sale-offer eligibility is cached in the API hot path; PostgreSQL is not queried for every losing buy attempt.
+- Run sale-offer eligibility is authoritative in the Redis inventory state and enforced inside the atomic stock decision; PostgreSQL is not queried for every losing buy attempt.
 - `@checkout-surge/contracts` is the single source of truth for shared types and Zod schemas across all services.
 - The API owns browser-facing SSE fan-out on `/dashboard/events`; API and worker publish transport-neutral dashboard realtime events through Redis Pub/Sub.
 - Dashboard realtime is best-effort observability. Latest-state recovery reads are the resynchronization strategy, not stream replay.

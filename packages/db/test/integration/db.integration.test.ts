@@ -31,6 +31,7 @@ function buildReservationInput(options: {
   sequence: number;
   quantity?: number;
   idempotencyKey?: string;
+  runId?: string;
 }) {
   const suffix = options.sequence.toString(16).padStart(12, "0");
 
@@ -41,7 +42,7 @@ function buildReservationInput(options: {
       id: `aaaaaaaa-aaaa-4aaa-8aaa-${suffix}`,
       saleOfferId: options.saleOfferId,
       correlationId: `corr-reservation-${options.sequence}`,
-      runId: "99999999-9999-4999-8999-999999999999",
+      ...(options.runId ? { runId: options.runId } : {}),
       quantity: options.quantity ?? 1,
       status: "secured" as const,
       reservationToken: `reservation-token-${options.sequence}`,
@@ -179,6 +180,7 @@ describe("database migrations, seed data, and reset behavior", () => {
     expect(() => publicRuntimePolicySchema.parse(policyRow?.policy)).not.toThrow();
     expect(inventoryState).toMatchObject({
       saleOfferId: seededSaleOfferId,
+      inventoryScope: "catalog",
       allocatedStock: "1000",
       remainingStock: "1000",
       reservedStock: "0",
@@ -336,6 +338,23 @@ describe("database migrations, seed data, and reset behavior", () => {
     });
   });
 
+  it("keeps pre-scope seeded inventory compatible as catalog inventory", async () => {
+    const saleOfferId = "10000000-0000-4000-8000-000000000017";
+    const keys = inventoryKeys(saleOfferId);
+    const input = buildReservationInput({ saleOfferId, sequence: 17 });
+    await initializeInventory(redis, { saleOfferId, allocatedStock: 1 });
+    await redis.hdel(keys.state, "inventoryScope");
+
+    expect(await reserveInventoryStock(redis, input)).toEqual({
+      outcome: "reservation_secured",
+      reservation: input.reservation,
+    });
+    expect(await redis.hgetall(keys.state)).toMatchObject({
+      remainingStock: "0",
+      reservedStock: "1",
+    });
+  });
+
   it("projects exact rolling successful-reservation throughput and aggregate sold-out pressure", async () => {
     const saleOfferId = "10000000-0000-4000-8000-000000000009";
     const keys = inventoryKeys(saleOfferId);
@@ -404,6 +423,17 @@ describe("database migrations, seed data, and reset behavior", () => {
     await redis.hset(keys.reservationThroughput, "0:second", "0", "0:count", "not-an-integer");
     await expect(getInventoryStatus(redis, saleOfferId)).rejects.toThrow(
       "Malformed reservation throughput state at slot 0: count must be a nonnegative safe integer.",
+    );
+  });
+
+  it("rejects contradictory stock counters from inventory status", async () => {
+    const saleOfferId = "10000000-0000-4000-8000-000000000016";
+    const keys = inventoryKeys(saleOfferId);
+    await initializeInventory(redis, { saleOfferId, allocatedStock: 5 });
+    await redis.hset(keys.state, { remainingStock: "3", reservedStock: "1" });
+
+    await expect(getInventoryStatus(redis, saleOfferId)).rejects.toThrow(
+      "Inventory stock counters must sum to allocatedStock.",
     );
   });
 
@@ -521,10 +551,16 @@ describe("database migrations, seed data, and reset behavior", () => {
     ).toMatchObject({ status: "pending_persistence", quantity: 1 });
   });
 
-  it("fails run eligibility closed for missing, mismatched, and closed records", async () => {
+  it("keeps the lifecycle cache synchronized with authoritative generated-run state", async () => {
     const runId = "20000000-0000-4000-8000-000000000001";
     const saleOfferId = "20000000-0000-4000-8000-000000000002";
 
+    await expect(isRunSaleEligible(redis, { runId, saleOfferId })).resolves.toBe(false);
+    await initializeInventory(redis, {
+      saleOfferId,
+      allocatedStock: 5,
+      run: { runId, status: "closed" },
+    });
     await expect(isRunSaleEligible(redis, { runId, saleOfferId })).resolves.toBe(false);
     await setRunSaleEligibility(redis, { runId, saleOfferId, status: "accepting" });
     await expect(isRunSaleEligible(redis, { runId, saleOfferId })).resolves.toBe(true);
@@ -536,6 +572,96 @@ describe("database migrations, seed data, and reset behavior", () => {
     ).resolves.toBe(false);
     await setRunSaleEligibility(redis, { runId, saleOfferId, status: "closed" });
     await expect(isRunSaleEligible(redis, { runId, saleOfferId })).resolves.toBe(false);
+    expect(await redis.hget(inventoryKeys(saleOfferId).state, "runSaleStatus")).toBe("closed");
+  });
+
+  it("rejects omitted and mismatched run IDs and catalog requests with a run ID", async () => {
+    const runId = "20000000-0000-4000-8000-000000000011";
+    const generatedOfferId = "20000000-0000-4000-8000-000000000012";
+    const catalogOfferId = "20000000-0000-4000-8000-000000000013";
+    const mismatchedRunId = "20000000-0000-4000-8000-000000000014";
+    await initializeInventory(redis, {
+      saleOfferId: generatedOfferId,
+      allocatedStock: 3,
+      run: { runId, status: "accepting" },
+    });
+    await initializeInventory(redis, { saleOfferId: catalogOfferId, allocatedStock: 3 });
+
+    const omitted = await reserveInventoryStock(
+      redis,
+      buildReservationInput({ saleOfferId: generatedOfferId, sequence: 21 }),
+    );
+    const mismatched = await reserveInventoryStock(
+      redis,
+      buildReservationInput({
+        saleOfferId: generatedOfferId,
+        sequence: 22,
+        runId: mismatchedRunId,
+      }),
+    );
+    const catalogWithRun = await reserveInventoryStock(
+      redis,
+      buildReservationInput({ saleOfferId: catalogOfferId, sequence: 23, runId }),
+    );
+
+    expect(omitted).toEqual({ outcome: "run_not_accepting_traffic", reservation: null });
+    expect(mismatched).toEqual({ outcome: "run_not_accepting_traffic", reservation: null });
+    expect(catalogWithRun).toEqual({ outcome: "run_not_accepting_traffic", reservation: null });
+    expect(await getInventoryStatus(redis, generatedOfferId)).toMatchObject({
+      remainingStock: 3,
+      reservedStock: 0,
+      pendingPersistenceCount: 0,
+    });
+    expect(await getInventoryStatus(redis, catalogOfferId)).toMatchObject({
+      remainingStock: 3,
+      reservedStock: 0,
+      pendingPersistenceCount: 0,
+    });
+  });
+
+  it("serializes closure with reservation and checks eligibility before replay", async () => {
+    const runId = "20000000-0000-4000-8000-000000000021";
+    const saleOfferId = "20000000-0000-4000-8000-000000000022";
+    const keys = inventoryKeys(saleOfferId);
+    const beforeClose = buildReservationInput({
+      saleOfferId,
+      sequence: 24,
+      idempotencyKey: "ordered-before-close",
+      runId,
+    });
+    const afterClose = buildReservationInput({
+      saleOfferId,
+      sequence: 25,
+      idempotencyKey: "ordered-after-close",
+      runId,
+    });
+    await initializeInventory(redis, {
+      saleOfferId,
+      allocatedStock: 2,
+      run: { runId, status: "accepting" },
+    });
+
+    expect(await reserveInventoryStock(redis, beforeClose)).toMatchObject({
+      outcome: "reservation_secured",
+    });
+    await setRunSaleEligibility(redis, { runId, saleOfferId, status: "closed" });
+    expect(await reserveInventoryStock(redis, afterClose)).toEqual({
+      outcome: "run_not_accepting_traffic",
+      reservation: null,
+    });
+    expect(await reserveInventoryStock(redis, beforeClose)).toEqual({
+      outcome: "run_not_accepting_traffic",
+      reservation: null,
+    });
+    expect(await redis.hgetall(keys.state)).toMatchObject({
+      runSaleStatus: "closed",
+      remainingStock: "1",
+      reservedStock: "1",
+    });
+    expect(await redis.hlen(keys.reservations)).toBe(1);
+    expect(await redis.zcard(keys.pendingPersistence)).toBe(1);
+    expect(await redis.exists(keys.idempotency(afterClose.idempotencyKey))).toBe(0);
+    expect(await redis.llen(keys.events)).toBe(2);
   });
 
   it("rejects an idempotency quantity conflict without changing stock", async () => {

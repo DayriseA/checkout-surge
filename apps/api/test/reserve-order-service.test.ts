@@ -45,7 +45,6 @@ function acceptingGateway(
   overrides: Partial<StockReservationGateway> = {},
 ): StockReservationGateway {
   return {
-    isRunSaleEligible: async () => true,
     reserve: async (input) => ({
       outcome: "reservation_secured",
       reservation: input.reservation,

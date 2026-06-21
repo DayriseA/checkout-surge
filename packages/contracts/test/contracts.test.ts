@@ -187,6 +187,12 @@ describe("buy and dashboard contracts", () => {
         reservation: null,
       }).outcome,
     ).toBe("idempotency_conflict");
+    expect(
+      stockReservationDecisionSchema.parse({
+        outcome: "run_not_accepting_traffic",
+        reservation: null,
+      }).outcome,
+    ).toBe("run_not_accepting_traffic");
   });
 
   it("validates transport-neutral dashboard events", () => {

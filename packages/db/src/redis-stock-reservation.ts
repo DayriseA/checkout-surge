@@ -106,6 +106,36 @@ if not quantity or quantity <= 0 or quantity ~= math.floor(quantity) or quantity
   return cjson.encode({ outcome = "quantity_invalid", reservation = cjson.null })
 end
 
+local stateType = redis.call("TYPE", KEYS[1]).ok
+if stateType == "none" then
+  return cjson.encode({ outcome = "inventory_not_initialized", reservation = cjson.null })
+end
+if stateType ~= "hash" then
+  return redis.error_reply("Inventory state key must be a hash")
+end
+
+local reservation = cjson.decode(ARGV[2])
+if redis.call("HGET", KEYS[1], "saleOfferId") ~= reservation.saleOfferId then
+  return redis.error_reply("Inventory state sale offer ID must match the reservation")
+end
+local inventoryScope = redis.call("HGET", KEYS[1], "inventoryScope") or "catalog"
+if inventoryScope == "catalog" then
+  if reservation.runId then
+    return cjson.encode({ outcome = "run_not_accepting_traffic", reservation = cjson.null })
+  end
+elseif inventoryScope == "generated_run" then
+  local inventoryRunId = redis.call("HGET", KEYS[1], "runId")
+  local runSaleStatus = redis.call("HGET", KEYS[1], "runSaleStatus")
+  if not reservation.runId
+    or reservation.runId ~= inventoryRunId
+    or runSaleStatus ~= "accepting" then
+    return cjson.encode({ outcome = "run_not_accepting_traffic", reservation = cjson.null })
+  end
+else
+  return redis.error_reply("Inventory scope must be catalog or generated_run")
+end
+
+-- Eligibility precedes idempotency replay so closure always fails closed, including retries.
 local existingIdempotencyJson = redis.call("GET", KEYS[8])
 if existingIdempotencyJson then
   local existingIdempotency = cjson.decode(existingIdempotencyJson)
@@ -125,14 +155,6 @@ if existingIdempotencyJson then
   return cjson.encode({ outcome = replayOutcome, reservation = existingIdempotency.reservation })
 end
 
-local stateType = redis.call("TYPE", KEYS[1]).ok
-if stateType == "none" then
-  return cjson.encode({ outcome = "inventory_not_initialized", reservation = cjson.null })
-end
-if stateType ~= "hash" then
-  return redis.error_reply("Inventory state key must be a hash")
-end
-
 assertOptionalKeyType(KEYS[2], "hash", "Inventory reservations")
 assertOptionalKeyType(KEYS[3], "zset", "Inventory reservation-expirations")
 assertOptionalKeyType(KEYS[4], "list", "Inventory events")
@@ -140,10 +162,6 @@ assertOptionalKeyType(KEYS[5], "hash", "Inventory reservation-outcomes")
 assertOptionalKeyType(KEYS[6], "hash", "Inventory reservation-throughput")
 assertOptionalKeyType(KEYS[7], "zset", "Inventory pending-persistence")
 
-local reservation = cjson.decode(ARGV[2])
-if redis.call("HGET", KEYS[1], "saleOfferId") ~= reservation.saleOfferId then
-  return redis.error_reply("Inventory state sale offer ID must match the reservation")
-end
 if redis.call("HGET", KEYS[2], reservation.id)
   or redis.call("ZSCORE", KEYS[3], reservation.id)
   or redis.call("ZSCORE", KEYS[7], reservation.id) then

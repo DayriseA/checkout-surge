@@ -126,11 +126,14 @@ const acceptedStockReservationDecisionSchema = z
 
 const rejectedStockReservationDecisionSchema = z
   .object({
-    outcome: reservationDecisionSchema.extract([
-      "sold_out",
-      "inventory_not_initialized",
-      "idempotency_conflict",
-      "quantity_invalid",
+    outcome: z.union([
+      reservationDecisionSchema.extract([
+        "sold_out",
+        "inventory_not_initialized",
+        "idempotency_conflict",
+        "quantity_invalid",
+      ]),
+      z.literal("run_not_accepting_traffic"),
     ]),
     reservation: z.null(),
   })

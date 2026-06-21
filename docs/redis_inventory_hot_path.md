@@ -6,7 +6,7 @@ This document describes the Redis inventory hot path: key structure, the invento
 
 Inventory keys are scoped per sale offer:
 
-- `inventory:{saleOfferId}:state` stores the live inventory counters.
+- `inventory:{saleOfferId}:state` stores the live inventory counters and authoritative inventory scope. New catalog state carries `inventoryScope: catalog`; generated-run state carries `inventoryScope: generated_run`, its `runId`, and `runSaleStatus` (`accepting` or `closed`). Legacy seeded state without `inventoryScope` is treated as catalog state because generated-run lifecycle seeding has not shipped yet.
 - `inventory:{saleOfferId}:reservations` stores reservation hold records by reservation ID.
 - `inventory:{saleOfferId}:reservation-expirations` stores reservation IDs scored by hold expiry time.
 - `inventory:{saleOfferId}:pending-persistence` stores reservation IDs that have a Redis hold but still need durable PostgreSQL reconciliation.
@@ -29,17 +29,22 @@ Payment authorization, customer cancel, payment timeout release, and automatic h
 
 ## Atomic Reservation Behavior
 
-The API checks run sale eligibility from the Redis run-scoped eligibility payload, keyed by `runId`, then validates the supplied `saleOfferId` and accepting status from that cached record before using one Redis Lua operation for the stock decision. PostgreSQL is not part of the per-request losing path.
+The stock-decision Lua operation reads inventory scope, run identity, and accepting/closed state directly from the inventory hash before considering idempotency or stock. Generated-run inventory fails closed when `runId` is omitted, mismatched, or no longer accepting traffic. Catalog inventory rejects requests that supply a `runId`. PostgreSQL is not part of the per-request losing path.
+
+Run lifecycle changes update the authoritative inventory hash and the separate run-scoped eligibility payload in one Redis Lua operation. The separate payload remains a useful lifecycle/read projection, but the buy path never consults it. Because closure and reservation are both Redis Lua operations, they serialize: a reservation ordered before closure may succeed, while one ordered after closure rejects without changing counters, holds, pending-persistence state, throughput, events, or idempotency records.
 
 The Lua operation:
 
-- replays an existing idempotency record when the same sale offer, idempotency key, and quantity are repeated;
+- checks inventory scope, run identity, and accepting state before idempotency replay, so closure also prevents replay through the buy path;
+- replays an existing idempotency record when the same eligible sale offer, idempotency key, and quantity are repeated;
 - rejects mismatched duplicate payloads as an idempotency conflict;
 - rejects sold-out attempts without decrementing stock or storing a per-request sold-out idempotency response, incrementing only the run-scoped `api_sold_out_decision` aggregate counter;
 - decrements `remainingStock` and increments `reservedStock` atomically when stock is available;
 - records the reservation hold, expiration score, pending-persistence sentinel, and `inventory.updated` event before returning success.
 
 Before its first write, the operation validates the required stock counters, their allocation invariant, and the Redis types of every collection it controls. This matters because Redis does not roll back writes performed before a Lua runtime error.
+
+Inventory status reads enforce the same allocation invariant: `remainingStock + reservedStock` must equal `allocatedStock`. Contradictory counters are reported as malformed state rather than returned to operators.
 
 Each successful `inventory.updated` event carries `reservationCount: 1`, `reservedQuantity`, remaining stock, reserved stock, and the event time. Initialization events intentionally omit the reservation-only fields. The event list remains capped at 100 and is suitable for bounded recent updates, but throughput does not depend on the list retaining every surge event.
 
@@ -67,7 +72,7 @@ That response intentionally has `order: null` because no durable order row exist
 
 Idempotency is scoped by `saleOfferId + idempotencyKey`.
 
-Retries for accepted or pending reservations with the same sale offer, key, and quantity replay the stored outcome.
+Retries for accepted or pending reservations with the same sale offer, key, and quantity replay the stored outcome only after the inventory scope and run state remain eligible.
 
 Retries with the same sale offer and key but a different quantity are rejected with `idempotency_conflict`.
 

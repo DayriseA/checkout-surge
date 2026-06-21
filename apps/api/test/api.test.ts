@@ -19,7 +19,6 @@ import {
   InventoryNotInitializedError,
   initializeInventory,
   inventoryKeys,
-  isRunSaleEligible,
   markReservationPendingPersistence,
   orderEvents,
   orders,
@@ -139,7 +138,6 @@ async function buildTestServer(options: {
 
 function createRedisStockReservations(redis: CheckoutSurgeRedis): StockReservationGateway {
   return {
-    isRunSaleEligible: (input) => isRunSaleEligible(redis, input),
     reserve: (input) => reserveInventoryStock(redis, input),
     markPendingPersistence: (input) => markReservationPendingPersistence(redis, input),
     promoteAccepted: (input) =>
@@ -184,10 +182,6 @@ class AcceptingPersistence implements BuyPersistence {
 }
 
 class AcceptingStockReservations implements StockReservationGateway {
-  async isRunSaleEligible(): Promise<boolean> {
-    return true;
-  }
-
   async reserve(input: Parameters<StockReservationGateway["reserve"]>[0]) {
     return { outcome: "reservation_secured" as const, reservation: input.reservation };
   }
@@ -387,9 +381,12 @@ describe("API gateway routes", () => {
     expect(payload.correlationId).toBe("body-correlation");
   });
 
-  it("fails closed for a run-scoped request without Redis eligibility", async () => {
-    const stockReservations = new AcceptingStockReservations();
-    stockReservations.isRunSaleEligible = async () => false;
+  it("maps the atomic Redis run rejection to the compatible API response", async () => {
+    const stockReservations: StockReservationGateway = {
+      reserve: async () => ({ outcome: "run_not_accepting_traffic", reservation: null }),
+      markPendingPersistence: async () => undefined,
+      promoteAccepted: async () => undefined,
+    };
     const server = await trackedServer({
       persistence: new AcceptingPersistence(),
       stockReservations,
@@ -524,6 +521,83 @@ describe("API buy persistence", () => {
         "order.queued",
         "reservation.secured",
       ]);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it.each([
+    {
+      name: "generated-run inventory when runId is omitted",
+      inventoryRunId: "11111111-1111-4111-8111-111111111111",
+      inventoryStatus: "accepting" as const,
+      requestRunId: undefined,
+    },
+    {
+      name: "generated-run inventory when runId is mismatched",
+      inventoryRunId: "11111111-1111-4111-8111-111111111111",
+      inventoryStatus: "accepting" as const,
+      requestRunId: "22222222-2222-4222-8222-222222222222",
+    },
+    {
+      name: "generated-run inventory after closure",
+      inventoryRunId: "11111111-1111-4111-8111-111111111111",
+      inventoryStatus: "closed" as const,
+      requestRunId: "11111111-1111-4111-8111-111111111111",
+    },
+    {
+      name: "catalog inventory when runId is supplied",
+      inventoryRunId: undefined,
+      inventoryStatus: undefined,
+      requestRunId: "11111111-1111-4111-8111-111111111111",
+    },
+  ])("rejects $name without changing stock", async (testCase) => {
+    if (!redis) {
+      throw new Error("Test Redis connection was not initialized.");
+    }
+
+    await initializeInventory(redis, {
+      saleOfferId: fixtureIds.saleOffer,
+      allocatedStock: 5,
+      ...(testCase.inventoryRunId && testCase.inventoryStatus
+        ? {
+            run: {
+              runId: testCase.inventoryRunId,
+              status: testCase.inventoryStatus,
+            },
+          }
+        : {}),
+    });
+    const server = await buildTestServer({
+      persistence: new AcceptingPersistence(),
+      stockReservations: createRedisStockReservations(redis),
+    });
+
+    try {
+      const response = await server.inject({
+        method: "POST",
+        url: "/buy",
+        payload: {
+          saleOfferId: fixtureIds.saleOffer,
+          ...(testCase.requestRunId ? { runId: testCase.requestRunId } : {}),
+          idempotencyKey: `atomic-run-rejection-${testCase.name}`,
+          quantity: 1,
+        },
+      });
+      const payload = buyResponseSchema.parse(response.json());
+
+      expect(response.statusCode).toBe(503);
+      expect(payload).toMatchObject({
+        outcome: "inventory_not_initialized",
+        reason: "run_not_accepting_traffic",
+        reservation: null,
+        order: null,
+      });
+      expect(await getInventoryStatus(redis, fixtureIds.saleOffer)).toMatchObject({
+        remainingStock: 5,
+        reservedStock: 0,
+        pendingPersistenceCount: 0,
+      });
     } finally {
       await server.close();
     }

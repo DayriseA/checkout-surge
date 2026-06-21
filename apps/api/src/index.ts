@@ -4,7 +4,6 @@ import {
   createRedisClient,
   dbPackageName,
   getInventoryStatus,
-  isRunSaleEligible,
   markReservationPendingPersistence,
   promoteReservationIdempotencyToAccepted,
   reserveInventoryStock,
@@ -42,7 +41,6 @@ export async function startApiServer(): Promise<void> {
   const reserveOrderService = new ReserveOrderService({
     persistence,
     stockReservations: {
-      isRunSaleEligible: (input) => isRunSaleEligible(redis, input),
       reserve: (input) => reserveInventoryStock(redis, input),
       markPendingPersistence: (input) => markReservationPendingPersistence(redis, input),
       promoteAccepted: (input) =>
