@@ -1,14 +1,14 @@
 import type { ReadinessCheck } from "@checkout-surge/contracts";
-import type { SqlClient } from "@checkout-surge/db";
+import type { CheckoutSurgeRedis, SqlClient } from "@checkout-surge/db";
 import { createReadinessCheck } from "@checkout-surge/logger";
 
 export interface ApiReadiness {
   checks: () => Promise<ReadinessCheck[]>;
 }
 
-export function createDatabaseReadinessCheck(
+export function createInfrastructureReadinessCheck(
   sql: SqlClient,
-  redisUrl: string | null,
+  redis: CheckoutSurgeRedis,
 ): ApiReadiness {
   return {
     checks: async () => {
@@ -27,13 +27,18 @@ export function createDatabaseReadinessCheck(
         );
       }
 
-      checks.push(
-        createReadinessCheck({
-          name: "redis_url_configured",
-          status: redisUrl ? "ok" : "degraded",
-          ...(redisUrl ? {} : { message: "REDIS_URL is not configured." }),
-        }),
-      );
+      try {
+        await redis.ping();
+        checks.push(createReadinessCheck({ name: "redis_reachable", status: "ok" }));
+      } catch (error) {
+        checks.push(
+          createReadinessCheck({
+            name: "redis_reachable",
+            status: "unavailable",
+            message: error instanceof Error ? error.message : "Redis check failed.",
+          }),
+        );
+      }
 
       return checks;
     },

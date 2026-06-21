@@ -57,6 +57,7 @@ export const reservationRejectedResponseSchema = z
       "sold_out",
       "inventory_not_initialized",
       "idempotency_conflict",
+      "quantity_invalid",
     ]),
     reason: reservationRejectReasonSchema,
     correlationId: correlationIdSchema,

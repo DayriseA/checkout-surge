@@ -19,6 +19,41 @@ export interface InventoryKeys {
   idempotency: (idempotencyKey: string) => string;
 }
 
+export interface RunSaleEligibility {
+  runId: string;
+  saleOfferId: string;
+  status: "accepting" | "closed";
+}
+
+export function runSaleEligibilityKey(runId: string): string {
+  return `demo-run:${runId}:sale-eligibility`;
+}
+
+export async function setRunSaleEligibility(
+  redis: CheckoutSurgeRedis,
+  eligibility: RunSaleEligibility,
+): Promise<void> {
+  await redis.set(runSaleEligibilityKey(eligibility.runId), JSON.stringify(eligibility));
+}
+
+export async function isRunSaleEligible(
+  redis: CheckoutSurgeRedis,
+  input: { runId: string; saleOfferId: string },
+): Promise<boolean> {
+  const rawEligibility = await redis.get(runSaleEligibilityKey(input.runId));
+
+  if (!rawEligibility) {
+    return false;
+  }
+
+  const eligibility = parseRunSaleEligibility(rawEligibility);
+  return (
+    eligibility.runId === input.runId &&
+    eligibility.saleOfferId === input.saleOfferId &&
+    eligibility.status === "accepting"
+  );
+}
+
 export interface InitializeInventoryInput {
   saleOfferId: string;
   allocatedStock: number;
@@ -190,4 +225,23 @@ function assertNonnegativeInteger(value: number, field: string): void {
   if (!Number.isSafeInteger(value) || value < 0) {
     throw new Error(`${field} must be a nonnegative safe integer.`);
   }
+}
+
+function parseRunSaleEligibility(rawEligibility: string): RunSaleEligibility {
+  const eligibility: unknown = JSON.parse(rawEligibility);
+
+  if (
+    typeof eligibility !== "object" ||
+    eligibility === null ||
+    !("runId" in eligibility) ||
+    typeof eligibility.runId !== "string" ||
+    !("saleOfferId" in eligibility) ||
+    typeof eligibility.saleOfferId !== "string" ||
+    !("status" in eligibility) ||
+    (eligibility.status !== "accepting" && eligibility.status !== "closed")
+  ) {
+    throw new Error("Redis run sale eligibility record is invalid.");
+  }
+
+  return eligibility as RunSaleEligibility;
 }

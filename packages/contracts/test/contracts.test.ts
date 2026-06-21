@@ -91,6 +91,17 @@ describe("buy and dashboard contracts", () => {
         simulatedStatus: "sold_out",
       }).outcome,
     ).toBe("sold_out");
+    expect(
+      buyResponseSchema.parse({
+        outcome: "quantity_invalid",
+        reason: "quantity_invalid",
+        correlationId,
+        timestamp,
+        reservation: null,
+        order: null,
+        simulatedStatus: "sold_out",
+      }).outcome,
+    ).toBe("quantity_invalid");
   });
 
   it("validates stable Redis stock reservation decisions", () => {

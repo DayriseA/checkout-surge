@@ -11,7 +11,11 @@ import {
   InventoryNotInitializedError,
   initializeInventory,
   inventoryKeys,
+  isRunSaleEligible,
+  markReservationPendingPersistence,
+  promoteReservationIdempotencyToAccepted,
   reserveInventoryStock,
+  setRunSaleEligibility,
 } from "../../src/index.js";
 import { resetTestDatabase } from "../../src/testing.js";
 
@@ -386,11 +390,11 @@ describe("database migrations, seed data, and reset behavior", () => {
 
     const idempotencyKey = keys.idempotency(firstInput.idempotencyKey);
     const ttlBeforePromotion = await redis.ttl(idempotencyKey);
-    const record = JSON.parse((await redis.get(idempotencyKey)) ?? "null") as Record<
-      string,
-      unknown
-    >;
-    await redis.set(idempotencyKey, JSON.stringify({ ...record, status: "accepted" }), "KEEPTTL");
+    await markReservationPendingPersistence(redis, firstInput);
+    expect(await redis.zscore(keys.pendingPersistence, firstInput.reservation.id)).toBe(
+      new Date(firstInput.reservation.securedAt).getTime().toString(),
+    );
+    await promoteReservationIdempotencyToAccepted(redis, firstInput);
     const ttlAfterPromotion = await redis.ttl(idempotencyKey);
     expect(ttlAfterPromotion).toBeGreaterThan(ttlBeforePromotion - 5);
     expect(ttlAfterPromotion).toBeLessThanOrEqual(ttlBeforePromotion);
@@ -403,6 +407,49 @@ describe("database migrations, seed data, and reset behavior", () => {
     expect(await redis.hget(keys.state, "reservedStock")).toBe("1");
     expect(await redis.hlen(keys.reservations)).toBe(1);
     expect(await redis.llen(keys.events)).toBe(2);
+    expect(await redis.zcard(keys.pendingPersistence)).toBe(0);
+  });
+
+  it("verifies pending and accepted transitions against the original hold", async () => {
+    const saleOfferId = "10000000-0000-4000-8000-000000000008";
+    const input = buildReservationInput({
+      saleOfferId,
+      sequence: 8,
+      idempotencyKey: "verified-transition",
+    });
+    await initializeInventory(redis, { saleOfferId, allocatedStock: 2 });
+    await reserveInventoryStock(redis, input);
+    const mismatched = {
+      ...input,
+      reservation: { ...input.reservation, id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" },
+    };
+
+    await expect(markReservationPendingPersistence(redis, mismatched)).rejects.toThrow("mismatch");
+    await expect(promoteReservationIdempotencyToAccepted(redis, mismatched)).rejects.toThrow(
+      "mismatch",
+    );
+    expect(
+      JSON.parse(
+        (await redis.get(inventoryKeys(saleOfferId).idempotency(input.idempotencyKey))) ?? "null",
+      ),
+    ).toMatchObject({ status: "pending_persistence", quantity: 1 });
+  });
+
+  it("fails run eligibility closed for missing, mismatched, and closed records", async () => {
+    const runId = "20000000-0000-4000-8000-000000000001";
+    const saleOfferId = "20000000-0000-4000-8000-000000000002";
+
+    await expect(isRunSaleEligible(redis, { runId, saleOfferId })).resolves.toBe(false);
+    await setRunSaleEligibility(redis, { runId, saleOfferId, status: "accepting" });
+    await expect(isRunSaleEligible(redis, { runId, saleOfferId })).resolves.toBe(true);
+    await expect(
+      isRunSaleEligible(redis, {
+        runId,
+        saleOfferId: "20000000-0000-4000-8000-000000000003",
+      }),
+    ).resolves.toBe(false);
+    await setRunSaleEligibility(redis, { runId, saleOfferId, status: "closed" });
+    await expect(isRunSaleEligible(redis, { runId, saleOfferId })).resolves.toBe(false);
   });
 
   it("rejects an idempotency quantity conflict without changing stock", async () => {

@@ -1,117 +1,33 @@
 import { randomUUID } from "node:crypto";
-import type { OrderSummary, ReservationSummary } from "@checkout-surge/contracts";
-import {
-  type CheckoutSurgeDatabase,
-  demoRunSaleContexts,
-  demoRuns,
-  orderEvents,
-  orders,
-  reservations,
-  saleOffers,
-} from "@checkout-surge/db";
-import { and, eq } from "drizzle-orm";
 import type {
-  BuyPersistence,
-  PersistedBuy,
-  SaleOfferEligibility,
-} from "./reserve-order-service.js";
+  OrderSummary,
+  ReservationSummary,
+  SecuredReservationHold,
+} from "@checkout-surge/contracts";
+import { type CheckoutSurgeDatabase, orderEvents, orders, reservations } from "@checkout-surge/db";
+import { eq } from "drizzle-orm";
+import type { BuyPersistence, PersistedBuy } from "./reserve-order-service.js";
 
 export class PostgresBuyPersistence implements BuyPersistence {
   constructor(private readonly db: CheckoutSurgeDatabase) {}
 
-  async getSaleOfferEligibility(input: {
-    saleOfferId: string;
-    runId?: string;
-    now: Date;
-  }): Promise<SaleOfferEligibility> {
-    const [offer] = await this.db
-      .select({
-        id: saleOffers.id,
-        isActive: saleOffers.isActive,
-        saleStartsAt: saleOffers.saleStartsAt,
-        saleEndsAt: saleOffers.saleEndsAt,
-        purpose: saleOffers.purpose,
-      })
-      .from(saleOffers)
-      .where(eq(saleOffers.id, input.saleOfferId))
-      .limit(1);
-
-    if (!offer) {
-      return {
-        saleOfferId: input.saleOfferId,
-        isAccepting: false,
-        rejectReason: "inventory_not_initialized",
-      };
-    }
-
-    if (!offer.isActive || input.now < offer.saleStartsAt || input.now >= offer.saleEndsAt) {
-      return {
-        saleOfferId: input.saleOfferId,
-        isAccepting: false,
-        rejectReason: "run_not_accepting_traffic",
-      };
-    }
-
-    if (offer.purpose === "catalog") {
-      return {
-        saleOfferId: input.saleOfferId,
-        isAccepting: !input.runId,
-        ...(input.runId ? { rejectReason: "run_not_accepting_traffic" } : {}),
-      };
-    }
-
-    if (!input.runId) {
-      return {
-        saleOfferId: input.saleOfferId,
-        isAccepting: false,
-        rejectReason: "run_not_accepting_traffic",
-      };
-    }
-
-    const [runContext] = await this.db
-      .select({
-        runId: demoRunSaleContexts.runId,
-        runStatus: demoRuns.status,
-      })
-      .from(demoRunSaleContexts)
-      .innerJoin(demoRuns, eq(demoRuns.id, demoRunSaleContexts.runId))
-      .where(
-        and(
-          eq(demoRunSaleContexts.saleOfferId, input.saleOfferId),
-          eq(demoRunSaleContexts.runId, input.runId),
-        ),
-      )
-      .limit(1);
-
-    return {
-      saleOfferId: input.saleOfferId,
-      isAccepting: runContext?.runStatus === "starting" || runContext?.runStatus === "active",
-      ...(runContext?.runStatus === "starting" || runContext?.runStatus === "active"
-        ? {}
-        : { rejectReason: "run_not_accepting_traffic" }),
-    };
-  }
-
   async persistSecuredReservation(input: {
-    saleOfferId: string;
-    runId?: string;
-    quantity: number;
-    correlationId: string;
-    securedAt: Date;
-    expiresAt: Date;
+    reservation: SecuredReservationHold;
   }): Promise<PersistedBuy> {
+    const hold = input.reservation;
     return this.db.transaction(async (tx) => {
       const [reservation] = await tx
         .insert(reservations)
         .values({
-          saleOfferId: input.saleOfferId,
-          ...(input.runId ? { runId: input.runId } : {}),
-          quantity: input.quantity,
-          correlationId: input.correlationId,
+          id: hold.id,
+          saleOfferId: hold.saleOfferId,
+          ...(hold.runId ? { runId: hold.runId } : {}),
+          quantity: hold.quantity,
+          correlationId: hold.correlationId,
           status: "secured",
-          reservationToken: `res_${randomUUID()}`,
-          securedAt: input.securedAt,
-          expiresAt: input.expiresAt,
+          reservationToken: hold.reservationToken,
+          securedAt: new Date(hold.securedAt),
+          expiresAt: new Date(hold.expiresAt),
         })
         .returning({
           id: reservations.id,
@@ -133,13 +49,13 @@ export class PostgresBuyPersistence implements BuyPersistence {
         .insert(orders)
         .values({
           publicOrderId: `ord_${randomUUID()}`,
-          saleOfferId: input.saleOfferId,
+          saleOfferId: hold.saleOfferId,
           reservationId: reservation.id,
-          ...(input.runId ? { runId: input.runId } : {}),
-          quantity: input.quantity,
-          correlationId: input.correlationId,
+          ...(hold.runId ? { runId: hold.runId } : {}),
+          quantity: hold.quantity,
+          correlationId: hold.correlationId,
           status: "queued",
-          queuedAt: input.securedAt,
+          queuedAt: new Date(hold.securedAt),
         })
         .returning({
           id: orders.id,
@@ -166,30 +82,30 @@ export class PostgresBuyPersistence implements BuyPersistence {
         {
           orderId: order.id,
           reservationId: reservation.id,
-          saleOfferId: input.saleOfferId,
-          ...(input.runId ? { runId: input.runId } : {}),
-          correlationId: input.correlationId,
+          saleOfferId: hold.saleOfferId,
+          ...(hold.runId ? { runId: hold.runId } : {}),
+          correlationId: hold.correlationId,
           eventName: "reservation.secured",
           payload: {
-            quantity: input.quantity,
+            quantity: hold.quantity,
             reservationStatus: "secured",
           },
           source: "api",
-          occurredAt: input.securedAt,
+          occurredAt: new Date(hold.securedAt),
         },
         {
           orderId: order.id,
           reservationId: reservation.id,
-          saleOfferId: input.saleOfferId,
-          ...(input.runId ? { runId: input.runId } : {}),
-          correlationId: input.correlationId,
+          saleOfferId: hold.saleOfferId,
+          ...(hold.runId ? { runId: hold.runId } : {}),
+          correlationId: hold.correlationId,
           eventName: "order.queued",
           payload: {
-            quantity: input.quantity,
+            quantity: hold.quantity,
             orderStatus: "queued",
           },
           source: "api",
-          occurredAt: input.securedAt,
+          occurredAt: new Date(hold.securedAt),
         },
       ]);
 
@@ -198,6 +114,24 @@ export class PostgresBuyPersistence implements BuyPersistence {
         order: toOrderSummary(order),
       };
     });
+  }
+
+  async getPersistedBuyByReservationId(reservationId: string): Promise<PersistedBuy | null> {
+    const [row] = await this.db
+      .select({ reservation: reservations, order: orders })
+      .from(reservations)
+      .innerJoin(orders, eq(orders.reservationId, reservations.id))
+      .where(eq(reservations.id, reservationId))
+      .limit(1);
+
+    if (!row) {
+      return null;
+    }
+
+    return {
+      reservation: toReservationSummary(row.reservation),
+      order: toOrderSummary(row.order),
+    };
   }
 }
 
