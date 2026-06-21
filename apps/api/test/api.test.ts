@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -34,6 +35,7 @@ import { eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { loadApiConfig } from "../src/runtime/config.js";
 import type { ApiFastifyInstance } from "../src/runtime/fastify.js";
+import { createInfrastructureReadinessCheck } from "../src/runtime/readiness.js";
 import { buildApiServer } from "../src/server.js";
 import {
   type InventoryStatusReader,
@@ -78,6 +80,7 @@ async function buildTestServer(options: {
   stockReservations?: StockReservationGateway;
   inventoryReader?: InventoryStatusReader | null;
   readiness?: "ok" | "unavailable";
+  generateId?: () => string;
 }): Promise<ApiFastifyInstance> {
   const inventoryReader =
     options.inventoryReader === undefined
@@ -128,7 +131,7 @@ async function buildTestServer(options: {
       reservationHoldMinutes: 15,
       idempotencyTtlSeconds: 1800,
       pendingPersistenceRetryAfterSeconds: 30,
-      generateId: deterministicIdGenerator(),
+      generateId: options.generateId ?? deterministicIdGenerator(),
     }),
     startedAt: new Date("2026-06-20T00:00:00.000Z"),
   });
@@ -216,6 +219,7 @@ describe("API gateway routes", () => {
     stockReservations?: StockReservationGateway;
     inventoryReader?: InventoryStatusReader | null;
     readiness?: "ok" | "unavailable";
+    generateId?: () => string;
   }) {
     const server = await buildTestServer(options);
     servers.push(server);
@@ -523,6 +527,229 @@ describe("API buy persistence", () => {
     } finally {
       await server.close();
     }
+  });
+
+  it("does not oversell through concurrent API requests and exposes the real Redis projection", async () => {
+    if (!connection || !redis) {
+      throw new Error("Test infrastructure was not initialized.");
+    }
+
+    const stock = 5;
+    const requestCount = 12;
+    const activeRedis = redis;
+    const server = await buildTestServer({
+      persistence: new PostgresBuyPersistence(connection.db),
+      stockReservations: createRedisStockReservations(redis),
+      inventoryReader: { getStatus: (saleOfferId) => getInventoryStatus(activeRedis, saleOfferId) },
+      generateId: randomUUID,
+    });
+
+    try {
+      const responses = await Promise.all(
+        Array.from({ length: requestCount }, (_, index) =>
+          server.inject({
+            method: "POST",
+            url: "/buy",
+            payload: {
+              saleOfferId: fixtureIds.saleOffer,
+              idempotencyKey: `concurrent-scarcity-${index}`,
+              quantity: 1,
+            },
+          }),
+        ),
+      );
+      const payloads = responses.map((response) => buyResponseSchema.parse(response.json()));
+      const secured = payloads.filter((payload) => payload.outcome === "reservation_secured");
+      const soldOut = payloads.filter((payload) => payload.outcome === "sold_out");
+      const reservationRows = await connection.db.select().from(reservations);
+      const orderRows = await connection.db.select().from(orders);
+      const eventRows = await connection.db.select().from(orderEvents);
+      const statusResponse = await server.inject({
+        method: "GET",
+        url: `/inventory/${fixtureIds.saleOffer}/status`,
+      });
+      const status = inventoryStatusSchema.parse(statusResponse.json());
+
+      expect(secured).toHaveLength(stock);
+      expect(soldOut).toHaveLength(requestCount - stock);
+      expect(new Set(secured.map((payload) => payload.reservation?.id)).size).toBe(stock);
+      expect(new Set(secured.map((payload) => payload.order?.id)).size).toBe(stock);
+      expect(reservationRows).toHaveLength(stock);
+      expect(orderRows).toHaveLength(stock);
+      expect(eventRows).toHaveLength(stock * 2);
+      expect(eventRows.filter((event) => event.eventName === "reservation.secured")).toHaveLength(
+        stock,
+      );
+      expect(eventRows.filter((event) => event.eventName === "order.queued")).toHaveLength(stock);
+      expect(statusResponse.statusCode).toBe(200);
+      expect(status).toMatchObject({
+        remainingStock: 0,
+        reservedStock: stock,
+        pendingPersistenceCount: 0,
+        soldOutPressure: { rejectionCount: requestCount - stock },
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("deduplicates concurrent API requests sharing one idempotency key", async () => {
+    if (!connection || !redis) {
+      throw new Error("Test infrastructure was not initialized.");
+    }
+
+    const server = await buildTestServer({
+      persistence: new PostgresBuyPersistence(connection.db),
+      stockReservations: createRedisStockReservations(redis),
+      generateId: randomUUID,
+    });
+
+    try {
+      const responses = await Promise.all(
+        Array.from({ length: 8 }, () =>
+          server.inject({
+            method: "POST",
+            url: "/buy",
+            payload: {
+              saleOfferId: fixtureIds.saleOffer,
+              idempotencyKey: "concurrent-shared-idempotency-key",
+              quantity: 1,
+            },
+          }),
+        ),
+      );
+      const payloads = responses.map((response) => buyResponseSchema.parse(response.json()));
+      const reservationRows = await connection.db.select().from(reservations);
+      const orderRows = await connection.db.select().from(orders);
+      const eventRows = await connection.db.select().from(orderEvents);
+      const inventoryStatus = await getInventoryStatus(redis, fixtureIds.saleOffer);
+
+      expect(responses.every((response) => response.statusCode === 202)).toBe(true);
+      expect(
+        payloads.every((payload) =>
+          ["reservation_secured", "idempotent_replay", "reservation_pending_persistence"].includes(
+            payload.outcome,
+          ),
+        ),
+      ).toBe(true);
+      expect(new Set(payloads.map((payload) => payload.reservation?.id)).size).toBe(1);
+      expect(
+        new Set(payloads.flatMap((payload) => (payload.order ? [payload.order.id] : []))).size,
+      ).toBe(1);
+      expect(reservationRows).toHaveLength(1);
+      expect(orderRows).toHaveLength(1);
+      expect(eventRows).toHaveLength(2);
+      expect(inventoryStatus).toMatchObject({
+        remainingStock: 4,
+        reservedStock: 1,
+        pendingPersistenceCount: 0,
+        reservationThroughput: { successfulReservationCount: 1 },
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("rolls back durable writes while preserving the Redis hold after a real transaction failure", async () => {
+    if (!connection || !redis) {
+      throw new Error("Test infrastructure was not initialized.");
+    }
+
+    await connection.sql`
+      DROP TRIGGER IF EXISTS order_events_reject_test_order_queued ON order_events
+    `;
+    await connection.sql`DROP FUNCTION IF EXISTS reject_test_order_queued_event()`;
+    await connection.sql`
+      CREATE FUNCTION reject_test_order_queued_event()
+      RETURNS trigger AS $$
+      BEGIN
+        IF NEW.event_name = 'order.queued' THEN
+          RAISE EXCEPTION 'intentional order event persistence failure';
+        END IF;
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql
+    `;
+    await connection.sql`
+      CREATE TRIGGER order_events_reject_test_order_queued
+      BEFORE INSERT ON order_events
+      FOR EACH ROW EXECUTE FUNCTION reject_test_order_queued_event()
+    `;
+
+    const server = await buildTestServer({
+      persistence: new PostgresBuyPersistence(connection.db),
+      stockReservations: createRedisStockReservations(redis),
+      generateId: randomUUID,
+    });
+
+    try {
+      const response = await server.inject({
+        method: "POST",
+        url: "/buy",
+        payload: {
+          saleOfferId: fixtureIds.saleOffer,
+          idempotencyKey: "real-postgres-transaction-failure",
+          quantity: 2,
+        },
+      });
+      const payload = buyResponseSchema.parse(response.json());
+      const keys = inventoryKeys(fixtureIds.saleOffer);
+
+      expect(response.statusCode).toBe(202);
+      expect(response.headers["retry-after"]).toBe("30");
+      expect(payload.outcome).toBe("reservation_pending_persistence");
+      expect(payload.order).toBeNull();
+      expect(await connection.db.select().from(reservations)).toEqual([]);
+      expect(await connection.db.select().from(orders)).toEqual([]);
+      expect(await connection.db.select().from(orderEvents)).toEqual([]);
+      expect(await redis.hgetall(keys.state)).toMatchObject({
+        remainingStock: "3",
+        reservedStock: "2",
+      });
+      expect(await redis.hlen(keys.reservations)).toBe(1);
+      expect(await redis.zcard(keys.pendingPersistence)).toBe(1);
+      expect(await getInventoryStatus(redis, fixtureIds.saleOffer)).toMatchObject({
+        pendingPersistenceCount: 1,
+      });
+    } finally {
+      try {
+        await server.close();
+      } finally {
+        await connection.sql`
+          DROP TRIGGER IF EXISTS order_events_reject_test_order_queued ON order_events
+        `;
+        await connection.sql`DROP FUNCTION IF EXISTS reject_test_order_queued_event()`;
+      }
+    }
+  });
+
+  it("checks reachable and unavailable Redis readiness directly", async () => {
+    if (!connection || !redis) {
+      throw new Error("Test infrastructure was not initialized.");
+    }
+
+    const reachableChecks = await createInfrastructureReadinessCheck(
+      connection.sql,
+      redis,
+    ).checks();
+    const unavailableRedis = redis.duplicate({ lazyConnect: true });
+    await unavailableRedis.connect();
+    await unavailableRedis.quit();
+    const unavailableChecks = await createInfrastructureReadinessCheck(
+      connection.sql,
+      unavailableRedis,
+    ).checks();
+    const unavailableRedisCheck = unavailableChecks.find(
+      (check) => check.name === "redis_reachable",
+    );
+
+    expect(reachableChecks).toContainEqual({ name: "redis_reachable", status: "ok" });
+    expect(unavailableRedisCheck).toEqual({
+      name: "redis_reachable",
+      status: "unavailable",
+      message: expect.any(String),
+    });
+    expect(unavailableRedisCheck?.message).not.toHaveLength(0);
   });
 
   it("rejects uninitialized inventory without PostgreSQL writes", async () => {
