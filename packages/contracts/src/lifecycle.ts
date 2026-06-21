@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { orderProcessQueueName } from "./queue.js";
 
 export const saleOfferPurposeValues = ["catalog", "generated_run"] as const;
 export const saleOfferPurposeSchema = z.enum(saleOfferPurposeValues);
@@ -110,6 +111,6 @@ export const metricNameValues = [
 export const metricNameSchema = z.enum(metricNameValues);
 export type MetricName = z.infer<typeof metricNameSchema>;
 
-export const queueNameValues = ["orders:process"] as const;
+export const queueNameValues = [orderProcessQueueName] as const;
 export const queueNameSchema = z.enum(queueNameValues);
 export type QueueName = z.infer<typeof queueNameSchema>;

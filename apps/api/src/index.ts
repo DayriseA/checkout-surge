@@ -22,9 +22,11 @@ import {
 export const apiAppName = "api" as const;
 export const apiAppDependencies = [contractsPackageName, dbPackageName, loggerPackageName] as const;
 
+export { createBullMqOrderProcessJobPublisher } from "./queue/bullmq-order-process-job-publisher.js";
 export { type ApiConfig, loadApiConfig } from "./runtime/config.js";
 export { buildApiServer } from "./server.js";
 export { InventoryStatusService } from "./services/inventory-status-service.js";
+export type { OrderProcessJobPublisher } from "./services/order-process-job-publisher.js";
 export { PostgresBuyPersistence } from "./services/postgres-buy-persistence.js";
 export { ReserveOrderService } from "./services/reserve-order-service.js";
 

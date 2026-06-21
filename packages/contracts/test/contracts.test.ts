@@ -9,6 +9,9 @@ import {
   inventoryStatusSchema,
   inventoryUpdatedEventPayloadSchema,
   metricNameValues,
+  orderProcessBullMqQueueName,
+  orderProcessJobSchema,
+  orderProcessQueueName,
   orderStatusValues,
   publicRuntimePolicySchema,
   reservationStatusValues,
@@ -32,6 +35,35 @@ describe("shared lifecycle vocabulary", () => {
     expect(metricNameValues).toContain("traffic.scheduled_request_rate");
     expect(metricNameValues).toContain("queue.depth");
     expect(metricNameValues).toContain("inventory.sold_out_rejection");
+  });
+});
+
+describe("queue contracts", () => {
+  it("keeps the semantic queue name distinct from the BullMQ physical name", () => {
+    expect(orderProcessQueueName).toBe("orders:process");
+    expect(orderProcessBullMqQueueName).toBe("orders-process");
+  });
+
+  it("validates an order-processing job payload", () => {
+    expect(
+      orderProcessJobSchema.parse({
+        orderId: "11111111-1111-4111-8111-111111111111",
+        publicOrderId: "ord_test",
+        reservationId: "33333333-3333-4333-8333-333333333333",
+        saleOfferId,
+        correlationId,
+        runId,
+        quantity: 1,
+        queuedAt: timestamp,
+      }),
+    ).toMatchObject({ publicOrderId: "ord_test", quantity: 1 });
+
+    expect(() =>
+      orderProcessJobSchema.parse({
+        orderId: "not-a-uuid",
+        correlationId,
+      }),
+    ).toThrow();
   });
 });
 

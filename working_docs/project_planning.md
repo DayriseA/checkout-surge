@@ -306,7 +306,7 @@ Subtasks:
 
 ---
 
-## ⬜ Phase 4 - Asynchronous Order Pipeline
+## 🚧 Phase 4 - Asynchronous Order Pipeline
 
 ### Goal
 
@@ -318,14 +318,16 @@ Primary references:
 - `docs/core_business_entities.md`
 - `docs/cross_service_conventions.md`
 
-### ⬜ Task 4.1 - Introduce the queue layer and worker skeleton
+Progress note: Task 4.1 delivered the shared BullMQ contracts and adapters, a startable worker runtime with health/readiness endpoints, an explicit not-yet-implemented processing failure that keeps skeleton-consumed jobs recoverable, and focused boundary tests. Reservation enqueue handoff, durable order transitions, queue visibility, and the comprehensive asynchronous pipeline remain deferred to Tasks 4.2-4.5.
+
+### ✅ Task 4.1 - Introduce the queue layer and worker skeleton
 
 Subtasks:
 
-- Add BullMQ queue construction in the appropriate composition roots.
-- Implement the `orders:process` semantic queue and physical queue naming rule from the shared conventions.
-- Add the first worker process with structured logging, explicit dependencies, health/readiness endpoints, and basic failure reporting.
-- Keep queue producers and consumers behind application-service or adapter boundaries.
+- ✅ Add BullMQ queue construction in the appropriate composition roots.
+- ✅ Implement the `orders:process` semantic queue and physical queue naming rule from the shared conventions.
+- ✅ Add the first worker process with structured logging, explicit dependencies, health/readiness endpoints, and basic failure reporting.
+- ✅ Keep queue producers and consumers behind application-service or adapter boundaries.
 
 ### ⬜ Task 4.2 - Hand off reservations to asynchronous processing
 

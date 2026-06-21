@@ -16,6 +16,7 @@
     "@checkout-surge/db": "workspace:*",
     "@checkout-surge/logger": "workspace:*",
     "@fastify/cors": "^11.2.0",
+    "bullmq": "^5.79.1",
     "drizzle-orm": "^0.45.2",
     "fastify": "^5.8.5",
     "zod": "^4.4.3"

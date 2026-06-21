@@ -11,6 +11,7 @@ import {
   positiveIntegerSchema,
   uuidSchema,
 } from "./primitives.js";
+import { orderProcessBullMqQueueName, orderProcessQueueName } from "./queue.js";
 
 export const buyerSpikeTrafficConfigSchema = z
   .object({
@@ -70,8 +71,8 @@ export type ErpRunConfig = z.infer<typeof erpRunConfigSchema>;
 
 export const backpressureConfigSchema = z
   .object({
-    queueName: z.literal("orders:process"),
-    physicalQueueName: z.literal("orders-process"),
+    queueName: z.literal(orderProcessQueueName),
+    physicalQueueName: z.literal(orderProcessBullMqQueueName),
     orderProcessConcurrency: positiveIntegerSchema,
     drainTimeoutSeconds: positiveIntegerSchema,
     pendingPersistenceRetryAfterSeconds: positiveIntegerSchema,

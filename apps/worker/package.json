@@ -7,13 +7,21 @@
     "build": "tsc -p tsconfig.json",
     "type-check": "tsc -p tsconfig.json --noEmit",
     "lint": "biome lint .",
-    "dev": "node ../../scripts/run-with-env.mjs node ../../scripts/not-implemented.mjs dev:worker \"Task 4.1 will add the BullMQ worker runtime.\"",
-    "test": "node ../../scripts/run-with-test-env.mjs node ../../scripts/not-implemented.mjs worker:test \"Worker tests land after queue processing behavior exists.\"",
-    "test:integration": "node ../../scripts/run-with-test-env.mjs node ../../scripts/not-implemented.mjs worker:test:integration \"Worker integration tests land after the queue and ERP boundaries exist.\""
+    "dev": "node ../../scripts/run-with-env.mjs tsx watch src/index.ts",
+    "test": "pnpm test:unit && pnpm test:integration",
+    "test:unit": "vitest run --config vitest.unit.config.ts",
+    "test:integration": "node ../../scripts/run-with-test-env.mjs vitest run --config vitest.integration.config.ts"
   },
   "dependencies": {
     "@checkout-surge/contracts": "workspace:*",
     "@checkout-surge/db": "workspace:*",
-    "@checkout-surge/logger": "workspace:*"
+    "@checkout-surge/logger": "workspace:*",
+    "bullmq": "^5.79.1",
+    "fastify": "^5.8.5",
+    "ioredis": "^5.11.1"
+  },
+  "devDependencies": {
+    "tsx": "^4.22.4",
+    "vitest": "^4.1.9"
   }
 }
