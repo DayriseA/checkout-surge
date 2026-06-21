@@ -8,7 +8,10 @@ import {
   healthResponseSchema,
   inventoryStatusSchema,
   livenessResponseSchema,
+  type OrderProcessJob,
   type OrderSummary,
+  orderProcessBullMqQueueName,
+  type orderProcessJobName,
   type ReservationSummary,
 } from "@checkout-surge/contracts";
 import {
@@ -30,8 +33,10 @@ import {
 } from "@checkout-surge/db";
 import { resetTestDatabase } from "@checkout-surge/db/testing";
 import { createSilentLogger } from "@checkout-surge/logger";
+import { Queue } from "bullmq";
 import { eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
+import { createBullMqOrderProcessJobPublisher } from "../src/queue/bullmq-order-process-job-publisher.js";
 import { loadApiConfig } from "../src/runtime/config.js";
 import type { ApiFastifyInstance } from "../src/runtime/fastify.js";
 import { createInfrastructureReadinessCheck } from "../src/runtime/readiness.js";
@@ -40,6 +45,7 @@ import {
   type InventoryStatusReader,
   InventoryStatusService,
 } from "../src/services/inventory-status-service.js";
+import type { OrderProcessJobPublisher } from "../src/services/order-process-job-publisher.js";
 import { PostgresBuyPersistence } from "../src/services/postgres-buy-persistence.js";
 import {
   type BuyPersistence,
@@ -80,6 +86,7 @@ async function buildTestServer(options: {
   inventoryReader?: InventoryStatusReader | null;
   readiness?: "ok" | "unavailable";
   generateId?: () => string;
+  orderProcessJobPublisher?: OrderProcessJobPublisher;
 }): Promise<ApiFastifyInstance> {
   const inventoryReader =
     options.inventoryReader === undefined
@@ -126,6 +133,9 @@ async function buildTestServer(options: {
     inventoryStatusService: new InventoryStatusService(inventoryReader),
     reserveOrderService: new ReserveOrderService({
       persistence: options.persistence,
+      orderProcessJobPublisher: options.orderProcessJobPublisher ?? {
+        enqueue: async () => undefined,
+      },
       stockReservations: options.stockReservations ?? new AcceptingStockReservations(),
       reservationHoldMinutes: 15,
       idempotencyTtlSeconds: 1800,
@@ -214,6 +224,7 @@ describe("API gateway routes", () => {
     inventoryReader?: InventoryStatusReader | null;
     readiness?: "ok" | "unavailable";
     generateId?: () => string;
+    orderProcessJobPublisher?: OrderProcessJobPublisher;
   }) {
     const server = await buildTestServer(options);
     servers.push(server);
@@ -523,6 +534,154 @@ describe("API buy persistence", () => {
       ]);
     } finally {
       await server.close();
+    }
+  });
+
+  it("returns 202 after publishing one deterministic BullMQ job without a running worker", async () => {
+    if (!connection || !redis) {
+      throw new Error("Test infrastructure was not initialized.");
+    }
+
+    const redisUrl = process.env.TEST_REDIS_URL ?? "redis://localhost:6380";
+    const publisher = createBullMqOrderProcessJobPublisher({
+      url: redisUrl,
+      maxRetriesPerRequest: 3,
+    });
+    const queue = new Queue<OrderProcessJob, void, typeof orderProcessJobName>(
+      orderProcessBullMqQueueName,
+      { connection: { url: redisUrl, maxRetriesPerRequest: 3 } },
+    );
+    const server = await buildTestServer({
+      persistence: new PostgresBuyPersistence(connection.db),
+      stockReservations: createRedisStockReservations(redis),
+      orderProcessJobPublisher: publisher,
+      generateId: randomUUID,
+    });
+
+    try {
+      const request = {
+        method: "POST" as const,
+        url: "/buy",
+        headers: { "x-correlation-id": "queued-api-correlation" },
+        payload: {
+          saleOfferId: fixtureIds.saleOffer,
+          idempotencyKey: "queued-api-idempotency",
+          quantity: 2,
+        },
+      };
+      const firstResponse = await server.inject(request);
+      const firstPayload = buyResponseSchema.parse(firstResponse.json());
+      if (!firstPayload.order || !firstPayload.reservation) {
+        throw new Error("Expected a persisted reservation and order.");
+      }
+
+      const replayResponses = await Promise.all(
+        Array.from({ length: 8 }, () => server.inject(request)),
+      );
+      const job = await queue.getJob(firstPayload.order.id);
+
+      expect(firstResponse.statusCode).toBe(202);
+      expect(firstPayload.outcome).toBe("reservation_secured");
+      expect(replayResponses.every((response) => response.statusCode === 202)).toBe(true);
+      expect(job?.id).toBe(firstPayload.order.id);
+      expect(job?.data).toEqual({
+        orderId: firstPayload.order.id,
+        publicOrderId: firstPayload.order.publicOrderId,
+        reservationId: firstPayload.reservation.id,
+        saleOfferId: fixtureIds.saleOffer,
+        correlationId: "queued-api-correlation",
+        quantity: 2,
+        queuedAt: firstPayload.order.queuedAt,
+      });
+      expect(await job?.getState()).toBe("waiting");
+      expect(await queue.getWaitingCount()).toBe(1);
+      expect(await connection.db.select().from(orderEvents)).toHaveLength(2);
+    } finally {
+      await server.close();
+      await publisher.close();
+      await queue.close();
+    }
+  });
+
+  it("heals a committed reservation after the first real-boundary enqueue attempt fails", async () => {
+    if (!connection || !redis) {
+      throw new Error("Test infrastructure was not initialized.");
+    }
+
+    const redisUrl = process.env.TEST_REDIS_URL ?? "redis://localhost:6380";
+    const publisher = createBullMqOrderProcessJobPublisher({
+      url: redisUrl,
+      maxRetriesPerRequest: 3,
+    });
+    const queue = new Queue<OrderProcessJob, void, typeof orderProcessJobName>(
+      orderProcessBullMqQueueName,
+      { connection: { url: redisUrl, maxRetriesPerRequest: 3 } },
+    );
+    let enqueueAttempts = 0;
+    const server = await buildTestServer({
+      persistence: new PostgresBuyPersistence(connection.db),
+      stockReservations: createRedisStockReservations(redis),
+      orderProcessJobPublisher: {
+        enqueue: async (job) => {
+          enqueueAttempts += 1;
+          if (enqueueAttempts === 1) {
+            throw new Error("simulated queue handoff interruption");
+          }
+          await publisher.enqueue(job);
+        },
+      },
+      generateId: randomUUID,
+    });
+
+    try {
+      const request = {
+        method: "POST" as const,
+        url: "/buy",
+        payload: {
+          saleOfferId: fixtureIds.saleOffer,
+          idempotencyKey: "queue-handoff-healing",
+          quantity: 1,
+        },
+      };
+      const firstResponse = await server.inject(request);
+      const firstError = errorPayloadSchema.parse(firstResponse.json());
+      const reservationRowsAfterFailure = await connection.db.select().from(reservations);
+      const orderRowsAfterFailure = await connection.db.select().from(orders);
+      const eventsAfterFailure = await connection.db.select().from(orderEvents);
+      const inventoryAfterFailure = await getInventoryStatus(redis, fixtureIds.saleOffer);
+
+      expect(firstResponse.statusCode).toBe(500);
+      expect(firstError.code).toBe("internal_error");
+      expect(reservationRowsAfterFailure).toHaveLength(1);
+      expect(orderRowsAfterFailure).toHaveLength(1);
+      expect(eventsAfterFailure.map((event) => event.eventName).sort()).toEqual([
+        "order.queued",
+        "reservation.secured",
+      ]);
+      expect(inventoryAfterFailure.pendingPersistenceCount).toBe(1);
+      expect(await queue.getWaitingCount()).toBe(0);
+
+      const retryResponse = await server.inject(request);
+      const retryPayload = buyResponseSchema.parse(retryResponse.json());
+      if (!retryPayload.order) {
+        throw new Error("Expected the durable order on the healing replay.");
+      }
+
+      expect(retryResponse.statusCode).toBe(202);
+      expect(retryPayload.outcome).toBe("idempotent_replay");
+      expect(enqueueAttempts).toBe(2);
+      expect(await queue.getWaitingCount()).toBe(1);
+      expect((await queue.getJob(retryPayload.order.id))?.id).toBe(retryPayload.order.id);
+      expect(await connection.db.select().from(reservations)).toHaveLength(1);
+      expect(await connection.db.select().from(orders)).toHaveLength(1);
+      expect(await connection.db.select().from(orderEvents)).toHaveLength(2);
+      expect((await getInventoryStatus(redis, fixtureIds.saleOffer)).pendingPersistenceCount).toBe(
+        0,
+      );
+    } finally {
+      await server.close();
+      await publisher.close();
+      await queue.close();
     }
   });
 

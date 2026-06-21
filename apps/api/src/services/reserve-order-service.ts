@@ -3,11 +3,13 @@ import {
   type BuyRequest,
   type BuyResponse,
   buyResponseSchema,
+  type OrderProcessJob,
   type OrderSummary,
   type ReservationSummary,
   type SecuredReservationHold,
   type StockReservationDecision,
 } from "@checkout-surge/contracts";
+import type { OrderProcessJobPublisher } from "./order-process-job-publisher.js";
 
 export interface PersistedBuy {
   reservation: ReservationSummary;
@@ -44,11 +46,15 @@ export interface ReservationPartialFailureReport {
   idempotencyKey: string;
 }
 
+export interface OrderEnqueueFailureReport extends ReservationPartialFailureReport {
+  orderId: string;
+}
+
 type ReservationPartialFailureReporter = (report: ReservationPartialFailureReport) => void;
 
-function safelyReportPartialFailure(
-  reporter: ReservationPartialFailureReporter,
-  report: ReservationPartialFailureReport,
+function safelyReportPartialFailure<Report extends ReservationPartialFailureReport>(
+  reporter: (report: Report) => void,
+  report: Report,
 ): void {
   try {
     reporter(report);
@@ -60,6 +66,7 @@ function safelyReportPartialFailure(
 export class ReserveOrderService {
   private readonly persistence: BuyPersistence;
   private readonly stockReservations: StockReservationGateway;
+  private readonly orderProcessJobPublisher: OrderProcessJobPublisher;
   private readonly reservationHoldMinutes: number;
   private readonly idempotencyTtlSeconds: number;
   private readonly pendingPersistenceRetryAfterSeconds: number;
@@ -67,10 +74,12 @@ export class ReserveOrderService {
   private readonly reportPersistenceFailure: ReservationPartialFailureReporter;
   private readonly reportPendingPersistenceEnsureFailure: ReservationPartialFailureReporter;
   private readonly reportPromotionFailure: ReservationPartialFailureReporter;
+  private readonly reportOrderEnqueueFailure: (report: OrderEnqueueFailureReport) => void;
 
   constructor(options: {
     persistence: BuyPersistence;
     stockReservations: StockReservationGateway;
+    orderProcessJobPublisher: OrderProcessJobPublisher;
     reservationHoldMinutes: number;
     idempotencyTtlSeconds: number;
     pendingPersistenceRetryAfterSeconds: number;
@@ -78,9 +87,11 @@ export class ReserveOrderService {
     reportPersistenceFailure?: ReservationPartialFailureReporter;
     reportPendingPersistenceEnsureFailure?: ReservationPartialFailureReporter;
     reportPromotionFailure?: ReservationPartialFailureReporter;
+    reportOrderEnqueueFailure?: (report: OrderEnqueueFailureReport) => void;
   }) {
     this.persistence = options.persistence;
     this.stockReservations = options.stockReservations;
+    this.orderProcessJobPublisher = options.orderProcessJobPublisher;
     this.reservationHoldMinutes = options.reservationHoldMinutes;
     this.idempotencyTtlSeconds = options.idempotencyTtlSeconds;
     this.pendingPersistenceRetryAfterSeconds = options.pendingPersistenceRetryAfterSeconds;
@@ -89,6 +100,7 @@ export class ReserveOrderService {
     this.reportPendingPersistenceEnsureFailure =
       options.reportPendingPersistenceEnsureFailure ?? (() => undefined);
     this.reportPromotionFailure = options.reportPromotionFailure ?? (() => undefined);
+    this.reportOrderEnqueueFailure = options.reportOrderEnqueueFailure ?? (() => undefined);
   }
 
   async reserve(input: {
@@ -141,6 +153,7 @@ export class ReserveOrderService {
     );
 
     if (persisted) {
+      await this.enqueuePersistedBuy(persisted, input.request.idempotencyKey, decision.reservation);
       await this.promoteWithoutHidingDurableSuccess(
         input.request.idempotencyKey,
         decision.reservation,
@@ -177,8 +190,40 @@ export class ReserveOrderService {
       return this.pendingResponse(input.reservation, input.correlationId, input.now);
     }
 
+    await this.enqueuePersistedBuy(persisted, input.idempotencyKey, input.reservation);
     await this.promoteWithoutHidingDurableSuccess(input.idempotencyKey, input.reservation);
     return this.acceptedResponse("reservation_secured", persisted, input.correlationId, input.now);
+  }
+
+  private async enqueuePersistedBuy(
+    persisted: PersistedBuy,
+    idempotencyKey: string,
+    reservation: SecuredReservationHold,
+  ): Promise<void> {
+    try {
+      // PostgreSQL and BullMQ are not atomic. Every durable replay re-asserts this
+      // deterministic job before Redis can be promoted to an accepted response.
+      await this.orderProcessJobPublisher.enqueue(this.toOrderProcessJob(persisted));
+    } catch (error) {
+      safelyReportPartialFailure(this.reportOrderEnqueueFailure, {
+        ...this.partialFailureReport(error, idempotencyKey, reservation),
+        orderId: persisted.order.id,
+      });
+      throw error;
+    }
+  }
+
+  private toOrderProcessJob(persisted: PersistedBuy): OrderProcessJob {
+    return {
+      orderId: persisted.order.id,
+      publicOrderId: persisted.order.publicOrderId,
+      reservationId: persisted.order.reservationId,
+      saleOfferId: persisted.order.saleOfferId,
+      correlationId: persisted.order.correlationId,
+      ...(persisted.order.runId ? { runId: persisted.order.runId } : {}),
+      quantity: persisted.order.quantity,
+      queuedAt: persisted.order.queuedAt,
+    };
   }
 
   private async promoteWithoutHidingDurableSuccess(

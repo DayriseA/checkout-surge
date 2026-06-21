@@ -318,7 +318,7 @@ Primary references:
 - `docs/core_business_entities.md`
 - `docs/cross_service_conventions.md`
 
-Progress note: Task 4.1 delivered the shared BullMQ contracts and adapters, a startable worker runtime with health/readiness endpoints, an explicit not-yet-implemented processing failure that keeps skeleton-consumed jobs recoverable, and focused boundary tests. Reservation enqueue handoff, durable order transitions, queue visibility, and the comprehensive asynchronous pipeline remain deferred to Tasks 4.2-4.5.
+Progress note: Tasks 4.1-4.2 delivered the shared BullMQ contracts and adapters, a startable worker skeleton, and the API handoff that publishes each durable queued order under its deterministic order ID before Redis accepted promotion. A new or pending handoff whose enqueue fails keeps its Redis idempotency record pending and heals through replay without duplicating durable `order.queued` events or BullMQ jobs. An already-accepted historical replay remains accepted in Redis if its enqueue attempt fails, but the API returns an error and retries the deterministic enqueue on the next replay. Worker-owned order transitions, queue visibility/projections, and comprehensive asynchronous pipeline coverage remain deferred to Tasks 4.3-4.5.
 
 ### ✅ Task 4.1 - Introduce the queue layer and worker skeleton
 
@@ -329,13 +329,13 @@ Subtasks:
 - ✅ Add the first worker process with structured logging, explicit dependencies, health/readiness endpoints, and basic failure reporting.
 - ✅ Keep queue producers and consumers behind application-service or adapter boundaries.
 
-### ⬜ Task 4.2 - Hand off reservations to asynchronous processing
+### ✅ Task 4.2 - Hand off reservations to asynchronous processing
 
 Subtasks:
 
-- Change the API flow so successful reservations enqueue order-processing work instead of assuming completion inline.
-- Return an immediate `reservation_secured` / queued-processing response without waiting for downstream confirmation.
-- Persist the transition from reservation secured to order queued.
+- ✅ Change the API flow so successful reservations enqueue order-processing work instead of assuming completion inline.
+- ✅ Return an immediate `reservation_secured` / queued-processing response without waiting for downstream confirmation.
+- ✅ Persist the transition from reservation secured to order queued.
 
 ### ⬜ Task 4.3 - Implement order state transitions inside the worker
 

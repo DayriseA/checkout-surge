@@ -9,12 +9,16 @@ import {
   reserveInventoryStock,
 } from "@checkout-surge/db";
 import { createServiceLogger, loggerPackageName } from "@checkout-surge/logger";
+import { createBullMqOrderProcessJobPublisher } from "./queue/bullmq-order-process-job-publisher.js";
+import { closeApiResources } from "./runtime/api-resource-cleanup.js";
 import { loadApiConfig } from "./runtime/config.js";
+import type { ApiFastifyInstance } from "./runtime/fastify.js";
 import { createInfrastructureReadinessCheck } from "./runtime/readiness.js";
 import { buildApiServer } from "./server.js";
 import { InventoryStatusService } from "./services/inventory-status-service.js";
 import { PostgresBuyPersistence } from "./services/postgres-buy-persistence.js";
 import {
+  type OrderEnqueueFailureReport,
   type ReservationPartialFailureReport,
   ReserveOrderService,
 } from "./services/reserve-order-service.js";
@@ -38,10 +42,15 @@ export async function startApiServer(): Promise<void> {
     lazyConnect: true,
     maxRetriesPerRequest: 3,
   });
+  const orderProcessJobPublisher = createBullMqOrderProcessJobPublisher({
+    url: config.redisUrl,
+    maxRetriesPerRequest: 3,
+  });
 
   const persistence = new PostgresBuyPersistence(connection.db);
   const reserveOrderService = new ReserveOrderService({
     persistence,
+    orderProcessJobPublisher,
     stockReservations: {
       reserve: (input) => reserveInventoryStock(redis, input),
       markPendingPersistence: (input) => markReservationPendingPersistence(redis, input),
@@ -69,34 +78,60 @@ export async function startApiServer(): Promise<void> {
         "Durable reservation succeeded but Redis idempotency promotion failed.",
       );
     },
+    reportOrderEnqueueFailure: (report) => {
+      logger.error(
+        orderEnqueueFailureLogContext(report),
+        "Durable reservation succeeded but order-processing enqueue failed.",
+      );
+    },
   });
 
-  const server = await buildApiServer({
-    config,
-    logger,
-    readiness: createInfrastructureReadinessCheck(connection.sql, redis),
-    inventoryStatusService: new InventoryStatusService({
-      getStatus: (saleOfferId) => getInventoryStatus(redis, saleOfferId),
-    }),
-    reserveOrderService,
-    startedAt: new Date(),
-  });
-
-  const close = async () => {
-    logger.info("Closing API server.");
-    await server.close();
-    redis.disconnect();
-    await connection.close();
+  let server: ApiFastifyInstance | null = null;
+  let closePromise: Promise<void> | null = null;
+  const close = () => {
+    closePromise ??= (async () => {
+      logger.info("Closing API server.");
+      await closeApiResources({
+        closeServer: async () => {
+          await server?.close();
+        },
+        closeOrderProcessJobPublisher: () => orderProcessJobPublisher.close(),
+        disconnectRedis: () => redis.disconnect(),
+        closeDatabase: () => connection.close(),
+      });
+    })();
+    return closePromise;
   };
 
-  process.once("SIGTERM", () => {
-    void close().then(() => process.exit(0));
-  });
-  process.once("SIGINT", () => {
-    void close().then(() => process.exit(0));
-  });
-
   try {
+    server = await buildApiServer({
+      config,
+      logger,
+      readiness: createInfrastructureReadinessCheck(connection.sql, redis),
+      inventoryStatusService: new InventoryStatusService({
+        getStatus: (saleOfferId) => getInventoryStatus(redis, saleOfferId),
+      }),
+      reserveOrderService,
+      startedAt: new Date(),
+    });
+
+    process.once("SIGTERM", () => {
+      void close()
+        .then(() => process.exit(0))
+        .catch((error: unknown) => {
+          logger.error({ err: error }, "API shutdown failed.");
+          process.exit(1);
+        });
+    });
+    process.once("SIGINT", () => {
+      void close()
+        .then(() => process.exit(0))
+        .catch((error: unknown) => {
+          logger.error({ err: error }, "API shutdown failed.");
+          process.exit(1);
+        });
+    });
+
     await server.listen({
       host: config.host,
       port: config.port,
@@ -104,11 +139,21 @@ export async function startApiServer(): Promise<void> {
       backlog: config.listenBacklog,
     });
   } catch (error) {
-    logger.error({ err: error }, "API server failed to start.");
-    redis.disconnect();
-    await connection.close();
     process.exitCode = 1;
+    logger.error({ err: error }, "API server failed to start.");
+    try {
+      await close();
+    } catch (cleanupError) {
+      logger.error({ err: cleanupError }, "API startup cleanup failed.");
+    }
   }
+}
+
+function orderEnqueueFailureLogContext(report: OrderEnqueueFailureReport) {
+  return {
+    ...partialFailureLogContext(report),
+    orderId: report.orderId,
+  };
 }
 
 function partialFailureLogContext(report: ReservationPartialFailureReport) {
