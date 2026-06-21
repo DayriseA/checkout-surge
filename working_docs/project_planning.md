@@ -213,7 +213,7 @@ Subtasks:
 
 ---
 
-## ⬜ Phase 3 - Redis Inventory Hot Path
+## ✅ Phase 3 - Redis Inventory Hot Path
 
 ### Goal
 
@@ -223,58 +223,86 @@ Primary reference:
 
 - `docs/redis_inventory_hot_path.md`
 
-### ⬜ Task 3.1 - Implement Redis-backed inventory state
+Completion commits:
+
+- `d5e1df2` - `feat(inventory): add Redis-backed inventory state`
+- `20b3aea` - `feat(inventory): add atomic stock reservations`
+- `d0ed743` - `feat(api): persist Redis-secured reservations`
+- `d1d659f` - `feat(inventory): expose bounded drain projections`
+- `cd42216` - `fix(inventory): harden reservation edge cases`
+- `62e81c7` - `test(inventory): complete hot-path coverage`
+- `91d6af6` - `fix(inventory): enforce atomic run eligibility`
+
+Final verification completed:
+
+- `pnpm turbo run build --force`
+- `pnpm type-check`
+- `pnpm type-check:test`
+- `pnpm lint`
+- `pnpm format:check`
+- `TURBO_FORCE=true pnpm test`
+  - Unit: 18 total (contracts 11, logger 6, web 1)
+  - API/service: 32
+  - DB/Redis integration: 24
+- `pnpm test:coverage`
+- Fresh `pnpm test:infra:up` / `pnpm test:infra:down` cycle with volumes removed
+
+Phase 3 completed the Redis inventory hot path, including Redis-secured durable reservations, bounded drain projections, hardened edge cases, comprehensive hot-path coverage, and atomic run eligibility enforcement added by the final audit fix.
+
+Phase 3 intentionally leaves queue/worker processing to Phase 4, ERP behavior to Phase 5, Redis Pub/Sub, SSE, and browser realtime behavior to Phase 6, and run-start/load orchestration to Phase 7. Automatic hold release and reconciliation remain a deferred production extension, and terminal run finalization remains for a later phase.
+
+### ✅ Task 3.1 - Implement Redis-backed inventory state
 
 Subtasks:
 
-- Add Redis key helpers and inventory state operations that follow the documented key structure.
-- Add stock initialization from seeded sale offers and generated run sale offers.
-- Add an API-readable inventory status path with remaining stock, reserved stock, pending persistence, expired hold count, and oldest pending age.
-- Keep PostgreSQL as the durable allocation source and Redis as the live hot-path authority.
+- ✅ Add Redis key helpers and inventory state operations that follow the documented key structure.
+- ✅ Add stock initialization from seeded sale offers and generated run sale offers.
+- ✅ Add an API-readable inventory status path with remaining stock, reserved stock, pending persistence, expired hold count, and oldest pending age.
+- ✅ Keep PostgreSQL as the durable allocation source and Redis as the live hot-path authority.
 
-### ⬜ Task 3.2 - Implement atomic stock reservation
-
-Subtasks:
-
-- Add the Redis Lua or equivalent atomic reservation operation.
-- Handle success, sold-out, missing inventory, idempotent replay, idempotency conflict, and quantity validation outcomes.
-- Ensure sold-out attempts stay on the cheap Redis-first losing path without per-loser PostgreSQL writes.
-- Return reservation outcomes through shared contract schemas the API and dashboard can trust.
-
-### ⬜ Task 3.3 - Persist reservation intent after successful stock hold
+### ✅ Task 3.2 - Implement atomic stock reservation
 
 Subtasks:
 
-- Persist successful reservations, initial queued orders, and order events in PostgreSQL after Redis accepts stock.
-- Preserve the distinction between fast reservation and slow final confirmation.
-- Add pending-persistence sentinel handling when Redis succeeds but PostgreSQL persistence fails.
-- Keep durable order/reservation/event writes behind persistence modules, not inside route handlers.
+- ✅ Add the Redis Lua or equivalent atomic reservation operation.
+- ✅ Handle success, sold-out, missing inventory, idempotent replay, idempotency conflict, and quantity validation outcomes.
+- ✅ Ensure sold-out attempts stay on the cheap Redis-first losing path without per-loser PostgreSQL writes.
+- ✅ Return reservation outcomes through shared contract schemas the API and dashboard can trust.
 
-### ⬜ Task 3.4 - Surface inventory drain in near real time
-
-Subtasks:
-
-- Publish bounded inventory updates after successful reservations and aggregate sold-out pressure.
-- Reflect remaining stock, reserved stock, and reservation throughput in API-readable state.
-- Prepare the inventory projection so dashboard realtime can consume it in Phase 6 without changing hot-path ownership.
-
-### ⬜ Task 3.5 - Harden reservation edge cases
+### ✅ Task 3.3 - Persist reservation intent after successful stock hold
 
 Subtasks:
 
-- Add idempotency protection for duplicate accepted requests.
-- Add behavior for stale holds, late duplicate submissions, and mismatched idempotency payloads.
-- Make partial-failure behavior explicit in API responses, logs, Redis state, and operator-visible status.
+- ✅ Persist successful reservations, initial queued orders, and order events in PostgreSQL after Redis accepts stock.
+- ✅ Preserve the distinction between fast reservation and slow final confirmation.
+- ✅ Add pending-persistence sentinel handling when Redis succeeds but PostgreSQL persistence fails.
+- ✅ Keep durable order/reservation/event writes behind persistence modules, not inside route handlers.
 
-### ⬜ Task 3.6 - Add automated tests for the Redis inventory hot path
+### ✅ Task 3.4 - Surface inventory drain in near real time
 
 Subtasks:
 
-- Add Redis integration tests for initialization, successful reservation, sold-out rejection, idempotent replay, and idempotency conflict.
-- Add concurrency tests proving the atomic reservation path cannot oversell under competing requests.
-- Add API integration tests for reservation-secured, sold-out, inventory-not-initialized, duplicate, and pending-persistence outcomes.
-- Add persistence tests proving successful Redis reservations create the expected reservation, order, and order-event records.
-- Add partial-failure tests proving a Redis stock hold is preserved for reconciliation when durable persistence fails.
+- ✅ Publish bounded inventory updates after successful reservations and aggregate sold-out pressure.
+- ✅ Reflect remaining stock, reserved stock, and reservation throughput in API-readable state.
+- ✅ Prepare the inventory projection so dashboard realtime can consume it in Phase 6 without changing hot-path ownership.
+
+### ✅ Task 3.5 - Harden reservation edge cases
+
+Subtasks:
+
+- ✅ Add idempotency protection for duplicate accepted requests.
+- ✅ Add behavior for stale holds, late duplicate submissions, and mismatched idempotency payloads.
+- ✅ Make partial-failure behavior explicit in API responses, logs, Redis state, and operator-visible status.
+
+### ✅ Task 3.6 - Add automated tests for the Redis inventory hot path
+
+Subtasks:
+
+- ✅ Add Redis integration tests for initialization, successful reservation, sold-out rejection, idempotent replay, and idempotency conflict.
+- ✅ Add concurrency tests proving the atomic reservation path cannot oversell under competing requests.
+- ✅ Add API integration tests for reservation-secured, sold-out, inventory-not-initialized, duplicate, and pending-persistence outcomes.
+- ✅ Add persistence tests proving successful Redis reservations create the expected reservation, order, and order-event records.
+- ✅ Add partial-failure tests proving a Redis stock hold is preserved for reconciliation when durable persistence fails.
 
 ---
 
