@@ -47,8 +47,8 @@ Every run-scoped purchase attempt follows the same two-phase flow.
 1. Starting a public or admin preset creates a `demo_runs` record with an immutable configuration snapshot, clones the baseline sale offer into a generated run sale offer, initializes durable inventory, initializes Redis inventory, and caches run/sale eligibility.
 2. k6 sends the `runId` and generated `saleOfferId` with each synthetic buy attempt.
 3. The API validates the request against the run sale-eligibility cache, failing closed when the run/sale pair is missing, mismatched, or no longer accepting traffic.
-4. A Redis Lua script atomically checks accepted idempotency records and decrements `remainingStock` for the generated sale offer.
-5. On success: the API writes the reservation and initial order record to PostgreSQL, publishes a BullMQ job, stores the accepted idempotency response, publishes bounded dashboard updates, and returns `202 Accepted` with a `reservation_secured` response immediately.
+4. A Redis Lua script atomically checks accepted idempotency records, decrements `remainingStock`, and creates the pending-persistence visibility sentinel for the generated sale offer.
+5. On success: the API writes the reservation and initial order record to PostgreSQL, publishes a BullMQ job, atomically promotes the accepted idempotency response while removing the pending sentinel, publishes bounded dashboard updates, and returns `202 Accepted` with a `reservation_secured` response immediately.
 6. On sold-out: the API returns a `409 sold_out` response directly from the Redis stock decision without querying PostgreSQL, writing per-loser idempotency records, or emitting per-loser dashboard events. Sold-out pressure is aggregated and flushed as periodic `inventory.sold_out_rejection` metrics instead.
 7. On duplicate accepted requests or idempotency conflicts: the API replays or rejects from the Redis idempotency record without changing stock.
 
@@ -90,7 +90,7 @@ For duplicate buyer-spike traffic, repeated accepted idempotency replays can inc
 
 ### 3. Partial persistence failures (Redis succeeds, PostgreSQL fails)
 
-If the Redis stock hold succeeds but the subsequent PostgreSQL write fails, the system preserves the Redis hold and returns `reservation_pending_persistence` rather than silently discarding a secured unit. The hold is tracked in a Redis `pending-persistence` sentinel. The inventory status endpoint exposes the pending count and the age of the oldest hold, giving operators visibility to inspect or reconcile without requiring distributed rollback coordination.
+If the Redis stock hold succeeds but the subsequent PostgreSQL write fails, the system preserves the Redis hold and returns `reservation_pending_persistence` rather than silently discarding a secured unit. The hold is tracked in a Redis `pending-persistence` sentinel created atomically with the stock decision. The inventory status endpoint exposes the pending count and the age of the oldest hold, giving operators visibility to inspect or reconcile without requiring distributed rollback coordination. If PostgreSQL commits but Redis promotion fails, the API truthfully returns `reservation_secured` while pending visibility remains until a retry finds the durable rows and self-heals the promotion.
 
 ### 4. Downstream slowness and TPS exhaustion
 

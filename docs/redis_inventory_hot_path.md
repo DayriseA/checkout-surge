@@ -37,7 +37,9 @@ The Lua operation:
 - rejects mismatched duplicate payloads as an idempotency conflict;
 - rejects sold-out attempts without decrementing stock or storing a per-request sold-out idempotency response, incrementing only the run-scoped `api_sold_out_decision` aggregate counter;
 - decrements `remainingStock` and increments `reservedStock` atomically when stock is available;
-- records the reservation hold, expiration score, and `inventory.updated` event before returning success.
+- records the reservation hold, expiration score, pending-persistence sentinel, and `inventory.updated` event before returning success.
+
+Before its first write, the operation validates the required stock counters, their allocation invariant, and the Redis types of every collection it controls. This matters because Redis does not roll back writes performed before a Lua runtime error.
 
 Each successful `inventory.updated` event carries `reservationCount: 1`, `reservedQuantity`, remaining stock, reserved stock, and the event time. Initialization events intentionally omit the reservation-only fields. The event list remains capped at 100 and is suitable for bounded recent updates, but throughput does not depend on the list retaining every surge event.
 
@@ -55,6 +57,8 @@ After Redis succeeds, the API writes:
 - the initial `orders` row in `queued` state;
 - `reservation.secured` and `order.queued` events.
 
+The initial stock decision and pending-persistence sentinel are one atomic Redis operation, so a process crash immediately after stock is secured cannot hide the hold from inventory status. After PostgreSQL commits, accepted-idempotency promotion and sentinel removal are also one atomic Redis operation.
+
 If PostgreSQL persistence fails after Redis has secured stock, the API preserves the Redis hold and returns `reservation_pending_persistence`.
 
 That response intentionally has `order: null` because no durable order row exists yet.
@@ -69,11 +73,15 @@ Retries with the same sale offer and key but a different quantity are rejected w
 
 Sold-out responses are intentionally not stored per request, so a repeated sold-out attempt is evaluated as a fresh sold-out stock check. Late retries after the idempotency TTL are also treated as new attempts. In practice, a late retry will either reserve remaining stock or receive a normal sold-out response.
 
+Hold expiry does not change retry semantics while the idempotency record remains live. A stale accepted hold still replays its durable reservation and order; a stale pending hold still returns `reservation_pending_persistence` with `order: null` and `Retry-After`. Once the idempotency TTL expires, either retry is a new attempt even though the original hold remains reserved and operator-visible.
+
 ## Stale Holds and Operator Visibility
 
 Reservation holds use the API's configured hold window. The initial default should be 15 minutes.
 
 Expired reservation holds are tracked in Redis via `reservation-expirations`, but are not yet released or reconciled automatically. That active reconciliation belongs with payment/reconciliation work in a future production extension.
+
+`expiredReservationCount` includes a hold when its expiry timestamp is equal to or earlier than the status measurement time. Expiry changes visibility only: it does not change `remainingStock`, `reservedStock`, pending-persistence membership, or the stored retry outcome.
 
 Operators can inspect:
 
@@ -96,5 +104,7 @@ Pending persistence is not hidden:
 - the API response is explicit;
 - Redis tracks the reservation in `pending-persistence`;
 - inventory status exposes pending count and oldest pending age.
+
+The service may idempotently ensure the marker again after a PostgreSQL failure. If that ensure reports an error, the API still returns the explicit pending response because the original atomic stock decision already created the sentinel. PostgreSQL persistence, marker-ensure, and accepted-promotion failures are reported through structured logs with correlation and reservation context. A promotion failure after PostgreSQL commits still returns truthful `reservation_secured`; the sentinel remains visible until an idempotent retry finds the durable rows, promotes the Redis outcome, and removes the sentinel.
 
 This keeps the user-facing behavior realistic while making reconciliation work visible to operators.

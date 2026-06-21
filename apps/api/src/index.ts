@@ -15,7 +15,10 @@ import { createInfrastructureReadinessCheck } from "./runtime/readiness.js";
 import { buildApiServer } from "./server.js";
 import { InventoryStatusService } from "./services/inventory-status-service.js";
 import { PostgresBuyPersistence } from "./services/postgres-buy-persistence.js";
-import { ReserveOrderService } from "./services/reserve-order-service.js";
+import {
+  type ReservationPartialFailureReport,
+  ReserveOrderService,
+} from "./services/reserve-order-service.js";
 
 export const apiAppName = "api" as const;
 export const apiAppDependencies = [contractsPackageName, dbPackageName, loggerPackageName] as const;
@@ -48,9 +51,21 @@ export async function startApiServer(): Promise<void> {
     reservationHoldMinutes: config.reservationHoldMinutes,
     idempotencyTtlSeconds: config.idempotencyTtlSeconds,
     pendingPersistenceRetryAfterSeconds: config.pendingPersistenceRetryAfterSeconds,
-    reportPromotionFailure: (error, reservationId) => {
+    reportPersistenceFailure: (report) => {
       logger.error(
-        { err: error, reservationId },
+        partialFailureLogContext(report),
+        "Redis secured a reservation but PostgreSQL persistence failed.",
+      );
+    },
+    reportPendingPersistenceEnsureFailure: (report) => {
+      logger.error(
+        partialFailureLogContext(report),
+        "Could not ensure the Redis pending-persistence marker.",
+      );
+    },
+    reportPromotionFailure: (report) => {
+      logger.error(
+        partialFailureLogContext(report),
         "Durable reservation succeeded but Redis idempotency promotion failed.",
       );
     },
@@ -94,6 +109,17 @@ export async function startApiServer(): Promise<void> {
     await connection.close();
     process.exitCode = 1;
   }
+}
+
+function partialFailureLogContext(report: ReservationPartialFailureReport) {
+  return {
+    err: report.error,
+    reservationId: report.reservationId,
+    saleOfferId: report.saleOfferId,
+    ...(report.runId ? { runId: report.runId } : {}),
+    correlationId: report.correlationId,
+    idempotencyKey: report.idempotencyKey,
+  };
 }
 
 if (process.env.NODE_ENV !== "test" && import.meta.url === `file://${process.argv[1]}`) {

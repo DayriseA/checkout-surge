@@ -36,6 +36,28 @@ export interface StockReservationGateway {
   }): Promise<void>;
 }
 
+export interface ReservationPartialFailureReport {
+  error: unknown;
+  reservationId: string;
+  saleOfferId: string;
+  runId?: string;
+  correlationId: string;
+  idempotencyKey: string;
+}
+
+type ReservationPartialFailureReporter = (report: ReservationPartialFailureReport) => void;
+
+function safelyReportPartialFailure(
+  reporter: ReservationPartialFailureReporter,
+  report: ReservationPartialFailureReport,
+): void {
+  try {
+    reporter(report);
+  } catch {
+    // Reporting is non-critical and must not hide the reservation outcome.
+  }
+}
+
 export class ReserveOrderService {
   private readonly persistence: BuyPersistence;
   private readonly stockReservations: StockReservationGateway;
@@ -43,7 +65,9 @@ export class ReserveOrderService {
   private readonly idempotencyTtlSeconds: number;
   private readonly pendingPersistenceRetryAfterSeconds: number;
   private readonly generateId: () => string;
-  private readonly reportPromotionFailure: (error: unknown, reservationId: string) => void;
+  private readonly reportPersistenceFailure: ReservationPartialFailureReporter;
+  private readonly reportPendingPersistenceEnsureFailure: ReservationPartialFailureReporter;
+  private readonly reportPromotionFailure: ReservationPartialFailureReporter;
 
   constructor(options: {
     persistence: BuyPersistence;
@@ -52,7 +76,9 @@ export class ReserveOrderService {
     idempotencyTtlSeconds: number;
     pendingPersistenceRetryAfterSeconds: number;
     generateId?: () => string;
-    reportPromotionFailure?: (error: unknown, reservationId: string) => void;
+    reportPersistenceFailure?: ReservationPartialFailureReporter;
+    reportPendingPersistenceEnsureFailure?: ReservationPartialFailureReporter;
+    reportPromotionFailure?: ReservationPartialFailureReporter;
   }) {
     this.persistence = options.persistence;
     this.stockReservations = options.stockReservations;
@@ -60,6 +86,9 @@ export class ReserveOrderService {
     this.idempotencyTtlSeconds = options.idempotencyTtlSeconds;
     this.pendingPersistenceRetryAfterSeconds = options.pendingPersistenceRetryAfterSeconds;
     this.generateId = options.generateId ?? randomUUID;
+    this.reportPersistenceFailure = options.reportPersistenceFailure ?? (() => undefined);
+    this.reportPendingPersistenceEnsureFailure =
+      options.reportPendingPersistenceEnsureFailure ?? (() => undefined);
     this.reportPromotionFailure = options.reportPromotionFailure ?? (() => undefined);
   }
 
@@ -130,10 +159,7 @@ export class ReserveOrderService {
       throw new Error("Accepted Redis idempotency record has no durable reservation and order.");
     }
 
-    await this.stockReservations.markPendingPersistence({
-      idempotencyKey: input.request.idempotencyKey,
-      reservation: decision.reservation,
-    });
+    await this.ensurePendingPersistence(input.request.idempotencyKey, decision.reservation);
     return this.pendingResponse(decision.reservation, input.correlationId, now);
   }
 
@@ -149,11 +175,12 @@ export class ReserveOrderService {
       persisted = await this.persistence.persistSecuredReservation({
         reservation: input.reservation,
       });
-    } catch {
-      await this.stockReservations.markPendingPersistence({
-        idempotencyKey: input.idempotencyKey,
-        reservation: input.reservation,
-      });
+    } catch (error) {
+      safelyReportPartialFailure(
+        this.reportPersistenceFailure,
+        this.partialFailureReport(error, input.idempotencyKey, input.reservation),
+      );
+      await this.ensurePendingPersistence(input.idempotencyKey, input.reservation);
       return this.pendingResponse(input.reservation, input.correlationId, input.now);
     }
 
@@ -168,8 +195,40 @@ export class ReserveOrderService {
     try {
       await this.stockReservations.promoteAccepted({ idempotencyKey, reservation });
     } catch (error) {
-      this.reportPromotionFailure(error, reservation.id);
+      safelyReportPartialFailure(
+        this.reportPromotionFailure,
+        this.partialFailureReport(error, idempotencyKey, reservation),
+      );
     }
+  }
+
+  private async ensurePendingPersistence(
+    idempotencyKey: string,
+    reservation: SecuredReservationHold,
+  ): Promise<void> {
+    try {
+      await this.stockReservations.markPendingPersistence({ idempotencyKey, reservation });
+    } catch (error) {
+      safelyReportPartialFailure(
+        this.reportPendingPersistenceEnsureFailure,
+        this.partialFailureReport(error, idempotencyKey, reservation),
+      );
+    }
+  }
+
+  private partialFailureReport(
+    error: unknown,
+    idempotencyKey: string,
+    reservation: SecuredReservationHold,
+  ): ReservationPartialFailureReport {
+    return {
+      error,
+      reservationId: reservation.id,
+      saleOfferId: reservation.saleOfferId,
+      ...(reservation.runId ? { runId: reservation.runId } : {}),
+      correlationId: reservation.correlationId,
+      idempotencyKey,
+    };
   }
 
   private createReservationHold(

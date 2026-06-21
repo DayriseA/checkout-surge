@@ -17,6 +17,7 @@ import {
   getInventoryStatus,
   InventoryNotInitializedError,
   initializeInventory,
+  inventoryKeys,
   isRunSaleEligible,
   markReservationPendingPersistence,
   orderEvents,
@@ -573,7 +574,10 @@ describe("API buy persistence", () => {
       throw new Error("Test infrastructure was not initialized.");
     }
 
-    await redis.hset(`inventory:${fixtureIds.saleOffer}:state`, "remainingStock", "0");
+    await redis.hset(`inventory:${fixtureIds.saleOffer}:state`, {
+      remainingStock: "0",
+      reservedStock: "5",
+    });
 
     const server = await buildTestServer({
       persistence: new PostgresBuyPersistence(connection.db),
@@ -617,7 +621,13 @@ describe("API buy persistence", () => {
     if (!redis) {
       throw new Error("Test Redis connection was not initialized.");
     }
-    const gateway = createRedisStockReservations(redis);
+    const redisGateway = createRedisStockReservations(redis);
+    const gateway: StockReservationGateway = {
+      ...redisGateway,
+      markPendingPersistence: async () => {
+        throw new Error("simulated pending marker ensure failure");
+      },
+    };
     const failingPersistence: BuyPersistence = {
       persistSecuredReservation: async () => {
         throw new Error("simulated PostgreSQL failure");
@@ -684,6 +694,8 @@ describe("API buy persistence", () => {
       const replayPayload = buyResponseSchema.parse((await server.inject(request)).json());
       const reservationRows = await connection.db.select().from(reservations);
       const orderRows = await connection.db.select().from(orders);
+      const eventRows = await connection.db.select().from(orderEvents);
+      const inventoryStatus = await getInventoryStatus(redis, fixtureIds.saleOffer);
 
       expect(firstPayload.outcome).toBe("reservation_secured");
       expect(replayPayload.outcome).toBe("idempotent_replay");
@@ -697,6 +709,9 @@ describe("API buy persistence", () => {
       expect(replayPayload.order.id).toBe(firstPayload.order.id);
       expect(reservationRows).toHaveLength(1);
       expect(orderRows).toHaveLength(1);
+      expect(eventRows).toHaveLength(2);
+      expect(inventoryStatus.reservationThroughput.successfulReservationCount).toBe(1);
+      expect(await redis.llen(inventoryKeys(fixtureIds.saleOffer).events)).toBe(2);
     } finally {
       await server.close();
     }
@@ -776,10 +791,14 @@ describe("API buy persistence", () => {
           quantity: 1,
         },
       };
-      const firstPayload = buyResponseSchema.parse((await server.inject(request)).json());
+      const firstResponse = await server.inject(request);
+      const firstPayload = buyResponseSchema.parse(firstResponse.json());
+      const statusBeforeRetry = await getInventoryStatus(redis, fixtureIds.saleOffer);
       const replayPayload = buyResponseSchema.parse((await server.inject(request)).json());
 
+      expect(firstResponse.statusCode).toBe(202);
       expect(firstPayload.outcome).toBe("reservation_secured");
+      expect(statusBeforeRetry.pendingPersistenceCount).toBe(1);
       expect(replayPayload.outcome).toBe("idempotent_replay");
       expect(await connection.db.select().from(reservations)).toHaveLength(1);
       expect(await connection.db.select().from(orders)).toHaveLength(1);

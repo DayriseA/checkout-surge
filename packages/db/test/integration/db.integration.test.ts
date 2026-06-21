@@ -309,6 +309,12 @@ describe("database migrations, seed data, and reset behavior", () => {
     expect(await redis.zscore(keys.reservationExpirations, input.reservation.id)).toBe(
       new Date(reservationExpiresAt).getTime().toString(),
     );
+    expect(await redis.zscore(keys.pendingPersistence, input.reservation.id)).toBe(
+      new Date(reservationSecuredAt).getTime().toString(),
+    );
+    expect(await getInventoryStatus(redis, saleOfferId)).toMatchObject({
+      pendingPersistenceCount: 1,
+    });
     const idempotencyTtl = await redis.ttl(keys.idempotency(input.idempotencyKey));
     expect(idempotencyTtl).toBeGreaterThan(1790);
     expect(idempotencyTtl).toBeLessThanOrEqual(1800);
@@ -470,6 +476,7 @@ describe("database migrations, seed data, and reset behavior", () => {
     const idempotencyKey = keys.idempotency(firstInput.idempotencyKey);
     const ttlBeforePromotion = await redis.ttl(idempotencyKey);
     await markReservationPendingPersistence(redis, firstInput);
+    await markReservationPendingPersistence(redis, firstInput);
     expect(await redis.zscore(keys.pendingPersistence, firstInput.reservation.id)).toBe(
       new Date(firstInput.reservation.securedAt).getTime().toString(),
     );
@@ -557,6 +564,114 @@ describe("database migrations, seed data, and reset behavior", () => {
     });
     expect(await redis.hlen(keys.reservations)).toBe(1);
     expect(await redis.llen(keys.events)).toBe(2);
+  });
+
+  it("treats a retry after idempotency expiry as a new reservation attempt", async () => {
+    const saleOfferId = "10000000-0000-4000-8000-000000000011";
+    const keys = inventoryKeys(saleOfferId);
+    const first = buildReservationInput({
+      saleOfferId,
+      sequence: 11,
+      idempotencyKey: "late-retry-key",
+    });
+    const lateRetry = buildReservationInput({
+      saleOfferId,
+      sequence: 111,
+      idempotencyKey: "late-retry-key",
+    });
+    await initializeInventory(redis, { saleOfferId, allocatedStock: 2 });
+
+    await reserveInventoryStock(redis, first);
+    await redis.del(keys.idempotency(first.idempotencyKey));
+    const retryDecision = await reserveInventoryStock(redis, lateRetry);
+
+    expect(retryDecision).toEqual({
+      outcome: "reservation_secured",
+      reservation: lateRetry.reservation,
+    });
+    expect(await redis.hgetall(keys.state)).toMatchObject({
+      remainingStock: "0",
+      reservedStock: "2",
+    });
+    expect(await redis.hlen(keys.reservations)).toBe(2);
+    expect(await redis.zcard(keys.pendingPersistence)).toBe(2);
+    expect(await redis.llen(keys.events)).toBe(3);
+  });
+
+  it("keeps stale accepted and pending holds reserved with inclusive expiry visibility", async () => {
+    const acceptedOfferId = "10000000-0000-4000-8000-000000000012";
+    const pendingOfferId = "10000000-0000-4000-8000-000000000013";
+    const accepted = buildReservationInput({ saleOfferId: acceptedOfferId, sequence: 12 });
+    const pending = buildReservationInput({ saleOfferId: pendingOfferId, sequence: 13 });
+    const immediatelyBeforeExpiry = new Date(new Date(reservationExpiresAt).getTime() - 1);
+    const atExpiry = new Date(reservationExpiresAt);
+    await initializeInventory(redis, { saleOfferId: acceptedOfferId, allocatedStock: 1 });
+    await initializeInventory(redis, { saleOfferId: pendingOfferId, allocatedStock: 1 });
+    await reserveInventoryStock(redis, accepted);
+    await promoteReservationIdempotencyToAccepted(redis, accepted);
+    await reserveInventoryStock(redis, pending);
+
+    expect(
+      (await getInventoryStatus(redis, acceptedOfferId, immediatelyBeforeExpiry))
+        .expiredReservationCount,
+    ).toBe(0);
+    expect(await getInventoryStatus(redis, acceptedOfferId, atExpiry)).toMatchObject({
+      remainingStock: 0,
+      reservedStock: 1,
+      expiredReservationCount: 1,
+      pendingPersistenceCount: 0,
+    });
+    expect(await getInventoryStatus(redis, pendingOfferId, atExpiry)).toMatchObject({
+      remainingStock: 0,
+      reservedStock: 1,
+      expiredReservationCount: 1,
+      pendingPersistenceCount: 1,
+      oldestPendingPersistenceAgeSeconds: 900,
+    });
+    expect(await reserveInventoryStock(redis, accepted)).toMatchObject({
+      outcome: "idempotent_replay",
+      reservation: accepted.reservation,
+    });
+    expect(await reserveInventoryStock(redis, pending)).toMatchObject({
+      outcome: "reservation_pending_persistence",
+      reservation: pending.reservation,
+    });
+  });
+
+  it("rejects malformed counters and collection types before mutating stock", async () => {
+    const malformedCounterOfferId = "10000000-0000-4000-8000-000000000014";
+    const malformedCollectionOfferId = "10000000-0000-4000-8000-000000000015";
+    const counterKeys = inventoryKeys(malformedCounterOfferId);
+    const collectionKeys = inventoryKeys(malformedCollectionOfferId);
+    const counterInput = buildReservationInput({
+      saleOfferId: malformedCounterOfferId,
+      sequence: 14,
+    });
+    const collectionInput = buildReservationInput({
+      saleOfferId: malformedCollectionOfferId,
+      sequence: 15,
+    });
+    await initializeInventory(redis, { saleOfferId: malformedCounterOfferId, allocatedStock: 2 });
+    await initializeInventory(redis, {
+      saleOfferId: malformedCollectionOfferId,
+      allocatedStock: 2,
+    });
+    await redis.hset(counterKeys.state, "reservedStock", "malformed");
+    await redis.del(collectionKeys.events);
+    await redis.set(collectionKeys.events, "not-a-list");
+
+    await expect(reserveInventoryStock(redis, counterInput)).rejects.toThrow(
+      "Inventory reservedStock must be a nonnegative safe integer",
+    );
+    await expect(reserveInventoryStock(redis, collectionInput)).rejects.toThrow(
+      "Inventory events key must be a list",
+    );
+    expect(await redis.hget(counterKeys.state, "remainingStock")).toBe("2");
+    expect(await redis.hget(collectionKeys.state, "remainingStock")).toBe("2");
+    expect(await redis.hlen(counterKeys.reservations)).toBe(0);
+    expect(await redis.hlen(collectionKeys.reservations)).toBe(0);
+    expect(await redis.exists(counterKeys.idempotency(counterInput.idempotencyKey))).toBe(0);
+    expect(await redis.exists(collectionKeys.idempotency(collectionInput.idempotencyKey))).toBe(0);
   });
 
   it("rejects invalid quantities before Redis without mutating inventory", async () => {

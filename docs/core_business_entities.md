@@ -450,6 +450,7 @@ Canonical statuses:
 Notes:
 
 - `reservationId` is reserved by the Redis success path even when the durable `reservations` row does not yet exist.
+- Pending visibility is created atomically with the Redis stock decision and removed atomically with accepted-idempotency promotion after durable persistence.
 - A run with unreconciled pending persistence remains explainably draining until reconciliation or timeout policy resolves it.
 
 ### 12. SimulatedNotification
