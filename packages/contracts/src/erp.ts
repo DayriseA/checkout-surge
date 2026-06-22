@@ -28,9 +28,13 @@ export const erpConfirmationRequestSchema = z
   .strict();
 export type ErpConfirmationRequest = z.infer<typeof erpConfirmationRequestSchema>;
 
+export const erpConfirmationResponseStatusValues = ["succeeded", "failed"] as const;
+export const erpConfirmationResponseStatusSchema = z.enum(erpConfirmationResponseStatusValues);
+export type ErpConfirmationResponseStatus = z.infer<typeof erpConfirmationResponseStatusSchema>;
+
 export const erpConfirmationResponseSchema = z
   .object({
-    status: erpAttemptStatusSchema,
+    status: erpConfirmationResponseStatusSchema,
     confirmationId: z.string().trim().min(1).optional(),
     httpStatus: z.number().int().min(100).max(599).optional(),
     errorCode: z.string().trim().min(1).optional(),

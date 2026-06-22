@@ -408,6 +408,8 @@ Subtasks:
 
 Completion summary: The worker startup path now composes a real Mock ERP HTTP confirmation adapter using `MOCK_ERP_BASE_URL` and `ERP_REQUEST_TIMEOUT_MS` instead of the local success placeholder. ERP responses, invalid responses, transport failures, and timeouts are recorded through a PostgreSQL attempt persistence adapter that writes `erp_attempts` rows and correlated `erp.attempt.succeeded` / `erp.attempt.failed` events. Worker unit tests cover request shape, success, dependency failure, timeout, invalid response, transport failure, and config validation; integration tests prove real BullMQ deliveries persist ERP attempt history before terminal order outcomes.
 
+Follow-up note: The worker-facing Mock ERP HTTP response contract now accepts only `succeeded` and `failed`; `timed_out` remains a durable attempt status for worker-owned request timeouts. Attempt persistence failures are propagated as local retryable persistence errors rather than being reclassified as ERP transport failures.
+
 ### ✅ Task 5.4 - Add resilience patterns around the ERP dependency
 
 Subtasks:
@@ -428,6 +430,8 @@ Subtasks:
 - ✅ Prepare these signals for dashboard panels and benchmark summaries.
 
 Completion summary: Shared contracts now define the API-readable ERP resilience projection at `/erp/status`, including dependency status, reason, circuit snapshot, retry pressure, latest attempt, recent failure/timeout counts, and confirmation-delay metrics. The worker publishes circuit snapshots through a shared Redis helper whenever breaker state changes, and the API combines that snapshot with BullMQ retry pressure plus PostgreSQL ERP/order read models. API route and service tests cover healthy, degraded, unavailable, and missing-circuit states, while contract tests pin the response shape for later dashboard and benchmark-summary consumers.
+
+Follow-up note: Recent ERP attempt, failure, and timeout counts are exact PostgreSQL aggregate counts over the configured recent-attempt window, not bounded row samples. Bounded reads remain only for latest-attempt and delay-summary inputs where the projection intentionally samples display data.
 
 ### ✅ Task 5.6 - Add automated tests for mock ERP and resilience controls
 

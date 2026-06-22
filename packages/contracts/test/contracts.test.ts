@@ -181,6 +181,16 @@ describe("ERP contracts", () => {
         timestamp,
       }),
     ).toMatchObject({ status: "failed", errorCode: "erp_unavailable" });
+
+    expect(() =>
+      erpConfirmationResponseSchema.parse({
+        status: "timed_out",
+        errorCode: "erp_request_timeout",
+        errorMessage: "The worker timed out the ERP request.",
+        latencyMs: 2000,
+        timestamp,
+      }),
+    ).toThrow();
   });
 
   it("defines chaos control paths and service-token header", () => {

@@ -39,6 +39,7 @@ export {
 } from "./application/erp-circuit-breaker.js";
 export {
   type ErpAttemptPersistence,
+  ErpAttemptPersistenceError,
   type ErpAttemptRecord,
   ErpConfirmationFailedError,
   ErpConfirmationInvalidResponseError,

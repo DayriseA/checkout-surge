@@ -12,7 +12,7 @@ import {
   orders,
 } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
-import { desc, eq, gte } from "drizzle-orm";
+import { desc, eq, gte, sql } from "drizzle-orm";
 import type { QueueStatusService } from "./queue-status-service.js";
 
 export interface ErpStatusReadModel {
@@ -45,15 +45,17 @@ export class PostgresErpAttemptStatusReader implements ErpAttemptStatusReader {
 
   async readStatus(now: Date, recentAttemptWindowSeconds: number): Promise<ErpStatusReadModel> {
     const recentSince = new Date(now.getTime() - recentAttemptWindowSeconds * 1000);
-    const [latestAttemptRows, recentAttemptRows, processingOrderRows, confirmedOrderRows] =
+    const [latestAttemptRows, recentAttemptCountRows, processingOrderRows, confirmedOrderRows] =
       await Promise.all([
         this.db.select().from(erpAttempts).orderBy(desc(erpAttempts.finishedAt)).limit(1),
         this.db
-          .select()
+          .select({
+            recentAttemptCount: sql<number>`(count(*))::int`,
+            recentFailureCount: sql<number>`(count(*) filter (where ${erpAttempts.status} = 'failed'))::int`,
+            recentTimeoutCount: sql<number>`(count(*) filter (where ${erpAttempts.status} = 'timed_out'))::int`,
+          })
           .from(erpAttempts)
-          .where(gte(erpAttempts.finishedAt, recentSince))
-          .orderBy(desc(erpAttempts.finishedAt))
-          .limit(100),
+          .where(gte(erpAttempts.finishedAt, recentSince)),
         this.db
           .select({ processingAt: orders.processingAt })
           .from(orders)
@@ -70,19 +72,18 @@ export class PostgresErpAttemptStatusReader implements ErpAttemptStatusReader {
     const latestAttempt = latestAttemptRows[0]
       ? toLatestAttemptSummary(latestAttemptRows[0])
       : null;
-    const recentFailureCount = recentAttemptRows.filter(
-      (attempt) => attempt.status === "failed",
-    ).length;
-    const recentTimeoutCount = recentAttemptRows.filter(
-      (attempt) => attempt.status === "timed_out",
-    ).length;
+    const recentAttemptCounts = recentAttemptCountRows[0] ?? {
+      recentAttemptCount: 0,
+      recentFailureCount: 0,
+      recentTimeoutCount: 0,
+    };
 
     return {
       latestAttempt,
       recentAttemptWindowSeconds,
-      recentAttemptCount: recentAttemptRows.length,
-      recentFailureCount,
-      recentTimeoutCount,
+      recentAttemptCount: recentAttemptCounts.recentAttemptCount,
+      recentFailureCount: recentAttemptCounts.recentFailureCount,
+      recentTimeoutCount: recentAttemptCounts.recentTimeoutCount,
       confirmationDelay: toConfirmationDelay(now, processingOrderRows, confirmedOrderRows),
     };
   }
