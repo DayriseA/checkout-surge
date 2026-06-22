@@ -306,7 +306,7 @@ Subtasks:
 
 ---
 
-## 🚧 Phase 4 - Asynchronous Order Pipeline
+## ✅ Phase 4 - Asynchronous Order Pipeline
 
 ### Goal
 
@@ -318,7 +318,7 @@ Primary references:
 - `docs/core_business_entities.md`
 - `docs/cross_service_conventions.md`
 
-Progress note: Tasks 4.1-4.4 delivered the shared BullMQ contracts and adapters, the API handoff that publishes each durable queued order under its deterministic order ID before Redis accepted promotion, the worker-owned `queued -> processing -> confirmed | failed` workflow, and a bounded queue-health projection available through `/queue/status`. Worker transitions and append-only events are atomic, validate durable/job identity, preserve correlation and delivery-attempt metadata, safely resume `processing`, and treat terminal redelivery as an idempotent no-op. Queue visibility now reports exact counts for the observed waiting, prioritized, paused, delayed, active, and retained failed BullMQ states; backlog depth across the observed states awaiting execution; enqueue age for the oldest waiting, prioritized, or paused job; bounded retry pressure; and a bounded recent failed-job sample. Public contracts expose only the semantic `orders:process` name, while the physical BullMQ name remains adapter and internal-log detail. API and worker readiness degrade on queue command/connectivity failures, while backlog and retained failed jobs remain operator signals rather than readiness failures. Phase 4 uses an injected successful local confirmation placeholder so Phase 5 can add ERP HTTP behavior without rewriting transition persistence. The broader asynchronous pipeline suite remains deferred to Task 4.5; ERP attempts, retry/backoff, circuit breaking, dead-letter behavior, notifications, and dashboard realtime/UI remain deferred to their planned phases.
+Completion summary: Phase 4 delivers the durable API-to-BullMQ handoff, immediate queued `202` reservation responses, worker-owned `queued -> processing -> confirmed | failed` transitions, append-only correlated event history with delivery metadata, terminal idempotency and transactional atomicity, readiness integration, and a validated bounded `/queue/status` projection. Integration coverage now proves the no-worker API response boundary, real enqueue and pickup, BullMQ metadata across test-only retry deliveries, terminal PostgreSQL state and reconstructable history, and live Redis/BullMQ backlog, paused, delayed, retrying, truncated, and recent-failure visibility. ERP behavior and attempt persistence, production retry/backoff policy, circuit breaking, dead-letter routing, notifications, Redis Pub/Sub, SSE, and dashboard behavior remain deferred to later phases.
 
 ### ✅ Task 4.1 - Introduce the queue layer and worker skeleton
 
@@ -353,14 +353,14 @@ Subtasks:
 - ✅ Surface queue health in readiness checks, logs, API-readable state, and later dashboard projections.
 - ✅ Make the backlog behavior observable before the full dashboard is complete.
 
-### ⬜ Task 4.5 - Add automated tests for the asynchronous order pipeline
+### ✅ Task 4.5 - Add automated tests for the asynchronous order pipeline
 
 Subtasks:
 
-- Add worker integration tests for enqueueing, pickup, retry metadata capture, and terminal state persistence.
-- Add API integration tests proving successful reservations return immediately without waiting for worker completion.
-- Add queue integration tests covering backlog visibility, failed-job reporting, and queue-health projections.
-- Add persistence tests proving order-state transitions and event history remain reconstructable.
+- ✅ Add worker integration tests for enqueueing, pickup, retry metadata capture, and terminal state persistence.
+- ✅ Add API integration tests proving successful reservations return immediately without waiting for worker completion.
+- ✅ Add queue integration tests covering backlog visibility, failed-job reporting, and queue-health projections.
+- ✅ Add persistence tests proving order-state transitions and event history remain reconstructable.
 
 ---
 

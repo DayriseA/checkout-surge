@@ -93,6 +93,42 @@ describe("BullMQ order-processing boundary", () => {
     });
   });
 
+  it("passes BullMQ retry delivery metadata across real attempts", async () => {
+    const handledTwice = deferred<void>();
+    const deliveries: Array<{ attemptNumber: number; attemptsMade: number }> = [];
+    consumer = createBullMqOrderProcessConsumer({
+      connection: { url: testRedisUrl(), maxRetriesPerRequest: null },
+      concurrency: 1,
+      handler: {
+        handle: async (_payload, delivery) => {
+          deliveries.push(delivery);
+          if (deliveries.length === 1) {
+            throw new Error("test-only first delivery failure");
+          }
+          handledTwice.resolve();
+        },
+      },
+      logger: createSilentLogger("worker"),
+    });
+
+    consumer.start();
+    const queuedJob = await queue.add(orderProcessJobName, job, {
+      attempts: 2,
+      jobId: job.orderId,
+    });
+
+    await handledTwice.promise;
+    await vi.waitFor(async () => expect(await queuedJob.getState()).toBe("completed"), {
+      timeout: 10_000,
+      interval: 25,
+    });
+    expect(deliveries).toEqual([
+      { attemptNumber: 1, attemptsMade: 0 },
+      { attemptNumber: 2, attemptsMade: 1 },
+    ]);
+    expect((await queue.getJob(job.orderId))?.attemptsMade).toBe(2);
+  });
+
   it("reports queue connectivity immediately across pre-ready, ready, and closed states", async () => {
     const handled = deferred<OrderProcessJob>();
     consumer = createBullMqOrderProcessConsumer({

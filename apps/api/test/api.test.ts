@@ -11,7 +11,7 @@ import {
   type OrderProcessJob,
   type OrderSummary,
   orderProcessBullMqQueueName,
-  type orderProcessJobName,
+  orderProcessJobName,
   type QueueStatus,
   queueStatusSchema,
   type ReservationSummary,
@@ -35,11 +35,14 @@ import {
 } from "@checkout-surge/db";
 import { resetTestDatabase } from "@checkout-surge/db/testing";
 import { createSilentLogger } from "@checkout-surge/logger";
-import { Queue } from "bullmq";
+import { Queue, Worker } from "bullmq";
 import { eq } from "drizzle-orm";
-import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createBullMqOrderProcessJobPublisher } from "../src/queue/bullmq-order-process-job-publisher.js";
-import { createBullMqOrderProcessQueueInspector } from "../src/queue/bullmq-order-process-queue-inspector.js";
+import {
+  createBullMqOrderProcessQueueInspector,
+  createOrderProcessQueueInspector,
+} from "../src/queue/bullmq-order-process-queue-inspector.js";
 import { loadApiConfig } from "../src/runtime/config.js";
 import type { ApiFastifyInstance } from "../src/runtime/fastify.js";
 import { createInfrastructureReadinessCheck } from "../src/runtime/readiness.js";
@@ -689,6 +692,130 @@ describe("API buy persistence", () => {
       await server.close();
       await publisher.close();
       await queueInspector.close();
+      await queue.close();
+    }
+  });
+
+  it("projects bounded health from real paused, delayed, retrying, and failed BullMQ jobs", async () => {
+    if (!redis) {
+      throw new Error("Test Redis was not initialized.");
+    }
+
+    const redisUrl = process.env.TEST_REDIS_URL ?? "redis://localhost:6380";
+    const connectionOptions = { url: redisUrl, maxRetriesPerRequest: 3 } as const;
+    const queue = new Queue<OrderProcessJob, void, typeof orderProcessJobName>(
+      orderProcessBullMqQueueName,
+      { connection: connectionOptions },
+    );
+    const worker = new Worker<OrderProcessJob, void, typeof orderProcessJobName>(
+      orderProcessBullMqQueueName,
+      async () => {
+        throw new Error("test-only queue inspection failure");
+      },
+      { connection: { url: redisUrl, maxRetriesPerRequest: null } },
+    );
+    const truncatedInspector = createOrderProcessQueueInspector(queue, {
+      retryInspectionLimit: 1,
+      failedJobInspectionLimit: 1,
+    });
+    const fullInspector = createOrderProcessQueueInspector(queue, {
+      retryInspectionLimit: 10,
+      failedJobInspectionLimit: 1,
+    });
+    const queueJob = (orderId: string): OrderProcessJob => ({
+      orderId,
+      publicOrderId: `ord_${orderId.slice(0, 8)}`,
+      reservationId: randomUUID(),
+      saleOfferId: fixtureIds.saleOffer,
+      correlationId: `queue-inspection-${orderId}`,
+      quantity: 1,
+      queuedAt: new Date().toISOString(),
+    });
+
+    try {
+      const failedOlder = await queue.add(orderProcessJobName, queueJob(randomUUID()), {
+        attempts: 1,
+        jobId: "failed-older",
+      });
+      await vi.waitFor(async () => expect(await failedOlder.getState()).toBe("failed"), {
+        timeout: 10_000,
+        interval: 25,
+      });
+      await vi.waitFor(
+        async () => {
+          const persistedJob = await queue.getJob("failed-older");
+          expect(Date.now()).toBeGreaterThan(persistedJob?.finishedOn ?? Number.MAX_SAFE_INTEGER);
+        },
+        { timeout: 10_000, interval: 25 },
+      );
+      const failedNewest = await queue.add(orderProcessJobName, queueJob(randomUUID()), {
+        attempts: 1,
+        jobId: "failed-newest",
+      });
+      await vi.waitFor(async () => expect(await failedNewest.getState()).toBe("failed"), {
+        timeout: 10_000,
+        interval: 25,
+      });
+      const retrying = await queue.add(orderProcessJobName, queueJob(randomUUID()), {
+        attempts: 2,
+        backoff: 60_000,
+        jobId: "retrying-delayed",
+      });
+      await vi.waitFor(
+        async () => {
+          expect(await retrying.getState()).toBe("delayed");
+          expect((await queue.getJob("retrying-delayed"))?.attemptsMade).toBe(1);
+        },
+        { timeout: 10_000, interval: 25 },
+      );
+      await queue.add(orderProcessJobName, queueJob(randomUUID()), {
+        delay: 120_000,
+        jobId: "scheduled-delayed",
+      });
+
+      const boundedStatus = queueStatusSchema.parse(await truncatedInspector.inspect());
+      expect(boundedStatus).toMatchObject({
+        name: "orders:process",
+        connectivity: "reachable",
+        depth: 2,
+        counts: { waiting: 0, prioritized: 0, paused: 0, delayed: 2, active: 0, failed: 2 },
+        retryPressure: {
+          inspectedJobCount: 1,
+          inspectionLimit: 1,
+          retryingJobCount: 1,
+          retryAttemptCount: 1,
+          inspectionTruncated: true,
+        },
+        failedJobs: {
+          totalCount: 2,
+          inspectionLimit: 1,
+          inspectionTruncated: true,
+          recent: [
+            expect.objectContaining({
+              jobId: "failed-newest",
+              attemptsMade: 1,
+              failedReason: "test-only queue inspection failure",
+            }),
+          ],
+        },
+      });
+
+      await queue.pause();
+      await queue.add(orderProcessJobName, queueJob(randomUUID()), { jobId: "paused-backlog" });
+      const fullStatus = queueStatusSchema.parse(await fullInspector.inspect());
+
+      expect(fullStatus.depth).toBe(3);
+      expect(fullStatus.counts).toMatchObject({ paused: 1, delayed: 2, failed: 2 });
+      expect(fullStatus.retryPressure).toMatchObject({
+        inspectedJobCount: 3,
+        retryingJobCount: 1,
+        retryAttemptCount: 1,
+        inspectionTruncated: false,
+      });
+      expect(fullStatus.oldestWaitingAgeSeconds).not.toBeNull();
+      expect(fullStatus).not.toHaveProperty("physicalName");
+    } finally {
+      await worker.close();
       await queue.close();
     }
   });
