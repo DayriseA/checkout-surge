@@ -50,7 +50,20 @@ export interface OrderEnqueueFailureReport extends ReservationPartialFailureRepo
   orderId: string;
 }
 
+export interface BusinessOutcomeUpdateFailureReport {
+  error: unknown;
+  saleOfferId: string;
+  runId?: string;
+  correlationId: string;
+}
+
 type ReservationPartialFailureReporter = (report: ReservationPartialFailureReport) => void;
+type BusinessOutcomeUpdatePublisher = (input: {
+  saleOfferId: string;
+  runId?: string;
+  correlationId: string;
+  occurredAt: Date;
+}) => Promise<void>;
 
 function safelyReportPartialFailure<Report extends ReservationPartialFailureReport>(
   reporter: (report: Report) => void,
@@ -75,6 +88,10 @@ export class ReserveOrderService {
   private readonly reportPendingPersistenceEnsureFailure: ReservationPartialFailureReporter;
   private readonly reportPromotionFailure: ReservationPartialFailureReporter;
   private readonly reportOrderEnqueueFailure: (report: OrderEnqueueFailureReport) => void;
+  private readonly publishBusinessOutcomeUpdate: BusinessOutcomeUpdatePublisher;
+  private readonly reportBusinessOutcomeUpdateFailure: (
+    report: BusinessOutcomeUpdateFailureReport,
+  ) => void;
 
   constructor(options: {
     persistence: BuyPersistence;
@@ -88,6 +105,8 @@ export class ReserveOrderService {
     reportPendingPersistenceEnsureFailure?: ReservationPartialFailureReporter;
     reportPromotionFailure?: ReservationPartialFailureReporter;
     reportOrderEnqueueFailure?: (report: OrderEnqueueFailureReport) => void;
+    publishBusinessOutcomeUpdate?: BusinessOutcomeUpdatePublisher;
+    reportBusinessOutcomeUpdateFailure?: (report: BusinessOutcomeUpdateFailureReport) => void;
   }) {
     this.persistence = options.persistence;
     this.stockReservations = options.stockReservations;
@@ -101,6 +120,10 @@ export class ReserveOrderService {
       options.reportPendingPersistenceEnsureFailure ?? (() => undefined);
     this.reportPromotionFailure = options.reportPromotionFailure ?? (() => undefined);
     this.reportOrderEnqueueFailure = options.reportOrderEnqueueFailure ?? (() => undefined);
+    this.publishBusinessOutcomeUpdate =
+      options.publishBusinessOutcomeUpdate ?? (async () => undefined);
+    this.reportBusinessOutcomeUpdateFailure =
+      options.reportBusinessOutcomeUpdateFailure ?? (() => undefined);
   }
 
   async reserve(input: {
@@ -192,7 +215,36 @@ export class ReserveOrderService {
 
     await this.enqueuePersistedBuy(persisted, input.idempotencyKey, input.reservation);
     await this.promoteWithoutHidingDurableSuccess(input.idempotencyKey, input.reservation);
+    await this.publishBusinessOutcomeUpdateWithoutHidingDurableSuccess(
+      input.reservation,
+      input.now,
+    );
     return this.acceptedResponse("reservation_secured", persisted, input.correlationId, input.now);
+  }
+
+  private async publishBusinessOutcomeUpdateWithoutHidingDurableSuccess(
+    reservation: SecuredReservationHold,
+    occurredAt: Date,
+  ): Promise<void> {
+    try {
+      await this.publishBusinessOutcomeUpdate({
+        saleOfferId: reservation.saleOfferId,
+        ...(reservation.runId ? { runId: reservation.runId } : {}),
+        correlationId: reservation.correlationId,
+        occurredAt,
+      });
+    } catch (error) {
+      try {
+        this.reportBusinessOutcomeUpdateFailure({
+          error,
+          saleOfferId: reservation.saleOfferId,
+          ...(reservation.runId ? { runId: reservation.runId } : {}),
+          correlationId: reservation.correlationId,
+        });
+      } catch {
+        // Realtime publication is best-effort and must not hide durable success.
+      }
+    }
   }
 
   private async enqueuePersistedBuy(

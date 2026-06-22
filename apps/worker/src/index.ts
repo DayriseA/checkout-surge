@@ -2,6 +2,7 @@ import { contractsPackageName } from "@checkout-surge/contracts";
 import {
   createDatabaseConnection,
   dbPackageName,
+  publishBusinessOutcomeDashboardUpdate,
   setErpCircuitBreakerSnapshot,
 } from "@checkout-surge/db";
 import { createServiceLogger, loggerPackageName } from "@checkout-surge/logger";
@@ -102,6 +103,26 @@ export async function startWorker(): Promise<void> {
       persistence: new PostgresOrderTransitionPersistence(database.db),
       logger,
       isTemporaryConfirmationFailure,
+      publishBusinessOutcomeUpdate: async (job) => {
+        await publishBusinessOutcomeDashboardUpdate(database.db, redis, {
+          saleOfferId: job.saleOfferId,
+          ...(job.runId ? { runId: job.runId } : {}),
+          correlationId: job.correlationId,
+        });
+      },
+      reportBusinessOutcomeUpdateFailure: (report) => {
+        logger.error(
+          {
+            err: report.error,
+            orderId: report.orderId,
+            saleOfferId: report.saleOfferId,
+            ...(report.runId ? { runId: report.runId } : {}),
+            correlationId: report.correlationId,
+            transition: report.transition,
+          },
+          "Order transition succeeded but dashboard business outcome publication failed.",
+        );
+      },
     }),
     logger,
   });

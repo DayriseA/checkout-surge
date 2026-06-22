@@ -47,6 +47,44 @@ describe("order-process application workflow", () => {
     expect(persistence.transitionToFailed).not.toHaveBeenCalled();
   });
 
+  it("publishes business outcome updates for processing and confirmation transitions", async () => {
+    const publishBusinessOutcomeUpdate = vi.fn().mockResolvedValue(undefined);
+    const handler = createOrderProcessJobHandler({
+      confirmation: { confirm: vi.fn().mockResolvedValue(undefined) },
+      persistence: createPersistence(),
+      logger: createSilentLogger("worker"),
+      publishBusinessOutcomeUpdate,
+    });
+
+    await handler.handle(job, delivery);
+
+    expect(publishBusinessOutcomeUpdate).toHaveBeenCalledWith(job, "processing");
+    expect(publishBusinessOutcomeUpdate).toHaveBeenCalledWith(job, "confirmed");
+  });
+
+  it("does not fail the job when business outcome publication fails", async () => {
+    const publishError = new Error("redis unavailable");
+    const reportBusinessOutcomeUpdateFailure = vi.fn();
+    const handler = createOrderProcessJobHandler({
+      confirmation: { confirm: vi.fn().mockResolvedValue(undefined) },
+      persistence: createPersistence(),
+      logger: createSilentLogger("worker"),
+      publishBusinessOutcomeUpdate: vi.fn().mockRejectedValue(publishError),
+      reportBusinessOutcomeUpdateFailure,
+    });
+
+    await handler.handle(job, delivery);
+
+    expect(reportBusinessOutcomeUpdateFailure).toHaveBeenCalledWith(
+      expect.objectContaining({
+        error: publishError,
+        orderId: job.orderId,
+        saleOfferId: job.saleOfferId,
+        correlationId: job.correlationId,
+      }),
+    );
+  });
+
   it("resumes confirmation for an order already processing", async () => {
     const persistence = createPersistence({
       transitionToProcessing: vi.fn().mockResolvedValue({ status: "processing", resumed: true }),
@@ -156,6 +194,24 @@ describe("order-process application workflow", () => {
 
     expect(persistence.transitionToFailed).not.toHaveBeenCalled();
     expect(persistence.transitionToConfirmed).not.toHaveBeenCalled();
+  });
+
+  it("publishes a retrying business outcome update before retrying temporary confirmation failures", async () => {
+    const confirmationError = new Error("ERP temporarily unavailable");
+    const publishBusinessOutcomeUpdate = vi.fn().mockResolvedValue(undefined);
+    const handler = createOrderProcessJobHandler({
+      confirmation: { confirm: vi.fn().mockRejectedValue(confirmationError) },
+      persistence: createPersistence(),
+      logger: createSilentLogger("worker"),
+      isTemporaryConfirmationFailure: () => true,
+      publishBusinessOutcomeUpdate,
+    });
+
+    await expect(
+      handler.handle(job, { attemptNumber: 1, attemptsMade: 0, maxAttempts: 3 }),
+    ).rejects.toBe(confirmationError);
+
+    expect(publishBusinessOutcomeUpdate).toHaveBeenCalledWith(job, "retrying");
   });
 
   it("marks exhausted temporary confirmation failures as terminal order failures", async () => {

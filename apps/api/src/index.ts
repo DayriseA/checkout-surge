@@ -7,6 +7,7 @@ import {
   getInventoryStatus,
   markReservationPendingPersistence,
   promoteReservationIdempotencyToAccepted,
+  publishBusinessOutcomeDashboardUpdate,
   reserveInventoryStock,
 } from "@checkout-surge/db";
 import { createServiceLogger, loggerPackageName } from "@checkout-surge/logger";
@@ -27,6 +28,7 @@ import { InventoryStatusService } from "./services/inventory-status-service.js";
 import { PostgresBuyPersistence } from "./services/postgres-buy-persistence.js";
 import { QueueStatusService } from "./services/queue-status-service.js";
 import {
+  type BusinessOutcomeUpdateFailureReport,
   type OrderEnqueueFailureReport,
   type ReservationPartialFailureReport,
   ReserveOrderService,
@@ -134,6 +136,15 @@ export async function startApiServer(): Promise<void> {
         "Durable reservation succeeded but order-processing enqueue failed.",
       );
     },
+    publishBusinessOutcomeUpdate: async (input) => {
+      await publishBusinessOutcomeDashboardUpdate(connection.db, redis, input);
+    },
+    reportBusinessOutcomeUpdateFailure: (report) => {
+      logger.error(
+        businessOutcomeUpdateFailureLogContext(report),
+        "Durable reservation succeeded but dashboard business outcome publication failed.",
+      );
+    },
   });
 
   let server: ApiFastifyInstance | null = null;
@@ -236,6 +247,15 @@ function partialFailureLogContext(report: ReservationPartialFailureReport) {
     ...(report.runId ? { runId: report.runId } : {}),
     correlationId: report.correlationId,
     idempotencyKey: report.idempotencyKey,
+  };
+}
+
+function businessOutcomeUpdateFailureLogContext(report: BusinessOutcomeUpdateFailureReport) {
+  return {
+    err: report.error,
+    saleOfferId: report.saleOfferId,
+    ...(report.runId ? { runId: report.runId } : {}),
+    correlationId: report.correlationId,
   };
 }
 

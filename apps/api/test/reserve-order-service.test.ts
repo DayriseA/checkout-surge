@@ -7,6 +7,7 @@ import type {
 import { describe, expect, it, vi } from "vitest";
 import type { OrderProcessJobPublisher } from "../src/services/order-process-job-publisher.js";
 import {
+  type BusinessOutcomeUpdateFailureReport,
   type BuyPersistence,
   type OrderEnqueueFailureReport,
   type ReservationPartialFailureReport,
@@ -31,9 +32,14 @@ function buildService(options: {
   reportPendingPersistenceEnsureFailure?: (report: ReservationPartialFailureReport) => void;
   reportPromotionFailure?: (report: ReservationPartialFailureReport) => void;
   reportOrderEnqueueFailure?: (report: OrderEnqueueFailureReport) => void;
+  publishBusinessOutcomeUpdate?: ConstructorParameters<
+    typeof ReserveOrderService
+  >[0]["publishBusinessOutcomeUpdate"];
+  reportBusinessOutcomeUpdateFailure?: (report: BusinessOutcomeUpdateFailureReport) => void;
 }) {
   return new ReserveOrderService({
-    ...options,
+    persistence: options.persistence,
+    stockReservations: options.stockReservations,
     orderProcessJobPublisher: options.orderProcessJobPublisher ?? {
       enqueue: async () => undefined,
     },
@@ -45,6 +51,24 @@ function buildService(options: {
       let index = 0;
       return () => ids[index++] ?? "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
     })(),
+    ...(options.reportPersistenceFailure
+      ? { reportPersistenceFailure: options.reportPersistenceFailure }
+      : {}),
+    ...(options.reportPendingPersistenceEnsureFailure
+      ? { reportPendingPersistenceEnsureFailure: options.reportPendingPersistenceEnsureFailure }
+      : {}),
+    ...(options.reportPromotionFailure
+      ? { reportPromotionFailure: options.reportPromotionFailure }
+      : {}),
+    ...(options.reportOrderEnqueueFailure
+      ? { reportOrderEnqueueFailure: options.reportOrderEnqueueFailure }
+      : {}),
+    ...(options.publishBusinessOutcomeUpdate
+      ? { publishBusinessOutcomeUpdate: options.publishBusinessOutcomeUpdate }
+      : {}),
+    ...(options.reportBusinessOutcomeUpdateFailure
+      ? { reportBusinessOutcomeUpdateFailure: options.reportBusinessOutcomeUpdateFailure }
+      : {}),
   });
 }
 
@@ -117,6 +141,85 @@ describe("ReserveOrderService queue handoff", () => {
       runId: request.runId,
       quantity: request.quantity,
       queuedAt: now.toISOString(),
+    });
+  });
+
+  it("publishes a best-effort business outcome update after durable reservation acceptance", async () => {
+    const publishBusinessOutcomeUpdate = vi.fn().mockResolvedValue(undefined);
+    const service = buildService({
+      persistence: {
+        persistSecuredReservation: async ({ reservation }) => persistedBuy(reservation),
+        getPersistedBuyByReservationId: async () => null,
+      },
+      stockReservations: acceptingGateway(),
+      publishBusinessOutcomeUpdate,
+    });
+
+    const response = await service.reserve({ request, correlationId, now });
+
+    expect(response.outcome).toBe("reservation_secured");
+    expect(publishBusinessOutcomeUpdate).toHaveBeenCalledWith({
+      saleOfferId: request.saleOfferId,
+      runId: request.runId,
+      correlationId,
+      occurredAt: now,
+    });
+  });
+
+  it("does not publish a business outcome update for idempotent accepted replays", async () => {
+    const hold: SecuredReservationHold = {
+      id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+      saleOfferId: request.saleOfferId,
+      runId: request.runId,
+      correlationId,
+      quantity: 1,
+      status: "secured",
+      reservationToken: "res_historical",
+      securedAt: now.toISOString(),
+      expiresAt: new Date(now.getTime() + 900_000).toISOString(),
+    };
+    const publishBusinessOutcomeUpdate = vi.fn();
+    const service = buildService({
+      persistence: {
+        persistSecuredReservation: async () => {
+          throw new Error("Historical replay must not persist again.");
+        },
+        getPersistedBuyByReservationId: async () => persistedBuy(hold),
+      },
+      stockReservations: acceptingGateway({
+        reserve: async () => ({ outcome: "idempotent_replay", reservation: hold }),
+      }),
+      publishBusinessOutcomeUpdate,
+    });
+
+    await service.reserve({ request, correlationId, now });
+
+    expect(publishBusinessOutcomeUpdate).not.toHaveBeenCalled();
+  });
+
+  it("does not hide durable acceptance when business outcome publication fails", async () => {
+    const publishError = new Error("redis publish unavailable");
+    const reportBusinessOutcomeUpdateFailure = vi.fn();
+    const service = buildService({
+      persistence: {
+        persistSecuredReservation: async ({ reservation }) => persistedBuy(reservation),
+        getPersistedBuyByReservationId: async () => null,
+      },
+      stockReservations: acceptingGateway(),
+      publishBusinessOutcomeUpdate: async () => {
+        throw publishError;
+      },
+      reportBusinessOutcomeUpdateFailure,
+    });
+
+    const response = await service.reserve({ request, correlationId, now });
+
+    expect(response.outcome).toBe("reservation_secured");
+    expect(reportBusinessOutcomeUpdateFailure).toHaveBeenCalledWith({
+      error: publishError,
+      saleOfferId: request.saleOfferId,
+      runId: request.runId,
+      correlationId,
     });
   });
 

@@ -395,6 +395,28 @@ describe("buy and dashboard contracts", () => {
     });
 
     expect(event.type).toBe("traffic.metric");
+
+    expect(
+      dashboardEventSchema.parse({
+        type: "business.outcome.updated",
+        eventId: "88888888-8888-4888-8888-888888888888",
+        runId,
+        saleOfferId,
+        correlationId,
+        occurredAt: timestamp,
+        outcome: {
+          acceptedReservations: 10,
+          soldOutRejections: 20,
+          queuedOrders: 4,
+          processingOrders: 3,
+          retryingOrders: 2,
+          confirmedOrders: 2,
+          failedOrders: 1,
+          pendingPersistenceCount: 0,
+          notificationsRecorded: 0,
+        },
+      }).type,
+    ).toBe("business.outcome.updated");
   });
 });
 

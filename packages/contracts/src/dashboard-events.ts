@@ -73,6 +73,7 @@ export type TrafficMetricDashboardEvent = z.infer<typeof trafficMetricDashboardE
 export const businessOutcomeDashboardEventSchema = dashboardEventBaseSchema
   .extend({
     type: z.literal("business.outcome.updated"),
+    saleOfferId: uuidSchema,
     outcome: businessOutcomeSummarySchema,
   })
   .strict();

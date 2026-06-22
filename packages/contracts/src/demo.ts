@@ -125,6 +125,8 @@ export const businessOutcomeSummarySchema = z
     acceptedReservations: nonnegativeIntegerSchema,
     soldOutRejections: nonnegativeIntegerSchema,
     queuedOrders: nonnegativeIntegerSchema,
+    processingOrders: nonnegativeIntegerSchema.default(0),
+    retryingOrders: nonnegativeIntegerSchema.default(0),
     confirmedOrders: nonnegativeIntegerSchema,
     failedOrders: nonnegativeIntegerSchema,
     pendingPersistenceCount: nonnegativeIntegerSchema,

@@ -469,13 +469,15 @@ Subtasks:
 
 Completion summary: Task 6.1 now provides the realtime transport foundation without adding later dashboard semantics. Shared contracts define the browser SSE path, recovery path, Redis Pub/Sub channel, and dashboard event schemas. `@checkout-surge/db` exposes validated Redis Pub/Sub publish/subscribe helpers for transport-neutral dashboard events. The API composes one shared Redis subscriber per process, fans valid Pub/Sub events out to connected browser SSE clients at `/dashboard/events`, emits heartbeat comments and reconnect guidance, closes slow or failed client connections instead of buffering unbounded data, and cleans up the subscriber during shutdown. Focused tests cover contract constants, Redis Pub/Sub validation, SSE route behavior, fan-out lifecycle, heartbeat, reconnect guidance, backpressure handling, and cleanup ordering. Task 6.2 still owns publishing real order/run outcome updates into this transport.
 
-### ⬜ Task 6.2 - Deliver live order and run outcome updates
+### ✅ Task 6.2 - Deliver live order and run outcome updates
 
 Subtasks:
 
-- Publish aggregate order status changes to the dashboard in real time.
-- Show the difference between reservations secured and final confirmations at run level.
-- Represent waiting, retrying, confirmed, failed, and simulated-notification outcomes clearly in operator-facing projections.
+- ✅ Publish aggregate order status changes to the dashboard in real time.
+- ✅ Show the difference between reservations secured and final confirmations at run level.
+- ✅ Represent waiting, retrying, confirmed, failed, and simulated-notification outcomes clearly in operator-facing projections.
+
+Completion summary: Task 6.2 now publishes validated `business.outcome.updated` dashboard events from real durable order state. The API publishes a best-effort aggregate update after a new reservation and queued order are durably accepted, while the worker publishes after processing, retry-relevant temporary confirmation failures, confirmed, and failed outcomes. The shared DB projection reads reservations, order statuses, retrying orders derived from failed/timed-out ERP attempts, pending persistence rows, sold-out run outcomes, and already-recorded simulated notifications without adding the Phase 8 notification workflow. Publish failures are logged/reported but do not change checkout responses, order processing, retry behavior, or durable persistence.
 
 ### ⬜ Task 6.3 - Build the first usable operator dashboard
 

@@ -40,6 +40,20 @@ export interface OrderConfirmation {
   confirm(job: OrderProcessJob, delivery: OrderProcessDeliveryMetadata): Promise<void>;
 }
 
+export interface BusinessOutcomeUpdateFailureReport {
+  error: unknown;
+  orderId: string;
+  saleOfferId: string;
+  runId?: string;
+  correlationId: string;
+  transition: "processing" | "retrying" | "confirmed" | "failed";
+}
+
+type BusinessOutcomeUpdatePublisher = (
+  job: OrderProcessJob,
+  transition: BusinessOutcomeUpdateFailureReport["transition"],
+) => Promise<void>;
+
 export class OrderFailurePersistenceError extends AggregateError {
   override readonly name = "OrderFailurePersistenceError";
 
@@ -66,6 +80,8 @@ export function createOrderProcessJobHandler(dependencies: {
   persistence: OrderTransitionPersistence;
   logger: CheckoutSurgeLogger;
   isTemporaryConfirmationFailure?: (error: unknown) => boolean;
+  publishBusinessOutcomeUpdate?: BusinessOutcomeUpdatePublisher;
+  reportBusinessOutcomeUpdateFailure?: (report: BusinessOutcomeUpdateFailureReport) => void;
 }): OrderProcessJobHandler {
   return {
     handle: async (job, delivery) => {
@@ -88,6 +104,15 @@ export function createOrderProcessJobHandler(dependencies: {
         return;
       }
 
+      if (!transition.resumed) {
+        await publishBusinessOutcomeUpdateWithoutFailingJob(
+          dependencies,
+          job,
+          "processing",
+          logger,
+        );
+      }
+
       logger.info(
         { ...logContext, resumed: transition.resumed },
         transition.resumed
@@ -105,6 +130,12 @@ export function createOrderProcessJobHandler(dependencies: {
           logger.warn(
             { ...logContext, err: confirmationError },
             "Temporary order confirmation failure will be retried.",
+          );
+          await publishBusinessOutcomeUpdateWithoutFailingJob(
+            dependencies,
+            job,
+            "retrying",
+            logger,
           );
           throw confirmationError;
         }
@@ -125,13 +156,53 @@ export function createOrderProcessJobHandler(dependencies: {
           { ...logContext, err: confirmationError, failureCode: failure.code },
           "Order confirmation failed and the order transitioned to failed.",
         );
+        await publishBusinessOutcomeUpdateWithoutFailingJob(dependencies, job, "failed", logger);
         throw confirmationError;
       }
 
       await dependencies.persistence.transitionToConfirmed(job, delivery);
+      await publishBusinessOutcomeUpdateWithoutFailingJob(dependencies, job, "confirmed", logger);
       logger.info(logContext, "Order transitioned to confirmed.");
     },
   };
+}
+
+async function publishBusinessOutcomeUpdateWithoutFailingJob(
+  dependencies: {
+    publishBusinessOutcomeUpdate?: BusinessOutcomeUpdatePublisher;
+    reportBusinessOutcomeUpdateFailure?: (report: BusinessOutcomeUpdateFailureReport) => void;
+  },
+  job: OrderProcessJob,
+  transition: BusinessOutcomeUpdateFailureReport["transition"],
+  logger: CheckoutSurgeLogger,
+): Promise<void> {
+  if (!dependencies.publishBusinessOutcomeUpdate) {
+    return;
+  }
+
+  try {
+    await dependencies.publishBusinessOutcomeUpdate(job, transition);
+  } catch (error) {
+    const report: BusinessOutcomeUpdateFailureReport = {
+      error,
+      orderId: job.orderId,
+      saleOfferId: job.saleOfferId,
+      ...(job.runId ? { runId: job.runId } : {}),
+      correlationId: job.correlationId,
+      transition,
+    };
+
+    if (dependencies.reportBusinessOutcomeUpdateFailure) {
+      try {
+        dependencies.reportBusinessOutcomeUpdateFailure(report);
+      } catch {
+        // Reporting is non-critical; the durable order transition remains authoritative.
+      }
+      return;
+    }
+
+    logger.error(report, "Dashboard business outcome publication failed.");
+  }
 }
 
 function hasRemainingAttempts(delivery: OrderProcessDeliveryMetadata): boolean {
