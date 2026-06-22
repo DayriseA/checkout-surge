@@ -12,6 +12,8 @@ import {
   type OrderSummary,
   orderProcessBullMqQueueName,
   type orderProcessJobName,
+  type QueueStatus,
+  queueStatusSchema,
   type ReservationSummary,
 } from "@checkout-surge/contracts";
 import {
@@ -37,6 +39,7 @@ import { Queue } from "bullmq";
 import { eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createBullMqOrderProcessJobPublisher } from "../src/queue/bullmq-order-process-job-publisher.js";
+import { createBullMqOrderProcessQueueInspector } from "../src/queue/bullmq-order-process-queue-inspector.js";
 import { loadApiConfig } from "../src/runtime/config.js";
 import type { ApiFastifyInstance } from "../src/runtime/fastify.js";
 import { createInfrastructureReadinessCheck } from "../src/runtime/readiness.js";
@@ -47,6 +50,10 @@ import {
 } from "../src/services/inventory-status-service.js";
 import type { OrderProcessJobPublisher } from "../src/services/order-process-job-publisher.js";
 import { PostgresBuyPersistence } from "../src/services/postgres-buy-persistence.js";
+import {
+  type OrderProcessQueueInspector,
+  QueueStatusService,
+} from "../src/services/queue-status-service.js";
 import {
   type BuyPersistence,
   ReserveOrderService,
@@ -80,6 +87,38 @@ function baseConfig() {
   });
 }
 
+function queueStatusFixture(): QueueStatus {
+  return {
+    name: "orders:process",
+    connectivity: "reachable",
+    depth: 10,
+    counts: { waiting: 4, prioritized: 1, paused: 3, delayed: 2, active: 3, failed: 2 },
+    oldestWaitingAgeSeconds: 12.5,
+    retryPressure: {
+      inspectedJobCount: 10,
+      inspectionLimit: 100,
+      retryingJobCount: 2,
+      retryAttemptCount: 3,
+      inspectionTruncated: false,
+    },
+    failedJobs: {
+      totalCount: 2,
+      recent: [
+        {
+          jobId: "failed-order-1",
+          jobName: "order.process",
+          attemptsMade: 2,
+          failedReason: "Confirmation failed.",
+          failedAt: "2026-06-20T00:00:09.000Z",
+        },
+      ],
+      inspectionLimit: 20,
+      inspectionTruncated: false,
+    },
+    updatedAt: "2026-06-20T00:00:10.000Z",
+  };
+}
+
 async function buildTestServer(options: {
   persistence: BuyPersistence;
   stockReservations?: StockReservationGateway;
@@ -87,6 +126,7 @@ async function buildTestServer(options: {
   readiness?: "ok" | "unavailable";
   generateId?: () => string;
   orderProcessJobPublisher?: OrderProcessJobPublisher;
+  queueInspector?: OrderProcessQueueInspector;
 }): Promise<ApiFastifyInstance> {
   const inventoryReader =
     options.inventoryReader === undefined
@@ -131,6 +171,10 @@ async function buildTestServer(options: {
       ],
     },
     inventoryStatusService: new InventoryStatusService(inventoryReader),
+    queueStatusService: new QueueStatusService(
+      options.queueInspector ?? { inspect: async () => queueStatusFixture() },
+      createSilentLogger("api"),
+    ),
     reserveOrderService: new ReserveOrderService({
       persistence: options.persistence,
       orderProcessJobPublisher: options.orderProcessJobPublisher ?? {
@@ -225,6 +269,7 @@ describe("API gateway routes", () => {
     readiness?: "ok" | "unavailable";
     generateId?: () => string;
     orderProcessJobPublisher?: OrderProcessJobPublisher;
+    queueInspector?: OrderProcessQueueInspector;
   }) {
     const server = await buildTestServer(options);
     servers.push(server);
@@ -301,6 +346,30 @@ describe("API gateway routes", () => {
         latestObservedAt: "2026-06-20T00:00:09.000Z",
       },
     });
+  });
+
+  it("returns the validated queue status projection", async () => {
+    const server = await trackedServer({ persistence: new AcceptingPersistence() });
+
+    const response = await server.inject({ method: "GET", url: "/queue/status" });
+    const payload = queueStatusSchema.parse(response.json());
+
+    expect(response.statusCode).toBe(200);
+    expect(payload).toEqual(queueStatusFixture());
+    expect(payload).not.toHaveProperty("physicalName");
+  });
+
+  it("returns a stable unavailable response when queue inspection fails", async () => {
+    const server = await trackedServer({
+      persistence: new AcceptingPersistence(),
+      queueInspector: { inspect: async () => Promise.reject(new Error("Redis disconnected")) },
+    });
+
+    const response = await server.inject({ method: "GET", url: "/queue/status" });
+    const payload = errorPayloadSchema.parse(response.json());
+
+    expect(response.statusCode).toBe(503);
+    expect(payload.code).toBe("queue_status_unavailable");
   });
 
   it("returns a stable shared error when inventory is not initialized", async () => {
@@ -551,10 +620,15 @@ describe("API buy persistence", () => {
       orderProcessBullMqQueueName,
       { connection: { url: redisUrl, maxRetriesPerRequest: 3 } },
     );
+    const queueInspector = createBullMqOrderProcessQueueInspector({
+      url: redisUrl,
+      maxRetriesPerRequest: 3,
+    });
     const server = await buildTestServer({
       persistence: new PostgresBuyPersistence(connection.db),
       stockReservations: createRedisStockReservations(redis),
       orderProcessJobPublisher: publisher,
+      queueInspector,
       generateId: randomUUID,
     });
 
@@ -579,6 +653,9 @@ describe("API buy persistence", () => {
         Array.from({ length: 8 }, () => server.inject(request)),
       );
       const job = await queue.getJob(firstPayload.order.id);
+      await queue.pause();
+      const queueStatusResponse = await server.inject({ method: "GET", url: "/queue/status" });
+      const queueStatus = queueStatusSchema.parse(queueStatusResponse.json());
 
       expect(firstResponse.statusCode).toBe(202);
       expect(firstPayload.outcome).toBe("reservation_secured");
@@ -594,11 +671,24 @@ describe("API buy persistence", () => {
         queuedAt: firstPayload.order.queuedAt,
       });
       expect(await job?.getState()).toBe("waiting");
-      expect(await queue.getWaitingCount()).toBe(1);
+      expect(queueStatus).toMatchObject({
+        name: "orders:process",
+        depth: 1,
+        counts: { waiting: 0, prioritized: 0, paused: 1, delayed: 0, active: 0, failed: 0 },
+        retryPressure: {
+          inspectedJobCount: 1,
+          retryingJobCount: 0,
+          retryAttemptCount: 0,
+          inspectionTruncated: false,
+        },
+        failedJobs: { totalCount: 0, recent: [], inspectionTruncated: false },
+      });
+      expect(queueStatus).not.toHaveProperty("physicalName");
       expect(await connection.db.select().from(orderEvents)).toHaveLength(2);
     } finally {
       await server.close();
       await publisher.close();
+      await queueInspector.close();
       await queue.close();
     }
   });
@@ -961,28 +1051,40 @@ describe("API buy persistence", () => {
       throw new Error("Test infrastructure was not initialized.");
     }
 
-    const reachableChecks = await createInfrastructureReadinessCheck(
-      connection.sql,
-      redis,
-    ).checks();
+    const reachableChecks = await createInfrastructureReadinessCheck(connection.sql, redis, {
+      checkConnectivity: async () => undefined,
+    }).checks();
     const unavailableRedis = redis.duplicate({ lazyConnect: true });
     await unavailableRedis.connect();
     await unavailableRedis.quit();
     const unavailableChecks = await createInfrastructureReadinessCheck(
       connection.sql,
       unavailableRedis,
+      { checkConnectivity: async () => undefined },
     ).checks();
     const unavailableRedisCheck = unavailableChecks.find(
       (check) => check.name === "redis_reachable",
     );
+    const unavailableQueueChecks = await createInfrastructureReadinessCheck(connection.sql, redis, {
+      checkConnectivity: async () => Promise.reject(new Error("BullMQ command failed")),
+    }).checks();
 
     expect(reachableChecks).toContainEqual({ name: "redis_reachable", status: "ok" });
+    expect(reachableChecks).toContainEqual({
+      name: "order_process_queue_reachable",
+      status: "ok",
+    });
     expect(unavailableRedisCheck).toEqual({
       name: "redis_reachable",
       status: "unavailable",
       message: expect.any(String),
     });
     expect(unavailableRedisCheck?.message).not.toHaveLength(0);
+    expect(unavailableQueueChecks).toContainEqual({
+      name: "order_process_queue_reachable",
+      status: "unavailable",
+      message: "BullMQ command failed",
+    });
   });
 
   it("rejects uninitialized inventory without PostgreSQL writes", async () => {

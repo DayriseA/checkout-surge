@@ -11,6 +11,9 @@ describe("API resource cleanup", () => {
     const closeOrderProcessJobPublisher = vi.fn(async () => {
       expect(serverClosed).toBe(true);
     });
+    const closeOrderProcessQueueInspector = vi.fn(async () => {
+      expect(serverClosed).toBe(true);
+    });
     const disconnectRedis = vi.fn(() => {
       expect(serverClosed).toBe(true);
     });
@@ -21,12 +24,14 @@ describe("API resource cleanup", () => {
     await closeApiResources({
       closeServer,
       closeOrderProcessJobPublisher,
+      closeOrderProcessQueueInspector,
       disconnectRedis,
       closeDatabase,
     });
 
     expect(closeServer).toHaveBeenCalledOnce();
     expect(closeOrderProcessJobPublisher).toHaveBeenCalledOnce();
+    expect(closeOrderProcessQueueInspector).toHaveBeenCalledOnce();
     expect(disconnectRedis).toHaveBeenCalledOnce();
     expect(closeDatabase).toHaveBeenCalledOnce();
   });
@@ -34,10 +39,12 @@ describe("API resource cleanup", () => {
   it("attempts every dependency cleanup and aggregates all failures after server close fails", async () => {
     const serverError = new Error("server close failed");
     const publisherError = new Error("publisher close failed");
+    const inspectorError = new Error("inspector close failed");
     const redisError = new Error("Redis disconnect failed");
     const databaseError = new Error("database close failed");
     const closeServer = vi.fn().mockRejectedValue(serverError);
     const closeOrderProcessJobPublisher = vi.fn().mockRejectedValue(publisherError);
+    const closeOrderProcessQueueInspector = vi.fn().mockRejectedValue(inspectorError);
     const disconnectRedis = vi.fn(() => {
       throw redisError;
     });
@@ -48,6 +55,7 @@ describe("API resource cleanup", () => {
       await closeApiResources({
         closeServer,
         closeOrderProcessJobPublisher,
+        closeOrderProcessQueueInspector,
         disconnectRedis,
         closeDatabase,
       });
@@ -59,11 +67,13 @@ describe("API resource cleanup", () => {
     expect((cleanupError as AggregateError).errors).toEqual([
       serverError,
       publisherError,
+      inspectorError,
       redisError,
       databaseError,
     ]);
     expect(closeServer).toHaveBeenCalledOnce();
     expect(closeOrderProcessJobPublisher).toHaveBeenCalledOnce();
+    expect(closeOrderProcessQueueInspector).toHaveBeenCalledOnce();
     expect(disconnectRedis).toHaveBeenCalledOnce();
     expect(closeDatabase).toHaveBeenCalledOnce();
   });

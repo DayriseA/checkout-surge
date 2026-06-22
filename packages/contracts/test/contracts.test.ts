@@ -14,6 +14,7 @@ import {
   orderProcessQueueName,
   orderStatusValues,
   publicRuntimePolicySchema,
+  queueStatusSchema,
   reservationStatusValues,
   securedReservationHoldSchema,
   stockReservationDecisionSchema,
@@ -64,6 +65,43 @@ describe("queue contracts", () => {
         correlationId,
       }),
     ).toThrow();
+  });
+
+  it("validates the bounded queue health projection", () => {
+    const status = queueStatusSchema.parse({
+      name: "orders:process",
+      connectivity: "reachable",
+      depth: 8,
+      counts: { waiting: 3, prioritized: 1, paused: 2, delayed: 2, active: 4, failed: 9 },
+      oldestWaitingAgeSeconds: 8.5,
+      retryPressure: {
+        inspectedJobCount: 4,
+        inspectionLimit: 100,
+        retryingJobCount: 2,
+        retryAttemptCount: 3,
+        inspectionTruncated: true,
+      },
+      failedJobs: {
+        totalCount: 9,
+        recent: [
+          {
+            jobId: "order-1",
+            jobName: "order.process",
+            attemptsMade: 2,
+            failedReason: "ERP unavailable",
+            failedAt: timestamp,
+          },
+        ],
+        inspectionLimit: 20,
+        inspectionTruncated: false,
+      },
+      updatedAt: timestamp,
+    });
+
+    expect(status.depth).toBe(8);
+    expect(status.retryPressure.inspectionTruncated).toBe(true);
+    expect(status.failedJobs.totalCount).toBe(9);
+    expect(() => queueStatusSchema.parse({ ...status, physicalName: "orders-process" })).toThrow();
   });
 });
 

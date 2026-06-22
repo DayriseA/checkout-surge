@@ -28,6 +28,7 @@ import {
   positiveIntegerSchema,
   uuidSchema,
 } from "./primitives.js";
+import { queueStatusSchema } from "./queue.js";
 
 export const demoPresetContractSchema = demoPresetSchema
   .extend({
@@ -113,14 +114,7 @@ export const dashboardRecoveryResponseSchema = z
           .strict(),
       )
       .default([]),
-    queue: z
-      .object({
-        name: z.literal("orders:process"),
-        depth: nonnegativeIntegerSchema,
-        updatedAt: isoTimestampSchema,
-      })
-      .strict()
-      .nullable(),
+    queue: queueStatusSchema.nullable(),
     recoveredAt: isoTimestampSchema,
   })
   .strict();

@@ -318,7 +318,7 @@ Primary references:
 - `docs/core_business_entities.md`
 - `docs/cross_service_conventions.md`
 
-Progress note: Tasks 4.1-4.3 delivered the shared BullMQ contracts and adapters, the API handoff that publishes each durable queued order under its deterministic order ID before Redis accepted promotion, and the worker-owned `queued -> processing -> confirmed | failed` workflow. Worker transitions and append-only events are atomic, validate durable/job identity, preserve correlation and delivery-attempt metadata, safely resume `processing`, and treat terminal redelivery as an idempotent no-op. Phase 4 uses an injected successful local confirmation placeholder so Phase 5 can add ERP HTTP behavior without rewriting transition persistence. Queue health/backlog projections and the broader asynchronous pipeline suite remain deferred to Tasks 4.4-4.5; ERP attempts, retry/backoff, and circuit breaking remain deferred to Phase 5.
+Progress note: Tasks 4.1-4.4 delivered the shared BullMQ contracts and adapters, the API handoff that publishes each durable queued order under its deterministic order ID before Redis accepted promotion, the worker-owned `queued -> processing -> confirmed | failed` workflow, and a bounded queue-health projection available through `/queue/status`. Worker transitions and append-only events are atomic, validate durable/job identity, preserve correlation and delivery-attempt metadata, safely resume `processing`, and treat terminal redelivery as an idempotent no-op. Queue visibility now reports exact counts for the observed waiting, prioritized, paused, delayed, active, and retained failed BullMQ states; backlog depth across the observed states awaiting execution; enqueue age for the oldest waiting, prioritized, or paused job; bounded retry pressure; and a bounded recent failed-job sample. Public contracts expose only the semantic `orders:process` name, while the physical BullMQ name remains adapter and internal-log detail. API and worker readiness degrade on queue command/connectivity failures, while backlog and retained failed jobs remain operator signals rather than readiness failures. Phase 4 uses an injected successful local confirmation placeholder so Phase 5 can add ERP HTTP behavior without rewriting transition persistence. The broader asynchronous pipeline suite remains deferred to Task 4.5; ERP attempts, retry/backoff, circuit breaking, dead-letter behavior, notifications, and dashboard realtime/UI remain deferred to their planned phases.
 
 ### ✅ Task 4.1 - Introduce the queue layer and worker skeleton
 
@@ -345,13 +345,13 @@ Subtasks:
 - ✅ Persist worker progress and order events so operators can reconstruct what happened.
 - ✅ Capture retry metadata hooks even if full ERP resilience lands in Phase 5.
 
-### ⬜ Task 4.4 - Expose queue health and backlog visibility
+### ✅ Task 4.4 - Expose queue health and backlog visibility
 
 Subtasks:
 
-- Track queue depth, wait time, retry count, and failed-job visibility.
-- Surface queue health in readiness checks, logs, API-readable state, and later dashboard projections.
-- Make the backlog behavior observable before the full dashboard is complete.
+- ✅ Track queue depth, wait time, retry count, and failed-job visibility.
+- ✅ Surface queue health in readiness checks, logs, API-readable state, and later dashboard projections.
+- ✅ Make the backlog behavior observable before the full dashboard is complete.
 
 ### ⬜ Task 4.5 - Add automated tests for the asynchronous order pipeline
 

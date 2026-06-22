@@ -3,6 +3,7 @@ import {
   orderProcessBullMqQueueName,
   orderProcessJobName,
   orderProcessJobSchema,
+  orderProcessQueueName,
 } from "@checkout-surge/contracts";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { type ConnectionOptions, type Job, Worker } from "bullmq";
@@ -25,6 +26,9 @@ export interface CreateBullMqOrderProcessConsumerOptions {
   reportFailure?: (report: OrderProcessJobFailureReport) => void | Promise<void>;
 }
 
+export const orderProcessQueueNotReadyMessage =
+  "The order-processing queue connection is not ready.";
+
 export function createBullMqOrderProcessConsumer(
   options: CreateBullMqOrderProcessConsumerOptions,
 ): OrderProcessConsumer {
@@ -40,6 +44,7 @@ export function createBullMqOrderProcessConsumer(
 
   let runPromise: Promise<void> | null = null;
   let isClosing = false;
+  let isQueueConnectionReady = false;
 
   worker.on("failed", (job, error) => {
     const report: OrderProcessJobFailureReport = {
@@ -76,7 +81,28 @@ export function createBullMqOrderProcessConsumer(
   });
 
   worker.on("error", (error) => {
+    isQueueConnectionReady = false;
     options.logger.error({ err: error }, "Order-processing BullMQ worker error.");
+  });
+
+  worker.on("ready", () => {
+    isQueueConnectionReady = !isClosing;
+    options.logger.info(
+      { queueName: orderProcessQueueName, physicalQueueName: orderProcessBullMqQueueName },
+      "Order-processing BullMQ worker is ready.",
+    );
+  });
+
+  worker.on("ioredis:close", () => {
+    isQueueConnectionReady = false;
+  });
+
+  worker.on("closing", () => {
+    isQueueConnectionReady = false;
+  });
+
+  worker.on("closed", () => {
+    isQueueConnectionReady = false;
   });
 
   return {
@@ -86,6 +112,7 @@ export function createBullMqOrderProcessConsumer(
       }
 
       runPromise = worker.run().catch((error: unknown) => {
+        isQueueConnectionReady = false;
         if (!isClosing) {
           options.logger.error(
             { err: error },
@@ -96,10 +123,16 @@ export function createBullMqOrderProcessConsumer(
     },
     async close() {
       isClosing = true;
+      isQueueConnectionReady = false;
       await worker.close();
       await runPromise;
     },
     isRunning: () => worker.isRunning(),
+    async checkConnectivity() {
+      if (!isQueueConnectionReady) {
+        throw new Error(orderProcessQueueNotReadyMessage);
+      }
+    },
   };
 }
 

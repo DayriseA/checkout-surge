@@ -1,6 +1,7 @@
 export interface ApiResourceCleanupOperations {
   closeServer(): Promise<void>;
   closeOrderProcessJobPublisher(): Promise<void>;
+  closeOrderProcessQueueInspector(): Promise<void>;
   disconnectRedis(): void;
   closeDatabase(): Promise<void>;
 }
@@ -16,6 +17,7 @@ export async function closeApiResources(operations: ApiResourceCleanupOperations
 
   const dependencyResults = await Promise.allSettled([
     runCleanup(operations.closeOrderProcessJobPublisher),
+    runCleanup(operations.closeOrderProcessQueueInspector),
     runCleanup(operations.disconnectRedis),
     runCleanup(operations.closeDatabase),
   ]);

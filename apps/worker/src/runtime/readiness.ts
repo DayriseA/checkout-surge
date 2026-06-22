@@ -54,6 +54,19 @@ export function createWorkerReadiness(dependencies: {
         }),
       );
 
+      try {
+        await dependencies.orderProcessConsumer.checkConnectivity();
+        checks.push(createReadinessCheck({ name: "order_process_queue_reachable", status: "ok" }));
+      } catch (error) {
+        checks.push(
+          createReadinessCheck({
+            name: "order_process_queue_reachable",
+            status: "unavailable",
+            message: error instanceof Error ? error.message : "Queue check failed.",
+          }),
+        );
+      }
+
       return checks;
     },
   };

@@ -10,6 +10,7 @@ import {
 } from "@checkout-surge/db";
 import { createServiceLogger, loggerPackageName } from "@checkout-surge/logger";
 import { createBullMqOrderProcessJobPublisher } from "./queue/bullmq-order-process-job-publisher.js";
+import { createBullMqOrderProcessQueueInspector } from "./queue/bullmq-order-process-queue-inspector.js";
 import { closeApiResources } from "./runtime/api-resource-cleanup.js";
 import { loadApiConfig } from "./runtime/config.js";
 import type { ApiFastifyInstance } from "./runtime/fastify.js";
@@ -17,6 +18,7 @@ import { createInfrastructureReadinessCheck } from "./runtime/readiness.js";
 import { buildApiServer } from "./server.js";
 import { InventoryStatusService } from "./services/inventory-status-service.js";
 import { PostgresBuyPersistence } from "./services/postgres-buy-persistence.js";
+import { QueueStatusService } from "./services/queue-status-service.js";
 import {
   type OrderEnqueueFailureReport,
   type ReservationPartialFailureReport,
@@ -27,11 +29,13 @@ export const apiAppName = "api" as const;
 export const apiAppDependencies = [contractsPackageName, dbPackageName, loggerPackageName] as const;
 
 export { createBullMqOrderProcessJobPublisher } from "./queue/bullmq-order-process-job-publisher.js";
+export { createBullMqOrderProcessQueueInspector } from "./queue/bullmq-order-process-queue-inspector.js";
 export { type ApiConfig, loadApiConfig } from "./runtime/config.js";
 export { buildApiServer } from "./server.js";
 export { InventoryStatusService } from "./services/inventory-status-service.js";
 export type { OrderProcessJobPublisher } from "./services/order-process-job-publisher.js";
 export { PostgresBuyPersistence } from "./services/postgres-buy-persistence.js";
+export { QueueStatusService } from "./services/queue-status-service.js";
 export { ReserveOrderService } from "./services/reserve-order-service.js";
 
 export async function startApiServer(): Promise<void> {
@@ -43,6 +47,10 @@ export async function startApiServer(): Promise<void> {
     maxRetriesPerRequest: 3,
   });
   const orderProcessJobPublisher = createBullMqOrderProcessJobPublisher({
+    url: config.redisUrl,
+    maxRetriesPerRequest: 3,
+  });
+  const orderProcessQueueInspector = createBullMqOrderProcessQueueInspector({
     url: config.redisUrl,
     maxRetriesPerRequest: 3,
   });
@@ -96,6 +104,7 @@ export async function startApiServer(): Promise<void> {
           await server?.close();
         },
         closeOrderProcessJobPublisher: () => orderProcessJobPublisher.close(),
+        closeOrderProcessQueueInspector: () => orderProcessQueueInspector.close(),
         disconnectRedis: () => redis.disconnect(),
         closeDatabase: () => connection.close(),
       });
@@ -107,10 +116,15 @@ export async function startApiServer(): Promise<void> {
     server = await buildApiServer({
       config,
       logger,
-      readiness: createInfrastructureReadinessCheck(connection.sql, redis),
+      readiness: createInfrastructureReadinessCheck(
+        connection.sql,
+        redis,
+        orderProcessQueueInspector,
+      ),
       inventoryStatusService: new InventoryStatusService({
         getStatus: (saleOfferId) => getInventoryStatus(redis, saleOfferId),
       }),
+      queueStatusService: new QueueStatusService(orderProcessQueueInspector, logger),
       reserveOrderService,
       startedAt: new Date(),
     });

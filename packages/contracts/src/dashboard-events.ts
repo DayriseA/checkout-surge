@@ -2,12 +2,8 @@ import { z } from "zod";
 import { businessOutcomeSummarySchema, demoRunSnapshotSchema } from "./demo.js";
 import { inventoryStatusSchema } from "./inventory.js";
 import { metricNameSchema } from "./lifecycle.js";
-import {
-  correlationIdSchema,
-  isoTimestampSchema,
-  nonnegativeIntegerSchema,
-  uuidSchema,
-} from "./primitives.js";
+import { correlationIdSchema, isoTimestampSchema, uuidSchema } from "./primitives.js";
+import { queueStatusSchema } from "./queue.js";
 
 export const dashboardEventTypeValues = [
   "run.started",
@@ -55,12 +51,7 @@ export type InventoryDashboardEvent = z.infer<typeof inventoryDashboardEventSche
 export const queueDashboardEventSchema = dashboardEventBaseSchema
   .extend({
     type: z.literal("queue.updated"),
-    queue: z
-      .object({
-        name: z.literal("orders:process"),
-        depth: nonnegativeIntegerSchema,
-      })
-      .strict(),
+    queue: queueStatusSchema,
   })
   .strict();
 export type QueueDashboardEvent = z.infer<typeof queueDashboardEventSchema>;

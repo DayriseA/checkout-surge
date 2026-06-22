@@ -85,6 +85,7 @@ describe("worker readiness", () => {
         start: vi.fn(),
         close: vi.fn(),
         isRunning: () => true,
+        checkConnectivity: vi.fn().mockResolvedValue(undefined),
       },
     });
 
@@ -92,6 +93,7 @@ describe("worker readiness", () => {
       { name: "database_reachable", status: "ok" },
       { name: "redis_reachable", status: "ok" },
       { name: "order_process_worker_running", status: "ok" },
+      { name: "order_process_queue_reachable", status: "ok" },
     ]);
   });
 
@@ -103,6 +105,7 @@ describe("worker readiness", () => {
         start: vi.fn(),
         close: vi.fn(),
         isRunning: () => false,
+        checkConnectivity: vi.fn().mockRejectedValue(new Error("Queue unavailable")),
       },
     });
 
@@ -117,6 +120,11 @@ describe("worker readiness", () => {
         name: "order_process_worker_running",
         status: "unavailable",
         message: "The order-processing consumer is not running.",
+      },
+      {
+        name: "order_process_queue_reachable",
+        status: "unavailable",
+        message: "Queue unavailable",
       },
     ]);
   });
@@ -133,6 +141,7 @@ describe("worker runtime lifecycle", () => {
       start: vi.fn(),
       close: vi.fn().mockResolvedValue(undefined),
       isRunning: () => true,
+      checkConnectivity: vi.fn().mockResolvedValue(undefined),
     };
     const runtime = createWorkerRuntime({
       healthServer,
@@ -169,6 +178,7 @@ describe("worker runtime lifecycle", () => {
           closeOrder.push("consumer");
         }),
         isRunning: () => true,
+        checkConnectivity: vi.fn().mockResolvedValue(undefined),
       },
       closePostgres: vi.fn(async () => {
         closeOrder.push("postgres");
@@ -200,6 +210,7 @@ describe("worker runtime lifecycle", () => {
         start: vi.fn(),
         close: vi.fn().mockResolvedValue(undefined),
         isRunning: () => false,
+        checkConnectivity: vi.fn().mockResolvedValue(undefined),
       },
       closePostgres: vi.fn().mockRejectedValue(closeError),
       closeRedis,

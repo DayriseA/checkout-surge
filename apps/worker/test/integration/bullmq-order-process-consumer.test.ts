@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createBullMqOrderProcessConsumer,
   type OrderProcessJobFailureReport,
+  orderProcessQueueNotReadyMessage,
 } from "../../src/queue/bullmq-order-process-consumer.js";
 import type { OrderProcessConsumer } from "../../src/queue/order-process-consumer.js";
 
@@ -90,6 +91,32 @@ describe("BullMQ order-processing boundary", () => {
       attemptNumber: 1,
       attemptsMade: 0,
     });
+  });
+
+  it("reports queue connectivity immediately across pre-ready, ready, and closed states", async () => {
+    const handled = deferred<OrderProcessJob>();
+    consumer = createBullMqOrderProcessConsumer({
+      connection: { url: testRedisUrl(), maxRetriesPerRequest: null },
+      concurrency: 1,
+      handler: { handle: async (payload) => handled.resolve(payload) },
+      logger: createSilentLogger("worker"),
+    });
+    const trackedConsumer = consumer;
+
+    await expect(trackedConsumer.checkConnectivity()).rejects.toThrow(
+      orderProcessQueueNotReadyMessage,
+    );
+
+    trackedConsumer.start();
+    await queue.add(orderProcessJobName, job, { jobId: job.orderId });
+    await expect(handled.promise).resolves.toEqual(job);
+    await expect(trackedConsumer.checkConnectivity()).resolves.toBeUndefined();
+
+    await trackedConsumer.close();
+    consumer = null;
+    await expect(trackedConsumer.checkConnectivity()).rejects.toThrow(
+      orderProcessQueueNotReadyMessage,
+    );
   });
 
   it("fails invalid payloads and reports basic job metadata", async () => {
