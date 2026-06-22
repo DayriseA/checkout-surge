@@ -2,11 +2,16 @@ import { execFile } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { publicRuntimePolicySchema } from "@checkout-surge/contracts";
+import {
+  type DashboardEvent,
+  dashboardEventsRedisChannel,
+  publicRuntimePolicySchema,
+} from "@checkout-surge/contracts";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   createDatabaseConnection,
+  createRedisDashboardEventSubscriber,
   getInventoryStatus,
   InventoryNotInitializedError,
   initializeInventory,
@@ -14,6 +19,7 @@ import {
   isRunSaleEligible,
   markReservationPendingPersistence,
   promoteReservationIdempotencyToAccepted,
+  publishDashboardEvent,
   reserveInventoryStock,
   setRunSaleEligibility,
 } from "../../src/index.js";
@@ -25,6 +31,15 @@ const migrationsFolder = path.join(packageRoot, "drizzle");
 const seededSaleOfferId = "22222222-2222-4222-8222-222222222222";
 const reservationSecuredAt = "2026-06-20T12:00:00.000Z";
 const reservationExpiresAt = "2026-06-20T12:15:00.000Z";
+const dashboardEvent: DashboardEvent = {
+  type: "traffic.metric",
+  eventId: "77777777-7777-4777-8777-777777777777",
+  runId: "55555555-5555-4555-8555-555555555555",
+  metricName: "traffic.latency",
+  value: 42,
+  unit: "ms",
+  occurredAt: "2026-06-20T12:00:00.000Z",
+};
 
 function buildReservationInput(options: {
   saleOfferId: string;
@@ -85,6 +100,21 @@ async function runSeedScript(): Promise<void> {
       REDIS_URL: requireTestEnv("TEST_REDIS_URL"),
     },
   });
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timeout: NodeJS.Timeout | null = null;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  }
 }
 
 describe("database migrations, seed data, and reset behavior", () => {
@@ -185,6 +215,86 @@ describe("database migrations, seed data, and reset behavior", () => {
       remainingStock: "1000",
       reservedStock: "0",
     });
+  });
+
+  it("publishes validated dashboard events through the shared Redis Pub/Sub channel", async () => {
+    const subscriberRedis = new Redis(requireTestEnv("TEST_REDIS_URL"), {
+      lazyConnect: true,
+      maxRetriesPerRequest: 3,
+    });
+    await subscriberRedis.connect();
+    let resolveReceived: (event: DashboardEvent) => void = () => undefined;
+    let rejectReceived: (error: unknown) => void = () => undefined;
+    const receivedEvent = new Promise<DashboardEvent>((resolve, reject) => {
+      resolveReceived = resolve;
+      rejectReceived = reject;
+    });
+    const subscriber = createRedisDashboardEventSubscriber(subscriberRedis, {
+      onEvent: resolveReceived,
+      onInvalidMessage: rejectReceived,
+    });
+
+    try {
+      await subscriber.start();
+      await publishDashboardEvent(redis, dashboardEvent);
+      await expect(
+        withTimeout(receivedEvent, 1_000, "Timed out waiting for dashboard event."),
+      ).resolves.toEqual(dashboardEvent);
+    } finally {
+      await subscriber.close();
+      subscriberRedis.disconnect();
+    }
+  });
+
+  it("rejects invalid dashboard events before publishing", async () => {
+    await expect(
+      publishDashboardEvent(redis, {
+        ...dashboardEvent,
+        eventId: "not-a-uuid",
+      } as DashboardEvent),
+    ).rejects.toThrow();
+  });
+
+  it("reports malformed dashboard Pub/Sub messages without delivering them", async () => {
+    const subscriberRedis = new Redis(requireTestEnv("TEST_REDIS_URL"), {
+      lazyConnect: true,
+      maxRetriesPerRequest: 3,
+    });
+    await subscriberRedis.connect();
+    const delivered: DashboardEvent[] = [];
+    let resolveInvalidMessage: (message: { error: unknown; message: string }) => void = () =>
+      undefined;
+    const invalidMessage = new Promise<{ error: unknown; message: string }>((resolve) => {
+      resolveInvalidMessage = resolve;
+    });
+    const subscriber = createRedisDashboardEventSubscriber(subscriberRedis, {
+      onEvent: (event) => {
+        delivered.push(event);
+      },
+      onInvalidMessage: (error, message) => {
+        resolveInvalidMessage({ error, message });
+      },
+    });
+
+    try {
+      await subscriber.start();
+      await redis.publish(
+        dashboardEventsRedisChannel,
+        JSON.stringify({ ...dashboardEvent, eventId: "not-a-uuid" }),
+      );
+      const result = await withTimeout(
+        invalidMessage,
+        1_000,
+        "Timed out waiting for invalid dashboard event.",
+      );
+
+      expect(result.error).toBeTruthy();
+      expect(result.message).toContain("not-a-uuid");
+      expect(delivered).toEqual([]);
+    } finally {
+      await subscriber.close();
+      subscriberRedis.disconnect();
+    }
   });
 
   it("initializes and resets only the targeted inventory namespace", async () => {

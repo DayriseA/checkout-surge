@@ -458,14 +458,16 @@ Primary references:
 - `docs/architecture.md`
 - `docs/load_generation_metrics_streaming.md`
 
-### ⬜ Task 6.1 - Implement the realtime transport layer
+### ✅ Task 6.1 - Implement the realtime transport layer
 
 Subtasks:
 
-- Add the API-owned SSE stream at `/dashboard/events`.
-- Add validated dashboard realtime event contracts and Redis Pub/Sub publication helpers.
-- Add one shared Redis subscriber per API process and fan out transport-neutral API/worker events to browser SSE clients.
-- Implement connection lifecycle, heartbeat behavior, backpressure handling, and reconnect expectations.
+- ✅ Add the API-owned SSE stream at `/dashboard/events`.
+- ✅ Add validated dashboard realtime event contracts and Redis Pub/Sub publication helpers.
+- ✅ Add one shared Redis subscriber per API process and fan out transport-neutral API/worker events to browser SSE clients.
+- ✅ Implement connection lifecycle, heartbeat behavior, backpressure handling, and reconnect expectations.
+
+Completion summary: Task 6.1 now provides the realtime transport foundation without adding later dashboard semantics. Shared contracts define the browser SSE path, recovery path, Redis Pub/Sub channel, and dashboard event schemas. `@checkout-surge/db` exposes validated Redis Pub/Sub publish/subscribe helpers for transport-neutral dashboard events. The API composes one shared Redis subscriber per process, fans valid Pub/Sub events out to connected browser SSE clients at `/dashboard/events`, emits heartbeat comments and reconnect guidance, closes slow or failed client connections instead of buffering unbounded data, and cleans up the subscriber during shutdown. Focused tests cover contract constants, Redis Pub/Sub validation, SSE route behavior, fan-out lifecycle, heartbeat, reconnect guidance, backpressure handling, and cleanup ordering. Task 6.2 still owns publishing real order/run outcome updates into this transport.
 
 ### ⬜ Task 6.2 - Deliver live order and run outcome updates
 

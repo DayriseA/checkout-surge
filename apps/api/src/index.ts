@@ -2,6 +2,7 @@ import { contractsPackageName } from "@checkout-surge/contracts";
 import {
   createDatabaseConnection,
   createRedisClient,
+  createRedisDashboardEventSubscriber,
   dbPackageName,
   getInventoryStatus,
   markReservationPendingPersistence,
@@ -11,6 +12,7 @@ import {
 import { createServiceLogger, loggerPackageName } from "@checkout-surge/logger";
 import { createBullMqOrderProcessJobPublisher } from "./queue/bullmq-order-process-job-publisher.js";
 import { createBullMqOrderProcessQueueInspector } from "./queue/bullmq-order-process-queue-inspector.js";
+import { DashboardEventFanout } from "./realtime/dashboard-event-fanout.js";
 import { closeApiResources } from "./runtime/api-resource-cleanup.js";
 import { loadApiConfig } from "./runtime/config.js";
 import type { ApiFastifyInstance } from "./runtime/fastify.js";
@@ -35,6 +37,7 @@ export const apiAppDependencies = [contractsPackageName, dbPackageName, loggerPa
 
 export { createBullMqOrderProcessJobPublisher } from "./queue/bullmq-order-process-job-publisher.js";
 export { createBullMqOrderProcessQueueInspector } from "./queue/bullmq-order-process-queue-inspector.js";
+export { DashboardEventFanout } from "./realtime/dashboard-event-fanout.js";
 export { type ApiConfig, loadApiConfig } from "./runtime/config.js";
 export { buildApiServer } from "./server.js";
 export {
@@ -56,6 +59,10 @@ export async function startApiServer(): Promise<void> {
     lazyConnect: true,
     maxRetriesPerRequest: 3,
   });
+  const dashboardEventSubscriberRedis = createRedisClient(config.redisUrl, {
+    lazyConnect: true,
+    maxRetriesPerRequest: 3,
+  });
   const orderProcessJobPublisher = createBullMqOrderProcessJobPublisher(
     {
       url: config.redisUrl,
@@ -72,6 +79,24 @@ export async function startApiServer(): Promise<void> {
   });
 
   const persistence = new PostgresBuyPersistence(connection.db);
+  const dashboardEventFanout = new DashboardEventFanout({ logger });
+  const dashboardEventSubscriber = createRedisDashboardEventSubscriber(
+    dashboardEventSubscriberRedis,
+    {
+      onEvent: (event) => {
+        dashboardEventFanout.publish(event);
+      },
+      onHandlerError: (error) => {
+        logger.error({ err: error }, "Dashboard event fan-out failed.");
+      },
+      onInvalidMessage: (error, message) => {
+        logger.warn(
+          { err: error, messageLength: message.length },
+          "Ignored invalid dashboard realtime event from Redis Pub/Sub.",
+        );
+      },
+    },
+  );
   const queueStatusService = new QueueStatusService(orderProcessQueueInspector, logger);
   const reserveOrderService = new ReserveOrderService({
     persistence,
@@ -118,7 +143,15 @@ export async function startApiServer(): Promise<void> {
       logger.info("Closing API server.");
       await closeApiResources({
         closeServer: async () => {
+          dashboardEventFanout.close();
           await server?.close();
+        },
+        closeDashboardEventSubscriber: async () => {
+          try {
+            await dashboardEventSubscriber.close();
+          } finally {
+            dashboardEventSubscriberRedis.disconnect();
+          }
         },
         closeOrderProcessJobPublisher: () => orderProcessJobPublisher.close(),
         closeOrderProcessQueueInspector: () => orderProcessQueueInspector.close(),
@@ -138,6 +171,7 @@ export async function startApiServer(): Promise<void> {
         redis,
         orderProcessQueueInspector,
       ),
+      dashboardEventFanout,
       erpStatusService: new ErpStatusService({
         circuitBreakerStateReader: new RedisErpCircuitBreakerStateReader(redis),
         attemptStatusReader: new PostgresErpAttemptStatusReader(connection.db),
@@ -151,6 +185,7 @@ export async function startApiServer(): Promise<void> {
       reserveOrderService,
       startedAt: new Date(),
     });
+    await dashboardEventSubscriber.start();
 
     process.once("SIGTERM", () => {
       void close()

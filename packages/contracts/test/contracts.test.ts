@@ -4,6 +4,9 @@ import {
   buyResponseSchema,
   controlServiceTokenHeaderName,
   dashboardEventSchema,
+  dashboardEventsPath,
+  dashboardEventsRedisChannel,
+  dashboardRecoveryPath,
   demoRunStatusValues,
   erpChaosResetPath,
   erpChaosStatusPath,
@@ -377,6 +380,10 @@ describe("buy and dashboard contracts", () => {
   });
 
   it("validates transport-neutral dashboard events", () => {
+    expect(dashboardEventsPath).toBe("/dashboard/events");
+    expect(dashboardRecoveryPath).toBe("/dashboard/recovery");
+    expect(dashboardEventsRedisChannel).toBe("dashboard-events");
+
     const event = dashboardEventSchema.parse({
       type: "traffic.metric",
       eventId: "77777777-7777-4777-8777-777777777777",

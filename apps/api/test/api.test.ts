@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
+import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   buyResponseSchema,
+  dashboardEventsPath,
   dashboardRecoveryResponseSchema,
   type ErpResilienceStatus,
   erpResilienceStatusPath,
@@ -46,6 +48,7 @@ import {
   createBullMqOrderProcessQueueInspector,
   createOrderProcessQueueInspector,
 } from "../src/queue/bullmq-order-process-queue-inspector.js";
+import { DashboardEventFanout } from "../src/realtime/dashboard-event-fanout.js";
 import { loadApiConfig } from "../src/runtime/config.js";
 import type { ApiFastifyInstance } from "../src/runtime/fastify.js";
 import { createInfrastructureReadinessCheck } from "../src/runtime/readiness.js";
@@ -135,6 +138,7 @@ async function buildTestServer(options: {
   orderProcessJobPublisher?: OrderProcessJobPublisher;
   queueInspector?: OrderProcessQueueInspector;
   erpStatusService?: ErpStatusService;
+  dashboardEventFanout?: DashboardEventFanout;
 }): Promise<ApiFastifyInstance> {
   const inventoryReader =
     options.inventoryReader === undefined
@@ -178,6 +182,9 @@ async function buildTestServer(options: {
         },
       ],
     },
+    dashboardEventFanout:
+      options.dashboardEventFanout ??
+      new DashboardEventFanout({ logger: createSilentLogger("api") }),
     erpStatusService: options.erpStatusService ?? createStaticErpStatusService(erpStatusFixture()),
     inventoryStatusService: new InventoryStatusService(inventoryReader),
     queueStatusService: new QueueStatusService(
@@ -246,6 +253,38 @@ function createRedisStockReservations(redis: CheckoutSurgeRedis): StockReservati
     promoteAccepted: (input) =>
       promoteReservationIdempotencyToAccepted(redis, input).then(() => undefined),
   };
+}
+
+async function readStreamUntil(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  expectedText: string,
+): Promise<string> {
+  const decoder = new TextDecoder();
+  let received = "";
+
+  while (!received.includes(expectedText)) {
+    let timeout: NodeJS.Timeout | null = null;
+    const result = await Promise.race([
+      reader.read(),
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error(`Timed out waiting for ${expectedText}.`)),
+          1_000,
+        );
+      }),
+    ]);
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+
+    if (result.done) {
+      break;
+    }
+
+    received += decoder.decode(result.value, { stream: true });
+  }
+
+  return received;
 }
 
 class AcceptingPersistence implements BuyPersistence {
@@ -366,6 +405,40 @@ describe("API gateway routes", () => {
     expect(payload.inventory).toBeNull();
     expect(payload.queue).toBeNull();
     expect(payload.recentMetrics).toEqual([]);
+  });
+
+  it("opens the dashboard realtime SSE stream with browser reconnect guidance", async () => {
+    const dashboardEventFanout = new DashboardEventFanout({
+      logger: createSilentLogger("api"),
+      retryMs: 1234,
+    });
+    const server = await buildTestServer({
+      persistence: new AcceptingPersistence(),
+      dashboardEventFanout,
+    });
+    await server.listen({ host: "127.0.0.1", port: 0 });
+    const address = server.server.address() as AddressInfo;
+    const response = await fetch(`http://127.0.0.1:${address.port}${dashboardEventsPath}`);
+    const reader = response.body?.getReader();
+
+    try {
+      if (!reader) {
+        throw new Error("Expected a readable SSE body.");
+      }
+
+      const initialFrame = await readStreamUntil(reader, ": connected");
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toContain("text/event-stream");
+      expect(response.headers.get("cache-control")).toContain("no-cache");
+      expect(initialFrame).toContain("retry: 1234");
+      expect(initialFrame).toContain(": connected");
+      expect(dashboardEventFanout.clientCount()).toBe(1);
+    } finally {
+      await reader?.cancel();
+      dashboardEventFanout.close();
+      await server.close();
+    }
   });
 
   it("returns the shared inventory status contract", async () => {

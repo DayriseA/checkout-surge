@@ -3,6 +3,7 @@ import { correlationIdHeaderName, normalizeCorrelationId } from "@checkout-surge
 import cors from "@fastify/cors";
 import { type FastifyReply, fastify } from "fastify";
 import { ZodError } from "zod";
+import type { DashboardEventFanout } from "./realtime/dashboard-event-fanout.js";
 import { registerBuyRoutes } from "./routes/buy-routes.js";
 import { registerDashboardRoutes } from "./routes/dashboard-routes.js";
 import { registerErpRoutes } from "./routes/erp-routes.js";
@@ -28,6 +29,7 @@ export interface BuildApiServerOptions {
   config: ApiConfig;
   logger: CheckoutSurgeLogger;
   readiness: ApiReadiness;
+  dashboardEventFanout: DashboardEventFanout;
   erpStatusService: ErpStatusService;
   inventoryStatusService: InventoryStatusService;
   queueStatusService: QueueStatusService;
@@ -95,7 +97,7 @@ export async function buildApiServer(options: BuildApiServerOptions): Promise<Ap
   registerBuyRoutes(app, { reserveOrderService: options.reserveOrderService });
   registerInventoryRoutes(app, { inventoryStatusService: options.inventoryStatusService });
   registerQueueRoutes(app, { queueStatusService: options.queueStatusService });
-  registerDashboardRoutes(app);
+  registerDashboardRoutes(app, { dashboardEventFanout: options.dashboardEventFanout });
 
   return app;
 }

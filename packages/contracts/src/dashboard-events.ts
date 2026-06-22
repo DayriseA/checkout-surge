@@ -5,6 +5,10 @@ import { metricNameSchema } from "./lifecycle.js";
 import { correlationIdSchema, isoTimestampSchema, uuidSchema } from "./primitives.js";
 import { queueStatusSchema } from "./queue.js";
 
+export const dashboardEventsPath = "/dashboard/events" as const;
+export const dashboardRecoveryPath = "/dashboard/recovery" as const;
+export const dashboardEventsRedisChannel = "dashboard-events" as const;
+
 export const dashboardEventTypeValues = [
   "run.started",
   "run.updated",

@@ -11,6 +11,9 @@ describe("API resource cleanup", () => {
     const closeOrderProcessJobPublisher = vi.fn(async () => {
       expect(serverClosed).toBe(true);
     });
+    const closeDashboardEventSubscriber = vi.fn(async () => {
+      expect(serverClosed).toBe(true);
+    });
     const closeOrderProcessQueueInspector = vi.fn(async () => {
       expect(serverClosed).toBe(true);
     });
@@ -23,6 +26,7 @@ describe("API resource cleanup", () => {
 
     await closeApiResources({
       closeServer,
+      closeDashboardEventSubscriber,
       closeOrderProcessJobPublisher,
       closeOrderProcessQueueInspector,
       disconnectRedis,
@@ -30,6 +34,7 @@ describe("API resource cleanup", () => {
     });
 
     expect(closeServer).toHaveBeenCalledOnce();
+    expect(closeDashboardEventSubscriber).toHaveBeenCalledOnce();
     expect(closeOrderProcessJobPublisher).toHaveBeenCalledOnce();
     expect(closeOrderProcessQueueInspector).toHaveBeenCalledOnce();
     expect(disconnectRedis).toHaveBeenCalledOnce();
@@ -38,11 +43,13 @@ describe("API resource cleanup", () => {
 
   it("attempts every dependency cleanup and aggregates all failures after server close fails", async () => {
     const serverError = new Error("server close failed");
+    const subscriberError = new Error("subscriber close failed");
     const publisherError = new Error("publisher close failed");
     const inspectorError = new Error("inspector close failed");
     const redisError = new Error("Redis disconnect failed");
     const databaseError = new Error("database close failed");
     const closeServer = vi.fn().mockRejectedValue(serverError);
+    const closeDashboardEventSubscriber = vi.fn().mockRejectedValue(subscriberError);
     const closeOrderProcessJobPublisher = vi.fn().mockRejectedValue(publisherError);
     const closeOrderProcessQueueInspector = vi.fn().mockRejectedValue(inspectorError);
     const disconnectRedis = vi.fn(() => {
@@ -54,6 +61,7 @@ describe("API resource cleanup", () => {
     try {
       await closeApiResources({
         closeServer,
+        closeDashboardEventSubscriber,
         closeOrderProcessJobPublisher,
         closeOrderProcessQueueInspector,
         disconnectRedis,
@@ -66,12 +74,14 @@ describe("API resource cleanup", () => {
     expect(cleanupError).toBeInstanceOf(AggregateError);
     expect((cleanupError as AggregateError).errors).toEqual([
       serverError,
+      subscriberError,
       publisherError,
       inspectorError,
       redisError,
       databaseError,
     ]);
     expect(closeServer).toHaveBeenCalledOnce();
+    expect(closeDashboardEventSubscriber).toHaveBeenCalledOnce();
     expect(closeOrderProcessJobPublisher).toHaveBeenCalledOnce();
     expect(closeOrderProcessQueueInspector).toHaveBeenCalledOnce();
     expect(disconnectRedis).toHaveBeenCalledOnce();
