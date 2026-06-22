@@ -417,13 +417,15 @@ Subtasks:
 
 Completion summary: Order-processing jobs now receive an environment-backed retry budget and exponential BullMQ backoff from the API queue handoff. The worker distinguishes temporary ERP dependency failures from terminal confirmation failures, leaves orders in `processing` while retry attempts remain, and only marks exhausted or terminal failures as `failed`. A worker-owned circuit breaker wraps ERP calls, opens after configured consecutive temporary failures, suppresses downstream calls during the reset window, probes half-open recovery, and closes on successful recovery. Tests cover retry metadata, retryable versus exhausted handler behavior, temporary/terminal classification, circuit open/half-open behavior, and a real BullMQ retry that records failed and successful ERP attempts before confirming the order.
 
-### ⬜ Task 5.5 - Surface resilience state to operators
+### ✅ Task 5.5 - Surface resilience state to operators
 
 Subtasks:
 
-- Expose whether the ERP is healthy, degraded, or unavailable.
-- Show circuit state, retry pressure, and confirmation delay through API-readable state.
-- Prepare these signals for dashboard panels and benchmark summaries.
+- ✅ Expose whether the ERP is healthy, degraded, or unavailable.
+- ✅ Show circuit state, retry pressure, and confirmation delay through API-readable state.
+- ✅ Prepare these signals for dashboard panels and benchmark summaries.
+
+Completion summary: Shared contracts now define the API-readable ERP resilience projection at `/erp/status`, including dependency status, reason, circuit snapshot, retry pressure, latest attempt, recent failure/timeout counts, and confirmation-delay metrics. The worker publishes circuit snapshots through a shared Redis helper whenever breaker state changes, and the API combines that snapshot with BullMQ retry pressure plus PostgreSQL ERP/order read models. API route and service tests cover healthy, degraded, unavailable, and missing-circuit states, while contract tests pin the response shape for later dashboard and benchmark-summary consumers.
 
 ### ⬜ Task 5.6 - Add automated tests for mock ERP and resilience controls
 

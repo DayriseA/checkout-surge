@@ -1,21 +1,14 @@
-import type { OrderProcessJob } from "@checkout-surge/contracts";
+import type {
+  ErpCircuitBreakerSnapshot,
+  ErpCircuitState,
+  OrderProcessJob,
+} from "@checkout-surge/contracts";
 import type {
   OrderConfirmation,
   OrderProcessDeliveryMetadata,
 } from "./order-process-job-handler.js";
 
-export type ErpCircuitState = "closed" | "open" | "half_open";
-
-export interface ErpCircuitBreakerSnapshot {
-  state: ErpCircuitState;
-  consecutiveFailureCount: number;
-  failureThreshold: number;
-  resetTimeoutMs: number;
-  openedAt: string | null;
-  nextAttemptAt: string | null;
-  halfOpenProbeInFlight: boolean;
-  updatedAt: string;
-}
+export type { ErpCircuitBreakerSnapshot, ErpCircuitState };
 
 export class ErpCircuitOpenError extends Error {
   override readonly name = "ErpCircuitOpenError";
@@ -34,6 +27,7 @@ export interface ErpCircuitBreakerOptions {
   failureThreshold: number;
   resetTimeoutMs: number;
   isCountedFailure: (error: unknown) => boolean;
+  onStateChange?: (snapshot: ErpCircuitBreakerSnapshot) => void | Promise<void>;
   now?: () => Date;
 }
 
@@ -42,6 +36,9 @@ export class ErpCircuitBreaker implements OrderConfirmation {
   private readonly failureThreshold: number;
   private readonly resetTimeoutMs: number;
   private readonly isCountedFailure: (error: unknown) => boolean;
+  private readonly onStateChange:
+    | ((snapshot: ErpCircuitBreakerSnapshot) => void | Promise<void>)
+    | undefined;
   private readonly now: () => Date;
   private state: ErpCircuitState = "closed";
   private consecutiveFailureCount = 0;
@@ -54,8 +51,10 @@ export class ErpCircuitBreaker implements OrderConfirmation {
     this.failureThreshold = options.failureThreshold;
     this.resetTimeoutMs = options.resetTimeoutMs;
     this.isCountedFailure = options.isCountedFailure;
+    this.onStateChange = options.onStateChange;
     this.now = options.now ?? (() => new Date());
     this.updatedAt = this.now();
+    this.reportStateChange();
   }
 
   async confirm(job: OrderProcessJob, delivery: OrderProcessDeliveryMetadata): Promise<void> {
@@ -159,5 +158,18 @@ export class ErpCircuitBreaker implements OrderConfirmation {
 
   private touch(): void {
     this.updatedAt = this.now();
+    this.reportStateChange();
+  }
+
+  private reportStateChange(): void {
+    if (!this.onStateChange) {
+      return;
+    }
+
+    try {
+      void Promise.resolve(this.onStateChange(this.snapshot())).catch(() => undefined);
+    } catch {
+      // State reporting is best-effort and must not break order processing.
+    }
   }
 }

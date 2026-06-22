@@ -4,6 +4,9 @@ import { fileURLToPath } from "node:url";
 import {
   buyResponseSchema,
   dashboardRecoveryResponseSchema,
+  type ErpResilienceStatus,
+  erpResilienceStatusPath,
+  erpResilienceStatusSchema,
   errorPayloadSchema,
   healthResponseSchema,
   inventoryStatusSchema,
@@ -47,6 +50,7 @@ import { loadApiConfig } from "../src/runtime/config.js";
 import type { ApiFastifyInstance } from "../src/runtime/fastify.js";
 import { createInfrastructureReadinessCheck } from "../src/runtime/readiness.js";
 import { buildApiServer } from "../src/server.js";
+import type { ErpStatusService } from "../src/services/erp-status-service.js";
 import {
   type InventoryStatusReader,
   InventoryStatusService,
@@ -130,6 +134,7 @@ async function buildTestServer(options: {
   generateId?: () => string;
   orderProcessJobPublisher?: OrderProcessJobPublisher;
   queueInspector?: OrderProcessQueueInspector;
+  erpStatusService?: ErpStatusService;
 }): Promise<ApiFastifyInstance> {
   const inventoryReader =
     options.inventoryReader === undefined
@@ -173,6 +178,7 @@ async function buildTestServer(options: {
         },
       ],
     },
+    erpStatusService: options.erpStatusService ?? createStaticErpStatusService(erpStatusFixture()),
     inventoryStatusService: new InventoryStatusService(inventoryReader),
     queueStatusService: new QueueStatusService(
       options.queueInspector ?? { inspect: async () => queueStatusFixture() },
@@ -191,6 +197,46 @@ async function buildTestServer(options: {
     }),
     startedAt: new Date("2026-06-20T00:00:00.000Z"),
   });
+}
+
+function erpStatusFixture(): ErpResilienceStatus {
+  return {
+    status: "healthy",
+    reason: null,
+    circuit: {
+      state: "closed",
+      consecutiveFailureCount: 0,
+      failureThreshold: 5,
+      resetTimeoutMs: 10_000,
+      openedAt: null,
+      nextAttemptAt: null,
+      halfOpenProbeInFlight: false,
+      updatedAt: "2026-06-20T00:00:10.000Z",
+    },
+    retryPressure: {
+      retryingJobCount: 0,
+      retryAttemptCount: 0,
+      inspectedJobCount: 0,
+      inspectionLimit: 100,
+      inspectionTruncated: false,
+    },
+    latestAttempt: null,
+    recentAttemptWindowSeconds: 60,
+    recentAttemptCount: 0,
+    recentFailureCount: 0,
+    recentTimeoutCount: 0,
+    confirmationDelay: {
+      processingOrderCount: 0,
+      oldestProcessingAgeSeconds: null,
+      recentConfirmedCount: 0,
+      averageConfirmationDelayMs: null,
+    },
+    updatedAt: "2026-06-20T00:00:10.000Z",
+  };
+}
+
+function createStaticErpStatusService(status: ErpResilienceStatus): ErpStatusService {
+  return { getStatus: async () => status } as unknown as ErpStatusService;
 }
 
 function createRedisStockReservations(redis: CheckoutSurgeRedis): StockReservationGateway {
@@ -360,6 +406,20 @@ describe("API gateway routes", () => {
     expect(response.statusCode).toBe(200);
     expect(payload).toEqual(queueStatusFixture());
     expect(payload).not.toHaveProperty("physicalName");
+  });
+
+  it("returns the validated ERP resilience status projection", async () => {
+    const status = erpStatusFixture();
+    const server = await trackedServer({
+      persistence: new AcceptingPersistence(),
+      erpStatusService: createStaticErpStatusService(status),
+    });
+
+    const response = await server.inject({ method: "GET", url: erpResilienceStatusPath });
+    const payload = erpResilienceStatusSchema.parse(response.json());
+
+    expect(response.statusCode).toBe(200);
+    expect(payload).toEqual(status);
   });
 
   it("returns a stable unavailable response when queue inspection fails", async () => {

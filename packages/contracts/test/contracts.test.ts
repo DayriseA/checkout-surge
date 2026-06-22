@@ -10,6 +10,8 @@ import {
   erpConfirmationPath,
   erpConfirmationRequestSchema,
   erpConfirmationResponseSchema,
+  erpResilienceStatusPath,
+  erpResilienceStatusSchema,
   errorPayloadSchema,
   healthResponseSchema,
   inventoryStatusSchema,
@@ -184,7 +186,56 @@ describe("ERP contracts", () => {
   it("defines chaos control paths and service-token header", () => {
     expect(erpChaosStatusPath).toBe("/chaos");
     expect(erpChaosResetPath).toBe("/chaos/reset");
+    expect(erpResilienceStatusPath).toBe("/erp/status");
     expect(controlServiceTokenHeaderName).toBe("x-control-service-token");
+  });
+
+  it("validates operator-facing ERP resilience status", () => {
+    expect(
+      erpResilienceStatusSchema.parse({
+        status: "degraded",
+        reason: "erp_retries_pending",
+        circuit: {
+          state: "half_open",
+          consecutiveFailureCount: 5,
+          failureThreshold: 5,
+          resetTimeoutMs: 10_000,
+          openedAt: "2026-06-20T00:00:00.000Z",
+          nextAttemptAt: "2026-06-20T00:00:10.000Z",
+          halfOpenProbeInFlight: true,
+          updatedAt: timestamp,
+        },
+        retryPressure: {
+          retryingJobCount: 2,
+          retryAttemptCount: 4,
+          inspectedJobCount: 10,
+          inspectionLimit: 100,
+          inspectionTruncated: false,
+        },
+        latestAttempt: {
+          orderId: "11111111-1111-4111-8111-111111111111",
+          runId: null,
+          attemptNumber: 3,
+          status: "failed",
+          httpStatus: 503,
+          errorCode: "erp_unavailable",
+          errorMessage: "The ERP is temporarily unavailable.",
+          latencyMs: 125,
+          finishedAt: timestamp,
+        },
+        recentAttemptWindowSeconds: 60,
+        recentAttemptCount: 8,
+        recentFailureCount: 3,
+        recentTimeoutCount: 1,
+        confirmationDelay: {
+          processingOrderCount: 4,
+          oldestProcessingAgeSeconds: 12.5,
+          recentConfirmedCount: 6,
+          averageConfirmationDelayMs: 275,
+        },
+        updatedAt: timestamp,
+      }).status,
+    ).toBe("degraded");
   });
 });
 

@@ -1,5 +1,9 @@
 import { contractsPackageName } from "@checkout-surge/contracts";
-import { createDatabaseConnection, dbPackageName } from "@checkout-surge/db";
+import {
+  createDatabaseConnection,
+  dbPackageName,
+  setErpCircuitBreakerSnapshot,
+} from "@checkout-surge/db";
 import { createServiceLogger, loggerPackageName } from "@checkout-surge/logger";
 import { Redis } from "ioredis";
 import {
@@ -86,6 +90,13 @@ export async function startWorker(): Promise<void> {
         failureThreshold: config.erpCircuitFailureThreshold,
         resetTimeoutMs: config.erpCircuitResetTimeoutMs,
         isCountedFailure: isTemporaryErpConfirmationError,
+        onStateChange: async (snapshot) => {
+          try {
+            await setErpCircuitBreakerSnapshot(redis, snapshot);
+          } catch (error) {
+            logger.error({ err: error }, "Could not publish ERP circuit breaker state.");
+          }
+        },
       }),
       persistence: new PostgresOrderTransitionPersistence(database.db),
       logger,

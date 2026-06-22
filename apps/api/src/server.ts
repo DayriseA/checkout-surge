@@ -5,6 +5,7 @@ import { type FastifyReply, fastify } from "fastify";
 import { ZodError } from "zod";
 import { registerBuyRoutes } from "./routes/buy-routes.js";
 import { registerDashboardRoutes } from "./routes/dashboard-routes.js";
+import { registerErpRoutes } from "./routes/erp-routes.js";
 import { registerHealthRoutes } from "./routes/health-routes.js";
 import { registerInventoryRoutes } from "./routes/inventory-routes.js";
 import { registerQueueRoutes } from "./routes/queue-routes.js";
@@ -12,6 +13,7 @@ import type { ApiConfig } from "./runtime/config.js";
 import { ApiHttpError, createErrorPayload } from "./runtime/errors.js";
 import type { ApiFastifyInstance } from "./runtime/fastify.js";
 import type { ApiReadiness } from "./runtime/readiness.js";
+import type { ErpStatusService } from "./services/erp-status-service.js";
 import type { InventoryStatusService } from "./services/inventory-status-service.js";
 import type { QueueStatusService } from "./services/queue-status-service.js";
 import type { ReserveOrderService } from "./services/reserve-order-service.js";
@@ -26,6 +28,7 @@ export interface BuildApiServerOptions {
   config: ApiConfig;
   logger: CheckoutSurgeLogger;
   readiness: ApiReadiness;
+  erpStatusService: ErpStatusService;
   inventoryStatusService: InventoryStatusService;
   queueStatusService: QueueStatusService;
   reserveOrderService: ReserveOrderService;
@@ -88,6 +91,7 @@ export async function buildApiServer(options: BuildApiServerOptions): Promise<Ap
     readiness: options.readiness,
     ...(options.startedAt ? { startedAt: options.startedAt } : {}),
   });
+  registerErpRoutes(app, { erpStatusService: options.erpStatusService });
   registerBuyRoutes(app, { reserveOrderService: options.reserveOrderService });
   registerInventoryRoutes(app, { inventoryStatusService: options.inventoryStatusService });
   registerQueueRoutes(app, { queueStatusService: options.queueStatusService });

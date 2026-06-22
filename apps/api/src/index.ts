@@ -16,6 +16,11 @@ import { loadApiConfig } from "./runtime/config.js";
 import type { ApiFastifyInstance } from "./runtime/fastify.js";
 import { createInfrastructureReadinessCheck } from "./runtime/readiness.js";
 import { buildApiServer } from "./server.js";
+import {
+  ErpStatusService,
+  PostgresErpAttemptStatusReader,
+  RedisErpCircuitBreakerStateReader,
+} from "./services/erp-status-service.js";
 import { InventoryStatusService } from "./services/inventory-status-service.js";
 import { PostgresBuyPersistence } from "./services/postgres-buy-persistence.js";
 import { QueueStatusService } from "./services/queue-status-service.js";
@@ -32,6 +37,11 @@ export { createBullMqOrderProcessJobPublisher } from "./queue/bullmq-order-proce
 export { createBullMqOrderProcessQueueInspector } from "./queue/bullmq-order-process-queue-inspector.js";
 export { type ApiConfig, loadApiConfig } from "./runtime/config.js";
 export { buildApiServer } from "./server.js";
+export {
+  ErpStatusService,
+  PostgresErpAttemptStatusReader,
+  RedisErpCircuitBreakerStateReader,
+} from "./services/erp-status-service.js";
 export { InventoryStatusService } from "./services/inventory-status-service.js";
 export type { OrderProcessJobPublisher } from "./services/order-process-job-publisher.js";
 export { PostgresBuyPersistence } from "./services/postgres-buy-persistence.js";
@@ -62,6 +72,7 @@ export async function startApiServer(): Promise<void> {
   });
 
   const persistence = new PostgresBuyPersistence(connection.db);
+  const queueStatusService = new QueueStatusService(orderProcessQueueInspector, logger);
   const reserveOrderService = new ReserveOrderService({
     persistence,
     orderProcessJobPublisher,
@@ -127,10 +138,16 @@ export async function startApiServer(): Promise<void> {
         redis,
         orderProcessQueueInspector,
       ),
+      erpStatusService: new ErpStatusService({
+        circuitBreakerStateReader: new RedisErpCircuitBreakerStateReader(redis),
+        attemptStatusReader: new PostgresErpAttemptStatusReader(connection.db),
+        queueStatusService,
+        logger,
+      }),
       inventoryStatusService: new InventoryStatusService({
         getStatus: (saleOfferId) => getInventoryStatus(redis, saleOfferId),
       }),
-      queueStatusService: new QueueStatusService(orderProcessQueueInspector, logger),
+      queueStatusService,
       reserveOrderService,
       startedAt: new Date(),
     });
