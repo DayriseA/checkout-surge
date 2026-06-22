@@ -396,13 +396,15 @@ Subtasks:
 
 Completion summary: Mock ERP now owns an environment-backed chaos configuration store with validated admin safety caps, a request-aware decision provider for latency, TPS throttling, forced errors, and forced outage behavior, public read-only chaos status, and service-token-protected update/reset endpoints. Shared contracts define the control paths and token header so later dashboard/admin proxy work can call the boundary without duplicating strings. Focused Mock ERP and contract tests cover fallback config loading, cap enforcement, status/update/reset routes, delayed decisions, throttling, injected failures, and forced outage responses.
 
-### ⬜ Task 5.3 - Integrate the worker with the mock ERP
+### ✅ Task 5.3 - Integrate the worker with the mock ERP
 
 Subtasks:
 
-- Replace placeholder confirmation behavior with real ERP HTTP calls from the worker only.
-- Persist ERP attempt results, HTTP status, errors, timing, and attempt numbers.
-- Ensure the order lifecycle reflects actual downstream behavior rather than assumed success.
+- ✅ Replace placeholder confirmation behavior with real ERP HTTP calls from the worker only.
+- ✅ Persist ERP attempt results, HTTP status, errors, timing, and attempt numbers.
+- ✅ Ensure the order lifecycle reflects actual downstream behavior rather than assumed success.
+
+Completion summary: The worker startup path now composes a real Mock ERP HTTP confirmation adapter using `MOCK_ERP_BASE_URL` and `ERP_REQUEST_TIMEOUT_MS` instead of the local success placeholder. ERP responses, invalid responses, transport failures, and timeouts are recorded through a PostgreSQL attempt persistence adapter that writes `erp_attempts` rows and correlated `erp.attempt.succeeded` / `erp.attempt.failed` events. Worker unit tests cover request shape, success, dependency failure, timeout, invalid response, transport failure, and config validation; integration tests prove real BullMQ deliveries persist ERP attempt history before terminal order outcomes.
 
 ### ⬜ Task 5.4 - Add resilience patterns around the ERP dependency
 

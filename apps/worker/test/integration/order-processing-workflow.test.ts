@@ -7,6 +7,7 @@ import {
 } from "@checkout-surge/contracts";
 import {
   createDatabaseConnection,
+  erpAttempts,
   orderEvents,
   orders,
   products,
@@ -19,10 +20,12 @@ import { Queue } from "bullmq";
 import { and, asc, eq } from "drizzle-orm";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { HttpErpOrderConfirmation } from "../../src/application/erp-confirmation-client.js";
 import {
   createOrderProcessJobHandler,
   type OrderConfirmation,
 } from "../../src/application/order-process-job-handler.js";
+import { PostgresErpAttemptPersistence } from "../../src/persistence/postgres-erp-attempt-persistence.js";
 import {
   OrderJobIdentityMismatchError,
   OrderNotFoundError,
@@ -244,6 +247,65 @@ describe("PostgreSQL worker order transitions", () => {
     });
   });
 
+  it("persists failed ERP attempt details with reconstructable event history", async () => {
+    const startedAt = new Date("2026-06-21T00:00:04.000Z");
+    const finishedAt = new Date("2026-06-21T00:00:04.075Z");
+    const persistence = new PostgresErpAttemptPersistence(connection.db);
+
+    await persistence.recordAttempt({
+      job,
+      delivery: { attemptNumber: 3, attemptsMade: 2 },
+      status: "failed",
+      httpStatus: 503,
+      errorCode: "erp_unavailable",
+      errorMessage: "The ERP is temporarily unavailable.",
+      latencyMs: 75,
+      startedAt,
+      finishedAt,
+    });
+
+    const [attempt] = await connection.db
+      .select()
+      .from(erpAttempts)
+      .where(eq(erpAttempts.orderId, ids.order));
+    const [event] = await connection.db
+      .select()
+      .from(orderEvents)
+      .where(
+        and(eq(orderEvents.orderId, ids.order), eq(orderEvents.eventName, "erp.attempt.failed")),
+      );
+
+    expect(attempt).toMatchObject({
+      orderId: ids.order,
+      correlationId: job.correlationId,
+      attemptNumber: 3,
+      status: "failed",
+      httpStatus: 503,
+      errorCode: "erp_unavailable",
+      errorMessage: "The ERP is temporarily unavailable.",
+      latencyMs: 75,
+      startedAt,
+      finishedAt,
+    });
+    expect(event).toMatchObject({
+      orderId: ids.order,
+      reservationId: ids.reservation,
+      saleOfferId: ids.saleOffer,
+      correlationId: job.correlationId,
+      source: "worker",
+      occurredAt: finishedAt,
+      payload: {
+        erpAttemptStatus: "failed",
+        attemptNumber: 3,
+        attemptsMade: 2,
+        httpStatus: 503,
+        errorCode: "erp_unavailable",
+        errorMessage: "The ERP is temporarily unavailable.",
+        latencyMs: 75,
+      },
+    });
+  });
+
   it("fails missing and materially mismatched jobs without fabricating events", async () => {
     const persistence = new PostgresOrderTransitionPersistence(connection.db);
     const eventCountBefore = (await readOrderEvents(connection, ids.order)).length;
@@ -317,6 +379,67 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
       "order.processing",
       "order.confirmed",
     ]);
+  });
+
+  it("calls the ERP adapter and records durable attempt history", async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          status: "succeeded",
+          confirmationId: "erp_confirmation_integration",
+          httpStatus: 200,
+          latencyMs: 20,
+          timestamp: "2026-06-21T00:00:02.000Z",
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    consumer = buildConsumer(
+      connection,
+      new HttpErpOrderConfirmation({
+        baseUrl: "http://mock-erp:4100",
+        requestTimeoutMs: 1000,
+        attemptPersistence: new PostgresErpAttemptPersistence(connection.db),
+        fetch,
+        now: sequenceClock(
+          new Date("2026-06-21T00:00:01.000Z"),
+          new Date("2026-06-21T00:00:01.020Z"),
+        ),
+      }),
+    );
+    consumer.start();
+
+    await queue.add(orderProcessJobName, job, { jobId: job.orderId });
+    await waitForOrderStatus(connection, "confirmed");
+    const [attempt] = await connection.db
+      .select()
+      .from(erpAttempts)
+      .where(eq(erpAttempts.orderId, ids.order));
+    const [attemptEvent] = await connection.db
+      .select()
+      .from(orderEvents)
+      .where(
+        and(eq(orderEvents.orderId, ids.order), eq(orderEvents.eventName, "erp.attempt.succeeded")),
+      );
+
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(attempt).toMatchObject({
+      orderId: ids.order,
+      correlationId: job.correlationId,
+      attemptNumber: 1,
+      status: "succeeded",
+      httpStatus: 200,
+      latencyMs: 20,
+      startedAt: new Date("2026-06-21T00:00:01.000Z"),
+      finishedAt: new Date("2026-06-21T00:00:01.020Z"),
+    });
+    expect(attemptEvent?.payload).toMatchObject({
+      erpAttemptStatus: "succeeded",
+      attemptNumber: 1,
+      attemptsMade: 0,
+      httpStatus: 200,
+      latencyMs: 20,
+    });
   });
 
   it("persists an injected failure and leaves the BullMQ job failed with attempt metadata", async () => {
@@ -459,4 +582,19 @@ function deferred<T>() {
     resolve = promiseResolve;
   });
   return { promise, resolve };
+}
+
+function sequenceClock(...dates: Date[]): () => Date {
+  let index = 0;
+
+  return () => {
+    const date = dates[index];
+    index += 1;
+
+    if (!date) {
+      throw new Error("Test clock exhausted.");
+    }
+
+    return date;
+  };
 }

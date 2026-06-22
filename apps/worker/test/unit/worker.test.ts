@@ -20,10 +20,26 @@ describe("worker configuration", () => {
       redisUrl: "redis://localhost:6379",
       orderProcessConcurrency: 5,
       postgresPoolMax: 10,
+      mockErpBaseUrl: "http://localhost:4100/",
+      erpRequestTimeoutMs: 2000,
     });
   });
 
-  it("rejects missing infrastructure and invalid concurrency", () => {
+  it("loads ERP client overrides", () => {
+    expect(
+      loadWorkerConfig({
+        DATABASE_URL: "postgresql://localhost/checkout_surge",
+        REDIS_URL: "redis://localhost:6379",
+        MOCK_ERP_BASE_URL: "http://mock-erp:4100",
+        ERP_REQUEST_TIMEOUT_MS: "500",
+      }),
+    ).toMatchObject({
+      mockErpBaseUrl: "http://mock-erp:4100/",
+      erpRequestTimeoutMs: 500,
+    });
+  });
+
+  it("rejects missing infrastructure and invalid worker values", () => {
     expect(() => loadWorkerConfig({})).toThrow("DATABASE_URL is required");
     expect(() =>
       loadWorkerConfig({
@@ -39,6 +55,20 @@ describe("worker configuration", () => {
         WORKER_POSTGRES_POOL_MAX: "invalid",
       }),
     ).toThrow("WORKER_POSTGRES_POOL_MAX must be a positive integer");
+    expect(() =>
+      loadWorkerConfig({
+        DATABASE_URL: "postgresql://localhost/test",
+        REDIS_URL: "redis://localhost:6379",
+        MOCK_ERP_BASE_URL: "not-a-url",
+      }),
+    ).toThrow("MOCK_ERP_BASE_URL must be a valid URL");
+    expect(() =>
+      loadWorkerConfig({
+        DATABASE_URL: "postgresql://localhost/test",
+        REDIS_URL: "redis://localhost:6379",
+        ERP_REQUEST_TIMEOUT_MS: "0",
+      }),
+    ).toThrow("ERP_REQUEST_TIMEOUT_MS must be a positive integer");
   });
 });
 

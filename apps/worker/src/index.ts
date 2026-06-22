@@ -2,10 +2,9 @@ import { contractsPackageName } from "@checkout-surge/contracts";
 import { createDatabaseConnection, dbPackageName } from "@checkout-surge/db";
 import { createServiceLogger, loggerPackageName } from "@checkout-surge/logger";
 import { Redis } from "ioredis";
-import {
-  createLocalOrderConfirmation,
-  createOrderProcessJobHandler,
-} from "./application/order-process-job-handler.js";
+import { HttpErpOrderConfirmation } from "./application/erp-confirmation-client.js";
+import { createOrderProcessJobHandler } from "./application/order-process-job-handler.js";
+import { PostgresErpAttemptPersistence } from "./persistence/postgres-erp-attempt-persistence.js";
 import { PostgresOrderTransitionPersistence } from "./persistence/postgres-order-transition-persistence.js";
 import { createBullMqOrderProcessConsumer } from "./queue/bullmq-order-process-consumer.js";
 import { loadWorkerConfig } from "./runtime/config.js";
@@ -21,10 +20,20 @@ export const workerAppDependencies = [
 ] as const;
 
 export {
+  type ErpAttemptPersistence,
+  type ErpAttemptRecord,
+  ErpConfirmationFailedError,
+  ErpConfirmationInvalidResponseError,
+  ErpConfirmationRequestError,
+  ErpConfirmationTimeoutError,
+  HttpErpOrderConfirmation,
+} from "./application/erp-confirmation-client.js";
+export {
   createLocalOrderConfirmation,
   createOrderProcessJobHandler,
   OrderFailurePersistenceError,
 } from "./application/order-process-job-handler.js";
+export { PostgresErpAttemptPersistence } from "./persistence/postgres-erp-attempt-persistence.js";
 export {
   InvalidOrderTransitionError,
   OrderJobIdentityMismatchError,
@@ -53,7 +62,11 @@ export async function startWorker(): Promise<void> {
     },
     concurrency: config.orderProcessConcurrency,
     handler: createOrderProcessJobHandler({
-      confirmation: createLocalOrderConfirmation(),
+      confirmation: new HttpErpOrderConfirmation({
+        baseUrl: config.mockErpBaseUrl,
+        requestTimeoutMs: config.erpRequestTimeoutMs,
+        attemptPersistence: new PostgresErpAttemptPersistence(database.db),
+      }),
       persistence: new PostgresOrderTransitionPersistence(database.db),
       logger,
     }),

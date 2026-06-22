@@ -5,6 +5,8 @@ export interface WorkerConfig {
   redisUrl: string;
   orderProcessConcurrency: number;
   postgresPoolMax: number;
+  mockErpBaseUrl: string;
+  erpRequestTimeoutMs: number;
 }
 
 export function loadWorkerConfig(env: NodeJS.ProcessEnv): WorkerConfig {
@@ -22,6 +24,15 @@ export function loadWorkerConfig(env: NodeJS.ProcessEnv): WorkerConfig {
       env.WORKER_POSTGRES_POOL_MAX,
       "WORKER_POSTGRES_POOL_MAX",
       10,
+    ),
+    mockErpBaseUrl: parseUrl(
+      env.MOCK_ERP_BASE_URL?.trim() || "http://localhost:4100",
+      "MOCK_ERP_BASE_URL",
+    ),
+    erpRequestTimeoutMs: parsePositiveInteger(
+      env.ERP_REQUEST_TIMEOUT_MS,
+      "ERP_REQUEST_TIMEOUT_MS",
+      2000,
     ),
   };
 }
@@ -50,4 +61,12 @@ function parsePositiveInteger(value: string | undefined, name: string, fallback:
   }
 
   return parsed;
+}
+
+function parseUrl(value: string, name: string): string {
+  try {
+    return new URL(value).toString();
+  } catch {
+    throw new Error(`${name} must be a valid URL.`);
+  }
 }
