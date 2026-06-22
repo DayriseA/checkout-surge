@@ -7,6 +7,8 @@ export interface WorkerConfig {
   postgresPoolMax: number;
   mockErpBaseUrl: string;
   erpRequestTimeoutMs: number;
+  erpCircuitFailureThreshold: number;
+  erpCircuitResetTimeoutMs: number;
 }
 
 export function loadWorkerConfig(env: NodeJS.ProcessEnv): WorkerConfig {
@@ -33,6 +35,16 @@ export function loadWorkerConfig(env: NodeJS.ProcessEnv): WorkerConfig {
       env.ERP_REQUEST_TIMEOUT_MS,
       "ERP_REQUEST_TIMEOUT_MS",
       2000,
+    ),
+    erpCircuitFailureThreshold: parsePositiveInteger(
+      env.ERP_CIRCUIT_FAILURE_THRESHOLD,
+      "ERP_CIRCUIT_FAILURE_THRESHOLD",
+      5,
+    ),
+    erpCircuitResetTimeoutMs: parsePositiveInteger(
+      env.ERP_CIRCUIT_RESET_TIMEOUT_MS,
+      "ERP_CIRCUIT_RESET_TIMEOUT_MS",
+      10_000,
     ),
   };
 }

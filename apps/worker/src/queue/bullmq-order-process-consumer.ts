@@ -181,5 +181,10 @@ async function processJob(
   await handler.handle(orderProcessJobSchema.parse(job.data), {
     attemptNumber: job.attemptsMade + 1,
     attemptsMade: job.attemptsMade,
+    maxAttempts: normalizeMaxAttempts(job.opts.attempts),
   });
+}
+
+function normalizeMaxAttempts(attempts: number | undefined): number {
+  return attempts && attempts > 0 ? attempts : 1;
 }

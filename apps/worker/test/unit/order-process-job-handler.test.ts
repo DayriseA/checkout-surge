@@ -140,6 +140,48 @@ describe("order-process application workflow", () => {
     expect(persistence.transitionToConfirmed).not.toHaveBeenCalled();
   });
 
+  it("leaves processing orders retryable after temporary confirmation failures with attempts remaining", async () => {
+    const confirmationError = new Error("ERP temporarily unavailable");
+    const persistence = createPersistence();
+    const handler = createOrderProcessJobHandler({
+      confirmation: { confirm: vi.fn().mockRejectedValue(confirmationError) },
+      persistence,
+      logger: createSilentLogger("worker"),
+      isTemporaryConfirmationFailure: () => true,
+    });
+
+    await expect(
+      handler.handle(job, { attemptNumber: 1, attemptsMade: 0, maxAttempts: 3 }),
+    ).rejects.toBe(confirmationError);
+
+    expect(persistence.transitionToFailed).not.toHaveBeenCalled();
+    expect(persistence.transitionToConfirmed).not.toHaveBeenCalled();
+  });
+
+  it("marks exhausted temporary confirmation failures as terminal order failures", async () => {
+    const confirmationError = new Error("ERP still unavailable");
+    const persistence = createPersistence();
+    const handler = createOrderProcessJobHandler({
+      confirmation: { confirm: vi.fn().mockRejectedValue(confirmationError) },
+      persistence,
+      logger: createSilentLogger("worker"),
+      isTemporaryConfirmationFailure: () => true,
+    });
+
+    await expect(
+      handler.handle(job, { attemptNumber: 3, attemptsMade: 2, maxAttempts: 3 }),
+    ).rejects.toBe(confirmationError);
+
+    expect(persistence.transitionToFailed).toHaveBeenCalledWith(
+      job,
+      {
+        code: "order_confirmation_failed",
+        message: "ERP still unavailable",
+      },
+      { attemptNumber: 3, attemptsMade: 2, maxAttempts: 3 },
+    );
+  });
+
   it("preserves confirmation and failure-persistence errors together", async () => {
     const confirmationError = new Error("confirmation unavailable");
     const persistenceError = new Error("database unavailable");

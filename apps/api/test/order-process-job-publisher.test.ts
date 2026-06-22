@@ -24,8 +24,28 @@ describe("order-processing job publisher", () => {
     await publisher.enqueue(job);
     await publisher.close();
 
-    expect(add).toHaveBeenCalledWith(orderProcessJobName, job, { jobId: job.orderId });
+    expect(add).toHaveBeenCalledWith(orderProcessJobName, job, {
+      attempts: 4,
+      backoff: { type: "exponential", delay: 500 },
+      jobId: job.orderId,
+    });
     expect(close).toHaveBeenCalledOnce();
+  });
+
+  it("uses explicit retry options when supplied", async () => {
+    const add = vi.fn().mockResolvedValue(undefined);
+    const publisher = createOrderProcessJobPublisher(
+      { add, close: vi.fn().mockResolvedValue(undefined) } as OrderProcessQueue,
+      { maxAttempts: 7, backoffBaseMs: 250 },
+    );
+
+    await publisher.enqueue(job);
+
+    expect(add).toHaveBeenCalledWith(orderProcessJobName, job, {
+      attempts: 7,
+      backoff: { type: "exponential", delay: 250 },
+      jobId: job.orderId,
+    });
   });
 
   it("rejects invalid jobs before publishing", async () => {

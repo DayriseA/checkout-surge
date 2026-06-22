@@ -90,12 +90,14 @@ describe("BullMQ order-processing boundary", () => {
       payload: job,
       attemptNumber: 1,
       attemptsMade: 0,
+      maxAttempts: 1,
     });
   });
 
   it("passes BullMQ retry delivery metadata across real attempts", async () => {
     const handledTwice = deferred<void>();
-    const deliveries: Array<{ attemptNumber: number; attemptsMade: number }> = [];
+    const deliveries: Array<{ attemptNumber: number; attemptsMade: number; maxAttempts?: number }> =
+      [];
     consumer = createBullMqOrderProcessConsumer({
       connection: { url: testRedisUrl(), maxRetriesPerRequest: null },
       concurrency: 1,
@@ -123,8 +125,8 @@ describe("BullMQ order-processing boundary", () => {
       interval: 25,
     });
     expect(deliveries).toEqual([
-      { attemptNumber: 1, attemptsMade: 0 },
-      { attemptNumber: 2, attemptsMade: 1 },
+      { attemptNumber: 1, attemptsMade: 0, maxAttempts: 2 },
+      { attemptNumber: 2, attemptsMade: 1, maxAttempts: 2 },
     ]);
     expect((await queue.getJob(job.orderId))?.attemptsMade).toBe(2);
   });

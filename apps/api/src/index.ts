@@ -46,10 +46,16 @@ export async function startApiServer(): Promise<void> {
     lazyConnect: true,
     maxRetriesPerRequest: 3,
   });
-  const orderProcessJobPublisher = createBullMqOrderProcessJobPublisher({
-    url: config.redisUrl,
-    maxRetriesPerRequest: 3,
-  });
+  const orderProcessJobPublisher = createBullMqOrderProcessJobPublisher(
+    {
+      url: config.redisUrl,
+      maxRetriesPerRequest: 3,
+    },
+    {
+      maxAttempts: config.orderProcessMaxAttempts,
+      backoffBaseMs: config.orderProcessBackoffBaseMs,
+    },
+  );
   const orderProcessQueueInspector = createBullMqOrderProcessQueueInspector({
     url: config.redisUrl,
     maxRetriesPerRequest: 3,

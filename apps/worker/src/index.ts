@@ -2,7 +2,14 @@ import { contractsPackageName } from "@checkout-surge/contracts";
 import { createDatabaseConnection, dbPackageName } from "@checkout-surge/db";
 import { createServiceLogger, loggerPackageName } from "@checkout-surge/logger";
 import { Redis } from "ioredis";
-import { HttpErpOrderConfirmation } from "./application/erp-confirmation-client.js";
+import {
+  ErpCircuitBreaker,
+  isTemporaryErpCircuitError,
+} from "./application/erp-circuit-breaker.js";
+import {
+  HttpErpOrderConfirmation,
+  isTemporaryErpConfirmationError,
+} from "./application/erp-confirmation-client.js";
 import { createOrderProcessJobHandler } from "./application/order-process-job-handler.js";
 import { PostgresErpAttemptPersistence } from "./persistence/postgres-erp-attempt-persistence.js";
 import { PostgresOrderTransitionPersistence } from "./persistence/postgres-order-transition-persistence.js";
@@ -20,6 +27,13 @@ export const workerAppDependencies = [
 ] as const;
 
 export {
+  ErpCircuitBreaker,
+  type ErpCircuitBreakerSnapshot,
+  ErpCircuitOpenError,
+  type ErpCircuitState,
+  isTemporaryErpCircuitError,
+} from "./application/erp-circuit-breaker.js";
+export {
   type ErpAttemptPersistence,
   type ErpAttemptRecord,
   ErpConfirmationFailedError,
@@ -27,6 +41,7 @@ export {
   ErpConfirmationRequestError,
   ErpConfirmationTimeoutError,
   HttpErpOrderConfirmation,
+  isTemporaryErpConfirmationError,
 } from "./application/erp-confirmation-client.js";
 export {
   createLocalOrderConfirmation,
@@ -62,13 +77,19 @@ export async function startWorker(): Promise<void> {
     },
     concurrency: config.orderProcessConcurrency,
     handler: createOrderProcessJobHandler({
-      confirmation: new HttpErpOrderConfirmation({
-        baseUrl: config.mockErpBaseUrl,
-        requestTimeoutMs: config.erpRequestTimeoutMs,
-        attemptPersistence: new PostgresErpAttemptPersistence(database.db),
+      confirmation: new ErpCircuitBreaker({
+        confirmation: new HttpErpOrderConfirmation({
+          baseUrl: config.mockErpBaseUrl,
+          requestTimeoutMs: config.erpRequestTimeoutMs,
+          attemptPersistence: new PostgresErpAttemptPersistence(database.db),
+        }),
+        failureThreshold: config.erpCircuitFailureThreshold,
+        resetTimeoutMs: config.erpCircuitResetTimeoutMs,
+        isCountedFailure: isTemporaryErpConfirmationError,
       }),
       persistence: new PostgresOrderTransitionPersistence(database.db),
       logger,
+      isTemporaryConfirmationFailure,
     }),
     logger,
   });
@@ -120,6 +141,10 @@ export async function startWorker(): Promise<void> {
     logger.error({ err: error }, "Worker runtime failed to start.");
     process.exitCode = 1;
   }
+}
+
+function isTemporaryConfirmationFailure(error: unknown): boolean {
+  return isTemporaryErpConfirmationError(error) || isTemporaryErpCircuitError(error);
 }
 
 if (process.env.NODE_ENV !== "test" && import.meta.url === `file://${process.argv[1]}`) {

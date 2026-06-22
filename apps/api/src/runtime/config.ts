@@ -5,6 +5,8 @@ export interface ApiConfig {
   databaseUrl: string;
   redisUrl: string;
   postgresPoolMax: number;
+  orderProcessMaxAttempts: number;
+  orderProcessBackoffBaseMs: number;
   reservationHoldMinutes: number;
   idempotencyTtlSeconds: number;
   pendingPersistenceRetryAfterSeconds: number;
@@ -19,6 +21,16 @@ export function loadApiConfig(env: NodeJS.ProcessEnv): ApiConfig {
     databaseUrl: requireEnv(env, "DATABASE_URL"),
     redisUrl: requireEnv(env, "REDIS_URL"),
     postgresPoolMax: parsePositiveInteger(env.API_POSTGRES_POOL_MAX, "API_POSTGRES_POOL_MAX", 10),
+    orderProcessMaxAttempts: parsePositiveInteger(
+      env.ORDER_PROCESS_MAX_ATTEMPTS,
+      "ORDER_PROCESS_MAX_ATTEMPTS",
+      4,
+    ),
+    orderProcessBackoffBaseMs: parsePositiveInteger(
+      env.ORDER_PROCESS_BACKOFF_BASE_MS,
+      "ORDER_PROCESS_BACKOFF_BASE_MS",
+      500,
+    ),
     reservationHoldMinutes: parsePositiveInteger(
       env.RESERVATION_HOLD_MINUTES,
       "RESERVATION_HOLD_MINUTES",

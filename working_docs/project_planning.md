@@ -406,14 +406,16 @@ Subtasks:
 
 Completion summary: The worker startup path now composes a real Mock ERP HTTP confirmation adapter using `MOCK_ERP_BASE_URL` and `ERP_REQUEST_TIMEOUT_MS` instead of the local success placeholder. ERP responses, invalid responses, transport failures, and timeouts are recorded through a PostgreSQL attempt persistence adapter that writes `erp_attempts` rows and correlated `erp.attempt.succeeded` / `erp.attempt.failed` events. Worker unit tests cover request shape, success, dependency failure, timeout, invalid response, transport failure, and config validation; integration tests prove real BullMQ deliveries persist ERP attempt history before terminal order outcomes.
 
-### ⬜ Task 5.4 - Add resilience patterns around the ERP dependency
+### ✅ Task 5.4 - Add resilience patterns around the ERP dependency
 
 Subtasks:
 
-- Add retry behavior with exponential backoff.
-- Add a circuit breaker or equivalent protective mechanism.
-- Define temporary failure versus terminal failure in code and tests.
-- Protect the ERP from retry thrash under prolonged failure.
+- ✅ Add retry behavior with exponential backoff.
+- ✅ Add a circuit breaker or equivalent protective mechanism.
+- ✅ Define temporary failure versus terminal failure in code and tests.
+- ✅ Protect the ERP from retry thrash under prolonged failure.
+
+Completion summary: Order-processing jobs now receive an environment-backed retry budget and exponential BullMQ backoff from the API queue handoff. The worker distinguishes temporary ERP dependency failures from terminal confirmation failures, leaves orders in `processing` while retry attempts remain, and only marks exhausted or terminal failures as `failed`. A worker-owned circuit breaker wraps ERP calls, opens after configured consecutive temporary failures, suppresses downstream calls during the reset window, probes half-open recovery, and closes on successful recovery. Tests cover retry metadata, retryable versus exhausted handler behavior, temporary/terminal classification, circuit open/half-open behavior, and a real BullMQ retry that records failed and successful ERP attempts before confirming the order.
 
 ### ⬜ Task 5.5 - Surface resilience state to operators
 

@@ -357,6 +357,8 @@ Most infrastructure URLs have local defaults, but service-to-service control end
 | `RESERVATION_HOLD_MINUTES` | `15` | API reservation flow |
 | `IDEMPOTENCY_TTL_SECONDS` | `1800` | API reservation flow |
 | `PENDING_PERSISTENCE_RETRY_AFTER_SECONDS` | `30` | API reservation flow |
+| `ORDER_PROCESS_MAX_ATTEMPTS` | `4` | API queue handoff retry budget for order-processing jobs |
+| `ORDER_PROCESS_BACKOFF_BASE_MS` | `500` | API queue handoff exponential-backoff base delay for order-processing jobs |
 | `API_LISTEN_BACKLOG` | `8192` | API listener accept backlog for one-second public spike validation |
 | `API_POSTGRES_POOL_MAX` | `10` | API PostgreSQL connection pool maximum |
 | `WORKER_POSTGRES_POOL_MAX` | `10` | Worker PostgreSQL connection pool maximum |

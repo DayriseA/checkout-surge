@@ -7,6 +7,7 @@ import {
   ErpConfirmationRequestError,
   ErpConfirmationTimeoutError,
   HttpErpOrderConfirmation,
+  isTemporaryErpConfirmationError,
 } from "../../src/application/erp-confirmation-client.js";
 import type { OrderProcessDeliveryMetadata } from "../../src/application/order-process-job-handler.js";
 
@@ -193,6 +194,31 @@ describe("HTTP ERP order confirmation", () => {
         latencyMs: 5,
       }),
     );
+  });
+
+  it("classifies dependency failures for retry eligibility", () => {
+    const temporaryResponse = {
+      status: "failed" as const,
+      httpStatus: 503,
+      errorCode: "erp_unavailable",
+      errorMessage: "The ERP is temporarily unavailable.",
+      latencyMs: 10,
+      timestamp: "2026-06-22T00:00:00.010Z",
+    };
+    const terminalResponse = {
+      ...temporaryResponse,
+      httpStatus: 400,
+      errorCode: "erp_bad_request",
+    };
+
+    expect(isTemporaryErpConfirmationError(new ErpConfirmationFailedError(temporaryResponse))).toBe(
+      true,
+    );
+    expect(isTemporaryErpConfirmationError(new ErpConfirmationFailedError(terminalResponse))).toBe(
+      false,
+    );
+    expect(isTemporaryErpConfirmationError(new ErpConfirmationTimeoutError(2000))).toBe(true);
+    expect(isTemporaryErpConfirmationError(new Error("local validation"))).toBe(false);
   });
 });
 

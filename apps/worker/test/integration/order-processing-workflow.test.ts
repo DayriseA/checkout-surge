@@ -20,7 +20,10 @@ import { Queue } from "bullmq";
 import { and, asc, eq } from "drizzle-orm";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { HttpErpOrderConfirmation } from "../../src/application/erp-confirmation-client.js";
+import {
+  HttpErpOrderConfirmation,
+  isTemporaryErpConfirmationError,
+} from "../../src/application/erp-confirmation-client.js";
 import {
   createOrderProcessJobHandler,
   type OrderConfirmation,
@@ -442,6 +445,87 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
     });
   });
 
+  it("retries temporary ERP failures without terminally failing the order", async () => {
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            status: "failed",
+            httpStatus: 503,
+            errorCode: "erp_unavailable",
+            errorMessage: "The ERP is temporarily unavailable.",
+            latencyMs: 10,
+            timestamp: "2026-06-21T00:00:01.010Z",
+          }),
+          { status: 503, headers: { "content-type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            status: "succeeded",
+            confirmationId: "erp_confirmation_retry_success",
+            httpStatus: 200,
+            latencyMs: 20,
+            timestamp: "2026-06-21T00:00:02.020Z",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      );
+    consumer = buildConsumer(
+      connection,
+      new HttpErpOrderConfirmation({
+        baseUrl: "http://mock-erp:4100",
+        requestTimeoutMs: 1000,
+        attemptPersistence: new PostgresErpAttemptPersistence(connection.db),
+        fetch,
+        now: sequenceClock(
+          new Date("2026-06-21T00:00:01.000Z"),
+          new Date("2026-06-21T00:00:01.010Z"),
+          new Date("2026-06-21T00:00:02.000Z"),
+          new Date("2026-06-21T00:00:02.020Z"),
+        ),
+      }),
+      undefined,
+      isTemporaryErpConfirmationError,
+    );
+    consumer.start();
+
+    await queue.add(orderProcessJobName, job, {
+      attempts: 2,
+      backoff: { type: "exponential", delay: 10 },
+      jobId: job.orderId,
+    });
+    await waitForOrderStatus(connection, "confirmed");
+    const attempts = await connection.db
+      .select()
+      .from(erpAttempts)
+      .where(eq(erpAttempts.orderId, ids.order))
+      .orderBy(asc(erpAttempts.attemptNumber));
+    const failedEvents = (await readOrderEvents(connection, ids.order)).filter(
+      (event) => event.eventName === "order.failed",
+    );
+
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(attempts).toMatchObject([
+      {
+        attemptNumber: 1,
+        status: "failed",
+        httpStatus: 503,
+        errorCode: "erp_unavailable",
+        latencyMs: 10,
+      },
+      {
+        attemptNumber: 2,
+        status: "succeeded",
+        httpStatus: 200,
+        latencyMs: 20,
+      },
+    ]);
+    expect(failedEvents).toHaveLength(0);
+  });
+
   it("persists an injected failure and leaves the BullMQ job failed with attempt metadata", async () => {
     const confirmationError = new Error("injected confirmation failure");
     const failed = deferred<OrderProcessJobFailureReport>();
@@ -476,6 +560,7 @@ function buildConsumer(
   connection: ReturnType<typeof createDatabaseConnection>,
   confirmation: OrderConfirmation,
   reportFailure?: (report: OrderProcessJobFailureReport) => void,
+  isTemporaryConfirmationFailure?: (error: unknown) => boolean,
 ): OrderProcessConsumer {
   const logger = createSilentLogger("worker");
   return createBullMqOrderProcessConsumer({
@@ -485,6 +570,7 @@ function buildConsumer(
       confirmation,
       persistence: new PostgresOrderTransitionPersistence(connection.db),
       logger,
+      ...(isTemporaryConfirmationFailure ? { isTemporaryConfirmationFailure } : {}),
     }),
     logger,
     ...(reportFailure ? { reportFailure } : {}),

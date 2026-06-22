@@ -59,6 +59,23 @@ export class ErpConfirmationTimeoutError extends Error {
   }
 }
 
+export function isTemporaryErpConfirmationError(error: unknown): boolean {
+  if (
+    error instanceof ErpConfirmationTimeoutError ||
+    error instanceof ErpConfirmationRequestError ||
+    error instanceof ErpConfirmationInvalidResponseError
+  ) {
+    return true;
+  }
+
+  if (!(error instanceof ErpConfirmationFailedError)) {
+    return false;
+  }
+
+  const httpStatus = error.response.httpStatus;
+  return httpStatus === undefined || httpStatus === 408 || httpStatus === 429 || httpStatus >= 500;
+}
+
 export interface HttpErpOrderConfirmationOptions {
   baseUrl: string;
   requestTimeoutMs: number;

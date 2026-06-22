@@ -4,6 +4,7 @@ import { type CheckoutSurgeLogger, childLoggerWithCorrelationId } from "@checkou
 export interface OrderProcessDeliveryMetadata {
   attemptNumber: number;
   attemptsMade: number;
+  maxAttempts?: number;
 }
 
 export interface OrderProcessJobHandler {
@@ -64,6 +65,7 @@ export function createOrderProcessJobHandler(dependencies: {
   confirmation: OrderConfirmation;
   persistence: OrderTransitionPersistence;
   logger: CheckoutSurgeLogger;
+  isTemporaryConfirmationFailure?: (error: unknown) => boolean;
 }): OrderProcessJobHandler {
   return {
     handle: async (job, delivery) => {
@@ -96,6 +98,17 @@ export function createOrderProcessJobHandler(dependencies: {
       try {
         await dependencies.confirmation.confirm(job, delivery);
       } catch (confirmationError) {
+        if (
+          dependencies.isTemporaryConfirmationFailure?.(confirmationError) &&
+          hasRemainingAttempts(delivery)
+        ) {
+          logger.warn(
+            { ...logContext, err: confirmationError },
+            "Temporary order confirmation failure will be retried.",
+          );
+          throw confirmationError;
+        }
+
         const failure = toOrderFailure(confirmationError);
 
         try {
@@ -119,6 +132,10 @@ export function createOrderProcessJobHandler(dependencies: {
       logger.info(logContext, "Order transitioned to confirmed.");
     },
   };
+}
+
+function hasRemainingAttempts(delivery: OrderProcessDeliveryMetadata): boolean {
+  return delivery.maxAttempts !== undefined && delivery.attemptNumber < delivery.maxAttempts;
 }
 
 function toOrderFailure(error: unknown): OrderFailure {

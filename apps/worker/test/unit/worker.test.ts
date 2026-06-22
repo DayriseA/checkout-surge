@@ -22,6 +22,8 @@ describe("worker configuration", () => {
       postgresPoolMax: 10,
       mockErpBaseUrl: "http://localhost:4100/",
       erpRequestTimeoutMs: 2000,
+      erpCircuitFailureThreshold: 5,
+      erpCircuitResetTimeoutMs: 10_000,
     });
   });
 
@@ -32,10 +34,14 @@ describe("worker configuration", () => {
         REDIS_URL: "redis://localhost:6379",
         MOCK_ERP_BASE_URL: "http://mock-erp:4100",
         ERP_REQUEST_TIMEOUT_MS: "500",
+        ERP_CIRCUIT_FAILURE_THRESHOLD: "2",
+        ERP_CIRCUIT_RESET_TIMEOUT_MS: "1500",
       }),
     ).toMatchObject({
       mockErpBaseUrl: "http://mock-erp:4100/",
       erpRequestTimeoutMs: 500,
+      erpCircuitFailureThreshold: 2,
+      erpCircuitResetTimeoutMs: 1500,
     });
   });
 
@@ -69,6 +75,13 @@ describe("worker configuration", () => {
         ERP_REQUEST_TIMEOUT_MS: "0",
       }),
     ).toThrow("ERP_REQUEST_TIMEOUT_MS must be a positive integer");
+    expect(() =>
+      loadWorkerConfig({
+        DATABASE_URL: "postgresql://localhost/test",
+        REDIS_URL: "redis://localhost:6379",
+        ERP_CIRCUIT_FAILURE_THRESHOLD: "0",
+      }),
+    ).toThrow("ERP_CIRCUIT_FAILURE_THRESHOLD must be a positive integer");
   });
 });
 
