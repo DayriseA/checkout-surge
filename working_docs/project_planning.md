@@ -364,7 +364,7 @@ Subtasks:
 
 ---
 
-## ⬜ Phase 5 - Mock ERP and Resilience Controls
+## ✅ Phase 5 - Mock ERP and Resilience Controls
 
 ### Goal
 
@@ -375,6 +375,8 @@ Primary references:
 - `docs/architecture.md`
 - `docs/core_business_entities.md`
 - `docs/cross_service_conventions.md`
+
+Completion summary: Phase 5 now delivers the controlled downstream bottleneck end to end. Mock ERP owns configurable latency, TPS throttling, injected errors, and forced outages behind validated contracts and protected controls; the worker calls that real HTTP boundary, persists ERP attempts and timing data, retries temporary failures with exponential backoff, and protects the dependency with a circuit breaker. The API exposes operator-readable ERP resilience state from Redis, BullMQ, and PostgreSQL read models. Phase 6 still owns the live dashboard/realtime UI, while later run-control phases can supply run-scoped ERP behavior snapshots into the boundaries prepared here.
 
 ### ✅ Task 5.1 - Build the mock ERP service
 
@@ -427,14 +429,16 @@ Subtasks:
 
 Completion summary: Shared contracts now define the API-readable ERP resilience projection at `/erp/status`, including dependency status, reason, circuit snapshot, retry pressure, latest attempt, recent failure/timeout counts, and confirmation-delay metrics. The worker publishes circuit snapshots through a shared Redis helper whenever breaker state changes, and the API combines that snapshot with BullMQ retry pressure plus PostgreSQL ERP/order read models. API route and service tests cover healthy, degraded, unavailable, and missing-circuit states, while contract tests pin the response shape for later dashboard and benchmark-summary consumers.
 
-### ⬜ Task 5.6 - Add automated tests for mock ERP and resilience controls
+### ✅ Task 5.6 - Add automated tests for mock ERP and resilience controls
 
 Subtasks:
 
-- Add mock-ERP tests for success, throttled, delayed, forced-error, and forced-outage responses.
-- Add worker integration tests proving ERP attempt results, timing data, retry scheduling, and terminal outcomes are persisted correctly.
-- Add resilience tests for exponential backoff, circuit-breaker open/recovery behavior, and retry-thrash protection.
-- Add API/read-model tests proving operator-facing resilience signals reflect degraded and unavailable ERP states accurately.
+- ✅ Add mock-ERP tests for success, throttled, delayed, forced-error, and forced-outage responses.
+- ✅ Add worker integration tests proving ERP attempt results, timing data, retry scheduling, and terminal outcomes are persisted correctly.
+- ✅ Add resilience tests for exponential backoff, circuit-breaker open/recovery behavior, and retry-thrash protection.
+- ✅ Add API/read-model tests proving operator-facing resilience signals reflect degraded and unavailable ERP states accurately.
+
+Completion summary: The Phase 5 test pass now covers the Mock ERP chaos behavior through the HTTP confirmation boundary, including delayed success, TPS throttling, forced errors, and forced outages. Worker integration coverage proves ERP attempts, timing data, retry metadata, retry recovery, exhausted retry budgets, and terminal order outcomes are durably recorded. Unit and API tests cover exponential backoff metadata, circuit open/half-open/recovery behavior, retry-thrash suppression, and operator-facing healthy, degraded, unavailable, and missing-circuit resilience projections.
 
 ---
 

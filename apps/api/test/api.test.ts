@@ -319,6 +319,7 @@ describe("API gateway routes", () => {
     generateId?: () => string;
     orderProcessJobPublisher?: OrderProcessJobPublisher;
     queueInspector?: OrderProcessQueueInspector;
+    erpStatusService?: ErpStatusService;
   }) {
     const server = await buildTestServer(options);
     servers.push(server);

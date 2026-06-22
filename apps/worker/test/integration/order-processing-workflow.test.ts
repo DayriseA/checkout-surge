@@ -526,6 +526,76 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
     expect(failedEvents).toHaveLength(0);
   });
 
+  it("persists terminal order failure after the ERP retry budget is exhausted", async () => {
+    const failed = deferred<OrderProcessJobFailureReport>();
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          status: "failed",
+          httpStatus: 503,
+          errorCode: "erp_unavailable",
+          errorMessage: "The ERP is temporarily unavailable.",
+          latencyMs: 15,
+          timestamp: "2026-06-21T00:00:01.015Z",
+        }),
+        { status: 503, headers: { "content-type": "application/json" } },
+      ),
+    );
+    consumer = buildConsumer(
+      connection,
+      new HttpErpOrderConfirmation({
+        baseUrl: "http://mock-erp:4100",
+        requestTimeoutMs: 1000,
+        attemptPersistence: new PostgresErpAttemptPersistence(connection.db),
+        fetch,
+        now: sequenceClock(
+          new Date("2026-06-21T00:00:01.000Z"),
+          new Date("2026-06-21T00:00:01.015Z"),
+        ),
+      }),
+      failed.resolve,
+      isTemporaryErpConfirmationError,
+    );
+    consumer.start();
+
+    await queue.add(orderProcessJobName, job, {
+      attempts: 1,
+      backoff: { type: "exponential", delay: 10 },
+      jobId: job.orderId,
+    });
+    const report = await failed.promise;
+    await waitForOrderStatus(connection, "failed");
+    const [attempt] = await connection.db
+      .select()
+      .from(erpAttempts)
+      .where(eq(erpAttempts.orderId, ids.order));
+    const [order] = await connection.db.select().from(orders).where(eq(orders.id, ids.order));
+    const failedEvent = (await readOrderEvents(connection, ids.order)).find(
+      (event) => event.eventName === "order.failed",
+    );
+
+    expect(report).toMatchObject({ jobId: job.orderId, attemptsMade: 1 });
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(attempt).toMatchObject({
+      attemptNumber: 1,
+      status: "failed",
+      httpStatus: 503,
+      errorCode: "erp_unavailable",
+      latencyMs: 15,
+    });
+    expect(order).toMatchObject({
+      status: "failed",
+      failureCode: "order_confirmation_failed",
+      failureMessage: "The ERP is temporarily unavailable.",
+    });
+    expect(failedEvent?.payload).toMatchObject({
+      orderStatus: "failed",
+      attemptNumber: 1,
+      attemptsMade: 0,
+      failureCode: "order_confirmation_failed",
+    });
+  });
+
   it("persists an injected failure and leaves the BullMQ job failed with attempt metadata", async () => {
     const confirmationError = new Error("injected confirmation failure");
     const failed = deferred<OrderProcessJobFailureReport>();

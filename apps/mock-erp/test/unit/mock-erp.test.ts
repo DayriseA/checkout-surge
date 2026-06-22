@@ -314,6 +314,108 @@ describe("Mock ERP HTTP service", () => {
     });
   });
 
+  it("applies configured latency through the HTTP confirmation boundary", async () => {
+    const server = buildChaosServer({
+      chaosConfigStore: new ErpChaosConfigStore(
+        { latencyMs: 25, maxTps: 100, errorRate: 0, forcedOutage: false },
+        testSafetyCaps,
+      ),
+      serviceNow: sequenceClock(
+        new Date("2026-06-22T00:00:00.000Z"),
+        new Date("2026-06-22T00:00:00.025Z"),
+      ),
+      sleep: vi.fn().mockResolvedValue(undefined),
+    });
+
+    const response = await server.inject({
+      method: "POST",
+      url: erpConfirmationPath,
+      payload: confirmationRequest,
+    });
+    await server.close();
+
+    expect(response.statusCode).toBe(200);
+    expect(erpConfirmationResponseSchema.parse(response.json())).toMatchObject({
+      status: "succeeded",
+      latencyMs: 25,
+    });
+  });
+
+  it("throttles confirmations through the HTTP confirmation boundary", async () => {
+    const server = buildChaosServer({
+      chaosConfigStore: new ErpChaosConfigStore(
+        { latencyMs: 0, maxTps: 1, errorRate: 0, forcedOutage: false },
+        testSafetyCaps,
+      ),
+      providerNow: () => new Date("2026-06-22T00:00:00.000Z"),
+      serviceNow: sequenceClock(
+        new Date("2026-06-22T00:00:00.000Z"),
+        new Date("2026-06-22T00:00:00.000Z"),
+        new Date("2026-06-22T00:00:00.100Z"),
+        new Date("2026-06-22T00:00:00.100Z"),
+      ),
+    });
+
+    const first = await server.inject({
+      method: "POST",
+      url: erpConfirmationPath,
+      payload: confirmationRequest,
+    });
+    const second = await server.inject({
+      method: "POST",
+      url: erpConfirmationPath,
+      payload: { ...confirmationRequest, publicOrderId: "ord_test_2" },
+    });
+    await server.close();
+
+    expect(first.statusCode).toBe(200);
+    expect(second.statusCode).toBe(429);
+    expect(erpConfirmationResponseSchema.parse(second.json())).toMatchObject({
+      status: "failed",
+      errorCode: "erp_capacity_exceeded",
+    });
+  });
+
+  it("returns forced error and forced outage responses through HTTP", async () => {
+    const forcedErrorServer = buildChaosServer({
+      chaosConfigStore: new ErpChaosConfigStore(
+        { latencyMs: 0, maxTps: 100, errorRate: 1, forcedOutage: false },
+        testSafetyCaps,
+      ),
+      random: () => 0,
+    });
+    const forcedError = await forcedErrorServer.inject({
+      method: "POST",
+      url: erpConfirmationPath,
+      payload: confirmationRequest,
+    });
+    await forcedErrorServer.close();
+
+    const forcedOutageServer = buildChaosServer({
+      chaosConfigStore: new ErpChaosConfigStore(
+        { latencyMs: 0, maxTps: 100, errorRate: 0, forcedOutage: true },
+        testSafetyCaps,
+      ),
+    });
+    const forcedOutage = await forcedOutageServer.inject({
+      method: "POST",
+      url: erpConfirmationPath,
+      payload: confirmationRequest,
+    });
+    await forcedOutageServer.close();
+
+    expect(forcedError.statusCode).toBe(503);
+    expect(erpConfirmationResponseSchema.parse(forcedError.json())).toMatchObject({
+      status: "failed",
+      errorCode: "erp_injected_error",
+    });
+    expect(forcedOutage.statusCode).toBe(503);
+    expect(erpConfirmationResponseSchema.parse(forcedOutage.json())).toMatchObject({
+      status: "failed",
+      errorCode: "erp_forced_outage",
+    });
+  });
+
   it("rejects invalid requests with the shared error contract", async () => {
     const server = buildTestServer({
       confirmationService: new ConfirmationService(),
@@ -472,5 +574,26 @@ function buildTestServer(options: {
     controlServiceToken,
     logger: createSilentLogger("mock-erp"),
     ...(options.startedAt ? { startedAt: options.startedAt } : {}),
+  });
+}
+
+function buildChaosServer(options: {
+  chaosConfigStore: ErpChaosConfigStore;
+  providerNow?: () => Date;
+  serviceNow?: () => Date;
+  random?: () => number;
+  sleep?: (durationMs: number) => Promise<void>;
+}) {
+  return buildTestServer({
+    confirmationService: new ConfirmationService({
+      decisionProvider: new ChaosConfirmationDecisionProvider({
+        configStore: options.chaosConfigStore,
+        ...(options.providerNow ? { now: options.providerNow } : {}),
+        ...(options.random ? { random: options.random } : {}),
+        ...(options.sleep ? { sleep: options.sleep } : {}),
+      }),
+      ...(options.serviceNow ? { now: options.serviceNow } : {}),
+    }),
+    chaosConfigStore: options.chaosConfigStore,
   });
 }
