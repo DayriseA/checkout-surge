@@ -1,8 +1,12 @@
 import { contractsPackageName } from "@checkout-surge/contracts";
-import { dbPackageName } from "@checkout-surge/db";
+import { createDatabaseConnection, dbPackageName } from "@checkout-surge/db";
 import { createServiceLogger, loggerPackageName } from "@checkout-surge/logger";
 import { Redis } from "ioredis";
-import { createOrderProcessJobHandler } from "./application/order-process-job-handler.js";
+import {
+  createLocalOrderConfirmation,
+  createOrderProcessJobHandler,
+} from "./application/order-process-job-handler.js";
+import { PostgresOrderTransitionPersistence } from "./persistence/postgres-order-transition-persistence.js";
 import { createBullMqOrderProcessConsumer } from "./queue/bullmq-order-process-consumer.js";
 import { loadWorkerConfig } from "./runtime/config.js";
 import { createWorkerReadiness } from "./runtime/readiness.js";
@@ -17,9 +21,16 @@ export const workerAppDependencies = [
 ] as const;
 
 export {
+  createLocalOrderConfirmation,
   createOrderProcessJobHandler,
-  OrderProcessingNotImplementedError,
+  OrderFailurePersistenceError,
 } from "./application/order-process-job-handler.js";
+export {
+  InvalidOrderTransitionError,
+  OrderJobIdentityMismatchError,
+  OrderNotFoundError,
+  PostgresOrderTransitionPersistence,
+} from "./persistence/postgres-order-transition-persistence.js";
 export { createBullMqOrderProcessConsumer } from "./queue/bullmq-order-process-consumer.js";
 export type { OrderProcessConsumer } from "./queue/order-process-consumer.js";
 export { loadWorkerConfig, type WorkerConfig } from "./runtime/config.js";
@@ -30,9 +41,10 @@ export { buildWorkerHealthServer } from "./server.js";
 export async function startWorker(): Promise<void> {
   const config = loadWorkerConfig(process.env);
   const logger = createServiceLogger({ service: "worker" });
+  const database = createDatabaseConnection(config.databaseUrl, { max: config.postgresPoolMax });
   const redis = new Redis(config.redisUrl, {
     lazyConnect: true,
-    maxRetriesPerRequest: null,
+    maxRetriesPerRequest: 3,
   });
   const orderProcessConsumer = createBullMqOrderProcessConsumer({
     connection: {
@@ -40,12 +52,16 @@ export async function startWorker(): Promise<void> {
       maxRetriesPerRequest: null,
     },
     concurrency: config.orderProcessConcurrency,
-    handler: createOrderProcessJobHandler({ logger }),
+    handler: createOrderProcessJobHandler({
+      confirmation: createLocalOrderConfirmation(),
+      persistence: new PostgresOrderTransitionPersistence(database.db),
+      logger,
+    }),
     logger,
   });
   const healthServer = buildWorkerHealthServer({
     logger,
-    readiness: createWorkerReadiness({ redis, orderProcessConsumer }),
+    readiness: createWorkerReadiness({ postgres: database.sql, redis, orderProcessConsumer }),
     startedAt: new Date(),
   });
   const runtime = createWorkerRuntime({
@@ -53,6 +69,10 @@ export async function startWorker(): Promise<void> {
     healthHost: config.healthHost,
     healthPort: config.healthPort,
     orderProcessConsumer,
+    closePostgres: database.close,
+    closeRedis: async () => {
+      await redis.quit();
+    },
     logger,
   });
 
@@ -60,7 +80,6 @@ export async function startWorker(): Promise<void> {
   const shutdown = () => {
     shutdownPromise ??= (async () => {
       await runtime.close();
-      await redis.quit();
     })();
     return shutdownPromise;
   };
@@ -86,7 +105,6 @@ export async function startWorker(): Promise<void> {
     await runtime.start();
   } catch (error) {
     logger.error({ err: error }, "Worker runtime failed to start.");
-    redis.disconnect();
     process.exitCode = 1;
   }
 }

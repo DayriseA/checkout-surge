@@ -12,6 +12,7 @@ import type { OrderProcessConsumer } from "./order-process-consumer.js";
 export interface OrderProcessJobFailureReport {
   jobId?: string;
   jobName: string;
+  attemptNumber: number;
   attemptsMade: number;
   error: Error;
 }
@@ -44,6 +45,7 @@ export function createBullMqOrderProcessConsumer(
     const report: OrderProcessJobFailureReport = {
       ...(job?.id ? { jobId: job.id } : {}),
       jobName: job?.name ?? orderProcessJobName,
+      attemptNumber: job?.attemptsMade ?? 0,
       attemptsMade: job?.attemptsMade ?? 0,
       error,
     };
@@ -53,6 +55,7 @@ export function createBullMqOrderProcessConsumer(
         err: error,
         ...(report.jobId ? { jobId: report.jobId } : {}),
         jobName: report.jobName,
+        attemptNumber: report.attemptNumber,
         attemptsMade: report.attemptsMade,
         ...correlationLogContext(job?.data),
       },
@@ -142,5 +145,8 @@ async function processJob(
     throw new Error(`Unsupported order-processing job name: ${job.name}`);
   }
 
-  await handler.handle(orderProcessJobSchema.parse(job.data));
+  await handler.handle(orderProcessJobSchema.parse(job.data), {
+    attemptNumber: job.attemptsMade + 1,
+    attemptsMade: job.attemptsMade,
+  });
 }

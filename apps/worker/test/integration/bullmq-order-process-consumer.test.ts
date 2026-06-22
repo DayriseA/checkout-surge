@@ -67,6 +67,31 @@ describe("BullMQ order-processing boundary", () => {
     expect(consumer.isRunning()).toBe(true);
   });
 
+  it("passes one-based delivery attempt metadata to the handler", async () => {
+    const handled = deferred<{
+      payload: OrderProcessJob;
+      attemptNumber: number;
+      attemptsMade: number;
+    }>();
+    consumer = createBullMqOrderProcessConsumer({
+      connection: { url: testRedisUrl(), maxRetriesPerRequest: null },
+      concurrency: 1,
+      handler: {
+        handle: async (payload, delivery) => handled.resolve({ payload, ...delivery }),
+      },
+      logger: createSilentLogger("worker"),
+    });
+
+    consumer.start();
+    await queue.add(orderProcessJobName, job, { jobId: job.orderId });
+
+    await expect(handled.promise).resolves.toEqual({
+      payload: job,
+      attemptNumber: 1,
+      attemptsMade: 0,
+    });
+  });
+
   it("fails invalid payloads and reports basic job metadata", async () => {
     const failed = deferred<OrderProcessJobFailureReport>();
     const handle = vi.fn();
@@ -87,6 +112,7 @@ describe("BullMQ order-processing boundary", () => {
     expect(report).toMatchObject({
       jobId: "invalid-job",
       jobName: orderProcessJobName,
+      attemptNumber: 1,
       attemptsMade: 1,
     });
     expect(report.error.name).toBe("ZodError");

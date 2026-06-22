@@ -1,10 +1,6 @@
 import { healthResponseSchema, livenessResponseSchema } from "@checkout-surge/contracts";
 import { createSilentLogger } from "@checkout-surge/logger";
 import { describe, expect, it, vi } from "vitest";
-import {
-  createOrderProcessJobHandler,
-  OrderProcessingNotImplementedError,
-} from "../../src/application/order-process-job-handler.js";
 import { loadWorkerConfig } from "../../src/runtime/config.js";
 import { createWorkerReadiness } from "../../src/runtime/readiness.js";
 import { createWorkerRuntime } from "../../src/runtime/worker-runtime.js";
@@ -12,37 +8,37 @@ import { buildWorkerHealthServer } from "../../src/server.js";
 
 describe("worker configuration", () => {
   it("loads bounded worker defaults", () => {
-    expect(loadWorkerConfig({ REDIS_URL: "redis://localhost:6379" })).toEqual({
+    expect(
+      loadWorkerConfig({
+        DATABASE_URL: "postgresql://localhost/checkout_surge",
+        REDIS_URL: "redis://localhost:6379",
+      }),
+    ).toEqual({
+      databaseUrl: "postgresql://localhost/checkout_surge",
       healthHost: "0.0.0.0",
       healthPort: 4300,
       redisUrl: "redis://localhost:6379",
       orderProcessConcurrency: 5,
+      postgresPoolMax: 10,
     });
   });
 
   it("rejects missing infrastructure and invalid concurrency", () => {
-    expect(() => loadWorkerConfig({})).toThrow("REDIS_URL is required");
+    expect(() => loadWorkerConfig({})).toThrow("DATABASE_URL is required");
     expect(() =>
-      loadWorkerConfig({ REDIS_URL: "redis://localhost:6379", ORDER_PROCESS_CONCURRENCY: "0" }),
-    ).toThrow("ORDER_PROCESS_CONCURRENCY must be a positive integer");
-  });
-});
-
-describe("production order-processing skeleton", () => {
-  it("rejects received jobs until durable processing is implemented", async () => {
-    const handler = createOrderProcessJobHandler({ logger: createSilentLogger("worker") });
-
-    await expect(
-      handler.handle({
-        orderId: "11111111-1111-4111-8111-111111111111",
-        publicOrderId: "ord_test",
-        reservationId: "33333333-3333-4333-8333-333333333333",
-        saleOfferId: "22222222-2222-4222-8222-222222222222",
-        correlationId: "corr-worker-test",
-        quantity: 1,
-        queuedAt: "2026-06-21T00:00:00.000Z",
+      loadWorkerConfig({
+        DATABASE_URL: "postgresql://localhost/test",
+        REDIS_URL: "redis://localhost:6379",
+        ORDER_PROCESS_CONCURRENCY: "0",
       }),
-    ).rejects.toBeInstanceOf(OrderProcessingNotImplementedError);
+    ).toThrow("ORDER_PROCESS_CONCURRENCY must be a positive integer");
+    expect(() =>
+      loadWorkerConfig({
+        DATABASE_URL: "postgresql://localhost/test",
+        REDIS_URL: "redis://localhost:6379",
+        WORKER_POSTGRES_POOL_MAX: "invalid",
+      }),
+    ).toThrow("WORKER_POSTGRES_POOL_MAX must be a positive integer");
   });
 });
 
@@ -83,6 +79,7 @@ describe("worker health server", () => {
 describe("worker readiness", () => {
   it("checks Redis and the consumer through injected boundaries", async () => {
     const readiness = createWorkerReadiness({
+      postgres: { unsafe: vi.fn().mockResolvedValue([{ one: 1 }]) } as never,
       redis: { ping: vi.fn().mockResolvedValue("PONG") } as never,
       orderProcessConsumer: {
         start: vi.fn(),
@@ -92,6 +89,7 @@ describe("worker readiness", () => {
     });
 
     await expect(readiness.checks()).resolves.toEqual([
+      { name: "database_reachable", status: "ok" },
       { name: "redis_reachable", status: "ok" },
       { name: "order_process_worker_running", status: "ok" },
     ]);
@@ -99,6 +97,7 @@ describe("worker readiness", () => {
 
   it("reports Redis and consumer failures directly", async () => {
     const readiness = createWorkerReadiness({
+      postgres: { unsafe: vi.fn().mockRejectedValue(new Error("PostgreSQL unavailable")) } as never,
       redis: { ping: vi.fn().mockRejectedValue(new Error("Redis unavailable")) } as never,
       orderProcessConsumer: {
         start: vi.fn(),
@@ -108,6 +107,11 @@ describe("worker readiness", () => {
     });
 
     await expect(readiness.checks()).resolves.toEqual([
+      {
+        name: "database_reachable",
+        status: "unavailable",
+        message: "PostgreSQL unavailable",
+      },
       { name: "redis_reachable", status: "unavailable", message: "Redis unavailable" },
       {
         name: "order_process_worker_running",
@@ -135,6 +139,8 @@ describe("worker runtime lifecycle", () => {
       healthHost: "127.0.0.1",
       healthPort: 0,
       orderProcessConsumer: consumer,
+      closePostgres: vi.fn().mockResolvedValue(undefined),
+      closeRedis: vi.fn().mockResolvedValue(undefined),
       logger,
     });
 
@@ -143,5 +149,67 @@ describe("worker runtime lifecycle", () => {
 
     expect(consumer.start).toHaveBeenCalledOnce();
     expect(consumer.close).toHaveBeenCalledOnce();
+  });
+
+  it("closes serving and consuming boundaries before PostgreSQL and Redis", async () => {
+    const closeOrder: string[] = [];
+    const healthServer = {
+      listen: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn(async () => {
+        closeOrder.push("health");
+      }),
+    } as never;
+    const runtime = createWorkerRuntime({
+      healthServer,
+      healthHost: "127.0.0.1",
+      healthPort: 0,
+      orderProcessConsumer: {
+        start: vi.fn(),
+        close: vi.fn(async () => {
+          closeOrder.push("consumer");
+        }),
+        isRunning: () => true,
+      },
+      closePostgres: vi.fn(async () => {
+        closeOrder.push("postgres");
+      }),
+      closeRedis: vi.fn(async () => {
+        closeOrder.push("redis");
+      }),
+      logger: createSilentLogger("worker"),
+    });
+
+    await runtime.start();
+    await Promise.all([runtime.close(), runtime.close()]);
+
+    expect(closeOrder).toEqual(["health", "consumer", "postgres", "redis"]);
+  });
+
+  it("cleans every resource after startup failure and preserves cleanup failures", async () => {
+    const listenError = new Error("port unavailable");
+    const closeError = new Error("postgres close failed");
+    const closeRedis = vi.fn().mockResolvedValue(undefined);
+    const runtime = createWorkerRuntime({
+      healthServer: {
+        listen: vi.fn().mockRejectedValue(listenError),
+        close: vi.fn().mockResolvedValue(undefined),
+      } as never,
+      healthHost: "127.0.0.1",
+      healthPort: 4300,
+      orderProcessConsumer: {
+        start: vi.fn(),
+        close: vi.fn().mockResolvedValue(undefined),
+        isRunning: () => false,
+      },
+      closePostgres: vi.fn().mockRejectedValue(closeError),
+      closeRedis,
+      logger: createSilentLogger("worker"),
+    });
+
+    const rejection = await runtime.start().catch((error: unknown) => error);
+
+    expect(rejection).toBeInstanceOf(AggregateError);
+    expect(rejection).toMatchObject({ cause: listenError });
+    expect(closeRedis).toHaveBeenCalledOnce();
   });
 });

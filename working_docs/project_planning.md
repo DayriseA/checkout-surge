@@ -318,7 +318,7 @@ Primary references:
 - `docs/core_business_entities.md`
 - `docs/cross_service_conventions.md`
 
-Progress note: Tasks 4.1-4.2 delivered the shared BullMQ contracts and adapters, a startable worker skeleton, and the API handoff that publishes each durable queued order under its deterministic order ID before Redis accepted promotion. A new or pending handoff whose enqueue fails keeps its Redis idempotency record pending and heals through replay without duplicating durable `order.queued` events or BullMQ jobs. An already-accepted historical replay remains accepted in Redis if its enqueue attempt fails, but the API returns an error and retries the deterministic enqueue on the next replay. Worker-owned order transitions, queue visibility/projections, and comprehensive asynchronous pipeline coverage remain deferred to Tasks 4.3-4.5.
+Progress note: Tasks 4.1-4.3 delivered the shared BullMQ contracts and adapters, the API handoff that publishes each durable queued order under its deterministic order ID before Redis accepted promotion, and the worker-owned `queued -> processing -> confirmed | failed` workflow. Worker transitions and append-only events are atomic, validate durable/job identity, preserve correlation and delivery-attempt metadata, safely resume `processing`, and treat terminal redelivery as an idempotent no-op. Phase 4 uses an injected successful local confirmation placeholder so Phase 5 can add ERP HTTP behavior without rewriting transition persistence. Queue health/backlog projections and the broader asynchronous pipeline suite remain deferred to Tasks 4.4-4.5; ERP attempts, retry/backoff, and circuit breaking remain deferred to Phase 5.
 
 ### ✅ Task 4.1 - Introduce the queue layer and worker skeleton
 
@@ -337,13 +337,13 @@ Subtasks:
 - ✅ Return an immediate `reservation_secured` / queued-processing response without waiting for downstream confirmation.
 - ✅ Persist the transition from reservation secured to order queued.
 
-### ⬜ Task 4.3 - Implement order state transitions inside the worker
+### ✅ Task 4.3 - Implement order state transitions inside the worker
 
 Subtasks:
 
-- Move orders through `queued -> processing -> confirmed | failed`.
-- Persist worker progress and order events so operators can reconstruct what happened.
-- Capture retry metadata hooks even if full ERP resilience lands in Phase 5.
+- ✅ Move orders through `queued -> processing -> confirmed | failed`.
+- ✅ Persist worker progress and order events so operators can reconstruct what happened.
+- ✅ Capture retry metadata hooks even if full ERP resilience lands in Phase 5.
 
 ### ⬜ Task 4.4 - Expose queue health and backlog visibility
 

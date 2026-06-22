@@ -12,6 +12,8 @@ export function createWorkerRuntime(options: {
   healthHost: string;
   healthPort: number;
   orderProcessConsumer: OrderProcessConsumer;
+  closePostgres: () => Promise<void>;
+  closeRedis: () => Promise<void>;
   logger: CheckoutSurgeLogger;
 }): WorkerRuntime {
   let started = false;
@@ -22,10 +24,12 @@ export function createWorkerRuntime(options: {
       if (started) {
         return;
       }
-
-      options.orderProcessConsumer.start();
+      if (closePromise) {
+        throw new Error("A closed worker runtime cannot be restarted.");
+      }
 
       try {
+        options.orderProcessConsumer.start();
         await options.healthServer.listen({
           host: options.healthHost,
           port: options.healthPort,
@@ -33,19 +37,52 @@ export function createWorkerRuntime(options: {
         });
         started = true;
       } catch (error) {
-        await options.orderProcessConsumer.close();
+        closePromise = closeResources(options).finally(() => {
+          started = false;
+        });
+        try {
+          await closePromise;
+        } catch (cleanupError) {
+          throw new AggregateError(
+            [error, cleanupError],
+            "Worker startup failed and resource cleanup also failed.",
+            { cause: error },
+          );
+        }
         throw error;
       }
     },
     close() {
       closePromise ??= (async () => {
         options.logger.info("Closing worker runtime.");
-        await options.healthServer.close();
-        await options.orderProcessConsumer.close();
-        started = false;
+        try {
+          await closeResources(options);
+        } finally {
+          started = false;
+        }
       })();
 
       return closePromise;
     },
   };
+}
+
+async function closeResources(options: Parameters<typeof createWorkerRuntime>[0]): Promise<void> {
+  const errors: unknown[] = [];
+  const close = async (resource: () => Promise<void>) => {
+    try {
+      await resource();
+    } catch (error) {
+      errors.push(error);
+    }
+  };
+
+  await close(() => options.healthServer.close());
+  await close(() => options.orderProcessConsumer.close());
+  await close(options.closePostgres);
+  await close(options.closeRedis);
+
+  if (errors.length > 0) {
+    throw new AggregateError(errors, "One or more worker resources failed to close.");
+  }
 }

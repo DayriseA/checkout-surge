@@ -1,12 +1,15 @@
 export interface WorkerConfig {
+  databaseUrl: string;
   healthHost: string;
   healthPort: number;
   redisUrl: string;
   orderProcessConcurrency: number;
+  postgresPoolMax: number;
 }
 
 export function loadWorkerConfig(env: NodeJS.ProcessEnv): WorkerConfig {
   return {
+    databaseUrl: requireEnv(env, "DATABASE_URL"),
     healthHost: env.HEALTH_HOST?.trim() || env.HOST?.trim() || "0.0.0.0",
     healthPort: parsePositiveInteger(env.HEALTH_PORT, "HEALTH_PORT", 4300),
     redisUrl: requireEnv(env, "REDIS_URL"),
@@ -14,6 +17,11 @@ export function loadWorkerConfig(env: NodeJS.ProcessEnv): WorkerConfig {
       env.ORDER_PROCESS_CONCURRENCY,
       "ORDER_PROCESS_CONCURRENCY",
       5,
+    ),
+    postgresPoolMax: parsePositiveInteger(
+      env.WORKER_POSTGRES_POOL_MAX,
+      "WORKER_POSTGRES_POOL_MAX",
+      10,
     ),
   };
 }
