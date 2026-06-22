@@ -2,8 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   buyRequestSchema,
   buyResponseSchema,
+  controlServiceTokenHeaderName,
   dashboardEventSchema,
   demoRunStatusValues,
+  erpChaosResetPath,
+  erpChaosStatusPath,
   erpConfirmationPath,
   erpConfirmationRequestSchema,
   erpConfirmationResponseSchema,
@@ -176,6 +179,12 @@ describe("ERP contracts", () => {
         timestamp,
       }),
     ).toMatchObject({ status: "failed", errorCode: "erp_unavailable" });
+  });
+
+  it("defines chaos control paths and service-token header", () => {
+    expect(erpChaosStatusPath).toBe("/chaos");
+    expect(erpChaosResetPath).toBe("/chaos/reset");
+    expect(controlServiceTokenHeaderName).toBe("x-control-service-token");
   });
 });
 

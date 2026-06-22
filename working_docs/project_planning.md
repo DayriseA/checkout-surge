@@ -386,13 +386,15 @@ Subtasks:
 
 Completion summary: The standalone Fastify Mock ERP now owns the shared `POST /confirmations` boundary, contract-validated success and dependency-failure responses, correlation-aware request logs, liveness/readiness endpoints, host-native startup, and service-level coverage. Its injected confirmation-decision boundary defaults to success and is ready for Task 5.2 to add latency, TPS, error-rate, and forced-outage controls without moving chaos behavior into the HTTP route.
 
-### ⬜ Task 5.2 - Add configurable chaos controls
+### ✅ Task 5.2 - Add configurable chaos controls
 
 Subtasks:
 
-- Add latency, TPS cap, error-rate, and forced-outage controls.
-- Read global fallback controls from environment and later allow run-scoped behavior from accepted snapshots.
-- Keep dangerous controls behind the protection model described in `docs/admin_access_protection.md` when exposed through dashboard/admin paths.
+- ✅ Add latency, TPS cap, error-rate, and forced-outage controls.
+- ✅ Read global fallback controls from environment and later allow run-scoped behavior from accepted snapshots.
+- ✅ Keep dangerous controls behind the protection model described in `docs/admin_access_protection.md` when exposed through dashboard/admin paths.
+
+Completion summary: Mock ERP now owns an environment-backed chaos configuration store with validated admin safety caps, a request-aware decision provider for latency, TPS throttling, forced errors, and forced outage behavior, public read-only chaos status, and service-token-protected update/reset endpoints. Shared contracts define the control paths and token header so later dashboard/admin proxy work can call the boundary without duplicating strings. Focused Mock ERP and contract tests cover fallback config loading, cap enforcement, status/update/reset routes, delayed decisions, throttling, injected failures, and forced outage responses.
 
 ### ⬜ Task 5.3 - Integrate the worker with the mock ERP
 

@@ -10,6 +10,9 @@ import {
 } from "./primitives.js";
 
 export const erpConfirmationPath = "/confirmations" as const;
+export const erpChaosStatusPath = "/chaos" as const;
+export const erpChaosResetPath = "/chaos/reset" as const;
+export const controlServiceTokenHeaderName = "x-control-service-token" as const;
 
 export const erpConfirmationRequestSchema = z
   .object({

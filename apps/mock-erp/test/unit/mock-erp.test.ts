@@ -1,5 +1,9 @@
 import {
+  controlServiceTokenHeaderName,
   type ErpConfirmationRequest,
+  erpChaosResetPath,
+  erpChaosStatusPath,
+  erpChaosStatusSchema,
   erpConfirmationPath,
   erpConfirmationResponseSchema,
   errorPayloadSchema,
@@ -8,6 +12,11 @@ import {
 } from "@checkout-surge/contracts";
 import { correlationIdHeaderName, createSilentLogger } from "@checkout-surge/logger";
 import { describe, expect, it, vi } from "vitest";
+import {
+  ChaosConfirmationDecisionProvider,
+  ErpChaosConfigSafetyError,
+  ErpChaosConfigStore,
+} from "../../src/application/chaos-control-service.js";
 import { ConfirmationService } from "../../src/application/confirmation-service.js";
 import { loadMockErpConfig } from "../../src/runtime/config.js";
 import { buildMockErpServer } from "../../src/server.js";
@@ -21,19 +30,82 @@ const confirmationRequest: ErpConfirmationRequest = {
   correlationId: "corr-mock-erp-test",
   quantity: 1,
 };
+const defaultChaosConfig = {
+  latencyMs: 0,
+  maxTps: 100,
+  errorRate: 0,
+  forcedOutage: false,
+};
+const testSafetyCaps = {
+  maxLatencyMs: 5000,
+  minMaxTps: 1,
+  maxErrorRate: 1,
+  allowForcedOutage: true,
+};
+const controlServiceToken = "test-control-token";
 
 describe("Mock ERP configuration", () => {
   it("loads host-native defaults and explicit overrides", () => {
-    expect(loadMockErpConfig({})).toEqual({ host: "0.0.0.0", port: 4100 });
-    expect(loadMockErpConfig({ HOST: "127.0.0.1", PORT: "5100" })).toEqual({
+    expect(loadMockErpConfig({ CONTROL_SERVICE_TOKEN: controlServiceToken })).toEqual({
+      host: "0.0.0.0",
+      port: 4100,
+      controlServiceToken,
+      defaultChaosConfig,
+      chaosSafetyCaps: testSafetyCaps,
+    });
+    expect(
+      loadMockErpConfig({
+        HOST: "127.0.0.1",
+        PORT: "5100",
+        CONTROL_SERVICE_TOKEN: controlServiceToken,
+        LATENCY_MS: "25",
+        MAX_TPS: "3",
+        ERROR_RATE: "0.5",
+        FORCED_OUTAGE: "true",
+        ADMIN_MAX_LATENCY_MS: "1000",
+        ADMIN_MIN_MAX_TPS: "2",
+        ADMIN_MAX_ERROR_RATE: "0.75",
+        ADMIN_ALLOW_FORCED_OUTAGE: "false",
+      }),
+    ).toEqual({
       host: "127.0.0.1",
       port: 5100,
+      controlServiceToken,
+      defaultChaosConfig: {
+        latencyMs: 25,
+        maxTps: 3,
+        errorRate: 0.5,
+        forcedOutage: true,
+      },
+      chaosSafetyCaps: {
+        maxLatencyMs: 1000,
+        minMaxTps: 2,
+        maxErrorRate: 0.75,
+        allowForcedOutage: false,
+      },
     });
   });
 
+  it("requires a control service token", () => {
+    expect(() => loadMockErpConfig({})).toThrow("CONTROL_SERVICE_TOKEN is required");
+  });
+
   it("rejects an invalid port", () => {
-    expect(() => loadMockErpConfig({ PORT: "0" })).toThrow("PORT must be a positive integer");
-    expect(() => loadMockErpConfig({ PORT: "invalid" })).toThrow("PORT must be a positive integer");
+    expect(() =>
+      loadMockErpConfig({ CONTROL_SERVICE_TOKEN: controlServiceToken, PORT: "0" }),
+    ).toThrow("PORT must be a positive integer");
+    expect(() =>
+      loadMockErpConfig({ CONTROL_SERVICE_TOKEN: controlServiceToken, PORT: "invalid" }),
+    ).toThrow("PORT must be a positive integer");
+  });
+
+  it("rejects invalid chaos environment values", () => {
+    expect(() =>
+      loadMockErpConfig({ CONTROL_SERVICE_TOKEN: controlServiceToken, ERROR_RATE: "2" }),
+    ).toThrow("ERROR_RATE must be a number from 0 to 1");
+    expect(() =>
+      loadMockErpConfig({ CONTROL_SERVICE_TOKEN: controlServiceToken, FORCED_OUTAGE: "yes" }),
+    ).toThrow("FORCED_OUTAGE must be true or false");
   });
 });
 
@@ -84,11 +156,90 @@ describe("confirmation service", () => {
   });
 });
 
+describe("chaos control service", () => {
+  it("tracks config status and rejects values outside admin safety caps", () => {
+    const store = new ErpChaosConfigStore(
+      defaultChaosConfig,
+      testSafetyCaps,
+      () => new Date("2026-06-22T00:00:00.000Z"),
+    );
+
+    expect(store.getStatus()).toEqual({
+      ...defaultChaosConfig,
+      updatedAt: "2026-06-22T00:00:00.000Z",
+    });
+
+    expect(() =>
+      store.update({ latencyMs: 5001, maxTps: 100, errorRate: 0, forcedOutage: false }),
+    ).toThrow(ErpChaosConfigSafetyError);
+  });
+
+  it("applies configured latency before returning a successful decision", async () => {
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const store = new ErpChaosConfigStore(
+      { latencyMs: 125, maxTps: 100, errorRate: 0, forcedOutage: false },
+      testSafetyCaps,
+    );
+    const provider = new ChaosConfirmationDecisionProvider({ configStore: store, sleep });
+
+    await expect(provider.decide(confirmationRequest)).resolves.toEqual({ status: "succeeded" });
+    expect(sleep).toHaveBeenCalledWith(125);
+  });
+
+  it("throttles confirmations beyond the configured TPS cap", async () => {
+    const store = new ErpChaosConfigStore(
+      { latencyMs: 0, maxTps: 1, errorRate: 0, forcedOutage: false },
+      testSafetyCaps,
+    );
+    const provider = new ChaosConfirmationDecisionProvider({
+      configStore: store,
+      now: () => new Date("2026-06-22T00:00:00.500Z"),
+    });
+
+    await expect(provider.decide(confirmationRequest)).resolves.toEqual({ status: "succeeded" });
+    await expect(provider.decide(confirmationRequest)).resolves.toMatchObject({
+      status: "failed",
+      httpStatus: 429,
+      errorCode: "erp_capacity_exceeded",
+    });
+  });
+
+  it("returns forced errors and forced outage failures", async () => {
+    const errorStore = new ErpChaosConfigStore(
+      { latencyMs: 0, maxTps: 100, errorRate: 1, forcedOutage: false },
+      testSafetyCaps,
+    );
+    const outageStore = new ErpChaosConfigStore(
+      { latencyMs: 0, maxTps: 100, errorRate: 0, forcedOutage: true },
+      testSafetyCaps,
+    );
+
+    await expect(
+      new ChaosConfirmationDecisionProvider({
+        configStore: errorStore,
+        random: () => 0,
+      }).decide(confirmationRequest),
+    ).resolves.toMatchObject({
+      status: "failed",
+      httpStatus: 503,
+      errorCode: "erp_injected_error",
+    });
+    await expect(
+      new ChaosConfirmationDecisionProvider({ configStore: outageStore }).decide(
+        confirmationRequest,
+      ),
+    ).resolves.toMatchObject({
+      status: "failed",
+      httpStatus: 503,
+      errorCode: "erp_forced_outage",
+    });
+  });
+});
+
 describe("Mock ERP HTTP service", () => {
   it("serves contract-valid liveness and readiness endpoints", async () => {
-    const server = buildMockErpServer({
+    const server = buildTestServer({
       confirmationService: new ConfirmationService(),
-      logger: createSilentLogger("mock-erp"),
       startedAt: new Date("2026-06-22T00:00:00.000Z"),
     });
 
@@ -105,7 +256,7 @@ describe("Mock ERP HTTP service", () => {
   });
 
   it("confirms an order and propagates its correlation ID", async () => {
-    const server = buildMockErpServer({
+    const server = buildTestServer({
       confirmationService: new ConfirmationService({
         generateConfirmationId: () => "erp_confirmation_http_test",
         now: sequenceClock(
@@ -113,7 +264,6 @@ describe("Mock ERP HTTP service", () => {
           new Date("2026-06-22T00:00:00.010Z"),
         ),
       }),
-      logger: createSilentLogger("mock-erp"),
     });
 
     const response = await server.inject({
@@ -136,7 +286,7 @@ describe("Mock ERP HTTP service", () => {
   });
 
   it("returns a structured dependency failure with its intended HTTP status", async () => {
-    const server = buildMockErpServer({
+    const server = buildTestServer({
       confirmationService: new ConfirmationService({
         decisionProvider: {
           decide: async () => ({
@@ -147,7 +297,6 @@ describe("Mock ERP HTTP service", () => {
           }),
         },
       }),
-      logger: createSilentLogger("mock-erp"),
     });
 
     const response = await server.inject({
@@ -166,9 +315,8 @@ describe("Mock ERP HTTP service", () => {
   });
 
   it("rejects invalid requests with the shared error contract", async () => {
-    const server = buildMockErpServer({
+    const server = buildTestServer({
       confirmationService: new ConfirmationService(),
-      logger: createSilentLogger("mock-erp"),
     });
 
     const response = await server.inject({
@@ -186,6 +334,115 @@ describe("Mock ERP HTTP service", () => {
       correlationId: "corr-invalid-request",
     });
   });
+
+  it("exposes chaos status as a public read", async () => {
+    const server = buildTestServer({
+      confirmationService: new ConfirmationService(),
+      chaosConfigStore: new ErpChaosConfigStore(
+        { latencyMs: 15, maxTps: 7, errorRate: 0.25, forcedOutage: false },
+        testSafetyCaps,
+        () => new Date("2026-06-22T00:00:00.000Z"),
+      ),
+    });
+
+    const response = await server.inject({ method: "GET", url: erpChaosStatusPath });
+    await server.close();
+
+    expect(response.statusCode).toBe(200);
+    expect(erpChaosStatusSchema.parse(response.json())).toEqual({
+      latencyMs: 15,
+      maxTps: 7,
+      errorRate: 0.25,
+      forcedOutage: false,
+      updatedAt: "2026-06-22T00:00:00.000Z",
+    });
+  });
+
+  it("protects chaos updates with the control service token", async () => {
+    const server = buildTestServer({ confirmationService: new ConfirmationService() });
+
+    const response = await server.inject({
+      method: "PUT",
+      url: erpChaosStatusPath,
+      payload: { latencyMs: 10, maxTps: 10, errorRate: 0, forcedOutage: false },
+    });
+    await server.close();
+
+    expect(response.statusCode).toBe(401);
+    expect(errorPayloadSchema.parse(response.json())).toMatchObject({
+      code: "control_token_required",
+    });
+  });
+
+  it("updates and resets chaos controls within configured caps", async () => {
+    const store = new ErpChaosConfigStore(
+      { latencyMs: 1, maxTps: 100, errorRate: 0, forcedOutage: false },
+      testSafetyCaps,
+      sequenceClock(
+        new Date("2026-06-22T00:00:00.000Z"),
+        new Date("2026-06-22T00:00:01.000Z"),
+        new Date("2026-06-22T00:00:02.000Z"),
+      ),
+    );
+    const server = buildTestServer({
+      confirmationService: new ConfirmationService(),
+      chaosConfigStore: store,
+    });
+
+    const update = await server.inject({
+      method: "PUT",
+      url: erpChaosStatusPath,
+      headers: { [controlServiceTokenHeaderName]: controlServiceToken },
+      payload: { latencyMs: 250, maxTps: 5, errorRate: 0.5, forcedOutage: true },
+    });
+    const reset = await server.inject({
+      method: "POST",
+      url: erpChaosResetPath,
+      headers: { [controlServiceTokenHeaderName]: controlServiceToken },
+    });
+    await server.close();
+
+    expect(update.statusCode).toBe(200);
+    expect(erpChaosStatusSchema.parse(update.json())).toEqual({
+      latencyMs: 250,
+      maxTps: 5,
+      errorRate: 0.5,
+      forcedOutage: true,
+      updatedAt: "2026-06-22T00:00:01.000Z",
+    });
+    expect(reset.statusCode).toBe(200);
+    expect(erpChaosStatusSchema.parse(reset.json())).toEqual({
+      latencyMs: 1,
+      maxTps: 100,
+      errorRate: 0,
+      forcedOutage: false,
+      updatedAt: "2026-06-22T00:00:02.000Z",
+    });
+  });
+
+  it("rejects chaos updates above configured caps", async () => {
+    const server = buildTestServer({
+      confirmationService: new ConfirmationService(),
+      chaosConfigStore: new ErpChaosConfigStore(defaultChaosConfig, {
+        ...testSafetyCaps,
+        maxLatencyMs: 100,
+      }),
+    });
+
+    const response = await server.inject({
+      method: "PUT",
+      url: erpChaosStatusPath,
+      headers: { [controlServiceTokenHeaderName]: controlServiceToken },
+      payload: { latencyMs: 101, maxTps: 10, errorRate: 0, forcedOutage: false },
+    });
+    await server.close();
+
+    expect(response.statusCode).toBe(400);
+    expect(errorPayloadSchema.parse(response.json())).toMatchObject({
+      code: "chaos_config_exceeds_caps",
+      details: { latencyMs: { maximum: 100, actual: 101 } },
+    });
+  });
 });
 
 function sequenceClock(...dates: Date[]): () => Date {
@@ -201,4 +458,19 @@ function sequenceClock(...dates: Date[]): () => Date {
 
     return date;
   };
+}
+
+function buildTestServer(options: {
+  confirmationService: ConfirmationService;
+  chaosConfigStore?: ErpChaosConfigStore;
+  startedAt?: Date;
+}) {
+  return buildMockErpServer({
+    confirmationService: options.confirmationService,
+    chaosConfigStore:
+      options.chaosConfigStore ?? new ErpChaosConfigStore(defaultChaosConfig, testSafetyCaps),
+    controlServiceToken,
+    logger: createSilentLogger("mock-erp"),
+    ...(options.startedAt ? { startedAt: options.startedAt } : {}),
+  });
 }
