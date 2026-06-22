@@ -3,6 +3,7 @@ import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  type BusinessOutcomeSummary,
   buyResponseSchema,
   dashboardEventsPath,
   dashboardRecoveryResponseSchema,
@@ -53,6 +54,10 @@ import { loadApiConfig } from "../src/runtime/config.js";
 import type { ApiFastifyInstance } from "../src/runtime/fastify.js";
 import { createInfrastructureReadinessCheck } from "../src/runtime/readiness.js";
 import { buildApiServer } from "../src/server.js";
+import {
+  type DashboardRecoveryContextReader,
+  DashboardRecoveryService,
+} from "../src/services/dashboard-recovery-service.js";
 import type { ErpStatusService } from "../src/services/erp-status-service.js";
 import {
   type InventoryStatusReader,
@@ -138,6 +143,7 @@ async function buildTestServer(options: {
   orderProcessJobPublisher?: OrderProcessJobPublisher;
   queueInspector?: OrderProcessQueueInspector;
   erpStatusService?: ErpStatusService;
+  dashboardRecoveryService?: DashboardRecoveryService;
   dashboardEventFanout?: DashboardEventFanout;
 }): Promise<ApiFastifyInstance> {
   const inventoryReader =
@@ -167,9 +173,18 @@ async function buildTestServer(options: {
         }
       : options.inventoryReader;
 
+  const logger = createSilentLogger("api");
+  const queueStatusService = new QueueStatusService(
+    options.queueInspector ?? { inspect: async () => queueStatusFixture() },
+    logger,
+  );
+  const erpStatusService =
+    options.erpStatusService ?? createStaticErpStatusService(erpStatusFixture());
+  const inventoryStatusService = new InventoryStatusService(inventoryReader);
+
   return buildApiServer({
     config: baseConfig(),
-    logger: createSilentLogger("api"),
+    logger,
     readiness: {
       checks: async () => [
         {
@@ -182,15 +197,21 @@ async function buildTestServer(options: {
         },
       ],
     },
-    dashboardEventFanout:
-      options.dashboardEventFanout ??
-      new DashboardEventFanout({ logger: createSilentLogger("api") }),
-    erpStatusService: options.erpStatusService ?? createStaticErpStatusService(erpStatusFixture()),
-    inventoryStatusService: new InventoryStatusService(inventoryReader),
-    queueStatusService: new QueueStatusService(
-      options.queueInspector ?? { inspect: async () => queueStatusFixture() },
-      createSilentLogger("api"),
-    ),
+    dashboardEventFanout: options.dashboardEventFanout ?? new DashboardEventFanout({ logger }),
+    dashboardRecoveryService:
+      options.dashboardRecoveryService ??
+      new DashboardRecoveryService({
+        contextReader: staticRecoveryContextReader(fixtureIds.saleOffer),
+        businessOutcomeReader: { read: async () => businessOutcomeFixture() },
+        inventoryStatusService,
+        queueStatusService,
+        erpStatusService,
+        logger,
+        now: () => new Date("2026-06-20T00:00:10.000Z"),
+      }),
+    erpStatusService,
+    inventoryStatusService,
+    queueStatusService,
     reserveOrderService: new ReserveOrderService({
       persistence: options.persistence,
       orderProcessJobPublisher: options.orderProcessJobPublisher ?? {
@@ -204,6 +225,29 @@ async function buildTestServer(options: {
     }),
     startedAt: new Date("2026-06-20T00:00:00.000Z"),
   });
+}
+
+function staticRecoveryContextReader(saleOfferId: string): DashboardRecoveryContextReader {
+  return {
+    readContext: async () => ({
+      currentRun: null,
+      saleOfferId,
+    }),
+  };
+}
+
+function businessOutcomeFixture(): BusinessOutcomeSummary {
+  return {
+    acceptedReservations: 6,
+    soldOutRejections: 4,
+    queuedOrders: 2,
+    processingOrders: 1,
+    retryingOrders: 1,
+    confirmedOrders: 2,
+    failedOrders: 1,
+    pendingPersistenceCount: 1,
+    notificationsRecorded: 0,
+  };
 }
 
 function erpStatusFixture(): ErpResilienceStatus {
@@ -394,7 +438,7 @@ describe("API gateway routes", () => {
     });
   });
 
-  it("returns a contract-valid dashboard recovery placeholder response", async () => {
+  it("returns a contract-valid dashboard recovery projection", async () => {
     const server = await trackedServer({ persistence: new AcceptingPersistence() });
 
     const response = await server.inject({ method: "GET", url: "/dashboard/recovery" });
@@ -402,8 +446,10 @@ describe("API gateway routes", () => {
 
     expect(response.statusCode).toBe(200);
     expect(payload.currentRun).toBeNull();
-    expect(payload.inventory).toBeNull();
-    expect(payload.queue).toBeNull();
+    expect(payload.inventory?.remainingStock).toBe(7);
+    expect(payload.queue?.depth).toBe(10);
+    expect(payload.erp?.status).toBe("healthy");
+    expect(payload.businessOutcome).toEqual(businessOutcomeFixture());
     expect(payload.recentMetrics).toEqual([]);
   });
 

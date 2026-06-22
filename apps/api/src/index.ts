@@ -20,6 +20,11 @@ import type { ApiFastifyInstance } from "./runtime/fastify.js";
 import { createInfrastructureReadinessCheck } from "./runtime/readiness.js";
 import { buildApiServer } from "./server.js";
 import {
+  DashboardRecoveryService,
+  PostgresDashboardBusinessOutcomeReader,
+  PostgresDashboardRecoveryContextReader,
+} from "./services/dashboard-recovery-service.js";
+import {
   ErpStatusService,
   PostgresErpAttemptStatusReader,
   RedisErpCircuitBreakerStateReader,
@@ -42,6 +47,11 @@ export { createBullMqOrderProcessQueueInspector } from "./queue/bullmq-order-pro
 export { DashboardEventFanout } from "./realtime/dashboard-event-fanout.js";
 export { type ApiConfig, loadApiConfig } from "./runtime/config.js";
 export { buildApiServer } from "./server.js";
+export {
+  DashboardRecoveryService,
+  PostgresDashboardBusinessOutcomeReader,
+  PostgresDashboardRecoveryContextReader,
+} from "./services/dashboard-recovery-service.js";
 export {
   ErpStatusService,
   PostgresErpAttemptStatusReader,
@@ -100,6 +110,23 @@ export async function startApiServer(): Promise<void> {
     },
   );
   const queueStatusService = new QueueStatusService(orderProcessQueueInspector, logger);
+  const erpStatusService = new ErpStatusService({
+    circuitBreakerStateReader: new RedisErpCircuitBreakerStateReader(redis),
+    attemptStatusReader: new PostgresErpAttemptStatusReader(connection.db),
+    queueStatusService,
+    logger,
+  });
+  const inventoryStatusService = new InventoryStatusService({
+    getStatus: (saleOfferId) => getInventoryStatus(redis, saleOfferId),
+  });
+  const dashboardRecoveryService = new DashboardRecoveryService({
+    contextReader: new PostgresDashboardRecoveryContextReader(connection.db),
+    businessOutcomeReader: new PostgresDashboardBusinessOutcomeReader(connection.db),
+    inventoryStatusService,
+    queueStatusService,
+    erpStatusService,
+    logger,
+  });
   const reserveOrderService = new ReserveOrderService({
     persistence,
     orderProcessJobPublisher,
@@ -183,15 +210,9 @@ export async function startApiServer(): Promise<void> {
         orderProcessQueueInspector,
       ),
       dashboardEventFanout,
-      erpStatusService: new ErpStatusService({
-        circuitBreakerStateReader: new RedisErpCircuitBreakerStateReader(redis),
-        attemptStatusReader: new PostgresErpAttemptStatusReader(connection.db),
-        queueStatusService,
-        logger,
-      }),
-      inventoryStatusService: new InventoryStatusService({
-        getStatus: (saleOfferId) => getInventoryStatus(redis, saleOfferId),
-      }),
+      dashboardRecoveryService,
+      erpStatusService,
+      inventoryStatusService,
       queueStatusService,
       reserveOrderService,
       startedAt: new Date(),

@@ -1,21 +1,32 @@
-import type { DashboardRecoveryResponse } from "@checkout-surge/contracts";
+import type {
+  BusinessOutcomeSummary,
+  DashboardRecoveryResponse,
+  HealthStatus,
+  InventoryStatus,
+  QueueStatus,
+} from "@checkout-surge/contracts";
 import type { BackendRead, DashboardBackendSnapshot } from "../lib/api";
 import { StatusPill } from "./status-pill";
+
+export type RealtimeConnectionStatus = "connecting" | "connected" | "disconnected" | "unsupported";
 
 const panelClassName =
   "min-w-0 rounded-lg border border-border bg-surface p-4 max-[900px]:col-span-full";
 const panelNarrowClassName = `${panelClassName} col-span-4`;
 const panelWideClassName = `${panelClassName} col-span-8`;
+const panelFullClassName = `${panelClassName} col-span-12`;
 const panelHeaderClassName = "mb-4 flex items-start justify-between gap-3";
 const eyebrowClassName = "m-0 text-xs font-bold uppercase text-muted";
 const panelTitleClassName = "m-0 mt-1 text-base font-bold leading-tight text-ink";
 const emptyStateClassName = "m-0 leading-6 text-muted";
 const factGridClassName = "m-0 grid grid-cols-3 gap-3 max-[560px]:grid-cols-2";
-const wideFactGridClassName = "m-0 grid grid-cols-5 gap-3 max-[560px]:grid-cols-2";
+const wideFactGridClassName =
+  "m-0 grid grid-cols-6 gap-3 max-[700px]:grid-cols-3 max-[480px]:grid-cols-2";
 const stackedFactGridClassName = "m-0 grid gap-3";
 const factItemClassName = "min-w-0";
 const factTermClassName = "mb-1 text-xs font-bold text-muted";
 const factValueClassName = "m-0 [overflow-wrap:anywhere] text-base font-bold text-ink";
+const smallValueClassName = "m-0 [overflow-wrap:anywhere] text-sm font-semibold text-ink";
 const controlButtonClassName =
   "min-h-10 rounded-lg border border-border bg-surface px-3.5 py-2.5 font-semibold text-muted-strong disabled:cursor-not-allowed disabled:opacity-60";
 
@@ -23,7 +34,17 @@ function formatNumber(value: number): string {
   return new Intl.NumberFormat("en-US").format(value);
 }
 
-function formatTime(value: string | undefined): string {
+function formatRate(value: number | null | undefined, unit: string): string {
+  if (value === null || value === undefined) {
+    return "n/a";
+  }
+
+  return `${new Intl.NumberFormat("en-US", {
+    maximumFractionDigits: value < 10 ? 2 : 1,
+  }).format(value)} ${unit}`;
+}
+
+function formatTime(value: string | undefined | null): string {
   if (!value) {
     return "Not started";
   }
@@ -34,6 +55,42 @@ function formatTime(value: string | undefined): string {
     second: "2-digit",
     timeZoneName: "short",
   }).format(new Date(value));
+}
+
+function formatSeconds(value: number | null | undefined): string {
+  if (value === null || value === undefined) {
+    return "n/a";
+  }
+
+  if (value < 1) {
+    return `${Math.round(value * 1000)}ms`;
+  }
+
+  return `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 }).format(value)}s`;
+}
+
+function formatMilliseconds(value: number | null | undefined): string {
+  if (value === null || value === undefined) {
+    return "n/a";
+  }
+
+  if (value >= 1000) {
+    return formatSeconds(value / 1000);
+  }
+
+  return `${Math.round(value)}ms`;
+}
+
+function formatMetric(value: number, unit: string): string {
+  return `${new Intl.NumberFormat("en-US", {
+    maximumFractionDigits: value < 10 ? 2 : 1,
+  }).format(value)} ${unit}`;
+}
+
+function recoveryData(
+  recovery: BackendRead<DashboardRecoveryResponse>,
+): DashboardRecoveryResponse | null {
+  return recovery.status === "available" ? recovery.data : null;
 }
 
 function EmptyState({ children }: { children: React.ReactNode }) {
@@ -54,6 +111,73 @@ function UnavailableState({ read }: { read: BackendRead<unknown> }) {
   );
 }
 
+function Fact({ label, value, small = false }: { label: string; value: string; small?: boolean }) {
+  return (
+    <div className={factItemClassName}>
+      <dt className={factTermClassName}>{label}</dt>
+      <dd className={small ? smallValueClassName : factValueClassName}>{value}</dd>
+    </div>
+  );
+}
+
+function healthTone(
+  status: HealthStatus | "healthy" | "idle",
+): Parameters<typeof StatusPill>[0]["tone"] {
+  if (status === "ok" || status === "healthy") {
+    return "ok";
+  }
+  if (status === "degraded") {
+    return "degraded";
+  }
+  if (status === "idle") {
+    return "idle";
+  }
+  return "unavailable";
+}
+
+function queueTone(queue: QueueStatus | null): Parameters<typeof StatusPill>[0]["tone"] {
+  if (!queue) {
+    return "idle";
+  }
+  if (queue.failedJobs.totalCount > 0) {
+    return "degraded";
+  }
+  if (queue.depth > 0 || queue.counts.active > 0) {
+    return "pending";
+  }
+  return "ok";
+}
+
+function inventoryTone(
+  inventory: InventoryStatus | null,
+): Parameters<typeof StatusPill>[0]["tone"] {
+  if (!inventory) {
+    return "idle";
+  }
+  if (inventory.pendingPersistenceCount > 0) {
+    return "degraded";
+  }
+  if (inventory.remainingStock === 0) {
+    return "blocked";
+  }
+  return "ok";
+}
+
+function outcomeTone(
+  outcome: BusinessOutcomeSummary | null,
+): Parameters<typeof StatusPill>[0]["tone"] {
+  if (!outcome) {
+    return "idle";
+  }
+  if (outcome.failedOrders > 0 || outcome.pendingPersistenceCount > 0) {
+    return "degraded";
+  }
+  if (outcome.processingOrders > 0 || outcome.retryingOrders > 0 || outcome.queuedOrders > 0) {
+    return "pending";
+  }
+  return "ok";
+}
+
 export function ApiStatusPanel({ snapshot }: { snapshot: DashboardBackendSnapshot }) {
   const liveness = snapshot.liveness.status === "available" ? snapshot.liveness.data : null;
   const readiness = snapshot.readiness.status === "available" ? snapshot.readiness.data : null;
@@ -66,7 +190,7 @@ export function ApiStatusPanel({ snapshot }: { snapshot: DashboardBackendSnapsho
           <p className={eyebrowClassName}>API gateway</p>
           <h2 className={panelTitleClassName}>Service readiness</h2>
         </div>
-        <StatusPill label={status} tone={status} />
+        <StatusPill label={status} tone={healthTone(status)} />
       </div>
       {snapshot.readiness.status === "available" ? (
         <div className="grid gap-2.5">
@@ -76,7 +200,7 @@ export function ApiStatusPanel({ snapshot }: { snapshot: DashboardBackendSnapsho
               key={check.name}
             >
               <span>{check.name}</span>
-              <StatusPill label={check.status} tone={check.status} />
+              <StatusPill label={check.status} tone={healthTone(check.status)} />
               {check.message ? (
                 <small className="col-span-full text-muted">{check.message}</small>
               ) : null}
@@ -90,22 +214,9 @@ export function ApiStatusPanel({ snapshot }: { snapshot: DashboardBackendSnapsho
         <UnavailableState read={snapshot.readiness} />
       )}
       <dl className={factGridClassName}>
-        <div className={factItemClassName}>
-          <dt className={factTermClassName}>Liveness</dt>
-          <dd className={factValueClassName}>{liveness ? liveness.status : "unavailable"}</dd>
-        </div>
-        <div className={factItemClassName}>
-          <dt className={factTermClassName}>Uptime</dt>
-          <dd className={factValueClassName}>
-            {liveness ? `${Math.round(liveness.uptimeSeconds)}s` : "n/a"}
-          </dd>
-        </div>
-        <div className={factItemClassName}>
-          <dt className={factTermClassName}>Read timestamp</dt>
-          <dd className={factValueClassName}>
-            {readiness ? formatTime(readiness.timestamp) : "n/a"}
-          </dd>
-        </div>
+        <Fact label="Liveness" value={liveness ? liveness.status : "unavailable"} />
+        <Fact label="Uptime" value={liveness ? `${Math.round(liveness.uptimeSeconds)}s` : "n/a"} />
+        <Fact label="Read timestamp" value={readiness ? formatTime(readiness.timestamp) : "n/a"} />
       </dl>
     </section>
   );
@@ -113,10 +224,15 @@ export function ApiStatusPanel({ snapshot }: { snapshot: DashboardBackendSnapsho
 
 export function RecoveryStatusPanel({
   recovery,
+  realtimeStatus,
+  liveEventCount,
 }: {
   recovery: BackendRead<DashboardRecoveryResponse>;
+  realtimeStatus: RealtimeConnectionStatus;
+  liveEventCount: number;
 }) {
-  const run = recovery.status === "available" ? recovery.data.currentRun : null;
+  const data = recoveryData(recovery);
+  const run = data?.currentRun ?? null;
 
   return (
     <section className={panelNarrowClassName}>
@@ -127,20 +243,13 @@ export function RecoveryStatusPanel({
         </div>
         <StatusPill label={run?.status ?? "idle"} tone={run ? "pending" : "idle"} />
       </div>
-      {recovery.status === "available" ? (
+      {data ? (
         <dl className={stackedFactGridClassName}>
-          <div className={factItemClassName}>
-            <dt className={factTermClassName}>Current run</dt>
-            <dd className={factValueClassName}>{run ? run.presetName : "No active run"}</dd>
-          </div>
-          <div className={factItemClassName}>
-            <dt className={factTermClassName}>Traffic</dt>
-            <dd className={factValueClassName}>{run?.trafficStatus ?? "Not active"}</dd>
-          </div>
-          <div className={factItemClassName}>
-            <dt className={factTermClassName}>Recovered at</dt>
-            <dd className={factValueClassName}>{formatTime(recovery.data.recoveredAt)}</dd>
-          </div>
+          <Fact label="Current run" value={run ? run.presetName : "No active run"} />
+          <Fact label="Traffic" value={run?.trafficStatus ?? "Not active"} />
+          <Fact label="Recovered at" value={formatTime(data.recoveredAt)} />
+          <Fact label="Live stream" value={realtimeStatus} />
+          <Fact label="Events applied" value={formatNumber(liveEventCount)} />
         </dl>
       ) : (
         <UnavailableState read={recovery} />
@@ -175,12 +284,89 @@ export function LoadRunControlsPanel() {
   );
 }
 
+export function RequestSurgePanel({
+  recovery,
+  liveEventCount,
+}: {
+  recovery: BackendRead<DashboardRecoveryResponse>;
+  liveEventCount: number;
+}) {
+  const data = recoveryData(recovery);
+  const inventory = data?.inventory ?? null;
+  const latestMetric = data?.recentMetrics.at(-1) ?? null;
+  const requestRateMetric = data
+    ? findLatestMetric(data.recentMetrics, (metricName) => metricName.includes("request_rate"))
+    : null;
+
+  return (
+    <section className={panelNarrowClassName}>
+      <div className={panelHeaderClassName}>
+        <div>
+          <p className={eyebrowClassName}>Request surge</p>
+          <h2 className={panelTitleClassName}>Traffic pressure</h2>
+        </div>
+        <StatusPill
+          label={requestRateMetric ? "metrics live" : inventory ? "reservations live" : "idle"}
+          tone={requestRateMetric || inventory ? "ok" : "idle"}
+        />
+      </div>
+      {data ? (
+        <dl className={stackedFactGridClassName}>
+          <Fact
+            label="HTTP request rate"
+            value={
+              requestRateMetric
+                ? formatMetric(requestRateMetric.value, requestRateMetric.unit)
+                : "Awaiting k6 metrics"
+            }
+          />
+          <Fact
+            label="Reservation rate"
+            value={formatRate(inventory?.reservationThroughput.rate, "holds/s")}
+          />
+          <Fact
+            label="Sold-out pressure"
+            value={formatNumber(inventory?.soldOutPressure.rejectionCount ?? 0)}
+          />
+          <Fact label="Live events" value={formatNumber(liveEventCount)} />
+          <Fact
+            label="Latest metric"
+            value={
+              latestMetric
+                ? `${latestMetric.metricName} at ${formatTime(latestMetric.timestamp)}`
+                : "n/a"
+            }
+            small
+          />
+        </dl>
+      ) : (
+        <UnavailableState read={recovery} />
+      )}
+    </section>
+  );
+}
+
+function findLatestMetric(
+  metrics: DashboardRecoveryResponse["recentMetrics"],
+  predicate: (metricName: string) => boolean,
+): DashboardRecoveryResponse["recentMetrics"][number] | null {
+  for (let index = metrics.length - 1; index >= 0; index -= 1) {
+    const metric = metrics[index];
+
+    if (metric && predicate(metric.metricName)) {
+      return metric;
+    }
+  }
+
+  return null;
+}
+
 export function InventoryDrainPanel({
   recovery,
 }: {
   recovery: BackendRead<DashboardRecoveryResponse>;
 }) {
-  const inventory = recovery.status === "available" ? recovery.data.inventory : null;
+  const inventory = recoveryData(recovery)?.inventory ?? null;
   const percentRemaining =
     inventory && inventory.allocatedStock > 0
       ? Math.round((inventory.remainingStock / inventory.allocatedStock) * 100)
@@ -193,7 +379,10 @@ export function InventoryDrainPanel({
           <p className={eyebrowClassName}>Inventory drain</p>
           <h2 className={panelTitleClassName}>Stock hold path</h2>
         </div>
-        <StatusPill label={inventory ? "active" : "no data"} tone={inventory ? "ok" : "idle"} />
+        <StatusPill
+          label={inventory ? `${percentRemaining}% left` : "no data"}
+          tone={inventoryTone(inventory)}
+        />
       </div>
       {inventory ? (
         <>
@@ -205,20 +394,15 @@ export function InventoryDrainPanel({
             value={percentRemaining}
           />
           <dl className={factGridClassName}>
-            <div className={factItemClassName}>
-              <dt className={factTermClassName}>Remaining</dt>
-              <dd className={factValueClassName}>{formatNumber(inventory.remainingStock)}</dd>
-            </div>
-            <div className={factItemClassName}>
-              <dt className={factTermClassName}>Reserved</dt>
-              <dd className={factValueClassName}>{formatNumber(inventory.reservedStock)}</dd>
-            </div>
-            <div className={factItemClassName}>
-              <dt className={factTermClassName}>Pending</dt>
-              <dd className={factValueClassName}>
-                {formatNumber(inventory.pendingPersistenceCount)}
-              </dd>
-            </div>
+            <Fact label="Allocated" value={formatNumber(inventory.allocatedStock)} />
+            <Fact label="Remaining" value={formatNumber(inventory.remainingStock)} />
+            <Fact label="Reserved" value={formatNumber(inventory.reservedStock)} />
+            <Fact label="Pending" value={formatNumber(inventory.pendingPersistenceCount)} />
+            <Fact label="Expired" value={formatNumber(inventory.expiredReservationCount)} />
+            <Fact
+              label="Oldest pending"
+              value={formatSeconds(inventory.oldestPendingPersistenceAgeSeconds)}
+            />
           </dl>
         </>
       ) : (
@@ -233,7 +417,7 @@ export function QueuePressurePanel({
 }: {
   recovery: BackendRead<DashboardRecoveryResponse>;
 }) {
-  const queue = recovery.status === "available" ? recovery.data.queue : null;
+  const queue = recoveryData(recovery)?.queue ?? null;
 
   return (
     <section className={panelNarrowClassName}>
@@ -242,18 +426,19 @@ export function QueuePressurePanel({
           <p className={eyebrowClassName}>Queue pressure</p>
           <h2 className={panelTitleClassName}>orders:process</h2>
         </div>
-        <StatusPill label={queue ? "active" : "no data"} tone={queue ? "ok" : "idle"} />
+        <StatusPill
+          label={queue ? `${formatNumber(queue.depth)} jobs` : "no data"}
+          tone={queueTone(queue)}
+        />
       </div>
       {queue ? (
         <dl className={factGridClassName}>
-          <div className={factItemClassName}>
-            <dt className={factTermClassName}>Depth</dt>
-            <dd className={factValueClassName}>{formatNumber(queue.depth)}</dd>
-          </div>
-          <div className={factItemClassName}>
-            <dt className={factTermClassName}>Updated</dt>
-            <dd className={factValueClassName}>{formatTime(queue.updatedAt)}</dd>
-          </div>
+          <Fact label="Waiting" value={formatNumber(queue.counts.waiting)} />
+          <Fact label="Active" value={formatNumber(queue.counts.active)} />
+          <Fact label="Delayed" value={formatNumber(queue.counts.delayed)} />
+          <Fact label="Retrying" value={formatNumber(queue.retryPressure.retryingJobCount)} />
+          <Fact label="Failed" value={formatNumber(queue.failedJobs.totalCount)} />
+          <Fact label="Oldest wait" value={formatSeconds(queue.oldestWaitingAgeSeconds)} />
         </dl>
       ) : (
         <EmptyState>No queue data.</EmptyState>
@@ -262,7 +447,9 @@ export function QueuePressurePanel({
   );
 }
 
-export function ErpHealthPanel() {
+export function ErpHealthPanel({ recovery }: { recovery: BackendRead<DashboardRecoveryResponse> }) {
+  const erp = recoveryData(recovery)?.erp ?? null;
+
   return (
     <section className={panelNarrowClassName}>
       <div className={panelHeaderClassName}>
@@ -270,23 +457,67 @@ export function ErpHealthPanel() {
           <p className={eyebrowClassName}>ERP health</p>
           <h2 className={panelTitleClassName}>Downstream dependency</h2>
         </div>
-        <StatusPill label="no data" tone="idle" />
+        <StatusPill
+          label={erp ? erp.status : "no data"}
+          tone={erp ? healthTone(erp.status) : "idle"}
+        />
       </div>
-      <dl className={factGridClassName}>
-        <div className={factItemClassName}>
-          <dt className={factTermClassName}>Latency</dt>
-          <dd className={factValueClassName}>n/a</dd>
+      {erp ? (
+        <dl className={factGridClassName}>
+          <Fact label="Circuit" value={erp.circuit?.state ?? "missing"} />
+          <Fact label="Reason" value={erp.reason ?? "normal"} small />
+          <Fact label="Retrying" value={formatNumber(erp.retryPressure.retryingJobCount)} />
+          <Fact label="Recent attempts" value={formatNumber(erp.recentAttemptCount)} />
+          <Fact label="Failures" value={formatNumber(erp.recentFailureCount)} />
+          <Fact label="Timeouts" value={formatNumber(erp.recentTimeoutCount)} />
+        </dl>
+      ) : (
+        <EmptyState>No ERP health data.</EmptyState>
+      )}
+    </section>
+  );
+}
+
+export function ConsistencyLagPanel({
+  recovery,
+}: {
+  recovery: BackendRead<DashboardRecoveryResponse>;
+}) {
+  const erp = recoveryData(recovery)?.erp ?? null;
+  const delay = erp?.confirmationDelay ?? null;
+
+  return (
+    <section className={panelNarrowClassName}>
+      <div className={panelHeaderClassName}>
+        <div>
+          <p className={eyebrowClassName}>Consistency lag</p>
+          <h2 className={panelTitleClassName}>Reservation to confirmation</h2>
         </div>
-        <div className={factItemClassName}>
-          <dt className={factTermClassName}>TPS cap</dt>
-          <dd className={factValueClassName}>n/a</dd>
-        </div>
-        <div className={factItemClassName}>
-          <dt className={factTermClassName}>Outage</dt>
-          <dd className={factValueClassName}>n/a</dd>
-        </div>
-      </dl>
-      <EmptyState>No ERP health data.</EmptyState>
+        <StatusPill
+          label={
+            delay && delay.processingOrderCount > 0 ? "draining" : delay ? "settled" : "no data"
+          }
+          tone={delay && delay.processingOrderCount > 0 ? "pending" : delay ? "ok" : "idle"}
+        />
+      </div>
+      {delay ? (
+        <dl className={factGridClassName}>
+          <Fact
+            label="Avg confirmed"
+            value={formatMilliseconds(delay.averageConfirmationDelayMs)}
+          />
+          <Fact label="Oldest processing" value={formatSeconds(delay.oldestProcessingAgeSeconds)} />
+          <Fact label="Processing" value={formatNumber(delay.processingOrderCount)} />
+          <Fact label="Recent confirmed" value={formatNumber(delay.recentConfirmedCount)} />
+          <Fact
+            label="Latest attempt"
+            value={erp?.latestAttempt ? formatTime(erp.latestAttempt.finishedAt) : "n/a"}
+          />
+          <Fact label="Window" value={erp ? `${erp.recentAttemptWindowSeconds}s` : "n/a"} />
+        </dl>
+      ) : (
+        <EmptyState>No confirmation-delay data.</EmptyState>
+      )}
     </section>
   );
 }
@@ -296,39 +527,35 @@ export function RunOutcomesPanel({
 }: {
   recovery: BackendRead<DashboardRecoveryResponse>;
 }) {
-  const metricCount = recovery.status === "available" ? recovery.data.recentMetrics.length : 0;
+  const outcome = recoveryData(recovery)?.businessOutcome ?? null;
 
   return (
-    <section className={panelWideClassName}>
+    <section className={panelFullClassName}>
       <div className={panelHeaderClassName}>
         <div>
           <p className={eyebrowClassName}>Run outcomes</p>
           <h2 className={panelTitleClassName}>Reservation and confirmation summary</h2>
         </div>
-        <StatusPill label="no data" tone="idle" />
+        <StatusPill
+          label={outcome ? `${formatNumber(outcome.acceptedReservations)} accepted` : "no data"}
+          tone={outcomeTone(outcome)}
+        />
       </div>
-      <dl className={wideFactGridClassName}>
-        <div className={factItemClassName}>
-          <dt className={factTermClassName}>Accepted</dt>
-          <dd className={factValueClassName}>0</dd>
-        </div>
-        <div className={factItemClassName}>
-          <dt className={factTermClassName}>Sold out</dt>
-          <dd className={factValueClassName}>0</dd>
-        </div>
-        <div className={factItemClassName}>
-          <dt className={factTermClassName}>Queued</dt>
-          <dd className={factValueClassName}>0</dd>
-        </div>
-        <div className={factItemClassName}>
-          <dt className={factTermClassName}>Confirmed</dt>
-          <dd className={factValueClassName}>0</dd>
-        </div>
-        <div className={factItemClassName}>
-          <dt className={factTermClassName}>Metrics</dt>
-          <dd className={factValueClassName}>{formatNumber(metricCount)}</dd>
-        </div>
-      </dl>
+      {outcome ? (
+        <dl className={wideFactGridClassName}>
+          <Fact label="Accepted" value={formatNumber(outcome.acceptedReservations)} />
+          <Fact label="Sold out" value={formatNumber(outcome.soldOutRejections)} />
+          <Fact label="Queued" value={formatNumber(outcome.queuedOrders)} />
+          <Fact label="Processing" value={formatNumber(outcome.processingOrders)} />
+          <Fact label="Retrying" value={formatNumber(outcome.retryingOrders)} />
+          <Fact label="Confirmed" value={formatNumber(outcome.confirmedOrders)} />
+          <Fact label="Failed" value={formatNumber(outcome.failedOrders)} />
+          <Fact label="Pending persistence" value={formatNumber(outcome.pendingPersistenceCount)} />
+          <Fact label="Notifications" value={formatNumber(outcome.notificationsRecorded)} />
+        </dl>
+      ) : (
+        <EmptyState>No business outcome data.</EmptyState>
+      )}
     </section>
   );
 }

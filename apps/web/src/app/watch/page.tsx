@@ -1,10 +1,4 @@
-import {
-  ApiStatusPanel,
-  InventoryDrainPanel,
-  QueuePressurePanel,
-  RecoveryStatusPanel,
-  RunOutcomesPanel,
-} from "../components/dashboard-panels";
+import { OperatorDashboard } from "../components/operator-dashboard";
 import { getDashboardBackendSnapshot } from "../lib/api";
 
 export default async function WatchPage() {
@@ -20,13 +14,7 @@ export default async function WatchPage() {
           </p>
         </div>
       </header>
-      <div className="grid grid-cols-12 gap-4">
-        <RecoveryStatusPanel recovery={snapshot.recovery} />
-        <ApiStatusPanel snapshot={snapshot} />
-        <InventoryDrainPanel recovery={snapshot.recovery} />
-        <QueuePressurePanel recovery={snapshot.recovery} />
-        <RunOutcomesPanel recovery={snapshot.recovery} />
-      </div>
+      <OperatorDashboard snapshot={snapshot} />
     </>
   );
 }

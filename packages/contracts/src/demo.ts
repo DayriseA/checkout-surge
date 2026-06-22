@@ -4,6 +4,7 @@ import {
   demoPresetSchema,
   demoRunSummaryShapeSchema,
 } from "./entities.js";
+import { erpResilienceStatusSchema } from "./erp.js";
 import { inventoryStatusSchema, terminalInventorySnapshotSchema } from "./inventory.js";
 import {
   demoRunStatusSchema,
@@ -98,6 +99,21 @@ export const startDemoRunResponseSchema = z
   .strict();
 export type StartDemoRunResponse = z.infer<typeof startDemoRunResponseSchema>;
 
+export const businessOutcomeSummarySchema = z
+  .object({
+    acceptedReservations: nonnegativeIntegerSchema,
+    soldOutRejections: nonnegativeIntegerSchema,
+    queuedOrders: nonnegativeIntegerSchema,
+    processingOrders: nonnegativeIntegerSchema.default(0),
+    retryingOrders: nonnegativeIntegerSchema.default(0),
+    confirmedOrders: nonnegativeIntegerSchema,
+    failedOrders: nonnegativeIntegerSchema,
+    pendingPersistenceCount: nonnegativeIntegerSchema,
+    notificationsRecorded: nonnegativeIntegerSchema,
+  })
+  .strict();
+export type BusinessOutcomeSummary = z.infer<typeof businessOutcomeSummarySchema>;
+
 export const dashboardRecoveryResponseSchema = z
   .object({
     currentRun: demoRunSnapshotSchema.nullable(),
@@ -115,25 +131,12 @@ export const dashboardRecoveryResponseSchema = z
       )
       .default([]),
     queue: queueStatusSchema.nullable(),
+    erp: erpResilienceStatusSchema.nullable(),
+    businessOutcome: businessOutcomeSummarySchema.nullable(),
     recoveredAt: isoTimestampSchema,
   })
   .strict();
 export type DashboardRecoveryResponse = z.infer<typeof dashboardRecoveryResponseSchema>;
-
-export const businessOutcomeSummarySchema = z
-  .object({
-    acceptedReservations: nonnegativeIntegerSchema,
-    soldOutRejections: nonnegativeIntegerSchema,
-    queuedOrders: nonnegativeIntegerSchema,
-    processingOrders: nonnegativeIntegerSchema.default(0),
-    retryingOrders: nonnegativeIntegerSchema.default(0),
-    confirmedOrders: nonnegativeIntegerSchema,
-    failedOrders: nonnegativeIntegerSchema,
-    pendingPersistenceCount: nonnegativeIntegerSchema,
-    notificationsRecorded: nonnegativeIntegerSchema,
-  })
-  .strict();
-export type BusinessOutcomeSummary = z.infer<typeof businessOutcomeSummarySchema>;
 
 export const runHistorySummarySchema = demoRunSummaryShapeSchema
   .extend({

@@ -1,12 +1,4 @@
-import {
-  ApiStatusPanel,
-  ErpHealthPanel,
-  InventoryDrainPanel,
-  LoadRunControlsPanel,
-  QueuePressurePanel,
-  RecoveryStatusPanel,
-  RunOutcomesPanel,
-} from "./components/dashboard-panels";
+import { OperatorDashboard } from "./components/operator-dashboard";
 import { getDashboardBackendSnapshot } from "./lib/api";
 
 export default async function DemoDashboardPage() {
@@ -23,15 +15,7 @@ export default async function DemoDashboardPage() {
           </p>
         </div>
       </header>
-      <div className="grid grid-cols-12 gap-4">
-        <ApiStatusPanel snapshot={snapshot} />
-        <RecoveryStatusPanel recovery={snapshot.recovery} />
-        <LoadRunControlsPanel />
-        <InventoryDrainPanel recovery={snapshot.recovery} />
-        <QueuePressurePanel recovery={snapshot.recovery} />
-        <ErpHealthPanel />
-        <RunOutcomesPanel recovery={snapshot.recovery} />
-      </div>
+      <OperatorDashboard snapshot={snapshot} showControls />
     </>
   );
 }

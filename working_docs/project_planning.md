@@ -479,13 +479,15 @@ Subtasks:
 
 Completion summary: Task 6.2 now publishes validated `business.outcome.updated` dashboard events from real durable order state. The API publishes a best-effort aggregate update after a new reservation and queued order are durably accepted, while the worker publishes after processing, retry-relevant temporary confirmation failures, confirmed, and failed outcomes. The shared DB projection reads reservations, order statuses, retrying orders derived from failed/timed-out ERP attempts, pending persistence rows, sold-out run outcomes, and already-recorded simulated notifications without adding the Phase 8 notification workflow. Publish failures are logged/reported but do not change checkout responses, order processing, retry behavior, or durable persistence.
 
-### ⬜ Task 6.3 - Build the first usable operator dashboard
+### ✅ Task 6.3 - Build the first usable operator dashboard
 
 Subtasks:
 
-- Add panels for request surge, queue depth, inventory drain, ERP health, and consistency lag.
-- Favor clear, scannable operational UI over marketing-style presentation.
-- Make the dashboard explain system behavior during a burst without requiring logs.
+- ✅ Add panels for request surge, queue depth, inventory drain, ERP health, and consistency lag.
+- ✅ Favor clear, scannable operational UI over marketing-style presentation.
+- ✅ Make the dashboard explain system behavior during a burst without requiring logs.
+
+Completion summary: Task 6.3 now turns the dashboard shell into a usable operator surface backed by the API recovery read and validated SSE events. The shared recovery contract includes ERP resilience and business-outcome projections, while the API composes current run or catalog sale-offer context, inventory, queue, ERP, and business outcome read models behind a thin route. The web app renders scannable panels for service readiness, recovery/realtime status, request pressure, inventory drain, queue pressure, ERP health, confirmation delay, and run outcomes, then applies live run, inventory, queue, traffic metric, and business outcome events over the recovery baseline. Request-rate metrics remain empty until Phase 7 streams k6 data, privileged controls remain Task 6.4, and true p95 consistency-lag metrics remain Task 6.5/finalization work.
 
 ### ⬜ Task 6.4 - Add simulation control actions to the dashboard UI
 

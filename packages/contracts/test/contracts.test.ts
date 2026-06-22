@@ -7,6 +7,7 @@ import {
   dashboardEventsPath,
   dashboardEventsRedisChannel,
   dashboardRecoveryPath,
+  dashboardRecoveryResponseSchema,
   demoRunStatusValues,
   erpChaosResetPath,
   erpChaosStatusPath,
@@ -417,6 +418,30 @@ describe("buy and dashboard contracts", () => {
         },
       }).type,
     ).toBe("business.outcome.updated");
+  });
+
+  it("validates dashboard recovery projections for the operator view", () => {
+    const recovery = dashboardRecoveryResponseSchema.parse({
+      currentRun: null,
+      inventory: null,
+      recentMetrics: [],
+      queue: null,
+      erp: null,
+      businessOutcome: {
+        acceptedReservations: 10,
+        soldOutRejections: 20,
+        queuedOrders: 4,
+        processingOrders: 3,
+        retryingOrders: 2,
+        confirmedOrders: 2,
+        failedOrders: 1,
+        pendingPersistenceCount: 0,
+        notificationsRecorded: 0,
+      },
+      recoveredAt: timestamp,
+    });
+
+    expect(recovery.businessOutcome?.retryingOrders).toBe(2);
   });
 });
 

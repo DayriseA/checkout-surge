@@ -14,6 +14,7 @@ import type { ApiConfig } from "./runtime/config.js";
 import { ApiHttpError, createErrorPayload } from "./runtime/errors.js";
 import type { ApiFastifyInstance } from "./runtime/fastify.js";
 import type { ApiReadiness } from "./runtime/readiness.js";
+import type { DashboardRecoveryService } from "./services/dashboard-recovery-service.js";
 import type { ErpStatusService } from "./services/erp-status-service.js";
 import type { InventoryStatusService } from "./services/inventory-status-service.js";
 import type { QueueStatusService } from "./services/queue-status-service.js";
@@ -30,6 +31,7 @@ export interface BuildApiServerOptions {
   logger: CheckoutSurgeLogger;
   readiness: ApiReadiness;
   dashboardEventFanout: DashboardEventFanout;
+  dashboardRecoveryService: DashboardRecoveryService;
   erpStatusService: ErpStatusService;
   inventoryStatusService: InventoryStatusService;
   queueStatusService: QueueStatusService;
@@ -97,7 +99,10 @@ export async function buildApiServer(options: BuildApiServerOptions): Promise<Ap
   registerBuyRoutes(app, { reserveOrderService: options.reserveOrderService });
   registerInventoryRoutes(app, { inventoryStatusService: options.inventoryStatusService });
   registerQueueRoutes(app, { queueStatusService: options.queueStatusService });
-  registerDashboardRoutes(app, { dashboardEventFanout: options.dashboardEventFanout });
+  registerDashboardRoutes(app, {
+    dashboardEventFanout: options.dashboardEventFanout,
+    dashboardRecoveryService: options.dashboardRecoveryService,
+  });
 
   return app;
 }
