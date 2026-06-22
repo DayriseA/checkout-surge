@@ -234,6 +234,8 @@ pnpm infra:down
 | Mock ERP | `4100` | `http://localhost:4100/health/live` | `http://localhost:4100/health/ready` |
 | Load orchestrator | `4200` | `http://localhost:4200/health/live` | `http://localhost:4200/health/ready` |
 
+The worker-facing Mock ERP confirmation contract is `POST http://localhost:4100/confirmations`. Its request and response payloads are defined by `@checkout-surge/contracts`.
+
 ## Root Commands
 
 | Command | Description |

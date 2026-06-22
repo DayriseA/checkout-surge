@@ -9,6 +9,8 @@ import {
   uuidSchema,
 } from "./primitives.js";
 
+export const erpConfirmationPath = "/confirmations" as const;
+
 export const erpConfirmationRequestSchema = z
   .object({
     orderId: uuidSchema,

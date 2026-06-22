@@ -4,6 +4,9 @@ import {
   buyResponseSchema,
   dashboardEventSchema,
   demoRunStatusValues,
+  erpConfirmationPath,
+  erpConfirmationRequestSchema,
+  erpConfirmationResponseSchema,
   errorPayloadSchema,
   healthResponseSchema,
   inventoryStatusSchema,
@@ -135,6 +138,44 @@ describe("shared error and health contracts", () => {
     });
 
     expect(response.checks[0]?.name).toBe("redis_url_configured");
+  });
+});
+
+describe("ERP contracts", () => {
+  it("defines the worker-facing confirmation endpoint and payloads", () => {
+    expect(erpConfirmationPath).toBe("/confirmations");
+    expect(
+      erpConfirmationRequestSchema.parse({
+        orderId: "11111111-1111-4111-8111-111111111111",
+        publicOrderId: "ord_test",
+        reservationId: "33333333-3333-4333-8333-333333333333",
+        saleOfferId,
+        runId,
+        correlationId,
+        quantity: 1,
+      }),
+    ).toMatchObject({ publicOrderId: "ord_test", correlationId });
+
+    expect(
+      erpConfirmationResponseSchema.parse({
+        status: "succeeded",
+        confirmationId: "erp_confirmation_test",
+        httpStatus: 200,
+        latencyMs: 15,
+        timestamp,
+      }),
+    ).toMatchObject({ status: "succeeded", httpStatus: 200 });
+
+    expect(
+      erpConfirmationResponseSchema.parse({
+        status: "failed",
+        httpStatus: 503,
+        errorCode: "erp_unavailable",
+        errorMessage: "The ERP is temporarily unavailable.",
+        latencyMs: 25,
+        timestamp,
+      }),
+    ).toMatchObject({ status: "failed", errorCode: "erp_unavailable" });
   });
 });
 

@@ -376,13 +376,15 @@ Primary references:
 - `docs/core_business_entities.md`
 - `docs/cross_service_conventions.md`
 
-### ⬜ Task 5.1 - Build the mock ERP service
+### ✅ Task 5.1 - Build the mock ERP service
 
 Subtasks:
 
-- Create the ERP-facing API contract that the worker calls.
-- Implement realistic success and failure responses that resemble a slow legacy dependency.
-- Add request logging, correlation ID propagation, health/readiness endpoints, and service-level tests.
+- ✅ Create the ERP-facing API contract that the worker calls.
+- ✅ Implement realistic success and failure responses that resemble a slow legacy dependency.
+- ✅ Add request logging, correlation ID propagation, health/readiness endpoints, and service-level tests.
+
+Completion summary: The standalone Fastify Mock ERP now owns the shared `POST /confirmations` boundary, contract-validated success and dependency-failure responses, correlation-aware request logs, liveness/readiness endpoints, host-native startup, and service-level coverage. Its injected confirmation-decision boundary defaults to success and is ready for Task 5.2 to add latency, TPS, error-rate, and forced-outage controls without moving chaos behavior into the HTTP route.
 
 ### ⬜ Task 5.2 - Add configurable chaos controls
 
