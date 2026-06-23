@@ -32,6 +32,11 @@ import {
 } from "./primitives.js";
 import { queueStatusSchema } from "./queue.js";
 
+export const publicPresetListPath = "/demo/presets/public" as const;
+export const publicRuntimePolicyPath = "/demo/runtime-policy" as const;
+export const startDemoRunPath = "/demo/runs/start" as const;
+export const runHistoryPath = "/demo/runs/history" as const;
+
 export const demoPresetContractSchema = demoPresetSchema
   .extend({
     trafficConfig: trafficConfigSchema,

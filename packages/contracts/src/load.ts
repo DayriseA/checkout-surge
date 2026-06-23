@@ -13,6 +13,10 @@ import {
 } from "./primitives.js";
 import { orderProcessBullMqQueueName, orderProcessQueueName } from "./queue.js";
 
+export const trafficExecutionStartPath = "/traffic/start" as const;
+export const internalLoadMetricIngestPath = "/internal/load/metrics" as const;
+export const internalTrafficCompletionPath = "/internal/load/completion" as const;
+
 export const buyerSpikeTrafficConfigSchema = z
   .object({
     mode: z.literal("buyer-spike"),

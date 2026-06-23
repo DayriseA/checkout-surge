@@ -25,11 +25,20 @@ import {
   orderProcessJobSchema,
   orderProcessQueueName,
   orderStatusValues,
+  publicPresetListPath,
   publicRuntimePolicySchema,
+  publicRuntimePolicyPath,
   queueStatusSchema,
   reservationStatusValues,
+  runHistoryPath,
   securedReservationHoldSchema,
+  startDemoRunPath,
   stockReservationDecisionSchema,
+  trafficCompletionReportSchema,
+  trafficExecutionStartPath,
+  trafficExecutionStartRequestSchema,
+  internalLoadMetricIngestPath,
+  internalTrafficCompletionPath,
 } from "../src/index.js";
 
 const timestamp = "2026-06-20T12:00:00.000Z";
@@ -465,6 +474,16 @@ describe("buy and dashboard contracts", () => {
 });
 
 describe("public runtime policy contract", () => {
+  it("defines demo-run and load-execution API boundaries", () => {
+    expect(publicPresetListPath).toBe("/demo/presets/public");
+    expect(publicRuntimePolicyPath).toBe("/demo/runtime-policy");
+    expect(startDemoRunPath).toBe("/demo/runs/start");
+    expect(runHistoryPath).toBe("/demo/runs/history");
+    expect(trafficExecutionStartPath).toBe("/traffic/start");
+    expect(internalLoadMetricIngestPath).toBe("/internal/load/metrics");
+    expect(internalTrafficCompletionPath).toBe("/internal/load/completion");
+  });
+
   it("covers public budget, custom caps, and deployment hard caps", () => {
     const policy = publicRuntimePolicySchema.parse({
       isPublicRunBudgetEnforced: true,
@@ -530,5 +549,80 @@ describe("public runtime policy contract", () => {
     });
 
     expect(policy.publicCustomLimits.maxStartingStock).toBe(1000);
+  });
+
+  it("validates load-orchestrator start and traffic completion payloads", () => {
+    const configSnapshot = {
+      trafficConfig: {
+        mode: "buyer-spike",
+        buyerCount: 200,
+        duplicateEachBuyerAttempt: true,
+        startDelaySeconds: 0,
+        maxDurationSeconds: 5,
+        quantityPerAttempt: 1,
+      },
+      inventoryConfig: {
+        startingStock: 200,
+        quantityPerCheckout: 1,
+        reservationHoldMinutes: 15,
+      },
+      erpConfig: {
+        latencyMs: 50,
+        maxTps: 200,
+        errorRate: 0,
+        forcedOutage: false,
+        requestTimeoutMs: 2000,
+      },
+      backpressureConfig: {
+        queueName: "orders:process",
+        physicalQueueName: "orders-process",
+        orderProcessConcurrency: 5,
+        drainTimeoutSeconds: 300,
+        pendingPersistenceRetryAfterSeconds: 30,
+      },
+    };
+
+    expect(
+      trafficExecutionStartRequestSchema.parse({
+        runId,
+        saleOfferId,
+        apiBaseUrl: "http://localhost:4000",
+        buyEndpointPath: "/buy",
+        correlationId,
+        configSnapshot,
+      }).configSnapshot.trafficConfig.mode,
+    ).toBe("buyer-spike");
+
+    expect(
+      trafficCompletionReportSchema.parse({
+        runId,
+        status: "succeeded",
+        exitCode: 0,
+        httpSummary: {
+          plannedRequests: 400,
+          emittedRequests: 400,
+          completedRequests: 400,
+          failedRequests: 0,
+          acceptedResponses: 200,
+          soldOutResponses: 200,
+          unexpectedResponses: 0,
+          p95LatencyMs: 42,
+          failureRate: 0,
+        },
+        trafficOutcomeSummary: {},
+        trafficDeliverySummary: {
+          plannedRequests: 400,
+          emittedRequests: 400,
+          droppedIterations: 0,
+          trafficDeliveryStatus: "complete",
+          notes: [],
+        },
+        httpTimingBreakdownSummary: {},
+        loadRunDiagnosticsSummary: {},
+        apiRequestLifecycleSummary: {},
+        completedAt: timestamp,
+        correlationId,
+      }).httpSummary.acceptedResponses,
+    ).toBe(200);
   });
 });
