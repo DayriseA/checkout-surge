@@ -11,7 +11,7 @@ import {
   requireAdminPassphrase,
   requireControlServiceToken,
   validateJson,
-} from "../../../lib/server/backend-proxy.js";
+} from "../../../lib/server/backend-proxy";
 
 export async function GET(): Promise<Response> {
   return proxyJson({

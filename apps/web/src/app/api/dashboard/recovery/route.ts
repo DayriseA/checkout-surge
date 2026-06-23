@@ -1,5 +1,5 @@
 import { dashboardRecoveryPath, dashboardRecoveryResponseSchema } from "@checkout-surge/contracts";
-import { apiBaseUrl, proxyJson } from "../../../lib/server/backend-proxy.js";
+import { apiBaseUrl, proxyJson } from "../../../lib/server/backend-proxy";
 
 export async function GET(): Promise<Response> {
   return proxyJson({

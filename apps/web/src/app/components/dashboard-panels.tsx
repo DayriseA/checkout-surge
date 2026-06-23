@@ -6,8 +6,8 @@ import type {
   QueueStatus,
   StartDemoRunResponse,
 } from "@checkout-surge/contracts";
-import type { BackendRead, DashboardBackendSnapshot } from "../lib/api.js";
-import { StatusPill } from "./status-pill.js";
+import type { BackendRead, DashboardBackendSnapshot } from "../lib/api";
+import { StatusPill } from "./status-pill";
 
 export type RealtimeConnectionStatus = "connecting" | "connected" | "disconnected" | "unsupported";
 

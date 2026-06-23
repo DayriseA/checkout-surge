@@ -12,15 +12,15 @@ import {
   startDemoRunResponseSchema,
 } from "@checkout-surge/contracts";
 import { useEffect, useMemo, useState } from "react";
-import type { BackendRead, DashboardBackendSnapshot } from "../lib/api.js";
+import type { BackendRead, DashboardBackendSnapshot } from "../lib/api";
 import {
   adminErpChaosProxyPath,
   adminErpChaosResetProxyPath,
   adminPassphraseHeaderName,
   dashboardRecoveryProxyPath,
   demoRunStartProxyPath,
-} from "../lib/control-paths.js";
-import { dashboardEventsUrl } from "../lib/realtime.js";
+} from "../lib/control-paths";
+import { dashboardEventsUrl } from "../lib/realtime";
 import {
   ApiStatusPanel,
   ConsistencyLagPanel,
@@ -32,7 +32,7 @@ import {
   RecoveryStatusPanel,
   RequestSurgePanel,
   RunOutcomesPanel,
-} from "./dashboard-panels.js";
+} from "./dashboard-panels";
 
 interface OperatorDashboardProps {
   snapshot: DashboardBackendSnapshot;

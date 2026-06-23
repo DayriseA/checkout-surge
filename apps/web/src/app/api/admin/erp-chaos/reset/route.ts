@@ -5,7 +5,7 @@ import {
   proxyJson,
   requireAdminPassphrase,
   requireControlServiceToken,
-} from "../../../../lib/server/backend-proxy.js";
+} from "../../../../lib/server/backend-proxy";
 
 export async function POST(request: Request): Promise<Response> {
   const unauthorized = requireAdminPassphrase(request);

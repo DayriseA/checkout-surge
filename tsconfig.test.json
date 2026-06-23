@@ -4,6 +4,8 @@
     "noEmit": true,
     "jsx": "react-jsx",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
     "types": ["node", "vitest/globals"]
   },
   "include": [
