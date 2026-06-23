@@ -11,6 +11,9 @@ import {
 export const orderProcessQueueName = "orders:process" as const;
 export const orderProcessBullMqQueueName = "orders-process" as const;
 export const orderProcessJobName = "order.process" as const;
+export const notificationRecordQueueName = "notifications:record" as const;
+export const notificationRecordBullMqQueueName = "notifications-record" as const;
+export const notificationRecordJobName = "notification.record" as const;
 
 export const orderProcessJobSchema = z
   .object({
@@ -25,6 +28,19 @@ export const orderProcessJobSchema = z
   })
   .strict();
 export type OrderProcessJob = z.infer<typeof orderProcessJobSchema>;
+
+export const notificationRecordJobSchema = z
+  .object({
+    orderId: uuidSchema,
+    saleOfferId: uuidSchema,
+    correlationId: correlationIdSchema,
+    runId: uuidSchema.optional(),
+    channel: z.enum(["email", "sms"]),
+    recipientPlaceholder: z.string().trim().min(1),
+    confirmedAt: isoTimestampSchema,
+  })
+  .strict();
+export type NotificationRecordJob = z.infer<typeof notificationRecordJobSchema>;
 
 export const queueFailedJobSummarySchema = z
   .object({

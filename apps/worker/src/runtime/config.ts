@@ -4,6 +4,7 @@ export interface WorkerConfig {
   healthPort: number;
   redisUrl: string;
   orderProcessConcurrency: number;
+  notificationRecordConcurrency: number;
   postgresPoolMax: number;
   mockErpBaseUrl: string;
   erpRequestTimeoutMs: number;
@@ -20,6 +21,11 @@ export function loadWorkerConfig(env: NodeJS.ProcessEnv): WorkerConfig {
     orderProcessConcurrency: parsePositiveInteger(
       env.ORDER_PROCESS_CONCURRENCY,
       "ORDER_PROCESS_CONCURRENCY",
+      5,
+    ),
+    notificationRecordConcurrency: parsePositiveInteger(
+      env.NOTIFICATION_RECORD_CONCURRENCY,
+      "NOTIFICATION_RECORD_CONCURRENCY",
       5,
     ),
     postgresPoolMax: parsePositiveInteger(

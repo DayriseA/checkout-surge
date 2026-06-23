@@ -47,6 +47,52 @@ describe("order-process application workflow", () => {
     expect(persistence.transitionToFailed).not.toHaveBeenCalled();
   });
 
+  it("publishes a simulated notification job after confirmation", async () => {
+    const notificationRecordPublisher = {
+      publishForConfirmedOrder: vi.fn().mockResolvedValue(undefined),
+    };
+    const handler = createOrderProcessJobHandler({
+      confirmation: { confirm: vi.fn().mockResolvedValue(undefined) },
+      persistence: createPersistence(),
+      logger: createSilentLogger("worker"),
+      notificationRecordPublisher,
+    });
+
+    await handler.handle(job, delivery);
+
+    expect(notificationRecordPublisher.publishForConfirmedOrder).toHaveBeenCalledWith(
+      job,
+      expect.any(String),
+    );
+  });
+
+  it("does not fail a confirmed order when notification job publication fails", async () => {
+    const publishError = new Error("queue unavailable");
+    const transitionToConfirmed = vi.fn().mockResolvedValue(undefined);
+    const reportNotificationRecordPublishFailure = vi.fn();
+    const handler = createOrderProcessJobHandler({
+      confirmation: { confirm: vi.fn().mockResolvedValue(undefined) },
+      persistence: createPersistence({ transitionToConfirmed }),
+      logger: createSilentLogger("worker"),
+      notificationRecordPublisher: {
+        publishForConfirmedOrder: vi.fn().mockRejectedValue(publishError),
+      },
+      reportNotificationRecordPublishFailure,
+    });
+
+    await handler.handle(job, delivery);
+
+    expect(transitionToConfirmed).toHaveBeenCalledOnce();
+    expect(reportNotificationRecordPublishFailure).toHaveBeenCalledWith(
+      expect.objectContaining({
+        error: publishError,
+        orderId: job.orderId,
+        saleOfferId: job.saleOfferId,
+        correlationId: job.correlationId,
+      }),
+    );
+  });
+
   it("publishes business outcome updates for processing and confirmation transitions", async () => {
     const publishBusinessOutcomeUpdate = vi.fn().mockResolvedValue(undefined);
     const handler = createOrderProcessJobHandler({

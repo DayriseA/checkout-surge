@@ -1,6 +1,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  type NotificationRecordJob,
   type OrderProcessJob,
   orderProcessBullMqQueueName,
   orderProcessJobName,
@@ -13,6 +14,7 @@ import {
   products,
   reservations,
   saleOffers,
+  simulatedNotifications,
 } from "@checkout-surge/db";
 import { resetTestDatabase } from "@checkout-surge/db/testing";
 import { createSilentLogger } from "@checkout-surge/logger";
@@ -29,6 +31,10 @@ import {
   type OrderConfirmation,
 } from "../../src/application/order-process-job-handler.js";
 import { PostgresErpAttemptPersistence } from "../../src/persistence/postgres-erp-attempt-persistence.js";
+import {
+  NotificationBeforeConfirmationError,
+  PostgresNotificationRecordPersistence,
+} from "../../src/persistence/postgres-notification-record-persistence.js";
 import {
   OrderJobIdentityMismatchError,
   OrderNotFoundError,
@@ -206,6 +212,74 @@ describe("PostgreSQL worker order transitions", () => {
       resumed: false,
     });
     expect(await readOrderEvents(connection, ids.order)).toHaveLength(4);
+  });
+
+  it("records simulated notifications only after confirmation and keeps replay idempotent", async () => {
+    const transitionPersistence = new PostgresOrderTransitionPersistence(
+      connection.db,
+      sequenceClock(new Date("2026-06-21T00:00:01.000Z"), new Date("2026-06-21T00:00:02.000Z")),
+    );
+    const notificationPersistence = new PostgresNotificationRecordPersistence(
+      connection.db,
+      sequenceClock(new Date("2026-06-21T00:00:03.000Z"), new Date("2026-06-21T00:00:04.000Z")),
+    );
+    const notificationJob: NotificationRecordJob = {
+      orderId: ids.order,
+      saleOfferId: ids.saleOffer,
+      correlationId: job.correlationId,
+      channel: "email",
+      recipientPlaceholder: "simulated-buyer:ord_worker_integration",
+      confirmedAt: "2026-06-21T00:00:02.000Z",
+    };
+
+    await expect(notificationPersistence.record(notificationJob)).rejects.toBeInstanceOf(
+      NotificationBeforeConfirmationError,
+    );
+    await transitionPersistence.transitionToProcessing(job, { attemptNumber: 1, attemptsMade: 0 });
+    await transitionPersistence.transitionToConfirmed(job, { attemptNumber: 1, attemptsMade: 0 });
+
+    await expect(notificationPersistence.record(notificationJob)).resolves.toEqual({
+      recorded: true,
+    });
+    await expect(notificationPersistence.record(notificationJob)).resolves.toEqual({
+      recorded: false,
+    });
+
+    const notifications = await connection.db
+      .select()
+      .from(simulatedNotifications)
+      .where(eq(simulatedNotifications.orderId, ids.order));
+    const notificationEvents = (await readOrderEvents(connection, ids.order)).filter(
+      (event) => event.eventName === "notification.recorded",
+    );
+
+    expect(notifications).toMatchObject([
+      {
+        orderId: ids.order,
+        saleOfferId: ids.saleOffer,
+        correlationId: job.correlationId,
+        runId: null,
+        channel: "email",
+        recipientPlaceholder: "simulated-buyer:ord_worker_integration",
+        status: "recorded",
+        recordedAt: new Date("2026-06-21T00:00:03.000Z"),
+      },
+    ]);
+    expect(notificationEvents).toHaveLength(1);
+    expect(notificationEvents[0]).toMatchObject({
+      orderId: ids.order,
+      reservationId: ids.reservation,
+      saleOfferId: ids.saleOffer,
+      correlationId: job.correlationId,
+      eventName: "notification.recorded",
+      source: "worker",
+      occurredAt: new Date("2026-06-21T00:00:03.000Z"),
+      payload: {
+        channel: "email",
+        recipientPlaceholder: "simulated-buyer:ord_worker_integration",
+        notificationStatus: "recorded",
+      },
+    });
   });
 
   it("persists one terminal failure and treats failed replay as a no-op", async () => {

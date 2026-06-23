@@ -15,11 +15,15 @@ import {
   HttpErpOrderConfirmation,
   isTemporaryErpConfirmationError,
 } from "./application/erp-confirmation-client.js";
+import { createNotificationRecordJobHandler } from "./application/notification-record-job-handler.js";
 import { createOrderProcessJobHandler } from "./application/order-process-job-handler.js";
 import { RunScopedBackpressureOrderConfirmation } from "./application/run-backpressure.js";
 import { PostgresErpAttemptPersistence } from "./persistence/postgres-erp-attempt-persistence.js";
+import { PostgresNotificationRecordPersistence } from "./persistence/postgres-notification-record-persistence.js";
 import { PostgresOrderTransitionPersistence } from "./persistence/postgres-order-transition-persistence.js";
 import { PostgresRunConfigReader } from "./persistence/postgres-run-config-reader.js";
+import { createBullMqNotificationRecordConsumer } from "./queue/bullmq-notification-record-consumer.js";
+import { createBullMqNotificationRecordPublisher } from "./queue/bullmq-notification-record-publisher.js";
 import { createBullMqOrderProcessConsumer } from "./queue/bullmq-order-process-consumer.js";
 import { loadWorkerConfig } from "./runtime/config.js";
 import { createWorkerReadiness } from "./runtime/readiness.js";
@@ -52,13 +56,25 @@ export {
   isTemporaryErpConfirmationError,
 } from "./application/erp-confirmation-client.js";
 export {
+  createNotificationRecordJobHandler,
+  type NotificationRecordJobHandler,
+  type NotificationRecordPersistence,
+} from "./application/notification-record-job-handler.js";
+export {
   createLocalOrderConfirmation,
   createOrderProcessJobHandler,
+  type NotificationRecordPublisher,
   OrderFailurePersistenceError,
 } from "./application/order-process-job-handler.js";
 export { RunScopedBackpressureOrderConfirmation } from "./application/run-backpressure.js";
 export type { RunConfigReader } from "./application/run-config.js";
 export { PostgresErpAttemptPersistence } from "./persistence/postgres-erp-attempt-persistence.js";
+export {
+  NotificationBeforeConfirmationError,
+  NotificationOrderIdentityMismatchError,
+  NotificationOrderNotFoundError,
+  PostgresNotificationRecordPersistence,
+} from "./persistence/postgres-notification-record-persistence.js";
 export {
   InvalidOrderTransitionError,
   OrderJobIdentityMismatchError,
@@ -66,7 +82,10 @@ export {
   PostgresOrderTransitionPersistence,
 } from "./persistence/postgres-order-transition-persistence.js";
 export { PostgresRunConfigReader } from "./persistence/postgres-run-config-reader.js";
+export { createBullMqNotificationRecordConsumer } from "./queue/bullmq-notification-record-consumer.js";
+export { createBullMqNotificationRecordPublisher } from "./queue/bullmq-notification-record-publisher.js";
 export { createBullMqOrderProcessConsumer } from "./queue/bullmq-order-process-consumer.js";
+export type { NotificationRecordConsumer } from "./queue/notification-record-consumer.js";
 export type { OrderProcessConsumer } from "./queue/order-process-consumer.js";
 export { loadWorkerConfig, type WorkerConfig } from "./runtime/config.js";
 export { createWorkerReadiness } from "./runtime/readiness.js";
@@ -82,6 +101,12 @@ export async function startWorker(): Promise<void> {
     maxRetriesPerRequest: 3,
   });
   const runConfigReader = new PostgresRunConfigReader(database.db);
+  const notificationRecordPublisher = createBullMqNotificationRecordPublisher({
+    connection: {
+      url: config.redisUrl,
+      maxRetriesPerRequest: null,
+    },
+  });
   const orderProcessConsumer = createBullMqOrderProcessConsumer({
     connection: {
       url: config.redisUrl,
@@ -113,6 +138,19 @@ export async function startWorker(): Promise<void> {
       persistence: new PostgresOrderTransitionPersistence(database.db),
       logger,
       isTemporaryConfirmationFailure,
+      notificationRecordPublisher,
+      reportNotificationRecordPublishFailure: (report) => {
+        logger.error(
+          {
+            err: report.error,
+            orderId: report.orderId,
+            saleOfferId: report.saleOfferId,
+            ...(report.runId ? { runId: report.runId } : {}),
+            correlationId: report.correlationId,
+          },
+          "Order confirmed but notification-recording job publication failed.",
+        );
+      },
       publishBusinessOutcomeUpdate: async (job) => {
         await publishBusinessOutcomeDashboardUpdate(database.db, redis, {
           saleOfferId: job.saleOfferId,
@@ -136,9 +174,45 @@ export async function startWorker(): Promise<void> {
     }),
     logger,
   });
+  const notificationRecordConsumer = createBullMqNotificationRecordConsumer({
+    connection: {
+      url: config.redisUrl,
+      maxRetriesPerRequest: null,
+    },
+    concurrency: config.notificationRecordConcurrency,
+    handler: createNotificationRecordJobHandler({
+      persistence: new PostgresNotificationRecordPersistence(database.db),
+      logger,
+      publishBusinessOutcomeUpdate: async (job) => {
+        await publishBusinessOutcomeDashboardUpdate(database.db, redis, {
+          saleOfferId: job.saleOfferId,
+          ...(job.runId ? { runId: job.runId } : {}),
+          correlationId: job.correlationId,
+        });
+      },
+      reportBusinessOutcomeUpdateFailure: (report) => {
+        logger.error(
+          {
+            err: report.error,
+            orderId: report.orderId,
+            saleOfferId: report.saleOfferId,
+            ...(report.runId ? { runId: report.runId } : {}),
+            correlationId: report.correlationId,
+          },
+          "Notification record succeeded but dashboard business outcome publication failed.",
+        );
+      },
+    }),
+    logger,
+  });
   const healthServer = buildWorkerHealthServer({
     logger,
-    readiness: createWorkerReadiness({ postgres: database.sql, redis, orderProcessConsumer }),
+    readiness: createWorkerReadiness({
+      postgres: database.sql,
+      redis,
+      orderProcessConsumer,
+      notificationRecordConsumer,
+    }),
     startedAt: new Date(),
   });
   const runtime = createWorkerRuntime({
@@ -146,6 +220,8 @@ export async function startWorker(): Promise<void> {
     healthHost: config.healthHost,
     healthPort: config.healthPort,
     orderProcessConsumer,
+    notificationRecordConsumer,
+    closeNotificationRecordPublisher: notificationRecordPublisher.close,
     closePostgres: database.close,
     closeRedis: async () => {
       await redis.quit();

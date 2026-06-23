@@ -376,6 +376,11 @@ CREATE INDEX "reservation_pending_persistence_status_idx" ON "reservation_pendin
 --> statement-breakpoint
 CREATE INDEX "simulated_notifications_order_id_idx" ON "simulated_notifications" ("order_id");
 --> statement-breakpoint
+CREATE UNIQUE INDEX "simulated_notifications_order_channel_unique" ON "simulated_notifications" (
+  "order_id",
+  "channel"
+);
+--> statement-breakpoint
 CREATE INDEX "simulated_notifications_sale_offer_id_idx" ON "simulated_notifications" (
   "sale_offer_id"
 );

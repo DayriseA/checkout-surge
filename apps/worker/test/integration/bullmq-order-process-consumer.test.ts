@@ -1,4 +1,7 @@
 import {
+  type NotificationRecordJob,
+  notificationRecordBullMqQueueName,
+  notificationRecordJobName,
   type OrderProcessJob,
   orderProcessBullMqQueueName,
   orderProcessJobName,
@@ -8,10 +11,15 @@ import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  createBullMqNotificationRecordConsumer,
+  notificationRecordQueueNotReadyMessage,
+} from "../../src/queue/bullmq-notification-record-consumer.js";
+import {
   createBullMqOrderProcessConsumer,
   type OrderProcessJobFailureReport,
   orderProcessQueueNotReadyMessage,
 } from "../../src/queue/bullmq-order-process-consumer.js";
+import type { NotificationRecordConsumer } from "../../src/queue/notification-record-consumer.js";
 import type { OrderProcessConsumer } from "../../src/queue/order-process-consumer.js";
 
 const job: OrderProcessJob = {
@@ -22,6 +30,14 @@ const job: OrderProcessJob = {
   correlationId: "corr-worker-test",
   quantity: 1,
   queuedAt: "2026-06-21T00:00:00.000Z",
+};
+const notificationJob: NotificationRecordJob = {
+  orderId: job.orderId,
+  saleOfferId: job.saleOfferId,
+  correlationId: job.correlationId,
+  channel: "email",
+  recipientPlaceholder: "simulated-buyer:ord_test",
+  confirmedAt: "2026-06-21T00:00:02.000Z",
 };
 
 function testRedisUrl(): string {
@@ -220,6 +236,56 @@ describe("BullMQ order-processing boundary", () => {
     expect(errorLog).toHaveBeenCalledWith(
       expect.objectContaining({ err: expect.any(Error) }),
       "Order-processing failure reporter threw an error.",
+    );
+  });
+});
+
+describe("BullMQ notification-recording boundary", () => {
+  let producerRedis: Redis;
+  let queue: Queue<NotificationRecordJob, void, typeof notificationRecordJobName>;
+  let consumer: NotificationRecordConsumer | null;
+
+  beforeEach(async () => {
+    producerRedis = new Redis(testRedisUrl(), { maxRetriesPerRequest: 3 });
+    await producerRedis.flushdb();
+    queue = new Queue(notificationRecordBullMqQueueName, {
+      connection: { url: testRedisUrl(), maxRetriesPerRequest: 3 },
+    });
+    consumer = null;
+  });
+
+  afterEach(async () => {
+    await consumer?.close();
+    await queue.close();
+    await producerRedis.quit();
+  });
+
+  it("consumes and validates a notification job from the physical BullMQ queue", async () => {
+    const handled = deferred<NotificationRecordJob>();
+    consumer = createBullMqNotificationRecordConsumer({
+      connection: { url: testRedisUrl(), maxRetriesPerRequest: null },
+      concurrency: 1,
+      handler: { handle: async (payload) => handled.resolve(payload) },
+      logger: createSilentLogger("worker"),
+    });
+
+    consumer.start();
+    await queue.add(notificationRecordJobName, notificationJob, { jobId: notificationJob.orderId });
+
+    await expect(handled.promise).resolves.toEqual(notificationJob);
+    await expect(consumer.checkConnectivity()).resolves.toBeUndefined();
+  });
+
+  it("reports notification queue connectivity before readiness", async () => {
+    consumer = createBullMqNotificationRecordConsumer({
+      connection: { url: testRedisUrl(), maxRetriesPerRequest: null },
+      concurrency: 1,
+      handler: { handle: vi.fn() },
+      logger: createSilentLogger("worker"),
+    });
+
+    await expect(consumer.checkConnectivity()).rejects.toThrow(
+      notificationRecordQueueNotReadyMessage,
     );
   });
 });

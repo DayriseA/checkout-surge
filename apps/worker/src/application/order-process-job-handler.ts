@@ -40,6 +40,10 @@ export interface OrderConfirmation {
   confirm(job: OrderProcessJob, delivery: OrderProcessDeliveryMetadata): Promise<void>;
 }
 
+export interface NotificationRecordPublisher {
+  publishForConfirmedOrder(job: OrderProcessJob, confirmedAt: string): Promise<void>;
+}
+
 export interface BusinessOutcomeUpdateFailureReport {
   error: unknown;
   orderId: string;
@@ -82,6 +86,14 @@ export function createOrderProcessJobHandler(dependencies: {
   isTemporaryConfirmationFailure?: (error: unknown) => boolean;
   publishBusinessOutcomeUpdate?: BusinessOutcomeUpdatePublisher;
   reportBusinessOutcomeUpdateFailure?: (report: BusinessOutcomeUpdateFailureReport) => void;
+  notificationRecordPublisher?: NotificationRecordPublisher;
+  reportNotificationRecordPublishFailure?: (report: {
+    error: unknown;
+    orderId: string;
+    saleOfferId: string;
+    runId?: string;
+    correlationId: string;
+  }) => void;
 }): OrderProcessJobHandler {
   return {
     handle: async (job, delivery) => {
@@ -161,10 +173,59 @@ export function createOrderProcessJobHandler(dependencies: {
       }
 
       await dependencies.persistence.transitionToConfirmed(job, delivery);
+      await publishNotificationRecordJobWithoutFailingOrder(
+        dependencies,
+        job,
+        new Date().toISOString(),
+        logger,
+      );
       await publishBusinessOutcomeUpdateWithoutFailingJob(dependencies, job, "confirmed", logger);
       logger.info(logContext, "Order transitioned to confirmed.");
     },
   };
+}
+
+async function publishNotificationRecordJobWithoutFailingOrder(
+  dependencies: {
+    notificationRecordPublisher?: NotificationRecordPublisher;
+    reportNotificationRecordPublishFailure?: (report: {
+      error: unknown;
+      orderId: string;
+      saleOfferId: string;
+      runId?: string;
+      correlationId: string;
+    }) => void;
+  },
+  job: OrderProcessJob,
+  confirmedAt: string,
+  logger: CheckoutSurgeLogger,
+): Promise<void> {
+  if (!dependencies.notificationRecordPublisher) {
+    return;
+  }
+
+  try {
+    await dependencies.notificationRecordPublisher.publishForConfirmedOrder(job, confirmedAt);
+  } catch (error) {
+    const report = {
+      error,
+      orderId: job.orderId,
+      saleOfferId: job.saleOfferId,
+      ...(job.runId ? { runId: job.runId } : {}),
+      correlationId: job.correlationId,
+    };
+
+    if (dependencies.reportNotificationRecordPublishFailure) {
+      try {
+        dependencies.reportNotificationRecordPublishFailure(report);
+      } catch {
+        // Reporting is non-critical; the confirmed order remains authoritative.
+      }
+      return;
+    }
+
+    logger.error(report, "Confirmed order notification job publication failed.");
+  }
 }
 
 async function publishBusinessOutcomeUpdateWithoutFailingJob(

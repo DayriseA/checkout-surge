@@ -19,6 +19,7 @@ describe("worker configuration", () => {
       healthPort: 4300,
       redisUrl: "redis://localhost:6379",
       orderProcessConcurrency: 5,
+      notificationRecordConcurrency: 5,
       postgresPoolMax: 10,
       mockErpBaseUrl: "http://localhost:4100/",
       erpRequestTimeoutMs: 2000,
@@ -130,6 +131,12 @@ describe("worker readiness", () => {
         isRunning: () => true,
         checkConnectivity: vi.fn().mockResolvedValue(undefined),
       },
+      notificationRecordConsumer: {
+        start: vi.fn(),
+        close: vi.fn(),
+        isRunning: () => true,
+        checkConnectivity: vi.fn().mockResolvedValue(undefined),
+      },
     });
 
     await expect(readiness.checks()).resolves.toEqual([
@@ -137,6 +144,8 @@ describe("worker readiness", () => {
       { name: "redis_reachable", status: "ok" },
       { name: "order_process_worker_running", status: "ok" },
       { name: "order_process_queue_reachable", status: "ok" },
+      { name: "notification_record_worker_running", status: "ok" },
+      { name: "notification_record_queue_reachable", status: "ok" },
     ]);
   });
 
@@ -149,6 +158,12 @@ describe("worker readiness", () => {
         close: vi.fn(),
         isRunning: () => false,
         checkConnectivity: vi.fn().mockRejectedValue(new Error("Queue unavailable")),
+      },
+      notificationRecordConsumer: {
+        start: vi.fn(),
+        close: vi.fn(),
+        isRunning: () => false,
+        checkConnectivity: vi.fn().mockRejectedValue(new Error("Notification queue unavailable")),
       },
     });
 
@@ -169,6 +184,16 @@ describe("worker readiness", () => {
         status: "unavailable",
         message: "Queue unavailable",
       },
+      {
+        name: "notification_record_worker_running",
+        status: "unavailable",
+        message: "The notification-recording consumer is not running.",
+      },
+      {
+        name: "notification_record_queue_reachable",
+        status: "unavailable",
+        message: "Notification queue unavailable",
+      },
     ]);
   });
 });
@@ -186,11 +211,19 @@ describe("worker runtime lifecycle", () => {
       isRunning: () => true,
       checkConnectivity: vi.fn().mockResolvedValue(undefined),
     };
+    const notificationConsumer = {
+      start: vi.fn(),
+      close: vi.fn().mockResolvedValue(undefined),
+      isRunning: () => true,
+      checkConnectivity: vi.fn().mockResolvedValue(undefined),
+    };
     const runtime = createWorkerRuntime({
       healthServer,
       healthHost: "127.0.0.1",
       healthPort: 0,
       orderProcessConsumer: consumer,
+      notificationRecordConsumer: notificationConsumer,
+      closeNotificationRecordPublisher: vi.fn().mockResolvedValue(undefined),
       closePostgres: vi.fn().mockResolvedValue(undefined),
       closeRedis: vi.fn().mockResolvedValue(undefined),
       logger,
@@ -201,6 +234,8 @@ describe("worker runtime lifecycle", () => {
 
     expect(consumer.start).toHaveBeenCalledOnce();
     expect(consumer.close).toHaveBeenCalledOnce();
+    expect(notificationConsumer.start).toHaveBeenCalledOnce();
+    expect(notificationConsumer.close).toHaveBeenCalledOnce();
   });
 
   it("closes serving and consuming boundaries before PostgreSQL and Redis", async () => {
@@ -223,6 +258,17 @@ describe("worker runtime lifecycle", () => {
         isRunning: () => true,
         checkConnectivity: vi.fn().mockResolvedValue(undefined),
       },
+      notificationRecordConsumer: {
+        start: vi.fn(),
+        close: vi.fn(async () => {
+          closeOrder.push("notifications");
+        }),
+        isRunning: () => true,
+        checkConnectivity: vi.fn().mockResolvedValue(undefined),
+      },
+      closeNotificationRecordPublisher: vi.fn(async () => {
+        closeOrder.push("notification-publisher");
+      }),
       closePostgres: vi.fn(async () => {
         closeOrder.push("postgres");
       }),
@@ -235,7 +281,14 @@ describe("worker runtime lifecycle", () => {
     await runtime.start();
     await Promise.all([runtime.close(), runtime.close()]);
 
-    expect(closeOrder).toEqual(["health", "consumer", "postgres", "redis"]);
+    expect(closeOrder).toEqual([
+      "health",
+      "consumer",
+      "notifications",
+      "notification-publisher",
+      "postgres",
+      "redis",
+    ]);
   });
 
   it("cleans every resource after startup failure and preserves cleanup failures", async () => {
@@ -255,6 +308,13 @@ describe("worker runtime lifecycle", () => {
         isRunning: () => false,
         checkConnectivity: vi.fn().mockResolvedValue(undefined),
       },
+      notificationRecordConsumer: {
+        start: vi.fn(),
+        close: vi.fn().mockResolvedValue(undefined),
+        isRunning: () => false,
+        checkConnectivity: vi.fn().mockResolvedValue(undefined),
+      },
+      closeNotificationRecordPublisher: vi.fn().mockResolvedValue(undefined),
       closePostgres: vi.fn().mockRejectedValue(closeError),
       closeRedis,
       logger: createSilentLogger("worker"),

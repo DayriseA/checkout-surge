@@ -420,6 +420,7 @@ export const simulatedNotifications = pgTable(
     createdAt: createdAt(),
   },
   (table) => [
+    uniqueIndex("simulated_notifications_order_channel_unique").on(table.orderId, table.channel),
     index("simulated_notifications_order_id_idx").on(table.orderId),
     index("simulated_notifications_sale_offer_id_idx").on(table.saleOfferId),
     index("simulated_notifications_run_id_idx").on(table.runId),
