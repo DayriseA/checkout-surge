@@ -584,6 +584,10 @@ Subtasks:
 - Preserve sold-out pressure as aggregate reservation-outcome accounting rather than per-loser PostgreSQL rows.
 - Prepare the structure for later side-by-side backend comparisons.
 
+Implementation note:
+
+- Phase 7 records k6 traffic completion payloads, business-outcome-at-traffic-completion snapshots, Redis-derived terminal inventory snapshots, and aggregate sold-out reservation outcomes in API-owned finalization/artifact records. Immutable terminal `demo_run_summaries` remain Phase 10 ownership because final benchmark completion still needs API-owned business-boundary finalization after asynchronous order work drains.
+
 ### ⬜ Task 7.6 - Add automated tests for load generation and metrics streaming
 
 Subtasks:

@@ -865,6 +865,63 @@ describe("API gateway routes", () => {
     expect(ingestMetrics).toHaveBeenCalledOnce();
   });
 
+  it("protects internal traffic completion ingestion with the control service token", async () => {
+    const recordTrafficCompletion = vi.fn(async () => demoRunSnapshotFixture());
+    const server = await trackedServer({
+      persistence: new AcceptingPersistence(),
+      demoRunService: {
+        ...demoRunControllerFixture(),
+        recordTrafficCompletion,
+      },
+    });
+    const report = {
+      runId: fixtureIds.run,
+      status: "succeeded",
+      exitCode: 0,
+      httpSummary: {
+        plannedRequests: 2,
+        emittedRequests: 2,
+        completedRequests: 2,
+        failedRequests: 0,
+        acceptedResponses: 1,
+        soldOutResponses: 1,
+        unexpectedResponses: 0,
+        p95LatencyMs: 42,
+        failureRate: 0,
+      },
+      trafficOutcomeSummary: {},
+      trafficDeliverySummary: {
+        plannedRequests: 2,
+        emittedRequests: 2,
+        droppedIterations: 0,
+        trafficDeliveryStatus: "complete",
+        notes: [],
+      },
+      httpTimingBreakdownSummary: {},
+      loadRunDiagnosticsSummary: {},
+      apiRequestLifecycleSummary: {},
+      completedAt: "2026-06-20T00:00:10.000Z",
+      correlationId: fixtureCorrelationId,
+    };
+
+    const unauthorized = await server.inject({
+      method: "POST",
+      url: "/internal/load/completion",
+      payload: report,
+    });
+    const accepted = await server.inject({
+      method: "POST",
+      url: "/internal/load/completion",
+      headers: { "x-control-service-token": "test-control-token" },
+      payload: report,
+    });
+
+    expect(unauthorized.statusCode).toBe(401);
+    expect(accepted.statusCode).toBe(202);
+    expect(accepted.json().run.runId).toBe(fixtureIds.run);
+    expect(recordTrafficCompletion).toHaveBeenCalledWith(report);
+  });
+
   it("returns a stable unavailable response when queue inspection fails", async () => {
     const server = await trackedServer({
       persistence: new AcceptingPersistence(),

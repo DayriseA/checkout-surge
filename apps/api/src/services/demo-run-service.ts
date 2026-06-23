@@ -20,6 +20,7 @@ import {
   type StartDemoRunRequest,
   type StartDemoRunResponse,
   startDemoRunResponseSchema,
+  type TerminalInventorySnapshot,
   type TrafficCompletionReport,
   type TrafficConfig,
   type TrafficExecutionStartRequest,
@@ -33,8 +34,10 @@ import {
   type CheckoutSurgeRedis,
   demoPresets,
   demoRunFinalizations,
+  demoRunReservationOutcomes,
   demoRunSaleContexts,
   demoRuns,
+  getInventoryStatus,
   initializeInventory,
   products,
   publicRuntimePolicies,
@@ -355,8 +358,36 @@ export class DemoRunService implements DemoRunController {
       saleOfferId: run.saleOfferId,
       runId: run.id,
     });
+    const terminalInventorySnapshot = await this.captureTerminalInventorySnapshot(
+      run.saleOfferId,
+      businessOutcome,
+      now,
+    );
 
     await this.options.db.transaction(async (tx) => {
+      if (terminalInventorySnapshot) {
+        await tx
+          .insert(demoRunReservationOutcomes)
+          .values({
+            runId: report.runId,
+            outcome: "api_sold_out_decision",
+            count: terminalInventorySnapshot.soldOutRejections,
+            latestObservedAt: terminalInventorySnapshot.soldOutRejections > 0 ? now : null,
+            source: "redis",
+            capturedAt: now,
+            createdAt: now,
+          })
+          .onConflictDoUpdate({
+            target: [demoRunReservationOutcomes.runId, demoRunReservationOutcomes.outcome],
+            set: {
+              count: terminalInventorySnapshot.soldOutRejections,
+              latestObservedAt: terminalInventorySnapshot.soldOutRejections > 0 ? now : null,
+              source: "redis",
+              capturedAt: now,
+            },
+          });
+      }
+
       await tx
         .insert(demoRunFinalizations)
         .values({
@@ -367,6 +398,7 @@ export class DemoRunService implements DemoRunController {
           trafficOutcomeSummary: {
             ...report.trafficOutcomeSummary,
             businessOutcomeAtTrafficCompletion: businessOutcome,
+            ...(terminalInventorySnapshot ? { terminalInventorySnapshot } : {}),
           },
           trafficDeliverySummary: report.trafficDeliverySummary,
           httpTimingBreakdownSummary: report.httpTimingBreakdownSummary,
@@ -385,6 +417,7 @@ export class DemoRunService implements DemoRunController {
             trafficOutcomeSummary: {
               ...report.trafficOutcomeSummary,
               businessOutcomeAtTrafficCompletion: businessOutcome,
+              ...(terminalInventorySnapshot ? { terminalInventorySnapshot } : {}),
             },
             trafficDeliverySummary: report.trafficDeliverySummary,
             httpTimingBreakdownSummary: report.httpTimingBreakdownSummary,
@@ -644,6 +677,33 @@ export class DemoRunService implements DemoRunController {
         }).catch(() => undefined);
       }
       await this.publishRunEvent("run.failed", toDemoRunSnapshot(run), correlationId, now);
+    }
+  }
+
+  private async captureTerminalInventorySnapshot(
+    saleOfferId: string,
+    businessOutcome: { acceptedReservations: number },
+    capturedAt: Date,
+  ): Promise<TerminalInventorySnapshot | null> {
+    try {
+      const inventory = await getInventoryStatus(this.options.redis, saleOfferId, capturedAt);
+      return {
+        saleOfferId,
+        startingStock: inventory.allocatedStock,
+        remainingStock: inventory.remainingStock,
+        reservedStock: inventory.reservedStock,
+        acceptedReservations: businessOutcome.acceptedReservations,
+        soldOutRejections: inventory.soldOutPressure.rejectionCount,
+        pendingPersistenceCount: inventory.pendingPersistenceCount,
+        capturedAt: capturedAt.toISOString(),
+        source: "redis",
+      };
+    } catch (error) {
+      this.options.logger.warn(
+        { err: error, saleOfferId },
+        "Could not capture terminal inventory snapshot at traffic completion.",
+      );
+      return null;
     }
   }
 

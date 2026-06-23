@@ -8,7 +8,7 @@ import {
   proxyJson,
   readJsonRequest,
   validateJson,
-} from "../../../../lib/server/backend-proxy";
+} from "../../../../lib/server/backend-proxy.js";
 
 export async function POST(request: Request) {
   const body = await readJsonRequest(request);
