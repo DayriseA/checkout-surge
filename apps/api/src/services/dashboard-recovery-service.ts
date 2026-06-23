@@ -1,5 +1,6 @@
 import {
   type BusinessOutcomeSummary,
+  type ConsistencyLagSummary,
   type DashboardRecoveryResponse,
   type DemoRunSnapshot,
   dashboardRecoveryResponseSchema,
@@ -9,6 +10,7 @@ import {
   type CheckoutSurgeDatabase,
   demoRuns,
   readBusinessOutcomeSummary,
+  readConsistencyLagSummary,
   saleOffers,
 } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
@@ -28,6 +30,13 @@ export interface DashboardRecoveryContextReader {
 
 export interface DashboardBusinessOutcomeReader {
   read(scope: { saleOfferId: string; runId?: string }): Promise<BusinessOutcomeSummary>;
+}
+
+export interface DashboardConsistencyLagReader {
+  read(
+    scope: { saleOfferId: string; runId?: string },
+    measuredAt: Date,
+  ): Promise<ConsistencyLagSummary>;
 }
 
 export class PostgresDashboardRecoveryContextReader implements DashboardRecoveryContextReader {
@@ -79,11 +88,23 @@ export class PostgresDashboardBusinessOutcomeReader implements DashboardBusiness
   }
 }
 
+export class PostgresDashboardConsistencyLagReader implements DashboardConsistencyLagReader {
+  constructor(private readonly db: CheckoutSurgeDatabase) {}
+
+  read(
+    scope: { saleOfferId: string; runId?: string },
+    measuredAt: Date,
+  ): Promise<ConsistencyLagSummary> {
+    return readConsistencyLagSummary(this.db, scope, measuredAt);
+  }
+}
+
 export class DashboardRecoveryService {
   constructor(
     private readonly options: {
       contextReader: DashboardRecoveryContextReader;
       businessOutcomeReader: DashboardBusinessOutcomeReader;
+      consistencyLagReader: DashboardConsistencyLagReader;
       inventoryStatusService: InventoryStatusService;
       queueStatusService: QueueStatusService;
       erpStatusService: ErpStatusService;
@@ -107,20 +128,26 @@ export class DashboardRecoveryService {
         }
       : null;
 
-    const [inventoryResult, queueResult, erpResult, businessOutcomeResult] = await Promise.all([
-      scope
-        ? readSafely("dashboard_inventory", () =>
-            this.options.inventoryStatusService.getStatus(scope.saleOfferId),
-          )
-        : Promise.resolve({ ok: true as const, value: null }),
-      readSafely("dashboard_queue", () => this.options.queueStatusService.getStatus()),
-      readSafely("dashboard_erp", () => this.options.erpStatusService.getStatus()),
-      scope
-        ? readSafely("dashboard_business_outcome", () =>
-            this.options.businessOutcomeReader.read(scope),
-          )
-        : Promise.resolve({ ok: true as const, value: null }),
-    ]);
+    const [inventoryResult, queueResult, erpResult, businessOutcomeResult, consistencyLagResult] =
+      await Promise.all([
+        scope
+          ? readSafely("dashboard_inventory", () =>
+              this.options.inventoryStatusService.getStatus(scope.saleOfferId),
+            )
+          : Promise.resolve({ ok: true as const, value: null }),
+        readSafely("dashboard_queue", () => this.options.queueStatusService.getStatus()),
+        readSafely("dashboard_erp", () => this.options.erpStatusService.getStatus()),
+        scope
+          ? readSafely("dashboard_business_outcome", () =>
+              this.options.businessOutcomeReader.read(scope),
+            )
+          : Promise.resolve({ ok: true as const, value: null }),
+        scope
+          ? readSafely("dashboard_consistency_lag", () =>
+              this.options.consistencyLagReader.read(scope, now),
+            )
+          : Promise.resolve({ ok: true as const, value: null }),
+      ]);
 
     for (const result of [
       contextResult,
@@ -128,6 +155,7 @@ export class DashboardRecoveryService {
       queueResult,
       erpResult,
       businessOutcomeResult,
+      consistencyLagResult,
     ]) {
       if (!result.ok) {
         this.options.logger.warn(
@@ -144,6 +172,7 @@ export class DashboardRecoveryService {
       queue: queueResult.ok ? queueResult.value : null,
       erp: erpResult.ok ? erpResult.value : null,
       businessOutcome: businessOutcomeResult.ok ? businessOutcomeResult.value : null,
+      consistencyLag: consistencyLagResult.ok ? consistencyLagResult.value : null,
       recoveredAt: now.toISOString(),
     });
   }

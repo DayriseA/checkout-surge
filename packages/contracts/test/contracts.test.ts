@@ -416,6 +416,15 @@ describe("buy and dashboard contracts", () => {
           pendingPersistenceCount: 0,
           notificationsRecorded: 0,
         },
+        consistencyLag: {
+          confirmedOrderCount: 2,
+          pendingConfirmationCount: 3,
+          averageLagMs: 225,
+          p95LagMs: 350,
+          maxLagMs: 375,
+          oldestPendingAgeSeconds: 12.5,
+          measuredAt: timestamp,
+        },
       }).type,
     ).toBe("business.outcome.updated");
   });
@@ -438,10 +447,20 @@ describe("buy and dashboard contracts", () => {
         pendingPersistenceCount: 0,
         notificationsRecorded: 0,
       },
+      consistencyLag: {
+        confirmedOrderCount: 2,
+        pendingConfirmationCount: 3,
+        averageLagMs: 225,
+        p95LagMs: 350,
+        maxLagMs: 375,
+        oldestPendingAgeSeconds: 12.5,
+        measuredAt: timestamp,
+      },
       recoveredAt: timestamp,
     });
 
     expect(recovery.businessOutcome?.retryingOrders).toBe(2);
+    expect(recovery.consistencyLag?.p95LagMs).toBe(350);
   });
 });
 

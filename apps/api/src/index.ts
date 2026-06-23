@@ -22,6 +22,7 @@ import { buildApiServer } from "./server.js";
 import {
   DashboardRecoveryService,
   PostgresDashboardBusinessOutcomeReader,
+  PostgresDashboardConsistencyLagReader,
   PostgresDashboardRecoveryContextReader,
 } from "./services/dashboard-recovery-service.js";
 import {
@@ -50,6 +51,7 @@ export { buildApiServer } from "./server.js";
 export {
   DashboardRecoveryService,
   PostgresDashboardBusinessOutcomeReader,
+  PostgresDashboardConsistencyLagReader,
   PostgresDashboardRecoveryContextReader,
 } from "./services/dashboard-recovery-service.js";
 export {
@@ -122,6 +124,7 @@ export async function startApiServer(): Promise<void> {
   const dashboardRecoveryService = new DashboardRecoveryService({
     contextReader: new PostgresDashboardRecoveryContextReader(connection.db),
     businessOutcomeReader: new PostgresDashboardBusinessOutcomeReader(connection.db),
+    consistencyLagReader: new PostgresDashboardConsistencyLagReader(connection.db),
     inventoryStatusService,
     queueStatusService,
     erpStatusService,

@@ -1,5 +1,5 @@
 import { controlServiceTokenHeaderName } from "@checkout-surge/contracts";
-import { adminPassphraseHeaderName } from "../control-paths";
+import { adminPassphraseHeaderName } from "../control-paths.js";
 
 const DEFAULT_API_BASE_URL = "http://localhost:4000";
 const DEFAULT_MOCK_ERP_BASE_URL = "http://localhost:4100";

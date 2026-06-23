@@ -3,6 +3,8 @@ import {
   type BusinessOutcomeDashboardEvent,
   type BusinessOutcomeSummary,
   businessOutcomeSummarySchema,
+  type ConsistencyLagSummary,
+  consistencyLagSummarySchema,
 } from "@checkout-surge/contracts";
 import { and, eq, inArray, type SQL, sql } from "drizzle-orm";
 import type { CheckoutSurgeDatabase } from "./client.js";
@@ -88,20 +90,78 @@ export async function readBusinessOutcomeSummary(
   });
 }
 
+export async function readConsistencyLagSummary(
+  db: CheckoutSurgeDatabase,
+  scope: BusinessOutcomeProjectionScope,
+  measuredAt: Date = new Date(),
+): Promise<ConsistencyLagSummary> {
+  const orderFilter = scope.runId
+    ? eq(orders.runId, scope.runId)
+    : eq(orders.saleOfferId, scope.saleOfferId);
+
+  const [confirmedRow, pendingRow] = await Promise.all([
+    db
+      .select({
+        confirmedOrderCount: sql<number>`count(*)::int`,
+        averageLagMs: sql<
+          number | null
+        >`avg(extract(epoch from (${orders.confirmedAt} - ${reservations.securedAt})) * 1000)`,
+        p95LagMs: sql<
+          number | null
+        >`percentile_cont(0.95) within group (order by extract(epoch from (${orders.confirmedAt} - ${reservations.securedAt})) * 1000)`,
+        maxLagMs: sql<
+          number | null
+        >`max(extract(epoch from (${orders.confirmedAt} - ${reservations.securedAt})) * 1000)`,
+      })
+      .from(orders)
+      .innerJoin(reservations, eq(reservations.id, orders.reservationId))
+      .where(
+        and(orderFilter, eq(orders.status, "confirmed"), sql`${orders.confirmedAt} is not null`),
+      ),
+    db
+      .select({
+        pendingConfirmationCount: sql<number>`count(*)::int`,
+        oldestPendingSecuredAt: sql<Date | null>`min(${reservations.securedAt})`,
+      })
+      .from(orders)
+      .innerJoin(reservations, eq(reservations.id, orders.reservationId))
+      .where(and(orderFilter, inArray(orders.status, ["queued", "processing"]))),
+  ]);
+
+  const oldestPendingSecuredAt = toDateOrNull(pendingRow[0]?.oldestPendingSecuredAt ?? null);
+
+  return consistencyLagSummarySchema.parse({
+    confirmedOrderCount: confirmedRow[0]?.confirmedOrderCount ?? 0,
+    pendingConfirmationCount: pendingRow[0]?.pendingConfirmationCount ?? 0,
+    averageLagMs: clampNonnegative(toNumberOrNull(confirmedRow[0]?.averageLagMs ?? null)),
+    p95LagMs: clampNonnegative(toNumberOrNull(confirmedRow[0]?.p95LagMs ?? null)),
+    maxLagMs: clampNonnegative(toNumberOrNull(confirmedRow[0]?.maxLagMs ?? null)),
+    oldestPendingAgeSeconds: oldestPendingSecuredAt
+      ? elapsedSeconds(oldestPendingSecuredAt, measuredAt)
+      : null,
+    measuredAt: measuredAt.toISOString(),
+  });
+}
+
 export async function publishBusinessOutcomeDashboardUpdate(
   db: CheckoutSurgeDatabase,
   redis: CheckoutSurgeRedis,
   input: PublishBusinessOutcomeDashboardUpdateInput,
 ): Promise<number> {
-  const outcome = await readBusinessOutcomeSummary(db, input);
+  const occurredAt = input.occurredAt ?? new Date();
+  const [outcome, consistencyLag] = await Promise.all([
+    readBusinessOutcomeSummary(db, input),
+    readConsistencyLagSummary(db, input, occurredAt),
+  ]);
   const event: BusinessOutcomeDashboardEvent = {
     type: "business.outcome.updated",
     eventId: input.eventId ?? randomUUID(),
     saleOfferId: input.saleOfferId,
     ...(input.runId ? { runId: input.runId } : {}),
     ...(input.correlationId ? { correlationId: input.correlationId } : {}),
-    occurredAt: (input.occurredAt ?? new Date()).toISOString(),
+    occurredAt: occurredAt.toISOString(),
     outcome,
+    consistencyLag,
   };
 
   return publishDashboardEvent(redis, event);
@@ -119,6 +179,34 @@ async function countRows(
   const [row] = await db.select({ value: sql<number>`count(*)::int` }).from(table).where(where);
 
   return row?.value ?? 0;
+}
+
+function clampNonnegative(value: number | null): number | null {
+  if (value === null) {
+    return null;
+  }
+
+  return Math.max(0, value);
+}
+
+function toNumberOrNull(value: number | string | null): number | null {
+  if (value === null) {
+    return null;
+  }
+
+  return Number(value);
+}
+
+function toDateOrNull(value: Date | string | null): Date | null {
+  if (value === null) {
+    return null;
+  }
+
+  return value instanceof Date ? value : new Date(value);
+}
+
+function elapsedSeconds(startedAt: Date, finishedAt: Date): number {
+  return Math.max(0, (finishedAt.getTime() - startedAt.getTime()) / 1000);
 }
 
 async function countRetryingOrders(

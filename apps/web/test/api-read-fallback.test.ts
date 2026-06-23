@@ -86,6 +86,15 @@ describe("dashboard backend API reads", () => {
             pendingPersistenceCount: 0,
             notificationsRecorded: 0,
           },
+          consistencyLag: {
+            confirmedOrderCount: 1,
+            pendingConfirmationCount: 1,
+            averageLagMs: 225,
+            p95LagMs: 225,
+            maxLagMs: 225,
+            oldestPendingAgeSeconds: 8.5,
+            measuredAt: "2026-06-20T00:00:10.000Z",
+          },
           recoveredAt: "2026-06-20T00:00:10.000Z",
         });
       }),
@@ -99,6 +108,10 @@ describe("dashboard backend API reads", () => {
         businessOutcome: {
           acceptedReservations: 3,
           confirmedOrders: 1,
+        },
+        consistencyLag: {
+          p95LagMs: 225,
+          pendingConfirmationCount: 1,
         },
       },
     });

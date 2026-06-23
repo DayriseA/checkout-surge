@@ -289,6 +289,7 @@ function applyDashboardEvent(
         data: {
           ...current,
           businessOutcome: event.outcome,
+          consistencyLag: event.consistencyLag,
         },
       };
   }

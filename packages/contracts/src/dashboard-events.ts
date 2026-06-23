@@ -1,5 +1,9 @@
 import { z } from "zod";
-import { businessOutcomeSummarySchema, demoRunSnapshotSchema } from "./demo.js";
+import {
+  businessOutcomeSummarySchema,
+  consistencyLagSummarySchema,
+  demoRunSnapshotSchema,
+} from "./demo.js";
 import { inventoryStatusSchema } from "./inventory.js";
 import { metricNameSchema } from "./lifecycle.js";
 import { correlationIdSchema, isoTimestampSchema, uuidSchema } from "./primitives.js";
@@ -75,6 +79,7 @@ export const businessOutcomeDashboardEventSchema = dashboardEventBaseSchema
     type: z.literal("business.outcome.updated"),
     saleOfferId: uuidSchema,
     outcome: businessOutcomeSummarySchema,
+    consistencyLag: consistencyLagSummarySchema,
   })
   .strict();
 export type BusinessOutcomeDashboardEvent = z.infer<typeof businessOutcomeDashboardEventSchema>;

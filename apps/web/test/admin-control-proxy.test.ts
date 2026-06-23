@@ -138,6 +138,7 @@ function dashboardRecoveryPayload() {
     queue: null,
     erp: null,
     businessOutcome: null,
+    consistencyLag: null,
     recoveredAt: "2026-06-20T00:00:10.000Z",
   };
 }

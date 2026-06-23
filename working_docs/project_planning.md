@@ -501,13 +501,15 @@ Subtasks:
 
 Completion summary: Task 6.4 now adds the scoped dashboard control surface without crossing into load execution. The web app exposes a same-origin dashboard recovery proxy, protected server-side Mock ERP chaos update/reset proxy routes, a recovery refresh action, recovery-gated public preset affordances that remain disabled until Phase 7, and an admin ERP chaos control panel that keeps the service token server-side. Reset/recovery and local maintenance controls are represented as protected pending actions because their backend boundaries have not landed yet. Real preset start acceptance, generated run sale-offer creation, k6 execution, load-orchestrator delegation, metrics streaming, and terminal benchmark lifecycle remain explicitly deferred to Phase 7 and Phase 10.
 
-### ⬜ Task 6.5 - Add consistency-lag visibility
+### ✅ Task 6.5 - Add consistency-lag visibility
 
 Subtasks:
 
-- Measure the time between the initial buy request and final ERP confirmation.
-- Surface consistency lag as a first-class dashboard metric.
-- Make it easy to compare fast reservation with slow final confirmation.
+- ✅ Measure the time between the initial buy request and final ERP confirmation.
+- ✅ Surface consistency lag as a first-class dashboard metric.
+- ✅ Make it easy to compare fast reservation with slow final confirmation.
+
+Completion summary: Task 6.5 now adds a first-class consistency-lag projection to dashboard recovery and live business-outcome events. The shared contract exposes confirmed count, pending confirmation count, average lag, p95 lag, max lag, oldest pending age, and measurement time. The PostgreSQL read model derives lag from durable reservation secured time to final order confirmation, scoped to the current run when present or the active catalog sale offer otherwise. The operator dashboard now headlines p95 buy-to-confirmation lag and contrasts fast reservation with pending/confirmed downstream completion, while API/web/contract/DB tests pin the new projection.
 
 ### ⬜ Task 6.6 - Add automated tests for the real-time admin simulation experience
 

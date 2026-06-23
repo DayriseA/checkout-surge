@@ -26,6 +26,7 @@ import {
   isoTimestampSchema,
   jsonObjectSchema,
   nonnegativeIntegerSchema,
+  nonnegativeNumberSchema,
   positiveIntegerSchema,
   uuidSchema,
 } from "./primitives.js";
@@ -114,6 +115,19 @@ export const businessOutcomeSummarySchema = z
   .strict();
 export type BusinessOutcomeSummary = z.infer<typeof businessOutcomeSummarySchema>;
 
+export const consistencyLagSummarySchema = z
+  .object({
+    confirmedOrderCount: nonnegativeIntegerSchema,
+    pendingConfirmationCount: nonnegativeIntegerSchema,
+    averageLagMs: nonnegativeNumberSchema.nullable(),
+    p95LagMs: nonnegativeNumberSchema.nullable(),
+    maxLagMs: nonnegativeNumberSchema.nullable(),
+    oldestPendingAgeSeconds: nonnegativeNumberSchema.nullable(),
+    measuredAt: isoTimestampSchema,
+  })
+  .strict();
+export type ConsistencyLagSummary = z.infer<typeof consistencyLagSummarySchema>;
+
 export const dashboardRecoveryResponseSchema = z
   .object({
     currentRun: demoRunSnapshotSchema.nullable(),
@@ -133,6 +147,7 @@ export const dashboardRecoveryResponseSchema = z
     queue: queueStatusSchema.nullable(),
     erp: erpResilienceStatusSchema.nullable(),
     businessOutcome: businessOutcomeSummarySchema.nullable(),
+    consistencyLag: consistencyLagSummarySchema.nullable(),
     recoveredAt: isoTimestampSchema,
   })
   .strict();

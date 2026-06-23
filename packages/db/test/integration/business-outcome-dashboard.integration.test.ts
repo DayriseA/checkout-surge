@@ -1,7 +1,10 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { readBusinessOutcomeSummary } from "../../src/business-outcome-dashboard.js";
+import {
+  readBusinessOutcomeSummary,
+  readConsistencyLagSummary,
+} from "../../src/business-outcome-dashboard.js";
 import { createDatabaseConnection } from "../../src/client.js";
 import {
   demoPresets,
@@ -100,6 +103,13 @@ describe.skipIf(!databaseUrl)("business outcome dashboard projection", () => {
       latestObservedAt: now,
     });
 
+    const securedAtByStatus = {
+      queued: now,
+      processing: new Date(now.getTime() - 3_000),
+      confirmed: new Date(now.getTime() - 2_000),
+      failed: now,
+    } as const;
+
     await connection.db.insert(reservations).values(
       ["queued", "processing", "confirmed", "failed"].map((status, index) => ({
         id: `55555555-5555-4555-8555-55555555555${index}`,
@@ -109,7 +119,7 @@ describe.skipIf(!databaseUrl)("business outcome dashboard projection", () => {
         quantity: 1,
         status: "secured" as const,
         reservationToken: `res-${status}`,
-        securedAt: now,
+        securedAt: securedAtByStatus[status as keyof typeof securedAtByStatus],
         expiresAt: new Date("2026-06-21T00:15:00.000Z"),
       })),
     );
@@ -123,7 +133,7 @@ describe.skipIf(!databaseUrl)("business outcome dashboard projection", () => {
         correlationId: `corr-${status}`,
         quantity: 1,
         status: status as "queued" | "processing" | "confirmed" | "failed",
-        queuedAt: now,
+        queuedAt: securedAtByStatus[status as keyof typeof securedAtByStatus],
         ...(status === "processing" ? { processingAt: now } : {}),
         ...(status === "confirmed" ? { processingAt: now, confirmedAt: now } : {}),
         ...(status === "failed" ? { processingAt: now, failedAt: now } : {}),
@@ -175,6 +185,25 @@ describe.skipIf(!databaseUrl)("business outcome dashboard projection", () => {
       failedOrders: 1,
       pendingPersistenceCount: 1,
       notificationsRecorded: 1,
+    });
+
+    await expect(
+      readConsistencyLagSummary(
+        connection.db,
+        {
+          saleOfferId,
+          runId,
+        },
+        now,
+      ),
+    ).resolves.toEqual({
+      confirmedOrderCount: 1,
+      pendingConfirmationCount: 2,
+      averageLagMs: 2000,
+      p95LagMs: 2000,
+      maxLagMs: 2000,
+      oldestPendingAgeSeconds: 3,
+      measuredAt: now.toISOString(),
     });
   });
 });

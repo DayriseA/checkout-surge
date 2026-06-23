@@ -203,6 +203,7 @@ async function buildTestServer(options: {
       new DashboardRecoveryService({
         contextReader: staticRecoveryContextReader(fixtureIds.saleOffer),
         businessOutcomeReader: { read: async () => businessOutcomeFixture() },
+        consistencyLagReader: { read: async () => consistencyLagFixture() },
         inventoryStatusService,
         queueStatusService,
         erpStatusService,
@@ -247,6 +248,18 @@ function businessOutcomeFixture(): BusinessOutcomeSummary {
     failedOrders: 1,
     pendingPersistenceCount: 1,
     notificationsRecorded: 0,
+  };
+}
+
+function consistencyLagFixture() {
+  return {
+    confirmedOrderCount: 2,
+    pendingConfirmationCount: 1,
+    averageLagMs: 225,
+    p95LagMs: 350,
+    maxLagMs: 375,
+    oldestPendingAgeSeconds: 8.5,
+    measuredAt: "2026-06-20T00:00:10.000Z",
   };
 }
 
@@ -450,6 +463,7 @@ describe("API gateway routes", () => {
     expect(payload.queue?.depth).toBe(10);
     expect(payload.erp?.status).toBe("healthy");
     expect(payload.businessOutcome).toEqual(businessOutcomeFixture());
+    expect(payload.consistencyLag).toEqual(consistencyLagFixture());
     expect(payload.recentMetrics).toEqual([]);
   });
 

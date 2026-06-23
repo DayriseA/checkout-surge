@@ -521,40 +521,33 @@ export function ConsistencyLagPanel({
 }: {
   recovery: BackendRead<DashboardRecoveryResponse>;
 }) {
-  const erp = recoveryData(recovery)?.erp ?? null;
-  const delay = erp?.confirmationDelay ?? null;
+  const lag = recoveryData(recovery)?.consistencyLag ?? null;
 
   return (
     <section className={panelNarrowClassName}>
       <div className={panelHeaderClassName}>
         <div>
           <p className={eyebrowClassName}>Consistency lag</p>
-          <h2 className={panelTitleClassName}>Reservation to confirmation</h2>
+          <h2 className={panelTitleClassName}>Fast reservation vs final confirmation</h2>
         </div>
         <StatusPill
-          label={
-            delay && delay.processingOrderCount > 0 ? "draining" : delay ? "settled" : "no data"
-          }
-          tone={delay && delay.processingOrderCount > 0 ? "pending" : delay ? "ok" : "idle"}
+          label={lag && lag.pendingConfirmationCount > 0 ? "draining" : lag ? "settled" : "no data"}
+          tone={lag && lag.pendingConfirmationCount > 0 ? "pending" : lag ? "ok" : "idle"}
         />
       </div>
-      {delay ? (
+      {lag ? (
         <dl className={factGridClassName}>
-          <Fact
-            label="Avg confirmed"
-            value={formatMilliseconds(delay.averageConfirmationDelayMs)}
-          />
-          <Fact label="Oldest processing" value={formatSeconds(delay.oldestProcessingAgeSeconds)} />
-          <Fact label="Processing" value={formatNumber(delay.processingOrderCount)} />
-          <Fact label="Recent confirmed" value={formatNumber(delay.recentConfirmedCount)} />
-          <Fact
-            label="Latest attempt"
-            value={erp?.latestAttempt ? formatTime(erp.latestAttempt.finishedAt) : "n/a"}
-          />
-          <Fact label="Window" value={erp ? `${erp.recentAttemptWindowSeconds}s` : "n/a"} />
+          <Fact label="Reservation" value="Secured" />
+          <Fact label="p95 confirmed" value={formatMilliseconds(lag.p95LagMs)} />
+          <Fact label="Avg confirmed" value={formatMilliseconds(lag.averageLagMs)} />
+          <Fact label="Max confirmed" value={formatMilliseconds(lag.maxLagMs)} />
+          <Fact label="Pending" value={formatNumber(lag.pendingConfirmationCount)} />
+          <Fact label="Oldest pending" value={formatSeconds(lag.oldestPendingAgeSeconds)} />
+          <Fact label="Confirmed" value={formatNumber(lag.confirmedOrderCount)} />
+          <Fact label="Measured" value={formatTime(lag.measuredAt)} />
         </dl>
       ) : (
-        <EmptyState>No confirmation-delay data.</EmptyState>
+        <EmptyState>No consistency-lag data.</EmptyState>
       )}
     </section>
   );
