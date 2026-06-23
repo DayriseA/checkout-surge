@@ -23,6 +23,7 @@ import {
 import { dashboardEventsUrl } from "../lib/realtime";
 import {
   ApiStatusPanel,
+  CompletionOutcomesPanel,
   ConsistencyLagPanel,
   ErpHealthPanel,
   InventoryDrainPanel,
@@ -170,6 +171,7 @@ export function OperatorDashboard({
       <ErpHealthPanel recovery={recovery} />
       <ConsistencyLagPanel recovery={recovery} />
       <RunOutcomesPanel recovery={recovery} />
+      <CompletionOutcomesPanel recovery={recovery} />
       {showAdminActions ? (
         <AdminActionsPanel erpChaos={erpChaos} onErpChaosChange={setErpChaos} />
       ) : null}

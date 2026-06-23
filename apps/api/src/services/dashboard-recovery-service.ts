@@ -1,5 +1,6 @@
 import {
   type BusinessOutcomeSummary,
+  type CompletionOutcome,
   type ConsistencyLagSummary,
   type DashboardRecoveryResponse,
   type DemoRunSnapshot,
@@ -12,6 +13,7 @@ import {
   demoRuns,
   readBusinessOutcomeSummary,
   readConsistencyLagSummary,
+  readRecentCompletionOutcomes,
   saleOffers,
 } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
@@ -39,6 +41,10 @@ export interface DashboardConsistencyLagReader {
     scope: { saleOfferId: string; runId?: string },
     measuredAt: Date,
   ): Promise<ConsistencyLagSummary>;
+}
+
+export interface DashboardCompletionOutcomeReader {
+  read(scope: { saleOfferId: string; runId?: string }, now: Date): Promise<CompletionOutcome[]>;
 }
 
 export class PostgresDashboardRecoveryContextReader implements DashboardRecoveryContextReader {
@@ -101,12 +107,21 @@ export class PostgresDashboardConsistencyLagReader implements DashboardConsisten
   }
 }
 
+export class PostgresDashboardCompletionOutcomeReader implements DashboardCompletionOutcomeReader {
+  constructor(private readonly db: CheckoutSurgeDatabase) {}
+
+  read(scope: { saleOfferId: string; runId?: string }, now: Date): Promise<CompletionOutcome[]> {
+    return readRecentCompletionOutcomes(this.db, scope, { now });
+  }
+}
+
 export class DashboardRecoveryService {
   constructor(
     private readonly options: {
       contextReader: DashboardRecoveryContextReader;
       businessOutcomeReader: DashboardBusinessOutcomeReader;
       consistencyLagReader: DashboardConsistencyLagReader;
+      completionOutcomeReader: DashboardCompletionOutcomeReader;
       inventoryStatusService: InventoryStatusService;
       queueStatusService: QueueStatusService;
       erpStatusService: ErpStatusService;
@@ -138,6 +153,7 @@ export class DashboardRecoveryService {
       businessOutcomeResult,
       consistencyLagResult,
       trafficMetricResult,
+      completionOutcomeResult,
     ] = await Promise.all([
       scope
         ? readSafely("dashboard_inventory", () =>
@@ -161,6 +177,11 @@ export class DashboardRecoveryService {
           ? this.options.trafficMetricReader.readRecent(context.currentRun?.runId ?? null)
           : Promise.resolve([] satisfies MetricSample[]),
       ),
+      scope
+        ? readSafely("dashboard_completion_outcomes", () =>
+            this.options.completionOutcomeReader.read(scope, now),
+          )
+        : Promise.resolve({ ok: true as const, value: [] }),
     ]);
 
     for (const result of [
@@ -171,6 +192,7 @@ export class DashboardRecoveryService {
       businessOutcomeResult,
       consistencyLagResult,
       trafficMetricResult,
+      completionOutcomeResult,
     ]) {
       if (!result.ok) {
         this.options.logger.warn(
@@ -188,6 +210,7 @@ export class DashboardRecoveryService {
       erp: erpResult.ok ? erpResult.value : null,
       businessOutcome: businessOutcomeResult.ok ? businessOutcomeResult.value : null,
       consistencyLag: consistencyLagResult.ok ? consistencyLagResult.value : null,
+      recentCompletionOutcomes: completionOutcomeResult.ok ? completionOutcomeResult.value : [],
       recoveredAt: now.toISOString(),
     });
   }

@@ -1,5 +1,7 @@
 import type {
   BusinessOutcomeSummary,
+  CompletionOutcome,
+  CompletionOutcomeStatus,
   DashboardRecoveryResponse,
   HealthStatus,
   InventoryStatus,
@@ -177,6 +179,25 @@ function outcomeTone(
     return "pending";
   }
   return "ok";
+}
+
+function completionOutcomeTone(
+  status: CompletionOutcomeStatus,
+): Parameters<typeof StatusPill>[0]["tone"] {
+  if (status === "confirmed" || status === "notification_recorded") {
+    return "ok";
+  }
+  if (status === "failed") {
+    return "degraded";
+  }
+  if (status === "delayed" || status === "retrying") {
+    return "pending";
+  }
+  return "idle";
+}
+
+function completionOutcomeLabel(status: CompletionOutcomeStatus): string {
+  return status.replaceAll("_", " ");
 }
 
 export function ApiStatusPanel({ snapshot }: { snapshot: DashboardBackendSnapshot }) {
@@ -611,5 +632,85 @@ export function RunOutcomesPanel({
         <EmptyState>No business outcome data.</EmptyState>
       )}
     </section>
+  );
+}
+
+export function CompletionOutcomesPanel({
+  recovery,
+}: {
+  recovery: BackendRead<DashboardRecoveryResponse>;
+}) {
+  const outcomes = recoveryData(recovery)?.recentCompletionOutcomes ?? [];
+
+  return (
+    <section className={panelFullClassName}>
+      <div className={panelHeaderClassName}>
+        <div>
+          <p className={eyebrowClassName}>Completion outcomes</p>
+          <h2 className={panelTitleClassName}>Recent order workflow results</h2>
+        </div>
+        <StatusPill
+          label={outcomes.length > 0 ? `${formatNumber(outcomes.length)} shown` : "no data"}
+          tone={outcomes.length > 0 ? "ok" : "idle"}
+        />
+      </div>
+      {outcomes.length > 0 ? (
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[720px] border-collapse text-left text-sm">
+            <thead>
+              <tr className="border-b border-border text-xs uppercase text-muted">
+                <th className="py-2 pr-3 font-bold">Status</th>
+                <th className="px-3 py-2 font-bold">Order</th>
+                <th className="px-3 py-2 font-bold">ERP</th>
+                <th className="px-3 py-2 font-bold">Latest</th>
+                <th className="py-2 pl-3 font-bold">Correlation</th>
+              </tr>
+            </thead>
+            <tbody>
+              {outcomes.map((outcome) => (
+                <CompletionOutcomeRow key={outcome.orderId} outcome={outcome} />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <EmptyState>No recent order outcomes.</EmptyState>
+      )}
+    </section>
+  );
+}
+
+function CompletionOutcomeRow({ outcome }: { outcome: CompletionOutcome }) {
+  return (
+    <tr className="border-b border-border last:border-b-0">
+      <td className="py-3 pr-3 align-top">
+        <StatusPill
+          label={completionOutcomeLabel(outcome.displayStatus)}
+          tone={completionOutcomeTone(outcome.displayStatus)}
+        />
+      </td>
+      <td className="px-3 py-3 align-top">
+        <div className="grid gap-1">
+          <span className="font-semibold text-ink">{outcome.publicOrderId}</span>
+          <span className="text-xs text-muted [overflow-wrap:anywhere]">{outcome.orderId}</span>
+        </div>
+      </td>
+      <td className="px-3 py-3 align-top text-muted">
+        {outcome.latestErpAttemptStatus
+          ? `${outcome.latestErpAttemptStatus}${outcome.latestErpErrorCode ? `:${outcome.latestErpErrorCode}` : ""}`
+          : "n/a"}
+      </td>
+      <td className="px-3 py-3 align-top text-muted">
+        <div className="grid gap-1">
+          <span>{formatTime(outcome.latestEventAt)}</span>
+          {outcome.notificationRecordedAt ? (
+            <span className="text-xs">Notified {formatTime(outcome.notificationRecordedAt)}</span>
+          ) : null}
+        </div>
+      </td>
+      <td className="py-3 pl-3 align-top text-xs text-muted [overflow-wrap:anywhere]">
+        {outcome.correlationId}
+      </td>
+    </tr>
   );
 }

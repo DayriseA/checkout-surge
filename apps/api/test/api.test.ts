@@ -219,6 +219,7 @@ async function buildTestServer(options: {
         contextReader: staticRecoveryContextReader(fixtureIds.saleOffer),
         businessOutcomeReader: { read: async () => businessOutcomeFixture() },
         consistencyLagReader: { read: async () => consistencyLagFixture() },
+        completionOutcomeReader: { read: async () => [] },
         inventoryStatusService,
         queueStatusService,
         erpStatusService,
@@ -587,6 +588,7 @@ describe("API gateway routes", () => {
     expect(payload.erp?.status).toBe("healthy");
     expect(payload.businessOutcome).toEqual(businessOutcomeFixture());
     expect(payload.consistencyLag).toEqual(consistencyLagFixture());
+    expect(payload.recentCompletionOutcomes).toEqual([]);
     expect(payload.recentMetrics).toEqual([]);
   });
 

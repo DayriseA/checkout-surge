@@ -3,6 +3,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import {
+  CompletionOutcomesPanel,
   ConsistencyLagPanel,
   LoadRunControlsPanel,
   RunOutcomesPanel,
@@ -68,6 +69,9 @@ describe("Phase 6 dashboard behavior", () => {
     const recovery = availableRecovery(recoveryFixture());
     const lagMarkup = renderToStaticMarkup(createElement(ConsistencyLagPanel, { recovery }));
     const outcomeMarkup = renderToStaticMarkup(createElement(RunOutcomesPanel, { recovery }));
+    const completionMarkup = renderToStaticMarkup(
+      createElement(CompletionOutcomesPanel, { recovery }),
+    );
 
     expect(lagMarkup).toContain("Fast reservation vs final confirmation");
     expect(lagMarkup).toContain("350ms");
@@ -76,6 +80,9 @@ describe("Phase 6 dashboard behavior", () => {
     expect(outcomeMarkup).toContain("Accepted");
     expect(outcomeMarkup).toContain("Confirmed");
     expect(outcomeMarkup).toContain("Failed");
+    expect(completionMarkup).toContain("Recent order workflow results");
+    expect(completionMarkup).toContain("notification recorded");
+    expect(completionMarkup).toContain("ord_recent");
   });
 
   it("applies live business-outcome events over the recovery baseline", () => {
@@ -193,6 +200,22 @@ function recoveryFixture(): DashboardRecoveryResponse {
       oldestPendingAgeSeconds: 8.5,
       measuredAt: "2026-06-20T00:00:10.000Z",
     },
+    recentCompletionOutcomes: [
+      {
+        orderId: "11111111-1111-4111-8111-111111111111",
+        publicOrderId: "ord_recent",
+        saleOfferId: "33333333-3333-4333-8333-333333333333",
+        correlationId: "corr-web-recent",
+        orderStatus: "confirmed",
+        displayStatus: "notification_recorded",
+        queuedAt: "2026-06-20T00:00:01.000Z",
+        processingAt: "2026-06-20T00:00:02.000Z",
+        confirmedAt: "2026-06-20T00:00:03.000Z",
+        notificationRecordedAt: "2026-06-20T00:00:04.000Z",
+        latestErpAttemptStatus: "succeeded",
+        latestEventAt: "2026-06-20T00:00:04.000Z",
+      },
+    ],
     recoveredAt: "2026-06-20T00:00:10.000Z",
   };
 }

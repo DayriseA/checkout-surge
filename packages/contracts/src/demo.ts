@@ -133,6 +133,42 @@ export const consistencyLagSummarySchema = z
   .strict();
 export type ConsistencyLagSummary = z.infer<typeof consistencyLagSummarySchema>;
 
+export const completionOutcomeStatusValues = [
+  "queued",
+  "processing",
+  "delayed",
+  "retrying",
+  "confirmed",
+  "failed",
+  "notification_recorded",
+] as const;
+export const completionOutcomeStatusSchema = z.enum(completionOutcomeStatusValues);
+export type CompletionOutcomeStatus = z.infer<typeof completionOutcomeStatusSchema>;
+
+const completionOutcomeOrderStatusSchema = z.enum(["queued", "processing", "confirmed", "failed"]);
+const completionOutcomeErpAttemptStatusSchema = z.enum(["succeeded", "failed", "timed_out"]);
+
+export const completionOutcomeSchema = z
+  .object({
+    orderId: uuidSchema,
+    publicOrderId: z.string().trim().min(1),
+    saleOfferId: uuidSchema,
+    runId: uuidSchema.optional(),
+    correlationId: correlationIdSchema,
+    orderStatus: completionOutcomeOrderStatusSchema,
+    displayStatus: completionOutcomeStatusSchema,
+    queuedAt: isoTimestampSchema,
+    processingAt: isoTimestampSchema.optional(),
+    confirmedAt: isoTimestampSchema.optional(),
+    failedAt: isoTimestampSchema.optional(),
+    notificationRecordedAt: isoTimestampSchema.optional(),
+    latestErpAttemptStatus: completionOutcomeErpAttemptStatusSchema.optional(),
+    latestErpErrorCode: z.string().trim().min(1).optional(),
+    latestEventAt: isoTimestampSchema,
+  })
+  .strict();
+export type CompletionOutcome = z.infer<typeof completionOutcomeSchema>;
+
 export const dashboardRecoveryResponseSchema = z
   .object({
     currentRun: demoRunSnapshotSchema.nullable(),
@@ -153,6 +189,7 @@ export const dashboardRecoveryResponseSchema = z
     erp: erpResilienceStatusSchema.nullable(),
     businessOutcome: businessOutcomeSummarySchema.nullable(),
     consistencyLag: consistencyLagSummarySchema.nullable(),
+    recentCompletionOutcomes: z.array(completionOutcomeSchema).default([]),
     recoveredAt: isoTimestampSchema,
   })
   .strict();

@@ -478,11 +478,28 @@ describe("buy and dashboard contracts", () => {
         oldestPendingAgeSeconds: 12.5,
         measuredAt: timestamp,
       },
+      recentCompletionOutcomes: [
+        {
+          orderId: "11111111-1111-4111-8111-111111111111",
+          publicOrderId: "ord_recent",
+          saleOfferId: "22222222-2222-4222-8222-222222222222",
+          correlationId: "corr-recent",
+          orderStatus: "confirmed",
+          displayStatus: "notification_recorded",
+          queuedAt: timestamp,
+          processingAt: timestamp,
+          confirmedAt: timestamp,
+          notificationRecordedAt: timestamp,
+          latestErpAttemptStatus: "succeeded",
+          latestEventAt: timestamp,
+        },
+      ],
       recoveredAt: timestamp,
     });
 
     expect(recovery.businessOutcome?.retryingOrders).toBe(2);
     expect(recovery.consistencyLag?.p95LagMs).toBe(350);
+    expect(recovery.recentCompletionOutcomes[0]?.displayStatus).toBe("notification_recorded");
   });
 });
 

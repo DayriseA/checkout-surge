@@ -7,6 +7,7 @@ import {
   publishBusinessOutcomeDashboardUpdate,
   readBusinessOutcomeSummary,
   readConsistencyLagSummary,
+  readRecentCompletionOutcomes,
 } from "../../src/business-outcome-dashboard.js";
 import { createDatabaseConnection } from "../../src/client.js";
 import { createRedisDashboardEventSubscriber } from "../../src/redis-dashboard-events.js";
@@ -144,6 +145,29 @@ describe.skipIf(!databaseUrl)("business outcome dashboard projection", () => {
         ...(status === "failed" ? { processingAt: now, failedAt: now } : {}),
       })),
     );
+    await connection.db.insert(reservations).values({
+      id: "55555555-5555-4555-8555-555555555554",
+      saleOfferId,
+      runId,
+      correlationId: "corr-delayed",
+      quantity: 1,
+      status: "secured",
+      reservationToken: "res-delayed",
+      securedAt: new Date(now.getTime() - 6_000),
+      expiresAt: new Date("2026-06-21T00:15:00.000Z"),
+    });
+    await connection.db.insert(orders).values({
+      id: "66666666-6666-4666-8666-666666666664",
+      publicOrderId: "ord-delayed",
+      saleOfferId,
+      reservationId: "55555555-5555-4555-8555-555555555554",
+      runId,
+      correlationId: "corr-delayed",
+      quantity: 1,
+      status: "processing",
+      queuedAt: new Date(now.getTime() - 6_000),
+      processingAt: new Date(now.getTime() - 6_000),
+    });
     await connection.db.insert(erpAttempts).values({
       orderId: "66666666-6666-4666-8666-666666666661",
       runId,
@@ -181,10 +205,10 @@ describe.skipIf(!databaseUrl)("business outcome dashboard projection", () => {
     await expect(
       readBusinessOutcomeSummary(connection.db, { saleOfferId, runId }),
     ).resolves.toEqual({
-      acceptedReservations: 4,
+      acceptedReservations: 5,
       soldOutRejections: 7,
       queuedOrders: 1,
-      processingOrders: 1,
+      processingOrders: 2,
       retryingOrders: 1,
       confirmedOrders: 1,
       failedOrders: 1,
@@ -203,13 +227,43 @@ describe.skipIf(!databaseUrl)("business outcome dashboard projection", () => {
       ),
     ).resolves.toEqual({
       confirmedOrderCount: 1,
-      pendingConfirmationCount: 2,
+      pendingConfirmationCount: 3,
       averageLagMs: 2000,
       p95LagMs: 2000,
       maxLagMs: 2000,
-      oldestPendingAgeSeconds: 3,
+      oldestPendingAgeSeconds: 6,
       measuredAt: now.toISOString(),
     });
+
+    await expect(
+      readRecentCompletionOutcomes(connection.db, { saleOfferId, runId }, { now }),
+    ).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          publicOrderId: "ord-confirmed",
+          displayStatus: "notification_recorded",
+          notificationRecordedAt: now.toISOString(),
+        }),
+        expect.objectContaining({
+          publicOrderId: "ord-failed",
+          displayStatus: "failed",
+        }),
+        expect.objectContaining({
+          publicOrderId: "ord-processing",
+          displayStatus: "retrying",
+          latestErpAttemptStatus: "failed",
+          latestErpErrorCode: "temporary_erp_failure",
+        }),
+        expect.objectContaining({
+          publicOrderId: "ord-delayed",
+          displayStatus: "delayed",
+        }),
+        expect.objectContaining({
+          publicOrderId: "ord-queued",
+          displayStatus: "queued",
+        }),
+      ]),
+    );
 
     if (!redisUrl) {
       throw new Error("TEST_REDIS_URL is required for dashboard publication tests.");
@@ -245,13 +299,13 @@ describe.skipIf(!databaseUrl)("business outcome dashboard projection", () => {
         runId,
         correlationId: "corr-dashboard-business-outcome",
         outcome: {
-          acceptedReservations: 4,
+          acceptedReservations: 5,
           confirmedOrders: 1,
           failedOrders: 1,
         },
         consistencyLag: {
           confirmedOrderCount: 1,
-          pendingConfirmationCount: 2,
+          pendingConfirmationCount: 3,
           p95LagMs: 2000,
         },
       });

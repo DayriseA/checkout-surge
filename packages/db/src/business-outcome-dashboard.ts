@@ -3,10 +3,12 @@ import {
   type BusinessOutcomeDashboardEvent,
   type BusinessOutcomeSummary,
   businessOutcomeSummarySchema,
+  type CompletionOutcome,
   type ConsistencyLagSummary,
+  completionOutcomeSchema,
   consistencyLagSummarySchema,
 } from "@checkout-surge/contracts";
-import { and, eq, inArray, type SQL, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, type SQL, sql } from "drizzle-orm";
 import type { CheckoutSurgeDatabase } from "./client.js";
 import type { CheckoutSurgeRedis } from "./redis.js";
 import { publishDashboardEvent } from "./redis-dashboard-events.js";
@@ -143,6 +145,76 @@ export async function readConsistencyLagSummary(
   });
 }
 
+const delayedOutcomeThresholdMs = 5_000;
+
+export async function readRecentCompletionOutcomes(
+  db: CheckoutSurgeDatabase,
+  scope: BusinessOutcomeProjectionScope,
+  options: { limit?: number; now?: Date } = {},
+): Promise<CompletionOutcome[]> {
+  const limit = options.limit ?? 8;
+  const measuredAt = options.now ?? new Date();
+  const orderFilter = scope.runId
+    ? eq(orders.runId, scope.runId)
+    : eq(orders.saleOfferId, scope.saleOfferId);
+
+  const rows = await db
+    .select()
+    .from(orders)
+    .where(orderFilter)
+    .orderBy(
+      desc(
+        sql`coalesce(${orders.confirmedAt}, ${orders.failedAt}, ${orders.processingAt}, ${orders.queuedAt})`,
+      ),
+    )
+    .limit(limit);
+
+  return Promise.all(
+    rows.map(async (order) => {
+      const [latestNotification, latestAttempt] = await Promise.all([
+        db
+          .select()
+          .from(simulatedNotifications)
+          .where(eq(simulatedNotifications.orderId, order.id))
+          .orderBy(desc(simulatedNotifications.recordedAt))
+          .limit(1),
+        db
+          .select()
+          .from(erpAttempts)
+          .where(eq(erpAttempts.orderId, order.id))
+          .orderBy(desc(erpAttempts.startedAt), desc(erpAttempts.createdAt))
+          .limit(1),
+      ]);
+      const notification = latestNotification[0] ?? null;
+      const attempt = latestAttempt[0] ?? null;
+      const latestEventAt =
+        notification?.recordedAt ??
+        order.confirmedAt ??
+        order.failedAt ??
+        order.processingAt ??
+        order.queuedAt;
+
+      return completionOutcomeSchema.parse({
+        orderId: order.id,
+        publicOrderId: order.publicOrderId,
+        saleOfferId: order.saleOfferId,
+        ...(order.runId ? { runId: order.runId } : {}),
+        correlationId: order.correlationId,
+        orderStatus: order.status,
+        displayStatus: deriveCompletionOutcomeStatus(order, attempt, notification, measuredAt),
+        queuedAt: order.queuedAt.toISOString(),
+        ...(order.processingAt ? { processingAt: order.processingAt.toISOString() } : {}),
+        ...(order.confirmedAt ? { confirmedAt: order.confirmedAt.toISOString() } : {}),
+        ...(order.failedAt ? { failedAt: order.failedAt.toISOString() } : {}),
+        ...(notification ? { notificationRecordedAt: notification.recordedAt.toISOString() } : {}),
+        ...(attempt ? { latestErpAttemptStatus: attempt.status } : {}),
+        ...(attempt?.errorCode ? { latestErpErrorCode: attempt.errorCode } : {}),
+        latestEventAt: latestEventAt.toISOString(),
+      });
+    }),
+  );
+}
+
 export async function publishBusinessOutcomeDashboardUpdate(
   db: CheckoutSurgeDatabase,
   redis: CheckoutSurgeRedis,
@@ -165,6 +237,33 @@ export async function publishBusinessOutcomeDashboardUpdate(
   };
 
   return publishDashboardEvent(redis, event);
+}
+
+function deriveCompletionOutcomeStatus(
+  order: typeof orders.$inferSelect,
+  latestAttempt: typeof erpAttempts.$inferSelect | null,
+  latestNotification: typeof simulatedNotifications.$inferSelect | null,
+  measuredAt: Date,
+): CompletionOutcome["displayStatus"] {
+  if (latestNotification) {
+    return "notification_recorded";
+  }
+  if (order.status === "confirmed") {
+    return "confirmed";
+  }
+  if (order.status === "failed") {
+    return "failed";
+  }
+  if (latestAttempt && ["failed", "timed_out"].includes(latestAttempt.status)) {
+    return "retrying";
+  }
+
+  const waitingSince = order.processingAt ?? order.queuedAt;
+  if (measuredAt.getTime() - waitingSince.getTime() >= delayedOutcomeThresholdMs) {
+    return "delayed";
+  }
+
+  return order.status;
 }
 
 async function countRows(
