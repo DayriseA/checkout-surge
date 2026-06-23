@@ -214,6 +214,22 @@ describe("order-process application workflow", () => {
     expect(publishBusinessOutcomeUpdate).toHaveBeenCalledWith(job, "retrying");
   });
 
+  it("publishes a failed business outcome update after terminal confirmation failures", async () => {
+    const confirmationError = new Error("ERP rejected the order");
+    const publishBusinessOutcomeUpdate = vi.fn().mockResolvedValue(undefined);
+    const handler = createOrderProcessJobHandler({
+      confirmation: { confirm: vi.fn().mockRejectedValue(confirmationError) },
+      persistence: createPersistence(),
+      logger: createSilentLogger("worker"),
+      publishBusinessOutcomeUpdate,
+    });
+
+    await expect(handler.handle(job, delivery)).rejects.toBe(confirmationError);
+
+    expect(publishBusinessOutcomeUpdate).toHaveBeenCalledWith(job, "processing");
+    expect(publishBusinessOutcomeUpdate).toHaveBeenCalledWith(job, "failed");
+  });
+
   it("marks exhausted temporary confirmation failures as terminal order failures", async () => {
     const confirmationError = new Error("ERP still unavailable");
     const persistence = createPersistence();

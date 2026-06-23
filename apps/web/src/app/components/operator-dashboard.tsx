@@ -10,14 +10,14 @@ import {
   erpChaosStatusSchema,
 } from "@checkout-surge/contracts";
 import { useEffect, useMemo, useState } from "react";
-import type { BackendRead, DashboardBackendSnapshot } from "../lib/api";
+import type { BackendRead, DashboardBackendSnapshot } from "../lib/api.js";
 import {
   adminErpChaosProxyPath,
   adminErpChaosResetProxyPath,
   adminPassphraseHeaderName,
   dashboardRecoveryProxyPath,
-} from "../lib/control-paths";
-import { dashboardEventsUrl } from "../lib/realtime";
+} from "../lib/control-paths.js";
+import { dashboardEventsUrl } from "../lib/realtime.js";
 import {
   ApiStatusPanel,
   ConsistencyLagPanel,
@@ -29,7 +29,7 @@ import {
   RecoveryStatusPanel,
   RequestSurgePanel,
   RunOutcomesPanel,
-} from "./dashboard-panels";
+} from "./dashboard-panels.js";
 
 interface OperatorDashboardProps {
   snapshot: DashboardBackendSnapshot;
@@ -228,7 +228,7 @@ function parseJson(input: string): { ok: true; value: unknown } | { ok: false } 
   }
 }
 
-function applyDashboardEvent(
+export function applyDashboardEvent(
   recovery: BackendRead<DashboardRecoveryResponse>,
   event: DashboardEvent,
 ): BackendRead<DashboardRecoveryResponse> {

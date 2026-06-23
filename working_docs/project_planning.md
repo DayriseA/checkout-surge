@@ -446,7 +446,7 @@ Completion summary: The Phase 5 test pass now covers the Mock ERP chaos behavior
 
 ---
 
-## ⬜ Phase 6 - Real-Time Admin Simulation Experience
+## ✅ Phase 6 - Real-Time Admin Simulation Experience
 
 ### Goal
 
@@ -511,14 +511,16 @@ Subtasks:
 
 Completion summary: Task 6.5 now adds a first-class consistency-lag projection to dashboard recovery and live business-outcome events. The shared contract exposes confirmed count, pending confirmation count, average lag, p95 lag, max lag, oldest pending age, and measurement time. The PostgreSQL read model derives lag from durable reservation secured time to final order confirmation, scoped to the current run when present or the active catalog sale offer otherwise. The operator dashboard now headlines p95 buy-to-confirmation lag and contrasts fast reservation with pending/confirmed downstream completion, while API/web/contract/DB tests pin the new projection.
 
-### ⬜ Task 6.6 - Add automated tests for the real-time admin simulation experience
+### ✅ Task 6.6 - Add automated tests for the real-time admin simulation experience
 
 Subtasks:
 
-- Add transport-layer tests for connection lifecycle, channel subscription, reconnect behavior, and event fan-out.
-- Add backend integration tests proving order, queue, inventory, and ERP state changes emit expected realtime events.
-- Add frontend component or integration tests covering live dashboard updates, simulation controls, and consistency-lag presentation.
-- Add tests for run-level aggregate projections distinguishing reservations secured from final confirmations and failures.
+- ✅ Add transport-layer tests for connection lifecycle, channel subscription, reconnect behavior, and event fan-out.
+- ✅ Add backend integration tests proving order, queue, inventory, and ERP state changes emit expected realtime events.
+- ✅ Add frontend component or integration tests covering live dashboard updates, simulation controls, and consistency-lag presentation.
+- ✅ Add tests for run-level aggregate projections distinguishing reservations secured from final confirmations and failures.
+
+Completion summary: Task 6.6 completes the Phase 6 test pass without adding Phase 7 load-execution behavior. API coverage now proves connected browser SSE clients receive validated dashboard event frames. DB integration coverage proves durable business-outcome and consistency-lag projections publish `business.outcome.updated` events through Redis Pub/Sub. Worker tests cover processing, retrying, confirmed, and failed business-outcome publication paths. Web tests cover live dashboard event application, recovery-aware disabled start controls, active-run gating, run outcome presentation, and consistency-lag presentation under the current node-based Vitest setup.
 
 ---
 

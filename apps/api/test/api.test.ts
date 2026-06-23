@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import {
   type BusinessOutcomeSummary,
   buyResponseSchema,
+  type DashboardEvent,
   dashboardEventsPath,
   dashboardRecoveryResponseSchema,
   type ErpResilienceStatus,
@@ -494,6 +495,67 @@ describe("API gateway routes", () => {
       expect(initialFrame).toContain("retry: 1234");
       expect(initialFrame).toContain(": connected");
       expect(dashboardEventFanout.clientCount()).toBe(1);
+    } finally {
+      await reader?.cancel();
+      dashboardEventFanout.close();
+      await server.close();
+    }
+  });
+
+  it("fans contract dashboard events to connected browser SSE clients", async () => {
+    const dashboardEventFanout = new DashboardEventFanout({
+      logger: createSilentLogger("api"),
+      retryMs: 1234,
+    });
+    const server = await buildTestServer({
+      persistence: new AcceptingPersistence(),
+      dashboardEventFanout,
+    });
+    await server.listen({ host: "127.0.0.1", port: 0 });
+    const address = server.server.address() as AddressInfo;
+    const response = await fetch(`http://127.0.0.1:${address.port}${dashboardEventsPath}`);
+    const reader = response.body?.getReader();
+    const event: DashboardEvent = {
+      type: "business.outcome.updated",
+      eventId: "99999999-9999-4999-8999-999999999999",
+      saleOfferId: fixtureIds.saleOffer,
+      correlationId: "corr-dashboard-event",
+      occurredAt: "2026-06-20T00:00:11.000Z",
+      outcome: {
+        acceptedReservations: 2,
+        soldOutRejections: 1,
+        queuedOrders: 1,
+        processingOrders: 0,
+        retryingOrders: 0,
+        confirmedOrders: 1,
+        failedOrders: 0,
+        pendingPersistenceCount: 0,
+        notificationsRecorded: 0,
+      },
+      consistencyLag: {
+        confirmedOrderCount: 1,
+        pendingConfirmationCount: 1,
+        averageLagMs: 180,
+        p95LagMs: 180,
+        maxLagMs: 180,
+        oldestPendingAgeSeconds: 3,
+        measuredAt: "2026-06-20T00:00:11.000Z",
+      },
+    };
+
+    try {
+      if (!reader) {
+        throw new Error("Expected a readable SSE body.");
+      }
+
+      await readStreamUntil(reader, ": connected");
+      dashboardEventFanout.publish(event);
+      const frame = await readStreamUntil(reader, "business.outcome.updated");
+
+      expect(frame).toContain('"type":"business.outcome.updated"');
+      expect(frame).toContain('"eventId":"99999999-9999-4999-8999-999999999999"');
+      expect(frame).toContain('"acceptedReservations":2');
+      expect(frame).toContain('"p95LagMs":180');
     } finally {
       await reader?.cancel();
       dashboardEventFanout.close();

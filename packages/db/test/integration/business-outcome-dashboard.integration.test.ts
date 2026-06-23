@@ -1,11 +1,15 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import type { DashboardEvent } from "@checkout-surge/contracts";
+import { Redis } from "ioredis";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
+  publishBusinessOutcomeDashboardUpdate,
   readBusinessOutcomeSummary,
   readConsistencyLagSummary,
 } from "../../src/business-outcome-dashboard.js";
 import { createDatabaseConnection } from "../../src/client.js";
+import { createRedisDashboardEventSubscriber } from "../../src/redis-dashboard-events.js";
 import {
   demoPresets,
   demoRunReservationOutcomes,
@@ -24,6 +28,7 @@ import { resetTestDatabase } from "../../src/testing.js";
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const migrationsFolder = path.join(packageRoot, "drizzle");
 const databaseUrl = process.env.TEST_DATABASE_URL;
+const redisUrl = process.env.TEST_REDIS_URL;
 
 describe.skipIf(!databaseUrl)("business outcome dashboard projection", () => {
   let connection: ReturnType<typeof createDatabaseConnection>;
@@ -205,5 +210,70 @@ describe.skipIf(!databaseUrl)("business outcome dashboard projection", () => {
       oldestPendingAgeSeconds: 3,
       measuredAt: now.toISOString(),
     });
+
+    if (!redisUrl) {
+      throw new Error("TEST_REDIS_URL is required for dashboard publication tests.");
+    }
+
+    const publisherRedis = new Redis(redisUrl, { lazyConnect: true, maxRetriesPerRequest: 3 });
+    const subscriberRedis = new Redis(redisUrl, { lazyConnect: true, maxRetriesPerRequest: 3 });
+    let resolveReceived: (event: DashboardEvent) => void = () => undefined;
+    const receivedEvent = new Promise<DashboardEvent>((resolve) => {
+      resolveReceived = resolve;
+    });
+    const subscriber = createRedisDashboardEventSubscriber(subscriberRedis, {
+      onEvent: resolveReceived,
+    });
+
+    try {
+      await Promise.all([publisherRedis.connect(), subscriberRedis.connect()]);
+      await subscriber.start();
+      await publishBusinessOutcomeDashboardUpdate(connection.db, publisherRedis, {
+        saleOfferId,
+        runId,
+        correlationId: "corr-dashboard-business-outcome",
+        occurredAt: now,
+        eventId: "88888888-8888-4888-8888-888888888888",
+      });
+
+      await expect(
+        withTimeout(receivedEvent, 1_000, "Timed out waiting for business outcome event."),
+      ).resolves.toMatchObject({
+        type: "business.outcome.updated",
+        eventId: "88888888-8888-4888-8888-888888888888",
+        saleOfferId,
+        runId,
+        correlationId: "corr-dashboard-business-outcome",
+        outcome: {
+          acceptedReservations: 4,
+          confirmedOrders: 1,
+          failedOrders: 1,
+        },
+        consistencyLag: {
+          confirmedOrderCount: 1,
+          pendingConfirmationCount: 2,
+          p95LagMs: 2000,
+        },
+      });
+    } finally {
+      await subscriber.close();
+      publisherRedis.disconnect();
+      subscriberRedis.disconnect();
+    }
   });
 });
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timeout: NodeJS.Timeout | null = null;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  }
+}
