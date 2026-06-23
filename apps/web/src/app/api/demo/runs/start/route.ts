@@ -1,4 +1,6 @@
 import {
+  demoRunOperatorModeHeaderName,
+  publicVisitorIdHeaderName,
   startDemoRunPath,
   startDemoRunRequestSchema,
   startDemoRunResponseSchema,
@@ -9,6 +11,7 @@ import {
   readJsonRequest,
   validateJson,
 } from "../../../../lib/server/backend-proxy";
+import { resolvePublicVisitorIdentity } from "../../../../lib/server/public-visitor";
 
 export async function POST(request: Request) {
   const body = await readJsonRequest(request);
@@ -21,10 +24,23 @@ export async function POST(request: Request) {
     return payload;
   }
 
-  return proxyJson({
+  const visitor = resolvePublicVisitorIdentity(request);
+  if (visitor instanceof Response) {
+    return visitor;
+  }
+
+  const response = await proxyJson({
     url: `${apiBaseUrl()}${startDemoRunPath}`,
     method: "POST",
     schema: startDemoRunResponseSchema,
     body: payload,
+    headers: {
+      [demoRunOperatorModeHeaderName]: "public",
+      [publicVisitorIdHeaderName]: visitor.id,
+    },
   });
+  if (visitor.setCookie) {
+    response.headers.append("set-cookie", visitor.setCookie);
+  }
+  return response;
 }

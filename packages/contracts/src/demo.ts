@@ -36,6 +36,8 @@ export const publicPresetListPath = "/demo/presets/public" as const;
 export const publicRuntimePolicyPath = "/demo/runtime-policy" as const;
 export const startDemoRunPath = "/demo/runs/start" as const;
 export const runHistoryPath = "/demo/runs/history" as const;
+export const demoRunOperatorModeHeaderName = "x-demo-operator-mode" as const;
+export const publicVisitorIdHeaderName = "x-public-visitor-id" as const;
 
 export const demoPresetContractSchema = demoPresetSchema
   .extend({
@@ -68,8 +70,6 @@ export type DemoRunConfigOverride = z.infer<typeof demoRunConfigOverrideSchema>;
 export const startDemoRunRequestSchema = z
   .object({
     presetSlug: z.string().trim().min(1),
-    operatorMode: operatorModeSchema,
-    publicVisitorId: z.string().trim().min(1).optional(),
     configOverride: demoRunConfigOverrideSchema.optional(),
     correlationId: correlationIdSchema.optional(),
   })

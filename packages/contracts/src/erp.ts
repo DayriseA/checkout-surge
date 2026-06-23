@@ -15,6 +15,16 @@ export const erpChaosResetPath = "/chaos/reset" as const;
 export const erpResilienceStatusPath = "/erp/status" as const;
 export const controlServiceTokenHeaderName = "x-control-service-token" as const;
 
+export const erpChaosConfigSchema = z
+  .object({
+    latencyMs: nonnegativeIntegerSchema,
+    maxTps: z.number().int().positive(),
+    errorRate: percentageSchema,
+    forcedOutage: z.boolean().default(false),
+  })
+  .strict();
+export type ErpChaosConfig = z.infer<typeof erpChaosConfigSchema>;
+
 export const erpConfirmationRequestSchema = z
   .object({
     orderId: uuidSchema,
@@ -22,6 +32,7 @@ export const erpConfirmationRequestSchema = z
     reservationId: uuidSchema,
     saleOfferId: uuidSchema,
     runId: uuidSchema.optional(),
+    erpConfig: erpChaosConfigSchema.optional(),
     correlationId: correlationIdSchema,
     quantity: z.number().int().positive(),
   })
@@ -44,16 +55,6 @@ export const erpConfirmationResponseSchema = z
   })
   .strict();
 export type ErpConfirmationResponse = z.infer<typeof erpConfirmationResponseSchema>;
-
-export const erpChaosConfigSchema = z
-  .object({
-    latencyMs: nonnegativeIntegerSchema,
-    maxTps: z.number().int().positive(),
-    errorRate: percentageSchema,
-    forcedOutage: z.boolean().default(false),
-  })
-  .strict();
-export type ErpChaosConfig = z.infer<typeof erpChaosConfigSchema>;
 
 export const erpChaosStatusSchema = erpChaosConfigSchema
   .extend({

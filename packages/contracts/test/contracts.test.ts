@@ -8,6 +8,7 @@ import {
   dashboardEventsRedisChannel,
   dashboardRecoveryPath,
   dashboardRecoveryResponseSchema,
+  demoRunOperatorModeHeaderName,
   demoRunStatusValues,
   erpChaosResetPath,
   erpChaosStatusPath,
@@ -30,11 +31,13 @@ import {
   publicPresetListPath,
   publicRuntimePolicyPath,
   publicRuntimePolicySchema,
+  publicVisitorIdHeaderName,
   queueStatusSchema,
   reservationStatusValues,
   runHistoryPath,
   securedReservationHoldSchema,
   startDemoRunPath,
+  startDemoRunRequestSchema,
   stockReservationDecisionSchema,
   trafficCompletionReportSchema,
   trafficExecutionStartPath,
@@ -169,10 +172,20 @@ describe("ERP contracts", () => {
         reservationId: "33333333-3333-4333-8333-333333333333",
         saleOfferId,
         runId,
+        erpConfig: {
+          latencyMs: 25,
+          maxTps: 50,
+          errorRate: 0.1,
+          forcedOutage: false,
+        },
         correlationId,
         quantity: 1,
       }),
-    ).toMatchObject({ publicOrderId: "ord_test", correlationId });
+    ).toMatchObject({
+      publicOrderId: "ord_test",
+      correlationId,
+      erpConfig: { latencyMs: 25, maxTps: 50, errorRate: 0.1, forcedOutage: false },
+    });
 
     expect(
       erpConfirmationResponseSchema.parse({
@@ -479,9 +492,20 @@ describe("public runtime policy contract", () => {
     expect(publicRuntimePolicyPath).toBe("/demo/runtime-policy");
     expect(startDemoRunPath).toBe("/demo/runs/start");
     expect(runHistoryPath).toBe("/demo/runs/history");
+    expect(demoRunOperatorModeHeaderName).toBe("x-demo-operator-mode");
+    expect(publicVisitorIdHeaderName).toBe("x-public-visitor-id");
     expect(trafficExecutionStartPath).toBe("/traffic/start");
     expect(internalLoadMetricIngestPath).toBe("/internal/load/metrics");
     expect(internalTrafficCompletionPath).toBe("/internal/load/completion");
+    expect(startDemoRunRequestSchema.parse({ presetSlug: "preview-1k" })).toEqual({
+      presetSlug: "preview-1k",
+    });
+    expect(() =>
+      startDemoRunRequestSchema.parse({
+        presetSlug: "preview-1k",
+        operatorMode: "admin",
+      }),
+    ).toThrow();
   });
 
   it("covers public budget, custom caps, and deployment hard caps", () => {
@@ -508,7 +532,7 @@ describe("public runtime policy contract", () => {
         },
         erpConfig: {
           latencyMs: 100,
-          maxTps: 150,
+          maxTps: 100,
           errorRate: 0,
           forcedOutage: false,
           requestTimeoutMs: 2000,

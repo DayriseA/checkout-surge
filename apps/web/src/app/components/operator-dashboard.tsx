@@ -128,8 +128,6 @@ export function OperatorDashboard({
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           presetSlug,
-          operatorMode: "public",
-          publicVisitorId: publicVisitorId(),
         }),
       });
 
@@ -178,25 +176,6 @@ export function OperatorDashboard({
       {showHistoryPlaceholder ? <RunHistoryPlaceholder /> : null}
     </div>
   );
-}
-
-function publicVisitorId(): string {
-  const storageKey = "checkout-surge-public-visitor-id";
-  if (typeof window === "undefined") {
-    return "server-rendered-public-visitor";
-  }
-
-  const existing = window.localStorage.getItem(storageKey);
-  if (existing) {
-    return existing;
-  }
-
-  const generated =
-    typeof crypto !== "undefined" && "randomUUID" in crypto
-      ? crypto.randomUUID()
-      : `visitor-${Date.now()}-${Math.round(Math.random() * 1_000_000)}`;
-  window.localStorage.setItem(storageKey, generated);
-  return generated;
 }
 
 interface ContractSchema<T> {

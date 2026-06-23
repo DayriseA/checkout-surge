@@ -16,8 +16,10 @@ import {
   isTemporaryErpConfirmationError,
 } from "./application/erp-confirmation-client.js";
 import { createOrderProcessJobHandler } from "./application/order-process-job-handler.js";
+import { RunScopedBackpressureOrderConfirmation } from "./application/run-backpressure.js";
 import { PostgresErpAttemptPersistence } from "./persistence/postgres-erp-attempt-persistence.js";
 import { PostgresOrderTransitionPersistence } from "./persistence/postgres-order-transition-persistence.js";
+import { PostgresRunConfigReader } from "./persistence/postgres-run-config-reader.js";
 import { createBullMqOrderProcessConsumer } from "./queue/bullmq-order-process-consumer.js";
 import { loadWorkerConfig } from "./runtime/config.js";
 import { createWorkerReadiness } from "./runtime/readiness.js";
@@ -54,6 +56,8 @@ export {
   createOrderProcessJobHandler,
   OrderFailurePersistenceError,
 } from "./application/order-process-job-handler.js";
+export { RunScopedBackpressureOrderConfirmation } from "./application/run-backpressure.js";
+export type { RunConfigReader } from "./application/run-config.js";
 export { PostgresErpAttemptPersistence } from "./persistence/postgres-erp-attempt-persistence.js";
 export {
   InvalidOrderTransitionError,
@@ -61,6 +65,7 @@ export {
   OrderNotFoundError,
   PostgresOrderTransitionPersistence,
 } from "./persistence/postgres-order-transition-persistence.js";
+export { PostgresRunConfigReader } from "./persistence/postgres-run-config-reader.js";
 export { createBullMqOrderProcessConsumer } from "./queue/bullmq-order-process-consumer.js";
 export type { OrderProcessConsumer } from "./queue/order-process-consumer.js";
 export { loadWorkerConfig, type WorkerConfig } from "./runtime/config.js";
@@ -76,6 +81,7 @@ export async function startWorker(): Promise<void> {
     lazyConnect: true,
     maxRetriesPerRequest: 3,
   });
+  const runConfigReader = new PostgresRunConfigReader(database.db);
   const orderProcessConsumer = createBullMqOrderProcessConsumer({
     connection: {
       url: config.redisUrl,
@@ -83,22 +89,26 @@ export async function startWorker(): Promise<void> {
     },
     concurrency: config.orderProcessConcurrency,
     handler: createOrderProcessJobHandler({
-      confirmation: new ErpCircuitBreaker({
-        confirmation: new HttpErpOrderConfirmation({
-          baseUrl: config.mockErpBaseUrl,
-          requestTimeoutMs: config.erpRequestTimeoutMs,
-          attemptPersistence: new PostgresErpAttemptPersistence(database.db),
+      confirmation: new RunScopedBackpressureOrderConfirmation({
+        runConfigReader,
+        inner: new ErpCircuitBreaker({
+          confirmation: new HttpErpOrderConfirmation({
+            baseUrl: config.mockErpBaseUrl,
+            requestTimeoutMs: config.erpRequestTimeoutMs,
+            attemptPersistence: new PostgresErpAttemptPersistence(database.db),
+            runConfigReader,
+          }),
+          failureThreshold: config.erpCircuitFailureThreshold,
+          resetTimeoutMs: config.erpCircuitResetTimeoutMs,
+          isCountedFailure: isTemporaryErpConfirmationError,
+          onStateChange: async (snapshot) => {
+            try {
+              await setErpCircuitBreakerSnapshot(redis, snapshot);
+            } catch (error) {
+              logger.error({ err: error }, "Could not publish ERP circuit breaker state.");
+            }
+          },
         }),
-        failureThreshold: config.erpCircuitFailureThreshold,
-        resetTimeoutMs: config.erpCircuitResetTimeoutMs,
-        isCountedFailure: isTemporaryErpConfirmationError,
-        onStateChange: async (snapshot) => {
-          try {
-            await setErpCircuitBreakerSnapshot(redis, snapshot);
-          } catch (error) {
-            logger.error({ err: error }, "Could not publish ERP circuit breaker state.");
-          }
-        },
       }),
       persistence: new PostgresOrderTransitionPersistence(database.db),
       logger,

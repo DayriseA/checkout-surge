@@ -1,8 +1,11 @@
 import {
   controlServiceTokenHeaderName,
+  demoRunOperatorModeHeaderName,
   internalLoadMetricIngestPath,
   internalTrafficCompletionPath,
   loadMetricIngestRequestSchema,
+  operatorModeSchema,
+  publicVisitorIdHeaderName,
   publicPresetListPath,
   publicRuntimePolicyPath,
   startDemoRunPath,
@@ -43,7 +46,15 @@ export function registerDemoRunRoutes(
     try {
       return reply
         .status(202)
-        .send(await options.demoRunService.startRun(parsedRequest, correlationId));
+        .send(
+          await options.demoRunService.startRun(
+            {
+              ...parsedRequest,
+              ...deriveRunStartPrincipal(request, options.controlServiceToken),
+            },
+            correlationId,
+          ),
+        );
     } catch (error) {
       throw mapDemoRunError(error);
     }
@@ -72,6 +83,33 @@ export function registerDemoRunRoutes(
   });
 }
 
+function deriveRunStartPrincipal(
+  request: FastifyRequest,
+  expectedToken: string,
+): { operatorMode: "public"; publicVisitorId?: string } | { operatorMode: "admin" } {
+  const suppliedMode = readSingleHeader(request, demoRunOperatorModeHeaderName);
+  const requestedMode = suppliedMode ? operatorModeSchema.parse(suppliedMode) : "public";
+
+  if (requestedMode === "admin") {
+    const suppliedToken = readSingleHeader(request, controlServiceTokenHeaderName);
+    if (suppliedToken !== expectedToken) {
+      throw new ApiHttpError({
+        statusCode: 401,
+        code: "control_token_required",
+        message: "A valid control service token is required for admin demo-run starts.",
+      });
+    }
+
+    return { operatorMode: "admin" };
+  }
+
+  const publicVisitorId = readSingleHeader(request, publicVisitorIdHeaderName);
+  return {
+    operatorMode: "public",
+    ...(publicVisitorId ? { publicVisitorId } : {}),
+  };
+}
+
 function requireControlServiceToken(
   request: FastifyRequest,
   reply: FastifyReply,
@@ -90,6 +128,11 @@ function requireControlServiceToken(
     correlationId: request.correlationId,
     timestamp: new Date().toISOString(),
   });
+}
+
+function readSingleHeader(request: FastifyRequest, name: string): string | undefined {
+  const supplied = request.headers[name];
+  return Array.isArray(supplied) ? supplied[0] : supplied;
 }
 
 function mapDemoRunError(error: unknown): unknown {

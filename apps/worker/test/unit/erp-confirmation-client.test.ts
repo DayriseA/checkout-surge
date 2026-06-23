@@ -1,3 +1,4 @@
+import type { AcceptedRunConfigSnapshot } from "@checkout-surge/contracts";
 import { correlationIdHeaderName } from "@checkout-surge/logger";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -77,6 +78,60 @@ describe("HTTP ERP order confirmation", () => {
       startedAt: new Date("2026-06-22T00:00:00.000Z"),
       finishedAt: new Date("2026-06-22T00:00:00.035Z"),
     });
+  });
+
+  it("includes run-scoped ERP chaos config when a run snapshot exists", async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(
+      jsonResponse(
+        {
+          status: "succeeded",
+          confirmationId: "erp_confirmation_test",
+          httpStatus: 200,
+          latencyMs: 20,
+          timestamp: "2026-06-22T00:00:00.020Z",
+        },
+        200,
+      ),
+    );
+    const runConfigReader = {
+      read: vi.fn().mockResolvedValue(
+        runConfigSnapshot({
+          erpConfig: {
+            latencyMs: 375,
+            maxTps: 9,
+            errorRate: 0.2,
+            forcedOutage: true,
+            requestTimeoutMs: 125,
+          },
+        }),
+      ),
+    };
+    const confirmation = new HttpErpOrderConfirmation({
+      baseUrl: "http://mock-erp:4100",
+      requestTimeoutMs: 1000,
+      attemptPersistence: createAttemptPersistence(),
+      fetch,
+      runConfigReader,
+      now: sequenceClock(
+        new Date("2026-06-22T00:00:00.000Z"),
+        new Date("2026-06-22T00:00:00.035Z"),
+      ),
+    });
+
+    await confirmation.confirm(job, delivery);
+
+    expect(runConfigReader.read).toHaveBeenCalledWith(job.runId);
+    const requestBody = JSON.parse(String(fetch.mock.calls[0]?.[1]?.body));
+    expect(requestBody).toMatchObject({
+      runId: job.runId,
+      erpConfig: {
+        latencyMs: 375,
+        maxTps: 9,
+        errorRate: 0.2,
+        forcedOutage: true,
+      },
+    });
+    expect(requestBody.erpConfig).not.toHaveProperty("requestTimeoutMs");
   });
 
   it("propagates attempt persistence failures without reclassifying the ERP response", async () => {
@@ -324,5 +379,40 @@ function sequenceClock(...dates: Date[]): () => Date {
     }
 
     return date;
+  };
+}
+
+function runConfigSnapshot(
+  overrides: Partial<AcceptedRunConfigSnapshot> = {},
+): AcceptedRunConfigSnapshot {
+  return {
+    trafficConfig: {
+      mode: "buyer-spike",
+      buyerCount: 1000,
+      duplicateEachBuyerAttempt: false,
+      startDelaySeconds: 0,
+      maxDurationSeconds: 30,
+      quantityPerAttempt: 1,
+    },
+    inventoryConfig: {
+      startingStock: 1000,
+      quantityPerCheckout: 1,
+      reservationHoldMinutes: 15,
+    },
+    erpConfig: {
+      latencyMs: 80,
+      maxTps: 250,
+      errorRate: 0,
+      forcedOutage: false,
+      requestTimeoutMs: 2000,
+    },
+    backpressureConfig: {
+      queueName: "orders:process",
+      physicalQueueName: "orders-process",
+      orderProcessConcurrency: 5,
+      drainTimeoutSeconds: 300,
+      pendingPersistenceRetryAfterSeconds: 30,
+    },
+    ...overrides,
   };
 }

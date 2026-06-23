@@ -10,6 +10,7 @@ import type {
   OrderConfirmation,
   OrderProcessDeliveryMetadata,
 } from "./order-process-job-handler.js";
+import { toErpRequestConfig, type RunConfigReader } from "./run-config.js";
 
 export interface ErpAttemptRecord {
   job: OrderProcessJob;
@@ -91,6 +92,7 @@ export interface HttpErpOrderConfirmationOptions {
   attemptPersistence: ErpAttemptPersistence;
   fetch?: typeof fetch;
   now?: () => Date;
+  runConfigReader?: RunConfigReader;
 }
 
 export class HttpErpOrderConfirmation implements OrderConfirmation {
@@ -99,6 +101,7 @@ export class HttpErpOrderConfirmation implements OrderConfirmation {
   private readonly attemptPersistence: ErpAttemptPersistence;
   private readonly fetch: typeof fetch;
   private readonly now: () => Date;
+  private readonly runConfigReader: RunConfigReader | undefined;
 
   constructor(options: HttpErpOrderConfirmationOptions) {
     this.confirmationUrl = new URL(erpConfirmationPath, options.baseUrl);
@@ -106,12 +109,15 @@ export class HttpErpOrderConfirmation implements OrderConfirmation {
     this.attemptPersistence = options.attemptPersistence;
     this.fetch = options.fetch ?? fetch;
     this.now = options.now ?? (() => new Date());
+    this.runConfigReader = options.runConfigReader;
   }
 
   async confirm(job: OrderProcessJob, delivery: OrderProcessDeliveryMetadata): Promise<void> {
+    const runConfig = job.runId ? await this.runConfigReader?.read(job.runId) : null;
+    const requestTimeoutMs = runConfig?.erpConfig.requestTimeoutMs ?? this.requestTimeoutMs;
     const startedAt = this.now();
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.requestTimeoutMs);
+    const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
 
     try {
       const response = await this.fetch(this.confirmationUrl, {
@@ -120,7 +126,7 @@ export class HttpErpOrderConfirmation implements OrderConfirmation {
           "content-type": "application/json",
           [correlationIdHeaderName]: job.correlationId,
         },
-        body: JSON.stringify(toConfirmationRequest(job)),
+        body: JSON.stringify(toConfirmationRequest(job, runConfig)),
         signal: controller.signal,
       });
       const parsed = await parseConfirmationResponse(response);
@@ -148,12 +154,12 @@ export class HttpErpOrderConfirmation implements OrderConfirmation {
           delivery,
           status: "timed_out",
           errorCode: "erp_request_timeout",
-          errorMessage: `The ERP confirmation request timed out after ${this.requestTimeoutMs}ms.`,
+          errorMessage: `The ERP confirmation request timed out after ${requestTimeoutMs}ms.`,
           latencyMs: elapsedMs(startedAt, finishedAt),
           startedAt,
           finishedAt,
         });
-        throw new ErpConfirmationTimeoutError(this.requestTimeoutMs);
+        throw new ErpConfirmationTimeoutError(requestTimeoutMs);
       }
 
       if (
@@ -205,13 +211,17 @@ export class HttpErpOrderConfirmation implements OrderConfirmation {
   }
 }
 
-function toConfirmationRequest(job: OrderProcessJob) {
+function toConfirmationRequest(
+  job: OrderProcessJob,
+  runConfig: Awaited<ReturnType<RunConfigReader["read"]>> | null | undefined,
+) {
   return erpConfirmationRequestSchema.parse({
     orderId: job.orderId,
     publicOrderId: job.publicOrderId,
     reservationId: job.reservationId,
     saleOfferId: job.saleOfferId,
     ...(job.runId ? { runId: job.runId } : {}),
+    ...(runConfig ? { erpConfig: toErpRequestConfig(runConfig) } : {}),
     correlationId: job.correlationId,
     quantity: job.quantity,
   });

@@ -430,7 +430,7 @@ function buildPublicRuntimePolicy(): JsonRecord {
     publicCustomDefaults: {
       trafficConfig: buyerSpikeTraffic({ buyerCount: 500, maxDurationSeconds: 10 }),
       inventoryConfig: inventoryConfig({ startingStock: 100 }),
-      erpConfig: erpConfig({ latencyMs: 100, maxTps: 150, errorRate: 0 }),
+      erpConfig: erpConfig({ latencyMs: 100, maxTps: 100, errorRate: 0 }),
       backpressureConfig: backpressureConfig({ orderProcessConcurrency: 5 }),
     },
     publicCustomLimits: {

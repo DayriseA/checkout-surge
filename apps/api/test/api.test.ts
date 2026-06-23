@@ -9,6 +9,7 @@ import {
   type DemoRunSnapshot,
   dashboardEventsPath,
   dashboardRecoveryResponseSchema,
+  demoRunOperatorModeHeaderName,
   type ErpResilienceStatus,
   erpResilienceStatusPath,
   erpResilienceStatusSchema,
@@ -24,6 +25,7 @@ import {
   publicPresetListResponseSchema,
   publicRuntimePolicyPath,
   publicRuntimePolicyResponseSchema,
+  publicVisitorIdHeaderName,
   type QueueStatus,
   queueStatusSchema,
   type ReservationSummary,
@@ -794,8 +796,6 @@ describe("API gateway routes", () => {
       headers: { "x-correlation-id": "run-start-correlation" },
       payload: {
         presetSlug: "preview-1k",
-        operatorMode: "public",
-        publicVisitorId: "visitor-1",
       },
     });
     const payload = startDemoRunResponseSchema.parse(response.json());
@@ -808,9 +808,98 @@ describe("API gateway routes", () => {
       {
         presetSlug: "preview-1k",
         operatorMode: "public",
-        publicVisitorId: "visitor-1",
       },
       "run-start-correlation",
+    );
+  });
+
+  it("derives admin demo-run authority only from trusted headers", async () => {
+    const startRun = vi.fn(demoRunControllerFixture().startRun);
+    const server = await trackedServer({
+      persistence: new AcceptingPersistence(),
+      demoRunService: {
+        ...demoRunControllerFixture(),
+        startRun,
+      },
+    });
+
+    const untrustedBody = await server.inject({
+      method: "POST",
+      url: startDemoRunPath,
+      payload: {
+        presetSlug: "admin-smoke-steady",
+        operatorMode: "admin",
+      },
+    });
+    const untrustedHeader = await server.inject({
+      method: "POST",
+      url: startDemoRunPath,
+      headers: { [demoRunOperatorModeHeaderName]: "admin" },
+      payload: {
+        presetSlug: "admin-smoke-steady",
+      },
+    });
+    const invalidHeader = await server.inject({
+      method: "POST",
+      url: startDemoRunPath,
+      headers: { [demoRunOperatorModeHeaderName]: "root" },
+      payload: {
+        presetSlug: "preview-1k",
+      },
+    });
+    const trustedHeader = await server.inject({
+      method: "POST",
+      url: startDemoRunPath,
+      headers: {
+        [demoRunOperatorModeHeaderName]: "admin",
+        "x-control-service-token": "test-control-token",
+      },
+      payload: {
+        presetSlug: "admin-smoke-steady",
+      },
+    });
+
+    expect(untrustedBody.statusCode).toBe(400);
+    expect(untrustedHeader.statusCode).toBe(401);
+    expect(invalidHeader.statusCode).toBe(400);
+    expect(trustedHeader.statusCode).toBe(202);
+    expect(startRun).toHaveBeenCalledTimes(1);
+    expect(startRun).toHaveBeenCalledWith(
+      {
+        presetSlug: "admin-smoke-steady",
+        operatorMode: "admin",
+      },
+      expect.any(String),
+    );
+  });
+
+  it("uses the trusted public visitor header instead of browser-supplied JSON", async () => {
+    const startRun = vi.fn(demoRunControllerFixture().startRun);
+    const server = await trackedServer({
+      persistence: new AcceptingPersistence(),
+      demoRunService: {
+        ...demoRunControllerFixture(),
+        startRun,
+      },
+    });
+
+    const response = await server.inject({
+      method: "POST",
+      url: startDemoRunPath,
+      headers: { [publicVisitorIdHeaderName]: "signed-visitor-1" },
+      payload: {
+        presetSlug: "preview-1k",
+      },
+    });
+
+    expect(response.statusCode).toBe(202);
+    expect(startRun).toHaveBeenCalledWith(
+      {
+        presetSlug: "preview-1k",
+        operatorMode: "public",
+        publicVisitorId: "signed-visitor-1",
+      },
+      expect.any(String),
     );
   });
 

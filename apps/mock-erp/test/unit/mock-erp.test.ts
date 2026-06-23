@@ -186,6 +186,23 @@ describe("chaos control service", () => {
     expect(sleep).toHaveBeenCalledWith(125);
   });
 
+  it("prefers request-scoped ERP config over the operator chaos store", async () => {
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const store = new ErpChaosConfigStore(
+      { latencyMs: 125, maxTps: 100, errorRate: 0, forcedOutage: true },
+      testSafetyCaps,
+    );
+    const provider = new ChaosConfirmationDecisionProvider({ configStore: store, sleep });
+
+    await expect(
+      provider.decide({
+        ...confirmationRequest,
+        erpConfig: { latencyMs: 0, maxTps: 100, errorRate: 0, forcedOutage: false },
+      }),
+    ).resolves.toEqual({ status: "succeeded" });
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
   it("throttles confirmations beyond the configured TPS cap", async () => {
     const store = new ErpChaosConfigStore(
       { latencyMs: 0, maxTps: 1, errorRate: 0, forcedOutage: false },

@@ -1,4 +1,9 @@
-import { controlServiceTokenHeaderName, startDemoRunPath } from "@checkout-surge/contracts";
+import {
+  controlServiceTokenHeaderName,
+  demoRunOperatorModeHeaderName,
+  publicVisitorIdHeaderName,
+  startDemoRunPath,
+} from "@checkout-surge/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { POST as resetErpChaos } from "../src/app/api/admin/erp-chaos/reset/route.js";
 import { PUT as updateErpChaos } from "../src/app/api/admin/erp-chaos/route.js";
@@ -33,14 +38,59 @@ describe("dashboard control proxy routes", () => {
 
   it("proxies public demo run starts through the API lifecycle", async () => {
     process.env.API_BASE_URL = "http://api.internal";
+    process.env.PUBLIC_CLIENT_COOKIE_SECRET = "public-cookie-secret";
+    const forwardedVisitorIds: string[] = [];
     const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       expect(String(input)).toBe(`http://api.internal${startDemoRunPath}`);
       expect(init?.method).toBe("POST");
-      expect(JSON.parse(String(init?.body))).toMatchObject({
-        presetSlug: "preview-1k",
-        operatorMode: "public",
-        publicVisitorId: "visitor-1",
-      });
+      expect(JSON.parse(String(init?.body))).toEqual({ presetSlug: "preview-1k" });
+      const headers = init?.headers as Record<string, string>;
+      const visitorId = headers[publicVisitorIdHeaderName];
+      expect(headers[demoRunOperatorModeHeaderName]).toBe("public");
+      expect(visitorId).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+      );
+      forwardedVisitorIds.push(String(visitorId));
+      return jsonResponse(startDemoRunPayload(), 202);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const firstResponse = await startDemoRun(
+      new Request("http://dashboard.local/api/demo/runs/start", {
+        method: "POST",
+        body: JSON.stringify({ presetSlug: "preview-1k" }),
+      }),
+    );
+    const firstPayload = await firstResponse.json();
+    const setCookie = firstResponse.headers.get("set-cookie");
+    const secondResponse = await startDemoRun(
+      new Request("http://dashboard.local/api/demo/runs/start", {
+        method: "POST",
+        headers: setCookie ? { cookie: setCookie.split(";")[0] ?? "" } : {},
+        body: JSON.stringify({ presetSlug: "preview-1k" }),
+      }),
+    );
+    const secondPayload = await secondResponse.json();
+
+    expect(firstResponse.status).toBe(202);
+    expect(secondResponse.status).toBe(202);
+    expect(firstPayload.run.presetName).toBe("Preview 1k");
+    expect(secondPayload.run.presetName).toBe("Preview 1k");
+    expect(setCookie).toContain("checkout_surge_public_visitor=");
+    expect(setCookie).toContain("HttpOnly");
+    expect(forwardedVisitorIds).toHaveLength(2);
+    expect(forwardedVisitorIds[1]).toBe(forwardedVisitorIds[0]);
+    expect(secondResponse.headers.get("set-cookie")).toBeNull();
+  });
+
+  it("rotates malformed public visitor cookies before proxying demo run starts", async () => {
+    process.env.API_BASE_URL = "http://api.internal";
+    process.env.PUBLIC_CLIENT_COOKIE_SECRET = "public-cookie-secret";
+    const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      const headers = init?.headers as Record<string, string>;
+      expect(headers[publicVisitorIdHeaderName]).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+      );
       return jsonResponse(startDemoRunPayload(), 202);
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -48,17 +98,13 @@ describe("dashboard control proxy routes", () => {
     const response = await startDemoRun(
       new Request("http://dashboard.local/api/demo/runs/start", {
         method: "POST",
-        body: JSON.stringify({
-          presetSlug: "preview-1k",
-          operatorMode: "public",
-          publicVisitorId: "visitor-1",
-        }),
+        headers: { cookie: "checkout_surge_public_visitor=%" },
+        body: JSON.stringify({ presetSlug: "preview-1k" }),
       }),
     );
-    const payload = await response.json();
 
     expect(response.status).toBe(202);
-    expect(payload.run.presetName).toBe("Preview 1k");
+    expect(response.headers.get("set-cookie")).toContain("checkout_surge_public_visitor=");
   });
 
   it("requires the admin passphrase before forwarding ERP chaos updates", async () => {

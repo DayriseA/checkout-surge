@@ -11,6 +11,7 @@ import {
   type LoadMetricIngestRequest,
   loadMetricIngestRequestSchema,
   type MetricSample,
+  type OperatorMode,
   type PublicPresetListResponse,
   type PublicRuntimePolicy,
   type PublicRuntimePolicyResponse,
@@ -73,10 +74,15 @@ export interface DashboardTrafficMetricReader {
 export interface DemoRunController {
   listPublicPresets(): Promise<PublicPresetListResponse>;
   getPublicRuntimePolicy(): Promise<PublicRuntimePolicyResponse>;
-  startRun(request: StartDemoRunRequest, correlationId: string): Promise<StartDemoRunResponse>;
+  startRun(request: StartDemoRunCommand, correlationId: string): Promise<StartDemoRunResponse>;
   ingestMetrics(input: LoadMetricIngestRequest): Promise<void>;
   recordTrafficCompletion(input: TrafficCompletionReport): Promise<DemoRunSnapshot>;
 }
+
+export type StartDemoRunCommand = StartDemoRunRequest & {
+  operatorMode: OperatorMode;
+  publicVisitorId?: string;
+};
 
 export class RedisPublicRunBudgetStore implements PublicRunBudgetStore {
   constructor(private readonly redis: CheckoutSurgeRedis) {}
@@ -243,14 +249,18 @@ export class DemoRunService implements DemoRunController {
   }
 
   async startRun(
-    request: StartDemoRunRequest,
+    request: StartDemoRunCommand,
     correlationId: string,
   ): Promise<StartDemoRunResponse> {
     const now = this.now();
     const policyRow = await this.readPublicRuntimePolicyRow();
     const policy = publicRuntimePolicySchema.parse(policyRow.policy);
-    const snapshot = await this.resolveAcceptedSnapshot(request, policy);
-    validateSnapshot(snapshot, policy, request.operatorMode);
+    const acceptedConfig = await this.resolveAcceptedConfig(request, policy);
+    validateAcceptedRunSnapshot(acceptedConfig.snapshot, policy, {
+      operatorMode: request.operatorMode,
+      enforcePublicCustomLimits:
+        request.operatorMode === "public" && acceptedConfig.preset.isCustom,
+    });
 
     let consumePublicBudget: (() => Promise<void>) | undefined;
     if (request.operatorMode === "public" && policy.isPublicRunBudgetEnforced) {
@@ -268,13 +278,19 @@ export class DemoRunService implements DemoRunController {
         });
     }
 
-    const accepted = await this.createAcceptedRun(request, snapshot, now, consumePublicBudget);
+    const accepted = await this.createAcceptedRun(
+      request,
+      acceptedConfig.preset,
+      acceptedConfig.snapshot,
+      now,
+      consumePublicBudget,
+    );
     const saleOfferId = requireRunSaleOfferId(accepted.run);
 
     try {
       await initializeInventory(this.options.redis, {
         saleOfferId,
-        allocatedStock: snapshot.inventoryConfig.startingStock,
+        allocatedStock: acceptedConfig.snapshot.inventoryConfig.startingStock,
         source: "demo_run_start",
         initializedAt: now,
         run: { runId: accepted.run.runId, status: "accepting" },
@@ -294,7 +310,7 @@ export class DemoRunService implements DemoRunController {
         apiBaseUrl: this.options.apiBaseUrl,
         buyEndpointPath: this.options.buyEndpointPath,
         correlationId,
-        configSnapshot: snapshot,
+        configSnapshot: acceptedConfig.snapshot,
       });
     } catch (error) {
       await this.failRun(accepted.run.runId, "load_orchestrator_start_failed", correlationId);
@@ -466,14 +482,14 @@ export class DemoRunService implements DemoRunController {
   }
 
   private async createAcceptedRun(
-    request: StartDemoRunRequest,
+    request: StartDemoRunCommand,
+    preset: DemoPresetContract,
     snapshot: AcceptedRunConfigSnapshot,
     now: Date,
     beforeInsert?: () => Promise<void>,
   ): Promise<{ run: DemoRunSnapshot }> {
     const runId = this.generateId();
     const saleOfferId = this.generateId();
-    const preset = await this.readPreset(request.presetSlug);
 
     return this.options.db.transaction(async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${demoRunStartLockKey}))`);
@@ -556,10 +572,10 @@ export class DemoRunService implements DemoRunController {
     });
   }
 
-  private async resolveAcceptedSnapshot(
-    request: StartDemoRunRequest,
+  private async resolveAcceptedConfig(
+    request: StartDemoRunCommand,
     policy: PublicRuntimePolicy,
-  ): Promise<AcceptedRunConfigSnapshot> {
+  ): Promise<{ preset: DemoPresetContract; snapshot: AcceptedRunConfigSnapshot }> {
     const preset = await this.readPreset(request.presetSlug);
 
     if (request.operatorMode === "public" && preset.visibility !== "public") {
@@ -593,7 +609,12 @@ export class DemoRunService implements DemoRunController {
             backpressureConfig: preset.backpressureConfig,
           };
 
-    return acceptedRunConfigSnapshotSchema.parse(mergeConfigSnapshot(base, request.configOverride));
+    return {
+      preset,
+      snapshot: acceptedRunConfigSnapshotSchema.parse(
+        mergeConfigSnapshot(base, request.configOverride),
+      ),
+    };
   }
 
   private async readPreset(slug: string): Promise<DemoPresetContract> {
@@ -802,10 +823,10 @@ function mergeConfigSnapshot(
   });
 }
 
-function validateSnapshot(
+export function validateAcceptedRunSnapshot(
   snapshot: AcceptedRunConfigSnapshot,
   policy: PublicRuntimePolicy,
-  operatorMode: "public" | "admin",
+  options: { operatorMode: OperatorMode; enforcePublicCustomLimits: boolean },
 ): void {
   const totalRequests = calculatePlannedRequests(snapshot.trafficConfig);
   const requestRate =
@@ -862,7 +883,7 @@ function validateSnapshot(
     assertCap(k6Vus.maxVus, policy.deploymentHardCaps.maxVus, "deployment_max_vus_exceeded");
   }
 
-  if (operatorMode !== "public") {
+  if (options.operatorMode !== "public" || !options.enforcePublicCustomLimits) {
     return;
   }
 
