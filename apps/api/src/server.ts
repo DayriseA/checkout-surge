@@ -6,6 +6,7 @@ import { ZodError } from "zod";
 import type { DashboardEventFanout } from "./realtime/dashboard-event-fanout.js";
 import { registerBuyRoutes } from "./routes/buy-routes.js";
 import { registerDashboardRoutes } from "./routes/dashboard-routes.js";
+import { registerDemoRunRoutes } from "./routes/demo-run-routes.js";
 import { registerErpRoutes } from "./routes/erp-routes.js";
 import { registerHealthRoutes } from "./routes/health-routes.js";
 import { registerInventoryRoutes } from "./routes/inventory-routes.js";
@@ -15,6 +16,7 @@ import { ApiHttpError, createErrorPayload } from "./runtime/errors.js";
 import type { ApiFastifyInstance } from "./runtime/fastify.js";
 import type { ApiReadiness } from "./runtime/readiness.js";
 import type { DashboardRecoveryService } from "./services/dashboard-recovery-service.js";
+import type { DemoRunController } from "./services/demo-run-service.js";
 import type { ErpStatusService } from "./services/erp-status-service.js";
 import type { InventoryStatusService } from "./services/inventory-status-service.js";
 import type { QueueStatusService } from "./services/queue-status-service.js";
@@ -36,6 +38,7 @@ export interface BuildApiServerOptions {
   inventoryStatusService: InventoryStatusService;
   queueStatusService: QueueStatusService;
   reserveOrderService: ReserveOrderService;
+  demoRunService: DemoRunController;
   startedAt?: Date;
 }
 
@@ -99,6 +102,10 @@ export async function buildApiServer(options: BuildApiServerOptions): Promise<Ap
   registerBuyRoutes(app, { reserveOrderService: options.reserveOrderService });
   registerInventoryRoutes(app, { inventoryStatusService: options.inventoryStatusService });
   registerQueueRoutes(app, { queueStatusService: options.queueStatusService });
+  registerDemoRunRoutes(app, {
+    demoRunService: options.demoRunService,
+    controlServiceToken: options.config.controlServiceToken,
+  });
   registerDashboardRoutes(app, {
     dashboardEventFanout: options.dashboardEventFanout,
     dashboardRecoveryService: options.dashboardRecoveryService,

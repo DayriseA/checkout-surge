@@ -11,6 +11,9 @@ export interface ApiConfig {
   idempotencyTtlSeconds: number;
   pendingPersistenceRetryAfterSeconds: number;
   webOrigins: string[];
+  apiBaseUrl: string;
+  loadOrchestratorBaseUrl: string;
+  controlServiceToken: string;
 }
 
 export function loadApiConfig(env: NodeJS.ProcessEnv): ApiConfig {
@@ -47,6 +50,13 @@ export function loadApiConfig(env: NodeJS.ProcessEnv): ApiConfig {
       30,
     ),
     webOrigins: parseCsv(env.WEB_ORIGIN),
+    apiBaseUrl: parseUrl(env.API_BASE_URL, "API_BASE_URL", "http://localhost:4000"),
+    loadOrchestratorBaseUrl: parseUrl(
+      env.LOAD_ORCHESTRATOR_BASE_URL,
+      "LOAD_ORCHESTRATOR_BASE_URL",
+      "http://localhost:4200",
+    ),
+    controlServiceToken: requireEnv(env, "CONTROL_SERVICE_TOKEN"),
   };
 }
 
@@ -88,4 +98,14 @@ function parseCsv(value: string | undefined): string[] {
       .map((entry) => entry.trim())
       .filter((entry) => entry.length > 0) ?? []
   );
+}
+
+function parseUrl(value: string | undefined, name: string, fallback: string): string {
+  const raw = value?.trim() || fallback;
+
+  try {
+    return new URL(raw).toString().replace(/\/+$/, "");
+  } catch {
+    throw new Error(`${name} must be a valid URL.`);
+  }
 }

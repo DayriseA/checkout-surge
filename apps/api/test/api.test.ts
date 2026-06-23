@@ -6,6 +6,7 @@ import {
   type BusinessOutcomeSummary,
   buyResponseSchema,
   type DashboardEvent,
+  type DemoRunSnapshot,
   dashboardEventsPath,
   dashboardRecoveryResponseSchema,
   type ErpResilienceStatus,
@@ -19,9 +20,15 @@ import {
   type OrderSummary,
   orderProcessBullMqQueueName,
   orderProcessJobName,
+  publicPresetListPath,
+  publicPresetListResponseSchema,
+  publicRuntimePolicyPath,
+  publicRuntimePolicyResponseSchema,
   type QueueStatus,
   queueStatusSchema,
   type ReservationSummary,
+  startDemoRunPath,
+  startDemoRunResponseSchema,
 } from "@checkout-surge/contracts";
 import {
   type CheckoutSurgeRedis,
@@ -59,6 +66,7 @@ import {
   type DashboardRecoveryContextReader,
   DashboardRecoveryService,
 } from "../src/services/dashboard-recovery-service.js";
+import type { DemoRunController } from "../src/services/demo-run-service.js";
 import type { ErpStatusService } from "../src/services/erp-status-service.js";
 import {
   type InventoryStatusReader,
@@ -83,7 +91,9 @@ const migrationsFolder = path.join(dbPackageRoot, "drizzle");
 const fixtureIds = {
   product: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
   saleOffer: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+  run: "55555555-5555-4555-8555-555555555555",
 } as const;
+const fixtureCorrelationId = "corr-api-test";
 
 function requireTestDatabaseUrl(): string {
   const databaseUrl = process.env.TEST_DATABASE_URL;
@@ -99,6 +109,7 @@ function baseConfig() {
   return loadApiConfig({
     DATABASE_URL: process.env.TEST_DATABASE_URL ?? "postgresql://postgres:postgres@localhost/test",
     REDIS_URL: process.env.TEST_REDIS_URL ?? "redis://localhost:6380",
+    CONTROL_SERVICE_TOKEN: "test-control-token",
     LOG_LEVEL: "silent",
   });
 }
@@ -146,6 +157,7 @@ async function buildTestServer(options: {
   erpStatusService?: ErpStatusService;
   dashboardRecoveryService?: DashboardRecoveryService;
   dashboardEventFanout?: DashboardEventFanout;
+  demoRunService?: DemoRunController;
 }): Promise<ApiFastifyInstance> {
   const inventoryReader =
     options.inventoryReader === undefined
@@ -225,6 +237,7 @@ async function buildTestServer(options: {
       pendingPersistenceRetryAfterSeconds: 30,
       generateId: options.generateId ?? deterministicIdGenerator(),
     }),
+    demoRunService: options.demoRunService ?? demoRunControllerFixture(),
     startedAt: new Date("2026-06-20T00:00:00.000Z"),
   });
 }
@@ -261,6 +274,112 @@ function consistencyLagFixture() {
     maxLagMs: 375,
     oldestPendingAgeSeconds: 8.5,
     measuredAt: "2026-06-20T00:00:10.000Z",
+  };
+}
+
+function demoRunSnapshotFixture(): DemoRunSnapshot {
+  return {
+    runId: fixtureIds.run,
+    presetId: "33333333-3333-4333-8333-333333333331",
+    presetName: "Preview 1k",
+    operatorMode: "public",
+    status: "active",
+    trafficStatus: "active",
+    saleOfferId: fixtureIds.saleOffer,
+    configSnapshot: acceptedRunConfigSnapshotFixture(),
+    startedAt: "2026-06-20T00:00:10.000Z",
+    trafficStartedAt: "2026-06-20T00:00:10.000Z",
+  };
+}
+
+function acceptedRunConfigSnapshotFixture() {
+  return {
+    trafficConfig: {
+      mode: "buyer-spike" as const,
+      buyerCount: 1000,
+      duplicateEachBuyerAttempt: false,
+      startDelaySeconds: 0,
+      maxDurationSeconds: 2,
+      quantityPerAttempt: 1,
+    },
+    inventoryConfig: {
+      startingStock: 250,
+      quantityPerCheckout: 1,
+      reservationHoldMinutes: 15,
+    },
+    erpConfig: {
+      latencyMs: 80,
+      maxTps: 250,
+      errorRate: 0,
+      forcedOutage: false,
+      requestTimeoutMs: 2000,
+    },
+    backpressureConfig: {
+      queueName: "orders:process" as const,
+      physicalQueueName: "orders-process" as const,
+      orderProcessConcurrency: 5,
+      drainTimeoutSeconds: 300,
+      pendingPersistenceRetryAfterSeconds: 30,
+    },
+  };
+}
+
+function demoRunControllerFixture(): DemoRunController {
+  return {
+    listPublicPresets: async () => ({
+      presets: [],
+      timestamp: "2026-06-20T00:00:10.000Z",
+    }),
+    getPublicRuntimePolicy: async () => ({
+      id: "active",
+      policy: publicRuntimePolicyFixture(),
+      updatedAt: "2026-06-20T00:00:10.000Z",
+    }),
+    startRun: async (_request, correlationId) => ({
+      run: demoRunSnapshotFixture(),
+      recovery: { establishedAt: "2026-06-20T00:00:10.000Z" },
+      correlationId,
+      timestamp: "2026-06-20T00:00:10.000Z",
+    }),
+    ingestMetrics: async () => undefined,
+    recordTrafficCompletion: async () => demoRunSnapshotFixture(),
+  };
+}
+
+function publicRuntimePolicyFixture() {
+  return {
+    isPublicRunBudgetEnforced: true,
+    publicRunBudget: {
+      windowSeconds: 300,
+      perVisitorMaxStarts: 2,
+      globalMaxStarts: 6,
+    },
+    publicCustomDefaults: acceptedRunConfigSnapshotFixture(),
+    publicCustomLimits: {
+      maxTotalRequests: 10_000,
+      maxBuyers: 10_000,
+      maxRequestsPerSecond: 1000,
+      maxTrafficDurationSeconds: 120,
+      maxTrafficStartDelaySeconds: 10,
+      maxPreAllocatedVus: 1000,
+      maxVus: 1000,
+      maxStartingStock: 1000,
+      maxErpLatencyMs: 2000,
+      minErpMaxTps: 1,
+      maxErpMaxTps: 300,
+      maxErpErrorRate: 0.25,
+      allowForcedOutage: false,
+      allowedTrafficModes: ["buyer-spike" as const, "steady-arrival-rate" as const],
+    },
+    deploymentHardCaps: {
+      maxBuyers: 100_000,
+      maxTotalRequests: 100_000,
+      maxRequestsPerSecond: 10_000,
+      maxTrafficDurationSeconds: 300,
+      maxTrafficStartDelaySeconds: 30,
+      maxPreAllocatedVus: 10_000,
+      maxVus: 10_000,
+    },
   };
 }
 
@@ -417,6 +536,7 @@ describe("API gateway routes", () => {
     orderProcessJobPublisher?: OrderProcessJobPublisher;
     queueInspector?: OrderProcessQueueInspector;
     erpStatusService?: ErpStatusService;
+    demoRunService?: DemoRunController;
   }) {
     const server = await buildTestServer(options);
     servers.push(server);
@@ -616,6 +736,133 @@ describe("API gateway routes", () => {
 
     expect(response.statusCode).toBe(200);
     expect(payload).toEqual(status);
+  });
+
+  it("returns public demo presets and runtime policy through shared contracts", async () => {
+    const server = await trackedServer({
+      persistence: new AcceptingPersistence(),
+      demoRunService: {
+        ...demoRunControllerFixture(),
+        listPublicPresets: async () => ({
+          presets: [
+            {
+              id: "33333333-3333-4333-8333-333333333331",
+              slug: "preview-1k",
+              visibility: "public",
+              isEditable: false,
+              isCustom: false,
+              display: {
+                name: "Preview 1k",
+                description: "Preview run",
+                sortOrder: 10,
+                outcomeFocus: ["happy_path"],
+              },
+              ...acceptedRunConfigSnapshotFixture(),
+              createdAt: "2026-06-20T00:00:00.000Z",
+              updatedAt: "2026-06-20T00:00:00.000Z",
+            },
+          ],
+          timestamp: "2026-06-20T00:00:10.000Z",
+        }),
+      },
+    });
+
+    const presetsResponse = await server.inject({ method: "GET", url: publicPresetListPath });
+    const policyResponse = await server.inject({ method: "GET", url: publicRuntimePolicyPath });
+
+    const presets = publicPresetListResponseSchema.parse(presetsResponse.json());
+    const policy = publicRuntimePolicyResponseSchema.parse(policyResponse.json());
+    expect(presetsResponse.statusCode).toBe(200);
+    expect(presets.presets[0]?.slug).toBe("preview-1k");
+    expect(policyResponse.statusCode).toBe(200);
+    expect(policy.policy.deploymentHardCaps.maxTotalRequests).toBe(100_000);
+  });
+
+  it("starts a demo run through the API run lifecycle and propagates correlation IDs", async () => {
+    const startRun = vi.fn(demoRunControllerFixture().startRun);
+    const server = await trackedServer({
+      persistence: new AcceptingPersistence(),
+      demoRunService: {
+        ...demoRunControllerFixture(),
+        startRun,
+      },
+    });
+
+    const response = await server.inject({
+      method: "POST",
+      url: startDemoRunPath,
+      headers: { "x-correlation-id": "run-start-correlation" },
+      payload: {
+        presetSlug: "preview-1k",
+        operatorMode: "public",
+        publicVisitorId: "visitor-1",
+      },
+    });
+    const payload = startDemoRunResponseSchema.parse(response.json());
+
+    expect(response.statusCode).toBe(202);
+    expect(response.headers["x-correlation-id"]).toBe("run-start-correlation");
+    expect(payload.correlationId).toBe("run-start-correlation");
+    expect(payload.run.status).toBe("active");
+    expect(startRun).toHaveBeenCalledWith(
+      {
+        presetSlug: "preview-1k",
+        operatorMode: "public",
+        publicVisitorId: "visitor-1",
+      },
+      "run-start-correlation",
+    );
+  });
+
+  it("protects internal load metric ingestion with the control service token", async () => {
+    const ingestMetrics = vi.fn();
+    const server = await trackedServer({
+      persistence: new AcceptingPersistence(),
+      demoRunService: {
+        ...demoRunControllerFixture(),
+        ingestMetrics,
+      },
+    });
+
+    const unauthorized = await server.inject({
+      method: "POST",
+      url: "/internal/load/metrics",
+      payload: {
+        runId: fixtureIds.run,
+        correlationId: fixtureCorrelationId,
+        samples: [
+          {
+            metricName: "traffic.latency",
+            value: 42,
+            unit: "ms",
+            timestamp: "2026-06-20T00:00:10.000Z",
+          },
+        ],
+        observedAt: "2026-06-20T00:00:10.000Z",
+      },
+    });
+    const accepted = await server.inject({
+      method: "POST",
+      url: "/internal/load/metrics",
+      headers: { "x-control-service-token": "test-control-token" },
+      payload: {
+        runId: fixtureIds.run,
+        correlationId: fixtureCorrelationId,
+        samples: [
+          {
+            metricName: "traffic.latency",
+            value: 42,
+            unit: "ms",
+            timestamp: "2026-06-20T00:00:10.000Z",
+          },
+        ],
+        observedAt: "2026-06-20T00:00:10.000Z",
+      },
+    });
+
+    expect(unauthorized.statusCode).toBe(401);
+    expect(accepted.statusCode).toBe(202);
+    expect(ingestMetrics).toHaveBeenCalledOnce();
   });
 
   it("returns a stable unavailable response when queue inspection fails", async () => {

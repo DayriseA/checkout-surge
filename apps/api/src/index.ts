@@ -26,6 +26,12 @@ import {
   PostgresDashboardRecoveryContextReader,
 } from "./services/dashboard-recovery-service.js";
 import {
+  DemoRunService,
+  HttpTrafficExecutionGateway,
+  RedisDashboardTrafficMetricStore,
+  RedisPublicRunBudgetStore,
+} from "./services/demo-run-service.js";
+import {
   ErpStatusService,
   PostgresErpAttemptStatusReader,
   RedisErpCircuitBreakerStateReader,
@@ -121,6 +127,7 @@ export async function startApiServer(): Promise<void> {
   const inventoryStatusService = new InventoryStatusService({
     getStatus: (saleOfferId) => getInventoryStatus(redis, saleOfferId),
   });
+  const trafficMetricStore = new RedisDashboardTrafficMetricStore(redis);
   const dashboardRecoveryService = new DashboardRecoveryService({
     contextReader: new PostgresDashboardRecoveryContextReader(connection.db),
     businessOutcomeReader: new PostgresDashboardBusinessOutcomeReader(connection.db),
@@ -128,6 +135,22 @@ export async function startApiServer(): Promise<void> {
     inventoryStatusService,
     queueStatusService,
     erpStatusService,
+    trafficMetricReader: trafficMetricStore,
+    logger,
+  });
+  const businessOutcomeReader = new PostgresDashboardBusinessOutcomeReader(connection.db);
+  const demoRunService = new DemoRunService({
+    db: connection.db,
+    redis,
+    trafficExecutionGateway: new HttpTrafficExecutionGateway({
+      loadOrchestratorBaseUrl: config.loadOrchestratorBaseUrl,
+      controlServiceToken: config.controlServiceToken,
+    }),
+    publicRunBudgetStore: new RedisPublicRunBudgetStore(redis),
+    trafficMetricStore,
+    businessOutcomeReader,
+    apiBaseUrl: config.apiBaseUrl,
+    buyEndpointPath: "/buy",
     logger,
   });
   const reserveOrderService = new ReserveOrderService({
@@ -218,6 +241,7 @@ export async function startApiServer(): Promise<void> {
       inventoryStatusService,
       queueStatusService,
       reserveOrderService,
+      demoRunService,
       startedAt: new Date(),
     });
     await dashboardEventSubscriber.start();

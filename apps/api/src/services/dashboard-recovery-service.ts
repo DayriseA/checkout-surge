@@ -5,6 +5,7 @@ import {
   type DemoRunSnapshot,
   dashboardRecoveryResponseSchema,
   demoRunSnapshotSchema,
+  type MetricSample,
 } from "@checkout-surge/contracts";
 import {
   type CheckoutSurgeDatabase,
@@ -15,6 +16,7 @@ import {
 } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { and, desc, eq, gte, inArray, lte } from "drizzle-orm";
+import type { DashboardTrafficMetricReader } from "./demo-run-service.js";
 import type { ErpStatusService } from "./erp-status-service.js";
 import type { InventoryStatusService } from "./inventory-status-service.js";
 import type { QueueStatusService } from "./queue-status-service.js";
@@ -109,6 +111,7 @@ export class DashboardRecoveryService {
       queueStatusService: QueueStatusService;
       erpStatusService: ErpStatusService;
       logger: CheckoutSurgeLogger;
+      trafficMetricReader?: DashboardTrafficMetricReader;
       now?: () => Date;
     },
   ) {}
@@ -128,26 +131,37 @@ export class DashboardRecoveryService {
         }
       : null;
 
-    const [inventoryResult, queueResult, erpResult, businessOutcomeResult, consistencyLagResult] =
-      await Promise.all([
-        scope
-          ? readSafely("dashboard_inventory", () =>
-              this.options.inventoryStatusService.getStatus(scope.saleOfferId),
-            )
-          : Promise.resolve({ ok: true as const, value: null }),
-        readSafely("dashboard_queue", () => this.options.queueStatusService.getStatus()),
-        readSafely("dashboard_erp", () => this.options.erpStatusService.getStatus()),
-        scope
-          ? readSafely("dashboard_business_outcome", () =>
-              this.options.businessOutcomeReader.read(scope),
-            )
-          : Promise.resolve({ ok: true as const, value: null }),
-        scope
-          ? readSafely("dashboard_consistency_lag", () =>
-              this.options.consistencyLagReader.read(scope, now),
-            )
-          : Promise.resolve({ ok: true as const, value: null }),
-      ]);
+    const [
+      inventoryResult,
+      queueResult,
+      erpResult,
+      businessOutcomeResult,
+      consistencyLagResult,
+      trafficMetricResult,
+    ] = await Promise.all([
+      scope
+        ? readSafely("dashboard_inventory", () =>
+            this.options.inventoryStatusService.getStatus(scope.saleOfferId),
+          )
+        : Promise.resolve({ ok: true as const, value: null }),
+      readSafely("dashboard_queue", () => this.options.queueStatusService.getStatus()),
+      readSafely("dashboard_erp", () => this.options.erpStatusService.getStatus()),
+      scope
+        ? readSafely("dashboard_business_outcome", () =>
+            this.options.businessOutcomeReader.read(scope),
+          )
+        : Promise.resolve({ ok: true as const, value: null }),
+      scope
+        ? readSafely("dashboard_consistency_lag", () =>
+            this.options.consistencyLagReader.read(scope, now),
+          )
+        : Promise.resolve({ ok: true as const, value: null }),
+      readSafely("dashboard_traffic_metrics", () =>
+        this.options.trafficMetricReader
+          ? this.options.trafficMetricReader.readRecent(context.currentRun?.runId ?? null)
+          : Promise.resolve([] satisfies MetricSample[]),
+      ),
+    ]);
 
     for (const result of [
       contextResult,
@@ -156,6 +170,7 @@ export class DashboardRecoveryService {
       erpResult,
       businessOutcomeResult,
       consistencyLagResult,
+      trafficMetricResult,
     ]) {
       if (!result.ok) {
         this.options.logger.warn(
@@ -168,7 +183,7 @@ export class DashboardRecoveryService {
     return dashboardRecoveryResponseSchema.parse({
       currentRun: context.currentRun,
       inventory: inventoryResult.ok ? inventoryResult.value : null,
-      recentMetrics: [],
+      recentMetrics: trafficMetricResult.ok ? trafficMetricResult.value : [],
       queue: queueResult.ok ? queueResult.value : null,
       erp: erpResult.ok ? erpResult.value : null,
       businessOutcome: businessOutcomeResult.ok ? businessOutcomeResult.value : null,
