@@ -4,6 +4,7 @@ import type {
   HealthStatus,
   InventoryStatus,
   QueueStatus,
+  StartDemoRunResponse,
 } from "@checkout-surge/contracts";
 import type { BackendRead, DashboardBackendSnapshot } from "../lib/api.js";
 import { StatusPill } from "./status-pill.js";
@@ -284,8 +285,14 @@ const publicPresetControls = [
 
 export function LoadRunControlsPanel({
   recovery,
+  onStartPreset,
+  startingPresetSlug = null,
+  statusMessage = null,
 }: {
   recovery: BackendRead<DashboardRecoveryResponse>;
+  onStartPreset?: (presetSlug: string) => Promise<BackendRead<StartDemoRunResponse>>;
+  startingPresetSlug?: string | null;
+  statusMessage?: string | null;
 }) {
   const data = recoveryData(recovery);
   const currentRun = data?.currentRun ?? null;
@@ -293,13 +300,18 @@ export function LoadRunControlsPanel({
     currentRun?.status === "starting" ||
     currentRun?.status === "active" ||
     currentRun?.status === "draining";
-  const statusLabel = isBlockedByCurrentRun ? currentRun.status : "phase 7";
+  const isStarting = startingPresetSlug !== null;
+  const statusLabel = isBlockedByCurrentRun ? currentRun.status : isStarting ? "starting" : "ready";
   const disabledReason =
     recovery.status !== "available"
       ? "Recovery is unavailable, so start gating cannot be verified."
       : isBlockedByCurrentRun
         ? "A run is already starting, active, or draining."
-        : "Traffic execution and load-orchestrator delegation land in Phase 7.";
+        : onStartPreset
+          ? "Ready to start bounded public traffic."
+          : "Start action unavailable.";
+  const disableStarts =
+    recovery.status !== "available" || isBlockedByCurrentRun || isStarting || !onStartPreset;
 
   return (
     <section className={panelNarrowClassName}>
@@ -312,12 +324,23 @@ export function LoadRunControlsPanel({
       </div>
       <div className="grid gap-2.5">
         {publicPresetControls.map((presetSlug) => (
-          <button className={controlButtonClassName} key={presetSlug} type="button" disabled>
-            {presetSlug}
+          <button
+            className={controlButtonClassName}
+            key={presetSlug}
+            onClick={() => {
+              void onStartPreset?.(presetSlug);
+            }}
+            type="button"
+            disabled={disableStarts}
+          >
+            {startingPresetSlug === presetSlug ? "Starting" : presetSlug}
           </button>
         ))}
       </div>
       <EmptyState>{disabledReason}</EmptyState>
+      {statusMessage ? (
+        <p className="m-0 text-sm font-semibold text-muted-strong">{statusMessage}</p>
+      ) : null}
     </section>
   );
 }

@@ -8,6 +8,8 @@ import {
   type ErpChaosStatus,
   erpChaosConfigSchema,
   erpChaosStatusSchema,
+  type StartDemoRunResponse,
+  startDemoRunResponseSchema,
 } from "@checkout-surge/contracts";
 import { useEffect, useMemo, useState } from "react";
 import type { BackendRead, DashboardBackendSnapshot } from "../lib/api.js";
@@ -16,6 +18,7 @@ import {
   adminErpChaosResetProxyPath,
   adminPassphraseHeaderName,
   dashboardRecoveryProxyPath,
+  demoRunStartProxyPath,
 } from "../lib/control-paths.js";
 import { dashboardEventsUrl } from "../lib/realtime.js";
 import {
@@ -49,6 +52,8 @@ export function OperatorDashboard({
   const [realtimeStatus, setRealtimeStatus] = useState<RealtimeConnectionStatus>("connecting");
   const [liveEventCount, setLiveEventCount] = useState(0);
   const [isRefreshingRecovery, setIsRefreshingRecovery] = useState(false);
+  const [startingPresetSlug, setStartingPresetSlug] = useState<string | null>(null);
+  const [startStatusMessage, setStartStatusMessage] = useState<string | null>(null);
 
   useEffect(() => {
     setRecovery(snapshot.recovery);
@@ -113,6 +118,34 @@ export function OperatorDashboard({
     }
   }
 
+  async function startPublicRun(presetSlug: string): Promise<BackendRead<StartDemoRunResponse>> {
+    setStartingPresetSlug(presetSlug);
+    setStartStatusMessage(null);
+
+    try {
+      const response = await readProxyJson(demoRunStartProxyPath, startDemoRunResponseSchema, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          presetSlug,
+          operatorMode: "public",
+          publicVisitorId: publicVisitorId(),
+        }),
+      });
+
+      if (response.status === "available") {
+        setStartStatusMessage("Run accepted.");
+        await refreshRecovery();
+      } else {
+        setStartStatusMessage(response.reason);
+      }
+
+      return response;
+    } finally {
+      setStartingPresetSlug(null);
+    }
+  }
+
   return (
     <div className="grid grid-cols-12 gap-4">
       <ApiStatusPanel snapshot={liveSnapshot} />
@@ -125,7 +158,14 @@ export function OperatorDashboard({
           void refreshRecovery();
         }}
       />
-      {showControls ? <LoadRunControlsPanel recovery={recovery} /> : null}
+      {showControls ? (
+        <LoadRunControlsPanel
+          recovery={recovery}
+          onStartPreset={startPublicRun}
+          startingPresetSlug={startingPresetSlug}
+          statusMessage={startStatusMessage}
+        />
+      ) : null}
       <RequestSurgePanel recovery={recovery} liveEventCount={liveEventCount} />
       <InventoryDrainPanel recovery={recovery} />
       <QueuePressurePanel recovery={recovery} />
@@ -138,6 +178,25 @@ export function OperatorDashboard({
       {showHistoryPlaceholder ? <RunHistoryPlaceholder /> : null}
     </div>
   );
+}
+
+function publicVisitorId(): string {
+  const storageKey = "checkout-surge-public-visitor-id";
+  if (typeof window === "undefined") {
+    return "server-rendered-public-visitor";
+  }
+
+  const existing = window.localStorage.getItem(storageKey);
+  if (existing) {
+    return existing;
+  }
+
+  const generated =
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `visitor-${Date.now()}-${Math.round(Math.random() * 1_000_000)}`;
+  window.localStorage.setItem(storageKey, generated);
+  return generated;
 }
 
 interface ContractSchema<T> {

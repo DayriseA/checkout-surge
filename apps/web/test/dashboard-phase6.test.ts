@@ -11,14 +11,26 @@ import { applyDashboardEvent } from "../src/app/components/operator-dashboard.js
 import type { BackendRead } from "../src/app/lib/api.js";
 
 describe("Phase 6 dashboard behavior", () => {
-  it("renders disabled run controls honestly until Phase 7 load execution exists", () => {
+  it("renders enabled run controls when Phase 7 start handling is available", () => {
     const markup = renderToStaticMarkup(
-      createElement(LoadRunControlsPanel, { recovery: availableRecovery(recoveryFixture()) }),
+      createElement(LoadRunControlsPanel, {
+        recovery: availableRecovery(recoveryFixture()),
+        onStartPreset: async () => ({
+          status: "available" as const,
+          data: {
+            run: runFixture(),
+            recovery: { establishedAt: "2026-06-20T00:00:10.000Z" },
+            correlationId: "corr-web-start",
+            timestamp: "2026-06-20T00:00:10.000Z",
+          },
+          httpStatus: 202,
+        }),
+      }),
     );
 
-    expect(markup).toContain("phase 7");
-    expect(markup).toContain("Traffic execution and load-orchestrator delegation land in Phase 7.");
-    expect(markup.match(/disabled=""/g)).toHaveLength(5);
+    expect(markup).toContain("ready");
+    expect(markup).toContain("Ready to start bounded public traffic.");
+    expect(markup).not.toContain('disabled=""');
     expect(markup).toContain("preview-1k");
     expect(markup).toContain("public-custom");
   });
@@ -110,6 +122,48 @@ function availableRecovery(
   data: DashboardRecoveryResponse,
 ): BackendRead<DashboardRecoveryResponse> {
   return { status: "available", data, httpStatus: 200 };
+}
+
+function runFixture() {
+  return {
+    runId: "11111111-1111-4111-8111-111111111111",
+    presetId: "22222222-2222-4222-8222-222222222222",
+    presetName: "Preview 1k",
+    operatorMode: "public" as const,
+    status: "active" as const,
+    trafficStatus: "active" as const,
+    configSnapshot: {
+      trafficConfig: {
+        mode: "buyer-spike" as const,
+        buyerCount: 1000,
+        duplicateEachBuyerAttempt: false,
+        startDelaySeconds: 0,
+        maxDurationSeconds: 2,
+        quantityPerAttempt: 1,
+      },
+      inventoryConfig: {
+        startingStock: 250,
+        quantityPerCheckout: 1,
+        reservationHoldMinutes: 15,
+      },
+      erpConfig: {
+        latencyMs: 80,
+        maxTps: 250,
+        errorRate: 0,
+        forcedOutage: false,
+        requestTimeoutMs: 2000,
+      },
+      backpressureConfig: {
+        queueName: "orders:process" as const,
+        physicalQueueName: "orders-process" as const,
+        orderProcessConcurrency: 5,
+        drainTimeoutSeconds: 300,
+        pendingPersistenceRetryAfterSeconds: 30,
+      },
+    },
+    saleOfferId: "33333333-3333-4333-8333-333333333333",
+    startedAt: "2026-06-20T00:00:00.000Z",
+  };
 }
 
 function recoveryFixture(): DashboardRecoveryResponse {
