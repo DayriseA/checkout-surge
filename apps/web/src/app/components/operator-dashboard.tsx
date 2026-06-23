@@ -21,6 +21,7 @@ import {
   adminErpChaosResetProxyPath,
   adminMaintenanceCleanupRunsProxyPath,
   adminPassphraseHeaderName,
+  adminSessionProxyPath,
   dashboardRecoveryProxyPath,
   demoRunStartProxyPath,
 } from "../lib/control-paths";
@@ -366,6 +367,32 @@ function AdminActionsPanel({
     setForcedOutage(current.forcedOutage);
   }, [current]);
 
+  async function signInAdmin() {
+    setIsSubmitting(true);
+    setStatusMessage(null);
+
+    try {
+      const response = await fetch(adminSessionProxyPath, {
+        method: "POST",
+        cache: "no-store",
+        headers: {
+          [adminPassphraseHeaderName]: adminPassphrase,
+        },
+      });
+      const payload = await response.json().catch(() => null);
+
+      setStatusMessage(
+        response.ok
+          ? "Admin session established."
+          : payload && typeof payload === "object" && "message" in payload
+            ? String(payload.message)
+            : "Admin session failed.",
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
   async function updateChaos() {
     const parsedConfig = erpChaosConfigSchema.safeParse({
       latencyMs: Number(latencyMs),
@@ -498,6 +525,16 @@ function AdminActionsPanel({
             Forced outage
           </label>
           <div className="flex flex-wrap gap-2">
+            <button
+              className="min-h-10 rounded-lg border border-border bg-surface px-3.5 py-2.5 font-semibold text-muted-strong disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={isSubmitting}
+              onClick={() => {
+                void signInAdmin();
+              }}
+              type="button"
+            >
+              Sign In
+            </button>
             <button
               className="min-h-10 rounded-lg border border-border bg-surface px-3.5 py-2.5 font-semibold text-muted-strong disabled:cursor-not-allowed disabled:opacity-60"
               disabled={isSubmitting}

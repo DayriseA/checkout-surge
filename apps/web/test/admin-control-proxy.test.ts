@@ -11,6 +11,7 @@ import { POST as resetDemo } from "../src/app/api/admin/demo/reset/route.js";
 import { POST as cleanupRuns } from "../src/app/api/admin/demo/runs/cleanup/route.js";
 import { POST as resetErpChaos } from "../src/app/api/admin/erp-chaos/reset/route.js";
 import { PUT as updateErpChaos } from "../src/app/api/admin/erp-chaos/route.js";
+import { POST as createAdminSession } from "../src/app/api/admin/session/route.js";
 import { GET as getDashboardRecovery } from "../src/app/api/dashboard/recovery/route.js";
 import { POST as startDemoRun } from "../src/app/api/demo/runs/start/route.js";
 import { adminPassphraseHeaderName } from "../src/app/lib/control-paths.js";
@@ -128,6 +129,65 @@ describe("dashboard control proxy routes", () => {
     expect(response.status).toBe(401);
     expect(payload.code).toBe("admin_passphrase_required");
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("sets a signed HttpOnly admin session after passphrase validation", async () => {
+    process.env.ADMIN_DASHBOARD_PASSPHRASE = "admin-pass";
+    process.env.ADMIN_SESSION_SECRET = "admin-session-secret";
+
+    const response = await createAdminSession(
+      new Request("http://dashboard.local/api/admin/session", {
+        method: "POST",
+        headers: {
+          [adminPassphraseHeaderName]: "admin-pass",
+        },
+      }),
+    );
+    const payload = await response.json();
+    const setCookie = response.headers.get("set-cookie");
+
+    expect(response.status).toBe(200);
+    expect(payload.authenticated).toBe(true);
+    expect(setCookie).toContain("checkout_surge_admin_session=");
+    expect(setCookie).toContain("HttpOnly");
+    expect(setCookie).toContain("SameSite=Lax");
+  });
+
+  it("accepts a valid admin session cookie for protected proxy routes", async () => {
+    process.env.ADMIN_DASHBOARD_PASSPHRASE = "admin-pass";
+    process.env.ADMIN_SESSION_SECRET = "admin-session-secret";
+    process.env.CONTROL_SERVICE_TOKEN = "control-token";
+    process.env.API_BASE_URL = "http://api.internal";
+    const session = await createAdminSession(
+      new Request("http://dashboard.local/api/admin/session", {
+        method: "POST",
+        headers: {
+          [adminPassphraseHeaderName]: "admin-pass",
+        },
+      }),
+    );
+    const cookie = session.headers.get("set-cookie")?.split(";")[0] ?? "";
+    const fetchMock = vi.fn(async () =>
+      jsonResponse({
+        failedRunCount: 1,
+        closedSaleOfferCount: 1,
+        cleanedQueueCount: 2,
+        cleanedJobCount: 3,
+        resetAt: "2026-06-20T00:00:10.000Z",
+        correlationId: "corr-reset",
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await resetDemo(
+      new Request("http://dashboard.local/api/admin/demo/reset", {
+        method: "POST",
+        headers: { cookie },
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledOnce();
   });
 
   it("forwards valid ERP chaos updates with the server-side control token", async () => {

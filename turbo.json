@@ -1,6 +1,12 @@
 {
   "$schema": "https://turbo.build/schema.json",
-  "globalPassThroughEnv": ["API_BASE_URL", "CONTROL_SERVICE_TOKEN"],
+  "globalPassThroughEnv": [
+    "ADMIN_DASHBOARD_PASSPHRASE",
+    "ADMIN_SESSION_MAX_AGE_SECONDS",
+    "ADMIN_SESSION_SECRET",
+    "API_BASE_URL",
+    "CONTROL_SERVICE_TOKEN"
+  ],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
