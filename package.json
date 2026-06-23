@@ -17,7 +17,7 @@
     "format": "biome check --write .",
     "format:check": "biome check .",
     "test": "pnpm test:unit && pnpm test:api && pnpm test:integration",
-    "test:unit": "turbo run test:unit --filter @checkout-surge/contracts --filter @checkout-surge/logger --filter mock-erp --filter worker --filter web",
+    "test:unit": "turbo run test:unit --filter @checkout-surge/contracts --filter @checkout-surge/logger --filter mock-erp --filter worker --filter web --filter load-orchestrator",
     "test:integration": "turbo run test:integration --filter @checkout-surge/db --filter worker",
     "test:api": "turbo run test:api --filter api",
     "test:watch": "vitest --watch --config vitest.unit.config.ts",
