@@ -28,6 +28,10 @@ describe("dashboard backend API reads", () => {
       status: "unavailable",
       reason: "backend offline",
     });
+    expect(snapshot.erpChaos).toMatchObject({
+      status: "unavailable",
+      reason: "backend offline",
+    });
   });
 
   it("returns the expanded dashboard recovery projection when backend reads succeed", async () => {
@@ -52,6 +56,16 @@ describe("dashboard backend API reads", () => {
             timestamp: "2026-06-20T00:00:10.000Z",
             uptimeSeconds: 10,
             checks: [{ name: "database_reachable", status: "ok" }],
+          });
+        }
+
+        if (url.endsWith("/chaos")) {
+          return jsonResponse({
+            latencyMs: 125,
+            maxTps: 50,
+            errorRate: 0.1,
+            forcedOutage: false,
+            updatedAt: "2026-06-20T00:00:10.000Z",
           });
         }
 
@@ -86,6 +100,14 @@ describe("dashboard backend API reads", () => {
           acceptedReservations: 3,
           confirmedOrders: 1,
         },
+      },
+    });
+    expect(snapshot.erpChaos).toMatchObject({
+      status: "available",
+      data: {
+        latencyMs: 125,
+        maxTps: 50,
+        errorRate: 0.1,
       },
     });
   });

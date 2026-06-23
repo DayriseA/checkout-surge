@@ -4,9 +4,19 @@ import {
   type DashboardEvent,
   type DashboardRecoveryResponse,
   dashboardEventSchema,
+  dashboardRecoveryResponseSchema,
+  type ErpChaosStatus,
+  erpChaosConfigSchema,
+  erpChaosStatusSchema,
 } from "@checkout-surge/contracts";
 import { useEffect, useMemo, useState } from "react";
 import type { BackendRead, DashboardBackendSnapshot } from "../lib/api";
+import {
+  adminErpChaosProxyPath,
+  adminErpChaosResetProxyPath,
+  adminPassphraseHeaderName,
+  dashboardRecoveryProxyPath,
+} from "../lib/control-paths";
 import { dashboardEventsUrl } from "../lib/realtime";
 import {
   ApiStatusPanel,
@@ -35,12 +45,18 @@ export function OperatorDashboard({
   showHistoryPlaceholder = false,
 }: OperatorDashboardProps) {
   const [recovery, setRecovery] = useState(snapshot.recovery);
+  const [erpChaos, setErpChaos] = useState(snapshot.erpChaos);
   const [realtimeStatus, setRealtimeStatus] = useState<RealtimeConnectionStatus>("connecting");
   const [liveEventCount, setLiveEventCount] = useState(0);
+  const [isRefreshingRecovery, setIsRefreshingRecovery] = useState(false);
 
   useEffect(() => {
     setRecovery(snapshot.recovery);
   }, [snapshot.recovery]);
+
+  useEffect(() => {
+    setErpChaos(snapshot.erpChaos);
+  }, [snapshot.erpChaos]);
 
   useEffect(() => {
     if (typeof EventSource === "undefined") {
@@ -82,29 +98,126 @@ export function OperatorDashboard({
     () => ({
       ...snapshot,
       recovery,
+      erpChaos,
     }),
-    [snapshot, recovery],
+    [snapshot, recovery, erpChaos],
   );
+
+  async function refreshRecovery() {
+    setIsRefreshingRecovery(true);
+
+    try {
+      setRecovery(await readProxyJson(dashboardRecoveryProxyPath, dashboardRecoveryResponseSchema));
+    } finally {
+      setIsRefreshingRecovery(false);
+    }
+  }
 
   return (
     <div className="grid grid-cols-12 gap-4">
       <ApiStatusPanel snapshot={liveSnapshot} />
       <RecoveryStatusPanel
         recovery={recovery}
+        isRefreshing={isRefreshingRecovery}
         realtimeStatus={realtimeStatus}
         liveEventCount={liveEventCount}
+        onRefresh={() => {
+          void refreshRecovery();
+        }}
       />
-      {showControls ? <LoadRunControlsPanel /> : null}
+      {showControls ? <LoadRunControlsPanel recovery={recovery} /> : null}
       <RequestSurgePanel recovery={recovery} liveEventCount={liveEventCount} />
       <InventoryDrainPanel recovery={recovery} />
       <QueuePressurePanel recovery={recovery} />
       <ErpHealthPanel recovery={recovery} />
       <ConsistencyLagPanel recovery={recovery} />
       <RunOutcomesPanel recovery={recovery} />
-      {showAdminActions ? <AdminActionsPanel /> : null}
+      {showAdminActions ? (
+        <AdminActionsPanel erpChaos={erpChaos} onErpChaosChange={setErpChaos} />
+      ) : null}
       {showHistoryPlaceholder ? <RunHistoryPlaceholder /> : null}
     </div>
   );
+}
+
+interface ContractSchema<T> {
+  safeParse(
+    input: unknown,
+  ): { success: true; data: T } | { success: false; error: { message: string } };
+}
+
+async function readProxyJson<T>(
+  path: string,
+  schema: ContractSchema<T>,
+  init?: RequestInit,
+): Promise<BackendRead<T>> {
+  let response: Response;
+  const { headers, ...requestInit } = init ?? {};
+
+  try {
+    response = await fetch(path, {
+      ...requestInit,
+      cache: "no-store",
+      headers: {
+        accept: "application/json",
+        ...headers,
+      },
+    });
+  } catch (error) {
+    return {
+      status: "unavailable",
+      reason: error instanceof Error ? error.message : "Dashboard control request failed.",
+    };
+  }
+
+  let payload: unknown;
+
+  try {
+    payload = await response.json();
+  } catch (error) {
+    return {
+      status: "unavailable",
+      httpStatus: response.status,
+      reason: error instanceof Error ? error.message : "Dashboard control returned non-JSON data.",
+    };
+  }
+
+  if (!response.ok) {
+    return {
+      status: "unavailable",
+      httpStatus: response.status,
+      reason: errorMessageFromPayload(payload),
+    };
+  }
+
+  const parsed = schema.safeParse(payload);
+
+  if (!parsed.success) {
+    return {
+      status: "unavailable",
+      httpStatus: response.status,
+      reason: `Dashboard control response did not match the shared contract: ${parsed.error.message}`,
+    };
+  }
+
+  return {
+    status: "available",
+    data: parsed.data,
+    httpStatus: response.status,
+  };
+}
+
+function errorMessageFromPayload(payload: unknown): string {
+  if (
+    typeof payload === "object" &&
+    payload !== null &&
+    "message" in payload &&
+    typeof payload.message === "string"
+  ) {
+    return payload.message;
+  }
+
+  return "Dashboard control request failed.";
 }
 
 function parseJson(input: string): { ok: true; value: unknown } | { ok: false } {
@@ -181,9 +294,80 @@ function applyDashboardEvent(
   }
 }
 
-function AdminActionsPanel() {
+function AdminActionsPanel({
+  erpChaos,
+  onErpChaosChange,
+}: {
+  erpChaos: BackendRead<ErpChaosStatus>;
+  onErpChaosChange: (next: BackendRead<ErpChaosStatus>) => void;
+}) {
+  const current = erpChaos.status === "available" ? erpChaos.data : null;
+  const [adminPassphrase, setAdminPassphrase] = useState("");
+  const [latencyMs, setLatencyMs] = useState("0");
+  const [maxTps, setMaxTps] = useState("100");
+  const [errorRate, setErrorRate] = useState("0");
+  const [forcedOutage, setForcedOutage] = useState(false);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (!current) {
+      return;
+    }
+
+    setLatencyMs(String(current.latencyMs));
+    setMaxTps(String(current.maxTps));
+    setErrorRate(String(current.errorRate));
+    setForcedOutage(current.forcedOutage);
+  }, [current]);
+
+  async function updateChaos() {
+    const parsedConfig = erpChaosConfigSchema.safeParse({
+      latencyMs: Number(latencyMs),
+      maxTps: Number(maxTps),
+      errorRate: Number(errorRate),
+      forcedOutage,
+    });
+
+    if (!parsedConfig.success) {
+      setStatusMessage("ERP chaos values are outside the accepted contract.");
+      return;
+    }
+
+    await submitChaosRequest(adminErpChaosProxyPath, {
+      method: "PUT",
+      headers: {
+        "content-type": "application/json",
+        [adminPassphraseHeaderName]: adminPassphrase,
+      },
+      body: JSON.stringify(parsedConfig.data),
+    });
+  }
+
+  async function resetChaos() {
+    await submitChaosRequest(adminErpChaosResetProxyPath, {
+      method: "POST",
+      headers: {
+        [adminPassphraseHeaderName]: adminPassphrase,
+      },
+    });
+  }
+
+  async function submitChaosRequest(path: string, init: RequestInit) {
+    setIsSubmitting(true);
+    setStatusMessage(null);
+
+    try {
+      const next = await readProxyJson(path, erpChaosStatusSchema, init);
+      onErpChaosChange(next);
+      setStatusMessage(next.status === "available" ? "ERP chaos controls updated." : next.reason);
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
   return (
-    <section className="col-span-4 min-w-0 rounded-lg border border-border bg-surface p-4 max-[900px]:col-span-full">
+    <section className="col-span-8 min-w-0 rounded-lg border border-border bg-surface p-4 max-[900px]:col-span-full">
       <div className="mb-4 flex items-start justify-between gap-3">
         <div>
           <p className="m-0 text-xs font-bold uppercase text-muted">Admin actions</p>
@@ -192,21 +376,115 @@ function AdminActionsPanel() {
           </h2>
         </div>
       </div>
-      <ul className="m-0 grid list-none gap-3 p-0">
-        <li className="flex items-center justify-between gap-3 border-t border-border pt-3 text-muted-strong">
-          <span>Reset active run</span>
-          <span className="font-semibold text-muted">not configured</span>
-        </li>
-        <li className="flex items-center justify-between gap-3 border-t border-border pt-3 text-muted-strong">
-          <span>Save preset</span>
-          <span className="font-semibold text-muted">not configured</span>
-        </li>
-        <li className="flex items-center justify-between gap-3 border-t border-border pt-3 text-muted-strong">
-          <span>ERP controls</span>
-          <span className="font-semibold text-muted">not configured</span>
-        </li>
-      </ul>
+      <div className="grid gap-4">
+        <div className="grid gap-3 border-t border-border pt-3">
+          <div className="grid grid-cols-4 gap-3 max-[700px]:grid-cols-2">
+            <LabeledInput
+              label="Admin passphrase"
+              onChange={setAdminPassphrase}
+              type="password"
+              value={adminPassphrase}
+            />
+            <LabeledInput label="Latency ms" onChange={setLatencyMs} value={latencyMs} />
+            <LabeledInput label="Max TPS" onChange={setMaxTps} value={maxTps} />
+            <LabeledInput
+              label="Error rate"
+              onChange={setErrorRate}
+              step="0.01"
+              value={errorRate}
+            />
+          </div>
+          <label className="flex items-center gap-2 text-sm font-semibold text-muted-strong">
+            <input
+              checked={forcedOutage}
+              onChange={(event) => setForcedOutage(event.target.checked)}
+              type="checkbox"
+            />
+            Forced outage
+          </label>
+          <div className="flex flex-wrap gap-2">
+            <button
+              className="min-h-10 rounded-lg border border-border bg-surface px-3.5 py-2.5 font-semibold text-muted-strong disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={isSubmitting}
+              onClick={() => {
+                void updateChaos();
+              }}
+              type="button"
+            >
+              Apply ERP Controls
+            </button>
+            <button
+              className="min-h-10 rounded-lg border border-border bg-surface px-3.5 py-2.5 font-semibold text-muted-strong disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={isSubmitting}
+              onClick={() => {
+                void resetChaos();
+              }}
+              type="button"
+            >
+              Reset ERP Controls
+            </button>
+          </div>
+          <dl className="m-0 grid grid-cols-4 gap-3 max-[700px]:grid-cols-2">
+            <FactLike label="Latency" value={current ? `${current.latencyMs}ms` : "n/a"} />
+            <FactLike label="Max TPS" value={current ? String(current.maxTps) : "n/a"} />
+            <FactLike label="Error rate" value={current ? String(current.errorRate) : "n/a"} />
+            <FactLike label="Outage" value={current?.forcedOutage ? "enabled" : "disabled"} />
+          </dl>
+          {erpChaos.status === "unavailable" ? (
+            <p className="m-0 text-sm font-semibold text-danger">{erpChaos.reason}</p>
+          ) : null}
+          {statusMessage ? (
+            <p className="m-0 text-sm font-semibold text-muted-strong">{statusMessage}</p>
+          ) : null}
+        </div>
+        <ul className="m-0 grid list-none gap-3 p-0">
+          <li className="flex items-center justify-between gap-3 border-t border-border pt-3 text-muted-strong">
+            <span>Demo reset and recovery</span>
+            <span className="font-semibold text-muted">pending backend boundary</span>
+          </li>
+          <li className="flex items-center justify-between gap-3 border-t border-border pt-3 text-muted-strong">
+            <span>Local maintenance cleanup</span>
+            <span className="font-semibold text-muted">pending backend boundary</span>
+          </li>
+        </ul>
+      </div>
     </section>
+  );
+}
+
+function LabeledInput({
+  label,
+  onChange,
+  step,
+  type = "number",
+  value,
+}: {
+  label: string;
+  onChange: (next: string) => void;
+  step?: string;
+  type?: "number" | "password";
+  value: string;
+}) {
+  return (
+    <label className="grid gap-1 text-sm font-semibold text-muted-strong">
+      <span>{label}</span>
+      <input
+        className="min-h-10 min-w-0 rounded-lg border border-border bg-bg px-3 py-2 text-ink"
+        onChange={(event) => onChange(event.target.value)}
+        step={step}
+        type={type}
+        value={value}
+      />
+    </label>
+  );
+}
+
+function FactLike({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0">
+      <dt className="mb-1 text-xs font-bold text-muted">{label}</dt>
+      <dd className="m-0 [overflow-wrap:anywhere] text-sm font-semibold text-ink">{value}</dd>
+    </div>
   );
 }
 

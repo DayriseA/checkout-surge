@@ -1,6 +1,9 @@
 import {
   type DashboardRecoveryResponse,
   dashboardRecoveryResponseSchema,
+  type ErpChaosStatus,
+  erpChaosStatusPath,
+  erpChaosStatusSchema,
   type HealthResponse,
   healthResponseSchema,
   type LivenessResponse,
@@ -8,6 +11,7 @@ import {
 } from "@checkout-surge/contracts";
 
 const DEFAULT_API_BASE_URL = "http://localhost:4000";
+const DEFAULT_MOCK_ERP_BASE_URL = "http://localhost:4100";
 
 interface ContractSchema<T> {
   safeParse(
@@ -31,21 +35,26 @@ export interface DashboardBackendSnapshot {
   liveness: BackendRead<LivenessResponse>;
   readiness: BackendRead<HealthResponse>;
   recovery: BackendRead<DashboardRecoveryResponse>;
+  erpChaos: BackendRead<ErpChaosStatus>;
 }
 
 function apiBaseUrl(): string {
   return (process.env.API_BASE_URL ?? DEFAULT_API_BASE_URL).replace(/\/+$/, "");
 }
 
+function mockErpBaseUrl(): string {
+  return (process.env.MOCK_ERP_BASE_URL ?? DEFAULT_MOCK_ERP_BASE_URL).replace(/\/+$/, "");
+}
+
 function errorReason(error: unknown): string {
   return error instanceof Error ? error.message : "Unknown API read failure";
 }
 
-async function readApi<T>(path: string, schema: ContractSchema<T>): Promise<BackendRead<T>> {
+async function readJson<T>(url: string, schema: ContractSchema<T>): Promise<BackendRead<T>> {
   let response: Response;
 
   try {
-    response = await fetch(`${apiBaseUrl()}${path}`, {
+    response = await fetch(url, {
       cache: "no-store",
       headers: { accept: "application/json" },
     });
@@ -86,11 +95,14 @@ async function readApi<T>(path: string, schema: ContractSchema<T>): Promise<Back
 }
 
 export async function getDashboardBackendSnapshot(): Promise<DashboardBackendSnapshot> {
-  const [liveness, readiness, recovery] = await Promise.all([
-    readApi("/health/live", livenessResponseSchema),
-    readApi("/health/ready", healthResponseSchema),
-    readApi("/dashboard/recovery", dashboardRecoveryResponseSchema),
+  const apiBase = apiBaseUrl();
+  const mockErpBase = mockErpBaseUrl();
+  const [liveness, readiness, recovery, erpChaos] = await Promise.all([
+    readJson(`${apiBase}/health/live`, livenessResponseSchema),
+    readJson(`${apiBase}/health/ready`, healthResponseSchema),
+    readJson(`${apiBase}/dashboard/recovery`, dashboardRecoveryResponseSchema),
+    readJson(`${mockErpBase}${erpChaosStatusPath}`, erpChaosStatusSchema),
   ]);
 
-  return { liveness, readiness, recovery };
+  return { liveness, readiness, recovery, erpChaos };
 }

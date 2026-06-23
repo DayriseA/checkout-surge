@@ -226,10 +226,14 @@ export function RecoveryStatusPanel({
   recovery,
   realtimeStatus,
   liveEventCount,
+  isRefreshing = false,
+  onRefresh,
 }: {
   recovery: BackendRead<DashboardRecoveryResponse>;
   realtimeStatus: RealtimeConnectionStatus;
   liveEventCount: number;
+  isRefreshing?: boolean;
+  onRefresh?: () => void;
 }) {
   const data = recoveryData(recovery);
   const run = data?.currentRun ?? null;
@@ -241,7 +245,19 @@ export function RecoveryStatusPanel({
           <p className={eyebrowClassName}>Recovery</p>
           <h2 className={panelTitleClassName}>Latest backend snapshot</h2>
         </div>
-        <StatusPill label={run?.status ?? "idle"} tone={run ? "pending" : "idle"} />
+        <div className="flex flex-wrap justify-end gap-2">
+          {onRefresh ? (
+            <button
+              className={`${controlButtonClassName} min-h-9 px-3 py-2 text-sm`}
+              disabled={isRefreshing}
+              onClick={onRefresh}
+              type="button"
+            >
+              {isRefreshing ? "Refreshing" : "Refresh"}
+            </button>
+          ) : null}
+          <StatusPill label={run?.status ?? "idle"} tone={run ? "pending" : "idle"} />
+        </div>
       </div>
       {data ? (
         <dl className={stackedFactGridClassName}>
@@ -258,7 +274,33 @@ export function RecoveryStatusPanel({
   );
 }
 
-export function LoadRunControlsPanel() {
+const publicPresetControls = [
+  "preview-1k",
+  "surge-5k",
+  "surge-10k",
+  "idempotency-check-200",
+  "public-custom",
+] as const;
+
+export function LoadRunControlsPanel({
+  recovery,
+}: {
+  recovery: BackendRead<DashboardRecoveryResponse>;
+}) {
+  const data = recoveryData(recovery);
+  const currentRun = data?.currentRun ?? null;
+  const isBlockedByCurrentRun =
+    currentRun?.status === "starting" ||
+    currentRun?.status === "active" ||
+    currentRun?.status === "draining";
+  const statusLabel = isBlockedByCurrentRun ? currentRun.status : "phase 7";
+  const disabledReason =
+    recovery.status !== "available"
+      ? "Recovery is unavailable, so start gating cannot be verified."
+      : isBlockedByCurrentRun
+        ? "A run is already starting, active, or draining."
+        : "Traffic execution and load-orchestrator delegation land in Phase 7.";
+
   return (
     <section className={panelNarrowClassName}>
       <div className={panelHeaderClassName}>
@@ -266,20 +308,16 @@ export function LoadRunControlsPanel() {
           <p className={eyebrowClassName}>Run controls</p>
           <h2 className={panelTitleClassName}>Preset traffic</h2>
         </div>
-        <StatusPill label="idle" tone="idle" />
+        <StatusPill label={statusLabel} tone={isBlockedByCurrentRun ? "pending" : "idle"} />
       </div>
       <div className="grid gap-2.5">
-        <button className={controlButtonClassName} type="button" disabled>
-          preview-1k
-        </button>
-        <button className={controlButtonClassName} type="button" disabled>
-          surge-5k
-        </button>
-        <button className={controlButtonClassName} type="button" disabled>
-          surge-10k
-        </button>
+        {publicPresetControls.map((presetSlug) => (
+          <button className={controlButtonClassName} key={presetSlug} type="button" disabled>
+            {presetSlug}
+          </button>
+        ))}
       </div>
-      <EmptyState>Traffic starts are not configured.</EmptyState>
+      <EmptyState>{disabledReason}</EmptyState>
     </section>
   );
 }

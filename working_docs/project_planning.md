@@ -487,15 +487,19 @@ Subtasks:
 - ✅ Favor clear, scannable operational UI over marketing-style presentation.
 - ✅ Make the dashboard explain system behavior during a burst without requiring logs.
 
-Completion summary: Task 6.3 now turns the dashboard shell into a usable operator surface backed by the API recovery read and validated SSE events. The shared recovery contract includes ERP resilience and business-outcome projections, while the API composes current run or catalog sale-offer context, inventory, queue, ERP, and business outcome read models behind a thin route. The web app renders scannable panels for service readiness, recovery/realtime status, request pressure, inventory drain, queue pressure, ERP health, confirmation delay, and run outcomes, then applies live run, inventory, queue, traffic metric, and business outcome events over the recovery baseline. Request-rate metrics remain empty until Phase 7 streams k6 data, privileged controls remain Task 6.4, and true p95 consistency-lag metrics remain Task 6.5/finalization work.
+Completion summary: Task 6.3 now turns the dashboard shell into a usable operator surface backed by the API recovery read and validated SSE events. The shared recovery contract includes ERP resilience and business-outcome projections, while the API composes current run or catalog sale-offer context, inventory, queue, ERP, and business outcome read models behind a thin route. The web app renders scannable panels for service readiness, recovery/realtime status, request pressure, inventory drain, queue pressure, ERP health, confirmation delay, and run outcomes, then applies live run, inventory, queue, traffic metric, and business outcome events over the recovery baseline. Request-rate metrics remain empty until Phase 7 streams k6 data, and true p95 consistency-lag metrics remain Task 6.5/finalization work.
 
-### ⬜ Task 6.4 - Add simulation control actions to the dashboard UI
+### ✅ Task 6.4 - Add simulation control affordances and protected dashboard boundaries
 
 Subtasks:
 
-- Add public-safe preset starts and admin-protected controls through the intended API/web boundary.
-- Add controls for ERP chaos knobs, recovery, reset, and local maintenance where appropriate.
-- Use the API-owned run lifecycle as the source of truth for start gating and recovery state.
+- ✅ Replace disabled dashboard placeholders with recovery-aware public preset start affordances and admin-protected control affordances routed through the intended web/API boundary.
+- ✅ Add admin-protected controls for ERP chaos diagnostics/knobs, recovery, reset, and local maintenance only where the underlying backend boundary already exists or can be represented honestly as a guarded pending action.
+- ✅ Keep service tokens and privileged mutation calls behind server-side dashboard/API boundaries; browser code must not call internal service-control endpoints directly.
+- ✅ Use the API-owned recovery read and current-run lifecycle as the source of truth for control disabled states and start/reset gating.
+- ✅ Do not implement k6 execution, load-orchestrator delegation, accepted traffic snapshot execution, or terminal benchmark finalization in this task; those remain Phase 7 and Phase 10 ownership.
+
+Completion summary: Task 6.4 now adds the scoped dashboard control surface without crossing into load execution. The web app exposes a same-origin dashboard recovery proxy, protected server-side Mock ERP chaos update/reset proxy routes, a recovery refresh action, recovery-gated public preset affordances that remain disabled until Phase 7, and an admin ERP chaos control panel that keeps the service token server-side. Reset/recovery and local maintenance controls are represented as protected pending actions because their backend boundaries have not landed yet. Real preset start acceptance, generated run sale-offer creation, k6 execution, load-orchestrator delegation, metrics streaming, and terminal benchmark lifecycle remain explicitly deferred to Phase 7 and Phase 10.
 
 ### ⬜ Task 6.5 - Add consistency-lag visibility
 
@@ -535,6 +539,7 @@ Subtasks:
 - Seed durable public presets, editable admin presets, and the public custom base in the database seed path if not already present.
 - Public preset set: `preview-1k`, `surge-5k`, `surge-10k`, `idempotency-check-200`, and read-only `public-custom`.
 - Ensure every accepted traffic snapshot includes API-generated `runId` and generated `saleOfferId`.
+- Promote any Phase 6.4 start affordances or proxy stubs into real accepted-start validation here; before this task lands, dashboard start controls must not imply that k6 traffic has been launched.
 
 ### ⬜ Task 7.2 - Build the load-orchestrator wrapper
 
@@ -544,6 +549,7 @@ Subtasks:
 - Generate k6 execution input from validated preset traffic snapshots without unsafe shell interpolation.
 - Parse k6 JSON output into stable traffic execution and metric payloads.
 - Keep the load orchestrator out of `packages/db`; persistence remains API-owned.
+- Own the first real k6 process execution boundary; Phase 6.4 dashboard controls must not spawn k6, shell out, or couple browser/server UI code to k6 internals.
 
 ### ⬜ Task 7.3 - Stream load metrics into the main application
 
@@ -562,6 +568,7 @@ Subtasks:
 - Have the API accept a run, establish dashboard recovery state, and delegate the accepted traffic snapshot to the load orchestrator.
 - Show current run state across `starting`, `active`, `draining`, `completed`, and `failed`.
 - Prevent overlapping or conflicting simulation runs through both UI affordances and API enforcement.
+- Convert the Phase 6.4 recovery-aware start affordances into real dashboard-triggered load execution only after Task 7.1 validation and Task 7.2 load-orchestrator execution are available.
 
 ### ⬜ Task 7.5 - Capture benchmark artifacts
 
