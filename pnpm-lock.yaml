@@ -69,6 +69,19 @@ importers:
       '@checkout-surge/logger':
         specifier: workspace:*
         version: link:../../packages/logger
+      fastify:
+        specifier: ^5.8.5
+        version: 5.8.5
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+    devDependencies:
+      tsx:
+        specifier: ^4.22.4
+        version: 4.22.4
+      vitest:
+        specifier: ^4.1.9
+        version: 4.1.9(@types/node@22.19.21)(@vitest/coverage-v8@4.1.9)(vite@8.0.16(@types/node@22.19.21)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4))
 
   apps/mock-erp:
     dependencies:

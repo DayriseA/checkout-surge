@@ -1,0 +1,144 @@
+import {
+  controlServiceTokenHeaderName,
+  healthResponseSchema,
+  livenessResponseSchema,
+  trafficExecutionStartPath,
+  trafficExecutionStartRequestSchema,
+  trafficExecutionStartResponseSchema,
+} from "@checkout-surge/contracts";
+import {
+  type CheckoutSurgeLogger,
+  correlationIdHeaderName,
+  createLivenessPayload,
+  createReadinessResponse,
+  normalizeCorrelationId,
+} from "@checkout-surge/logger";
+import { type FastifyReply, type FastifyRequest, fastify } from "fastify";
+import { ZodError } from "zod";
+import type { TrafficExecutionService } from "./application/traffic-execution-service.js";
+import type { LoadOrchestratorConfig } from "./runtime/config.js";
+import type { LoadOrchestratorReadiness } from "./runtime/readiness.js";
+
+declare module "fastify" {
+  interface FastifyRequest {
+    correlationId: string;
+  }
+}
+
+export interface BuildLoadOrchestratorServerOptions {
+  config: LoadOrchestratorConfig;
+  logger: CheckoutSurgeLogger;
+  readiness: LoadOrchestratorReadiness;
+  trafficExecutionService: TrafficExecutionService;
+  startedAt?: Date;
+}
+
+export function buildLoadOrchestratorServer(options: BuildLoadOrchestratorServerOptions) {
+  const app = fastify({ loggerInstance: options.logger });
+
+  app.addHook("onRequest", async (request, reply) => {
+    request.correlationId = normalizeCorrelationId(request.headers[correlationIdHeaderName]);
+    reply.header(correlationIdHeaderName, request.correlationId);
+  });
+
+  app.setErrorHandler((error, request, reply) => {
+    const correlationId = request.correlationId ?? normalizeCorrelationId(undefined);
+
+    if (error instanceof ZodError) {
+      return reply.status(400).send(
+        errorPayload("invalid_request", "Request validation failed.", correlationId, {
+          issues: error.issues,
+        }),
+      );
+    }
+
+    request.log.error({ err: error, correlationId }, "Unhandled load-orchestrator error.");
+    return reply
+      .status(500)
+      .send(
+        errorPayload(
+          "internal_error",
+          "The load orchestrator could not complete the request.",
+          correlationId,
+        ),
+      );
+  });
+
+  app.get("/health/live", async () =>
+    livenessResponseSchema.parse(
+      createLivenessPayload({
+        service: "load-orchestrator",
+        ...(options.startedAt ? { startedAt: options.startedAt } : {}),
+      }),
+    ),
+  );
+
+  app.get("/health/ready", async (_request, reply) => {
+    const response = healthResponseSchema.parse(
+      createReadinessResponse({
+        service: "load-orchestrator",
+        checks: await options.readiness.checks(),
+        ...(options.startedAt ? { startedAt: options.startedAt } : {}),
+      }),
+    );
+
+    return reply.status(response.status === "unavailable" ? 503 : 200).send(response);
+  });
+
+  app.post(trafficExecutionStartPath, async (request, reply) => {
+    const unauthorized = requireControlServiceToken(
+      request,
+      reply,
+      options.config.controlServiceToken,
+    );
+    if (unauthorized) {
+      return unauthorized;
+    }
+
+    const startRequest = trafficExecutionStartRequestSchema.parse(request.body);
+    const response = trafficExecutionStartResponseSchema.parse(
+      await options.trafficExecutionService.start(startRequest),
+    );
+    return reply.status(202).send(response);
+  });
+
+  return app;
+}
+
+function requireControlServiceToken(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  expectedToken: string,
+): FastifyReply | null {
+  const suppliedToken = request.headers[controlServiceTokenHeaderName];
+  const token = Array.isArray(suppliedToken) ? suppliedToken[0] : suppliedToken;
+
+  if (token === expectedToken) {
+    return null;
+  }
+
+  return reply
+    .status(401)
+    .send(
+      errorPayload(
+        "control_token_required",
+        "A valid control service token is required.",
+        request.correlationId,
+      ),
+    );
+}
+
+function errorPayload(
+  code: string,
+  message: string,
+  correlationId: string,
+  details?: Record<string, unknown>,
+) {
+  return {
+    code,
+    message,
+    correlationId,
+    timestamp: new Date().toISOString(),
+    ...(details ? { details } : {}),
+  };
+}
