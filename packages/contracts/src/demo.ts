@@ -38,6 +38,10 @@ export const startDemoRunPath = "/demo/runs/start" as const;
 export const runHistoryPath = "/demo/runs/history" as const;
 export const adminDemoResetPath = "/admin/demo/reset" as const;
 export const adminMaintenanceCleanupRunsPath = "/admin/demo/runs/cleanup" as const;
+export const adminPresetListPath = "/admin/demo/presets" as const;
+export const adminPresetSavePath = "/admin/demo/presets/save" as const;
+export const adminPresetDuplicatePath = "/admin/demo/presets/duplicate" as const;
+export const adminPresetCopyToCustomPath = "/admin/demo/presets/copy-to-custom" as const;
 export const demoRunOperatorModeHeaderName = "x-demo-operator-mode" as const;
 export const publicVisitorIdHeaderName = "x-public-visitor-id" as const;
 
@@ -285,6 +289,40 @@ export const saveDemoPresetRequestSchema = z
   })
   .strict();
 export type SaveDemoPresetRequest = z.infer<typeof saveDemoPresetRequestSchema>;
+
+export const adminPresetListResponseSchema = z
+  .object({
+    presets: z.array(demoPresetContractSchema),
+    timestamp: isoTimestampSchema,
+  })
+  .strict();
+export type AdminPresetListResponse = z.infer<typeof adminPresetListResponseSchema>;
+
+export const adminPresetMutationResponseSchema = z
+  .object({
+    preset: demoPresetContractSchema,
+    timestamp: isoTimestampSchema,
+  })
+  .strict();
+export type AdminPresetMutationResponse = z.infer<typeof adminPresetMutationResponseSchema>;
+
+export const duplicateDemoPresetRequestSchema = z
+  .object({
+    sourceSlug: z.string().trim().min(1),
+    targetSlug: z.string().trim().min(1),
+    displayName: z.string().trim().min(1).optional(),
+    correlationId: correlationIdSchema.optional(),
+  })
+  .strict();
+export type DuplicateDemoPresetRequest = z.infer<typeof duplicateDemoPresetRequestSchema>;
+
+export const copyDemoPresetToCustomRequestSchema = z
+  .object({
+    sourceSlug: z.string().trim().min(1),
+    correlationId: correlationIdSchema.optional(),
+  })
+  .strict();
+export type CopyDemoPresetToCustomRequest = z.infer<typeof copyDemoPresetToCustomRequestSchema>;
 
 export const adminDeleteRunHistoryRequestSchema = z
   .object({

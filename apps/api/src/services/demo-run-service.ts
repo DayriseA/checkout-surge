@@ -1,11 +1,17 @@
 import { randomUUID } from "node:crypto";
 import {
   type AcceptedRunConfigSnapshot,
+  type AdminPresetListResponse,
+  type AdminPresetMutationResponse,
   acceptedRunConfigSnapshotSchema,
+  adminPresetListResponseSchema,
+  adminPresetMutationResponseSchema,
+  type CopyDemoPresetToCustomRequest,
   controlServiceTokenHeaderName,
   type DemoPresetContract,
   type DemoRunConfigOverride,
   type DemoRunSnapshot,
+  type DuplicateDemoPresetRequest,
   demoPresetContractSchema,
   demoRunSnapshotSchema,
   type LoadMetricIngestRequest,
@@ -18,6 +24,7 @@ import {
   publicPresetListResponseSchema,
   publicRuntimePolicyResponseSchema,
   publicRuntimePolicySchema,
+  type SaveDemoPresetRequest,
   type StartDemoRunRequest,
   type StartDemoRunResponse,
   startDemoRunResponseSchema,
@@ -73,6 +80,10 @@ export interface DashboardTrafficMetricReader {
 
 export interface DemoRunController {
   listPublicPresets(): Promise<PublicPresetListResponse>;
+  listAdminPresets(): Promise<AdminPresetListResponse>;
+  saveAdminPreset(request: SaveDemoPresetRequest): Promise<AdminPresetMutationResponse>;
+  duplicatePreset(request: DuplicateDemoPresetRequest): Promise<AdminPresetMutationResponse>;
+  copyPresetToCustom(request: CopyDemoPresetToCustomRequest): Promise<AdminPresetMutationResponse>;
   getPublicRuntimePolicy(): Promise<PublicRuntimePolicyResponse>;
   startRun(request: StartDemoRunCommand, correlationId: string): Promise<StartDemoRunResponse>;
   ingestMetrics(input: LoadMetricIngestRequest): Promise<void>;
@@ -236,6 +247,122 @@ export class DemoRunService implements DemoRunController {
     return publicPresetListResponseSchema.parse({
       presets: rows.map(toDemoPresetContract),
       timestamp: this.now().toISOString(),
+    });
+  }
+
+  async listAdminPresets(): Promise<AdminPresetListResponse> {
+    const rows = await this.options.db
+      .select()
+      .from(demoPresets)
+      .orderBy(sql`(${demoPresets.display}->>'sortOrder')::int`, demoPresets.slug);
+
+    return adminPresetListResponseSchema.parse({
+      presets: rows.map(toDemoPresetContract),
+      timestamp: this.now().toISOString(),
+    });
+  }
+
+  async saveAdminPreset(request: SaveDemoPresetRequest): Promise<AdminPresetMutationResponse> {
+    const now = this.now();
+    const preset = await this.readPreset(request.slug);
+    ensureEditableAdminPreset(preset);
+
+    const [updated] = await this.options.db
+      .update(demoPresets)
+      .set({
+        display: request.display,
+        trafficConfig: request.trafficConfig,
+        inventoryConfig: request.inventoryConfig,
+        erpConfig: request.erpConfig,
+        backpressureConfig: request.backpressureConfig,
+        updatedAt: now,
+      })
+      .where(eq(demoPresets.slug, request.slug))
+      .returning();
+
+    return adminPresetMutationResponseSchema.parse({
+      preset: toDemoPresetContract(requirePresetRow(updated, request.slug)),
+      timestamp: now.toISOString(),
+    });
+  }
+
+  async duplicatePreset(request: DuplicateDemoPresetRequest): Promise<AdminPresetMutationResponse> {
+    const now = this.now();
+    const source = await this.readPreset(request.sourceSlug);
+    const targetSlug = normalizeSlug(request.targetSlug);
+    const [existingTarget] = await this.options.db
+      .select({ id: demoPresets.id })
+      .from(demoPresets)
+      .where(eq(demoPresets.slug, targetSlug))
+      .limit(1);
+
+    if (existingTarget) {
+      throw new DemoRunValidationError("preset_slug_conflict", "A preset already uses that slug.", {
+        slug: targetSlug,
+      });
+    }
+
+    if (source.slug === "public-custom") {
+      throw new DemoRunValidationError(
+        "preset_not_duplicable",
+        "The public custom base preset cannot be duplicated.",
+      );
+    }
+
+    const [inserted] = await this.options.db
+      .insert(demoPresets)
+      .values({
+        id: this.generateId(),
+        slug: targetSlug,
+        visibility: "admin",
+        isEditable: true,
+        isCustom: false,
+        display: {
+          ...source.display,
+          name: request.displayName ?? `${source.display.name} Copy`,
+        },
+        trafficConfig: source.trafficConfig,
+        inventoryConfig: source.inventoryConfig,
+        erpConfig: source.erpConfig,
+        backpressureConfig: source.backpressureConfig,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .returning();
+
+    return adminPresetMutationResponseSchema.parse({
+      preset: toDemoPresetContract(requirePresetRow(inserted, targetSlug)),
+      timestamp: now.toISOString(),
+    });
+  }
+
+  async copyPresetToCustom(
+    request: CopyDemoPresetToCustomRequest,
+  ): Promise<AdminPresetMutationResponse> {
+    const now = this.now();
+    const source = await this.readPreset(request.sourceSlug);
+    const custom = await this.readPreset("custom");
+    ensureEditableAdminPreset(custom);
+
+    const [updated] = await this.options.db
+      .update(demoPresets)
+      .set({
+        display: {
+          ...custom.display,
+          description: `Scratch copy of ${source.display.name}.`,
+        },
+        trafficConfig: source.trafficConfig,
+        inventoryConfig: source.inventoryConfig,
+        erpConfig: source.erpConfig,
+        backpressureConfig: source.backpressureConfig,
+        updatedAt: now,
+      })
+      .where(eq(demoPresets.slug, "custom"))
+      .returning();
+
+    return adminPresetMutationResponseSchema.parse({
+      preset: toDemoPresetContract(requirePresetRow(updated, "custom")),
+      timestamp: now.toISOString(),
     });
   }
 
@@ -805,6 +932,44 @@ function toDemoPresetContract(preset: typeof demoPresets.$inferSelect): DemoPres
     createdAt: preset.createdAt.toISOString(),
     updatedAt: preset.updatedAt.toISOString(),
   });
+}
+
+function ensureEditableAdminPreset(preset: DemoPresetContract): void {
+  if (preset.visibility !== "admin" || !preset.isEditable) {
+    throw new DemoRunValidationError(
+      "preset_not_editable",
+      "Only editable admin presets can be changed.",
+      { slug: preset.slug },
+    );
+  }
+}
+
+function normalizeSlug(slug: string): string {
+  const normalized = slug
+    .trim()
+    .toLowerCase()
+    .replaceAll(/[^a-z0-9]+/g, "-")
+    .replaceAll(/^-+|-+$/g, "");
+
+  if (!normalized) {
+    throw new DemoRunValidationError(
+      "invalid_preset_slug",
+      "Preset slug must contain a letter or number.",
+    );
+  }
+
+  return normalized;
+}
+
+function requirePresetRow(
+  preset: typeof demoPresets.$inferSelect | undefined,
+  slug: string,
+): typeof demoPresets.$inferSelect {
+  if (!preset) {
+    throw new DemoRunValidationError("preset_not_found", "Demo preset was not found.", { slug });
+  }
+
+  return preset;
 }
 
 function mergeConfigSnapshot(

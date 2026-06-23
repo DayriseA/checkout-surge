@@ -5,6 +5,10 @@ import { fileURLToPath } from "node:url";
 import {
   adminDemoResetPath,
   adminMaintenanceCleanupRunsPath,
+  adminPresetCopyToCustomPath,
+  adminPresetDuplicatePath,
+  adminPresetListPath,
+  adminPresetSavePath,
   type BusinessOutcomeSummary,
   buyResponseSchema,
   controlServiceTokenHeaderName,
@@ -353,10 +357,48 @@ function acceptedRunConfigSnapshotFixture() {
   };
 }
 
+function demoPresetFixture(slug: string) {
+  return {
+    id:
+      slug === "custom"
+        ? "44444444-4444-4444-8444-444444444443"
+        : "55555555-5555-4555-8555-555555555555",
+    slug,
+    visibility: "admin" as const,
+    isEditable: true,
+    isCustom: slug === "custom",
+    display: {
+      name: slug === "custom" ? "Custom" : "Preview Copy",
+      description: "Admin preset fixture.",
+      sortOrder: 10,
+      outcomeFocus: [],
+    },
+    ...acceptedRunConfigSnapshotFixture(),
+    createdAt: "2026-06-20T00:00:10.000Z",
+    updatedAt: "2026-06-20T00:00:10.000Z",
+  };
+}
+
 function demoRunControllerFixture(): DemoRunController {
   return {
     listPublicPresets: async () => ({
       presets: [],
+      timestamp: "2026-06-20T00:00:10.000Z",
+    }),
+    listAdminPresets: async () => ({
+      presets: [],
+      timestamp: "2026-06-20T00:00:10.000Z",
+    }),
+    saveAdminPreset: async () => ({
+      preset: demoPresetFixture("custom"),
+      timestamp: "2026-06-20T00:00:10.000Z",
+    }),
+    duplicatePreset: async () => ({
+      preset: demoPresetFixture("preview-copy"),
+      timestamp: "2026-06-20T00:00:10.000Z",
+    }),
+    copyPresetToCustom: async () => ({
+      preset: demoPresetFixture("custom"),
       timestamp: "2026-06-20T00:00:10.000Z",
     }),
     getPublicRuntimePolicy: async () => ({
@@ -978,6 +1020,77 @@ describe("API gateway routes", () => {
       olderThanDays: 14,
       correlationId: "corr-cleanup-test",
     });
+  });
+
+  it("protects and delegates admin preset management endpoints", async () => {
+    const listAdminPresets = vi.fn(demoRunControllerFixture().listAdminPresets);
+    const saveAdminPreset = vi.fn(demoRunControllerFixture().saveAdminPreset);
+    const duplicatePreset = vi.fn(demoRunControllerFixture().duplicatePreset);
+    const copyPresetToCustom = vi.fn(demoRunControllerFixture().copyPresetToCustom);
+    const server = await trackedServer({
+      persistence: new AcceptingPersistence(),
+      demoRunService: {
+        ...demoRunControllerFixture(),
+        listAdminPresets,
+        saveAdminPreset,
+        duplicatePreset,
+        copyPresetToCustom,
+      },
+    });
+    const headers = { [controlServiceTokenHeaderName]: "test-control-token" };
+    const savePayload = {
+      slug: "custom",
+      display: {
+        name: "Custom",
+        description: "Updated custom preset.",
+        sortOrder: 10,
+        outcomeFocus: [],
+      },
+      ...acceptedRunConfigSnapshotFixture(),
+    };
+
+    expect((await server.inject({ method: "GET", url: adminPresetListPath })).statusCode).toBe(401);
+    expect(
+      (await server.inject({ method: "GET", url: adminPresetListPath, headers })).statusCode,
+    ).toBe(200);
+    expect(
+      (
+        await server.inject({
+          method: "POST",
+          url: adminPresetSavePath,
+          headers,
+          payload: savePayload,
+        })
+      ).statusCode,
+    ).toBe(200);
+    expect(
+      (
+        await server.inject({
+          method: "POST",
+          url: adminPresetDuplicatePath,
+          headers,
+          payload: { sourceSlug: "preview-1k", targetSlug: "preview-copy" },
+        })
+      ).statusCode,
+    ).toBe(201);
+    expect(
+      (
+        await server.inject({
+          method: "POST",
+          url: adminPresetCopyToCustomPath,
+          headers,
+          payload: { sourceSlug: "preview-1k" },
+        })
+      ).statusCode,
+    ).toBe(200);
+
+    expect(listAdminPresets).toHaveBeenCalledOnce();
+    expect(saveAdminPreset).toHaveBeenCalledWith(savePayload);
+    expect(duplicatePreset).toHaveBeenCalledWith({
+      sourceSlug: "preview-1k",
+      targetSlug: "preview-copy",
+    });
+    expect(copyPresetToCustom).toHaveBeenCalledWith({ sourceSlug: "preview-1k" });
   });
 
   it("uses the trusted public visitor header instead of browser-supplied JSON", async () => {

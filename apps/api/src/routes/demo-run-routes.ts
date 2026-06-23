@@ -1,13 +1,20 @@
 import {
+  adminPresetCopyToCustomPath,
+  adminPresetDuplicatePath,
+  adminPresetListPath,
+  adminPresetSavePath,
   controlServiceTokenHeaderName,
+  copyDemoPresetToCustomRequestSchema,
   demoRunOperatorModeHeaderName,
+  duplicateDemoPresetRequestSchema,
   internalLoadMetricIngestPath,
   internalTrafficCompletionPath,
   loadMetricIngestRequestSchema,
   operatorModeSchema,
-  publicVisitorIdHeaderName,
   publicPresetListPath,
   publicRuntimePolicyPath,
+  publicVisitorIdHeaderName,
+  saveDemoPresetRequestSchema,
   startDemoRunPath,
   startDemoRunRequestSchema,
   trafficCompletionReportSchema,
@@ -35,6 +42,60 @@ export function registerDemoRunRoutes(
     return reply.status(200).send(await options.demoRunService.getPublicRuntimePolicy());
   });
 
+  app.get(adminPresetListPath, async (request, reply) => {
+    const unauthorized = requireControlServiceToken(request, reply, options.controlServiceToken);
+    if (unauthorized) {
+      return unauthorized;
+    }
+
+    return reply.status(200).send(await options.demoRunService.listAdminPresets());
+  });
+
+  app.post(adminPresetSavePath, async (request, reply) => {
+    const unauthorized = requireControlServiceToken(request, reply, options.controlServiceToken);
+    if (unauthorized) {
+      return unauthorized;
+    }
+
+    return reply
+      .status(200)
+      .send(
+        await options.demoRunService.saveAdminPreset(
+          saveDemoPresetRequestSchema.parse(request.body),
+        ),
+      );
+  });
+
+  app.post(adminPresetDuplicatePath, async (request, reply) => {
+    const unauthorized = requireControlServiceToken(request, reply, options.controlServiceToken);
+    if (unauthorized) {
+      return unauthorized;
+    }
+
+    return reply
+      .status(201)
+      .send(
+        await options.demoRunService.duplicatePreset(
+          duplicateDemoPresetRequestSchema.parse(request.body),
+        ),
+      );
+  });
+
+  app.post(adminPresetCopyToCustomPath, async (request, reply) => {
+    const unauthorized = requireControlServiceToken(request, reply, options.controlServiceToken);
+    if (unauthorized) {
+      return unauthorized;
+    }
+
+    return reply
+      .status(200)
+      .send(
+        await options.demoRunService.copyPresetToCustom(
+          copyDemoPresetToCustomRequestSchema.parse(request.body),
+        ),
+      );
+  });
+
   app.post(startDemoRunPath, async (request, reply) => {
     const parsedRequest = startDemoRunRequestSchema.parse(request.body);
     const correlationId = normalizeCorrelationId(
@@ -44,17 +105,15 @@ export function registerDemoRunRoutes(
     reply.header(correlationIdHeaderName, correlationId);
 
     try {
-      return reply
-        .status(202)
-        .send(
-          await options.demoRunService.startRun(
-            {
-              ...parsedRequest,
-              ...deriveRunStartPrincipal(request, options.controlServiceToken),
-            },
-            correlationId,
-          ),
-        );
+      return reply.status(202).send(
+        await options.demoRunService.startRun(
+          {
+            ...parsedRequest,
+            ...deriveRunStartPrincipal(request, options.controlServiceToken),
+          },
+          correlationId,
+        ),
+      );
     } catch (error) {
       throw mapDemoRunError(error);
     }

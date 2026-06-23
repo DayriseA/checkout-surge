@@ -1,12 +1,20 @@
 import {
   adminDemoResetPath,
   adminMaintenanceCleanupRunsPath,
+  adminPresetCopyToCustomPath,
+  adminPresetDuplicatePath,
+  adminPresetListPath,
+  adminPresetSavePath,
   controlServiceTokenHeaderName,
   demoRunOperatorModeHeaderName,
   publicVisitorIdHeaderName,
   startDemoRunPath,
 } from "@checkout-surge/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { POST as copyPresetToCustom } from "../src/app/api/admin/demo/presets/copy-to-custom/route.js";
+import { POST as duplicatePreset } from "../src/app/api/admin/demo/presets/duplicate/route.js";
+import { GET as listAdminPresets } from "../src/app/api/admin/demo/presets/route.js";
+import { POST as saveAdminPreset } from "../src/app/api/admin/demo/presets/save/route.js";
 import { POST as resetDemo } from "../src/app/api/admin/demo/reset/route.js";
 import { POST as cleanupRuns } from "../src/app/api/admin/demo/runs/cleanup/route.js";
 import { POST as resetErpChaos } from "../src/app/api/admin/erp-chaos/reset/route.js";
@@ -329,6 +337,94 @@ describe("dashboard control proxy routes", () => {
     );
     expect(payload.deletedRunCount).toBe(2);
   });
+
+  it("forwards admin preset management with validated bodies", async () => {
+    process.env.ADMIN_DASHBOARD_PASSPHRASE = "admin-pass";
+    process.env.CONTROL_SERVICE_TOKEN = "control-token";
+    process.env.API_BASE_URL = "http://api.internal";
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      expect((init?.headers as Record<string, string>)[controlServiceTokenHeaderName]).toBe(
+        "control-token",
+      );
+
+      if (String(input).endsWith(adminPresetListPath)) {
+        expect(init?.method).toBe("GET");
+        return jsonResponse({
+          presets: [demoPresetPayload("custom")],
+          timestamp: "2026-06-20T00:00:10.000Z",
+        });
+      }
+
+      expect(init?.method).toBe("POST");
+      return jsonResponse({
+        preset: demoPresetPayload("custom"),
+        timestamp: "2026-06-20T00:00:10.000Z",
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const headers = {
+      "content-type": "application/json",
+      [adminPassphraseHeaderName]: "admin-pass",
+    };
+    const savePayload = {
+      slug: "custom",
+      display: {
+        name: "Custom",
+        description: "Updated custom preset.",
+        sortOrder: 120,
+        outcomeFocus: [],
+      },
+      ...configSnapshotPayload(),
+    };
+
+    const listResponse = await listAdminPresets(
+      new Request("http://dashboard.local/api/admin/demo/presets", { headers }),
+    );
+    const saveResponse = await saveAdminPreset(
+      new Request("http://dashboard.local/api/admin/demo/presets/save", {
+        method: "POST",
+        headers,
+        body: JSON.stringify(savePayload),
+      }),
+    );
+    const duplicateResponse = await duplicatePreset(
+      new Request("http://dashboard.local/api/admin/demo/presets/duplicate", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ sourceSlug: "preview-1k", targetSlug: "preview-copy" }),
+      }),
+    );
+    const copyResponse = await copyPresetToCustom(
+      new Request("http://dashboard.local/api/admin/demo/presets/copy-to-custom", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ sourceSlug: "preview-1k" }),
+      }),
+    );
+    const invalidDuplicate = await duplicatePreset(
+      new Request("http://dashboard.local/api/admin/demo/presets/duplicate", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ sourceSlug: "" }),
+      }),
+    );
+
+    expect(listResponse.status).toBe(200);
+    expect(saveResponse.status).toBe(200);
+    expect(duplicateResponse.status).toBe(200);
+    expect(copyResponse.status).toBe(200);
+    expect(invalidDuplicate.status).toBe(400);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(`http://api.internal${adminPresetListPath}`);
+    expect(String(fetchMock.mock.calls[1]?.[0])).toBe(`http://api.internal${adminPresetSavePath}`);
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual(savePayload);
+    expect(String(fetchMock.mock.calls[2]?.[0])).toBe(
+      `http://api.internal${adminPresetDuplicatePath}`,
+    );
+    expect(String(fetchMock.mock.calls[3]?.[0])).toBe(
+      `http://api.internal${adminPresetCopyToCustomPath}`,
+    );
+  });
 });
 
 function erpChaosConfigPayload() {
@@ -405,6 +501,60 @@ function startDemoRunPayload() {
     recovery: { establishedAt: "2026-06-20T00:00:10.000Z" },
     correlationId: "corr-web-start",
     timestamp: "2026-06-20T00:00:10.000Z",
+  };
+}
+
+function demoPresetPayload(slug: string) {
+  return {
+    id:
+      slug === "custom"
+        ? "44444444-4444-4444-8444-444444444443"
+        : "33333333-3333-4333-8333-333333333331",
+    slug,
+    visibility: slug === "custom" ? "admin" : "public",
+    isEditable: slug === "custom",
+    isCustom: slug === "custom",
+    display: {
+      name: slug === "custom" ? "Custom" : "Preview 1k",
+      description: "Preset fixture.",
+      sortOrder: 120,
+      outcomeFocus: [],
+    },
+    ...configSnapshotPayload(),
+    createdAt: "2026-06-20T00:00:10.000Z",
+    updatedAt: "2026-06-20T00:00:10.000Z",
+  };
+}
+
+function configSnapshotPayload() {
+  return {
+    trafficConfig: {
+      mode: "buyer-spike",
+      buyerCount: 1000,
+      duplicateEachBuyerAttempt: false,
+      startDelaySeconds: 0,
+      maxDurationSeconds: 2,
+      quantityPerAttempt: 1,
+    },
+    inventoryConfig: {
+      startingStock: 250,
+      quantityPerCheckout: 1,
+      reservationHoldMinutes: 15,
+    },
+    erpConfig: {
+      latencyMs: 80,
+      maxTps: 250,
+      errorRate: 0,
+      forcedOutage: false,
+      requestTimeoutMs: 2000,
+    },
+    backpressureConfig: {
+      queueName: "orders:process",
+      physicalQueueName: "orders-process",
+      orderProcessConcurrency: 5,
+      drainTimeoutSeconds: 300,
+      pendingPersistenceRetryAfterSeconds: 30,
+    },
   };
 }
 
