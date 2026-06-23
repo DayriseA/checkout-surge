@@ -524,7 +524,7 @@ Completion summary: Task 6.6 completes the Phase 6 test pass without adding Phas
 
 ---
 
-## ⬜ Phase 7 - Load Generation and Metrics Streaming
+## ✅ Phase 7 - Load Generation and Metrics Streaming
 
 ### Goal
 
@@ -534,7 +534,9 @@ Primary reference:
 
 - `docs/load_generation_metrics_streaming.md`
 
-### ⬜ Task 7.1 - Implement preset traffic contracts and validation
+Completion summary: Phase 7 now starts bounded public/admin demo runs through the API lifecycle, creates generated run sale offers with isolated Redis inventory, delegates accepted snapshots to a dedicated load-orchestrator service, streams k6-derived traffic metrics back through API-owned ingestion and dashboard realtime, and stores traffic-completion artifacts with business outcome and Redis terminal inventory snapshots. Browser controls start runs only through same-origin web proxy routes, and internal load ingestion is protected by the shared service token. Immutable terminal run-history summaries and full business-boundary finalization remain Phase 10 ownership.
+
+### ✅ Task 7.1 - Implement preset traffic contracts and validation
 
 Subtasks:
 
@@ -545,7 +547,7 @@ Subtasks:
 - Ensure every accepted traffic snapshot includes API-generated `runId` and generated `saleOfferId`.
 - Promote any Phase 6.4 start affordances or proxy stubs into real accepted-start validation here; before this task lands, dashboard start controls must not imply that k6 traffic has been launched.
 
-### ⬜ Task 7.2 - Build the load-orchestrator wrapper
+### ✅ Task 7.2 - Build the load-orchestrator wrapper
 
 Subtasks:
 
@@ -555,7 +557,7 @@ Subtasks:
 - Keep the load orchestrator out of `packages/db`; persistence remains API-owned.
 - Own the first real k6 process execution boundary; Phase 6.4 dashboard controls must not spawn k6, shell out, or couple browser/server UI code to k6 internals.
 
-### ⬜ Task 7.3 - Stream load metrics into the main application
+### ✅ Task 7.3 - Stream load metrics into the main application
 
 Subtasks:
 
@@ -564,7 +566,7 @@ Subtasks:
 - Preserve run metadata so benchmark sessions are distinguishable.
 - Keep HTTP-level traffic metrics separate from asynchronous business outcomes.
 
-### ⬜ Task 7.4 - Connect dashboard actions to load execution
+### ✅ Task 7.4 - Connect dashboard actions to load execution
 
 Subtasks:
 
@@ -574,7 +576,7 @@ Subtasks:
 - Prevent overlapping or conflicting simulation runs through both UI affordances and API enforcement.
 - Convert the Phase 6.4 recovery-aware start affordances into real dashboard-triggered load execution only after Task 7.1 validation and Task 7.2 load-orchestrator execution are available.
 
-### ⬜ Task 7.5 - Capture benchmark artifacts
+### ✅ Task 7.5 - Capture benchmark artifacts
 
 Subtasks:
 
@@ -588,7 +590,7 @@ Implementation note:
 
 - Phase 7 records k6 traffic completion payloads, business-outcome-at-traffic-completion snapshots, Redis-derived terminal inventory snapshots, and aggregate sold-out reservation outcomes in API-owned finalization/artifact records. Immutable terminal `demo_run_summaries` remain Phase 10 ownership because final benchmark completion still needs API-owned business-boundary finalization after asynchronous order work drains.
 
-### ⬜ Task 7.6 - Add automated tests for load generation and metrics streaming
+### ✅ Task 7.6 - Add automated tests for load generation and metrics streaming
 
 Subtasks:
 
