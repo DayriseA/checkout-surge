@@ -1,10 +1,10 @@
 # Checkout-Surge
 
-> 🚧**_[Work in Progress]_** 🚧  / Document subject to changes
+> 🚧**_[Work in Progress]_** 🚧 / Document subject to changes
 
-Checkout-Surge is intended to become a realistic limited-inventory checkout simulation for surge traffic. The completed project must use Redis atomic reservations, BullMQ workers, durable PostgreSQL records, and observable backpressure to show how a checkout system can absorb request bursts without overselling or overwhelming a slow downstream business system. The same pressure pattern appears in ticket launches, product drops, presales, and other scarcity-driven purchase flows. The mock ERP gives the downstream dependency a concrete back-office shape, but the boundary applies equally to payment, risk, warehouse, fulfillment, tax, accounting, supplier APIs, or other fragile business systems.
+Checkout-Surge is a realistic limited-inventory checkout simulation for surge traffic. The implemented Node.js track uses Redis atomic reservations, BullMQ workers, durable PostgreSQL records, and observable backpressure to show how a checkout system can absorb request bursts without overselling or overwhelming a slow downstream business system. The same pressure pattern appears in ticket launches, product drops, presales, and other scarcity-driven purchase flows. The mock ERP gives the downstream dependency a concrete back-office shape, but the boundary applies equally to payment, risk, warehouse, fulfillment, tax, accounting, supplier APIs, or other fragile business systems.
 
-This repository intentionally starts from documentation, workspace guidance, and development-environment scaffolding rather than application source code. Treat the commands, paths, package names, and runtime behavior described here as the target contract that the implementation must create.
+The current implementation covers the core simulation through Phase 8 of the roadmap: inventory hot path, async order processing, mock ERP resilience, realtime dashboard recovery, k6 load orchestration, simulated notifications, protected admin controls, demo reset/cleanup tools, and admin preset management. Containerized full-runtime packaging and final benchmark lifecycle ownership remain later roadmap work.
 
 The buyers, mock ERP downstream dependency, and post-confirmation notifications are simulated because this is a systems demonstration, not a commerce business. The architecture proof is real: the project must measure whether the services protect inventory consistency, keep the API responsive, and make delayed downstream processing visible.
 
@@ -19,7 +19,8 @@ During a simulated limited-inventory surge:
 3. Redis atomically reserves inventory for that run-scoped limited-stock offer.
 4. The API returns a reservation response and pushes order processing to BullMQ.
 5. A worker confirms orders against the mock ERP / downstream business system with run-scoped retry, timeout, and circuit-breaker behavior.
-6. The live spectator view shows request rate, queue depth, inventory drain, and consistency lag in real time.
+6. A simulated notification record is written after successful confirmation.
+7. The live spectator view shows request rate, queue depth, inventory drain, completion outcomes, and consistency lag in real time.
 
 ## Architecture
 
@@ -67,19 +68,18 @@ For the deeper design rationale and failure modes, see [docs/architecture.md](do
 - Mock ERP / downstream latency, TPS, error-rate, and outage controls
 - Retry and circuit-breaker behavior around downstream calls
 - Real-time live spectator view for active-run operational signals
-- k6-based load orchestration with demo run summary capture
+- k6-based load orchestration with traffic-completion artifact capture
+- Simulated post-confirmation notification recording
 - Public demonstration presets plus protected admin preset management, reset, recovery, and cleanup controls
 
 ## Prerequisites
 
 - Node.js and pnpm (Corepack recommended for the pinned version)
 - Docker with Docker Compose
-- k6 inside the load-orchestrator reference container
-- k6 CLI only for the alternate host-native load-orchestrator workflow
+- k6 CLI for the current host-native load-orchestrator workflow
+- Dockerized k6 inside the load-orchestrator reference container after Phase 9 lands
 
 ## Quick Start
-
-The following commands are yet to be implemented. 
 
 Create a local environment file:
 
@@ -87,59 +87,53 @@ Create a local environment file:
 cp .env.example .env
 ```
 
-Start the architecture-realistic local runtime:
+Start local PostgreSQL and Redis:
 
 ```bash
-pnpm runtime:up
+pnpm infra:up
 ```
 
 Run migrations and seed the demo product, baseline sale offer, durable presets, PostgreSQL records, and Redis inventory:
 
 ```bash
-pnpm runtime:setup
+pnpm --filter @checkout-surge/db db:migrate
+pnpm --filter @checkout-surge/db seed
+```
+
+Start the services in separate terminals:
+
+```bash
+pnpm dev:mock-erp
+pnpm dev:api
+pnpm dev:worker
+pnpm dev:load-orchestrator
+pnpm dev:dashboard
 ```
 
 Open the dashboard:
 
 ```text
-http://localhost:8080
+http://localhost:3000
 ```
 
-Check runtime readiness:
+Direct dashboard development on `3000` works for focused local work. The single-origin `8080` dashboard proxy, full compose runtime, and containerized k6 path are Phase 9 runtime-topology work.
+
+Run API/web/load flows from the dashboard or call the owning services directly while developing. Admin-only operations require `ADMIN_DASHBOARD_PASSPHRASE`, `ADMIN_SESSION_SECRET`, and `CONTROL_SERVICE_TOKEN` from `.env`.
+
+Run the test suite with isolated PostgreSQL and Redis:
 
 ```bash
-pnpm health:check
-pnpm runtime:smoke
+pnpm test:infra:up
+pnpm test
+pnpm test:infra:down
 ```
 
-To verify the dashboard-triggered load path with a small mutating smoke run:
+Admin reset and generated-run cleanup are implemented for local recovery/maintenance:
 
 ```bash
-pnpm runtime:smoke:load
-```
-
-The load smoke check should mutate the demo by creating a small load run, then remove only the rows and Redis keys created by that smoke run before it exits.
-
-Normal public and admin demo starts should create generated run sale offers with isolated inventory, so repeated runs do not require resetting the seeded active sale offer. Reset should be reserved for admin recovery/local-maintenance. To prune old run data manually while keeping the latest 15 runs by default:
-
-```bash
+pnpm runtime:reset
 pnpm maintenance:cleanup-runs
 ```
-
-To intentionally drop local runtime data and rebuild from a fresh database:
-
-```bash
-pnpm runtime:wipe
-pnpm runtime:setup
-```
-
-Stop the runtime when finished:
-
-```bash
-pnpm runtime:down
-```
-
-For focused host-native development, install dependencies, start only PostgreSQL and Redis with `pnpm infra:up`, and run app services with `pnpm dev:*`. Host-native load runs require a local k6 binary on `PATH`; the containerized runtime carries k6 inside the load-orchestrator image.
 
 For local ports, environment variables, health endpoints, and command references, see [docs/local_development.md](docs/local_development.md).
 

@@ -601,7 +601,7 @@ Subtasks:
 
 ---
 
-## ⬜ Phase 8 - Product Polish, Reliability, and Demo Completeness
+## ✅ Phase 8 - Product Polish, Reliability, and Demo Completeness
 
 ### Goal
 
@@ -613,58 +613,79 @@ Primary references:
 - `docs/core_business_entities.md`
 - `docs/load_generation_metrics_streaming.md`
 
-### ⬜ Task 8.1 - Add simulated notification records
+Completion commits:
+
+- `73aefb9` - `feat(worker): record simulated notifications`
+- `025d3b1` - `feat(dashboard): surface completion outcomes`
+- `8dc8b24` - `feat(admin): add demo reset and cleanup tools`
+- `d38f980` - `feat(web): add admin session cookie`
+- `499167c` - `feat(admin): add demo preset management`
+
+Completion summary: Phase 8 makes the demo safer and more presentation-ready without changing the core checkout architecture. The worker now records simulated post-confirmation notifications through a separate queue and durable notification rows, while dashboard recovery surfaces recent completion outcomes across queued, processing, delayed, retrying, confirmed, failed, and notification-recorded states. Admin reset and generated-run cleanup paths are protected by service-token API routes and same-origin dashboard proxies. The web app now supports signed HttpOnly admin sessions, and admin preset management can list all presets, save editable admin-only presets, duplicate public presets into editable admin copies, and copy any preset into the persisted `Custom` scratch preset while keeping public presets and `public-custom` read-only. Public documentation has been updated to distinguish the delivered Phase 8 system from later containerized runtime and final benchmark-lifecycle work.
+
+Final verification completed:
+
+- `pnpm --filter @checkout-surge/contracts build`
+- `pnpm --filter @checkout-surge/contracts test:unit`
+- `pnpm --filter api type-check`
+- `pnpm --filter api test:api`
+- `pnpm --filter web type-check`
+- `pnpm --filter web test:unit`
+
+Phase 8 intentionally leaves the full containerized reference runtime, containerized k6 packaging, runtime smoke scripts, API-owned benchmark finalization after business drain, immutable terminal run-history summaries, hosted deployment assets, and optional Go comparison track to later phases.
+
+### ✅ Task 8.1 - Add simulated notification records
 
 Subtasks:
 
-- Record a post-confirmation notification event after an order is confirmed.
-- Keep the implementation intentionally simulated; do not add real email, SMS, or external provider dependencies.
-- Persist order ID, channel, recipient placeholder, status, timestamp, run ID, sale offer ID, and correlation ID.
+- ✅ Record a post-confirmation notification event after an order is confirmed.
+- ✅ Keep the implementation intentionally simulated; do not add real email, SMS, or external provider dependencies.
+- ✅ Persist order ID, channel, recipient placeholder, status, timestamp, run ID, sale offer ID, and correlation ID.
 
-### ⬜ Task 8.2 - Surface completion outcomes
-
-Subtasks:
-
-- Show run-level and order-level completion outcomes in the dashboard and read models.
-- Represent confirmed, failed, delayed, retrying, and notification-recorded outcomes without changing canonical persistence states.
-- Reuse background job patterns so post-confirmation workflow steps do not block order processing.
-
-### ⬜ Task 8.3 - Add operational reset and demo tools
+### ✅ Task 8.2 - Surface completion outcomes
 
 Subtasks:
 
-- Provide safe admin recovery/reset workflows for local maintenance and demo recovery.
-- Make queue inspection and reset-owned queue cleanup explicit, auditable operations.
-- Ensure normal preset starts use generated run sale offers with isolated inventory, so reset is not required before every run.
-- Add maintenance cleanup for old generated runs while preserving active runs and recent history.
+- ✅ Show run-level and order-level completion outcomes in the dashboard and read models.
+- ✅ Represent confirmed, failed, delayed, retrying, and notification-recorded outcomes without changing canonical persistence states.
+- ✅ Reuse background job patterns so post-confirmation workflow steps do not block order processing.
 
-### ⬜ Task 8.4 - Protect admin controls and unsafe paths
-
-Subtasks:
-
-- Add passphrase-backed admin session handling in the web app.
-- Proxy protected dashboard actions through server-side routes with service tokens.
-- Enforce server-side caps for public starts, public custom runs, admin traffic, ERP diagnostics, reset, realtime reads, and internal ingestion.
-- Implement admin preset management explicitly: save editable admin-only presets, duplicate public presets into editable admin copies, copy presets into the persisted `Custom` scratch preset, and keep public presets plus `public-custom` read-only.
-- Review secret handling, browser-exposed values, error leakage, and direct service mutation endpoints.
-
-### ⬜ Task 8.5 - Write portfolio-facing technical documentation
+### ✅ Task 8.3 - Add operational reset and demo tools
 
 Subtasks:
 
-- Summarize the architecture in plain but credible engineering language.
-- Explain the failure modes the system absorbs and how the dashboard proves them.
-- Document what is simulated versus what is architecturally real.
-- Keep public docs aligned with implemented behavior rather than future-tense aspirations.
+- ✅ Provide safe admin recovery/reset workflows for local maintenance and demo recovery.
+- ✅ Make queue inspection and reset-owned queue cleanup explicit, auditable operations.
+- ✅ Ensure normal preset starts use generated run sale offers with isolated inventory, so reset is not required before every run.
+- ✅ Add maintenance cleanup for old generated runs while preserving active runs and recent history.
 
-### ⬜ Task 8.6 - Add automated tests for product polish and operational reliability
+### ✅ Task 8.4 - Protect admin controls and unsafe paths
 
 Subtasks:
 
-- Add tests proving simulated notifications are recorded only after successful confirmation and contain expected metadata.
-- Add dashboard/read-model tests for confirmed, failed, delayed, retrying, and notification-recorded outcomes.
-- Add integration tests for reset, recovery, maintenance cleanup, and queue cleanup workflows.
-- Add security-focused tests for admin protection, rate limiting, server-side caps, and unsafe control prevention.
+- ✅ Add passphrase-backed admin session handling in the web app.
+- ✅ Proxy protected dashboard actions through server-side routes with service tokens.
+- ✅ Enforce server-side caps for public starts, public custom runs, admin traffic, ERP diagnostics, reset, realtime reads, and internal ingestion.
+- ✅ Implement admin preset management explicitly: save editable admin-only presets, duplicate public presets into editable admin copies, copy presets into the persisted `Custom` scratch preset, and keep public presets plus `public-custom` read-only.
+- ✅ Review secret handling, browser-exposed values, error leakage, and direct service mutation endpoints.
+
+### ✅ Task 8.5 - Write portfolio-facing technical documentation
+
+Subtasks:
+
+- ✅ Summarize the architecture in plain but credible engineering language.
+- ✅ Explain the failure modes the system absorbs and how the dashboard proves them.
+- ✅ Document what is simulated versus what is architecturally real.
+- ✅ Keep public docs aligned with implemented behavior rather than future-tense aspirations.
+
+### ✅ Task 8.6 - Add automated tests for product polish and operational reliability
+
+Subtasks:
+
+- ✅ Add tests proving simulated notifications are recorded only after successful confirmation and contain expected metadata.
+- ✅ Add dashboard/read-model tests for confirmed, failed, delayed, retrying, and notification-recorded outcomes.
+- ✅ Add integration tests for reset, recovery, maintenance cleanup, and queue cleanup workflows.
+- ✅ Add security-focused tests for admin protection, rate limiting, server-side caps, and unsafe control prevention.
 
 ---
 
