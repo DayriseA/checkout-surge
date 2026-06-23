@@ -4,6 +4,7 @@ import cors from "@fastify/cors";
 import { type FastifyReply, fastify } from "fastify";
 import { ZodError } from "zod";
 import type { DashboardEventFanout } from "./realtime/dashboard-event-fanout.js";
+import { registerAdminMaintenanceRoutes } from "./routes/admin-maintenance-routes.js";
 import { registerBuyRoutes } from "./routes/buy-routes.js";
 import { registerDashboardRoutes } from "./routes/dashboard-routes.js";
 import { registerDemoRunRoutes } from "./routes/demo-run-routes.js";
@@ -16,6 +17,7 @@ import { ApiHttpError, createErrorPayload } from "./runtime/errors.js";
 import type { ApiFastifyInstance } from "./runtime/fastify.js";
 import type { ApiReadiness } from "./runtime/readiness.js";
 import type { DashboardRecoveryService } from "./services/dashboard-recovery-service.js";
+import type { DemoMaintenanceService } from "./services/demo-maintenance-service.js";
 import type { DemoRunController } from "./services/demo-run-service.js";
 import type { ErpStatusService } from "./services/erp-status-service.js";
 import type { InventoryStatusService } from "./services/inventory-status-service.js";
@@ -39,6 +41,7 @@ export interface BuildApiServerOptions {
   queueStatusService: QueueStatusService;
   reserveOrderService: ReserveOrderService;
   demoRunService: DemoRunController;
+  demoMaintenanceService: DemoMaintenanceService;
   startedAt?: Date;
 }
 
@@ -104,6 +107,10 @@ export async function buildApiServer(options: BuildApiServerOptions): Promise<Ap
   registerQueueRoutes(app, { queueStatusService: options.queueStatusService });
   registerDemoRunRoutes(app, {
     demoRunService: options.demoRunService,
+    controlServiceToken: options.config.controlServiceToken,
+  });
+  registerAdminMaintenanceRoutes(app, {
+    demoMaintenanceService: options.demoMaintenanceService,
     controlServiceToken: options.config.controlServiceToken,
   });
   registerDashboardRoutes(app, {

@@ -3,6 +3,7 @@ export interface ApiResourceCleanupOperations {
   closeDashboardEventSubscriber(): Promise<void>;
   closeOrderProcessJobPublisher(): Promise<void>;
   closeOrderProcessQueueInspector(): Promise<void>;
+  closeDemoQueueMaintenance(): Promise<void>;
   disconnectRedis(): void;
   closeDatabase(): Promise<void>;
 }
@@ -20,6 +21,7 @@ export async function closeApiResources(operations: ApiResourceCleanupOperations
     runCleanup(operations.closeDashboardEventSubscriber),
     runCleanup(operations.closeOrderProcessJobPublisher),
     runCleanup(operations.closeOrderProcessQueueInspector),
+    runCleanup(operations.closeDemoQueueMaintenance),
     runCleanup(operations.disconnectRedis),
     runCleanup(operations.closeDatabase),
   ]);

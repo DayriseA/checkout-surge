@@ -1,6 +1,8 @@
 "use client";
 
 import {
+  adminDemoResetResponseSchema,
+  adminMaintenanceCleanupRunsResponseSchema,
   type DashboardEvent,
   type DashboardRecoveryResponse,
   dashboardEventSchema,
@@ -14,8 +16,10 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import type { BackendRead, DashboardBackendSnapshot } from "../lib/api";
 import {
+  adminDemoResetProxyPath,
   adminErpChaosProxyPath,
   adminErpChaosResetProxyPath,
+  adminMaintenanceCleanupRunsProxyPath,
   adminPassphraseHeaderName,
   dashboardRecoveryProxyPath,
   demoRunStartProxyPath,
@@ -394,6 +398,56 @@ function AdminActionsPanel({
     });
   }
 
+  async function resetDemo() {
+    setIsSubmitting(true);
+    setStatusMessage(null);
+
+    try {
+      const result = await readProxyJson(adminDemoResetProxyPath, adminDemoResetResponseSchema, {
+        method: "POST",
+        headers: {
+          [adminPassphraseHeaderName]: adminPassphrase,
+        },
+      });
+
+      setStatusMessage(
+        result.status === "available"
+          ? `Reset complete: ${result.data.failedRunCount} runs failed, ${result.data.cleanedJobCount} jobs cleaned.`
+          : result.reason,
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  async function cleanupRuns() {
+    setIsSubmitting(true);
+    setStatusMessage(null);
+
+    try {
+      const result = await readProxyJson(
+        adminMaintenanceCleanupRunsProxyPath,
+        adminMaintenanceCleanupRunsResponseSchema,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            [adminPassphraseHeaderName]: adminPassphrase,
+          },
+          body: JSON.stringify({ keepLatest: 15, olderThanDays: 7 }),
+        },
+      );
+
+      setStatusMessage(
+        result.status === "available"
+          ? `Cleanup complete: ${result.data.deletedRunCount} runs removed.`
+          : result.reason,
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
   async function submitChaosRequest(path: string, init: RequestInit) {
     setIsSubmitting(true);
     setStatusMessage(null);
@@ -481,11 +535,29 @@ function AdminActionsPanel({
         <ul className="m-0 grid list-none gap-3 p-0">
           <li className="flex items-center justify-between gap-3 border-t border-border pt-3 text-muted-strong">
             <span>Demo reset and recovery</span>
-            <span className="font-semibold text-muted">pending backend boundary</span>
+            <button
+              className="min-h-10 rounded-lg border border-border bg-surface px-3.5 py-2.5 font-semibold text-muted-strong disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={isSubmitting}
+              onClick={() => {
+                void resetDemo();
+              }}
+              type="button"
+            >
+              Reset Demo
+            </button>
           </li>
           <li className="flex items-center justify-between gap-3 border-t border-border pt-3 text-muted-strong">
             <span>Local maintenance cleanup</span>
-            <span className="font-semibold text-muted">pending backend boundary</span>
+            <button
+              className="min-h-10 rounded-lg border border-border bg-surface px-3.5 py-2.5 font-semibold text-muted-strong disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={isSubmitting}
+              onClick={() => {
+                void cleanupRuns();
+              }}
+              type="button"
+            >
+              Cleanup Runs
+            </button>
           </li>
         </ul>
       </div>

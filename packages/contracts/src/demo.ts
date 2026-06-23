@@ -36,6 +36,8 @@ export const publicPresetListPath = "/demo/presets/public" as const;
 export const publicRuntimePolicyPath = "/demo/runtime-policy" as const;
 export const startDemoRunPath = "/demo/runs/start" as const;
 export const runHistoryPath = "/demo/runs/history" as const;
+export const adminDemoResetPath = "/admin/demo/reset" as const;
+export const adminMaintenanceCleanupRunsPath = "/admin/demo/runs/cleanup" as const;
 export const demoRunOperatorModeHeaderName = "x-demo-operator-mode" as const;
 export const publicVisitorIdHeaderName = "x-public-visitor-id" as const;
 
@@ -293,6 +295,44 @@ export const adminDeleteRunHistoryRequestSchema = z
   })
   .strict();
 export type AdminDeleteRunHistoryRequest = z.infer<typeof adminDeleteRunHistoryRequestSchema>;
+
+export const adminDemoResetResponseSchema = z
+  .object({
+    failedRunCount: nonnegativeIntegerSchema,
+    closedSaleOfferCount: nonnegativeIntegerSchema,
+    cleanedQueueCount: nonnegativeIntegerSchema,
+    cleanedJobCount: nonnegativeIntegerSchema,
+    resetAt: isoTimestampSchema,
+    correlationId: correlationIdSchema,
+  })
+  .strict();
+export type AdminDemoResetResponse = z.infer<typeof adminDemoResetResponseSchema>;
+
+export const adminMaintenanceCleanupRunsRequestSchema = z
+  .object({
+    keepLatest: positiveIntegerSchema.default(15),
+    olderThanDays: positiveIntegerSchema.default(7),
+    correlationId: correlationIdSchema.optional(),
+  })
+  .strict();
+export type AdminMaintenanceCleanupRunsRequest = z.infer<
+  typeof adminMaintenanceCleanupRunsRequestSchema
+>;
+
+export const adminMaintenanceCleanupRunsResponseSchema = z
+  .object({
+    deletedRunCount: nonnegativeIntegerSchema,
+    deletedSaleOfferCount: nonnegativeIntegerSchema,
+    preservedLatestCount: nonnegativeIntegerSchema,
+    preservedActiveRunCount: nonnegativeIntegerSchema,
+    cutoffBefore: isoTimestampSchema,
+    cleanedAt: isoTimestampSchema,
+    correlationId: correlationIdSchema,
+  })
+  .strict();
+export type AdminMaintenanceCleanupRunsResponse = z.infer<
+  typeof adminMaintenanceCleanupRunsResponseSchema
+>;
 
 export const trafficDeliveryStatusSummarySchema = z
   .object({

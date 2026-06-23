@@ -17,6 +17,9 @@ describe("API resource cleanup", () => {
     const closeOrderProcessQueueInspector = vi.fn(async () => {
       expect(serverClosed).toBe(true);
     });
+    const closeDemoQueueMaintenance = vi.fn(async () => {
+      expect(serverClosed).toBe(true);
+    });
     const disconnectRedis = vi.fn(() => {
       expect(serverClosed).toBe(true);
     });
@@ -29,6 +32,7 @@ describe("API resource cleanup", () => {
       closeDashboardEventSubscriber,
       closeOrderProcessJobPublisher,
       closeOrderProcessQueueInspector,
+      closeDemoQueueMaintenance,
       disconnectRedis,
       closeDatabase,
     });
@@ -37,6 +41,7 @@ describe("API resource cleanup", () => {
     expect(closeDashboardEventSubscriber).toHaveBeenCalledOnce();
     expect(closeOrderProcessJobPublisher).toHaveBeenCalledOnce();
     expect(closeOrderProcessQueueInspector).toHaveBeenCalledOnce();
+    expect(closeDemoQueueMaintenance).toHaveBeenCalledOnce();
     expect(disconnectRedis).toHaveBeenCalledOnce();
     expect(closeDatabase).toHaveBeenCalledOnce();
   });
@@ -46,12 +51,14 @@ describe("API resource cleanup", () => {
     const subscriberError = new Error("subscriber close failed");
     const publisherError = new Error("publisher close failed");
     const inspectorError = new Error("inspector close failed");
+    const maintenanceError = new Error("maintenance close failed");
     const redisError = new Error("Redis disconnect failed");
     const databaseError = new Error("database close failed");
     const closeServer = vi.fn().mockRejectedValue(serverError);
     const closeDashboardEventSubscriber = vi.fn().mockRejectedValue(subscriberError);
     const closeOrderProcessJobPublisher = vi.fn().mockRejectedValue(publisherError);
     const closeOrderProcessQueueInspector = vi.fn().mockRejectedValue(inspectorError);
+    const closeDemoQueueMaintenance = vi.fn().mockRejectedValue(maintenanceError);
     const disconnectRedis = vi.fn(() => {
       throw redisError;
     });
@@ -64,6 +71,7 @@ describe("API resource cleanup", () => {
         closeDashboardEventSubscriber,
         closeOrderProcessJobPublisher,
         closeOrderProcessQueueInspector,
+        closeDemoQueueMaintenance,
         disconnectRedis,
         closeDatabase,
       });
@@ -77,6 +85,7 @@ describe("API resource cleanup", () => {
       subscriberError,
       publisherError,
       inspectorError,
+      maintenanceError,
       redisError,
       databaseError,
     ]);
@@ -84,6 +93,7 @@ describe("API resource cleanup", () => {
     expect(closeDashboardEventSubscriber).toHaveBeenCalledOnce();
     expect(closeOrderProcessJobPublisher).toHaveBeenCalledOnce();
     expect(closeOrderProcessQueueInspector).toHaveBeenCalledOnce();
+    expect(closeDemoQueueMaintenance).toHaveBeenCalledOnce();
     expect(disconnectRedis).toHaveBeenCalledOnce();
     expect(closeDatabase).toHaveBeenCalledOnce();
   });

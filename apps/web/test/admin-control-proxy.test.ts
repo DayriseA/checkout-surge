@@ -1,10 +1,14 @@
 import {
+  adminDemoResetPath,
+  adminMaintenanceCleanupRunsPath,
   controlServiceTokenHeaderName,
   demoRunOperatorModeHeaderName,
   publicVisitorIdHeaderName,
   startDemoRunPath,
 } from "@checkout-surge/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { POST as resetDemo } from "../src/app/api/admin/demo/reset/route.js";
+import { POST as cleanupRuns } from "../src/app/api/admin/demo/runs/cleanup/route.js";
 import { POST as resetErpChaos } from "../src/app/api/admin/erp-chaos/reset/route.js";
 import { PUT as updateErpChaos } from "../src/app/api/admin/erp-chaos/route.js";
 import { GET as getDashboardRecovery } from "../src/app/api/dashboard/recovery/route.js";
@@ -188,6 +192,82 @@ describe("dashboard control proxy routes", () => {
     expect(response.status).toBe(200);
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe("http://mock-erp.internal/chaos/reset");
     expect(payload.forcedOutage).toBe(false);
+  });
+
+  it("forwards demo reset with the server-side control token", async () => {
+    process.env.ADMIN_DASHBOARD_PASSPHRASE = "admin-pass";
+    process.env.CONTROL_SERVICE_TOKEN = "control-token";
+    process.env.API_BASE_URL = "http://api.internal";
+    const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      expect(init?.method).toBe("POST");
+      expect((init?.headers as Record<string, string>)[controlServiceTokenHeaderName]).toBe(
+        "control-token",
+      );
+      return jsonResponse({
+        failedRunCount: 1,
+        closedSaleOfferCount: 1,
+        cleanedQueueCount: 2,
+        cleanedJobCount: 3,
+        resetAt: "2026-06-20T00:00:10.000Z",
+        correlationId: "corr-reset",
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await resetDemo(
+      new Request("http://dashboard.local/api/admin/demo/reset", {
+        method: "POST",
+        headers: {
+          [adminPassphraseHeaderName]: "admin-pass",
+        },
+      }),
+    );
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(`http://api.internal${adminDemoResetPath}`);
+    expect(payload.cleanedQueueCount).toBe(2);
+  });
+
+  it("forwards generated-run cleanup with validated options", async () => {
+    process.env.ADMIN_DASHBOARD_PASSPHRASE = "admin-pass";
+    process.env.CONTROL_SERVICE_TOKEN = "control-token";
+    process.env.API_BASE_URL = "http://api.internal";
+    const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      expect(init?.method).toBe("POST");
+      expect((init?.headers as Record<string, string>)[controlServiceTokenHeaderName]).toBe(
+        "control-token",
+      );
+      expect(JSON.parse(String(init?.body))).toEqual({ keepLatest: 15, olderThanDays: 7 });
+      return jsonResponse({
+        deletedRunCount: 2,
+        deletedSaleOfferCount: 2,
+        preservedLatestCount: 15,
+        preservedActiveRunCount: 0,
+        cutoffBefore: "2026-06-13T00:00:10.000Z",
+        cleanedAt: "2026-06-20T00:00:10.000Z",
+        correlationId: "corr-cleanup",
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await cleanupRuns(
+      new Request("http://dashboard.local/api/admin/demo/runs/cleanup", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          [adminPassphraseHeaderName]: "admin-pass",
+        },
+        body: JSON.stringify({ keepLatest: 15, olderThanDays: 7 }),
+      }),
+    );
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      `http://api.internal${adminMaintenanceCleanupRunsPath}`,
+    );
+    expect(payload.deletedRunCount).toBe(2);
   });
 });
 

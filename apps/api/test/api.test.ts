@@ -3,8 +3,11 @@ import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  adminDemoResetPath,
+  adminMaintenanceCleanupRunsPath,
   type BusinessOutcomeSummary,
   buyResponseSchema,
+  controlServiceTokenHeaderName,
   type DashboardEvent,
   type DemoRunSnapshot,
   dashboardEventsPath,
@@ -68,6 +71,7 @@ import {
   type DashboardRecoveryContextReader,
   DashboardRecoveryService,
 } from "../src/services/dashboard-recovery-service.js";
+import type { DemoMaintenanceService } from "../src/services/demo-maintenance-service.js";
 import type { DemoRunController } from "../src/services/demo-run-service.js";
 import type { ErpStatusService } from "../src/services/erp-status-service.js";
 import {
@@ -160,6 +164,7 @@ async function buildTestServer(options: {
   dashboardRecoveryService?: DashboardRecoveryService;
   dashboardEventFanout?: DashboardEventFanout;
   demoRunService?: DemoRunController;
+  demoMaintenanceService?: DemoMaintenanceService;
 }): Promise<ApiFastifyInstance> {
   const inventoryReader =
     options.inventoryReader === undefined
@@ -241,6 +246,27 @@ async function buildTestServer(options: {
       generateId: options.generateId ?? deterministicIdGenerator(),
     }),
     demoRunService: options.demoRunService ?? demoRunControllerFixture(),
+    demoMaintenanceService:
+      options.demoMaintenanceService ??
+      ({
+        reset: async (correlationId) => ({
+          failedRunCount: 0,
+          closedSaleOfferCount: 0,
+          cleanedQueueCount: 0,
+          cleanedJobCount: 0,
+          resetAt: "2026-06-20T00:00:10.000Z",
+          correlationId,
+        }),
+        cleanupOldRuns: async ({ correlationId }) => ({
+          deletedRunCount: 0,
+          deletedSaleOfferCount: 0,
+          preservedLatestCount: 0,
+          preservedActiveRunCount: 0,
+          cutoffBefore: "2026-06-13T00:00:10.000Z",
+          cleanedAt: "2026-06-20T00:00:10.000Z",
+          correlationId,
+        }),
+      } as never),
     startedAt: new Date("2026-06-20T00:00:00.000Z"),
   });
 }
@@ -873,6 +899,85 @@ describe("API gateway routes", () => {
       },
       expect.any(String),
     );
+  });
+
+  it("protects admin demo reset and delegates to the maintenance service", async () => {
+    const reset = vi.fn(async (correlationId: string) => ({
+      failedRunCount: 2,
+      closedSaleOfferCount: 2,
+      cleanedQueueCount: 2,
+      cleanedJobCount: 5,
+      resetAt: "2026-06-20T00:00:10.000Z",
+      correlationId,
+    }));
+    const server = await trackedServer({
+      persistence: new AcceptingPersistence(),
+      demoMaintenanceService: {
+        reset,
+        cleanupOldRuns: vi.fn(),
+      } as never,
+    });
+
+    const unauthorized = await server.inject({ method: "POST", url: adminDemoResetPath });
+    const authorized = await server.inject({
+      method: "POST",
+      url: adminDemoResetPath,
+      headers: { [controlServiceTokenHeaderName]: "test-control-token" },
+    });
+
+    expect(unauthorized.statusCode).toBe(401);
+    expect(authorized.statusCode).toBe(200);
+    expect(authorized.json()).toMatchObject({
+      failedRunCount: 2,
+      closedSaleOfferCount: 2,
+      cleanedQueueCount: 2,
+      cleanedJobCount: 5,
+    });
+    expect(reset).toHaveBeenCalledOnce();
+  });
+
+  it("protects generated-run cleanup and validates cleanup options", async () => {
+    const cleanupOldRuns = vi.fn(async (input: { correlationId: string }) => ({
+      deletedRunCount: 3,
+      deletedSaleOfferCount: 3,
+      preservedLatestCount: 2,
+      preservedActiveRunCount: 1,
+      cutoffBefore: "2026-06-13T00:00:10.000Z",
+      cleanedAt: "2026-06-20T00:00:10.000Z",
+      correlationId: input.correlationId,
+    }));
+    const server = await trackedServer({
+      persistence: new AcceptingPersistence(),
+      demoMaintenanceService: {
+        reset: vi.fn(),
+        cleanupOldRuns,
+      } as never,
+    });
+
+    const response = await server.inject({
+      method: "POST",
+      url: adminMaintenanceCleanupRunsPath,
+      headers: { [controlServiceTokenHeaderName]: "test-control-token" },
+      payload: {
+        keepLatest: 2,
+        olderThanDays: 14,
+        correlationId: "corr-cleanup-test",
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      deletedRunCount: 3,
+      deletedSaleOfferCount: 3,
+      preservedLatestCount: 2,
+      preservedActiveRunCount: 1,
+      correlationId: "corr-cleanup-test",
+    });
+    expect(cleanupOldRuns).toHaveBeenCalledWith({
+      keepLatest: 2,
+      olderThanDays: 14,
+      correlationId: "corr-cleanup-test",
+    });
   });
 
   it("uses the trusted public visitor header instead of browser-supplied JSON", async () => {

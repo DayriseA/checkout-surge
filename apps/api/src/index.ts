@@ -11,6 +11,7 @@ import {
   reserveInventoryStock,
 } from "@checkout-surge/db";
 import { createServiceLogger, loggerPackageName } from "@checkout-surge/logger";
+import { createBullMqDemoQueueMaintenance } from "./queue/bullmq-demo-queue-maintenance.js";
 import { createBullMqOrderProcessJobPublisher } from "./queue/bullmq-order-process-job-publisher.js";
 import { createBullMqOrderProcessQueueInspector } from "./queue/bullmq-order-process-queue-inspector.js";
 import { DashboardEventFanout } from "./realtime/dashboard-event-fanout.js";
@@ -26,6 +27,7 @@ import {
   PostgresDashboardConsistencyLagReader,
   PostgresDashboardRecoveryContextReader,
 } from "./services/dashboard-recovery-service.js";
+import { DemoMaintenanceService } from "./services/demo-maintenance-service.js";
 import {
   DemoRunService,
   HttpTrafficExecutionGateway,
@@ -50,6 +52,7 @@ import {
 export const apiAppName = "api" as const;
 export const apiAppDependencies = [contractsPackageName, dbPackageName, loggerPackageName] as const;
 
+export { createBullMqDemoQueueMaintenance } from "./queue/bullmq-demo-queue-maintenance.js";
 export { createBullMqOrderProcessJobPublisher } from "./queue/bullmq-order-process-job-publisher.js";
 export { createBullMqOrderProcessQueueInspector } from "./queue/bullmq-order-process-queue-inspector.js";
 export { DashboardEventFanout } from "./realtime/dashboard-event-fanout.js";
@@ -62,6 +65,7 @@ export {
   PostgresDashboardConsistencyLagReader,
   PostgresDashboardRecoveryContextReader,
 } from "./services/dashboard-recovery-service.js";
+export { DemoMaintenanceService } from "./services/demo-maintenance-service.js";
 export {
   ErpStatusService,
   PostgresErpAttemptStatusReader,
@@ -99,6 +103,10 @@ export async function startApiServer(): Promise<void> {
     url: config.redisUrl,
     maxRetriesPerRequest: 3,
   });
+  const demoQueueMaintenance = createBullMqDemoQueueMaintenance({
+    url: config.redisUrl,
+    maxRetriesPerRequest: 3,
+  });
 
   const persistence = new PostgresBuyPersistence(connection.db);
   const dashboardEventFanout = new DashboardEventFanout({ logger });
@@ -130,6 +138,12 @@ export async function startApiServer(): Promise<void> {
     getStatus: (saleOfferId) => getInventoryStatus(redis, saleOfferId),
   });
   const trafficMetricStore = new RedisDashboardTrafficMetricStore(redis);
+  const demoMaintenanceService = new DemoMaintenanceService({
+    db: connection.db,
+    redis,
+    queueMaintenance: demoQueueMaintenance,
+    logger,
+  });
   const dashboardRecoveryService = new DashboardRecoveryService({
     contextReader: new PostgresDashboardRecoveryContextReader(connection.db),
     businessOutcomeReader: new PostgresDashboardBusinessOutcomeReader(connection.db),
@@ -222,6 +236,7 @@ export async function startApiServer(): Promise<void> {
         },
         closeOrderProcessJobPublisher: () => orderProcessJobPublisher.close(),
         closeOrderProcessQueueInspector: () => orderProcessQueueInspector.close(),
+        closeDemoQueueMaintenance: () => demoQueueMaintenance.close(),
         disconnectRedis: () => redis.disconnect(),
         closeDatabase: () => connection.close(),
       });
@@ -245,6 +260,7 @@ export async function startApiServer(): Promise<void> {
       queueStatusService,
       reserveOrderService,
       demoRunService,
+      demoMaintenanceService,
       startedAt: new Date(),
     });
     await dashboardEventSubscriber.start();
