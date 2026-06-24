@@ -13,6 +13,8 @@ import {
   uuidSchema,
 } from "./primitives.js";
 
+export const loadRunIdHeaderName = "x-load-run-id" as const;
+
 export const buyRequestSchema = z
   .object({
     saleOfferId: uuidSchema,

@@ -4,7 +4,13 @@ import type {
   ReservationSummary,
   SecuredReservationHold,
 } from "@checkout-surge/contracts";
-import { type CheckoutSurgeDatabase, orderEvents, orders, reservations } from "@checkout-surge/db";
+import {
+  type CheckoutSurgeDatabase,
+  orderEvents,
+  orders,
+  reservationPendingPersistence,
+  reservations,
+} from "@checkout-surge/db";
 import { eq } from "drizzle-orm";
 import type { BuyPersistence, PersistedBuy } from "./reserve-order-service.js";
 
@@ -132,6 +138,44 @@ export class PostgresBuyPersistence implements BuyPersistence {
       reservation: toReservationSummary(row.reservation),
       order: toOrderSummary(row.order),
     };
+  }
+
+  async recordPendingPersistence(input: {
+    reservation: SecuredReservationHold;
+    idempotencyKey: string;
+  }): Promise<void> {
+    const hold = input.reservation;
+    const now = new Date();
+
+    await this.db
+      .insert(reservationPendingPersistence)
+      .values({
+        reservationId: hold.id,
+        saleOfferId: hold.saleOfferId,
+        correlationId: hold.correlationId,
+        ...(hold.runId ? { runId: hold.runId } : {}),
+        idempotencyKey: input.idempotencyKey,
+        quantity: hold.quantity,
+        reservationToken: hold.reservationToken,
+        status: "pending_reconciliation",
+        securedAt: new Date(hold.securedAt),
+        expiresAt: new Date(hold.expiresAt),
+      })
+      .onConflictDoUpdate({
+        target: reservationPendingPersistence.reservationId,
+        set: {
+          saleOfferId: hold.saleOfferId,
+          correlationId: hold.correlationId,
+          runId: hold.runId ?? null,
+          idempotencyKey: input.idempotencyKey,
+          quantity: hold.quantity,
+          reservationToken: hold.reservationToken,
+          status: "pending_reconciliation",
+          securedAt: new Date(hold.securedAt),
+          expiresAt: new Date(hold.expiresAt),
+          updatedAt: now,
+        },
+      });
   }
 }
 

@@ -1,5 +1,12 @@
-import { buyRequestSchema, buyResponseSchema } from "@checkout-surge/contracts";
+import {
+  type BuyRequest,
+  buyRequestSchema,
+  buyResponseSchema,
+  loadRunIdHeaderName,
+  uuidSchema,
+} from "@checkout-surge/contracts";
 import { correlationIdHeaderName, normalizeCorrelationId } from "@checkout-surge/logger";
+import { ApiHttpError } from "../runtime/errors.js";
 import type { ApiFastifyInstance } from "../runtime/fastify.js";
 import type { ReserveOrderService } from "../services/reserve-order-service.js";
 
@@ -10,15 +17,19 @@ export interface BuyRouteOptions {
 export function registerBuyRoutes(app: ApiFastifyInstance, options: BuyRouteOptions): void {
   app.post("/buy", async (request, reply) => {
     const parsedRequest = buyRequestSchema.parse(request.body);
+    const attributedRequest = applyRunAttribution(
+      parsedRequest,
+      request.headers[loadRunIdHeaderName],
+    );
     const correlationId = normalizeCorrelationId(
-      parsedRequest.correlationId ?? request.correlationId,
+      attributedRequest.correlationId ?? request.correlationId,
     );
     request.correlationId = correlationId;
     reply.header(correlationIdHeaderName, correlationId);
 
     const response = buyResponseSchema.parse(
       await options.reserveOrderService.reserve({
-        request: parsedRequest,
+        request: attributedRequest,
         correlationId,
       }),
     );
@@ -29,6 +40,53 @@ export function registerBuyRoutes(app: ApiFastifyInstance, options: BuyRouteOpti
     }
     return reply.status(statusCode).send(response);
   });
+}
+
+function applyRunAttribution(
+  request: BuyRequest,
+  headerValue: string | string[] | undefined,
+): BuyRequest {
+  const headerRunId = parseLoadRunIdHeader(headerValue);
+
+  if (!headerRunId) {
+    return request;
+  }
+
+  if (request.runId && request.runId !== headerRunId) {
+    throw new ApiHttpError({
+      statusCode: 400,
+      code: "run_attribution_mismatch",
+      message: "Run attribution in the request body does not match the load-run header.",
+      details: {
+        bodyRunId: request.runId,
+        headerRunId,
+        headerName: loadRunIdHeaderName,
+      },
+    });
+  }
+
+  return { ...request, runId: headerRunId };
+}
+
+function parseLoadRunIdHeader(headerValue: string | string[] | undefined): string | undefined {
+  if (headerValue === undefined) {
+    return undefined;
+  }
+
+  if (Array.isArray(headerValue)) {
+    if (headerValue.length !== 1) {
+      throw new ApiHttpError({
+        statusCode: 400,
+        code: "invalid_request",
+        message: "Load-run attribution header must be provided at most once.",
+        details: { headerName: loadRunIdHeaderName },
+      });
+    }
+
+    return uuidSchema.parse(headerValue[0]);
+  }
+
+  return uuidSchema.parse(headerValue);
 }
 
 function buyStatusCode(outcome: ReturnType<typeof buyResponseSchema.parse>["outcome"]): number {

@@ -24,6 +24,7 @@ import {
   healthResponseSchema,
   inventoryStatusSchema,
   livenessResponseSchema,
+  loadRunIdHeaderName,
   type OrderProcessJob,
   type OrderSummary,
   orderProcessBullMqQueueName,
@@ -43,6 +44,9 @@ import {
   type CheckoutSurgeRedis,
   createDatabaseConnection,
   createRedisClient,
+  demoPresets,
+  demoRunSaleContexts,
+  demoRuns,
   getInventoryStatus,
   InventoryNotInitializedError,
   initializeInventory,
@@ -52,6 +56,7 @@ import {
   orders,
   products,
   promoteReservationIdempotencyToAccepted,
+  reservationPendingPersistence,
   reservations,
   reserveInventoryStock,
   saleOffers,
@@ -253,7 +258,7 @@ async function buildTestServer(options: {
     demoMaintenanceService:
       options.demoMaintenanceService ??
       ({
-        reset: async (correlationId) => ({
+        reset: async (correlationId: string) => ({
           failedRunCount: 0,
           closedSaleOfferCount: 0,
           cleanedQueueCount: 0,
@@ -261,7 +266,7 @@ async function buildTestServer(options: {
           resetAt: "2026-06-20T00:00:10.000Z",
           correlationId,
         }),
-        cleanupOldRuns: async ({ correlationId }) => ({
+        cleanupOldRuns: async ({ correlationId }: { correlationId: string }) => ({
           deletedRunCount: 0,
           deletedSaleOfferCount: 0,
           preservedLatestCount: 0,
@@ -608,6 +613,7 @@ describe("API gateway routes", () => {
     queueInspector?: OrderProcessQueueInspector;
     erpStatusService?: ErpStatusService;
     demoRunService?: DemoRunController;
+    demoMaintenanceService?: DemoMaintenanceService;
   }) {
     const server = await buildTestServer(options);
     servers.push(server);
@@ -1333,6 +1339,78 @@ describe("API gateway routes", () => {
     expect(payload.correlationId).toBe("body-correlation");
   });
 
+  it("accepts matching run attribution from the buy body and load-run header", async () => {
+    const server = await trackedServer({ persistence: new AcceptingPersistence() });
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/buy",
+      headers: {
+        [loadRunIdHeaderName]: fixtureIds.run,
+      },
+      payload: {
+        saleOfferId: fixtureIds.saleOffer,
+        runId: fixtureIds.run,
+        idempotencyKey: "matching-run-attribution",
+        quantity: 1,
+      },
+    });
+    const payload = buyResponseSchema.parse(response.json());
+
+    expect(response.statusCode).toBe(202);
+    expect(payload.reservation?.runId).toBe(fixtureIds.run);
+    expect(payload.order?.runId).toBe(fixtureIds.run);
+  });
+
+  it("uses the load-run header when the buy body omits run attribution", async () => {
+    const server = await trackedServer({ persistence: new AcceptingPersistence() });
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/buy",
+      headers: {
+        [loadRunIdHeaderName]: fixtureIds.run,
+      },
+      payload: {
+        saleOfferId: fixtureIds.saleOffer,
+        idempotencyKey: "header-only-run-attribution",
+        quantity: 1,
+      },
+    });
+    const payload = buyResponseSchema.parse(response.json());
+
+    expect(response.statusCode).toBe(202);
+    expect(payload.reservation?.runId).toBe(fixtureIds.run);
+    expect(payload.order?.runId).toBe(fixtureIds.run);
+  });
+
+  it("rejects mismatched buy body and load-run header attribution", async () => {
+    const server = await trackedServer({ persistence: new AcceptingPersistence() });
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/buy",
+      headers: {
+        [loadRunIdHeaderName]: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+      },
+      payload: {
+        saleOfferId: fixtureIds.saleOffer,
+        runId: fixtureIds.run,
+        idempotencyKey: "mismatched-run-attribution",
+        quantity: 1,
+      },
+    });
+    const payload = errorPayloadSchema.parse(response.json());
+
+    expect(response.statusCode).toBe(400);
+    expect(payload.code).toBe("run_attribution_mismatch");
+    expect(payload.details).toEqual({
+      bodyRunId: fixtureIds.run,
+      headerRunId: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+      headerName: loadRunIdHeaderName,
+    });
+  });
+
   it("maps the atomic Redis run rejection to the compatible API response", async () => {
     const stockReservations: StockReservationGateway = {
       reserve: async () => ({ outcome: "run_not_accepting_traffic", reservation: null }),
@@ -2028,6 +2106,141 @@ describe("API buy persistence", () => {
       expect(await redis.hlen(keys.reservations)).toBe(1);
       expect(await redis.zcard(keys.pendingPersistence)).toBe(1);
       expect(await getInventoryStatus(redis, fixtureIds.saleOffer)).toMatchObject({
+        pendingPersistenceCount: 1,
+      });
+    } finally {
+      try {
+        await server.close();
+      } finally {
+        await connection.sql`
+          DROP TRIGGER IF EXISTS order_events_reject_test_order_queued ON order_events
+        `;
+        await connection.sql`DROP FUNCTION IF EXISTS reject_test_order_queued_event()`;
+      }
+    }
+  });
+
+  it("records run-scoped pending-persistence state after a generated-run durable write failure", async () => {
+    if (!connection || !redis) {
+      throw new Error("Test infrastructure was not initialized.");
+    }
+
+    const generatedSaleOfferId = "99999999-9999-4999-8999-999999999999";
+    const presetId = "88888888-8888-4888-8888-888888888888";
+
+    await connection.db.insert(saleOffers).values({
+      id: generatedSaleOfferId,
+      productId: fixtureIds.product,
+      name: "Generated API Test Sale Offer",
+      allocatedStock: 3,
+      saleStartsAt: new Date("2026-01-01T00:00:00.000Z"),
+      saleEndsAt: new Date("2035-01-01T00:00:00.000Z"),
+      isActive: true,
+      purpose: "generated_run",
+    });
+    await connection.db.insert(demoPresets).values({
+      id: presetId,
+      slug: "generated-pending-test",
+      visibility: "admin",
+      isEditable: true,
+      display: { name: "Generated Pending Test", description: "Run attribution test" },
+      trafficConfig: {},
+      inventoryConfig: {},
+      erpConfig: {},
+      backpressureConfig: {},
+    });
+    await connection.db.insert(demoRuns).values({
+      id: fixtureIds.run,
+      presetId,
+      presetName: "Generated Pending Test",
+      operatorMode: "admin",
+      status: "active",
+      trafficStatus: "active",
+      configSnapshot: {
+        trafficConfig: {},
+        inventoryConfig: {},
+        erpConfig: {},
+        backpressureConfig: {},
+      },
+      saleOfferId: generatedSaleOfferId,
+      startedAt: new Date("2026-01-01T00:00:00.000Z"),
+    });
+    await connection.db.insert(demoRunSaleContexts).values({
+      runId: fixtureIds.run,
+      saleOfferId: generatedSaleOfferId,
+    });
+    await initializeInventory(redis, {
+      saleOfferId: generatedSaleOfferId,
+      allocatedStock: 3,
+      run: { runId: fixtureIds.run, status: "accepting" },
+    });
+    await connection.sql`
+      DROP TRIGGER IF EXISTS order_events_reject_test_order_queued ON order_events
+    `;
+    await connection.sql`DROP FUNCTION IF EXISTS reject_test_order_queued_event()`;
+    await connection.sql`
+      CREATE FUNCTION reject_test_order_queued_event()
+      RETURNS trigger AS $$
+      BEGIN
+        IF NEW.event_name = 'order.queued' THEN
+          RAISE EXCEPTION 'intentional generated-run order event persistence failure';
+        END IF;
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql
+    `;
+    await connection.sql`
+      CREATE TRIGGER order_events_reject_test_order_queued
+      BEFORE INSERT ON order_events
+      FOR EACH ROW EXECUTE FUNCTION reject_test_order_queued_event()
+    `;
+
+    const server = await buildTestServer({
+      persistence: new PostgresBuyPersistence(connection.db),
+      stockReservations: createRedisStockReservations(redis),
+      generateId: randomUUID,
+    });
+
+    try {
+      const response = await server.inject({
+        method: "POST",
+        url: "/buy",
+        headers: {
+          [loadRunIdHeaderName]: fixtureIds.run,
+        },
+        payload: {
+          saleOfferId: generatedSaleOfferId,
+          runId: fixtureIds.run,
+          idempotencyKey: "generated-run-pending-persistence",
+          quantity: 1,
+        },
+      });
+      const payload = buyResponseSchema.parse(response.json());
+      const pendingRows = await connection.db
+        .select()
+        .from(reservationPendingPersistence)
+        .where(eq(reservationPendingPersistence.reservationId, payload.reservation?.id ?? ""));
+
+      expect(response.statusCode).toBe(202);
+      expect(payload.outcome).toBe("reservation_pending_persistence");
+      expect(payload.reservation?.runId).toBe(fixtureIds.run);
+      expect(payload.order).toBeNull();
+      expect(await connection.db.select().from(reservations)).toEqual([]);
+      expect(await connection.db.select().from(orders)).toEqual([]);
+      expect(await connection.db.select().from(orderEvents)).toEqual([]);
+      expect(pendingRows).toHaveLength(1);
+      expect(pendingRows[0]).toMatchObject({
+        reservationId: payload.reservation?.id,
+        saleOfferId: generatedSaleOfferId,
+        runId: fixtureIds.run,
+        idempotencyKey: "generated-run-pending-persistence",
+        quantity: 1,
+        reservationToken: payload.reservation?.reservationToken,
+        status: "pending_reconciliation",
+      });
+      expect(await getInventoryStatus(redis, generatedSaleOfferId)).toMatchObject({
+        remainingStock: 2,
+        reservedStock: 1,
         pendingPersistenceCount: 1,
       });
     } finally {

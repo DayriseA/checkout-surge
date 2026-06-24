@@ -781,14 +781,16 @@ Primary references:
 - `docs/core_business_entities.md`
 - `docs/cross_service_conventions.md`
 
-### ⬜ Task 10.1 - Add first-class run attribution
+### ✅ Task 10.1 - Add first-class run attribution
 
 Subtasks:
 
-- Accept run attribution at the buy API boundary from the shared request body and `x-load-run-id` header, rejecting mismatches.
-- Track run membership for reservations, orders, queue jobs, ERP attempts, simulated notifications, finalization inputs, and summaries.
-- Persist enough run-scoped pending-persistence state to explain Redis-accepted reservations when durable order creation initially fails.
-- Prefer explicit run identity over correlation ID parsing while preserving correlation IDs for tracing and diagnostics.
+- ✅ Accept run attribution at the buy API boundary from the shared request body and `x-load-run-id` header, rejecting mismatches.
+- ✅ Track run membership for reservations, orders, queue jobs, ERP attempts, simulated notifications, finalization inputs, and summaries.
+- ✅ Persist enough run-scoped pending-persistence state to explain Redis-accepted reservations when durable order creation initially fails.
+- ✅ Prefer explicit run identity over correlation ID parsing while preserving correlation IDs for tracing and diagnostics.
+
+Completion summary: Task 10.1 now makes run attribution first-class at the checkout boundary without changing benchmark terminal semantics. The shared contracts expose `x-load-run-id`, the API accepts body/header run identity and rejects mismatches before reservation work starts, and the load orchestrator includes the header in generated k6 traffic. Existing run-aware persistence, queue, ERP, notification, finalization-input, and summary records remain explicitly keyed by `runId`; the buy path now also records durable pending-persistence reconciliation rows when Redis secures a run-scoped hold but durable order creation initially fails. Business-boundary finalization, immutable terminal benchmark summaries, dashboard recovery ownership, startup reconciliation, and draining-run decisions remain Task 10.2 and Task 10.3 ownership.
 
 ### ⬜ Task 10.2 - Implement business-boundary finalization
 

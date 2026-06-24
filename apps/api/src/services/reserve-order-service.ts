@@ -19,6 +19,10 @@ export interface PersistedBuy {
 export interface BuyPersistence {
   persistSecuredReservation(input: { reservation: SecuredReservationHold }): Promise<PersistedBuy>;
   getPersistedBuyByReservationId(reservationId: string): Promise<PersistedBuy | null>;
+  recordPendingPersistence?(input: {
+    reservation: SecuredReservationHold;
+    idempotencyKey: string;
+  }): Promise<void>;
 }
 
 export interface StockReservationGateway {
@@ -85,6 +89,7 @@ export class ReserveOrderService {
   private readonly pendingPersistenceRetryAfterSeconds: number;
   private readonly generateId: () => string;
   private readonly reportPersistenceFailure: ReservationPartialFailureReporter;
+  private readonly reportPendingPersistenceRecordFailure: ReservationPartialFailureReporter;
   private readonly reportPendingPersistenceEnsureFailure: ReservationPartialFailureReporter;
   private readonly reportPromotionFailure: ReservationPartialFailureReporter;
   private readonly reportOrderEnqueueFailure: (report: OrderEnqueueFailureReport) => void;
@@ -102,6 +107,7 @@ export class ReserveOrderService {
     pendingPersistenceRetryAfterSeconds: number;
     generateId?: () => string;
     reportPersistenceFailure?: ReservationPartialFailureReporter;
+    reportPendingPersistenceRecordFailure?: ReservationPartialFailureReporter;
     reportPendingPersistenceEnsureFailure?: ReservationPartialFailureReporter;
     reportPromotionFailure?: ReservationPartialFailureReporter;
     reportOrderEnqueueFailure?: (report: OrderEnqueueFailureReport) => void;
@@ -116,6 +122,8 @@ export class ReserveOrderService {
     this.pendingPersistenceRetryAfterSeconds = options.pendingPersistenceRetryAfterSeconds;
     this.generateId = options.generateId ?? randomUUID;
     this.reportPersistenceFailure = options.reportPersistenceFailure ?? (() => undefined);
+    this.reportPendingPersistenceRecordFailure =
+      options.reportPendingPersistenceRecordFailure ?? (() => undefined);
     this.reportPendingPersistenceEnsureFailure =
       options.reportPendingPersistenceEnsureFailure ?? (() => undefined);
     this.reportPromotionFailure = options.reportPromotionFailure ?? (() => undefined);
@@ -188,6 +196,10 @@ export class ReserveOrderService {
       throw new Error("Accepted Redis idempotency record has no durable reservation and order.");
     }
 
+    await this.recordPendingPersistenceWithoutHidingPending(
+      input.request.idempotencyKey,
+      decision.reservation,
+    );
     await this.ensurePendingPersistence(input.request.idempotencyKey, decision.reservation);
     return this.pendingResponse(decision.reservation, input.correlationId, now);
   }
@@ -208,6 +220,10 @@ export class ReserveOrderService {
       safelyReportPartialFailure(
         this.reportPersistenceFailure,
         this.partialFailureReport(error, input.idempotencyKey, input.reservation),
+      );
+      await this.recordPendingPersistenceWithoutHidingPending(
+        input.idempotencyKey,
+        input.reservation,
       );
       await this.ensurePendingPersistence(input.idempotencyKey, input.reservation);
       return this.pendingResponse(input.reservation, input.correlationId, input.now);
@@ -301,6 +317,24 @@ export class ReserveOrderService {
     } catch (error) {
       safelyReportPartialFailure(
         this.reportPendingPersistenceEnsureFailure,
+        this.partialFailureReport(error, idempotencyKey, reservation),
+      );
+    }
+  }
+
+  private async recordPendingPersistenceWithoutHidingPending(
+    idempotencyKey: string,
+    reservation: SecuredReservationHold,
+  ): Promise<void> {
+    if (!this.persistence.recordPendingPersistence) {
+      return;
+    }
+
+    try {
+      await this.persistence.recordPendingPersistence({ idempotencyKey, reservation });
+    } catch (error) {
+      safelyReportPartialFailure(
+        this.reportPendingPersistenceRecordFailure,
         this.partialFailureReport(error, idempotencyKey, reservation),
       );
     }

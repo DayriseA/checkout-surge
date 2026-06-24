@@ -1,4 +1,4 @@
-import type { TrafficExecutionStartRequest } from "@checkout-surge/contracts";
+import { loadRunIdHeaderName, type TrafficExecutionStartRequest } from "@checkout-surge/contracts";
 
 export interface GeneratedK6Script {
   contents: string;
@@ -71,7 +71,13 @@ export default function () {
       quantity: config.quantity,
       correlationId: \`\${config.correlationId}:k6:\${iteration}\`,
     }),
-    { headers: { "content-type": "application/json", accept: "application/json" } },
+    {
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json",
+        "${loadRunIdHeaderName}": config.runId,
+      },
+    },
   );
 
   let outcome = null;

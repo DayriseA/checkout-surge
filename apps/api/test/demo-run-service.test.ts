@@ -1,6 +1,11 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { AcceptedRunConfigSnapshot, PublicRuntimePolicy } from "@checkout-surge/contracts";
+import type {
+  AcceptedRunConfigSnapshot,
+  BusinessOutcomeSummary,
+  PublicRuntimePolicy,
+  TrafficConfig,
+} from "@checkout-surge/contracts";
 import { createDatabaseConnection, demoPresets } from "@checkout-surge/db";
 import { resetTestDatabase } from "@checkout-surge/db/testing";
 import { createSilentLogger } from "@checkout-surge/logger";
@@ -96,7 +101,9 @@ describe("demo-run preset management", () => {
     ).rejects.toMatchObject({ code: "preset_not_editable" });
     expect(updated.preset.slug).toBe("custom");
     expect(updated.preset.display.name).toBe("Custom Saved");
-    expect(updated.preset.trafficConfig.buyerCount).toBe(10_000);
+    expect(expectBuyerSpikeTrafficConfig(updated.preset.trafficConfig)).toMatchObject({
+      buyerCount: 10_000,
+    });
   });
 
   it("duplicates presets as editable admin copies and rejects duplicate slugs", async () => {
@@ -137,7 +144,9 @@ describe("demo-run preset management", () => {
     expect(copied.preset.isCustom).toBe(true);
     expect(copied.preset.display.name).toBe("Custom");
     expect(copied.preset.display.description).toBe("Scratch copy of Preview 1k.");
-    expect(copied.preset.trafficConfig.buyerCount).toBe(10_000);
+    expect(expectBuyerSpikeTrafficConfig(copied.preset.trafficConfig)).toMatchObject({
+      buyerCount: 10_000,
+    });
   });
 });
 
@@ -199,16 +208,47 @@ function createPresetManagementService(
   return new DemoRunService({
     db: connection.db,
     redis: {} as never,
-    trafficExecutionGateway: { start: async () => ({ runId: "unused", startedAt: "unused" }) },
+    trafficExecutionGateway: {
+      start: async () => ({
+        runId: "unused",
+        status: "active",
+        startedAt: "unused",
+        correlationId: "unused",
+      }),
+    },
     publicRunBudgetStore: { consume: async () => undefined },
     trafficMetricStore: {} as never,
-    businessOutcomeReader: { read: async () => null },
+    businessOutcomeReader: { read: async () => emptyBusinessOutcomeSummary() },
     apiBaseUrl: "http://api.test",
     buyEndpointPath: "/buy",
     logger: createSilentLogger("api"),
     now: () => new Date("2026-06-20T00:00:10.000Z"),
     generateId: () => "66666666-6666-4666-8666-666666666666",
   });
+}
+
+function expectBuyerSpikeTrafficConfig(
+  trafficConfig: TrafficConfig,
+): Extract<TrafficConfig, { mode: "buyer-spike" }> {
+  if (trafficConfig.mode !== "buyer-spike") {
+    throw new Error(`Expected buyer-spike traffic config, received ${trafficConfig.mode}.`);
+  }
+
+  return trafficConfig;
+}
+
+function emptyBusinessOutcomeSummary(): BusinessOutcomeSummary {
+  return {
+    acceptedReservations: 0,
+    soldOutRejections: 0,
+    queuedOrders: 0,
+    processingOrders: 0,
+    retryingOrders: 0,
+    confirmedOrders: 0,
+    failedOrders: 0,
+    pendingPersistenceCount: 0,
+    notificationsRecorded: 0,
+  };
 }
 
 async function seedPresetFixtures(

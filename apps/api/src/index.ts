@@ -194,6 +194,12 @@ export async function startApiServer(): Promise<void> {
         "Could not ensure the Redis pending-persistence marker.",
       );
     },
+    reportPendingPersistenceRecordFailure: (report) => {
+      logger.error(
+        partialFailureLogContext(report),
+        "Could not record the pending-persistence reconciliation state.",
+      );
+    },
     reportPromotionFailure: (report) => {
       logger.error(
         partialFailureLogContext(report),

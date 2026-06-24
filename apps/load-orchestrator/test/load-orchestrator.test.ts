@@ -1,6 +1,7 @@
 import {
   controlServiceTokenHeaderName,
   healthResponseSchema,
+  loadRunIdHeaderName,
   type TrafficExecutionStartRequest,
   trafficExecutionStartPath,
   trafficExecutionStartResponseSchema,
@@ -62,6 +63,7 @@ describe("load-orchestrator k6 mapping", () => {
     expect(script.contents).toContain("http.post");
     expect(script.contents).toContain("run:");
     expect(script.contents).toContain(":buyer:");
+    expect(script.contents).toContain(`"${loadRunIdHeaderName}": config.runId`);
   });
 
   it("generates a steady-arrival scenario with k6 VU controls", () => {

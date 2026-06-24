@@ -29,6 +29,7 @@ function buildService(options: {
   stockReservations: StockReservationGateway;
   orderProcessJobPublisher?: OrderProcessJobPublisher;
   reportPersistenceFailure?: (report: ReservationPartialFailureReport) => void;
+  reportPendingPersistenceRecordFailure?: (report: ReservationPartialFailureReport) => void;
   reportPendingPersistenceEnsureFailure?: (report: ReservationPartialFailureReport) => void;
   reportPromotionFailure?: (report: ReservationPartialFailureReport) => void;
   reportOrderEnqueueFailure?: (report: OrderEnqueueFailureReport) => void;
@@ -53,6 +54,9 @@ function buildService(options: {
     })(),
     ...(options.reportPersistenceFailure
       ? { reportPersistenceFailure: options.reportPersistenceFailure }
+      : {}),
+    ...(options.reportPendingPersistenceRecordFailure
+      ? { reportPendingPersistenceRecordFailure: options.reportPendingPersistenceRecordFailure }
       : {}),
     ...(options.reportPendingPersistenceEnsureFailure
       ? { reportPendingPersistenceEnsureFailure: options.reportPendingPersistenceEnsureFailure }
@@ -386,6 +390,64 @@ describe("ReserveOrderService queue handoff", () => {
 });
 
 describe("ReserveOrderService partial failures", () => {
+  it("records pending-persistence context when PostgreSQL order creation fails", async () => {
+    const persistenceError = new Error("database unavailable");
+    const recordPendingPersistence = vi.fn(async () => undefined);
+    const service = buildService({
+      persistence: {
+        persistSecuredReservation: async () => {
+          throw persistenceError;
+        },
+        getPersistedBuyByReservationId: async () => null,
+        recordPendingPersistence,
+      },
+      stockReservations: acceptingGateway(),
+    });
+
+    const response = await service.reserve({ request, correlationId, now });
+
+    expect(response.outcome).toBe("reservation_pending_persistence");
+    expect(recordPendingPersistence).toHaveBeenCalledWith({
+      idempotencyKey: request.idempotencyKey,
+      reservation: expect.objectContaining({
+        saleOfferId: request.saleOfferId,
+        runId: request.runId,
+        correlationId,
+      }),
+    });
+  });
+
+  it("does not hide the pending response when pending-persistence recording fails", async () => {
+    const recordError = new Error("pending record unavailable");
+    const reportPendingPersistenceRecordFailure = vi.fn();
+    const service = buildService({
+      persistence: {
+        persistSecuredReservation: async () => {
+          throw new Error("database unavailable");
+        },
+        getPersistedBuyByReservationId: async () => null,
+        recordPendingPersistence: async () => {
+          throw recordError;
+        },
+      },
+      stockReservations: acceptingGateway(),
+      reportPendingPersistenceRecordFailure,
+    });
+
+    const response = await service.reserve({ request, correlationId, now });
+
+    expect(response.outcome).toBe("reservation_pending_persistence");
+    expect(reportPendingPersistenceRecordFailure).toHaveBeenCalledWith(
+      expect.objectContaining({
+        error: recordError,
+        saleOfferId: request.saleOfferId,
+        runId: request.runId,
+        correlationId,
+        idempotencyKey: request.idempotencyKey,
+      }),
+    );
+  });
+
   it("returns explicit pending when PostgreSQL and the marker ensure both fail", async () => {
     const persistenceError = new Error("database unavailable");
     const markerError = new Error("marker ensure unavailable");

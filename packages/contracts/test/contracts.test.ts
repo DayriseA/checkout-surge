@@ -23,6 +23,7 @@ import {
   internalTrafficCompletionPath,
   inventoryStatusSchema,
   inventoryUpdatedEventPayloadSchema,
+  loadRunIdHeaderName,
   metricNameValues,
   orderProcessBullMqQueueName,
   orderProcessJobSchema,
@@ -342,6 +343,7 @@ describe("buy and dashboard contracts", () => {
 
     expect(request.quantity).toBe(1);
     expect(request.runId).toBe(runId);
+    expect(loadRunIdHeaderName).toBe("x-load-run-id");
   });
 
   it("validates accepted and sold-out reservation outcomes", () => {
