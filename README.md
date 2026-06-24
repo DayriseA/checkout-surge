@@ -4,7 +4,7 @@
 
 Checkout-Surge is a realistic limited-inventory checkout simulation for surge traffic. The implemented Node.js track uses Redis atomic reservations, BullMQ workers, durable PostgreSQL records, and observable backpressure to show how a checkout system can absorb request bursts without overselling or overwhelming a slow downstream business system. The same pressure pattern appears in ticket launches, product drops, presales, and other scarcity-driven purchase flows. The mock ERP gives the downstream dependency a concrete back-office shape, but the boundary applies equally to payment, risk, warehouse, fulfillment, tax, accounting, supplier APIs, or other fragile business systems.
 
-The current implementation covers the core simulation through Phase 8 of the roadmap: inventory hot path, async order processing, mock ERP resilience, realtime dashboard recovery, k6 load orchestration, simulated notifications, protected admin controls, demo reset/cleanup tools, and admin preset management. Containerized full-runtime packaging and final benchmark lifecycle ownership remain later roadmap work.
+The current implementation covers the core simulation through Phase 9 of the roadmap: inventory hot path, async order processing, mock ERP resilience, realtime dashboard recovery, k6 load orchestration, simulated notifications, protected admin controls, demo reset/cleanup tools, admin preset management, and the containerized local reference runtime. Final benchmark lifecycle ownership remains later roadmap work.
 
 The buyers, mock ERP downstream dependency, and post-confirmation notifications are simulated because this is a systems demonstration, not a commerce business. The architecture proof is real: the project must measure whether the services protect inventory consistency, keep the API responsive, and make delayed downstream processing visible.
 
@@ -76,8 +76,7 @@ For the deeper design rationale and failure modes, see [docs/architecture.md](do
 
 - Node.js and pnpm (Corepack recommended for the pinned version)
 - Docker with Docker Compose
-- k6 CLI for the current host-native load-orchestrator workflow
-- Dockerized k6 inside the load-orchestrator reference container after Phase 9 lands
+- k6 CLI only for the alternate host-native load-orchestrator workflow
 
 ## Quick Start
 
@@ -87,36 +86,44 @@ Create a local environment file:
 cp .env.example .env
 ```
 
-Start local PostgreSQL and Redis:
+Start the full containerized reference runtime:
 
 ```bash
-pnpm infra:up
+pnpm runtime:up
 ```
 
-Run migrations and seed the demo product, baseline sale offer, durable presets, PostgreSQL records, and Redis inventory:
+Run migrations and seed the demo product, baseline sale offer, durable presets, PostgreSQL records, and Redis inventory inside the Compose network:
 
 ```bash
-pnpm --filter @checkout-surge/db db:migrate
-pnpm --filter @checkout-surge/db seed
+pnpm runtime:setup
 ```
 
-Start the services in separate terminals:
-
-```bash
-pnpm dev:mock-erp
-pnpm dev:api
-pnpm dev:worker
-pnpm dev:load-orchestrator
-pnpm dev:dashboard
-```
-
-Open the dashboard:
+Open the dashboard through the single-origin proxy:
 
 ```text
-http://localhost:3000
+http://localhost:8080
 ```
 
-Direct dashboard development on `3000` works for focused local work. The single-origin `8080` dashboard proxy, full compose runtime, and containerized k6 path are Phase 9 runtime-topology work.
+Verify the runtime:
+
+```bash
+pnpm health:check
+pnpm runtime:smoke
+```
+
+Run a small dashboard-triggered load smoke check:
+
+```bash
+pnpm runtime:smoke:load
+```
+
+For focused host-native development, use the infra-only and `dev:*` commands documented in [docs/local_development.md](docs/local_development.md). Host-native load runs require a local `k6` binary.
+
+Stop the full runtime:
+
+```bash
+pnpm runtime:down
+```
 
 Run API/web/load flows from the dashboard or call the owning services directly while developing. Admin-only operations require `ADMIN_DASHBOARD_PASSPHRASE`, `ADMIN_SESSION_SECRET`, and `CONTROL_SERVICE_TOKEN` from `.env`.
 

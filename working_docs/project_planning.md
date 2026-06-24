@@ -689,7 +689,7 @@ Subtasks:
 
 ---
 
-## ⬜ Phase 9 - Runtime Topology and Containerized Local Development
+## ✅ Phase 9 - Runtime Topology and Containerized Local Development
 
 ### Goal
 
@@ -699,50 +699,72 @@ Primary reference:
 
 - `docs/runtime_topology.md`
 
-### ⬜ Task 9.1 - Containerize the load orchestrator with k6
+Completion commits:
+
+- `58dc4eb` - `feat(runtime): add containerized reference topology`
+- `a5f7045` - `test(runtime): harden smoke validation cleanup`
+
+Completion summary: Phase 9 makes the full containerized local runtime the primary reference path. The root Compose topology now includes PostgreSQL, Redis, API, worker, mock ERP, web, load orchestrator, and the dashboard Caddy proxy. The load-orchestrator runtime image carries a pinned k6 binary and readiness verifies `k6_binary_executable=ok`. Root runtime commands now build/start the topology, run explicit setup, wipe or reset local state, check health, run smoke checks, and run a tiny dashboard-proxied load smoke path that verifies k6 metric streaming and traffic completion without host-installed k6. The Dev Container compose layer extends the root topology for app-service development while starting only the workspace service by default. The merged Dev Container config was validated in the current Codespace; a full Codespace rebuild remains the required external verification for editor startup, port forwarding, Docker-in-Docker initialization, and named dependency volumes after these `.devcontainer` changes.
+
+Final verification completed:
+
+- `docker compose config`
+- `docker compose --profile setup config`
+- `docker compose -f docker-compose.yml -f .devcontainer/docker-compose.yml config`
+- `docker compose build load-orchestrator`
+- `docker run --rm checkout-surge-load-orchestrator:latest /usr/local/bin/k6 version`
+- `pnpm runtime:up`
+- `pnpm runtime:setup`
+- `pnpm health:check`
+- `pnpm runtime:smoke`
+- `pnpm runtime:smoke:load`
+
+Phase 9 intentionally leaves API-owned final benchmark lifecycle finalization, immutable terminal run-history summaries, hosted deployment assets, reverse-proxy deployment tuning, and optional Go comparison work to later phases.
+
+### ✅ Task 9.1 - Containerize the load orchestrator with k6
 
 Subtasks:
 
-- Add a load-orchestrator image that installs the k6 binary as part of the runtime.
-- Ensure `K6_BINARY` resolves inside the container without host machine setup.
-- Add readiness coverage that verifies the configured k6 binary is executable before the load orchestrator reports full readiness.
+- ✅ Add a load-orchestrator image that installs the k6 binary as part of the runtime.
+- ✅ Ensure `K6_BINARY` resolves inside the container without host machine setup.
+- ✅ Add readiness coverage that verifies the configured k6 binary is executable before the load orchestrator reports full readiness.
 
-### ⬜ Task 9.2 - Add the application-service compose path
-
-Subtasks:
-
-- Expand the root local compose topology to include API, worker, mock ERP, web, load orchestrator, PostgreSQL, Redis, and the dashboard proxy.
-- Add a `.devcontainer` compose override only for Dev Container/Codespaces concerns such as bind mounts, dev-mode commands, Docker-in-Docker compatibility, dependency-volume isolation, and forwarded ports.
-- Preserve host-native `pnpm dev:*` workflows and infra-only convenience commands.
-- Add `runtime:up`, `runtime:down`, `runtime:setup`, `runtime:wipe`, `runtime:reset`, and related command contracts.
-- Ensure Dev Container/Codespaces startup does not auto-run the full reference runtime.
-- Keep compose-internal service DNS, browser-facing localhost URLs, secrets, boot order, and port-forwarding behavior aligned with `docs/runtime_topology.md`.
-
-### ⬜ Task 9.3 - Validate dashboard-triggered load runs in the containerized topology
+### ✅ Task 9.2 - Add the application-service compose path
 
 Subtasks:
 
-- Prove the dashboard can start a load run through the containerized load orchestrator.
-- Prove the load orchestrator streams k6 metrics back to the API and dashboard without host-installed k6.
-- Capture host, Dev Container, and Codespaces limitations that affect local 10k-style validation.
-- Verify the same dashboard-triggered flow from host-native and containerized entry points where practical.
+- ✅ Expand the root local compose topology to include API, worker, mock ERP, web, load orchestrator, PostgreSQL, Redis, and the dashboard proxy.
+- ✅ Add a `.devcontainer` compose override only for Dev Container/Codespaces concerns such as bind mounts, dev-mode commands, Docker-in-Docker compatibility, dependency-volume isolation, and forwarded ports.
+- ✅ Preserve host-native `pnpm dev:*` workflows and infra-only convenience commands.
+- ✅ Add `runtime:up`, `runtime:down`, `runtime:setup`, `runtime:wipe`, `runtime:reset`, and related command contracts.
+- ✅ Ensure Dev Container/Codespaces startup does not auto-run the full reference runtime.
+- ✅ Keep compose-internal service DNS, browser-facing localhost URLs, secrets, boot order, and port-forwarding behavior aligned with `docs/runtime_topology.md`.
 
-### ⬜ Task 9.4 - Add automated checks for the containerized local runtime
-
-Subtasks:
-
-- Add smoke checks for container startup, dependency readiness, direct service health, dashboard proxy reachability, same-origin dashboard reads, SSE reachability, and k6 execution inside the load-orchestrator container.
-- Add a repeatable smoke path for dashboard-triggered load runs that cleans up only its own generated rows and Redis keys.
-- Include Dev Container and Codespaces setup validation in runtime checks where practical.
-
-### ⬜ Task 9.5 - Promote the containerized runtime in public docs
+### ✅ Task 9.3 - Validate dashboard-triggered load runs in the containerized topology
 
 Subtasks:
 
-- Update README and local-development docs so the containerized reference runtime is the primary demo path after it is implemented.
-- Move host-native k6 installation guidance into an alternate workflow section.
-- Remove transitional wording that no longer matches delivered runtime behavior.
-- Ensure architecture and working-doc references describe the final local topology without stale future-tense language.
+- ✅ Prove the dashboard can start a load run through the containerized load orchestrator.
+- ✅ Prove the load orchestrator streams k6 metrics back to the API and dashboard without host-installed k6.
+- ✅ Capture host, Dev Container, and Codespaces limitations that affect local 10k-style validation.
+- ✅ Verify the same dashboard-triggered flow from host-native and containerized entry points where practical.
+
+### ✅ Task 9.4 - Add automated checks for the containerized local runtime
+
+Subtasks:
+
+- ✅ Add smoke checks for container startup, dependency readiness, direct service health, dashboard proxy reachability, same-origin dashboard reads, SSE reachability, and k6 execution inside the load-orchestrator container.
+- ✅ Add a repeatable smoke path for dashboard-triggered load runs that cleans up only its own generated rows and Redis keys.
+- ✅ Include Dev Container and Codespaces setup validation in runtime checks where practical.
+
+### ✅ Task 9.5 - Promote the containerized runtime in public docs
+
+Subtasks:
+
+- ✅ Update README and local-development docs so the containerized reference runtime is the primary demo path after it is implemented.
+- ✅ Move host-native k6 installation guidance into an alternate workflow section.
+- ✅ Remove transitional wording that no longer matches delivered runtime behavior.
+- ✅ Ensure architecture and working-doc references describe the final local topology without stale future-tense language.
 
 ---
 

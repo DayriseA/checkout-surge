@@ -1,6 +1,6 @@
 # Local Development
 
-This guide covers the day-to-day setup for running Checkout-Forge locally. The durable architecture rationale lives in `docs/architecture.md`; this file is the practical reference.
+This guide covers the day-to-day setup for running Checkout-Surge locally. The durable architecture rationale lives in `docs/architecture.md`; this file is the practical reference.
 
 ## Prerequisites
 
@@ -13,7 +13,7 @@ The reference local runtime runs the load orchestrator in its own container with
 
 ## Environment
 
-After the application workspace is scaffolded, several control surfaces require shared secrets, so create a local environment file from the root template before starting services:
+Several control surfaces require shared secrets, so create a local environment file from the root template before starting services:
 
 ```bash
 cp .env.example .env
@@ -21,11 +21,11 @@ cp .env.example .env
 
 Local `dev`, database migration, and seed commands should load `.env` automatically through `scripts/run-with-env.mjs`, so the setup works from Bash, PowerShell, cmd, Git Bash, and WSL. Real shell environment variables take precedence over file values. Optional `.env.local` files override `.env`, and app-specific `.env` / `.env.local` files can override root values for that service.
 
-The root `.env.example` should contain shared infrastructure URLs and control secrets. Per-app `.env.example` files should document service-specific defaults and optional knobs.
+The root `.env.example` contains host-native shared infrastructure URLs and control secrets. Per-app `.env.example` files document service-specific defaults and optional knobs.
 
 ## Runtime Modes
 
-Checkout-Surge must eventually support three local workflows:
+Checkout-Surge supports three local workflows:
 
 - Containerized reference runtime: run the application services and infrastructure through Docker Compose, with the load orchestrator carrying its own k6 binary and the dashboard exposed through the single-origin proxy on port `8080`. Use this for demos, manual end-to-end checks, and dashboard-triggered load runs.
 - Host-native development: run app services with `pnpm dev:*` and shared PostgreSQL/Redis through Docker Compose. Use this for focused code edits. Host-native load runs require `K6_BINARY` to resolve on the host machine.
@@ -48,7 +48,7 @@ The Caddy proxy owns the local edge route contract for dashboard realtime: `/das
 
 ## Reference Runtime Startup
 
-These commands are the target runtime contract. They become available as the monorepo, root scripts, and compose topology are implemented.
+These commands are the primary local demo path.
 
 Create your local environment file:
 
@@ -93,7 +93,7 @@ http://localhost:8080
 
 Use `/` for the public demo picker, `/admin` for operator controls, `/watch` for the active live run after a start, `/run-history` for finalized summaries, and `/about` for the static "how it works" explainer. The live watch route follows the active/current run exposed by dashboard recovery; arbitrary completed-run detail remains owned by Run History.
 
-In Dev Containers and GitHub Codespaces, launch the forwarded `8080` `dashboard-proxy` port after the application runtime adds it. API, mock ERP, load-orchestrator, and direct web ports should be forwarded as debugging surfaces, not as the normal dashboard URL. In Codespaces, set `WEB_ORIGIN` to the forwarded `8080` dashboard-proxy URL shown by the Ports panel, for example `https://<codespace>-8080.app.github.dev`.
+In Dev Containers and GitHub Codespaces, launch the forwarded `8080` `dashboard-proxy` port. API, mock ERP, load-orchestrator, and direct web ports are forwarded as debugging surfaces, not as the normal dashboard URL. In Codespaces, set `WEB_ORIGIN` to the forwarded `8080` dashboard-proxy URL shown by the Ports panel, for example `https://<codespace>-8080.app.github.dev`.
 
 Check runtime readiness:
 
@@ -102,7 +102,7 @@ pnpm health:check
 pnpm runtime:smoke
 ```
 
-Run the mutating dashboard-to-load-run smoke check when you want to prove the full control path. It resets demo data through the API, starts a small admin demo run through the dashboard proxy, then removes only the rows and Redis keys created by that smoke run:
+Run the mutating dashboard-to-load-run smoke check when you want to prove the full control path. It resets demo data through the API, starts a small bounded public custom run through the dashboard proxy, verifies k6 metric streaming and traffic completion, then removes only the rows and Redis keys created by that smoke run:
 
 ```bash
 pnpm runtime:smoke:load
@@ -118,13 +118,15 @@ pnpm runtime:down
 
 ## Dev Container Startup
 
-The seed Dev Container is a standalone editor workspace named `checkout-surge-devcontainer`. It uses the universal devcontainer image, Docker-in-Docker, persistent Codex/Claude config volumes, a persistent pnpm store, and a root `node_modules` volume. After the root application compose topology exists, implementation work may add a Dev Container override for app-service development, but the editor workspace must remain separate from the reference runtime project.
+The Dev Container is an editor workspace named `checkout-surge-devcontainer`. It extends the root Compose topology for app-service development, while `runServices` starts only the `workspace` service by default. It uses the universal devcontainer image, Docker-in-Docker, persistent Codex/Claude config volumes, a persistent pnpm store, and named `node_modules` volumes so Linux dependencies stay out of the host-visible workspace.
 
-Open or rebuild the Dev Container through VS Code. Startup prepares the workspace and checks Docker readiness. After runtime scripts exist, the full runtime remains explicit:
+Open or rebuild the Dev Container through VS Code. Startup prepares the workspace and checks Docker readiness, but it does not auto-start the full application runtime. The full runtime remains explicit:
 
 ```bash
 pnpm runtime:up
 ```
+
+After changes to `.devcontainer` files, rebuild the Dev Container or Codespace to verify editor startup, Docker-in-Docker initialization, forwarded ports, and dependency-volume behavior under the new configuration.
 
 ## Host-Native Startup
 

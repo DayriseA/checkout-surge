@@ -1,6 +1,6 @@
 # Runtime Topology - Decisions & Rationale
 
-This document defines the target local reference runtime topology, the Dev Container and GitHub Codespaces expectations, and the boundary between the local runtime and hosted deployment packaging. To start with, `.devcontainer` is intentionally a neutral workspace shell; application compose services are added later as the monorepo is scaffolded.
+This document defines the delivered local reference runtime topology, the Dev Container and GitHub Codespaces expectations, and the boundary between the local runtime and hosted deployment packaging.
 
 The goal is to make the architecture-realistic topology easy to run locally without turning every development workspace startup into a full demo environment.
 
@@ -12,8 +12,8 @@ The goal is to make the architecture-realistic topology easy to run locally with
 | :-- | :-- | :-- |
 | Reference local topology | API, worker, mock ERP, web, load orchestrator, PostgreSQL, and Redis run as separate services | The local reference runtime should demonstrate the same service boundaries the project claims architecturally. |
 | Load orchestrator runtime | The load-orchestrator container owns the k6 binary | k6 is part of the load-generation service runtime, not a host-machine prerequisite for the reference path. |
-| Root compose ownership | The future root compose topology is the stable full local reference/demo runtime | `docker compose up` and `pnpm runtime:up` should represent the complete local system, not only shared infrastructure. |
-| Dev Container compose ownership | The seed `.devcontainer` compose uses a separate `checkout-surge-devcontainer` project for the editor workspace; later implementation may extend shared service definitions after they exist | The editor container lifecycle must not be coupled to `pnpm runtime:up` / `pnpm runtime:down`, which own the reference runtime project. |
+| Root compose ownership | The root compose topology is the stable full local reference/demo runtime | `docker compose up` and `pnpm runtime:up` represent the complete local system, not only shared infrastructure. |
+| Dev Container compose ownership | The `.devcontainer` compose layer extends the root topology under the separate `checkout-surge-devcontainer` project for the editor workspace | The editor container lifecycle must not be coupled to `pnpm runtime:up` / `pnpm runtime:down`, which own the reference runtime project. |
 | Dev Container Docker strategy | Dev Container and GitHub Codespaces use Docker-in-Docker | The seed workspace provides this controlled environment, works naturally in Codespaces, and isolates compose state from host Docker state. |
 | Dev Container startup | Dev Container and Codespaces startup should not automatically start the full application topology | Developers should explicitly choose test infrastructure, infra-only services, or the full runtime depending on their current loop. |
 | Host-native workflow | Keep `pnpm dev:*` commands as a focused development convenience | Host-native app processes are useful for fast edits, but they are not the reference proof of service separation. |
@@ -87,7 +87,7 @@ Tests should continue to avoid normal development and demo state.
 
 ## Compose File Ownership
 
-The future root compose file should describe the reusable local service topology. It should be stable enough for demos and local reference verification.
+The root compose file describes the reusable local service topology. It is the reference path for demos and local runtime verification.
 
 Dev Container and GitHub Codespaces-specific compose configuration belongs under `.devcontainer` when it only exists for the development environment. Examples include:
 
@@ -97,9 +97,9 @@ Dev Container and GitHub Codespaces-specific compose configuration belongs under
 - editor-friendly startup behavior,
 - development-only command overrides.
 
-The seed Dev Container compose file is intentionally standalone because the application topology does not exist yet. After the root runtime topology is introduced, a Dev Container override may extend shared service definitions for bind mounts, dev-mode commands, forwarded ports, and dependency-volume isolation. It should keep its own Compose project name so the editor workspace container attaches to `checkout-surge-devcontainer_default`, not the reference runtime network `checkout-surge_default`.
+The Dev Container compose override extends shared service definitions for bind mounts, dev-mode commands, forwarded ports, and dependency-volume isolation. It keeps its own Compose project name so the editor workspace container attaches to `checkout-surge-devcontainer_default`, not the reference runtime network `checkout-surge_default`.
 
-Once shared compose files exist, follow the Dev Containers and Docker Compose base-plus-override convention: use shared compose files for common topology, and layer development-environment-specific overrides where the Dev Container configuration lives.
+Follow the Dev Containers and Docker Compose base-plus-override convention: use shared compose files for common topology, and layer development-environment-specific overrides where the Dev Container configuration lives.
 
 The dependency cache volumes used by the Dev Container should keep explicit volume names. This preserves cache continuity across Compose project-name changes and keeps Linux `node_modules` out of the host-visible workspace.
 
@@ -117,7 +117,7 @@ The Dev Container and Codespaces path must preserve dependency isolation:
 - pnpm store data should remain in the configured container volume.
 - generated container artifacts should not conflict with host-native installs.
 
-The dashboard proxy port should be the normal launch target. API, mock ERP, load orchestrator, direct web, worker health, PostgreSQL, Redis, test PostgreSQL, and test Redis ports may remain forwarded as needed for local verification and debugging.
+The dashboard proxy port is the normal launch target. API, mock ERP, load orchestrator, direct web, worker health, PostgreSQL, Redis, test PostgreSQL, and test Redis ports remain forwarded for local verification and debugging.
 
 ---
 
@@ -167,19 +167,17 @@ The expected smoke workflow is:
 1. Start the full runtime with `pnpm runtime:up`.
 2. Seed the demo baseline with `pnpm runtime:setup`.
 3. Open or call the dashboard through the proxy at `http://localhost:8080`; use `/` for public starts and `/admin` for operator controls.
-4. Authenticate as an admin when a small custom smoke run is preferred over the larger public presets.
-5. Start a public preset or an editable admin preset through the dashboard. The normal start path calls the same-origin dashboard control route, saves editable admin configuration when needed, starts an API-owned demo run from the accepted preset snapshot, and moves browser observation to `/watch`.
-6. Confirm `GET http://localhost:8080/api/dashboard/recovery` shows the API-owned demo run moving through `starting`, `active`, `draining`, and then a terminal `completed` or `failed` state. The load orchestrator's local traffic execution ends as `succeeded` or `failed`; this recovery read is the browser source of truth after reconnects.
-7. Confirm `GET http://localhost:8080/api/dashboard/snapshot` shows the resulting inventory, queue, ERP, and run-outcome changes without historical run summaries.
-8. Confirm `GET http://localhost:8080/api/dashboard/run-summaries` lists finalized historical run summaries separately from the live dashboard.
+4. Start a public preset or an editable admin preset through the dashboard. The normal start path calls the same-origin dashboard control route, starts an API-owned demo run from the accepted preset snapshot, and moves browser observation to `/watch`.
+5. Confirm `GET http://localhost:8080/api/dashboard/recovery` shows the API-owned demo run moving through `starting`, `active`, and `draining` after traffic completion. The load orchestrator's local traffic execution ends as `succeeded` or `failed`; this recovery read is the browser source of truth after reconnects.
+6. Confirm the recovery response includes recent k6 metric samples and the resulting inventory, queue, ERP, and run-outcome changes. Immutable terminal benchmark summaries remain Phase 10 lifecycle work.
 
-The seeded public presets are `preview-1k`, `surge-5k`, `surge-10k`, `idempotency-check-200`, and `public-custom`. The surge presets are sized for public burst demonstrations: `preview-1k`, `surge-5k`, and `surge-10k` use buyer-spike traffic and each create a generated run sale offer with isolated Redis inventory. `idempotency-check-200` is a light duplicate-attempt correctness run, and `public-custom` is the read-only base preset for bounded run-scoped public custom starts. The public `surge-10k` preset is the intended showcase target: approximately 10,000 synthetic buyers attempting to buy at once through k6/API traffic. For smoke validation, use an authenticated admin steady-arrival run with a low `ratePerSecond` value and short `durationSeconds`; repeated public/admin starts do not require resetting the seeded active sale offer. `pnpm runtime:setup` rebuilds the setup image before seeding so local seed-data changes are reflected in the running PostgreSQL and Redis state. The setup image uses a DB-only Docker target, so seed changes do not rebuild the web, API, worker, mock ERP, or load-orchestrator application bundles.
+The seeded public presets are `preview-1k`, `surge-5k`, `surge-10k`, `idempotency-check-200`, and `public-custom`. The surge presets are sized for public burst demonstrations: `preview-1k`, `surge-5k`, and `surge-10k` use buyer-spike traffic and each create a generated run sale offer with isolated Redis inventory. `idempotency-check-200` is a light duplicate-attempt correctness run, and `public-custom` is the read-only base preset for bounded run-scoped public custom starts. The public `surge-10k` preset is the intended showcase target: approximately 10,000 synthetic buyers attempting to buy at once through k6/API traffic. For smoke validation, `pnpm runtime:smoke:load` uses a tiny dashboard-proxied `public-custom` steady-arrival override, verifies metric streaming and traffic completion, and cleans up the generated run rows plus run-scoped Redis keys. Repeated public/admin starts do not require resetting the seeded active sale offer. `pnpm runtime:setup` rebuilds the setup image before seeding so local seed-data changes are reflected in the running PostgreSQL and Redis state. The setup image uses a DB-only Docker target, so seed changes do not rebuild the web, API, worker, mock ERP, or load-orchestrator application bundles.
 
 Local laptop, Dev Container, and Codespaces runs are not hosted benchmark runs. They share CPU, memory, and Docker daemon capacity with the development workspace. If the environment is constrained, lower admin preset `buyerCount` for buyer-spike checks or `ratePerSecond` for steady-arrival checks, lengthen steady-arrival `durationSeconds` when useful, and treat dashboard behavior, queue pressure, and k6 metric streaming as the local verification target. Lower local validation parameters are a developer-workstation compromise, not a change to the public demo target. Hosted benchmark isolation, horizontal scaling, reverse-proxy settings, and infrastructure tuning belong to hosted deployment.
 
 The live watch page uses the API-owned SSE stream at `/dashboard/events` only for best-effort feedback. Browser refresh, reconnect, start, and reset flows recover through the API-owned dashboard recovery read, and the browser performs a follow-up recovery when events are dropped during a recovery window. The watch route is current-run focused; arbitrary completed-run detail remains owned by Run History. The live stream and recovery read remain public demo observability surfaces; admin sign-in gates privileged controls only. Run History is HTTP-only and does not subscribe to the live stream; terminal run summaries appear there after page load, explicit refresh, pagination, or admin deletion refreshes the list.
 
-The seed Dev Container compose configuration can be validated with Docker Compose config checks. After application services and forwarded ports are added, a full Dev Container or Codespaces rebuild is required to prove editor startup, port forwarding, Docker-in-Docker initialization, and named dependency volumes.
+The Dev Container compose configuration can be validated with Docker Compose config checks. A full Dev Container or Codespaces rebuild is required to prove editor startup, port forwarding, Docker-in-Docker initialization, and named dependency volumes after `.devcontainer` changes.
 
 ---
 
@@ -194,7 +192,7 @@ Use this checklist when implementing or changing the local runtime topology:
 - Apply migrations and seed demo data with `pnpm runtime:setup`.
 - Check service readiness and dashboard reachability with `pnpm health:check`.
 - Check compose service health and the in-container k6 binary with `pnpm runtime:smoke`.
-- For the mutating dashboard-to-load-run path, run `pnpm runtime:smoke:load`. This resets demo data through the API before starting a small dashboard-proxied admin load run. Set `RUNTIME_SMOKE_LOAD_RUN_TIMEOUT_MS` when a slower environment needs a longer finalization window.
+- For the mutating dashboard-to-load-run path, run `pnpm runtime:smoke:load`. This resets demo data through the API before starting a small dashboard-proxied public custom load run. Set `RUNTIME_SMOKE_LOAD_RUN_TIMEOUT_MS` when a slower environment needs a longer traffic-completion window.
 - For manual old-run cleanup, run `pnpm maintenance:cleanup-runs`. The command deletes old generated run state and related records while preserving active runs and the latest 15 runs by default. Use `-- --keep-latest <count>` to choose a different retention count.
 - Rebuild or reopen the Dev Container after `.devcontainer` changes and confirm: Docker readiness is checked on post-start without auto-starting the full runtime, `pnpm install` uses the named dependency volumes, and `pnpm infra:up`, `pnpm test:infra:up`, and `pnpm runtime:up` remain explicit opt-in commands.
 - Rebuild or reopen GitHub Codespaces after `.devcontainer` changes and confirm: Docker-in-Docker starts, required dashboard/API/mock ERP/load-orchestrator/worker health/PostgreSQL/Redis ports are forwarded once those services exist, and `pnpm runtime:smoke` can see healthy compose services after `pnpm runtime:up`.

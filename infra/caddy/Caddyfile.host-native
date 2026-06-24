@@ -1,0 +1,15 @@
+{
+	auto_https off
+}
+
+:8080 {
+	encode gzip
+
+	handle /dashboard/events {
+		reverse_proxy localhost:4000
+	}
+
+	handle {
+		reverse_proxy localhost:3000
+	}
+}
