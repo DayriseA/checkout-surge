@@ -1,6 +1,6 @@
 import {
-  acceptedRunConfigSnapshotSchema,
   type AcceptedRunConfigSnapshot,
+  acceptedRunConfigSnapshotSchema,
 } from "@checkout-surge/contracts";
 import { type CheckoutSurgeDatabase, demoRuns } from "@checkout-surge/db";
 import { eq } from "drizzle-orm";

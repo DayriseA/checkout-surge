@@ -10,7 +10,7 @@ import type {
   OrderConfirmation,
   OrderProcessDeliveryMetadata,
 } from "./order-process-job-handler.js";
-import { toErpRequestConfig, type RunConfigReader } from "./run-config.js";
+import { type RunConfigReader, toErpRequestConfig } from "./run-config.js";
 
 export interface ErpAttemptRecord {
   job: OrderProcessJob;

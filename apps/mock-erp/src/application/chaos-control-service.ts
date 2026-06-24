@@ -120,7 +120,8 @@ export class ChaosConfirmationDecisionProvider implements ConfirmationDecisionPr
     this.now = options.now ?? (() => new Date());
     this.random = options.random ?? Math.random;
     this.sleep = options.sleep ?? defaultSleep;
-    this.resolveConfig = options.resolveConfig ?? ((request, fallback) => request.erpConfig ?? fallback);
+    this.resolveConfig =
+      options.resolveConfig ?? ((request, fallback) => request.erpConfig ?? fallback);
   }
 
   async decide(request: ErpConfirmationRequest): Promise<ConfirmationDecision> {

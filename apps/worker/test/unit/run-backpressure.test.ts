@@ -1,7 +1,7 @@
 import type { AcceptedRunConfigSnapshot, OrderProcessJob } from "@checkout-surge/contracts";
 import { describe, expect, it, vi } from "vitest";
-import { RunScopedBackpressureOrderConfirmation } from "../../src/application/run-backpressure.js";
 import type { OrderProcessDeliveryMetadata } from "../../src/application/order-process-job-handler.js";
+import { RunScopedBackpressureOrderConfirmation } from "../../src/application/run-backpressure.js";
 
 const job: OrderProcessJob = {
   orderId: "11111111-1111-4111-8111-111111111111",
