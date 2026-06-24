@@ -28,6 +28,7 @@ import {
   PostgresDashboardRecoveryContextReader,
 } from "./services/dashboard-recovery-service.js";
 import { DemoMaintenanceService } from "./services/demo-maintenance-service.js";
+import { DemoRunFinalizationService } from "./services/demo-run-finalization-service.js";
 import {
   DemoRunService,
   HttpTrafficExecutionGateway,
@@ -66,6 +67,7 @@ export {
   PostgresDashboardRecoveryContextReader,
 } from "./services/dashboard-recovery-service.js";
 export { DemoMaintenanceService } from "./services/demo-maintenance-service.js";
+export { DemoRunFinalizationService } from "./services/demo-run-finalization-service.js";
 export {
   ErpStatusService,
   PostgresErpAttemptStatusReader,
@@ -156,6 +158,11 @@ export async function startApiServer(): Promise<void> {
     logger,
   });
   const businessOutcomeReader = new PostgresDashboardBusinessOutcomeReader(connection.db);
+  const demoRunFinalizationService = new DemoRunFinalizationService({
+    db: connection.db,
+    redis,
+    logger,
+  });
   const demoRunService = new DemoRunService({
     db: connection.db,
     redis,
@@ -166,6 +173,7 @@ export async function startApiServer(): Promise<void> {
     publicRunBudgetStore: new RedisPublicRunBudgetStore(redis),
     trafficMetricStore,
     businessOutcomeReader,
+    finalizationService: demoRunFinalizationService,
     apiBaseUrl: config.apiBaseUrl,
     buyEndpointPath: "/buy",
     logger,
@@ -225,9 +233,16 @@ export async function startApiServer(): Promise<void> {
 
   let server: ApiFastifyInstance | null = null;
   let closePromise: Promise<void> | null = null;
+  const finalizationPoller = setInterval(() => {
+    void demoRunFinalizationService.finalizeReadyRuns().catch((error: unknown) => {
+      logger.error({ err: error }, "Demo run finalization poll failed.");
+    });
+  }, config.demoRunFinalizationPollIntervalSeconds * 1000);
+  finalizationPoller.unref();
   const close = () => {
     closePromise ??= (async () => {
       logger.info("Closing API server.");
+      clearInterval(finalizationPoller);
       await closeApiResources({
         closeServer: async () => {
           dashboardEventFanout.close();

@@ -792,16 +792,18 @@ Subtasks:
 
 Completion summary: Task 10.1 now makes run attribution first-class at the checkout boundary without changing benchmark terminal semantics. The shared contracts expose `x-load-run-id`, the API accepts body/header run identity and rejects mismatches before reservation work starts, and the load orchestrator includes the header in generated k6 traffic. Existing run-aware persistence, queue, ERP, notification, finalization-input, and summary records remain explicitly keyed by `runId`; the buy path now also records durable pending-persistence reconciliation rows when Redis secures a run-scoped hold but durable order creation initially fails. Business-boundary finalization, immutable terminal benchmark summaries, dashboard recovery ownership, startup reconciliation, and draining-run decisions remain Task 10.2 and Task 10.3 ownership.
 
-### ⬜ Task 10.2 - Implement business-boundary finalization
+### ✅ Task 10.2 - Implement business-boundary finalization
 
 Subtasks:
 
-- Treat k6 process success as traffic completion, not benchmark completion.
-- Add API-owned traffic-completion/failure ingestion so the load orchestrator reports k6 results and HTTP summaries.
-- Add an API-owned finalization service or poller that evaluates draining runs and transitions them to `completed` or `failed`.
-- Enforce one immutable final benchmark artifact per run ID with idempotent duplicate-finalization behavior.
-- Combine persisted k6 traffic aggregates with durable async business outcomes only after run-scoped business work settles or an explicit timeout/failure policy applies.
-- Preserve sold-out rejection totals from traffic/Redis aggregate sources rather than per-rejection PostgreSQL rows.
+- ✅ Treat k6 process success as traffic completion, not benchmark completion.
+- ✅ Add API-owned traffic-completion/failure ingestion so the load orchestrator reports k6 results and HTTP summaries.
+- ✅ Add an API-owned finalization service or poller that evaluates draining runs and transitions them to `completed` or `failed`.
+- ✅ Enforce one immutable final benchmark artifact per run ID with idempotent duplicate-finalization behavior.
+- ✅ Combine persisted k6 traffic aggregates with durable async business outcomes only after run-scoped business work settles or an explicit timeout/failure policy applies.
+- ✅ Preserve sold-out rejection totals from traffic/Redis aggregate sources rather than per-rejection PostgreSQL rows.
+
+Completion summary: Task 10.2 now separates traffic completion from terminal benchmark completion. Load-orchestrator completion reports are stored once as API-owned finalization input and successful or failed k6 execution moves the run into `draining` while generated-run sale eligibility is closed. A dedicated API finalization service and poller evaluate draining runs using durable run-scoped business facts: queued/processing/retrying orders, unreconciled pending persistence, and missing simulated notifications keep a run draining until work settles or the run's drain timeout applies. Terminal finalization writes one immutable `demo_run_summaries` artifact per run, preserves sold-out totals from the Redis-derived aggregate row rather than per-rejection records, emits terminal dashboard run events, and treats major traffic under-delivery as `traffic_delivery_major_shortfall` only after drainable work settles. Dashboard recovery lifecycle ownership, startup reconciliation of interrupted runs, and recovery-event serialization remain Task 10.3 ownership; the broader lifecycle/finalization regression pass remains Task 10.4 ownership.
 
 ### ⬜ Task 10.3 - Implement dashboard recovery and lifecycle ownership
 

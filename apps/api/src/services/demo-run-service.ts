@@ -54,9 +54,10 @@ import {
   setRunSaleEligibility,
 } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
-import { desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { ApiHttpError } from "../runtime/errors.js";
 import type { DashboardBusinessOutcomeReader } from "./dashboard-recovery-service.js";
+import type { DemoRunFinalizationController } from "./demo-run-finalization-service.js";
 
 const demoRunStartLockKey = "checkout_surge_demo_run_start";
 const generatedRunSaleDurationMs = 24 * 60 * 60 * 1000;
@@ -229,6 +230,7 @@ export class DemoRunService implements DemoRunController {
       publicRunBudgetStore: PublicRunBudgetStore;
       trafficMetricStore: RedisDashboardTrafficMetricStore;
       businessOutcomeReader: DashboardBusinessOutcomeReader;
+      finalizationService?: DemoRunFinalizationController;
       apiBaseUrl: string;
       buyEndpointPath: string;
       logger: CheckoutSurgeLogger;
@@ -497,15 +499,19 @@ export class DemoRunService implements DemoRunController {
       });
     }
 
-    const businessOutcome = await this.options.businessOutcomeReader.read({
+    const initialBusinessOutcome = await this.options.businessOutcomeReader.read({
       saleOfferId: run.saleOfferId,
       runId: run.id,
     });
     const terminalInventorySnapshot = await this.captureTerminalInventorySnapshot(
       run.saleOfferId,
-      businessOutcome,
+      initialBusinessOutcome,
       now,
     );
+    const businessOutcome = await this.options.businessOutcomeReader.read({
+      saleOfferId: run.saleOfferId,
+      runId: run.id,
+    });
 
     await this.options.db.transaction(async (tx) => {
       if (terminalInventorySnapshot) {
@@ -551,38 +557,21 @@ export class DemoRunService implements DemoRunController {
           createdAt: now,
           updatedAt: now,
         })
-        .onConflictDoUpdate({
+        .onConflictDoNothing({
           target: demoRunFinalizations.runId,
-          set: {
-            exitCode: report.exitCode ?? null,
-            errorMessage: report.errorMessage ?? null,
-            httpSummary: report.httpSummary,
-            trafficOutcomeSummary: {
-              ...report.trafficOutcomeSummary,
-              businessOutcomeAtTrafficCompletion: businessOutcome,
-              ...(terminalInventorySnapshot ? { terminalInventorySnapshot } : {}),
-            },
-            trafficDeliverySummary: report.trafficDeliverySummary,
-            httpTimingBreakdownSummary: report.httpTimingBreakdownSummary,
-            loadRunDiagnosticsSummary: report.loadRunDiagnosticsSummary,
-            apiRequestLifecycleSummary: report.apiRequestLifecycleSummary,
-            trafficSummaryReceivedAt: now,
-            updatedAt: now,
-          },
         });
 
       await tx
         .update(demoRuns)
         .set({
-          status: report.status === "succeeded" ? "draining" : "failed",
+          status: "draining",
           trafficStatus: report.status,
           trafficEndedAt: new Date(report.completedAt),
-          ...(report.status === "failed"
-            ? { finalizedAt: now, failureReason: report.errorMessage ?? "traffic_failed" }
-            : {}),
           updatedAt: now,
         })
-        .where(eq(demoRuns.id, report.runId));
+        .where(
+          and(eq(demoRuns.id, report.runId), inArray(demoRuns.status, ["starting", "active"])),
+        );
     });
 
     if (run.saleOfferId) {
@@ -599,13 +588,11 @@ export class DemoRunService implements DemoRunController {
     }
 
     const updatedRun = await this.readRunSnapshot(report.runId);
-    await this.publishRunEvent(
-      report.status === "failed" ? "run.failed" : "run.updated",
-      updatedRun,
-      report.correlationId,
-      now,
+    await this.publishRunEvent("run.updated", updatedRun, report.correlationId, now);
+    return (
+      (await this.options.finalizationService?.finalizeRun(report.runId, report.correlationId)) ??
+      updatedRun
     );
-    return updatedRun;
   }
 
   private async createAcceptedRun(

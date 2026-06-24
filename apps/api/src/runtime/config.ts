@@ -14,6 +14,7 @@ export interface ApiConfig {
   apiBaseUrl: string;
   loadOrchestratorBaseUrl: string;
   controlServiceToken: string;
+  demoRunFinalizationPollIntervalSeconds: number;
 }
 
 export function loadApiConfig(env: NodeJS.ProcessEnv): ApiConfig {
@@ -57,6 +58,11 @@ export function loadApiConfig(env: NodeJS.ProcessEnv): ApiConfig {
       "http://localhost:4200",
     ),
     controlServiceToken: requireEnv(env, "CONTROL_SERVICE_TOKEN"),
+    demoRunFinalizationPollIntervalSeconds: parsePositiveInteger(
+      env.DEMO_RUN_FINALIZATION_POLL_INTERVAL_SECONDS,
+      "DEMO_RUN_FINALIZATION_POLL_INTERVAL_SECONDS",
+      5,
+    ),
   };
 }
 
