@@ -14,6 +14,7 @@ import {
   demoRunSaleContexts,
   demoRunSummaries,
   demoRuns,
+  erpAttempts,
   initializeInventory,
   orders,
   products,
@@ -41,6 +42,7 @@ const ids = {
   reservation2: "22222222-2222-4222-8222-222222222222",
   order1: "44444444-4444-4444-8444-444444444441",
   order2: "44444444-4444-4444-8444-444444444442",
+  erpAttempt: "88888888-8888-4888-8888-888888888888",
   notification: "99999999-9999-4999-8999-999999999999",
 } as const;
 
@@ -71,14 +73,63 @@ describe("demo run finalization service", () => {
     }
   });
 
-  it("keeps a traffic-complete run draining while business work is unsettled", async () => {
+  it.each([
+    {
+      name: "queued orders",
+      seed: async (db: ReturnType<typeof createDatabaseConnection>["db"]) => {
+        await db.insert(reservations).values(reservationFixture(ids.reservation1));
+        await db.insert(orders).values(orderFixture(ids.order1, ids.reservation1, "queued"));
+      },
+    },
+    {
+      name: "processing orders",
+      seed: async (db: ReturnType<typeof createDatabaseConnection>["db"]) => {
+        await db.insert(reservations).values(reservationFixture(ids.reservation1));
+        await db.insert(orders).values(orderFixture(ids.order1, ids.reservation1, "processing"));
+      },
+    },
+    {
+      name: "retrying orders",
+      seed: async (db: ReturnType<typeof createDatabaseConnection>["db"]) => {
+        await db.insert(reservations).values(reservationFixture(ids.reservation1));
+        await db.insert(orders).values(orderFixture(ids.order1, ids.reservation1, "processing"));
+        await db.insert(erpAttempts).values({
+          id: ids.erpAttempt,
+          orderId: ids.order1,
+          correlationId: "corr-finalize-test",
+          runId: ids.run,
+          attemptNumber: 1,
+          status: "failed",
+          httpStatus: 503,
+          errorCode: "erp_unavailable",
+          errorMessage: "ERP unavailable.",
+          latencyMs: 50,
+          startedAt: new Date("2026-06-20T00:00:04.000Z"),
+          finishedAt: new Date("2026-06-20T00:00:04.050Z"),
+          createdAt: new Date("2026-06-20T00:00:04.050Z"),
+        });
+      },
+    },
+    {
+      name: "missing required notifications",
+      seed: async (db: ReturnType<typeof createDatabaseConnection>["db"]) => {
+        await db.insert(reservations).values(reservationFixture(ids.reservation1));
+        await db.insert(orders).values(orderFixture(ids.order1, ids.reservation1, "confirmed"));
+      },
+    },
+    {
+      name: "pending persistence reconciliation",
+      seed: async (db: ReturnType<typeof createDatabaseConnection>["db"]) => {
+        await db.insert(reservationPendingPersistence).values(pendingPersistenceFixture());
+      },
+    },
+  ])("keeps a traffic-complete run draining while $name remain unsettled", async ({ seed }) => {
     const db = requireConnection(connection).db;
     const redisClient = requireRedis(redis);
     const service = createService(connection, redis);
 
     await seedDrainingRun({ db, redis: redisClient, trafficDeliveryStatus: "complete" });
-    await db.insert(reservations).values(reservationFixture(ids.reservation1));
-    await db.insert(orders).values(orderFixture(ids.order1, ids.reservation1, "queued"));
+    await seed(db);
 
     const finalized = await service.finalizeRun(ids.run, "corr-finalize-test");
     const [summaryCount] = await db
@@ -138,6 +189,8 @@ describe("demo run finalization service", () => {
     expect(second?.status).toBe("completed");
     expect(summaries).toHaveLength(1);
     expect(summaries[0]?.status).toBe("completed");
+    expect(summaries[0]?.endedAt).toEqual(new Date("2026-06-20T00:00:10.000Z"));
+    expect(summaries[0]?.createdAt).toEqual(new Date("2026-06-20T00:00:10.000Z"));
     expect(summaries[0]?.failureReason).toBeNull();
     expect(summaries[0]?.businessOutcomeSummary as BusinessOutcomeSummary).toMatchObject({
       acceptedReservations: 2,
@@ -330,7 +383,7 @@ function reservationFixture(id: string): typeof reservations.$inferInsert {
 function orderFixture(
   id: string,
   reservationId: string,
-  status: "queued" | "confirmed" | "failed",
+  status: "queued" | "processing" | "confirmed" | "failed",
 ): typeof orders.$inferInsert {
   return {
     id,
@@ -342,6 +395,11 @@ function orderFixture(
     quantity: 1,
     status,
     queuedAt: new Date("2026-06-20T00:00:03.000Z"),
+    ...(status === "processing"
+      ? {
+          processingAt: new Date("2026-06-20T00:00:04.000Z"),
+        }
+      : {}),
     ...(status === "confirmed"
       ? {
           processingAt: new Date("2026-06-20T00:00:04.000Z"),
@@ -358,6 +416,23 @@ function orderFixture(
       : {}),
     createdAt: new Date("2026-06-20T00:00:03.000Z"),
     updatedAt: new Date("2026-06-20T00:00:05.000Z"),
+  };
+}
+
+function pendingPersistenceFixture(): typeof reservationPendingPersistence.$inferInsert {
+  return {
+    reservationId: ids.reservation1,
+    saleOfferId: ids.saleOffer,
+    runId: ids.run,
+    correlationId: "corr-finalize-test",
+    idempotencyKey: "pending-key",
+    quantity: 1,
+    reservationToken: "pending-token",
+    status: "pending_reconciliation",
+    securedAt: new Date("2026-06-20T00:00:00.000Z"),
+    expiresAt: new Date("2026-06-20T00:15:00.000Z"),
+    createdAt: new Date("2026-06-20T00:00:00.000Z"),
+    updatedAt: new Date("2026-06-20T00:00:00.000Z"),
   };
 }
 

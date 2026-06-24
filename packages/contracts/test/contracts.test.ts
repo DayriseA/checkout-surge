@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  adminDemoResetResponseSchema,
   buyRequestSchema,
   buyResponseSchema,
   controlServiceTokenHeaderName,
@@ -9,6 +10,7 @@ import {
   dashboardRecoveryPath,
   dashboardRecoveryResponseSchema,
   demoRunOperatorModeHeaderName,
+  demoRunSnapshotSchema,
   demoRunStatusValues,
   erpChaosResetPath,
   erpChaosStatusPath,
@@ -41,8 +43,10 @@ import {
   startDemoRunRequestSchema,
   stockReservationDecisionSchema,
   trafficCompletionReportSchema,
+  trafficDeliveryStatusValues,
   trafficExecutionStartPath,
   trafficExecutionStartRequestSchema,
+  trafficExecutionStatusValues,
 } from "../src/index.js";
 
 const timestamp = "2026-06-20T12:00:00.000Z";
@@ -55,12 +59,106 @@ describe("shared lifecycle vocabulary", () => {
     expect(reservationStatusValues).toEqual(["secured", "rejected", "released", "expired"]);
     expect(orderStatusValues).toEqual(["queued", "processing", "confirmed", "failed"]);
     expect(demoRunStatusValues).toEqual(["starting", "active", "draining", "completed", "failed"]);
+    expect(trafficExecutionStatusValues).toEqual([
+      "not_started",
+      "starting",
+      "active",
+      "succeeded",
+      "failed",
+    ]);
+    expect(trafficDeliveryStatusValues).toEqual(["complete", "warning", "degraded", "failed"]);
   });
 
   it("exposes the documented dashboard metric names", () => {
     expect(metricNameValues).toContain("traffic.scheduled_request_rate");
     expect(metricNameValues).toContain("queue.depth");
     expect(metricNameValues).toContain("inventory.sold_out_rejection");
+  });
+});
+
+describe("run lifecycle contracts", () => {
+  it("validates run-attributed buy and load payloads without deriving identity from correlation IDs", () => {
+    expect(loadRunIdHeaderName).toBe("x-load-run-id");
+
+    expect(
+      buyRequestSchema.parse({
+        saleOfferId,
+        runId,
+        idempotencyKey: "run-attributed-buy",
+        quantity: 1,
+        correlationId,
+      }),
+    ).toMatchObject({ saleOfferId, runId });
+
+    expect(
+      trafficExecutionStartRequestSchema.parse({
+        runId,
+        saleOfferId,
+        apiBaseUrl: "http://api.local",
+        buyEndpointPath: "/buy",
+        correlationId,
+        configSnapshot: acceptedRunSnapshot(),
+      }),
+    ).toMatchObject({ runId, saleOfferId, correlationId });
+
+    expect(() =>
+      trafficExecutionStartRequestSchema.parse({
+        runId,
+        saleOfferId,
+        apiBaseUrl: "http://api.local",
+        buyEndpointPath: "/buy",
+        correlationId: `run:${runId}:buyer:1`,
+        configSnapshot: acceptedRunSnapshot(),
+      }),
+    ).not.toThrow();
+  });
+
+  it("separates traffic completion from API-owned terminal demo-run state", () => {
+    const report = trafficCompletionReportSchema.parse({
+      runId,
+      status: "succeeded",
+      exitCode: 0,
+      httpSummary: {
+        plannedRequests: 10,
+        emittedRequests: 10,
+        completedRequests: 10,
+        failedRequests: 0,
+        acceptedResponses: 2,
+        soldOutResponses: 8,
+        unexpectedResponses: 0,
+        p95LatencyMs: 25,
+        failureRate: 0,
+      },
+      trafficOutcomeSummary: {},
+      trafficDeliverySummary: {
+        plannedRequests: 10,
+        emittedRequests: 10,
+        droppedIterations: 0,
+        trafficDeliveryStatus: "complete",
+        notes: [],
+      },
+      httpTimingBreakdownSummary: {},
+      loadRunDiagnosticsSummary: {},
+      apiRequestLifecycleSummary: {},
+      completedAt: timestamp,
+      correlationId,
+    });
+
+    expect(report.status).toBe("succeeded");
+    expect(() => demoRunSnapshotSchema.parse({ ...report, status: "completed" })).toThrow();
+  });
+
+  it("validates admin reset as a recovery result rather than a traffic lifecycle event", () => {
+    expect(
+      adminDemoResetResponseSchema.parse({
+        failedRunCount: 1,
+        closedSaleOfferCount: 1,
+        cleanedQueueCount: 2,
+        cleanedJobCount: 3,
+        resetAt: timestamp,
+        correlationId,
+      }),
+    ).toMatchObject({ failedRunCount: 1, closedSaleOfferCount: 1 });
   });
 });
 
@@ -669,3 +767,35 @@ describe("public runtime policy contract", () => {
     ).toBe(200);
   });
 });
+
+function acceptedRunSnapshot() {
+  return {
+    trafficConfig: {
+      mode: "buyer-spike",
+      buyerCount: 10,
+      duplicateEachBuyerAttempt: false,
+      startDelaySeconds: 0,
+      maxDurationSeconds: 1,
+      quantityPerAttempt: 1,
+    },
+    inventoryConfig: {
+      startingStock: 10,
+      quantityPerCheckout: 1,
+      reservationHoldMinutes: 15,
+    },
+    erpConfig: {
+      latencyMs: 10,
+      maxTps: 10,
+      errorRate: 0,
+      forcedOutage: false,
+      requestTimeoutMs: 1000,
+    },
+    backpressureConfig: {
+      queueName: "orders:process",
+      physicalQueueName: "orders-process",
+      orderProcessConcurrency: 2,
+      drainTimeoutSeconds: 300,
+      pendingPersistenceRetryAfterSeconds: 30,
+    },
+  };
+}

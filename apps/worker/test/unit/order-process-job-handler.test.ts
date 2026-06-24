@@ -16,6 +16,10 @@ const job: OrderProcessJob = {
   quantity: 1,
   queuedAt: "2026-06-21T00:00:00.000Z",
 };
+const runScopedJob: OrderProcessJob = {
+  ...job,
+  runId: "55555555-5555-4555-8555-555555555555",
+};
 const delivery = { attemptNumber: 3, attemptsMade: 2 };
 
 function createPersistence(
@@ -66,6 +70,29 @@ describe("order-process application workflow", () => {
     );
   });
 
+  it("preserves run identity when publishing notification and business outcome updates", async () => {
+    const notificationRecordPublisher = {
+      publishForConfirmedOrder: vi.fn().mockResolvedValue(undefined),
+    };
+    const publishBusinessOutcomeUpdate = vi.fn().mockResolvedValue(undefined);
+    const handler = createOrderProcessJobHandler({
+      confirmation: { confirm: vi.fn().mockResolvedValue(undefined) },
+      persistence: createPersistence(),
+      logger: createSilentLogger("worker"),
+      notificationRecordPublisher,
+      publishBusinessOutcomeUpdate,
+    });
+
+    await handler.handle(runScopedJob, delivery);
+
+    expect(notificationRecordPublisher.publishForConfirmedOrder).toHaveBeenCalledWith(
+      runScopedJob,
+      expect.any(String),
+    );
+    expect(publishBusinessOutcomeUpdate).toHaveBeenCalledWith(runScopedJob, "processing");
+    expect(publishBusinessOutcomeUpdate).toHaveBeenCalledWith(runScopedJob, "confirmed");
+  });
+
   it("does not fail a confirmed order when notification job publication fails", async () => {
     const publishError = new Error("queue unavailable");
     const transitionToConfirmed = vi.fn().mockResolvedValue(undefined);
@@ -89,6 +116,46 @@ describe("order-process application workflow", () => {
         orderId: job.orderId,
         saleOfferId: job.saleOfferId,
         correlationId: job.correlationId,
+      }),
+    );
+  });
+
+  it("includes run identity in non-fatal side-effect failure reports", async () => {
+    const notificationError = new Error("notification queue unavailable");
+    const outcomeError = new Error("dashboard publish unavailable");
+    const reportNotificationRecordPublishFailure = vi.fn();
+    const reportBusinessOutcomeUpdateFailure = vi.fn();
+    const handler = createOrderProcessJobHandler({
+      confirmation: { confirm: vi.fn().mockResolvedValue(undefined) },
+      persistence: createPersistence(),
+      logger: createSilentLogger("worker"),
+      notificationRecordPublisher: {
+        publishForConfirmedOrder: vi.fn().mockRejectedValue(notificationError),
+      },
+      reportNotificationRecordPublishFailure,
+      publishBusinessOutcomeUpdate: vi.fn().mockRejectedValue(outcomeError),
+      reportBusinessOutcomeUpdateFailure,
+    });
+
+    await handler.handle(runScopedJob, delivery);
+
+    expect(reportNotificationRecordPublishFailure).toHaveBeenCalledWith(
+      expect.objectContaining({
+        error: notificationError,
+        orderId: runScopedJob.orderId,
+        saleOfferId: runScopedJob.saleOfferId,
+        runId: runScopedJob.runId,
+        correlationId: runScopedJob.correlationId,
+      }),
+    );
+    expect(reportBusinessOutcomeUpdateFailure).toHaveBeenCalledWith(
+      expect.objectContaining({
+        error: outcomeError,
+        orderId: runScopedJob.orderId,
+        saleOfferId: runScopedJob.saleOfferId,
+        runId: runScopedJob.runId,
+        correlationId: runScopedJob.correlationId,
+        transition: "processing",
       }),
     );
   });

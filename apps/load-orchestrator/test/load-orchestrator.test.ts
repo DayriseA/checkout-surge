@@ -145,6 +145,38 @@ describe("load-orchestrator k6 mapping", () => {
     });
     expect(report.trafficDeliverySummary.trafficDeliveryStatus).toBe("failed");
   });
+
+  it("reports successful k6 execution as traffic success without terminal demo-run state", () => {
+    const accumulator = new K6RunAccumulator({
+      runId: startRequest.runId,
+      correlationId: startRequest.correlationId,
+      plannedRequests: 1,
+      startedAt: new Date(timestamp),
+    });
+
+    const point = parseK6JsonLine(
+      JSON.stringify({ type: "Point", metric: "http_reqs", data: { value: 1, time: timestamp } }),
+    );
+    if (!point) {
+      throw new Error("Expected k6 point fixture to parse.");
+    }
+
+    accumulator.observe(point);
+    const report = accumulator.completionReport({
+      status: "succeeded",
+      exitCode: 0,
+      completedAt: new Date("2026-06-20T12:00:05.000Z"),
+    });
+
+    expect(report).toMatchObject({
+      runId: startRequest.runId,
+      status: "succeeded",
+      exitCode: 0,
+      trafficDeliverySummary: { trafficDeliveryStatus: "complete" },
+    });
+    expect(report).not.toHaveProperty("demoRunStatus");
+    expect(report).not.toHaveProperty("finalizedAt");
+  });
 });
 
 describe("load-orchestrator HTTP boundary", () => {

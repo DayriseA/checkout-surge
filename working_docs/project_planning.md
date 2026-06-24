@@ -768,7 +768,7 @@ Subtasks:
 
 ---
 
-## ⬜ Phase 10 - Run Lifecycle and Benchmark Finalization
+## ✅ Phase 10 - Run Lifecycle and Benchmark Finalization
 
 ### Goal
 
@@ -780,6 +780,17 @@ Primary references:
 - `docs/load_generation_metrics_streaming.md`
 - `docs/core_business_entities.md`
 - `docs/cross_service_conventions.md`
+
+Final verification completed:
+
+- `pnpm build`
+- `pnpm type-check`
+- `pnpm type-check:test`
+- `pnpm lint`
+- `pnpm format:check`
+- `pnpm test:unit`
+- `pnpm test:api`
+- `pnpm test:integration`
 
 ### ✅ Task 10.1 - Add first-class run attribution
 
@@ -820,17 +831,19 @@ Subtasks:
 
 Completion summary: Task 10.3 now gives the API explicit startup reconciliation ownership for interrupted demo runs. On API startup, durable `starting` and `active` runs are failed with `api_restart_interrupted_run`, generated-run sale eligibility is closed through Redis, and an immutable run-history summary is written through the same idempotent terminal summary writer used by normal finalization. Durable `draining` runs are left recoverable so the existing finalization poller can continue business-boundary completion. Dashboard recovery remains the authoritative current-run read while historical summaries stay separate; the browser now refreshes recovery on SSE open/reconnect and after terminal run hints, discards live events during recovery, and schedules serialized follow-up recovery when live events arrive mid-refresh. SSE remains ephemeral and best-effort, and the load orchestrator remains limited to k6 execution, metric streaming, and traffic-completion reporting. The broader lifecycle/finalization regression pass remains Task 10.4 ownership.
 
-### ⬜ Task 10.4 - Add lifecycle and finalization tests
+### ✅ Task 10.4 - Add lifecycle and finalization tests
 
 Subtasks:
 
-- Add contract tests for lifecycle vocabulary and run-attribution payloads.
-- Add API/service tests proving runs remain draining while run-scoped work is queued, processing, retrying, missing required notifications, or pending persistence reconciliation.
-- Add API startup-reconciliation tests for interrupted `starting`/`active` runs, closed sale eligibility, summary creation, and continued recovery of `draining` runs.
-- Add API/load-orchestrator tests proving starts and reset are blocked while a run is `starting`, `active`, or `draining`, and allowed after terminal states.
-- Add persistence/API tests proving duplicate finalization attempts do not create duplicate artifacts or overwrite existing final artifacts.
-- Add load-orchestrator tests proving k6 success is reported as traffic `succeeded` and does not emit API-owned terminal benchmark state.
-- Add finalization tests for traffic delivery quality, major under-delivery failure, sold-out aggregate preservation, and worker run-identity propagation.
+- ✅ Add contract tests for lifecycle vocabulary and run-attribution payloads.
+- ✅ Add API/service tests proving runs remain draining while run-scoped work is queued, processing, retrying, missing required notifications, or pending persistence reconciliation.
+- ✅ Add API startup-reconciliation tests for interrupted `starting`/`active` runs, closed sale eligibility, summary creation, and continued recovery of `draining` runs.
+- ✅ Add API/load-orchestrator tests proving starts are blocked while a run is `starting`, `active`, or `draining`, and allowed after terminal states; admin reset coverage follows the documented recovery override semantics by failing in-progress runs and leaving terminal history unchanged.
+- ✅ Add persistence/API tests proving duplicate finalization attempts do not create duplicate artifacts or overwrite existing final artifacts.
+- ✅ Add load-orchestrator tests proving k6 success is reported as traffic `succeeded` and does not emit API-owned terminal benchmark state.
+- ✅ Add finalization tests for traffic delivery quality, major under-delivery failure, sold-out aggregate preservation, and worker run-identity propagation.
+
+Completion summary: Task 10.4 completes the Phase 10 lifecycle and finalization regression pass. Shared contracts now assert the canonical run lifecycle vocabulary, explicit run attribution, traffic-completion payloads, and admin reset recovery shape. API/service coverage proves business-boundary finalization remains draining for queued, processing, retrying, missing-notification, and pending-persistence work; startup reconciliation remains idempotent and preserves recoverable draining runs; start gating rejects new runs during `starting`, `active`, or `draining` and accepts starts after terminal states; admin reset is documented and tested as the privileged recovery path that fails in-progress runs, closes sale eligibility, cleans queues, and leaves terminal history unchanged. Finalization coverage also asserts one immutable summary per run, major traffic under-delivery failure, and sold-out aggregate preservation. Load-orchestrator tests keep k6 process success scoped to traffic `succeeded` without terminal benchmark state, and worker tests prove run identity is propagated through notification and business-outcome side effects.
 
 ---
 

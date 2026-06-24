@@ -6,7 +6,14 @@ import type {
   PublicRuntimePolicy,
   TrafficConfig,
 } from "@checkout-surge/contracts";
-import { createDatabaseConnection, demoPresets } from "@checkout-surge/db";
+import {
+  createDatabaseConnection,
+  createRedisClient,
+  demoPresets,
+  demoRuns,
+  products,
+  publicRuntimePolicies,
+} from "@checkout-surge/db";
 import { resetTestDatabase } from "@checkout-surge/db/testing";
 import { createSilentLogger } from "@checkout-surge/logger";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
@@ -150,6 +157,74 @@ describe("demo-run preset management", () => {
   });
 });
 
+describe("demo-run lifecycle start gating", () => {
+  let connection: ReturnType<typeof createDatabaseConnection> | null = null;
+  let redis: ReturnType<typeof createRedisClient> | null = null;
+
+  beforeEach(async () => {
+    await connection?.close();
+    redis?.disconnect();
+    connection = null;
+    redis = null;
+
+    await resetTestDatabase({ databaseUrl: requireTestDatabaseUrl(), migrationsFolder });
+    connection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
+    redis = createRedisClient(requireTestRedisUrl(), {
+      lazyConnect: true,
+      maxRetriesPerRequest: 3,
+    });
+    await redis.flushdb();
+    await seedStartFixtures(connection);
+  });
+
+  afterAll(async () => {
+    await connection?.close();
+    if (redis) {
+      await redis.flushdb();
+      redis.disconnect();
+    }
+  });
+
+  it.each([
+    "starting",
+    "active",
+    "draining",
+  ] as const)("blocks a new start while another run is %s", async (status) => {
+    const service = createStartService(requireConnection(connection), requireRedis(redis));
+    await seedExistingRun(requireConnection(connection), {
+      runId: existingRunId(status),
+      status,
+    });
+
+    await expect(
+      service.startRun({ presetSlug: "preview-1k", operatorMode: "admin" }, "corr-start"),
+    ).rejects.toMatchObject({
+      code: "demo_run_already_active",
+      details: { status },
+    });
+  });
+
+  it.each([
+    "completed",
+    "failed",
+  ] as const)("allows a new start after the existing run is %s", async (status) => {
+    const service = createStartService(requireConnection(connection), requireRedis(redis));
+    await seedExistingRun(requireConnection(connection), {
+      runId: existingRunId(status),
+      status,
+    });
+
+    const response = await service.startRun(
+      { presetSlug: "preview-1k", operatorMode: "admin" },
+      "corr-start",
+    );
+
+    expect(response.run.status).toBe("active");
+    expect(response.run.trafficStatus).toBe("active");
+    expect(response.run.saleOfferId).toBe("77777777-7777-4777-8777-777777777778");
+  });
+});
+
 function surge10kSnapshot(): AcceptedRunConfigSnapshot {
   return {
     trafficConfig: {
@@ -202,6 +277,26 @@ function requireConnection(
   return connection;
 }
 
+function requireTestRedisUrl(): string {
+  const redisUrl = process.env.TEST_REDIS_URL;
+
+  if (!redisUrl) {
+    throw new Error("TEST_REDIS_URL is required for API demo-run tests.");
+  }
+
+  return redisUrl;
+}
+
+function requireRedis(
+  redis: ReturnType<typeof createRedisClient> | null,
+): ReturnType<typeof createRedisClient> {
+  if (!redis) {
+    throw new Error("Test Redis client was not initialized.");
+  }
+
+  return redis;
+}
+
 function createPresetManagementService(
   connection: ReturnType<typeof createDatabaseConnection>,
 ): DemoRunService {
@@ -227,6 +322,40 @@ function createPresetManagementService(
   });
 }
 
+function createStartService(
+  connection: ReturnType<typeof createDatabaseConnection>,
+  redis: ReturnType<typeof createRedisClient>,
+): DemoRunService {
+  const ids = ["77777777-7777-4777-8777-777777777777", "77777777-7777-4777-8777-777777777778"];
+
+  return new DemoRunService({
+    db: connection.db,
+    redis,
+    trafficExecutionGateway: {
+      start: async (request) => ({
+        runId: request.runId,
+        status: "active",
+        startedAt: "2026-06-20T00:00:11.000Z",
+        correlationId: request.correlationId,
+      }),
+    },
+    publicRunBudgetStore: { consume: async () => undefined },
+    trafficMetricStore: {} as never,
+    businessOutcomeReader: { read: async () => emptyBusinessOutcomeSummary() },
+    apiBaseUrl: "http://api.test",
+    buyEndpointPath: "/buy",
+    logger: createSilentLogger("api"),
+    now: () => new Date("2026-06-20T00:00:10.000Z"),
+    generateId: () => {
+      const id = ids.shift();
+      if (!id) {
+        throw new Error("Start-service ID sequence exhausted.");
+      }
+      return id;
+    },
+  });
+}
+
 function expectBuyerSpikeTrafficConfig(
   trafficConfig: TrafficConfig,
 ): Extract<TrafficConfig, { mode: "buyer-spike" }> {
@@ -249,6 +378,79 @@ function emptyBusinessOutcomeSummary(): BusinessOutcomeSummary {
     pendingPersistenceCount: 0,
     notificationsRecorded: 0,
   };
+}
+
+async function seedStartFixtures(
+  connection: ReturnType<typeof createDatabaseConnection>,
+): Promise<void> {
+  await connection.db.insert(products).values({
+    id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    sku: "START-GATING-001",
+    slug: "start-gating-product",
+    name: "Start Gating Product",
+    isActive: true,
+    createdAt: new Date("2026-06-20T00:00:00.000Z"),
+    updatedAt: new Date("2026-06-20T00:00:00.000Z"),
+  });
+  await seedPresetFixtures(connection);
+  await connection.db.insert(publicRuntimePolicies).values({
+    id: "active",
+    policy: publicRuntimePolicy(),
+    createdAt: new Date("2026-06-20T00:00:00.000Z"),
+    updatedAt: new Date("2026-06-20T00:00:00.000Z"),
+  });
+}
+
+async function seedExistingRun(
+  connection: ReturnType<typeof createDatabaseConnection>,
+  input: {
+    runId: string;
+    status: "starting" | "active" | "draining" | "completed" | "failed";
+  },
+): Promise<void> {
+  await connection.db.insert(demoRuns).values({
+    id: input.runId,
+    presetId: "33333333-3333-4333-8333-333333333331",
+    presetName: "Preview 1k",
+    operatorMode: "admin",
+    status: input.status,
+    trafficStatus: trafficStatusForRunStatus(input.status),
+    configSnapshot: surge10kSnapshot(),
+    startedAt: new Date("2026-06-20T00:00:00.000Z"),
+    ...(input.status === "draining" || input.status === "completed" || input.status === "failed"
+      ? { trafficEndedAt: new Date("2026-06-20T00:00:05.000Z") }
+      : {}),
+    ...(input.status === "completed" || input.status === "failed"
+      ? { finalizedAt: new Date("2026-06-20T00:00:06.000Z") }
+      : {}),
+    createdAt: new Date("2026-06-20T00:00:00.000Z"),
+    updatedAt: new Date("2026-06-20T00:00:06.000Z"),
+  });
+}
+
+function trafficStatusForRunStatus(
+  status: "starting" | "active" | "draining" | "completed" | "failed",
+): "starting" | "active" | "succeeded" | "failed" {
+  if (status === "starting" || status === "active") {
+    return status;
+  }
+  if (status === "failed") {
+    return "failed";
+  }
+
+  return "succeeded";
+}
+
+function existingRunId(status: "starting" | "active" | "draining" | "completed" | "failed") {
+  const suffix = {
+    starting: "1",
+    active: "2",
+    draining: "3",
+    completed: "4",
+    failed: "5",
+  }[status];
+
+  return `55555555-5555-4555-8555-55555555555${suffix}`;
 }
 
 async function seedPresetFixtures(
