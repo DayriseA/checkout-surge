@@ -805,18 +805,20 @@ Subtasks:
 
 Completion summary: Task 10.2 now separates traffic completion from terminal benchmark completion. Load-orchestrator completion reports are stored once as API-owned finalization input and successful or failed k6 execution moves the run into `draining` while generated-run sale eligibility is closed. A dedicated API finalization service and poller evaluate draining runs using durable run-scoped business facts: queued/processing/retrying orders, unreconciled pending persistence, and missing simulated notifications keep a run draining until work settles or the run's drain timeout applies. Terminal finalization writes one immutable `demo_run_summaries` artifact per run, preserves sold-out totals from the Redis-derived aggregate row rather than per-rejection records, emits terminal dashboard run events, and treats major traffic under-delivery as `traffic_delivery_major_shortfall` only after drainable work settles. Dashboard recovery lifecycle ownership, startup reconciliation of interrupted runs, and recovery-event serialization remain Task 10.3 ownership; the broader lifecycle/finalization regression pass remains Task 10.4 ownership.
 
-### ⬜ Task 10.3 - Implement dashboard recovery and lifecycle ownership
+### ✅ Task 10.3 - Implement dashboard recovery and lifecycle ownership
 
 Subtasks:
 
-- Split live dashboard recovery from historical benchmark summaries.
-- Make `/dashboard/recovery` the authoritative current-run recovery read for initial load, SSE reconnect, manual refresh, start controls, and reset controls.
-- Add API startup reconciliation: durable `starting` and `active` runs left behind by process restart are failed with `api_restart_interrupted_run`, sale eligibility is closed, and immutable run-history summaries are written; durable `draining` runs remain recoverable so finalization can continue.
-- Discard live events received while recovery is in progress and schedule a serialized follow-up recovery when needed.
-- Keep SSE events ephemeral and best-effort; do not add event logs, replay cursors, or catch-up endpoints.
-- Move in-progress start gating and benchmark lifecycle ownership to the API.
-- Keep the load orchestrator limited to k6 traffic execution, metric streaming, and traffic-completion reporting.
-- Preserve `trafficEndedAt` and `finalizedAt` as distinct recovery fields.
+- ✅ Split live dashboard recovery from historical benchmark summaries.
+- ✅ Make `/dashboard/recovery` the authoritative current-run recovery read for initial load, SSE reconnect, manual refresh, start controls, and reset controls.
+- ✅ Add API startup reconciliation: durable `starting` and `active` runs left behind by process restart are failed with `api_restart_interrupted_run`, sale eligibility is closed, and immutable run-history summaries are written; durable `draining` runs remain recoverable so finalization can continue.
+- ✅ Discard live events received while recovery is in progress and schedule a serialized follow-up recovery when needed.
+- ✅ Keep SSE events ephemeral and best-effort; do not add event logs, replay cursors, or catch-up endpoints.
+- ✅ Move in-progress start gating and benchmark lifecycle ownership to the API.
+- ✅ Keep the load orchestrator limited to k6 traffic execution, metric streaming, and traffic-completion reporting.
+- ✅ Preserve `trafficEndedAt` and `finalizedAt` as distinct recovery fields.
+
+Completion summary: Task 10.3 now gives the API explicit startup reconciliation ownership for interrupted demo runs. On API startup, durable `starting` and `active` runs are failed with `api_restart_interrupted_run`, generated-run sale eligibility is closed through Redis, and an immutable run-history summary is written through the same idempotent terminal summary writer used by normal finalization. Durable `draining` runs are left recoverable so the existing finalization poller can continue business-boundary completion. Dashboard recovery remains the authoritative current-run read while historical summaries stay separate; the browser now refreshes recovery on SSE open/reconnect and after terminal run hints, discards live events during recovery, and schedules serialized follow-up recovery when live events arrive mid-refresh. SSE remains ephemeral and best-effort, and the load orchestrator remains limited to k6 execution, metric streaming, and traffic-completion reporting. The broader lifecycle/finalization regression pass remains Task 10.4 ownership.
 
 ### ⬜ Task 10.4 - Add lifecycle and finalization tests
 

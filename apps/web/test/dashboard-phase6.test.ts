@@ -8,7 +8,10 @@ import {
   LoadRunControlsPanel,
   RunOutcomesPanel,
 } from "../src/app/components/dashboard-panels.js";
-import { applyDashboardEvent } from "../src/app/components/operator-dashboard.js";
+import {
+  applyDashboardEvent,
+  shouldRequestAuthoritativeRecoveryAfterEvent,
+} from "../src/app/components/operator-dashboard.js";
 import type { BackendRead } from "../src/app/lib/api.js";
 
 describe("Phase 6 dashboard behavior", () => {
@@ -123,6 +126,16 @@ describe("Phase 6 dashboard behavior", () => {
     expect(next.data.businessOutcome).toEqual(event.outcome);
     expect(next.data.consistencyLag).toEqual(event.consistencyLag);
   });
+
+  it("uses authoritative recovery after terminal run events", () => {
+    expect(shouldRequestAuthoritativeRecoveryAfterEvent(runEventFixture("run.completed"))).toBe(
+      true,
+    );
+    expect(shouldRequestAuthoritativeRecoveryAfterEvent(runEventFixture("run.failed"))).toBe(true);
+    expect(shouldRequestAuthoritativeRecoveryAfterEvent(runEventFixture("run.updated"))).toBe(
+      false,
+    );
+  });
 });
 
 function availableRecovery(
@@ -170,6 +183,25 @@ function runFixture() {
     },
     saleOfferId: "33333333-3333-4333-8333-333333333333",
     startedAt: "2026-06-20T00:00:00.000Z",
+  };
+}
+
+function runEventFixture(type: "run.updated" | "run.completed" | "run.failed"): DashboardEvent {
+  return {
+    type,
+    eventId: "44444444-4444-4444-8444-444444444444",
+    runId: "11111111-1111-4111-8111-111111111111",
+    correlationId: "corr-web-live",
+    run: {
+      ...runFixture(),
+      status: type === "run.completed" ? "completed" : type === "run.failed" ? "failed" : "active",
+      trafficStatus: type === "run.completed" || type === "run.failed" ? "succeeded" : "active",
+      ...(type === "run.completed" || type === "run.failed"
+        ? { finalizedAt: "2026-06-20T00:00:12.000Z" }
+        : {}),
+      ...(type === "run.failed" ? { failureReason: "traffic_failed" } : {}),
+    },
+    occurredAt: "2026-06-20T00:00:12.000Z",
   };
 }
 

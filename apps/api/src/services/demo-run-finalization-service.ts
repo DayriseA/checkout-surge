@@ -7,9 +7,12 @@ import {
   type DemoRunSnapshot,
   demoRunSnapshotSchema,
   type TerminalInventorySnapshot,
+  type TrafficDeliverySummary,
+  type TrafficHttpSummary,
   trafficDeliverySummarySchema,
   trafficHttpSummarySchema,
 } from "@checkout-surge/contracts";
+import type { DemoRunStatus, DemoRunTrafficStatus } from "@checkout-surge/db";
 import {
   type CheckoutSurgeDatabase,
   type CheckoutSurgeRedis,
@@ -39,7 +42,98 @@ type FinalizationDecision =
       terminalInventorySnapshot: TerminalInventorySnapshot | null;
     };
 
+export interface TerminalDemoRunSummaryInput {
+  run: typeof demoRuns.$inferSelect;
+  terminalStatus: "completed" | "failed";
+  failureReason: string | null;
+  finalizedAt: Date;
+  httpSummary: TrafficHttpSummary;
+  trafficDeliverySummary: TrafficDeliverySummary;
+  httpTimingBreakdownSummary: Record<string, unknown>;
+  loadRunDiagnosticsSummary: Record<string, unknown>;
+  apiRequestLifecycleSummary: Record<string, unknown>;
+  businessOutcome: BusinessOutcomeSummary;
+  terminalInventorySnapshot: TerminalInventorySnapshot | null;
+  allowedCurrentStatuses: DemoRunStatus[];
+  terminalTrafficStatus?: DemoRunTrafficStatus;
+}
+
+export class PostgresTerminalDemoRunSummaryWriter {
+  constructor(private readonly db: CheckoutSurgeDatabase) {}
+
+  async write(input: TerminalDemoRunSummaryInput): Promise<boolean> {
+    return this.db.transaction(async (tx) => {
+      await tx.execute(
+        sql`select pg_advisory_xact_lock(hashtext(${`demo_run_finalize:${input.run.id}`}))`,
+      );
+
+      const [existingSummary] = await tx
+        .select()
+        .from(demoRunSummaries)
+        .where(eq(demoRunSummaries.runId, input.run.id))
+        .limit(1);
+
+      if (existingSummary) {
+        await tx
+          .update(demoRuns)
+          .set({
+            status: existingSummary.status,
+            ...(input.terminalTrafficStatus ? { trafficStatus: input.terminalTrafficStatus } : {}),
+            failureReason: existingSummary.failureReason,
+            finalizedAt: existingSummary.endedAt,
+            updatedAt: input.finalizedAt,
+          })
+          .where(
+            and(
+              eq(demoRuns.id, input.run.id),
+              inArray(demoRuns.status, input.allowedCurrentStatuses),
+            ),
+          );
+        return false;
+      }
+
+      await tx.insert(demoRunSummaries).values({
+        runId: input.run.id,
+        presetName: input.run.presetName,
+        status: input.terminalStatus,
+        failureReason: input.failureReason,
+        startedAt: input.run.startedAt,
+        endedAt: input.finalizedAt,
+        httpSummary: trafficHttpSummarySchema.parse(input.httpSummary),
+        trafficDeliverySummary: trafficDeliverySummarySchema.parse(input.trafficDeliverySummary),
+        httpTimingBreakdownSummary: input.httpTimingBreakdownSummary,
+        loadRunDiagnosticsSummary: input.loadRunDiagnosticsSummary,
+        apiRequestLifecycleSummary: input.apiRequestLifecycleSummary,
+        businessOutcomeSummary: input.businessOutcome,
+        terminalInventorySnapshot: input.terminalInventorySnapshot,
+        capturedAt: input.finalizedAt,
+        createdAt: input.finalizedAt,
+      });
+
+      await tx
+        .update(demoRuns)
+        .set({
+          status: input.terminalStatus,
+          ...(input.terminalTrafficStatus ? { trafficStatus: input.terminalTrafficStatus } : {}),
+          failureReason: input.failureReason,
+          finalizedAt: input.finalizedAt,
+          updatedAt: input.finalizedAt,
+        })
+        .where(
+          and(
+            eq(demoRuns.id, input.run.id),
+            inArray(demoRuns.status, input.allowedCurrentStatuses),
+          ),
+        );
+
+      return true;
+    });
+  }
+}
+
 export class DemoRunFinalizationService implements DemoRunFinalizationController {
+  private readonly summaryWriter: PostgresTerminalDemoRunSummaryWriter;
+
   constructor(
     private readonly options: {
       db: CheckoutSurgeDatabase;
@@ -48,7 +142,9 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
       now?: () => Date;
       generateId?: () => string;
     },
-  ) {}
+  ) {
+    this.summaryWriter = new PostgresTerminalDemoRunSummaryWriter(options.db);
+  }
 
   async finalizeReadyRuns(): Promise<number> {
     const rows = await this.options.db
@@ -106,11 +202,21 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
       return toDemoRunSnapshot(row.run);
     }
 
-    const wroteSummary = await this.writeTerminalSummary({
+    const wroteSummary = await this.summaryWriter.write({
       run: row.run,
-      finalization: row.finalization,
-      decision,
+      terminalStatus: decision.terminalStatus,
+      failureReason: decision.failureReason,
       finalizedAt: now,
+      httpSummary: trafficHttpSummarySchema.parse(row.finalization.httpSummary),
+      trafficDeliverySummary: trafficDeliverySummarySchema.parse(
+        row.finalization.trafficDeliverySummary,
+      ),
+      httpTimingBreakdownSummary: row.finalization.httpTimingBreakdownSummary,
+      loadRunDiagnosticsSummary: row.finalization.loadRunDiagnosticsSummary,
+      apiRequestLifecycleSummary: row.finalization.apiRequestLifecycleSummary,
+      businessOutcome: decision.businessOutcome,
+      terminalInventorySnapshot: decision.terminalInventorySnapshot,
+      allowedCurrentStatuses: ["draining"],
     });
     const updatedRun = await this.readRun(runId);
 
@@ -157,70 +263,6 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
       businessOutcome,
       terminalInventorySnapshot,
     };
-  }
-
-  private async writeTerminalSummary(input: {
-    run: typeof demoRuns.$inferSelect;
-    finalization: typeof demoRunFinalizations.$inferSelect;
-    decision: Extract<FinalizationDecision, { ready: true }>;
-    finalizedAt: Date;
-  }): Promise<boolean> {
-    return this.options.db.transaction(async (tx) => {
-      await tx.execute(
-        sql`select pg_advisory_xact_lock(hashtext(${`demo_run_finalize:${input.run.id}`}))`,
-      );
-
-      const [existingSummary] = await tx
-        .select()
-        .from(demoRunSummaries)
-        .where(eq(demoRunSummaries.runId, input.run.id))
-        .limit(1);
-
-      if (existingSummary) {
-        await tx
-          .update(demoRuns)
-          .set({
-            status: existingSummary.status,
-            failureReason: existingSummary.failureReason,
-            finalizedAt: existingSummary.endedAt,
-            updatedAt: input.finalizedAt,
-          })
-          .where(and(eq(demoRuns.id, input.run.id), inArray(demoRuns.status, ["draining"])));
-        return false;
-      }
-
-      await tx.insert(demoRunSummaries).values({
-        runId: input.run.id,
-        presetName: input.run.presetName,
-        status: input.decision.terminalStatus,
-        failureReason: input.decision.failureReason,
-        startedAt: input.run.startedAt,
-        endedAt: input.finalizedAt,
-        httpSummary: trafficHttpSummarySchema.parse(input.finalization.httpSummary),
-        trafficDeliverySummary: trafficDeliverySummarySchema.parse(
-          input.finalization.trafficDeliverySummary,
-        ),
-        httpTimingBreakdownSummary: input.finalization.httpTimingBreakdownSummary,
-        loadRunDiagnosticsSummary: input.finalization.loadRunDiagnosticsSummary,
-        apiRequestLifecycleSummary: input.finalization.apiRequestLifecycleSummary,
-        businessOutcomeSummary: input.decision.businessOutcome,
-        terminalInventorySnapshot: input.decision.terminalInventorySnapshot,
-        capturedAt: input.finalizedAt,
-        createdAt: input.finalizedAt,
-      });
-
-      await tx
-        .update(demoRuns)
-        .set({
-          status: input.decision.terminalStatus,
-          failureReason: input.decision.failureReason,
-          finalizedAt: input.finalizedAt,
-          updatedAt: input.finalizedAt,
-        })
-        .where(and(eq(demoRuns.id, input.run.id), inArray(demoRuns.status, ["draining"])));
-
-      return true;
-    });
   }
 
   private drainTimeoutAt(

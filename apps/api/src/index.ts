@@ -35,6 +35,7 @@ import {
   RedisDashboardTrafficMetricStore,
   RedisPublicRunBudgetStore,
 } from "./services/demo-run-service.js";
+import { DemoRunStartupReconciliationService } from "./services/demo-run-startup-reconciliation-service.js";
 import {
   ErpStatusService,
   PostgresErpAttemptStatusReader,
@@ -68,6 +69,7 @@ export {
 } from "./services/dashboard-recovery-service.js";
 export { DemoMaintenanceService } from "./services/demo-maintenance-service.js";
 export { DemoRunFinalizationService } from "./services/demo-run-finalization-service.js";
+export { DemoRunStartupReconciliationService } from "./services/demo-run-startup-reconciliation-service.js";
 export {
   ErpStatusService,
   PostgresErpAttemptStatusReader,
@@ -163,6 +165,11 @@ export async function startApiServer(): Promise<void> {
     redis,
     logger,
   });
+  const demoRunStartupReconciliationService = new DemoRunStartupReconciliationService({
+    db: connection.db,
+    redis,
+    logger,
+  });
   const demoRunService = new DemoRunService({
     db: connection.db,
     redis,
@@ -233,16 +240,13 @@ export async function startApiServer(): Promise<void> {
 
   let server: ApiFastifyInstance | null = null;
   let closePromise: Promise<void> | null = null;
-  const finalizationPoller = setInterval(() => {
-    void demoRunFinalizationService.finalizeReadyRuns().catch((error: unknown) => {
-      logger.error({ err: error }, "Demo run finalization poll failed.");
-    });
-  }, config.demoRunFinalizationPollIntervalSeconds * 1000);
-  finalizationPoller.unref();
+  let finalizationPoller: ReturnType<typeof setInterval> | null = null;
   const close = () => {
     closePromise ??= (async () => {
       logger.info("Closing API server.");
-      clearInterval(finalizationPoller);
+      if (finalizationPoller) {
+        clearInterval(finalizationPoller);
+      }
       await closeApiResources({
         closeServer: async () => {
           dashboardEventFanout.close();
@@ -266,6 +270,21 @@ export async function startApiServer(): Promise<void> {
   };
 
   try {
+    const startupReconciliation = await demoRunStartupReconciliationService.reconcile();
+    if (
+      startupReconciliation.interruptedRunCount > 0 ||
+      startupReconciliation.recoverableDrainingRunCount > 0
+    ) {
+      logger.info(startupReconciliation, "API startup demo-run reconciliation completed.");
+    }
+
+    finalizationPoller = setInterval(() => {
+      void demoRunFinalizationService.finalizeReadyRuns().catch((error: unknown) => {
+        logger.error({ err: error }, "Demo run finalization poll failed.");
+      });
+    }, config.demoRunFinalizationPollIntervalSeconds * 1000);
+    finalizationPoller.unref();
+
     server = await buildApiServer({
       config,
       logger,

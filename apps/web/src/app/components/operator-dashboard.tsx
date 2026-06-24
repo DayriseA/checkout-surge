@@ -13,7 +13,7 @@ import {
   type StartDemoRunResponse,
   startDemoRunResponseSchema,
 } from "@checkout-surge/contracts";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BackendRead, DashboardBackendSnapshot } from "../lib/api";
 import {
   adminDemoResetProxyPath,
@@ -60,6 +60,38 @@ export function OperatorDashboard({
   const [isRefreshingRecovery, setIsRefreshingRecovery] = useState(false);
   const [startingPresetSlug, setStartingPresetSlug] = useState<string | null>(null);
   const [startStatusMessage, setStartStatusMessage] = useState<string | null>(null);
+  const recoveryPromiseRef = useRef<Promise<void> | null>(null);
+  const recoveryFollowUpRequestedRef = useRef(false);
+  const discardedLiveEventDuringRecoveryRef = useRef(false);
+
+  const refreshRecovery = useCallback(async () => {
+    if (recoveryPromiseRef.current) {
+      recoveryFollowUpRequestedRef.current = true;
+      await recoveryPromiseRef.current;
+      return;
+    }
+
+    setIsRefreshingRecovery(true);
+
+    const recoveryPromise = (async () => {
+      setRecovery(await readProxyJson(dashboardRecoveryProxyPath, dashboardRecoveryResponseSchema));
+    })();
+
+    recoveryPromiseRef.current = recoveryPromise;
+
+    try {
+      await recoveryPromise;
+    } finally {
+      recoveryPromiseRef.current = null;
+      setIsRefreshingRecovery(false);
+
+      if (discardedLiveEventDuringRecoveryRef.current || recoveryFollowUpRequestedRef.current) {
+        discardedLiveEventDuringRecoveryRef.current = false;
+        recoveryFollowUpRequestedRef.current = false;
+        await refreshRecovery();
+      }
+    }
+  }, []);
 
   useEffect(() => {
     setRecovery(snapshot.recovery);
@@ -79,6 +111,7 @@ export function OperatorDashboard({
 
     source.onopen = () => {
       setRealtimeStatus("connected");
+      void refreshRecovery();
     };
     source.onerror = () => {
       setRealtimeStatus("disconnected");
@@ -97,13 +130,21 @@ export function OperatorDashboard({
       }
 
       setLiveEventCount((count) => count + 1);
+      if (recoveryPromiseRef.current) {
+        discardedLiveEventDuringRecoveryRef.current = true;
+        return;
+      }
+
       setRecovery((current) => applyDashboardEvent(current, parsed.data));
+      if (shouldRequestAuthoritativeRecoveryAfterEvent(parsed.data)) {
+        void refreshRecovery();
+      }
     };
 
     return () => {
       source.close();
     };
-  }, []);
+  }, [refreshRecovery]);
 
   const liveSnapshot = useMemo(
     () => ({
@@ -113,16 +154,6 @@ export function OperatorDashboard({
     }),
     [snapshot, recovery, erpChaos],
   );
-
-  async function refreshRecovery() {
-    setIsRefreshingRecovery(true);
-
-    try {
-      setRecovery(await readProxyJson(dashboardRecoveryProxyPath, dashboardRecoveryResponseSchema));
-    } finally {
-      setIsRefreshingRecovery(false);
-    }
-  }
 
   async function startPublicRun(presetSlug: string): Promise<BackendRead<StartDemoRunResponse>> {
     setStartingPresetSlug(presetSlug);
@@ -338,6 +369,10 @@ export function applyDashboardEvent(
         },
       };
   }
+}
+
+export function shouldRequestAuthoritativeRecoveryAfterEvent(event: DashboardEvent): boolean {
+  return event.type === "run.completed" || event.type === "run.failed";
 }
 
 function AdminActionsPanel({
