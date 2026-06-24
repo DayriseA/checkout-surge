@@ -1,5 +1,17 @@
 name: checkout-surge
 
+x-app-env: &app-env
+  NODE_ENV: production
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+  CONTROL_SERVICE_TOKEN: ${CONTROL_SERVICE_TOKEN:-change-me-shared-control-token}
+  DATABASE_URL: postgresql://postgres:postgres@postgres:5432/checkout_surge
+  REDIS_URL: redis://redis:6379
+  API_BASE_URL: http://api:4000
+  MOCK_ERP_BASE_URL: http://mock-erp:4100
+  LOAD_ORCHESTRATOR_BASE_URL: http://load-orchestrator:4200
+  WEB_BASE_URL: http://localhost:8080
+  WEB_ORIGIN: http://localhost:8080
+
 services:
   postgres:
     image: postgres:17-alpine
@@ -29,6 +41,216 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: api-runtime
+    environment:
+      <<: *app-env
+      PORT: 4000
+      HOST: 0.0.0.0
+      API_LISTEN_BACKLOG: ${API_LISTEN_BACKLOG:-8192}
+      API_POSTGRES_POOL_MAX: ${API_POSTGRES_POOL_MAX:-10}
+      RESERVATION_HOLD_MINUTES: ${RESERVATION_HOLD_MINUTES:-15}
+      IDEMPOTENCY_TTL_SECONDS: ${IDEMPOTENCY_TTL_SECONDS:-1800}
+      PENDING_PERSISTENCE_RETRY_AFTER_SECONDS: ${PENDING_PERSISTENCE_RETRY_AFTER_SECONDS:-30}
+      ORDER_PROCESS_MAX_ATTEMPTS: ${ORDER_PROCESS_MAX_ATTEMPTS:-4}
+      ORDER_PROCESS_BACKOFF_BASE_MS: ${ORDER_PROCESS_BACKOFF_BASE_MS:-500}
+      DEMO_MAX_BUYERS: ${DEMO_MAX_BUYERS:-100000}
+      DEMO_MAX_TOTAL_REQUESTS: ${DEMO_MAX_TOTAL_REQUESTS:-100000}
+      DEMO_MAX_REQUESTS_PER_SECOND: ${DEMO_MAX_REQUESTS_PER_SECOND:-10000}
+      DEMO_MAX_TRAFFIC_DURATION_SECONDS: ${DEMO_MAX_TRAFFIC_DURATION_SECONDS:-300}
+      DEMO_MAX_TRAFFIC_START_DELAY_SECONDS: ${DEMO_MAX_TRAFFIC_START_DELAY_SECONDS:-30}
+      DEMO_MAX_PRE_ALLOCATED_VUS: ${DEMO_MAX_PRE_ALLOCATED_VUS:-10000}
+      DEMO_MAX_VUS: ${DEMO_MAX_VUS:-10000}
+      DEMO_RUN_DRAIN_TIMEOUT_SECONDS: ${DEMO_RUN_DRAIN_TIMEOUT_SECONDS:-300}
+      DEMO_RUN_FINALIZATION_POLL_INTERVAL_SECONDS: ${DEMO_RUN_FINALIZATION_POLL_INTERVAL_SECONDS:-5}
+      PUBLIC_RUN_BUDGET_WINDOW_SECONDS: ${PUBLIC_RUN_BUDGET_WINDOW_SECONDS:-300}
+      PUBLIC_RUN_BUDGET_PER_VISITOR_MAX_STARTS: ${PUBLIC_RUN_BUDGET_PER_VISITOR_MAX_STARTS:-2}
+      PUBLIC_RUN_BUDGET_GLOBAL_MAX_STARTS: ${PUBLIC_RUN_BUDGET_GLOBAL_MAX_STARTS:-6}
+      PUBLIC_CUSTOM_MAX_TOTAL_REQUESTS: ${PUBLIC_CUSTOM_MAX_TOTAL_REQUESTS:-10000}
+      PUBLIC_CUSTOM_MAX_BUYERS: ${PUBLIC_CUSTOM_MAX_BUYERS:-10000}
+      PUBLIC_CUSTOM_MAX_REQUESTS_PER_SECOND: ${PUBLIC_CUSTOM_MAX_REQUESTS_PER_SECOND:-1000}
+      PUBLIC_CUSTOM_MAX_TRAFFIC_DURATION_SECONDS: ${PUBLIC_CUSTOM_MAX_TRAFFIC_DURATION_SECONDS:-120}
+      PUBLIC_CUSTOM_MAX_TRAFFIC_START_DELAY_SECONDS: ${PUBLIC_CUSTOM_MAX_TRAFFIC_START_DELAY_SECONDS:-10}
+      PUBLIC_CUSTOM_MAX_PRE_ALLOCATED_VUS: ${PUBLIC_CUSTOM_MAX_PRE_ALLOCATED_VUS:-1000}
+      PUBLIC_CUSTOM_MAX_VUS: ${PUBLIC_CUSTOM_MAX_VUS:-1000}
+      PUBLIC_CUSTOM_MAX_STARTING_STOCK: ${PUBLIC_CUSTOM_MAX_STARTING_STOCK:-1000}
+      PUBLIC_CUSTOM_MAX_ERP_LATENCY_MS: ${PUBLIC_CUSTOM_MAX_ERP_LATENCY_MS:-2000}
+      PUBLIC_CUSTOM_MIN_ERP_MAX_TPS: ${PUBLIC_CUSTOM_MIN_ERP_MAX_TPS:-1}
+      PUBLIC_CUSTOM_MAX_ERP_MAX_TPS: ${PUBLIC_CUSTOM_MAX_ERP_MAX_TPS:-100}
+      PUBLIC_CUSTOM_MAX_ERP_ERROR_RATE: ${PUBLIC_CUSTOM_MAX_ERP_ERROR_RATE:-0.25}
+    ports:
+      - "4000:4000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"fetch('http://127.0.0.1:4000/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\"",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: worker-runtime
+    environment:
+      <<: *app-env
+      HEALTH_PORT: 4300
+      HEALTH_HOST: 0.0.0.0
+      WORKER_POSTGRES_POOL_MAX: ${WORKER_POSTGRES_POOL_MAX:-10}
+      ERP_REQUEST_TIMEOUT_MS: ${ERP_REQUEST_TIMEOUT_MS:-2000}
+      ERP_CIRCUIT_FAILURE_THRESHOLD: ${ERP_CIRCUIT_FAILURE_THRESHOLD:-5}
+      ERP_CIRCUIT_RESET_TIMEOUT_MS: ${ERP_CIRCUIT_RESET_TIMEOUT_MS:-10000}
+      ORDER_PROCESS_CONCURRENCY: ${ORDER_PROCESS_CONCURRENCY:-5}
+      NOTIFICATION_RECORD_CONCURRENCY: ${NOTIFICATION_RECORD_CONCURRENCY:-5}
+    ports:
+      - "4300:4300"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mock-erp:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"fetch('http://127.0.0.1:4300/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\"",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  mock-erp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: mock-erp-runtime
+    environment:
+      <<: *app-env
+      PORT: 4100
+      HOST: 0.0.0.0
+      LATENCY_MS: ${LATENCY_MS:-0}
+      MAX_TPS: ${MAX_TPS:-100}
+      ERROR_RATE: ${ERROR_RATE:-0}
+      FORCED_OUTAGE: ${FORCED_OUTAGE:-false}
+      ADMIN_MAX_LATENCY_MS: ${ADMIN_MAX_LATENCY_MS:-5000}
+      ADMIN_MIN_MAX_TPS: ${ADMIN_MIN_MAX_TPS:-1}
+      ADMIN_MAX_ERROR_RATE: ${ADMIN_MAX_ERROR_RATE:-1}
+      ADMIN_ALLOW_FORCED_OUTAGE: ${ADMIN_ALLOW_FORCED_OUTAGE:-true}
+    ports:
+      - "4100:4100"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"fetch('http://127.0.0.1:4100/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\"",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  load-orchestrator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: load-orchestrator-runtime
+    environment:
+      <<: *app-env
+      PORT: 4200
+      HOST: 0.0.0.0
+      K6_BINARY: /usr/local/bin/k6
+      BUY_ENDPOINT_PATH: /buy
+    ports:
+      - "4200:4200"
+    depends_on:
+      api:
+        condition: service_started
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"fetch('http://127.0.0.1:4200/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\"",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: web-runtime
+    environment:
+      <<: *app-env
+      PORT: 3000
+      HOST: 0.0.0.0
+      ADMIN_DASHBOARD_PASSPHRASE: ${ADMIN_DASHBOARD_PASSPHRASE:-change-me-admin-passphrase}
+      ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET:-change-me-admin-session-secret}
+      ADMIN_SESSION_MAX_AGE_SECONDS: ${ADMIN_SESSION_MAX_AGE_SECONDS:-28800}
+      PUBLIC_CLIENT_COOKIE_SECRET: ${PUBLIC_CLIENT_COOKIE_SECRET:-change-me-public-client-cookie-secret}
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:8080
+    ports:
+      - "3000:3000"
+    depends_on:
+      api:
+        condition: service_started
+      mock-erp:
+        condition: service_started
+      load-orchestrator:
+        condition: service_started
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"fetch('http://127.0.0.1:3000/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\"",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  dashboard-proxy:
+    image: caddy:2-alpine
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on:
+      api:
+        condition: service_started
+      web:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  runtime-setup:
+    profiles: ["setup"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime-setup
+    environment:
+      <<: *app-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
 volumes:
   checkout-surge-postgres-data:

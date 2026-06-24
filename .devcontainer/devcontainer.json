@@ -1,6 +1,6 @@
 {
   "name": "checkout-surge",
-  "dockerComposeFile": "docker-compose.yml",
+  "dockerComposeFile": ["../docker-compose.yml", "docker-compose.yml"],
   "service": "workspace",
   "runServices": ["workspace"],
   "workspaceFolder": "/workspaces/checkout-surge",

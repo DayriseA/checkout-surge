@@ -15,4 +15,4 @@ until docker info >/dev/null 2>&1; do
   sleep 2
 done
 
-echo "Docker daemon is ready. Start infrastructure explicitly with pnpm infra:up or pnpm test:infra:up."
+echo "Docker daemon is ready. Start infrastructure explicitly with pnpm infra:up, pnpm test:infra:up, or pnpm runtime:up."

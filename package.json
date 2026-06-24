@@ -28,13 +28,13 @@
     "test:db:migrate": "pnpm --filter @checkout-surge/db test:db:migrate",
     "infra:up": "node scripts/run-with-env.mjs docker compose up -d postgres redis",
     "infra:down": "node scripts/run-with-env.mjs docker compose down",
-    "runtime:up": "node scripts/not-implemented.mjs runtime:up \"Full reference runtime containers are not implemented yet. Use infra:up for PostgreSQL and Redis only.\"",
-    "runtime:down": "node scripts/not-implemented.mjs runtime:down \"Full reference runtime containers are not implemented yet. Use infra:down for infrastructure-only teardown.\"",
-    "runtime:setup": "node scripts/not-implemented.mjs runtime:setup \"Full runtime setup depends on later service containers. For now use infra:up, @checkout-surge/db db:migrate, and @checkout-surge/db seed.\"",
-    "runtime:wipe": "node scripts/not-implemented.mjs runtime:wipe \"Full runtime wipe depends on later service containers and explicit local-maintenance reset behavior.\"",
+    "runtime:up": "node scripts/run-with-env.mjs docker compose up -d --build",
+    "runtime:down": "node scripts/run-with-env.mjs docker compose down",
+    "runtime:setup": "node scripts/run-with-env.mjs docker compose run --rm --build runtime-setup",
+    "runtime:wipe": "node scripts/run-with-env.mjs docker compose down --volumes --remove-orphans",
     "runtime:reset": "node scripts/run-with-env.mjs node scripts/runtime-reset.mjs",
-    "runtime:smoke": "node scripts/not-implemented.mjs runtime:smoke \"Runtime smoke checks depend on the compose topology and service health endpoints from later tasks.\"",
-    "runtime:smoke:load": "node scripts/not-implemented.mjs runtime:smoke:load \"Load smoke checks depend on dashboard, API, and load-orchestrator implementations from later phases.\"",
+    "runtime:smoke": "node scripts/run-with-env.mjs node scripts/runtime-smoke.mjs",
+    "runtime:smoke:load": "node scripts/run-with-env.mjs node scripts/runtime-smoke-load.mjs",
     "maintenance:cleanup-runs": "node scripts/run-with-env.mjs node scripts/maintenance-cleanup-runs.mjs",
     "dev": "node scripts/not-implemented.mjs dev \"Workspace dev processes land as app runtimes are implemented in later tasks.\"",
     "dev:dashboard": "pnpm --filter @checkout-surge/contracts build && pnpm --filter web dev",
@@ -42,7 +42,7 @@
     "dev:worker": "pnpm --filter worker dev",
     "dev:mock-erp": "pnpm --filter mock-erp dev",
     "dev:load-orchestrator": "pnpm --filter load-orchestrator dev",
-    "health:check": "node scripts/not-implemented.mjs health:check \"Task 1.5 and later service tasks will add readiness endpoints and the polling script.\""
+    "health:check": "node scripts/run-with-env.mjs node scripts/runtime-health-check.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.0",

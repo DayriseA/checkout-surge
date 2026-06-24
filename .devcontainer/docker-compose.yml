@@ -1,5 +1,18 @@
 name: checkout-surge-devcontainer
 
+x-workspace-volumes: &workspace-volumes
+  - .:/workspaces/checkout-surge:cached
+  - checkout-surge-pnpm-store:/pnpm-store
+  - checkout-surge-root-node-modules:/workspaces/checkout-surge/node_modules
+  - checkout-surge-web-node-modules:/workspaces/checkout-surge/apps/web/node_modules
+  - checkout-surge-api-node-modules:/workspaces/checkout-surge/apps/api/node_modules
+  - checkout-surge-worker-node-modules:/workspaces/checkout-surge/apps/worker/node_modules
+  - checkout-surge-mock-erp-node-modules:/workspaces/checkout-surge/apps/mock-erp/node_modules
+  - checkout-surge-load-orchestrator-node-modules:/workspaces/checkout-surge/apps/load-orchestrator/node_modules
+  - checkout-surge-contracts-node-modules:/workspaces/checkout-surge/packages/contracts/node_modules
+  - checkout-surge-logger-node-modules:/workspaces/checkout-surge/packages/logger/node_modules
+  - checkout-surge-db-node-modules:/workspaces/checkout-surge/packages/db/node_modules
+
 services:
   workspace:
     image: mcr.microsoft.com/devcontainers/universal:linux
@@ -7,9 +20,7 @@ services:
     init: true
     privileged: true
     volumes:
-      - ..:/workspaces/checkout-surge:cached
-      - checkout-surge-codex-config:/mnt/codex-config
-      - checkout-surge-claude-config:/mnt/claude-config
+      - .:/workspaces/checkout-surge:cached
       - checkout-surge-pnpm-store:/pnpm-store
       - checkout-surge-root-node-modules:/workspaces/checkout-surge/node_modules
       - checkout-surge-web-node-modules:/workspaces/checkout-surge/apps/web/node_modules
@@ -20,6 +31,46 @@ services:
       - checkout-surge-contracts-node-modules:/workspaces/checkout-surge/packages/contracts/node_modules
       - checkout-surge-logger-node-modules:/workspaces/checkout-surge/packages/logger/node_modules
       - checkout-surge-db-node-modules:/workspaces/checkout-surge/packages/db/node_modules
+      - checkout-surge-codex-config:/mnt/codex-config
+      - checkout-surge-claude-config:/mnt/claude-config
+
+  api:
+    build:
+      target: workspace
+    command: pnpm --filter api dev
+    environment:
+      NODE_ENV: development
+    volumes: *workspace-volumes
+
+  worker:
+    build:
+      target: workspace
+    command: pnpm --filter worker dev
+    environment:
+      NODE_ENV: development
+    volumes: *workspace-volumes
+
+  mock-erp:
+    build:
+      target: workspace
+    command: pnpm --filter mock-erp dev
+    environment:
+      NODE_ENV: development
+    volumes: *workspace-volumes
+
+  load-orchestrator:
+    command: pnpm --filter load-orchestrator dev
+    environment:
+      NODE_ENV: development
+    volumes: *workspace-volumes
+
+  web:
+    build:
+      target: workspace
+    command: pnpm --filter web dev
+    environment:
+      NODE_ENV: development
+    volumes: *workspace-volumes
 
 volumes:
   checkout-surge-codex-config:
