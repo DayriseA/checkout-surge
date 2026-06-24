@@ -15,7 +15,7 @@ const requiredServices = [
 
 const failures = [];
 
-runStep("compose_config", () => runCommand("docker", ["compose", "config"]));
+runStep("compose_config", () => runCommand("docker", ["compose", "config"], { silent: true }));
 runStep("compose_services_running", assertComposeServicesRunning);
 runStep("health_check", () => runCommand("node", ["scripts/runtime-health-check.mjs"]));
 runStep("load_orchestrator_k6_binary", () =>

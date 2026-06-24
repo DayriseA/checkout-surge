@@ -1,12 +1,16 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
+import { createHmac } from "node:crypto";
 
 const dashboardBaseUrl = envUrl("WEB_BASE_URL", "http://localhost:8080");
 const apiBaseUrl = envUrl("API_BASE_URL", "http://localhost:4000");
 const controlServiceToken = process.env.CONTROL_SERVICE_TOKEN?.trim();
 const timeoutMs = positiveIntegerEnv("RUNTIME_SMOKE_LOAD_RUN_TIMEOUT_MS", 60_000);
+const publicRunBudgetWindowSeconds = positiveIntegerEnv("PUBLIC_RUN_BUDGET_WINDOW_SECONDS", 300);
 const correlationId = `runtime-smoke-load-${Date.now()}`;
+const smokeVisitorId = "00000000-0000-4000-8000-000000000009";
+const publicBudgetWindowStart = Math.floor(Date.now() / (publicRunBudgetWindowSeconds * 1000));
 
 if (!controlServiceToken) {
   console.error("CONTROL_SERVICE_TOKEN is required for runtime load smoke.");
@@ -61,6 +65,7 @@ async function startSmokeRun() {
     headers: {
       accept: "application/json",
       "content-type": "application/json",
+      cookie: signedPublicVisitorCookie(smokeVisitorId),
     },
     body: JSON.stringify({
       presetSlug: "public-custom",
@@ -148,43 +153,46 @@ function cleanupSmokeRun(input) {
   console.log(`Cleaning runtime smoke run ${input.runId}.`);
   cleanupPostgresRows(input);
   cleanupRedisKeys(input);
+  cleanupPublicBudgetKeys();
 }
 
 function cleanupPostgresRows(input) {
+  const runId = sqlUuidLiteral(input.runId, "runId");
+  const saleOfferId = sqlUuidLiteral(input.saleOfferId, "saleOfferId");
   const sql = `
-delete from simulated_notifications where run_id = :'run_id' or sale_offer_id = :'sale_offer_id';
-delete from erp_attempts where run_id = :'run_id';
-delete from order_events where run_id = :'run_id' or sale_offer_id = :'sale_offer_id';
-delete from orders where run_id = :'run_id' or sale_offer_id = :'sale_offer_id';
-delete from reservations where run_id = :'run_id' or sale_offer_id = :'sale_offer_id';
-delete from reservation_pending_persistence where run_id = :'run_id' or sale_offer_id = :'sale_offer_id';
-delete from demo_run_reservation_outcomes where run_id = :'run_id';
-delete from demo_run_finalizations where run_id = :'run_id';
-delete from demo_run_summaries where run_id = :'run_id';
-delete from demo_run_sale_contexts where run_id = :'run_id' or sale_offer_id = :'sale_offer_id';
-delete from demo_runs where id = :'run_id';
-delete from sale_offers where id = :'sale_offer_id' and purpose = 'generated_run';
+delete from simulated_notifications where run_id = ${runId} or sale_offer_id = ${saleOfferId};
+delete from erp_attempts where run_id = ${runId};
+delete from order_events where run_id = ${runId} or sale_offer_id = ${saleOfferId};
+delete from orders where run_id = ${runId} or sale_offer_id = ${saleOfferId};
+delete from reservations where run_id = ${runId} or sale_offer_id = ${saleOfferId};
+delete from reservation_pending_persistence where run_id = ${runId} or sale_offer_id = ${saleOfferId};
+delete from demo_run_reservation_outcomes where run_id = ${runId};
+delete from demo_run_finalizations where run_id = ${runId};
+delete from demo_run_summaries where run_id = ${runId};
+delete from demo_run_sale_contexts where run_id = ${runId} or sale_offer_id = ${saleOfferId};
+delete from demo_runs where id = ${runId};
+delete from sale_offers where id = ${saleOfferId} and purpose = 'generated_run';
 `;
 
-  runCommand("docker", [
-    "compose",
-    "exec",
-    "-T",
-    "postgres",
-    "psql",
-    "-U",
-    "postgres",
-    "-d",
-    "checkout_surge",
-    "-v",
-    "ON_ERROR_STOP=1",
-    "-v",
-    `run_id=${input.runId}`,
-    "-v",
-    `sale_offer_id=${input.saleOfferId}`,
-    "-c",
-    sql,
-  ]);
+  runCommand(
+    "docker",
+    [
+      "compose",
+      "exec",
+      "-T",
+      "postgres",
+      "psql",
+      "-U",
+      "postgres",
+      "-d",
+      "checkout_surge",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-c",
+      sql,
+    ],
+    { silent: true },
+  );
 }
 
 function cleanupRedisKeys(input) {
@@ -210,7 +218,33 @@ function cleanupRedisKeys(input) {
     return;
   }
 
-  runCommand("docker", ["compose", "exec", "-T", "redis", "redis-cli", "DEL", ...keyList]);
+  runCommand("docker", ["compose", "exec", "-T", "redis", "redis-cli", "DEL", ...keyList], {
+    silent: true,
+  });
+}
+
+function cleanupPublicBudgetKeys() {
+  const globalKey = `demo-run:public-budget:${publicBudgetWindowStart}:global`;
+  const visitorKey = `demo-run:public-budget:${publicBudgetWindowStart}:visitor:${smokeVisitorId}`;
+
+  runCommand("docker", ["compose", "exec", "-T", "redis", "redis-cli", "DEL", visitorKey], {
+    silent: true,
+  });
+  runCommand(
+    "docker",
+    [
+      "compose",
+      "exec",
+      "-T",
+      "redis",
+      "redis-cli",
+      "EVAL",
+      "local v = redis.call('DECR', KEYS[1]); if v <= 0 then redis.call('DEL', KEYS[1]); end; return v",
+      "1",
+      globalKey,
+    ],
+    { silent: true },
+  );
 }
 
 async function fetchWithTimeout(url, init = {}) {
@@ -258,6 +292,25 @@ function positiveIntegerEnv(name, fallback) {
     throw new Error(`${name} must be a positive integer.`);
   }
   return parsed;
+}
+
+function sqlUuidLiteral(value, name) {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) {
+    throw new Error(`${name} must be a UUID.`);
+  }
+
+  return `'${value}'`;
+}
+
+function signedPublicVisitorCookie(visitorId) {
+  const secret = process.env.PUBLIC_CLIENT_COOKIE_SECRET?.trim();
+  if (!secret) {
+    throw new Error("PUBLIC_CLIENT_COOKIE_SECRET is required for runtime load smoke.");
+  }
+
+  const signature = createHmac("sha256", secret).update(visitorId).digest("base64url");
+  const value = encodeURIComponent(`${visitorId}.${signature}`);
+  return `checkout_surge_public_visitor=${value}`;
 }
 
 function sleep(ms) {
