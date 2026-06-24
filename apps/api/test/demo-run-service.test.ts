@@ -10,6 +10,7 @@ import {
   createDatabaseConnection,
   createRedisClient,
   demoPresets,
+  demoRunSummaries,
   demoRuns,
   products,
   publicRuntimePolicies,
@@ -223,6 +224,62 @@ describe("demo-run lifecycle start gating", () => {
     expect(response.run.trafficStatus).toBe("active");
     expect(response.run.saleOfferId).toBe("77777777-7777-4777-8777-777777777778");
   });
+
+  it("writes a terminal summary when inventory initialization fails", async () => {
+    const service = createStartService(requireConnection(connection), redisUnavailable());
+
+    await expect(
+      service.startRun({ presetSlug: "preview-1k", operatorMode: "admin" }, "corr-start"),
+    ).rejects.toThrow("Redis unavailable during initialization.");
+
+    const summaries = await requireConnection(connection).db.select().from(demoRunSummaries);
+
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0]).toMatchObject({
+      runId: "77777777-7777-4777-8777-777777777777",
+      status: "failed",
+      failureReason: "inventory_initialization_failed",
+      terminalInventorySnapshot: null,
+    });
+    expect(summaries[0]?.httpSummary).toMatchObject({
+      plannedRequests: 10_000,
+      emittedRequests: 0,
+    });
+    expect(summaries[0]?.trafficDeliverySummary).toMatchObject({
+      trafficDeliveryStatus: "failed",
+      droppedIterations: 10_000,
+    });
+  });
+
+  it("writes a terminal summary when load-orchestrator traffic start fails", async () => {
+    const service = createStartService(requireConnection(connection), requireRedis(redis), {
+      trafficExecutionGateway: {
+        start: async () => {
+          throw new Error("load orchestrator unavailable");
+        },
+      },
+    });
+
+    await expect(
+      service.startRun({ presetSlug: "preview-1k", operatorMode: "admin" }, "corr-start"),
+    ).rejects.toThrow("load orchestrator unavailable");
+
+    const summaries = await requireConnection(connection).db.select().from(demoRunSummaries);
+
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0]).toMatchObject({
+      runId: "77777777-7777-4777-8777-777777777777",
+      status: "failed",
+      failureReason: "load_orchestrator_start_failed",
+    });
+    expect(summaries[0]?.terminalInventorySnapshot).toMatchObject({
+      saleOfferId: "77777777-7777-4777-8777-777777777778",
+      startingStock: 1000,
+      remainingStock: 1000,
+      acceptedReservations: 0,
+      source: "redis",
+    });
+  });
 });
 
 function surge10kSnapshot(): AcceptedRunConfigSnapshot {
@@ -325,13 +382,23 @@ function createPresetManagementService(
 function createStartService(
   connection: ReturnType<typeof createDatabaseConnection>,
   redis: ReturnType<typeof createRedisClient>,
+  overrides: {
+    trafficExecutionGateway?: ConstructorParameters<
+      typeof DemoRunService
+    >[0]["trafficExecutionGateway"];
+  } = {},
 ): DemoRunService {
-  const ids = ["77777777-7777-4777-8777-777777777777", "77777777-7777-4777-8777-777777777778"];
+  const ids = [
+    "77777777-7777-4777-8777-777777777777",
+    "77777777-7777-4777-8777-777777777778",
+    "77777777-7777-4777-8777-777777777779",
+    "77777777-7777-4777-8777-777777777780",
+  ];
 
   return new DemoRunService({
     db: connection.db,
     redis,
-    trafficExecutionGateway: {
+    trafficExecutionGateway: overrides.trafficExecutionGateway ?? {
       start: async (request) => ({
         runId: request.runId,
         status: "active",
@@ -354,6 +421,23 @@ function createStartService(
       return id;
     },
   });
+}
+
+function redisUnavailable(): ReturnType<typeof createRedisClient> {
+  return {
+    hget: async () => {
+      throw new Error("Redis unavailable during initialization.");
+    },
+    eval: async () => {
+      throw new Error("Redis unavailable during cleanup.");
+    },
+    hgetall: async () => {
+      throw new Error("Redis unavailable during snapshot capture.");
+    },
+    publish: async () => {
+      throw new Error("Redis unavailable during event publication.");
+    },
+  } as unknown as ReturnType<typeof createRedisClient>;
 }
 
 function expectBuyerSpikeTrafficConfig(

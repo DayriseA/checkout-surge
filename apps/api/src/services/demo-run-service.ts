@@ -6,6 +6,7 @@ import {
   acceptedRunConfigSnapshotSchema,
   adminPresetListResponseSchema,
   adminPresetMutationResponseSchema,
+  type BusinessOutcomeSummary,
   type CopyDemoPresetToCustomRequest,
   controlServiceTokenHeaderName,
   type DemoPresetContract,
@@ -31,8 +32,10 @@ import {
   type TerminalInventorySnapshot,
   type TrafficCompletionReport,
   type TrafficConfig,
+  type TrafficDeliverySummary,
   type TrafficExecutionStartRequest,
   type TrafficExecutionStartResponse,
+  type TrafficHttpSummary,
   trafficCompletionReportSchema,
   trafficExecutionStartPath,
   trafficExecutionStartResponseSchema,
@@ -57,7 +60,10 @@ import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { ApiHttpError } from "../runtime/errors.js";
 import type { DashboardBusinessOutcomeReader } from "./dashboard-recovery-service.js";
-import type { DemoRunFinalizationController } from "./demo-run-finalization-service.js";
+import {
+  type DemoRunFinalizationController,
+  PostgresTerminalDemoRunSummaryWriter,
+} from "./demo-run-finalization-service.js";
 
 const demoRunStartLockKey = "checkout_surge_demo_run_start";
 const generatedRunSaleDurationMs = 24 * 60 * 60 * 1000;
@@ -222,6 +228,8 @@ export class DemoRunValidationError extends Error {
 }
 
 export class DemoRunService implements DemoRunController {
+  private readonly summaryWriter: PostgresTerminalDemoRunSummaryWriter;
+
   constructor(
     private readonly options: {
       db: CheckoutSurgeDatabase;
@@ -237,7 +245,9 @@ export class DemoRunService implements DemoRunController {
       now?: () => Date;
       generateId?: () => string;
     },
-  ) {}
+  ) {
+    this.summaryWriter = new PostgresTerminalDemoRunSummaryWriter(options.db);
+  }
 
   async listPublicPresets(): Promise<PublicPresetListResponse> {
     const rows = await this.options.db
@@ -791,19 +801,43 @@ export class DemoRunService implements DemoRunController {
     correlationId: string,
   ): Promise<void> {
     const now = this.now();
-    const [run] = await this.options.db
-      .update(demoRuns)
-      .set({
-        status: "failed",
-        trafficStatus: "failed",
-        failureReason,
-        finalizedAt: now,
-        updatedAt: now,
-      })
-      .where(eq(demoRuns.id, runId))
-      .returning();
+    const [run] = await this.options.db.select().from(demoRuns).where(eq(demoRuns.id, runId));
 
     if (run) {
+      const businessOutcome = await this.readBusinessOutcomeForRun(run);
+      const terminalInventorySnapshot = run.saleOfferId
+        ? await this.captureTerminalInventorySnapshot(run.saleOfferId, businessOutcome, now)
+        : null;
+      const trafficSummary = failedBeforeTrafficStartSummary(
+        acceptedRunConfigSnapshotSchema.parse(run.configSnapshot),
+        failureReason,
+      );
+
+      await this.summaryWriter.write({
+        run,
+        terminalStatus: "failed",
+        failureReason,
+        finalizedAt: now,
+        httpSummary: trafficSummary.httpSummary,
+        trafficDeliverySummary: trafficSummary.trafficDeliverySummary,
+        httpTimingBreakdownSummary: {},
+        loadRunDiagnosticsSummary: {
+          failureReason,
+          previousTrafficStatus: run.trafficStatus,
+        },
+        apiRequestLifecycleSummary: {
+          failureReason,
+          previousStatus: run.status,
+          previousTrafficStatus: run.trafficStatus,
+          finalizedAt: now.toISOString(),
+        },
+        businessOutcome,
+        terminalInventorySnapshot,
+        allowedCurrentStatuses: ["starting", "active"],
+        terminalTrafficStatus: "failed",
+      });
+      const updatedRun = await this.readRunSnapshot(runId);
+
       if (run.saleOfferId) {
         await setRunSaleEligibility(this.options.redis, {
           runId,
@@ -811,8 +845,21 @@ export class DemoRunService implements DemoRunController {
           status: "closed",
         }).catch(() => undefined);
       }
-      await this.publishRunEvent("run.failed", toDemoRunSnapshot(run), correlationId, now);
+      await this.publishRunEvent("run.failed", updatedRun, correlationId, now);
     }
+  }
+
+  private async readBusinessOutcomeForRun(
+    run: typeof demoRuns.$inferSelect,
+  ): Promise<BusinessOutcomeSummary> {
+    if (!run.saleOfferId) {
+      return emptyBusinessOutcomeSummary();
+    }
+
+    return this.options.businessOutcomeReader.read({
+      saleOfferId: run.saleOfferId,
+      runId: run.id,
+    });
   }
 
   private async captureTerminalInventorySnapshot(
@@ -1092,6 +1139,50 @@ function calculatePlannedRequests(trafficConfig: TrafficConfig): number {
   }
 
   return trafficConfig.ratePerSecond * trafficConfig.durationSeconds;
+}
+
+function failedBeforeTrafficStartSummary(
+  config: AcceptedRunConfigSnapshot,
+  failureReason: string,
+): {
+  httpSummary: TrafficHttpSummary;
+  trafficDeliverySummary: TrafficDeliverySummary;
+} {
+  const plannedRequests = calculatePlannedRequests(config.trafficConfig);
+
+  return {
+    httpSummary: {
+      plannedRequests,
+      emittedRequests: 0,
+      completedRequests: 0,
+      failedRequests: 0,
+      acceptedResponses: 0,
+      soldOutResponses: 0,
+      unexpectedResponses: 0,
+      failureRate: 0,
+    },
+    trafficDeliverySummary: {
+      plannedRequests,
+      emittedRequests: 0,
+      droppedIterations: plannedRequests,
+      trafficDeliveryStatus: "failed",
+      notes: [`${failureReason}_before_traffic_start`],
+    },
+  };
+}
+
+function emptyBusinessOutcomeSummary(): BusinessOutcomeSummary {
+  return {
+    acceptedReservations: 0,
+    soldOutRejections: 0,
+    queuedOrders: 0,
+    processingOrders: 0,
+    retryingOrders: 0,
+    confirmedOrders: 0,
+    failedOrders: 0,
+    pendingPersistenceCount: 0,
+    notificationsRecorded: 0,
+  };
 }
 
 function assertCap(value: number, cap: number, code: string): void {
