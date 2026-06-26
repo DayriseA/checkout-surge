@@ -2,7 +2,7 @@
 set -euo pipefail
 
 workspace_dir="${1:-/workspaces/checkout-surge}"
-common_git_dir="${DEVCONTAINER_COMMON_GIT_DIR:-/workspaces/checkout-surge-host-git}"
+common_git_dir="${DEVCONTAINER_COMMON_GIT_DIR:-/workspaces/checkout-surge-main/.git}"
 git_file="${workspace_dir}/.git"
 
 configure_safe_directory() {
@@ -11,8 +11,20 @@ configure_safe_directory() {
   fi
 }
 
+prepare_turbo_cache_directory() {
+  local git_common_dir
+  git_common_dir="$(git -C "$workspace_dir" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+
+  case "$git_common_dir" in
+    */.git)
+      sudo install -d -m 775 -o "$(id -u)" -g "$(id -g)" "${git_common_dir%/.git}/.turbo/cache"
+      ;;
+  esac
+}
+
 if [ -d "$git_file" ]; then
   configure_safe_directory
+  prepare_turbo_cache_directory
   exit 0
 fi
 
@@ -22,6 +34,7 @@ fi
 
 if git -C "$workspace_dir" rev-parse --git-dir >/dev/null 2>&1; then
   configure_safe_directory
+  prepare_turbo_cache_directory
   exit 0
 fi
 
@@ -50,3 +63,4 @@ sudo mount --bind "$container_git_file" "$git_file"
 
 configure_safe_directory
 git -C "$workspace_dir" rev-parse --show-toplevel >/dev/null
+prepare_turbo_cache_directory
