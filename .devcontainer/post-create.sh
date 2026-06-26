@@ -4,6 +4,8 @@ set -euo pipefail
 apt_packages=(bubblewrap ripgrep curl jq)
 apt_max_attempts=5
 
+bash .devcontainer/repair-git-worktree.sh
+
 persist_home_config() {
   local name="$1"
   local target_dir="$2"

@@ -4,6 +4,8 @@ set -euo pipefail
 max_attempts=30
 attempt=1
 
+bash .devcontainer/repair-git-worktree.sh
+
 until docker info >/dev/null 2>&1; do
   if [ "$attempt" -ge "$max_attempts" ]; then
     echo "Docker daemon did not become ready after ${max_attempts} attempts." >&2

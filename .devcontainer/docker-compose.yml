@@ -21,6 +21,7 @@ services:
     privileged: true
     volumes:
       - .:/workspaces/checkout-surge:cached
+      - ../checkout-surge/.git:/workspaces/checkout-surge-host-git
       - checkout-surge-pnpm-store:/pnpm-store
       - checkout-surge-root-node-modules:/workspaces/checkout-surge/node_modules
       - checkout-surge-web-node-modules:/workspaces/checkout-surge/apps/web/node_modules
