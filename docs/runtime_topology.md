@@ -13,7 +13,7 @@ The goal is to make the architecture-realistic topology easy to run locally with
 | Reference local topology | API, worker, mock ERP, web, load orchestrator, PostgreSQL, and Redis run as separate services | The local reference runtime should demonstrate the same service boundaries the project claims architecturally. |
 | Load orchestrator runtime | The load-orchestrator container owns the k6 binary | k6 is part of the load-generation service runtime, not a host-machine prerequisite for the reference path. |
 | Root compose ownership | The root compose topology is the stable full local reference/demo runtime | `docker compose up` and `pnpm runtime:up` represent the complete local system, not only shared infrastructure. |
-| Dev Container compose ownership | The `.devcontainer` compose layer extends the root topology under the separate `checkout-surge-devcontainer` project for the editor workspace | The editor container lifecycle must not be coupled to `pnpm runtime:up` / `pnpm runtime:down`, which own the reference runtime project. |
+| Dev Container compose ownership | The `.devcontainer` compose layer extends the root topology under a separate branch-specific Dev Container project for the editor workspace | The editor container lifecycle must not be coupled to `pnpm runtime:up` / `pnpm runtime:down`, which own the reference runtime project. |
 | Dev Container Docker strategy | Dev Container and GitHub Codespaces use Docker-in-Docker | The seed workspace provides this controlled environment, works naturally in Codespaces, and isolates compose state from host Docker state. |
 | Dev Container startup | Dev Container and Codespaces startup should not automatically start the full application topology | Developers should explicitly choose test infrastructure, infra-only services, or the full runtime depending on their current loop. |
 | Host-native workflow | Keep `pnpm dev:*` commands as a focused development convenience | Host-native app processes are useful for fast edits, but they are not the reference proof of service separation. |
@@ -97,11 +97,17 @@ Dev Container and GitHub Codespaces-specific compose configuration belongs under
 - editor-friendly startup behavior,
 - development-only command overrides.
 
-The Dev Container compose override extends shared service definitions for bind mounts, dev-mode commands, forwarded ports, and dependency-volume isolation. It keeps its own Compose project name so the editor workspace container attaches to `checkout-surge-devcontainer_default`, not the reference runtime network `checkout-surge_default`.
+The root, Dev Container, and test Compose files use branch-specific default project names so separate Git worktrees do not share project runtime containers, networks, or persistent PostgreSQL/Redis state by accident. On this branch the defaults are:
+
+- root runtime: `checkout-surge-gpt-55`, override with `COMPOSE_PROJECT_NAME`
+- Dev Container: `checkout-surge-gpt-55-devcontainer`, override with `DEVCONTAINER_COMPOSE_PROJECT_NAME`
+- test infrastructure: `checkout-surge-gpt-55-test`, override with `TEST_COMPOSE_PROJECT_NAME`
+
+The Dev Container compose override extends shared service definitions for bind mounts, dev-mode commands, forwarded ports, and dependency-volume isolation. It keeps its own Compose project name so the editor workspace container attaches to the Dev Container project network, not the reference runtime network.
 
 Follow the Dev Containers and Docker Compose base-plus-override convention: use shared compose files for common topology, and layer development-environment-specific overrides where the Dev Container configuration lives.
 
-The dependency cache volumes used by the Dev Container should keep explicit volume names. This preserves cache continuity across Compose project-name changes and keeps Linux `node_modules` out of the host-visible workspace.
+The dependency cache volumes used by the Dev Container are Compose-scoped so branch worktrees can carry different dependency graphs without sharing installed packages. The Codex and Claude config volumes intentionally keep explicit global volume names so developer-tool identity/config remains shared across worktrees.
 
 ---
 
@@ -185,9 +191,9 @@ The Dev Container compose configuration can be validated with Docker Compose con
 
 Use this checklist when implementing or changing the local runtime topology:
 
-- Validate the seed Dev Container shell with `docker compose -f .devcontainer/docker-compose.yml config`.
 - After the root runtime compose file exists, validate the root topology with `docker compose config`.
-- If a Dev Container override is added later, validate the merged topology with `docker compose -f docker-compose.yml -f .devcontainer/docker-compose.yml config`. Confirm the merged project name is `checkout-surge-devcontainer` and the merged default network is `checkout-surge-devcontainer_default`.
+- Validate the test topology with `docker compose -f docker-compose.test.yml config`.
+- Validate the Dev Container merged topology with `docker compose -f docker-compose.yml -f .devcontainer/docker-compose.yml config`. Confirm the merged project name defaults to `checkout-surge-gpt-55-devcontainer` unless `DEVCONTAINER_COMPOSE_PROJECT_NAME` is set.
 - Start services with `pnpm runtime:up`.
 - Apply migrations and seed demo data with `pnpm runtime:setup`.
 - Check service readiness and dashboard reachability with `pnpm health:check`.

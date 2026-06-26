@@ -1,4 +1,4 @@
-name: checkout-surge-devcontainer
+name: ${DEVCONTAINER_COMPOSE_PROJECT_NAME:-checkout-surge-gpt-55-devcontainer}
 
 x-workspace-volumes: &workspace-volumes
   - .:/workspaces/checkout-surge:cached
@@ -78,22 +78,12 @@ volumes:
   checkout-surge-claude-config:
     name: checkout-surge-claude-config
   checkout-surge-pnpm-store:
-    name: checkout-surge-pnpm-store
   checkout-surge-root-node-modules:
-    name: checkout-surge-root-node-modules
   checkout-surge-web-node-modules:
-    name: checkout-surge-web-node-modules
   checkout-surge-api-node-modules:
-    name: checkout-surge-api-node-modules
   checkout-surge-worker-node-modules:
-    name: checkout-surge-worker-node-modules
   checkout-surge-mock-erp-node-modules:
-    name: checkout-surge-mock-erp-node-modules
   checkout-surge-load-orchestrator-node-modules:
-    name: checkout-surge-load-orchestrator-node-modules
   checkout-surge-contracts-node-modules:
-    name: checkout-surge-contracts-node-modules
   checkout-surge-logger-node-modules:
-    name: checkout-surge-logger-node-modules
   checkout-surge-db-node-modules:
-    name: checkout-surge-db-node-modules

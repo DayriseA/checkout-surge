@@ -116,9 +116,19 @@ Stop the full runtime:
 pnpm runtime:down
 ```
 
+## Compose Project Names
+
+Compose project names default to branch-specific values so separate Git worktrees do not share project runtime containers, networks, PostgreSQL/Redis state, or Dev Container dependency volumes by accident:
+
+- root runtime: `checkout-surge-gpt-55`, override with `COMPOSE_PROJECT_NAME`
+- Dev Container: `checkout-surge-gpt-55-devcontainer`, override with `DEVCONTAINER_COMPOSE_PROJECT_NAME`
+- test infrastructure: `checkout-surge-gpt-55-test`, override with `TEST_COMPOSE_PROJECT_NAME`
+
+Published ports stay unchanged, so this isolates project state without making parallel full runtimes on multiple branches work automatically. Codex and Claude config volumes remain intentionally shared across worktrees.
+
 ## Dev Container Startup
 
-The Dev Container is an editor workspace named `checkout-surge-devcontainer`. It extends the root Compose topology for app-service development, while `runServices` starts only the `workspace` service by default. It uses the universal devcontainer image, Docker-in-Docker, persistent Codex/Claude config volumes, a persistent pnpm store, and named `node_modules` volumes so Linux dependencies stay out of the host-visible workspace.
+The Dev Container is an editor workspace with the default Compose project name `checkout-surge-gpt-55-devcontainer`. It extends the root Compose topology for app-service development, while `runServices` starts only the `workspace` service by default. It uses the universal devcontainer image, Docker-in-Docker, intentionally shared Codex/Claude config volumes, and branch-scoped pnpm store and `node_modules` volumes so Linux dependencies stay out of the host-visible workspace and do not leak across worktrees.
 
 Open or rebuild the Dev Container through VS Code. Startup prepares the workspace and checks Docker readiness, but it does not auto-start the full application runtime. The full runtime remains explicit:
 

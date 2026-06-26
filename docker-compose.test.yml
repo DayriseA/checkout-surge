@@ -1,4 +1,4 @@
-name: checkout-surge-test
+name: ${TEST_COMPOSE_PROJECT_NAME:-checkout-surge-gpt-55-test}
 
 services:
   postgres-test:
@@ -32,6 +32,4 @@ services:
 
 volumes:
   checkout-surge-test-postgres-data:
-    name: checkout-surge-test-postgres-data
   checkout-surge-test-redis-data:
-    name: checkout-surge-test-redis-data

@@ -1,4 +1,4 @@
-name: checkout-surge
+name: ${COMPOSE_PROJECT_NAME:-checkout-surge-gpt-55}
 
 x-app-env: &app-env
   NODE_ENV: production
@@ -254,6 +254,4 @@ services:
 
 volumes:
   checkout-surge-postgres-data:
-    name: checkout-surge-postgres-data
   checkout-surge-redis-data:
-    name: checkout-surge-redis-data
