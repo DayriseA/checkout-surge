@@ -47,6 +47,7 @@ services:
       context: .
       dockerfile: Dockerfile
       target: api-runtime
+    restart: on-failure
     environment:
       <<: *app-env
       PORT: 4000
