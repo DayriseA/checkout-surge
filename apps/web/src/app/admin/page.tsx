@@ -1,10 +1,7 @@
-import { OperatorDashboard } from "../components/operator-dashboard";
+import { AdminConsole } from "../components/admin-console";
 import { StatusPill } from "../components/status-pill";
-import { getDashboardBackendSnapshot } from "../lib/api";
 
-export default async function AdminPage() {
-  const snapshot = await getDashboardBackendSnapshot();
-
+export default function AdminPage() {
   return (
     <>
       <header className="mb-4 grid grid-cols-[1fr_auto] items-end gap-4 max-[900px]:grid-cols-1 max-[900px]:items-start">
@@ -16,7 +13,7 @@ export default async function AdminPage() {
         </div>
         <StatusPill label="access required" tone="pending" />
       </header>
-      <OperatorDashboard snapshot={snapshot} showControls showAdminActions />
+      <AdminConsole />
     </>
   );
 }

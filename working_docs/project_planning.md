@@ -881,15 +881,17 @@ Subtasks:
 
 Completion summary: Task 10.5.1 now exposes immutable terminal summaries through public `GET /demo/runs/history` with shared pagination/query contracts and a public-safe DTO that includes the run ID, traffic delivery quality, business outcomes, HTTP summary, and terminal Redis inventory snapshot without reservation tokens, idempotency keys, raw private payloads, private headers, or operational controls. The web `/run-history` page no longer reuses the live dashboard placeholder; it renders real summary rows, empty/unavailable states, pagination, and admin-only cleanup controls through a same-origin protected proxy. Authenticated admin deletion is implemented as `DELETE /demo/runs/history` behind the API control service token and dashboard admin passphrase/session boundary, supporting selected visible summaries or full summary deletion only with `DELETE_ALL_RUN_SUMMARIES`. A separate public detail route was not added because the delivered UI is satisfied by the public-safe summary list. Contract, API, service, and web tests now cover pagination, sanitized payload shape, empty history, admin deletion authorization, and delete-all confirmation.
 
-### ⬜ Task 10.5.2 - Finish the public/admin dashboard control surface
+### ✅ Task 10.5.2 - Finish the public/admin dashboard control surface
 
 Subtasks:
 
-- Make `/` match the documented public visitor entry point: curated public preset starts, bounded public custom controls, public visitor identity handling, and navigation to `/watch` after accepted starts.
-- Make `/admin` match the documented protected operator surface: sign-in gate, admin preset inspection, editable admin preset saves, public-preset duplication, copy-to-`Custom`, admin starts, reset/recovery, cleanup, and ERP diagnostics.
-- Ensure public starts remain public-budget protected and public-custom overrides remain run-scoped rather than mutating persisted preset defaults.
-- Ensure admin starts can use public or admin presets with optional run-scoped configuration inside deployment hard caps, without relying on browser-supplied privilege.
-- Add frontend/proxy tests that cover public custom submission, admin preset management, admin starts, anonymous `/admin` access, and active/draining disabled states.
+- ✅ Make `/` match the documented public visitor entry point: curated public preset starts, bounded public custom controls, public visitor identity handling, and navigation to `/watch` after accepted starts.
+- ✅ Make `/admin` match the documented protected operator surface: sign-in gate, admin preset inspection, editable admin preset saves, public-preset duplication, copy-to-`Custom`, admin starts, reset/recovery, cleanup, and ERP diagnostics.
+- ✅ Ensure public starts remain public-budget protected and public-custom overrides remain run-scoped rather than mutating persisted preset defaults.
+- ✅ Ensure admin starts can use public or admin presets with optional run-scoped configuration inside deployment hard caps, without relying on browser-supplied privilege.
+- ✅ Add frontend/proxy tests that cover public custom submission, admin preset management, admin starts, anonymous `/admin` access, and active/draining disabled states.
+
+Completion summary: Task 10.5.2 now separates the public and admin product surfaces instead of reusing the live dashboard control placeholder. The public `/` route reads the public preset list, public runtime policy, and recovery state, renders curated public starts plus bounded public custom controls, submits starts through the public visitor proxy with a signed visitor identity, and navigates accepted starts to `/watch`. The protected `/admin` route renders only a sign-in gate for anonymous visitors; authenticated sessions can inspect presets, edit and save editable admin presets, duplicate presets, copy a source preset into `Custom`, start public or admin presets with run-scoped configuration through a new admin start proxy, refresh recovery, reset the demo, clean generated runs, and use ERP diagnostics. The API start service now treats admin `configOverride` as run-scoped for public and admin presets while leaving preset mutation restricted to editable admin presets. Web proxy/component tests cover public custom submission, admin start authority, preset management, anonymous admin access, and active/draining disabled states; API service tests prove public custom and admin overrides are frozen into run snapshots without mutating persisted preset defaults.
 
 ### ⬜ Task 10.5.3 - Normalize browser realtime configuration
 

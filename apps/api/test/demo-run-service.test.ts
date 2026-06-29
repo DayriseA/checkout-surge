@@ -225,6 +225,94 @@ describe("demo-run lifecycle start gating", () => {
     expect(response.run.saleOfferId).toBe("77777777-7777-4777-8777-777777777778");
   });
 
+  it("keeps public custom overrides scoped to the accepted run snapshot", async () => {
+    const service = createStartService(requireConnection(connection), requireRedis(redis));
+
+    const response = await service.startRun(
+      {
+        presetSlug: "public-custom",
+        operatorMode: "public",
+        publicVisitorId: "visitor-1",
+        configOverride: {
+          trafficConfig: {
+            mode: "buyer-spike",
+            buyerCount: 321,
+            duplicateEachBuyerAttempt: false,
+            startDelaySeconds: 0,
+            maxDurationSeconds: 3,
+            quantityPerAttempt: 1,
+          },
+          inventoryConfig: {
+            startingStock: 44,
+            quantityPerCheckout: 1,
+            reservationHoldMinutes: 15,
+          },
+          erpConfig: {
+            latencyMs: 75,
+            maxTps: 50,
+            errorRate: 0,
+            forcedOutage: false,
+            requestTimeoutMs: 2000,
+          },
+        },
+      },
+      "corr-public-custom",
+    );
+    const publicCustomPreset = await readPresetRow(requireConnection(connection), "public-custom");
+
+    expect(expectBuyerSpikeTrafficConfig(response.run.configSnapshot.trafficConfig)).toMatchObject({
+      buyerCount: 321,
+      maxDurationSeconds: 3,
+    });
+    expect(response.run.configSnapshot.inventoryConfig.startingStock).toBe(44);
+    expect(publicCustomPreset.trafficConfig).toMatchObject({
+      mode: "buyer-spike",
+      buyerCount: 10_000,
+    });
+    expect(publicCustomPreset.inventoryConfig.startingStock).toBe(1000);
+  });
+
+  it("allows admin run-scoped overrides for read-only public presets", async () => {
+    const service = createStartService(requireConnection(connection), requireRedis(redis));
+
+    const response = await service.startRun(
+      {
+        presetSlug: "preview-1k",
+        operatorMode: "admin",
+        configOverride: {
+          trafficConfig: {
+            mode: "buyer-spike",
+            buyerCount: 123,
+            duplicateEachBuyerAttempt: true,
+            startDelaySeconds: 0,
+            maxDurationSeconds: 5,
+            quantityPerAttempt: 1,
+          },
+          inventoryConfig: {
+            startingStock: 33,
+            quantityPerCheckout: 1,
+            reservationHoldMinutes: 15,
+          },
+        },
+      },
+      "corr-admin-public-override",
+    );
+    const previewPreset = await readPresetRow(requireConnection(connection), "preview-1k");
+
+    expect(response.run.operatorMode).toBe("admin");
+    expect(expectBuyerSpikeTrafficConfig(response.run.configSnapshot.trafficConfig)).toMatchObject({
+      buyerCount: 123,
+      duplicateEachBuyerAttempt: true,
+    });
+    expect(response.run.configSnapshot.inventoryConfig.startingStock).toBe(33);
+    expect(previewPreset.trafficConfig).toMatchObject({
+      mode: "buyer-spike",
+      buyerCount: 10_000,
+      duplicateEachBuyerAttempt: false,
+    });
+    expect(previewPreset.inventoryConfig.startingStock).toBe(1000);
+  });
+
   it("writes a terminal summary when inventory initialization fails", async () => {
     const service = createStartService(requireConnection(connection), redisUnavailable());
 
@@ -448,6 +536,20 @@ function expectBuyerSpikeTrafficConfig(
   }
 
   return trafficConfig;
+}
+
+async function readPresetRow(
+  connection: ReturnType<typeof createDatabaseConnection>,
+  slug: string,
+): Promise<typeof demoPresets.$inferSelect> {
+  const presets = await connection.db.select().from(demoPresets);
+  const preset = presets.find((candidate) => candidate.slug === slug);
+
+  if (!preset) {
+    throw new Error(`Expected seeded preset ${slug}.`);
+  }
+
+  return preset;
 }
 
 function emptyBusinessOutcomeSummary(): BusinessOutcomeSummary {

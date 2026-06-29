@@ -19,6 +19,7 @@ import { POST as saveAdminPreset } from "../src/app/api/admin/demo/presets/save/
 import { POST as resetDemo } from "../src/app/api/admin/demo/reset/route.js";
 import { POST as cleanupRuns } from "../src/app/api/admin/demo/runs/cleanup/route.js";
 import { DELETE as deleteRunHistory } from "../src/app/api/admin/demo/runs/history/route.js";
+import { POST as startAdminDemoRun } from "../src/app/api/admin/demo/runs/start/route.js";
 import { POST as resetErpChaos } from "../src/app/api/admin/erp-chaos/reset/route.js";
 import { PUT as updateErpChaos } from "../src/app/api/admin/erp-chaos/route.js";
 import { POST as createAdminSession } from "../src/app/api/admin/session/route.js";
@@ -120,6 +121,49 @@ describe("dashboard control proxy routes", () => {
 
     expect(response.status).toBe(202);
     expect(response.headers.get("set-cookie")).toContain("checkout_surge_public_visitor=");
+  });
+
+  it("proxies public custom submissions as run-scoped public starts", async () => {
+    process.env.API_BASE_URL = "http://api.internal";
+    process.env.PUBLIC_CLIENT_COOKIE_SECRET = "public-cookie-secret";
+    const configOverride = {
+      trafficConfig: {
+        mode: "buyer-spike",
+        buyerCount: 321,
+        duplicateEachBuyerAttempt: false,
+        startDelaySeconds: 0,
+        maxDurationSeconds: 3,
+        quantityPerAttempt: 1,
+      },
+      inventoryConfig: {
+        startingStock: 44,
+        quantityPerCheckout: 1,
+        reservationHoldMinutes: 15,
+      },
+    };
+    const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      const headers = init?.headers as Record<string, string>;
+      expect(headers[demoRunOperatorModeHeaderName]).toBe("public");
+      expect(headers[publicVisitorIdHeaderName]).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+      );
+      expect(JSON.parse(String(init?.body))).toEqual({
+        presetSlug: "public-custom",
+        configOverride,
+      });
+      return jsonResponse(startDemoRunPayload(), 202);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await startDemoRun(
+      new Request("http://dashboard.local/api/demo/runs/start", {
+        method: "POST",
+        body: JSON.stringify({ presetSlug: "public-custom", configOverride }),
+      }),
+    );
+
+    expect(response.status).toBe(202);
+    expect(fetchMock).toHaveBeenCalledOnce();
   });
 
   it("requires the admin passphrase before forwarding ERP chaos updates", async () => {
@@ -297,6 +341,50 @@ describe("dashboard control proxy routes", () => {
     expect(response.status).toBe(200);
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe(`http://api.internal${adminDemoResetPath}`);
     expect(payload.cleanedQueueCount).toBe(2);
+  });
+
+  it("forwards admin demo starts with trusted admin authority", async () => {
+    process.env.ADMIN_DASHBOARD_PASSPHRASE = "admin-pass";
+    process.env.CONTROL_SERVICE_TOKEN = "control-token";
+    process.env.API_BASE_URL = "http://api.internal";
+    const configOverride = configSnapshotPayload();
+    const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      const headers = init?.headers as Record<string, string>;
+      expect(init?.method).toBe("POST");
+      expect(headers[controlServiceTokenHeaderName]).toBe("control-token");
+      expect(headers[demoRunOperatorModeHeaderName]).toBe("admin");
+      expect(headers[publicVisitorIdHeaderName]).toBeUndefined();
+      expect(JSON.parse(String(init?.body))).toEqual({
+        presetSlug: "preview-1k",
+        configOverride,
+      });
+      return jsonResponse(startDemoRunPayload("admin"), 202);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const unauthorized = await startAdminDemoRun(
+      new Request("http://dashboard.local/api/admin/demo/runs/start", {
+        method: "POST",
+        body: JSON.stringify({ presetSlug: "preview-1k", configOverride }),
+      }),
+    );
+    const authorized = await startAdminDemoRun(
+      new Request("http://dashboard.local/api/admin/demo/runs/start", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          [adminPassphraseHeaderName]: "admin-pass",
+        },
+        body: JSON.stringify({ presetSlug: "preview-1k", configOverride }),
+      }),
+    );
+    const payload = await authorized.json();
+
+    expect(unauthorized.status).toBe(401);
+    expect(authorized.status).toBe(202);
+    expect(payload.run.operatorMode).toBe("admin");
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(`http://api.internal${startDemoRunPath}`);
+    expect(fetchMock).toHaveBeenCalledOnce();
   });
 
   it("forwards generated-run cleanup with validated options", async () => {
@@ -494,13 +582,13 @@ function dashboardRecoveryPayload() {
   };
 }
 
-function startDemoRunPayload() {
+function startDemoRunPayload(operatorMode: "public" | "admin" = "public") {
   return {
     run: {
       runId: "55555555-5555-4555-8555-555555555555",
       presetId: "33333333-3333-4333-8333-333333333331",
       presetName: "Preview 1k",
-      operatorMode: "public",
+      operatorMode,
       status: "active",
       trafficStatus: "active",
       saleOfferId: "22222222-2222-4222-8222-222222222222",

@@ -15,6 +15,7 @@ import {
 } from "@checkout-surge/contracts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BackendRead, DashboardBackendSnapshot } from "../lib/api";
+import { readProxyJson } from "../lib/client/proxy-json";
 import {
   adminDemoResetProxyPath,
   adminErpChaosProxyPath,
@@ -214,86 +215,6 @@ export function OperatorDashboard({
       {showHistoryPlaceholder ? <RunHistoryPlaceholder /> : null}
     </div>
   );
-}
-
-interface ContractSchema<T> {
-  safeParse(
-    input: unknown,
-  ): { success: true; data: T } | { success: false; error: { message: string } };
-}
-
-async function readProxyJson<T>(
-  path: string,
-  schema: ContractSchema<T>,
-  init?: RequestInit,
-): Promise<BackendRead<T>> {
-  let response: Response;
-  const { headers, ...requestInit } = init ?? {};
-
-  try {
-    response = await fetch(path, {
-      ...requestInit,
-      cache: "no-store",
-      headers: {
-        accept: "application/json",
-        ...headers,
-      },
-    });
-  } catch (error) {
-    return {
-      status: "unavailable",
-      reason: error instanceof Error ? error.message : "Dashboard control request failed.",
-    };
-  }
-
-  let payload: unknown;
-
-  try {
-    payload = await response.json();
-  } catch (error) {
-    return {
-      status: "unavailable",
-      httpStatus: response.status,
-      reason: error instanceof Error ? error.message : "Dashboard control returned non-JSON data.",
-    };
-  }
-
-  if (!response.ok) {
-    return {
-      status: "unavailable",
-      httpStatus: response.status,
-      reason: errorMessageFromPayload(payload),
-    };
-  }
-
-  const parsed = schema.safeParse(payload);
-
-  if (!parsed.success) {
-    return {
-      status: "unavailable",
-      httpStatus: response.status,
-      reason: `Dashboard control response did not match the shared contract: ${parsed.error.message}`,
-    };
-  }
-
-  return {
-    status: "available",
-    data: parsed.data,
-    httpStatus: response.status,
-  };
-}
-
-function errorMessageFromPayload(payload: unknown): string {
-  if (
-    typeof payload === "object" &&
-    payload !== null &&
-    "message" in payload &&
-    typeof payload.message === "string"
-  ) {
-    return payload.message;
-  }
-
-  return "Dashboard control request failed.";
 }
 
 function parseJson(input: string): { ok: true; value: unknown } | { ok: false } {

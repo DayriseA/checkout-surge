@@ -1,5 +1,6 @@
 import {
   type DashboardRecoveryResponse,
+  dashboardRecoveryPath,
   dashboardRecoveryResponseSchema,
   type ErpChaosStatus,
   erpChaosStatusPath,
@@ -8,6 +9,12 @@ import {
   healthResponseSchema,
   type LivenessResponse,
   livenessResponseSchema,
+  type PublicPresetListResponse,
+  type PublicRuntimePolicyResponse,
+  publicPresetListPath,
+  publicPresetListResponseSchema,
+  publicRuntimePolicyPath,
+  publicRuntimePolicyResponseSchema,
   type RunHistoryListResponse,
   runHistoryListResponseSchema,
   runHistoryPath,
@@ -39,6 +46,12 @@ export interface DashboardBackendSnapshot {
   readiness: BackendRead<HealthResponse>;
   recovery: BackendRead<DashboardRecoveryResponse>;
   erpChaos: BackendRead<ErpChaosStatus>;
+}
+
+export interface PublicDemoSurface {
+  presets: BackendRead<PublicPresetListResponse>;
+  runtimePolicy: BackendRead<PublicRuntimePolicyResponse>;
+  recovery: BackendRead<DashboardRecoveryResponse>;
 }
 
 function apiBaseUrl(): string {
@@ -103,11 +116,22 @@ export async function getDashboardBackendSnapshot(): Promise<DashboardBackendSna
   const [liveness, readiness, recovery, erpChaos] = await Promise.all([
     readJson(`${apiBase}/health/live`, livenessResponseSchema),
     readJson(`${apiBase}/health/ready`, healthResponseSchema),
-    readJson(`${apiBase}/dashboard/recovery`, dashboardRecoveryResponseSchema),
+    readJson(`${apiBase}${dashboardRecoveryPath}`, dashboardRecoveryResponseSchema),
     readJson(`${mockErpBase}${erpChaosStatusPath}`, erpChaosStatusSchema),
   ]);
 
   return { liveness, readiness, recovery, erpChaos };
+}
+
+export async function getPublicDemoSurface(): Promise<PublicDemoSurface> {
+  const apiBase = apiBaseUrl();
+  const [presets, runtimePolicy, recovery] = await Promise.all([
+    readJson(`${apiBase}${publicPresetListPath}`, publicPresetListResponseSchema),
+    readJson(`${apiBase}${publicRuntimePolicyPath}`, publicRuntimePolicyResponseSchema),
+    readJson(`${apiBase}${dashboardRecoveryPath}`, dashboardRecoveryResponseSchema),
+  ]);
+
+  return { presets, runtimePolicy, recovery };
 }
 
 export async function getRunHistoryPage(

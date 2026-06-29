@@ -716,13 +716,6 @@ export class DemoRunService implements DemoRunController {
       );
     }
 
-    if (request.operatorMode === "admin" && request.configOverride && !preset.isEditable) {
-      throw new DemoRunValidationError(
-        "admin_override_not_allowed",
-        "Admin overrides require an editable preset.",
-      );
-    }
-
     const base =
       request.operatorMode === "public" && preset.isCustom
         ? policy.publicCustomDefaults
