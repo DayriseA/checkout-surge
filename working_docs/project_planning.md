@@ -904,29 +904,50 @@ Subtasks:
 
 Completion summary: Task 10.5.3 now makes the browser realtime stream same-origin by default. The web `dashboardEventsUrl()` helper returns the shared `/dashboard/events` path unless an explicit `NEXT_PUBLIC_DASHBOARD_EVENTS_URL` endpoint override is set for direct-web debugging, and tests prove the legacy `NEXT_PUBLIC_API_BASE_URL` value no longer controls browser SSE. Compose no longer publishes `NEXT_PUBLIC_API_BASE_URL` to the web service, the environment examples document the debug-only stream endpoint override, Turbo passes that optional public variable through for debug builds, Caddyfiles call out the same-origin SSE route, and runtime docs separate browser dashboard traffic from server-side service URLs.
 
-### ⬜ Task 10.5.4 - Correct stale command, dependency, and reference-doc drift
+### ✅ Task 10.5.4 - Correct stale command, dependency, and reference-doc drift
 
 Subtasks:
 
-- Decide whether root `pnpm dev` should become a real workspace dev command or stay intentionally unavailable, then align `package.json` and `docs/local_development.md`.
-- Align documented package commands with actual scripts, especially load-orchestrator and web `test:api` behavior.
-- Update `test:coverage` wording to reflect the current coverage lane or expand the command if broader coverage is required.
-- Align frontend library guidance in `docs/repository_layout.md` with the actual web dependency strategy, or intentionally add the documented libraries if they are now desired.
-- Remove stale future-tense wording in runtime and Redis inventory docs, including Phase 10 terminal-summary wording and generated-run lifecycle seeding notes.
-- Re-scan all `docs/*.md` for claims that still describe pre-Phase-10 behavior.
+- ✅ Implement the documented root `pnpm dev` contract from `docs/local_development.md` as a real workspace dev command. If a concrete conflict makes that contract unsafe or obsolete, record the conflict as an explicit spec-change decision before changing the documented contract.
+- ✅ Align documented package commands with actual scripts, especially load-orchestrator and web `test:api` behavior; prefer fixing scripts to match the docs when the docs describe the intended command contract.
+- ✅ Update `test:coverage` wording to reflect the current coverage lane, or expand the command when the documented expectation is broader than the current implementation.
+- ✅ Align frontend library guidance in `docs/repository_layout.md` with the intended web dependency strategy.
+- ✅ Remove stale future-tense wording in runtime and Redis inventory docs.
 
-### ⬜ Task 10.5.5 - Add final alignment verification
+Completion summary: Task 10.5.4 now replaces the stale root `pnpm dev` placeholder with a real host-native app dev command that prebuilds shared packages and runs the API, worker, mock ERP, load orchestrator, and web dev tasks through Turbo. Focused `dev:*` commands share the same prebuild step. The load-orchestrator and web package-level `test:api` commands now execute real service/proxy tests instead of missing or placeholder behavior, and `test:coverage` now covers the full root unit-test lane rather than only the original three packages. Local-development docs, frontend dependency guidance, README tech-stack wording, runtime topology wording, Redis stale-hold wording, and cross-service convention wording now match the delivered implementation.
+
+### ⬜ Task 10.5.5 - Add admin public runtime policy management
+
+Subtasks:
+
+- Add shared admin contracts for reading and updating the active public runtime policy, including public run budgets, public custom defaults, public custom limits, deployment hard-cap validation vocabulary, and correlation IDs.
+- Add API service and protected route behavior that persists updates to the singleton `public_runtime_policies` row behind the control service token, validates values against deployment hard caps, and leaves starts using the persisted policy rather than environment defaults until an explicit reseed/reset path changes it.
+- Add protected Next.js proxy routes and `/admin` controls that let an authenticated operator inspect, edit, save, and refresh the active public runtime policy without exposing service tokens or trusting browser-supplied privilege.
+- Ensure public starts and public custom submissions immediately use the updated persisted budget/default/limit policy, while admin starts continue to bypass public run budgets but still respect deployment hard caps and active/draining start gating.
+- Add contract, API/service, Redis-budget, and web tests for authorization, persistence, cap rejection, budget enforcement after policy changes, public custom default/limit changes, and anonymous access rejection.
+
+### ⬜ Task 10.5.6 - Add public-safe Run History detail reads
+
+Subtasks:
+
+- Add a shared public Run History detail contract and route for an individual terminal run, keyed by run ID, with a sanitized DTO that excludes reservation tokens, idempotency keys, raw private payloads, private headers, internal service tokens, and unsafe operational controls.
+- Back the API detail read with immutable `demo_run_summaries` and any safe supporting run/order/event projections needed to explain the run beyond the summary row; return a stable not-found response for missing or non-summary-backed runs.
+- Add a web detail surface, such as `/run-history/[runId]`, and link to it from the summary list without making the live `/watch` route responsible for arbitrary completed-run history.
+- Keep admin history deletion separate from public detail reads; deleted summaries should no longer appear in lists and their detail reads should return not found.
+- Add contract, API/service, and web tests for sanitized detail shape, not-found behavior, list-to-detail navigation, deleted-summary behavior, and absence of private fields.
+
+### ⬜ Task 10.5.7 - Add final alignment verification
 
 Subtasks:
 
 - Run the relevant non-runtime checks after remediation: `pnpm build`, `pnpm type-check`, `pnpm type-check:test`, `pnpm lint`, `pnpm format:check`, `pnpm test:unit`, `pnpm test:api`, and `pnpm test:integration` where infrastructure is available.
 - Run `pnpm runtime:smoke` and `pnpm runtime:smoke:load` when Docker runtime verification is available.
 - Record any skipped checks with concrete reasons.
-- Before handing off Phase 10.5, perform one more docs-vs-implementation scan for `docs/*.md`, README, and runtime scripts.
+- Before handing off Phase 10.5, perform a docs-vs-implementation scan for `docs/*.md`, README, command references, package scripts, and runtime scripts. Do not treat unimplemented documented target behavior as disposable drift. If a documented target is still intended and is not covered by a later task, add a Task 10.5.x in this Phase. Any remaining documented target behavior must be implemented, or documented as a spec change with rationale.
 
 ### Phase 10.5 checkpoint
 
-At the end of this phase, Phases 1-10 remain completed historical implementation milestones, and the locally delivered product surface, Run History, public/admin controls, browser realtime configuration, command docs, and reference docs are aligned well enough to proceed into hosted deployment readiness.
+At the end of this phase, Phases 1-10 remain completed historical implementation milestones, and the locally delivered product surface, Run History list/detail reads, public runtime policy management, public/admin controls, browser realtime configuration, command docs, and reference docs are aligned well enough to proceed into hosted deployment readiness.
 
 ---
 
@@ -1078,6 +1099,6 @@ At the end of this phase, the project demonstrates not only distributed-systems 
 3. Milestone C: Phases 6 to 7 complete. Result: live dashboard and realistic load simulation prove system behavior visually.
 4. Milestone D: Phases 8 to 9 complete. Result: the project is portfolio-ready locally with an architecture-realistic containerized runtime.
 5. Milestone E: Phase 10 complete. Result: run lifecycle and benchmark finalization semantics are complete.
-6. Milestone E2: Phase 10.5 complete. Result: the final local product surface and public docs are aligned with the implementation.
+6. Milestone E2: Phase 10.5 complete. Result: the final local product surface, public runtime policy management, Run History list/detail reads, command surface, and public docs are aligned with the implementation.
 7. Milestone F: Phase 11 complete. Result: hosted deployment and infrastructure tuning story is complete.
 8. Milestone G: Phase 12 complete. Result: optional Node-versus-Go comparison is available.

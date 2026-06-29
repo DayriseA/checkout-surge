@@ -11,7 +11,7 @@
     "start": "next start -p 3000",
     "test": "pnpm test:unit",
     "test:unit": "node ../../scripts/run-with-test-env.mjs vitest run --config vitest.config.ts",
-    "test:api": "node ../../scripts/run-with-test-env.mjs node ../../scripts/not-implemented.mjs web:test:api \"Dashboard control-route tests land after the web app API routes exist.\""
+    "test:api": "node ../../scripts/run-with-test-env.mjs vitest run --config vitest.config.ts test/admin-control-proxy.test.ts test/api-read-fallback.test.ts"
   },
   "dependencies": {
     "@checkout-surge/contracts": "workspace:*",

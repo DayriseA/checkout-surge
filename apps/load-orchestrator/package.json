@@ -9,7 +9,8 @@
     "lint": "biome lint .",
     "dev": "node ../../scripts/run-with-env.mjs tsx watch src/index.ts",
     "test": "pnpm test:unit",
-    "test:unit": "vitest run --config vitest.unit.config.ts"
+    "test:unit": "vitest run --config vitest.unit.config.ts",
+    "test:api": "vitest run --config vitest.unit.config.ts test/load-orchestrator.test.ts"
   },
   "dependencies": {
     "@checkout-surge/contracts": "workspace:*",

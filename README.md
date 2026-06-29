@@ -51,7 +51,7 @@ For the deeper design rationale and failure modes, see [docs/architecture.md](do
 | Layer                   | Technology                  |
 | :---------------------- | :-------------------------- |
 | Web UI                  | React / Next.js             |
-| UI Styling / Components | Tailwind CSS / shadcn/ui / Radix UI / sonner / react-icons |
+| UI Styling / Components | Tailwind CSS / local React components |
 | Backend API             | Node.js / Fastify           |
 | Worker Runtime          | Node.js / BullMQ            |
 | Primary Database        | PostgreSQL / Drizzle ORM    |

@@ -263,14 +263,15 @@ The worker-facing Mock ERP confirmation contract is `POST http://localhost:4100/
 | `pnpm runtime:smoke` | Check compose service health, direct service readiness, dashboard proxy reachability, a same-origin dashboard read, SSE reachability through `/dashboard/events`, and k6 execution inside the load-orchestrator container |
 | `pnpm runtime:smoke:load` | Reset demo data through the API, run a small dashboard-triggered load smoke check through the dashboard proxy, then clean up only that smoke run's rows and Redis keys |
 | `pnpm maintenance:cleanup-runs` | Delete old generated demo runs and related data, preserving active runs and the latest 15 runs by default; pass `-- --keep-latest <count>` to override |
-| `pnpm dev` | Run all workspace `dev` tasks through Turbo |
-| `pnpm dev:dashboard` | Start the Next.js operator dashboard |
+| `pnpm dev` | Build shared packages, then run all app `dev` tasks through Turbo |
+| `pnpm dev:dashboard` | Build shared packages, then start the Next.js operator dashboard |
 | `pnpm dev:api` | Build and start the API gateway |
 | `pnpm dev:worker` | Build and start the order-processing worker |
 | `pnpm dev:mock-erp` | Build and start the mock ERP service |
 | `pnpm dev:load-orchestrator` | Build and start the load orchestrator |
 | `pnpm health:check` | Poll service readiness and dashboard reachability, then print a setup health summary |
 | `pnpm build` | Build all packages and apps through Turbo |
+| `pnpm build:shared` | Build shared packages consumed by host-native app dev commands |
 | `pnpm type-check` | Run TypeScript checks through Turbo |
 | `pnpm type-check:test` | Run test TypeScript checks through Turbo |
 | `pnpm lint` | Lint the whole workspace with Biome |
@@ -282,7 +283,7 @@ The worker-facing Mock ERP confirmation contract is `POST http://localhost:4100/
 | `pnpm test:integration` | Run integration tests against isolated test PostgreSQL/Redis |
 | `pnpm test:api` | Run API/service-boundary tests against isolated test PostgreSQL/Redis |
 | `pnpm test:watch` | Start Vitest watch mode using the root unit-test config |
-| `pnpm test:coverage` | Run unit tests with coverage |
+| `pnpm test:coverage` | Run the root unit-test lane with coverage |
 | `pnpm test:infra:up` | Start isolated test PostgreSQL and Redis from `docker-compose.test.yml` |
 | `pnpm test:infra:down` | Stop isolated test services and remove their volumes |
 | `pnpm test:infra:reset` | Reset isolated test PostgreSQL and Redis services |
@@ -298,7 +299,7 @@ Useful package commands:
 | `pnpm --filter worker test:integration` | Run worker integration tests |
 | `pnpm --filter mock-erp test:unit` | Run mock ERP unit tests |
 | `pnpm --filter load-orchestrator test:api` | Run load orchestrator API tests |
-| `pnpm --filter web test:api` | Run dashboard control-route tests |
+| `pnpm --filter web test:api` | Run dashboard proxy and backend-read route tests |
 
 ## Testing Workflow
 

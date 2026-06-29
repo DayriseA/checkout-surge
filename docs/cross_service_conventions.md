@@ -12,12 +12,12 @@ The goal is to establish one canonical vocabulary before shared contracts, persi
 | :-- | :-- | :-- |
 | Vocabulary boundary | Keep reservation language and order language distinct | The project's core UX and architecture depend on fast reservation happening before slow final confirmation. |
 | Event naming style | Use lowercase dot notation with domain-first names such as `reservation.secured` | Keeps emitted facts readable, stable, and consistent across logs, queues, and dashboard realtime payloads. |
-| Correlation identifier name | Use `correlationId` as the canonical cross-service trace field | This aligns with the planned logger package direction and gives one shared thread across API, worker, ERP, and dashboards. |
+| Correlation identifier name | Use `correlationId` as the canonical cross-service trace field | This aligns with the logger package and gives one shared thread across API, worker, ERP, and dashboards. |
 | Timestamp format | Use ISO 8601 strings with an explicit timezone offset at service boundaries; services should emit UTC `Z` strings | This is explicit, portable, and easy to consume across logs, APIs, dashboard realtime payloads, and UI clients. |
 | Error payload baseline | Standardize on a small shared shape with `code`, `message`, optional `details`, `correlationId`, and `timestamp` | Gives enough structure for UI and diagnostics without overdesigning the first contract layer. |
 | Scope of this document | Define semantics and names; leave exact request/response payload schemas to the contract layer | Keeps this document focused on shared language rather than prematurely freezing every contract detail. |
 | Reservation lifecycle | `secured`, `rejected`, `released`, `expired` | Separates immediate success, immediate failure, explicit stock release, and time-based hold expiry with minimal ambiguity. |
-| Order lifecycle | `queued`, `processing`, `confirmed`, `failed` | Matches the planned asynchronous pipeline while keeping business state distinct from retry metadata. |
+| Order lifecycle | `queued`, `processing`, `confirmed`, `failed` | Matches the asynchronous pipeline while keeping business state distinct from retry metadata. |
 | Queue naming convention | Use lowercase colon-separated semantic queue names with plural domain names by default; the first canonical queue is `orders:process` | Keeps queue names readable and extensible without overcommitting to future queue topology. |
 | Metric naming convention | Use lowercase dot notation and reserve semantic names for benchmark and dashboard signals | Keeps dashboard, backend, and documentation vocabulary aligned to the benchmark story. |
 

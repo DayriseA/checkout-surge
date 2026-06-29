@@ -82,9 +82,9 @@ Hold expiry does not change retry semantics while the idempotency record remains
 
 ## Stale Holds and Operator Visibility
 
-Reservation holds use the API's configured hold window. The initial default should be 15 minutes.
+Reservation holds use the API's configured hold window. The default is 15 minutes.
 
-Expired reservation holds are tracked in Redis via `reservation-expirations`, but are not yet released or reconciled automatically. That active reconciliation belongs with payment/reconciliation work in a future production extension.
+Expired reservation holds are tracked in Redis via `reservation-expirations`, but the local demo intentionally retains them instead of releasing or reconciling them automatically. Active release/reconciliation belongs with payment or reconciliation work outside the current Node.js demo track.
 
 `expiredReservationCount` includes a hold when its expiry timestamp is equal to or earlier than the status measurement time. Expiry changes visibility only: it does not change `remainingStock`, `reservedStock`, pending-persistence membership, or the stored retry outcome.
 
