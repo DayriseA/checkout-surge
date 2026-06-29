@@ -5,6 +5,7 @@
 :8080 {
 	encode gzip
 
+	# Browser EventSource uses this same-origin path; only the SSE stream bypasses Next.js.
 	handle /dashboard/events {
 		reverse_proxy localhost:4000
 	}

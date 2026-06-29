@@ -202,7 +202,6 @@ services:
       ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET:-change-me-admin-session-secret}
       ADMIN_SESSION_MAX_AGE_SECONDS: ${ADMIN_SESSION_MAX_AGE_SECONDS:-28800}
       PUBLIC_CLIENT_COOKIE_SECRET: ${PUBLIC_CLIENT_COOKIE_SECRET:-change-me-public-client-cookie-secret}
-      NEXT_PUBLIC_API_BASE_URL: http://localhost:8080
     ports:
       - "3000:3000"
     depends_on:

@@ -46,6 +46,8 @@ web -> http://load-orchestrator:4200
 
 The Caddy proxy owns the local edge route contract for dashboard realtime: `/dashboard/events` is routed directly to the API service, while the rest of the dashboard origin is routed to the web service. Dashboard observability remains public for the demo: `/` exposes curated public preset starts, `/watch` observes the current live run, `/run-history` lists terminal summaries, and recovery reads remain public-safe. Editable admin presets, reset, ERP diagnostics, run-history deletion, and other privileged controls live under `/admin` and still require admin sign-in. The direct API, mock ERP, load-orchestrator, and web ports remain published for service health checks and focused debugging, but they are not the normal browser path.
 
+The web client opens the live stream with same-origin `EventSource("/dashboard/events")` by default. Leave `NEXT_PUBLIC_DASHBOARD_EVENTS_URL` unset for the containerized reference runtime and the host-native Caddy proxy workflow. Set it only for an intentional direct-web debug session, such as opening `http://localhost:3000` and connecting the browser directly to `http://localhost:4000/dashboard/events`; in that mode, keep API realtime CORS aligned through `WEB_ORIGIN`. Do not use `API_BASE_URL` or a browser-readable API base URL for normal dashboard realtime.
+
 ## Reference Runtime Startup
 
 These commands are the primary local demo path.
@@ -172,7 +174,7 @@ caddy run --config infra/caddy/Caddyfile.host-native --adapter caddyfile
 
 `pnpm dev:load-orchestrator` starts the project-owned wrapper service, then that service invokes the configured `K6_BINARY` when a dashboard or API request starts a load run. In the host-native workflow, `K6_BINARY` defaults to `k6` on the local PATH.
 
-Caddy provides the same single-origin edge route used by the compose runtime: `/dashboard/events` goes to the API on `4000`, while all other dashboard traffic goes to the web app on `3000`. Run Caddy from the same host or Dev Container network namespace as the app services so it can reach those local ports.
+Caddy provides the same single-origin edge route used by the compose runtime: `/dashboard/events` goes to the API on `4000`, while all other dashboard traffic goes to the web app on `3000`. Run Caddy from the same host or Dev Container network namespace as the app services so it can reach those local ports. When you intentionally bypass Caddy by opening the web app on `3000`, set `NEXT_PUBLIC_DASHBOARD_EVENTS_URL` to the full API SSE endpoint for that debug session only.
 
 Open the host-native dashboard through the proxy:
 
@@ -359,6 +361,7 @@ Most infrastructure URLs have local defaults, but service-to-service control end
 | `ADMIN_SESSION_MAX_AGE_SECONDS` | `28800` | Web admin session cookie lifetime |
 | `PUBLIC_CLIENT_COOKIE_SECRET` | `change-me-public-client-cookie-secret` | Web anonymous public visitor cookies |
 | `API_BASE_URL` | `http://localhost:4000` | Web, load orchestrator |
+| `NEXT_PUBLIC_DASHBOARD_EVENTS_URL` | unset | Optional browser EventSource endpoint override for direct-web debugging only; normal runtime uses same-origin `/dashboard/events` |
 | `MOCK_ERP_BASE_URL` | `http://localhost:4100` | Web, worker |
 | `LOAD_ORCHESTRATOR_BASE_URL` | `http://localhost:4200` | Web |
 | `WORKER_HEALTH_BASE_URL` | `http://localhost:4300` | Web/local tooling |

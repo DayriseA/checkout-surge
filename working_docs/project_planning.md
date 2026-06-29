@@ -893,14 +893,16 @@ Subtasks:
 
 Completion summary: Task 10.5.2 now separates the public and admin product surfaces instead of reusing the live dashboard control placeholder. The public `/` route reads the public preset list, public runtime policy, and recovery state, renders curated public starts plus bounded public custom controls, submits starts through the public visitor proxy with a signed visitor identity, and navigates accepted starts to `/watch`. The protected `/admin` route renders only a sign-in gate for anonymous visitors; authenticated sessions can inspect presets, edit and save editable admin presets, duplicate presets, copy a source preset into `Custom`, start public or admin presets with run-scoped configuration through a new admin start proxy, refresh recovery, reset the demo, clean generated runs, and use ERP diagnostics. The API start service now treats admin `configOverride` as run-scoped for public and admin presets while leaving preset mutation restricted to editable admin presets. Web proxy/component tests cover public custom submission, admin start authority, preset management, anonymous admin access, and active/draining disabled states; API service tests prove public custom and admin overrides are frozen into run snapshots without mutating persisted preset defaults.
 
-### ⬜ Task 10.5.3 - Normalize browser realtime configuration
+### ✅ Task 10.5.3 - Normalize browser realtime configuration
 
 Subtasks:
 
-- Prefer same-origin dashboard SSE URLs in the browser so the normal runtime does not depend on a `NEXT_PUBLIC_*` backend URL for `/dashboard/events`.
-- Keep direct API-origin SSE only as an explicit host-native/debug override if still needed, and document that exception clearly.
-- Update `.env.example`, `apps/web/.env.example`, Compose environment, Caddy notes, and runtime docs so browser-facing dashboard traffic and internal server-side service URLs are not conflated.
-- Add or update tests for the SSE URL helper and host-native/proxy behavior.
+- ✅ Prefer same-origin dashboard SSE URLs in the browser so the normal runtime does not depend on a `NEXT_PUBLIC_*` backend URL for `/dashboard/events`.
+- ✅ Keep direct API-origin SSE only as an explicit host-native/debug override if still needed, and document that exception clearly.
+- ✅ Update `.env.example`, `apps/web/.env.example`, Compose environment, Caddy notes, and runtime docs so browser-facing dashboard traffic and internal server-side service URLs are not conflated.
+- ✅ Add or update tests for the SSE URL helper and host-native/proxy behavior.
+
+Completion summary: Task 10.5.3 now makes the browser realtime stream same-origin by default. The web `dashboardEventsUrl()` helper returns the shared `/dashboard/events` path unless an explicit `NEXT_PUBLIC_DASHBOARD_EVENTS_URL` endpoint override is set for direct-web debugging, and tests prove the legacy `NEXT_PUBLIC_API_BASE_URL` value no longer controls browser SSE. Compose no longer publishes `NEXT_PUBLIC_API_BASE_URL` to the web service, the environment examples document the debug-only stream endpoint override, Turbo passes that optional public variable through for debug builds, Caddyfiles call out the same-origin SSE route, and runtime docs separate browser dashboard traffic from server-side service URLs.
 
 ### ⬜ Task 10.5.4 - Correct stale command, dependency, and reference-doc drift
 
