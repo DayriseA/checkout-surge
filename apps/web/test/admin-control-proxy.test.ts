@@ -8,6 +8,7 @@ import {
   controlServiceTokenHeaderName,
   demoRunOperatorModeHeaderName,
   publicVisitorIdHeaderName,
+  runHistoryPath,
   startDemoRunPath,
 } from "@checkout-surge/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -17,6 +18,7 @@ import { GET as listAdminPresets } from "../src/app/api/admin/demo/presets/route
 import { POST as saveAdminPreset } from "../src/app/api/admin/demo/presets/save/route.js";
 import { POST as resetDemo } from "../src/app/api/admin/demo/reset/route.js";
 import { POST as cleanupRuns } from "../src/app/api/admin/demo/runs/cleanup/route.js";
+import { DELETE as deleteRunHistory } from "../src/app/api/admin/demo/runs/history/route.js";
 import { POST as resetErpChaos } from "../src/app/api/admin/erp-chaos/reset/route.js";
 import { PUT as updateErpChaos } from "../src/app/api/admin/erp-chaos/route.js";
 import { POST as createAdminSession } from "../src/app/api/admin/session/route.js";
@@ -336,6 +338,42 @@ describe("dashboard control proxy routes", () => {
       `http://api.internal${adminMaintenanceCleanupRunsPath}`,
     );
     expect(payload.deletedRunCount).toBe(2);
+  });
+
+  it("forwards run history deletion with the server-side control token", async () => {
+    process.env.ADMIN_DASHBOARD_PASSPHRASE = "admin-pass";
+    process.env.CONTROL_SERVICE_TOKEN = "control-token";
+    process.env.API_BASE_URL = "http://api.internal";
+    const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      expect(init?.method).toBe("DELETE");
+      expect((init?.headers as Record<string, string>)[controlServiceTokenHeaderName]).toBe(
+        "control-token",
+      );
+      expect(JSON.parse(String(init?.body))).toEqual({
+        deleteAllConfirmation: "DELETE_ALL_RUN_SUMMARIES",
+      });
+      return jsonResponse({
+        deletedSummaryCount: 3,
+        deletedAt: "2026-06-20T00:00:10.000Z",
+        correlationId: "corr-delete-history",
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await deleteRunHistory(
+      new Request("http://dashboard.local/api/admin/demo/runs/history", {
+        method: "DELETE",
+        headers: {
+          [adminPassphraseHeaderName]: "admin-pass",
+        },
+        body: JSON.stringify({ deleteAllConfirmation: "DELETE_ALL_RUN_SUMMARIES" }),
+      }),
+    );
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(`http://api.internal${runHistoryPath}`);
+    expect(payload.deletedSummaryCount).toBe(3);
   });
 
   it("forwards admin preset management with validated bodies", async () => {

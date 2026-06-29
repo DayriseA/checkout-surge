@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  adminDeleteRunHistoryRequestSchema,
+  adminDeleteRunHistoryResponseSchema,
   adminDemoResetResponseSchema,
   buyRequestSchema,
   buyResponseSchema,
@@ -37,6 +39,8 @@ import {
   publicVisitorIdHeaderName,
   queueStatusSchema,
   reservationStatusValues,
+  runHistoryListQuerySchema,
+  runHistoryListResponseSchema,
   runHistoryPath,
   securedReservationHoldSchema,
   startDemoRunPath,
@@ -623,6 +627,97 @@ describe("public runtime policy contract", () => {
         operatorMode: "admin",
       }),
     ).toThrow();
+  });
+
+  it("validates paginated run history reads and protected deletion commands", () => {
+    const history = runHistoryListResponseSchema.parse({
+      summaries: [
+        {
+          id: "77777777-7777-4777-8777-777777777777",
+          runId,
+          presetName: "Preview 1k",
+          status: "completed",
+          startedAt: timestamp,
+          endedAt: timestamp,
+          httpSummary: {
+            plannedRequests: 10,
+            emittedRequests: 10,
+            completedRequests: 10,
+            failedRequests: 0,
+            acceptedResponses: 6,
+            soldOutResponses: 4,
+            unexpectedResponses: 0,
+            p95LatencyMs: 42,
+            failureRate: 0,
+          },
+          trafficDeliverySummary: {
+            plannedRequests: 10,
+            emittedRequests: 10,
+            droppedIterations: 0,
+            trafficDeliveryStatus: "complete",
+            notes: [],
+          },
+          businessOutcomeSummary: {
+            acceptedReservations: 6,
+            soldOutRejections: 4,
+            queuedOrders: 0,
+            processingOrders: 0,
+            retryingOrders: 0,
+            confirmedOrders: 5,
+            failedOrders: 1,
+            pendingPersistenceCount: 0,
+            notificationsRecorded: 5,
+          },
+          terminalInventorySnapshot: {
+            saleOfferId,
+            startingStock: 10,
+            remainingStock: 0,
+            reservedStock: 10,
+            acceptedReservations: 6,
+            soldOutRejections: 4,
+            pendingPersistenceCount: 0,
+            capturedAt: timestamp,
+            source: "redis",
+          },
+          capturedAt: timestamp,
+        },
+      ],
+      page: 1,
+      pageSize: 10,
+      totalCount: 1,
+      timestamp,
+    });
+
+    expect(runHistoryListQuerySchema.parse({})).toEqual({ page: 1, pageSize: 10 });
+    expect(runHistoryListQuerySchema.parse({ page: "2", pageSize: "5" })).toEqual({
+      page: 2,
+      pageSize: 5,
+    });
+    expect(history.summaries[0]?.runId).toBe(runId);
+    expect(history.summaries[0]).not.toHaveProperty("reservationToken");
+    expect(history.summaries[0]).not.toHaveProperty("idempotencyKey");
+    expect(adminDeleteRunHistoryRequestSchema.parse({ runIds: [runId] })).toEqual({
+      runIds: [runId],
+    });
+    expect(
+      adminDeleteRunHistoryRequestSchema.parse({
+        deleteAllConfirmation: "DELETE_ALL_RUN_SUMMARIES",
+      }),
+    ).toEqual({ deleteAllConfirmation: "DELETE_ALL_RUN_SUMMARIES" });
+    expect(() => adminDeleteRunHistoryRequestSchema.parse({})).toThrow();
+    expect(() =>
+      adminDeleteRunHistoryRequestSchema.parse({
+        runIds: [runId],
+        deleteAllConfirmation: "DELETE_ALL_RUN_SUMMARIES",
+      }),
+    ).toThrow();
+    expect(
+      adminDeleteRunHistoryResponseSchema.parse({
+        deletedSummaryCount: 1,
+        deletedAt: timestamp,
+        correlationId,
+      }),
+    ).toMatchObject({ deletedSummaryCount: 1 });
   });
 
   it("covers public budget, custom caps, and deployment hard caps", () => {

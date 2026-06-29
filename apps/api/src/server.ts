@@ -12,6 +12,7 @@ import { registerErpRoutes } from "./routes/erp-routes.js";
 import { registerHealthRoutes } from "./routes/health-routes.js";
 import { registerInventoryRoutes } from "./routes/inventory-routes.js";
 import { registerQueueRoutes } from "./routes/queue-routes.js";
+import { registerRunHistoryRoutes } from "./routes/run-history-routes.js";
 import type { ApiConfig } from "./runtime/config.js";
 import { ApiHttpError, createErrorPayload } from "./runtime/errors.js";
 import type { ApiFastifyInstance } from "./runtime/fastify.js";
@@ -23,6 +24,7 @@ import type { ErpStatusService } from "./services/erp-status-service.js";
 import type { InventoryStatusService } from "./services/inventory-status-service.js";
 import type { QueueStatusService } from "./services/queue-status-service.js";
 import type { ReserveOrderService } from "./services/reserve-order-service.js";
+import type { RunHistoryController } from "./services/run-history-service.js";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -42,6 +44,7 @@ export interface BuildApiServerOptions {
   reserveOrderService: ReserveOrderService;
   demoRunService: DemoRunController;
   demoMaintenanceService: DemoMaintenanceService;
+  runHistoryService: RunHistoryController;
   startedAt?: Date;
 }
 
@@ -111,6 +114,10 @@ export async function buildApiServer(options: BuildApiServerOptions): Promise<Ap
   });
   registerAdminMaintenanceRoutes(app, {
     demoMaintenanceService: options.demoMaintenanceService,
+    controlServiceToken: options.config.controlServiceToken,
+  });
+  registerRunHistoryRoutes(app, {
+    runHistoryService: options.runHistoryService,
     controlServiceToken: options.config.controlServiceToken,
   });
   registerDashboardRoutes(app, {

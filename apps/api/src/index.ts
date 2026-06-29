@@ -50,6 +50,7 @@ import {
   type ReservationPartialFailureReport,
   ReserveOrderService,
 } from "./services/reserve-order-service.js";
+import { RunHistoryService } from "./services/run-history-service.js";
 
 export const apiAppName = "api" as const;
 export const apiAppDependencies = [contractsPackageName, dbPackageName, loggerPackageName] as const;
@@ -80,6 +81,7 @@ export type { OrderProcessJobPublisher } from "./services/order-process-job-publ
 export { PostgresBuyPersistence } from "./services/postgres-buy-persistence.js";
 export { QueueStatusService } from "./services/queue-status-service.js";
 export { ReserveOrderService } from "./services/reserve-order-service.js";
+export { RunHistoryService } from "./services/run-history-service.js";
 
 export async function startApiServer(): Promise<void> {
   const config = loadApiConfig(process.env);
@@ -148,6 +150,7 @@ export async function startApiServer(): Promise<void> {
     queueMaintenance: demoQueueMaintenance,
     logger,
   });
+  const runHistoryService = new RunHistoryService({ db: connection.db });
   const dashboardRecoveryService = new DashboardRecoveryService({
     contextReader: new PostgresDashboardRecoveryContextReader(connection.db),
     businessOutcomeReader: new PostgresDashboardBusinessOutcomeReader(connection.db),
@@ -301,6 +304,7 @@ export async function startApiServer(): Promise<void> {
       reserveOrderService,
       demoRunService,
       demoMaintenanceService,
+      runHistoryService,
       startedAt: new Date(),
     });
     await dashboardEventSubscriber.start();

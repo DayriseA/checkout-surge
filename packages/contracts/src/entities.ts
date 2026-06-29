@@ -110,6 +110,7 @@ export type DemoPreset = z.infer<typeof demoPresetSchema>;
 export const demoRunSummaryShapeSchema = z
   .object({
     id: uuidSchema,
+    runId: uuidSchema,
     presetName: z.string().trim().min(1),
     status: demoRunStatusSchema,
     failureReason: z.string().trim().min(1).optional(),

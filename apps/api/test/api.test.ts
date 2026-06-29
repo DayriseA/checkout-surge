@@ -3,6 +3,7 @@ import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  adminDeleteRunHistoryResponseSchema,
   adminDemoResetPath,
   adminMaintenanceCleanupRunsPath,
   adminPresetCopyToCustomPath,
@@ -37,6 +38,9 @@ import {
   type QueueStatus,
   queueStatusSchema,
   type ReservationSummary,
+  type RunHistoryListResponse,
+  runHistoryListResponseSchema,
+  runHistoryPath,
   startDemoRunPath,
   startDemoRunResponseSchema,
 } from "@checkout-surge/contracts";
@@ -98,6 +102,7 @@ import {
   ReserveOrderService,
   type StockReservationGateway,
 } from "../src/services/reserve-order-service.js";
+import type { RunHistoryController } from "../src/services/run-history-service.js";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const dbPackageRoot = path.resolve(packageRoot, "../../packages/db");
@@ -174,6 +179,7 @@ async function buildTestServer(options: {
   dashboardEventFanout?: DashboardEventFanout;
   demoRunService?: DemoRunController;
   demoMaintenanceService?: DemoMaintenanceService;
+  runHistoryService?: RunHistoryController;
 }): Promise<ApiFastifyInstance> {
   const inventoryReader =
     options.inventoryReader === undefined
@@ -276,6 +282,7 @@ async function buildTestServer(options: {
           correlationId,
         }),
       } as never),
+    runHistoryService: options.runHistoryService ?? runHistoryControllerFixture(),
     startedAt: new Date("2026-06-20T00:00:00.000Z"),
   });
 }
@@ -419,6 +426,71 @@ function demoRunControllerFixture(): DemoRunController {
     }),
     ingestMetrics: async () => undefined,
     recordTrafficCompletion: async () => demoRunSnapshotFixture(),
+  };
+}
+
+function runHistoryListResponseFixture(): RunHistoryListResponse {
+  return {
+    summaries: [
+      {
+        id: "77777777-7777-4777-8777-777777777777",
+        runId: fixtureIds.run,
+        presetName: "Preview 1k",
+        status: "completed",
+        startedAt: "2026-06-20T00:00:00.000Z",
+        endedAt: "2026-06-20T00:00:10.000Z",
+        httpSummary: {
+          plannedRequests: 10,
+          emittedRequests: 10,
+          completedRequests: 10,
+          failedRequests: 0,
+          acceptedResponses: 6,
+          soldOutResponses: 4,
+          unexpectedResponses: 0,
+          p95LatencyMs: 42,
+          failureRate: 0,
+        },
+        trafficDeliverySummary: {
+          plannedRequests: 10,
+          emittedRequests: 10,
+          droppedIterations: 0,
+          trafficDeliveryStatus: "complete",
+          notes: [],
+        },
+        businessOutcomeSummary: businessOutcomeFixture(),
+        terminalInventorySnapshot: {
+          saleOfferId: fixtureIds.saleOffer,
+          startingStock: 10,
+          remainingStock: 0,
+          reservedStock: 10,
+          acceptedReservations: 6,
+          soldOutRejections: 4,
+          pendingPersistenceCount: 0,
+          capturedAt: "2026-06-20T00:00:10.000Z",
+          source: "redis",
+        },
+        capturedAt: "2026-06-20T00:00:10.000Z",
+      },
+    ],
+    page: 1,
+    pageSize: 10,
+    totalCount: 1,
+    timestamp: "2026-06-20T00:00:10.000Z",
+  };
+}
+
+function runHistoryControllerFixture(): RunHistoryController {
+  return {
+    list: async (input) => ({
+      ...runHistoryListResponseFixture(),
+      page: input.page,
+      pageSize: input.pageSize,
+    }),
+    delete: async (_input, correlationId) => ({
+      deletedSummaryCount: 1,
+      deletedAt: "2026-06-20T00:00:10.000Z",
+      correlationId,
+    }),
   };
 }
 
@@ -614,6 +686,7 @@ describe("API gateway routes", () => {
     erpStatusService?: ErpStatusService;
     demoRunService?: DemoRunController;
     demoMaintenanceService?: DemoMaintenanceService;
+    runHistoryService?: RunHistoryController;
   }) {
     const server = await buildTestServer(options);
     servers.push(server);
@@ -854,6 +927,81 @@ describe("API gateway routes", () => {
     expect(presets.presets[0]?.slug).toBe("preview-1k");
     expect(policyResponse.statusCode).toBe(200);
     expect(policy.policy.deploymentHardCaps.maxTotalRequests).toBe(100_000);
+  });
+
+  it("returns public run history summaries through the shared contract", async () => {
+    const list = vi.fn(runHistoryControllerFixture().list);
+    const server = await trackedServer({
+      persistence: new AcceptingPersistence(),
+      runHistoryService: {
+        ...runHistoryControllerFixture(),
+        list,
+      },
+    });
+
+    const response = await server.inject({
+      method: "GET",
+      url: `${runHistoryPath}?page=2&pageSize=5`,
+    });
+    const payload = runHistoryListResponseSchema.parse(response.json());
+
+    expect(response.statusCode).toBe(200);
+    expect(payload.page).toBe(2);
+    expect(payload.pageSize).toBe(5);
+    expect(payload.summaries[0]?.runId).toBe(fixtureIds.run);
+    expect(payload.summaries[0]).not.toHaveProperty("reservationToken");
+    expect(payload.summaries[0]).not.toHaveProperty("idempotencyKey");
+    expect(list).toHaveBeenCalledWith({ page: 2, pageSize: 5 });
+  });
+
+  it("protects run history deletion and requires delete-all confirmation", async () => {
+    const deleteHistory = vi.fn(runHistoryControllerFixture().delete);
+    const server = await trackedServer({
+      persistence: new AcceptingPersistence(),
+      runHistoryService: {
+        ...runHistoryControllerFixture(),
+        delete: deleteHistory,
+      },
+    });
+    const headers = { [controlServiceTokenHeaderName]: "test-control-token" };
+
+    const unauthorized = await server.inject({
+      method: "DELETE",
+      url: runHistoryPath,
+      payload: { runIds: [fixtureIds.run] },
+    });
+    const missingConfirmation = await server.inject({
+      method: "DELETE",
+      url: runHistoryPath,
+      headers,
+      payload: {},
+    });
+    const selected = await server.inject({
+      method: "DELETE",
+      url: runHistoryPath,
+      headers: { ...headers, "x-correlation-id": "corr-history-delete" },
+      payload: { runIds: [fixtureIds.run] },
+    });
+    const deleteAll = await server.inject({
+      method: "DELETE",
+      url: runHistoryPath,
+      headers,
+      payload: { deleteAllConfirmation: "DELETE_ALL_RUN_SUMMARIES" },
+    });
+
+    expect(unauthorized.statusCode).toBe(401);
+    expect(missingConfirmation.statusCode).toBe(400);
+    expect(selected.statusCode).toBe(200);
+    expect(deleteAll.statusCode).toBe(200);
+    expect(adminDeleteRunHistoryResponseSchema.parse(selected.json())).toMatchObject({
+      deletedSummaryCount: 1,
+      correlationId: "corr-history-delete",
+    });
+    expect(deleteHistory).toHaveBeenCalledWith({ runIds: [fixtureIds.run] }, "corr-history-delete");
+    expect(deleteHistory).toHaveBeenCalledWith(
+      { deleteAllConfirmation: "DELETE_ALL_RUN_SUMMARIES" },
+      expect.any(String),
+    );
   });
 
   it("starts a demo run through the API run lifecycle and propagates correlation IDs", async () => {

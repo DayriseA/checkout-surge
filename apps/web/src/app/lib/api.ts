@@ -8,6 +8,9 @@ import {
   healthResponseSchema,
   type LivenessResponse,
   livenessResponseSchema,
+  type RunHistoryListResponse,
+  runHistoryListResponseSchema,
+  runHistoryPath,
 } from "@checkout-surge/contracts";
 
 const DEFAULT_API_BASE_URL = "http://localhost:4000";
@@ -105,4 +108,19 @@ export async function getDashboardBackendSnapshot(): Promise<DashboardBackendSna
   ]);
 
   return { liveness, readiness, recovery, erpChaos };
+}
+
+export async function getRunHistoryPage(
+  page: number,
+  pageSize: number,
+): Promise<BackendRead<RunHistoryListResponse>> {
+  const query = new URLSearchParams({
+    page: String(page),
+    pageSize: String(pageSize),
+  });
+
+  return readJson(
+    `${apiBaseUrl()}${runHistoryPath}?${query.toString()}`,
+    runHistoryListResponseSchema,
+  );
 }

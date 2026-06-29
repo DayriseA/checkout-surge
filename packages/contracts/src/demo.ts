@@ -211,6 +211,14 @@ export const runHistorySummarySchema = demoRunSummaryShapeSchema
   .strict();
 export type RunHistorySummary = z.infer<typeof runHistorySummarySchema>;
 
+export const runHistoryListQuerySchema = z
+  .object({
+    page: z.coerce.number().int().positive().default(1),
+    pageSize: z.coerce.number().int().positive().max(50).default(10),
+  })
+  .strict();
+export type RunHistoryListQuery = z.infer<typeof runHistoryListQuerySchema>;
+
 export const runHistoryListResponseSchema = z
   .object({
     summaries: z.array(runHistorySummarySchema),
@@ -326,13 +334,35 @@ export type CopyDemoPresetToCustomRequest = z.infer<typeof copyDemoPresetToCusto
 
 export const adminDeleteRunHistoryRequestSchema = z
   .object({
-    runIds: z.array(uuidSchema).optional(),
+    runIds: z.array(uuidSchema).min(1).optional(),
     deleteAllConfirmation: z.literal("DELETE_ALL_RUN_SUMMARIES").optional(),
     visibleFilter: jsonObjectSchema.optional(),
     correlationId: correlationIdSchema.optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((request, context) => {
+    const deletesSelectedRuns = Boolean(request.runIds?.length);
+    const deletesAllRuns = request.deleteAllConfirmation === "DELETE_ALL_RUN_SUMMARIES";
+
+    if (deletesSelectedRuns === deletesAllRuns) {
+      context.addIssue({
+        code: "custom",
+        message:
+          "Run History deletion requires either selected run IDs or the delete-all confirmation.",
+        path: ["runIds"],
+      });
+    }
+  });
 export type AdminDeleteRunHistoryRequest = z.infer<typeof adminDeleteRunHistoryRequestSchema>;
+
+export const adminDeleteRunHistoryResponseSchema = z
+  .object({
+    deletedSummaryCount: nonnegativeIntegerSchema,
+    deletedAt: isoTimestampSchema,
+    correlationId: correlationIdSchema,
+  })
+  .strict();
+export type AdminDeleteRunHistoryResponse = z.infer<typeof adminDeleteRunHistoryResponseSchema>;
 
 export const adminDemoResetResponseSchema = z
   .object({

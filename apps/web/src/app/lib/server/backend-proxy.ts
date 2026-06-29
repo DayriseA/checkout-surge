@@ -121,7 +121,7 @@ export function validateJson<T>(input: unknown, schema: ContractSchema<T>): T | 
 
 export async function proxyJson<T>(options: {
   url: string;
-  method: "GET" | "POST" | "PUT";
+  method: "DELETE" | "GET" | "POST" | "PUT";
   schema: ContractSchema<T>;
   body?: unknown;
   headers?: HeadersInit;

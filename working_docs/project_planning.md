@@ -845,6 +845,85 @@ Subtasks:
 
 Completion summary: Task 10.4 completes the Phase 10 lifecycle and finalization regression pass. Shared contracts now assert the canonical run lifecycle vocabulary, explicit run attribution, traffic-completion payloads, and admin reset recovery shape. API/service coverage proves business-boundary finalization remains draining for queued, processing, retrying, missing-notification, and pending-persistence work; startup reconciliation remains idempotent and preserves recoverable draining runs; start gating rejects new runs during `starting`, `active`, or `draining` and accepts starts after terminal states; admin reset is documented and tested as the privileged recovery path that fails in-progress runs, closes sale eligibility, cleans queues, and leaves terminal history unchanged. Finalization coverage also asserts one immutable summary per run, major traffic under-delivery failure, and sold-out aggregate preservation. Load-orchestrator tests keep k6 process success scoped to traffic `succeeded` without terminal benchmark state, and worker tests prove run identity is propagated through notification and business-outcome side effects.
 
+Post-completion audit note: A documentation and product-surface verification pass after Phase 10 found that the backend lifecycle/finalization core is complete, but some public/admin dashboard surfaces, Run History reads/deletion, realtime browser-origin configuration, and developer-command documentation are not yet aligned with the current docs. These gaps are tracked as Phase 10.5 rather than reopening Phases 1-10, because the earlier phases remain valid historical milestones for the service and lifecycle work they completed.
+
+---
+
+## ⬜ Phase 10.5 - Final Product Surface and Documentation Alignment
+
+### Goal
+
+Close the post-Phase-10 verification gaps before hosted deployment work begins. This phase is an audit-remediation phase: it should make the delivered local product surface and `docs/` references agree with the implementation, without adding hosted deployment assets or starting the optional Go comparison track.
+
+Primary references:
+
+- `docs/admin_access_protection.md`
+- `docs/local_development.md`
+- `docs/repository_layout.md`
+- `docs/runtime_topology.md`
+- `docs/redis_inventory_hot_path.md`
+- `docs/load_generation_metrics_streaming.md`
+
+Non-goals:
+
+- Do not add hosted deployment packaging, hosted reverse-proxy tuning, or production infrastructure assumptions; those remain Phase 11.
+- Do not reopen completed backend lifecycle/finalization work unless a remediation task exposes a concrete implementation bug.
+
+### ✅ Task 10.5.1 - Deliver the Run History surface
+
+Subtasks:
+
+- ✅ Add the API read route for `runHistoryPath` backed by immutable `demo_run_summaries`.
+- ✅ Add a public `/run-history` web surface that reads and renders real terminal summaries, including traffic delivery quality, business outcomes, and terminal inventory snapshots.
+- ✅ Add public-safe detail reads only if the UI needs drill-down beyond the summary list; exclude reservation tokens, idempotency keys, raw private payloads, private headers, and unsafe operational controls.
+- ✅ Add authenticated admin deletion only if retained as a documented capability: delete one, selected visible summaries, or all summaries with the `DELETE_ALL_RUN_SUMMARIES` confirmation.
+- ✅ Add contract/API/web tests for summary pagination, public-safe payloads, empty history, admin deletion authorization, and delete-all confirmation.
+
+Completion summary: Task 10.5.1 now exposes immutable terminal summaries through public `GET /demo/runs/history` with shared pagination/query contracts and a public-safe DTO that includes the run ID, traffic delivery quality, business outcomes, HTTP summary, and terminal Redis inventory snapshot without reservation tokens, idempotency keys, raw private payloads, private headers, or operational controls. The web `/run-history` page no longer reuses the live dashboard placeholder; it renders real summary rows, empty/unavailable states, pagination, and admin-only cleanup controls through a same-origin protected proxy. Authenticated admin deletion is implemented as `DELETE /demo/runs/history` behind the API control service token and dashboard admin passphrase/session boundary, supporting selected visible summaries or full summary deletion only with `DELETE_ALL_RUN_SUMMARIES`. A separate public detail route was not added because the delivered UI is satisfied by the public-safe summary list. Contract, API, service, and web tests now cover pagination, sanitized payload shape, empty history, admin deletion authorization, and delete-all confirmation.
+
+### ⬜ Task 10.5.2 - Finish the public/admin dashboard control surface
+
+Subtasks:
+
+- Make `/` match the documented public visitor entry point: curated public preset starts, bounded public custom controls, public visitor identity handling, and navigation to `/watch` after accepted starts.
+- Make `/admin` match the documented protected operator surface: sign-in gate, admin preset inspection, editable admin preset saves, public-preset duplication, copy-to-`Custom`, admin starts, reset/recovery, cleanup, and ERP diagnostics.
+- Ensure public starts remain public-budget protected and public-custom overrides remain run-scoped rather than mutating persisted preset defaults.
+- Ensure admin starts can use public or admin presets with optional run-scoped configuration inside deployment hard caps, without relying on browser-supplied privilege.
+- Add frontend/proxy tests that cover public custom submission, admin preset management, admin starts, anonymous `/admin` access, and active/draining disabled states.
+
+### ⬜ Task 10.5.3 - Normalize browser realtime configuration
+
+Subtasks:
+
+- Prefer same-origin dashboard SSE URLs in the browser so the normal runtime does not depend on a `NEXT_PUBLIC_*` backend URL for `/dashboard/events`.
+- Keep direct API-origin SSE only as an explicit host-native/debug override if still needed, and document that exception clearly.
+- Update `.env.example`, `apps/web/.env.example`, Compose environment, Caddy notes, and runtime docs so browser-facing dashboard traffic and internal server-side service URLs are not conflated.
+- Add or update tests for the SSE URL helper and host-native/proxy behavior.
+
+### ⬜ Task 10.5.4 - Correct stale command, dependency, and reference-doc drift
+
+Subtasks:
+
+- Decide whether root `pnpm dev` should become a real workspace dev command or stay intentionally unavailable, then align `package.json` and `docs/local_development.md`.
+- Align documented package commands with actual scripts, especially load-orchestrator and web `test:api` behavior.
+- Update `test:coverage` wording to reflect the current coverage lane or expand the command if broader coverage is required.
+- Align frontend library guidance in `docs/repository_layout.md` with the actual web dependency strategy, or intentionally add the documented libraries if they are now desired.
+- Remove stale future-tense wording in runtime and Redis inventory docs, including Phase 10 terminal-summary wording and generated-run lifecycle seeding notes.
+- Re-scan all `docs/*.md` for claims that still describe pre-Phase-10 behavior.
+
+### ⬜ Task 10.5.5 - Add final alignment verification
+
+Subtasks:
+
+- Run the relevant non-runtime checks after remediation: `pnpm build`, `pnpm type-check`, `pnpm type-check:test`, `pnpm lint`, `pnpm format:check`, `pnpm test:unit`, `pnpm test:api`, and `pnpm test:integration` where infrastructure is available.
+- Run `pnpm runtime:smoke` and `pnpm runtime:smoke:load` when Docker runtime verification is available.
+- Record any skipped checks with concrete reasons.
+- Before handing off Phase 10.5, perform one more docs-vs-implementation scan for `docs/*.md`, README, and runtime scripts.
+
+### Phase 10.5 checkpoint
+
+At the end of this phase, Phases 1-10 remain completed historical implementation milestones, and the locally delivered product surface, Run History, public/admin controls, browser realtime configuration, command docs, and reference docs are aligned well enough to proceed into hosted deployment readiness.
+
 ---
 
 ## ⬜ Phase 11 - Hosted Deployment Readiness and Infrastructure Tuning
@@ -995,5 +1074,6 @@ At the end of this phase, the project demonstrates not only distributed-systems 
 3. Milestone C: Phases 6 to 7 complete. Result: live dashboard and realistic load simulation prove system behavior visually.
 4. Milestone D: Phases 8 to 9 complete. Result: the project is portfolio-ready locally with an architecture-realistic containerized runtime.
 5. Milestone E: Phase 10 complete. Result: run lifecycle and benchmark finalization semantics are complete.
-6. Milestone F: Phase 11 complete. Result: hosted deployment and infrastructure tuning story is complete.
-7. Milestone G: Phase 12 complete. Result: optional Node-versus-Go comparison is available.
+6. Milestone E2: Phase 10.5 complete. Result: the final local product surface and public docs are aligned with the implementation.
+7. Milestone F: Phase 11 complete. Result: hosted deployment and infrastructure tuning story is complete.
+8. Milestone G: Phase 12 complete. Result: optional Node-versus-Go comparison is available.
