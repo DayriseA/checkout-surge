@@ -5,6 +5,7 @@ import {
   adminPresetDuplicatePath,
   adminPresetListPath,
   adminPresetSavePath,
+  adminPublicRuntimePolicyPath,
   controlServiceTokenHeaderName,
   demoRunOperatorModeHeaderName,
   publicVisitorIdHeaderName,
@@ -20,6 +21,10 @@ import { POST as resetDemo } from "../src/app/api/admin/demo/reset/route.js";
 import { POST as cleanupRuns } from "../src/app/api/admin/demo/runs/cleanup/route.js";
 import { DELETE as deleteRunHistory } from "../src/app/api/admin/demo/runs/history/route.js";
 import { POST as startAdminDemoRun } from "../src/app/api/admin/demo/runs/start/route.js";
+import {
+  GET as getAdminRuntimePolicy,
+  PUT as updateAdminRuntimePolicy,
+} from "../src/app/api/admin/demo/runtime-policy/route.js";
 import { POST as resetErpChaos } from "../src/app/api/admin/erp-chaos/reset/route.js";
 import { PUT as updateErpChaos } from "../src/app/api/admin/erp-chaos/route.js";
 import { POST as createAdminSession } from "../src/app/api/admin/session/route.js";
@@ -464,6 +469,69 @@ describe("dashboard control proxy routes", () => {
     expect(payload.deletedSummaryCount).toBe(3);
   });
 
+  it("forwards admin runtime policy reads and updates with the server-side control token", async () => {
+    process.env.ADMIN_DASHBOARD_PASSPHRASE = "admin-pass";
+    process.env.CONTROL_SERVICE_TOKEN = "control-token";
+    process.env.API_BASE_URL = "http://api.internal";
+    const policy = publicRuntimePolicyMutablePayload();
+    const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      expect((init?.headers as Record<string, string>)[controlServiceTokenHeaderName]).toBe(
+        "control-token",
+      );
+
+      if (init?.method === "GET") {
+        return jsonResponse(adminRuntimePolicyPayload({ policy: publicRuntimePolicyPayload() }));
+      }
+
+      expect(init?.method).toBe("PUT");
+      expect(JSON.parse(String(init?.body))).toEqual({
+        policy,
+        correlationId: "corr-policy-proxy",
+      });
+      return jsonResponse(
+        adminRuntimePolicyPayload({
+          policy: {
+            ...policy,
+            deploymentHardCaps: publicRuntimePolicyPayload().deploymentHardCaps,
+          },
+          correlationId: "corr-policy-proxy",
+        }),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const headers = {
+      "content-type": "application/json",
+      [adminPassphraseHeaderName]: "admin-pass",
+    };
+
+    const unauthorized = await getAdminRuntimePolicy(
+      new Request("http://dashboard.local/api/admin/demo/runtime-policy"),
+    );
+    const readResponse = await getAdminRuntimePolicy(
+      new Request("http://dashboard.local/api/admin/demo/runtime-policy", { headers }),
+    );
+    const updateResponse = await updateAdminRuntimePolicy(
+      new Request("http://dashboard.local/api/admin/demo/runtime-policy", {
+        method: "PUT",
+        headers,
+        body: JSON.stringify({ policy, correlationId: "corr-policy-proxy" }),
+      }),
+    );
+    const payload = await updateResponse.json();
+
+    expect(unauthorized.status).toBe(401);
+    expect(readResponse.status).toBe(200);
+    expect(updateResponse.status).toBe(200);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      `http://api.internal${adminPublicRuntimePolicyPath}`,
+    );
+    expect(String(fetchMock.mock.calls[1]?.[0])).toBe(
+      `http://api.internal${adminPublicRuntimePolicyPath}`,
+    );
+    expect(payload.correlationId).toBe("corr-policy-proxy");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("forwards admin preset management with validated bodies", async () => {
     process.env.ADMIN_DASHBOARD_PASSPHRASE = "admin-pass";
     process.env.CONTROL_SERVICE_TOKEN = "control-token";
@@ -681,6 +749,74 @@ function configSnapshotPayload() {
       drainTimeoutSeconds: 300,
       pendingPersistenceRetryAfterSeconds: 30,
     },
+  };
+}
+
+function publicRuntimePolicyPayload() {
+  return {
+    isPublicRunBudgetEnforced: true,
+    publicRunBudget: {
+      windowSeconds: 300,
+      perVisitorMaxStarts: 2,
+      globalMaxStarts: 6,
+    },
+    publicCustomDefaults: configSnapshotPayload(),
+    publicCustomLimits: {
+      maxTotalRequests: 10_000,
+      maxBuyers: 10_000,
+      maxRequestsPerSecond: 1000,
+      maxTrafficDurationSeconds: 120,
+      maxTrafficStartDelaySeconds: 10,
+      maxPreAllocatedVus: 1000,
+      maxVus: 1000,
+      maxStartingStock: 1000,
+      maxErpLatencyMs: 2000,
+      minErpMaxTps: 1,
+      maxErpMaxTps: 300,
+      maxErpErrorRate: 0.25,
+      allowForcedOutage: false,
+      allowedTrafficModes: ["buyer-spike" as const, "steady-arrival-rate" as const],
+    },
+    deploymentHardCaps: {
+      maxBuyers: 100_000,
+      maxTotalRequests: 100_000,
+      maxRequestsPerSecond: 10_000,
+      maxTrafficDurationSeconds: 300,
+      maxTrafficStartDelaySeconds: 30,
+      maxPreAllocatedVus: 10_000,
+      maxVus: 10_000,
+    },
+  };
+}
+
+function publicRuntimePolicyMutablePayload() {
+  const policy = publicRuntimePolicyPayload();
+
+  return {
+    isPublicRunBudgetEnforced: policy.isPublicRunBudgetEnforced,
+    publicRunBudget: {
+      windowSeconds: 120,
+      perVisitorMaxStarts: 1,
+      globalMaxStarts: 3,
+    },
+    publicCustomDefaults: policy.publicCustomDefaults,
+    publicCustomLimits: {
+      ...policy.publicCustomLimits,
+      maxBuyers: 500,
+    },
+  };
+}
+
+function adminRuntimePolicyPayload(options: {
+  policy: ReturnType<typeof publicRuntimePolicyPayload>;
+  correlationId?: string;
+}) {
+  return {
+    id: "active",
+    policy: options.policy,
+    updatedAt: "2026-06-20T00:00:10.000Z",
+    correlationId: options.correlationId ?? "corr-policy-read",
+    timestamp: "2026-06-20T00:00:10.000Z",
   };
 }
 

@@ -916,15 +916,17 @@ Subtasks:
 
 Completion summary: Task 10.5.4 now replaces the stale root `pnpm dev` placeholder with a real host-native app dev command that prebuilds shared packages and runs the API, worker, mock ERP, load orchestrator, and web dev tasks through Turbo. Focused `dev:*` commands share the same prebuild step. The load-orchestrator and web package-level `test:api` commands now execute real service/proxy tests instead of missing or placeholder behavior, and `test:coverage` now covers the full root unit-test lane rather than only the original three packages. Local-development docs, frontend dependency guidance, README tech-stack wording, runtime topology wording, Redis stale-hold wording, and cross-service convention wording now match the delivered implementation.
 
-### ⬜ Task 10.5.5 - Add admin public runtime policy management
+### ✅ Task 10.5.5 - Add admin public runtime policy management
 
 Subtasks:
 
-- Add shared admin contracts for reading and updating the active public runtime policy, including public run budgets, public custom defaults, public custom limits, deployment hard-cap validation vocabulary, and correlation IDs.
-- Add API service and protected route behavior that persists updates to the singleton `public_runtime_policies` row behind the control service token, validates values against deployment hard caps, and leaves starts using the persisted policy rather than environment defaults until an explicit reseed/reset path changes it.
-- Add protected Next.js proxy routes and `/admin` controls that let an authenticated operator inspect, edit, save, and refresh the active public runtime policy without exposing service tokens or trusting browser-supplied privilege.
-- Ensure public starts and public custom submissions immediately use the updated persisted budget/default/limit policy, while admin starts continue to bypass public run budgets but still respect deployment hard caps and active/draining start gating.
-- Add contract, API/service, Redis-budget, and web tests for authorization, persistence, cap rejection, budget enforcement after policy changes, public custom default/limit changes, and anonymous access rejection.
+- ✅ Add shared admin contracts for reading and updating the active public runtime policy, including public run budgets, public custom defaults, public custom limits, deployment hard-cap validation vocabulary, and correlation IDs.
+- ✅ Add API service and protected route behavior that persists updates to the singleton `public_runtime_policies` row behind the control service token, validates values against deployment hard caps, and leaves starts using the persisted policy rather than environment defaults until an explicit reseed/reset path changes it.
+- ✅ Add protected Next.js proxy routes and `/admin` controls that let an authenticated operator inspect, edit, save, and refresh the active public runtime policy without exposing service tokens or trusting browser-supplied privilege.
+- ✅ Ensure public starts and public custom submissions immediately use the updated persisted budget/default/limit policy, while admin starts continue to bypass public run budgets but still respect deployment hard caps and active/draining start gating.
+- ✅ Add contract, API/service, Redis-budget, and web tests for authorization, persistence, cap rejection, budget enforcement after policy changes, public custom default/limit changes, and anonymous access rejection.
+
+Completion summary: Task 10.5.5 now exposes protected admin read/update contracts for the active public runtime policy at the API and dashboard proxy boundaries. The API persists mutable public budget, public custom defaults, and public custom limits to the singleton `public_runtime_policies` row while preserving deployment hard caps as read-only policy data and rejecting updates whose limits/defaults exceed those caps. The authenticated `/admin` console can inspect, edit, save, and refresh the active policy through a same-origin protected proxy without exposing the control service token. Public custom starts now pick up saved default/limit changes immediately from PostgreSQL, public Redis budget enforcement uses the updated policy values, and admin starts continue to bypass public budgets while still using the existing hard-cap and active/draining run gating. Contract, API/service, Redis-budget, and web tests cover protected authorization, persistence, cap rejection, budget enforcement, updated defaults, admin budget bypass, and anonymous dashboard rejection.
 
 ### ⬜ Task 10.5.6 - Add public-safe Run History detail reads
 

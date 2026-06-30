@@ -21,7 +21,9 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import {
   DemoRunService,
   DemoRunValidationError,
+  RedisPublicRunBudgetStore,
   validateAcceptedRunSnapshot,
+  validatePublicRuntimePolicyUpdate,
 } from "../src/services/demo-run-service.js";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -45,6 +47,23 @@ describe("demo-run service validation", () => {
         enforcePublicCustomLimits: true,
       }),
     ).toThrow(DemoRunValidationError);
+  });
+
+  it("rejects public runtime policy updates above deployment hard caps", () => {
+    const policy = publicRuntimePolicy();
+    policy.publicCustomLimits.maxTotalRequests = policy.deploymentHardCaps.maxTotalRequests + 1;
+
+    expect(() => validatePublicRuntimePolicyUpdate(policy)).toThrow(
+      "Accepted run configuration exceeds a configured cap.",
+    );
+    expect(() => validatePublicRuntimePolicyUpdate(policy)).toThrow(DemoRunValidationError);
+  });
+
+  it("rejects public custom defaults that exceed the updated public limits", () => {
+    const policy = publicRuntimePolicy();
+    policy.publicCustomLimits.maxBuyers = 100;
+
+    expect(() => validatePublicRuntimePolicyUpdate(policy)).toThrow(DemoRunValidationError);
   });
 });
 
@@ -155,6 +174,84 @@ describe("demo-run preset management", () => {
     expect(expectBuyerSpikeTrafficConfig(copied.preset.trafficConfig)).toMatchObject({
       buyerCount: 10_000,
     });
+  });
+});
+
+describe("demo-run public runtime policy management", () => {
+  let connection: ReturnType<typeof createDatabaseConnection> | null = null;
+
+  beforeEach(async () => {
+    await connection?.close();
+    connection = null;
+    await resetTestDatabase({ databaseUrl: requireTestDatabaseUrl(), migrationsFolder });
+    connection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
+    await seedStartFixtures(connection);
+  });
+
+  afterAll(async () => {
+    await connection?.close();
+  });
+
+  it("persists public budget, default, and limit updates while preserving deployment hard caps", async () => {
+    const service = createPresetManagementService(requireConnection(connection));
+    const policy = publicRuntimePolicyMutable();
+    policy.publicRunBudget = {
+      windowSeconds: 60,
+      perVisitorMaxStarts: 1,
+      globalMaxStarts: 2,
+    };
+    policy.publicCustomDefaults = {
+      ...policy.publicCustomDefaults,
+      trafficConfig: {
+        mode: "buyer-spike",
+        buyerCount: 250,
+        duplicateEachBuyerAttempt: false,
+        startDelaySeconds: 0,
+        maxDurationSeconds: 5,
+        quantityPerAttempt: 1,
+      },
+      inventoryConfig: {
+        startingStock: 75,
+        quantityPerCheckout: 1,
+        reservationHoldMinutes: 15,
+      },
+    };
+    policy.publicCustomLimits = {
+      ...policy.publicCustomLimits,
+      maxBuyers: 500,
+      maxStartingStock: 100,
+    };
+
+    const response = await service.updateAdminPublicRuntimePolicy(
+      { policy, correlationId: "corr-policy-save" },
+      "corr-policy-save",
+    );
+    const [row] = await requireConnection(connection).db.select().from(publicRuntimePolicies);
+    const persistedPolicy = row?.policy as PublicRuntimePolicy | undefined;
+
+    expect(response.correlationId).toBe("corr-policy-save");
+    expect(response.policy.publicRunBudget.perVisitorMaxStarts).toBe(1);
+    expect(response.policy.publicCustomDefaults.inventoryConfig.startingStock).toBe(75);
+    expect(response.policy.publicCustomLimits.maxBuyers).toBe(500);
+    expect(response.policy.deploymentHardCaps.maxBuyers).toBe(100_000);
+    expect(persistedPolicy?.publicRunBudget.globalMaxStarts).toBe(2);
+    expect(persistedPolicy?.deploymentHardCaps.maxTotalRequests).toBe(100_000);
+  });
+
+  it("rejects policy updates above deployment hard caps without changing the stored row", async () => {
+    const service = createPresetManagementService(requireConnection(connection));
+    const policy = publicRuntimePolicyMutable();
+    policy.publicCustomLimits.maxTotalRequests = 100_001;
+
+    await expect(
+      service.updateAdminPublicRuntimePolicy({ policy }, "corr-policy-reject"),
+    ).rejects.toMatchObject({
+      code: "public_limit_total_requests_exceeds_deployment_cap",
+    });
+
+    const [row] = await requireConnection(connection).db.select().from(publicRuntimePolicies);
+    const persistedPolicy = row?.policy as PublicRuntimePolicy | undefined;
+    expect(persistedPolicy?.publicCustomLimits.maxTotalRequests).toBe(10_000);
   });
 });
 
@@ -272,6 +369,44 @@ describe("demo-run lifecycle start gating", () => {
     expect(publicCustomPreset.inventoryConfig.startingStock).toBe(1000);
   });
 
+  it("uses updated persisted public custom defaults for the next public custom start", async () => {
+    const managementService = createPresetManagementService(requireConnection(connection));
+    const policy = publicRuntimePolicyMutable();
+    policy.publicCustomDefaults = {
+      ...policy.publicCustomDefaults,
+      trafficConfig: {
+        mode: "buyer-spike",
+        buyerCount: 222,
+        duplicateEachBuyerAttempt: false,
+        startDelaySeconds: 0,
+        maxDurationSeconds: 4,
+        quantityPerAttempt: 1,
+      },
+      inventoryConfig: {
+        startingStock: 55,
+        quantityPerCheckout: 1,
+        reservationHoldMinutes: 15,
+      },
+    };
+    await managementService.updateAdminPublicRuntimePolicy({ policy }, "corr-policy-update");
+
+    const startService = createStartService(requireConnection(connection), requireRedis(redis));
+    const response = await startService.startRun(
+      {
+        presetSlug: "public-custom",
+        operatorMode: "public",
+        publicVisitorId: "visitor-defaults",
+      },
+      "corr-public-defaults",
+    );
+
+    expect(expectBuyerSpikeTrafficConfig(response.run.configSnapshot.trafficConfig)).toMatchObject({
+      buyerCount: 222,
+      maxDurationSeconds: 4,
+    });
+    expect(response.run.configSnapshot.inventoryConfig.startingStock).toBe(55);
+  });
+
   it("allows admin run-scoped overrides for read-only public presets", async () => {
     const service = createStartService(requireConnection(connection), requireRedis(redis));
 
@@ -311,6 +446,70 @@ describe("demo-run lifecycle start gating", () => {
       duplicateEachBuyerAttempt: false,
     });
     expect(previewPreset.inventoryConfig.startingStock).toBe(1000);
+  });
+
+  it("does not consume public run budget for admin starts", async () => {
+    const service = createStartService(requireConnection(connection), requireRedis(redis), {
+      publicRunBudgetStore: {
+        consume: async () => {
+          throw new Error("Admin starts should not consume public budget.");
+        },
+      },
+    });
+
+    const response = await service.startRun(
+      { presetSlug: "preview-1k", operatorMode: "admin" },
+      "corr-admin-budget-bypass",
+    );
+
+    expect(response.run.operatorMode).toBe("admin");
+  });
+
+  it("enforces updated public run-budget windows through Redis", async () => {
+    const store = new RedisPublicRunBudgetStore(requireRedis(redis));
+    const policy = publicRuntimePolicy();
+    policy.publicRunBudget = {
+      windowSeconds: 60,
+      perVisitorMaxStarts: 1,
+      globalMaxStarts: 2,
+    };
+
+    await store.consume({
+      policy,
+      publicVisitorId: "visitor-budget-1",
+      now: new Date("2026-06-20T00:00:00.000Z"),
+    });
+    await expect(
+      store.consume({
+        policy,
+        publicVisitorId: "visitor-budget-1",
+        now: new Date("2026-06-20T00:00:01.000Z"),
+      }),
+    ).rejects.toMatchObject({ code: "public_visitor_run_budget_exceeded" });
+
+    await requireRedis(redis).flushdb();
+    policy.publicRunBudget = {
+      windowSeconds: 60,
+      perVisitorMaxStarts: 10,
+      globalMaxStarts: 2,
+    };
+    await store.consume({
+      policy,
+      publicVisitorId: "visitor-budget-2",
+      now: new Date("2026-06-20T00:00:02.000Z"),
+    });
+    await store.consume({
+      policy,
+      publicVisitorId: "visitor-budget-3",
+      now: new Date("2026-06-20T00:00:03.000Z"),
+    });
+    await expect(
+      store.consume({
+        policy,
+        publicVisitorId: "visitor-budget-4",
+        now: new Date("2026-06-20T00:00:04.000Z"),
+      }),
+    ).rejects.toMatchObject({ code: "public_run_budget_exceeded" });
   });
 
   it("writes a terminal summary when inventory initialization fails", async () => {
@@ -474,6 +673,7 @@ function createStartService(
     trafficExecutionGateway?: ConstructorParameters<
       typeof DemoRunService
     >[0]["trafficExecutionGateway"];
+    publicRunBudgetStore?: ConstructorParameters<typeof DemoRunService>[0]["publicRunBudgetStore"];
   } = {},
 ): DemoRunService {
   const ids = [
@@ -494,7 +694,7 @@ function createStartService(
         correlationId: request.correlationId,
       }),
     },
-    publicRunBudgetStore: { consume: async () => undefined },
+    publicRunBudgetStore: overrides.publicRunBudgetStore ?? { consume: async () => undefined },
     trafficMetricStore: {} as never,
     businessOutcomeReader: { read: async () => emptyBusinessOutcomeSummary() },
     apiBaseUrl: "http://api.test",
@@ -755,5 +955,16 @@ function publicRuntimePolicy(): PublicRuntimePolicy {
       maxPreAllocatedVus: 10_000,
       maxVus: 10_000,
     },
+  };
+}
+
+function publicRuntimePolicyMutable() {
+  const policy = publicRuntimePolicy();
+
+  return {
+    isPublicRunBudgetEnforced: policy.isPublicRunBudgetEnforced,
+    publicRunBudget: policy.publicRunBudget,
+    publicCustomDefaults: policy.publicCustomDefaults,
+    publicCustomLimits: policy.publicCustomLimits,
   };
 }

@@ -3,9 +3,12 @@ import {
   type AcceptedRunConfigSnapshot,
   type AdminPresetListResponse,
   type AdminPresetMutationResponse,
+  type AdminPublicRuntimePolicyResponse,
+  type AdminPublicRuntimePolicyUpdateRequest,
   acceptedRunConfigSnapshotSchema,
   adminPresetListResponseSchema,
   adminPresetMutationResponseSchema,
+  adminPublicRuntimePolicyResponseSchema,
   type BusinessOutcomeSummary,
   type CopyDemoPresetToCustomRequest,
   controlServiceTokenHeaderName,
@@ -23,6 +26,7 @@ import {
   type PublicRuntimePolicy,
   type PublicRuntimePolicyResponse,
   publicPresetListResponseSchema,
+  publicRuntimePolicyMutableSchema,
   publicRuntimePolicyResponseSchema,
   publicRuntimePolicySchema,
   type SaveDemoPresetRequest,
@@ -92,6 +96,11 @@ export interface DemoRunController {
   duplicatePreset(request: DuplicateDemoPresetRequest): Promise<AdminPresetMutationResponse>;
   copyPresetToCustom(request: CopyDemoPresetToCustomRequest): Promise<AdminPresetMutationResponse>;
   getPublicRuntimePolicy(): Promise<PublicRuntimePolicyResponse>;
+  getAdminPublicRuntimePolicy(correlationId: string): Promise<AdminPublicRuntimePolicyResponse>;
+  updateAdminPublicRuntimePolicy(
+    request: AdminPublicRuntimePolicyUpdateRequest,
+    correlationId: string,
+  ): Promise<AdminPublicRuntimePolicyResponse>;
   startRun(request: StartDemoRunCommand, correlationId: string): Promise<StartDemoRunResponse>;
   ingestMetrics(input: LoadMetricIngestRequest): Promise<void>;
   recordTrafficCompletion(input: TrafficCompletionReport): Promise<DemoRunSnapshot>;
@@ -385,6 +394,50 @@ export class DemoRunService implements DemoRunController {
       policy: row.policy,
       updatedAt: row.updatedAt.toISOString(),
     });
+  }
+
+  async getAdminPublicRuntimePolicy(
+    correlationId: string,
+  ): Promise<AdminPublicRuntimePolicyResponse> {
+    return toAdminPublicRuntimePolicyResponse(
+      await this.readPublicRuntimePolicyRow(),
+      correlationId,
+      this.now(),
+    );
+  }
+
+  async updateAdminPublicRuntimePolicy(
+    request: AdminPublicRuntimePolicyUpdateRequest,
+    correlationId: string,
+  ): Promise<AdminPublicRuntimePolicyResponse> {
+    const now = this.now();
+    const currentRow = await this.readPublicRuntimePolicyRow();
+    const currentPolicy = publicRuntimePolicySchema.parse(currentRow.policy);
+    const mutablePolicy = publicRuntimePolicyMutableSchema.parse(request.policy);
+    const nextPolicy = publicRuntimePolicySchema.parse({
+      ...mutablePolicy,
+      deploymentHardCaps: currentPolicy.deploymentHardCaps,
+    });
+
+    validatePublicRuntimePolicyUpdate(nextPolicy);
+
+    const [updated] = await this.options.db
+      .update(publicRuntimePolicies)
+      .set({
+        policy: nextPolicy,
+        updatedAt: now,
+      })
+      .where(eq(publicRuntimePolicies.id, "active"))
+      .returning();
+
+    if (!updated) {
+      throw new DemoRunValidationError(
+        "public_runtime_policy_not_found",
+        "Public runtime policy is not configured.",
+      );
+    }
+
+    return toAdminPublicRuntimePolicyResponse(updated, correlationId, now);
   }
 
   async startRun(
@@ -1126,6 +1179,78 @@ export function validateAcceptedRunSnapshot(
   }
 }
 
+export function validatePublicRuntimePolicyUpdate(policy: PublicRuntimePolicy): void {
+  const caps = policy.deploymentHardCaps;
+  const limits = policy.publicCustomLimits;
+
+  assertCap(
+    limits.maxTotalRequests,
+    caps.maxTotalRequests,
+    "public_limit_total_requests_exceeds_deployment_cap",
+  );
+  assertCap(
+    limits.maxRequestsPerSecond,
+    caps.maxRequestsPerSecond,
+    "public_limit_request_rate_exceeds_deployment_cap",
+  );
+  assertCap(
+    limits.maxTrafficDurationSeconds,
+    caps.maxTrafficDurationSeconds,
+    "public_limit_duration_exceeds_deployment_cap",
+  );
+  assertCap(
+    limits.maxTrafficStartDelaySeconds,
+    caps.maxTrafficStartDelaySeconds,
+    "public_limit_start_delay_exceeds_deployment_cap",
+  );
+  assertCap(limits.maxBuyers, caps.maxBuyers, "public_limit_buyers_exceeds_deployment_cap");
+  assertCap(
+    limits.maxPreAllocatedVus,
+    caps.maxPreAllocatedVus,
+    "public_limit_preallocated_vus_exceeds_deployment_cap",
+  );
+  assertCap(limits.maxVus, caps.maxVus, "public_limit_max_vus_exceeds_deployment_cap");
+
+  if (limits.minErpMaxTps > limits.maxErpMaxTps) {
+    throw new DemoRunValidationError(
+      "public_erp_tps_limit_invalid",
+      "Public ERP TPS minimum cannot exceed the maximum.",
+      {
+        minErpMaxTps: limits.minErpMaxTps,
+        maxErpMaxTps: limits.maxErpMaxTps,
+      },
+    );
+  }
+
+  if (limits.maxPreAllocatedVus > limits.maxVus) {
+    throw new DemoRunValidationError(
+      "public_vus_limit_invalid",
+      "Public preallocated VUs cannot exceed max VUs.",
+      {
+        maxPreAllocatedVus: limits.maxPreAllocatedVus,
+        maxVus: limits.maxVus,
+      },
+    );
+  }
+
+  try {
+    validateAcceptedRunSnapshot(policy.publicCustomDefaults, policy, {
+      operatorMode: "public",
+      enforcePublicCustomLimits: true,
+    });
+  } catch (error) {
+    if (error instanceof DemoRunValidationError) {
+      throw new DemoRunValidationError(
+        `public_custom_default_${error.code}`,
+        "Public custom defaults must fit within the active public runtime policy.",
+        error.details,
+      );
+    }
+
+    throw error;
+  }
+}
+
 function calculatePlannedRequests(trafficConfig: TrafficConfig): number {
   if (trafficConfig.mode === "buyer-spike") {
     return trafficConfig.buyerCount * (trafficConfig.duplicateEachBuyerAttempt ? 2 : 1);
@@ -1189,6 +1314,20 @@ function assertCap(value: number, cap: number, code: string): void {
 
 function trafficMetricKey(runId: string): string {
   return `demo-run:${runId}:traffic-metrics`;
+}
+
+function toAdminPublicRuntimePolicyResponse(
+  row: typeof publicRuntimePolicies.$inferSelect,
+  correlationId: string,
+  timestamp: Date,
+): AdminPublicRuntimePolicyResponse {
+  return adminPublicRuntimePolicyResponseSchema.parse({
+    id: row.id,
+    policy: row.policy,
+    updatedAt: row.updatedAt.toISOString(),
+    correlationId,
+    timestamp: timestamp.toISOString(),
+  });
 }
 
 function requireRunSaleOfferId(run: DemoRunSnapshot): string {

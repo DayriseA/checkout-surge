@@ -10,6 +10,8 @@ import {
   adminPresetDuplicatePath,
   adminPresetListPath,
   adminPresetSavePath,
+  adminPublicRuntimePolicyPath,
+  adminPublicRuntimePolicyResponseSchema,
   type BusinessOutcomeSummary,
   buyResponseSchema,
   controlServiceTokenHeaderName,
@@ -418,6 +420,20 @@ function demoRunControllerFixture(): DemoRunController {
       policy: publicRuntimePolicyFixture(),
       updatedAt: "2026-06-20T00:00:10.000Z",
     }),
+    getAdminPublicRuntimePolicy: async (correlationId) => ({
+      id: "active",
+      policy: publicRuntimePolicyFixture(),
+      updatedAt: "2026-06-20T00:00:10.000Z",
+      correlationId,
+      timestamp: "2026-06-20T00:00:10.000Z",
+    }),
+    updateAdminPublicRuntimePolicy: async (_request, correlationId) => ({
+      id: "active",
+      policy: publicRuntimePolicyFixture(),
+      updatedAt: "2026-06-20T00:00:10.000Z",
+      correlationId,
+      timestamp: "2026-06-20T00:00:10.000Z",
+    }),
     startRun: async (_request, correlationId) => ({
       run: demoRunSnapshotFixture(),
       recovery: { establishedAt: "2026-06-20T00:00:10.000Z" },
@@ -528,6 +544,20 @@ function publicRuntimePolicyFixture() {
       maxPreAllocatedVus: 10_000,
       maxVus: 10_000,
     },
+  };
+}
+
+function publicRuntimePolicyMutableFixture() {
+  const policy = publicRuntimePolicyFixture();
+  return {
+    isPublicRunBudgetEnforced: policy.isPublicRunBudgetEnforced,
+    publicRunBudget: {
+      windowSeconds: 120,
+      perVisitorMaxStarts: 1,
+      globalMaxStarts: 3,
+    },
+    publicCustomDefaults: policy.publicCustomDefaults,
+    publicCustomLimits: policy.publicCustomLimits,
   };
 }
 
@@ -927,6 +957,61 @@ describe("API gateway routes", () => {
     expect(presets.presets[0]?.slug).toBe("preview-1k");
     expect(policyResponse.statusCode).toBe(200);
     expect(policy.policy.deploymentHardCaps.maxTotalRequests).toBe(100_000);
+  });
+
+  it("protects admin public runtime policy reads and updates", async () => {
+    const getAdminPublicRuntimePolicy = vi.fn(
+      demoRunControllerFixture().getAdminPublicRuntimePolicy,
+    );
+    const updateAdminPublicRuntimePolicy = vi.fn(
+      demoRunControllerFixture().updateAdminPublicRuntimePolicy,
+    );
+    const server = await trackedServer({
+      persistence: new AcceptingPersistence(),
+      demoRunService: {
+        ...demoRunControllerFixture(),
+        getAdminPublicRuntimePolicy,
+        updateAdminPublicRuntimePolicy,
+      },
+    });
+    const policy = publicRuntimePolicyMutableFixture();
+    const headers = { [controlServiceTokenHeaderName]: "test-control-token" };
+
+    const unauthorized = await server.inject({
+      method: "GET",
+      url: adminPublicRuntimePolicyPath,
+    });
+    const readResponse = await server.inject({
+      method: "GET",
+      url: adminPublicRuntimePolicyPath,
+      headers: {
+        ...headers,
+        "x-correlation-id": "corr-admin-policy-read",
+      },
+    });
+    const updateResponse = await server.inject({
+      method: "PUT",
+      url: adminPublicRuntimePolicyPath,
+      headers,
+      payload: {
+        policy,
+        correlationId: "corr-admin-policy-update",
+      },
+    });
+
+    const readPayload = adminPublicRuntimePolicyResponseSchema.parse(readResponse.json());
+    const updatePayload = adminPublicRuntimePolicyResponseSchema.parse(updateResponse.json());
+    expect(unauthorized.statusCode).toBe(401);
+    expect(readResponse.statusCode).toBe(200);
+    expect(updateResponse.statusCode).toBe(200);
+    expect(readPayload.correlationId).toBe("corr-admin-policy-read");
+    expect(updatePayload.correlationId).toBe("corr-admin-policy-update");
+    expect(updateResponse.headers["x-correlation-id"]).toBe("corr-admin-policy-update");
+    expect(getAdminPublicRuntimePolicy).toHaveBeenCalledWith("corr-admin-policy-read");
+    expect(updateAdminPublicRuntimePolicy).toHaveBeenCalledWith(
+      { policy, correlationId: "corr-admin-policy-update" },
+      "corr-admin-policy-update",
+    );
   });
 
   it("returns public run history summaries through the shared contract", async () => {

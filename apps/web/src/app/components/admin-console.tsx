@@ -1,11 +1,15 @@
 "use client";
 
 import {
+  type AcceptedRunConfigSnapshot,
   type AdminPresetListResponse,
+  type AdminPublicRuntimePolicyResponse,
   adminDemoResetResponseSchema,
   adminMaintenanceCleanupRunsResponseSchema,
   adminPresetListResponseSchema,
   adminPresetMutationResponseSchema,
+  adminPublicRuntimePolicyResponseSchema,
+  adminPublicRuntimePolicyUpdateRequestSchema,
   copyDemoPresetToCustomRequestSchema,
   type DashboardRecoveryResponse,
   type DemoPresetContract,
@@ -15,6 +19,8 @@ import {
   type ErpChaosStatus,
   erpChaosConfigSchema,
   erpChaosStatusSchema,
+  type PublicRuntimePolicy,
+  type PublicRuntimePolicyMutable,
   saveDemoPresetRequestSchema,
   startDemoRunRequestSchema,
   startDemoRunResponseSchema,
@@ -33,6 +39,7 @@ import {
   adminPresetDuplicateProxyPath,
   adminPresetListProxyPath,
   adminPresetSaveProxyPath,
+  adminPublicRuntimePolicyProxyPath,
   adminSessionProxyPath,
   dashboardRecoveryProxyPath,
 } from "../lib/control-paths";
@@ -47,6 +54,33 @@ const primaryButtonClassName =
 const inputClassName = "min-h-10 min-w-0 rounded-lg border border-border bg-bg px-3 py-2 text-ink";
 
 type TrafficMode = DemoPresetContract["trafficConfig"]["mode"];
+type RunConfigBase = Pick<
+  AcceptedRunConfigSnapshot,
+  "trafficConfig" | "inventoryConfig" | "erpConfig" | "backpressureConfig"
+>;
+type RunConfigDraft = Pick<
+  PresetDraft,
+  | "mode"
+  | "buyerCount"
+  | "duplicateEachBuyerAttempt"
+  | "maxDurationSeconds"
+  | "ratePerSecond"
+  | "durationSeconds"
+  | "startDelaySeconds"
+  | "preAllocatedVus"
+  | "maxVus"
+  | "startingStock"
+  | "quantityPerCheckout"
+  | "reservationHoldMinutes"
+  | "erpLatencyMs"
+  | "erpMaxTps"
+  | "erpErrorRate"
+  | "erpForcedOutage"
+  | "erpRequestTimeoutMs"
+  | "orderProcessConcurrency"
+  | "drainTimeoutSeconds"
+  | "pendingPersistenceRetryAfterSeconds"
+>;
 
 interface PresetDraft {
   displayName: string;
@@ -74,12 +108,35 @@ interface PresetDraft {
   pendingPersistenceRetryAfterSeconds: string;
 }
 
+interface RuntimePolicyDraft extends RunConfigDraft {
+  isPublicRunBudgetEnforced: boolean;
+  budgetWindowSeconds: string;
+  perVisitorMaxStarts: string;
+  globalMaxStarts: string;
+  maxTotalRequests: string;
+  maxBuyers: string;
+  maxRequestsPerSecond: string;
+  maxTrafficDurationSeconds: string;
+  maxTrafficStartDelaySeconds: string;
+  maxPreAllocatedVus: string;
+  maxPublicVus: string;
+  maxStartingStock: string;
+  maxErpLatencyMs: string;
+  minErpMaxTps: string;
+  maxErpMaxTps: string;
+  maxErpErrorRate: string;
+  allowForcedOutage: boolean;
+  allowBuyerSpike: boolean;
+  allowSteadyArrivalRate: boolean;
+}
+
 export interface AdminConsoleProps {
   autoCheckSession?: boolean;
   initialAuthenticated?: boolean;
   initialErpChaos?: BackendRead<ErpChaosStatus>;
   initialPresets?: BackendRead<AdminPresetListResponse>;
   initialRecovery?: BackendRead<DashboardRecoveryResponse>;
+  initialRuntimePolicy?: BackendRead<AdminPublicRuntimePolicyResponse>;
 }
 
 export function AdminConsole({
@@ -88,6 +145,7 @@ export function AdminConsole({
   initialErpChaos,
   initialPresets,
   initialRecovery,
+  initialRuntimePolicy,
 }: AdminConsoleProps = {}) {
   const initialSelectedPreset =
     initialPresets?.status === "available" ? initialPresets.data.presets[0] : null;
@@ -113,11 +171,22 @@ export function AdminConsole({
       reason: "Admin sign-in required.",
     },
   );
+  const [runtimePolicy, setRuntimePolicy] = useState<BackendRead<AdminPublicRuntimePolicyResponse>>(
+    initialRuntimePolicy ?? {
+      status: "unavailable",
+      reason: "Admin sign-in required.",
+    },
+  );
   const [selectedSlug, setSelectedSlug] = useState<string | null>(
     initialSelectedPreset?.slug ?? null,
   );
   const [draft, setDraft] = useState<PresetDraft | null>(
     initialSelectedPreset ? draftFromPreset(initialSelectedPreset) : null,
+  );
+  const [policyDraft, setPolicyDraft] = useState<RuntimePolicyDraft | null>(
+    initialRuntimePolicy?.status === "available"
+      ? draftFromRuntimePolicy(initialRuntimePolicy.data.policy)
+      : null,
   );
   const [duplicateTargetSlug, setDuplicateTargetSlug] = useState(
     initialSelectedPreset ? `${initialSelectedPreset.slug}-copy` : "",
@@ -148,15 +217,17 @@ export function AdminConsole({
       return;
     }
 
-    const [nextRecovery, nextErpChaos] = await Promise.all([
+    const [nextRecovery, nextErpChaos, nextRuntimePolicy] = await Promise.all([
       readProxyJson(dashboardRecoveryProxyPath, dashboardRecoveryResponseSchema),
       readProxyJson(adminErpChaosProxyPath, erpChaosStatusSchema),
+      readProxyJson(adminPublicRuntimePolicyProxyPath, adminPublicRuntimePolicyResponseSchema),
     ]);
 
     setAuthenticated(true);
     setPresetsRead(nextPresets);
     setRecovery(nextRecovery);
     setErpChaos(nextErpChaos);
+    setRuntimePolicy(nextRuntimePolicy);
     setSelectedSlug((current) => current ?? nextPresets.data.presets[0]?.slug ?? null);
   }, []);
 
@@ -175,6 +246,15 @@ export function AdminConsole({
     setDraft(draftFromPreset(selectedPreset));
     setDuplicateTargetSlug(`${selectedPreset.slug}-copy`);
   }, [selectedPreset]);
+
+  useEffect(() => {
+    if (runtimePolicy.status !== "available") {
+      setPolicyDraft(null);
+      return;
+    }
+
+    setPolicyDraft(draftFromRuntimePolicy(runtimePolicy.data.policy));
+  }, [runtimePolicy]);
 
   async function signIn() {
     setIsSubmitting(true);
@@ -206,6 +286,54 @@ export function AdminConsole({
 
   async function refreshRecovery() {
     setRecovery(await readProxyJson(dashboardRecoveryProxyPath, dashboardRecoveryResponseSchema));
+  }
+
+  async function refreshRuntimePolicy() {
+    const result = await readProxyJson(
+      adminPublicRuntimePolicyProxyPath,
+      adminPublicRuntimePolicyResponseSchema,
+    );
+    setRuntimePolicy(result);
+    setStatusMessage(
+      result.status === "available" ? "Public runtime policy refreshed." : result.reason,
+    );
+  }
+
+  async function saveRuntimePolicy() {
+    if (runtimePolicy.status !== "available" || !policyDraft) {
+      return;
+    }
+
+    const parsed = adminPublicRuntimePolicyUpdateRequestSchema.safeParse({
+      policy: policyFromDraft(policyDraft, runtimePolicy.data.policy),
+    });
+
+    if (!parsed.success) {
+      setStatusMessage("Public runtime policy values are outside the shared contract.");
+      return;
+    }
+
+    setIsSubmitting(true);
+    setStatusMessage(null);
+
+    try {
+      const result = await readProxyJson(
+        adminPublicRuntimePolicyProxyPath,
+        adminPublicRuntimePolicyResponseSchema,
+        {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(parsed.data),
+        },
+      );
+
+      setRuntimePolicy(result);
+      setStatusMessage(
+        result.status === "available" ? "Public runtime policy saved." : result.reason,
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
   }
 
   async function startSelectedPreset() {
@@ -482,6 +610,21 @@ export function AdminConsole({
         </button>
       </section>
 
+      <PublicRuntimePolicyPanel
+        draft={policyDraft}
+        isSubmitting={isSubmitting}
+        onRefresh={() => {
+          void refreshRuntimePolicy();
+        }}
+        onSave={() => {
+          void saveRuntimePolicy();
+        }}
+        onUpdateDraft={(next) =>
+          setPolicyDraft((current) => (current ? { ...current, ...next } : current))
+        }
+        runtimePolicy={runtimePolicy}
+      />
+
       <section className={`${panelClassName} col-span-8`}>
         <div className="mb-4 flex items-start justify-between gap-3">
           <div>
@@ -586,6 +729,237 @@ export function AdminConsole({
   );
 }
 
+function PublicRuntimePolicyPanel({
+  draft,
+  isSubmitting,
+  onRefresh,
+  onSave,
+  onUpdateDraft,
+  runtimePolicy,
+}: {
+  draft: RuntimePolicyDraft | null;
+  isSubmitting: boolean;
+  onRefresh: () => void;
+  onSave: () => void;
+  onUpdateDraft: (next: Partial<RuntimePolicyDraft>) => void;
+  runtimePolicy: BackendRead<AdminPublicRuntimePolicyResponse>;
+}) {
+  const policy = runtimePolicy.status === "available" ? runtimePolicy.data.policy : null;
+
+  return (
+    <section className={`${panelClassName} col-span-8`}>
+      <div className="mb-4 flex items-start justify-between gap-3">
+        <div>
+          <p className="m-0 text-xs font-bold uppercase text-muted">Public policy</p>
+          <h2 className="m-0 mt-1 text-base font-bold leading-tight text-ink">
+            Runtime budgets and custom limits
+          </h2>
+        </div>
+        <StatusPill
+          label={draft?.isPublicRunBudgetEnforced ? "budgeted" : "open"}
+          tone={runtimePolicy.status === "available" ? "ok" : "pending"}
+        />
+      </div>
+      {runtimePolicy.status === "available" && policy && draft ? (
+        <div className="grid gap-4">
+          <div className="grid grid-cols-4 gap-3 max-[900px]:grid-cols-2 max-[560px]:grid-cols-1">
+            <label className="flex min-h-10 items-center gap-2 text-sm font-semibold text-muted-strong">
+              <input
+                checked={draft.isPublicRunBudgetEnforced}
+                onChange={(event) =>
+                  onUpdateDraft({ isPublicRunBudgetEnforced: event.target.checked })
+                }
+                type="checkbox"
+              />
+              Enforce public budget
+            </label>
+            <LabeledTextInput
+              label="Budget window seconds"
+              onChange={(budgetWindowSeconds) => onUpdateDraft({ budgetWindowSeconds })}
+              type="number"
+              value={draft.budgetWindowSeconds}
+            />
+            <LabeledTextInput
+              label="Per-visitor starts"
+              onChange={(perVisitorMaxStarts) => onUpdateDraft({ perVisitorMaxStarts })}
+              type="number"
+              value={draft.perVisitorMaxStarts}
+            />
+            <LabeledTextInput
+              label="Global starts"
+              onChange={(globalMaxStarts) => onUpdateDraft({ globalMaxStarts })}
+              type="number"
+              value={draft.globalMaxStarts}
+            />
+          </div>
+
+          <div className="grid gap-3">
+            <p className="m-0 text-xs font-bold uppercase text-muted">Public custom defaults</p>
+            <TrafficEditor draft={draft} onUpdateDraft={onUpdateDraft} />
+            <RunConfigFields draft={draft} onUpdateDraft={onUpdateDraft} />
+          </div>
+
+          <div className="grid gap-3">
+            <p className="m-0 text-xs font-bold uppercase text-muted">Public custom limits</p>
+            <div className="grid grid-cols-4 gap-3 max-[900px]:grid-cols-2 max-[560px]:grid-cols-1">
+              <LabeledTextInput
+                label="Max total requests"
+                onChange={(maxTotalRequests) => onUpdateDraft({ maxTotalRequests })}
+                type="number"
+                value={draft.maxTotalRequests}
+              />
+              <LabeledTextInput
+                label="Max buyers"
+                onChange={(maxBuyers) => onUpdateDraft({ maxBuyers })}
+                type="number"
+                value={draft.maxBuyers}
+              />
+              <LabeledTextInput
+                label="Max requests/sec"
+                onChange={(maxRequestsPerSecond) => onUpdateDraft({ maxRequestsPerSecond })}
+                type="number"
+                value={draft.maxRequestsPerSecond}
+              />
+              <LabeledTextInput
+                label="Max duration seconds"
+                onChange={(maxTrafficDurationSeconds) =>
+                  onUpdateDraft({ maxTrafficDurationSeconds })
+                }
+                type="number"
+                value={draft.maxTrafficDurationSeconds}
+              />
+              <LabeledTextInput
+                label="Max start delay seconds"
+                onChange={(maxTrafficStartDelaySeconds) =>
+                  onUpdateDraft({ maxTrafficStartDelaySeconds })
+                }
+                type="number"
+                value={draft.maxTrafficStartDelaySeconds}
+              />
+              <LabeledTextInput
+                label="Max preallocated VUs"
+                onChange={(maxPreAllocatedVus) => onUpdateDraft({ maxPreAllocatedVus })}
+                type="number"
+                value={draft.maxPreAllocatedVus}
+              />
+              <LabeledTextInput
+                label="Max VUs"
+                onChange={(maxPublicVus) => onUpdateDraft({ maxPublicVus })}
+                type="number"
+                value={draft.maxPublicVus}
+              />
+              <LabeledTextInput
+                label="Max starting stock"
+                onChange={(maxStartingStock) => onUpdateDraft({ maxStartingStock })}
+                type="number"
+                value={draft.maxStartingStock}
+              />
+              <LabeledTextInput
+                label="Max ERP latency ms"
+                onChange={(maxErpLatencyMs) => onUpdateDraft({ maxErpLatencyMs })}
+                type="number"
+                value={draft.maxErpLatencyMs}
+              />
+              <LabeledTextInput
+                label="Min ERP max TPS"
+                onChange={(minErpMaxTps) => onUpdateDraft({ minErpMaxTps })}
+                type="number"
+                value={draft.minErpMaxTps}
+              />
+              <LabeledTextInput
+                label="Max ERP max TPS"
+                onChange={(maxErpMaxTps) => onUpdateDraft({ maxErpMaxTps })}
+                type="number"
+                value={draft.maxErpMaxTps}
+              />
+              <LabeledTextInput
+                label="Max ERP error rate"
+                onChange={(maxErpErrorRate) => onUpdateDraft({ maxErpErrorRate })}
+                step="0.01"
+                type="number"
+                value={draft.maxErpErrorRate}
+              />
+              <label className="flex min-h-10 items-center gap-2 text-sm font-semibold text-muted-strong">
+                <input
+                  checked={draft.allowBuyerSpike}
+                  onChange={(event) => onUpdateDraft({ allowBuyerSpike: event.target.checked })}
+                  type="checkbox"
+                />
+                Buyer spike
+              </label>
+              <label className="flex min-h-10 items-center gap-2 text-sm font-semibold text-muted-strong">
+                <input
+                  checked={draft.allowSteadyArrivalRate}
+                  onChange={(event) =>
+                    onUpdateDraft({ allowSteadyArrivalRate: event.target.checked })
+                  }
+                  type="checkbox"
+                />
+                Steady arrival
+              </label>
+              <label className="flex min-h-10 items-center gap-2 text-sm font-semibold text-muted-strong">
+                <input
+                  checked={draft.allowForcedOutage}
+                  onChange={(event) => onUpdateDraft({ allowForcedOutage: event.target.checked })}
+                  type="checkbox"
+                />
+                Allow forced outage
+              </label>
+            </div>
+          </div>
+
+          <dl className="m-0 grid grid-cols-4 gap-3 max-[900px]:grid-cols-2">
+            <Fact label="Hard max buyers" value={String(policy.deploymentHardCaps.maxBuyers)} />
+            <Fact
+              label="Hard max requests"
+              value={String(policy.deploymentHardCaps.maxTotalRequests)}
+            />
+            <Fact
+              label="Hard max RPS"
+              value={String(policy.deploymentHardCaps.maxRequestsPerSecond)}
+            />
+            <Fact
+              label="Hard max duration"
+              value={`${policy.deploymentHardCaps.maxTrafficDurationSeconds}s`}
+            />
+          </dl>
+
+          <div className="flex flex-wrap gap-2">
+            <button
+              className={primaryButtonClassName}
+              disabled={isSubmitting}
+              onClick={onSave}
+              type="button"
+            >
+              Save Public Policy
+            </button>
+            <button
+              className={buttonClassName}
+              disabled={isSubmitting}
+              onClick={onRefresh}
+              type="button"
+            >
+              Refresh Policy
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div>
+          <Unavailable read={runtimePolicy} />
+          <button
+            className={`${buttonClassName} mt-4`}
+            disabled={isSubmitting}
+            onClick={onRefresh}
+            type="button"
+          >
+            Refresh Policy
+          </button>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function PresetEditor({
   draft,
   duplicateTargetSlug,
@@ -638,81 +1012,7 @@ function PresetEditor({
         />
       </div>
       <TrafficEditor draft={draft} onUpdateDraft={onUpdateDraft} />
-      <div className="grid grid-cols-4 gap-3 max-[900px]:grid-cols-2 max-[560px]:grid-cols-1">
-        <LabeledTextInput
-          label="Starting stock"
-          onChange={(startingStock) => onUpdateDraft({ startingStock })}
-          type="number"
-          value={draft.startingStock}
-        />
-        <LabeledTextInput
-          label="Quantity per checkout"
-          onChange={(quantityPerCheckout) => onUpdateDraft({ quantityPerCheckout })}
-          type="number"
-          value={draft.quantityPerCheckout}
-        />
-        <LabeledTextInput
-          label="Hold minutes"
-          onChange={(reservationHoldMinutes) => onUpdateDraft({ reservationHoldMinutes })}
-          type="number"
-          value={draft.reservationHoldMinutes}
-        />
-        <LabeledTextInput
-          label="Worker concurrency"
-          onChange={(orderProcessConcurrency) => onUpdateDraft({ orderProcessConcurrency })}
-          type="number"
-          value={draft.orderProcessConcurrency}
-        />
-        <LabeledTextInput
-          label="Drain timeout seconds"
-          onChange={(drainTimeoutSeconds) => onUpdateDraft({ drainTimeoutSeconds })}
-          type="number"
-          value={draft.drainTimeoutSeconds}
-        />
-        <LabeledTextInput
-          label="Persistence retry seconds"
-          onChange={(pendingPersistenceRetryAfterSeconds) =>
-            onUpdateDraft({ pendingPersistenceRetryAfterSeconds })
-          }
-          type="number"
-          value={draft.pendingPersistenceRetryAfterSeconds}
-        />
-      </div>
-      <div className="grid grid-cols-5 gap-3 max-[900px]:grid-cols-2 max-[560px]:grid-cols-1">
-        <LabeledTextInput
-          label="ERP latency ms"
-          onChange={(erpLatencyMs) => onUpdateDraft({ erpLatencyMs })}
-          type="number"
-          value={draft.erpLatencyMs}
-        />
-        <LabeledTextInput
-          label="ERP max TPS"
-          onChange={(erpMaxTps) => onUpdateDraft({ erpMaxTps })}
-          type="number"
-          value={draft.erpMaxTps}
-        />
-        <LabeledTextInput
-          label="ERP error rate"
-          onChange={(erpErrorRate) => onUpdateDraft({ erpErrorRate })}
-          step="0.01"
-          type="number"
-          value={draft.erpErrorRate}
-        />
-        <LabeledTextInput
-          label="ERP timeout ms"
-          onChange={(erpRequestTimeoutMs) => onUpdateDraft({ erpRequestTimeoutMs })}
-          type="number"
-          value={draft.erpRequestTimeoutMs}
-        />
-        <label className="flex min-h-10 items-center gap-2 text-sm font-semibold text-muted-strong">
-          <input
-            checked={draft.erpForcedOutage}
-            onChange={(event) => onUpdateDraft({ erpForcedOutage: event.target.checked })}
-            type="checkbox"
-          />
-          ERP forced outage
-        </label>
-      </div>
+      <RunConfigFields draft={draft} onUpdateDraft={onUpdateDraft} />
       <div className="flex flex-wrap gap-2">
         <button
           className={primaryButtonClassName}
@@ -762,8 +1062,8 @@ function TrafficEditor({
   draft,
   onUpdateDraft,
 }: {
-  draft: PresetDraft;
-  onUpdateDraft: (next: Partial<PresetDraft>) => void;
+  draft: RunConfigDraft;
+  onUpdateDraft: (next: Partial<RunConfigDraft>) => void;
 }) {
   return (
     <div className="grid gap-3">
@@ -841,6 +1141,94 @@ function TrafficEditor({
         />
       </div>
     </div>
+  );
+}
+
+function RunConfigFields({
+  draft,
+  onUpdateDraft,
+}: {
+  draft: RunConfigDraft;
+  onUpdateDraft: (next: Partial<RunConfigDraft>) => void;
+}) {
+  return (
+    <>
+      <div className="grid grid-cols-4 gap-3 max-[900px]:grid-cols-2 max-[560px]:grid-cols-1">
+        <LabeledTextInput
+          label="Starting stock"
+          onChange={(startingStock) => onUpdateDraft({ startingStock })}
+          type="number"
+          value={draft.startingStock}
+        />
+        <LabeledTextInput
+          label="Quantity per checkout"
+          onChange={(quantityPerCheckout) => onUpdateDraft({ quantityPerCheckout })}
+          type="number"
+          value={draft.quantityPerCheckout}
+        />
+        <LabeledTextInput
+          label="Hold minutes"
+          onChange={(reservationHoldMinutes) => onUpdateDraft({ reservationHoldMinutes })}
+          type="number"
+          value={draft.reservationHoldMinutes}
+        />
+        <LabeledTextInput
+          label="Worker concurrency"
+          onChange={(orderProcessConcurrency) => onUpdateDraft({ orderProcessConcurrency })}
+          type="number"
+          value={draft.orderProcessConcurrency}
+        />
+        <LabeledTextInput
+          label="Drain timeout seconds"
+          onChange={(drainTimeoutSeconds) => onUpdateDraft({ drainTimeoutSeconds })}
+          type="number"
+          value={draft.drainTimeoutSeconds}
+        />
+        <LabeledTextInput
+          label="Persistence retry seconds"
+          onChange={(pendingPersistenceRetryAfterSeconds) =>
+            onUpdateDraft({ pendingPersistenceRetryAfterSeconds })
+          }
+          type="number"
+          value={draft.pendingPersistenceRetryAfterSeconds}
+        />
+      </div>
+      <div className="grid grid-cols-5 gap-3 max-[900px]:grid-cols-2 max-[560px]:grid-cols-1">
+        <LabeledTextInput
+          label="ERP latency ms"
+          onChange={(erpLatencyMs) => onUpdateDraft({ erpLatencyMs })}
+          type="number"
+          value={draft.erpLatencyMs}
+        />
+        <LabeledTextInput
+          label="ERP max TPS"
+          onChange={(erpMaxTps) => onUpdateDraft({ erpMaxTps })}
+          type="number"
+          value={draft.erpMaxTps}
+        />
+        <LabeledTextInput
+          label="ERP error rate"
+          onChange={(erpErrorRate) => onUpdateDraft({ erpErrorRate })}
+          step="0.01"
+          type="number"
+          value={draft.erpErrorRate}
+        />
+        <LabeledTextInput
+          label="ERP timeout ms"
+          onChange={(erpRequestTimeoutMs) => onUpdateDraft({ erpRequestTimeoutMs })}
+          type="number"
+          value={draft.erpRequestTimeoutMs}
+        />
+        <label className="flex min-h-10 items-center gap-2 text-sm font-semibold text-muted-strong">
+          <input
+            checked={draft.erpForcedOutage}
+            onChange={(event) => onUpdateDraft({ erpForcedOutage: event.target.checked })}
+            type="checkbox"
+          />
+          ERP forced outage
+        </label>
+      </div>
+    </>
   );
 }
 
@@ -933,13 +1321,45 @@ function ErpDiagnosticsPanel({
 }
 
 function draftFromPreset(preset: DemoPresetContract): PresetDraft {
-  const traffic = preset.trafficConfig;
-  const steadyVus = traffic.mode === "steady-arrival-rate" ? traffic.k6Vus : undefined;
-
   return {
     displayName: preset.display.name,
     description: preset.display.description,
     sortOrder: String(preset.display.sortOrder),
+    ...draftFromConfigSnapshot(preset),
+  };
+}
+
+function draftFromRuntimePolicy(policy: PublicRuntimePolicy): RuntimePolicyDraft {
+  return {
+    isPublicRunBudgetEnforced: policy.isPublicRunBudgetEnforced,
+    budgetWindowSeconds: String(policy.publicRunBudget.windowSeconds),
+    perVisitorMaxStarts: String(policy.publicRunBudget.perVisitorMaxStarts),
+    globalMaxStarts: String(policy.publicRunBudget.globalMaxStarts),
+    ...draftFromConfigSnapshot(policy.publicCustomDefaults),
+    maxTotalRequests: String(policy.publicCustomLimits.maxTotalRequests),
+    maxBuyers: String(policy.publicCustomLimits.maxBuyers),
+    maxRequestsPerSecond: String(policy.publicCustomLimits.maxRequestsPerSecond),
+    maxTrafficDurationSeconds: String(policy.publicCustomLimits.maxTrafficDurationSeconds),
+    maxTrafficStartDelaySeconds: String(policy.publicCustomLimits.maxTrafficStartDelaySeconds),
+    maxPreAllocatedVus: String(policy.publicCustomLimits.maxPreAllocatedVus),
+    maxPublicVus: String(policy.publicCustomLimits.maxVus),
+    maxStartingStock: String(policy.publicCustomLimits.maxStartingStock),
+    maxErpLatencyMs: String(policy.publicCustomLimits.maxErpLatencyMs),
+    minErpMaxTps: String(policy.publicCustomLimits.minErpMaxTps),
+    maxErpMaxTps: String(policy.publicCustomLimits.maxErpMaxTps),
+    maxErpErrorRate: String(policy.publicCustomLimits.maxErpErrorRate),
+    allowForcedOutage: policy.publicCustomLimits.allowForcedOutage,
+    allowBuyerSpike: policy.publicCustomLimits.allowedTrafficModes.includes("buyer-spike"),
+    allowSteadyArrivalRate:
+      policy.publicCustomLimits.allowedTrafficModes.includes("steady-arrival-rate"),
+  };
+}
+
+function draftFromConfigSnapshot(config: RunConfigBase): RunConfigDraft {
+  const traffic = config.trafficConfig;
+  const steadyVus = traffic.mode === "steady-arrival-rate" ? traffic.k6Vus : undefined;
+
+  return {
     mode: traffic.mode,
     buyerCount: traffic.mode === "buyer-spike" ? String(traffic.buyerCount) : "1000",
     duplicateEachBuyerAttempt:
@@ -951,23 +1371,59 @@ function draftFromPreset(preset: DemoPresetContract): PresetDraft {
     startDelaySeconds: String(traffic.startDelaySeconds),
     preAllocatedVus: String(steadyVus?.preAllocatedVus ?? 10),
     maxVus: String(steadyVus?.maxVus ?? 50),
-    startingStock: String(preset.inventoryConfig.startingStock),
-    quantityPerCheckout: String(preset.inventoryConfig.quantityPerCheckout),
-    reservationHoldMinutes: String(preset.inventoryConfig.reservationHoldMinutes),
-    erpLatencyMs: String(preset.erpConfig.latencyMs),
-    erpMaxTps: String(preset.erpConfig.maxTps),
-    erpErrorRate: String(preset.erpConfig.errorRate),
-    erpForcedOutage: preset.erpConfig.forcedOutage,
-    erpRequestTimeoutMs: String(preset.erpConfig.requestTimeoutMs),
-    orderProcessConcurrency: String(preset.backpressureConfig.orderProcessConcurrency),
-    drainTimeoutSeconds: String(preset.backpressureConfig.drainTimeoutSeconds),
+    startingStock: String(config.inventoryConfig.startingStock),
+    quantityPerCheckout: String(config.inventoryConfig.quantityPerCheckout),
+    reservationHoldMinutes: String(config.inventoryConfig.reservationHoldMinutes),
+    erpLatencyMs: String(config.erpConfig.latencyMs),
+    erpMaxTps: String(config.erpConfig.maxTps),
+    erpErrorRate: String(config.erpConfig.errorRate),
+    erpForcedOutage: config.erpConfig.forcedOutage,
+    erpRequestTimeoutMs: String(config.erpConfig.requestTimeoutMs),
+    orderProcessConcurrency: String(config.backpressureConfig.orderProcessConcurrency),
+    drainTimeoutSeconds: String(config.backpressureConfig.drainTimeoutSeconds),
     pendingPersistenceRetryAfterSeconds: String(
-      preset.backpressureConfig.pendingPersistenceRetryAfterSeconds,
+      config.backpressureConfig.pendingPersistenceRetryAfterSeconds,
     ),
   };
 }
 
-function configFromDraft(draft: PresetDraft, preset: DemoPresetContract) {
+function policyFromDraft(
+  draft: RuntimePolicyDraft,
+  currentPolicy: PublicRuntimePolicy,
+): PublicRuntimePolicyMutable {
+  const allowedTrafficModes = [
+    ...(draft.allowBuyerSpike ? (["buyer-spike"] as const) : []),
+    ...(draft.allowSteadyArrivalRate ? (["steady-arrival-rate"] as const) : []),
+  ];
+
+  return {
+    isPublicRunBudgetEnforced: draft.isPublicRunBudgetEnforced,
+    publicRunBudget: {
+      windowSeconds: parseInteger(draft.budgetWindowSeconds, 1),
+      perVisitorMaxStarts: parseInteger(draft.perVisitorMaxStarts, 1),
+      globalMaxStarts: parseInteger(draft.globalMaxStarts, 1),
+    },
+    publicCustomDefaults: configFromDraft(draft, currentPolicy.publicCustomDefaults),
+    publicCustomLimits: {
+      maxTotalRequests: parseInteger(draft.maxTotalRequests, 1),
+      maxBuyers: parseInteger(draft.maxBuyers, 1),
+      maxRequestsPerSecond: parseInteger(draft.maxRequestsPerSecond, 1),
+      maxTrafficDurationSeconds: parseInteger(draft.maxTrafficDurationSeconds, 1),
+      maxTrafficStartDelaySeconds: parseInteger(draft.maxTrafficStartDelaySeconds, 0),
+      maxPreAllocatedVus: parseInteger(draft.maxPreAllocatedVus, 1),
+      maxVus: parseInteger(draft.maxPublicVus, 1),
+      maxStartingStock: parseInteger(draft.maxStartingStock, 1),
+      maxErpLatencyMs: parseInteger(draft.maxErpLatencyMs, 0),
+      minErpMaxTps: parseInteger(draft.minErpMaxTps, 1),
+      maxErpMaxTps: parseInteger(draft.maxErpMaxTps, 1),
+      maxErpErrorRate: parseNumber(draft.maxErpErrorRate, 0),
+      allowForcedOutage: draft.allowForcedOutage,
+      allowedTrafficModes,
+    },
+  };
+}
+
+function configFromDraft(draft: RunConfigDraft, base: RunConfigBase): AcceptedRunConfigSnapshot {
   return {
     trafficConfig:
       draft.mode === "buyer-spike"
@@ -977,14 +1433,14 @@ function configFromDraft(draft: PresetDraft, preset: DemoPresetContract) {
             duplicateEachBuyerAttempt: draft.duplicateEachBuyerAttempt,
             startDelaySeconds: parseInteger(draft.startDelaySeconds, 0),
             maxDurationSeconds: parseInteger(draft.maxDurationSeconds, 1),
-            quantityPerAttempt: preset.trafficConfig.quantityPerAttempt,
+            quantityPerAttempt: base.trafficConfig.quantityPerAttempt,
           }
         : {
             mode: "steady-arrival-rate" as const,
             ratePerSecond: parseInteger(draft.ratePerSecond, 1),
             startDelaySeconds: parseInteger(draft.startDelaySeconds, 0),
             durationSeconds: parseInteger(draft.durationSeconds, 1),
-            quantityPerAttempt: preset.trafficConfig.quantityPerAttempt,
+            quantityPerAttempt: base.trafficConfig.quantityPerAttempt,
             k6Vus: {
               preAllocatedVus: parseInteger(draft.preAllocatedVus, 1),
               maxVus: parseInteger(draft.maxVus, 1),
@@ -1003,7 +1459,7 @@ function configFromDraft(draft: PresetDraft, preset: DemoPresetContract) {
       requestTimeoutMs: parseInteger(draft.erpRequestTimeoutMs, 1),
     },
     backpressureConfig: {
-      ...preset.backpressureConfig,
+      ...base.backpressureConfig,
       orderProcessConcurrency: parseInteger(draft.orderProcessConcurrency, 1),
       drainTimeoutSeconds: parseInteger(draft.drainTimeoutSeconds, 1),
       pendingPersistenceRetryAfterSeconds: parseInteger(

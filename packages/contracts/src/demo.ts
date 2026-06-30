@@ -42,6 +42,7 @@ export const adminPresetListPath = "/admin/demo/presets" as const;
 export const adminPresetSavePath = "/admin/demo/presets/save" as const;
 export const adminPresetDuplicatePath = "/admin/demo/presets/duplicate" as const;
 export const adminPresetCopyToCustomPath = "/admin/demo/presets/copy-to-custom" as const;
+export const adminPublicRuntimePolicyPath = "/admin/demo/runtime-policy" as const;
 export const demoRunOperatorModeHeaderName = "x-demo-operator-mode" as const;
 export const publicVisitorIdHeaderName = "x-public-visitor-id" as const;
 
@@ -230,48 +231,63 @@ export const runHistoryListResponseSchema = z
   .strict();
 export type RunHistoryListResponse = z.infer<typeof runHistoryListResponseSchema>;
 
-export const publicRuntimePolicySchema = z
+export const publicRunBudgetSchema = z
+  .object({
+    windowSeconds: positiveIntegerSchema,
+    perVisitorMaxStarts: positiveIntegerSchema,
+    globalMaxStarts: positiveIntegerSchema,
+  })
+  .strict();
+export type PublicRunBudget = z.infer<typeof publicRunBudgetSchema>;
+
+export const publicCustomLimitsSchema = z
+  .object({
+    maxTotalRequests: positiveIntegerSchema,
+    maxBuyers: positiveIntegerSchema,
+    maxRequestsPerSecond: positiveIntegerSchema,
+    maxTrafficDurationSeconds: positiveIntegerSchema,
+    maxTrafficStartDelaySeconds: nonnegativeIntegerSchema,
+    maxPreAllocatedVus: positiveIntegerSchema,
+    maxVus: positiveIntegerSchema,
+    maxStartingStock: positiveIntegerSchema,
+    maxErpLatencyMs: nonnegativeIntegerSchema,
+    minErpMaxTps: positiveIntegerSchema,
+    maxErpMaxTps: positiveIntegerSchema,
+    maxErpErrorRate: z.number().min(0).max(1),
+    allowForcedOutage: z.boolean(),
+    allowedTrafficModes: z
+      .array(z.union([z.literal("buyer-spike"), z.literal("steady-arrival-rate")]))
+      .min(1),
+  })
+  .strict();
+export type PublicCustomLimits = z.infer<typeof publicCustomLimitsSchema>;
+
+export const deploymentHardCapsSchema = z
+  .object({
+    maxBuyers: positiveIntegerSchema,
+    maxTotalRequests: positiveIntegerSchema,
+    maxRequestsPerSecond: positiveIntegerSchema,
+    maxTrafficDurationSeconds: positiveIntegerSchema,
+    maxTrafficStartDelaySeconds: nonnegativeIntegerSchema,
+    maxPreAllocatedVus: positiveIntegerSchema,
+    maxVus: positiveIntegerSchema,
+  })
+  .strict();
+export type DeploymentHardCaps = z.infer<typeof deploymentHardCapsSchema>;
+
+export const publicRuntimePolicyMutableSchema = z
   .object({
     isPublicRunBudgetEnforced: z.boolean(),
-    publicRunBudget: z
-      .object({
-        windowSeconds: positiveIntegerSchema,
-        perVisitorMaxStarts: positiveIntegerSchema,
-        globalMaxStarts: positiveIntegerSchema,
-      })
-      .strict(),
+    publicRunBudget: publicRunBudgetSchema,
     publicCustomDefaults: acceptedRunConfigSnapshotSchema,
-    publicCustomLimits: z
-      .object({
-        maxTotalRequests: positiveIntegerSchema,
-        maxBuyers: positiveIntegerSchema,
-        maxRequestsPerSecond: positiveIntegerSchema,
-        maxTrafficDurationSeconds: positiveIntegerSchema,
-        maxTrafficStartDelaySeconds: nonnegativeIntegerSchema,
-        maxPreAllocatedVus: positiveIntegerSchema,
-        maxVus: positiveIntegerSchema,
-        maxStartingStock: positiveIntegerSchema,
-        maxErpLatencyMs: nonnegativeIntegerSchema,
-        minErpMaxTps: positiveIntegerSchema,
-        maxErpMaxTps: positiveIntegerSchema,
-        maxErpErrorRate: z.number().min(0).max(1),
-        allowForcedOutage: z.boolean(),
-        allowedTrafficModes: z.array(
-          z.union([z.literal("buyer-spike"), z.literal("steady-arrival-rate")]),
-        ),
-      })
-      .strict(),
-    deploymentHardCaps: z
-      .object({
-        maxBuyers: positiveIntegerSchema,
-        maxTotalRequests: positiveIntegerSchema,
-        maxRequestsPerSecond: positiveIntegerSchema,
-        maxTrafficDurationSeconds: positiveIntegerSchema,
-        maxTrafficStartDelaySeconds: nonnegativeIntegerSchema,
-        maxPreAllocatedVus: positiveIntegerSchema,
-        maxVus: positiveIntegerSchema,
-      })
-      .strict(),
+    publicCustomLimits: publicCustomLimitsSchema,
+  })
+  .strict();
+export type PublicRuntimePolicyMutable = z.infer<typeof publicRuntimePolicyMutableSchema>;
+
+export const publicRuntimePolicySchema = publicRuntimePolicyMutableSchema
+  .extend({
+    deploymentHardCaps: deploymentHardCapsSchema,
   })
   .strict();
 export type PublicRuntimePolicy = z.infer<typeof publicRuntimePolicySchema>;
@@ -284,6 +300,26 @@ export const publicRuntimePolicyResponseSchema = z
   })
   .strict();
 export type PublicRuntimePolicyResponse = z.infer<typeof publicRuntimePolicyResponseSchema>;
+
+export const adminPublicRuntimePolicyResponseSchema = publicRuntimePolicyResponseSchema
+  .extend({
+    correlationId: correlationIdSchema,
+    timestamp: isoTimestampSchema,
+  })
+  .strict();
+export type AdminPublicRuntimePolicyResponse = z.infer<
+  typeof adminPublicRuntimePolicyResponseSchema
+>;
+
+export const adminPublicRuntimePolicyUpdateRequestSchema = z
+  .object({
+    policy: publicRuntimePolicyMutableSchema,
+    correlationId: correlationIdSchema.optional(),
+  })
+  .strict();
+export type AdminPublicRuntimePolicyUpdateRequest = z.infer<
+  typeof adminPublicRuntimePolicyUpdateRequestSchema
+>;
 
 export const saveDemoPresetRequestSchema = z
   .object({

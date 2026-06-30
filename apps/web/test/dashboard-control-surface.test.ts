@@ -1,5 +1,6 @@
 import type {
   AdminPresetListResponse,
+  AdminPublicRuntimePolicyResponse,
   DashboardRecoveryResponse,
   DemoPresetContract,
   ErpChaosStatus,
@@ -46,6 +47,7 @@ describe("dashboard control surface", () => {
     expect(markup).toContain("Sign In");
     expect(markup).not.toContain("Reset Demo");
     expect(markup).not.toContain("Start Admin Run");
+    expect(markup).not.toContain("Save Public Policy");
   });
 
   it("renders protected admin controls and disables starts while a run is draining", () => {
@@ -56,10 +58,14 @@ describe("dashboard control surface", () => {
         initialErpChaos: available(erpChaosFixture()),
         initialPresets: available(adminPresetListFixture()),
         initialRecovery: available(recoveryFixture(runFixture("draining"))),
+        initialRuntimePolicy: available(adminRuntimePolicyFixture()),
       }),
     );
 
     expect(markup).toContain("Inspection and starts");
+    expect(markup).toContain("Public policy");
+    expect(markup).toContain("Save Public Policy");
+    expect(markup).toContain("Hard max buyers");
     expect(markup).toContain("Start Admin Run");
     expect(markup).toContain("Save Preset");
     expect(markup).toContain("Copy to Custom");
@@ -141,6 +147,14 @@ function publicRuntimePolicyFixture(): PublicRuntimePolicyResponse {
       },
     },
     updatedAt: "2026-06-20T00:00:10.000Z",
+  };
+}
+
+function adminRuntimePolicyFixture(): AdminPublicRuntimePolicyResponse {
+  return {
+    ...publicRuntimePolicyFixture(),
+    correlationId: "corr-admin-policy",
+    timestamp: "2026-06-20T00:00:10.000Z",
   };
 }
 

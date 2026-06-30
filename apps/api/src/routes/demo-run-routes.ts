@@ -3,6 +3,8 @@ import {
   adminPresetDuplicatePath,
   adminPresetListPath,
   adminPresetSavePath,
+  adminPublicRuntimePolicyPath,
+  adminPublicRuntimePolicyUpdateRequestSchema,
   controlServiceTokenHeaderName,
   copyDemoPresetToCustomRequestSchema,
   demoRunOperatorModeHeaderName,
@@ -40,6 +42,45 @@ export function registerDemoRunRoutes(
 
   app.get(publicRuntimePolicyPath, async (_request, reply) => {
     return reply.status(200).send(await options.demoRunService.getPublicRuntimePolicy());
+  });
+
+  app.get(adminPublicRuntimePolicyPath, async (request, reply) => {
+    const unauthorized = requireControlServiceToken(request, reply, options.controlServiceToken);
+    if (unauthorized) {
+      return unauthorized;
+    }
+
+    try {
+      return reply
+        .status(200)
+        .send(await options.demoRunService.getAdminPublicRuntimePolicy(request.correlationId));
+    } catch (error) {
+      throw mapDemoRunError(error);
+    }
+  });
+
+  app.put(adminPublicRuntimePolicyPath, async (request, reply) => {
+    const unauthorized = requireControlServiceToken(request, reply, options.controlServiceToken);
+    if (unauthorized) {
+      return unauthorized;
+    }
+
+    const parsedRequest = adminPublicRuntimePolicyUpdateRequestSchema.parse(request.body);
+    const correlationId = normalizeCorrelationId(
+      parsedRequest.correlationId ?? request.correlationId,
+    );
+    request.correlationId = correlationId;
+    reply.header(correlationIdHeaderName, correlationId);
+
+    try {
+      return reply
+        .status(200)
+        .send(
+          await options.demoRunService.updateAdminPublicRuntimePolicy(parsedRequest, correlationId),
+        );
+    } catch (error) {
+      throw mapDemoRunError(error);
+    }
   });
 
   app.get(adminPresetListPath, async (request, reply) => {

@@ -3,6 +3,9 @@ import {
   adminDeleteRunHistoryRequestSchema,
   adminDeleteRunHistoryResponseSchema,
   adminDemoResetResponseSchema,
+  adminPublicRuntimePolicyPath,
+  adminPublicRuntimePolicyResponseSchema,
+  adminPublicRuntimePolicyUpdateRequestSchema,
   buyRequestSchema,
   buyResponseSchema,
   controlServiceTokenHeaderName,
@@ -34,6 +37,7 @@ import {
   orderProcessQueueName,
   orderStatusValues,
   publicPresetListPath,
+  publicRuntimePolicyMutableSchema,
   publicRuntimePolicyPath,
   publicRuntimePolicySchema,
   publicVisitorIdHeaderName,
@@ -611,6 +615,7 @@ describe("public runtime policy contract", () => {
   it("defines demo-run and load-execution API boundaries", () => {
     expect(publicPresetListPath).toBe("/demo/presets/public");
     expect(publicRuntimePolicyPath).toBe("/demo/runtime-policy");
+    expect(adminPublicRuntimePolicyPath).toBe("/admin/demo/runtime-policy");
     expect(startDemoRunPath).toBe("/demo/runs/start");
     expect(runHistoryPath).toBe("/demo/runs/history");
     expect(demoRunOperatorModeHeaderName).toBe("x-demo-operator-mode");
@@ -785,6 +790,72 @@ describe("public runtime policy contract", () => {
     });
 
     expect(policy.publicCustomLimits.maxStartingStock).toBe(1000);
+  });
+
+  it("validates protected public runtime policy reads and update requests", () => {
+    const policy = publicRuntimePolicySchema.parse({
+      isPublicRunBudgetEnforced: true,
+      publicRunBudget: {
+        windowSeconds: 120,
+        perVisitorMaxStarts: 1,
+        globalMaxStarts: 3,
+      },
+      publicCustomDefaults: acceptedRunSnapshot(),
+      publicCustomLimits: {
+        maxTotalRequests: 1000,
+        maxBuyers: 1000,
+        maxRequestsPerSecond: 100,
+        maxTrafficDurationSeconds: 30,
+        maxTrafficStartDelaySeconds: 5,
+        maxPreAllocatedVus: 100,
+        maxVus: 200,
+        maxStartingStock: 500,
+        maxErpLatencyMs: 500,
+        minErpMaxTps: 1,
+        maxErpMaxTps: 50,
+        maxErpErrorRate: 0.1,
+        allowForcedOutage: false,
+        allowedTrafficModes: ["buyer-spike"],
+      },
+      deploymentHardCaps: {
+        maxBuyers: 100_000,
+        maxTotalRequests: 100_000,
+        maxRequestsPerSecond: 10_000,
+        maxTrafficDurationSeconds: 300,
+        maxTrafficStartDelaySeconds: 30,
+        maxPreAllocatedVus: 10_000,
+        maxVus: 10_000,
+      },
+    });
+    const mutable = publicRuntimePolicyMutableSchema.parse({
+      isPublicRunBudgetEnforced: policy.isPublicRunBudgetEnforced,
+      publicRunBudget: policy.publicRunBudget,
+      publicCustomDefaults: policy.publicCustomDefaults,
+      publicCustomLimits: policy.publicCustomLimits,
+    });
+    const update = adminPublicRuntimePolicyUpdateRequestSchema.parse({
+      policy: mutable,
+      correlationId,
+    });
+    const response = adminPublicRuntimePolicyResponseSchema.parse({
+      id: "active",
+      policy,
+      updatedAt: timestamp,
+      correlationId,
+      timestamp,
+    });
+
+    expect(update.policy).not.toHaveProperty("deploymentHardCaps");
+    expect(update.correlationId).toBe(correlationId);
+    expect(response.policy.deploymentHardCaps.maxBuyers).toBe(100_000);
+    expect(() =>
+      adminPublicRuntimePolicyUpdateRequestSchema.parse({
+        policy: {
+          ...mutable,
+          publicCustomLimits: { ...mutable.publicCustomLimits, allowedTrafficModes: [] },
+        },
+      }),
+    ).toThrow();
   });
 
   it("validates load-orchestrator start and traffic completion payloads", () => {
