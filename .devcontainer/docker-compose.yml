@@ -19,6 +19,7 @@ services:
     command: sleep infinity
     init: true
     privileged: true
+    working_dir: /workspaces/checkout-surge
     volumes:
       - .:/workspaces/checkout-surge:cached
       - ../checkout-surge/.git:/workspaces/checkout-surge-main/.git
@@ -39,6 +40,7 @@ services:
     build:
       target: workspace
     command: pnpm --filter api dev
+    working_dir: /workspaces/checkout-surge
     environment:
       NODE_ENV: development
     volumes: *workspace-volumes
@@ -47,6 +49,7 @@ services:
     build:
       target: workspace
     command: pnpm --filter worker dev
+    working_dir: /workspaces/checkout-surge
     environment:
       NODE_ENV: development
     volumes: *workspace-volumes
@@ -55,12 +58,14 @@ services:
     build:
       target: workspace
     command: pnpm --filter mock-erp dev
+    working_dir: /workspaces/checkout-surge
     environment:
       NODE_ENV: development
     volumes: *workspace-volumes
 
   load-orchestrator:
     command: pnpm --filter load-orchestrator dev
+    working_dir: /workspaces/checkout-surge
     environment:
       NODE_ENV: development
     volumes: *workspace-volumes
@@ -69,6 +74,7 @@ services:
     build:
       target: workspace
     command: pnpm --filter web dev
+    working_dir: /workspaces/checkout-surge
     environment:
       NODE_ENV: development
     volumes: *workspace-volumes

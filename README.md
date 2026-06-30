@@ -4,7 +4,7 @@
 
 Checkout-Surge is a realistic limited-inventory checkout simulation for surge traffic. The implemented Node.js track uses Redis atomic reservations, BullMQ workers, durable PostgreSQL records, and observable backpressure to show how a checkout system can absorb request bursts without overselling or overwhelming a slow downstream business system. The same pressure pattern appears in ticket launches, product drops, presales, and other scarcity-driven purchase flows. The mock ERP gives the downstream dependency a concrete back-office shape, but the boundary applies equally to payment, risk, warehouse, fulfillment, tax, accounting, supplier APIs, or other fragile business systems.
 
-The current implementation covers the core simulation through Phase 9 of the roadmap: inventory hot path, async order processing, mock ERP resilience, realtime dashboard recovery, k6 load orchestration, simulated notifications, protected admin controls, demo reset/cleanup tools, admin preset management, and the containerized local reference runtime. Final benchmark lifecycle ownership remains later roadmap work.
+The current implementation covers the core local simulation through Phase 10.5 of the roadmap: inventory hot path, async order processing, mock ERP resilience, realtime dashboard recovery, k6 load orchestration, simulated notifications, API-owned benchmark finalization, immutable Run History list/detail reads, public runtime policy management, protected admin controls, demo reset/cleanup tools, admin preset management, and the containerized local reference runtime. Hosted deployment readiness and the optional Go comparison track remain later roadmap work.
 
 The buyers, mock ERP downstream dependency, and post-confirmation notifications are simulated because this is a systems demonstration, not a commerce business. The architecture proof is real: the project must measure whether the services protect inventory consistency, keep the API responsive, and make delayed downstream processing visible.
 
@@ -68,9 +68,10 @@ For the deeper design rationale and failure modes, see [docs/architecture.md](do
 - Mock ERP / downstream latency, TPS, error-rate, and outage controls
 - Retry and circuit-breaker behavior around downstream calls
 - Real-time live spectator view for active-run operational signals
-- k6-based load orchestration with traffic-completion artifact capture
+- k6-based load orchestration with API-owned business-boundary finalization
+- Public Run History summaries and sanitized detail views for terminal runs
 - Simulated post-confirmation notification recording
-- Public demonstration presets plus protected admin preset management, reset, recovery, and cleanup controls
+- Public demonstration presets plus protected admin preset, runtime policy, reset, recovery, and cleanup controls
 
 ## Prerequisites
 

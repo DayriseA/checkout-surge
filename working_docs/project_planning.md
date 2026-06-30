@@ -940,18 +940,14 @@ Subtasks:
 
 Completion summary: Task 10.5.6 now exposes public-safe detail reads for terminal Run History entries through shared detail contracts and `GET /demo/runs/history/:runId`. The API detail read is summary-backed, returns a stable `run_history_detail_not_found` response for missing, deleted, or non-summary-backed runs, and includes the immutable summary plus the accepted run snapshot and bounded sanitized order, ERP-attempt, notification, and event-name timeline projections. Raw event payloads, reservation tokens, idempotency keys, private headers, recipient placeholders, ERP error messages, service tokens, and operational mutation controls are not exposed. The web `/run-history/[runId]` page renders the detail surface and summary rows now link to it while `/watch` remains current-run focused. Contract, API route, DB-backed service, and web tests cover the detail shape, not-found/deleted-summary behavior, list-to-detail navigation, and private-field exclusion.
 
-### ⬜ Task 10.5.7 - Add final alignment verification
+### ✅ Task 10.5.7 - Add final alignment verification
 
 Subtasks:
 
-- Run the relevant non-runtime checks after remediation: `pnpm build`, `pnpm type-check`, `pnpm type-check:test`, `pnpm lint`, `pnpm format:check`, `pnpm test:unit`, `pnpm test:api`, and `pnpm test:integration` where infrastructure is available.
-- Run `pnpm runtime:smoke` and `pnpm runtime:smoke:load` when Docker runtime verification is available.
-- Record any skipped checks with concrete reasons.
-- Before handing off Phase 10.5, perform a docs-vs-implementation scan for `docs/*.md`, README, command references, package scripts, and runtime scripts. Do not treat unimplemented documented target behavior as disposable drift. If a documented target is still intended and is not covered by a later task, add a Task 10.5.x in this Phase. Any remaining documented target behavior must be implemented, or documented as a spec change with rationale.
-
-### Phase 10.5 checkpoint
-
-At the end of this phase, Phases 1-10 remain completed historical implementation milestones, and the locally delivered product surface, Run History list/detail reads, public runtime policy management, public/admin controls, browser realtime configuration, command docs, and reference docs are aligned well enough to proceed into hosted deployment readiness.
+- ✅ Run the relevant non-runtime checks after remediation: `pnpm build`, `pnpm type-check`, `pnpm type-check:test`, `pnpm lint`, `pnpm format:check`, `pnpm test:unit`, `pnpm test:api`, and `pnpm test:integration` where infrastructure is available.
+- ✅ Run `pnpm runtime:smoke` and `pnpm runtime:smoke:load` when Docker runtime verification is available.
+- ✅ Record, if any, skipped checks with concrete reasons. -> None skipped.
+- ✅ Before handing off Phase 10.5, perform a docs-vs-implementation scan for `docs/*.md`, README, command references, package scripts, and runtime scripts. Do not treat unimplemented documented target behavior as disposable drift. If a documented target is still intended and is not covered by a later task, add a Task 10.5.x in this Phase. Any remaining documented target behavior must be implemented, or documented as a spec change with rationale.
 
 ---
 

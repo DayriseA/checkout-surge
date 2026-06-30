@@ -6,7 +6,7 @@ This document describes the Redis inventory hot path: key structure, the invento
 
 Inventory keys are scoped per sale offer:
 
-- `inventory:{saleOfferId}:state` stores the live inventory counters and authoritative inventory scope. New catalog state carries `inventoryScope: catalog`; generated-run state carries `inventoryScope: generated_run`, its `runId`, and `runSaleStatus` (`accepting` or `closed`). Legacy seeded state without `inventoryScope` is treated as catalog state because generated-run lifecycle seeding has not shipped yet.
+- `inventory:{saleOfferId}:state` stores the live inventory counters and authoritative inventory scope. Catalog state carries `inventoryScope: catalog`; generated-run state carries `inventoryScope: generated_run`, its `runId`, and `runSaleStatus` (`accepting` or `closed`). Legacy or test inventory state without `inventoryScope` is treated as catalog state for backward compatibility.
 - `inventory:{saleOfferId}:reservations` stores reservation hold records by reservation ID.
 - `inventory:{saleOfferId}:reservation-expirations` stores reservation IDs scored by hold expiry time.
 - `inventory:{saleOfferId}:pending-persistence` stores reservation IDs that have a Redis hold but still need durable PostgreSQL reconciliation.
