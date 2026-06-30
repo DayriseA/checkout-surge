@@ -15,7 +15,10 @@ import {
   publicPresetListResponseSchema,
   publicRuntimePolicyPath,
   publicRuntimePolicyResponseSchema,
+  type RunHistoryDetailResponse,
   type RunHistoryListResponse,
+  runHistoryDetailPath,
+  runHistoryDetailResponseSchema,
   runHistoryListResponseSchema,
   runHistoryPath,
 } from "@checkout-surge/contracts";
@@ -147,4 +150,10 @@ export async function getRunHistoryPage(
     `${apiBaseUrl()}${runHistoryPath}?${query.toString()}`,
     runHistoryListResponseSchema,
   );
+}
+
+export async function getRunHistoryDetail(
+  runId: string,
+): Promise<BackendRead<RunHistoryDetailResponse>> {
+  return readJson(`${apiBaseUrl()}${runHistoryDetailPath(runId)}`, runHistoryDetailResponseSchema);
 }

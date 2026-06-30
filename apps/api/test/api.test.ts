@@ -40,7 +40,10 @@ import {
   type QueueStatus,
   queueStatusSchema,
   type ReservationSummary,
+  type RunHistoryDetailResponse,
   type RunHistoryListResponse,
+  runHistoryDetailPath,
+  runHistoryDetailResponseSchema,
   runHistoryListResponseSchema,
   runHistoryPath,
   startDemoRunPath,
@@ -495,6 +498,94 @@ function runHistoryListResponseFixture(): RunHistoryListResponse {
   };
 }
 
+function runHistoryDetailResponseFixture(): RunHistoryDetailResponse {
+  const summary = runHistoryListResponseFixture().summaries[0];
+  if (!summary) {
+    throw new Error("Expected run history summary fixture.");
+  }
+
+  return {
+    summary,
+    run: {
+      ...demoRunSnapshotFixture(),
+      status: "completed",
+      trafficStatus: "succeeded",
+      trafficEndedAt: "2026-06-20T00:00:10.000Z",
+      finalizedAt: "2026-06-20T00:00:10.000Z",
+    },
+    orders: {
+      totalCount: 1,
+      limit: 20,
+      truncated: false,
+      records: [
+        {
+          orderId: "99999999-9999-4999-8999-999999999991",
+          publicOrderId: "ord_history_1",
+          saleOfferId: fixtureIds.saleOffer,
+          correlationId: fixtureCorrelationId,
+          quantity: 1,
+          status: "confirmed",
+          queuedAt: "2026-06-20T00:00:02.000Z",
+          processingAt: "2026-06-20T00:00:03.000Z",
+          confirmedAt: "2026-06-20T00:00:06.000Z",
+        },
+      ],
+    },
+    erpAttempts: {
+      totalCount: 1,
+      limit: 20,
+      truncated: false,
+      records: [
+        {
+          attemptId: "99999999-9999-4999-8999-999999999992",
+          orderId: "99999999-9999-4999-8999-999999999991",
+          publicOrderId: "ord_history_1",
+          correlationId: fixtureCorrelationId,
+          attemptNumber: 1,
+          status: "succeeded",
+          httpStatus: 200,
+          latencyMs: 42,
+          startedAt: "2026-06-20T00:00:04.000Z",
+          finishedAt: "2026-06-20T00:00:05.000Z",
+        },
+      ],
+    },
+    notifications: {
+      totalCount: 1,
+      limit: 20,
+      truncated: false,
+      records: [
+        {
+          notificationId: "99999999-9999-4999-8999-999999999993",
+          orderId: "99999999-9999-4999-8999-999999999991",
+          publicOrderId: "ord_history_1",
+          channel: "email",
+          status: "recorded",
+          recordedAt: "2026-06-20T00:00:07.000Z",
+        },
+      ],
+    },
+    eventTimeline: {
+      totalCount: 1,
+      limit: 20,
+      truncated: false,
+      records: [
+        {
+          eventId: "99999999-9999-4999-8999-999999999994",
+          eventName: "order.confirmed",
+          source: "worker",
+          saleOfferId: fixtureIds.saleOffer,
+          correlationId: fixtureCorrelationId,
+          orderId: "99999999-9999-4999-8999-999999999991",
+          publicOrderId: "ord_history_1",
+          occurredAt: "2026-06-20T00:00:06.000Z",
+        },
+      ],
+    },
+    timestamp: "2026-06-20T00:00:10.000Z",
+  };
+}
+
 function runHistoryControllerFixture(): RunHistoryController {
   return {
     list: async (input) => ({
@@ -502,6 +593,7 @@ function runHistoryControllerFixture(): RunHistoryController {
       page: input.page,
       pageSize: input.pageSize,
     }),
+    detail: async (runId) => (runId === fixtureIds.run ? runHistoryDetailResponseFixture() : null),
     delete: async (_input, correlationId) => ({
       deletedSummaryCount: 1,
       deletedAt: "2026-06-20T00:00:10.000Z",
@@ -1037,6 +1129,42 @@ describe("API gateway routes", () => {
     expect(payload.summaries[0]).not.toHaveProperty("reservationToken");
     expect(payload.summaries[0]).not.toHaveProperty("idempotencyKey");
     expect(list).toHaveBeenCalledWith({ page: 2, pageSize: 5 });
+  });
+
+  it("returns public-safe run history detail and stable not found responses", async () => {
+    const detail = vi.fn(runHistoryControllerFixture().detail);
+    const server = await trackedServer({
+      persistence: new AcceptingPersistence(),
+      runHistoryService: {
+        ...runHistoryControllerFixture(),
+        detail,
+      },
+    });
+
+    const response = await server.inject({
+      method: "GET",
+      url: runHistoryDetailPath(fixtureIds.run),
+    });
+    const missing = await server.inject({
+      method: "GET",
+      url: runHistoryDetailPath("ffffffff-ffff-4fff-8fff-ffffffffffff"),
+    });
+    const payload = runHistoryDetailResponseSchema.parse(response.json());
+    const missingPayload = errorPayloadSchema.parse(missing.json());
+
+    expect(response.statusCode).toBe(200);
+    expect(payload.summary.runId).toBe(fixtureIds.run);
+    expect(payload.orders.records[0]?.publicOrderId).toBe("ord_history_1");
+    expect(payload.orders.records[0]).not.toHaveProperty("reservationToken");
+    expect(payload.orders.records[0]).not.toHaveProperty("idempotencyKey");
+    expect(payload.eventTimeline.records[0]).not.toHaveProperty("payload");
+    expect(missing.statusCode).toBe(404);
+    expect(missingPayload).toMatchObject({
+      code: "run_history_detail_not_found",
+      details: { runId: "ffffffff-ffff-4fff-8fff-ffffffffffff" },
+    });
+    expect(detail).toHaveBeenCalledWith(fixtureIds.run);
+    expect(detail).toHaveBeenCalledWith("ffffffff-ffff-4fff-8fff-ffffffffffff");
   });
 
   it("protects run history deletion and requires delete-all confirmation", async () => {

@@ -3,8 +3,16 @@ import { fileURLToPath } from "node:url";
 import {
   createDatabaseConnection,
   demoPresets,
+  demoRunSaleContexts,
   demoRunSummaries,
   demoRuns,
+  erpAttempts,
+  orderEvents,
+  orders,
+  products,
+  reservations,
+  saleOffers,
+  simulatedNotifications,
 } from "@checkout-surge/db";
 import { resetTestDatabase } from "@checkout-surge/db/testing";
 import { inArray } from "drizzle-orm";
@@ -16,12 +24,20 @@ const dbPackageRoot = path.resolve(packageRoot, "../../packages/db");
 const migrationsFolder = path.join(dbPackageRoot, "drizzle");
 
 const ids = {
+  product: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
   preset: "33333333-3333-4333-8333-333333333331",
   olderRun: "55555555-5555-4555-8555-555555555551",
   newerRun: "55555555-5555-4555-8555-555555555552",
+  noSummaryRun: "55555555-5555-4555-8555-555555555553",
   olderSummary: "77777777-7777-4777-8777-777777777771",
   newerSummary: "77777777-7777-4777-8777-777777777772",
   saleOffer: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+  reservation: "99999999-9999-4999-8999-999999999991",
+  order: "99999999-9999-4999-8999-999999999992",
+  erpAttempt: "99999999-9999-4999-8999-999999999993",
+  notification: "99999999-9999-4999-8999-999999999994",
+  orderQueuedEvent: "99999999-9999-4999-8999-999999999995",
+  orderConfirmedEvent: "99999999-9999-4999-8999-999999999996",
 } as const;
 
 describe("run history service", () => {
@@ -90,6 +106,94 @@ describe("run history service", () => {
     expect(secondPage.summaries[0]?.runId).toBe(ids.olderRun);
   });
 
+  it("returns public-safe detail for a summary-backed terminal run", async () => {
+    const db = requireConnection(connection).db;
+    const service = createService(connection);
+    await seedHistory(db);
+    await seedRunDetailRecords(db);
+
+    const detail = await service.detail(ids.newerRun);
+
+    expect(detail).toMatchObject({
+      summary: {
+        runId: ids.newerRun,
+        status: "failed",
+      },
+      run: {
+        runId: ids.newerRun,
+        status: "failed",
+        trafficStatus: "failed",
+        saleOfferId: ids.saleOffer,
+      },
+      orders: {
+        totalCount: 1,
+        truncated: false,
+        records: [
+          {
+            orderId: ids.order,
+            publicOrderId: "ord_history_1",
+            status: "confirmed",
+          },
+        ],
+      },
+      erpAttempts: {
+        totalCount: 1,
+        records: [
+          {
+            attemptId: ids.erpAttempt,
+            publicOrderId: "ord_history_1",
+            status: "succeeded",
+            httpStatus: 200,
+          },
+        ],
+      },
+      notifications: {
+        totalCount: 1,
+        records: [
+          {
+            notificationId: ids.notification,
+            publicOrderId: "ord_history_1",
+            channel: "email",
+          },
+        ],
+      },
+      eventTimeline: {
+        totalCount: 2,
+      },
+    });
+    expect(detail?.eventTimeline.records.map((event) => event.eventName)).toEqual([
+      "order.confirmed",
+      "order.queued",
+    ]);
+
+    const serialized = JSON.stringify(detail);
+    expect(serialized).not.toContain("reservation-token-private");
+    expect(serialized).not.toContain("idempotency-key-private");
+    expect(serialized).not.toContain("raw-private-header");
+    expect(serialized).not.toContain("private-upstream-response");
+    expect(serialized).not.toContain("private-recipient-placeholder");
+    expect(serialized).not.toContain("x-control-service-token");
+    expect(serialized).not.toContain("payload");
+  });
+
+  it("returns null for missing or non-summary-backed runs", async () => {
+    const db = requireConnection(connection).db;
+    const service = createService(connection);
+    await seedHistory(db);
+    await db.insert(demoRuns).values(
+      runFixture({
+        id: ids.noSummaryRun,
+        presetName: "No Summary Run",
+        status: "completed",
+        failureReason: null,
+        finalizedAt: new Date("2026-06-20T00:00:08.000Z"),
+      }),
+    );
+
+    await expect(service.detail(ids.noSummaryRun)).resolves.toBeNull();
+    await expect(service.detail("ffffffff-ffff-4fff-8fff-ffffffffffff")).resolves.toBeNull();
+  });
+
   it("deletes selected summaries without deleting demo runs", async () => {
     const db = requireConnection(connection).db;
     const service = createService(connection);
@@ -110,6 +214,7 @@ describe("run history service", () => {
     expect(history.totalCount).toBe(1);
     expect(history.summaries[0]?.runId).toBe(ids.newerRun);
     expect(runs.map((run) => run.id).sort()).toEqual([ids.newerRun, ids.olderRun].sort());
+    await expect(service.detail(ids.olderRun)).resolves.toBeNull();
   });
 
   it("deletes all summaries only through the explicit delete-all command", async () => {
@@ -140,6 +245,27 @@ function createService(
 }
 
 async function seedHistory(db: ReturnType<typeof createDatabaseConnection>["db"]): Promise<void> {
+  await db.insert(products).values({
+    id: ids.product,
+    sku: "HISTORY-TEST-SKU",
+    slug: "history-test-product",
+    name: "History Test Product",
+    isActive: true,
+    createdAt: new Date("2026-06-20T00:00:00.000Z"),
+    updatedAt: new Date("2026-06-20T00:00:00.000Z"),
+  });
+  await db.insert(saleOffers).values({
+    id: ids.saleOffer,
+    productId: ids.product,
+    name: "History Test Sale Offer",
+    allocatedStock: 5,
+    saleStartsAt: new Date("2026-06-20T00:00:00.000Z"),
+    saleEndsAt: new Date("2026-06-21T00:00:00.000Z"),
+    isActive: true,
+    purpose: "generated_run",
+    createdAt: new Date("2026-06-20T00:00:00.000Z"),
+    updatedAt: new Date("2026-06-20T00:00:00.000Z"),
+  });
   await db.insert(demoPresets).values({
     id: ids.preset,
     slug: "history-preset",
@@ -170,6 +296,7 @@ async function seedHistory(db: ReturnType<typeof createDatabaseConnection>["db"]
       status: "failed",
       failureReason: "traffic_delivery_major_shortfall",
       finalizedAt: new Date("2026-06-20T00:00:09.000Z"),
+      saleOfferId: ids.saleOffer,
     }),
   ]);
   await db.insert(demoRunSummaries).values([
@@ -194,6 +321,106 @@ async function seedHistory(db: ReturnType<typeof createDatabaseConnection>["db"]
       trafficDeliveryStatus: "failed",
     }),
   ]);
+  await db.insert(demoRunSaleContexts).values({
+    runId: ids.newerRun,
+    saleOfferId: ids.saleOffer,
+    createdAt: new Date("2026-06-20T00:00:00.000Z"),
+    updatedAt: new Date("2026-06-20T00:00:00.000Z"),
+  });
+}
+
+async function seedRunDetailRecords(
+  db: ReturnType<typeof createDatabaseConnection>["db"],
+): Promise<void> {
+  await db.insert(reservations).values({
+    id: ids.reservation,
+    saleOfferId: ids.saleOffer,
+    correlationId: "corr-history-detail",
+    runId: ids.newerRun,
+    quantity: 1,
+    status: "secured",
+    reservationToken: "reservation-token-private",
+    expiresAt: new Date("2026-06-20T00:15:02.000Z"),
+    securedAt: new Date("2026-06-20T00:00:02.000Z"),
+    createdAt: new Date("2026-06-20T00:00:02.000Z"),
+    updatedAt: new Date("2026-06-20T00:00:02.000Z"),
+  });
+  await db.insert(orders).values({
+    id: ids.order,
+    publicOrderId: "ord_history_1",
+    saleOfferId: ids.saleOffer,
+    reservationId: ids.reservation,
+    correlationId: "corr-history-detail",
+    runId: ids.newerRun,
+    quantity: 1,
+    status: "confirmed",
+    queuedAt: new Date("2026-06-20T00:00:02.000Z"),
+    processingAt: new Date("2026-06-20T00:00:03.000Z"),
+    confirmedAt: new Date("2026-06-20T00:00:07.000Z"),
+    createdAt: new Date("2026-06-20T00:00:02.000Z"),
+    updatedAt: new Date("2026-06-20T00:00:07.000Z"),
+  });
+  await db.insert(erpAttempts).values({
+    id: ids.erpAttempt,
+    orderId: ids.order,
+    correlationId: "corr-history-detail",
+    runId: ids.newerRun,
+    attemptNumber: 1,
+    status: "succeeded",
+    httpStatus: 200,
+    errorMessage: "private-upstream-response",
+    latencyMs: 42,
+    startedAt: new Date("2026-06-20T00:00:04.000Z"),
+    finishedAt: new Date("2026-06-20T00:00:05.000Z"),
+    createdAt: new Date("2026-06-20T00:00:05.000Z"),
+  });
+  await db.insert(simulatedNotifications).values({
+    id: ids.notification,
+    orderId: ids.order,
+    saleOfferId: ids.saleOffer,
+    correlationId: "corr-history-detail",
+    runId: ids.newerRun,
+    channel: "email",
+    recipientPlaceholder: "private-recipient-placeholder",
+    status: "recorded",
+    recordedAt: new Date("2026-06-20T00:00:08.000Z"),
+    createdAt: new Date("2026-06-20T00:00:08.000Z"),
+  });
+  await db.insert(orderEvents).values([
+    {
+      id: ids.orderQueuedEvent,
+      orderId: ids.order,
+      reservationId: ids.reservation,
+      saleOfferId: ids.saleOffer,
+      correlationId: "corr-history-detail",
+      runId: ids.newerRun,
+      eventName: "order.queued",
+      payload: {
+        reservationToken: "reservation-token-private",
+        idempotencyKey: "idempotency-key-private",
+        privateHeaders: { "raw-private-header": "secret" },
+        "x-control-service-token": "private-control-token",
+      },
+      source: "api",
+      occurredAt: new Date("2026-06-20T00:00:02.000Z"),
+      createdAt: new Date("2026-06-20T00:00:02.000Z"),
+    },
+    {
+      id: ids.orderConfirmedEvent,
+      orderId: ids.order,
+      reservationId: ids.reservation,
+      saleOfferId: ids.saleOffer,
+      correlationId: "corr-history-detail",
+      runId: ids.newerRun,
+      eventName: "order.confirmed",
+      payload: {
+        rawPrivatePayload: true,
+      },
+      source: "worker",
+      occurredAt: new Date("2026-06-20T00:00:07.000Z"),
+      createdAt: new Date("2026-06-20T00:00:07.000Z"),
+    },
+  ]);
 }
 
 function runFixture(input: {
@@ -202,6 +429,7 @@ function runFixture(input: {
   status: "completed" | "failed";
   failureReason: string | null;
   finalizedAt: Date;
+  saleOfferId?: string;
 }): typeof demoRuns.$inferInsert {
   return {
     id: input.id,
@@ -211,6 +439,7 @@ function runFixture(input: {
     status: input.status,
     trafficStatus: input.status === "completed" ? "succeeded" : "failed",
     configSnapshot: configSnapshotFixture(),
+    ...(input.saleOfferId ? { saleOfferId: input.saleOfferId } : {}),
     startedAt: new Date("2026-06-20T00:00:00.000Z"),
     trafficStartedAt: new Date("2026-06-20T00:00:01.000Z"),
     trafficEndedAt: new Date("2026-06-20T00:00:04.000Z"),

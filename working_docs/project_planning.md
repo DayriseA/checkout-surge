@@ -928,15 +928,17 @@ Subtasks:
 
 Completion summary: Task 10.5.5 now exposes protected admin read/update contracts for the active public runtime policy at the API and dashboard proxy boundaries. The API persists mutable public budget, public custom defaults, and public custom limits to the singleton `public_runtime_policies` row while preserving deployment hard caps as read-only policy data and rejecting updates whose limits/defaults exceed those caps. The authenticated `/admin` console can inspect, edit, save, and refresh the active policy through a same-origin protected proxy without exposing the control service token. Public custom starts now pick up saved default/limit changes immediately from PostgreSQL, public Redis budget enforcement uses the updated policy values, and admin starts continue to bypass public budgets while still using the existing hard-cap and active/draining run gating. Contract, API/service, Redis-budget, and web tests cover protected authorization, persistence, cap rejection, budget enforcement, updated defaults, admin budget bypass, and anonymous dashboard rejection.
 
-### ⬜ Task 10.5.6 - Add public-safe Run History detail reads
+### ✅ Task 10.5.6 - Add public-safe Run History detail reads
 
 Subtasks:
 
-- Add a shared public Run History detail contract and route for an individual terminal run, keyed by run ID, with a sanitized DTO that excludes reservation tokens, idempotency keys, raw private payloads, private headers, internal service tokens, and unsafe operational controls.
-- Back the API detail read with immutable `demo_run_summaries` and any safe supporting run/order/event projections needed to explain the run beyond the summary row; return a stable not-found response for missing or non-summary-backed runs.
-- Add a web detail surface, such as `/run-history/[runId]`, and link to it from the summary list without making the live `/watch` route responsible for arbitrary completed-run history.
-- Keep admin history deletion separate from public detail reads; deleted summaries should no longer appear in lists and their detail reads should return not found.
-- Add contract, API/service, and web tests for sanitized detail shape, not-found behavior, list-to-detail navigation, deleted-summary behavior, and absence of private fields.
+- ✅ Add a shared public Run History detail contract and route for an individual terminal run, keyed by run ID, with a sanitized DTO that excludes reservation tokens, idempotency keys, raw private payloads, private headers, internal service tokens, and unsafe operational controls.
+- ✅ Back the API detail read with immutable `demo_run_summaries` and any safe supporting run/order/event projections needed to explain the run beyond the summary row; return a stable not-found response for missing or non-summary-backed runs.
+- ✅ Add a web detail surface, such as `/run-history/[runId]`, and link to it from the summary list without making the live `/watch` route responsible for arbitrary completed-run history.
+- ✅ Keep admin history deletion separate from public detail reads; deleted summaries should no longer appear in lists and their detail reads should return not found.
+- ✅ Add contract, API/service, and web tests for sanitized detail shape, not-found behavior, list-to-detail navigation, deleted-summary behavior, and absence of private fields.
+
+Completion summary: Task 10.5.6 now exposes public-safe detail reads for terminal Run History entries through shared detail contracts and `GET /demo/runs/history/:runId`. The API detail read is summary-backed, returns a stable `run_history_detail_not_found` response for missing, deleted, or non-summary-backed runs, and includes the immutable summary plus the accepted run snapshot and bounded sanitized order, ERP-attempt, notification, and event-name timeline projections. Raw event payloads, reservation tokens, idempotency keys, private headers, recipient placeholders, ERP error messages, service tokens, and operational mutation controls are not exposed. The web `/run-history/[runId]` page renders the detail surface and summary rows now link to it while `/watch` remains current-run focused. Contract, API route, DB-backed service, and web tests cover the detail shape, not-found/deleted-summary behavior, list-to-detail navigation, and private-field exclusion.
 
 ### ⬜ Task 10.5.7 - Add final alignment verification
 

@@ -53,6 +53,12 @@ function RunHistorySummaryArticle({ summary }: { summary: RunHistorySummary }) {
             label={`traffic ${summary.trafficDeliverySummary.trafficDeliveryStatus}`}
             tone={trafficDeliveryTone(summary.trafficDeliverySummary.trafficDeliveryStatus)}
           />
+          <Link
+            className="inline-flex min-h-8 items-center rounded-lg border border-border px-3 text-sm font-semibold text-muted-strong"
+            href={`/run-history/${summary.runId}`}
+          >
+            View details
+          </Link>
         </div>
       </div>
       <div className="grid grid-cols-3 gap-4 max-[900px]:grid-cols-1">

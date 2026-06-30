@@ -43,6 +43,10 @@ import {
   publicVisitorIdHeaderName,
   queueStatusSchema,
   reservationStatusValues,
+  runHistoryDetailParamsSchema,
+  runHistoryDetailPath,
+  runHistoryDetailPathTemplate,
+  runHistoryDetailResponseSchema,
   runHistoryListQuerySchema,
   runHistoryListResponseSchema,
   runHistoryPath,
@@ -701,6 +705,155 @@ describe("public runtime policy contract", () => {
     expect(history.summaries[0]?.runId).toBe(runId);
     expect(history.summaries[0]).not.toHaveProperty("reservationToken");
     expect(history.summaries[0]).not.toHaveProperty("idempotencyKey");
+
+    const summary = history.summaries[0];
+    if (!summary) {
+      throw new Error("Expected run history summary fixture.");
+    }
+
+    expect(runHistoryDetailPathTemplate).toBe("/demo/runs/history/:runId");
+    expect(runHistoryDetailPath(runId)).toBe(`/demo/runs/history/${runId}`);
+    expect(runHistoryDetailParamsSchema.parse({ runId })).toEqual({ runId });
+
+    const detail = runHistoryDetailResponseSchema.parse({
+      summary,
+      run: {
+        runId,
+        presetId: "33333333-3333-4333-8333-333333333333",
+        presetName: "Preview 1k",
+        operatorMode: "public",
+        status: "completed",
+        trafficStatus: "succeeded",
+        saleOfferId,
+        configSnapshot: {
+          trafficConfig: {
+            mode: "buyer-spike",
+            buyerCount: 10,
+            duplicateEachBuyerAttempt: false,
+            startDelaySeconds: 0,
+            maxDurationSeconds: 1,
+            quantityPerAttempt: 1,
+          },
+          inventoryConfig: {
+            startingStock: 10,
+            quantityPerCheckout: 1,
+            reservationHoldMinutes: 15,
+          },
+          erpConfig: {
+            latencyMs: 10,
+            maxTps: 10,
+            errorRate: 0,
+            forcedOutage: false,
+            requestTimeoutMs: 1000,
+          },
+          backpressureConfig: {
+            queueName: "orders:process",
+            physicalQueueName: "orders-process",
+            orderProcessConcurrency: 2,
+            drainTimeoutSeconds: 300,
+            pendingPersistenceRetryAfterSeconds: 30,
+          },
+        },
+        startedAt: timestamp,
+        trafficStartedAt: timestamp,
+        trafficEndedAt: timestamp,
+        finalizedAt: timestamp,
+      },
+      orders: {
+        totalCount: 1,
+        limit: 20,
+        truncated: false,
+        records: [
+          {
+            orderId: "99999999-9999-4999-8999-999999999991",
+            publicOrderId: "ord_history_1",
+            saleOfferId,
+            correlationId,
+            quantity: 1,
+            status: "confirmed",
+            queuedAt: timestamp,
+            processingAt: timestamp,
+            confirmedAt: timestamp,
+          },
+        ],
+      },
+      erpAttempts: {
+        totalCount: 1,
+        limit: 20,
+        truncated: false,
+        records: [
+          {
+            attemptId: "99999999-9999-4999-8999-999999999992",
+            orderId: "99999999-9999-4999-8999-999999999991",
+            publicOrderId: "ord_history_1",
+            correlationId,
+            attemptNumber: 1,
+            status: "succeeded",
+            httpStatus: 200,
+            latencyMs: 25,
+            startedAt: timestamp,
+            finishedAt: timestamp,
+          },
+        ],
+      },
+      notifications: {
+        totalCount: 1,
+        limit: 20,
+        truncated: false,
+        records: [
+          {
+            notificationId: "99999999-9999-4999-8999-999999999993",
+            orderId: "99999999-9999-4999-8999-999999999991",
+            publicOrderId: "ord_history_1",
+            channel: "email",
+            status: "recorded",
+            recordedAt: timestamp,
+          },
+        ],
+      },
+      eventTimeline: {
+        totalCount: 1,
+        limit: 20,
+        truncated: false,
+        records: [
+          {
+            eventId: "99999999-9999-4999-8999-999999999994",
+            eventName: "order.confirmed",
+            source: "worker",
+            saleOfferId,
+            correlationId,
+            orderId: "99999999-9999-4999-8999-999999999991",
+            publicOrderId: "ord_history_1",
+            occurredAt: timestamp,
+          },
+        ],
+      },
+      timestamp,
+    });
+
+    expect(detail.summary.runId).toBe(runId);
+    expect(detail.orders.records[0]).not.toHaveProperty("reservationToken");
+    expect(detail.orders.records[0]).not.toHaveProperty("idempotencyKey");
+    expect(detail.eventTimeline.records[0]).not.toHaveProperty("payload");
+    expect(() =>
+      runHistoryDetailResponseSchema.parse({
+        ...detail,
+        orders: {
+          ...detail.orders,
+          records: [{ ...detail.orders.records[0], reservationToken: "private-token" }],
+        },
+      }),
+    ).toThrow();
+    expect(() =>
+      runHistoryDetailResponseSchema.parse({
+        ...detail,
+        eventTimeline: {
+          ...detail.eventTimeline,
+          records: [{ ...detail.eventTimeline.records[0], payload: { private: true } }],
+        },
+      }),
+    ).toThrow();
+
     expect(adminDeleteRunHistoryRequestSchema.parse({ runIds: [runId] })).toEqual({
       runIds: [runId],
     });

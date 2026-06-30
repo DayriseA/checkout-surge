@@ -8,7 +8,10 @@ import { erpResilienceStatusSchema } from "./erp.js";
 import { inventoryStatusSchema, terminalInventorySnapshotSchema } from "./inventory.js";
 import {
   demoRunStatusSchema,
+  erpAttemptStatusSchema,
   operatorModeSchema,
+  orderEventNameSchema,
+  orderStatusSchema,
   trafficDeliveryStatusSchema,
   trafficExecutionStatusSchema,
 } from "./lifecycle.js";
@@ -36,6 +39,7 @@ export const publicPresetListPath = "/demo/presets/public" as const;
 export const publicRuntimePolicyPath = "/demo/runtime-policy" as const;
 export const startDemoRunPath = "/demo/runs/start" as const;
 export const runHistoryPath = "/demo/runs/history" as const;
+export const runHistoryDetailPathTemplate = "/demo/runs/history/:runId" as const;
 export const adminDemoResetPath = "/admin/demo/reset" as const;
 export const adminMaintenanceCleanupRunsPath = "/admin/demo/runs/cleanup" as const;
 export const adminPresetListPath = "/admin/demo/presets" as const;
@@ -45,6 +49,10 @@ export const adminPresetCopyToCustomPath = "/admin/demo/presets/copy-to-custom" 
 export const adminPublicRuntimePolicyPath = "/admin/demo/runtime-policy" as const;
 export const demoRunOperatorModeHeaderName = "x-demo-operator-mode" as const;
 export const publicVisitorIdHeaderName = "x-public-visitor-id" as const;
+
+export function runHistoryDetailPath(runId: string): string {
+  return `${runHistoryPath}/${encodeURIComponent(runId)}`;
+}
 
 export const demoPresetContractSchema = demoPresetSchema
   .extend({
@@ -230,6 +238,110 @@ export const runHistoryListResponseSchema = z
   })
   .strict();
 export type RunHistoryListResponse = z.infer<typeof runHistoryListResponseSchema>;
+
+export const runHistoryDetailParamsSchema = z
+  .object({
+    runId: uuidSchema,
+  })
+  .strict();
+export type RunHistoryDetailParams = z.infer<typeof runHistoryDetailParamsSchema>;
+
+export const runHistoryOrderOutcomeSchema = z
+  .object({
+    orderId: uuidSchema,
+    publicOrderId: z.string().trim().min(1),
+    saleOfferId: uuidSchema,
+    correlationId: correlationIdSchema,
+    quantity: positiveIntegerSchema,
+    status: orderStatusSchema,
+    failureCode: z.string().trim().min(1).optional(),
+    queuedAt: isoTimestampSchema,
+    processingAt: isoTimestampSchema.optional(),
+    confirmedAt: isoTimestampSchema.optional(),
+    failedAt: isoTimestampSchema.optional(),
+  })
+  .strict();
+export type RunHistoryOrderOutcome = z.infer<typeof runHistoryOrderOutcomeSchema>;
+
+export const runHistoryErpAttemptSchema = z
+  .object({
+    attemptId: uuidSchema,
+    orderId: uuidSchema,
+    publicOrderId: z.string().trim().min(1),
+    correlationId: correlationIdSchema,
+    attemptNumber: positiveIntegerSchema,
+    status: erpAttemptStatusSchema,
+    httpStatus: z.number().int().min(100).max(599).optional(),
+    errorCode: z.string().trim().min(1).optional(),
+    latencyMs: nonnegativeIntegerSchema,
+    startedAt: isoTimestampSchema,
+    finishedAt: isoTimestampSchema,
+  })
+  .strict();
+export type RunHistoryErpAttempt = z.infer<typeof runHistoryErpAttemptSchema>;
+
+export const runHistoryNotificationSchema = z
+  .object({
+    notificationId: uuidSchema,
+    orderId: uuidSchema,
+    publicOrderId: z.string().trim().min(1),
+    channel: z.enum(["email", "sms"]),
+    status: z.literal("recorded"),
+    recordedAt: isoTimestampSchema,
+  })
+  .strict();
+export type RunHistoryNotification = z.infer<typeof runHistoryNotificationSchema>;
+
+export const runHistoryEventTimelineEntrySchema = z
+  .object({
+    eventId: uuidSchema,
+    eventName: orderEventNameSchema,
+    source: z.string().trim().min(1),
+    saleOfferId: uuidSchema,
+    correlationId: correlationIdSchema,
+    orderId: uuidSchema.optional(),
+    publicOrderId: z.string().trim().min(1).optional(),
+    occurredAt: isoTimestampSchema,
+  })
+  .strict();
+export type RunHistoryEventTimelineEntry = z.infer<typeof runHistoryEventTimelineEntrySchema>;
+
+const runHistoryCollectionMetadataSchema = z
+  .object({
+    totalCount: nonnegativeIntegerSchema,
+    limit: positiveIntegerSchema,
+    truncated: z.boolean(),
+  })
+  .strict();
+
+export const runHistoryDetailResponseSchema = z
+  .object({
+    summary: runHistorySummarySchema,
+    run: demoRunSnapshotSchema,
+    orders: runHistoryCollectionMetadataSchema
+      .extend({
+        records: z.array(runHistoryOrderOutcomeSchema),
+      })
+      .strict(),
+    erpAttempts: runHistoryCollectionMetadataSchema
+      .extend({
+        records: z.array(runHistoryErpAttemptSchema),
+      })
+      .strict(),
+    notifications: runHistoryCollectionMetadataSchema
+      .extend({
+        records: z.array(runHistoryNotificationSchema),
+      })
+      .strict(),
+    eventTimeline: runHistoryCollectionMetadataSchema
+      .extend({
+        records: z.array(runHistoryEventTimelineEntrySchema),
+      })
+      .strict(),
+    timestamp: isoTimestampSchema,
+  })
+  .strict();
+export type RunHistoryDetailResponse = z.infer<typeof runHistoryDetailResponseSchema>;
 
 export const publicRunBudgetSchema = z
   .object({

@@ -1,11 +1,14 @@
 import {
   adminDeleteRunHistoryRequestSchema,
   controlServiceTokenHeaderName,
+  runHistoryDetailParamsSchema,
+  runHistoryDetailPathTemplate,
   runHistoryListQuerySchema,
   runHistoryPath,
 } from "@checkout-surge/contracts";
 import { correlationIdHeaderName, normalizeCorrelationId } from "@checkout-surge/logger";
 import type { FastifyReply, FastifyRequest } from "fastify";
+import { ApiHttpError } from "../runtime/errors.js";
 import type { ApiFastifyInstance } from "../runtime/fastify.js";
 import type { RunHistoryController } from "../services/run-history-service.js";
 
@@ -21,6 +24,22 @@ export function registerRunHistoryRoutes(
   app.get(runHistoryPath, async (request, reply) => {
     const query = runHistoryListQuerySchema.parse(request.query ?? {});
     return reply.status(200).send(await options.runHistoryService.list(query));
+  });
+
+  app.get(runHistoryDetailPathTemplate, async (request, reply) => {
+    const { runId } = runHistoryDetailParamsSchema.parse(request.params ?? {});
+    const detail = await options.runHistoryService.detail(runId);
+
+    if (!detail) {
+      throw new ApiHttpError({
+        statusCode: 404,
+        code: "run_history_detail_not_found",
+        message: "Run history detail was not found.",
+        details: { runId },
+      });
+    }
+
+    return reply.status(200).send(detail);
   });
 
   app.delete(runHistoryPath, async (request, reply) => {
