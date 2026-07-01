@@ -30,6 +30,7 @@ persist_home_config() {
     rm "$home_dir"
   fi
 
+  mkdir -p "$(dirname "$home_dir")"
   ln -s "$target_dir" "$home_dir"
 }
 
@@ -46,6 +47,16 @@ setup_claude_persistence() {
     persist_home_config ".claude" "/workspaces/.claude"
   else
     persist_home_config ".claude" "/mnt/claude-config"
+  fi
+}
+
+setup_kilo_persistence() {
+  if [ "${CODESPACES:-}" = "true" ]; then
+    persist_home_config ".config/kilo" "/workspaces/.kilo-config"
+    persist_home_config ".local/share/kilo" "/workspaces/.kilo-data"
+  else
+    persist_home_config ".config/kilo" "/mnt/kilo-config"
+    persist_home_config ".local/share/kilo" "/mnt/kilo-data"
   fi
 }
 
@@ -111,6 +122,7 @@ install_apt_packages() {
 
 setup_codex_persistence
 setup_claude_persistence
+setup_kilo_persistence
 install_apt_packages
 
 npm i -g @openai/codex

@@ -80,3 +80,4 @@ build/
 .VSCodeCounter/
 .tmp/
 .claude/
+devcontainer-lock.json

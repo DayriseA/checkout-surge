@@ -107,7 +107,7 @@ The Dev Container compose override extends shared service definitions for bind m
 
 Follow the Dev Containers and Docker Compose base-plus-override convention: use shared compose files for common topology, and layer development-environment-specific overrides where the Dev Container configuration lives.
 
-The dependency cache volumes used by the Dev Container are Compose-scoped so branch worktrees can carry different dependency graphs without sharing installed packages. The Codex and Claude config volumes intentionally keep explicit global volume names so developer-tool identity/config remains shared across worktrees.
+The dependency cache volumes used by the Dev Container are Compose-scoped so branch worktrees can carry different dependency graphs without sharing installed packages. The Codex, Claude, and Kilo Code config/state volumes intentionally keep explicit global volume names so developer-tool identity/config remains shared across worktrees.
 
 ---
 

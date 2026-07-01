@@ -35,6 +35,8 @@ services:
       - checkout-surge-db-node-modules:/workspaces/checkout-surge/packages/db/node_modules
       - checkout-surge-codex-config:/mnt/codex-config
       - checkout-surge-claude-config:/mnt/claude-config
+      - checkout-surge-kilo-config:/mnt/kilo-config
+      - checkout-surge-kilo-data:/mnt/kilo-data
 
   api:
     build:
@@ -84,6 +86,10 @@ volumes:
     name: checkout-surge-codex-config
   checkout-surge-claude-config:
     name: checkout-surge-claude-config
+  checkout-surge-kilo-config:
+    name: checkout-surge-kilo-config
+  checkout-surge-kilo-data:
+    name: checkout-surge-kilo-data
   checkout-surge-pnpm-store:
   checkout-surge-root-node-modules:
   checkout-surge-web-node-modules:

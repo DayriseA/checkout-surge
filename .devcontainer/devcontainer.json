@@ -45,5 +45,12 @@
   "postStartCommand": "bash .devcontainer/post-start.sh",
   "features": {
     "ghcr.io/devcontainers/features/docker-in-docker:2": {}
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "kilocode.kilo-code"
+      ]
+    }
   }
 }
