@@ -1,15 +1,20 @@
+import type { spawn } from "node:child_process";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import {
   controlServiceTokenHeaderName,
   healthResponseSchema,
   loadRunIdHeaderName,
+  type TrafficCompletionReport,
   type TrafficExecutionStartRequest,
   trafficExecutionStartPath,
   trafficExecutionStartResponseSchema,
 } from "@checkout-surge/contracts";
 import { createSilentLogger } from "@checkout-surge/logger";
 import { describe, expect, it, vi } from "vitest";
+import type { LoadApiClient } from "../src/application/api-client.js";
 import { K6RunAccumulator, parseK6JsonLine } from "../src/application/k6-output-parser.js";
-import type { K6Runner } from "../src/application/k6-runner.js";
+import { type K6Runner, SpawnK6Runner } from "../src/application/k6-runner.js";
 import { generateK6Script } from "../src/application/k6-script.js";
 import { TrafficExecutionService } from "../src/application/traffic-execution-service.js";
 import { buildLoadOrchestratorServer } from "../src/server.js";
@@ -179,6 +184,72 @@ describe("load-orchestrator k6 mapping", () => {
   });
 });
 
+describe("SpawnK6Runner completion reporting", () => {
+  it("retries completion delivery when the API fails once", async () => {
+    const k6Process = createK6ProcessFixture();
+    const reports: TrafficCompletionReport[] = [];
+    const retryDelays: number[] = [];
+    let completionAccepted: () => void = () => undefined;
+    const completionAcceptedPromise = new Promise<void>((resolve) => {
+      completionAccepted = resolve;
+    });
+    const apiClient: LoadApiClient = {
+      sendMetrics: vi.fn(async () => undefined),
+      sendCompletion: vi.fn(async (report) => {
+        reports.push(report);
+        if (reports.length === 1) {
+          throw new Error("API temporarily unavailable");
+        }
+
+        completionAccepted();
+      }),
+    };
+    const runner = new SpawnK6Runner({
+      k6Binary: "k6",
+      apiClient,
+      logger: createSilentLogger("load-orchestrator"),
+      now: () => new Date(timestamp),
+      spawnProcess: k6Process.spawnProcess,
+      completionRetry: {
+        maxAttempts: 2,
+        initialBackoffMs: 25,
+        sleep: async (delayMs) => {
+          retryDelays.push(delayMs);
+        },
+      },
+    });
+
+    await runner.start(startRequest);
+    k6Process.stdout.write(
+      `${JSON.stringify({
+        type: "Point",
+        metric: "http_reqs",
+        data: { value: 1, time: timestamp },
+      })}\n`,
+    );
+    await waitForReadline();
+    k6Process.child.emit("close", 0);
+    await completionAcceptedPromise;
+
+    expect(apiClient.sendCompletion).toHaveBeenCalledTimes(2);
+    expect(retryDelays).toEqual([25]);
+    expect(reports).toHaveLength(2);
+    expect(reports[1]).toBe(reports[0]);
+    expect(reports[1]).toMatchObject({
+      runId: startRequest.runId,
+      status: "succeeded",
+      exitCode: 0,
+      httpSummary: {
+        plannedRequests: 400,
+        emittedRequests: 1,
+      },
+      trafficDeliverySummary: {
+        trafficDeliveryStatus: "failed",
+      },
+    });
+  });
+});
+
 describe("load-orchestrator HTTP boundary", () => {
   it("exposes readiness and protects traffic starts with the shared control token", async () => {
     const runner: K6Runner = {
@@ -233,3 +304,29 @@ describe("load-orchestrator HTTP boundary", () => {
     }
   });
 });
+
+function createK6ProcessFixture(): {
+  child: ReturnType<typeof spawn>;
+  stdout: PassThrough;
+  stderr: PassThrough;
+  spawnProcess: typeof spawn;
+} {
+  const child = new EventEmitter() as ReturnType<typeof spawn>;
+  const stdout = new PassThrough();
+  const stderr = new PassThrough();
+
+  Object.assign(child, { stdout, stderr });
+
+  return {
+    child,
+    stdout,
+    stderr,
+    spawnProcess: vi.fn(() => child) as unknown as typeof spawn,
+  };
+}
+
+function waitForReadline(): Promise<void> {
+  return new Promise((resolve) => {
+    setImmediate(resolve);
+  });
+}

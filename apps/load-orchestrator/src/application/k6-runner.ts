@@ -3,7 +3,10 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createInterface } from "node:readline";
-import type { TrafficExecutionStartRequest } from "@checkout-surge/contracts";
+import type {
+  TrafficCompletionReport,
+  TrafficExecutionStartRequest,
+} from "@checkout-surge/contracts";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { type LoadApiClient, MetricBatcher } from "./api-client.js";
 import { K6RunAccumulator, parseK6JsonLine } from "./k6-output-parser.js";
@@ -18,6 +21,26 @@ export interface K6Runner {
   start(input: TrafficExecutionStartRequest): Promise<K6ExecutionStart>;
 }
 
+type CompletionRetrySleep = (delayMs: number) => Promise<void>;
+
+interface CompletionRetryConfig {
+  maxAttempts?: number;
+  initialBackoffMs?: number;
+  backoffMultiplier?: number;
+  sleep?: CompletionRetrySleep;
+}
+
+interface ResolvedCompletionRetryConfig {
+  maxAttempts: number;
+  initialBackoffMs: number;
+  backoffMultiplier: number;
+  sleep: CompletionRetrySleep;
+}
+
+const defaultCompletionRetryMaxAttempts = 5;
+const defaultCompletionRetryInitialBackoffMs = 1000;
+const defaultCompletionRetryBackoffMultiplier = 2;
+
 export class SpawnK6Runner implements K6Runner {
   constructor(
     private readonly options: {
@@ -26,6 +49,7 @@ export class SpawnK6Runner implements K6Runner {
       logger: CheckoutSurgeLogger;
       now?: () => Date;
       spawnProcess?: typeof spawn;
+      completionRetry?: CompletionRetryConfig;
     },
   ) {}
 
@@ -151,22 +175,103 @@ export class SpawnK6Runner implements K6Runner {
   }): Promise<void> {
     try {
       await input.batcher.close();
-      await this.options.apiClient.sendCompletion(
-        input.accumulator.completionReport({
-          status: input.status,
-          ...(input.exitCode === undefined ? {} : { exitCode: input.exitCode }),
-          ...(input.errorMessage ? { errorMessage: input.errorMessage } : {}),
-          completedAt: input.completedAt,
-        }),
-      );
     } catch (error) {
-      this.options.logger.error({ err: error }, "Could not report k6 traffic completion to API.");
+      this.options.logger.warn({ err: error }, "Could not flush final k6 metric batch.");
+    }
+
+    const report = input.accumulator.completionReport({
+      status: input.status,
+      ...(input.exitCode === undefined ? {} : { exitCode: input.exitCode }),
+      ...(input.errorMessage ? { errorMessage: input.errorMessage } : {}),
+      completedAt: input.completedAt,
+    });
+
+    try {
+      await this.sendCompletionWithRetry(report);
+    } catch (error) {
+      this.options.logger.error(
+        {
+          err: error,
+          runId: report.runId,
+          maxAttempts: this.resolveCompletionRetryConfig().maxAttempts,
+        },
+        "Could not report k6 traffic completion to API.",
+      );
     } finally {
       await rm(input.workDir, { recursive: true, force: true }).catch(() => undefined);
     }
   }
 
+  private async sendCompletionWithRetry(report: TrafficCompletionReport): Promise<void> {
+    const retry = this.resolveCompletionRetryConfig();
+    let nextBackoffMs = retry.initialBackoffMs;
+    let lastError: unknown;
+
+    for (let attempt = 1; attempt <= retry.maxAttempts; attempt += 1) {
+      try {
+        await this.options.apiClient.sendCompletion(report);
+        return;
+      } catch (error) {
+        lastError = error;
+        if (attempt >= retry.maxAttempts) {
+          break;
+        }
+
+        this.options.logger.warn(
+          {
+            err: error,
+            runId: report.runId,
+            attempt,
+            maxAttempts: retry.maxAttempts,
+            retryInMs: nextBackoffMs,
+          },
+          "Could not report k6 traffic completion to API. Retrying.",
+        );
+        await retry.sleep(nextBackoffMs);
+        nextBackoffMs = Math.round(nextBackoffMs * retry.backoffMultiplier);
+      }
+    }
+
+    throw lastError ?? new Error("Traffic completion reporting failed.");
+  }
+
+  private resolveCompletionRetryConfig(): ResolvedCompletionRetryConfig {
+    const retry = this.options.completionRetry;
+    return {
+      maxAttempts: positiveIntegerOrDefault(retry?.maxAttempts, defaultCompletionRetryMaxAttempts),
+      initialBackoffMs: nonnegativeNumberOrDefault(
+        retry?.initialBackoffMs,
+        defaultCompletionRetryInitialBackoffMs,
+      ),
+      backoffMultiplier: positiveNumberOrDefault(
+        retry?.backoffMultiplier,
+        defaultCompletionRetryBackoffMultiplier,
+      ),
+      sleep: retry?.sleep ?? defaultSleep,
+    };
+  }
+
   private now(): Date {
     return this.options.now?.() ?? new Date();
   }
+}
+
+function defaultSleep(delayMs: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, delayMs);
+  });
+}
+
+function positiveIntegerOrDefault(value: number | undefined, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 1
+    ? Math.trunc(value)
+    : fallback;
+}
+
+function nonnegativeNumberOrDefault(value: number | undefined, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : fallback;
+}
+
+function positiveNumberOrDefault(value: number | undefined, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback;
 }

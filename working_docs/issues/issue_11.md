@@ -1,5 +1,6 @@
 # Issue 11 - Make load completion reporting retryable or durable
 
+Status: Fixed
 
 ## Recommended Order Rationale
 
