@@ -74,17 +74,16 @@ describe("demo-run service validation", () => {
 
 describe("HTTP traffic execution gateway", () => {
   it("sends the validated start correlation ID in the load-orchestrator header", async () => {
-    const fetchMock = vi.fn(
-      async () =>
-        new Response(
-          JSON.stringify({
-            runId: "55555555-5555-4555-8555-555555555555",
-            status: "active",
-            startedAt: "2026-06-20T00:00:11.000Z",
-            correlationId: "corr-start-delegation",
-          }),
-          { status: 202, headers: { "content-type": "application/json" } },
-        ),
+    const fetchMock = vi.fn<typeof globalThis.fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          runId: "55555555-5555-4555-8555-555555555555",
+          status: "active",
+          startedAt: "2026-06-20T00:00:11.000Z",
+          correlationId: "corr-start-delegation",
+        }),
+        { status: 202, headers: { "content-type": "application/json" } },
+      ),
     );
     vi.stubGlobal("fetch", fetchMock);
     const gateway = new HttpTrafficExecutionGateway({

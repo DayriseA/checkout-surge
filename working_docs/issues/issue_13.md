@@ -1,5 +1,6 @@
 # Issue 13 - Make load-orchestrator readiness verify API reachability
 
+Status: Fixed
 
 ## Recommended Order Rationale
 

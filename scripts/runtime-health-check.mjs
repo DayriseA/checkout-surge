@@ -25,7 +25,7 @@ const checks = [
     name: "load_orchestrator_readiness",
     url: joinUrl(envUrl("LOAD_ORCHESTRATOR_BASE_URL", "http://localhost:4200"), "/health/ready"),
     kind: "readiness",
-    requiredChecks: ["k6_binary_executable"],
+    requiredChecks: ["api_readiness_reachable", "k6_binary_executable"],
   },
   {
     name: "dashboard_proxy",

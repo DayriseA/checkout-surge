@@ -3,8 +3,10 @@ import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import {
   controlServiceTokenHeaderName,
+  type HealthStatus,
   healthResponseSchema,
   loadRunIdHeaderName,
+  type ReadinessCheck,
   type TrafficCompletionReport,
   type TrafficExecutionStartRequest,
   trafficExecutionStartPath,
@@ -17,6 +19,8 @@ import { K6RunAccumulator, parseK6JsonLine } from "../src/application/k6-output-
 import { type K6Runner, SpawnK6Runner } from "../src/application/k6-runner.js";
 import { generateK6Script } from "../src/application/k6-script.js";
 import { TrafficExecutionService } from "../src/application/traffic-execution-service.js";
+import type { LoadOrchestratorConfig } from "../src/runtime/config.js";
+import { createLoadOrchestratorReadiness } from "../src/runtime/readiness.js";
 import { buildLoadOrchestratorServer } from "../src/server.js";
 
 const timestamp = "2026-06-20T12:00:00.000Z";
@@ -252,7 +256,9 @@ describe("SpawnK6Runner completion reporting", () => {
 
 describe("load-orchestrator API client", () => {
   it("sends metric and completion correlation IDs in internal API headers", async () => {
-    const fetchMock = vi.fn(async () => new Response("{}", { status: 202 }));
+    const fetchMock = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValue(new Response("{}", { status: 202 }));
     vi.stubGlobal("fetch", fetchMock);
     const client = new HttpLoadApiClient({
       apiBaseUrl: "http://api.test",
@@ -302,24 +308,106 @@ describe("load-orchestrator API client", () => {
   });
 });
 
+describe("load-orchestrator readiness", () => {
+  it("marks the API readiness dependency ok when the configured API target is reachable", async () => {
+    const fetchApi = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValue(jsonResponse(apiHealthPayload("ok")));
+    const readiness = createLoadOrchestratorReadiness(
+      createConfig({ apiBaseUrl: "http://api.test/" }),
+      {
+        fetch: fetchApi,
+      },
+    );
+
+    const checks = await readiness.checks();
+
+    expect(fetchApi).toHaveBeenCalledTimes(1);
+    expect(fetchApi.mock.calls[0]?.[0]).toBe("http://api.test/health/ready");
+    expect(fetchApi.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal);
+    expect(readinessCheck(checks, "api_readiness_reachable")).toMatchObject({ status: "ok" });
+  });
+
+  it("marks the API readiness dependency unavailable when the API target is unreachable", async () => {
+    const fetchApi = vi
+      .fn<typeof globalThis.fetch>()
+      .mockRejectedValue(new Error("getaddrinfo ENOTFOUND api"));
+    const readiness = createLoadOrchestratorReadiness(
+      createConfig({ apiBaseUrl: "http://api.test" }),
+      {
+        fetch: fetchApi,
+      },
+    );
+
+    const checks = await readiness.checks();
+
+    expect(readinessCheck(checks, "api_readiness_reachable")).toMatchObject({
+      status: "unavailable",
+      message: "getaddrinfo ENOTFOUND api",
+    });
+  });
+
+  it("marks the API readiness dependency unavailable when the API readiness request times out", async () => {
+    vi.useFakeTimers();
+    const fetchApi = vi.fn<typeof globalThis.fetch>(
+      (_input, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+        }),
+    );
+    const readiness = createLoadOrchestratorReadiness(
+      createConfig({ apiBaseUrl: "http://api.test" }),
+      {
+        apiReadinessTimeoutMs: 25,
+        fetch: fetchApi,
+      },
+    );
+
+    try {
+      const checksPromise = readiness.checks();
+      await vi.advanceTimersByTimeAsync(25);
+      const checks = await checksPromise;
+
+      expect(readinessCheck(checks, "api_readiness_reachable")).toMatchObject({
+        status: "unavailable",
+        message: "API readiness check timed out after 25ms.",
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("marks the API readiness dependency unavailable when the API is not ready", async () => {
+    const fetchApi = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValue(jsonResponse(apiHealthPayload("unavailable"), 503));
+    const readiness = createLoadOrchestratorReadiness(
+      createConfig({ apiBaseUrl: "http://api.test" }),
+      {
+        fetch: fetchApi,
+      },
+    );
+
+    const checks = await readiness.checks();
+
+    expect(readinessCheck(checks, "api_readiness_reachable")).toMatchObject({
+      status: "unavailable",
+      message: "API readiness returned HTTP 503.",
+    });
+  });
+});
+
 describe("load-orchestrator HTTP boundary", () => {
   it("exposes readiness and protects traffic starts with the shared control token", async () => {
     const runner: K6Runner = {
       start: vi.fn(async () => ({ startedAt: new Date(timestamp), plannedRequests: 400 })),
     };
     const server = buildLoadOrchestratorServer({
-      config: {
-        host: "127.0.0.1",
-        port: 4200,
-        apiBaseUrl: "http://localhost:4000",
-        buyEndpointPath: "/buy",
-        k6Binary: "k6",
-        controlServiceToken: "test-token",
-      },
+      config: createConfig(),
       logger: createSilentLogger("load-orchestrator"),
       readiness: {
         checks: async () => [
-          { name: "api_base_url_configured", status: "ok" },
+          { name: "api_readiness_reachable", status: "ok" },
           { name: "preset_traffic_start_enabled", status: "ok" },
           { name: "k6_binary_executable", status: "degraded" },
         ],
@@ -357,6 +445,44 @@ describe("load-orchestrator HTTP boundary", () => {
     }
   });
 });
+
+function createConfig(overrides: Partial<LoadOrchestratorConfig> = {}): LoadOrchestratorConfig {
+  return {
+    host: "127.0.0.1",
+    port: 4200,
+    apiBaseUrl: "http://localhost:4000",
+    buyEndpointPath: "/buy",
+    k6Binary: "k6",
+    controlServiceToken: "test-token",
+    ...overrides,
+  };
+}
+
+function readinessCheck(checks: ReadinessCheck[], name: string): ReadinessCheck {
+  const check = checks.find((entry) => entry.name === name);
+  if (!check) {
+    throw new Error(`Expected readiness check ${name}.`);
+  }
+
+  return check;
+}
+
+function apiHealthPayload(status: HealthStatus) {
+  return {
+    service: "api",
+    status,
+    timestamp,
+    uptimeSeconds: 1,
+    checks: [],
+  };
+}
+
+function jsonResponse(payload: unknown, status = 200): Response {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
 
 function createK6ProcessFixture(): {
   child: ReturnType<typeof spawn>;

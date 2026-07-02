@@ -214,9 +214,9 @@ Healthy readiness includes these checks:
 | API gateway | `database_reachable=ok`, `redis_url_configured=ok` |
 | Worker | `database_url_configured=ok`, `redis_url_configured=ok`, `mock_erp_base_url_configured=ok`, `erp_circuit_breaker=ok`, `order_process_worker_running=ok`, `notification_record_worker_running=ok` |
 | Mock ERP | `confirmation_endpoint_ready=ok` |
-| Load orchestrator | `api_base_url_configured=ok`, `preset_traffic_start_enabled=ok`, `k6_binary_executable=ok` |
+| Load orchestrator | `api_readiness_reachable=ok`, `preset_traffic_start_enabled=ok`, `k6_binary_executable=ok` |
 
-`status: "degraded"` means the process is reachable but one non-fatal readiness check is not ideal, such as a configured URL missing. `status: "unavailable"` means a required dependency or worker loop is not ready; the API and worker return HTTP 503 for unavailable readiness.
+`status: "degraded"` means the process is reachable but one non-fatal readiness check is not ideal, such as a configured URL missing. `status: "unavailable"` means a required dependency or worker loop is not ready; the API, worker, and load orchestrator return HTTP 503 for unavailable readiness.
 
 For the host-native infrastructure-only workflow, stop PostgreSQL and Redis when finished:
 
