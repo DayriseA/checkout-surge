@@ -5,7 +5,11 @@ import {
   type RunHistorySummary,
 } from "@checkout-surge/contracts";
 import { useMemo, useState } from "react";
-import { adminPassphraseHeaderName, adminRunHistoryProxyPath } from "../lib/control-paths";
+import {
+  adminPassphraseHeaderName,
+  adminRunHistoryProxyPath,
+  adminSessionProxyPath,
+} from "../lib/control-paths";
 
 interface RunHistoryAdminControlsProps {
   summaries: RunHistorySummary[];
@@ -29,6 +33,32 @@ export function RunHistoryAdminControls({ summaries }: RunHistoryAdminControlsPr
       }
       return next;
     });
+  }
+
+  async function signInAdmin() {
+    setIsSubmitting(true);
+    setStatusMessage(null);
+
+    try {
+      const response = await fetch(adminSessionProxyPath, {
+        method: "POST",
+        cache: "no-store",
+        headers: {
+          [adminPassphraseHeaderName]: adminPassphrase,
+        },
+      });
+      const payload = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        setStatusMessage(errorMessageFromPayload(payload, "Admin sign-in failed."));
+        return;
+      }
+
+      setAdminPassphrase("");
+      setStatusMessage("Admin session established.");
+    } finally {
+      setIsSubmitting(false);
+    }
   }
 
   async function deleteSelected() {
@@ -56,14 +86,13 @@ export function RunHistoryAdminControls({ summaries }: RunHistoryAdminControlsPr
         headers: {
           accept: "application/json",
           "content-type": "application/json",
-          [adminPassphraseHeaderName]: adminPassphrase,
         },
         body: JSON.stringify(body),
       });
       const payload = await response.json().catch(() => null);
 
       if (!response.ok) {
-        setStatusMessage(errorMessageFromPayload(payload));
+        setStatusMessage(errorMessageFromPayload(payload, "Run History deletion failed."));
         return;
       }
 
@@ -129,6 +158,16 @@ export function RunHistoryAdminControls({ summaries }: RunHistoryAdminControlsPr
         <div className="flex flex-wrap gap-2 border-t border-border pt-3">
           <button
             className="min-h-10 rounded-lg border border-border bg-surface px-3.5 py-2.5 font-semibold text-muted-strong disabled:cursor-not-allowed disabled:opacity-60"
+            disabled={isSubmitting}
+            onClick={() => {
+              void signInAdmin();
+            }}
+            type="button"
+          >
+            Sign In
+          </button>
+          <button
+            className="min-h-10 rounded-lg border border-border bg-surface px-3.5 py-2.5 font-semibold text-muted-strong disabled:cursor-not-allowed disabled:opacity-60"
             disabled={isSubmitting || summaries.length === 0}
             onClick={() => {
               void deleteSelected();
@@ -156,7 +195,7 @@ export function RunHistoryAdminControls({ summaries }: RunHistoryAdminControlsPr
   );
 }
 
-function errorMessageFromPayload(payload: unknown): string {
+function errorMessageFromPayload(payload: unknown, fallback: string): string {
   if (
     typeof payload === "object" &&
     payload !== null &&
@@ -166,5 +205,5 @@ function errorMessageFromPayload(payload: unknown): string {
     return payload.message;
   }
 
-  return "Run History deletion failed.";
+  return fallback;
 }

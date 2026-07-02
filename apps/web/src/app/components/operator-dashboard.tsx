@@ -337,12 +337,16 @@ function AdminActionsPanel({
       });
       const payload = await response.json().catch(() => null);
 
+      if (response.ok) {
+        setAdminPassphrase("");
+        setStatusMessage("Admin session established.");
+        return;
+      }
+
       setStatusMessage(
-        response.ok
-          ? "Admin session established."
-          : payload && typeof payload === "object" && "message" in payload
-            ? String(payload.message)
-            : "Admin session failed.",
+        payload && typeof payload === "object" && "message" in payload
+          ? String(payload.message)
+          : "Admin session failed.",
       );
     } finally {
       setIsSubmitting(false);
@@ -366,7 +370,6 @@ function AdminActionsPanel({
       method: "PUT",
       headers: {
         "content-type": "application/json",
-        [adminPassphraseHeaderName]: adminPassphrase,
       },
       body: JSON.stringify(parsedConfig.data),
     });
@@ -375,9 +378,6 @@ function AdminActionsPanel({
   async function resetChaos() {
     await submitChaosRequest(adminErpChaosResetProxyPath, {
       method: "POST",
-      headers: {
-        [adminPassphraseHeaderName]: adminPassphrase,
-      },
     });
   }
 
@@ -388,9 +388,6 @@ function AdminActionsPanel({
     try {
       const result = await readProxyJson(adminDemoResetProxyPath, adminDemoResetResponseSchema, {
         method: "POST",
-        headers: {
-          [adminPassphraseHeaderName]: adminPassphrase,
-        },
       });
 
       setStatusMessage(
@@ -415,7 +412,6 @@ function AdminActionsPanel({
           method: "POST",
           headers: {
             "content-type": "application/json",
-            [adminPassphraseHeaderName]: adminPassphrase,
           },
           body: JSON.stringify({ keepLatest: 15, olderThanDays: 7 }),
         },

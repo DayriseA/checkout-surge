@@ -27,10 +27,6 @@ export function requireAdminPassphrase(request: Request): Response | null {
     return jsonError(503, "admin_passphrase_not_configured", "Admin controls are not configured.");
   }
 
-  if (hasValidAdminSession(request)) {
-    return null;
-  }
-
   const suppliedPassphrase = request.headers.get(adminPassphraseHeaderName)?.trim();
 
   if (suppliedPassphrase === expectedPassphrase) {
@@ -38,6 +34,24 @@ export function requireAdminPassphrase(request: Request): Response | null {
   }
 
   return jsonError(401, "admin_passphrase_required", "A valid admin passphrase is required.");
+}
+
+export function requireAdminSession(request: Request): Response | null {
+  const secret = process.env.ADMIN_SESSION_SECRET?.trim();
+
+  if (!secret) {
+    return jsonError(
+      503,
+      "admin_session_secret_not_configured",
+      "Admin sessions are not configured.",
+    );
+  }
+
+  if (hasValidAdminSession(request)) {
+    return null;
+  }
+
+  return jsonError(401, "admin_session_required", "A valid admin session is required.");
 }
 
 export function createAdminSessionCookie(now: Date = new Date()): string | Response {

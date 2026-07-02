@@ -8,7 +8,7 @@ import {
   mockErpBaseUrl,
   proxyJson,
   readJsonRequest,
-  requireAdminPassphrase,
+  requireAdminSession,
   requireControlServiceToken,
   validateJson,
 } from "../../../lib/server/backend-proxy";
@@ -22,7 +22,7 @@ export async function GET(): Promise<Response> {
 }
 
 export async function PUT(request: Request): Promise<Response> {
-  const unauthorized = requireAdminPassphrase(request);
+  const unauthorized = requireAdminSession(request);
   if (unauthorized) {
     return unauthorized;
   }

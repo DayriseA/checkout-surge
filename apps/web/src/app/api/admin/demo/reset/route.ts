@@ -3,12 +3,12 @@ import {
   apiBaseUrl,
   controlTokenHeaders,
   proxyJson,
-  requireAdminPassphrase,
+  requireAdminSession,
   requireControlServiceToken,
 } from "../../../../lib/server/backend-proxy";
 
 export async function POST(request: Request): Promise<Response> {
-  const unauthorized = requireAdminPassphrase(request);
+  const unauthorized = requireAdminSession(request);
   if (unauthorized) {
     return unauthorized;
   }

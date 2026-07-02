@@ -171,8 +171,9 @@ describe("dashboard control proxy routes", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
-  it("requires the admin passphrase before forwarding ERP chaos updates", async () => {
+  it("requires an admin session before forwarding ERP chaos updates", async () => {
     process.env.ADMIN_DASHBOARD_PASSPHRASE = "admin-pass";
+    process.env.ADMIN_SESSION_SECRET = "admin-session-secret";
     process.env.CONTROL_SERVICE_TOKEN = "control-token";
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
@@ -186,7 +187,7 @@ describe("dashboard control proxy routes", () => {
     const payload = await response.json();
 
     expect(response.status).toBe(401);
-    expect(payload.code).toBe("admin_passphrase_required");
+    expect(payload.code).toBe("admin_session_required");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -212,20 +213,87 @@ describe("dashboard control proxy routes", () => {
     expect(setCookie).toContain("SameSite=Lax");
   });
 
-  it("accepts a valid admin session cookie for protected proxy routes", async () => {
+  it("rejects raw passphrase headers on protected admin proxy routes without a session", async () => {
     process.env.ADMIN_DASHBOARD_PASSPHRASE = "admin-pass";
     process.env.ADMIN_SESSION_SECRET = "admin-session-secret";
     process.env.CONTROL_SERVICE_TOKEN = "control-token";
     process.env.API_BASE_URL = "http://api.internal";
-    const session = await createAdminSession(
-      new Request("http://dashboard.local/api/admin/session", {
-        method: "POST",
-        headers: {
-          [adminPassphraseHeaderName]: "admin-pass",
-        },
-      }),
-    );
-    const cookie = session.headers.get("set-cookie")?.split(";")[0] ?? "";
+    process.env.MOCK_ERP_BASE_URL = "http://mock-erp.internal";
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const rawPassphraseHeaders = {
+      [adminPassphraseHeaderName]: "admin-pass",
+    };
+    const rawPassphraseJsonHeaders = {
+      "content-type": "application/json",
+      ...rawPassphraseHeaders,
+    };
+    const savePayload = {
+      slug: "custom",
+      display: {
+        name: "Custom",
+        description: "Updated custom preset.",
+        sortOrder: 120,
+        outcomeFocus: [],
+      },
+      ...configSnapshotPayload(),
+    };
+
+    const responses = await Promise.all([
+      resetDemo(
+        new Request("http://dashboard.local/api/admin/demo/reset", {
+          method: "POST",
+          headers: rawPassphraseHeaders,
+        }),
+      ),
+      updateErpChaos(
+        new Request("http://dashboard.local/api/admin/erp-chaos", {
+          method: "PUT",
+          headers: rawPassphraseJsonHeaders,
+          body: JSON.stringify(erpChaosConfigPayload()),
+        }),
+      ),
+      saveAdminPreset(
+        new Request("http://dashboard.local/api/admin/demo/presets/save", {
+          method: "POST",
+          headers: rawPassphraseJsonHeaders,
+          body: JSON.stringify(savePayload),
+        }),
+      ),
+      deleteRunHistory(
+        new Request("http://dashboard.local/api/admin/demo/runs/history", {
+          method: "DELETE",
+          headers: rawPassphraseJsonHeaders,
+          body: JSON.stringify({ deleteAllConfirmation: "DELETE_ALL_RUN_SUMMARIES" }),
+        }),
+      ),
+      startAdminDemoRun(
+        new Request("http://dashboard.local/api/admin/demo/runs/start", {
+          method: "POST",
+          headers: rawPassphraseJsonHeaders,
+          body: JSON.stringify({ presetSlug: "preview-1k" }),
+        }),
+      ),
+    ]);
+    const payloads = (await Promise.all(responses.map((response) => response.json()))) as Array<{
+      code?: string;
+    }>;
+
+    expect(responses.map((response) => response.status)).toEqual([401, 401, 401, 401, 401]);
+    expect(payloads.map((payload) => payload.code)).toEqual([
+      "admin_session_required",
+      "admin_session_required",
+      "admin_session_required",
+      "admin_session_required",
+      "admin_session_required",
+    ]);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("accepts a valid admin session cookie for protected proxy routes", async () => {
+    process.env.CONTROL_SERVICE_TOKEN = "control-token";
+    process.env.API_BASE_URL = "http://api.internal";
+    const headers = await adminSessionHeaders();
     const fetchMock = vi.fn(async () =>
       jsonResponse({
         failedRunCount: 1,
@@ -241,7 +309,7 @@ describe("dashboard control proxy routes", () => {
     const response = await resetDemo(
       new Request("http://dashboard.local/api/admin/demo/reset", {
         method: "POST",
-        headers: { cookie },
+        headers,
       }),
     );
 
@@ -250,9 +318,9 @@ describe("dashboard control proxy routes", () => {
   });
 
   it("forwards valid ERP chaos updates with the server-side control token", async () => {
-    process.env.ADMIN_DASHBOARD_PASSPHRASE = "admin-pass";
     process.env.CONTROL_SERVICE_TOKEN = "control-token";
     process.env.MOCK_ERP_BASE_URL = "http://mock-erp.internal";
+    const headers = await adminSessionHeaders({ "content-type": "application/json" });
     const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
       expect(init?.method).toBe("PUT");
       expect((init?.headers as Record<string, string>)[controlServiceTokenHeaderName]).toBe(
@@ -271,10 +339,7 @@ describe("dashboard control proxy routes", () => {
     const response = await updateErpChaos(
       new Request("http://dashboard.local/api/admin/erp-chaos", {
         method: "PUT",
-        headers: {
-          "content-type": "application/json",
-          [adminPassphraseHeaderName]: "admin-pass",
-        },
+        headers,
         body: JSON.stringify(erpChaosConfigPayload()),
       }),
     );
@@ -286,9 +351,9 @@ describe("dashboard control proxy routes", () => {
   });
 
   it("forwards ERP chaos reset with the server-side control token", async () => {
-    process.env.ADMIN_DASHBOARD_PASSPHRASE = "admin-pass";
     process.env.CONTROL_SERVICE_TOKEN = "control-token";
     process.env.MOCK_ERP_BASE_URL = "http://mock-erp.internal";
+    const headers = await adminSessionHeaders();
     const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
       expect(init?.method).toBe("POST");
       expect((init?.headers as Record<string, string>)[controlServiceTokenHeaderName]).toBe(
@@ -301,9 +366,7 @@ describe("dashboard control proxy routes", () => {
     const response = await resetErpChaos(
       new Request("http://dashboard.local/api/admin/erp-chaos/reset", {
         method: "POST",
-        headers: {
-          [adminPassphraseHeaderName]: "admin-pass",
-        },
+        headers,
       }),
     );
     const payload = await response.json();
@@ -314,9 +377,9 @@ describe("dashboard control proxy routes", () => {
   });
 
   it("forwards demo reset with the server-side control token", async () => {
-    process.env.ADMIN_DASHBOARD_PASSPHRASE = "admin-pass";
     process.env.CONTROL_SERVICE_TOKEN = "control-token";
     process.env.API_BASE_URL = "http://api.internal";
+    const headers = await adminSessionHeaders();
     const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
       expect(init?.method).toBe("POST");
       expect((init?.headers as Record<string, string>)[controlServiceTokenHeaderName]).toBe(
@@ -336,9 +399,7 @@ describe("dashboard control proxy routes", () => {
     const response = await resetDemo(
       new Request("http://dashboard.local/api/admin/demo/reset", {
         method: "POST",
-        headers: {
-          [adminPassphraseHeaderName]: "admin-pass",
-        },
+        headers,
       }),
     );
     const payload = await response.json();
@@ -349,10 +410,10 @@ describe("dashboard control proxy routes", () => {
   });
 
   it("forwards admin demo starts with trusted admin authority", async () => {
-    process.env.ADMIN_DASHBOARD_PASSPHRASE = "admin-pass";
     process.env.CONTROL_SERVICE_TOKEN = "control-token";
     process.env.API_BASE_URL = "http://api.internal";
     const configOverride = configSnapshotPayload();
+    const headers = await adminSessionHeaders({ "content-type": "application/json" });
     const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
       const headers = init?.headers as Record<string, string>;
       expect(init?.method).toBe("POST");
@@ -376,10 +437,7 @@ describe("dashboard control proxy routes", () => {
     const authorized = await startAdminDemoRun(
       new Request("http://dashboard.local/api/admin/demo/runs/start", {
         method: "POST",
-        headers: {
-          "content-type": "application/json",
-          [adminPassphraseHeaderName]: "admin-pass",
-        },
+        headers,
         body: JSON.stringify({ presetSlug: "preview-1k", configOverride }),
       }),
     );
@@ -393,9 +451,9 @@ describe("dashboard control proxy routes", () => {
   });
 
   it("forwards generated-run cleanup with validated options", async () => {
-    process.env.ADMIN_DASHBOARD_PASSPHRASE = "admin-pass";
     process.env.CONTROL_SERVICE_TOKEN = "control-token";
     process.env.API_BASE_URL = "http://api.internal";
+    const headers = await adminSessionHeaders({ "content-type": "application/json" });
     const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
       expect(init?.method).toBe("POST");
       expect((init?.headers as Record<string, string>)[controlServiceTokenHeaderName]).toBe(
@@ -417,10 +475,7 @@ describe("dashboard control proxy routes", () => {
     const response = await cleanupRuns(
       new Request("http://dashboard.local/api/admin/demo/runs/cleanup", {
         method: "POST",
-        headers: {
-          "content-type": "application/json",
-          [adminPassphraseHeaderName]: "admin-pass",
-        },
+        headers,
         body: JSON.stringify({ keepLatest: 15, olderThanDays: 7 }),
       }),
     );
@@ -434,9 +489,9 @@ describe("dashboard control proxy routes", () => {
   });
 
   it("forwards run history deletion with the server-side control token", async () => {
-    process.env.ADMIN_DASHBOARD_PASSPHRASE = "admin-pass";
     process.env.CONTROL_SERVICE_TOKEN = "control-token";
     process.env.API_BASE_URL = "http://api.internal";
+    const headers = await adminSessionHeaders({ "content-type": "application/json" });
     const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
       expect(init?.method).toBe("DELETE");
       expect((init?.headers as Record<string, string>)[controlServiceTokenHeaderName]).toBe(
@@ -456,9 +511,7 @@ describe("dashboard control proxy routes", () => {
     const response = await deleteRunHistory(
       new Request("http://dashboard.local/api/admin/demo/runs/history", {
         method: "DELETE",
-        headers: {
-          [adminPassphraseHeaderName]: "admin-pass",
-        },
+        headers,
         body: JSON.stringify({ deleteAllConfirmation: "DELETE_ALL_RUN_SUMMARIES" }),
       }),
     );
@@ -470,7 +523,6 @@ describe("dashboard control proxy routes", () => {
   });
 
   it("forwards admin runtime policy reads and updates with the server-side control token", async () => {
-    process.env.ADMIN_DASHBOARD_PASSPHRASE = "admin-pass";
     process.env.CONTROL_SERVICE_TOKEN = "control-token";
     process.env.API_BASE_URL = "http://api.internal";
     const policy = publicRuntimePolicyMutablePayload();
@@ -499,10 +551,7 @@ describe("dashboard control proxy routes", () => {
       );
     });
     vi.stubGlobal("fetch", fetchMock);
-    const headers = {
-      "content-type": "application/json",
-      [adminPassphraseHeaderName]: "admin-pass",
-    };
+    const headers = await adminSessionHeaders({ "content-type": "application/json" });
 
     const unauthorized = await getAdminRuntimePolicy(
       new Request("http://dashboard.local/api/admin/demo/runtime-policy"),
@@ -533,7 +582,6 @@ describe("dashboard control proxy routes", () => {
   });
 
   it("forwards admin preset management with validated bodies", async () => {
-    process.env.ADMIN_DASHBOARD_PASSPHRASE = "admin-pass";
     process.env.CONTROL_SERVICE_TOKEN = "control-token";
     process.env.API_BASE_URL = "http://api.internal";
     const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
@@ -556,10 +604,7 @@ describe("dashboard control proxy routes", () => {
       });
     });
     vi.stubGlobal("fetch", fetchMock);
-    const headers = {
-      "content-type": "application/json",
-      [adminPassphraseHeaderName]: "admin-pass",
-    };
+    const headers = await adminSessionHeaders({ "content-type": "application/json" });
     const savePayload = {
       slug: "custom",
       display: {
@@ -818,6 +863,35 @@ function adminRuntimePolicyPayload(options: {
     correlationId: options.correlationId ?? "corr-policy-read",
     timestamp: "2026-06-20T00:00:10.000Z",
   };
+}
+
+async function adminSessionHeaders(
+  headers: Record<string, string> = {},
+): Promise<Record<string, string>> {
+  return {
+    ...headers,
+    cookie: await adminSessionCookie(),
+  };
+}
+
+async function adminSessionCookie(): Promise<string> {
+  process.env.ADMIN_DASHBOARD_PASSPHRASE = "admin-pass";
+  process.env.ADMIN_SESSION_SECRET = "admin-session-secret";
+
+  const response = await createAdminSession(
+    new Request("http://dashboard.local/api/admin/session", {
+      method: "POST",
+      headers: {
+        [adminPassphraseHeaderName]: "admin-pass",
+      },
+    }),
+  );
+  const cookie = response.headers.get("set-cookie")?.split(";")[0] ?? "";
+
+  expect(response.status).toBe(200);
+  expect(cookie).toContain("checkout_surge_admin_session=");
+
+  return cookie;
 }
 
 function jsonResponse(payload: unknown, status = 200): Response {

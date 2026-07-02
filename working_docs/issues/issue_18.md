@@ -1,5 +1,7 @@
 # Issue 18 - Require admin sessions for protected web proxy routes
 
+Status: Fixed
+
 
 ## Recommended Order Rationale
 
