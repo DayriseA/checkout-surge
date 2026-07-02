@@ -64,10 +64,8 @@ import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { ApiHttpError } from "../runtime/errors.js";
 import type { DashboardBusinessOutcomeReader } from "./dashboard-recovery-service.js";
-import {
-  type DemoRunFinalizationController,
-  PostgresTerminalDemoRunSummaryWriter,
-} from "./demo-run-finalization-service.js";
+import type { DemoRunFinalizationController } from "./demo-run-finalization-service.js";
+import { PostgresTerminalDemoRunSummaryWriter } from "./terminal-demo-run-transition.js";
 
 const demoRunStartLockKey = "checkout_surge_demo_run_start";
 const generatedRunSaleDurationMs = 24 * 60 * 60 * 1000;

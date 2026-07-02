@@ -23,6 +23,7 @@ import {
 } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { and, desc, inArray, lt, notInArray } from "drizzle-orm";
+import { PostgresTerminalDemoRunSummaryWriter } from "./terminal-demo-run-transition.js";
 
 export interface QueueCleanupSummary {
   cleanedQueueCount: number;
@@ -34,6 +35,8 @@ export interface DemoQueueMaintenance {
 }
 
 export class DemoMaintenanceService {
+  private readonly terminalRunWriter: PostgresTerminalDemoRunSummaryWriter;
+
   constructor(
     private readonly options: {
       db: CheckoutSurgeDatabase;
@@ -42,7 +45,9 @@ export class DemoMaintenanceService {
       logger: CheckoutSurgeLogger;
       now?: () => Date;
     },
-  ) {}
+  ) {
+    this.terminalRunWriter = new PostgresTerminalDemoRunSummaryWriter(options.db);
+  }
 
   async reset(correlationId: string): Promise<AdminDemoResetResponse> {
     const now = this.now();
@@ -51,19 +56,22 @@ export class DemoMaintenanceService {
       .from(demoRuns)
       .where(inArray(demoRuns.status, ["starting", "active", "draining"]));
 
-    await this.options.db
-      .update(demoRuns)
-      .set({
-        status: "failed",
-        trafficStatus: "failed",
-        finalizedAt: now,
-        failureReason: "admin_reset",
-        updatedAt: now,
-      })
-      .where(inArray(demoRuns.status, ["starting", "active", "draining"]));
-
+    let failedRunCount = 0;
     let closedSaleOfferCount = 0;
     for (const run of activeRuns) {
+      const claimedRun = await this.terminalRunWriter.claimTerminalRun({
+        runId: run.id,
+        terminalStatus: "failed",
+        terminalTrafficStatus: "failed",
+        failureReason: "admin_reset",
+        finalizedAt: now,
+        allowedCurrentStatuses: ["starting", "active", "draining"],
+      });
+      if (!claimedRun) {
+        continue;
+      }
+
+      failedRunCount += 1;
       if (!run.saleOfferId) {
         continue;
       }
@@ -85,7 +93,7 @@ export class DemoMaintenanceService {
     const queueCleanup = await this.options.queueMaintenance.cleanResetOwnedQueues();
 
     return adminDemoResetResponseSchema.parse({
-      failedRunCount: activeRuns.length,
+      failedRunCount,
       closedSaleOfferCount,
       cleanedQueueCount: queueCleanup.cleanedQueueCount,
       cleanedJobCount: queueCleanup.cleanedJobCount,

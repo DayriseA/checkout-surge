@@ -1,7 +1,9 @@
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import type {
   AcceptedRunConfigSnapshot,
+  AdminDemoResetResponse,
   BusinessOutcomeSummary,
   TrafficCompletionReport,
 } from "@checkout-surge/contracts";
@@ -25,9 +27,11 @@ import {
 } from "@checkout-surge/db";
 import { resetTestDatabase } from "@checkout-surge/db/testing";
 import { createSilentLogger } from "@checkout-surge/logger";
-import { count, eq } from "drizzle-orm";
+import { count, eq, sql } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { DemoMaintenanceService } from "../src/services/demo-maintenance-service.js";
 import { DemoRunFinalizationService } from "../src/services/demo-run-finalization-service.js";
+import { terminalDemoRunTransitionLockKey } from "../src/services/terminal-demo-run-transition.js";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const dbPackageRoot = path.resolve(packageRoot, "../../packages/db");
@@ -206,6 +210,67 @@ describe("demo run finalization service", () => {
       acceptedReservations: 2,
       source: "redis",
     });
+  });
+
+  it("keeps run and summary terminal state consistent when reset races with finalization", async () => {
+    const db = requireConnection(connection).db;
+    const redisClient = requireRedis(redis);
+    const finalizationService = createService(connection, redis);
+    const lockConnection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
+    const resetConnection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
+    const resetService = new DemoMaintenanceService({
+      db: resetConnection.db,
+      redis: redisClient,
+      queueMaintenance: {
+        cleanResetOwnedQueues: async () => ({ cleanedQueueCount: 0, cleanedJobCount: 0 }),
+      },
+      logger: createSilentLogger("api"),
+      now: () => new Date("2026-06-20T00:00:11.000Z"),
+    });
+    let finalizationPromise: Promise<unknown> | null = null;
+    let resetPromise: Promise<AdminDemoResetResponse> | null = null;
+
+    await seedDrainingRun({ db, redis: redisClient, trafficDeliveryStatus: "complete" });
+
+    try {
+      await lockConnection.db.transaction(async (tx) => {
+        await tx.execute(
+          sql`select pg_advisory_xact_lock(hashtext(${terminalDemoRunTransitionLockKey(ids.run)}))`,
+        );
+
+        finalizationPromise = finalizationService.finalizeRun(ids.run, "corr-finalize-race");
+        await waitForWaitingAdvisoryLock(resetConnection.sql);
+
+        resetPromise = resetService.reset("corr-reset-race");
+        await delay(100);
+      });
+
+      const startedFinalization = requireStartedPromise(finalizationPromise, "finalization");
+      const startedReset = requireStartedPromise<AdminDemoResetResponse>(resetPromise, "reset");
+      await startedFinalization;
+      const resetResponse = await startedReset;
+      const [run] = await db.select().from(demoRuns).where(eq(demoRuns.id, ids.run)).limit(1);
+      const summaries = await db
+        .select()
+        .from(demoRunSummaries)
+        .where(eq(demoRunSummaries.runId, ids.run));
+      const [summary] = summaries;
+
+      expect(resetResponse.failedRunCount === 0 || resetResponse.failedRunCount === 1).toBe(true);
+      expect(summaries.length).toBeLessThanOrEqual(1);
+      expect(run).toBeDefined();
+      if (summary) {
+        expect(run?.status).toBe(summary.status);
+        expect(run?.failureReason).toBe(summary.failureReason);
+        expect(run?.finalizedAt).toEqual(summary.endedAt);
+      } else {
+        expect(run?.status).toBe("failed");
+        expect(run?.failureReason).toBe("admin_reset");
+      }
+    } finally {
+      await lockConnection.close();
+      await resetConnection.close();
+    }
   });
 
   it("finalizes as failed for major traffic-delivery shortfall after business drain", async () => {
@@ -502,6 +567,37 @@ function trafficCompletionReportFixture(
     completedAt: "2026-06-20T00:00:05.000Z",
     correlationId: "corr-finalize-test",
   };
+}
+
+async function waitForWaitingAdvisoryLock(
+  sqlClient: ReturnType<typeof createDatabaseConnection>["sql"],
+): Promise<void> {
+  const deadline = Date.now() + 5_000;
+
+  while (Date.now() < deadline) {
+    const rows = await sqlClient`
+      select exists (
+        select 1
+        from pg_locks
+        where locktype = 'advisory'
+          and granted = false
+      ) as waiting
+    `;
+    if (rows[0]?.waiting) {
+      return;
+    }
+    await delay(20);
+  }
+
+  throw new Error("Timed out waiting for a blocked terminal run advisory lock.");
+}
+
+function requireStartedPromise<T>(promise: Promise<T> | null, label: string): Promise<T> {
+  if (!promise) {
+    throw new Error(`${label} promise was not started.`);
+  }
+
+  return promise;
 }
 
 function requireTestDatabaseUrl(): string {

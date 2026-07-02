@@ -7,25 +7,22 @@ import {
   type DemoRunSnapshot,
   demoRunSnapshotSchema,
   type TerminalInventorySnapshot,
-  type TrafficDeliverySummary,
-  type TrafficHttpSummary,
   trafficDeliverySummarySchema,
   trafficHttpSummarySchema,
 } from "@checkout-surge/contracts";
-import type { DemoRunStatus, DemoRunTrafficStatus } from "@checkout-surge/db";
 import {
   type CheckoutSurgeDatabase,
   type CheckoutSurgeRedis,
   demoRunFinalizations,
   demoRunReservationOutcomes,
-  demoRunSummaries,
   demoRuns,
   getInventoryStatus,
   publishDashboardEvent,
   readBusinessOutcomeSummary,
 } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
+import { PostgresTerminalDemoRunSummaryWriter } from "./terminal-demo-run-transition.js";
 
 export interface DemoRunFinalizationController {
   finalizeRun(runId: string, correlationId?: string): Promise<DemoRunSnapshot | null>;
@@ -41,95 +38,6 @@ type FinalizationDecision =
       businessOutcome: BusinessOutcomeSummary;
       terminalInventorySnapshot: TerminalInventorySnapshot | null;
     };
-
-export interface TerminalDemoRunSummaryInput {
-  run: typeof demoRuns.$inferSelect;
-  terminalStatus: "completed" | "failed";
-  failureReason: string | null;
-  finalizedAt: Date;
-  httpSummary: TrafficHttpSummary;
-  trafficDeliverySummary: TrafficDeliverySummary;
-  httpTimingBreakdownSummary: Record<string, unknown>;
-  loadRunDiagnosticsSummary: Record<string, unknown>;
-  apiRequestLifecycleSummary: Record<string, unknown>;
-  businessOutcome: BusinessOutcomeSummary;
-  terminalInventorySnapshot: TerminalInventorySnapshot | null;
-  allowedCurrentStatuses: DemoRunStatus[];
-  terminalTrafficStatus?: DemoRunTrafficStatus;
-}
-
-export class PostgresTerminalDemoRunSummaryWriter {
-  constructor(private readonly db: CheckoutSurgeDatabase) {}
-
-  async write(input: TerminalDemoRunSummaryInput): Promise<boolean> {
-    return this.db.transaction(async (tx) => {
-      await tx.execute(
-        sql`select pg_advisory_xact_lock(hashtext(${`demo_run_finalize:${input.run.id}`}))`,
-      );
-
-      const [existingSummary] = await tx
-        .select()
-        .from(demoRunSummaries)
-        .where(eq(demoRunSummaries.runId, input.run.id))
-        .limit(1);
-
-      if (existingSummary) {
-        await tx
-          .update(demoRuns)
-          .set({
-            status: existingSummary.status,
-            ...(input.terminalTrafficStatus ? { trafficStatus: input.terminalTrafficStatus } : {}),
-            failureReason: existingSummary.failureReason,
-            finalizedAt: existingSummary.endedAt,
-            updatedAt: input.finalizedAt,
-          })
-          .where(
-            and(
-              eq(demoRuns.id, input.run.id),
-              inArray(demoRuns.status, input.allowedCurrentStatuses),
-            ),
-          );
-        return false;
-      }
-
-      await tx.insert(demoRunSummaries).values({
-        runId: input.run.id,
-        presetName: input.run.presetName,
-        status: input.terminalStatus,
-        failureReason: input.failureReason,
-        startedAt: input.run.startedAt,
-        endedAt: input.finalizedAt,
-        httpSummary: trafficHttpSummarySchema.parse(input.httpSummary),
-        trafficDeliverySummary: trafficDeliverySummarySchema.parse(input.trafficDeliverySummary),
-        httpTimingBreakdownSummary: input.httpTimingBreakdownSummary,
-        loadRunDiagnosticsSummary: input.loadRunDiagnosticsSummary,
-        apiRequestLifecycleSummary: input.apiRequestLifecycleSummary,
-        businessOutcomeSummary: input.businessOutcome,
-        terminalInventorySnapshot: input.terminalInventorySnapshot,
-        capturedAt: input.finalizedAt,
-        createdAt: input.finalizedAt,
-      });
-
-      await tx
-        .update(demoRuns)
-        .set({
-          status: input.terminalStatus,
-          ...(input.terminalTrafficStatus ? { trafficStatus: input.terminalTrafficStatus } : {}),
-          failureReason: input.failureReason,
-          finalizedAt: input.finalizedAt,
-          updatedAt: input.finalizedAt,
-        })
-        .where(
-          and(
-            eq(demoRuns.id, input.run.id),
-            inArray(demoRuns.status, input.allowedCurrentStatuses),
-          ),
-        );
-
-      return true;
-    });
-  }
-}
 
 export class DemoRunFinalizationService implements DemoRunFinalizationController {
   private readonly summaryWriter: PostgresTerminalDemoRunSummaryWriter;

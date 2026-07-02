@@ -18,7 +18,7 @@ import {
 } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { and, eq, inArray } from "drizzle-orm";
-import { PostgresTerminalDemoRunSummaryWriter } from "./demo-run-finalization-service.js";
+import { PostgresTerminalDemoRunSummaryWriter } from "./terminal-demo-run-transition.js";
 
 const apiRestartInterruptedRunReason = "api_restart_interrupted_run";
 

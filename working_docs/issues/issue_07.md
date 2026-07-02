@@ -1,5 +1,7 @@
 # Issue 07 - Make terminal summary writes atomic with run terminal updates
 
+Status: Fixed
+
 
 ## Recommended Order Rationale
 
