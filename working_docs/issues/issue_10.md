@@ -1,5 +1,6 @@
 # Issue 10 - Restrict generated-run cleanup to generated sale offers
 
+Status: Fixed
 
 ## Recommended Order Rationale
 

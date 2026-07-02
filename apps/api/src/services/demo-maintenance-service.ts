@@ -170,12 +170,24 @@ export class DemoMaintenanceService {
       .from(demoRuns)
       .where(and(...filters));
     const runIds = deletableRuns.map((run) => run.id);
-    const saleOfferIds = deletableRuns
-      .map((run) => run.saleOfferId)
-      .filter((id): id is string => Boolean(id));
 
+    let deletedSaleOfferCount = 0;
     if (runIds.length > 0) {
-      await this.options.db.transaction(async (tx) => {
+      deletedSaleOfferCount = await this.options.db.transaction(async (tx) => {
+        const generatedSaleOfferRows = await tx
+          .select({ id: saleOffers.id })
+          .from(demoRuns)
+          .innerJoin(
+            demoRunSaleContexts,
+            and(
+              eq(demoRunSaleContexts.runId, demoRuns.id),
+              eq(demoRunSaleContexts.saleOfferId, demoRuns.saleOfferId),
+            ),
+          )
+          .innerJoin(saleOffers, eq(saleOffers.id, demoRunSaleContexts.saleOfferId))
+          .where(and(inArray(demoRuns.id, runIds), eq(saleOffers.purpose, "generated_run")));
+        const generatedSaleOfferIds = generatedSaleOfferRows.map((row) => row.id);
+
         await tx
           .delete(simulatedNotifications)
           .where(inArray(simulatedNotifications.runId, runIds));
@@ -193,15 +205,26 @@ export class DemoMaintenanceService {
         await tx.delete(demoRunSummaries).where(inArray(demoRunSummaries.runId, runIds));
         await tx.delete(demoRunSaleContexts).where(inArray(demoRunSaleContexts.runId, runIds));
         await tx.delete(demoRuns).where(inArray(demoRuns.id, runIds));
-        if (saleOfferIds.length > 0) {
-          await tx.delete(saleOffers).where(inArray(saleOffers.id, saleOfferIds));
+        if (generatedSaleOfferIds.length === 0) {
+          return 0;
         }
+        const deletedSaleOffers = await tx
+          .delete(saleOffers)
+          .where(
+            and(
+              inArray(saleOffers.id, generatedSaleOfferIds),
+              eq(saleOffers.purpose, "generated_run"),
+            ),
+          )
+          .returning({ id: saleOffers.id });
+
+        return deletedSaleOffers.length;
       });
     }
 
     return adminMaintenanceCleanupRunsResponseSchema.parse({
       deletedRunCount: runIds.length,
-      deletedSaleOfferCount: saleOfferIds.length,
+      deletedSaleOfferCount,
       preservedLatestCount: latestRunIds.length,
       preservedActiveRunCount: activeRunIds.length,
       cutoffBefore: cutoffBefore.toISOString(),

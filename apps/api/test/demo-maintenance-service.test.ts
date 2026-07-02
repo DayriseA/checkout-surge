@@ -21,7 +21,7 @@ import {
 } from "@checkout-surge/db";
 import { resetTestDatabase } from "@checkout-surge/db/testing";
 import { createSilentLogger } from "@checkout-surge/logger";
-import { inArray } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { DemoMaintenanceService } from "../src/services/demo-maintenance-service.js";
 
@@ -37,16 +37,18 @@ const ids = {
   drainingRun: "55555555-5555-4555-8555-555555555553",
   completedRun: "55555555-5555-4555-8555-555555555554",
   failedRun: "55555555-5555-4555-8555-555555555555",
+  catalogRun: "55555555-5555-4555-8555-555555555556",
   startingOffer: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1",
   activeOffer: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2",
   drainingOffer: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb3",
   completedOffer: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb4",
   failedOffer: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb5",
+  catalogOffer: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb6",
   activeReservation: "77777777-7777-4777-8777-777777777771",
   activeOrder: "88888888-8888-4888-8888-888888888881",
 } as const;
 
-describe("demo maintenance lifecycle reset", () => {
+describe("demo maintenance service", () => {
   let connection: ReturnType<typeof createDatabaseConnection> | null = null;
   let redis: ReturnType<typeof createRedisClient> | null = null;
 
@@ -303,6 +305,99 @@ describe("demo maintenance lifecycle reset", () => {
       ]),
     );
   });
+
+  it("cleans eligible terminal generated-run sale offers through sale contexts", async () => {
+    const db = requireConnection(connection).db;
+    const redisClient = requireRedis(redis);
+    const service = new DemoMaintenanceService({
+      db,
+      redis: redisClient,
+      queueMaintenance: {
+        cleanResetOwnedQueues: vi
+          .fn()
+          .mockResolvedValue({ cleanedQueueCount: 0, cleanedJobCount: 0 }),
+      },
+      logger: createSilentLogger("api"),
+      now: () => new Date("2026-06-25T00:00:00.000Z"),
+    });
+
+    await seedBase(db);
+    await seedRun(db, redisClient, {
+      runId: ids.completedRun,
+      saleOfferId: ids.completedOffer,
+      status: "completed",
+      trafficStatus: "succeeded",
+      failureReason: null,
+    });
+
+    const response = await service.cleanupOldRuns({
+      keepLatest: 0,
+      olderThanDays: 1,
+      correlationId: "corr-cleanup-generated",
+    });
+    const runRows = await db.select().from(demoRuns).where(eq(demoRuns.id, ids.completedRun));
+    const contextRows = await db
+      .select()
+      .from(demoRunSaleContexts)
+      .where(eq(demoRunSaleContexts.runId, ids.completedRun));
+    const saleOfferRows = await db
+      .select()
+      .from(saleOffers)
+      .where(eq(saleOffers.id, ids.completedOffer));
+
+    expect(response).toEqual({
+      deletedRunCount: 1,
+      deletedSaleOfferCount: 1,
+      preservedLatestCount: 0,
+      preservedActiveRunCount: 0,
+      cutoffBefore: "2026-06-24T00:00:00.000Z",
+      cleanedAt: "2026-06-25T00:00:00.000Z",
+      correlationId: "corr-cleanup-generated",
+    });
+    expect(runRows).toHaveLength(0);
+    expect(contextRows).toHaveLength(0);
+    expect(saleOfferRows).toHaveLength(0);
+  });
+
+  it("leaves catalog sale offers untouched when an old terminal run references one", async () => {
+    const db = requireConnection(connection).db;
+    const redisClient = requireRedis(redis);
+    const service = new DemoMaintenanceService({
+      db,
+      redis: redisClient,
+      queueMaintenance: {
+        cleanResetOwnedQueues: vi
+          .fn()
+          .mockResolvedValue({ cleanedQueueCount: 0, cleanedJobCount: 0 }),
+      },
+      logger: createSilentLogger("api"),
+      now: () => new Date("2026-06-25T00:00:00.000Z"),
+    });
+
+    await seedBase(db);
+    await seedCatalogReferencedTerminalRun(db);
+
+    const response = await service.cleanupOldRuns({
+      keepLatest: 0,
+      olderThanDays: 1,
+      correlationId: "corr-cleanup-catalog",
+    });
+    const runRows = await db.select().from(demoRuns).where(eq(demoRuns.id, ids.catalogRun));
+    const saleOfferRows = await db
+      .select({ id: saleOffers.id, purpose: saleOffers.purpose })
+      .from(saleOffers)
+      .where(eq(saleOffers.id, ids.catalogOffer));
+
+    expect(response).toMatchObject({
+      deletedRunCount: 1,
+      deletedSaleOfferCount: 0,
+      preservedLatestCount: 0,
+      preservedActiveRunCount: 0,
+      correlationId: "corr-cleanup-catalog",
+    });
+    expect(runRows).toHaveLength(0);
+    expect(saleOfferRows).toEqual([{ id: ids.catalogOffer, purpose: "catalog" }]);
+  });
 });
 
 async function seedRuns(
@@ -471,6 +566,41 @@ async function seedRun(
       updatedAt: new Date("2026-06-20T00:00:05.000Z"),
     });
   }
+}
+
+async function seedCatalogReferencedTerminalRun(
+  db: ReturnType<typeof createDatabaseConnection>["db"],
+): Promise<void> {
+  const now = new Date("2026-06-20T00:00:00.000Z");
+  await db.insert(saleOffers).values({
+    id: ids.catalogOffer,
+    productId: ids.product,
+    name: "Catalog Offer",
+    allocatedStock: 10,
+    saleStartsAt: now,
+    saleEndsAt: new Date("2026-06-21T00:00:00.000Z"),
+    isActive: true,
+    purpose: "catalog",
+    createdAt: now,
+    updatedAt: now,
+  });
+  await db.insert(demoRuns).values({
+    id: ids.catalogRun,
+    presetId: ids.preset,
+    presetName: "Reset Preset",
+    operatorMode: "admin",
+    status: "completed",
+    trafficStatus: "succeeded",
+    configSnapshot: configSnapshotFixture(),
+    saleOfferId: ids.catalogOffer,
+    startedAt: now,
+    trafficStartedAt: new Date("2026-06-20T00:00:01.000Z"),
+    trafficEndedAt: new Date("2026-06-20T00:00:05.000Z"),
+    finalizedAt: new Date("2026-06-20T00:00:06.000Z"),
+    failureReason: null,
+    createdAt: now,
+    updatedAt: now,
+  });
 }
 
 async function seedActiveRunBusinessState(
