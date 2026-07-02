@@ -1,10 +1,15 @@
-import type { spawn } from "node:child_process";
+import { type spawn, spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
+import { accessSync, constants } from "node:fs";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { PassThrough } from "node:stream";
 import {
   controlServiceTokenHeaderName,
   type HealthStatus,
   healthResponseSchema,
+  type LoadMetricIngestRequest,
   loadRunIdHeaderName,
   type ReadinessCheck,
   type TrafficCompletionReport,
@@ -24,6 +29,8 @@ import { createLoadOrchestratorReadiness } from "../src/runtime/readiness.js";
 import { buildLoadOrchestratorServer } from "../src/server.js";
 
 const timestamp = "2026-06-20T12:00:00.000Z";
+const completionTimestamp = "2026-06-20T12:00:05.000Z";
+const runnableK6Binary = resolveRunnableK6Binary();
 const startRequest: TrafficExecutionStartRequest = {
   runId: "55555555-5555-4555-8555-555555555555",
   saleOfferId: "22222222-2222-4222-8222-222222222222",
@@ -98,6 +105,62 @@ describe("load-orchestrator k6 mapping", () => {
     expect(script.contents).toContain('"maxVUs":50');
   });
 
+  it("emits a parseable k6 module using the expected public k6 APIs", async () => {
+    const script = generateK6Script(startRequest);
+    const workDir = await mkdtemp(path.join(tmpdir(), "checkout-surge-k6-script-check-"));
+    const scriptPath = path.join(workDir, "scenario.mjs");
+
+    try {
+      await writeFile(scriptPath, script.contents, "utf8");
+      const checkResult = spawnSync(process.execPath, ["--check", scriptPath], {
+        encoding: "utf8",
+      });
+
+      if (checkResult.status !== 0) {
+        throw new Error(
+          `Generated k6 script failed Node syntax validation.\nstdout:\n${checkResult.stdout}\nstderr:\n${checkResult.stderr}`,
+        );
+      }
+
+      expect(script.contents).toContain('import http from "k6/http";');
+      expect(script.contents).toContain('import { check } from "k6";');
+      expect(script.contents).toContain('import exec from "k6/execution";');
+      expect(script.contents).toContain('import { Counter } from "k6/metrics";');
+      expect(script.contents).toContain("exec.scenario.iterationInTest");
+      expect(script.contents).toContain('new Counter("checkout_reservation_accepted")');
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
+    }
+  });
+
+  const itWithK6 = runnableK6Binary ? it : it.skip;
+  itWithK6("is accepted by k6 inspect when a k6 binary is available", async () => {
+    if (!runnableK6Binary) {
+      throw new Error("Expected runnable k6 binary for this compatibility check.");
+    }
+
+    const script = generateK6Script(startRequest);
+    const workDir = await mkdtemp(path.join(tmpdir(), "checkout-surge-k6-inspect-"));
+    const scriptPath = path.join(workDir, "scenario.js");
+
+    try {
+      await writeFile(scriptPath, script.contents, "utf8");
+      const inspectResult = spawnSync(runnableK6Binary, ["inspect", scriptPath], {
+        encoding: "utf8",
+      });
+
+      if (inspectResult.status !== 0) {
+        throw new Error(
+          `Generated k6 script failed k6 inspect.\nstdout:\n${inspectResult.stdout}\nstderr:\n${inspectResult.stderr}`,
+        );
+      }
+
+      expect(inspectResult.status).toBe(0);
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
+    }
+  });
+
   it("parses k6 JSON points into stable dashboard metrics and traffic summaries", () => {
     const accumulator = new K6RunAccumulator({
       runId: startRequest.runId,
@@ -136,7 +199,7 @@ describe("load-orchestrator k6 mapping", () => {
     const report = accumulator.completionReport({
       status: "succeeded",
       exitCode: 0,
-      completedAt: new Date("2026-06-20T12:00:05.000Z"),
+      completedAt: new Date(completionTimestamp),
     });
 
     expect(samples.map((sample) => sample.metricName)).toEqual([
@@ -174,7 +237,7 @@ describe("load-orchestrator k6 mapping", () => {
     const report = accumulator.completionReport({
       status: "succeeded",
       exitCode: 0,
-      completedAt: new Date("2026-06-20T12:00:05.000Z"),
+      completedAt: new Date(completionTimestamp),
     });
 
     expect(report).toMatchObject({
@@ -189,6 +252,213 @@ describe("load-orchestrator k6 mapping", () => {
 });
 
 describe("SpawnK6Runner completion reporting", () => {
+  it("writes a temporary script, streams parsed metric batches, reports success, and cleans up", async () => {
+    const k6Process = createK6ProcessFixture();
+    const metricBatches: LoadMetricIngestRequest[] = [];
+    const completionReports: TrafficCompletionReport[] = [];
+    const apiClient: LoadApiClient = {
+      sendMetrics: vi.fn(async (batch) => {
+        metricBatches.push(batch);
+      }),
+      sendCompletion: vi.fn(async (report) => {
+        completionReports.push(report);
+      }),
+    };
+    const runner = new SpawnK6Runner({
+      k6Binary: "k6",
+      apiClient,
+      logger: createSilentLogger("load-orchestrator"),
+      now: createClock([timestamp, completionTimestamp]),
+      spawnProcess: k6Process.spawnProcess,
+    });
+
+    const start = await runner.start(startRequest);
+    const spawnCall = getSingleSpawnCall(k6Process);
+    const workDir = path.dirname(spawnCall.scriptPath);
+    const script = await readFile(spawnCall.scriptPath, "utf8");
+
+    writeK6JsonLines(k6Process.stdout, [
+      { type: "Point", metric: "http_reqs", data: { value: 1, time: timestamp } },
+      { type: "Point", metric: "http_req_duration", data: { value: 42, time: timestamp } },
+      { type: "Point", metric: "http_req_failed", data: { value: 0, time: timestamp } },
+      {
+        type: "Point",
+        metric: "checkout_reservation_accepted",
+        data: { value: 1, time: timestamp },
+      },
+    ]);
+    await waitForReadline();
+    k6Process.child.emit("close", 0);
+
+    const report = await waitForCompletionReport(completionReports, 1);
+    await waitForCondition(() => pathMissing(workDir), "k6 temp directory cleanup");
+
+    expect(start).toEqual({ startedAt: new Date(timestamp), plannedRequests: 400 });
+    expect(spawnCall.binary).toBe("k6");
+    expect(spawnCall.args).toEqual(["run", "--quiet", "--out", "json=-", spawnCall.scriptPath]);
+    expect(spawnCall.options).toEqual({ stdio: ["ignore", "pipe", "pipe"] });
+    expect(script).toContain('export const options = {"scenarios":{"checkout":');
+    expect(script).toContain(startRequest.runId);
+    expect(apiClient.sendMetrics).toHaveBeenCalledTimes(1);
+    expect(metricBatches).toEqual([
+      {
+        runId: startRequest.runId,
+        correlationId: startRequest.correlationId,
+        samples: [
+          {
+            metricName: "traffic.scheduled_request_rate",
+            value: 1,
+            unit: "requests",
+            timestamp,
+          },
+          { metricName: "traffic.latency", value: 42, unit: "ms", timestamp },
+          { metricName: "traffic.failure_rate", value: 0, unit: "ratio", timestamp },
+        ],
+        observedAt: expect.any(String),
+      },
+    ]);
+    expect(apiClient.sendCompletion).toHaveBeenCalledTimes(1);
+    expect(report).toMatchObject({
+      runId: startRequest.runId,
+      status: "succeeded",
+      exitCode: 0,
+      completedAt: completionTimestamp,
+      correlationId: startRequest.correlationId,
+      httpSummary: {
+        plannedRequests: 400,
+        emittedRequests: 1,
+        failedRequests: 0,
+        acceptedResponses: 1,
+        unexpectedResponses: 0,
+        p95LatencyMs: 42,
+        failureRate: 0,
+      },
+      trafficDeliverySummary: {
+        plannedRequests: 400,
+        emittedRequests: 1,
+        trafficDeliveryStatus: "failed",
+      },
+    });
+  });
+
+  it("reports non-zero k6 exits as failed completions and cleans up", async () => {
+    const k6Process = createK6ProcessFixture();
+    const metricBatches: LoadMetricIngestRequest[] = [];
+    const completionReports: TrafficCompletionReport[] = [];
+    const apiClient: LoadApiClient = {
+      sendMetrics: vi.fn(async (batch) => {
+        metricBatches.push(batch);
+      }),
+      sendCompletion: vi.fn(async (report) => {
+        completionReports.push(report);
+      }),
+    };
+    const runner = new SpawnK6Runner({
+      k6Binary: "k6",
+      apiClient,
+      logger: createSilentLogger("load-orchestrator"),
+      now: createClock([timestamp, completionTimestamp]),
+      spawnProcess: k6Process.spawnProcess,
+    });
+
+    await runner.start(startRequest);
+    const spawnCall = getSingleSpawnCall(k6Process);
+    const workDir = path.dirname(spawnCall.scriptPath);
+
+    writeK6JsonLines(k6Process.stdout, [
+      { type: "Point", metric: "http_reqs", data: { value: 1, time: timestamp } },
+      { type: "Point", metric: "http_req_failed", data: { value: 1, time: timestamp } },
+      {
+        type: "Point",
+        metric: "checkout_unexpected_response",
+        data: { value: 1, time: timestamp },
+      },
+      { type: "Point", metric: "dropped_iterations", data: { value: 1, time: timestamp } },
+    ]);
+    await waitForReadline();
+    k6Process.child.emit("close", 23);
+
+    const report = await waitForCompletionReport(completionReports, 1);
+    await waitForCondition(() => pathMissing(workDir), "k6 temp directory cleanup");
+
+    expect(apiClient.sendMetrics).toHaveBeenCalledTimes(1);
+    expect(metricBatches[0]?.samples.map((sample) => sample.metricName)).toEqual([
+      "traffic.scheduled_request_rate",
+      "traffic.failure_rate",
+    ]);
+    expect(apiClient.sendCompletion).toHaveBeenCalledTimes(1);
+    expect(report).toMatchObject({
+      runId: startRequest.runId,
+      status: "failed",
+      exitCode: 23,
+      errorMessage: "k6 exited with code 23.",
+      completedAt: completionTimestamp,
+      httpSummary: {
+        plannedRequests: 400,
+        emittedRequests: 1,
+        failedRequests: 1,
+        unexpectedResponses: 1,
+        failureRate: 1,
+      },
+      trafficDeliverySummary: {
+        plannedRequests: 400,
+        emittedRequests: 1,
+        droppedIterations: 1,
+        trafficDeliveryStatus: "failed",
+        notes: ["unexpected_checkout_responses_observed", "k6_dropped_iterations_observed"],
+      },
+    });
+  });
+
+  it("reports spawn errors once even when close follows error and cleans up", async () => {
+    const k6Process = createK6ProcessFixture();
+    const completionReports: TrafficCompletionReport[] = [];
+    const apiClient: LoadApiClient = {
+      sendMetrics: vi.fn(async () => undefined),
+      sendCompletion: vi.fn(async (report) => {
+        completionReports.push(report);
+      }),
+    };
+    const runner = new SpawnK6Runner({
+      k6Binary: "/missing/k6",
+      apiClient,
+      logger: createSilentLogger("load-orchestrator"),
+      now: createClock([timestamp, completionTimestamp]),
+      spawnProcess: k6Process.spawnProcess,
+    });
+
+    await runner.start(startRequest);
+    const spawnCall = getSingleSpawnCall(k6Process);
+    const workDir = path.dirname(spawnCall.scriptPath);
+
+    k6Process.child.emit("error", new Error("spawn /missing/k6 ENOENT"));
+    k6Process.child.emit("close", -2);
+
+    const report = await waitForCompletionReport(completionReports, 1);
+    await waitForCondition(() => pathMissing(workDir), "k6 temp directory cleanup");
+    await waitForReadline();
+
+    expect(apiClient.sendMetrics).not.toHaveBeenCalled();
+    expect(apiClient.sendCompletion).toHaveBeenCalledTimes(1);
+    expect(report).toMatchObject({
+      runId: startRequest.runId,
+      status: "failed",
+      errorMessage: "spawn /missing/k6 ENOENT",
+      completedAt: completionTimestamp,
+      httpSummary: {
+        plannedRequests: 400,
+        emittedRequests: 0,
+        failedRequests: 0,
+      },
+      trafficDeliverySummary: {
+        plannedRequests: 400,
+        emittedRequests: 0,
+        trafficDeliveryStatus: "failed",
+      },
+    });
+    expect(report).not.toHaveProperty("exitCode");
+  });
+
   it("retries completion delivery when the API fails once", async () => {
     const k6Process = createK6ProcessFixture();
     const reports: TrafficCompletionReport[] = [];
@@ -502,6 +772,109 @@ function createK6ProcessFixture(): {
     stderr,
     spawnProcess: vi.fn(() => child) as unknown as typeof spawn,
   };
+}
+
+function resolveRunnableK6Binary(): string | null {
+  const candidate = process.env.K6_BINARY?.trim() || "k6";
+  if (candidate.includes("/") || candidate.includes("\\")) {
+    try {
+      accessSync(candidate, constants.X_OK);
+      return candidate;
+    } catch {
+      return null;
+    }
+  }
+
+  const result = spawnSync(candidate, ["version"], { stdio: "ignore" });
+  return result.status === 0 ? candidate : null;
+}
+
+function createClock(isoTimestamps: string[]): () => Date {
+  let index = 0;
+  return () => {
+    const value = isoTimestamps[Math.min(index, isoTimestamps.length - 1)] ?? timestamp;
+    index += 1;
+    return new Date(value);
+  };
+}
+
+function writeK6JsonLines(stdout: PassThrough, points: unknown[]): void {
+  stdout.write(`${points.map((point) => JSON.stringify(point)).join("\n")}\n`);
+}
+
+function getSingleSpawnCall(k6Process: ReturnType<typeof createK6ProcessFixture>): {
+  binary: string;
+  args: string[];
+  options: unknown;
+  scriptPath: string;
+} {
+  const call = vi.mocked(k6Process.spawnProcess).mock.calls[0];
+  if (!call) {
+    throw new Error("Expected k6 process to be spawned.");
+  }
+
+  const binary = call[0];
+  const args = call[1];
+  if (typeof binary !== "string" || !Array.isArray(args)) {
+    throw new Error("Expected k6 spawn call to use string binary and argument list.");
+  }
+
+  const scriptPath = args.at(-1);
+  if (typeof scriptPath !== "string") {
+    throw new Error("Expected k6 spawn call to include the generated script path.");
+  }
+
+  return { binary, args: [...args], options: call[2], scriptPath };
+}
+
+async function waitForCompletionReport(
+  reports: TrafficCompletionReport[],
+  count: number,
+): Promise<TrafficCompletionReport> {
+  await waitForCondition(
+    () => reports.length >= count,
+    `traffic completion report ${count} to be sent`,
+  );
+
+  const report = reports[count - 1];
+  if (!report) {
+    throw new Error(`Expected traffic completion report ${count}.`);
+  }
+
+  return report;
+}
+
+async function waitForCondition(
+  predicate: () => boolean | Promise<boolean>,
+  description: string,
+): Promise<void> {
+  const deadline = Date.now() + 1000;
+  while (Date.now() < deadline) {
+    if (await predicate()) {
+      return;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+
+  throw new Error(`Timed out waiting for ${description}.`);
+}
+
+async function pathMissing(targetPath: string): Promise<boolean> {
+  try {
+    await stat(targetPath);
+    return false;
+  } catch (error) {
+    if (isNodeError(error) && error.code === "ENOENT") {
+      return true;
+    }
+
+    throw error;
+  }
+}
+
+function isNodeError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error;
 }
 
 function waitForReadline(): Promise<void> {

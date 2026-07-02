@@ -1,5 +1,7 @@
 # Issue 14 - Cover the production SpawnK6Runner path
 
+Status: Fixed
+
 
 ## Recommended Order Rationale
 

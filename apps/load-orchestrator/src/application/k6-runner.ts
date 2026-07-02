@@ -105,15 +105,31 @@ export class SpawnK6Runner implements K6Runner {
     });
     const stdout = input.child.stdout;
     const stderr = input.child.stderr;
+    let completionReported = false;
+    const reportCompletionOnce = (completion: {
+      status: "succeeded" | "failed";
+      exitCode?: number;
+      errorMessage?: string;
+      completedAt: Date;
+    }) => {
+      if (completionReported) {
+        return;
+      }
 
-    if (!stdout || !stderr) {
+      completionReported = true;
       void this.reportCompletion({
         accumulator,
         batcher,
+        workDir: input.workDir,
+        ...completion,
+      });
+    };
+
+    if (!stdout || !stderr) {
+      reportCompletionOnce({
         status: "failed",
         errorMessage: "k6 process did not expose stdout and stderr pipes.",
         completedAt: this.now(),
-        workDir: input.workDir,
       });
       return;
     }
@@ -138,29 +154,22 @@ export class SpawnK6Runner implements K6Runner {
     });
 
     input.child.once("error", (error) => {
-      void this.reportCompletion({
-        accumulator,
-        batcher,
+      reportCompletionOnce({
         status: "failed",
         errorMessage: error.message,
         completedAt: this.now(),
-        workDir: input.workDir,
       });
     });
 
     input.child.once("close", (exitCode) => {
-      const completion = {
-        accumulator,
-        batcher,
+      reportCompletionOnce({
         status: exitCode === 0 ? "succeeded" : "failed",
         completedAt: this.now(),
-        workDir: input.workDir,
         ...(exitCode === null ? {} : { exitCode }),
         ...(exitCode === 0
           ? {}
           : { errorMessage: `k6 exited with code ${exitCode ?? "unknown"}.` }),
-      } as const;
-      void this.reportCompletion(completion);
+      });
     });
   }
 
