@@ -38,6 +38,9 @@ function buildService(options: {
   publishBusinessOutcomeUpdate?: ConstructorParameters<
     typeof ReserveOrderService
   >[0]["publishBusinessOutcomeUpdate"];
+  scheduleBusinessOutcomeUpdate?: ConstructorParameters<
+    typeof ReserveOrderService
+  >[0]["scheduleBusinessOutcomeUpdate"];
   reportBusinessOutcomeUpdateFailure?: (report: BusinessOutcomeUpdateFailureReport) => void;
 }) {
   return new ReserveOrderService({
@@ -73,10 +76,18 @@ function buildService(options: {
     ...(options.publishBusinessOutcomeUpdate
       ? { publishBusinessOutcomeUpdate: options.publishBusinessOutcomeUpdate }
       : {}),
+    ...(options.scheduleBusinessOutcomeUpdate
+      ? { scheduleBusinessOutcomeUpdate: options.scheduleBusinessOutcomeUpdate }
+      : {}),
     ...(options.reportBusinessOutcomeUpdateFailure
       ? { reportBusinessOutcomeUpdateFailure: options.reportBusinessOutcomeUpdateFailure }
       : {}),
   });
+}
+
+async function flushScheduledDashboardUpdate(): Promise<void> {
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  await Promise.resolve();
 }
 
 function acceptingGateway(
@@ -173,7 +184,8 @@ describe("ReserveOrderService queue handoff", () => {
     });
   });
 
-  it("publishes a best-effort business outcome update after durable reservation acceptance", async () => {
+  it("schedules a best-effort business outcome update after durable reservation acceptance", async () => {
+    const scheduledDashboardUpdates: Array<() => void> = [];
     const publishBusinessOutcomeUpdate = vi.fn().mockResolvedValue(undefined);
     const service = buildService({
       persistence: {
@@ -182,17 +194,62 @@ describe("ReserveOrderService queue handoff", () => {
       },
       stockReservations: acceptingGateway(),
       publishBusinessOutcomeUpdate,
+      scheduleBusinessOutcomeUpdate: (task) => {
+        scheduledDashboardUpdates.push(task);
+      },
     });
 
     const response = await service.reserve({ request, correlationId, now });
 
     expect(response.outcome).toBe("reservation_secured");
+    expect(publishBusinessOutcomeUpdate).not.toHaveBeenCalled();
+    expect(scheduledDashboardUpdates).toHaveLength(1);
+
+    scheduledDashboardUpdates[0]?.();
+    await Promise.resolve();
+
     expect(publishBusinessOutcomeUpdate).toHaveBeenCalledWith({
       saleOfferId: request.saleOfferId,
       runId: request.runId,
       correlationId,
       occurredAt: now,
     });
+  });
+
+  it("does not await a slow business outcome refresh before returning accepted reservations", async () => {
+    let resolveRefresh: (() => void) | null = null;
+    const publishBusinessOutcomeUpdate = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveRefresh = resolve;
+        }),
+    );
+    const service = buildService({
+      persistence: {
+        persistSecuredReservation: async ({ reservation }) => persistedBuy(reservation),
+        getPersistedBuyByReservationId: async () => null,
+      },
+      stockReservations: acceptingGateway(),
+      publishBusinessOutcomeUpdate,
+      scheduleBusinessOutcomeUpdate: (task) => {
+        task();
+      },
+    });
+
+    const responsePromise = service.reserve({ request, correlationId, now });
+    let responseSettled = false;
+    responsePromise.then(() => {
+      responseSettled = true;
+    });
+
+    await flushScheduledDashboardUpdate();
+    const settledBeforeRefreshCompleted = responseSettled;
+    resolveRefresh?.();
+    const response = await responsePromise;
+
+    expect(response.outcome).toBe("reservation_secured");
+    expect(publishBusinessOutcomeUpdate).toHaveBeenCalledOnce();
+    expect(settledBeforeRefreshCompleted).toBe(true);
   });
 
   it("does not publish a business outcome update for idempotent accepted replays", async () => {
@@ -242,6 +299,7 @@ describe("ReserveOrderService queue handoff", () => {
     });
 
     const response = await service.reserve({ request, correlationId, now });
+    await flushScheduledDashboardUpdate();
 
     expect(response.outcome).toBe("reservation_secured");
     expect(reportBusinessOutcomeUpdateFailure).toHaveBeenCalledWith({
@@ -417,6 +475,7 @@ describe("ReserveOrderService queue handoff", () => {
 
     const first = await service.reserve({ request, correlationId, now });
     const replay = await service.reserve({ request, correlationId, now });
+    await flushScheduledDashboardUpdate();
 
     expect(first.outcome).toBe("reservation_pending_persistence");
     expect(replay.outcome).toBe("idempotent_replay");

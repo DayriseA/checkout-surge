@@ -72,6 +72,7 @@ type BusinessOutcomeUpdatePublisher = (input: {
   correlationId: string;
   occurredAt: Date;
 }) => Promise<void>;
+type BusinessOutcomeUpdateScheduler = (task: () => void) => void;
 
 function safelyReportPartialFailure<Report extends ReservationPartialFailureReport>(
   reporter: (report: Report) => void,
@@ -99,6 +100,7 @@ export class ReserveOrderService {
   private readonly reportPromotionFailure: ReservationPartialFailureReporter;
   private readonly reportOrderEnqueueFailure: (report: OrderEnqueueFailureReport) => void;
   private readonly publishBusinessOutcomeUpdate: BusinessOutcomeUpdatePublisher;
+  private readonly scheduleBusinessOutcomeUpdate: BusinessOutcomeUpdateScheduler;
   private readonly reportBusinessOutcomeUpdateFailure: (
     report: BusinessOutcomeUpdateFailureReport,
   ) => void;
@@ -118,6 +120,7 @@ export class ReserveOrderService {
     reportPromotionFailure?: ReservationPartialFailureReporter;
     reportOrderEnqueueFailure?: (report: OrderEnqueueFailureReport) => void;
     publishBusinessOutcomeUpdate?: BusinessOutcomeUpdatePublisher;
+    scheduleBusinessOutcomeUpdate?: BusinessOutcomeUpdateScheduler;
     reportBusinessOutcomeUpdateFailure?: (report: BusinessOutcomeUpdateFailureReport) => void;
   }) {
     this.persistence = options.persistence;
@@ -137,6 +140,11 @@ export class ReserveOrderService {
     this.reportOrderEnqueueFailure = options.reportOrderEnqueueFailure ?? (() => undefined);
     this.publishBusinessOutcomeUpdate =
       options.publishBusinessOutcomeUpdate ?? (async () => undefined);
+    this.scheduleBusinessOutcomeUpdate =
+      options.scheduleBusinessOutcomeUpdate ??
+      ((task) => {
+        setImmediate(task);
+      });
     this.reportBusinessOutcomeUpdateFailure =
       options.reportBusinessOutcomeUpdateFailure ?? (() => undefined);
   }
@@ -254,7 +262,7 @@ export class ReserveOrderService {
 
     await this.enqueuePersistedBuy(persisted, input.idempotencyKey, input.reservation);
     await this.promoteWithoutHidingDurableSuccess(input.idempotencyKey, input.reservation);
-    await this.publishBusinessOutcomeUpdateWithoutHidingDurableSuccess(
+    this.scheduleBusinessOutcomeUpdateWithoutHidingDurableSuccess(
       input.reservation,
       input.now,
     );
@@ -288,11 +296,27 @@ export class ReserveOrderService {
 
     await this.enqueuePersistedBuy(persisted, input.idempotencyKey, input.reservation);
     await this.promoteWithoutHidingDurableSuccess(input.idempotencyKey, input.reservation);
-    await this.publishBusinessOutcomeUpdateWithoutHidingDurableSuccess(
+    this.scheduleBusinessOutcomeUpdateWithoutHidingDurableSuccess(
       input.reservation,
       input.now,
     );
     return this.acceptedResponse("idempotent_replay", persisted, input.correlationId, input.now);
+  }
+
+  private scheduleBusinessOutcomeUpdateWithoutHidingDurableSuccess(
+    reservation: SecuredReservationHold,
+    occurredAt: Date,
+  ): void {
+    try {
+      this.scheduleBusinessOutcomeUpdate(() => {
+        void this.publishBusinessOutcomeUpdateWithoutHidingDurableSuccess(
+          reservation,
+          occurredAt,
+        );
+      });
+    } catch (error) {
+      this.reportBusinessOutcomeUpdateFailureSafely(error, reservation);
+    }
   }
 
   private async publishBusinessOutcomeUpdateWithoutHidingDurableSuccess(
@@ -307,16 +331,23 @@ export class ReserveOrderService {
         occurredAt,
       });
     } catch (error) {
-      try {
-        this.reportBusinessOutcomeUpdateFailure({
-          error,
-          saleOfferId: reservation.saleOfferId,
-          ...(reservation.runId ? { runId: reservation.runId } : {}),
-          correlationId: reservation.correlationId,
-        });
-      } catch {
-        // Realtime publication is best-effort and must not hide durable success.
-      }
+      this.reportBusinessOutcomeUpdateFailureSafely(error, reservation);
+    }
+  }
+
+  private reportBusinessOutcomeUpdateFailureSafely(
+    error: unknown,
+    reservation: SecuredReservationHold,
+  ): void {
+    try {
+      this.reportBusinessOutcomeUpdateFailure({
+        error,
+        saleOfferId: reservation.saleOfferId,
+        ...(reservation.runId ? { runId: reservation.runId } : {}),
+        correlationId: reservation.correlationId,
+      });
+    } catch {
+      // Realtime publication is best-effort and must not hide durable success.
     }
   }
 

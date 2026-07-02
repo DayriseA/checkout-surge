@@ -1,5 +1,7 @@
 # Issue 16 - Move dashboard aggregate reads out of the synchronous buy path
 
+Status: Fixed
+
 
 ## Recommended Order Rationale
 
