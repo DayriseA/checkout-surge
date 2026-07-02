@@ -96,6 +96,8 @@ export function buildLoadOrchestratorServer(options: BuildLoadOrchestratorServer
     }
 
     const startRequest = trafficExecutionStartRequestSchema.parse(request.body);
+    request.correlationId = startRequest.correlationId;
+    reply.header(correlationIdHeaderName, startRequest.correlationId);
     const response = trafficExecutionStartResponseSchema.parse(
       await options.trafficExecutionService.start(startRequest),
     );

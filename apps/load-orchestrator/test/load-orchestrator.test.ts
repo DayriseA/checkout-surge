@@ -10,9 +10,9 @@ import {
   trafficExecutionStartPath,
   trafficExecutionStartResponseSchema,
 } from "@checkout-surge/contracts";
-import { createSilentLogger } from "@checkout-surge/logger";
+import { correlationIdHeaderName, createSilentLogger } from "@checkout-surge/logger";
 import { describe, expect, it, vi } from "vitest";
-import type { LoadApiClient } from "../src/application/api-client.js";
+import { HttpLoadApiClient, type LoadApiClient } from "../src/application/api-client.js";
 import { K6RunAccumulator, parseK6JsonLine } from "../src/application/k6-output-parser.js";
 import { type K6Runner, SpawnK6Runner } from "../src/application/k6-runner.js";
 import { generateK6Script } from "../src/application/k6-script.js";
@@ -250,6 +250,58 @@ describe("SpawnK6Runner completion reporting", () => {
   });
 });
 
+describe("load-orchestrator API client", () => {
+  it("sends metric and completion correlation IDs in internal API headers", async () => {
+    const fetchMock = vi.fn(async () => new Response("{}", { status: 202 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new HttpLoadApiClient({
+      apiBaseUrl: "http://api.test",
+      controlServiceToken: "test-token",
+    });
+    const completionReport = new K6RunAccumulator({
+      runId: startRequest.runId,
+      correlationId: startRequest.correlationId,
+      plannedRequests: 1,
+      startedAt: new Date(timestamp),
+    }).completionReport({
+      status: "succeeded",
+      exitCode: 0,
+      completedAt: new Date("2026-06-20T12:00:05.000Z"),
+    });
+
+    try {
+      await client.sendMetrics({
+        runId: startRequest.runId,
+        correlationId: startRequest.correlationId,
+        samples: [
+          {
+            metricName: "traffic.latency",
+            value: 42,
+            unit: "ms",
+            timestamp,
+          },
+        ],
+        observedAt: timestamp,
+      });
+      await client.sendCompletion(completionReport);
+
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
+        headers: expect.objectContaining({
+          [correlationIdHeaderName]: startRequest.correlationId,
+        }),
+      });
+      expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({
+        headers: expect.objectContaining({
+          [correlationIdHeaderName]: startRequest.correlationId,
+        }),
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
 describe("load-orchestrator HTTP boundary", () => {
   it("exposes readiness and protects traffic starts with the shared control token", async () => {
     const runner: K6Runner = {
@@ -293,6 +345,7 @@ describe("load-orchestrator HTTP boundary", () => {
       expect(healthResponseSchema.parse(ready.json()).status).toBe("degraded");
       expect(unauthorized.statusCode).toBe(401);
       expect(accepted.statusCode).toBe(202);
+      expect(accepted.headers[correlationIdHeaderName]).toBe(startRequest.correlationId);
       expect(trafficExecutionStartResponseSchema.parse(accepted.json())).toMatchObject({
         runId: startRequest.runId,
         status: "active",

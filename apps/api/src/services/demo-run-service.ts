@@ -42,6 +42,7 @@ import {
   type TrafficHttpSummary,
   trafficCompletionReportSchema,
   trafficExecutionStartPath,
+  trafficExecutionStartRequestSchema,
   trafficExecutionStartResponseSchema,
 } from "@checkout-surge/contracts";
 import {
@@ -60,7 +61,7 @@ import {
   saleOffers,
   setRunSaleEligibility,
 } from "@checkout-surge/db";
-import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
+import { type CheckoutSurgeLogger, correlationIdHeaderName } from "@checkout-surge/logger";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { ApiHttpError } from "../runtime/errors.js";
 import type { DashboardBusinessOutcomeReader } from "./dashboard-recovery-service.js";
@@ -193,6 +194,7 @@ export class HttpTrafficExecutionGateway implements TrafficExecutionGateway {
   ) {}
 
   async start(request: TrafficExecutionStartRequest): Promise<TrafficExecutionStartResponse> {
+    const startRequest = trafficExecutionStartRequestSchema.parse(request);
     const response = await fetch(
       `${this.options.loadOrchestratorBaseUrl}${trafficExecutionStartPath}`,
       {
@@ -200,9 +202,10 @@ export class HttpTrafficExecutionGateway implements TrafficExecutionGateway {
         headers: {
           accept: "application/json",
           "content-type": "application/json",
+          [correlationIdHeaderName]: startRequest.correlationId,
           [controlServiceTokenHeaderName]: this.options.controlServiceToken,
         },
-        body: JSON.stringify(request),
+        body: JSON.stringify(startRequest),
       },
     );
 

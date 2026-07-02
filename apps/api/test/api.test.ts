@@ -71,7 +71,7 @@ import {
   saleOffers,
 } from "@checkout-surge/db";
 import { resetTestDatabase } from "@checkout-surge/db/testing";
-import { createSilentLogger } from "@checkout-surge/logger";
+import { correlationIdHeaderName, createSilentLogger } from "@checkout-surge/logger";
 import { Queue, Worker } from "bullmq";
 import { eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -1545,7 +1545,10 @@ describe("API gateway routes", () => {
 
     expect(unauthorized.statusCode).toBe(401);
     expect(accepted.statusCode).toBe(202);
-    expect(ingestMetrics).toHaveBeenCalledOnce();
+    expect(accepted.headers[correlationIdHeaderName]).toBe(fixtureCorrelationId);
+    expect(ingestMetrics).toHaveBeenCalledWith(
+      expect.objectContaining({ correlationId: fixtureCorrelationId }),
+    );
   });
 
   it("protects internal traffic completion ingestion with the control service token", async () => {
@@ -1601,6 +1604,7 @@ describe("API gateway routes", () => {
 
     expect(unauthorized.statusCode).toBe(401);
     expect(accepted.statusCode).toBe(202);
+    expect(accepted.headers[correlationIdHeaderName]).toBe(fixtureCorrelationId);
     expect(accepted.json().run.runId).toBe(fixtureIds.run);
     expect(recordTrafficCompletion).toHaveBeenCalledWith(report);
   });

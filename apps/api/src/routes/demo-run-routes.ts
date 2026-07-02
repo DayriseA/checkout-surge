@@ -166,7 +166,9 @@ export function registerDemoRunRoutes(
       return unauthorized;
     }
 
-    await options.demoRunService.ingestMetrics(loadMetricIngestRequestSchema.parse(request.body));
+    const parsedRequest = loadMetricIngestRequestSchema.parse(request.body);
+    applyInternalBodyCorrelation(request, reply, parsedRequest.correlationId);
+    await options.demoRunService.ingestMetrics(parsedRequest);
     return reply.status(202).send({ accepted: true });
   });
 
@@ -176,9 +178,9 @@ export function registerDemoRunRoutes(
       return unauthorized;
     }
 
-    const run = await options.demoRunService.recordTrafficCompletion(
-      trafficCompletionReportSchema.parse(request.body),
-    );
+    const parsedReport = trafficCompletionReportSchema.parse(request.body);
+    applyInternalBodyCorrelation(request, reply, parsedReport.correlationId);
+    const run = await options.demoRunService.recordTrafficCompletion(parsedReport);
     return reply.status(202).send({ run });
   });
 }
@@ -228,6 +230,16 @@ function requireControlServiceToken(
     correlationId: request.correlationId,
     timestamp: new Date().toISOString(),
   });
+}
+
+function applyInternalBodyCorrelation(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  correlationId: string,
+): void {
+  const normalizedCorrelationId = normalizeCorrelationId(correlationId);
+  request.correlationId = normalizedCorrelationId;
+  reply.header(correlationIdHeaderName, normalizedCorrelationId);
 }
 
 function readSingleHeader(request: FastifyRequest, name: string): string | undefined {

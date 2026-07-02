@@ -8,6 +8,7 @@ import {
   type TrafficCompletionReport,
   trafficCompletionReportSchema,
 } from "@checkout-surge/contracts";
+import { correlationIdHeaderName } from "@checkout-surge/logger";
 
 export interface LoadApiClient {
   sendMetrics(request: LoadMetricIngestRequest): Promise<void>;
@@ -23,19 +24,22 @@ export class HttpLoadApiClient implements LoadApiClient {
   ) {}
 
   async sendMetrics(request: LoadMetricIngestRequest): Promise<void> {
-    await this.postJson(internalLoadMetricIngestPath, loadMetricIngestRequestSchema.parse(request));
+    const payload = loadMetricIngestRequestSchema.parse(request);
+    await this.postJson(internalLoadMetricIngestPath, payload, payload.correlationId);
   }
 
   async sendCompletion(report: TrafficCompletionReport): Promise<void> {
-    await this.postJson(internalTrafficCompletionPath, trafficCompletionReportSchema.parse(report));
+    const payload = trafficCompletionReportSchema.parse(report);
+    await this.postJson(internalTrafficCompletionPath, payload, payload.correlationId);
   }
 
-  private async postJson(path: string, body: unknown): Promise<void> {
+  private async postJson(path: string, body: unknown, correlationId: string): Promise<void> {
     const response = await fetch(`${this.options.apiBaseUrl}${path}`, {
       method: "POST",
       headers: {
         accept: "application/json",
         "content-type": "application/json",
+        [correlationIdHeaderName]: correlationId,
         [controlServiceTokenHeaderName]: this.options.controlServiceToken,
       },
       body: JSON.stringify(body),

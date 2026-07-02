@@ -1,5 +1,6 @@
 # Issue 12 - Propagate correlation IDs on internal load-orchestration calls
 
+Status: Fixed
 
 ## Recommended Order Rationale
 
