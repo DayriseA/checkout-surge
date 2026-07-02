@@ -31,6 +31,9 @@ const migrationsFolder = path.join(packageRoot, "drizzle");
 const seededSaleOfferId = "22222222-2222-4222-8222-222222222222";
 const reservationSecuredAt = "2026-06-20T12:00:00.000Z";
 const reservationExpiresAt = "2026-06-20T12:15:00.000Z";
+const orderQueuedAt = "2026-06-20T12:00:01.000Z";
+const saleStartsAt = "2026-06-20T00:00:00.000Z";
+const saleEndsAt = "2026-06-21T00:00:00.000Z";
 const dashboardEvent: DashboardEvent = {
   type: "traffic.metric",
   eventId: "77777777-7777-4777-8777-777777777777",
@@ -40,6 +43,11 @@ const dashboardEvent: DashboardEvent = {
   unit: "ms",
   occurredAt: "2026-06-20T12:00:00.000Z",
 };
+
+type TestSql = ReturnType<typeof createDatabaseConnection>["sql"];
+type ReservationStatusForTest = "secured" | "rejected" | "released" | "expired";
+type OrderStatusForTest = "queued" | "processing" | "confirmed" | "failed";
+type SaleOfferPurposeForTest = "catalog" | "generated_run";
 
 function buildReservationInput(options: {
   saleOfferId: string;
@@ -67,6 +75,23 @@ function buildReservationInput(options: {
   };
 }
 
+function buildOrderReservationIds(sequence: number) {
+  const suffix = sequence.toString(16).padStart(12, "0");
+
+  return {
+    productId: `31000000-0000-4000-8000-${suffix}`,
+    saleOfferId: `31000001-0000-4000-8000-${suffix}`,
+    alternateProductId: `31000002-0000-4000-8000-${suffix}`,
+    alternateSaleOfferId: `31000003-0000-4000-8000-${suffix}`,
+    reservationId: `31000004-0000-4000-8000-${suffix}`,
+    orderId: `31000005-0000-4000-8000-${suffix}`,
+    alternateOrderId: `31000006-0000-4000-8000-${suffix}`,
+    thirdOrderId: `31000007-0000-4000-8000-${suffix}`,
+    runId: `31000008-0000-4000-8000-${suffix}`,
+    presetId: `31000009-0000-4000-8000-${suffix}`,
+  };
+}
+
 function requireTestEnv(name: "TEST_DATABASE_URL" | "TEST_REDIS_URL"): string {
   const value = process.env[name];
 
@@ -87,6 +112,174 @@ async function withDatabase<T>(
   } finally {
     await connection.close();
   }
+}
+
+async function insertCatalogSaleOffer(
+  sql: TestSql,
+  input: { productId: string; saleOfferId: string; purpose?: SaleOfferPurposeForTest },
+): Promise<void> {
+  const slug = input.saleOfferId.replaceAll("-", "");
+
+  await sql`
+    INSERT INTO "products" ("id", "sku", "slug", "name")
+    VALUES (${input.productId}, ${`sku-${slug}`}, ${`slug-${slug}`}, ${`Product ${slug}`})
+  `;
+  await sql`
+    INSERT INTO "sale_offers" (
+      "id",
+      "product_id",
+      "name",
+      "allocated_stock",
+      "sale_starts_at",
+      "sale_ends_at",
+      "purpose"
+    )
+    VALUES (
+      ${input.saleOfferId},
+      ${input.productId},
+      ${`Offer ${slug}`},
+      ${10},
+      ${saleStartsAt}::timestamptz,
+      ${saleEndsAt}::timestamptz,
+      ${input.purpose ?? "catalog"}::"sale_offer_purpose"
+    )
+  `;
+}
+
+async function insertGeneratedRunContext(
+  sql: TestSql,
+  input: { presetId: string; runId: string; saleOfferId: string },
+): Promise<void> {
+  await sql`
+    INSERT INTO "demo_presets" (
+      "id",
+      "slug",
+      "visibility",
+      "is_editable",
+      "display",
+      "traffic_config",
+      "inventory_config",
+      "erp_config",
+      "backpressure_config"
+    )
+    VALUES (
+      ${input.presetId},
+      ${`preset-${input.presetId.replaceAll("-", "")}`},
+      'admin'::"demo_preset_visibility",
+      true,
+      ${JSON.stringify({ name: "Order Reservation Guard" })}::jsonb,
+      '{}'::jsonb,
+      '{}'::jsonb,
+      '{}'::jsonb,
+      '{}'::jsonb
+    )
+  `;
+  await sql`
+    INSERT INTO "demo_runs" (
+      "id",
+      "preset_id",
+      "preset_name",
+      "operator_mode",
+      "status",
+      "traffic_status",
+      "config_snapshot",
+      "sale_offer_id",
+      "started_at"
+    )
+    VALUES (
+      ${input.runId},
+      ${input.presetId},
+      'Order Reservation Guard',
+      'admin'::"demo_run_operator_mode",
+      'active'::"demo_run_status",
+      'active'::"demo_run_traffic_status",
+      '{}'::jsonb,
+      ${input.saleOfferId},
+      ${saleStartsAt}::timestamptz
+    )
+  `;
+  await sql`
+    INSERT INTO "demo_run_sale_contexts" ("run_id", "sale_offer_id")
+    VALUES (${input.runId}, ${input.saleOfferId})
+  `;
+}
+
+async function insertReservation(
+  sql: TestSql,
+  input: {
+    reservationId: string;
+    saleOfferId: string;
+    correlationId: string;
+    runId?: string | null;
+    quantity?: number;
+    status?: ReservationStatusForTest;
+  },
+): Promise<void> {
+  await sql`
+    INSERT INTO "reservations" (
+      "id",
+      "sale_offer_id",
+      "correlation_id",
+      "run_id",
+      "quantity",
+      "status",
+      "reservation_token",
+      "secured_at",
+      "expires_at"
+    )
+    VALUES (
+      ${input.reservationId},
+      ${input.saleOfferId},
+      ${input.correlationId},
+      ${input.runId ?? null},
+      ${input.quantity ?? 1},
+      ${input.status ?? "secured"}::"reservation_status",
+      ${`token-${input.reservationId}`},
+      ${reservationSecuredAt}::timestamptz,
+      ${reservationExpiresAt}::timestamptz
+    )
+  `;
+}
+
+async function insertOrder(
+  sql: TestSql,
+  input: {
+    orderId: string;
+    saleOfferId: string;
+    reservationId: string;
+    correlationId: string;
+    runId?: string | null;
+    quantity?: number;
+    status?: OrderStatusForTest;
+    processingAt?: string | null;
+  },
+): Promise<void> {
+  await sql`
+    INSERT INTO "orders" (
+      "id",
+      "public_order_id",
+      "sale_offer_id",
+      "reservation_id",
+      "correlation_id",
+      "run_id",
+      "quantity",
+      "status",
+      "queued_at",
+      "processing_at"
+    )
+    VALUES (
+      ${input.orderId},
+      ${`ord-${input.orderId}`},
+      ${input.saleOfferId},
+      ${input.reservationId},
+      ${input.correlationId},
+      ${input.runId ?? null},
+      ${input.quantity ?? 1},
+      ${input.status ?? "queued"}::"order_status",
+      ${orderQueuedAt}::timestamptz,
+      ${input.processingAt ?? null}::timestamptz
+    )
+  `;
 }
 
 async function runSeedScript(): Promise<void> {
@@ -152,6 +345,8 @@ describe("database migrations, seed data, and reset behavior", () => {
         FROM pg_trigger
         WHERE tgname IN (
           'demo_run_sale_contexts_enforce_offer_purpose',
+          'orders_enforce_backing_secured_reservation',
+          'reservations_preserve_order_backing_secured_reservation',
           'reservations_enforce_run_owned_sale_offer_attribution'
         )
       `,
@@ -166,7 +361,9 @@ describe("database migrations, seed data, and reset behavior", () => {
     ]);
     expect(triggerRows.map((row) => row.tgname).sort()).toEqual([
       "demo_run_sale_contexts_enforce_offer_purpose",
+      "orders_enforce_backing_secured_reservation",
       "reservations_enforce_run_owned_sale_offer_attribution",
+      "reservations_preserve_order_backing_secured_reservation",
     ]);
   });
 
@@ -214,6 +411,228 @@ describe("database migrations, seed data, and reset behavior", () => {
       allocatedStock: "1000",
       remainingStock: "1000",
       reservedStock: "0",
+    });
+  });
+
+  it("accepts orders backed by matching secured reservations", async () => {
+    await withDatabase(async (sql) => {
+      const ids = buildOrderReservationIds(1);
+      const correlationId = "corr-order-reservation-valid";
+
+      await insertCatalogSaleOffer(sql, ids);
+      await insertReservation(sql, {
+        reservationId: ids.reservationId,
+        saleOfferId: ids.saleOfferId,
+        correlationId,
+        quantity: 2,
+      });
+      await insertOrder(sql, {
+        orderId: ids.orderId,
+        saleOfferId: ids.saleOfferId,
+        reservationId: ids.reservationId,
+        correlationId,
+        quantity: 2,
+      });
+      await sql`
+        UPDATE "orders"
+        SET "status" = 'confirmed'::"order_status", "confirmed_at" = ${orderQueuedAt}::timestamptz
+        WHERE "id" = ${ids.orderId}
+      `;
+
+      const [orderRow] = await sql<{ status: string }[]>`
+        SELECT "status"
+        FROM "orders"
+        WHERE "id" = ${ids.orderId}
+      `;
+
+      expect(orderRow?.status).toBe("confirmed");
+    });
+  });
+
+  it.each(["rejected", "released", "expired"] as const)(
+    "rejects orders backed by %s reservations",
+    async (status) => {
+      await withDatabase(async (sql) => {
+        const sequenceByStatus = { rejected: 10, released: 11, expired: 12 } as const;
+        const ids = buildOrderReservationIds(sequenceByStatus[status]);
+        const correlationId = `corr-order-reservation-${status}`;
+
+        await insertCatalogSaleOffer(sql, ids);
+        await insertReservation(sql, {
+          reservationId: ids.reservationId,
+          saleOfferId: ids.saleOfferId,
+          correlationId,
+          status,
+        });
+
+        await expect(
+          insertOrder(sql, {
+            orderId: ids.orderId,
+            saleOfferId: ids.saleOfferId,
+            reservationId: ids.reservationId,
+            correlationId,
+          }),
+        ).rejects.toThrow("must match secured reservation");
+      });
+    },
+  );
+
+  it("rejects orders whose offer, correlation ID, or quantity differs from the reservation", async () => {
+    await withDatabase(async (sql) => {
+      const ids = buildOrderReservationIds(20);
+      const correlationId = "corr-order-reservation-mismatch";
+
+      await insertCatalogSaleOffer(sql, ids);
+      await insertCatalogSaleOffer(sql, {
+        productId: ids.alternateProductId,
+        saleOfferId: ids.alternateSaleOfferId,
+      });
+      await insertReservation(sql, {
+        reservationId: ids.reservationId,
+        saleOfferId: ids.saleOfferId,
+        correlationId,
+        quantity: 2,
+      });
+
+      await expect(
+        insertOrder(sql, {
+          orderId: ids.orderId,
+          saleOfferId: ids.alternateSaleOfferId,
+          reservationId: ids.reservationId,
+          correlationId,
+          quantity: 2,
+        }),
+      ).rejects.toThrow("must match secured reservation");
+      await expect(
+        insertOrder(sql, {
+          orderId: ids.alternateOrderId,
+          saleOfferId: ids.saleOfferId,
+          reservationId: ids.reservationId,
+          correlationId: "corr-order-reservation-other",
+          quantity: 2,
+        }),
+      ).rejects.toThrow("must match secured reservation");
+      await expect(
+        insertOrder(sql, {
+          orderId: ids.thirdOrderId,
+          saleOfferId: ids.saleOfferId,
+          reservationId: ids.reservationId,
+          correlationId,
+          quantity: 1,
+        }),
+      ).rejects.toThrow("must match secured reservation");
+    });
+  });
+
+  it("rejects orders whose nullable run ID differs from the reservation", async () => {
+    await withDatabase(async (sql) => {
+      const ids = buildOrderReservationIds(30);
+      const correlationId = "corr-order-reservation-run";
+
+      await insertCatalogSaleOffer(sql, {
+        productId: ids.productId,
+        saleOfferId: ids.saleOfferId,
+        purpose: "generated_run",
+      });
+      await insertGeneratedRunContext(sql, ids);
+      await insertReservation(sql, {
+        reservationId: ids.reservationId,
+        saleOfferId: ids.saleOfferId,
+        runId: ids.runId,
+        correlationId,
+      });
+
+      await expect(
+        insertOrder(sql, {
+          orderId: ids.orderId,
+          saleOfferId: ids.saleOfferId,
+          reservationId: ids.reservationId,
+          runId: null,
+          correlationId,
+        }),
+      ).rejects.toThrow("must match secured reservation");
+    });
+  });
+
+  it("rejects reservation updates that would invalidate an existing order", async () => {
+    await withDatabase(async (sql) => {
+      const ids = buildOrderReservationIds(40);
+      const correlationId = "corr-order-reservation-preserve";
+
+      await insertCatalogSaleOffer(sql, ids);
+      await insertReservation(sql, {
+        reservationId: ids.reservationId,
+        saleOfferId: ids.saleOfferId,
+        correlationId,
+      });
+      await insertOrder(sql, {
+        orderId: ids.orderId,
+        saleOfferId: ids.saleOfferId,
+        reservationId: ids.reservationId,
+        correlationId,
+      });
+
+      await expect(
+        sql`
+          UPDATE "reservations"
+          SET "status" = 'released'::"reservation_status"
+          WHERE "id" = ${ids.reservationId}
+        `,
+      ).rejects.toThrow("cannot be changed because an order depends");
+    });
+  });
+
+  it("rejects worker-style order confirmation when the backing reservation is invalid", async () => {
+    await withDatabase(async (sql) => {
+      const ids = buildOrderReservationIds(50);
+      const correlationId = "corr-order-reservation-worker-transition";
+
+      await insertCatalogSaleOffer(sql, ids);
+      await insertReservation(sql, {
+        reservationId: ids.reservationId,
+        saleOfferId: ids.saleOfferId,
+        correlationId,
+      });
+      await insertOrder(sql, {
+        orderId: ids.orderId,
+        saleOfferId: ids.saleOfferId,
+        reservationId: ids.reservationId,
+        correlationId,
+        status: "processing",
+        processingAt: orderQueuedAt,
+      });
+      await sql`
+        ALTER TABLE "reservations"
+        DISABLE TRIGGER "reservations_preserve_order_backing_secured_reservation"
+      `;
+      try {
+        await sql`
+          UPDATE "reservations"
+          SET "status" = 'released'::"reservation_status"
+          WHERE "id" = ${ids.reservationId}
+        `;
+      } finally {
+        await sql`
+          ALTER TABLE "reservations"
+          ENABLE TRIGGER "reservations_preserve_order_backing_secured_reservation"
+        `;
+      }
+
+      try {
+        await expect(
+          sql`
+            UPDATE "orders"
+            SET "status" = 'confirmed'::"order_status", "confirmed_at" = ${orderQueuedAt}::timestamptz
+            WHERE "id" = ${ids.orderId}
+          `,
+        ).rejects.toThrow("must match secured reservation");
+      } finally {
+        await sql`
+          UPDATE "reservations"
+          SET "status" = 'secured'::"reservation_status"
+          WHERE "id" = ${ids.reservationId}
+        `;
+      }
     });
   });
 

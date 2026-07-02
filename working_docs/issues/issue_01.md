@@ -1,5 +1,7 @@
 # Issue 01 - Enforce orders against secured reservations
 
+Status: Fixed
+
 
 ## Recommended Order Rationale
 
