@@ -24,7 +24,15 @@ export interface ErpAttemptRecord {
   finishedAt: Date;
 }
 
+export interface ReusableErpConfirmationAttempt {
+  orderId: string;
+  attemptNumber: number;
+  httpStatus?: number;
+  finishedAt: Date;
+}
+
 export interface ErpAttemptPersistence {
+  findSuccessfulAttempt(job: OrderProcessJob): Promise<ReusableErpConfirmationAttempt | null>;
   recordAttempt(record: ErpAttemptRecord): Promise<void>;
 }
 
@@ -61,16 +69,40 @@ export class ErpConfirmationTimeoutError extends Error {
 }
 
 export class ErpAttemptPersistenceError extends Error {
-  override readonly name = "ErpAttemptPersistenceError";
+  override readonly name: string = "ErpAttemptPersistenceError";
 
-  constructor(cause: unknown) {
-    super("The ERP attempt result could not be persisted.", { cause });
+  constructor(cause: unknown, message = "The ERP attempt result could not be persisted.") {
+    super(message, { cause });
   }
+}
+
+export class ErpAcceptedConfirmationPersistenceError extends ErpAttemptPersistenceError {
+  override readonly name = "ErpAcceptedConfirmationPersistenceError";
+
+  constructor(
+    cause: unknown,
+    readonly record: ErpAttemptRecord,
+  ) {
+    super(
+      cause,
+      "The ERP accepted the confirmation, but the successful attempt result could not be persisted.",
+    );
+  }
+}
+
+export function isErpAttemptPersistenceError(error: unknown): error is ErpAttemptPersistenceError {
+  return error instanceof ErpAttemptPersistenceError;
+}
+
+export function isAcceptedErpConfirmationPersistenceError(
+  error: unknown,
+): error is ErpAcceptedConfirmationPersistenceError {
+  return error instanceof ErpAcceptedConfirmationPersistenceError;
 }
 
 export function isTemporaryErpConfirmationError(error: unknown): boolean {
   if (
-    error instanceof ErpAttemptPersistenceError ||
+    isErpAttemptPersistenceError(error) ||
     error instanceof ErpConfirmationTimeoutError ||
     error instanceof ErpConfirmationRequestError ||
     error instanceof ErpConfirmationInvalidResponseError
@@ -84,6 +116,14 @@ export function isTemporaryErpConfirmationError(error: unknown): boolean {
 
   const httpStatus = error.response.httpStatus;
   return httpStatus === undefined || httpStatus === 408 || httpStatus === 429 || httpStatus >= 500;
+}
+
+export function isTemporaryErpDependencyError(error: unknown): boolean {
+  if (isErpAttemptPersistenceError(error)) {
+    return false;
+  }
+
+  return isTemporaryErpConfirmationError(error);
 }
 
 export interface HttpErpOrderConfirmationOptions {
@@ -113,6 +153,11 @@ export class HttpErpOrderConfirmation implements OrderConfirmation {
   }
 
   async confirm(job: OrderProcessJob, delivery: OrderProcessDeliveryMetadata): Promise<void> {
+    const reusableAttempt = await this.findSuccessfulAttempt(job);
+    if (reusableAttempt) {
+      return;
+    }
+
     const runConfig = job.runId ? await this.runConfigReader?.read(job.runId) : null;
     const requestTimeoutMs = runConfig?.erpConfig.requestTimeoutMs ?? this.requestTimeoutMs;
     const startedAt = this.now();
@@ -206,6 +251,19 @@ export class HttpErpOrderConfirmation implements OrderConfirmation {
     try {
       await this.attemptPersistence.recordAttempt(record);
     } catch (error) {
+      if (record.status === "succeeded") {
+        throw new ErpAcceptedConfirmationPersistenceError(error, record);
+      }
+      throw new ErpAttemptPersistenceError(error);
+    }
+  }
+
+  private async findSuccessfulAttempt(
+    job: OrderProcessJob,
+  ): Promise<ReusableErpConfirmationAttempt | null> {
+    try {
+      return await this.attemptPersistence.findSuccessfulAttempt(job);
+    } catch (error) {
       throw new ErpAttemptPersistenceError(error);
     }
   }
@@ -221,10 +279,15 @@ function toConfirmationRequest(
     reservationId: job.reservationId,
     saleOfferId: job.saleOfferId,
     ...(job.runId ? { runId: job.runId } : {}),
+    idempotencyKey: toConfirmationIdempotencyKey(job),
     ...(runConfig ? { erpConfig: toErpRequestConfig(runConfig) } : {}),
     correlationId: job.correlationId,
     quantity: job.quantity,
   });
+}
+
+function toConfirmationIdempotencyKey(job: OrderProcessJob): string {
+  return `erp-confirmation:${job.orderId}`;
 }
 
 async function parseConfirmationResponse(response: Response): Promise<ErpConfirmationResponse> {

@@ -27,6 +27,7 @@ const confirmationRequest: ErpConfirmationRequest = {
   reservationId: "22222222-2222-4222-8222-222222222222",
   saleOfferId: "33333333-3333-4333-8333-333333333333",
   runId: "44444444-4444-4444-8444-444444444444",
+  idempotencyKey: "erp-confirmation:11111111-1111-4111-8111-111111111111",
   correlationId: "corr-mock-erp-test",
   quantity: 1,
 };
@@ -127,6 +128,29 @@ describe("confirmation service", () => {
       latencyMs: 25,
       timestamp: "2026-06-22T00:00:00.025Z",
     });
+  });
+
+  it("reuses successful confirmations by idempotency key", async () => {
+    const generateConfirmationId = vi
+      .fn()
+      .mockReturnValueOnce("erp_confirmation_first")
+      .mockReturnValueOnce("erp_confirmation_second");
+    const service = new ConfirmationService({
+      generateConfirmationId,
+      now: sequenceClock(
+        new Date("2026-06-22T00:00:00.000Z"),
+        new Date("2026-06-22T00:00:00.025Z"),
+      ),
+    });
+
+    const first = await service.confirm(confirmationRequest);
+    const replay = await service.confirm({
+      ...confirmationRequest,
+      correlationId: "corr-mock-erp-replay",
+    });
+
+    expect(replay).toEqual(first);
+    expect(generateConfirmationId).toHaveBeenCalledOnce();
   });
 
   it("returns dependency-style failure details from the injected decision boundary", async () => {
@@ -381,7 +405,12 @@ describe("Mock ERP HTTP service", () => {
     const second = await server.inject({
       method: "POST",
       url: erpConfirmationPath,
-      payload: { ...confirmationRequest, publicOrderId: "ord_test_2" },
+      payload: {
+        ...confirmationRequest,
+        orderId: "55555555-5555-4555-8555-555555555555",
+        publicOrderId: "ord_test_2",
+        idempotencyKey: "erp-confirmation:55555555-5555-4555-8555-555555555555",
+      },
     });
     await server.close();
 

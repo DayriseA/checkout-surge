@@ -283,6 +283,7 @@ describe("ERP contracts", () => {
         reservationId: "33333333-3333-4333-8333-333333333333",
         saleOfferId,
         runId,
+        idempotencyKey: "erp-confirmation:11111111-1111-4111-8111-111111111111",
         erpConfig: {
           latencyMs: 25,
           maxTps: 50,
@@ -295,6 +296,7 @@ describe("ERP contracts", () => {
     ).toMatchObject({
       publicOrderId: "ord_test",
       correlationId,
+      idempotencyKey: "erp-confirmation:11111111-1111-4111-8111-111111111111",
       erpConfig: { latencyMs: 25, maxTps: 50, errorRate: 0.1, forcedOutage: false },
     });
 

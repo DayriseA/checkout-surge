@@ -13,7 +13,9 @@ import {
 } from "./application/erp-circuit-breaker.js";
 import {
   HttpErpOrderConfirmation,
+  isErpAttemptPersistenceError,
   isTemporaryErpConfirmationError,
+  isTemporaryErpDependencyError,
 } from "./application/erp-confirmation-client.js";
 import { createNotificationRecordJobHandler } from "./application/notification-record-job-handler.js";
 import { createOrderProcessJobHandler } from "./application/order-process-job-handler.js";
@@ -45,6 +47,7 @@ export {
   isTemporaryErpCircuitError,
 } from "./application/erp-circuit-breaker.js";
 export {
+  ErpAcceptedConfirmationPersistenceError,
   type ErpAttemptPersistence,
   ErpAttemptPersistenceError,
   type ErpAttemptRecord,
@@ -53,7 +56,11 @@ export {
   ErpConfirmationRequestError,
   ErpConfirmationTimeoutError,
   HttpErpOrderConfirmation,
+  isAcceptedErpConfirmationPersistenceError,
+  isErpAttemptPersistenceError,
   isTemporaryErpConfirmationError,
+  isTemporaryErpDependencyError,
+  type ReusableErpConfirmationAttempt,
 } from "./application/erp-confirmation-client.js";
 export {
   createNotificationRecordJobHandler,
@@ -125,7 +132,7 @@ export async function startWorker(): Promise<void> {
           }),
           failureThreshold: config.erpCircuitFailureThreshold,
           resetTimeoutMs: config.erpCircuitResetTimeoutMs,
-          isCountedFailure: isTemporaryErpConfirmationError,
+          isCountedFailure: isTemporaryErpDependencyError,
           onStateChange: async (snapshot) => {
             try {
               await setErpCircuitBreakerSnapshot(redis, snapshot);
@@ -138,6 +145,7 @@ export async function startWorker(): Promise<void> {
       persistence: new PostgresOrderTransitionPersistence(database.db),
       logger,
       isTemporaryConfirmationFailure,
+      shouldRetryWithoutFailingOrder: isErpAttemptPersistenceError,
       notificationRecordPublisher,
       reportNotificationRecordPublishFailure: (report) => {
         logger.error(

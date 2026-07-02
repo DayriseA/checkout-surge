@@ -2,6 +2,10 @@ import type { OrderProcessJob } from "@checkout-surge/contracts";
 import { createSilentLogger } from "@checkout-surge/logger";
 import { describe, expect, it, vi } from "vitest";
 import {
+  ErpAcceptedConfirmationPersistenceError,
+  isErpAttemptPersistenceError,
+} from "../../src/application/erp-confirmation-client.js";
+import {
   createOrderProcessJobHandler,
   OrderFailurePersistenceError,
   type OrderTransitionPersistence,
@@ -240,6 +244,34 @@ describe("order-process application workflow", () => {
 
     expect(confirmation.confirm).toHaveBeenCalledTimes(2);
     expect(transitionToConfirmed).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not mark accepted ERP confirmations failed when local attempt persistence fails", async () => {
+    const localPersistenceError = new Error("attempt persistence unavailable");
+    const confirmationError = new ErpAcceptedConfirmationPersistenceError(localPersistenceError, {
+      job,
+      delivery: { attemptNumber: 3, attemptsMade: 2, maxAttempts: 3 },
+      status: "succeeded",
+      httpStatus: 200,
+      latencyMs: 35,
+      startedAt: new Date("2026-06-21T00:00:00.000Z"),
+      finishedAt: new Date("2026-06-21T00:00:00.035Z"),
+    });
+    const persistence = createPersistence();
+    const handler = createOrderProcessJobHandler({
+      confirmation: { confirm: vi.fn().mockRejectedValue(confirmationError) },
+      persistence,
+      logger: createSilentLogger("worker"),
+      isTemporaryConfirmationFailure: () => true,
+      shouldRetryWithoutFailingOrder: isErpAttemptPersistenceError,
+    });
+
+    await expect(
+      handler.handle(job, { attemptNumber: 3, attemptsMade: 2, maxAttempts: 3 }),
+    ).rejects.toBe(confirmationError);
+
+    expect(persistence.transitionToFailed).not.toHaveBeenCalled();
+    expect(persistence.transitionToConfirmed).not.toHaveBeenCalled();
   });
 
   it.each([

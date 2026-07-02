@@ -2,6 +2,7 @@ import type { AcceptedRunConfigSnapshot } from "@checkout-surge/contracts";
 import { correlationIdHeaderName } from "@checkout-surge/logger";
 import { describe, expect, it, vi } from "vitest";
 import {
+  ErpAcceptedConfirmationPersistenceError,
   type ErpAttemptPersistence,
   ErpAttemptPersistenceError,
   ErpConfirmationFailedError,
@@ -9,7 +10,10 @@ import {
   ErpConfirmationRequestError,
   ErpConfirmationTimeoutError,
   HttpErpOrderConfirmation,
+  isAcceptedErpConfirmationPersistenceError,
+  isErpAttemptPersistenceError,
   isTemporaryErpConfirmationError,
+  isTemporaryErpDependencyError,
 } from "../../src/application/erp-confirmation-client.js";
 import type { OrderProcessDeliveryMetadata } from "../../src/application/order-process-job-handler.js";
 
@@ -67,6 +71,7 @@ describe("HTTP ERP order confirmation", () => {
     expect(requestBody).toMatchObject({
       orderId: job.orderId,
       publicOrderId: job.publicOrderId,
+      idempotencyKey: `erp-confirmation:${job.orderId}`,
       correlationId: job.correlationId,
     });
     expect(attemptPersistence.recordAttempt).toHaveBeenCalledWith({
@@ -134,6 +139,52 @@ describe("HTTP ERP order confirmation", () => {
     expect(requestBody.erpConfig).not.toHaveProperty("requestTimeoutMs");
   });
 
+  it("reuses a successful ERP attempt without calling ERP again", async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>();
+    const attemptPersistence = createAttemptPersistence();
+    attemptPersistence.findSuccessfulAttempt = vi.fn().mockResolvedValue({
+      orderId: job.orderId,
+      attemptNumber: 1,
+      httpStatus: 200,
+      finishedAt: new Date("2026-06-22T00:00:00.035Z"),
+    });
+    const runConfigReader = { read: vi.fn() };
+    const confirmation = new HttpErpOrderConfirmation({
+      baseUrl: "http://mock-erp:4100",
+      requestTimeoutMs: 1000,
+      attemptPersistence,
+      fetch,
+      runConfigReader,
+    });
+
+    await confirmation.confirm(job, delivery);
+
+    expect(attemptPersistence.findSuccessfulAttempt).toHaveBeenCalledWith(job);
+    expect(fetch).not.toHaveBeenCalled();
+    expect(runConfigReader.read).not.toHaveBeenCalled();
+    expect(attemptPersistence.recordAttempt).not.toHaveBeenCalled();
+  });
+
+  it("does not call ERP when successful-attempt lookup fails", async () => {
+    const lookupError = new Error("database unavailable");
+    const fetch = vi.fn<typeof globalThis.fetch>();
+    const attemptPersistence = createAttemptPersistence();
+    attemptPersistence.findSuccessfulAttempt = vi.fn().mockRejectedValue(lookupError);
+    const confirmation = new HttpErpOrderConfirmation({
+      baseUrl: "http://mock-erp:4100",
+      requestTimeoutMs: 1000,
+      attemptPersistence,
+      fetch,
+    });
+
+    const rejection = await confirmation.confirm(job, delivery).catch((error: unknown) => error);
+
+    expect(rejection).toBeInstanceOf(ErpAttemptPersistenceError);
+    expect(rejection).toMatchObject({ cause: lookupError });
+    expect(fetch).not.toHaveBeenCalled();
+    expect(attemptPersistence.recordAttempt).not.toHaveBeenCalled();
+  });
+
   it("propagates attempt persistence failures without reclassifying the ERP response", async () => {
     const persistenceError = new Error("database unavailable");
     const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(
@@ -163,12 +214,49 @@ describe("HTTP ERP order confirmation", () => {
 
     const rejection = await confirmation.confirm(job, delivery).catch((error: unknown) => error);
 
+    expect(rejection).toBeInstanceOf(ErpAcceptedConfirmationPersistenceError);
     expect(rejection).toBeInstanceOf(ErpAttemptPersistenceError);
     expect(rejection).toMatchObject({ cause: persistenceError });
+    expect(isAcceptedErpConfirmationPersistenceError(rejection)).toBe(true);
     expect(attemptPersistence.recordAttempt).toHaveBeenCalledOnce();
     expect(attemptPersistence.recordAttempt).toHaveBeenCalledWith(
       expect.objectContaining({ status: "succeeded", httpStatus: 200 }),
     );
+  });
+
+  it("keeps failed-response persistence errors distinct from accepted confirmation write failures", async () => {
+    const persistenceError = new Error("database unavailable");
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(
+      jsonResponse(
+        {
+          status: "failed",
+          httpStatus: 503,
+          errorCode: "erp_unavailable",
+          errorMessage: "The ERP is unavailable.",
+          latencyMs: 40,
+          timestamp: "2026-06-22T00:00:00.040Z",
+        },
+        503,
+      ),
+    );
+    const attemptPersistence = createAttemptPersistence();
+    attemptPersistence.recordAttempt = vi.fn().mockRejectedValue(persistenceError);
+    const confirmation = new HttpErpOrderConfirmation({
+      baseUrl: "http://mock-erp:4100",
+      requestTimeoutMs: 1000,
+      attemptPersistence,
+      fetch,
+      now: sequenceClock(
+        new Date("2026-06-22T00:00:00.000Z"),
+        new Date("2026-06-22T00:00:00.045Z"),
+      ),
+    });
+
+    const rejection = await confirmation.confirm(job, delivery).catch((error: unknown) => error);
+
+    expect(rejection).toBeInstanceOf(ErpAttemptPersistenceError);
+    expect(rejection).not.toBeInstanceOf(ErpAcceptedConfirmationPersistenceError);
+    expect(isAcceptedErpConfirmationPersistenceError(rejection)).toBe(false);
   });
 
   it("records dependency failures and propagates a confirmation error", async () => {
@@ -351,11 +439,22 @@ describe("HTTP ERP order confirmation", () => {
       true,
     );
     expect(isTemporaryErpConfirmationError(new Error("local validation"))).toBe(false);
+    expect(isErpAttemptPersistenceError(new ErpAttemptPersistenceError(new Error("db")))).toBe(
+      true,
+    );
+    expect(isErpAttemptPersistenceError(new ErpConfirmationTimeoutError(2000))).toBe(false);
+    expect(isTemporaryErpDependencyError(new ErpConfirmationFailedError(temporaryResponse))).toBe(
+      true,
+    );
+    expect(isTemporaryErpDependencyError(new ErpAttemptPersistenceError(new Error("db")))).toBe(
+      false,
+    );
   });
 });
 
 function createAttemptPersistence(): ErpAttemptPersistence {
   return {
+    findSuccessfulAttempt: vi.fn().mockResolvedValue(null),
     recordAttempt: vi.fn().mockResolvedValue(undefined),
   };
 }

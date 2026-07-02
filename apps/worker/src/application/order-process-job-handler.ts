@@ -84,6 +84,7 @@ export function createOrderProcessJobHandler(dependencies: {
   persistence: OrderTransitionPersistence;
   logger: CheckoutSurgeLogger;
   isTemporaryConfirmationFailure?: (error: unknown) => boolean;
+  shouldRetryWithoutFailingOrder?: (error: unknown) => boolean;
   publishBusinessOutcomeUpdate?: BusinessOutcomeUpdatePublisher;
   reportBusinessOutcomeUpdateFailure?: (report: BusinessOutcomeUpdateFailureReport) => void;
   notificationRecordPublisher?: NotificationRecordPublisher;
@@ -135,13 +136,18 @@ export function createOrderProcessJobHandler(dependencies: {
       try {
         await dependencies.confirmation.confirm(job, delivery);
       } catch (confirmationError) {
+        const shouldRetryWithoutFailingOrder =
+          dependencies.shouldRetryWithoutFailingOrder?.(confirmationError) ?? false;
         if (
-          dependencies.isTemporaryConfirmationFailure?.(confirmationError) &&
-          hasRemainingAttempts(delivery)
+          shouldRetryWithoutFailingOrder ||
+          (dependencies.isTemporaryConfirmationFailure?.(confirmationError) &&
+            hasRemainingAttempts(delivery))
         ) {
           logger.warn(
             { ...logContext, err: confirmationError },
-            "Temporary order confirmation failure will be retried.",
+            shouldRetryWithoutFailingOrder
+              ? "Order confirmation accepted by ERP but local persistence failed; order remains retryable."
+              : "Temporary order confirmation failure will be retried.",
           );
           await publishBusinessOutcomeUpdateWithoutFailingJob(
             dependencies,

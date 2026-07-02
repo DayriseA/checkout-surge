@@ -32,6 +32,10 @@ export class ConfirmationService {
   private readonly decisionProvider: ConfirmationDecisionProvider;
   private readonly generateConfirmationId: () => string;
   private readonly now: () => Date;
+  private readonly successfulConfirmationsByIdempotencyKey = new Map<
+    string,
+    ErpConfirmationResponse
+  >();
 
   constructor(options: ConfirmationServiceOptions = {}) {
     this.decisionProvider = options.decisionProvider ?? successfulDecisionProvider;
@@ -40,6 +44,13 @@ export class ConfirmationService {
   }
 
   async confirm(request: ErpConfirmationRequest): Promise<ErpConfirmationResponse> {
+    const existingConfirmation = this.successfulConfirmationsByIdempotencyKey.get(
+      request.idempotencyKey,
+    );
+    if (existingConfirmation) {
+      return existingConfirmation;
+    }
+
     const startedAt = this.now();
     const decision = await this.decisionProvider.decide(request);
     const completedAt = this.now();
@@ -56,12 +67,14 @@ export class ConfirmationService {
       });
     }
 
-    return erpConfirmationResponseSchema.parse({
+    const response = erpConfirmationResponseSchema.parse({
       status: "succeeded",
       confirmationId: this.generateConfirmationId(),
       httpStatus: 200,
       latencyMs,
       timestamp: completedAt.toISOString(),
     });
+    this.successfulConfirmationsByIdempotencyKey.set(request.idempotencyKey, response);
+    return response;
   }
 }

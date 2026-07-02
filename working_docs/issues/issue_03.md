@@ -1,5 +1,7 @@
 # Issue 03 - Make ERP confirmation idempotent across local persistence failures
 
+Status: Fixed
+
 
 ## Recommended Order Rationale
 

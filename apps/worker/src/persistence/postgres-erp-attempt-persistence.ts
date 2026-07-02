@@ -1,11 +1,38 @@
 import { type CheckoutSurgeDatabase, erpAttempts, orderEvents } from "@checkout-surge/db";
+import { and, desc, eq } from "drizzle-orm";
 import type {
   ErpAttemptPersistence,
   ErpAttemptRecord,
+  ReusableErpConfirmationAttempt,
 } from "../application/erp-confirmation-client.js";
 
 export class PostgresErpAttemptPersistence implements ErpAttemptPersistence {
   constructor(private readonly db: CheckoutSurgeDatabase) {}
+
+  async findSuccessfulAttempt(
+    job: ErpAttemptRecord["job"],
+  ): Promise<ReusableErpConfirmationAttempt | null> {
+    const [attempt] = await this.db
+      .select({
+        orderId: erpAttempts.orderId,
+        attemptNumber: erpAttempts.attemptNumber,
+        httpStatus: erpAttempts.httpStatus,
+        finishedAt: erpAttempts.finishedAt,
+      })
+      .from(erpAttempts)
+      .where(and(eq(erpAttempts.orderId, job.orderId), eq(erpAttempts.status, "succeeded")))
+      .orderBy(desc(erpAttempts.finishedAt), desc(erpAttempts.createdAt))
+      .limit(1);
+
+    return attempt
+      ? {
+          orderId: attempt.orderId,
+          attemptNumber: attempt.attemptNumber,
+          ...(attempt.httpStatus ? { httpStatus: attempt.httpStatus } : {}),
+          finishedAt: attempt.finishedAt,
+        }
+      : null;
+  }
 
   async recordAttempt(record: ErpAttemptRecord): Promise<void> {
     await this.db.transaction(async (tx) => {

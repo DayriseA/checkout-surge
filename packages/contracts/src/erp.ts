@@ -2,6 +2,7 @@ import { z } from "zod";
 import { erpAttemptStatusSchema } from "./lifecycle.js";
 import {
   correlationIdSchema,
+  idempotencyKeySchema,
   isoTimestampSchema,
   nonnegativeIntegerSchema,
   nonnegativeNumberSchema,
@@ -32,6 +33,7 @@ export const erpConfirmationRequestSchema = z
     reservationId: uuidSchema,
     saleOfferId: uuidSchema,
     runId: uuidSchema.optional(),
+    idempotencyKey: idempotencyKeySchema,
     erpConfig: erpChaosConfigSchema.optional(),
     correlationId: correlationIdSchema,
     quantity: z.number().int().positive(),
