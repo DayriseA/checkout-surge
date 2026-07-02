@@ -257,16 +257,11 @@ describe("demo run finalization service", () => {
       const [summary] = summaries;
 
       expect(resetResponse.failedRunCount === 0 || resetResponse.failedRunCount === 1).toBe(true);
-      expect(summaries.length).toBeLessThanOrEqual(1);
+      expect(summaries).toHaveLength(1);
       expect(run).toBeDefined();
-      if (summary) {
-        expect(run?.status).toBe(summary.status);
-        expect(run?.failureReason).toBe(summary.failureReason);
-        expect(run?.finalizedAt).toEqual(summary.endedAt);
-      } else {
-        expect(run?.status).toBe("failed");
-        expect(run?.failureReason).toBe("admin_reset");
-      }
+      expect(run?.status).toBe(summary?.status);
+      expect(run?.failureReason).toBe(summary?.failureReason);
+      expect(run?.finalizedAt).toEqual(summary?.endedAt);
     } finally {
       await lockConnection.close();
       await resetConnection.close();

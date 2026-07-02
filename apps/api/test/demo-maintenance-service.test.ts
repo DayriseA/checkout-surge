@@ -5,10 +5,18 @@ import {
   createDatabaseConnection,
   createRedisClient,
   demoPresets,
+  demoRunFinalizations,
+  demoRunReservationOutcomes,
+  demoRunSaleContexts,
+  demoRunSummaries,
   demoRuns,
   initializeInventory,
   isRunSaleEligible,
+  orders,
   products,
+  promoteReservationIdempotencyToAccepted,
+  reservations,
+  reserveInventoryStock,
   saleOffers,
 } from "@checkout-surge/db";
 import { resetTestDatabase } from "@checkout-surge/db/testing";
@@ -34,6 +42,8 @@ const ids = {
   drainingOffer: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb3",
   completedOffer: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb4",
   failedOffer: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb5",
+  activeReservation: "77777777-7777-4777-8777-777777777771",
+  activeOrder: "88888888-8888-4888-8888-888888888881",
 } as const;
 
 describe("demo maintenance lifecycle reset", () => {
@@ -80,6 +90,7 @@ describe("demo maintenance lifecycle reset", () => {
     });
 
     await seedRuns(db, redisClient);
+    await seedActiveRunBusinessState(db, redisClient);
 
     const response = await service.reset("corr-reset");
     const runs = await db
@@ -94,6 +105,10 @@ describe("demo maintenance lifecycle reset", () => {
           ids.failedRun,
         ]),
       );
+    const summaries = await db
+      .select()
+      .from(demoRunSummaries)
+      .where(inArray(demoRunSummaries.runId, [ids.startingRun, ids.activeRun, ids.drainingRun]));
 
     expect(response).toEqual({
       failedRunCount: 3,
@@ -142,6 +157,67 @@ describe("demo maintenance lifecycle reset", () => {
     );
     expect(runs.find((run) => run.id === ids.completedRun)?.status).toBe("completed");
     expect(runs.find((run) => run.id === ids.failedRun)?.failureReason).toBe("traffic_failed");
+    expect(summaries).toHaveLength(3);
+    expect(
+      summaries.map((summary) => ({
+        runId: summary.runId,
+        status: summary.status,
+        failureReason: summary.failureReason,
+        endedAt: summary.endedAt,
+      })),
+    ).toEqual(
+      expect.arrayContaining([
+        {
+          runId: ids.startingRun,
+          status: "failed",
+          failureReason: "admin_reset",
+          endedAt: new Date("2026-06-20T00:00:10.000Z"),
+        },
+        {
+          runId: ids.activeRun,
+          status: "failed",
+          failureReason: "admin_reset",
+          endedAt: new Date("2026-06-20T00:00:10.000Z"),
+        },
+        {
+          runId: ids.drainingRun,
+          status: "failed",
+          failureReason: "admin_reset",
+          endedAt: new Date("2026-06-20T00:00:10.000Z"),
+        },
+      ]),
+    );
+    expect(summaries.find((summary) => summary.runId === ids.activeRun)).toMatchObject({
+      businessOutcomeSummary: {
+        acceptedReservations: 1,
+        soldOutRejections: 4,
+        queuedOrders: 1,
+        pendingPersistenceCount: 0,
+      },
+      terminalInventorySnapshot: {
+        saleOfferId: ids.activeOffer,
+        startingStock: 10,
+        remainingStock: 9,
+        reservedStock: 1,
+        acceptedReservations: 1,
+        soldOutRejections: 4,
+        pendingPersistenceCount: 0,
+        source: "redis",
+      },
+    });
+    expect(summaries.find((summary) => summary.runId === ids.drainingRun)).toMatchObject({
+      httpSummary: {
+        plannedRequests: 10,
+        emittedRequests: 10,
+        completedRequests: 10,
+      },
+      trafficDeliverySummary: {
+        plannedRequests: 10,
+        emittedRequests: 10,
+        droppedIterations: 0,
+        trafficDeliveryStatus: "complete",
+      },
+    });
     await expect(
       isRunSaleEligible(redisClient, {
         runId: ids.startingRun,
@@ -185,6 +261,12 @@ describe("demo maintenance lifecycle reset", () => {
       trafficStatus: "succeeded",
       failureReason: null,
     });
+    await seedTerminalSummary(db, {
+      runId: ids.completedRun,
+      saleOfferId: ids.completedOffer,
+      status: "completed",
+      failureReason: null,
+    });
     await seedRun(db, redisClient, {
       runId: ids.failedRun,
       saleOfferId: ids.failedOffer,
@@ -192,15 +274,24 @@ describe("demo maintenance lifecycle reset", () => {
       trafficStatus: "failed",
       failureReason: "traffic_failed",
     });
+    await seedTerminalSummary(db, {
+      runId: ids.failedRun,
+      saleOfferId: ids.failedOffer,
+      status: "failed",
+      failureReason: "traffic_failed",
+    });
+    const summariesBeforeReset = await readTerminalSummaryRows(db);
 
     const response = await service.reset("corr-reset-terminal");
     const terminalRuns = await db
       .select()
       .from(demoRuns)
       .where(inArray(demoRuns.id, [ids.completedRun, ids.failedRun]));
+    const summariesAfterReset = await readTerminalSummaryRows(db);
 
     expect(response.failedRunCount).toBe(0);
     expect(response.closedSaleOfferCount).toBe(0);
+    expect(summariesAfterReset).toEqual(summariesBeforeReset);
     expect(terminalRuns).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ id: ids.completedRun, status: "completed" }),
@@ -335,6 +426,12 @@ async function seedRun(
     createdAt: now,
     updatedAt: now,
   });
+  await db.insert(demoRunSaleContexts).values({
+    runId: input.runId,
+    saleOfferId: input.saleOfferId,
+    createdAt: now,
+    updatedAt: now,
+  });
   if (input.runInventoryStatus) {
     await initializeInventory(redis, {
       saleOfferId: input.saleOfferId,
@@ -343,6 +440,173 @@ async function seedRun(
       run: { runId: input.runId, status: input.runInventoryStatus },
     });
   }
+  if (input.status === "draining") {
+    await db.insert(demoRunFinalizations).values({
+      runId: input.runId,
+      exitCode: 0,
+      errorMessage: null,
+      httpSummary: {
+        plannedRequests: 10,
+        emittedRequests: 10,
+        completedRequests: 10,
+        failedRequests: 0,
+        acceptedResponses: 8,
+        soldOutResponses: 2,
+        unexpectedResponses: 0,
+        failureRate: 0,
+      },
+      trafficOutcomeSummary: {},
+      trafficDeliverySummary: {
+        plannedRequests: 10,
+        emittedRequests: 10,
+        droppedIterations: 0,
+        trafficDeliveryStatus: "complete",
+        notes: [],
+      },
+      httpTimingBreakdownSummary: { p95: 42 },
+      loadRunDiagnosticsSummary: { source: "fixture" },
+      apiRequestLifecycleSummary: { source: "fixture" },
+      trafficSummaryReceivedAt: new Date("2026-06-20T00:00:05.000Z"),
+      createdAt: new Date("2026-06-20T00:00:05.000Z"),
+      updatedAt: new Date("2026-06-20T00:00:05.000Z"),
+    });
+  }
+}
+
+async function seedActiveRunBusinessState(
+  db: ReturnType<typeof createDatabaseConnection>["db"],
+  redis: ReturnType<typeof createRedisClient>,
+): Promise<void> {
+  const reservation = {
+    id: ids.activeReservation,
+    saleOfferId: ids.activeOffer,
+    runId: ids.activeRun,
+    quantity: 1,
+    status: "secured" as const,
+    reservationToken: "active-token",
+    correlationId: "corr-active-business",
+    securedAt: "2026-06-20T00:00:02.000Z",
+    expiresAt: "2026-06-20T00:15:02.000Z",
+  };
+
+  await reserveInventoryStock(redis, {
+    idempotencyKey: "active-idempotency",
+    idempotencyTtlSeconds: 1800,
+    reservation,
+  });
+  await promoteReservationIdempotencyToAccepted(redis, {
+    idempotencyKey: "active-idempotency",
+    reservation,
+  });
+  await db.insert(reservations).values({
+    id: ids.activeReservation,
+    saleOfferId: ids.activeOffer,
+    runId: ids.activeRun,
+    correlationId: "corr-active-business",
+    quantity: 1,
+    status: "secured",
+    reservationToken: "active-token",
+    securedAt: new Date("2026-06-20T00:00:02.000Z"),
+    expiresAt: new Date("2026-06-20T00:15:02.000Z"),
+    createdAt: new Date("2026-06-20T00:00:02.000Z"),
+    updatedAt: new Date("2026-06-20T00:00:02.000Z"),
+  });
+  await db.insert(orders).values({
+    id: ids.activeOrder,
+    publicOrderId: "active-order",
+    saleOfferId: ids.activeOffer,
+    reservationId: ids.activeReservation,
+    runId: ids.activeRun,
+    correlationId: "corr-active-business",
+    quantity: 1,
+    status: "queued",
+    queuedAt: new Date("2026-06-20T00:00:03.000Z"),
+    createdAt: new Date("2026-06-20T00:00:03.000Z"),
+    updatedAt: new Date("2026-06-20T00:00:03.000Z"),
+  });
+  await db.insert(demoRunReservationOutcomes).values({
+    runId: ids.activeRun,
+    outcome: "api_sold_out_decision",
+    count: 4,
+    latestObservedAt: new Date("2026-06-20T00:00:04.000Z"),
+    source: "redis",
+    capturedAt: new Date("2026-06-20T00:00:04.000Z"),
+    createdAt: new Date("2026-06-20T00:00:04.000Z"),
+  });
+}
+
+async function seedTerminalSummary(
+  db: ReturnType<typeof createDatabaseConnection>["db"],
+  input: {
+    runId: string;
+    saleOfferId: string;
+    status: "completed" | "failed";
+    failureReason: string | null;
+  },
+): Promise<void> {
+  await db.insert(demoRunSummaries).values({
+    runId: input.runId,
+    presetName: "Reset Preset",
+    status: input.status,
+    failureReason: input.failureReason,
+    startedAt: new Date("2026-06-20T00:00:00.000Z"),
+    endedAt: new Date("2026-06-20T00:00:06.000Z"),
+    httpSummary: {
+      plannedRequests: 10,
+      emittedRequests: 10,
+      completedRequests: 10,
+      failedRequests: 0,
+      acceptedResponses: input.status === "completed" ? 10 : 8,
+      soldOutResponses: input.status === "completed" ? 0 : 2,
+      unexpectedResponses: 0,
+      failureRate: 0,
+    },
+    trafficDeliverySummary: {
+      plannedRequests: 10,
+      emittedRequests: 10,
+      droppedIterations: 0,
+      trafficDeliveryStatus: input.status === "completed" ? "complete" : "failed",
+      notes: [],
+    },
+    httpTimingBreakdownSummary: { p95: 30 },
+    loadRunDiagnosticsSummary: { source: "existing-summary" },
+    apiRequestLifecycleSummary: { source: "existing-summary" },
+    businessOutcomeSummary: {
+      acceptedReservations: input.status === "completed" ? 10 : 8,
+      soldOutRejections: input.status === "completed" ? 0 : 2,
+      queuedOrders: 0,
+      processingOrders: 0,
+      retryingOrders: 0,
+      confirmedOrders: input.status === "completed" ? 10 : 6,
+      failedOrders: input.status === "completed" ? 0 : 2,
+      pendingPersistenceCount: 0,
+      notificationsRecorded: input.status === "completed" ? 10 : 6,
+    },
+    terminalInventorySnapshot: {
+      saleOfferId: input.saleOfferId,
+      startingStock: 10,
+      remainingStock: input.status === "completed" ? 0 : 2,
+      reservedStock: input.status === "completed" ? 10 : 8,
+      acceptedReservations: input.status === "completed" ? 10 : 8,
+      soldOutRejections: input.status === "completed" ? 0 : 2,
+      pendingPersistenceCount: 0,
+      capturedAt: "2026-06-20T00:00:06.000Z",
+      source: "redis",
+    },
+    capturedAt: new Date("2026-06-20T00:00:06.000Z"),
+    createdAt: new Date("2026-06-20T00:00:06.000Z"),
+  });
+}
+
+async function readTerminalSummaryRows(
+  db: ReturnType<typeof createDatabaseConnection>["db"],
+): Promise<(typeof demoRunSummaries.$inferSelect)[]> {
+  const rows = await db
+    .select()
+    .from(demoRunSummaries)
+    .where(inArray(demoRunSummaries.runId, [ids.completedRun, ids.failedRun]));
+
+  return rows.sort((left, right) => left.runId.localeCompare(right.runId));
 }
 
 function configSnapshotFixture(): AcceptedRunConfigSnapshot {

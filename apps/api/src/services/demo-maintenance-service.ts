@@ -1,8 +1,17 @@
 import {
+  type AcceptedRunConfigSnapshot,
   type AdminDemoResetResponse,
   type AdminMaintenanceCleanupRunsResponse,
+  acceptedRunConfigSnapshotSchema,
   adminDemoResetResponseSchema,
   adminMaintenanceCleanupRunsResponseSchema,
+  type BusinessOutcomeSummary,
+  type TerminalInventorySnapshot,
+  type TrafficConfig,
+  type TrafficDeliverySummary,
+  type TrafficHttpSummary,
+  trafficDeliverySummarySchema,
+  trafficHttpSummarySchema,
 } from "@checkout-surge/contracts";
 import {
   type CheckoutSurgeDatabase,
@@ -13,8 +22,10 @@ import {
   demoRunSummaries,
   demoRuns,
   erpAttempts,
+  getInventoryStatus,
   orderEvents,
   orders,
+  readBusinessOutcomeSummary,
   reservationPendingPersistence,
   reservations,
   saleOffers,
@@ -22,7 +33,7 @@ import {
   simulatedNotifications,
 } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
-import { and, desc, inArray, lt, notInArray } from "drizzle-orm";
+import { and, desc, eq, inArray, lt, notInArray } from "drizzle-orm";
 import { PostgresTerminalDemoRunSummaryWriter } from "./terminal-demo-run-transition.js";
 
 export interface QueueCleanupSummary {
@@ -52,39 +63,66 @@ export class DemoMaintenanceService {
   async reset(correlationId: string): Promise<AdminDemoResetResponse> {
     const now = this.now();
     const activeRuns = await this.options.db
-      .select({ id: demoRuns.id, saleOfferId: demoRuns.saleOfferId })
+      .select({ run: demoRuns, finalization: demoRunFinalizations })
       .from(demoRuns)
+      .leftJoin(demoRunFinalizations, eq(demoRunFinalizations.runId, demoRuns.id))
       .where(inArray(demoRuns.status, ["starting", "active", "draining"]));
 
     let failedRunCount = 0;
     let closedSaleOfferCount = 0;
-    for (const run of activeRuns) {
-      const claimedRun = await this.terminalRunWriter.claimTerminalRun({
-        runId: run.id,
+    for (const row of activeRuns) {
+      const businessOutcome = await this.readBusinessOutcome(row.run);
+      const terminalInventorySnapshot = await this.captureTerminalInventorySnapshot({
+        run: row.run,
+        businessOutcome,
+        capturedAt: now,
+      });
+      const trafficSummary = adminResetTrafficSummary(row.run, row.finalization);
+      const wroteSummary = await this.terminalRunWriter.write({
+        run: row.run,
         terminalStatus: "failed",
-        terminalTrafficStatus: "failed",
         failureReason: "admin_reset",
         finalizedAt: now,
+        httpSummary: trafficSummary.httpSummary,
+        trafficDeliverySummary: trafficSummary.trafficDeliverySummary,
+        httpTimingBreakdownSummary: trafficSummary.httpTimingBreakdownSummary,
+        loadRunDiagnosticsSummary: {
+          ...trafficSummary.loadRunDiagnosticsSummary,
+          failureReason: "admin_reset",
+          previousStatus: row.run.status,
+          previousTrafficStatus: row.run.trafficStatus,
+        },
+        apiRequestLifecycleSummary: {
+          ...trafficSummary.apiRequestLifecycleSummary,
+          failureReason: "admin_reset",
+          previousStatus: row.run.status,
+          previousTrafficStatus: row.run.trafficStatus,
+          resetAt: now.toISOString(),
+          correlationId,
+        },
+        businessOutcome,
+        terminalInventorySnapshot,
         allowedCurrentStatuses: ["starting", "active", "draining"],
+        terminalTrafficStatus: "failed",
       });
-      if (!claimedRun) {
+      if (!wroteSummary) {
         continue;
       }
 
       failedRunCount += 1;
-      if (!run.saleOfferId) {
+      if (!row.run.saleOfferId) {
         continue;
       }
       try {
         await setRunSaleEligibility(this.options.redis, {
-          runId: run.id,
-          saleOfferId: run.saleOfferId,
+          runId: row.run.id,
+          saleOfferId: row.run.saleOfferId,
           status: "closed",
         });
         closedSaleOfferCount += 1;
       } catch (error) {
         this.options.logger.warn(
-          { err: error, runId: run.id, saleOfferId: run.saleOfferId },
+          { err: error, runId: row.run.id, saleOfferId: row.run.saleOfferId },
           "Could not close run sale eligibility during admin reset.",
         );
       }
@@ -175,4 +213,154 @@ export class DemoMaintenanceService {
   private now(): Date {
     return this.options.now?.() ?? new Date();
   }
+
+  private async readBusinessOutcome(
+    run: typeof demoRuns.$inferSelect,
+  ): Promise<BusinessOutcomeSummary> {
+    if (!run.saleOfferId) {
+      return emptyBusinessOutcomeSummary();
+    }
+
+    return readBusinessOutcomeSummary(this.options.db, {
+      saleOfferId: run.saleOfferId,
+      runId: run.id,
+    });
+  }
+
+  private async captureTerminalInventorySnapshot(input: {
+    run: typeof demoRuns.$inferSelect;
+    businessOutcome: BusinessOutcomeSummary;
+    capturedAt: Date;
+  }): Promise<TerminalInventorySnapshot | null> {
+    if (!input.run.saleOfferId) {
+      return null;
+    }
+
+    try {
+      const inventory = await getInventoryStatus(
+        this.options.redis,
+        input.run.saleOfferId,
+        input.capturedAt,
+      );
+      return {
+        saleOfferId: input.run.saleOfferId,
+        startingStock: inventory.allocatedStock,
+        remainingStock: inventory.remainingStock,
+        reservedStock: inventory.reservedStock,
+        acceptedReservations: input.businessOutcome.acceptedReservations,
+        soldOutRejections: await this.readSoldOutRejections(input.run.id, inventory),
+        pendingPersistenceCount: inventory.pendingPersistenceCount,
+        capturedAt: input.capturedAt.toISOString(),
+        source: "redis",
+      };
+    } catch (error) {
+      this.options.logger.warn(
+        { err: error, runId: input.run.id, saleOfferId: input.run.saleOfferId },
+        "Could not capture terminal inventory snapshot during admin reset.",
+      );
+      return null;
+    }
+  }
+
+  private async readSoldOutRejections(
+    runId: string,
+    inventory: Awaited<ReturnType<typeof getInventoryStatus>>,
+  ): Promise<number> {
+    const [row] = await this.options.db
+      .select({ count: demoRunReservationOutcomes.count })
+      .from(demoRunReservationOutcomes)
+      .where(
+        and(
+          eq(demoRunReservationOutcomes.runId, runId),
+          eq(demoRunReservationOutcomes.outcome, "api_sold_out_decision"),
+        ),
+      )
+      .limit(1);
+
+    return row?.count ?? inventory.soldOutPressure.rejectionCount;
+  }
+}
+
+function adminResetTrafficSummary(
+  run: typeof demoRuns.$inferSelect,
+  finalization: typeof demoRunFinalizations.$inferSelect | null,
+): {
+  httpSummary: TrafficHttpSummary;
+  trafficDeliverySummary: TrafficDeliverySummary;
+  httpTimingBreakdownSummary: Record<string, unknown>;
+  loadRunDiagnosticsSummary: Record<string, unknown>;
+  apiRequestLifecycleSummary: Record<string, unknown>;
+} {
+  if (finalization) {
+    return {
+      httpSummary: trafficHttpSummarySchema.parse(finalization.httpSummary),
+      trafficDeliverySummary: trafficDeliverySummarySchema.parse(
+        finalization.trafficDeliverySummary,
+      ),
+      httpTimingBreakdownSummary: finalization.httpTimingBreakdownSummary,
+      loadRunDiagnosticsSummary: finalization.loadRunDiagnosticsSummary,
+      apiRequestLifecycleSummary: finalization.apiRequestLifecycleSummary,
+    };
+  }
+
+  const summary = failedBeforeTrafficCompletionSummary(
+    acceptedRunConfigSnapshotSchema.parse(run.configSnapshot),
+  );
+
+  return {
+    httpSummary: summary.httpSummary,
+    trafficDeliverySummary: summary.trafficDeliverySummary,
+    httpTimingBreakdownSummary: {},
+    loadRunDiagnosticsSummary: {},
+    apiRequestLifecycleSummary: {},
+  };
+}
+
+function failedBeforeTrafficCompletionSummary(config: AcceptedRunConfigSnapshot): {
+  httpSummary: TrafficHttpSummary;
+  trafficDeliverySummary: TrafficDeliverySummary;
+} {
+  const plannedRequests = plannedTrafficRequests(config.trafficConfig);
+
+  return {
+    httpSummary: {
+      plannedRequests,
+      emittedRequests: 0,
+      completedRequests: 0,
+      failedRequests: 0,
+      acceptedResponses: 0,
+      soldOutResponses: 0,
+      unexpectedResponses: 0,
+      failureRate: 0,
+    },
+    trafficDeliverySummary: {
+      plannedRequests,
+      emittedRequests: 0,
+      droppedIterations: plannedRequests,
+      trafficDeliveryStatus: "failed",
+      notes: ["Admin reset failed the run before traffic completion."],
+    },
+  };
+}
+
+function plannedTrafficRequests(config: TrafficConfig): number {
+  if (config.mode === "buyer-spike") {
+    return config.buyerCount * (config.duplicateEachBuyerAttempt ? 2 : 1);
+  }
+
+  return config.ratePerSecond * config.durationSeconds;
+}
+
+function emptyBusinessOutcomeSummary(): BusinessOutcomeSummary {
+  return {
+    acceptedReservations: 0,
+    soldOutRejections: 0,
+    queuedOrders: 0,
+    processingOrders: 0,
+    retryingOrders: 0,
+    confirmedOrders: 0,
+    failedOrders: 0,
+    pendingPersistenceCount: 0,
+    notificationsRecorded: 0,
+  };
 }

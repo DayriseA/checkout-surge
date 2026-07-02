@@ -1,5 +1,7 @@
 # Issue 08 - Write immutable summaries for admin-reset failed runs
 
+Status: Fixed
+
 
 ## Recommended Order Rationale
 

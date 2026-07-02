@@ -48,9 +48,7 @@
   },
   "customizations": {
     "vscode": {
-      "extensions": [
-        "kilocode.kilo-code"
-      ]
+      "extensions": ["kilocode.kilo-code"]
     }
   }
 }

@@ -449,33 +449,34 @@ describe("database migrations, seed data, and reset behavior", () => {
     });
   });
 
-  it.each(["rejected", "released", "expired"] as const)(
-    "rejects orders backed by %s reservations",
-    async (status) => {
-      await withDatabase(async (sql) => {
-        const sequenceByStatus = { rejected: 10, released: 11, expired: 12 } as const;
-        const ids = buildOrderReservationIds(sequenceByStatus[status]);
-        const correlationId = `corr-order-reservation-${status}`;
+  it.each([
+    "rejected",
+    "released",
+    "expired",
+  ] as const)("rejects orders backed by %s reservations", async (status) => {
+    await withDatabase(async (sql) => {
+      const sequenceByStatus = { rejected: 10, released: 11, expired: 12 } as const;
+      const ids = buildOrderReservationIds(sequenceByStatus[status]);
+      const correlationId = `corr-order-reservation-${status}`;
 
-        await insertCatalogSaleOffer(sql, ids);
-        await insertReservation(sql, {
-          reservationId: ids.reservationId,
-          saleOfferId: ids.saleOfferId,
-          correlationId,
-          status,
-        });
-
-        await expect(
-          insertOrder(sql, {
-            orderId: ids.orderId,
-            saleOfferId: ids.saleOfferId,
-            reservationId: ids.reservationId,
-            correlationId,
-          }),
-        ).rejects.toThrow("must match secured reservation");
+      await insertCatalogSaleOffer(sql, ids);
+      await insertReservation(sql, {
+        reservationId: ids.reservationId,
+        saleOfferId: ids.saleOfferId,
+        correlationId,
+        status,
       });
-    },
-  );
+
+      await expect(
+        insertOrder(sql, {
+          orderId: ids.orderId,
+          saleOfferId: ids.saleOfferId,
+          reservationId: ids.reservationId,
+          correlationId,
+        }),
+      ).rejects.toThrow("must match secured reservation");
+    });
+  });
 
   it("rejects orders whose offer, correlation ID, or quantity differs from the reservation", async () => {
     await withDatabase(async (sql) => {
