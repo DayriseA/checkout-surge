@@ -50,6 +50,7 @@ import exec from "k6/execution";
 import { Counter } from "k6/metrics";
 
 const config = ${JSON.stringify(scriptConfig)};
+const expectedCheckoutStatuses = http.expectedStatuses(202, 409);
 const acceptedResponses = new Counter("checkout_reservation_accepted");
 const soldOutResponses = new Counter("checkout_sold_out");
 const unexpectedResponses = new Counter("checkout_unexpected_response");
@@ -72,6 +73,7 @@ export default function () {
       correlationId: \`\${config.correlationId}:k6:\${iteration}\`,
     }),
     {
+      responseCallback: expectedCheckoutStatuses,
       headers: {
         "content-type": "application/json",
         accept: "application/json",

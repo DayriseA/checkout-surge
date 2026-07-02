@@ -16,7 +16,7 @@ export interface K6ParsedPoint {
 
 export class K6RunAccumulator {
   private emittedRequests = 0;
-  private failedRequests = 0;
+  private httpFailedRequests = 0;
   private acceptedResponses = 0;
   private soldOutResponses = 0;
   private unexpectedResponses = 0;
@@ -52,7 +52,7 @@ export class K6RunAccumulator {
         this.latencies.push(value);
         return { metricName: "traffic.latency", value, unit: "ms", timestamp };
       case "http_req_failed":
-        this.failedRequests += value > 0 ? 1 : 0;
+        this.httpFailedRequests += value > 0 ? 1 : 0;
         return { metricName: "traffic.failure_rate", value, unit: "ratio", timestamp };
       case "checkout_reservation_accepted":
         this.acceptedResponses += value;
@@ -78,8 +78,9 @@ export class K6RunAccumulator {
     completedAt: Date;
   }): TrafficCompletionReport {
     const failureRate =
-      this.emittedRequests > 0 ? this.failedRequests / Math.max(this.emittedRequests, 1) : 0;
+      this.emittedRequests > 0 ? this.failedRequests() / Math.max(this.emittedRequests, 1) : 0;
     const trafficDeliverySummary = this.trafficDeliverySummary();
+    const failedRequests = this.failedRequests();
 
     return {
       runId: this.options.runId,
@@ -90,7 +91,7 @@ export class K6RunAccumulator {
         plannedRequests: this.options.plannedRequests,
         emittedRequests: this.emittedRequests,
         completedRequests: this.emittedRequests,
-        failedRequests: this.failedRequests,
+        failedRequests,
         acceptedResponses: this.acceptedResponses,
         soldOutResponses: this.soldOutResponses,
         unexpectedResponses: this.unexpectedResponses,
@@ -112,7 +113,7 @@ export class K6RunAccumulator {
       },
       apiRequestLifecycleSummary: {
         completedRequests: this.emittedRequests,
-        failedRequests: this.failedRequests,
+        failedRequests,
       },
       completedAt: input.completedAt.toISOString(),
       correlationId: this.options.correlationId,
@@ -147,6 +148,11 @@ export class K6RunAccumulator {
       trafficDeliveryStatus,
       notes,
     };
+  }
+
+  private failedRequests(): number {
+    const nonSoldOutHttpFailures = Math.max(this.httpFailedRequests - this.soldOutResponses, 0);
+    return Math.max(this.unexpectedResponses, nonSoldOutHttpFailures);
   }
 }
 

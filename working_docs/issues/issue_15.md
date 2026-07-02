@@ -1,5 +1,7 @@
 # Issue 15 - Treat expected sold-out responses as successful k6 HTTP outcomes
 
+Status: Fixed
+
 
 ## Recommended Order Rationale
 

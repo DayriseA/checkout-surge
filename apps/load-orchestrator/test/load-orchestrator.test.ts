@@ -77,6 +77,8 @@ describe("load-orchestrator k6 mapping", () => {
     expect(script.contents).toContain('"vus":200');
     expect(script.contents).toContain('"iterations":2');
     expect(script.contents).toContain("http.post");
+    expect(script.contents).toContain("const expectedCheckoutStatuses = http.expectedStatuses(202, 409);");
+    expect(script.contents).toContain("responseCallback: expectedCheckoutStatuses");
     expect(script.contents).toContain("run:");
     expect(script.contents).toContain(":buyer:");
     expect(script.contents).toContain(`"${loadRunIdHeaderName}": config.runId`);
@@ -126,6 +128,7 @@ describe("load-orchestrator k6 mapping", () => {
       expect(script.contents).toContain('import { check } from "k6";');
       expect(script.contents).toContain('import exec from "k6/execution";');
       expect(script.contents).toContain('import { Counter } from "k6/metrics";');
+      expect(script.contents).toContain("http.expectedStatuses(202, 409)");
       expect(script.contents).toContain("exec.scenario.iterationInTest");
       expect(script.contents).toContain('new Counter("checkout_reservation_accepted")');
     } finally {
@@ -248,6 +251,91 @@ describe("load-orchestrator k6 mapping", () => {
     });
     expect(report).not.toHaveProperty("demoRunStatus");
     expect(report).not.toHaveProperty("finalizedAt");
+  });
+
+  it("does not count clean sold-out responses as failed HTTP summary outcomes", () => {
+    const accumulator = new K6RunAccumulator({
+      runId: startRequest.runId,
+      correlationId: startRequest.correlationId,
+      plannedRequests: 2,
+      startedAt: new Date(timestamp),
+    });
+
+    [
+      { type: "Point", metric: "http_reqs", data: { value: 1, time: timestamp } },
+      { type: "Point", metric: "http_req_failed", data: { value: 1, time: timestamp } },
+      { type: "Point", metric: "checkout_sold_out", data: { value: 1, time: timestamp } },
+      { type: "Point", metric: "http_reqs", data: { value: 1, time: timestamp } },
+      { type: "Point", metric: "http_req_failed", data: { value: 1, time: timestamp } },
+      { type: "Point", metric: "checkout_sold_out", data: { value: 1, time: timestamp } },
+    ].forEach((point) => {
+      accumulator.observe(point);
+    });
+
+    const report = accumulator.completionReport({
+      status: "succeeded",
+      exitCode: 0,
+      completedAt: new Date(completionTimestamp),
+    });
+
+    expect(report.httpSummary).toMatchObject({
+      plannedRequests: 2,
+      emittedRequests: 2,
+      failedRequests: 0,
+      acceptedResponses: 0,
+      soldOutResponses: 2,
+      unexpectedResponses: 0,
+      failureRate: 0,
+    });
+    expect(report.apiRequestLifecycleSummary).toMatchObject({
+      completedRequests: 2,
+      failedRequests: 0,
+    });
+    expect(report.trafficDeliverySummary.trafficDeliveryStatus).toBe("complete");
+  });
+
+  it("counts unexpected checkout responses as failed HTTP summary outcomes", () => {
+    const accumulator = new K6RunAccumulator({
+      runId: startRequest.runId,
+      correlationId: startRequest.correlationId,
+      plannedRequests: 1,
+      startedAt: new Date(timestamp),
+    });
+
+    [
+      { type: "Point", metric: "http_reqs", data: { value: 1, time: timestamp } },
+      { type: "Point", metric: "http_req_failed", data: { value: 0, time: timestamp } },
+      {
+        type: "Point",
+        metric: "checkout_unexpected_response",
+        data: { value: 1, time: timestamp },
+      },
+    ].forEach((point) => {
+      accumulator.observe(point);
+    });
+
+    const report = accumulator.completionReport({
+      status: "succeeded",
+      exitCode: 0,
+      completedAt: new Date(completionTimestamp),
+    });
+
+    expect(report.httpSummary).toMatchObject({
+      plannedRequests: 1,
+      emittedRequests: 1,
+      failedRequests: 1,
+      soldOutResponses: 0,
+      unexpectedResponses: 1,
+      failureRate: 1,
+    });
+    expect(report.apiRequestLifecycleSummary).toMatchObject({
+      completedRequests: 1,
+      failedRequests: 1,
+    });
+    expect(report.trafficDeliverySummary).toMatchObject({
+      trafficDeliveryStatus: "failed",
+      notes: ["unexpected_checkout_responses_observed"],
+    });
   });
 });
 
