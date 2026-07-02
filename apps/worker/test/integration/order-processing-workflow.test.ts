@@ -1,14 +1,22 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  type AcceptedRunConfigSnapshot,
   type NotificationRecordJob,
   type OrderProcessJob,
   orderProcessBullMqQueueName,
   orderProcessJobName,
+  type TrafficCompletionReport,
 } from "@checkout-surge/contracts";
 import {
   createDatabaseConnection,
+  demoPresets,
+  demoRunFinalizations,
+  demoRunSaleContexts,
+  demoRunSummaries,
+  demoRuns,
   erpAttempts,
+  initializeInventory,
   orderEvents,
   orders,
   products,
@@ -22,6 +30,7 @@ import { Queue } from "bullmq";
 import { and, asc, eq } from "drizzle-orm";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { DemoRunFinalizationService } from "../../../api/src/services/demo-run-finalization-service.js";
 import {
   ErpCircuitBreaker,
   ErpCircuitOpenError,
@@ -31,6 +40,8 @@ import {
   HttpErpOrderConfirmation,
   isTemporaryErpConfirmationError,
 } from "../../src/application/erp-confirmation-client.js";
+import { createNotificationRecordJobHandler } from "../../src/application/notification-record-job-handler.js";
+import { createNotificationRecoveryScanner } from "../../src/application/notification-recovery-scanner.js";
 import {
   createOrderProcessJobHandler,
   type OrderConfirmation,
@@ -41,11 +52,14 @@ import {
   NotificationBeforeConfirmationError,
   PostgresNotificationRecordPersistence,
 } from "../../src/persistence/postgres-notification-record-persistence.js";
+import { PostgresNotificationRecoveryPersistence } from "../../src/persistence/postgres-notification-recovery-persistence.js";
 import {
   OrderJobIdentityMismatchError,
   OrderNotFoundError,
   PostgresOrderTransitionPersistence,
 } from "../../src/persistence/postgres-order-transition-persistence.js";
+import { createBullMqNotificationRecordConsumer } from "../../src/queue/bullmq-notification-record-consumer.js";
+import { createBullMqNotificationRecordPublisher } from "../../src/queue/bullmq-notification-record-publisher.js";
 import {
   createBullMqOrderProcessConsumer,
   type OrderProcessJobFailureReport,
@@ -56,6 +70,8 @@ const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "
 const migrationsFolder = path.resolve(packageRoot, "../../packages/db/drizzle");
 const ids = {
   product: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  preset: "33333333-3333-4333-8333-333333333331",
+  run: "55555555-5555-4555-8555-555555555555",
   saleOffer: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
   reservation: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
   order: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
@@ -69,6 +85,10 @@ const job: OrderProcessJob = {
   correlationId: "corr-worker-integration",
   quantity: 1,
   queuedAt: queuedAt.toISOString(),
+};
+const runScopedJob: OrderProcessJob = {
+  ...job,
+  runId: ids.run,
 };
 
 function requireTestEnv(name: "TEST_DATABASE_URL" | "TEST_REDIS_URL"): string {
@@ -537,6 +557,106 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
     ]);
   });
 
+  it("recovers a missed notification after initial enqueue failure so the run can finalize", async () => {
+    await redis.flushdb();
+    await resetTestDatabase({ databaseUrl, migrationsFolder });
+    await seedQueuedOrder(connection, { runScoped: true });
+    await seedTrafficCompleteRunArtifacts(connection, redis);
+
+    const logger = createSilentLogger("worker");
+    const initialPublishError = new Error("notification queue unavailable");
+    const reportNotificationRecordPublishFailure = vi.fn();
+    const orderHandler = createOrderProcessJobHandler({
+      confirmation: { confirm: vi.fn().mockResolvedValue(undefined) },
+      persistence: new PostgresOrderTransitionPersistence(connection.db),
+      logger,
+      notificationRecordPublisher: {
+        publishForConfirmedOrder: vi.fn().mockRejectedValueOnce(initialPublishError),
+      },
+      reportNotificationRecordPublishFailure,
+    });
+
+    await orderHandler.handle(runScopedJob, {
+      attemptNumber: 1,
+      attemptsMade: 0,
+      maxAttempts: 1,
+    });
+    expect(reportNotificationRecordPublishFailure).toHaveBeenCalledWith(
+      expect.objectContaining({
+        error: initialPublishError,
+        orderId: ids.order,
+        runId: ids.run,
+      }),
+    );
+    await expect(readNotificationCount(connection)).resolves.toBe(0);
+
+    const finalizationService = createFinalizationService(connection, redis);
+    await expect(
+      finalizationService.finalizeRun(ids.run, job.correlationId),
+    ).resolves.toMatchObject({
+      status: "draining",
+    });
+
+    const notificationRecordPublisher = createBullMqNotificationRecordPublisher({
+      connection: { url: redisUrl, maxRetriesPerRequest: null },
+      attempts: 1,
+    });
+    const notificationRecordConsumer = createBullMqNotificationRecordConsumer({
+      connection: { url: redisUrl, maxRetriesPerRequest: null },
+      concurrency: 1,
+      handler: createNotificationRecordJobHandler({
+        persistence: new PostgresNotificationRecordPersistence(connection.db),
+        logger,
+      }),
+      logger,
+    });
+
+    try {
+      notificationRecordConsumer.start();
+      const recoveryPublishFailures: unknown[] = [];
+      const scanner = createNotificationRecoveryScanner({
+        persistence: new PostgresNotificationRecoveryPersistence(connection.db),
+        publisher: notificationRecordPublisher,
+        logger,
+        scanIntervalMs: 1000,
+        batchSize: 10,
+        reportPublishFailure: (report) => {
+          recoveryPublishFailures.push(report.error);
+        },
+      });
+
+      const scanResult = await scanner.scanOnce();
+      if (scanResult.failed > 0) {
+        throw recoveryPublishFailures[0] ?? new Error("Notification recovery publish failed.");
+      }
+      expect(scanResult).toEqual({
+        candidates: 1,
+        published: 1,
+        failed: 0,
+      });
+      await waitForNotificationCount(connection, 1);
+
+      await expect(
+        finalizationService.finalizeRun(ids.run, job.correlationId),
+      ).resolves.toMatchObject({
+        status: "completed",
+      });
+      const summaries = await connection.db
+        .select()
+        .from(demoRunSummaries)
+        .where(eq(demoRunSummaries.runId, ids.run));
+
+      expect(summaries).toHaveLength(1);
+      expect(summaries[0]?.businessOutcomeSummary).toMatchObject({
+        confirmedOrders: 1,
+        notificationsRecorded: 1,
+      });
+    } finally {
+      await notificationRecordConsumer.close();
+      await notificationRecordPublisher.close();
+    }
+  });
+
   it("calls the ERP adapter and records durable attempt history", async () => {
     const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(
       new Response(
@@ -856,26 +976,73 @@ function buildConsumer(
 
 async function seedQueuedOrder(
   connection: ReturnType<typeof createDatabaseConnection>,
+  options: { runScoped?: boolean } = {},
 ): Promise<void> {
+  const testJob = options.runScoped ? runScopedJob : job;
+  const configSnapshot = configSnapshotFixture();
+
   await connection.db.insert(products).values({
     id: ids.product,
     sku: "WORKER-TEST-SKU",
     slug: "worker-test-product",
     name: "Worker Test Product",
   });
+  if (options.runScoped) {
+    await connection.db.insert(demoPresets).values({
+      id: ids.preset,
+      slug: "worker-recovery-preset",
+      visibility: "public",
+      isEditable: false,
+      isCustom: false,
+      display: {
+        name: "Worker Recovery Preset",
+        description: "Worker recovery fixture.",
+        sortOrder: 1,
+        outcomeFocus: ["run_history"],
+      },
+      ...configSnapshot,
+      createdAt: queuedAt,
+      updatedAt: queuedAt,
+    });
+  }
   await connection.db.insert(saleOffers).values({
     id: ids.saleOffer,
     productId: ids.product,
     name: "Worker Test Offer",
-    allocatedStock: 1,
+    allocatedStock: configSnapshot.inventoryConfig.startingStock,
     saleStartsAt: new Date("2026-01-01T00:00:00.000Z"),
     saleEndsAt: new Date("2030-01-01T00:00:00.000Z"),
+    purpose: options.runScoped ? "generated_run" : "catalog",
   });
+  if (options.runScoped) {
+    await connection.db.insert(demoRuns).values({
+      id: ids.run,
+      presetId: ids.preset,
+      presetName: "Worker Recovery Preset",
+      operatorMode: "public",
+      status: "draining",
+      trafficStatus: "succeeded",
+      configSnapshot,
+      saleOfferId: ids.saleOffer,
+      startedAt: new Date("2026-06-21T00:00:00.000Z"),
+      trafficStartedAt: new Date("2026-06-21T00:00:01.000Z"),
+      trafficEndedAt: new Date("2026-06-21T00:00:03.000Z"),
+      createdAt: queuedAt,
+      updatedAt: new Date("2026-06-21T00:00:03.000Z"),
+    });
+    await connection.db.insert(demoRunSaleContexts).values({
+      runId: ids.run,
+      saleOfferId: ids.saleOffer,
+      createdAt: queuedAt,
+      updatedAt: queuedAt,
+    });
+  }
   await connection.db.insert(reservations).values({
     id: ids.reservation,
     saleOfferId: ids.saleOffer,
-    correlationId: job.correlationId,
-    quantity: job.quantity,
+    ...(testJob.runId ? { runId: testJob.runId } : {}),
+    correlationId: testJob.correlationId,
+    quantity: testJob.quantity,
     status: "secured",
     reservationToken: "worker-test-reservation-token",
     securedAt: queuedAt,
@@ -883,11 +1050,12 @@ async function seedQueuedOrder(
   });
   await connection.db.insert(orders).values({
     id: ids.order,
-    publicOrderId: job.publicOrderId,
+    publicOrderId: testJob.publicOrderId,
     saleOfferId: ids.saleOffer,
     reservationId: ids.reservation,
-    correlationId: job.correlationId,
-    quantity: job.quantity,
+    ...(testJob.runId ? { runId: testJob.runId } : {}),
+    correlationId: testJob.correlationId,
+    quantity: testJob.quantity,
     status: "queued",
     queuedAt,
   });
@@ -896,7 +1064,8 @@ async function seedQueuedOrder(
       orderId: ids.order,
       reservationId: ids.reservation,
       saleOfferId: ids.saleOffer,
-      correlationId: job.correlationId,
+      ...(testJob.runId ? { runId: testJob.runId } : {}),
+      correlationId: testJob.correlationId,
       eventName: "reservation.secured",
       payload: { quantity: 1, reservationStatus: "secured" },
       source: "api",
@@ -906,13 +1075,53 @@ async function seedQueuedOrder(
       orderId: ids.order,
       reservationId: ids.reservation,
       saleOfferId: ids.saleOffer,
-      correlationId: job.correlationId,
+      ...(testJob.runId ? { runId: testJob.runId } : {}),
+      correlationId: testJob.correlationId,
       eventName: "order.queued",
       payload: { quantity: 1, orderStatus: "queued" },
       source: "api",
       occurredAt: queuedAt,
     },
   ]);
+}
+
+async function seedTrafficCompleteRunArtifacts(
+  connection: ReturnType<typeof createDatabaseConnection>,
+  redis: Redis,
+): Promise<void> {
+  const report = trafficCompletionReportFixture();
+  await connection.db.insert(demoRunFinalizations).values({
+    runId: ids.run,
+    exitCode: 0,
+    httpSummary: report.httpSummary,
+    trafficOutcomeSummary: report.trafficOutcomeSummary,
+    trafficDeliverySummary: report.trafficDeliverySummary,
+    httpTimingBreakdownSummary: report.httpTimingBreakdownSummary,
+    loadRunDiagnosticsSummary: report.loadRunDiagnosticsSummary,
+    apiRequestLifecycleSummary: report.apiRequestLifecycleSummary,
+    trafficSummaryReceivedAt: new Date(report.completedAt),
+    createdAt: new Date(report.completedAt),
+    updatedAt: new Date(report.completedAt),
+  });
+  await initializeInventory(redis, {
+    saleOfferId: ids.saleOffer,
+    allocatedStock: configSnapshotFixture().inventoryConfig.startingStock,
+    initializedAt: queuedAt,
+    run: { runId: ids.run, status: "closed" },
+  });
+}
+
+function createFinalizationService(
+  connection: ReturnType<typeof createDatabaseConnection>,
+  redis: Redis,
+): DemoRunFinalizationService {
+  return new DemoRunFinalizationService({
+    db: connection.db,
+    redis,
+    logger: createSilentLogger("api"),
+    now: () => new Date("2026-06-21T00:00:10.000Z"),
+    generateId: () => "77777777-7777-4777-8777-777777777777",
+  });
 }
 
 async function readOrderEvents(
@@ -937,6 +1146,93 @@ async function waitForOrderStatus(
     },
     { timeout: 10_000, interval: 25 },
   );
+}
+
+async function waitForNotificationCount(
+  connection: ReturnType<typeof createDatabaseConnection>,
+  expectedCount: number,
+): Promise<void> {
+  await vi.waitFor(
+    async () => {
+      await expect(readNotificationCount(connection)).resolves.toBe(expectedCount);
+    },
+    { timeout: 10_000, interval: 25 },
+  );
+}
+
+async function readNotificationCount(
+  connection: ReturnType<typeof createDatabaseConnection>,
+): Promise<number> {
+  const notifications = await connection.db
+    .select()
+    .from(simulatedNotifications)
+    .where(eq(simulatedNotifications.orderId, ids.order));
+
+  return notifications.length;
+}
+
+function configSnapshotFixture(): AcceptedRunConfigSnapshot {
+  return {
+    trafficConfig: {
+      mode: "buyer-spike",
+      buyerCount: 1,
+      duplicateEachBuyerAttempt: false,
+      startDelaySeconds: 0,
+      maxDurationSeconds: 1,
+      quantityPerAttempt: 1,
+    },
+    inventoryConfig: {
+      startingStock: 1,
+      quantityPerCheckout: 1,
+      reservationHoldMinutes: 15,
+    },
+    erpConfig: {
+      latencyMs: 10,
+      maxTps: 10,
+      errorRate: 0,
+      forcedOutage: false,
+      requestTimeoutMs: 1000,
+    },
+    backpressureConfig: {
+      queueName: "orders:process",
+      physicalQueueName: "orders-process",
+      orderProcessConcurrency: 1,
+      drainTimeoutSeconds: 300,
+      pendingPersistenceRetryAfterSeconds: 30,
+    },
+  };
+}
+
+function trafficCompletionReportFixture(): TrafficCompletionReport {
+  return {
+    runId: ids.run,
+    status: "succeeded",
+    exitCode: 0,
+    httpSummary: {
+      plannedRequests: 1,
+      emittedRequests: 1,
+      completedRequests: 1,
+      failedRequests: 0,
+      acceptedResponses: 1,
+      soldOutResponses: 0,
+      unexpectedResponses: 0,
+      p95LatencyMs: 25,
+      failureRate: 0,
+    },
+    trafficOutcomeSummary: {},
+    trafficDeliverySummary: {
+      plannedRequests: 1,
+      emittedRequests: 1,
+      droppedIterations: 0,
+      trafficDeliveryStatus: "complete",
+      notes: [],
+    },
+    httpTimingBreakdownSummary: {},
+    loadRunDiagnosticsSummary: {},
+    apiRequestLifecycleSummary: {},
+    completedAt: "2026-06-21T00:00:03.000Z",
+    correlationId: job.correlationId,
+  };
 }
 
 function deferred<T>() {

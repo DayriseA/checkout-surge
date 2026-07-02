@@ -31,7 +31,7 @@ export function createBullMqNotificationRecordPublisher(options: {
       await queue.add(notificationRecordJobName, payload, {
         attempts: options.attempts ?? 3,
         backoff: { type: "exponential", delay: 250 },
-        jobId: `${job.orderId}:email`,
+        jobId: `${job.orderId}-email`,
         removeOnComplete: 1000,
         removeOnFail: 1000,
       });

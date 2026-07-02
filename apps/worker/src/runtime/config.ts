@@ -5,6 +5,8 @@ export interface WorkerConfig {
   redisUrl: string;
   orderProcessConcurrency: number;
   notificationRecordConcurrency: number;
+  notificationRecoveryScanIntervalMs: number;
+  notificationRecoveryBatchSize: number;
   postgresPoolMax: number;
   mockErpBaseUrl: string;
   erpRequestTimeoutMs: number;
@@ -27,6 +29,16 @@ export function loadWorkerConfig(env: NodeJS.ProcessEnv): WorkerConfig {
       env.NOTIFICATION_RECORD_CONCURRENCY,
       "NOTIFICATION_RECORD_CONCURRENCY",
       5,
+    ),
+    notificationRecoveryScanIntervalMs: parsePositiveInteger(
+      env.NOTIFICATION_RECOVERY_SCAN_INTERVAL_MS,
+      "NOTIFICATION_RECOVERY_SCAN_INTERVAL_MS",
+      1000,
+    ),
+    notificationRecoveryBatchSize: parsePositiveInteger(
+      env.NOTIFICATION_RECOVERY_BATCH_SIZE,
+      "NOTIFICATION_RECOVERY_BATCH_SIZE",
+      100,
     ),
     postgresPoolMax: parsePositiveInteger(
       env.WORKER_POSTGRES_POOL_MAX,

@@ -18,10 +18,12 @@ import {
   isTemporaryErpDependencyError,
 } from "./application/erp-confirmation-client.js";
 import { createNotificationRecordJobHandler } from "./application/notification-record-job-handler.js";
+import { createNotificationRecoveryScanner } from "./application/notification-recovery-scanner.js";
 import { createOrderProcessJobHandler } from "./application/order-process-job-handler.js";
 import { RunScopedBackpressureOrderConfirmation } from "./application/run-backpressure.js";
 import { PostgresErpAttemptPersistence } from "./persistence/postgres-erp-attempt-persistence.js";
 import { PostgresNotificationRecordPersistence } from "./persistence/postgres-notification-record-persistence.js";
+import { PostgresNotificationRecoveryPersistence } from "./persistence/postgres-notification-recovery-persistence.js";
 import { PostgresOrderTransitionPersistence } from "./persistence/postgres-order-transition-persistence.js";
 import { PostgresRunConfigReader } from "./persistence/postgres-run-config-reader.js";
 import { createBullMqNotificationRecordConsumer } from "./queue/bullmq-notification-record-consumer.js";
@@ -68,6 +70,13 @@ export {
   type NotificationRecordPersistence,
 } from "./application/notification-record-job-handler.js";
 export {
+  createNotificationRecoveryScanner,
+  type NotificationRecoveryPersistence,
+  type NotificationRecoveryScanner,
+  type NotificationRecoveryScanResult,
+  type RecoverableNotificationOrder,
+} from "./application/notification-recovery-scanner.js";
+export {
   createLocalOrderConfirmation,
   createOrderProcessJobHandler,
   type NotificationRecordPublisher,
@@ -82,6 +91,7 @@ export {
   NotificationOrderNotFoundError,
   PostgresNotificationRecordPersistence,
 } from "./persistence/postgres-notification-record-persistence.js";
+export { PostgresNotificationRecoveryPersistence } from "./persistence/postgres-notification-recovery-persistence.js";
 export {
   InvalidOrderTransitionError,
   OrderJobIdentityMismatchError,
@@ -112,6 +122,25 @@ export async function startWorker(): Promise<void> {
     connection: {
       url: config.redisUrl,
       maxRetriesPerRequest: null,
+    },
+  });
+  const notificationRecoveryScanner = createNotificationRecoveryScanner({
+    persistence: new PostgresNotificationRecoveryPersistence(database.db),
+    publisher: notificationRecordPublisher,
+    logger,
+    scanIntervalMs: config.notificationRecoveryScanIntervalMs,
+    batchSize: config.notificationRecoveryBatchSize,
+    reportPublishFailure: (report) => {
+      logger.error(
+        {
+          err: report.error,
+          orderId: report.orderId,
+          saleOfferId: report.saleOfferId,
+          ...(report.runId ? { runId: report.runId } : {}),
+          correlationId: report.correlationId,
+        },
+        "Notification recovery could not publish a notification-recording job.",
+      );
     },
   });
   const orderProcessConsumer = createBullMqOrderProcessConsumer({
@@ -229,6 +258,7 @@ export async function startWorker(): Promise<void> {
     healthPort: config.healthPort,
     orderProcessConsumer,
     notificationRecordConsumer,
+    notificationRecoveryScanner,
     closeNotificationRecordPublisher: notificationRecordPublisher.close,
     closePostgres: database.close,
     closeRedis: async () => {

@@ -20,6 +20,8 @@ describe("worker configuration", () => {
       redisUrl: "redis://localhost:6379",
       orderProcessConcurrency: 5,
       notificationRecordConcurrency: 5,
+      notificationRecoveryScanIntervalMs: 1000,
+      notificationRecoveryBatchSize: 100,
       postgresPoolMax: 10,
       mockErpBaseUrl: "http://localhost:4100/",
       erpRequestTimeoutMs: 2000,
@@ -83,6 +85,13 @@ describe("worker configuration", () => {
         ERP_CIRCUIT_FAILURE_THRESHOLD: "0",
       }),
     ).toThrow("ERP_CIRCUIT_FAILURE_THRESHOLD must be a positive integer");
+    expect(() =>
+      loadWorkerConfig({
+        DATABASE_URL: "postgresql://localhost/test",
+        REDIS_URL: "redis://localhost:6379",
+        NOTIFICATION_RECOVERY_SCAN_INTERVAL_MS: "0",
+      }),
+    ).toThrow("NOTIFICATION_RECOVERY_SCAN_INTERVAL_MS must be a positive integer");
   });
 });
 
@@ -217,12 +226,18 @@ describe("worker runtime lifecycle", () => {
       isRunning: () => true,
       checkConnectivity: vi.fn().mockResolvedValue(undefined),
     };
+    const notificationRecoveryScanner = {
+      start: vi.fn(),
+      close: vi.fn().mockResolvedValue(undefined),
+      scanOnce: vi.fn().mockResolvedValue({ candidates: 0, published: 0, failed: 0 }),
+    };
     const runtime = createWorkerRuntime({
       healthServer,
       healthHost: "127.0.0.1",
       healthPort: 0,
       orderProcessConsumer: consumer,
       notificationRecordConsumer: notificationConsumer,
+      notificationRecoveryScanner,
       closeNotificationRecordPublisher: vi.fn().mockResolvedValue(undefined),
       closePostgres: vi.fn().mockResolvedValue(undefined),
       closeRedis: vi.fn().mockResolvedValue(undefined),
@@ -236,6 +251,8 @@ describe("worker runtime lifecycle", () => {
     expect(consumer.close).toHaveBeenCalledOnce();
     expect(notificationConsumer.start).toHaveBeenCalledOnce();
     expect(notificationConsumer.close).toHaveBeenCalledOnce();
+    expect(notificationRecoveryScanner.start).toHaveBeenCalledOnce();
+    expect(notificationRecoveryScanner.close).toHaveBeenCalledOnce();
   });
 
   it("closes serving and consuming boundaries before PostgreSQL and Redis", async () => {
@@ -266,6 +283,13 @@ describe("worker runtime lifecycle", () => {
         isRunning: () => true,
         checkConnectivity: vi.fn().mockResolvedValue(undefined),
       },
+      notificationRecoveryScanner: {
+        start: vi.fn(),
+        close: vi.fn(async () => {
+          closeOrder.push("notification-recovery");
+        }),
+        scanOnce: vi.fn().mockResolvedValue({ candidates: 0, published: 0, failed: 0 }),
+      },
       closeNotificationRecordPublisher: vi.fn(async () => {
         closeOrder.push("notification-publisher");
       }),
@@ -285,6 +309,7 @@ describe("worker runtime lifecycle", () => {
       "health",
       "consumer",
       "notifications",
+      "notification-recovery",
       "notification-publisher",
       "postgres",
       "redis",

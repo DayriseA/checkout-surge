@@ -1,5 +1,7 @@
 # Issue 06 - Recover lost notification enqueue after order confirmation
 
+Status: Fixed
+
 
 ## Recommended Order Rationale
 
