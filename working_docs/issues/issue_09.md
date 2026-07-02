@@ -1,5 +1,7 @@
 # Issue 09 - Fail closed when generated-run Redis eligibility cannot be closed
 
+Status: Fixed
+
 
 ## Recommended Order Rationale
 

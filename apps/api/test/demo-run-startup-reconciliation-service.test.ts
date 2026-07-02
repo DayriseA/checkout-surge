@@ -85,7 +85,7 @@ describe("demo run startup reconciliation service", () => {
 
     expect(summary).toEqual({
       interruptedRunCount: 2,
-      closedSaleOfferCount: 2,
+      closedSaleOfferCount: 3,
       summaryCreatedCount: 2,
       recoverableDrainingRunCount: 1,
     });

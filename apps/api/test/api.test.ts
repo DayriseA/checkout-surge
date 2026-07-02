@@ -92,6 +92,7 @@ import {
 import type { DemoMaintenanceService } from "../src/services/demo-maintenance-service.js";
 import type { DemoRunController } from "../src/services/demo-run-service.js";
 import type { ErpStatusService } from "../src/services/erp-status-service.js";
+import { PostgresGeneratedRunSaleGate } from "../src/services/generated-run-sale-gate.js";
 import {
   type InventoryStatusReader,
   InventoryStatusService,
@@ -104,6 +105,7 @@ import {
 } from "../src/services/queue-status-service.js";
 import {
   type BuyPersistence,
+  type GeneratedRunSaleGate,
   ReserveOrderService,
   type StockReservationGateway,
 } from "../src/services/reserve-order-service.js";
@@ -174,6 +176,7 @@ function queueStatusFixture(): QueueStatus {
 async function buildTestServer(options: {
   persistence: BuyPersistence;
   stockReservations?: StockReservationGateway;
+  generatedRunSaleGate?: GeneratedRunSaleGate;
   inventoryReader?: InventoryStatusReader | null;
   readiness?: "ok" | "unavailable";
   generateId?: () => string;
@@ -260,6 +263,9 @@ async function buildTestServer(options: {
         enqueue: async () => undefined,
       },
       stockReservations: options.stockReservations ?? new AcceptingStockReservations(),
+      ...(options.generatedRunSaleGate
+        ? { generatedRunSaleGate: options.generatedRunSaleGate }
+        : {}),
       reservationHoldMinutes: 15,
       idempotencyTtlSeconds: 1800,
       pendingPersistenceRetryAfterSeconds: 30,
@@ -800,6 +806,7 @@ describe("API gateway routes", () => {
   async function trackedServer(options: {
     persistence: BuyPersistence;
     stockReservations?: StockReservationGateway;
+    generatedRunSaleGate?: GeneratedRunSaleGate;
     inventoryReader?: InventoryStatusReader | null;
     readiness?: "ok" | "unavailable";
     generateId?: () => string;
@@ -2649,6 +2656,119 @@ describe("API buy persistence", () => {
         `;
         await connection.sql`DROP FUNCTION IF EXISTS reject_test_order_queued_event()`;
       }
+    }
+  });
+
+  it("rejects generated-run buys after durable closure even when Redis sale state is stale", async () => {
+    if (!connection || !redis) {
+      throw new Error("Test infrastructure was not initialized.");
+    }
+
+    const generatedSaleOfferId = "99999999-9999-4999-8999-999999999998";
+    const presetId = "88888888-8888-4888-8888-888888888887";
+
+    await connection.db.insert(saleOffers).values({
+      id: generatedSaleOfferId,
+      productId: fixtureIds.product,
+      name: "Generated Stale Closure Test Sale Offer",
+      allocatedStock: 3,
+      saleStartsAt: new Date("2026-01-01T00:00:00.000Z"),
+      saleEndsAt: new Date("2035-01-01T00:00:00.000Z"),
+      isActive: true,
+      purpose: "generated_run",
+    });
+    await connection.db.insert(demoPresets).values({
+      id: presetId,
+      slug: "generated-stale-closure-test",
+      visibility: "admin",
+      isEditable: true,
+      display: { name: "Generated Stale Closure Test", description: "Run closure test" },
+      trafficConfig: {},
+      inventoryConfig: {},
+      erpConfig: {},
+      backpressureConfig: {},
+    });
+    await connection.db.insert(demoRuns).values({
+      id: fixtureIds.run,
+      presetId,
+      presetName: "Generated Stale Closure Test",
+      operatorMode: "admin",
+      status: "active",
+      trafficStatus: "active",
+      configSnapshot: {
+        trafficConfig: {},
+        inventoryConfig: {},
+        erpConfig: {},
+        backpressureConfig: {},
+      },
+      saleOfferId: generatedSaleOfferId,
+      startedAt: new Date("2026-01-01T00:00:00.000Z"),
+    });
+    await connection.db.insert(demoRunSaleContexts).values({
+      runId: fixtureIds.run,
+      saleOfferId: generatedSaleOfferId,
+    });
+    await initializeInventory(redis, {
+      saleOfferId: generatedSaleOfferId,
+      allocatedStock: 3,
+      run: { runId: fixtureIds.run, status: "accepting" },
+    });
+    await connection.db
+      .update(demoRuns)
+      .set({
+        status: "draining",
+        trafficStatus: "succeeded",
+        trafficEndedAt: new Date("2026-01-01T00:00:05.000Z"),
+        updatedAt: new Date("2026-01-01T00:00:05.000Z"),
+      })
+      .where(eq(demoRuns.id, fixtureIds.run));
+
+    const server = await buildTestServer({
+      persistence: new PostgresBuyPersistence(connection.db),
+      stockReservations: createRedisStockReservations(redis),
+      generatedRunSaleGate: new PostgresGeneratedRunSaleGate(connection.db),
+      generateId: randomUUID,
+    });
+
+    try {
+      const response = await server.inject({
+        method: "POST",
+        url: "/buy",
+        headers: {
+          [loadRunIdHeaderName]: fixtureIds.run,
+        },
+        payload: {
+          saleOfferId: generatedSaleOfferId,
+          runId: fixtureIds.run,
+          idempotencyKey: "generated-run-stale-closure",
+          quantity: 1,
+        },
+      });
+      const payload = buyResponseSchema.parse(response.json());
+
+      expect(response.statusCode).toBe(503);
+      expect(payload).toMatchObject({
+        outcome: "inventory_not_initialized",
+        reason: "run_not_accepting_traffic",
+        reservation: null,
+        order: null,
+      });
+      expect(await redis.hget(inventoryKeys(generatedSaleOfferId).state, "runSaleStatus")).toBe(
+        "accepting",
+      );
+      expect(await getInventoryStatus(redis, generatedSaleOfferId)).toMatchObject({
+        remainingStock: 3,
+        reservedStock: 0,
+        pendingPersistenceCount: 0,
+      });
+      expect(
+        await connection.db
+          .select()
+          .from(reservations)
+          .where(eq(reservations.saleOfferId, generatedSaleOfferId)),
+      ).toEqual([]);
+    } finally {
+      await server.close();
     }
   });
 

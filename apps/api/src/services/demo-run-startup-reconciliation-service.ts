@@ -52,7 +52,8 @@ export class DemoRunStartupReconciliationService {
     const interruptedRuns = runs.filter(
       (run) => run.status === "starting" || run.status === "active",
     );
-    const recoverableDrainingRunCount = runs.length - interruptedRuns.length;
+    const recoverableDrainingRuns = runs.filter((run) => run.status === "draining");
+    const recoverableDrainingRunCount = recoverableDrainingRuns.length;
     let closedSaleOfferCount = 0;
     let summaryCreatedCount = 0;
 
@@ -107,6 +108,26 @@ export class DemoRunStartupReconciliationService {
 
       if (wroteSummary) {
         summaryCreatedCount += 1;
+      }
+    }
+
+    for (const run of recoverableDrainingRuns) {
+      if (!run.saleOfferId) {
+        continue;
+      }
+
+      try {
+        await setRunSaleEligibility(this.options.redis, {
+          runId: run.id,
+          saleOfferId: run.saleOfferId,
+          status: "closed",
+        });
+        closedSaleOfferCount += 1;
+      } catch (error) {
+        this.options.logger.warn(
+          { err: error, runId: run.id, saleOfferId: run.saleOfferId },
+          "Could not repair run sale eligibility during API startup reconciliation.",
+        );
       }
     }
 

@@ -642,7 +642,7 @@ export class DemoRunService implements DemoRunController {
         status: "closed",
       }).catch((error: unknown) => {
         this.options.logger.warn(
-          { err: error, runId: report.runId },
+          { err: error, runId: report.runId, saleOfferId: run.saleOfferId },
           "Could not close run sale eligibility after traffic completion.",
         );
       });
@@ -887,7 +887,12 @@ export class DemoRunService implements DemoRunController {
           runId,
           saleOfferId: run.saleOfferId,
           status: "closed",
-        }).catch(() => undefined);
+        }).catch((error: unknown) => {
+          this.options.logger.warn(
+            { err: error, runId, saleOfferId: run.saleOfferId },
+            "Could not close run sale eligibility after run failure.",
+          );
+        });
       }
       await this.publishRunEvent("run.failed", updatedRun, correlationId, now);
     }

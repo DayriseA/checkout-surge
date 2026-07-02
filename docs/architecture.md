@@ -46,18 +46,19 @@ Every run-scoped purchase attempt follows the same two-phase flow.
 
 1. Starting a public or admin preset creates a `demo_runs` record with an immutable configuration snapshot, clones the baseline sale offer into a generated run sale offer, initializes durable inventory, and initializes Redis inventory with authoritative run identity and accepting state plus a lifecycle/read cache projection.
 2. k6 sends the `runId` and generated `saleOfferId` with each synthetic buy attempt.
-3. A Redis Lua script atomically validates inventory scope, the request's run identity, and the authoritative accepting state, failing closed when the run ID is omitted, mismatched, or closed and rejecting run IDs on catalog inventory.
-4. The same uninterrupted Lua operation checks idempotency, decrements `remainingStock`, and creates the pending-persistence visibility sentinel for the generated sale offer. Eligibility is ordered before idempotency replay. Run closure updates the state inspected by this script atomically, so reservations before closure may succeed and reservations after closure reject without mutation.
-5. On success: the API writes the reservation and initial order record to PostgreSQL, publishes a BullMQ job, atomically promotes the accepted idempotency response while removing the pending sentinel, publishes bounded dashboard updates, and returns `202 Accepted` with a `reservation_secured` response immediately.
-6. On sold-out: the API returns a `409 sold_out` response directly from the Redis stock decision without querying PostgreSQL, writing per-loser idempotency records, or emitting per-loser dashboard events. Sold-out pressure is aggregated and flushed as periodic `inventory.sold_out_rejection` metrics instead.
-7. On duplicate accepted requests or idempotency conflicts: the API replays or rejects from the Redis idempotency record without changing stock.
+3. For generated-run attempts, the API first verifies through a narrow durable guard that the supplied run still belongs to the supplied generated sale offer and is still `starting` or `active`. This closes the stale-Redis gap if a durable lifecycle transition has already moved the run to `draining`, `completed`, or `failed`.
+4. A Redis Lua script atomically validates inventory scope, the request's run identity, and the authoritative accepting state, failing closed when the run ID is omitted, mismatched, or closed and rejecting run IDs on catalog inventory.
+5. The same uninterrupted Lua operation checks idempotency, decrements `remainingStock`, and creates the pending-persistence visibility sentinel for the generated sale offer. Eligibility is ordered before idempotency replay. Run closure updates the state inspected by this script atomically, so reservations before closure may succeed and reservations after closure reject without mutation.
+6. On success: the API writes the reservation and initial order record to PostgreSQL, publishes a BullMQ job, atomically promotes the accepted idempotency response while removing the pending sentinel, publishes bounded dashboard updates, and returns `202 Accepted` with a `reservation_secured` response immediately.
+7. On sold-out: the API returns a `409 sold_out` response directly from the Redis stock decision without writing per-loser idempotency records or emitting per-loser dashboard events. Sold-out pressure is aggregated and flushed as periodic `inventory.sold_out_rejection` metrics instead.
+8. On duplicate accepted requests or idempotency conflicts: the API replays or rejects from the Redis idempotency record without changing stock.
 
 **Phase 2 — Slow path (worker, seconds to minutes)**
 
-8. The worker picks up the queued job, applies the active run's accepted backpressure policy, calls the mock ERP / downstream business system with the run-scoped ERP behavior, and advances the order through `queued → processing → confirmed` (or `failed`).
-9. After successful confirmation, the worker enqueues and records a simulated notification so the demo shows the post-confirmation workflow without using a real provider.
-10. The worker publishes transport-neutral dashboard realtime events to Redis Pub/Sub on every state transition.
-11. The dashboard reflects the outcome through the API-owned SSE stream, latest-state recovery reads, and k6 metric-stream summaries for high-volume sold-out pressure.
+9. The worker picks up the queued job, applies the active run's accepted backpressure policy, calls the mock ERP / downstream business system with the run-scoped ERP behavior, and advances the order through `queued → processing → confirmed` (or `failed`).
+10. After successful confirmation, the worker enqueues and records a simulated notification so the demo shows the post-confirmation workflow without using a real provider.
+11. The worker publishes transport-neutral dashboard realtime events to Redis Pub/Sub on every state transition.
+12. The dashboard reflects the outcome through the API-owned SSE stream, latest-state recovery reads, and k6 metric-stream summaries for high-volume sold-out pressure.
 
 This split is the core architectural bet: callers are never blocked by slow downstream confirmation, and the buy path remains fast regardless of what is happening in the queue.
 
@@ -116,7 +117,7 @@ Public-facing controls are narrowly scoped: curated read-only preset starts, bou
 
 - The API never calls the mock ERP directly. All downstream confirmation interaction passes through the BullMQ queue.
 - Inventory state lives in Redis as the fast authoritative source; PostgreSQL holds the durable business record.
-- Run sale-offer eligibility is authoritative in the Redis inventory state and enforced inside the atomic stock decision; PostgreSQL is not queried for every losing buy attempt.
+- Run sale-offer stock eligibility is authoritative in the Redis inventory state and enforced inside the atomic stock decision; generated-run lifecycle eligibility is also checked against durable run state before Redis so stale Redis cannot accept a closed run.
 - `@checkout-surge/contracts` is the single source of truth for shared types and Zod schemas across all services.
 - The API owns browser-facing SSE fan-out on `/dashboard/events`; API and worker publish transport-neutral dashboard realtime events through Redis Pub/Sub.
 - Dashboard realtime is best-effort observability. Latest-state recovery reads are the resynchronization strategy, not stream replay.
