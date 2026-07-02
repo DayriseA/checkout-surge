@@ -1,5 +1,7 @@
 # Issue 22 - Resolve runtime setup Docker target mismatch
 
+Status: Fixed
+
 
 ## Recommended Order Rationale
 
