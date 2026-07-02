@@ -1389,6 +1389,7 @@ describe("API gateway routes", () => {
       preservedActiveRunCount: 1,
       correlationId: "corr-cleanup-test",
     });
+    expect(response.headers[correlationIdHeaderName]).toBe("corr-cleanup-test");
     expect(cleanupOldRuns).toHaveBeenCalledWith({
       keepLatest: 2,
       olderThanDays: 14,

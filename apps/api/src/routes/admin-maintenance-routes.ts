@@ -4,7 +4,7 @@ import {
   adminMaintenanceCleanupRunsRequestSchema,
   controlServiceTokenHeaderName,
 } from "@checkout-surge/contracts";
-import { normalizeCorrelationId } from "@checkout-surge/logger";
+import { correlationIdHeaderName, normalizeCorrelationId } from "@checkout-surge/logger";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import type { ApiFastifyInstance } from "../runtime/fastify.js";
 import type { DemoMaintenanceService } from "../services/demo-maintenance-service.js";
@@ -38,6 +38,7 @@ export function registerAdminMaintenanceRoutes(
     const parsed = adminMaintenanceCleanupRunsRequestSchema.parse(request.body ?? {});
     const correlationId = normalizeCorrelationId(parsed.correlationId ?? request.correlationId);
     request.correlationId = correlationId;
+    reply.header(correlationIdHeaderName, correlationId);
 
     return reply.status(200).send(
       await options.demoMaintenanceService.cleanupOldRuns({

@@ -1,5 +1,7 @@
 # Issue 19 - Align cleanup response correlation header with body
 
+Status: Fixed
+
 
 ## Recommended Order Rationale
 
