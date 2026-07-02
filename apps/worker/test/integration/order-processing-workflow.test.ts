@@ -23,6 +23,11 @@ import { and, asc, eq } from "drizzle-orm";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  ErpCircuitBreaker,
+  ErpCircuitOpenError,
+  isTemporaryErpCircuitError,
+} from "../../src/application/erp-circuit-breaker.js";
+import {
   HttpErpOrderConfirmation,
   isTemporaryErpConfirmationError,
 } from "../../src/application/erp-confirmation-client.js";
@@ -674,6 +679,58 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
     expect(failedEvents).toHaveLength(0);
   });
 
+  it("delays circuit-open deliveries without exhausting the ERP attempt budget", async () => {
+    const confirmationFailure = new Error("ERP unavailable");
+    const downstreamConfirmation = {
+      confirm: vi
+        .fn<OrderConfirmation["confirm"]>()
+        .mockRejectedValueOnce(confirmationFailure)
+        .mockResolvedValueOnce(undefined),
+    };
+    consumer = buildConsumer(
+      connection,
+      new ErpCircuitBreaker({
+        confirmation: downstreamConfirmation,
+        failureThreshold: 1,
+        resetTimeoutMs: 1000,
+        isCountedFailure: (error) => error === confirmationFailure,
+      }),
+      undefined,
+      (error) => error === confirmationFailure || isTemporaryErpCircuitError(error),
+      (error) => error instanceof ErpCircuitOpenError,
+    );
+    consumer.start();
+
+    await queue.add(orderProcessJobName, job, {
+      attempts: 2,
+      backoff: { type: "exponential", delay: 10 },
+      jobId: job.orderId,
+    });
+    await vi.waitFor(
+      async () => {
+        const queuedJob = await queue.getJob(job.orderId);
+        expect(await queuedJob?.getState()).toBe("delayed");
+        expect(queuedJob?.attemptsMade).toBe(1);
+      },
+      { timeout: 5000, interval: 25 },
+    );
+
+    const [orderBeforeProbe] = await connection.db
+      .select()
+      .from(orders)
+      .where(eq(orders.id, ids.order));
+    expect(orderBeforeProbe?.status).toBe("processing");
+    expect(orderBeforeProbe?.failedAt).toBeNull();
+
+    await waitForOrderStatus(connection, "confirmed");
+    const failedEvents = (await readOrderEvents(connection, ids.order)).filter(
+      (event) => event.eventName === "order.failed",
+    );
+
+    expect(downstreamConfirmation.confirm).toHaveBeenCalledTimes(2);
+    expect(failedEvents).toHaveLength(0);
+  });
+
   it("persists terminal order failure after the ERP retry budget is exhausted", async () => {
     const failed = deferred<OrderProcessJobFailureReport>();
     const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(
@@ -779,6 +836,7 @@ function buildConsumer(
   confirmation: OrderConfirmation,
   reportFailure?: (report: OrderProcessJobFailureReport) => void,
   isTemporaryConfirmationFailure?: (error: unknown) => boolean,
+  shouldRetryWithoutFailingOrder?: (error: unknown) => boolean,
 ): OrderProcessConsumer {
   const logger = createSilentLogger("worker");
   return createBullMqOrderProcessConsumer({
@@ -789,6 +847,7 @@ function buildConsumer(
       persistence: new PostgresOrderTransitionPersistence(connection.db),
       logger,
       ...(isTemporaryConfirmationFailure ? { isTemporaryConfirmationFailure } : {}),
+      ...(shouldRetryWithoutFailingOrder ? { shouldRetryWithoutFailingOrder } : {}),
     }),
     logger,
     ...(reportFailure ? { reportFailure } : {}),

@@ -145,7 +145,7 @@ export async function startWorker(): Promise<void> {
       persistence: new PostgresOrderTransitionPersistence(database.db),
       logger,
       isTemporaryConfirmationFailure,
-      shouldRetryWithoutFailingOrder: isErpAttemptPersistenceError,
+      shouldRetryWithoutFailingOrder,
       notificationRecordPublisher,
       reportNotificationRecordPublishFailure: (report) => {
         logger.error(
@@ -272,6 +272,10 @@ export async function startWorker(): Promise<void> {
 
 function isTemporaryConfirmationFailure(error: unknown): boolean {
   return isTemporaryErpConfirmationError(error) || isTemporaryErpCircuitError(error);
+}
+
+function shouldRetryWithoutFailingOrder(error: unknown): boolean {
+  return isErpAttemptPersistenceError(error) || isTemporaryErpCircuitError(error);
 }
 
 if (process.env.NODE_ENV !== "test" && import.meta.url === `file://${process.argv[1]}`) {

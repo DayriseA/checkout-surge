@@ -1,5 +1,7 @@
 # Issue 05 - Align ERP circuit-open retries with reset timing
 
+Status: Fixed
+
 
 ## Recommended Order Rationale
 

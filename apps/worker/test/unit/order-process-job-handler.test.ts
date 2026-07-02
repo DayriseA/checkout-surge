@@ -1,6 +1,7 @@
 import type { OrderProcessJob } from "@checkout-surge/contracts";
 import { createSilentLogger } from "@checkout-surge/logger";
 import { describe, expect, it, vi } from "vitest";
+import { ErpCircuitOpenError } from "../../src/application/erp-circuit-breaker.js";
 import {
   ErpAcceptedConfirmationPersistenceError,
   isErpAttemptPersistenceError,
@@ -280,6 +281,25 @@ describe("order-process application workflow", () => {
     await expect(
       handler.handle(job, { attemptNumber: 3, attemptsMade: 2, maxAttempts: 3 }),
     ).rejects.toBe(confirmationError);
+
+    expect(persistence.transitionToFailed).not.toHaveBeenCalled();
+    expect(persistence.transitionToConfirmed).not.toHaveBeenCalled();
+  });
+
+  it("does not mark circuit-open deliveries failed when the BullMQ attempt budget is reached", async () => {
+    const circuitOpenError = new ErpCircuitOpenError(1000);
+    const persistence = createPersistence();
+    const handler = createOrderProcessJobHandler({
+      confirmation: { confirm: vi.fn().mockRejectedValue(circuitOpenError) },
+      persistence,
+      logger: createSilentLogger("worker"),
+      isTemporaryConfirmationFailure: (error) => error instanceof ErpCircuitOpenError,
+      shouldRetryWithoutFailingOrder: (error) => error instanceof ErpCircuitOpenError,
+    });
+
+    await expect(
+      handler.handle(job, { attemptNumber: 3, attemptsMade: 2, maxAttempts: 3 }),
+    ).rejects.toBe(circuitOpenError);
 
     expect(persistence.transitionToFailed).not.toHaveBeenCalled();
     expect(persistence.transitionToConfirmed).not.toHaveBeenCalled();

@@ -6,7 +6,8 @@ import {
   orderProcessQueueName,
 } from "@checkout-surge/contracts";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
-import { type ConnectionOptions, type Job, Worker } from "bullmq";
+import { type ConnectionOptions, DelayedError, type Job, Worker } from "bullmq";
+import { ErpCircuitOpenError } from "../application/erp-circuit-breaker.js";
 import type { OrderProcessJobHandler } from "../application/order-process-job-handler.js";
 import type { OrderProcessConsumer } from "./order-process-consumer.js";
 
@@ -34,7 +35,7 @@ export function createBullMqOrderProcessConsumer(
 ): OrderProcessConsumer {
   const worker = new Worker<OrderProcessJob, void, typeof orderProcessJobName>(
     orderProcessBullMqQueueName,
-    async (job) => processJob(job, options.handler),
+    async (job, token) => processJob(job, token, options.handler),
     {
       autorun: false,
       concurrency: options.concurrency,
@@ -172,17 +173,27 @@ function correlationLogContext(data: unknown): { correlationId?: string } {
 
 async function processJob(
   job: Job<OrderProcessJob, void, typeof orderProcessJobName>,
+  token: string | undefined,
   handler: OrderProcessJobHandler,
 ): Promise<void> {
   if (job.name !== orderProcessJobName) {
     throw new Error(`Unsupported order-processing job name: ${job.name}`);
   }
 
-  await handler.handle(orderProcessJobSchema.parse(job.data), {
-    attemptNumber: job.attemptsMade + 1,
-    attemptsMade: job.attemptsMade,
-    maxAttempts: normalizeMaxAttempts(job.opts.attempts),
-  });
+  try {
+    await handler.handle(orderProcessJobSchema.parse(job.data), {
+      attemptNumber: job.attemptsMade + 1,
+      attemptsMade: job.attemptsMade,
+      maxAttempts: normalizeMaxAttempts(job.opts.attempts),
+    });
+  } catch (error) {
+    if (error instanceof ErpCircuitOpenError) {
+      await job.moveToDelayed(Date.now() + Math.max(error.retryAfterMs, 0), token);
+      throw new DelayedError();
+    }
+
+    throw error;
+  }
 }
 
 function normalizeMaxAttempts(attempts: number | undefined): number {

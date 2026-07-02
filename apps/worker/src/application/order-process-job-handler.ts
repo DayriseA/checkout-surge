@@ -146,7 +146,7 @@ export function createOrderProcessJobHandler(dependencies: {
           logger.warn(
             { ...logContext, err: confirmationError },
             shouldRetryWithoutFailingOrder
-              ? "Order confirmation accepted by ERP but local persistence failed; order remains retryable."
+              ? "Order confirmation failure will be retried without marking the order failed."
               : "Temporary order confirmation failure will be retried.",
           );
           await publishBusinessOutcomeUpdateWithoutFailingJob(
