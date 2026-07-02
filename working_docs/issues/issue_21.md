@@ -1,5 +1,7 @@
 # Issue 21 - Add browser workflow coverage for web surfaces
 
+Status: Fixed
+
 
 ## Recommended Order Rationale
 
