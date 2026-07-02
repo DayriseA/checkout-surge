@@ -235,6 +235,10 @@ export function applyDashboardEvent(
 
   const current = recovery.data;
 
+  if (!isDashboardEventInRecoveredScope(current, event)) {
+    return recovery;
+  }
+
   switch (event.type) {
     case "run.started":
     case "run.updated":
@@ -294,6 +298,92 @@ export function applyDashboardEvent(
 
 export function shouldRequestAuthoritativeRecoveryAfterEvent(event: DashboardEvent): boolean {
   return event.type === "run.completed" || event.type === "run.failed";
+}
+
+function isDashboardEventInRecoveredScope(
+  recovery: DashboardRecoveryResponse,
+  event: DashboardEvent,
+): boolean {
+  if (isOlderThanRecoveryBaseline(event.occurredAt, recovery.recoveredAt)) {
+    return false;
+  }
+
+  if (!matchesRecoveredRun(recovery.currentRun?.runId ?? null, event)) {
+    return false;
+  }
+
+  return matchesRecoveredSaleOffer(recovery, event);
+}
+
+function isOlderThanRecoveryBaseline(eventOccurredAt: string, recoveredAt: string): boolean {
+  return Date.parse(eventOccurredAt) < Date.parse(recoveredAt);
+}
+
+function matchesRecoveredRun(currentRunId: string | null, event: DashboardEvent): boolean {
+  if (!event.runId) {
+    return true;
+  }
+
+  if (currentRunId) {
+    return event.runId === currentRunId;
+  }
+
+  return isRunDashboardEvent(event);
+}
+
+function matchesRecoveredSaleOffer(
+  recovery: DashboardRecoveryResponse,
+  event: DashboardEvent,
+): boolean {
+  const eventSaleOfferId = dashboardEventSaleOfferId(event);
+
+  if (!eventSaleOfferId || (isRunDashboardEvent(event) && recovery.currentRun === null)) {
+    return true;
+  }
+
+  const currentSaleOfferId = recoveredSaleOfferId(recovery);
+
+  return currentSaleOfferId === null || eventSaleOfferId === currentSaleOfferId;
+}
+
+function recoveredSaleOfferId(recovery: DashboardRecoveryResponse): string | null {
+  if (recovery.currentRun?.saleOfferId) {
+    return recovery.currentRun.saleOfferId;
+  }
+
+  if (recovery.inventory?.saleOfferId) {
+    return recovery.inventory.saleOfferId;
+  }
+
+  const [firstCompletionOutcome] = recovery.recentCompletionOutcomes;
+
+  return firstCompletionOutcome?.saleOfferId ?? null;
+}
+
+function dashboardEventSaleOfferId(event: DashboardEvent): string | null {
+  switch (event.type) {
+    case "run.started":
+    case "run.updated":
+    case "run.completed":
+    case "run.failed":
+      return event.run.saleOfferId ?? null;
+    case "inventory.updated":
+      return event.inventory.saleOfferId;
+    case "business.outcome.updated":
+      return event.saleOfferId;
+    case "traffic.metric":
+    case "queue.updated":
+      return null;
+  }
+}
+
+function isRunDashboardEvent(event: DashboardEvent): boolean {
+  return (
+    event.type === "run.started" ||
+    event.type === "run.updated" ||
+    event.type === "run.completed" ||
+    event.type === "run.failed"
+  );
 }
 
 function AdminActionsPanel({

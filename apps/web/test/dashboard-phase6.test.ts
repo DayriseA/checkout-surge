@@ -89,33 +89,7 @@ describe("Phase 6 dashboard behavior", () => {
   });
 
   it("applies live business-outcome events over the recovery baseline", () => {
-    const event: DashboardEvent = {
-      type: "business.outcome.updated",
-      eventId: "44444444-4444-4444-8444-444444444444",
-      saleOfferId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-      correlationId: "corr-web-live",
-      occurredAt: "2026-06-20T00:00:11.000Z",
-      outcome: {
-        acceptedReservations: 9,
-        soldOutRejections: 3,
-        queuedOrders: 2,
-        processingOrders: 1,
-        retryingOrders: 1,
-        confirmedOrders: 4,
-        failedOrders: 1,
-        pendingPersistenceCount: 0,
-        notificationsRecorded: 0,
-      },
-      consistencyLag: {
-        confirmedOrderCount: 4,
-        pendingConfirmationCount: 4,
-        averageLagMs: 275,
-        p95LagMs: 425,
-        maxLagMs: 500,
-        oldestPendingAgeSeconds: 7,
-        measuredAt: "2026-06-20T00:00:11.000Z",
-      },
-    };
+    const event = businessOutcomeEventFixture();
 
     const next = applyDashboardEvent(availableRecovery(recoveryFixture()), event);
 
@@ -125,6 +99,131 @@ describe("Phase 6 dashboard behavior", () => {
     }
     expect(next.data.businessOutcome).toEqual(event.outcome);
     expect(next.data.consistencyLag).toEqual(event.consistencyLag);
+  });
+
+  it("ignores previous-run business, metric, and run events after newer recovery", () => {
+    const recoveryData = {
+      ...recoveryFixture(),
+      currentRun: runFixture(),
+      recentMetrics: [
+        {
+          metricName: "queue.depth",
+          value: 1,
+          unit: "jobs",
+          timestamp: "2026-06-20T00:00:10.000Z",
+        },
+      ],
+    };
+    const recovery = availableRecovery(recoveryData);
+    const previousRun = previousRunFixture();
+
+    const nextBusiness = applyDashboardEvent(
+      recovery,
+      businessOutcomeEventFixture({
+        runId: previousRun.runId,
+        saleOfferId: previousRun.saleOfferId,
+        acceptedReservations: 99,
+      }),
+    );
+    const nextMetric = applyDashboardEvent(
+      recovery,
+      trafficMetricEventFixture({
+        runId: previousRun.runId,
+        value: 99,
+      }),
+    );
+    const nextRun = applyDashboardEvent(recovery, runEventFixture("run.updated", previousRun));
+
+    expect(nextBusiness.status).toBe("available");
+    expect(nextMetric.status).toBe("available");
+    expect(nextRun.status).toBe("available");
+    if (
+      nextBusiness.status !== "available" ||
+      nextMetric.status !== "available" ||
+      nextRun.status !== "available"
+    ) {
+      throw new Error("Expected available recovery after applying ignored live events.");
+    }
+    expect(nextBusiness.data.businessOutcome).toEqual(recoveryData.businessOutcome);
+    expect(nextMetric.data.recentMetrics).toEqual(recoveryData.recentMetrics);
+    expect(nextRun.data.currentRun).toEqual(recoveryData.currentRun);
+  });
+
+  it("ignores same-run events older than the recovered baseline", () => {
+    const recovery = availableRecovery({
+      ...recoveryFixture(),
+      currentRun: runFixture(),
+      recentMetrics: [],
+    });
+
+    const next = applyDashboardEvent(
+      recovery,
+      trafficMetricEventFixture({
+        runId: runFixture().runId,
+        occurredAt: "2026-06-20T00:00:09.000Z",
+        value: 99,
+      }),
+    );
+
+    expect(next.status).toBe("available");
+    if (next.status !== "available") {
+      throw new Error("Expected available recovery after applying an ignored stale event.");
+    }
+    expect(next.data.recentMetrics).toEqual([]);
+  });
+
+  it("applies fresh same-run events over the recovery baseline", () => {
+    const recovery = availableRecovery({
+      ...recoveryFixture(),
+      currentRun: runFixture(),
+      recentMetrics: [],
+    });
+    const event = trafficMetricEventFixture({
+      runId: runFixture().runId,
+      value: 7,
+    });
+
+    const next = applyDashboardEvent(recovery, event);
+
+    expect(next.status).toBe("available");
+    if (next.status !== "available") {
+      throw new Error("Expected available recovery after applying a fresh same-run event.");
+    }
+    expect(next.data.recentMetrics).toEqual([
+      {
+        metricName: event.metricName,
+        value: event.value,
+        unit: event.unit,
+        timestamp: event.occurredAt,
+      },
+    ]);
+  });
+
+  it("ignores mismatched inventory events and stale queue events", () => {
+    const recoveryData = {
+      ...recoveryFixture(),
+      currentRun: runFixture(),
+      inventory: inventoryFixture(runFixture().saleOfferId, 12),
+      queue: queueFixture(4, "2026-06-20T00:00:10.000Z"),
+    };
+    const recovery = availableRecovery(recoveryData);
+
+    const nextInventory = applyDashboardEvent(
+      recovery,
+      inventoryEventFixture(previousRunFixture().saleOfferId, 99, "2026-06-20T00:00:11.000Z"),
+    );
+    const nextQueue = applyDashboardEvent(
+      recovery,
+      queueEventFixture(99, "2026-06-20T00:00:09.000Z"),
+    );
+
+    expect(nextInventory.status).toBe("available");
+    expect(nextQueue.status).toBe("available");
+    if (nextInventory.status !== "available" || nextQueue.status !== "available") {
+      throw new Error("Expected available recovery after applying ignored stale events.");
+    }
+    expect(nextInventory.data.inventory).toEqual(recoveryData.inventory);
+    expect(nextQueue.data.queue).toEqual(recoveryData.queue);
   });
 
   it("uses authoritative recovery after terminal run events", () => {
@@ -186,14 +285,26 @@ function runFixture() {
   };
 }
 
-function runEventFixture(type: "run.updated" | "run.completed" | "run.failed"): DashboardEvent {
+function previousRunFixture(): ReturnType<typeof runFixture> {
+  return {
+    ...runFixture(),
+    runId: "99999999-9999-4999-8999-999999999999",
+    presetName: "Previous run",
+    saleOfferId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  };
+}
+
+function runEventFixture(
+  type: "run.updated" | "run.completed" | "run.failed",
+  run: ReturnType<typeof runFixture> = runFixture(),
+): DashboardEvent {
   return {
     type,
     eventId: "44444444-4444-4444-8444-444444444444",
-    runId: "11111111-1111-4111-8111-111111111111",
+    runId: run.runId,
     correlationId: "corr-web-live",
     run: {
-      ...runFixture(),
+      ...run,
       status: type === "run.completed" ? "completed" : type === "run.failed" ? "failed" : "active",
       trafficStatus: type === "run.completed" || type === "run.failed" ? "succeeded" : "active",
       ...(type === "run.completed" || type === "run.failed"
@@ -202,6 +313,148 @@ function runEventFixture(type: "run.updated" | "run.completed" | "run.failed"): 
       ...(type === "run.failed" ? { failureReason: "traffic_failed" } : {}),
     },
     occurredAt: "2026-06-20T00:00:12.000Z",
+  };
+}
+
+function businessOutcomeEventFixture(
+  options: {
+    runId?: string;
+    saleOfferId?: string;
+    occurredAt?: string;
+    acceptedReservations?: number;
+  } = {},
+): Extract<DashboardEvent, { type: "business.outcome.updated" }> {
+  return {
+    type: "business.outcome.updated",
+    eventId: "44444444-4444-4444-8444-444444444444",
+    saleOfferId: options.saleOfferId ?? "33333333-3333-4333-8333-333333333333",
+    ...(options.runId ? { runId: options.runId } : {}),
+    correlationId: "corr-web-live",
+    occurredAt: options.occurredAt ?? "2026-06-20T00:00:11.000Z",
+    outcome: {
+      acceptedReservations: options.acceptedReservations ?? 9,
+      soldOutRejections: 3,
+      queuedOrders: 2,
+      processingOrders: 1,
+      retryingOrders: 1,
+      confirmedOrders: 4,
+      failedOrders: 1,
+      pendingPersistenceCount: 0,
+      notificationsRecorded: 0,
+    },
+    consistencyLag: {
+      confirmedOrderCount: 4,
+      pendingConfirmationCount: 4,
+      averageLagMs: 275,
+      p95LagMs: 425,
+      maxLagMs: 500,
+      oldestPendingAgeSeconds: 7,
+      measuredAt: options.occurredAt ?? "2026-06-20T00:00:11.000Z",
+    },
+  };
+}
+
+function trafficMetricEventFixture(
+  options: {
+    runId?: string;
+    occurredAt?: string;
+    value?: number;
+  } = {},
+): Extract<DashboardEvent, { type: "traffic.metric" }> {
+  return {
+    type: "traffic.metric",
+    eventId: "55555555-5555-4555-8555-555555555555",
+    ...(options.runId ? { runId: options.runId } : {}),
+    correlationId: "corr-web-live",
+    metricName: "queue.depth",
+    value: options.value ?? 3,
+    unit: "jobs",
+    occurredAt: options.occurredAt ?? "2026-06-20T00:00:11.000Z",
+  };
+}
+
+function inventoryEventFixture(
+  saleOfferId: string,
+  remainingStock: number,
+  occurredAt: string,
+): Extract<DashboardEvent, { type: "inventory.updated" }> {
+  return {
+    type: "inventory.updated",
+    eventId: "66666666-6666-4666-8666-666666666666",
+    correlationId: "corr-web-live",
+    occurredAt,
+    inventory: inventoryFixture(saleOfferId, remainingStock),
+  };
+}
+
+function queueEventFixture(
+  depth: number,
+  occurredAt: string,
+): Extract<DashboardEvent, { type: "queue.updated" }> {
+  return {
+    type: "queue.updated",
+    eventId: "77777777-7777-4777-8777-777777777777",
+    correlationId: "corr-web-live",
+    occurredAt,
+    queue: queueFixture(depth, occurredAt),
+  };
+}
+
+function inventoryFixture(
+  saleOfferId: string = "33333333-3333-4333-8333-333333333333",
+  remainingStock = 12,
+) {
+  return {
+    saleOfferId,
+    allocatedStock: 100,
+    remainingStock,
+    reservedStock: 100 - remainingStock,
+    pendingPersistenceCount: 0,
+    expiredReservationCount: 0,
+    oldestPendingPersistenceAgeSeconds: 0,
+    reservationThroughput: {
+      windowSeconds: 60,
+      successfulReservationCount: 0,
+      rate: 0,
+      unit: "reservations_per_second" as const,
+      measuredAt: "2026-06-20T00:00:10.000Z",
+    },
+    soldOutPressure: {
+      rejectionCount: 0,
+      latestObservedAt: null,
+    },
+    lastUpdatedAt: "2026-06-20T00:00:10.000Z",
+  };
+}
+
+function queueFixture(depth: number, updatedAt: string) {
+  return {
+    name: "orders:process" as const,
+    connectivity: "reachable" as const,
+    depth,
+    counts: {
+      waiting: depth,
+      prioritized: 0,
+      paused: 0,
+      delayed: 0,
+      active: 0,
+      failed: 0,
+    },
+    oldestWaitingAgeSeconds: null,
+    retryPressure: {
+      inspectedJobCount: depth,
+      inspectionLimit: 100,
+      retryingJobCount: 0,
+      retryAttemptCount: 0,
+      inspectionTruncated: false,
+    },
+    failedJobs: {
+      totalCount: 0,
+      recent: [],
+      inspectionLimit: 20,
+      inspectionTruncated: false,
+    },
+    updatedAt,
   };
 }
 

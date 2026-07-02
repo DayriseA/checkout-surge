@@ -1,5 +1,7 @@
 # Issue 20 - Guard dashboard SSE updates against stale run events
 
+Status: Fixed
+
 
 ## Recommended Order Rationale
 
