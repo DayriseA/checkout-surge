@@ -77,6 +77,7 @@ For a clean wipe-and-rebuild (drops all data and re-seeds):
 ```bash
 pnpm runtime:wipe
 pnpm runtime:setup
+pnpm runtime:up
 ```
 
 Reset the running demo only when you need explicit admin recovery or a refreshed local baseline:
@@ -202,7 +203,8 @@ A healthy readiness response has this shape:
   "uptimeSeconds": 12,
   "checks": [
     { "name": "database_reachable", "status": "ok" },
-    { "name": "redis_url_configured", "status": "ok" }
+    { "name": "redis_reachable", "status": "ok" },
+    { "name": "order_process_queue_reachable", "status": "ok" }
   ]
 }
 ```
@@ -211,12 +213,12 @@ Healthy readiness includes these checks:
 
 | Service | Healthy checks |
 | :-- | :-- |
-| API gateway | `database_reachable=ok`, `redis_url_configured=ok` |
-| Worker | `database_url_configured=ok`, `redis_url_configured=ok`, `mock_erp_base_url_configured=ok`, `erp_circuit_breaker=ok`, `order_process_worker_running=ok`, `notification_record_worker_running=ok` |
+| API gateway | `database_reachable=ok`, `redis_reachable=ok`, `order_process_queue_reachable=ok` |
+| Worker | `database_reachable=ok`, `redis_reachable=ok`, `order_process_worker_running=ok`, `order_process_queue_reachable=ok`, `notification_record_worker_running=ok`, `notification_record_queue_reachable=ok` |
 | Mock ERP | `confirmation_endpoint_ready=ok` |
 | Load orchestrator | `api_readiness_reachable=ok`, `preset_traffic_start_enabled=ok`, `k6_binary_executable=ok` |
 
-`status: "degraded"` means the process is reachable but one non-fatal readiness check is not ideal, such as a configured URL missing. `status: "unavailable"` means a required dependency or worker loop is not ready; the API, worker, and load orchestrator return HTTP 503 for unavailable readiness.
+`status: "degraded"` means the process is reachable but one non-fatal readiness check is not ideal. In host-native mode, the load orchestrator reports `k6_binary_executable=degraded` when `K6_BINARY` is a bare PATH command such as `k6`; set `K6_BINARY` to an absolute executable path when `pnpm health:check` must pass. `status: "unavailable"` means a required dependency or worker loop is not ready; the API, worker, and load orchestrator return HTTP 503 for unavailable readiness.
 
 For the host-native infrastructure-only workflow, stop PostgreSQL and Redis when finished:
 
