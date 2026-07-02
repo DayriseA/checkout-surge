@@ -115,6 +115,14 @@ export class PostgresBuyPersistence implements BuyPersistence {
         },
       ]);
 
+      await tx
+        .update(reservationPendingPersistence)
+        .set({
+          status: "reconciled",
+          updatedAt: new Date(),
+        })
+        .where(eq(reservationPendingPersistence.reservationId, reservation.id));
+
       return {
         reservation: toReservationSummary(reservation),
         order: toOrderSummary(order),

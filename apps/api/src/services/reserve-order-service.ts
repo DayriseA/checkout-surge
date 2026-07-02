@@ -196,12 +196,12 @@ export class ReserveOrderService {
       throw new Error("Accepted Redis idempotency record has no durable reservation and order.");
     }
 
-    await this.recordPendingPersistenceWithoutHidingPending(
-      input.request.idempotencyKey,
-      decision.reservation,
-    );
-    await this.ensurePendingPersistence(input.request.idempotencyKey, decision.reservation);
-    return this.pendingResponse(decision.reservation, input.correlationId, now);
+    return this.reconcilePendingReservation({
+      reservation: decision.reservation,
+      idempotencyKey: input.request.idempotencyKey,
+      correlationId: input.correlationId,
+      now,
+    });
   }
 
   private async persistNewReservation(input: {
@@ -236,6 +236,40 @@ export class ReserveOrderService {
       input.now,
     );
     return this.acceptedResponse("reservation_secured", persisted, input.correlationId, input.now);
+  }
+
+  private async reconcilePendingReservation(input: {
+    reservation: SecuredReservationHold;
+    idempotencyKey: string;
+    correlationId: string;
+    now: Date;
+  }): Promise<BuyResponse> {
+    let persisted: PersistedBuy;
+
+    try {
+      persisted = await this.persistence.persistSecuredReservation({
+        reservation: input.reservation,
+      });
+    } catch (error) {
+      safelyReportPartialFailure(
+        this.reportPersistenceFailure,
+        this.partialFailureReport(error, input.idempotencyKey, input.reservation),
+      );
+      await this.recordPendingPersistenceWithoutHidingPending(
+        input.idempotencyKey,
+        input.reservation,
+      );
+      await this.ensurePendingPersistence(input.idempotencyKey, input.reservation);
+      return this.pendingResponse(input.reservation, input.correlationId, input.now);
+    }
+
+    await this.enqueuePersistedBuy(persisted, input.idempotencyKey, input.reservation);
+    await this.promoteWithoutHidingDurableSuccess(input.idempotencyKey, input.reservation);
+    await this.publishBusinessOutcomeUpdateWithoutHidingDurableSuccess(
+      input.reservation,
+      input.now,
+    );
+    return this.acceptedResponse("idempotent_replay", persisted, input.correlationId, input.now);
   }
 
   private async publishBusinessOutcomeUpdateWithoutHidingDurableSuccess(

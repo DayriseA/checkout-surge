@@ -68,17 +68,19 @@ If PostgreSQL persistence fails after Redis has secured stock, the API preserves
 
 That response intentionally has `order: null` because no durable order row exists yet.
 
+On an eligible retry with the same idempotency key, the API reuses the original Redis hold to retry the durable reservation/order write. When that write succeeds, PostgreSQL marks the pending-persistence row `reconciled`, the API enqueues the order-processing job, promotes the Redis idempotency record to accepted, removes the Redis pending sentinel, and returns the durable accepted replay without consuming additional stock.
+
 ## Idempotency and Retry Behavior
 
 Idempotency is scoped by `saleOfferId + idempotencyKey`.
 
-Retries for accepted or pending reservations with the same sale offer, key, and quantity replay the stored outcome only after the inventory scope and run state remain eligible.
+Retries for accepted or pending reservations with the same sale offer, key, and quantity replay the stored Redis hold only after the inventory scope and run state remain eligible. Accepted holds return the existing durable reservation and order. Pending holds first check for a durable buy and otherwise retry durable persistence from the original hold; they return `reservation_pending_persistence` again only while the durable write is still unavailable.
 
 Retries with the same sale offer and key but a different quantity are rejected with `idempotency_conflict`.
 
 Sold-out responses are intentionally not stored per request, so a repeated sold-out attempt is evaluated as a fresh sold-out stock check. Late retries after the idempotency TTL are also treated as new attempts. In practice, a late retry will either reserve remaining stock or receive a normal sold-out response.
 
-Hold expiry does not change retry semantics while the idempotency record remains live. A stale accepted hold still replays its durable reservation and order; a stale pending hold still returns `reservation_pending_persistence` with `order: null` and `Retry-After`. Once the idempotency TTL expires, either retry is a new attempt even though the original hold remains reserved and operator-visible.
+Hold expiry does not change retry semantics while the idempotency record remains live. A stale accepted hold still replays its durable reservation and order; a stale pending hold still uses the original secured hold for reconciliation and returns `reservation_pending_persistence` with `order: null` and `Retry-After` only if durable persistence is still unavailable. Once the idempotency TTL expires, either retry is a new attempt even though the original hold remains reserved and operator-visible.
 
 ## Stale Holds and Operator Visibility
 
@@ -110,6 +112,6 @@ Pending persistence is not hidden:
 - Redis tracks the reservation in `pending-persistence`;
 - inventory status exposes pending count and oldest pending age.
 
-The service may idempotently ensure the marker again after a PostgreSQL failure. If that ensure reports an error, the API still returns the explicit pending response because the original atomic stock decision already created the sentinel. PostgreSQL persistence, marker-ensure, and accepted-promotion failures are reported through structured logs with correlation and reservation context. A promotion failure after PostgreSQL commits still returns truthful `reservation_secured`; the sentinel remains visible until an idempotent retry finds the durable rows, promotes the Redis outcome, and removes the sentinel.
+The service may idempotently ensure the marker again after a PostgreSQL failure. If that ensure reports an error, the API still returns the explicit pending response because the original atomic stock decision already created the sentinel. PostgreSQL persistence, marker-ensure, and accepted-promotion failures are reported through structured logs with correlation and reservation context. A pending retry that can reach PostgreSQL reconciles the original hold into durable rows, marks the pending record reconciled, enqueues the order, promotes the Redis outcome, and removes the sentinel. A promotion failure after PostgreSQL commits still returns truthful `reservation_secured`; the sentinel remains visible until an idempotent retry finds the durable rows, promotes the Redis outcome, and removes the sentinel.
 
 This keeps the user-facing behavior realistic while making reconciliation work visible to operators.

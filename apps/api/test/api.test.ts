@@ -2408,7 +2408,7 @@ describe("API buy persistence", () => {
     }
   });
 
-  it("rolls back durable writes while preserving the Redis hold after a real transaction failure", async () => {
+  it("reconciles a Redis-secured hold after a transient PostgreSQL transaction failure", async () => {
     if (!connection || !redis) {
       throw new Error("Test infrastructure was not initialized.");
     }
@@ -2441,7 +2441,7 @@ describe("API buy persistence", () => {
     });
 
     try {
-      const response = await server.inject({
+      const request = {
         method: "POST",
         url: "/buy",
         payload: {
@@ -2449,9 +2449,14 @@ describe("API buy persistence", () => {
           idempotencyKey: "real-postgres-transaction-failure",
           quantity: 2,
         },
-      });
+      } as const;
+      const response = await server.inject(request);
       const payload = buyResponseSchema.parse(response.json());
       const keys = inventoryKeys(fixtureIds.saleOffer);
+      const pendingRowsAfterFailure = await connection.db
+        .select()
+        .from(reservationPendingPersistence)
+        .where(eq(reservationPendingPersistence.reservationId, payload.reservation?.id ?? ""));
 
       expect(response.statusCode).toBe(202);
       expect(response.headers["retry-after"]).toBe("30");
@@ -2469,6 +2474,37 @@ describe("API buy persistence", () => {
       expect(await getInventoryStatus(redis, fixtureIds.saleOffer)).toMatchObject({
         pendingPersistenceCount: 1,
       });
+      expect(pendingRowsAfterFailure).toHaveLength(1);
+      expect(pendingRowsAfterFailure[0]?.status).toBe("pending_reconciliation");
+
+      await connection.sql`
+        DROP TRIGGER IF EXISTS order_events_reject_test_order_queued ON order_events
+      `;
+      const retry = await server.inject(request);
+      const retryPayload = buyResponseSchema.parse(retry.json());
+      const pendingRowsAfterRetry = await connection.db
+        .select()
+        .from(reservationPendingPersistence)
+        .where(eq(reservationPendingPersistence.reservationId, payload.reservation?.id ?? ""));
+
+      expect(retry.statusCode).toBe(202);
+      expect(retryPayload.outcome).toBe("idempotent_replay");
+      expect(retryPayload.reservation?.id).toBe(payload.reservation?.id);
+      expect(retryPayload.order?.reservationId).toBe(payload.reservation?.id);
+      expect(await connection.db.select().from(reservations)).toHaveLength(1);
+      expect(await connection.db.select().from(orders)).toHaveLength(1);
+      expect(await connection.db.select().from(orderEvents)).toHaveLength(2);
+      expect(await redis.hgetall(keys.state)).toMatchObject({
+        remainingStock: "3",
+        reservedStock: "2",
+      });
+      expect(await redis.hlen(keys.reservations)).toBe(1);
+      expect(await redis.zcard(keys.pendingPersistence)).toBe(0);
+      expect(await getInventoryStatus(redis, fixtureIds.saleOffer)).toMatchObject({
+        pendingPersistenceCount: 0,
+      });
+      expect(pendingRowsAfterRetry).toHaveLength(1);
+      expect(pendingRowsAfterRetry[0]?.status).toBe("reconciled");
     } finally {
       try {
         await server.close();
@@ -2749,7 +2785,7 @@ describe("API buy persistence", () => {
     }
   });
 
-  it("preserves a failed durable write as pending and replays without consuming stock", async () => {
+  it("keeps a Redis-secured hold pending without consuming stock while PostgreSQL remains unavailable", async () => {
     if (!redis) {
       throw new Error("Test Redis connection was not initialized.");
     }

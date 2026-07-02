@@ -1,5 +1,7 @@
 # Issue 02 - Reconcile Redis-secured pending reservations
 
+Status: Fixed
+
 
 ## Recommended Order Rationale
 

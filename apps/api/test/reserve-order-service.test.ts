@@ -351,6 +351,70 @@ describe("ReserveOrderService queue handoff", () => {
     expect(promoteAccepted).toHaveBeenCalledOnce();
   });
 
+  it("reconciles a Redis-secured pending hold on an idempotent retry", async () => {
+    let originalHold: SecuredReservationHold | null = null;
+    let durableBuy: ReturnType<typeof persistedBuy> | null = null;
+    const persistSecuredReservation = vi.fn(async ({ reservation }) => {
+      if (!originalHold) {
+        originalHold = reservation;
+      }
+      if (persistSecuredReservation.mock.calls.length === 1) {
+        throw new Error("database temporarily unavailable");
+      }
+
+      durableBuy = persistedBuy(reservation);
+      return durableBuy;
+    });
+    const recordPendingPersistence = vi.fn(async () => undefined);
+    const markPendingPersistence = vi.fn(async () => undefined);
+    const promoteAccepted = vi.fn(async () => undefined);
+    const enqueue = vi.fn(async () => undefined);
+    const publishBusinessOutcomeUpdate = vi.fn(async () => undefined);
+    const service = buildService({
+      persistence: {
+        persistSecuredReservation,
+        getPersistedBuyByReservationId: async () => durableBuy,
+        recordPendingPersistence,
+      },
+      stockReservations: acceptingGateway({
+        reserve: async (input) => {
+          if (!originalHold) {
+            return { outcome: "reservation_secured", reservation: input.reservation };
+          }
+          return { outcome: "reservation_pending_persistence", reservation: originalHold };
+        },
+        markPendingPersistence,
+        promoteAccepted,
+      }),
+      orderProcessJobPublisher: { enqueue },
+      publishBusinessOutcomeUpdate,
+    });
+
+    const first = await service.reserve({ request, correlationId, now });
+    const replay = await service.reserve({ request, correlationId, now });
+
+    expect(first.outcome).toBe("reservation_pending_persistence");
+    expect(replay.outcome).toBe("idempotent_replay");
+    if (
+      first.outcome !== "reservation_pending_persistence" ||
+      replay.outcome !== "idempotent_replay"
+    ) {
+      throw new Error("Expected pending response followed by durable idempotent replay.");
+    }
+    expect(replay.reservation.id).toBe(first.reservation.id);
+    expect(replay.order.reservationId).toBe(first.reservation.id);
+    expect(persistSecuredReservation).toHaveBeenCalledTimes(2);
+    expect(persistSecuredReservation.mock.calls[1]?.[0].reservation).toEqual(originalHold);
+    expect(recordPendingPersistence).toHaveBeenCalledOnce();
+    expect(markPendingPersistence).toHaveBeenCalledOnce();
+    expect(enqueue).toHaveBeenCalledOnce();
+    expect(promoteAccepted).toHaveBeenCalledWith({
+      idempotencyKey: request.idempotencyKey,
+      reservation: originalHold,
+    });
+    expect(publishBusinessOutcomeUpdate).toHaveBeenCalledOnce();
+  });
+
   it("re-enqueues an accepted historical replay before returning it", async () => {
     const hold: SecuredReservationHold = {
       id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
