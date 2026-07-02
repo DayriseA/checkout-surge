@@ -1,5 +1,7 @@
 # Issue 17 - Scope mock ERP TPS limiting by run or config
 
+Status: Fixed
+
 
 ## Recommended Order Rationale
 

@@ -103,6 +103,11 @@ export interface ChaosConfirmationDecisionProviderOptions {
   resolveConfig?: (request: ErpConfirmationRequest, fallback: ErpChaosConfig) => ErpChaosConfig;
 }
 
+interface TpsWindow {
+  windowStartedAtMs: number;
+  requestsInWindow: number;
+}
+
 export class ChaosConfirmationDecisionProvider implements ConfirmationDecisionProvider {
   private readonly configStore: ErpChaosConfigStore;
   private readonly now: () => Date;
@@ -112,8 +117,7 @@ export class ChaosConfirmationDecisionProvider implements ConfirmationDecisionPr
     request: ErpConfirmationRequest,
     fallback: ErpChaosConfig,
   ) => ErpChaosConfig;
-  private windowStartedAtMs = Number.NEGATIVE_INFINITY;
-  private requestsInWindow = 0;
+  private readonly tpsWindows = new Map<string, TpsWindow>();
 
   constructor(options: ChaosConfirmationDecisionProviderOptions) {
     this.configStore = options.configStore;
@@ -125,9 +129,8 @@ export class ChaosConfirmationDecisionProvider implements ConfirmationDecisionPr
   }
 
   async decide(request: ErpConfirmationRequest): Promise<ConfirmationDecision> {
-    const config = erpChaosConfigSchema.parse(
-      this.resolveConfig(request, this.configStore.getConfig()),
-    );
+    const fallbackConfig = this.configStore.getConfig();
+    const config = erpChaosConfigSchema.parse(this.resolveConfig(request, fallbackConfig));
 
     if (config.latencyMs > 0) {
       await this.sleep(config.latencyMs);
@@ -141,7 +144,8 @@ export class ChaosConfirmationDecisionProvider implements ConfirmationDecisionPr
       );
     }
 
-    if (!this.acceptWithinTpsLimit(config.maxTps)) {
+    const tpsScopeKey = this.resolveTpsScopeKey(request, config, fallbackConfig);
+    if (!this.acceptWithinTpsLimit(tpsScopeKey, config.maxTps)) {
       return dependencyFailure(
         429,
         "erp_capacity_exceeded",
@@ -160,16 +164,37 @@ export class ChaosConfirmationDecisionProvider implements ConfirmationDecisionPr
     return { status: "succeeded" };
   }
 
-  private acceptWithinTpsLimit(maxTps: number): boolean {
+  private acceptWithinTpsLimit(scopeKey: string, maxTps: number): boolean {
     const currentWindowStartedAtMs = Math.floor(this.now().getTime() / 1000) * 1000;
+    const window = this.tpsWindows.get(scopeKey) ?? {
+      windowStartedAtMs: Number.NEGATIVE_INFINITY,
+      requestsInWindow: 0,
+    };
 
-    if (currentWindowStartedAtMs !== this.windowStartedAtMs) {
-      this.windowStartedAtMs = currentWindowStartedAtMs;
-      this.requestsInWindow = 0;
+    if (currentWindowStartedAtMs !== window.windowStartedAtMs) {
+      window.windowStartedAtMs = currentWindowStartedAtMs;
+      window.requestsInWindow = 0;
     }
 
-    this.requestsInWindow += 1;
-    return this.requestsInWindow <= maxTps;
+    window.requestsInWindow += 1;
+    this.tpsWindows.set(scopeKey, window);
+    return window.requestsInWindow <= maxTps;
+  }
+
+  private resolveTpsScopeKey(
+    request: ErpConfirmationRequest,
+    config: ErpChaosConfig,
+    fallbackConfig: ErpChaosConfig,
+  ): string {
+    if (request.runId) {
+      return `run:${request.runId}`;
+    }
+
+    if (!configsMatch(config, fallbackConfig)) {
+      return `config:${serializeTpsConfigScope(config)}`;
+    }
+
+    return "global";
   }
 }
 
@@ -190,4 +215,22 @@ function defaultSleep(durationMs: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, durationMs);
   });
+}
+
+function configsMatch(left: ErpChaosConfig, right: ErpChaosConfig): boolean {
+  return (
+    left.latencyMs === right.latencyMs &&
+    left.maxTps === right.maxTps &&
+    left.errorRate === right.errorRate &&
+    left.forcedOutage === right.forcedOutage
+  );
+}
+
+function serializeTpsConfigScope(config: ErpChaosConfig): string {
+  return [
+    `latencyMs=${config.latencyMs}`,
+    `maxTps=${config.maxTps}`,
+    `errorRate=${config.errorRate}`,
+    `forcedOutage=${config.forcedOutage}`,
+  ].join(";");
 }

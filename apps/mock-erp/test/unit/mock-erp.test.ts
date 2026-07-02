@@ -245,6 +245,104 @@ describe("chaos control service", () => {
     });
   });
 
+  it("tracks request-scoped TPS windows independently by run ID", async () => {
+    const store = new ErpChaosConfigStore(defaultChaosConfig, testSafetyCaps);
+    const provider = new ChaosConfirmationDecisionProvider({
+      configStore: store,
+      now: () => new Date("2026-06-22T00:00:00.500Z"),
+    });
+    const runScopedConfig = { latencyMs: 0, maxTps: 1, errorRate: 0, forcedOutage: false };
+    const firstRunRequest = {
+      ...confirmationRequest,
+      runId: "44444444-4444-4444-8444-444444444444",
+      erpConfig: runScopedConfig,
+    };
+    const secondRunRequest = {
+      ...confirmationRequest,
+      orderId: "55555555-5555-4555-8555-555555555555",
+      publicOrderId: "ord_test_2",
+      idempotencyKey: "erp-confirmation:55555555-5555-4555-8555-555555555555",
+      runId: "66666666-6666-4666-8666-666666666666",
+      erpConfig: runScopedConfig,
+    };
+
+    await expect(provider.decide(firstRunRequest)).resolves.toEqual({ status: "succeeded" });
+    await expect(provider.decide(secondRunRequest)).resolves.toEqual({ status: "succeeded" });
+    await expect(provider.decide(firstRunRequest)).resolves.toMatchObject({
+      status: "failed",
+      httpStatus: 429,
+      errorCode: "erp_capacity_exceeded",
+    });
+    await expect(provider.decide(secondRunRequest)).resolves.toMatchObject({
+      status: "failed",
+      httpStatus: 429,
+      errorCode: "erp_capacity_exceeded",
+    });
+  });
+
+  it("keeps global traffic out of a run-scoped TPS window", async () => {
+    const store = new ErpChaosConfigStore(
+      { latencyMs: 0, maxTps: 1, errorRate: 0, forcedOutage: false },
+      testSafetyCaps,
+    );
+    const provider = new ChaosConfirmationDecisionProvider({
+      configStore: store,
+      now: () => new Date("2026-06-22T00:00:00.500Z"),
+    });
+    const globalRequest = {
+      ...confirmationRequest,
+      runId: undefined,
+    };
+
+    await expect(provider.decide(confirmationRequest)).resolves.toEqual({ status: "succeeded" });
+    await expect(provider.decide(globalRequest)).resolves.toEqual({ status: "succeeded" });
+    await expect(provider.decide(confirmationRequest)).resolves.toMatchObject({
+      status: "failed",
+      httpStatus: 429,
+      errorCode: "erp_capacity_exceeded",
+    });
+    await expect(provider.decide(globalRequest)).resolves.toMatchObject({
+      status: "failed",
+      httpStatus: 429,
+      errorCode: "erp_capacity_exceeded",
+    });
+  });
+
+  it("separates no-run TPS windows for materially different request-scoped configs", async () => {
+    const store = new ErpChaosConfigStore(defaultChaosConfig, testSafetyCaps);
+    const provider = new ChaosConfirmationDecisionProvider({
+      configStore: store,
+      now: () => new Date("2026-06-22T00:00:00.500Z"),
+      random: () => 1,
+    });
+    const firstConfigRequest = {
+      ...confirmationRequest,
+      runId: undefined,
+      erpConfig: { latencyMs: 0, maxTps: 1, errorRate: 0, forcedOutage: false },
+    };
+    const secondConfigRequest = {
+      ...confirmationRequest,
+      orderId: "55555555-5555-4555-8555-555555555555",
+      publicOrderId: "ord_test_2",
+      idempotencyKey: "erp-confirmation:55555555-5555-4555-8555-555555555555",
+      runId: undefined,
+      erpConfig: { latencyMs: 0, maxTps: 1, errorRate: 0.25, forcedOutage: false },
+    };
+
+    await expect(provider.decide(firstConfigRequest)).resolves.toEqual({ status: "succeeded" });
+    await expect(provider.decide(secondConfigRequest)).resolves.toEqual({ status: "succeeded" });
+    await expect(provider.decide(firstConfigRequest)).resolves.toMatchObject({
+      status: "failed",
+      httpStatus: 429,
+      errorCode: "erp_capacity_exceeded",
+    });
+    await expect(provider.decide(secondConfigRequest)).resolves.toMatchObject({
+      status: "failed",
+      httpStatus: 429,
+      errorCode: "erp_capacity_exceeded",
+    });
+  });
+
   it("returns forced errors and forced outage failures", async () => {
     const errorStore = new ErpChaosConfigStore(
       { latencyMs: 0, maxTps: 100, errorRate: 1, forcedOutage: false },
