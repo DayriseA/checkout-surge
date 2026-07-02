@@ -1,5 +1,7 @@
 # Issue 04 - Remove tests that lock in known-bad recovery behavior
 
+Status: Fixed
+
 
 ## Recommended Order Rationale
 

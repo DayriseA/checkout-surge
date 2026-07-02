@@ -2785,7 +2785,7 @@ describe("API buy persistence", () => {
     }
   });
 
-  it("keeps a Redis-secured hold pending without consuming stock while PostgreSQL remains unavailable", async () => {
+  it("returns retryable pending without consuming additional stock while PostgreSQL remains unavailable", async () => {
     if (!redis) {
       throw new Error("Test Redis connection was not initialized.");
     }

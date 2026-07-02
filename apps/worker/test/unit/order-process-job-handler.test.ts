@@ -219,7 +219,7 @@ describe("order-process application workflow", () => {
     expect(persistence.transitionToConfirmed).toHaveBeenCalledOnce();
   });
 
-  it("can retry from processing when confirmed persistence fails after confirmation", async () => {
+  it("reuses a successful ERP confirmation when confirmed persistence fails", async () => {
     const transitionToProcessing = vi
       .fn()
       .mockResolvedValueOnce({ status: "processing", resumed: false })
@@ -230,7 +230,18 @@ describe("order-process application workflow", () => {
       .mockRejectedValueOnce(persistenceError)
       .mockResolvedValueOnce(undefined);
     const persistence = createPersistence({ transitionToProcessing, transitionToConfirmed });
-    const confirmation = { confirm: vi.fn().mockResolvedValue(undefined) };
+    const confirmDownstreamErp = vi.fn().mockResolvedValue(undefined);
+    let hasReusableSuccessfulConfirmation = false;
+    const confirmation = {
+      confirm: vi.fn(async () => {
+        if (hasReusableSuccessfulConfirmation) {
+          return;
+        }
+
+        await confirmDownstreamErp();
+        hasReusableSuccessfulConfirmation = true;
+      }),
+    };
     const handler = createOrderProcessJobHandler({
       confirmation,
       persistence,
@@ -242,7 +253,7 @@ describe("order-process application workflow", () => {
       handler.handle(job, { attemptNumber: 4, attemptsMade: 3 }),
     ).resolves.toBeUndefined();
 
-    expect(confirmation.confirm).toHaveBeenCalledTimes(2);
+    expect(confirmDownstreamErp).toHaveBeenCalledOnce();
     expect(transitionToConfirmed).toHaveBeenCalledTimes(2);
   });
 
