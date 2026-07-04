@@ -1,0 +1,879 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Phase 1–10 Final Review — Consolidated Findings</title>
+<style>
+:root{
+  --bg:#0a0d13;--surface:#111722;--surface-2:#161f2c;--surface-3:#1d2939;
+  --border:#243040;--border-2:#33445c;--text:#e8eff8;--text-dim:#a0acc0;--text-faint:#6a7589;
+  --accent:#5b9dff;--accent-soft:rgba(91,157,255,.12);
+  --high:#ff5c7a;--high-soft:rgba(255,92,122,.13);
+  --medium:#ffae5c;--medium-soft:rgba(255,174,92,.13);
+  --lowmed:#ffd35c;--lowmed-soft:rgba(255,211,92,.13);
+  --low:#56d0e0;--low-soft:rgba(86,208,224,.13);
+  --radius:14px;--shadow:0 12px 34px rgba(0,0,0,.38);
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  margin:0;font-family:var(--sans);font-size:15.5px;line-height:1.65;color:var(--text);
+  background:
+    radial-gradient(1100px 560px at 82% -12%,rgba(91,157,255,.10),transparent 60%),
+    radial-gradient(820px 480px at -8% 4%,rgba(124,92,255,.08),transparent 55%),
+    var(--bg);
+  -webkit-font-smoothing:antialiased;
+}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+strong{color:#fff;font-weight:650}
+em{color:#dfe7f3;font-style:italic}
+code{font-family:var(--mono);font-size:.85em;background:rgba(127,143,180,.16);border:1px solid var(--border);
+  padding:.06em .36em;border-radius:6px;color:#d8e6fb;white-space:nowrap}
+p{margin:.5em 0}
+
+/* topbar */
+.topbar{position:sticky;top:0;z-index:50;backdrop-filter:blur(10px);
+  background:linear-gradient(180deg,rgba(10,13,19,.92),rgba(10,13,19,.78));
+  border-bottom:1px solid var(--border)}
+.topbar-inner{max-width:1320px;margin:0 auto;display:flex;align-items:center;gap:16px;padding:10px 20px}
+#sidebar-toggle{display:none;background:var(--surface-2);border:1px solid var(--border);color:var(--text);
+  border-radius:8px;width:38px;height:38px;font-size:18px;cursor:pointer}
+.brand{font-weight:700;font-size:15px;letter-spacing:.2px;white-space:nowrap;opacity:.92}
+.brand .dot-h{color:var(--high)}
+.tools{margin-left:auto;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.search{position:relative}
+.search input{background:var(--surface-2);border:1px solid var(--border);color:var(--text);
+  padding:8px 12px;border-radius:9px;font-size:13.5px;width:230px;max-width:42vw;outline:none;font-family:var(--sans)}
+.search input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.sev-filters{display:flex;gap:4px;background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:3px}
+.sev-btn{border:none;background:transparent;color:var(--text-dim);padding:5px 10px;border-radius:7px;
+  font-size:12.5px;cursor:pointer;font-weight:600;transition:.15s}
+.sev-btn:hover{color:var(--text)}
+.sev-btn.active{background:var(--surface-3);color:var(--text);box-shadow:0 1px 0 rgba(255,255,255,.05)}
+.sev-btn[data-sev=high].active{color:var(--high)}
+.sev-btn[data-sev=medium].active{color:var(--medium)}
+.sev-btn[data-sev=lowmed].active{color:var(--lowmed)}
+.sev-btn[data-sev=low].active{color:var(--low)}
+.count{font-size:12.5px;color:var(--text-faint);font-variant-numeric:tabular-nums;min-width:84px;text-align:right}
+
+/* layout */
+.app{max-width:1320px;margin:0 auto;display:grid;grid-template-columns:288px minmax(0,1fr);gap:0}
+.sidebar{position:sticky;top:61px;align-self:start;height:calc(100vh - 61px);overflow-y:auto;
+  padding:22px 14px 40px;border-right:1px solid var(--border)}
+.sidebar::-webkit-scrollbar{width:8px}
+.sidebar::-webkit-scrollbar-thumb{background:var(--border-2);border-radius:8px}
+.side-inner > * + *{margin-top:2px}
+.nav-item{display:block;padding:7px 12px;border-radius:8px;color:var(--text-dim);font-size:13px;font-weight:600}
+.nav-item:hover{background:var(--surface-2);color:var(--text);text-decoration:none}
+.nav-group{margin-top:8px}
+.nav-section{display:flex;gap:8px;align-items:baseline;padding:7px 12px;border-radius:8px;
+  color:var(--text);font-size:13px;font-weight:650;line-height:1.3}
+.nav-section:hover{background:var(--surface-2);text-decoration:none}
+.nav-sect-num{flex:0 0 auto;font-variant-numeric:tabular-nums;color:var(--accent);
+  background:var(--accent-soft);border-radius:5px;padding:0 6px;font-size:11.5px;font-weight:700}
+.nav-findings{padding:2px 0 6px 12px;border-left:1px dashed var(--border-2);margin-left:14px}
+.nav-finding{display:flex;align-items:center;gap:7px;padding:4px 8px;border-radius:7px;
+  color:var(--text-faint);font-size:12px;line-height:1.25}
+.nav-finding:hover{background:var(--surface-2);color:var(--text-dim);text-decoration:none}
+.nav-finding.active{color:var(--text);background:var(--surface-2)}
+.nav-fnum{flex:0 0 auto;font-variant-numeric:tabular-nums;color:var(--text-faint);font-weight:700;font-size:11px}
+.dot{flex:0 0 auto;width:8px;height:8px;border-radius:50%;background:var(--text-faint)}
+.dot-high{background:var(--high)}.dot-medium{background:var(--medium)}
+.dot-lowmed{background:var(--lowmed)}.dot-low{background:var(--low)}
+.nav-ftitle{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+.main{padding:26px 34px 80px;min-width:0}
+
+/* hero */
+.hero{padding:8px 0 26px;border-bottom:1px solid var(--border);margin-bottom:26px}
+.hero .eyebrow{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);font-weight:700}
+.hero h1{font-size:34px;line-height:1.15;margin:10px 0 8px;font-weight:780;letter-spacing:-.01em}
+.hero .meta{color:var(--text-faint);font-size:13px;margin-bottom:20px}
+.hero .meta code{font-size:12px}
+.stats{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;max-width:680px}
+.stat{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px;position:relative;overflow:hidden}
+.stat-num{font-size:28px;font-weight:780;line-height:1;font-variant-numeric:tabular-nums}
+.stat-label{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-faint);margin-top:6px;font-weight:700}
+.stat-total .stat-num{color:var(--text)}
+.stat-total{border-color:var(--border-2)}
+.stat-high .stat-num{color:var(--high)}.stat-high{border-color:rgba(255,92,122,.35)}
+.stat-medium .stat-num{color:var(--medium)}.stat-medium{border-color:rgba(255,174,92,.35)}
+.stat-lowmed .stat-num{color:var(--lowmed)}.stat-lowmed{border-color:rgba(255,211,92,.35)}
+.stat-low .stat-num{color:var(--low)}.stat-low{border-color:rgba(86,208,224,.35)}
+
+/* intro */
+.intro{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+  padding:20px 24px;margin-bottom:30px}
+.intro p{color:var(--text-dim)}
+
+/* sections */
+.review-section{margin-bottom:42px;scroll-margin-top:80px}
+.section-head{display:flex;align-items:baseline;gap:14px;margin:0 0 6px;padding-bottom:10px;border-bottom:1px solid var(--border)}
+.section-num{font-size:13px;font-weight:800;color:var(--accent);background:var(--accent-soft);
+  padding:3px 10px;border-radius:7px}
+.section-title{font-size:23px;margin:0;font-weight:740;letter-spacing:-.01em}
+.block-section{scroll-margin-top:80px;margin-bottom:36px}
+hr.sep{border:none;border-top:1px solid var(--border);margin:26px 0}
+
+.para{color:var(--text-dim)}
+.para.scope{color:#c4d0e2;background:var(--surface);border:1px solid var(--border);
+  border-left:3px solid var(--accent);padding:12px 16px;border-radius:0 10px 10px 0;margin:12px 0}
+.para.verified{color:var(--text-faint);font-size:13.5px;font-style:italic;
+  background:rgba(86,208,224,.05);border:1px dashed var(--border-2);padding:10px 14px;border-radius:8px}
+.para.totals{color:var(--text);font-weight:600;background:var(--surface-2);border:1px solid var(--border-2);
+  padding:12px 16px;border-radius:10px;margin:16px 0}
+
+.label{font-weight:780;color:#fff;font-size:13px;letter-spacing:.04em;text-transform:uppercase;
+  margin:16px 0 6px;display:inline-block;padding-bottom:2px;border-bottom:2px solid var(--accent)}
+
+/* lists */
+.list ul,.list ol{margin:.4em 0 .8em;padding-left:22px}
+.list li{margin:.28em 0;color:var(--text-dim)}
+.list li::marker{color:var(--text-faint)}
+.list ul ul,.list ol ol,.list ul ol,.list ol ul{margin:.2em 0}
+.list strong{color:#eaf2ff}
+
+/* finding card */
+.finding{background:linear-gradient(180deg,var(--surface),var(--bg));
+  border:1px solid var(--border);border-radius:16px;padding:0;margin-bottom:20px;
+  scroll-margin-top:78px;box-shadow:var(--shadow);overflow:hidden;transition:border-color .15s}
+.finding:hover{border-color:var(--border-2)}
+.finding[data-sev=high]{border-left:4px solid var(--high)}
+.finding[data-sev=medium]{border-left:4px solid var(--medium)}
+.finding[data-sev=lowmed]{border-left:4px solid var(--lowmed)}
+.finding[data-sev=low]{border-left:4px solid var(--low)}
+.finding-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+  padding:16px 22px;background:var(--surface-2);border-bottom:1px solid var(--border)}
+.fnum{flex:0 0 auto;font-weight:800;font-size:12.5px;color:#fff;background:var(--surface-3);
+  border:1px solid var(--border-2);padding:3px 9px;border-radius:7px;font-variant-numeric:tabular-nums}
+.area-tag{flex:0 0 auto;font-size:11px;color:var(--text-faint);background:rgba(127,143,180,.12);
+  border:1px solid var(--border);padding:3px 9px;border-radius:20px;white-space:nowrap}
+.finding-title{flex:1 1 220px;margin:0;font-size:16.5px;font-weight:680;line-height:1.35;color:#fff}
+.sev{flex:0 0 auto;font-size:11px;font-weight:800;letter-spacing:.05em;padding:4px 10px;
+  border-radius:20px;text-transform:uppercase;border:1px solid transparent}
+.sev-high{color:var(--high);background:var(--high-soft);border-color:rgba(255,92,122,.4)}
+.sev-medium{color:var(--medium);background:var(--medium-soft);border-color:rgba(255,174,92,.4)}
+.sev-lowmed{color:var(--lowmed);background:var(--lowmed-soft);border-color:rgba(255,211,92,.4)}
+.sev-low{color:var(--low);background:var(--low-soft);border-color:rgba(86,208,224,.4)}
+.finding-body{padding:16px 22px 20px}
+.finding-body p{color:var(--text-dim)}
+
+/* code block */
+pre.codeblock{background:#0c1119;border:1px solid var(--border);border-radius:10px;padding:12px 14px;
+  overflow-x:auto;margin:10px 0;font-size:12.5px;line-height:1.55}
+pre.codeblock code{background:none;border:none;padding:0;color:#cfe0f7;white-space:pre;font-size:12.5px}
+
+/* table */
+.table-wrap{overflow-x:auto;margin:14px 0;border:1px solid var(--border);border-radius:12px}
+.idx-table{width:100%;border-collapse:collapse;font-size:13.5px}
+.idx-table th,.idx-table td{padding:10px 14px;text-align:left;border-bottom:1px solid var(--border);vertical-align:top}
+.idx-table thead th{background:var(--surface-2);color:var(--text);font-size:11.5px;
+  text-transform:uppercase;letter-spacing:.06em;position:sticky;top:0}
+.idx-table tbody tr{transition:background .12s}
+.idx-table tbody tr:hover{background:var(--surface-2)}
+.idx-table td.num{font-variant-numeric:tabular-nums;font-weight:700}
+.idx-table td.num a{color:var(--accent)}
+.idx-table tbody tr:last-child td{border-bottom:none}
+.idx-table td{color:var(--text-dim)}
+
+blockquote{margin:14px 0;padding:12px 16px;border-left:3px solid var(--low);
+  background:var(--low-soft);border-radius:0 10px 10px 0;color:var(--text-dim)}
+
+.empty{max-width:1320px;margin:10px auto;padding:30px;text-align:center;color:var(--text-faint)}
+
+#to-top{position:fixed;right:22px;bottom:22px;width:44px;height:44px;border-radius:50%;
+  border:1px solid var(--border-2);background:var(--surface-3);color:var(--text);
+  font-size:18px;cursor:pointer;opacity:0;pointer-events:none;transition:.2s;z-index:60;box-shadow:var(--shadow)}
+#to-top.show{opacity:1;pointer-events:auto}
+#to-top:hover{background:var(--accent);color:#061018}
+
+/* mobile */
+@media (max-width:980px){
+  .app{grid-template-columns:1fr}
+  .sidebar{position:fixed;top:61px;left:0;z-index:45;width:300px;height:calc(100vh - 61px);
+    background:var(--bg);transform:translateX(-100%);transition:transform .22s;border-right:1px solid var(--border)}
+  .sidebar.open{transform:none;box-shadow:var(--shadow)}
+  #sidebar-toggle{display:block}
+  .main{padding:20px 16px 70px}
+  .hero h1{font-size:27px}
+  .stats{grid-template-columns:repeat(2,1fr)}
+  .search input{width:160px}
+}
+
+@media print{
+  body{background:#fff;color:#111}
+  .topbar,.sidebar,#to-top,.sev-filters,.search,.count,#sidebar-toggle{display:none!important}
+  .app{display:block}
+  .main{padding:0}
+  .hero{border:none}
+  .finding,.intro,.block-section{break-inside:avoid;box-shadow:none}
+  .finding,.finding-head,.finding-body,.para,.intro{color:#111}
+  code,pre.codeblock{background:#f3f5f8;color:#111;border-color:#ccc}
+}
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="topbar-inner">
+    <button id="sidebar-toggle" aria-label="Toggle navigation">&#9776;</button>
+    <div class="brand">Phase 1&ndash;10 Review <span class="dot-h">&bull;</span> Findings</div>
+    <div class="tools">
+      <div class="search"><input id="search" type="search" placeholder="Search findings&hellip;" aria-label="Search findings"></div>
+      <div class="sev-filters">
+        <button class="sev-btn active" data-sev="all">All</button>
+        <button class="sev-btn" data-sev="high">High</button>
+        <button class="sev-btn" data-sev="medium">Med</button>
+        <button class="sev-btn" data-sev="lowmed">Low&ndash;Med</button>
+        <button class="sev-btn" data-sev="low">Low</button>
+      </div>
+      <span id="count" class="count"></span>
+    </div>
+  </div>
+</header>
+<div class="app">
+  <aside id="sidebar" class="sidebar"><div class="side-inner"><a class="nav-item top" href="#top">Overview</a>
+<a class="nav-item" href="#index">Index &amp; severity totals</a>
+<div class="nav-group">
+<a class="nav-section" href="#section-1"><span class="nav-sect-num">1</span><span>API Reservation Hot Path</span></a>
+<div class="nav-findings">
+<a class="nav-finding" href="#finding-1" data-sev="high"><span class="dot dot-high"></span><span class="nav-fnum">1</span><span class="nav-ftitle">No Redis-first run-sale eligibility gate on the buy hot p…</span></a>
+<a class="nav-finding" href="#finding-2" data-sev="medium"><span class="dot dot-medium"></span><span class="nav-fnum">2</span><span class="nav-ftitle">Realtime publications awaited synchronously on the buy ho…</span></a>
+</div>
+</div>
+<div class="nav-group">
+<a class="nav-section" href="#section-2"><span class="nav-sect-num">2</span><span>Persistence, Domain State, And Seeds</span></a>
+<div class="nav-findings">
+<a class="nav-finding" href="#finding-3" data-sev="medium"><span class="dot dot-medium"></span><span class="nav-fnum">3</span><span class="nav-ftitle">Startup reconciliation reports a run as reconciled when i…</span></a>
+<a class="nav-finding" href="#finding-4" data-sev="low"><span class="dot dot-low"></span><span class="nav-fnum">4</span><span class="nav-ftitle">`getRunSecuredVsConfirmed` counts all reservation statuse…</span></a>
+<a class="nav-finding" href="#finding-5" data-sev="low"><span class="dot dot-low"></span><span class="nav-fnum">5</span><span class="nav-ftitle">Preset mutation adapters return `preset_not_found` for a …</span></a>
+<a class="nav-finding" href="#finding-6" data-sev="low"><span class="dot dot-low"></span><span class="nav-fnum">6</span><span class="nav-ftitle">`seedDemoData` silently overwrites admin/API-owned editab…</span></a>
+</div>
+</div>
+<div class="nav-group">
+<a class="nav-section" href="#section-3"><span class="nav-sect-num">3</span><span>Worker, Queue, Mock ERP, And Notifications</span></a>
+<div class="nav-findings">
+<a class="nav-finding" href="#finding-7" data-sev="high"><span class="dot dot-high"></span><span class="nav-fnum">7</span><span class="nav-ftitle">Run-scoped ERP behavior and backpressure captured in the …</span></a>
+<a class="nav-finding" href="#finding-8" data-sev="lowmed"><span class="dot dot-lowmed"></span><span class="nav-fnum">8</span><span class="nav-ftitle">Circuit breaker half-open allows multiple concurrent tria…</span></a>
+<a class="nav-finding" href="#finding-9" data-sev="low"><span class="dot dot-low"></span><span class="nav-fnum">9</span><span class="nav-ftitle">Production worker has no BullMQ retry; unexpected throws …</span></a>
+</div>
+</div>
+<div class="nav-group">
+<a class="nav-section" href="#section-4"><span class="nav-sect-num">4</span><span>Run Lifecycle, Load Orchestration, And Finalization</span></a>
+<div class="nav-findings">
+<a class="nav-finding" href="#finding-10" data-sev="high"><span class="dot dot-high"></span><span class="nav-fnum">10</span><span class="nav-ftitle">Finalization writes summary + transition non-atomically; …</span></a>
+<a class="nav-finding" href="#finding-11" data-sev="medium"><span class="dot dot-medium"></span><span class="nav-fnum">11</span><span class="nav-ftitle">`trafficDeliveryStatus` carries mixed execution-vs-delive…</span></a>
+<a class="nav-finding" href="#finding-12" data-sev="medium"><span class="dot dot-medium"></span><span class="nav-fnum">12</span><span class="nav-ftitle">The one-current-run start gate is a TOCTOU read-then-writ…</span></a>
+<a class="nav-finding" href="#finding-13" data-sev="low"><span class="dot dot-low"></span><span class="nav-fnum">13</span><span class="nav-ftitle">The finalization poller does not serialize ticks</span></a>
+<a class="nav-finding" href="#finding-14" data-sev="low"><span class="dot dot-low"></span><span class="nav-fnum">14</span><span class="nav-ftitle">k6 metrics streaming re-reads/re-parses the whole output …</span></a>
+<a class="nav-finding" href="#finding-15" data-sev="low"><span class="dot dot-low"></span><span class="nav-fnum">15</span><span class="nav-ftitle">Finalization does not wait for post-confirmation notifica…</span></a>
+</div>
+</div>
+<div class="nav-group">
+<a class="nav-section" href="#section-5"><span class="nav-sect-num">5</span><span>Dashboard, Realtime, Admin, And Run History</span></a>
+<div class="nav-findings">
+<a class="nav-finding" href="#finding-16" data-sev="high"><span class="dot dot-high"></span><span class="nav-fnum">16</span><span class="nav-ftitle">Live Watch observes a static seeded sale offer, not the a…</span></a>
+<a class="nav-finding" href="#finding-17" data-sev="medium"><span class="dot dot-medium"></span><span class="nav-fnum">17</span><span class="nav-ftitle">Public run start promises a `/watch` redirect that never …</span></a>
+<a class="nav-finding" href="#finding-18" data-sev="medium"><span class="dot dot-medium"></span><span class="nav-fnum">18</span><span class="nav-ftitle">No client-side recovery re-fetch on SSE reconnect or term…</span></a>
+<a class="nav-finding" href="#finding-19" data-sev="low"><span class="dot dot-low"></span><span class="nav-fnum">19</span><span class="nav-ftitle">&quot;Fail-closed&quot; secret strength check accepts the committed…</span></a>
+<a class="nav-finding" href="#finding-20" data-sev="low"><span class="dot dot-low"></span><span class="nav-fnum">20</span><span class="nav-ftitle">Public &quot;Demo Picker&quot; cards are decorative: fictional pres…</span></a>
+</div>
+</div>
+<div class="nav-group">
+<a class="nav-section" href="#section-6"><span class="nav-sect-num">6</span><span>Shared Contracts, Logging, And Cross-Service Vocabulary</span></a>
+<div class="nav-findings">
+<a class="nav-finding" href="#finding-21" data-sev="medium"><span class="dot dot-medium"></span><span class="nav-fnum">21</span><span class="nav-ftitle">Stable error codes returned by every service are absent f…</span></a>
+<a class="nav-finding" href="#finding-22" data-sev="medium"><span class="dot dot-medium"></span><span class="nav-fnum">22</span><span class="nav-ftitle">Worker readiness check `notification_record_worker_runnin…</span></a>
+<a class="nav-finding" href="#finding-23" data-sev="low"><span class="dot dot-low"></span><span class="nav-fnum">23</span><span class="nav-ftitle">`IsoTimestamp` accepts any non-empty string; timezone cla…</span></a>
+<a class="nav-finding" href="#finding-24" data-sev="low"><span class="dot dot-low"></span><span class="nav-fnum">24</span><span class="nav-ftitle">`OrderReadResponseSchema` types order/reservation `status…</span></a>
+</div>
+</div>
+<div class="nav-group">
+<a class="nav-section" href="#section-7"><span class="nav-sect-num">7</span><span>Runtime, Configuration, And Operations</span></a>
+<div class="nav-findings">
+<a class="nav-finding" href="#finding-25" data-sev="medium"><span class="dot dot-medium"></span><span class="nav-fnum">25</span><span class="nav-ftitle">Documented per-package test commands do not exist</span></a>
+<a class="nav-finding" href="#finding-26" data-sev="lowmed"><span class="dot dot-lowmed"></span><span class="nav-fnum">26</span><span class="nav-ftitle">Load-orchestrator Dockerfile builds the entire workspace</span></a>
+<a class="nav-finding" href="#finding-27" data-sev="lowmed"><span class="dot dot-lowmed"></span><span class="nav-fnum">27</span><span class="nav-ftitle">Compose project names are not worktree-isolated despite t…</span></a>
+<a class="nav-finding" href="#finding-28" data-sev="low"><span class="dot dot-low"></span><span class="nav-fnum">28</span><span class="nav-ftitle">`infra:down` tears down the whole project, not just Postg…</span></a>
+<a class="nav-finding" href="#finding-29" data-sev="low"><span class="dot dot-low"></span><span class="nav-fnum">29</span><span class="nav-ftitle">Caddy has no healthcheck; `runtime:up --wait` can report …</span></a>
+</div>
+</div>
+<div class="nav-group">
+<a class="nav-section" href="#section-8"><span class="nav-sect-num">8</span><span>Test Suite Quality</span></a>
+<div class="nav-findings">
+<a class="nav-finding" href="#finding-30" data-sev="high"><span class="dot dot-high"></span><span class="nav-fnum">30</span><span class="nav-ftitle">The only real-k6 behavioral test runs in the infrastructu…</span></a>
+<a class="nav-finding" href="#finding-31" data-sev="low"><span class="dot dot-low"></span><span class="nav-fnum">31</span><span class="nav-ftitle">`x-load-run-id` header-agreement &quot;matching/absent&quot; cases …</span></a>
+</div>
+</div>
+<a class="nav-item" href="#appendix">Appendix</a></div></aside>
+  <main class="main">
+    <section class="hero" id="top">
+      <div class="eyebrow">Consolidated Review Report</div>
+      <h1>Phase 1–10 Final Review — Consolidated Findings</h1>
+      <div class="meta">Source: <code>working_docs/review/p1-10_review_findings.md</code> &nbsp;&middot;&nbsp; Generated 2026-07-02 &nbsp;&middot;&nbsp; 31 findings across 8 review slices</div>
+      <div class="stats">
+        <div class="stat stat-total"><div class="stat-num">31</div><div class="stat-label">Total</div></div>
+        <div class="stat stat-high"><div class="stat-num">5</div><div class="stat-label">HIGH</div></div>
+<div class="stat stat-medium"><div class="stat-num">9</div><div class="stat-label">MEDIUM</div></div>
+<div class="stat stat-lowmed"><div class="stat-num">3</div><div class="stat-label">LOW–MEDIUM</div></div>
+<div class="stat stat-low"><div class="stat-num">14</div><div class="stat-label">LOW</div></div>
+      </div>
+    </section>
+    <section class="intro" id="overview"><p class="para ">This document consolidates the eight per-area review slices (<code>findings_slice_1.md</code> … <code>findings_slice_8.md</code> in <code>working_docs/review/</code>) into a single list of findings, with repetitions removed.</p>
+<p class="para ">Each slice reviewed a distinct area but some concerns overlapped. The following deduplication was applied:</p>
+<div class="list"><ul><li><strong>Merged (single finding).</strong> &quot;Worker readiness check <code>notification_record_worker_running</code> is contracted/documented but never emitted&quot; appeared as Slice 6 Finding 2 <strong>and</strong> Slice 7 Finding 3. They are the same issue and are merged here as <strong>Finding 22</strong> (its evidence combines both slices).</li><li><strong>Kept separate (cross-referenced where noted).</strong> A few findings share context but describe different defects and remain distinct entries:<ul><li><strong>Finding 19</strong> (fail-closed secret check) is a config/ops-hardening gap that the slice flagged as overlapping Slice 7&#x27;s scope, but Slice 7 produced no duplicate finding about secrets.</li><li><strong>Finding 25</strong> (documented per-package test commands do not exist) and <strong>Finding 30</strong> (the only real-k6 test silently skips in the unit lane) both touch load-orchestrator test scripts but report different problems.</li></ul></li></ul></div>
+<p class="para ">Severities are preserved verbatim from the slices. The sections below keep the original review areas (slices) so navigation maps to the source slices.</p>
+<hr class="sep"/>
+</section><section class="block-section" id="index">
+<h2 class="section-title">Index</h2>
+<div class="table-wrap"><table class="idx-table"><thead><tr><th>#</th><th>Area</th><th>Finding</th><th>Severity</th></tr></thead><tbody><tr><td class="num"><a href="#finding-1">1</a></td><td>API reservation hot path</td><td>No Redis-first run-sale eligibility gate on the buy hot path</td><td><span class="sev sev-high">HIGH</span></td></tr><tr><td class="num"><a href="#finding-2">2</a></td><td>API reservation hot path</td><td>Realtime publications awaited synchronously on the buy hot path</td><td><span class="sev sev-medium">MEDIUM</span></td></tr><tr><td class="num"><a href="#finding-3">3</a></td><td>Persistence / domain state / seeds</td><td>Startup reconciliation reports a run as reconciled when it did not fail it</td><td><span class="sev sev-medium">MEDIUM</span></td></tr><tr><td class="num"><a href="#finding-4">4</a></td><td>Persistence / domain state / seeds</td><td><code>getRunSecuredVsConfirmed</code> counts all reservation statuses, not just <code>secured</code></td><td><span class="sev sev-low">LOW</span></td></tr><tr><td class="num"><a href="#finding-5">5</a></td><td>Persistence / domain state / seeds</td><td>Preset mutation adapters return <code>preset_not_found</code> for a config-validation failure</td><td><span class="sev sev-low">LOW</span></td></tr><tr><td class="num"><a href="#finding-6">6</a></td><td>Persistence / domain state / seeds</td><td><code>seedDemoData</code> silently overwrites admin/API-owned editable rows on re-run</td><td><span class="sev sev-low">LOW</span></td></tr><tr><td class="num"><a href="#finding-7">7</a></td><td>Worker / queue / mock ERP / notifications</td><td>Run-scoped ERP behavior and backpressure captured in the run snapshot are never applied</td><td><span class="sev sev-high">HIGH</span></td></tr><tr><td class="num"><a href="#finding-8">8</a></td><td>Worker / queue / mock ERP / notifications</td><td>Circuit breaker half-open allows multiple concurrent trial calls</td><td><span class="sev sev-lowmed">LOW–MEDIUM</span></td></tr><tr><td class="num"><a href="#finding-9">9</a></td><td>Worker / queue / mock ERP / notifications</td><td>Production worker has no BullMQ retry; unexpected throws strand orders in <code>processing</code></td><td><span class="sev sev-low">LOW</span></td></tr><tr><td class="num"><a href="#finding-10">10</a></td><td>Run lifecycle / load orchestration / finalization</td><td>Finalization writes summary + transition non-atomically; <code>already_finalized</code> strands the run in <code>draining</code> forever</td><td><span class="sev sev-high">HIGH</span></td></tr><tr><td class="num"><a href="#finding-11">11</a></td><td>Run lifecycle / load orchestration / finalization</td><td><code>trafficDeliveryStatus</code> carries mixed execution-vs-delivery vocabulary; classified delivery status discarded on the draining path</td><td><span class="sev sev-medium">MEDIUM</span></td></tr><tr><td class="num"><a href="#finding-12">12</a></td><td>Run lifecycle / load orchestration / finalization</td><td>The one-current-run start gate is a TOCTOU read-then-write; concurrent starts can create two overlapping runs</td><td><span class="sev sev-medium">MEDIUM</span></td></tr><tr><td class="num"><a href="#finding-13">13</a></td><td>Run lifecycle / load orchestration / finalization</td><td>The finalization poller does not serialize ticks</td><td><span class="sev sev-low">LOW</span></td></tr><tr><td class="num"><a href="#finding-14">14</a></td><td>Run lifecycle / load orchestration / finalization</td><td>k6 metrics streaming re-reads/re-parses the whole output file every window (quadratic)</td><td><span class="sev sev-low">LOW</span></td></tr><tr><td class="num"><a href="#finding-15">15</a></td><td>Run lifecycle / load orchestration / finalization</td><td>Finalization does not wait for post-confirmation notifications; <code>notificationsRecorded</code> undercounts</td><td><span class="sev sev-low">LOW</span></td></tr><tr><td class="num"><a href="#finding-16">16</a></td><td>Dashboard / realtime / admin / history</td><td>Live Watch observes a static seeded sale offer, not the active run&#x27;s generated offer</td><td><span class="sev sev-high">HIGH</span></td></tr><tr><td class="num"><a href="#finding-17">17</a></td><td>Dashboard / realtime / admin / history</td><td>Public run start promises a <code>/watch</code> redirect that never happens</td><td><span class="sev sev-medium">MEDIUM</span></td></tr><tr><td class="num"><a href="#finding-18">18</a></td><td>Dashboard / realtime / admin / history</td><td>No client-side recovery re-fetch on SSE reconnect or terminal run events; recovery-sourced counts freeze</td><td><span class="sev sev-medium">MEDIUM</span></td></tr><tr><td class="num"><a href="#finding-19">19</a></td><td>Dashboard / realtime / admin / history</td><td>&quot;Fail-closed&quot; secret strength check accepts the committed dev sentinel; no startup validation forces an override</td><td><span class="sev sev-low">LOW</span></td></tr><tr><td class="num"><a href="#finding-20">20</a></td><td>Dashboard / realtime / admin / history</td><td>Public &quot;Demo Picker&quot; cards are decorative: fictional preset slugs and no start action</td><td><span class="sev sev-low">LOW</span></td></tr><tr><td class="num"><a href="#finding-21">21</a></td><td>Shared contracts / logging / vocabulary</td><td>Stable error codes returned by every service are absent from the documented <code>ERROR_CODES</code> vocabulary</td><td><span class="sev sev-medium">MEDIUM</span></td></tr><tr><td class="num"><a href="#finding-22">22</a></td><td>Shared contracts / runtime / ops <em>(merged: slices 6 &amp; 7)</em></td><td>Worker readiness check <code>notification_record_worker_running</code> is contracted and documented but never emitted</td><td><span class="sev sev-medium">MEDIUM</span></td></tr><tr><td class="num"><a href="#finding-23">23</a></td><td>Shared contracts / logging / vocabulary</td><td><code>IsoTimestamp</code> accepts any non-empty string; timezone clarity not enforced at the contract boundary</td><td><span class="sev sev-low">LOW</span></td></tr><tr><td class="num"><a href="#finding-24">24</a></td><td>Shared contracts / logging / vocabulary</td><td><code>OrderReadResponseSchema</code> types order/reservation <code>status</code> as a free-form string instead of the canonical enum schemas</td><td><span class="sev sev-low">LOW</span></td></tr><tr><td class="num"><a href="#finding-25">25</a></td><td>Runtime / configuration / ops</td><td>Documented per-package test commands do not exist</td><td><span class="sev sev-medium">MEDIUM</span></td></tr><tr><td class="num"><a href="#finding-26">26</a></td><td>Runtime / configuration / ops</td><td>Load-orchestrator Dockerfile builds the entire workspace</td><td><span class="sev sev-lowmed">LOW–MEDIUM</span></td></tr><tr><td class="num"><a href="#finding-27">27</a></td><td>Runtime / configuration / ops</td><td>Compose project names are not worktree-isolated despite the docs guaranteeing it</td><td><span class="sev sev-lowmed">LOW–MEDIUM</span></td></tr><tr><td class="num"><a href="#finding-28">28</a></td><td>Runtime / configuration / ops</td><td><code>infra:down</code> tears down the whole project, not just PostgreSQL/Redis</td><td><span class="sev sev-low">LOW</span></td></tr><tr><td class="num"><a href="#finding-29">29</a></td><td>Runtime / configuration / ops</td><td>Caddy has no healthcheck; <code>runtime:up --wait</code> can report success without proving the public entry point serves</td><td><span class="sev sev-low">LOW</span></td></tr><tr><td class="num"><a href="#finding-30">30</a></td><td>Test suite quality</td><td>The only real-k6 behavioral test runs in the infrastructure-free unit lane and silently skips when k6 is absent (suite stays green)</td><td><span class="sev sev-high">HIGH</span></td></tr><tr><td class="num"><a href="#finding-31">31</a></td><td>Test suite quality</td><td><code>x-load-run-id</code> header-agreement &quot;matching/absent&quot; cases assert only the absence of a validation path</td><td><span class="sev sev-low">LOW</span></td></tr></tbody></table></div>
+<p class="para totals">Severity totals: <strong>5 HIGH</strong>, <strong>9 MEDIUM</strong>, <strong>3 LOW–MEDIUM</strong>, <strong>14 LOW</strong> (31 findings).</p>
+<hr class="sep"/>
+</section>
+<section class="review-section" id="section-1" data-section="1">
+<div class="section-head"><span class="section-num">§ 1</span><h2 class="section-title">API Reservation Hot Path</h2></div>
+<p class="para scope">Scope: <code>apps/api</code> reservation/buy path + Redis inventory code (<code>packages/db/src/inventory/*</code>, persistence adapter). (Verified-correct parts intentionally not enumerated: atomic Lua oversell prevention, idempotency replay/conflict, sold-out cheap path, pending-persistence <code>order: null</code>, queue hand-off after durable write, thin <code>buy</code> route, <code>x-load-run-id</code> header agreement.)</p>
+<article class="finding" id="finding-1" data-sev="high" data-num="1">
+<div class="finding-head">
+<span class="fnum">F1</span>
+<span class="area-tag">API reservation hot path</span>
+<h3 class="finding-title">No Redis-first run-sale eligibility gate on the buy hot path</h3>
+<span class="sev sev-high">HIGH</span>
+</div>
+<div class="finding-body">
+<p class="para ">The atomic reservation gate is the documented eligibility signal, but it decides eligibility <strong>only</strong> from the per-<code>saleOfferId</code> inventory <code>:state</code> hash existence. It never validates the request <code>runId</code> against the offer&#x27;s owning run, nor the run&#x27;s accepting-traffic lifecycle. There is no Redis run-scoped eligibility payload.</p>
+<p class="label">Evidence</p>
+<div class="list"><ul><li><code>packages/db/src/inventory/reservation-gate.ts:201-205</code> — the Lua only does <code>HGET :state remainingStock</code>; absent → <code>not_initialized</code>. <code>runId</code> is unused for the eligibility decision.</li><li>Inventory keys are scoped by <code>saleOfferId</code> only (<code>packages/db/src/inventory/redis-keys.ts:21-26</code>), not by run.</li><li><code>apps/api/src/app/services/reserve-order-service.ts:36-40</code> explicitly states: <em>&quot;The documented Redis run-scoped eligibility payload keyed by runId does not exist yet (it lands with the demo-run lifecycle)&quot;</em> — but the demo-run lifecycle (Task 10.3) is implemented (<code>packages/db/src/run-lifecycle/run-lifecycle.ts</code>) and never added it.</li><li>The contract disagrees with the implementation: <code>packages/contracts/src/buy.ts:80-82</code> says <code>runId</code>+<code>saleOfferId</code> are sent <em>&quot;so the API can validate run sale eligibility from the cached record without querying PostgreSQL on the losing path&quot;</em>, and <code>buy.ts:173-175</code> defines <code>not_initialized</code> as <em>&quot;The run/sale pair is missing, mismatched, or no longer accepting traffic … the run has moved past the accepting-traffic lifecycle.&quot;</em></li><li><code>apps/api/tests/buy-run-attribution.integration.test.ts:187-209</code> proves the mismatch path &quot;degrades to <code>reservation_pending_persistence</code>&quot; but asserts nothing about Redis stock — masking the leak.</li></ul></div>
+<p class="para "><strong>Impact A — wrong-<code>runId</code> stock leak + permanent pending-persistence pollution.</strong> <code>/buy</code> is unauthenticated (<code>apps/api/src/app/routes/buy.ts:15-44</code>). A generated offer bought under a non-owning <code>runId</code>:</p>
+<div class="list"><ol><li>passes the gate and decrements Redis stock (<code>reservation-gate.ts:215-217</code>);</li><li><code>resolveDurableRunId</code> returns <code>null</code> for the mismatch (<code>reserve-order-service.ts:294-307</code>);</li><li>the durable write is rejected by the ownership trigger (<code>packages/db/migrations/0000_burly_random.sql:308-352</code>: generated offer requires <code>run_id = owner</code>);</li><li>the flow lands in the partial-failure branch and records a pending-persistence sentinel (<code>reserve-order-service.ts:537-585</code>).</li></ol></div>
+<p class="para ">That hold can <strong>never</strong> reconcile: every retry carries the wrong <code>runId</code>, so <code>resolveDurableRunId</code> keeps returning <code>null</code> and the trigger keeps rejecting. Net effect: Redis stock is permanently leaked and <code>pendingPersistenceCount</code> is permanently inflated. Because there is no reservation-expiry release worker either, leaked holds never return to <code>remainingStock</code>. A client hammering <code>/buy</code> with the active run&#x27;s <code>saleOfferId</code> + an arbitrary wrong <code>runId</code> drains the live demo&#x27;s stock into unreconcilable holds.</p>
+<p class="para "><strong>Impact B — stale/closed runs remain buyable.</strong> Normal finalization does <strong>not</strong> tear down the run&#x27;s Redis inventory state and does <strong>not</strong> deactivate its generated sale offer (only admin reset and startup reconciliation do: <code>reset-service.ts:325-332</code>, <code>run-lifecycle.ts:147-159</code>). Since the gate keys eligibility only on inventory-state existence, a buy against a finalized run&#x27;s offer (with its own <code>runId</code>) still succeeds: it decrements stock and inserts a fresh reservation/order/events onto a run whose immutable summary is already written (so the summary is stale, and <code>acceptedReservations</code>/<code>soldOut</code> totals no longer match durable rows). <code>cleanupOldGeneratedRuns</code> (<code>run-maintenance.ts:190-258</code>) eventually clears Redis for runs beyond the latest-15 retention, but the just-completed run plus retained history stay buyable in the window.</p>
+<p class="para ">The same gap means the seeded catalog offer (which has live inventory: <code>packages/db/src/seed-data.ts:385</code>) accepts any <code>runId</code> with null attribution — possibly intended for catalog, but it is indistinguishable from a run-scoped offer at the gate.</p>
+<p class="para "><strong>Suggested direction.</strong> Add a Redis-first run-sale eligibility signal written when a run goes <code>active</code> and cleared on terminalization/reset (runId↔saleOfferId ownership + accepting-traffic status), and consult it in the gate before the stock decision so wrong-run / stale / closed / catalog offers return <code>not_initialized</code> on the cheap path (matching the contract). At minimum, the hot path must not decrement stock for a <code>runId</code> that cannot own the offer.</p>
+</div></article>
+<article class="finding" id="finding-2" data-sev="medium" data-num="2">
+<div class="finding-head">
+<span class="fnum">F2</span>
+<span class="area-tag">API reservation hot path</span>
+<h3 class="finding-title">Realtime publications are awaited synchronously on the buy hot path in production</h3>
+<span class="sev sev-medium">MEDIUM</span>
+</div>
+<div class="finding-body">
+<p class="para ">Now that Task 6.1 wired a real Redis Pub/Sub publisher in the composition root (<code>apps/api/src/index.ts:66</code>), every accepted reservation serializes several awaited publishes (and Redis reads) before responding:</p>
+<div class="list"><ul><li><code>reserve-order-service.ts:518</code> awaits <code>publishSecuredInventoryDrain</code>, which performs an <strong>extra</strong> <code>getInventoryState</code> Redis round trip (<code>hgetall</code> + <code>zcount</code>, <code>apps/api/src/app/services/inventory-drain.ts:58-73</code>) then <code>publisher.publish</code>.</li><li><code>reserve-order-service.ts:239</code> awaits <code>publishOrderQueued</code> (publish), and after enqueue <code>reserve-order-service.ts:273</code> awaits <code>publishQueueDepth</code>, which does a <code>queue.getJobCounts</code> Redis round trip + publish (<code>apps/api/src/app/services/queue-drain.ts:44-73</code>).</li></ul></div>
+<p class="para ">These are still <code>await</code>ed despite the modules&#x27; own notes saying publication would <em>&quot;switch to fire-and-forget when it wires a real channel&quot;</em> (<code>inventory-drain.ts:19-20</code>, <code>queue-drain.ts:18-19</code>, <code>order-queued.ts:17-18</code>) — which has now happened. For the one-second spike the winning path is: gate → PG attribution read → Redis state read → PUBLISH → durable PG transaction → PUBLISH → <code>queue.add</code> → <code>getJobCounts</code> → PUBLISH. The publications remain best-effort (won&#x27;t fail the buy), but the synchronous awaits add per-buy latency to the public surge target and contradict the documented fire-and-forget intent.</p>
+<p class="para ">Separately, the <code>getInventoryState</code> read in <code>publishSecuredInventoryDrain</code> is redundant: the Lua gate already computed the post-decrement <code>remainingStock</code>/<code>reservedStock</code> (<code>reservation-gate.ts:216-218</code>) but does not surface them, so the TS layer re-reads them solely to publish.</p>
+<p class="para "><strong>Suggested direction.</strong> Make hot-path realtime publication fire-and-forget (queue onto a background channel/setImmediate, swallow backpressure) now that the transport is live, and/or return the post-decrement counters from the gate so <code>publishSecuredInventoryDrain</code> does not re-read Redis per buy.</p>
+<hr class="sep"/>
+</div></article>
+</section>
+<section class="review-section" id="section-2" data-section="2">
+<div class="section-head"><span class="section-num">§ 2</span><h2 class="section-title">Persistence, Domain State, And Seeds</h2></div>
+<p class="para scope">Scope: <code>packages/db</code> (schema, migrations/triggers, seed/reset helpers, run-lifecycle + inventory persistence adapters) and the persistence adapters in <code>apps/api</code> / <code>apps/worker</code> that own durable business writes. (Verified-correct parts intentionally not enumerated: FK + uniqueness graph, run-attribution PL/pgSQL triggers, write-once immutable summaries via <code>onConflictDoNothing</code>, FK-safe maintenance delete ordering, sold-out aggregate surviving via <code>onConflictDoUpdate</code>, seed-time contract validation, generated-run offer purpose enforcement.)</p>
+<article class="finding" id="finding-3" data-sev="medium" data-num="3">
+<div class="finding-head">
+<span class="fnum">F3</span>
+<span class="area-tag">Persistence / domain state / seeds</span>
+<h3 class="finding-title">Startup reconciliation reports a run as reconciled even when it did not fail it</h3>
+<span class="sev sev-medium">MEDIUM</span>
+</div>
+<div class="finding-body">
+<p class="para "><code>reconcileInterruptedRunsOnStartup</code> selects <code>starting</code>/<code>active</code> runs, then per run fails the run inside a transaction guarded by <code>status in (starting, active)</code>. When that guarded update matches <strong>zero</strong> rows (a concurrent transition moved the run out of <code>starting</code>/<code>active</code> between the SELECT and the UPDATE), the transaction correctly skips the summary write via an early <code>return</code> — but the enclosing loop still pushes the run into the returned <code>reconciled</code> array unconditionally.</p>
+<p class="label">Evidence</p>
+<div class="list"><ul><li><code>packages/db/src/run-lifecycle/run-lifecycle.ts:215-218</code> — the early <code>return</code> only aborts the transaction callback; execution continues after <code>await db.transaction(...)</code>.</li><li><code>packages/db/src/run-lifecycle/run-lifecycle.ts:253-258</code> — <code>reconciled.push({ runId, presetName, saleOfferId, previousStatus })</code> runs for <strong>every</strong> selected run regardless of whether the guarded update transitioned anything.</li><li>The caller fans out a <code>run.failed</code> realtime event for each entry: <code>apps/api/src/app/services/run-lifecycle-service.ts:101-112</code> (<code>for (const run of reconciled) { await publisher.publish(runFailedEvent(run, occurredAt)); }</code>) and logs an inflated <code>count</code> (<code>run-lifecycle-service.ts:114-119</code>).</li><li>The code&#x27;s own comment at <code>run-lifecycle.ts:216</code> states the intent (&quot;leave the summary to that path&quot;) for the zero-match case, but the result array contradicts it. The existing tests (<code>packages/db/tests/run-lifecycle.integration.test.ts:259-316</code>) only cover the happy fail path and the fully-idempotent second pass (where the SELECT itself returns nothing); the SELECT-hits / UPDATE-misses race is uncovered.</li></ul></div>
+<p class="para "><strong>Impact.</strong> A run that legitimately transitions <code>active -&gt; draining</code> (traffic-end reported by the orchestrator/finalization poller) during the API startup window is not failed by reconciliation, yet the dashboard receives a spurious <code>run.failed</code> SSE event for it and the startup log overstates the reconciled count. The run then continues to drain/finalize normally, so operators see a &quot;failed&quot; event for a run that completes — a stale/incorrect realtime signal contradicting the durable <code>demo_runs</code> truth. With more than one API instance the race widens (two reconciliations, one wins the update, the other still reports).</p>
+<p class="para "><strong>Suggested direction.</strong> Only push to <code>reconciled</code> when the guarded update actually transitioned (move the push inside the <code>failed.length &gt; 0</code> branch, or have the transaction return a <code>transitioned</code> boolean and push on it), so the returned set reflects runs this reconciliation actually failed.</p>
+</div></article>
+<article class="finding" id="finding-4" data-sev="low" data-num="4">
+<div class="finding-head">
+<span class="fnum">F4</span>
+<span class="area-tag">Persistence / domain state / seeds</span>
+<h3 class="finding-title"><code>getRunSecuredVsConfirmed</code> counts all reservation statuses, not just <code>secured</code></h3>
+<span class="sev sev-low">LOW</span>
+</div>
+<div class="finding-body">
+<p class="para "><code>acceptedReservations</code> is documented as &quot;Durable reservations secured (reservation status <code>secured</code>)&quot;, but the query counts every reservation row for the run with no status filter.</p>
+<p class="label">Evidence</p>
+<div class="list"><ul><li><code>packages/db/src/run-lifecycle/run-recovery.ts:40-43</code> — interface doc: <em>&quot;Durable reservations secured (reservation status <code>secured</code>) for the run.&quot;</em></li><li><code>packages/db/src/run-lifecycle/run-recovery.ts:116-117</code> — <code>db.select({ value: count() }).from(reservations).where(eq(reservations.runId, runId))</code> (no <code>status = &#x27;secured&#x27;</code> predicate), unlike the sibling order-by-status counts below it which do filter.</li></ul></div>
+<p class="para "><strong>Impact.</strong> No observable bug today: the only reservation writer (<code>createSecuredReservationWithOrder</code>) always inserts <code>status: &quot;secured&quot;</code>, and no <code>update(reservations)</code> release/expiry path exists yet (verified — no writes of <code>rejected</code>/<code>released</code>/<code>expired</code>). So the count is currently correct. But the contract is wrong: the moment a release/expiry transition persists non-<code>secured</code> rows, this counter silently inflates <code>acceptedReservations</code> in every summary that consumes it (startup reconciliation <code>run-lifecycle.ts:242</code>, admin reset <code>reset-service.ts:194</code>, normal finalization <code>run-finalization-service.ts:302</code>).</p>
+<p class="para "><strong>Suggested direction.</strong> Add <code>eq(reservations.status, &quot;secured&quot;)</code> to match the documented semantic (and the analogous orders-by-status filters), so the read stays correct when reservation lifecycle writes broaden.</p>
+</div></article>
+<article class="finding" id="finding-5" data-sev="low" data-num="5">
+<div class="finding-head">
+<span class="fnum">F5</span>
+<span class="area-tag">Persistence / domain state / seeds</span>
+<h3 class="finding-title">Preset mutation adapters return <code>preset_not_found</code> for a config-validation failure</h3>
+<span class="sev sev-low">LOW</span>
+</div>
+<div class="finding-body">
+<p class="para "><code>saveDemoPreset</code>, <code>duplicateDemoPreset</code>, and <code>copyToCustomPreset</code> each re-parse the config through <code>DemoPresetConfigSchema.safeParse</code> as a defensive check, but on a parse failure they return <code>code: &quot;preset_not_found&quot;</code> — conflating a validation failure with a missing preset.</p>
+<p class="label">Evidence</p>
+<div class="list"><ul><li><code>packages/db/src/run-lifecycle/preset-management.ts:88-89</code> (<code>saveDemoPreset</code>), <code>:121-122</code> (<code>duplicateDemoPreset</code>), <code>:163-164</code> (<code>copyToCustomPreset</code>) — <code>if (!parsed.success) return { ok: false, code: &quot;preset_not_found&quot; }</code>.</li><li><code>PresetMutationCode</code> (<code>preset-management.ts:34</code>) has no validation-error variant, so an invalid config is reported to the caller as if the preset did not exist.</li></ul></div>
+<p class="para "><strong>Impact.</strong> The API service is documented to re-validate before calling these primitives, so this branch should not fire in practice. If it ever does (a contract/schema drift, or a future caller that skips pre-validation), the surfaced error impersonates <code>preset_not_found</code>, which would drive a 404 / &quot;not found&quot; response for what is actually a malformed/invalid config — misleading for an operator and hard to diagnose.</p>
+<p class="para "><strong>Suggested direction.</strong> Either add a <code>preset_config_invalid</code> code to <code>PresetMutationCode</code> (and map parse failures to it), or drop the redundant defensive parse since the service already validates upstream — but do not report a validation failure as &quot;not found&quot;.</p>
+</div></article>
+<article class="finding" id="finding-6" data-sev="low" data-num="6">
+<div class="finding-head">
+<span class="fnum">F6</span>
+<span class="area-tag">Persistence / domain state / seeds</span>
+<h3 class="finding-title"><code>seedDemoData</code> silently overwrites admin/API-owned editable rows on every re-run</h3>
+<span class="sev sev-low">LOW</span>
+</div>
+<div class="finding-body">
+<p class="para ">The seed is upsert-based and treats <strong>editable</strong> rows the same as read-only baseline rows: re-running it (e.g. <code>pnpm runtime:setup</code>) resets the active public runtime policy and every editable admin preset — including the persisted <code>admin-custom</code> scratch preset — back to the hardcoded defaults.</p>
+<p class="label">Evidence</p>
+<div class="list"><ul><li><code>packages/db/src/seed-data.ts:369-381</code> — <code>publicRuntimePolicies</code> upsert <code>onConflictDoUpdate</code> sets <code>policy: PUBLIC_RUNTIME_POLICY</code> unconditionally, overwriting whatever the API wrote.</li><li><code>packages/db/src/seed-data.ts:339-367</code> — every preset (including <code>visibility: &quot;admin&quot;</code>, <code>isEditable: true</code> rows) is upserted with <code>onConflictDoUpdate</code> rewriting <code>display</code>/<code>trafficConfig</code>/<code>inventoryConfig</code>/<code>erpConfig</code>/<code>backpressureConfig</code>, so operator edits to editable admin presets (and the <code>admin-custom</code> scratch config) are discarded.</li><li>This contradicts the ownership model the same files assert: the API &quot;owns&quot; the public runtime policy and &quot;may update it&quot; (<code>public-runtime-policy.ts:6-9</code>, <code>seed-data.ts:240-244</code>), and admin presets are documented as editable (<code>preset-management.ts</code>).</li></ul></div>
+<p class="para "><strong>Impact.</strong> For a fresh demo this is fine (idempotent baseline). The footgun is re-running setup against a data set an operator has already customized: API-tuned public budgets/limits and admin-preset tweaks are silently reverted to defaults with no warning. This is a likely-intended &quot;reset to baseline&quot; behavior, but it is not called out anywhere, so it reads as data loss.</p>
+<p class="para "><strong>Suggested direction.</strong> If re-seed is meant to reset editable state, document that explicitly (and consider scoping the policy/admin-preset upserts to insert-only so a populated, operator-edited baseline survives <code>runtime:setup</code>). At minimum, note that <code>runtime:setup</code> is not additive for editable rows.</p>
+<hr class="sep"/>
+</div></article>
+</section>
+<section class="review-section" id="section-3" data-section="3">
+<div class="section-head"><span class="section-num">§ 3</span><h2 class="section-title">Worker, Queue, Mock ERP, And Notifications</h2></div>
+<p class="para scope">Scope: <code>apps/worker</code>, <code>apps/mock-erp</code>, the API <code>orders:process</code> queue producer (<code>apps/api/src/app/queue/orders-process-queue.ts</code>, <code>reserve-order-service.ts</code> enqueue), ERP clients/resilience, and notification code. (Verified-correct parts intentionally not enumerated: thin route → service layering, persist-before-side-effect ordering everywhere, monotonic ERP-attempt numbering with a <code>(orderId, attemptNumber)</code> unique constraint, <code>jobId = orderId</code> producer-side dedup, exponential backoff math, real mock-ERP state machine <code>queued -&gt; processing -&gt; confirmed | failed</code>, idempotent terminal guards, best-effort notification recording after confirmation, correlation-id threading.)</p>
+<article class="finding" id="finding-7" data-sev="high" data-num="7">
+<div class="finding-head">
+<span class="fnum">F7</span>
+<span class="area-tag">Worker / queue / mock ERP / notifications</span>
+<h3 class="finding-title">Run-scoped ERP behavior and backpressure captured in the run snapshot are never applied</h3>
+<span class="sev sev-high">HIGH</span>
+</div>
+<div class="finding-body">
+<p class="para ">The demo-run snapshot freezes <code>erpConfig</code> (<code>latencyMs</code>, <code>maxTps</code>, <code>errorRate</code>, <code>forcedOutage</code>) and <code>backpressureConfig</code> (<code>enabled</code>, <code>orderProcessConcurrency</code>, <code>circuitBreakerFailureThreshold</code>, <code>circuitBreakerResetTimeoutMs</code>) into <code>demo_runs.configSnapshot</code> at start time. The architecture documents these as the live behavior source: the worker &quot;applies the active run&#x27;s accepted backpressure policy&quot; and &quot;calls the mock ERP … with the run-scoped ERP behavior&quot;, and the mock ERP &quot;applies the ERP behavior captured in the run snapshot&quot; (<code>docs/architecture.md:57,97</code>; <code>docs/admin_access_protection.md:123</code> — &quot;normal ERP behavior comes from the run snapshot&quot;). Neither is wired: both services use global/environment values only and ignore the snapshot.</p>
+<p class="label">Evidence</p>
+<div class="list"><ul><li><code>apps/mock-erp/src/app/services/erp-behavior-service.ts:22-24</code> states run-scoped behavior is &quot;deferred to the demo-run lifecycle phase&quot;, and the seam at <code>:124-127</code> (<code>resolveControl</code>) always returns the retained <strong>global</strong> control regardless of <code>input.runId</code>; it is consumed at <code>:132</code>. The demo-run lifecycle (Phases 7–10) is implemented and never closed this seam.</li><li>The worker sources every resilience/concurrency knob from global env, never the snapshot: <code>apps/worker/src/index.ts:76-117</code> builds the breaker + retry policy purely from <code>WorkerConfig</code>, and <code>apps/worker/src/app/config.ts:100-107</code> reads <code>ERP_CIRCUIT_FAILURE_THRESHOLD</code>, <code>ERP_CIRCUIT_RESET_TIMEOUT_MS</code>, <code>ORDER_PROCESS_CONCURRENCY</code> from the environment. <code>order-process-service.ts</code> only uses <code>data.runId</code> for event payloads, never to resolve run-scoped ERP/backpressure settings.</li><li>The captured config is real and meaningful: <code>packages/db/src/seed-data.ts:110</code> and <code>:132</code> ship <code>surge-5k</code>/<code>surge-10k</code> with <code>backpressureConfig: { enabled: true }</code>, and <code>:197</code> ships <code>admin-steady-arrival</code> with <code>erpConfig: { latencyMs: 50, errorRate: 0.05 }</code>. The contract documents the intended effect (<code>packages/contracts/src/demo-control.ts:51-65</code>: &quot;When enabled, the worker caps simultaneous in-flight downstream confirmation calls&quot;), and <code>DemoRunConfigSnapshotSchema</code> (<code>demo-control.ts:72-101</code>) includes both blocks.</li><li><code>backpressureConfig</code> / <code>erpConfig</code> are written, validated against caps, merged on override (<code>apps/api/src/app/services/demo-run-start-service.ts:210-215</code>), and rendered on the dashboard, but have no runtime consumer — confirmed by a repo-wide search finding no read of either in <code>apps/worker</code> or <code>apps/mock-erp</code>.</li></ul></div>
+<p class="para "><strong>Impact.</strong> The frozen, cap-validated, dashboard-displayed <code>erpConfig</code> and <code>backpressureConfig</code> are dead configuration:</p>
+<div class="list"><ul><li>A run started from <code>admin-steady-arrival</code> (50 ms latency, 5 % ERP errors) exhibits whatever the global <code>LATENCY_MS</code>/<code>ERROR_RATE</code>/<code>FORCED_OUTAGE</code> happen to be, not the snapshot. An operator observing &quot;the run&#x27;s ERP behavior&quot; on the dashboard is misled.</li><li><code>backpressureConfig.enabled = true</code> on the headline surge presets has no effect: the worker&#x27;s in-flight confirmation cap is the global <code>ORDER_PROCESS_CONCURRENCY</code> (default 5) regardless of the run. The documented &quot;excess jobs accumulate in BullMQ rather than piling onto the downstream system&quot; buffer effect is not run-scoped.</li><li>Because run-scoped behavior is absent, the <strong>global</strong> retained chaos control (<code>PUT /chaos</code>/<code>POST /chaos/reset</code>) is the only behavior source and applies to every run indiscriminately — i.e. &quot;global ERP chaos settings leaking between runs&quot; is structural, not accidental.</li></ul></div>
+<p class="para "><strong>Suggested direction.</strong> Make <code>resolveControl</code> honor the run snapshot (pass the accepted <code>erpConfig</code> in the confirm request, or resolve it from the run the worker already attributes), and have the worker resolve concurrency/breaker settings from the run&#x27;s <code>backpressureConfig</code> (enriching the job payload or a per-run lookup) instead of global env. At minimum, document the current state as a known limitation rather than describing run-scoped behavior as implemented in <code>docs/architecture.md</code>.</p>
+</div></article>
+<article class="finding" id="finding-8" data-sev="lowmed" data-num="8">
+<div class="finding-head">
+<span class="fnum">F8</span>
+<span class="area-tag">Worker / queue / mock ERP / notifications</span>
+<h3 class="finding-title">Circuit breaker half-open allows multiple concurrent trial calls, not a single trial</h3>
+<span class="sev sev-lowmed">LOW–MEDIUM</span>
+</div>
+<div class="finding-body">
+<p class="para "><code>allow()</code> documents a half-open &quot;single trial call&quot; but implements an unconditional pass, so under <code>ORDER_PROCESS_CONCURRENCY &gt; 1</code> several confirmations flow during each recovery probe instead of one.</p>
+<p class="label">Evidence</p>
+<div class="list"><ul><li><code>apps/worker/src/app/erp/circuit-breaker.ts:145-147</code> — the <code>half_open</code> branch returns <code>true</code> for every call; the inline comment says &quot;allow the single trial call through,&quot; which is not what the code does. The class doc (<code>:11-22</code>) concedes the breaker is &quot;intentionally approximate across the async gap&quot;, but the per-call comment overstates the guarantee.</li><li>The trial fan-out is bounded by worker concurrency (<code>apps/worker/src/app/config.ts:107</code>, default 5; <code>apps/worker/src/index.ts:113-117</code>). The recovery tests (<code>apps/worker/tests/erp-resilience.integration.test.ts:438-493</code>) drive jobs serially (<code>concurrency: 1</code>), so they never exercise the concurrent half-open case.</li></ul></div>
+<p class="para "><strong>Impact.</strong> If the downstream is still failing when the breaker half-opens, up to <code>concurrency</code> calls hit it in one batch before it re-opens (a partial relaxation of the &quot;don&#x27;t hammer a failing ERP while open/recovering&quot; property). Recovery still works (any success closes, sustained failure re-opens), so the deviation is bounded and low-severity.</p>
+<p class="para "><strong>Suggested direction.</strong> Either enforce a single in-flight trial in half-open (e.g. a &quot;probe-in-flight&quot; flag set in <code>allow()</code> and cleared on the next <code>recordSuccess</code>/<code>recordFailure</code>), or correct the inline comment to state the approximate multi-trial behavior explicitly.</p>
+</div></article>
+<article class="finding" id="finding-9" data-sev="low" data-num="9">
+<div class="finding-head">
+<span class="fnum">F9</span>
+<span class="area-tag">Worker / queue / mock ERP / notifications</span>
+<h3 class="finding-title">Production worker has no BullMQ retry; unexpected throws strand orders in <code>processing</code> and the code comments assume retries that don&#x27;t exist</h3>
+<span class="sev sev-low">LOW</span>
+</div>
+<div class="finding-body">
+<p class="para ">The in-service retry loop only handles RESULT failures (resolved <code>succeeded</code>/<code>failed</code>/ <code>timed_out</code>/<code>circuit_open</code> outcomes). An unexpected throw is meant to propagate to BullMQ, but neither the producer nor the consumer configures BullMQ <code>attempts</code>, so there is no BullMQ-level retry in production — the job fails after one attempt and the order is left in <code>processing</code> with no worker-driven recovery to terminal.</p>
+<p class="label">Evidence</p>
+<div class="list"><ul><li>Consumer sets no retry: <code>apps/worker/src/app/queue/orders-process-worker.ts:50-59</code> constructs the <code>Worker</code> with only <code>connection</code> + <code>concurrency</code>.</li><li>Producer sets no retry: <code>apps/api/src/app/services/reserve-order-service.ts:262</code> <code>queue.add(ORDER_PROCESS_QUEUE, job, { jobId: facts.orderId })</code> — no <code>attempts</code>/<code>backoff</code>. BullMQ therefore defaults to a single attempt.</li><li>The code nonetheless reasons as if BullMQ retries exist: <code>apps/worker/src/app/services/order-process-service.ts:163-167</code> — &quot;An unexpected THROW propagates to BullMQ unchanged … so BullMQ-level retry and the Task 4.5 throw contract are preserved&quot;; <code>apps/worker/src/app/services/erp-confirmation.ts:15-19</code> similarly references BullMQ&#x27;s failure reporting carrying the throw.</li><li>The async-pipeline suite simulates retry by passing <code>attempts: 2</code> at <code>queue.add</code> (<code>apps/worker/tests/order-async-pipeline.integration.test.ts:296-300</code> and <code>:338-342</code>), which does not match the production producer. Its third case (<code>:326-366</code>) asserts a persistently-throwing job leaves the order permanently <code>processing</code>.</li></ul></div>
+<p class="para "><strong>Impact.</strong> Low probability in practice (the HTTP client translates every expected condition to a result and wraps <code>fetch</code> in try/catch, so throws require a genuinely unexpected error), and run finalization is protected by the drain-timeout policy (<code>apps/api/src/app/services/run-finalization-service.ts:214,228-243</code>) so a stranded order does not hang finalization. But the stranded order row never reaches <code>confirmed</code>/<code>failed</code>, and the &quot;preserved BullMQ-level retry&quot; comments are misleading about production behavior.</p>
+<p class="para "><strong>Suggested direction.</strong> Either configure a small BullMQ <code>attempts</code>/<code>backoff</code> on the producer (so the documented throw-retry path actually exists) and reconcile it with the in-service retry budget, or correct the comments to state that throws are terminal-at-the-job-level (operator-visible in the failed set) with no automatic re-drive. Consider a reconciliation/re-enqueue path for orders stuck in <code>processing</code>.</p>
+<hr class="sep"/>
+</div></article>
+</section>
+<section class="review-section" id="section-4" data-section="4">
+<div class="section-head"><span class="section-num">§ 4</span><h2 class="section-title">Run Lifecycle, Load Orchestration, And Finalization</h2></div>
+<p class="para scope">Scope: <code>apps/load-orchestrator</code> (traffic execution, k6 script/parser/aggregator, sinks), the API-owned run lifecycle/finalization/recovery/start services (<code>apps/api/src/app/services/run-*.ts</code>, <code>demo-run-start-service.ts</code>, <code>traffic-completion-ingestion-service.ts</code>, <code>load-metrics-ingestion-service.ts</code>, <code>recovery-service.ts</code>), <code>run-finalization-poller.ts</code>, the load-orchestrator client, metric ingestion, recovery state, and summary creation. (Verified-correct parts intentionally not enumerated: clean orchestrator-owns-only-traffic/API-owns-lifecycle split, no shell interpolation in k6 argv/script, idempotent lifecycle guards, <code>trafficEndedAt</code> vs <code>finalizedAt</code> kept distinct, traffic metrics kept separate from business outcomes, sold-out totals sourced from the Redis aggregate not per-rejection rows, k6 success → <code>draining</code> never → terminal, clean sold-out runs treated as expected via the response-callback override, recovery sourced from durable truth.)</p>
+<article class="finding" id="finding-10" data-sev="high" data-num="10">
+<div class="finding-head">
+<span class="fnum">F10</span>
+<span class="area-tag">Run lifecycle / load orchestration / finalization</span>
+<h3 class="finding-title">Finalization writes the summary and the lifecycle transition non-atomically; the <code>already_finalized</code> early-return then strands the run in <code>draining</code> forever</h3>
+<span class="sev sev-high">HIGH</span>
+</div>
+<div class="finding-body">
+<p class="para "><code>finalizeRun</code> writes the immutable summary, then — in separate statements — upserts the sold-out aggregate and transitions the lifecycle. If anything interrupts the run after the summary is written but before <code>completeRun</code>/<code>failRun</code> commits, the next poller tick observes the pre-existing summary, treats it as &quot;already finalized&quot;, and <strong>never retries the transition</strong>. The run is left permanently <code>draining</code>, which also blocks every subsequent start (the one-current-run gate treats <code>draining</code> as blocking).</p>
+<p class="label">Evidence</p>
+<div class="list"><ul><li><code>apps/api/src/app/services/run-finalization-service.ts:337</code> writes the summary (<code>writeRunSummary</code>); <code>:363-379</code> upserts the sold-out aggregate; <code>:382-385</code> only then calls <code>completeRun</code>/<code>failRun</code>. There is no transaction wrapping summary + transition.</li><li><code>apps/api/src/app/services/run-finalization-service.ts:356-359</code> early-returns <code>already_finalized</code> as soon as <code>written === false</code>, with the comment &quot;A summary already existed (already finalized). Do not re-transition or re-publish.&quot; That assumption (&quot;summary exists ⟹ run already terminalized&quot;) is false for this service&#x27;s own non-atomic path.</li><li>The transition primitives are independent conditional updates (<code>packages/db/src/run-lifecycle/run-lifecycle.ts:102-112</code>, <code>:124-139</code>), so a crash or a transient DB error between the summary write and the transition leaves the row <code>draining</code> with a summary already present. A transient failure of <code>completeRun</code> itself is caught per-run at <code>run-finalization-service.ts:197-203</code> (logged, <code>{ finalized: false }</code>) and is likewise never retried, because the following tick early-returns on the existing summary.</li><li>Nothing else recovers this state: startup reconciliation only fails <code>starting</code>/<code>active</code> runs (<code>packages/db/src/run-lifecycle/run-lifecycle.ts:184-199</code>); <code>draining</code> runs are intentionally left recoverable. So the stranded run survives restarts, and <code>findBlockingRun</code> includes <code>draining</code> (<code>packages/db/src/run-lifecycle/run-recovery.ts:19,270-278</code>), locking out new runs until a manual admin reset.</li><li>The idempotency test seeds exactly this state — a <code>draining</code> row plus a pre-existing summary — and asserts <code>already_finalized</code> without ever transitioning the row (<code>apps/api/tests/run-finalization.integration.test.ts:634-687</code>), codifying the faulty assumption. The &quot;second pass is a no-op&quot; test (<code>:408-421</code>) only passes because both passes run to completion (no interruption between summary and transition).</li></ul></div>
+<p class="para "><strong>Impact.</strong> A process kill, OOM, or a momentary DB error during the finalization window strands the current run in <code>draining</code> indefinitely and silently blocks all future demonstrations until an operator runs an admin reset. This is the single highest-risk correctness gap in the slice.</p>
+<p class="para "><strong>Suggested direction.</strong> Attempt the lifecycle transition regardless of whether the summary was freshly written (the transition is already idempotent, guarded on <code>status = &#x27;draining&#x27;</code>); use <code>written</code> only to decide logging/realtime re-publish. Alternatively wrap summary + transition in one transaction, or transition first and write the summary after.</p>
+</div></article>
+<article class="finding" id="finding-11" data-sev="medium" data-num="11">
+<div class="finding-head">
+<span class="fnum">F11</span>
+<span class="area-tag">Run lifecycle / load orchestration / finalization</span>
+<h3 class="finding-title"><code>trafficDeliveryStatus</code> carries mixed execution-vs-delivery vocabulary across lifecycle events; the API-classified delivery status is computed on the draining path and then discarded</h3>
+<span class="sev sev-medium">MEDIUM</span>
+</div>
+<div class="finding-body">
+<p class="para ">The same payload field <code>trafficDeliveryStatus</code> is populated with load-orchestrator <strong>execution</strong> status (<code>active</code>/<code>succeeded</code>/<code>failed</code>) on <code>run.active</code>/<code>run.draining</code>, but with the API-classified <strong>delivery</strong> status (<code>complete</code>/<code>warning</code>/<code>degraded</code>/<code>failed</code>) on <code>run.completed</code>/<code>run.failed</code>. On the draining path the service actually computes the classified delivery summary and then throws it away, emitting the raw execution status instead.</p>
+<p class="label">Evidence</p>
+<div class="list"><ul><li><code>apps/api/src/app/services/traffic-completion-ingestion-service.ts:120-125</code> computes <code>trafficDeliverySummary</code> via <code>classifyTrafficDelivery</code>, but uses it only in the log (<code>:182-184</code>). The <code>active → draining</code> transition stores <code>trafficStatus = completed ? &quot;succeeded&quot; : &quot;failed&quot;</code> (<code>:155-158</code>) and the <code>run.draining</code> realtime event puts that same execution value into <code>payload.trafficDeliveryStatus</code> (<code>:166-173</code>).</li><li><code>apps/api/src/app/services/demo-run-start-service.ts:456-463</code> emits <code>run.active</code> with <code>payload.trafficDeliveryStatus = delegation.trafficStatus</code>, i.e. the orchestrator&#x27;s <code>TrafficExecutionState.status</code> (<code>&quot;active&quot;</code>).</li><li><code>apps/api/src/app/services/run-finalization-service.ts:398-409</code> emits <code>run.completed</code>/<code>run.failed</code> with <code>payload.trafficDeliveryStatus = trafficDeliverySummary.trafficDeliveryStatus</code> — the classified delivery vocabulary.</li><li>The contract field is permissive (<code>packages/contracts/src/dashboard-events.ts:78</code> <code>z.string().min(1).optional()</code>), so this does not crash, but a dashboard consumer of <code>trafficDeliveryStatus</code> receives <code>&quot;active&quot;</code>/<code>&quot;succeeded&quot;</code>/<code>&quot;failed&quot;</code> early and <code>&quot;complete&quot;</code>/<code>&quot;warning&quot;</code>/<code>&quot;degraded&quot;</code>/ <code>&quot;failed&quot;</code> at termination from the same field.</li><li>Naming is also inconsistent with recovery: the DB column <code>demo_runs.trafficStatus</code> is documented as the execution status (<code>packages/db/src/run-lifecycle/run-lifecycle.ts:45-49</code>) and recovery surfaces it as <code>currentRun.trafficStatus</code> (<code>apps/api/src/app/services/recovery-service.ts:85</code>), while events call the overlapping concept <code>trafficDeliveryStatus</code>.</li></ul></div>
+<p class="para "><strong>Impact.</strong> The API-owned delivery classification (the whole point of &quot;the API — not the orchestrator — decides delivery quality&quot;) is invisible to the UI until the terminal event, and the field&#x27;s vocabulary is unstable across a run&#x27;s lifetime, so any UI logic keying off <code>trafficDeliveryStatus</code> must handle two unrelated vocabularies.</p>
+<p class="para "><strong>Suggested direction.</strong> Emit the classified <code>trafficDeliverySummary.trafficDeliveryStatus</code> (or omit the field until classified) on <code>run.draining</code>; reconcile the recovery field name/vocabulary with the event field, or introduce a distinct field for execution status vs delivery status.</p>
+</div></article>
+<article class="finding" id="finding-12" data-sev="medium" data-num="12">
+<div class="finding-head">
+<span class="fnum">F12</span>
+<span class="area-tag">Run lifecycle / load orchestration / finalization</span>
+<h3 class="finding-title">The one-current-run start gate is a TOCTOU read-then-write; concurrent starts can create two overlapping runs</h3>
+<span class="sev sev-medium">MEDIUM</span>
+</div>
+<div class="finding-body">
+<p class="para "><code>canStartRun()</code> reads for a blocking run with no lock, and the <code>starting</code> row is inserted much later in a separate call. Two start requests that both pass the gate before either inserts produce two recoverable runs, violating the documented one-current-run invariant.</p>
+<p class="label">Evidence</p>
+<div class="list"><ul><li><code>apps/api/src/app/services/demo-run-start-service.ts:271-275</code> calls <code>canStartRun()</code> (<code>findBlockingRun</code>, a plain <code>SELECT</code>); the run is only created at <code>:403-410</code> (<code>createDemoRun</code>), after preset resolution, cap validation, budget consumption, and product lookup.</li><li><code>createDemoRun</code> inserts an unconditional <code>starting</code> row with no guard against a second in-progress run (<code>packages/db/src/run-lifecycle/run-creation.ts:142-190</code>).</li><li><code>findCurrentRecoverableRun</code> returns the newest recoverable row (<code>packages/db/src/run-lifecycle/run-recovery.ts:94-104</code>), so the loser of the race is left as an orphaned <code>active</code> run that is still recoverable/consuming inventory.</li><li>The only concurrency control is the public run budget (<code>apps/api/src/app/services/demo-run-start-service.ts:366-377</code>), which is a per-visitor/per-window counter, not a one-run-in-flight guard. With a global budget ≥ 2 (or two distinct visitors), overlapping starts are permitted.</li></ul></div>
+<p class="para "><strong>Impact.</strong> Overlapping runs corrupt the benchmark: two k6 processes run at once, inventory accounting is split across two generated sale offers, and current-run recovery is ambiguous. For a product whose entire purpose is controlled, isolated load runs this is a meaningful invariant violation (low probability in single-operator use, higher under concurrent public traffic).</p>
+<p class="para "><strong>Suggested direction.</strong> Make the gate atomic with creation — e.g. a conditional <code>INSERT</code> guarded on no existing recoverable run, or an advisory/row lock held across the gate check and insert — or serialize starts through a single-flight lock.</p>
+</div></article>
+<article class="finding" id="finding-13" data-sev="low" data-num="13">
+<div class="finding-head">
+<span class="fnum">F13</span>
+<span class="area-tag">Run lifecycle / load orchestration / finalization</span>
+<h3 class="finding-title">The finalization poller does not serialize ticks; slow finalization lets overlapping ticks race on the same draining run</h3>
+<span class="sev sev-low">LOW</span>
+</div>
+<div class="finding-body">
+<p class="para "><code>setInterval</code> fires on a fixed cadence regardless of whether the previous tick resolved, and the handler is fire-and-forget.</p>
+<p class="label">Evidence</p>
+<div class="list"><ul><li><code>apps/api/src/app/run-finalization-poller.ts:42-44</code> schedules <code>void tick()</code> on a fixed <code>setInterval</code>; there is no guard preventing a tick from starting while the previous one is still awaiting <code>finalizeEligibleRuns</code>.</li></ul></div>
+<p class="para "><strong>Impact.</strong> If a tick runs longer than the poll interval (many draining runs, slow DB), two ticks overlap and both evaluate the same draining run before either transitions it. The idempotent guards (run-unique summary, <code>status = &#x27;draining&#x27;</code> transition guard) prevent duplicate artifacts in the common case, so this is benign on its own, but it multiplies redundant DB reads and — combined with Finding 10 — widens the window in which a summary exists without a transition.</p>
+<p class="para "><strong>Suggested direction.</strong> Self-schedule the next tick after the current one resolves (<code>setTimeout</code>-style re-arming) instead of fixed <code>setInterval</code>, or add an in-flight guard.</p>
+</div></article>
+<article class="finding" id="finding-14" data-sev="low" data-num="14">
+<div class="finding-head">
+<span class="fnum">F14</span>
+<span class="area-tag">Run lifecycle / load orchestration / finalization</span>
+<h3 class="finding-title">k6 metrics streaming re-reads and re-parses the whole output file every window (quadratic in run length); a partially-written line can be dropped from an intermediate window</h3>
+<span class="sev sev-low">LOW</span>
+</div>
+<div class="finding-body">
+<p class="para ">Each flush window reads the entire growing NDJSON file and slices by a positional sample count, which is O(samples × windows) over the run, and the positional slicing can permanently skip a sample that was partially written in one window and completed in the next.</p>
+<p class="label">Evidence</p>
+<div class="list"><ul><li><code>apps/load-orchestrator/src/app/services/traffic-execution-service.ts:91-133</code> <code>flushWindow</code> reads the full output file each call; the active-run loop (<code>:207-219</code>) invokes it every <code>metricStreamIntervalMs</code> (default 1 s, <code>apps/load-orchestrator/src/app/config.ts:147</code>).</li><li>For the documented <code>surge-10k</code> contract (~10 000 requests × 3 metrics ≈ 30 000 NDJSON lines), every 1 s window re-parses the whole growing file, so total parsing grows quadratically with run length.</li><li><code>parseK6Output</code> drops a malformed (partially-written) line (<code>apps/load-orchestrator/src/app/k6/output-parser.ts:33-66</code>). Because <code>flushWindow</code> slices new samples by a positional count (<code>traffic-execution-service.ts:105-108</code>), a line that was partial in window N (dropped, not counted) but complete in window N+1 can land before the slice offset and be skipped for that window.</li><li>The terminal summary is unaffected: <code>reportTrafficCompletion</code> re-reads and re-parses the entire file once (<code>traffic-execution-service.ts:142-183</code> → <code>aggregateTrafficSummary</code>), so the durable artifact is authoritative; only an intermediate realtime sample can be lost.</li></ul></div>
+<p class="para "><strong>Impact.</strong> CPU/memory pressure that scales with run size (relevant to the <code>surge-10k</code> demo contract), plus minor best-effort loss of an intermediate traffic sample. No effect on the final summary or any business invariant.</p>
+<p class="para "><strong>Suggested direction.</strong> Track a byte offset (or line count written by k6) and append-read from there instead of re-reading the whole file each window.</p>
+</div></article>
+<article class="finding" id="finding-15" data-sev="low" data-num="15">
+<div class="finding-head">
+<span class="fnum">F15</span>
+<span class="area-tag">Run lifecycle / load orchestration / finalization</span>
+<h3 class="finding-title">Finalization does not wait for post-confirmation notifications, so a run can finalize while notifications are still missing/dropped and <code>notificationsRecorded</code> undercounts</h3>
+<span class="sev sev-low">LOW</span>
+</div>
+<div class="finding-body">
+<p class="para ">The &quot;settled&quot; gate waits for queued/processing orders and unreconciled pending-persistence holds, but not for simulated notifications. Notifications are recorded as a separate best-effort step <em>after</em> the order reaches <code>confirmed</code>, so finalization can fire before they land (or after they were silently swallowed).</p>
+<p class="label">Evidence</p>
+<div class="list"><ul><li><code>apps/api/src/app/services/run-finalization-service.ts:219-226</code> defines <code>settled</code> as <code>queued === 0 &amp;&amp; processing === 0 &amp;&amp; pendingReconciliation === 0</code> — no notification condition. The summary then snapshots <code>notificationsRecorded</code> (<code>run-finalization-service.ts:296-315</code> via <code>getRunNotificationCount</code>).</li><li>The worker commits the <code>processing → confirmed</code> transition first, then records the simulated notification in a separate, best-effort, swallow-on-failure step (<code>apps/worker/src/app/services/order-process-service.ts:276-337</code>); a recording failure is logged and the order stays confirmed with no notification row.</li></ul></div>
+<p class="para "><strong>Impact.</strong> The immutable summary&#x27;s <code>notificationsRecorded</code> is a point-in-time best-effort count rather than a settled-state guarantee: a run that finalized immediately after confirmation (or after a dropped notification) reports fewer notifications than were intended. This matches the review prompt&#x27;s &quot;finalization happening while … missing notifications&quot; condition. Given notifications are documented as non-blocking background side effects this may be intentional, but it is an accounting gap worth confirming.</p>
+<p class="para "><strong>Suggested direction.</strong> Either accept and document <code>notificationsRecorded</code> as best-effort-at-finalization, or add a notification-pending condition to the settled gate if a complete count is required.</p>
+<hr class="sep"/>
+</div></article>
+</section>
+<section class="review-section" id="section-5" data-section="5">
+<div class="section-head"><span class="section-num">§ 5</span><h2 class="section-title">Dashboard, Realtime, Admin, And Run History</h2></div>
+<p class="para scope">Scope: <code>apps/web</code> (pages, <code>components/**</code>, <code>lib/**</code>, <code>app/api/admin/**</code> route handlers, <code>app/actions.ts</code>), the realtime client hook, admin session/proxy/read/control helpers, and the public-safe DTOs the dashboard renders. (Verified-correct parts intentionally not enumerated: same-origin browser traffic only — no <code>NEXT_PUBLIC_*</code> backend URLs, service tokens never reach the browser, admin privilege derived from the server-side session/service-token proxy rather than the request body, defense-in-depth <code>requireAdmin</code> on every mutation route, constant-time passphrase/signature compares, public-safe run-history DTO mirroring the immutable summary, thin proxy routes that forward unvalidated bodies for API-side validation.)</p>
+<article class="finding" id="finding-16" data-sev="high" data-num="16">
+<div class="finding-head">
+<span class="fnum">F16</span>
+<span class="area-tag">Dashboard / realtime / admin / history</span>
+<h3 class="finding-title">Live Watch observes a static seeded sale offer, not the active run&#x27;s generated offer</h3>
+<span class="sev sev-high">HIGH</span>
+</div>
+<div class="finding-body">
+<p class="para ">The Live Watch page reads inventory for the <strong>default seeded</strong> sale offer (<code>ACTIVE_SALE_OFFER_ID = 00000000-0000-4000-8000-000000000010</code>) via the env knob <code>DASHBOARD_WATCH_SALE_OFFER_ID</code>, and never resolves the <strong>active run&#x27;s generated</strong> sale offer. But every run start creates a brand-new generated sale offer with a database-generated random id, so during any demo run the inventory-drain / request-surge panels are pointed at the wrong offer — the static seeded offer has no reservations written against it while the run drains a completely different offer id. This is the core Live Watch experience being disconnected from the run it claims to watch.</p>
+<p class="para ">This was an explicitly deferred TODO that the slice-4 lifecycle phases (Tasks 7.4/10.3) were supposed to close, and they shipped without the dashboard-side wiring.</p>
+<p class="label">Evidence</p>
+<div class="list"><ul><li><code>apps/web/app/watch/page.tsx:39</code> resolves the watched offer from <code>getWatchSaleOfferId()</code> (env knob / seeded default) and feeds it to <code>getInventoryStatus(saleOfferId)</code> at <code>:41</code>, while <code>getDashboardRecovery()</code> at <code>:44</code> is fetched in the same <code>Promise.all</code> but its <code>currentRun.saleOfferId</code> is never used to pick the inventory target.</li><li><code>apps/web/lib/config.ts:18</code> defines <code>DEFAULT_WATCH_SALE_OFFER_ID</code> as the seeded offer; <code>:12-18</code> comment still claims &quot;The dashboard follows the active/current run once the run lifecycle lands (project_planning.md Tasks 7.4/10.3)&quot; — that follow-the-run wiring was never added.</li><li><code>working_docs/implementation_notes/phase-6.md:29</code> states the knob was a phase-6 placeholder and that &quot;real active-run resolution lands with Tasks 7.4/10.3.&quot; Those tasks are implemented, but the resolution never landed on the web side.</li><li><code>packages/db/src/run-lifecycle/run-creation.ts:151-160</code> inserts a generated <code>purpose = &#x27;generated_run&#x27;</code> sale offer with a DB <code>defaultRandom</code> id for every start; the seeded catalog offer is reused only as the parent product, never as the inventory target.</li><li>The active run&#x27;s offer id is available right where the page already reads: <code>packages/contracts/src/dashboard-recovery.ts:104</code> (<code>saleOfferId: Uuid.nullable()</code> on <code>CurrentDemoRun</code>), returned by the recovery read the page already performs.</li></ul></div>
+<p class="para "><strong>Impact.</strong> During any generated run the Live Watch inventory drain, remaining-stock, and sold-out panels reflect the static seeded offer (no live drain, or a stale/<code>not_initialized</code> 409) instead of the run&#x27;s actual stock. The realtime <code>inventory.updated</code>/ <code>inventory.sold_out_rejection</code> events are published to the <strong>global</strong> <code>dashboard-events</code> channel (not offer-scoped to the watched run), so the panel can incidentally tick from the run&#x27;s events, but the authoritative initial snapshot and any recovery refresh are for the wrong offer and there is no filtering to the active run. The headline &quot;watch the surge&quot; surface does not watch the run it is supposed to.</p>
+<p class="para "><strong>Suggested direction.</strong> Resolve the inventory target from the recovery snapshot first: fetch <code>getDashboardRecovery()</code>, and if <code>hasCurrentRun &amp;&amp; currentRun.saleOfferId</code> use that for the inventory read (fall back to the env knob only when there is no current run). If the run-scoped follow is intentionally deferred, update the <code>config.ts</code>/phase-6 claims and document the manual env override as the only supported path.</p>
+</div></article>
+<article class="finding" id="finding-17" data-sev="medium" data-num="17">
+<div class="finding-head">
+<span class="fnum">F17</span>
+<span class="area-tag">Dashboard / realtime / admin / history</span>
+<h3 class="finding-title">Public run start promises a <code>/watch</code> redirect that never happens</h3>
+<span class="sev sev-medium">MEDIUM</span>
+</div>
+<div class="finding-body">
+<p class="para ">On a successful public preset start the toast says &quot;Redirecting to watch…&quot; but the handler returns immediately and never navigates. The server action only calls <code>revalidatePath(&quot;/&quot;)</code>, which re-renders the home page into its overlap/active state, so the operator is left on the home page despite being told they are being sent to the live view.</p>
+<p class="label">Evidence</p>
+<div class="list"><ul><li><code>apps/web/components/load-run-trigger.tsx:35</code> emits <code>toast.success(\</code>…Redirecting to watch…\<code>)</code> and <code>:36</code> <code>return</code>s — no <code>useRouter().push(&quot;/watch&quot;)</code>, and the component does not even import a router.</li><li><code>apps/web/app/actions.ts:50-52</code> is the only post-success effect: <code>if (outcome.state === &quot;started&quot;) revalidatePath(&quot;/&quot;)</code>. That revalidates the current (home) route; it does not change the route.</li></ul></div>
+<p class="para "><strong>Impact.</strong> The user is misled: the success message promises navigation that does not occur, and the live results only appear if the user manually clicks &quot;Watch&quot;. A reviewer following the public demo path will reasonably believe the start silently failed.</p>
+<p class="para "><strong>Suggested direction.</strong> Either redirect to <code>/watch</code> on success (the action can return the run id and the trigger can <code>router.push(&quot;/watch&quot;)</code>, or the trigger can read the outcome and navigate), or change the copy to reflect what actually happens (e.g. &quot;Run started — open Watch to see it live&quot;).</p>
+</div></article>
+<article class="finding" id="finding-18" data-sev="medium" data-num="18">
+<div class="finding-head">
+<span class="fnum">F18</span>
+<span class="area-tag">Dashboard / realtime / admin / history</span>
+<h3 class="finding-title">No client-side recovery re-fetch on SSE reconnect or terminal run events; recovery-sourced counts freeze for the whole watch session</h3>
+<span class="sev sev-medium">MEDIUM</span>
+</div>
+<div class="finding-body">
+<p class="para ">The realtime contract documents <code>/dashboard/recovery</code> as the authoritative reconnect/refresh path (&quot;The dashboard discards live events received while a recovery snapshot is in flight and runs a follow-up recovery if anything arrived during that window; a received terminal run event triggers one final recovery for that run ID&quot;). The dashboard client implements none of this: recovery is read exactly once at server render and passed down as a frozen prop, EventSource auto-reconnect only flips a boolean, and terminal <code>run.completed</code>/<code>run.failed</code> events are reducer no-ops.</p>
+<p class="label">Evidence</p>
+<div class="list"><ul><li><code>packages/contracts/src/dashboard-events.ts:9-18</code> states the recovery-on-reconnect / final-recovery contract the client is expected to honor.</li><li><code>apps/web/components/watch/live-watch.tsx:36-80</code> receives <code>recovery</code> only via props (server-fetched once); there is no client-side re-fetch. The connection effect at <code>:61-63</code> only dispatches <code>{ type: &quot;connection&quot;, connected }</code>.</li><li><code>apps/web/components/realtime/use-dashboard-events.ts:62-99</code> exposes no reconnect/recovery callback; on a dropped stream the status oscillates <code>error → open</code> via native auto-reconnect but nothing triggers a fresh recovery read, so any events missed during the gap are permanently lost from the UI.</li><li><code>apps/web/lib/dashboard-state.ts:368-374</code> — terminal run events (<code>run.completed</code>, <code>run.failed</code>) and <code>run.starting</code>/<code>active</code>/<code>draining</code> all hit the no-op <code>default</code> branch, so the watch view never reflects that the run finished or changed phase without a manual full-page refresh.</li><li><code>apps/web/components/watch/completion-outcomes-panel.tsx:55-56</code> renders confirmed/failed/processing counts straight from the frozen <code>recovery.data.securedVsConfirmed.ordersByStatus</code>, so during an active session these headline numbers never advance even though <code>order.confirmed</code>/<code>order.failed</code> events are arriving (only the session-since-load deltas in the connection banner update).</li></ul></div>
+<p class="para "><strong>Impact.</strong> After an SSE drop, the &quot;since view load&quot; burst counters (<code>secured</code>/ <code>rejected</code>/<code>queued</code>/<code>confirmed</code>) and the recovery-sourced completion counts are understated/stale until a manual reload. After a run finalizes the Live Watch page gives no indication the run ended. (The absolute remaining/reserved stock and queue depth self-correct on reconnect because their events carry absolute values, and a manual page reload recovers everything — so the blast radius is the live &quot;burst&quot; and completion panels plus lifecycle surfacing, not the durable numbers.)</p>
+<p class="para "><strong>Suggested direction.</strong> Treat the realtime stream as hints per the contract: on (re)connect and on terminal <code>run.*</code> events, trigger a fresh recovery read (e.g. via <code>router.refresh()</code> or a client-side recovery fetch) and reconcile, discarding in-flight live events during that window. At minimum, re-fetch recovery once on the first <code>open</code> after an <code>error</code> and on <code>run.completed</code>/<code>run.failed</code>.</p>
+</div></article>
+<article class="finding" id="finding-19" data-sev="low" data-num="19">
+<div class="finding-head">
+<span class="fnum">F19</span>
+<span class="area-tag">Dashboard / realtime / admin / history</span>
+<h3 class="finding-title">&quot;Fail-closed&quot; secret strength check accepts the committed dev sentinel; no startup validation forces an override</h3>
+<span class="sev sev-low">LOW</span>
+</div>
+<div class="finding-body">
+<p class="para "><code>isSecretStrongEnough</code> gates admin-session signing/verification (and visitor-cookie issuance) and is documented as a &quot;fail closed&quot; guard against an unverifiable session secret. But it only checks byte length (≥ 16), and every committed dev sentinel it falls back to is longer than 16 bytes, so the guard is satisfied by the publicly-known defaults. A deployment that forgets to override the env values silently mints and accepts admin sessions signed with the committed secret (and accepts the committed passphrase at login), with no startup check rejecting it. (Primarily a config/operations hardening gap that overlaps slice 7&#x27;s scope; the local dockerized runtime intentionally uses the sentinels, so this is flagged for awareness rather than as a local-runtime break.)</p>
+<p class="label">Evidence</p>
+<div class="list"><ul><li><code>apps/web/lib/config.ts:83-86</code> <code>isSecretStrongEnough</code> is <code>Buffer.byteLength(secret) &gt;= 16</code> only.</li><li><code>apps/web/lib/config.ts:61-62</code> falls back to <code>&quot;change-me-admin-passphrase&quot;</code> / <code>&quot;change-me-admin-session-secret&quot;</code> (30 bytes — passes the check); <code>:79</code> <code>&quot;change-me-public-client-cookie-secret&quot;</code> and <code>:113</code> <code>&quot;change-me-shared-control-token&quot;</code> likewise.</li><li><code>apps/web/lib/admin-session.ts:80</code> (<code>createAdminSession</code> returns <code>null</code> only when too short) and <code>:129</code> (<code>verifyAdminSession</code> returns <code>false</code> only when too short) therefore do not fail closed when the default sentinel is in use. There is no startup validation anywhere that rejects the sentinel in a non-local deployment.</li></ul></div>
+<p class="para "><strong>Impact.</strong> The advertised &quot;fail closed rather than issuing unverifiable sessions&quot; guarantee is defeated for the common misconfiguration (unset secret). Anyone who reads the repo can log into / forge admin sessions in such a deployment, after which the service-token proxy faithfully forwards with full privilege.</p>
+<p class="para "><strong>Suggested direction.</strong> Either reject the known sentinels explicitly (e.g. a deny-list of the <code>change-me-*</code> values treated as &quot;not configured&quot;), or add startup validation that fails closed when <code>NODE_ENV=production</code> and any of the secrets/tokens is unset or equal to its sentinel.</p>
+</div></article>
+<article class="finding" id="finding-20" data-sev="low" data-num="20">
+<div class="finding-head">
+<span class="fnum">F20</span>
+<span class="area-tag">Dashboard / realtime / admin / history</span>
+<h3 class="finding-title">Public &quot;Demo Picker&quot; cards are decorative: fictional preset slugs and no start action</h3>
+<span class="sev sev-low">LOW</span>
+</div>
+<div class="finding-body">
+<p class="para ">The home page is headed &quot;Public Demo Picker&quot; and lists three &quot;Available demo runs&quot; (<code>scarcity-burst</code>, <code>steady-drain</code>, <code>erp-stall</code>), but those slugs do not correspond to any documented preset (the demo contract presets are <code>preview-1k</code>, <code>surge-5k</code>, <code>surge-10k</code>, <code>idempotency-check-200</code>, <code>public-custom</code>), and each card&#x27;s &quot;Select run&quot; button is just a <code>&lt;Link href=&quot;/watch&quot;&gt;</code> that starts nothing and carries no selection. The only real public start on the page is the separate <code>RunStartPanel</code>, whose trigger is hardcoded to <code>preview-1k</code>. The picker surface therefore neither picks nor starts the documented presets.</p>
+<p class="label">Evidence</p>
+<div class="list"><ul><li><code>apps/web/app/page.tsx:18-37</code> defines <code>DEMO_RUNS</code> with slugs <code>scarcity-burst</code> / <code>steady-drain</code> / <code>erp-stall</code> (not the documented preset slugs).</li><li><code>apps/web/app/page.tsx:65-70</code> renders each card&#x27;s CTA as <code>&lt;Button asChild&gt;&lt;Link href=&quot;/watch&quot;&gt;Select run&lt;/Link&gt;&lt;/Button&gt;</code> — navigation only, no run start and no per-card selection state.</li><li><code>apps/web/components/run-start-panel.tsx:67-71</code> (and <code>apps/web/components/load-run-trigger.tsx:25</code> default <code>presetSlug = &quot;preview-1k&quot;</code>) is the sole actual start, fixed to <code>preview-1k</code>.</li></ul></div>
+<p class="para "><strong>Impact.</strong> The public picker is misleading: the showcased runs cannot be started from their cards, and their slugs do not exist as presets. A reviewer/demo viewer who expects the documented presets on the public surface will not find them and cannot start them from the picker.</p>
+<p class="para "><strong>Suggested direction.</strong> Either drive the picker cards from the real preset list and have each card start its preset (via the existing public start action), or relabel the cards as static examples and make clear the start happens through the Load-Run Controls panel, and align the card slugs/names with the documented preset contract.</p>
+<hr class="sep"/>
+</div></article>
+</section>
+<section class="review-section" id="section-6" data-section="6">
+<div class="section-head"><span class="section-num">§ 6</span><h2 class="section-title">Shared Contracts, Logging, And Cross-Service Vocabulary</h2></div>
+<p class="para scope">Scope: <code>packages/contracts</code> (vocabularies, Zod schemas, shared types, service-boundary payloads) and <code>packages/logger</code> (correlation + health builders), plus how <code>apps/*</code> emit and consume those vocabularies. (Verified-correct parts intentionally not enumerated: the DB pg enums are derived directly from the vocabulary constants, every <code>DASHBOARD_EVENT_NAMES</code> member has a matching <code>DashboardRealtimeEventSchema</code> variant, the k6 buy body/headers match <code>BuyRequestSchema</code>, the web <code>api-client.ts</code> parses every projection through the shared contract schema rather than duplicating shapes, and worker/API realtime projections consistently thread <code>correlationId</code>/<code>runId</code>.)</p>
+<article class="finding" id="finding-21" data-sev="medium" data-num="21">
+<div class="finding-head">
+<span class="fnum">F21</span>
+<span class="area-tag">Shared contracts / logging / vocabulary</span>
+<h3 class="finding-title">Stable error codes returned by every service are absent from the documented <code>ERROR_CODES</code> vocabulary</h3>
+<span class="sev sev-medium">MEDIUM</span>
+</div>
+<div class="finding-body">
+<p class="para "><code>packages/contracts/src/errors.ts</code> owns <code>ERROR_CODES</code> as the &quot;documented baseline set&quot; of stable, machine-readable error codes and ships the shared <code>ErrorPayloadSchema</code> every HTTP error response conforms to. A whole family of codes now in production use — including a fundamental cross-service code — is missing from that baseline, and <code>ErrorPayloadSchema.code</code> is typed as the permissive <code>StableCode = z.string().min(1)</code>, so neither the baseline nor the implemented extras are enumerated at the contract boundary.</p>
+<p class="label">Evidence</p>
+<div class="list"><ul><li><code>packages/contracts/src/errors.ts:22-48</code> — <code>ERROR_CODES</code> enumerates 20 codes; there is no <code>not_found</code>, no <code>delegation_failed</code>, no <code>run_not_deletable</code>, no <code>queue_not_configured</code>, and none of the <code>*_unavailable</code> family.</li><li><code>packages/contracts/src/errors.ts:70-72</code> + <code>packages/contracts/src/common.ts:38</code> — <code>ErrorPayloadSchema.code: StableCode</code> where <code>StableCode = z.string().min(1)</code>, so any non-empty string validates as an error code.</li><li><code>not_found</code> is the headline: it is the code returned by <strong>all three services&#x27;</strong> 404 not-found handlers (<code>apps/api/src/app/plugins/error-handler.ts:66</code>, <code>apps/mock-erp/src/app/plugins/error-handler.ts:65</code>, <code>apps/load-orchestrator/src/app/plugins/error-handler.ts:66</code>) and by domain routes (<code>apps/api/src/app/routes/orders.ts:19</code>, <code>apps/api/src/app/services/demo-run-start-service.ts:110</code>, <code>apps/load-orchestrator/src/app/routes/run-control.ts:80</code>), and is asserted by tests (<code>apps/load-orchestrator/tests/run-control-routes.unit.test.ts:263</code>, <code>apps/api/tests/demo-run-start.integration.test.ts:310</code>, <code>apps/api/tests/buy-path.integration.test.ts:384</code>).</li><li>The valid-but-down projection codes the dashboard depends on are also undocumented: <code>recovery_unavailable</code> (<code>apps/api/src/app/services/recovery-service.ts:45</code>, returned by <code>GET /dashboard/recovery</code> via <code>apps/api/src/app/routes/recovery.ts:17</code>), <code>queue_not_configured</code> (<code>apps/api/src/app/services/queue-health-service.ts:41</code>), <code>erp_health_unavailable</code> (<code>apps/api/src/app/services/erp-health-service.ts:44</code>), plus <code>reset_unavailable</code>, <code>maintenance_unavailable</code>, <code>run_history_unavailable</code>, <code>traffic_completion_ingestion_unavailable</code>, <code>load_metrics_ingestion_unavailable</code>, and <code>run_not_deletable</code>.</li><li><code>delegation_failed</code> (<code>apps/api/src/app/load-orchestrator/load-orchestrator-client.ts:67,102,113,117</code>) is the documented run-start delegation failure surfaced to the operator but absent from the vocabulary.</li></ul></div>
+<p class="para "><strong>Impact.</strong> The cross-service error-code contract (slice 6&#x27;s core concern) has drifted behind the implementation. A consumer that builds against <code>ERROR_CODES</code> / <code>ErrorCode</code> (typed switch, generated client, test fixtures) cannot see <code>not_found</code> — the single most pervasive error code, returned by every service&#x27;s 404 path — nor the <code>*_unavailable</code> family that the web <code>api-client.ts</code> actively keys on to map 503→<code>unavailable</code>. The permissive <code>StableCode</code> typing means a typo&#x27;d or drifting code (e.g. <code>not_found</code> vs <code>notfound</code>) would silently validate and reach clients.</p>
+<p class="para "><strong>Suggested direction.</strong> Promote the stabilized codes into <code>ERROR_CODES</code> (at minimum <code>not_found</code> and the <code>*_unavailable</code> / <code>delegation_failed</code> codes that are already tested and consumed by the dashboard), and tighten <code>ErrorPayloadSchema.code</code> toward an enum-or-baseline check so the vocabulary is enforced at the contract boundary rather than only documented.</p>
+</div></article>
+<article class="finding" id="finding-22" data-sev="medium" data-num="22">
+<div class="finding-head">
+<span class="fnum">F22</span>
+<span class="area-tag">Shared contracts / runtime / ops <em>(merged: slices 6 &amp; 7)</em></span>
+<h3 class="finding-title">Worker readiness check <code>notification_record_worker_running</code> is contracted and documented but never emitted</h3>
+<span class="sev sev-medium">MEDIUM</span>
+</div>
+<div class="finding-body">
+<p class="para "><em>(Consolidated from Slice 6 Finding 2 and Slice 7 Finding 3 — the same defect reported under both the contracts/vocabulary area and the runtime/ops area.)</em></p>
+<p class="para ">The readiness vocabulary advertises a <code>notification_record_worker_running</code> check as part of a healthy worker, but the worker readiness service never reports it. Phase 8 notification recording landed as <strong>inline</strong> behavior inside order processing, not a separate worker loop, so the check name is stale relative to the implemented design.</p>
+<p class="label">Evidence</p>
+<div class="list"><ul><li><code>packages/contracts/src/health.ts:63-70</code> — <code>READINESS_CHECK_NAMES.worker</code> lists six checks, the last being <code>notification_record_worker_running</code>.</li><li><code>docs/local_development.md:213</code> — the &quot;Healthy readiness includes these checks&quot; table lists <code>notification_record_worker_running=ok</code> for the Worker.</li><li><code>apps/worker/src/app/services/readiness-service.ts:81</code> — returns <code>[databaseConfigured, redisConfigured, mockErpConfigured, circuitBreaker, workerRunning]</code> (five checks); <code>notification_record_worker_running</code> is never produced.</li><li><code>apps/worker/src/app/services/readiness-service.ts:14-17</code> — comment claims the check &quot;lands with its phase (Phase 8)&quot; and is &quot;NOT reported here yet&quot;, but Phase 8 notification recording is implemented: it runs inline inside the order-process worker (<code>apps/worker/src/app/services/order-process-service.ts:308-336</code>) after a fresh <code>confirmed</code> transition.</li><li><code>apps/worker/src/index.ts</code> — no separate notification BullMQ worker is constructed; the worker composition root builds only the <code>orders:process</code> consumer (<code>apps/worker/src/index.ts:113-117</code>). So there is no distinct &quot;notification record worker&quot; loop whose running state the documented check could reflect.</li></ul></div>
+<p class="para "><strong>Impact.</strong> Contract/vocabulary/docs drift on the readiness surface: the documented check list (6) disagrees with the implemented response (5), and the check name (<code>..._worker_running</code>) advertises a separate worker process that was never built — notification recording is folded into the order-process worker. An operator or monitor relying on the documented vocabulary (or comparing <code>GET /health/ready</code> / <code>pnpm health:check</code> output against the documented table) to assert the notification path is alive gets no signal, and any consumer that validates worker readiness against <code>READINESS_CHECK_NAMES.worker</code> will fail to find it. Because the notification work is inline (covered by <code>order_process_worker_running</code>), this is a vocabulary/docs drift rather than a missing safety check — but the drift is real and misleads operators.</p>
+<p class="para "><strong>Suggested direction.</strong> Reconcile the vocabulary with the implementation: either drop <code>notification_record_worker_running</code> from <code>READINESS_CHECK_NAMES.worker</code> and the docs table (notification recording is covered by <code>order_process_worker_running</code>), or rename it to reflect the inline behavior; and update the readiness-service comment, which is now stale relative to Phase 8. If a distinct notification loop is intended later, track it explicitly.</p>
+</div></article>
+<article class="finding" id="finding-23" data-sev="low" data-num="23">
+<div class="finding-head">
+<span class="fnum">F23</span>
+<span class="area-tag">Shared contracts / logging / vocabulary</span>
+<h3 class="finding-title"><code>IsoTimestamp</code> accepts any non-empty string, so timezone clarity is not enforced at the contract boundary</h3>
+<span class="sev sev-low">LOW</span>
+</div>
+<div class="finding-body">
+<p class="para ">The shared timestamp schema used for every <code>occurredAt</code> / <code>capturedAt</code> / <code>timestamp</code> / <code>securedAt</code> / <code>expiresAt</code> field validates only <code>z.string().min(1)</code>, despite the convention doc and the field comments requiring ISO-8601 UTC <code>Z</code> strings.</p>
+<p class="label">Evidence</p>
+<div class="list"><ul><li><code>packages/contracts/src/common.ts:17</code> — <code>export const IsoTimestamp = z.string().min(1);</code> (comment admits it &quot;Accepts any string; callers validate semantics where required&quot;).</li><li>Consumed as the timestamp type across the contract surface: <code>ErrorPayloadSchema.timestamp</code> (<code>errors.ts:80</code>), every buy response <code>occurredAt</code>/<code>securedAt</code>/<code>expiresAt</code> (<code>buy.ts</code>), <code>ReadinessResponseSchema.timestamp</code> / <code>LivenessResponseSchema.timestamp</code> (<code>health.ts</code>), <code>OrderEventRecordSchema.occurredAt</code>/<code>createdAt</code> (<code>lifecycle.ts:109-110</code>), and every dashboard realtime/metric <code>occurredAt</code>.</li></ul></div>
+<p class="para "><strong>Impact.</strong> Producers emit UTC <code>Z</code> strings today, so there is no observable bug — but nothing in the contract catches a producer that emits a naive local timestamp, a non-ISO string, or a millisecond-epoch. Such a value would pass <code>IsoTimestamp</code> and reach clients/the dashboard, directly the &quot;timestamps without timezone clarity&quot; risk. Because timestamp parsing is centralized here, a single regex/<code>z.string().datetime()</code> tightening would protect every boundary at once.</p>
+<p class="para "><strong>Suggested direction.</strong> Tighten <code>IsoTimestamp</code> (e.g. <code>z.string().datetime()</code> or an ISO-8601-with-offset regex) so the documented UTC-<code>Z</code>/offset invariant is enforced at the contract boundary rather than left to each producer&#x27;s discipline.</p>
+</div></article>
+<article class="finding" id="finding-24" data-sev="low" data-num="24">
+<div class="finding-head">
+<span class="fnum">F24</span>
+<span class="area-tag">Shared contracts / logging / vocabulary</span>
+<h3 class="finding-title"><code>OrderReadResponseSchema</code> types order/reservation <code>status</code> as a free-form string instead of the canonical enum schemas</h3>
+<span class="sev sev-low">LOW</span>
+</div>
+<div class="finding-body">
+<p class="para ">The GET <code>/orders/:publicOrderId</code> response defines both the order and reservation <code>status</code> fields as <code>z.string().min(1)</code> rather than the shared <code>OrderStatusSchema</code> / <code>ReservationStatusSchema</code>, so the response can advertise a non-canonical lifecycle value.</p>
+<p class="label">Evidence</p>
+<div class="list"><ul><li><code>apps/api/src/app/services/order-query-service.ts:29</code> — order <code>status: z.string().min(1)</code>.</li><li><code>apps/api/src/app/services/order-query-service.ts:37</code> — reservation <code>status: z.string().min(1)</code>.</li><li>Contrast the canonical enums in <code>packages/contracts/src/enums.ts:36</code> (<code>OrderStatusSchema</code>) and <code>:34</code> (<code>ReservationStatusSchema</code>), which the DB columns (<code>packages/db/src/schema.ts:215,185</code>) and every other contract surface already use.</li></ul></div>
+<p class="para "><strong>Impact.</strong> The file comment marks this as a deliberately temporary, non-cross-service schema (it is not yet consumed by the frontend), so impact is low today. But it is exactly the &quot;lifecycle values differing between contracts, services&quot; drift the slice targets: a single read path can return a status string outside the documented vocabulary with no validation, and the loose typing will silently propagate if the schema is promoted to shared contracts later.</p>
+<p class="para "><strong>Suggested direction.</strong> Type the two <code>status</code> fields with <code>OrderStatusSchema</code> and <code>ReservationStatusSchema</code> (or <code>.nullable()</code> variants) so the read path cannot emit a non-canonical lifecycle value, matching the rest of the codebase.</p>
+<hr class="sep"/>
+</div></article>
+</section>
+<section class="review-section" id="section-7" data-section="7">
+<div class="section-head"><span class="section-num">§ 7</span><h2 class="section-title">Runtime, Configuration, And Operations</h2></div>
+<p class="para scope">Scope: compose files, Dockerfiles, Caddy config, root/package scripts, env examples, health/readiness, smoke checks, Dev Container, and test-infrastructure isolation. (Verified-correct parts intentionally not enumerated: every service runs in its own container, k6 baked into the load-orchestrator image, all internal service-to-service URLs use Compose DNS, <code>/dashboard/events</code> routed to the API via Caddy, <code>surge-10k</code> preserved at 10,000 buyers, <code>runtime:setup</code> runs migrate→seed idempotently, <code>runtime:reset</code>/ <code>maintenance:cleanup-runs</code> delegate to API-owned endpoints without deleting history, test-env port-isolation guard + per-package DB/Redis rewrite, FLUSHALL confined to <code>reset-test-infra.mjs</code>, API readiness honestly probes DB+queue, <code>.env</code> git-ignored and <code>.dockerignore</code> strips secrets.)</p>
+<blockquote>Note: Slice 7 Finding 3 (<code>notification_record_worker_running</code> readiness check) is the same defect as Slice 6 Finding 2 and is consolidated above as <strong>Finding 22</strong>. It is not repeated here.</blockquote>
+<article class="finding" id="finding-25" data-sev="medium" data-num="25">
+<div class="finding-head">
+<span class="fnum">F25</span>
+<span class="area-tag">Runtime / configuration / ops</span>
+<h3 class="finding-title">Documented per-package test commands do not exist</h3>
+<span class="sev sev-medium">MEDIUM</span>
+</div>
+<div class="finding-body">
+<p class="para "><code>docs/local_development.md</code> &quot;Useful package commands&quot; advertises five per-package test entry points that none of the packages define. Running any of them fails immediately.</p>
+<p class="label">Evidence</p>
+<div class="list"><ul><li><code>docs/local_development.md:300-308</code> lists:<ul><li><code>pnpm --filter api test:api</code> (line 304)</li><li><code>pnpm --filter worker test:integration</code> (line 305)</li><li><code>pnpm --filter mock-erp test:unit</code> (line 306)</li><li><code>pnpm --filter load-orchestrator test:api</code> (line 307)</li><li><code>pnpm --filter web test:api</code> (line 308)</li></ul></li><li>The actual package scripts only define <code>dev</code>/<code>build</code>/<code>start</code>/<code>type-check</code> for <code>apps/{api,worker,load-orchestrator,mock-erp}/package.json</code>, and <code>apps/web/package.json</code> only defines <code>test:unit</code>/<code>test:watch</code> — there is no <code>test:api</code>, <code>test:integration</code>, or service-level <code>test:unit</code> script on any of them.</li><li>Confirmed at runtime: <pre class="codeblock"><code>  $ pnpm --filter @checkout-surge/api test:api        → ERR_PNPM_RECURSIVE_RUN_NO_SCRIPT
+  $ pnpm --filter @checkout-surge/mock-erp test:unit  → ERR_PNPM_RECURSIVE_RUN_NO_SCRIPT
+  $ pnpm --filter @checkout-surge/web test:api        → ERR_PNPM_RECURSIVE_RUN_NO_SCRIPT
+  </code></pre></li><li>The real contract is the root scripts (<code>package.json:40-42</code>): <code>test:api</code> / <code>test:worker</code> / <code>test:integration</code> drive each package through <code>scripts/run-with-test-env.mjs</code> + <code>vitest.integration.config.ts</code>, and <code>test:unit</code> (<code>package.json:20</code>) sweeps mock-erp/load-orchestrator/etc. unit tests via the root <code>vitest.config.ts</code>. The docs table simply does not match it.</li></ul></div>
+<p class="para "><strong>Impact.</strong> A reviewer/contributor following the documented &quot;Useful package commands&quot; hits <code>ERR_PNPM_RECURSIVE_RUN_NO_SCRIPT</code> for 5 of the 7 listed commands and has no documented pointer to the real <code>test:api</code>/<code>test:worker</code>/<code>test:integration</code>/<code>test:unit</code> root entry points for service tests. The command contract the review helper calls out as a stability requirement is stale here.</p>
+<p class="para "><strong>Suggested direction.</strong> Replace the &quot;Useful package commands&quot; table with the actual root commands (<code>pnpm test:api</code>, <code>pnpm test:worker</code>, <code>pnpm test:integration</code>, <code>pnpm test:unit</code>, and the existing <code>pnpm --filter @checkout-surge/db db:migrate</code>/<code>seed</code> and <code>pnpm --filter @checkout-surge/web test:unit</code>), or add the missing per-package scripts that delegate to the test-env runner.</p>
+</div></article>
+<article class="finding" id="finding-26" data-sev="lowmed" data-num="26">
+<div class="finding-head">
+<span class="fnum">F26</span>
+<span class="area-tag">Runtime / configuration / ops</span>
+<h3 class="finding-title">Load-orchestrator Dockerfile builds the entire workspace</h3>
+<span class="sev sev-lowmed">LOW–MEDIUM</span>
+</div>
+<div class="finding-body">
+<p class="para "><code>apps/load-orchestrator/Dockerfile</code> runs an unfiltered <code>pnpm build</code>, so the load-orchestrator image build compiles every package in the monorepo (including the Next.js web bundle, api, worker, mock-erp, db) instead of just its own dependency closure. Every other Dockerfile uses the scoped <code>--filter=&lt;pkg&gt;...</code> form.</p>
+<p class="label">Evidence</p>
+<div class="list"><ul><li><code>apps/load-orchestrator/Dockerfile:36-38</code>: <pre class="codeblock"><code>  COPY . .
+  RUN pnpm install --frozen-lockfile --offline \
+   &amp;&amp; pnpm build
+  </code></pre></li><li>Contrast the scoped form used everywhere else:<ul><li><code>docker/Dockerfile.node-service:44-45</code> → <code>pnpm --filter=${SERVICE_NAME}... build</code></li><li><code>apps/web/Dockerfile:33-34</code> → <code>pnpm --filter=@checkout-surge/web... build</code></li><li><code>packages/db/Dockerfile:30-31</code> → <code>pnpm --filter=@checkout-surge/db... build</code></li></ul></li><li>The load-orchestrator only depends on <code>@checkout-surge/contracts</code> + <code>@checkout-surge/logger</code> (<code>apps/load-orchestrator/package.json</code>), so <code>pnpm --filter=@checkout-surge/load-orchestrator... build</code> is sufficient.</li></ul></div>
+<p class="para "><strong>Impact.</strong> Wasted build time/cache churn on every load-orchestrator image build, and — more importantly — the load-orchestrator image build is now coupled to packages it never ships: a build break in <code>apps/web</code> (or any other unrelated package) blocks the load-orchestrator image even though it does not consume it. This contradicts the explicit design rationale applied to the setup image (&quot;DB-only Docker target, so seed changes do not rebuild the … application bundles&quot;, <code>packages/db/Dockerfile:5-7</code>).</p>
+<p class="para "><strong>Suggested direction.</strong> Change the RUN to <code>pnpm --filter=@checkout-surge/load-orchestrator... build</code> so only contracts/logger/load-orchestrator are built, matching the other Dockerfiles.</p>
+</div></article>
+<article class="finding" id="finding-27" data-sev="lowmed" data-num="27">
+<div class="finding-head">
+<span class="fnum">F27</span>
+<span class="area-tag">Runtime / configuration / ops</span>
+<h3 class="finding-title">Compose project names are NOT worktree-isolated despite the docs guaranteeing it</h3>
+<span class="sev sev-lowmed">LOW–MEDIUM</span>
+</div>
+<div class="finding-body">
+<p class="para ">Both runtime docs state Compose project names are &quot;branch-specific by default so separate worktrees do not share project runtime state.&quot; The implementation uses a single static branch-named default per file, so two worktrees of the <strong>same</strong> branch share the same Compose project, containers, and volumes unless the operator manually overrides the project name per worktree.</p>
+<p class="label">Evidence</p>
+<div class="list"><ul><li><code>docker-compose.yml:12</code> — <code>name: ${COMPOSE_PROJECT_NAME:-checkout-surge-glm-52}</code></li><li><code>.devcontainer/docker-compose.yml:13</code> — <code>name: ${DEVCONTAINER_COMPOSE_PROJECT_NAME:-checkout-surge-glm-52-devcontainer}</code></li><li>The promise: <code>docs/local_development.md:121</code> (&quot;Compose project names are branch-specific by default to keep local runtime state isolated across Git worktrees&quot;) and <code>docs/runtime_topology.md:104</code> (&quot;Compose project names are branch-specific by default so separate worktrees do not share project runtime state&quot;). The <code>glm-52</code> suffix is the <em>branch</em> identifier, not a worktree identifier.</li></ul></div>
+<p class="para "><strong>Impact.</strong> With two worktrees of the same branch on one host (a documented supported workflow), <code>pnpm runtime:up</code> / <code>runtime:reset</code> / <code>runtime:wipe</code> in one worktree operate on the <em>same</em> project (same <code>checkout-surge-postgres-data</code> / <code>checkout-surge-redis-data</code> volumes, same containers) as the other — so one worktree&#x27;s reset/wipe mutates the other&#x27;s demo state, and a second <code>runtime:up</code> reattaches to the first&#x27;s running containers. The documented &quot;do not share project runtime state&quot; guarantee is not delivered by default.</p>
+<p class="para "><strong>Suggested direction.</strong> Either derive the default project name from the worktree/path (e.g. a sanitized <code>$(pwd)</code>/git worktree name) so worktrees auto-isolate, or correct the docs to state that worktree isolation requires an explicit <code>COMPOSE_PROJECT_NAME</code>/<code>DEVCONTAINER_COMPOSE_PROJECT_NAME</code> override per worktree.</p>
+</div></article>
+<article class="finding" id="finding-28" data-sev="low" data-num="28">
+<div class="finding-head">
+<span class="fnum">F28</span>
+<span class="area-tag">Runtime / configuration / ops</span>
+<h3 class="finding-title"><code>infra:down</code> tears down the whole project, not just PostgreSQL/Redis</h3>
+<span class="sev sev-low">LOW</span>
+</div>
+<div class="finding-body">
+<p class="para "><code>infra:up</code> correctly scopes to the two data services, but <code>infra:down</code> runs an unscoped <code>docker compose down</code>, which stops and removes <strong>every</strong> service in the project — contradicting its documented purpose.</p>
+<p class="label">Evidence</p>
+<div class="list"><ul><li><code>package.json:29-30</code>:<ul><li><code>infra:up</code> → <code>docker compose -f docker-compose.yml up -d --wait postgres redis</code> (scoped)</li><li><code>infra:down</code> → <code>docker compose -f docker-compose.yml down</code> (unscoped)</li></ul></li><li><code>docs/local_development.md:265</code> — &quot;<code>pnpm infra:down</code> | Stop development PostgreSQL and Redis&quot;.</li></ul></div>
+<p class="para "><strong>Impact.</strong> If the full runtime is up (<code>pnpm runtime:up</code>) and an operator runs <code>infra:down</code> expecting to stop only the data services, the entire stack (api, worker, web, mock-erp, load-orchestrator, caddy) is stopped and removed instead. (Volumes are preserved — no <code>-v</code> — so data is not lost, but the running demo is.)</p>
+<p class="para "><strong>Suggested direction.</strong> Scope <code>infra:down</code> symmetrically (<code>docker compose -f docker-compose.yml down postgres redis</code>), or update the docs to state <code>infra:down</code> stops the whole project.</p>
+</div></article>
+<article class="finding" id="finding-29" data-sev="low" data-num="29">
+<div class="finding-head">
+<span class="fnum">F29</span>
+<span class="area-tag">Runtime / configuration / ops</span>
+<h3 class="finding-title">Caddy has no healthcheck, so <code>runtime:up --wait</code> can report success without proving the public entry point serves</h3>
+<span class="sev sev-low">LOW</span>
+</div>
+<div class="finding-body">
+<p class="para "><code>docker-compose.yml</code> defines no healthcheck for the <code>caddy</code> service. Because <code>pnpm runtime:up</code> uses <code>up -d --build --wait</code>, Compose treats caddy as ready as soon as its container is running, without verifying the proxy actually serves. Caddy is the single public dashboard origin, so this is the one place where <code>--wait</code>&#x27;s &quot;everything is up&quot; signal is not backed by a real probe.</p>
+<p class="label">Evidence</p>
+<div class="list"><ul><li><code>docker-compose.yml:183-196</code> — the <code>caddy</code> service has ports + depends_on (api, web healthy) but no <code>healthcheck:</code> block. Every other long-lived service has a healthcheck.</li><li><code>scripts/runtime-smoke.mjs:37-39</code> explicitly excludes <code>caddy</code> from <code>SERVICES_WITH_HEALTHCHECK</code>.</li></ul></div>
+<p class="para "><strong>Impact.</strong> Narrow: caddy&#x27;s config is validated by <code>docker compose config</code>, and it only starts after api+web are healthy, so a true failure is unlikely. It is mitigated because both <code>pnpm health:check</code> (<code>scripts/health-check.mjs:32</code> probes <code>WEB_BASE_URL/</code>) and <code>pnpm runtime:smoke</code> hit the proxy root. But a user who runs only <code>runtime:up</code> and then opens the browser has no <code>--wait</code>-backed guarantee that the proxy is serving.</p>
+<p class="para "><strong>Suggested direction.</strong> Add a lightweight caddy healthcheck (e.g. <code>wget -q -O /dev/null http://127.0.0.1:8080/ || exit 1</code>) so <code>runtime:up --wait</code> covers the public entry point, matching the other services.</p>
+<hr class="sep"/>
+</div></article>
+</section>
+<section class="review-section" id="section-8" data-section="8">
+<div class="section-head"><span class="section-num">§ 8</span><h2 class="section-title">Test Suite Quality</h2></div>
+<p class="para scope">Scope: all test files across <code>apps/*</code> and <code>packages/*</code>, plus the test lane configuration (<code>vitest.config.ts</code>, <code>vitest.integration.config.ts</code>, <code>apps/web/vitest.config.ts</code>) and the test-env runners (<code>scripts/run-with-test-env.mjs</code>, <code>scripts/reset-test-infra.mjs</code>, <code>apps/*/tests/helpers.ts</code>).</p>
+<p class="para ">Overall the suite is strong and is intentionally not praised here at length: concurrency/no-oversell (<code>buy-concurrency</code>), idempotency/replay/late-duplicate reconciliation (<code>buy-queue-handoff</code>, <code>buy-late-duplicate-reconciliation</code>), finalization settlement holds + force-finalize + idempotency (<code>run-finalization</code>), worker state machine + real-BullMQ retry/backoff + circuit breaker with an injected clock (<code>order-processing</code>, <code>order-async-pipeline</code>, <code>erp-resilience</code>), public budget per-visitor + global (<code>public-run-budget</code>, <code>demo-run-start</code>), recovery/startup reconciliation (<code>recovery</code>), reset/maintenance ownership safety (<code>reset</code>, <code>run-maintenance</code>), and real Redis Pub/Sub→SSE (<code>dashboard-realtime</code>) all assert durable business outcomes against isolated PostgreSQL/Redis with proper per-package isolation locks and clean-slate resets. High-risk persistence is mocked only where the real implementation is preserved and re-installed to exercise the pending/reconciliation path. The two items below are the genuine test-quality gaps.</p>
+<article class="finding" id="finding-30" data-sev="high" data-num="30">
+<div class="finding-head">
+<span class="fnum">F30</span>
+<span class="area-tag">Test suite quality</span>
+<h3 class="finding-title">The only real-k6 behavioral test runs in the infrastructure-free unit lane and silently skips (suite stays green) whenever k6 is absent — which is the current state of this environment</h3>
+<span class="sev sev-high">HIGH</span>
+</div>
+<div class="finding-body">
+<p class="para "><code>apps/load-orchestrator/tests/k6-roundtrip.test.ts</code> is named <code>*.test.ts</code> (not <code>*.integration.test.ts</code>), so it is picked up by the <strong>root unit lane</strong> (<code>vitest.config.ts:33-44</code>, include <code>**/*.{test,spec}.{ts,tsx}</code>, exclude only <code>*.integration.test.ts</code> + <code>apps/web/**</code>). That lane is explicitly documented as &quot;infrastructure-free, build-free, and safe to run in watch mode&quot; (<code>vitest.config.ts:4-7,20-23</code>). This file is neither:</p>
+<div class="list"><ul><li>it opens a real listening TCP socket (<code>apps/load-orchestrator/tests/k6-roundtrip.test.ts:45-54</code>, <code>createServer(...).listen(0, &quot;127.0.0.1&quot;)</code>), and</li><li>it spawns a real external <code>k6</code> binary through the child-process runner (<code>:25-31</code> <code>k6Available()</code> via <code>spawnSync(&quot;k6&quot;, [&quot;version&quot;])</code>; <code>:80-93</code> <code>createChildProcessK6Runner({ k6Binary: &quot;k6&quot;, ... }).run(...)</code>).</li></ul></div>
+<p class="para ">Worse, when <code>k6</code> is not on PATH the file does not fail — it conditionally degrades to <code>it.skip</code> (<code>:33</code> <code>const itIfK6 = (k6: boolean) =&gt; (k6 ? it : it.skip)</code>), and both lanes set <code>passWithNoTests: true</code> (<code>vitest.config.ts:32</code>, <code>vitest.integration.config.ts:30</code>). The two tests that silently vanish are the <strong>only</strong> real-k6, runtime-verifying assertions in the repo:</p>
+<div class="list"><ul><li><code>:119-125</code> — proves the generated buyer-spike script actually executes in real k6 and that k6&#x27;s JSON output parses into the reserved <code>traffic.*</code> payloads; and</li><li><code>:127-131</code> — proves the core sold-out traffic contract end to end: when the buy endpoint returns only <code>409</code> (<code>sold_out</code>), <code>traffic.failure_rate == 0</code> because the generated script overrides k6&#x27;s response callback to treat expected buy outcomes as expected.</li></ul></div>
+<p class="para ">This was confirmed live: <code>which k6</code> returns nothing in this environment, so <code>pnpm test:unit</code> / <code>pnpm test:watch</code> currently skip both tests and report success with zero coverage of either property. Without this file, the k6 script is &quot;verified&quot; only by <code>script-generator.unit.test.ts</code>, which locks onto generated <strong>source substrings</strong> (e.g. <code>expect(script).toContain(&#x27;&quot;buyer-&quot; + __VU&#x27;)</code>, <code>&#x27;import exec from &quot;k6/execution&quot;&#x27;</code>, <code>http.setResponseCallback(...)</code>, <code>apps/load-orchestrator/tests/script-generator.unit.test.ts:96-141</code>) — incidental structure, not the behavior that a real k6 run exercises.</p>
+<p class="para ">There is also no place to move it: <code>apps/load-orchestrator/package.json</code> has no <code>test</code> script at all (only <code>dev</code>/<code>build</code>/<code>start</code>/<code>type-check</code>), and the root <code>package.json</code> exposes no load-orchestrator lane — <code>test:api</code>/<code>test:worker</code>/<code>test:integration</code> all filter <code>@checkout-surge/{api,worker,db}</code>, so <strong>every</strong> load-orchestrator test (unit or otherwise) reaches CI only through the root <code>test:unit</code> (<code>pnpm test:unit</code> = <code>vitest run &amp;&amp; ...</code>). <em>(This is related to Finding 25&#x27;s stale documented test commands, but a distinct defect: Finding 25 is the wrong docs table; this is the silent skip of the only behavioral k6 test.)</em></p>
+<p class="para "><strong>Impact.</strong> In any runner without a host <code>k6</code> (local <code>test:unit</code>/<code>test:watch</code>, and any CI image that does not bake k6 onto PATH), the headline load-generation guarantees are unverified yet green: a regression that breaks the generated script&#x27;s k6 compatibility, or that stops treating expected <code>409</code>s as non-failures (the exact property that makes a clean all-sold-out run report success), would not be caught by the test suite. The file&#x27;s own header claims &quot;this environment has k6 installed, so the roundtrip runs here&quot; (<code>:10-12</code>), but the runner makes no such guarantee and the skip is silent.</p>
+<p class="label">Suggested direction.</p>
+<div class="list"><ul><li>Rename to <code>k6-roundtrip.integration.test.ts</code> so it leaves the infrastructure-free unit lane (it then matches <code>vitest.integration.config.ts</code>&#x27;s <code>*.integration.test.ts</code> include) and add a load-orchestrator integration lane (a <code>test</code>/<code>test:integration</code> script + <code>--filter @checkout-surge/load-orchestrator</code>), mirroring the api/worker/db pattern.</li><li>Stop masking the missing dependency: in that lane, fail when <code>k6</code> is absent rather than <code>it.skip</code> (e.g. an explicit precondition that throws, or gate the lane on a <code>K6_BINARY</code> that startup validates) so a missing k6 is a visible failure, not a silently-green zero-test run. Keep the graceful host skip only for an explicitly opt-in &quot;no-k6&quot; convenience mode if desired.</li></ul></div>
+</div></article>
+<article class="finding" id="finding-31" data-sev="low" data-num="31">
+<div class="finding-head">
+<span class="fnum">F31</span>
+<span class="area-tag">Test suite quality</span>
+<h3 class="finding-title"><code>x-load-run-id</code> header-agreement &quot;matching/absent&quot; cases assert only the absence of a validation path, so they pass against a no-op header check</h3>
+<span class="sev sev-low">LOW</span>
+</div>
+<div class="finding-body">
+<p class="para "><code>apps/api/tests/buy-route.unit.test.ts</code> wires <code>db: undefined</code> (<code>:164-182</code>), so a request that clears the header-agreement guard then fails inside the reservation service for an unrelated reason. The two negative-shape cases lean on that:</p>
+<div class="list"><ul><li>&quot;treats a matching header case-insensitively&quot; (<code>:206-224</code>) sends <code>x-load-run-id: &lt;RUN uppercase&gt;</code> with <code>runId: RUN</code> and asserts only <code>headerPaths.not.toContain(&quot;runId&quot;)</code> (<code>:220</code>).</li><li>&quot;does not require the header&quot; (<code>:226-240</code>) sends no header and asserts the same (<code>:235</code>).</li></ul></div>
+<p class="para ">Because the reservation service fails downstream (no DB), the response body is never a <code>runId</code> validation error regardless of whether the header guard ran or matched — so these assertions cannot distinguish &quot;the header check accepted the match&quot; from &quot;the request blew up later.&quot; They would stay green against a header-check regression that simply never flags anything (the only thing pinning mismatch detection is the sibling &quot;rejects a body/header run-id mismatch&quot; case at <code>:184-204</code>, which does assert <code>paths</code> contains <code>&quot;runId&quot;</code>).</p>
+<p class="para "><strong>Impact.</strong> Minor: the mismatch case brackets the detection, so a total regression would surface there. But the matching/absent cases individually verify nothing about the agreement logic they are named for.</p>
+<p class="para "><strong>Suggested direction.</strong> Make the positive cases observe the agreement path itself rather than the absence of a path — e.g. assert the request reaches the reservation service with a recognizable, header-independent outcome, or move the agreement guard into the service and assert its explicit result, so a no-op guard turns these tests red.</p>
+<hr class="sep"/>
+</div></article>
+</section>
+<section class="block-section" id="appendix">
+<h2 class="section-title">Appendix — Consolidation notes</h2>
+<div class="list"><ul><li>Source slices: <code>findings_slice_1.md</code> … <code>findings_slice_8.md</code> (and the scoping guide <code>p1-10_review_helper.md</code>) in <code>working_docs/review/</code>.</li><li>Finding-to-slice mapping for traceability:<ul><li>Section 1 (API reservation hot path): Slice 1.</li><li>Section 2 (persistence/domain state/seeds): Slice 2.</li><li>Section 3 (worker/queue/mock ERP/notifications): Slice 3.</li><li>Section 4 (run lifecycle/load orchestration/finalization): Slice 4.</li><li>Section 5 (dashboard/realtime/admin/history): Slice 5.</li><li>Section 6 (shared contracts/logging/vocabulary): Slice 6.</li><li>Section 7 (runtime/configuration/ops): Slice 7.</li><li>Section 8 (test suite quality): Slice 8.</li></ul></li><li>Deduplication applied: Slice 6 Finding 2 + Slice 7 Finding 3 → <strong>Finding 22</strong> (single entry).</li><li>Cross-referenced-but-distinct: <strong>Finding 19</strong> (secret check; overlaps slice 7 scope), <strong>Finding 25</strong> vs <strong>Finding 30</strong> (test commands vs silent k6 skip).</li><li>The &quot;Final Pass Questions&quot; checklist that frames this review lives in <code>p1-10_review_helper.md</code> and is not reproduced here.</li></ul></div>
+</section>
+  </main>
+</div>
+<div id="empty" class="empty" style="display:none">No findings match your filter.</div>
+<button id="to-top" aria-label="Back to top">&uarr;</button>
+<script>
+const search=document.getElementById('search');
+const cards=[...document.querySelectorAll('article.finding')];
+const sections=[...document.querySelectorAll('section.review-section')];
+const idxRows=[...document.querySelectorAll('.idx-table tbody tr')];
+const countEl=document.getElementById('count');
+const emptyEl=document.getElementById('empty');
+let activeSev='all';
+const norm=s=>s.toLowerCase();
+function apply(){
+  const q=norm(search.value.trim());let vis=0;
+  cards.forEach(c=>{
+    const ok=(!q||norm(c.textContent).includes(q))&&(activeSev==='all'||c.dataset.sev===activeSev);
+    c.style.display=ok?'':'none'; if(ok)vis++;
+  });
+  idxRows.forEach(r=>{
+    const a=r.querySelector('td.num a');const card=a?document.getElementById('finding-'+a.textContent.trim()):null;
+    r.style.display=(card&&card.style.display!=='none')?'':'none';
+  });
+  sections.forEach(s=>{const any=[...s.querySelectorAll('article.finding')].some(a=>a.style.display!=='none');s.style.display=any?'':'none';});
+  countEl.textContent=vis+(vis===1?' finding':' findings');
+  emptyEl.style.display=vis===0?'block':'none';
+}
+search.addEventListener('input',apply);
+document.querySelectorAll('.sev-btn').forEach(b=>b.addEventListener('click',()=>{
+  document.querySelectorAll('.sev-btn').forEach(x=>x.classList.remove('active'));
+  b.classList.add('active');activeSev=b.dataset.sev;apply();
+}));
+const navLinks=[...document.querySelectorAll('a.nav-finding,a.nav-section')];
+const spy=new IntersectionObserver(es=>{
+  es.forEach(e=>{if(e.isIntersecting){const id=e.target.id;
+    navLinks.forEach(l=>l.classList.toggle('active',l.getAttribute('href')==='#'+id));}});
+},{rootMargin:'-25% 0px -65% 0px',threshold:0});
+[...document.querySelectorAll('article.finding,section.review-section')].forEach(el=>spy.observe(el));
+const topBtn=document.getElementById('to-top');
+window.addEventListener('scroll',()=>topBtn.classList.toggle('show',window.scrollY>600));
+topBtn.addEventListener('click',()=>window.scrollTo({top:0,behavior:'smooth'}));
+const sb=document.getElementById('sidebar'),tg=document.getElementById('sidebar-toggle');
+tg.addEventListener('click',()=>sb.classList.toggle('open'));
+document.querySelectorAll('#sidebar a').forEach(a=>a.addEventListener('click',()=>sb.classList.remove('open')));
+</script>
+</body>
+</html>

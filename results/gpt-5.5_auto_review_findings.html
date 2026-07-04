@@ -1,0 +1,1212 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Phase 1-10 Review Findings</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0d1117;
+      --panel: #131a24;
+      --panel-strong: #182232;
+      --panel-soft: #101722;
+      --text: #edf2f7;
+      --muted: #9aa8ba;
+      --subtle: #6f7f92;
+      --line: #253247;
+      --line-soft: #1e293a;
+      --code-bg: #07111f;
+      --p1: #ff6b6b;
+      --p1-bg: rgba(255, 107, 107, 0.11);
+      --p1-line: rgba(255, 107, 107, 0.5);
+      --p2: #f7b955;
+      --p2-bg: rgba(247, 185, 85, 0.11);
+      --p2-line: rgba(247, 185, 85, 0.45);
+      --p3: #62d2a2;
+      --p3-bg: rgba(98, 210, 162, 0.1);
+      --p3-line: rgba(98, 210, 162, 0.45);
+      --accent: #78a6ff;
+      --accent-soft: rgba(120, 166, 255, 0.13);
+      --shadow: 0 20px 60px rgba(0, 0, 0, 0.28);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      background:
+        radial-gradient(circle at 18% -10%, rgba(120, 166, 255, 0.14), transparent 28rem),
+        radial-gradient(circle at 92% 8%, rgba(98, 210, 162, 0.10), transparent 24rem),
+        var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+    }
+
+    a { color: inherit; }
+
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(16rem, 20rem) minmax(0, 1fr);
+      min-height: 100vh;
+    }
+
+    .sidebar {
+      position: sticky;
+      top: 0;
+      align-self: start;
+      height: 100vh;
+      overflow: auto;
+      padding: 1.5rem;
+      border-right: 1px solid var(--line);
+      background: rgba(13, 17, 23, 0.88);
+      backdrop-filter: blur(14px);
+    }
+
+    .brand {
+      padding-bottom: 1.25rem;
+      margin-bottom: 1.25rem;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .brand p,
+    .phase-heading p,
+    .meta p { margin: 0; color: var(--muted); }
+
+    .brand h1 {
+      margin: 0.25rem 0 0;
+      font-size: clamp(1.35rem, 3vw, 2rem);
+      line-height: 1.08;
+      letter-spacing: 0;
+    }
+
+    .toc-phase { margin-bottom: 1.15rem; }
+
+    .toc-phase-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      color: var(--text);
+      font-weight: 700;
+      text-decoration: none;
+      padding: 0.55rem 0.65rem;
+      border-radius: 8px;
+      background: var(--panel-soft);
+      border: 1px solid var(--line-soft);
+    }
+
+    .toc-phase-title span,
+    summary span {
+      min-width: 1.55rem;
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.82rem;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 0 0.4rem;
+    }
+
+    .toc-phase ol {
+      list-style: none;
+      padding: 0;
+      margin: 0.55rem 0 0;
+    }
+
+    .toc-phase li + li { margin-top: 0.25rem; }
+
+    .toc-phase li a {
+      display: grid;
+      grid-template-columns: 4.2rem minmax(0, 1fr);
+      gap: 0.5rem;
+      align-items: start;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 0.42rem 0.55rem;
+      border-radius: 8px;
+      font-size: 0.88rem;
+    }
+
+    .toc-phase li a:hover,
+    .toc-phase-title:hover { background: var(--accent-soft); color: var(--text); }
+
+    .toc-phase li span {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    main {
+      max-width: 78rem;
+      width: 100%;
+      padding: 3rem clamp(1rem, 4vw, 4rem) 5rem;
+    }
+
+    .hero {
+      padding: clamp(1.25rem, 3vw, 2.25rem);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: linear-gradient(135deg, rgba(24, 34, 50, 0.96), rgba(16, 23, 34, 0.96));
+      box-shadow: var(--shadow);
+    }
+
+    .hero h1 {
+      margin: 0.2rem 0 1rem;
+      font-size: clamp(2rem, 6vw, 4.5rem);
+      line-height: 0.95;
+      letter-spacing: 0;
+      max-width: 11ch;
+    }
+
+    .hero-copy {
+      max-width: 54rem;
+      color: var(--muted);
+      font-size: 1.05rem;
+      margin: 0;
+    }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 0.85rem;
+      margin-top: 1.5rem;
+    }
+
+    .summary-card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(13, 17, 23, 0.48);
+      padding: 1rem;
+    }
+
+    .summary-card strong {
+      display: block;
+      font-size: 2rem;
+      line-height: 1;
+      margin-bottom: 0.45rem;
+    }
+
+    .summary-card span { color: var(--muted); font-size: 0.92rem; }
+
+    .phase { padding-top: 3rem; }
+
+    .phase-heading {
+      display: flex;
+      flex-direction: column;
+      gap: 0.2rem;
+      margin-bottom: 1rem;
+    }
+
+    .phase-heading h2 {
+      margin: 0;
+      font-size: clamp(1.7rem, 4vw, 2.6rem);
+      letter-spacing: 0;
+    }
+
+    .eyebrow {
+      color: var(--accent);
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-size: 0.75rem;
+    }
+
+    .finding {
+      position: relative;
+      margin: 1rem 0;
+      border: 1px solid var(--line);
+      border-left-width: 4px;
+      border-radius: 8px;
+      background: rgba(19, 26, 36, 0.88);
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
+      overflow: hidden;
+    }
+
+    .finding.p1 { border-left-color: var(--p1); }
+    .finding.p2 { border-left-color: var(--p2); }
+    .finding.p3 { border-left-color: var(--p3); }
+
+    .finding-header {
+      display: flex;
+      justify-content: space-between;
+      gap: 1rem;
+      padding: 1.2rem 1.25rem 0.9rem;
+      background: rgba(16, 23, 34, 0.8);
+      border-bottom: 1px solid var(--line-soft);
+    }
+
+    .finding-header h3 {
+      margin: 0.2rem 0 0;
+      font-size: clamp(1.1rem, 2vw, 1.45rem);
+      line-height: 1.25;
+      letter-spacing: 0;
+    }
+
+    .anchor {
+      position: absolute;
+      left: 0.45rem;
+      top: 0.45rem;
+      color: var(--subtle);
+      opacity: 0;
+      text-decoration: none;
+      font-weight: 700;
+    }
+
+    .finding:hover .anchor { opacity: 1; }
+
+    .badge {
+      align-self: start;
+      flex: 0 0 auto;
+      border-radius: 999px;
+      padding: 0.35rem 0.7rem;
+      font-size: 0.78rem;
+      font-weight: 800;
+      white-space: nowrap;
+      border: 1px solid currentColor;
+    }
+
+    .badge.p1 { color: var(--p1); background: var(--p1-bg); }
+    .badge.p2 { color: var(--p2); background: var(--p2-bg); }
+    .badge.p3 { color: var(--p3); background: var(--p3-bg); }
+
+    .finding-body,
+    .callout,
+    .references { padding: 0 1.25rem; }
+
+    .finding-body { padding-top: 1rem; }
+
+    p { margin: 0 0 1rem; }
+
+    ul { margin: 0 0 1rem; padding-left: 1.25rem; }
+
+    li + li { margin-top: 0.45rem; }
+
+    code {
+      color: #c9ddff;
+      background: var(--code-bg);
+      border: 1px solid #203047;
+      border-radius: 6px;
+      padding: 0.12rem 0.35rem;
+      font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+      font-size: 0.9em;
+      word-break: break-word;
+    }
+
+    .callout {
+      margin: 0 1.25rem 1rem;
+      padding: 0.9rem 1rem;
+      border-radius: 8px;
+    }
+
+    .callout h4 {
+      margin: 0 0 0.45rem;
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .callout p { margin: 0; }
+
+    .impact { background: rgba(255, 107, 107, 0.08); border: 1px solid var(--p1-line); }
+    .impact h4 { color: var(--p1); }
+
+    .fix { background: rgba(98, 210, 162, 0.08); border: 1px solid var(--p3-line); }
+    .fix h4 { color: var(--p3); }
+
+    .references {
+      padding-top: 0.25rem;
+      padding-bottom: 1.15rem;
+    }
+
+    summary {
+      cursor: pointer;
+      color: var(--muted);
+      font-weight: 700;
+      padding: 0.3rem 0;
+    }
+
+    summary:hover { color: var(--text); }
+
+    .references ul {
+      margin-top: 0.7rem;
+      margin-bottom: 0;
+      padding: 0.85rem 0.85rem 0.85rem 1.95rem;
+      border: 1px solid var(--line-soft);
+      border-radius: 8px;
+      background: rgba(7, 17, 31, 0.55);
+    }
+
+    .references a { color: #9ec1ff; }
+
+    .meta {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.85rem;
+      margin-top: 1rem;
+    }
+
+    .meta div {
+      border: 1px solid var(--line-soft);
+      border-radius: 8px;
+      background: rgba(7, 17, 31, 0.42);
+      padding: 0.85rem;
+    }
+
+    .meta strong { display: block; margin-bottom: 0.15rem; }
+
+    @media (max-width: 980px) {
+      .layout { display: block; }
+      .sidebar {
+        position: relative;
+        height: auto;
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+      .toc-phase li span { white-space: normal; }
+      main { padding-top: 1.5rem; }
+      .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+
+    @media (max-width: 640px) {
+      .summary-grid,
+      .meta { grid-template-columns: 1fr; }
+      .finding-header { flex-direction: column; }
+      .badge { white-space: normal; }
+      .toc-phase li a { grid-template-columns: 4rem minmax(0, 1fr); }
+    }
+
+    @media print {
+      body { background: #fff; color: #111827; }
+      .layout { display: block; }
+      .sidebar { display: none; }
+      main { max-width: none; padding: 0; }
+      .hero,
+      .finding,
+      .summary-card,
+      .meta div { box-shadow: none; background: #fff; color: #111827; }
+      code { color: #111827; background: #f3f4f6; border-color: #d1d5db; }
+      .references { break-inside: avoid; }
+      .finding { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar" aria-label="Report navigation">
+      <div class="brand">
+        <p class="eyebrow">Review Archive</p>
+        <h1>Phase 1-10 Review Findings</h1>
+      </div>
+      <nav>
+        
+  <section class="toc-phase">
+    <a class="toc-phase-title" href="#p1">P1 Findings <span>10</span></a>
+    <ol>
+      <li><a href="#p1-01"><strong>P1-01</strong><span>Redis-secured holds can remain permanently pending after a transient PostgreSQL failure</span></a></li>
+<li><a href="#p1-02"><strong>P1-02</strong><span>Run closure is best-effort, so stale Redis eligibility can keep accepting a closed run</span></a></li>
+<li><a href="#p1-03"><strong>P1-03</strong><span>Admin reset fails runs without writing immutable run-history summaries</span></a></li>
+<li><a href="#p1-04"><strong>P1-04</strong><span>Generated-run cleanup can delete non-generated sale offers</span></a></li>
+<li><a href="#p1-05"><strong>P1-05</strong><span>Orders are not constrained to match a secured reservation</span></a></li>
+<li><a href="#p1-06"><strong>P1-06</strong><span>Successful ERP confirmations can be replayed after local persistence failures</span></a></li>
+<li><a href="#p1-07"><strong>P1-07</strong><span>Open ERP circuit retries can exhaust the job before the circuit can recover</span></a></li>
+<li><a href="#p1-08"><strong>P1-08</strong><span>Lost notification enqueue can fail an otherwise completed run</span></a></li>
+<li><a href="#p1-09"><strong>P1-09</strong><span>Lost traffic-completion reports can leave runs permanently active</span></a></li>
+<li><a href="#p1-10"><strong>P1-10</strong><span>Expected sold-out responses are counted as HTTP failures in k6 summaries</span></a></li>
+    </ol>
+  </section>
+
+  <section class="toc-phase">
+    <a class="toc-phase-title" href="#p2">P2 Findings <span>10</span></a>
+    <ol>
+      <li><a href="#p2-01"><strong>P2-01</strong><span>Accepted reservations synchronously run dashboard aggregate reads before responding</span></a></li>
+<li><a href="#p2-02"><strong>P2-02</strong><span>Mock ERP TPS limiting is global despite request-scoped run config</span></a></li>
+<li><a href="#p2-03"><strong>P2-03</strong><span>Terminal summary writes can race with direct reset updates and create split-brain run history</span></a></li>
+<li><a href="#p2-04"><strong>P2-04</strong><span>Stale SSE events can overwrite a fresher recovery snapshot</span></a></li>
+<li><a href="#p2-05"><strong>P2-05</strong><span>Protected admin proxy routes accept the raw passphrase instead of requiring the documented admin session</span></a></li>
+<li><a href="#p2-06"><strong>P2-06</strong><span>Internal load-orchestration calls split correlation IDs between bodies, headers, and logs</span></a></li>
+<li><a href="#p2-07"><strong>P2-07</strong><span>Load-orchestrator readiness can pass with an unreachable API target</span></a></li>
+<li><a href="#p2-08"><strong>P2-08</strong><span>Load-orchestrator tests do not exercise the production k6 runner or completion reporting path</span></a></li>
+<li><a href="#p2-09"><strong>P2-09</strong><span>Web tests stop at static markup and proxy units, leaving browser workflows untested</span></a></li>
+<li><a href="#p2-10"><strong>P2-10</strong><span>Some tests lock in known-bad recovery behavior as expected behavior</span></a></li>
+    </ol>
+  </section>
+
+  <section class="toc-phase">
+    <a class="toc-phase-title" href="#p3">P3 Findings <span>3</span></a>
+    <ol>
+      <li><a href="#p3-01"><strong>P3-01</strong><span>Admin cleanup can return a correlation ID that disagrees with the response header</span></a></li>
+<li><a href="#p3-02"><strong>P3-02</strong><span><code>runtime:setup</code> is documented as DB-only but rebuilds the whole app workspace</span></a></li>
+<li><a href="#p3-03"><strong>P3-03</strong><span>Local runtime docs contain stale operational guidance</span></a></li>
+    </ol>
+  </section>
+      </nav>
+    </aside>
+    <main>
+      <section class="hero">
+        <p class="eyebrow">GPT-5.5 xhigh autonomous phase review</p>
+        <h1>Phase 1-10 Review Findings</h1>
+        <p class="hero-copy">Archive of the findings recorded after mostly autonomous implementation of phases 1 through 10. Auto-review made the same GPT-5.5 xhigh type of agent.</p>
+        <div class="summary-grid" aria-label="Finding summary">
+          <div class="summary-card"><strong>23</strong><span>Total findings</span></div>
+          <div class="summary-card"><strong>10</strong><span>P1 high-severity issues</span></div>
+          <div class="summary-card"><strong>10</strong><span>P2 medium-severity issues</span></div>
+          <div class="summary-card"><strong>3</strong><span>P3 lower-severity issues</span></div>
+        </div>
+        <div class="meta">
+          <div><strong>Source</strong><p><code>working_docs/review/p1-10_review_findings.md</code></p></div>
+          <div><strong>Generated</strong><p>2026-07-02</p></div>
+        </div>
+      </section>
+      
+  <section class="phase" id="p1">
+    <div class="phase-heading">
+      <p class="eyebrow">P1</p>
+      <h2>P1 Findings</h2>
+      <p>10 findings recorded for this priority band.</p>
+    </div>
+    
+    <article class="finding p1" id="p1-01">
+      <header class="finding-header">
+        <div>
+          <a class="anchor" href="#p1-01" aria-label="Link to P1-01">#</a>
+          <span class="eyebrow">P1-01</span>
+          <h3>Redis-secured holds can remain permanently pending after a transient PostgreSQL failure</h3>
+        </div>
+        <span class="badge p1">P1 · High severity</span>
+      </header>
+      <section class="finding-body">
+        <p>When Redis secures stock but <code>persistSecuredReservation()</code> fails, the service returns <code>reservation_pending_persistence</code> and records the hold. On subsequent requests with the same idempotency key, Redis returns <code>reservation_pending_persistence</code>; the service only checks <code>getPersistedBuyByReservationId()</code>, re-records pending state, re-marks the Redis sentinel, and returns pending again. It never retries the durable reservation/order insert from the stored hold when no durable row exists.</p>
+      </section>
+      <section class="callout impact">
+        <h4>Impact</h4>
+        <p>a transient PostgreSQL outage can reserve Redis stock, expose <code>Retry-After</code>, and still never create the durable reservation/order when PostgreSQL recovers. The buyer has a secured Redis hold but no order, the queue never receives work, and the run can stay draining until timeout.</p>
+      </section>
+      <section class="callout fix">
+        <h4>Suggested Fix</h4>
+        <p>add a reconciliation/retry path that can durably persist a previously secured Redis hold once PostgreSQL is available, then update tests to assert the pending hold is eventually reconciled instead of remaining permanently pending.</p>
+      </section>
+      <details class="references">
+        <summary>References <span>4</span></summary>
+        <ul>
+          <li><code>apps/api/src/services/reserve-order-service.ts:173</code> persists only the initial <code>reservation_secured</code> decision.</li>
+<li><code>apps/api/src/services/reserve-order-service.ts:182</code> handles later pending replays by checking for an already-persisted buy, then returns pending at line 204 if none exists.</li>
+<li><code>apps/api/src/services/postgres-buy-persistence.ts:143</code> records <code>pending_reconciliation</code>, but repo search shows no code path that later marks it <code>reconciled</code>.</li>
+<li><code>apps/api/test/api.test.ts:2752</code> locks in the current behavior: repeated client retries stay pending and do not consume more stock.</li>
+        </ul>
+      </details>
+    </article>
+
+    <article class="finding p1" id="p1-02">
+      <header class="finding-header">
+        <div>
+          <a class="anchor" href="#p1-02" aria-label="Link to P1-02">#</a>
+          <span class="eyebrow">P1-02</span>
+          <h3>Run closure is best-effort, so stale Redis eligibility can keep accepting a closed run</h3>
+        </div>
+        <span class="badge p1">P1 · High severity</span>
+      </header>
+      <section class="finding-body">
+        <p>The buy path trusts only Redis inventory state for generated-run eligibility. Lifecycle code moves the durable run to <code>draining</code> or <code>failed</code>, then catches and suppresses failures while closing Redis sale eligibility. If that Redis close command fails transiently, the run is no longer accepting in PostgreSQL while <code>inventory:{saleOfferId}:state</code> can still say <code>runSaleStatus: accepting</code>, allowing later <code>/buy</code> calls with the old <code>runId</code> to reserve stock.</p>
+      </section>
+      <section class="callout impact">
+        <h4>Impact</h4>
+        <p>a stale Redis hash can keep accepting reservations for closed, failed, or draining runs. This violates the hot-path guarantee that generated-run inventory fails closed after lifecycle closure.</p>
+      </section>
+      <section class="callout fix">
+        <h4>Suggested Fix</h4>
+        <p>make generated-run closure fail closed, either by making Redis closure part of the guarded lifecycle transition or by adding a durable/repairable closure path that prevents stale Redis eligibility from accepting old runs. Add a regression test covering Redis close failure during run closure.</p>
+      </section>
+      <details class="references">
+        <summary>References <span>3</span></summary>
+        <ul>
+          <li><code>packages/db/src/redis-stock-reservation.ts:121</code> accepts generated-run traffic solely from Redis <code>runId</code> and <code>runSaleStatus</code>.</li>
+<li><code>apps/api/src/services/demo-run-service.ts:627</code> writes the run to <code>draining</code>; Redis closure is attempted afterward and failure is only logged at line 645.</li>
+<li><code>apps/api/src/services/demo-run-service.ts:887</code> similarly suppresses Redis close failures while failing a run.</li>
+        </ul>
+      </details>
+    </article>
+
+    <article class="finding p1" id="p1-03">
+      <header class="finding-header">
+        <div>
+          <a class="anchor" href="#p1-03" aria-label="Link to P1-03">#</a>
+          <span class="eyebrow">P1-03</span>
+          <h3>Admin reset fails runs without writing immutable run-history summaries</h3>
+        </div>
+        <span class="badge p1">P1 · High severity</span>
+      </header>
+      <section class="finding-body">
+        <p><code>reset()</code> directly updates every <code>starting</code>, <code>active</code>, or <code>draining</code> run to <code>failed</code> with <code>failureReason: &quot;admin_reset&quot;</code>, but it never calls the terminal summary writer or inserts <code>demo_run_summaries</code>.</p>
+      </section>
+      <section class="callout impact">
+        <h4>Impact</h4>
+        <p>a reset during a run leaves a terminal <code>demo_runs</code> row with no immutable history summary, no terminal inventory snapshot, and no preserved business outcome/sold-out accounting for Run History. Users see the run disappear from history even though it was made terminal.</p>
+      </section>
+      <section class="callout fix">
+        <h4>Suggested Fix</h4>
+        <p>route reset-owned active runs through the shared terminal summary writer before or while marking them failed, with <code>admin_reset</code> summaries and captured business outcome/inventory snapshots. Add a maintenance-service regression test asserting summaries are created for reset-failed active runs and existing terminal summaries remain unchanged.</p>
+      </section>
+      <details class="references">
+        <summary>References <span>4</span></summary>
+        <ul>
+          <li><code>apps/api/src/services/demo-maintenance-service.ts:47</code> performs the direct failure update.</li>
+<li><code>apps/api/src/services/demo-maintenance-service.ts:87</code> returns without writing terminal summaries.</li>
+<li><code>docs/core_business_entities.md:581</code> and <code>docs/load_generation_metrics_streaming.md:57</code> document the invariant that every terminal run should have one summary-backed history record, including admin recovery/reset paths.</li>
+<li><code>apps/api/src/services/demo-run-startup-reconciliation-service.ts:84</code> and <code>apps/api/src/services/demo-run-finalization-service.ts:95</code> already use <code>PostgresTerminalDemoRunSummaryWriter</code> for other terminal paths.</li>
+        </ul>
+      </details>
+    </article>
+
+    <article class="finding p1" id="p1-04">
+      <header class="finding-header">
+        <div>
+          <a class="anchor" href="#p1-04" aria-label="Link to P1-04">#</a>
+          <span class="eyebrow">P1-04</span>
+          <h3>Generated-run cleanup can delete non-generated sale offers</h3>
+        </div>
+        <span class="badge p1">P1 · High severity</span>
+      </header>
+      <section class="finding-body">
+        <p><code>DemoMaintenanceService.cleanupOldRuns()</code> collects <code>saleOfferId</code> values from every deletable terminal run and deletes those <code>sale_offers</code> rows by ID only. It never verifies that the referenced offer is generated-run-owned data. The schema allows <code>demo_runs.sale_offer_id</code> to reference any sale offer, and generated-run ownership is enforced through <code>demo_run_sale_contexts</code>, not by <code>demo_runs.saleOfferId</code> itself.</p>
+      </section>
+      <section class="callout impact">
+        <h4>Impact</h4>
+        <p>if legacy data, manual repair data, or a bug leaves an old terminal run pointing at a catalog offer, cleanup can delete baseline demo data outside generated-run ownership. At best the transaction fails on unrelated foreign keys; at worst the seeded catalog offer disappears.</p>
+      </section>
+      <section class="callout fix">
+        <h4>Suggested Fix</h4>
+        <p>collect/delete sale offers only through verified <code>demo_run_sale_contexts</code> rows and/or add <code>sale_offers.purpose = 'generated_run'</code> to the delete condition. Add a cleanup regression test proving a terminal run that references a catalog offer does not delete that offer.</p>
+      </section>
+      <details class="references">
+        <summary>References <span>6</span></summary>
+        <ul>
+          <li><code>apps/api/src/services/demo-maintenance-service.ts:122</code> through <code>apps/api/src/services/demo-maintenance-service.ts:129</code> select deletable runs and collect <code>saleOfferId</code> without joining or filtering <code>sale_offers.purpose</code>.</li>
+<li><code>apps/api/src/services/demo-maintenance-service.ts:150</code> through <code>apps/api/src/services/demo-maintenance-service.ts:152</code> delete <code>sale_offers</code> by ID only.</li>
+<li><code>packages/db/src/schema.ts:210</code> defines <code>demo_runs.saleOfferId</code> as a plain foreign key to <code>sale_offers</code>.</li>
+<li><code>packages/db/drizzle/0000_initial_schema.sql:63</code> through <code>packages/db/drizzle/0000_initial_schema.sql:72</code> define <code>sale_offers.purpose</code> as <code>catalog | generated_run</code>.</li>
+<li><code>packages/db/drizzle/0000_initial_schema.sql:455</code> and <code>packages/db/drizzle/0000_initial_schema.sql:478</code> show generated-run purpose/ownership triggers are tied to generated-run context validation, not cleanup's direct sale-offer delete.</li>
+<li><code>packages/db/src/scripts/seed.ts:76</code> through <code>packages/db/src/scripts/seed.ts:102</code> seed the baseline catalog sale offer.</li>
+        </ul>
+      </details>
+    </article>
+
+    <article class="finding p1" id="p1-05">
+      <header class="finding-header">
+        <div>
+          <a class="anchor" href="#p1-05" aria-label="Link to P1-05">#</a>
+          <span class="eyebrow">P1-05</span>
+          <h3>Orders are not constrained to match a secured reservation</h3>
+        </div>
+        <span class="badge p1">P1 · High severity</span>
+      </header>
+      <section class="finding-body">
+        <p><code>orders.reservationId</code> only references <code>reservations.id</code> and is unique. There is no database trigger/check ensuring the referenced reservation is <code>status = 'secured'</code>, nor that <code>orders.saleOfferId</code>, <code>runId</code>, <code>correlationId</code>, or <code>quantity</code> match the reservation row. The existing generated-run trigger validates sale-offer ownership for each row independently, not the order-to-reservation relationship.</p>
+      </section>
+      <section class="callout impact">
+        <h4>Impact</h4>
+        <p>PostgreSQL accepts orders that point to released, expired, rejected, or mismatched reservations. Worker transitions can then confirm those orders because they validate the job against the order row, not the reservation row. Final summaries and run history can count confirmed orders whose underlying reservation was not actually secured for the same run/offer.</p>
+      </section>
+      <section class="callout fix">
+        <h4>Suggested Fix</h4>
+        <p>add a migration-backed trigger or equivalent relational constraint on <code>orders</code> inserts/updates requiring a matching secured reservation with the same <code>saleOfferId</code>, nullable <code>runId</code>, <code>correlationId</code>, and <code>quantity</code>. Add schema/integration tests proving mismatched and non-secured reservations are rejected.</p>
+      </section>
+      <details class="references">
+        <summary>References <span>3</span></summary>
+        <ul>
+          <li><code>packages/db/src/schema.ts:282</code> and <code>packages/db/src/schema.ts:300</code> define the order-to-reservation reference/uniqueness.</li>
+<li><code>packages/db/drizzle/0000_initial_schema.sql:478</code> validates generated-run sale-offer ownership independently for each row.</li>
+<li><code>docs/core_business_entities.md:202</code> describes an order as the durable business process started from a successful reservation.</li>
+        </ul>
+      </details>
+    </article>
+
+    <article class="finding p1" id="p1-06">
+      <header class="finding-header">
+        <div>
+          <a class="anchor" href="#p1-06" aria-label="Link to P1-06">#</a>
+          <span class="eyebrow">P1-06</span>
+          <h3>Successful ERP confirmations can be replayed after local persistence failures</h3>
+        </div>
+        <span class="badge p1">P1 · High severity</span>
+      </header>
+      <section class="finding-body">
+        <p>The worker calls the external ERP before the order is durably marked confirmed. If <code>transitionToConfirmed()</code> fails after a successful ERP call, the order remains <code>processing</code>; the next delivery resumes that state and calls the ERP again. The current unit test explicitly locks in this behavior by expecting <code>confirmation.confirm</code> to be called twice after confirmed-state persistence fails.</p>
+      </section>
+      <section class="callout impact">
+        <h4>Impact</h4>
+        <p>a transient PostgreSQL failure after a successful ERP response can create duplicate ERP confirmations for the same order. If local attempt persistence keeps failing while the ERP succeeds, the retry budget can also end with the order marked failed even though the downstream system accepted it.</p>
+      </section>
+      <section class="callout fix">
+        <h4>Suggested Fix</h4>
+        <p>make ERP confirmation idempotent at the worker/ERP boundary, for example by using an explicit idempotency key and storing/reusing successful confirmation results before retrying. Separate &quot;ERP succeeded but local persistence failed&quot; from normal dependency failures so retries do not blindly repeat the external confirmation.</p>
+      </section>
+      <details class="references">
+        <summary>References <span>5</span></summary>
+        <ul>
+          <li><code>apps/worker/src/application/order-process-job-handler.ts:135</code> calls <code>confirmation.confirm()</code> before <code>transitionToConfirmed()</code> at line 175.</li>
+<li><code>apps/worker/src/persistence/postgres-order-transition-persistence.ts:65</code> treats an already-<code>processing</code> order as resumable, which sends the resumed job back through confirmation.</li>
+<li><code>apps/worker/test/unit/order-process-job-handler.test.ts:218</code> covers a failed <code>transitionToConfirmed()</code> retry and expects two confirmation calls at line 241.</li>
+<li><code>apps/worker/src/application/erp-confirmation-client.ts:122</code> sends the POST to ERP, then persists the ERP attempt at line 142; if that local attempt write fails, <code>ErpAttemptPersistenceError</code> is classified as retryable at <code>apps/worker/src/application/erp-confirmation-client.ts:71</code>.</li>
+<li><code>apps/mock-erp/src/application/confirmation-service.ts:59</code> generates a fresh <code>confirmationId</code> for every successful request and does not dedupe by <code>orderId</code>.</li>
+        </ul>
+      </details>
+    </article>
+
+    <article class="finding p1" id="p1-07">
+      <header class="finding-header">
+        <div>
+          <a class="anchor" href="#p1-07" aria-label="Link to P1-07">#</a>
+          <span class="eyebrow">P1-07</span>
+          <h3>Open ERP circuit retries can exhaust the job before the circuit can recover</h3>
+        </div>
+        <span class="badge p1">P1 · High severity</span>
+      </header>
+      <section class="finding-body">
+        <p><code>ErpCircuitOpenError</code> carries <code>retryAfterMs</code>, but the BullMQ retry schedule ignores it. Order jobs use the publisher's fixed retry options, which default to 4 attempts and 500 ms exponential backoff, while the worker's circuit reset timeout defaults to 10 seconds. With those defaults, a job can spend all retries on immediate <code>circuit open</code> errors before the circuit reaches its half-open probe window, then the handler persists the order as failed.</p>
+      </section>
+      <section class="callout impact">
+        <h4>Impact</h4>
+        <p>an ERP outage can fail otherwise valid orders while the circuit is deliberately open and protecting the ERP, rather than waiting for the configured reset window. This also makes retry pressure and run outcomes look worse than the actual downstream recovery behavior.</p>
+      </section>
+      <section class="callout fix">
+        <h4>Suggested Fix</h4>
+        <p>align circuit-open retries with <code>retryAfterMs</code>, either through a custom BullMQ backoff strategy, delayed requeue that does not consume the normal ERP attempt budget, or defaults that guarantee attempts span the reset window. Add a regression test that opens the circuit and verifies jobs are not terminally failed before the half-open probe time.</p>
+      </section>
+      <details class="references">
+        <summary>References <span>6</span></summary>
+        <ul>
+          <li><code>apps/worker/src/application/erp-circuit-breaker.ts:63</code> throws <code>ErpCircuitOpenError</code> with <code>retryAfterMs</code>; the next attempt time is derived from <code>resetTimeoutMs</code> at lines 95-96.</li>
+<li><code>apps/worker/src/application/order-process-job-handler.ts:138</code> treats temporary failures as retryable only while attempts remain, then marks the order failed at lines 155-171.</li>
+<li><code>apps/api/src/queue/bullmq-order-process-job-publisher.ts:56</code> configures BullMQ attempts/backoff without reading <code>retryAfterMs</code>.</li>
+<li><code>apps/api/src/runtime/config.ts:28</code> defaults order jobs to 4 attempts.</li>
+<li><code>apps/api/src/runtime/config.ts:33</code> defaults the backoff base to 500 ms.</li>
+<li><code>apps/worker/src/runtime/config.ts:50</code> defaults the circuit reset timeout to 10,000 ms.</li>
+        </ul>
+      </details>
+    </article>
+
+    <article class="finding p1" id="p1-08">
+      <header class="finding-header">
+        <div>
+          <a class="anchor" href="#p1-08" aria-label="Link to P1-08">#</a>
+          <span class="eyebrow">P1-08</span>
+          <h3>Lost notification enqueue can fail an otherwise completed run</h3>
+        </div>
+        <span class="badge p1">P1 · High severity</span>
+      </header>
+      <section class="finding-body">
+        <p>After an order is confirmed, notification work is only represented by a BullMQ job. If publishing that job fails, the order handler logs/reports the error and still completes the order job; there is no durable outbox or later repair path for the missing notification. Finalization, however, blocks whenever <code>notificationsRecorded &lt; confirmedOrders</code>, so a single transient notification queue publish failure can keep a run draining until it fails with <code>business_drain_timeout</code>.</p>
+      </section>
+      <section class="callout impact">
+        <h4>Impact</h4>
+        <p>notification work is correctly backgrounded from the order-processing perspective, but the finalization contract makes the notification record mandatory. A transient Redis/BullMQ publish failure after confirmation can turn a successful checkout run into a terminal failed run.</p>
+      </section>
+      <section class="callout fix">
+        <h4>Suggested Fix</h4>
+        <p>persist a durable notification outbox row or add a confirmed-order recovery scanner that can recreate missing notification jobs/records. Add a regression test where notification enqueue fails once after confirmation and the run can still finalize after recovery.</p>
+      </section>
+      <details class="references">
+        <summary>References <span>4</span></summary>
+        <ul>
+          <li><code>apps/worker/src/application/order-process-job-handler.ts:175</code> persists the order as confirmed before publishing the notification job.</li>
+<li><code>apps/worker/src/application/order-process-job-handler.ts:207</code> attempts the notification publish, but the catch path returns after reporting/logging at lines 218-227.</li>
+<li><code>apps/worker/src/queue/bullmq-notification-record-publisher.ts:31</code> is the only place the notification record job is materialized.</li>
+<li><code>apps/api/src/services/demo-run-finalization-service.ts:407</code> adds <code>missing_notifications</code> as a drain blocker.</li>
+        </ul>
+      </details>
+    </article>
+
+    <article class="finding p1" id="p1-09">
+      <header class="finding-header">
+        <div>
+          <a class="anchor" href="#p1-09" aria-label="Link to P1-09">#</a>
+          <span class="eyebrow">P1-09</span>
+          <h3>Lost traffic-completion reports can leave runs permanently active</h3>
+        </div>
+        <span class="badge p1">P1 · High severity</span>
+      </header>
+      <section class="finding-body">
+        <p>The load orchestrator treats completion delivery to the API as fire-and-forget. When k6 exits, <code>SpawnK6Runner.reportCompletion()</code> flushes metrics and posts the completion report once; if that API call fails, the error is logged and the temporary run directory is removed, with no retry, durable outbox, or later reconciliation path. The API only moves a run from <code>starting</code>/<code>active</code> to <code>draining</code> inside <code>recordTrafficCompletion()</code>.</p>
+      </section>
+      <section class="callout impact">
+        <h4>Impact</h4>
+        <p>the local dockerized product can complete k6 traffic successfully but remain stuck as an active run if the API is briefly unavailable, saturated, restarting, or returns a transient 5xx during completion ingestion. This blocks future starts and prevents business-boundary finalization until an operator reset or API restart marks the run failed.</p>
+      </section>
+      <section class="callout fix">
+        <h4>Suggested Fix</h4>
+        <p>make completion reporting retry with bounded backoff and/or persist a small load-orchestrator completion outbox until the API accepts it idempotently. Add a regression test where <code>sendCompletion()</code> fails once and the run still reaches <code>draining</code>.</p>
+      </section>
+      <details class="references">
+        <summary>References <span>4</span></summary>
+        <ul>
+          <li><code>apps/load-orchestrator/src/application/k6-runner.ts:152</code> sends the final completion report once.</li>
+<li><code>apps/load-orchestrator/src/application/k6-runner.ts:162</code> catches completion-delivery failures and only logs them before cleanup.</li>
+<li><code>apps/api/src/services/demo-run-service.ts:603</code> stores traffic finalization input only when the completion report reaches the API.</li>
+<li><code>apps/api/src/services/demo-run-service.ts:627</code> is the only normal path that transitions traffic-finished runs into <code>draining</code>.</li>
+        </ul>
+      </details>
+    </article>
+
+    <article class="finding p1" id="p1-10">
+      <header class="finding-header">
+        <div>
+          <a class="anchor" href="#p1-10" aria-label="Link to P1-10">#</a>
+          <span class="eyebrow">P1-10</span>
+          <h3>Expected sold-out responses are counted as HTTP failures in k6 summaries</h3>
+        </div>
+        <span class="badge p1">P1 · High severity</span>
+      </header>
+      <section class="finding-body">
+        <p>The generated k6 script correctly treats <code>409</code> + <code>outcome: &quot;sold_out&quot;</code> as an expected checkout response through custom counters and <code>check()</code>, but it never configures k6's HTTP expected-status callback. k6's built-in <code>http_req_failed</code> metric therefore still classifies expected <code>409</code> responses as failed HTTP requests. The accumulator copies that metric directly into <code>httpSummary.failedRequests</code> and <code>failureRate</code>.</p>
+      </section>
+      <section class="callout impact">
+        <h4>Impact</h4>
+        <p>run history and dashboard summaries can show expected sold-out traffic as HTTP failure. That weakens the documented sold-out-only demo case and makes traffic health look worse exactly when scarcity behavior is working.</p>
+      </section>
+      <section class="callout fix">
+        <h4>Suggested Fix</h4>
+        <p>generate the script with a k6 response callback that treats <code>202</code> and the expected <code>409</code> sold-out response as successful for <code>http_req_failed</code>, or compute <code>failedRequests</code> from <code>unexpectedResponses</code> instead of raw k6 HTTP failure points. Add a parser/script test that all-sold-out traffic yields <code>failedRequests: 0</code> and <code>failureRate: 0</code>.</p>
+      </section>
+      <details class="references">
+        <summary>References <span>5</span></summary>
+        <ul>
+          <li><code>apps/load-orchestrator/src/application/k6-script.ts:90</code> classifies <code>202</code> as accepted and <code>409</code> sold-out as expected custom outcomes.</li>
+<li><code>apps/load-orchestrator/src/application/k6-script.ts:98</code> checks both <code>202</code> and clean <code>409</code> sold-out responses as expected.</li>
+<li><code>apps/load-orchestrator/src/application/k6-output-parser.ts:54</code> increments failed request accounting from k6 <code>http_req_failed</code>.</li>
+<li><code>apps/load-orchestrator/src/application/k6-output-parser.ts:89</code> stores that count in <code>httpSummary.failedRequests</code> and <code>failureRate</code>.</li>
+<li>Grafana k6 documents that <code>http_req_failed</code> follows <code>setResponseCallback</code>, and default expected statuses are <code>200</code> through <code>399</code>: <a href="https://grafana.com/docs/k6/latest/javascript-api/k6-http/set-response-callback/">https://grafana.com/docs/k6/latest/javascript-api/k6-http/set-response-callback/</a></li>
+        </ul>
+      </details>
+    </article>
+  </section>
+
+  <section class="phase" id="p2">
+    <div class="phase-heading">
+      <p class="eyebrow">P2</p>
+      <h2>P2 Findings</h2>
+      <p>10 findings recorded for this priority band.</p>
+    </div>
+    
+    <article class="finding p2" id="p2-01">
+      <header class="finding-header">
+        <div>
+          <a class="anchor" href="#p2-01" aria-label="Link to P2-01">#</a>
+          <span class="eyebrow">P2-01</span>
+          <h3>Accepted reservations synchronously run dashboard aggregate reads before responding</h3>
+        </div>
+        <span class="badge p2">P2 · Medium severity</span>
+      </header>
+      <section class="finding-body">
+        <p>After durable persistence, queue enqueue, and Redis promotion, <code>ReserveOrderService</code> awaits <code>publishBusinessOutcomeUpdateWithoutHidingDurableSuccess()</code> before returning <code>reservation_secured</code>. The default publisher reads the full business outcome and consistency lag projections, which fan out into multiple PostgreSQL aggregate queries, on every newly accepted reservation.</p>
+      </section>
+      <section class="callout impact">
+        <h4>Impact</h4>
+        <p>accepted-heavy runs add avoidable PostgreSQL read load and response latency to the API reservation path. This directly works against the documented one-second surge target; dashboard projection should not be in the synchronous buy response path.</p>
+      </section>
+      <section class="callout fix">
+        <h4>Suggested Fix</h4>
+        <p>publish only a lightweight event or enqueue/asynchronously refresh dashboard aggregates outside the buy response path. Add a hot-path regression/performance test or service test asserting accepted reservations do not synchronously perform aggregate dashboard reads.</p>
+      </section>
+      <details class="references">
+        <summary>References <span>3</span></summary>
+        <ul>
+          <li><code>apps/api/src/services/reserve-order-service.ts:232</code> awaits enqueue, promotion, and then dashboard publication before building the response.</li>
+<li><code>packages/db/src/business-outcome-dashboard.ts:224</code> publishes by awaiting <code>readBusinessOutcomeSummary()</code> and <code>readConsistencyLagSummary()</code>.</li>
+<li><code>packages/db/src/business-outcome-dashboard.ts:52</code> shows <code>readBusinessOutcomeSummary()</code> running multiple count queries per publication.</li>
+        </ul>
+      </details>
+    </article>
+
+    <article class="finding p2" id="p2-02">
+      <header class="finding-header">
+        <div>
+          <a class="anchor" href="#p2-02" aria-label="Link to P2-02">#</a>
+          <span class="eyebrow">P2-02</span>
+          <h3>Mock ERP TPS limiting is global despite request-scoped run config</h3>
+        </div>
+        <span class="badge p2">P2 · Medium severity</span>
+      </header>
+      <section class="finding-body">
+        <p>The mock ERP correctly resolves request-scoped <code>erpConfig</code> before deciding a confirmation, but its TPS counter is a single process-wide window. <code>acceptWithinTpsLimit()</code> receives only <code>maxTps</code>, not <code>runId</code> or a config key, so confirmations from one run/config can consume capacity for a different run/config in the same second.</p>
+      </section>
+      <section class="callout impact">
+        <h4>Impact</h4>
+        <p>quick successive runs, catalog confirmations during a run, or any mixed request-scoped/global ERP traffic can produce unexpected 429s that are attributed to the current run even though another scope consumed the window. That weakens the accepted-run snapshot guarantee for ERP behavior.</p>
+      </section>
+      <section class="callout fix">
+        <h4>Suggested Fix</h4>
+        <p>scope the TPS window by <code>runId</code> when present, and use a separate key for global/catalog traffic or for materially different request-scoped configs. Add a test proving two different run IDs do not throttle each other.</p>
+      </section>
+      <details class="references">
+        <summary>References <span>4</span></summary>
+        <ul>
+          <li><code>apps/mock-erp/src/application/chaos-control-service.ts:115</code> stores one <code>windowStartedAtMs</code> and one <code>requestsInWindow</code> for the provider.</li>
+<li><code>apps/mock-erp/src/application/chaos-control-service.ts:127</code> resolves per-request config.</li>
+<li><code>apps/mock-erp/src/application/chaos-control-service.ts:144</code> checks TPS through the shared counter.</li>
+<li><code>apps/mock-erp/src/application/chaos-control-service.ts:163</code> implements <code>acceptWithinTpsLimit(maxTps)</code> without run/config scoping.</li>
+        </ul>
+      </details>
+    </article>
+
+    <article class="finding p2" id="p2-03">
+      <header class="finding-header">
+        <div>
+          <a class="anchor" href="#p2-03" aria-label="Link to P2-03">#</a>
+          <span class="eyebrow">P2-03</span>
+          <h3>Terminal summary writes can race with direct reset updates and create split-brain run history</h3>
+        </div>
+        <span class="badge p2">P2 · Medium severity</span>
+      </header>
+      <section class="finding-body">
+        <p><code>PostgresTerminalDemoRunSummaryWriter</code> takes an advisory lock, inserts the immutable summary, then updates <code>demo_runs</code> only if the current status is in the allowed set. It does not verify that the guarded update matched a row before returning <code>true</code>. The admin reset path bypasses this writer and directly updates <code>starting</code>, <code>active</code>, or <code>draining</code> runs to <code>failed</code> without taking the same advisory lock. If reset races with finalization, the summary writer can insert a <code>completed</code> or different <code>failed</code> summary for a draining run while the reset update wins the run row with <code>failureReason: &quot;admin_reset&quot;</code>.</p>
+      </section>
+      <section class="callout impact">
+        <h4>Impact</h4>
+        <p>a run can end with <code>demo_runs</code> showing <code>failed/admin_reset</code> while <code>demo_run_summaries</code> shows a different terminal status and reason. Recovery and Run History then disagree about the same benchmark artifact.</p>
+      </section>
+      <section class="callout fix">
+        <h4>Suggested Fix</h4>
+        <p>make all terminal transitions, including reset, go through one locked summary writer path, and have the writer insert the summary only when it can atomically claim the allowed current status or otherwise verify/update the run row. Add a concurrency regression test for reset racing with finalization.</p>
+      </section>
+      <details class="references">
+        <summary>References <span>4</span></summary>
+        <ul>
+          <li><code>apps/api/src/services/demo-run-finalization-service.ts:66</code> takes the writer's advisory lock.</li>
+<li><code>apps/api/src/services/demo-run-finalization-service.ts:95</code> inserts the terminal summary before proving the guarded run update succeeded.</li>
+<li><code>apps/api/src/services/demo-run-finalization-service.ts:113</code> updates <code>demo_runs</code> under an allowed-status predicate but does not check the affected row count before returning <code>true</code> at line 129.</li>
+<li><code>apps/api/src/services/demo-maintenance-service.ts:54</code> directly updates in-progress runs during reset without using the same writer/lock.</li>
+        </ul>
+      </details>
+    </article>
+
+    <article class="finding p2" id="p2-04">
+      <header class="finding-header">
+        <div>
+          <a class="anchor" href="#p2-04" aria-label="Link to P2-04">#</a>
+          <span class="eyebrow">P2-04</span>
+          <h3>Stale SSE events can overwrite a fresher recovery snapshot</h3>
+        </div>
+        <span class="badge p2">P2 · Medium severity</span>
+      </header>
+      <section class="finding-body">
+        <p>The watch dashboard treats live SSE payloads as direct state patches without checking whether the event belongs to the currently recovered run or whether it is older than the current recovery baseline. <code>source.onmessage</code> always calls <code>applyDashboardEvent()</code>, and the reducer blindly replaces <code>currentRun</code>, inventory, queue, metrics, and business outcome data from the event. The event contract and publishers carry <code>runId</code> for run, metric, and business-outcome events, but the browser ignores it.</p>
+      </section>
+      <section class="callout impact">
+        <h4>Impact</h4>
+        <p>after reconnect, manual refresh, reset, or a quick new run, a delayed event from a previous run can make <code>/watch</code> show old run state, old business outcomes, or old metrics as if they belong to the current run. Terminal events trigger a follow-up recovery, but stale state is still displayed until that read returns; non-terminal stale metric/business events do not trigger recovery at all.</p>
+      </section>
+      <section class="callout fix">
+        <h4>Suggested Fix</h4>
+        <p>treat live events as hints scoped to the recovered current run. Ignore events whose <code>runId</code> or <code>saleOfferId</code> disagrees with <code>recovery.data.currentRun</code>, and ignore events with <code>occurredAt</code> older than the current recovery baseline unless they are part of the same accepted baseline window. Add reducer tests for stale previous-run business/metric/run events arriving after a newer recovery snapshot.</p>
+      </section>
+      <details class="references">
+        <summary>References <span>6</span></summary>
+        <ul>
+          <li><code>apps/web/src/app/components/operator-dashboard.tsx:139</code> applies every parsed live event to the current recovery state.</li>
+<li><code>apps/web/src/app/components/operator-dashboard.tsx:238</code> through <code>apps/web/src/app/components/operator-dashboard.tsx:291</code> patch run, inventory, queue, metrics, and business outcome fields without any <code>runId</code>, <code>saleOfferId</code>, or timestamp guard.</li>
+<li><code>packages/contracts/src/dashboard-events.ts:29</code> defines <code>runId</code> on dashboard events.</li>
+<li><code>packages/db/src/business-outcome-dashboard.ts:231</code> and <code>apps/api/src/services/demo-run-service.ts:535</code> publish business and metric events with run attribution.</li>
+<li><code>docs/cross_service_conventions.md:91</code> says live events are not the durable source of truth.</li>
+<li><code>docs/cross_service_conventions.md:94</code> says recovery establishes the fresh baseline before subsequent live updates.</li>
+        </ul>
+      </details>
+    </article>
+
+    <article class="finding p2" id="p2-05">
+      <header class="finding-header">
+        <div>
+          <a class="anchor" href="#p2-05" aria-label="Link to P2-05">#</a>
+          <span class="eyebrow">P2-05</span>
+          <h3>Protected admin proxy routes accept the raw passphrase instead of requiring the documented admin session</h3>
+        </div>
+        <span class="badge p2">P2 · Medium severity</span>
+      </header>
+      <section class="finding-body">
+        <p>The documented protection model says operators exchange the passphrase once for a signed <code>HttpOnly</code> admin session, and protected dashboard API routes then verify that session before adding the server-side control token. The shared route helper currently allows either a valid session cookie or a matching <code>x-admin-passphrase</code> header, so dangerous actions can be invoked without ever establishing the admin session.</p>
+      </section>
+      <section class="callout impact">
+        <h4>Impact</h4>
+        <p>the service token is still kept server-side, but the browser/admin client is encouraged to keep and resend the long-lived admin passphrase on individual destructive requests. This bypasses the documented session boundary, increases passphrase exposure in request handling/logging surfaces, and makes it harder to reason about which protected actions are authorized by the trusted session versus a browser-supplied credential header.</p>
+      </section>
+      <section class="callout fix">
+        <h4>Suggested Fix</h4>
+        <p>split the helper into <code>requireAdminSession()</code> for protected proxy routes and a passphrase-only check used only by <code>POST /api/admin/session</code>. After successful sign-in, protected components should call admin proxy routes with the <code>HttpOnly</code> cookie only. Remove passphrase headers from destructive action calls and update tests to assert raw-passphrase access is rejected outside the session-creation route.</p>
+      </section>
+      <details class="references">
+        <summary>References <span>6</span></summary>
+        <ul>
+          <li><code>docs/admin_access_protection.md:37</code> through <code>docs/admin_access_protection.md:43</code> define the passphrase-to-<code>HttpOnly</code> session flow.</li>
+<li><code>docs/admin_access_protection.md:120</code>, <code>docs/admin_access_protection.md:123</code>, <code>docs/admin_access_protection.md:125</code>, <code>docs/admin_access_protection.md:127</code>, and <code>docs/admin_access_protection.md:128</code> mark reset, chaos mutation, admin preset mutation, history deletion, and admin starts as requiring an admin session plus the service-token proxy.</li>
+<li><code>apps/web/src/app/lib/server/backend-proxy.ts:30</code> accepts a valid session.</li>
+<li><code>apps/web/src/app/lib/server/backend-proxy.ts:34</code> through <code>apps/web/src/app/lib/server/backend-proxy.ts:37</code> also accept the raw passphrase header.</li>
+<li>Admin proxy routes such as <code>apps/web/src/app/api/admin/demo/runs/start/route.ts:18</code>, <code>apps/web/src/app/api/admin/demo/reset/route.ts:11</code>, and <code>apps/web/src/app/api/admin/demo/runs/history/route.ts:17</code> all rely on that helper before forwarding the server-side control token.</li>
+<li><code>apps/web/src/app/components/run-history-admin-controls.tsx:53</code> through <code>apps/web/src/app/components/run-history-admin-controls.tsx:60</code> still send the passphrase directly on the deletion request instead of using the established session model.</li>
+        </ul>
+      </details>
+    </article>
+
+    <article class="finding p2" id="p2-06">
+      <header class="finding-header">
+        <div>
+          <a class="anchor" href="#p2-06" aria-label="Link to P2-06">#</a>
+          <span class="eyebrow">P2-06</span>
+          <h3>Internal load-orchestration calls split correlation IDs between bodies, headers, and logs</h3>
+        </div>
+        <span class="badge p2">P2 · Medium severity</span>
+      </header>
+      <section class="finding-body">
+        <p>The internal API-to-load and load-to-API HTTP clients send contract payloads that contain <code>correlationId</code>, but they do not send the shared <code>x-correlation-id</code> header. Both Fastify servers derive <code>request.correlationId</code>, response headers, error payloads, and log context from that header before route handlers run. The load-orchestrator start route also returns the body correlation ID from the parsed request, so a successful start can expose one correlation ID in the JSON body and a different generated ID in the <code>x-correlation-id</code> response header.</p>
+      </section>
+      <section class="callout impact">
+        <h4>Impact</h4>
+        <p>cross-service traces for a single demo run fragment into unrelated IDs exactly around traffic start, metric ingestion, and completion reporting. A caller can see mismatched response header/body IDs, and operational errors from these internal boundaries cannot be reliably joined to the run's dashboard events or persisted records.</p>
+      </section>
+      <section class="callout fix">
+        <h4>Suggested Fix</h4>
+        <p>set <code>x-correlation-id</code> from the validated contract payload on every internal HTTP client call, and add regression tests asserting the load-orchestrator start response header matches the request body <code>correlationId</code> and that load metric/completion calls reach the API with the same header. Consider also normalizing route <code>request.correlationId</code> from the parsed internal body after authentication so logs emitted after parsing use the contract correlation.</p>
+      </section>
+      <details class="references">
+        <summary>References <span>6</span></summary>
+        <ul>
+          <li><code>apps/api/src/services/demo-run-service.ts:202</code> through <code>apps/api/src/services/demo-run-service.ts:206</code> post <code>TrafficExecutionStartRequest</code> to the load orchestrator with the control token but without <code>x-correlation-id</code>.</li>
+<li><code>apps/load-orchestrator/src/server.ts:39</code> through <code>apps/load-orchestrator/src/server.ts:45</code> derive request/log/error correlation from <code>x-correlation-id</code>.</li>
+<li><code>apps/load-orchestrator/src/server.ts:98</code> through <code>apps/load-orchestrator/src/server.ts:102</code> parse the body and return a response that uses the body correlation ID.</li>
+<li><code>apps/load-orchestrator/src/application/api-client.ts:33</code> through <code>apps/load-orchestrator/src/application/api-client.ts:41</code> post metric and completion payloads back to the API without <code>x-correlation-id</code>.</li>
+<li><code>apps/api/src/server.ts:60</code> through <code>apps/api/src/server.ts:66</code> derive API request/log/error correlation from <code>x-correlation-id</code>.</li>
+<li><code>apps/api/src/routes/demo-run-routes.ts:163</code> through <code>apps/api/src/routes/demo-run-routes.ts:182</code> do not replace the request correlation ID with the parsed internal payload correlation ID.</li>
+        </ul>
+      </details>
+    </article>
+
+    <article class="finding p2" id="p2-07">
+      <header class="finding-header">
+        <div>
+          <a class="anchor" href="#p2-07" aria-label="Link to P2-07">#</a>
+          <span class="eyebrow">P2-07</span>
+          <h3>Load-orchestrator readiness can pass with an unreachable API target</h3>
+        </div>
+        <span class="badge p2">P2 · Medium severity</span>
+      </header>
+      <section class="finding-body">
+        <p>The load-orchestrator readiness check reports <code>api_base_url_configured=ok</code> whenever <code>config.apiBaseUrl</code> is non-empty. It does not attempt a request from the load-orchestrator container to the configured API URL. Compose also starts the load orchestrator after the API container is merely started, not healthy.</p>
+      </section>
+      <section class="callout impact">
+        <h4>Impact</h4>
+        <p>a bad in-container <code>API_BASE_URL</code> such as a host-only URL, broken Compose DNS, or an API that is not yet ready can still leave <code>health:check</code>, Compose health, and <code>runtime:smoke</code> green for the load-orchestrator service. The first dashboard-triggered load run then fails at execution time instead of being caught by readiness.</p>
+      </section>
+      <section class="callout fix">
+        <h4>Suggested Fix</h4>
+        <p>have load-orchestrator readiness fetch the configured API liveness/readiness endpoint from inside the service and mark it <code>unavailable</code> on failure. Consider changing Compose to wait for <code>api</code> health before starting the orchestrator.</p>
+      </section>
+      <details class="references">
+        <summary>References <span>3</span></summary>
+        <ul>
+          <li><code>apps/load-orchestrator/src/runtime/readiness.ts:15</code> through <code>apps/load-orchestrator/src/runtime/readiness.ts:24</code> validate only that an API URL string exists, plus k6 executability.</li>
+<li><code>docker-compose.yml:179</code> through <code>docker-compose.yml:181</code> use <code>depends_on: api: condition: service_started</code> for the load orchestrator.</li>
+<li><code>scripts/runtime-health-check.mjs:25</code> through <code>scripts/runtime-health-check.mjs:29</code> trusts the load-orchestrator <code>/health/ready</code> response and only adds a nested assertion for <code>k6_binary_executable</code>.</li>
+        </ul>
+      </details>
+    </article>
+
+    <article class="finding p2" id="p2-08">
+      <header class="finding-header">
+        <div>
+          <a class="anchor" href="#p2-08" aria-label="Link to P2-08">#</a>
+          <span class="eyebrow">P2-08</span>
+          <h3>Load-orchestrator tests do not exercise the production k6 runner or completion reporting path</h3>
+        </div>
+        <span class="badge p2">P2 · Medium severity</span>
+      </header>
+      <section class="finding-body">
+        <p>The load-orchestrator suite checks generated script text and parser behavior, then tests the HTTP start route with a fake <code>K6Runner</code>. It never instantiates <code>SpawnK6Runner</code>, never fakes a spawned k6 process, and never verifies the production path that writes the temporary script, reads k6 stdout, batches metrics, sends completion, handles non-zero exits, or cleans up the temp directory.</p>
+      </section>
+      <section class="callout impact">
+        <h4>Impact</h4>
+        <p>a green suite can miss production-only failures where k6 starts but metrics or completion never reach the API, temp files leak, non-zero exits are misreported, or the generated script is syntactically invalid for real k6. This is especially risky because run finalization depends on the completion callback.</p>
+      </section>
+      <section class="callout fix">
+        <h4>Suggested Fix</h4>
+        <p>add a <code>SpawnK6Runner</code> unit test with an injected fake <code>spawnProcess</code> that emits k6 JSON lines and <code>close</code>/<code>error</code> events, asserting metric batches, completion reports, failure reports, and cleanup. Add at least one script-level check that can catch real k6 syntax/API drift.</p>
+      </section>
+      <details class="references">
+        <summary>References <span>4</span></summary>
+        <ul>
+          <li><code>apps/load-orchestrator/test/load-orchestrator.test.ts:56</code> string-checks the generated buyer-spike script.</li>
+<li><code>apps/load-orchestrator/test/load-orchestrator.test.ts:92</code> feeds hand-written JSON metric lines straight into <code>K6RunAccumulator</code>.</li>
+<li><code>apps/load-orchestrator/test/load-orchestrator.test.ts:183</code> tests the HTTP boundary with a fake runner whose <code>start()</code> only resolves <code>{ startedAt, plannedRequests }</code>.</li>
+<li><code>apps/load-orchestrator/src/application/k6-runner.ts:32</code> through <code>apps/load-orchestrator/src/application/k6-runner.ts:154</code> contain the untested production spawn/stdout/metric/completion path.</li>
+        </ul>
+      </details>
+    </article>
+
+    <article class="finding p2" id="p2-09">
+      <header class="finding-header">
+        <div>
+          <a class="anchor" href="#p2-09" aria-label="Link to P2-09">#</a>
+          <span class="eyebrow">P2-09</span>
+          <h3>Web tests stop at static markup and proxy units, leaving browser workflows untested</h3>
+        </div>
+        <span class="badge p2">P2 · Medium severity</span>
+      </header>
+      <section class="finding-body">
+        <p>The dashboard tests render client components with <code>renderToStaticMarkup()</code> and the proxy tests call Next route handlers directly. That covers labels and server forwarding, but it does not execute the browser event handlers that actually build request bodies, handle sessions, navigate to <code>/watch</code>, refresh recovery, delete selected history rows, or recover from proxy errors. The route/page surfaces themselves are also not smoke-tested as pages.</p>
+      </section>
+      <section class="callout impact">
+        <h4>Impact</h4>
+        <p>the local product can pass the current web tests while public starts, public custom payload construction, admin sign-in/session use, destructive history deletion, or route-level page data loading is broken in the browser.</p>
+      </section>
+      <section class="callout fix">
+        <h4>Suggested Fix</h4>
+        <p>add jsdom/Testing Library or Playwright coverage for the key workflows: public curated start, public custom start, admin sign-in plus one protected action, watch recovery refresh/SSE follow-up behavior, and run-history selected/delete-all actions. Include lightweight page smoke tests for <code>/</code>, <code>/watch</code>, <code>/admin</code>, <code>/run-history</code>, <code>/run-history/[runId]</code>, and <code>/about</code>.</p>
+      </section>
+      <details class="references">
+        <summary>References <span>3</span></summary>
+        <ul>
+          <li><code>apps/web/test/dashboard-control-surface.test.ts:20</code> and <code>apps/web/test/dashboard-control-surface.test.ts:53</code> render <code>PublicDemoEntry</code> and <code>AdminConsole</code> to static markup and assert text/disabled strings.</li>
+<li><code>apps/web/test/admin-control-proxy.test.ts:60</code> and <code>apps/web/test/admin-control-proxy.test.ts:131</code> test proxy route handlers directly, not the public UI that calls them.</li>
+<li><code>apps/web/src/app/components/public-demo-entry.tsx:69</code>, <code>apps/web/src/app/components/admin-console.tsx:339</code>, and <code>apps/web/src/app/components/run-history-admin-controls.tsx:34</code> own the user-triggered start/admin/delete workflows that are not driven by a browser-style test.</li>
+        </ul>
+      </details>
+    </article>
+
+    <article class="finding p2" id="p2-10">
+      <header class="finding-header">
+        <div>
+          <a class="anchor" href="#p2-10" aria-label="Link to P2-10">#</a>
+          <span class="eyebrow">P2-10</span>
+          <h3>Some tests lock in known-bad recovery behavior as expected behavior</h3>
+        </div>
+        <span class="badge p2">P2 · Medium severity</span>
+      </header>
+      <section class="finding-body">
+        <p>A few tests currently assert the broken behavior reported by other review findings instead of the intended product recovery outcome. That makes the suite actively protect defects until those tests are rewritten, rather than merely lacking coverage.</p>
+      </section>
+      <section class="callout impact">
+        <h4>Impact</h4>
+        <p>after the product bugs are fixed, these tests will fail unless they are inverted. Until then, <code>pnpm test</code> can be green while still enforcing behavior that loses orders or repeats downstream confirmations.</p>
+      </section>
+      <section class="callout fix">
+        <h4>Suggested Fix</h4>
+        <p>replace these with regression tests for the desired behavior: pending Redis holds are durably reconciled/retried once PostgreSQL is available, and successful ERP confirmations are idempotently reused or persisted before retry so the downstream confirmation is not repeated.</p>
+      </section>
+      <details class="references">
+        <summary>References <span>4</span></summary>
+        <ul>
+          <li><code>apps/api/test/api.test.ts:2752</code> names the pending-persistence replay behavior as expected.</li>
+<li><code>apps/api/test/api.test.ts:2792</code> through <code>apps/api/test/api.test.ts:2795</code> assert the retry remains <code>reservation_pending_persistence</code> with no order.</li>
+<li><code>apps/worker/test/unit/order-process-job-handler.test.ts:218</code> names duplicate confirmation after confirmed-state persistence failure as retryable behavior.</li>
+<li><code>apps/worker/test/unit/order-process-job-handler.test.ts:241</code> asserts <code>confirmation.confirm</code> is called twice.</li>
+        </ul>
+      </details>
+    </article>
+  </section>
+
+  <section class="phase" id="p3">
+    <div class="phase-heading">
+      <p class="eyebrow">P3</p>
+      <h2>P3 Findings</h2>
+      <p>3 findings recorded for this priority band.</p>
+    </div>
+    
+    <article class="finding p3" id="p3-01">
+      <header class="finding-header">
+        <div>
+          <a class="anchor" href="#p3-01" aria-label="Link to P3-01">#</a>
+          <span class="eyebrow">P3-01</span>
+          <h3>Admin cleanup can return a correlation ID that disagrees with the response header</h3>
+        </div>
+        <span class="badge p3">P3 · Low severity</span>
+      </header>
+      <section class="finding-body">
+        <p>The generated-run cleanup endpoint accepts <code>correlationId</code> in the request body and passes it into the service response, whose shared schema requires <code>correlationId</code>. The route updates <code>request.correlationId</code> after parsing the body, but it does not update the <code>x-correlation-id</code> response header. Other body-correlation routes, such as admin runtime-policy updates and run-history deletion, refresh the header after normalization.</p>
+      </section>
+      <section class="callout impact">
+        <h4>Impact</h4>
+        <p>clients and logs that key off the standard <code>x-correlation-id</code> header can disagree with the JSON payload for cleanup requests that supply a body correlation ID. This weakens the shared correlation vocabulary on an admin maintenance boundary and leaves the current API test coverage checking only the body value.</p>
+      </section>
+      <section class="callout fix">
+        <h4>Suggested Fix</h4>
+        <p>import <code>correlationIdHeaderName</code>, set the response header after normalizing the cleanup correlation ID, and add a route test that asserts both payload and header equal the supplied body <code>correlationId</code>.</p>
+      </section>
+      <details class="references">
+        <summary>References <span>3</span></summary>
+        <ul>
+          <li><code>packages/contracts/src/demo.ts:527</code> through <code>packages/contracts/src/demo.ts:547</code> define cleanup request/response contracts with optional request <code>correlationId</code> and required response <code>correlationId</code>.</li>
+<li><code>apps/api/src/routes/admin-maintenance-routes.ts:38</code> through <code>apps/api/src/routes/admin-maintenance-routes.ts:47</code> normalize and pass the body correlation ID but never call <code>reply.header(correlationIdHeaderName, correlationId)</code>.</li>
+<li><code>apps/api/src/services/demo-maintenance-service.ts:156</code> through <code>apps/api/src/services/demo-maintenance-service.ts:164</code> returns that body-derived correlation ID in the response payload.</li>
+        </ul>
+      </details>
+    </article>
+
+    <article class="finding p3" id="p3-02">
+      <header class="finding-header">
+        <div>
+          <a class="anchor" href="#p3-02" aria-label="Link to P3-02">#</a>
+          <span class="eyebrow">P3-02</span>
+          <h3><code>runtime:setup</code> is documented as DB-only but rebuilds the whole app workspace</h3>
+        </div>
+        <span class="badge p3">P3 · Low severity</span>
+      </header>
+      <section class="finding-body">
+        <p>The runtime docs say the setup image uses a DB-only Docker target so seed changes do not rebuild the web, API, worker, mock ERP, or load-orchestrator bundles. The Dockerfile does the opposite: every runtime target inherits from <code>workspace</code>, and <code>workspace</code> runs <code>pnpm build</code> for the whole monorepo before <code>runtime-setup</code> is created.</p>
+      </section>
+      <section class="callout impact">
+        <h4>Impact</h4>
+        <p><code>pnpm runtime:setup</code> can spend time rebuilding every service bundle after ordinary source or seed changes, contradicting the local runtime command contract and making setup slower and more fragile than intended.</p>
+      </section>
+      <section class="callout fix">
+        <h4>Suggested Fix</h4>
+        <p>split a real DB/setup Docker target that copies only the files needed by <code>@checkout-surge/db</code> migrations/seeds and its workspace dependencies, or update the docs if the full build is intentional.</p>
+      </section>
+      <details class="references">
+        <summary>References <span>5</span></summary>
+        <ul>
+          <li><code>Dockerfile:21</code> installs the full workspace.</li>
+<li><code>Dockerfile:23</code> through <code>Dockerfile:25</code> copy the entire repository and run <code>pnpm build</code>.</li>
+<li><code>Dockerfile:56</code> through <code>Dockerfile:58</code> define <code>runtime-setup</code> as <code>FROM workspace</code>.</li>
+<li><code>package.json:34</code> runs <code>docker compose run --rm --build runtime-setup</code>.</li>
+<li><code>docs/runtime_topology.md:182</code> says the setup image uses a DB-only Docker target and does not rebuild application bundles.</li>
+        </ul>
+      </details>
+    </article>
+
+    <article class="finding p3" id="p3-03">
+      <header class="finding-header">
+        <div>
+          <a class="anchor" href="#p3-03" aria-label="Link to P3-03">#</a>
+          <span class="eyebrow">P3-03</span>
+          <h3>Local runtime docs contain stale operational guidance</h3>
+        </div>
+        <span class="badge p3">P3 · Low severity</span>
+      </header>
+      <section class="finding-body">
+        <p>The local development guide has two stale runtime details:</p>
+<ul><li>The clean wipe-and-rebuild recipe lists only <code>pnpm runtime:wipe</code> followed by <code>pnpm runtime:setup</code>, but <code>runtime:wipe</code> runs <code>docker compose down --volumes --remove-orphans</code> and <code>runtime:setup</code> starts only PostgreSQL, Redis, and the one-shot setup container. Following the recipe leaves the API, worker, mock ERP, web, load-orchestrator, and dashboard proxy stopped until <code>pnpm runtime:up</code> is run again.</li><li>The health-check example/table lists old readiness check names such as <code>redis_url_configured</code>, <code>database_url_configured</code>, <code>mock_erp_base_url_configured</code>, and <code>erp_circuit_breaker</code>, while the current API and worker readiness code reports reachable dependency and queue-worker checks.</li></ul>
+      </section>
+      <section class="callout impact">
+        <h4>Impact</h4>
+        <p>operators following the docs can believe a wiped runtime has been rebuilt when only data services were restarted, and health troubleshooting points at readiness checks that no longer exist.</p>
+      </section>
+      <section class="callout fix">
+        <h4>Suggested Fix</h4>
+        <p>include <code>pnpm runtime:up</code> in the clean wipe recipe and update the readiness examples/table to match the implemented check names.</p>
+      </section>
+      <details class="references">
+        <summary>References <span>5</span></summary>
+        <ul>
+          <li><code>package.json:35</code> defines <code>runtime:wipe</code> as Compose <code>down --volumes --remove-orphans</code>.</li>
+<li><code>docs/local_development.md:73</code> says <code>runtime:setup</code> by itself does not start the application services.</li>
+<li><code>docs/local_development.md:75</code> through <code>docs/local_development.md:80</code> document the incomplete wipe-and-rebuild recipe.</li>
+<li><code>docs/local_development.md:195</code> through <code>docs/local_development.md:218</code> show stale readiness response/check names.</li>
+<li><code>apps/api/src/runtime/readiness.ts:19</code> through <code>apps/api/src/runtime/readiness.ts:56</code> and <code>apps/worker/src/runtime/readiness.ts:22</code> through <code>apps/worker/src/runtime/readiness.ts:96</code> show the current readiness checks.</li>
+        </ul>
+      </details>
+    </article>
+  </section>
+    </main>
+  </div>
+</body>
+</html>
