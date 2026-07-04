@@ -16,7 +16,7 @@ const pages: Array<{ path: string; expect: string[] }> = [
   { path: "/models/opus-4.8", expect: ["Opus 4.8", "F25"] },
   { path: "/models/glm-5.2?tab=report", expect: ["Consolidated Findings", "Section 8"] },
   { path: "/comparisons", expect: ["No comparisons recorded yet"] },
-  { path: "/manual-findings", expect: ["No manual findings recorded yet"] },
+  { path: "/agentic-testing", expect: ["No agentic test findings recorded yet"] },
 ];
 
 const browser = await chromium.launch();

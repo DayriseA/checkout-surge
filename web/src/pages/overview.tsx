@@ -23,7 +23,7 @@ export function OverviewPage() {
           <Link to="/clusters" className="underline hover:text-ink">
             cluster view
           </Link>{" "}
-          and, later, the manual-testing results.
+          and, later, the agentic exploratory testing results.
         </p>
       </header>
 

@@ -7,10 +7,10 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  agenticTestFindingsFileSchema,
   clustersFileSchema,
   comparisonSchema,
   findingsFileSchema,
-  manualFindingsFileSchema,
   modelsFileSchema,
   slicesFileSchema,
 } from "../src/lib/schema.ts";
@@ -81,10 +81,15 @@ check("clusters.json", () => {
   }
 });
 
-for (const file of readdirSync(join(dataDir, "manual-findings"))) {
-  check(`manual-findings/${file}`, () => {
-    const parsed = manualFindingsFileSchema.parse(readJson(join(dataDir, "manual-findings", file)));
+for (const file of readdirSync(join(dataDir, "agentic-test-findings"))) {
+  check(`agentic-test-findings/${file}`, () => {
+    const parsed = agenticTestFindingsFileSchema.parse(readJson(join(dataDir, "agentic-test-findings", file)));
+    const model = models.find((m) => m.id === parsed.model);
+    if (!model) throw new Error(`unknown model ${parsed.model}`);
     for (const finding of parsed.findings) {
+      if (!finding.id.startsWith(`${parsed.model}:`)) {
+        throw new Error(`${finding.id} does not match file model ${parsed.model}`);
+      }
       for (const related of finding.relatedFindingIds) {
         if (!findingIds.has(related)) throw new Error(`${finding.id}: unknown related id ${related}`);
       }

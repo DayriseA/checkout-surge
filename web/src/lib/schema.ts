@@ -68,8 +68,8 @@ export type Cluster = z.infer<typeof clusterSchema>;
 
 export const clustersFileSchema = z.object({ clusters: z.array(clusterSchema) });
 
-export const manualFindingSchema = z.object({
-  id: z.string().min(1),
+export const agenticTestFindingSchema = z.object({
+  id: z.string().regex(/^[a-z0-9.-]+:E\d+$/, "expected '<model>:E{n}'"),
   title: z.string().min(1),
   severity: severitySchema,
   slices: z.array(z.number().int().min(1).max(8)).optional(),
@@ -78,14 +78,14 @@ export const manualFindingSchema = z.object({
   relatedFindingIds: z.array(z.string()).default([]),
   description: z.string().min(1),
 });
-export type ManualFinding = z.infer<typeof manualFindingSchema>;
+export type AgenticTestFinding = z.infer<typeof agenticTestFindingSchema>;
 
-export const manualFindingsFileSchema = z.object({
+export const agenticTestFindingsFileSchema = z.object({
   model: z.string().min(1),
-  reviewType: z.literal("manual"),
-  findings: z.array(manualFindingSchema),
+  reviewType: z.literal("agentic-exploratory-test"),
+  findings: z.array(agenticTestFindingSchema),
 });
-export type ManualFindingsFile = z.infer<typeof manualFindingsFileSchema>;
+export type AgenticTestFindingsFile = z.infer<typeof agenticTestFindingsFileSchema>;
 
 export const verdictSchema = z.enum(["better", "same", "worse", "missing", "unknown"]);
 export type Verdict = z.infer<typeof verdictSchema>;

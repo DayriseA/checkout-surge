@@ -9,7 +9,7 @@ const sections = [
   { to: "/findings", label: "Findings", icon: ListChecks },
   { to: "/clusters", label: "Clusters", icon: Layers },
   { to: "/comparisons", label: "Comparisons", icon: GitCompareArrows },
-  { to: "/manual-findings", label: "Manual testing", icon: ScrollText },
+  { to: "/agentic-testing", label: "Agentic testing", icon: ScrollText },
 ];
 
 export function Layout() {

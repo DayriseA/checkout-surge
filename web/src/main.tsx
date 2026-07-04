@@ -15,7 +15,7 @@ import { FindingsPage } from "./pages/findings";
 import { ClustersPage } from "./pages/clusters";
 import { ModelPage } from "./pages/model";
 import { ComparisonsPage } from "./pages/comparisons";
-import { ManualFindingsPage } from "./pages/manual-findings";
+import { AgenticTestingPage } from "./pages/agentic-testing";
 
 const router = createBrowserRouter([
   {
@@ -26,7 +26,7 @@ const router = createBrowserRouter([
       { path: "/clusters", element: <ClustersPage /> },
       { path: "/models/:modelId", element: <ModelPage /> },
       { path: "/comparisons", element: <ComparisonsPage /> },
-      { path: "/manual-findings", element: <ManualFindingsPage /> },
+      { path: "/agentic-testing", element: <AgenticTestingPage /> },
       { path: "*", element: <OverviewPage /> },
     ],
   },

@@ -3,18 +3,18 @@
  * A schema mismatch throws here, on purpose — bad data should be loud.
  */
 import {
+  agenticTestFindingsFileSchema,
   clustersFileSchema,
   comparisonSchema,
   findingsFileSchema,
-  manualFindingsFileSchema,
   modelsFileSchema,
   slicesFileSchema,
   SEVERITY_ORDER,
+  type AgenticTestFindingsFile,
   type Cluster,
   type Comparison,
   type Finding,
   type FindingsFile,
-  type ManualFindingsFile,
   type Model,
   type Severity,
   type Slice,
@@ -28,7 +28,7 @@ const findingsModules = import.meta.glob("../../../results/data/findings/*.json"
   eager: true,
   import: "default",
 });
-const manualModules = import.meta.glob("../../../results/data/manual-findings/*.json", {
+const agenticTestModules = import.meta.glob("../../../results/data/agentic-test-findings/*.json", {
   eager: true,
   import: "default",
 });
@@ -62,8 +62,8 @@ export const findingsFiles: FindingsFile[] = Object.entries(findingsModules).map
   ([path, raw]) => parseOrThrow(path, () => findingsFileSchema.parse(raw)),
 );
 
-export const manualFiles: ManualFindingsFile[] = Object.entries(manualModules).map(
-  ([path, raw]) => parseOrThrow(path, () => manualFindingsFileSchema.parse(raw)),
+export const agenticTestFiles: AgenticTestFindingsFile[] = Object.entries(agenticTestModules).map(
+  ([path, raw]) => parseOrThrow(path, () => agenticTestFindingsFileSchema.parse(raw)),
 );
 
 export const comparisons: Comparison[] = Object.entries(comparisonModules).map(

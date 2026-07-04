@@ -1,17 +1,18 @@
 import { Link } from "react-router-dom";
-import { findingById, manualFiles, modelById } from "@/lib/data";
+import { agenticTestFiles, findingById, modelById } from "@/lib/data";
 import { Markdown } from "@/components/markdown";
 import { ModelMark } from "@/components/model-mark";
 import { SeverityBadge } from "@/components/severity-badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 /**
- * Bugs found by human testing of each implementation. The headline metric is
- * caughtInSelfAudit — did the model's own review see this issue coming?
+ * Bugs found by AI agents running exploratory browser sessions against each
+ * implementation. The headline metric is caughtInSelfAudit — did the model's
+ * own review see this issue coming?
  */
-export function ManualFindingsPage() {
-  const total = manualFiles.reduce((n, file) => n + file.findings.length, 0);
-  const missed = manualFiles.reduce(
+export function AgenticTestingPage() {
+  const total = agenticTestFiles.reduce((n, file) => n + file.findings.length, 0);
+  const missed = agenticTestFiles.reduce(
     (n, file) => n + file.findings.filter((f) => !f.caughtInSelfAudit).length,
     0,
   );
@@ -19,21 +20,23 @@ export function ManualFindingsPage() {
   return (
     <div className="space-y-6">
       <header className="max-w-[70ch]">
-        <h1 className="text-2xl font-semibold tracking-tight">Manual testing</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Agentic exploratory testing</h1>
         <p className="mt-1 text-sm leading-relaxed text-ink-2">
-          Issues found by hand-testing each implementation. Every entry records whether the
-          model's own self-audit had already caught it — the direct measure of audit blind spots.
+          Issues found by AI agents taking control of the browser, simulating real user workflows,
+          and reporting functional bugs, inconsistencies, broken flows, or unstable UI states. Every
+          entry records whether the model's own self-audit had already caught it — the direct measure
+          of audit blind spots.
         </p>
       </header>
 
       {total === 0 ? (
         <Card>
           <CardContent className="py-10 text-center">
-            <p className="text-sm font-medium">No manual findings recorded yet</p>
+            <p className="text-sm font-medium">No agentic test findings recorded yet</p>
             <p className="mx-auto mt-2 max-w-[52ch] text-xs leading-relaxed text-ink-2">
-              As you test the implementations, record issues in{" "}
+              As AI tester agents explore the implementations, record issues in{" "}
               <code className="rounded bg-wash px-1 font-mono">
-                results/data/manual-findings/&lt;model&gt;.json
+                results/data/agentic-test-findings/&lt;model&gt;.json
               </code>{" "}
               (schema in <code className="rounded bg-wash px-1 font-mono">results/data/README.md</code>).
               Set <code className="rounded bg-wash px-1 font-mono">caughtInSelfAudit</code> and link
@@ -44,9 +47,9 @@ export function ManualFindingsPage() {
       ) : (
         <>
           <p className="font-mono text-xs text-ink-3">
-            {total} manual findings · {missed} missed by the self-audits
+            {total} agentic test findings · {missed} missed by the self-audits
           </p>
-          {manualFiles
+          {agenticTestFiles
             .filter((file) => file.findings.length > 0)
             .map((file) => (
               <Card key={file.model}>

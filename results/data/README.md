@@ -10,7 +10,7 @@ This directory is the machine-readable layer over the reports in `results/`. The
 | `slices.json` | The eight review areas from the shared review helper; findings reference them by id. |
 | `findings/<model>.auto-review.json` | One record per finding from that model's post-phase-10 self-audit. |
 | `clusters.json` | Cross-model groupings of findings that describe the same underlying issue class. |
-| `manual-findings/<model>.json` | Bugs found by human testing of that model's implementation (empty for now). |
+| `agentic-test-findings/<model>.json` | Bugs found by AI agents running exploratory browser sessions against that model's implementation (empty for now). |
 | `comparisons/*.json` | Per-topic implementation comparisons against the reference project (empty for now). |
 
 ## Finding record
@@ -51,11 +51,11 @@ A cluster groups findings across models that describe the same underlying issue 
 
 The initial cluster mapping was AI-curated — review the `confidence` field and adjust membership freely; the app re-derives all overlap views from this file.
 
-## Manual findings (to fill during manual testing)
+## Agentic test findings (to fill during agentic exploratory testing)
 
 ```jsonc
 {
-  "id": "glm-5.2:M1",            // "<model>:M<n>"
+  "id": "glm-5.2:E1",            // "<model>:E<n>"
   "title": "…",
   "severity": "medium",          // same normalized scale
   "slices": [5],                 // optional
@@ -65,6 +65,8 @@ The initial cluster mapping was AI-curated — review the `confidence` field and
   "description": "…"             // markdown allowed
 }
 ```
+
+These findings come from capable AI tester agents simulating real user interactions through browser use ability.
 
 ## Comparisons (to fill during the comparison phase)
 
