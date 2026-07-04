@@ -66,11 +66,11 @@ The initial cluster mapping was AI-curated — review the `confidence` field and
 }
 ```
 
-These findings come from capable AI tester agents simulating real user interactions through browser use ability.
+These findings come from capable AI tester agents simulating real user interactions through browser use ability. Source reports follow `docs/agentic_test_report_format.md`, so the `E{n}` codes here mirror the reports directly.
 
 ## Comparisons (to fill during the comparison phase)
 
-One JSON file per topic in `comparisons/`:
+Source reports follow `docs/comparison_report_format.md`; these records are ingested from its per-topic `C{n}` sections. One JSON file per topic in `comparisons/`:
 
 ```jsonc
 {
