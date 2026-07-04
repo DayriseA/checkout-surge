@@ -33,11 +33,10 @@ export type Slice = z.infer<typeof sliceSchema>;
 export const slicesFileSchema = z.object({ slices: z.array(sliceSchema).min(1) });
 
 export const findingSchema = z.object({
-  id: z.string().regex(/^[a-z0-9.-]+:[A-Za-z0-9-]+$/, "expected '<model>:<code>'"),
-  code: z.string().min(1),
+  id: z.string().regex(/^[a-z0-9.-]+:[FN]\d+$/, "expected '<model>:<code>'"),
+  code: z.string().regex(/^[FN]\d+$/, "expected F{n} or N{n}"),
   title: z.string().min(1),
   severity: severitySchema,
-  severityRaw: z.string().min(1),
   tier: z.enum(["finding", "note"]),
   slices: z.array(z.number().int().min(1).max(8)).min(1),
   locations: z.array(z.string().min(1)),

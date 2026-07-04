@@ -1,8 +1,36 @@
 # Phase 1-10 Review Findings
 
-## P1 Findings
+| Code | Finding | Severity | Slices |
+|------|---------|----------|--------|
+| F1 | Redis-secured holds can remain permanently pending after a transient PostgreSQL failure | High | 1 |
+| F2 | Run closure is best-effort, so stale Redis eligibility can keep accepting a closed run | High | 4 |
+| F3 | Admin reset fails runs without writing immutable run-history summaries | High | 4 |
+| F4 | Generated-run cleanup can delete non-generated sale offers | High | 2 |
+| F5 | Orders are not constrained to match a secured reservation | High | 2 |
+| F6 | Successful ERP confirmations can be replayed after local persistence failures | High | 3 |
+| F7 | Open ERP circuit retries can exhaust the job before the circuit can recover | High | 3 |
+| F8 | Lost notification enqueue can fail an otherwise completed run | High | 3 |
+| F9 | Lost traffic-completion reports can leave runs permanently active | High | 4 |
+| F10 | Expected sold-out responses are counted as HTTP failures in k6 summaries | High | 4 |
+| F11 | Accepted reservations synchronously run dashboard aggregate reads before responding | Medium | 1 |
+| F12 | Mock ERP TPS limiting is global despite request-scoped run config | Medium | 3 |
+| F13 | Terminal summary writes can race with direct reset updates and create split-brain run history | Medium | 4 |
+| F14 | Stale SSE events can overwrite a fresher recovery snapshot | Medium | 5 |
+| F15 | Protected admin proxy routes accept the raw passphrase instead of requiring the documented admin session | Medium | 5 |
+| F16 | Internal load-orchestration calls split correlation IDs between bodies, headers, and logs | Medium | 6 |
+| F17 | Load-orchestrator readiness can pass with an unreachable API target | Medium | 7 |
+| F18 | Load-orchestrator tests do not exercise the production k6 runner or completion reporting path | Medium | 8 |
+| F19 | Web tests stop at static markup and proxy units, leaving browser workflows untested | Medium | 8 |
+| F20 | Some tests lock in known-bad recovery behavior as expected behavior | Medium | 8 |
+| F21 | Admin cleanup can return a correlation ID that disagrees with the response header | Low | 6 |
+| F22 | runtime:setup is documented as DB-only but rebuilds the whole app workspace | Low | 7 |
+| F23 | Local runtime docs contain stale operational guidance | Low | 7 |
 
-### P1-01 - Redis-secured holds can remain permanently pending after a transient PostgreSQL failure
+## High
+
+### F1 — Redis-secured holds can remain permanently pending after a transient PostgreSQL failure (High)
+
+**Slices:** 1
 
 When Redis secures stock but `persistSecuredReservation()` fails, the service returns `reservation_pending_persistence` and records the hold. On subsequent requests with the same idempotency key, Redis returns `reservation_pending_persistence`; the service only checks `getPersistedBuyByReservationId()`, re-records pending state, re-marks the Redis sentinel, and returns pending again. It never retries the durable reservation/order insert from the stored hold when no durable row exists.
 
@@ -17,7 +45,9 @@ Impact: a transient PostgreSQL outage can reserve Redis stock, expose `Retry-Aft
 
 Suggested fix: add a reconciliation/retry path that can durably persist a previously secured Redis hold once PostgreSQL is available, then update tests to assert the pending hold is eventually reconciled instead of remaining permanently pending.
 
-### P1-02 - Run closure is best-effort, so stale Redis eligibility can keep accepting a closed run
+### F2 — Run closure is best-effort, so stale Redis eligibility can keep accepting a closed run (High)
+
+**Slices:** 4
 
 The buy path trusts only Redis inventory state for generated-run eligibility. Lifecycle code moves the durable run to `draining` or `failed`, then catches and suppresses failures while closing Redis sale eligibility. If that Redis close command fails transiently, the run is no longer accepting in PostgreSQL while `inventory:{saleOfferId}:state` can still say `runSaleStatus: accepting`, allowing later `/buy` calls with the old `runId` to reserve stock.
 
@@ -31,7 +61,9 @@ Impact: a stale Redis hash can keep accepting reservations for closed, failed, o
 
 Suggested fix: make generated-run closure fail closed, either by making Redis closure part of the guarded lifecycle transition or by adding a durable/repairable closure path that prevents stale Redis eligibility from accepting old runs. Add a regression test covering Redis close failure during run closure.
 
-### P1-03 - Admin reset fails runs without writing immutable run-history summaries
+### F3 — Admin reset fails runs without writing immutable run-history summaries (High)
+
+**Slices:** 4
 
 `reset()` directly updates every `starting`, `active`, or `draining` run to `failed` with `failureReason: "admin_reset"`, but it never calls the terminal summary writer or inserts `demo_run_summaries`.
 
@@ -46,7 +78,9 @@ Impact: a reset during a run leaves a terminal `demo_runs` row with no immutable
 
 Suggested fix: route reset-owned active runs through the shared terminal summary writer before or while marking them failed, with `admin_reset` summaries and captured business outcome/inventory snapshots. Add a maintenance-service regression test asserting summaries are created for reset-failed active runs and existing terminal summaries remain unchanged.
 
-### P1-04 - Generated-run cleanup can delete non-generated sale offers
+### F4 — Generated-run cleanup can delete non-generated sale offers (High)
+
+**Slices:** 2
 
 `DemoMaintenanceService.cleanupOldRuns()` collects `saleOfferId` values from every deletable terminal run and deletes those `sale_offers` rows by ID only. It never verifies that the referenced offer is generated-run-owned data. The schema allows `demo_runs.sale_offer_id` to reference any sale offer, and generated-run ownership is enforced through `demo_run_sale_contexts`, not by `demo_runs.saleOfferId` itself.
 
@@ -63,7 +97,9 @@ Impact: if legacy data, manual repair data, or a bug leaves an old terminal run 
 
 Suggested fix: collect/delete sale offers only through verified `demo_run_sale_contexts` rows and/or add `sale_offers.purpose = 'generated_run'` to the delete condition. Add a cleanup regression test proving a terminal run that references a catalog offer does not delete that offer.
 
-### P1-05 - Orders are not constrained to match a secured reservation
+### F5 — Orders are not constrained to match a secured reservation (High)
+
+**Slices:** 2
 
 `orders.reservationId` only references `reservations.id` and is unique. There is no database trigger/check ensuring the referenced reservation is `status = 'secured'`, nor that `orders.saleOfferId`, `runId`, `correlationId`, or `quantity` match the reservation row. The existing generated-run trigger validates sale-offer ownership for each row independently, not the order-to-reservation relationship.
 
@@ -77,7 +113,9 @@ Impact: PostgreSQL accepts orders that point to released, expired, rejected, or 
 
 Suggested fix: add a migration-backed trigger or equivalent relational constraint on `orders` inserts/updates requiring a matching secured reservation with the same `saleOfferId`, nullable `runId`, `correlationId`, and `quantity`. Add schema/integration tests proving mismatched and non-secured reservations are rejected.
 
-### P1-06 - Successful ERP confirmations can be replayed after local persistence failures
+### F6 — Successful ERP confirmations can be replayed after local persistence failures (High)
+
+**Slices:** 3
 
 The worker calls the external ERP before the order is durably marked confirmed. If `transitionToConfirmed()` fails after a successful ERP call, the order remains `processing`; the next delivery resumes that state and calls the ERP again. The current unit test explicitly locks in this behavior by expecting `confirmation.confirm` to be called twice after confirmed-state persistence fails.
 
@@ -93,7 +131,9 @@ Impact: a transient PostgreSQL failure after a successful ERP response can creat
 
 Suggested fix: make ERP confirmation idempotent at the worker/ERP boundary, for example by using an explicit idempotency key and storing/reusing successful confirmation results before retrying. Separate "ERP succeeded but local persistence failed" from normal dependency failures so retries do not blindly repeat the external confirmation.
 
-### P1-07 - Open ERP circuit retries can exhaust the job before the circuit can recover
+### F7 — Open ERP circuit retries can exhaust the job before the circuit can recover (High)
+
+**Slices:** 3
 
 `ErpCircuitOpenError` carries `retryAfterMs`, but the BullMQ retry schedule ignores it. Order jobs use the publisher's fixed retry options, which default to 4 attempts and 500 ms exponential backoff, while the worker's circuit reset timeout defaults to 10 seconds. With those defaults, a job can spend all retries on immediate `circuit open` errors before the circuit reaches its half-open probe window, then the handler persists the order as failed.
 
@@ -110,7 +150,9 @@ Impact: an ERP outage can fail otherwise valid orders while the circuit is delib
 
 Suggested fix: align circuit-open retries with `retryAfterMs`, either through a custom BullMQ backoff strategy, delayed requeue that does not consume the normal ERP attempt budget, or defaults that guarantee attempts span the reset window. Add a regression test that opens the circuit and verifies jobs are not terminally failed before the half-open probe time.
 
-### P1-08 - Lost notification enqueue can fail an otherwise completed run
+### F8 — Lost notification enqueue can fail an otherwise completed run (High)
+
+**Slices:** 3
 
 After an order is confirmed, notification work is only represented by a BullMQ job. If publishing that job fails, the order handler logs/reports the error and still completes the order job; there is no durable outbox or later repair path for the missing notification. Finalization, however, blocks whenever `notificationsRecorded < confirmedOrders`, so a single transient notification queue publish failure can keep a run draining until it fails with `business_drain_timeout`.
 
@@ -125,7 +167,9 @@ Impact: notification work is correctly backgrounded from the order-processing pe
 
 Suggested fix: persist a durable notification outbox row or add a confirmed-order recovery scanner that can recreate missing notification jobs/records. Add a regression test where notification enqueue fails once after confirmation and the run can still finalize after recovery.
 
-### P1-09 - Lost traffic-completion reports can leave runs permanently active
+### F9 — Lost traffic-completion reports can leave runs permanently active (High)
+
+**Slices:** 4
 
 The load orchestrator treats completion delivery to the API as fire-and-forget. When k6 exits, `SpawnK6Runner.reportCompletion()` flushes metrics and posts the completion report once; if that API call fails, the error is logged and the temporary run directory is removed, with no retry, durable outbox, or later reconciliation path. The API only moves a run from `starting`/`active` to `draining` inside `recordTrafficCompletion()`.
 
@@ -140,7 +184,9 @@ Impact: the local dockerized product can complete k6 traffic successfully but re
 
 Suggested fix: make completion reporting retry with bounded backoff and/or persist a small load-orchestrator completion outbox until the API accepts it idempotently. Add a regression test where `sendCompletion()` fails once and the run still reaches `draining`.
 
-### P1-10 - Expected sold-out responses are counted as HTTP failures in k6 summaries
+### F10 — Expected sold-out responses are counted as HTTP failures in k6 summaries (High)
+
+**Slices:** 4
 
 The generated k6 script correctly treats `409` + `outcome: "sold_out"` as an expected checkout response through custom counters and `check()`, but it never configures k6's HTTP expected-status callback. k6's built-in `http_req_failed` metric therefore still classifies expected `409` responses as failed HTTP requests. The accumulator copies that metric directly into `httpSummary.failedRequests` and `failureRate`.
 
@@ -156,9 +202,11 @@ Impact: run history and dashboard summaries can show expected sold-out traffic a
 
 Suggested fix: generate the script with a k6 response callback that treats `202` and the expected `409` sold-out response as successful for `http_req_failed`, or compute `failedRequests` from `unexpectedResponses` instead of raw k6 HTTP failure points. Add a parser/script test that all-sold-out traffic yields `failedRequests: 0` and `failureRate: 0`.
 
-## P2 Findings
+## Medium
 
-### P2-01 - Accepted reservations synchronously run dashboard aggregate reads before responding
+### F11 — Accepted reservations synchronously run dashboard aggregate reads before responding (Medium)
+
+**Slices:** 1
 
 After durable persistence, queue enqueue, and Redis promotion, `ReserveOrderService` awaits `publishBusinessOutcomeUpdateWithoutHidingDurableSuccess()` before returning `reservation_secured`. The default publisher reads the full business outcome and consistency lag projections, which fan out into multiple PostgreSQL aggregate queries, on every newly accepted reservation.
 
@@ -172,7 +220,9 @@ Impact: accepted-heavy runs add avoidable PostgreSQL read load and response late
 
 Suggested fix: publish only a lightweight event or enqueue/asynchronously refresh dashboard aggregates outside the buy response path. Add a hot-path regression/performance test or service test asserting accepted reservations do not synchronously perform aggregate dashboard reads.
 
-### P2-02 - Mock ERP TPS limiting is global despite request-scoped run config
+### F12 — Mock ERP TPS limiting is global despite request-scoped run config (Medium)
+
+**Slices:** 3
 
 The mock ERP correctly resolves request-scoped `erpConfig` before deciding a confirmation, but its TPS counter is a single process-wide window. `acceptWithinTpsLimit()` receives only `maxTps`, not `runId` or a config key, so confirmations from one run/config can consume capacity for a different run/config in the same second.
 
@@ -187,7 +237,9 @@ Impact: quick successive runs, catalog confirmations during a run, or any mixed 
 
 Suggested fix: scope the TPS window by `runId` when present, and use a separate key for global/catalog traffic or for materially different request-scoped configs. Add a test proving two different run IDs do not throttle each other.
 
-### P2-03 - Terminal summary writes can race with direct reset updates and create split-brain run history
+### F13 — Terminal summary writes can race with direct reset updates and create split-brain run history (Medium)
+
+**Slices:** 4
 
 `PostgresTerminalDemoRunSummaryWriter` takes an advisory lock, inserts the immutable summary, then updates `demo_runs` only if the current status is in the allowed set. It does not verify that the guarded update matched a row before returning `true`. The admin reset path bypasses this writer and directly updates `starting`, `active`, or `draining` runs to `failed` without taking the same advisory lock. If reset races with finalization, the summary writer can insert a `completed` or different `failed` summary for a draining run while the reset update wins the run row with `failureReason: "admin_reset"`.
 
@@ -202,7 +254,9 @@ Impact: a run can end with `demo_runs` showing `failed/admin_reset` while `demo_
 
 Suggested fix: make all terminal transitions, including reset, go through one locked summary writer path, and have the writer insert the summary only when it can atomically claim the allowed current status or otherwise verify/update the run row. Add a concurrency regression test for reset racing with finalization.
 
-### P2-04 - Stale SSE events can overwrite a fresher recovery snapshot
+### F14 — Stale SSE events can overwrite a fresher recovery snapshot (Medium)
+
+**Slices:** 5
 
 The watch dashboard treats live SSE payloads as direct state patches without checking whether the event belongs to the currently recovered run or whether it is older than the current recovery baseline. `source.onmessage` always calls `applyDashboardEvent()`, and the reducer blindly replaces `currentRun`, inventory, queue, metrics, and business outcome data from the event. The event contract and publishers carry `runId` for run, metric, and business-outcome events, but the browser ignores it.
 
@@ -219,7 +273,9 @@ Impact: after reconnect, manual refresh, reset, or a quick new run, a delayed ev
 
 Suggested fix: treat live events as hints scoped to the recovered current run. Ignore events whose `runId` or `saleOfferId` disagrees with `recovery.data.currentRun`, and ignore events with `occurredAt` older than the current recovery baseline unless they are part of the same accepted baseline window. Add reducer tests for stale previous-run business/metric/run events arriving after a newer recovery snapshot.
 
-### P2-05 - Protected admin proxy routes accept the raw passphrase instead of requiring the documented admin session
+### F15 — Protected admin proxy routes accept the raw passphrase instead of requiring the documented admin session (Medium)
+
+**Slices:** 5
 
 The documented protection model says operators exchange the passphrase once for a signed `HttpOnly` admin session, and protected dashboard API routes then verify that session before adding the server-side control token. The shared route helper currently allows either a valid session cookie or a matching `x-admin-passphrase` header, so dangerous actions can be invoked without ever establishing the admin session.
 
@@ -236,7 +292,9 @@ Impact: the service token is still kept server-side, but the browser/admin clien
 
 Suggested fix: split the helper into `requireAdminSession()` for protected proxy routes and a passphrase-only check used only by `POST /api/admin/session`. After successful sign-in, protected components should call admin proxy routes with the `HttpOnly` cookie only. Remove passphrase headers from destructive action calls and update tests to assert raw-passphrase access is rejected outside the session-creation route.
 
-### P2-06 - Internal load-orchestration calls split correlation IDs between bodies, headers, and logs
+### F16 — Internal load-orchestration calls split correlation IDs between bodies, headers, and logs (Medium)
+
+**Slices:** 6
 
 The internal API-to-load and load-to-API HTTP clients send contract payloads that contain `correlationId`, but they do not send the shared `x-correlation-id` header. Both Fastify servers derive `request.correlationId`, response headers, error payloads, and log context from that header before route handlers run. The load-orchestrator start route also returns the body correlation ID from the parsed request, so a successful start can expose one correlation ID in the JSON body and a different generated ID in the `x-correlation-id` response header.
 
@@ -253,7 +311,9 @@ Impact: cross-service traces for a single demo run fragment into unrelated IDs e
 
 Suggested fix: set `x-correlation-id` from the validated contract payload on every internal HTTP client call, and add regression tests asserting the load-orchestrator start response header matches the request body `correlationId` and that load metric/completion calls reach the API with the same header. Consider also normalizing route `request.correlationId` from the parsed internal body after authentication so logs emitted after parsing use the contract correlation.
 
-### P2-07 - Load-orchestrator readiness can pass with an unreachable API target
+### F17 — Load-orchestrator readiness can pass with an unreachable API target (Medium)
+
+**Slices:** 7
 
 The load-orchestrator readiness check reports `api_base_url_configured=ok` whenever `config.apiBaseUrl` is non-empty. It does not attempt a request from the load-orchestrator container to the configured API URL. Compose also starts the load orchestrator after the API container is merely started, not healthy.
 
@@ -267,7 +327,9 @@ Impact: a bad in-container `API_BASE_URL` such as a host-only URL, broken Compos
 
 Suggested fix: have load-orchestrator readiness fetch the configured API liveness/readiness endpoint from inside the service and mark it `unavailable` on failure. Consider changing Compose to wait for `api` health before starting the orchestrator.
 
-### P2-08 - Load-orchestrator tests do not exercise the production k6 runner or completion reporting path
+### F18 — Load-orchestrator tests do not exercise the production k6 runner or completion reporting path (Medium)
+
+**Slices:** 8
 
 The load-orchestrator suite checks generated script text and parser behavior, then tests the HTTP start route with a fake `K6Runner`. It never instantiates `SpawnK6Runner`, never fakes a spawned k6 process, and never verifies the production path that writes the temporary script, reads k6 stdout, batches metrics, sends completion, handles non-zero exits, or cleans up the temp directory.
 
@@ -282,7 +344,9 @@ Impact: a green suite can miss production-only failures where k6 starts but metr
 
 Suggested fix: add a `SpawnK6Runner` unit test with an injected fake `spawnProcess` that emits k6 JSON lines and `close`/`error` events, asserting metric batches, completion reports, failure reports, and cleanup. Add at least one script-level check that can catch real k6 syntax/API drift.
 
-### P2-09 - Web tests stop at static markup and proxy units, leaving browser workflows untested
+### F19 — Web tests stop at static markup and proxy units, leaving browser workflows untested (Medium)
+
+**Slices:** 8
 
 The dashboard tests render client components with `renderToStaticMarkup()` and the proxy tests call Next route handlers directly. That covers labels and server forwarding, but it does not execute the browser event handlers that actually build request bodies, handle sessions, navigate to `/watch`, refresh recovery, delete selected history rows, or recover from proxy errors. The route/page surfaces themselves are also not smoke-tested as pages.
 
@@ -296,7 +360,9 @@ Impact: the local product can pass the current web tests while public starts, pu
 
 Suggested fix: add jsdom/Testing Library or Playwright coverage for the key workflows: public curated start, public custom start, admin sign-in plus one protected action, watch recovery refresh/SSE follow-up behavior, and run-history selected/delete-all actions. Include lightweight page smoke tests for `/`, `/watch`, `/admin`, `/run-history`, `/run-history/[runId]`, and `/about`.
 
-### P2-10 - Some tests lock in known-bad recovery behavior as expected behavior
+### F20 — Some tests lock in known-bad recovery behavior as expected behavior (Medium)
+
+**Slices:** 8
 
 A few tests currently assert the broken behavior reported by other review findings instead of the intended product recovery outcome. That makes the suite actively protect defects until those tests are rewritten, rather than merely lacking coverage.
 
@@ -311,9 +377,11 @@ Impact: after the product bugs are fixed, these tests will fail unless they are 
 
 Suggested fix: replace these with regression tests for the desired behavior: pending Redis holds are durably reconciled/retried once PostgreSQL is available, and successful ERP confirmations are idempotently reused or persisted before retry so the downstream confirmation is not repeated.
 
-## P3 Findings
+## Low
 
-### P3-01 - Admin cleanup can return a correlation ID that disagrees with the response header
+### F21 — Admin cleanup can return a correlation ID that disagrees with the response header (Low)
+
+**Slices:** 6
 
 The generated-run cleanup endpoint accepts `correlationId` in the request body and passes it into the service response, whose shared schema requires `correlationId`. The route updates `request.correlationId` after parsing the body, but it does not update the `x-correlation-id` response header. Other body-correlation routes, such as admin runtime-policy updates and run-history deletion, refresh the header after normalization.
 
@@ -327,7 +395,9 @@ Impact: clients and logs that key off the standard `x-correlation-id` header can
 
 Suggested fix: import `correlationIdHeaderName`, set the response header after normalizing the cleanup correlation ID, and add a route test that asserts both payload and header equal the supplied body `correlationId`.
 
-### P3-02 - `runtime:setup` is documented as DB-only but rebuilds the whole app workspace
+### F22 — `runtime:setup` is documented as DB-only but rebuilds the whole app workspace (Low)
+
+**Slices:** 7
 
 The runtime docs say the setup image uses a DB-only Docker target so seed changes do not rebuild the web, API, worker, mock ERP, or load-orchestrator bundles. The Dockerfile does the opposite: every runtime target inherits from `workspace`, and `workspace` runs `pnpm build` for the whole monorepo before `runtime-setup` is created.
 
@@ -343,7 +413,9 @@ Impact: `pnpm runtime:setup` can spend time rebuilding every service bundle afte
 
 Suggested fix: split a real DB/setup Docker target that copies only the files needed by `@checkout-surge/db` migrations/seeds and its workspace dependencies, or update the docs if the full build is intentional.
 
-### P3-03 - Local runtime docs contain stale operational guidance
+### F23 — Local runtime docs contain stale operational guidance (Low)
+
+**Slices:** 7
 
 The local development guide has two stale runtime details:
 

@@ -45,7 +45,7 @@ export function FindingRow({
           <span className="text-sm leading-snug font-medium text-ink">{finding.title}</span>
           <span className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
             {showModel && <ModelMark modelId={finding.model} className="text-xs" />}
-            <SeverityBadge severity={finding.severity} raw={finding.severityRaw} />
+            <SeverityBadge severity={finding.severity} />
             {finding.slices.map((sliceId) => (
               <span key={sliceId} className="font-mono text-[0.68rem] tracking-wide text-ink-3 uppercase">
                 S{sliceId} · {sliceById(sliceId)?.name}
@@ -64,7 +64,7 @@ function FindingDetail({ finding }: { finding: FindingWithModel }) {
 
   const section = useMemo(() => {
     if (!model) return null;
-    return extractSection(reportMarkdown(model), finding.model, finding.code);
+    return extractSection(reportMarkdown(model), finding.code);
   }, [model, finding]);
 
   return (
@@ -90,7 +90,7 @@ function FindingDetail({ finding }: { finding: FindingWithModel }) {
         </details>
       ) : (
         <p className="mt-3 text-xs text-ink-3">
-          Lower-confidence note — the summary above is the full content.{" "}
+          Section not located in the report.{" "}
           <Link to={`/models/${finding.model}?tab=report`} className="underline hover:text-ink">
             Open the report
           </Link>

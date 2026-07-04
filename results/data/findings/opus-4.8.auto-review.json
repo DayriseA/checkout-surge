@@ -8,9 +8,11 @@
       "code": "F1",
       "title": "Expected sold-out / idempotency 409s are graded as k6 traffic failures, so the flagship surge always finalizes failed",
       "severity": "high",
-      "severityRaw": "High",
       "tier": "finding",
-      "slices": [4, 8],
+      "slices": [
+        4,
+        8
+      ],
       "locations": [
         "apps/load-orchestrator/src/services/k6-script.ts:98-145",
         "apps/api/src/services/grade-traffic-delivery.ts:20-25",
@@ -23,9 +25,10 @@
       "code": "F2",
       "title": "Run-scoped ERP behavior and worker backpressure are frozen into the run but never applied",
       "severity": "high",
-      "severityRaw": "High",
       "tier": "finding",
-      "slices": [3],
+      "slices": [
+        3
+      ],
       "locations": [
         "apps/api/src/services/run-start-service.ts:216-265",
         "apps/mock-erp/src/services/erp-behavior.ts:56-68",
@@ -38,10 +41,14 @@
       "code": "F3",
       "title": "Root pnpm test:db:migrate is a stale \"not implemented\" placeholder that errors out",
       "severity": "high",
-      "severityRaw": "High",
       "tier": "finding",
-      "slices": [7],
-      "locations": ["package.json:36", "packages/db/package.json:27"],
+      "slices": [
+        7
+      ],
+      "locations": [
+        "package.json:36",
+        "packages/db/package.json:27"
+      ],
       "summary": "The root script still runs the Task-1.3-era not-implemented guard and exits 1, while the real implementation exists in packages/db and three docs walk the reader through the root command as a working migration-authoring aid."
     },
     {
@@ -49,9 +56,10 @@
       "code": "F4",
       "title": "Catalog (null-runId) buy against a live run's generated offer leaks a Redis hold",
       "severity": "medium",
-      "severityRaw": "Medium",
       "tier": "finding",
-      "slices": [1],
+      "slices": [
+        1
+      ],
       "locations": [
         "apps/api/src/services/reserve-order-service.ts:100-102",
         "packages/db/drizzle/0001_run_ownership_triggers.sql:27-52"
@@ -63,10 +71,13 @@
       "code": "F5",
       "title": "demo_run_reservation_outcomes is a dead durable table despite comments claiming active use",
       "severity": "medium",
-      "severityRaw": "Medium",
       "tier": "finding",
-      "slices": [2],
-      "locations": ["packages/db/src/schema.ts:342-357"],
+      "slices": [
+        2
+      ],
+      "locations": [
+        "packages/db/src/schema.ts:342-357"
+      ],
       "summary": "The table, its enum, and its constraints are never written or read anywhere, yet multiple comments assert it is the Phase 10 durable outcome record. The sold-out accounting it was meant to hold actually lands in demo_run_summaries.terminalInventorySnapshot."
     },
     {
@@ -74,10 +85,13 @@
       "code": "F6",
       "title": "orders:process completed jobs are never trimmed, so the completed set grows unbounded during the surge",
       "severity": "medium",
-      "severityRaw": "Medium",
       "tier": "finding",
-      "slices": [3],
-      "locations": ["apps/api/src/services/order-process-queue.ts:47-57"],
+      "slices": [
+        3
+      ],
+      "locations": [
+        "apps/api/src/services/order-process-queue.ts:47-57"
+      ],
       "summary": "defaultJobOptions omit removeOnComplete (unlike the notification queue), so a surge-10k run leaves ~10k completed job hashes in Redis, accumulating across runs until an explicit admin obliterate."
     },
     {
@@ -85,9 +99,10 @@
       "code": "F7",
       "title": "Traffic metrics are forwarded only once, after k6 exits, so there is no live in-run traffic telemetry",
       "severity": "medium",
-      "severityRaw": "Medium",
       "tier": "finding",
-      "slices": [4],
+      "slices": [
+        4
+      ],
       "locations": [
         "apps/load-orchestrator/src/services/traffic-run-service.ts:129-146",
         "apps/load-orchestrator/src/services/k6-runner.ts:55-74"
@@ -99,10 +114,13 @@
       "code": "F8",
       "title": "Live dashboard retains the previous run's order-outcome overlay across a run change",
       "severity": "medium",
-      "severityRaw": "Medium",
       "tier": "finding",
-      "slices": [5],
-      "locations": ["apps/web/src/lib/live-dashboard-state.ts"],
+      "slices": [
+        5
+      ],
+      "locations": [
+        "apps/web/src/lib/live-dashboard-state.ts"
+      ],
       "summary": "The recovery reducer re-baselines the snapshot but deliberately keeps the live overlay with no run-change detection. A run that emits no order events (notably a clean sold-out-only run) shows the previous run's confirmed/failed counts and lastOrderEvent as current for its entire duration."
     },
     {
@@ -110,10 +128,14 @@
       "code": "F9",
       "title": "API readiness never probes Redis reachability; a down Redis is hidden as degraded/HTTP 200",
       "severity": "medium",
-      "severityRaw": "Medium",
       "tier": "finding",
-      "slices": [6, 7],
-      "locations": ["apps/api/src/services/readiness.ts:28-36"],
+      "slices": [
+        6,
+        7
+      ],
+      "locations": [
+        "apps/api/src/services/readiness.ts:28-36"
+      ],
       "summary": "Redis is only checked for configuration presence while PostgreSQL gets a real probe. With Redis down — the inventory hot-path authority — every buy returns 503 while /health/ready, the compose healthcheck, health:check, and runtime:smoke all stay green."
     },
     {
@@ -121,10 +143,14 @@
       "code": "F10",
       "title": "WEB_ORIGIN is documented and compose-injected as the API realtime-CORS allow-list, but no code implements CORS",
       "severity": "medium",
-      "severityRaw": "Medium",
       "tier": "finding",
-      "slices": [7],
-      "locations": ["docker-compose.yml:73", "apps/api/src/server.ts"],
+      "slices": [
+        7
+      ],
+      "locations": [
+        "docker-compose.yml:73",
+        "apps/api/src/server.ts"
+      ],
       "summary": "WEB_ORIGIN is read nowhere and no CORS plugin is registered. The demo works same-origin through the proxy, but an operator exposing the debug ports and relying on WEB_ORIGIN gets no protection — a false security claim in docs and compose."
     },
     {
@@ -132,10 +158,13 @@
       "code": "F11",
       "title": "Concurrent idempotent replay can return reservation_secured for an order that will never exist",
       "severity": "medium",
-      "severityRaw": "Medium/Low",
       "tier": "finding",
-      "slices": [1],
-      "locations": ["apps/api/src/services/reserve-order-service.ts:218-231"],
+      "slices": [
+        1
+      ],
+      "locations": [
+        "apps/api/src/services/reserve-order-service.ts:218-231"
+      ],
       "summary": "A replayed duplicate decides secured-vs-pending from a pending sentinel the original request only writes after its durable write has already failed. Under a concurrent same-key duplicate plus a transient write failure, the replay promises a queued order that reconciliation will never materialize."
     },
     {
@@ -143,10 +172,14 @@
       "code": "F12",
       "title": "PUBLIC_CUSTOM_* env knobs are inert; the public runtime policy is hardcoded in the seed",
       "severity": "medium",
-      "severityRaw": "Medium-low",
       "tier": "finding",
-      "slices": [7],
-      "locations": ["apps/api/.env.example:45-57", "packages/db/src/presets.ts:23-33"],
+      "slices": [
+        7
+      ],
+      "locations": [
+        "apps/api/.env.example:45-57",
+        "packages/db/src/presets.ts:23-33"
+      ],
       "summary": "Thirteen documented PUBLIC_CUSTOM_* variables are read by no code — the policy is DEFAULT_PUBLIC_RUNTIME_POLICY seeded verbatim, and one variable (MAX_ERP_MAX_TPS) has no representable policy field at all."
     },
     {
@@ -154,10 +187,13 @@
       "code": "F13",
       "title": "Live inventory.updated publish is awaited inline on the winning hot path",
       "severity": "low",
-      "severityRaw": "Low",
       "tier": "finding",
-      "slices": [1],
-      "locations": ["apps/api/src/services/reserve-order-service.ts:155"],
+      "slices": [
+        1
+      ],
+      "locations": [
+        "apps/api/src/services/reserve-order-service.ts:155"
+      ],
       "summary": "A best-effort observability publish is awaited before the durable write on every newly reserved buy, adding a serialized Redis round trip to the latency-critical winning path for no correctness benefit."
     },
     {
@@ -165,10 +201,13 @@
       "code": "F14",
       "title": "clearRunLiveState leaks the run's sale-eligibility Redis key on cleanup",
       "severity": "low",
-      "severityRaw": "Low/Medium",
       "tier": "finding",
-      "slices": [2],
-      "locations": ["packages/db/src/run-cleanup.ts:80-86"],
+      "slices": [
+        2
+      ],
+      "locations": [
+        "packages/db/src/run-cleanup.ts:80-86"
+      ],
       "summary": "The cleanup helper unlinks outcome, metrics, and inventory keys but not run:{runId}:sale-eligibility, which lingers until its 24h TTL — and the smoke by-id path destroys a run whose eligibility record still says accepting."
     },
     {
@@ -176,10 +215,13 @@
       "code": "F15",
       "title": "resetTestDatabase performs DROP SCHEMA / TRUNCATE with no guard that the target is actually a test database",
       "severity": "low",
-      "severityRaw": "Low",
       "tier": "finding",
-      "slices": [2],
-      "locations": ["packages/db/src/testing/index.ts:94-115"],
+      "slices": [
+        2
+      ],
+      "locations": [
+        "packages/db/src/testing/index.ts:94-115"
+      ],
       "summary": "Safety rests entirely on callers passing TEST_DATABASE_URL; a future caller or a mis-set env var pointing at the dev database would silently wipe development data."
     },
     {
@@ -187,10 +229,13 @@
       "code": "F16",
       "title": "Seed is idempotent for durable rows but hard-resets Redis inventory",
       "severity": "low",
-      "severityRaw": "Low",
       "tier": "finding",
-      "slices": [2],
-      "locations": ["packages/db/src/seed.ts:24-54"],
+      "slices": [
+        2
+      ],
+      "locations": [
+        "packages/db/src/seed.ts:24-54"
+      ],
       "summary": "Re-running the seed leaves durable rows untouched but unconditionally resets the catalog offer's live Redis counters to full stock, diverging from any existing reservations against that offer."
     },
     {
@@ -198,10 +243,13 @@
       "code": "F17",
       "title": "Worker readiness reports order_process_worker_running: ok even when the consumer is not consuming",
       "severity": "low",
-      "severityRaw": "Low",
       "tier": "finding",
-      "slices": [3],
-      "locations": ["apps/worker/src/adapters/order-process-worker.ts:88-90"],
+      "slices": [
+        3
+      ],
+      "locations": [
+        "apps/worker/src/adapters/order-process-worker.ts:88-90"
+      ],
       "summary": "BullMQ's Worker.isRunning() does not reflect broker connectivity; with Redis unreachable the worker retries forever, consumes nothing, and /health/ready still reports the loop healthy while orders pile up."
     },
     {
@@ -209,9 +257,10 @@
       "code": "F18",
       "title": "A confirmation persisted-transition failure can double-confirm at the (non-idempotent) Mock ERP",
       "severity": "low",
-      "severityRaw": "Low",
       "tier": "finding",
-      "slices": [3],
+      "slices": [
+        3
+      ],
       "locations": [
         "apps/worker/src/services/process-order-service.ts:130-162",
         "apps/mock-erp/src/services/erp-confirmation-service.ts:48-96"
@@ -223,10 +272,14 @@
       "code": "F19",
       "title": "Admin console cannot launch the admin-only / Custom presets it can create",
       "severity": "low",
-      "severityRaw": "Low",
       "tier": "finding",
-      "slices": [5],
-      "locations": ["apps/web/src/components/run-controls.tsx", "apps/web/src/app/admin/page.tsx"],
+      "slices": [
+        5
+      ],
+      "locations": [
+        "apps/web/src/components/run-controls.tsx",
+        "apps/web/src/app/admin/page.tsx"
+      ],
       "summary": "The admin console reuses the public RunControls with its four hard-coded public presets, so there is no UI to start the admin-only or Custom presets the management panel can create — the backend supports it; the launcher is missing."
     },
     {
@@ -234,10 +287,13 @@
       "code": "F20",
       "title": "formatClock slices the ISO string as if it were always UTC",
       "severity": "low",
-      "severityRaw": "Low",
       "tier": "finding",
-      "slices": [5],
-      "locations": ["apps/web/src/components/panels.tsx"],
+      "slices": [
+        5
+      ],
+      "locations": [
+        "apps/web/src/components/panels.tsx"
+      ],
       "summary": "The clock renders iso.slice(11, 19), but the shared schema permits explicit offsets; a non-Z producer would render offset-local wall-clock time mislabeled as UTC. Latent because producers currently emit Z."
     },
     {
@@ -245,10 +301,13 @@
       "code": "F21",
       "title": "DB run-summary/finalization tables carry summary columns that are never written, read, or in the contract",
       "severity": "low",
-      "severityRaw": "Low",
       "tier": "finding",
-      "slices": [6],
-      "locations": ["packages/db/src/schema.ts:359-398"],
+      "slices": [
+        6
+      ],
+      "locations": [
+        "packages/db/src/schema.ts:359-398"
+      ],
       "summary": "Several jsonb columns on demo_run_summaries and demo_run_finalizations exist only in the schema and initial migration — dead schema and DB-to-contract drift signaling an abandoned richer-summary feature."
     },
     {
@@ -256,10 +315,14 @@
       "code": "F22",
       "title": "requestFailureRate is documented as (0..1) but only bounded below",
       "severity": "low",
-      "severityRaw": "Low",
       "tier": "finding",
-      "slices": [6],
-      "locations": ["packages/contracts/src/load.ts:140", "packages/contracts/src/run-history.ts:67"],
+      "slices": [
+        6
+      ],
+      "locations": [
+        "packages/contracts/src/load.ts:140",
+        "packages/contracts/src/run-history.ts:67"
+      ],
       "summary": "Both schema fields use z.number().min(0) with no .max(1), unlike the comparable ERP rate fields; a malformed over-range producer value would silently validate."
     },
     {
@@ -267,10 +330,14 @@
       "code": "F23",
       "title": "Unused contract exports add vocabulary surface with no consumer",
       "severity": "low",
-      "severityRaw": "Low/info",
       "tier": "finding",
-      "slices": [6],
-      "locations": ["packages/contracts/src/enums.ts:74-83", "packages/contracts/src/load.ts:66-71"],
+      "slices": [
+        6
+      ],
+      "locations": [
+        "packages/contracts/src/enums.ts:74-83",
+        "packages/contracts/src/load.ts:66-71"
+      ],
       "summary": "SIMULATED_PURCHASE_STATUSES and trafficSnapshotRefSchema are exported but consumed nowhere; the UI derives its purchase view from other schemas, leaving it ambiguous whether these were supposed to be used."
     },
     {
@@ -278,10 +345,13 @@
       "code": "F24",
       "title": "runtime:smoke:load permanently lowers the admin-soak-steady preset and never restores it",
       "severity": "low",
-      "severityRaw": "Low",
       "tier": "finding",
-      "slices": [7],
-      "locations": ["scripts/runtime-smoke-load.mjs:97-121"],
+      "slices": [
+        7
+      ],
+      "locations": [
+        "scripts/runtime-smoke-load.mjs:97-121"
+      ],
       "summary": "The smoke shrinks the editable preset to run quickly but has no restore step, contradicting its own clean-up-only-what-it-created contract; the seeded 2-minute soak silently becomes a 5-second run."
     },
     {
@@ -289,10 +359,13 @@
       "code": "F25",
       "title": "The only real-k6 end-to-end test self-skips silently; the k6 parsers are otherwise validated solely against hand-authored canned JSON",
       "severity": "low",
-      "severityRaw": "Low-Medium",
       "tier": "finding",
-      "slices": [8],
-      "locations": ["apps/load-orchestrator/test/integration/k6-run.test.ts:19-36"],
+      "slices": [
+        8
+      ],
+      "locations": [
+        "apps/load-orchestrator/test/integration/k6-run.test.ts:19-36"
+      ],
       "summary": "describe.skipIf(!k6Available) means any environment without k6 on PATH reports green with zero coverage of the real k6-format-to-parser contract; every other k6 test uses canned JSON written to match the parser."
     },
     {
@@ -300,10 +373,14 @@
       "code": "N1",
       "title": "ERP timeout vs admin latency cap mismatch",
       "severity": "info",
-      "severityRaw": "Lower-confidence note",
       "tier": "note",
-      "slices": [3],
-      "locations": ["apps/worker (config.ts:81)", "apps/mock-erp (config.ts:107)"],
+      "slices": [
+        3
+      ],
+      "locations": [
+        "apps/worker (config.ts:81)",
+        "apps/mock-erp (config.ts:107)"
+      ],
       "summary": "The worker's 2000ms ERP request timeout sits below the Mock ERP's 5000ms admin latency cap, so global chaos latency in (2000, 5000]ms turns \"slow ERP\" into universal timeouts rather than slow-but-successful confirmations."
     },
     {
@@ -311,10 +388,13 @@
       "code": "N2",
       "title": "run:catalog:order-outcomes aggregate is never cleared",
       "severity": "info",
-      "severityRaw": "Lower-confidence note",
       "tier": "note",
-      "slices": [3],
-      "locations": ["packages/db/src/redis-keys.ts:76-87"],
+      "slices": [
+        3
+      ],
+      "locations": [
+        "packages/db/src/redis-keys.ts:76-87"
+      ],
       "summary": "Catalog (null-runId) traffic increments the CATALOG_RUN_SCOPE order-outcome hash, which carries no TTL and is not covered by run cleanup — harmless but ever-growing."
     },
     {
@@ -322,10 +402,13 @@
       "code": "N3",
       "title": "Rate-named metrics store per-request counter deltas, not rates",
       "severity": "info",
-      "severityRaw": "Lower-confidence note",
       "tier": "note",
-      "slices": [4],
-      "locations": ["apps/load-orchestrator/src/services/k6-output.ts:13-17"],
+      "slices": [
+        4
+      ],
+      "locations": [
+        "apps/load-orchestrator/src/services/k6-output.ts:13-17"
+      ],
       "summary": "k6 JSON points carry per-observation values (http_reqs = 1 per request), and the latest-point projection keeps only the last one, so the stored \"request rate\" ends up 1 and \"failure rate\" the last request's 0/1."
     },
     {
@@ -333,10 +416,13 @@
       "code": "N4",
       "title": "markTrafficFailed sets finalizedAt = trafficEndedAt",
       "severity": "info",
-      "severityRaw": "Lower-confidence note",
       "tier": "note",
-      "slices": [4],
-      "locations": ["packages/db/src/postgres-run-store.ts:116-130"],
+      "slices": [
+        4
+      ],
+      "locations": [
+        "packages/db/src/postgres-run-store.ts:116-130"
+      ],
       "summary": "Defensible, but it is the one path where trafficEndedAt and finalizedAt are the same instant; worth confirming history consumers never infer state from timestamp equality."
     }
   ]

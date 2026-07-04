@@ -8,9 +8,10 @@
       "code": "F1",
       "title": "No Redis-first run-sale eligibility gate on the buy hot path",
       "severity": "high",
-      "severityRaw": "HIGH",
       "tier": "finding",
-      "slices": [1],
+      "slices": [
+        1
+      ],
       "locations": [
         "packages/db/src/inventory/reservation-gate.ts:201-205",
         "apps/api/src/app/services/reserve-order-service.ts:294-307"
@@ -22,10 +23,14 @@
       "code": "F2",
       "title": "Realtime publications are awaited synchronously on the buy hot path in production",
       "severity": "medium",
-      "severityRaw": "MEDIUM / performance",
       "tier": "finding",
-      "slices": [1],
-      "locations": ["apps/api/src/app/services/reserve-order-service.ts:518", "apps/api/src/app/services/inventory-drain.ts:58-73"],
+      "slices": [
+        1
+      ],
+      "locations": [
+        "apps/api/src/app/services/reserve-order-service.ts:518",
+        "apps/api/src/app/services/inventory-drain.ts:58-73"
+      ],
       "summary": "Every accepted reservation serializes several awaited publishes plus redundant Redis reads (an extra inventory-state read and queue.getJobCounts) before responding — despite the modules' own notes saying publication would switch to fire-and-forget once a real channel was wired, which has now happened."
     },
     {
@@ -33,10 +38,13 @@
       "code": "F3",
       "title": "Startup reconciliation reports a run as reconciled even when it did not fail it",
       "severity": "medium",
-      "severityRaw": "MEDIUM",
       "tier": "finding",
-      "slices": [2],
-      "locations": ["packages/db/src/run-lifecycle/run-lifecycle.ts:215-258"],
+      "slices": [
+        2
+      ],
+      "locations": [
+        "packages/db/src/run-lifecycle/run-lifecycle.ts:215-258"
+      ],
       "summary": "When the guarded UPDATE matches zero rows (a concurrent transition won), the loop still pushes the run into the reconciled array, so the dashboard receives a spurious run.failed SSE event for a run that continues to drain and finalize normally."
     },
     {
@@ -44,10 +52,13 @@
       "code": "F4",
       "title": "getRunSecuredVsConfirmed counts all reservation statuses, not just secured",
       "severity": "low",
-      "severityRaw": "LOW / latent",
       "tier": "finding",
-      "slices": [2],
-      "locations": ["packages/db/src/run-lifecycle/run-recovery.ts:116-117"],
+      "slices": [
+        2
+      ],
+      "locations": [
+        "packages/db/src/run-lifecycle/run-recovery.ts:116-117"
+      ],
       "summary": "The query has no status filter, unlike its documented semantic and the sibling order counts. Correct today because only secured rows are ever written, but acceptedReservations silently inflates the moment a release/expiry transition lands."
     },
     {
@@ -55,10 +66,13 @@
       "code": "F5",
       "title": "Preset mutation adapters return preset_not_found for a config-validation failure",
       "severity": "low",
-      "severityRaw": "LOW",
       "tier": "finding",
-      "slices": [2],
-      "locations": ["packages/db/src/run-lifecycle/preset-management.ts:88-89"],
+      "slices": [
+        2
+      ],
+      "locations": [
+        "packages/db/src/run-lifecycle/preset-management.ts:88-89"
+      ],
       "summary": "save/duplicate/copy-to-custom each map a defensive schema-parse failure to preset_not_found, so an invalid config would surface as a misleading 404 rather than a validation error."
     },
     {
@@ -66,10 +80,13 @@
       "code": "F6",
       "title": "seedDemoData silently overwrites admin/API-owned editable rows on every re-run",
       "severity": "low",
-      "severityRaw": "LOW / observation",
       "tier": "finding",
-      "slices": [2],
-      "locations": ["packages/db/src/seed-data.ts:339-381"],
+      "slices": [
+        2
+      ],
+      "locations": [
+        "packages/db/src/seed-data.ts:339-381"
+      ],
       "summary": "onConflictDoUpdate unconditionally rewrites the active public runtime policy and every editable admin preset (including the admin-custom scratch) back to hardcoded defaults, discarding operator edits without warning on any runtime:setup re-run."
     },
     {
@@ -77,9 +94,10 @@
       "code": "F7",
       "title": "Run-scoped ERP behavior and backpressure captured in the run snapshot are never applied",
       "severity": "high",
-      "severityRaw": "HIGH",
       "tier": "finding",
-      "slices": [3],
+      "slices": [
+        3
+      ],
       "locations": [
         "apps/mock-erp/src/app/services/erp-behavior-service.ts:124-127",
         "apps/worker/src/app/config.ts:100-107"
@@ -91,10 +109,13 @@
       "code": "F8",
       "title": "Circuit breaker half-open allows multiple concurrent trial calls, not a single trial",
       "severity": "low",
-      "severityRaw": "LOW–MEDIUM",
       "tier": "finding",
-      "slices": [3],
-      "locations": ["apps/worker/src/app/erp/circuit-breaker.ts:145-147"],
+      "slices": [
+        3
+      ],
+      "locations": [
+        "apps/worker/src/app/erp/circuit-breaker.ts:145-147"
+      ],
       "summary": "The half_open branch returns true for every call while the inline comment claims a single trial, so up to worker-concurrency confirmations hit a still-failing ERP during each recovery probe."
     },
     {
@@ -102,10 +123,14 @@
       "code": "F9",
       "title": "Production worker has no BullMQ retry; unexpected throws strand orders in processing",
       "severity": "low",
-      "severityRaw": "LOW",
       "tier": "finding",
-      "slices": [3],
-      "locations": ["apps/worker/src/app/queue/orders-process-worker.ts:50-59", "apps/api/src/app/services/reserve-order-service.ts:262"],
+      "slices": [
+        3
+      ],
+      "locations": [
+        "apps/worker/src/app/queue/orders-process-worker.ts:50-59",
+        "apps/api/src/app/services/reserve-order-service.ts:262"
+      ],
       "summary": "Neither producer nor consumer configures BullMQ attempts, while code comments and the async-pipeline tests assume retries exist; an unexpected throw fails the job after one attempt and leaves the order permanently in processing."
     },
     {
@@ -113,10 +138,13 @@
       "code": "F10",
       "title": "Finalization writes the summary and the lifecycle transition non-atomically; the already_finalized early-return then strands the run in draining forever",
       "severity": "high",
-      "severityRaw": "HIGH",
       "tier": "finding",
-      "slices": [4],
-      "locations": ["apps/api/src/app/services/run-finalization-service.ts:337-385"],
+      "slices": [
+        4
+      ],
+      "locations": [
+        "apps/api/src/app/services/run-finalization-service.ts:337-385"
+      ],
       "summary": "A crash or transient DB error between the summary write and completeRun/failRun leaves a summary present with the run still draining; every later poller tick then early-returns already_finalized without retrying the transition. The stranded run survives restarts and blocks all future starts until an admin reset — and the idempotency test codifies the faulty assumption."
     },
     {
@@ -124,10 +152,13 @@
       "code": "F11",
       "title": "trafficDeliveryStatus carries mixed execution-vs-delivery vocabulary across lifecycle events; the classified delivery status is computed on the draining path and then discarded",
       "severity": "medium",
-      "severityRaw": "MEDIUM",
       "tier": "finding",
-      "slices": [4],
-      "locations": ["apps/api/src/app/services/traffic-completion-ingestion-service.ts:120-173"],
+      "slices": [
+        4
+      ],
+      "locations": [
+        "apps/api/src/app/services/traffic-completion-ingestion-service.ts:120-173"
+      ],
       "summary": "run.active/run.draining events populate the field with orchestrator execution status while terminal events use the API-classified delivery vocabulary; on the draining path the classified summary is computed and used only in a log line."
     },
     {
@@ -135,9 +166,10 @@
       "code": "F12",
       "title": "The one-current-run start gate is a TOCTOU read-then-write; concurrent starts can create two overlapping runs",
       "severity": "medium",
-      "severityRaw": "MEDIUM",
       "tier": "finding",
-      "slices": [4],
+      "slices": [
+        4
+      ],
       "locations": [
         "apps/api/src/app/services/demo-run-start-service.ts:271-275",
         "packages/db/src/run-lifecycle/run-creation.ts:142-190"
@@ -149,10 +181,13 @@
       "code": "F13",
       "title": "The finalization poller does not serialize ticks; slow finalization lets overlapping ticks race on the same draining run",
       "severity": "low",
-      "severityRaw": "LOW",
       "tier": "finding",
-      "slices": [4],
-      "locations": ["apps/api/src/app/run-finalization-poller.ts:42-44"],
+      "slices": [
+        4
+      ],
+      "locations": [
+        "apps/api/src/app/run-finalization-poller.ts:42-44"
+      ],
       "summary": "setInterval fires on a fixed cadence with fire-and-forget ticks; overlapping ticks are mostly benign under the idempotent guards but widen the Finding 10 window and multiply redundant reads."
     },
     {
@@ -160,10 +195,13 @@
       "code": "F14",
       "title": "k6 metrics streaming re-reads and re-parses the whole output file every window (quadratic in run length); a partially-written line can be dropped from an intermediate window",
       "severity": "low",
-      "severityRaw": "LOW",
       "tier": "finding",
-      "slices": [4],
-      "locations": ["apps/load-orchestrator/src/app/services/traffic-execution-service.ts:91-133"],
+      "slices": [
+        4
+      ],
+      "locations": [
+        "apps/load-orchestrator/src/app/services/traffic-execution-service.ts:91-133"
+      ],
       "summary": "Each 1s flush re-reads the entire growing NDJSON file and slices by positional count, so parsing grows quadratically with run length, and a line partial in one window and complete in the next can be skipped. The terminal summary is unaffected."
     },
     {
@@ -171,10 +209,13 @@
       "code": "F15",
       "title": "Finalization does not wait for post-confirmation notifications, so a run can finalize while notifications are still missing and notificationsRecorded undercounts",
       "severity": "low",
-      "severityRaw": "LOW",
       "tier": "finding",
-      "slices": [4],
-      "locations": ["apps/api/src/app/services/run-finalization-service.ts:219-226"],
+      "slices": [
+        4
+      ],
+      "locations": [
+        "apps/api/src/app/services/run-finalization-service.ts:219-226"
+      ],
       "summary": "The settled gate covers queued/processing orders and pending holds but not notifications, which are recorded best-effort after confirmed — so the immutable summary's notificationsRecorded is a point-in-time count, not a settled guarantee."
     },
     {
@@ -182,10 +223,14 @@
       "code": "F16",
       "title": "Live Watch observes a static seeded sale offer, not the active run's generated offer",
       "severity": "high",
-      "severityRaw": "HIGH",
       "tier": "finding",
-      "slices": [5],
-      "locations": ["apps/web/app/watch/page.tsx:39-44", "apps/web/lib/config.ts:18"],
+      "slices": [
+        5
+      ],
+      "locations": [
+        "apps/web/app/watch/page.tsx:39-44",
+        "apps/web/lib/config.ts:18"
+      ],
       "summary": "The watch page resolves its inventory target from an env knob defaulting to the seeded offer and never uses the recovery snapshot's currentRun.saleOfferId, while every run creates a fresh generated offer — so during any run the headline inventory-drain panels point at the wrong offer."
     },
     {
@@ -193,10 +238,14 @@
       "code": "F17",
       "title": "Public run start promises a /watch redirect that never happens",
       "severity": "medium",
-      "severityRaw": "MEDIUM",
       "tier": "finding",
-      "slices": [5],
-      "locations": ["apps/web/components/load-run-trigger.tsx:35-36", "apps/web/app/actions.ts:50-52"],
+      "slices": [
+        5
+      ],
+      "locations": [
+        "apps/web/components/load-run-trigger.tsx:35-36",
+        "apps/web/app/actions.ts:50-52"
+      ],
       "summary": "The success toast says \"Redirecting to watch…\" but the handler returns immediately and only revalidates the home route; the operator stays on the home page and may believe the start silently failed."
     },
     {
@@ -204,10 +253,14 @@
       "code": "F18",
       "title": "No client-side recovery re-fetch on SSE reconnect or terminal run events; recovery-sourced counts freeze for the whole watch session",
       "severity": "medium",
-      "severityRaw": "MEDIUM",
       "tier": "finding",
-      "slices": [5],
-      "locations": ["apps/web/components/watch/live-watch.tsx:36-80", "apps/web/lib/dashboard-state.ts:368-374"],
+      "slices": [
+        5
+      ],
+      "locations": [
+        "apps/web/components/watch/live-watch.tsx:36-80",
+        "apps/web/lib/dashboard-state.ts:368-374"
+      ],
       "summary": "Recovery is fetched once at server render and passed as a frozen prop; reconnects only flip a boolean and terminal run events are reducer no-ops, so events missed during a drop are permanently lost and the page never shows that the run ended — contradicting the documented recovery-on-reconnect contract."
     },
     {
@@ -215,10 +268,14 @@
       "code": "F19",
       "title": "\"Fail-closed\" secret strength check accepts the committed dev sentinel; no startup validation forces an override",
       "severity": "low",
-      "severityRaw": "LOW",
       "tier": "finding",
-      "slices": [5],
-      "locations": ["apps/web/lib/config.ts:83-86", "apps/web/lib/admin-session.ts:80-129"],
+      "slices": [
+        5
+      ],
+      "locations": [
+        "apps/web/lib/config.ts:83-86",
+        "apps/web/lib/admin-session.ts:80-129"
+      ],
       "summary": "isSecretStrongEnough only checks byte length ≥ 16 and every committed change-me-* sentinel passes, so a deployment that forgets to override env silently mints admin sessions signed with a publicly known secret."
     },
     {
@@ -226,10 +283,13 @@
       "code": "F20",
       "title": "Public \"Demo Picker\" cards are decorative: fictional preset slugs and no start action",
       "severity": "low",
-      "severityRaw": "LOW",
       "tier": "finding",
-      "slices": [5],
-      "locations": ["apps/web/app/page.tsx:18-37"],
+      "slices": [
+        5
+      ],
+      "locations": [
+        "apps/web/app/page.tsx:18-37"
+      ],
       "summary": "The picker lists three slugs that exist as no preset and whose CTA is a bare link to /watch; the only real start is a separate panel hardcoded to preview-1k, so the documented public presets can be neither picked nor started from the picker."
     },
     {
@@ -237,10 +297,13 @@
       "code": "F21",
       "title": "Stable error codes returned by every service are absent from the documented ERROR_CODES vocabulary",
       "severity": "medium",
-      "severityRaw": "MEDIUM",
       "tier": "finding",
-      "slices": [6],
-      "locations": ["packages/contracts/src/errors.ts:22-48"],
+      "slices": [
+        6
+      ],
+      "locations": [
+        "packages/contracts/src/errors.ts:22-48"
+      ],
       "summary": "not_found (returned by all three services' 404 paths), delegation_failed, and the whole *_unavailable family the dashboard keys on are missing from the baseline, and ErrorPayloadSchema.code accepts any non-empty string, so drift validates silently."
     },
     {
@@ -248,9 +311,11 @@
       "code": "F22",
       "title": "Worker readiness check notification_record_worker_running is contracted and documented but never emitted",
       "severity": "medium",
-      "severityRaw": "MEDIUM",
       "tier": "finding",
-      "slices": [6, 7],
+      "slices": [
+        6,
+        7
+      ],
       "locations": [
         "packages/contracts/src/health.ts:63-70",
         "apps/worker/src/app/services/readiness-service.ts:81"
@@ -262,10 +327,13 @@
       "code": "F23",
       "title": "IsoTimestamp accepts any non-empty string, so timezone clarity is not enforced at the contract boundary",
       "severity": "low",
-      "severityRaw": "LOW",
       "tier": "finding",
-      "slices": [6],
-      "locations": ["packages/contracts/src/common.ts:17"],
+      "slices": [
+        6
+      ],
+      "locations": [
+        "packages/contracts/src/common.ts:17"
+      ],
       "summary": "The shared timestamp schema is z.string().min(1); nothing catches a producer emitting a naive local timestamp or epoch value, though all producers emit UTC Z today. One central tightening would protect every boundary."
     },
     {
@@ -273,10 +341,13 @@
       "code": "F24",
       "title": "OrderReadResponseSchema types order/reservation status as a free-form string instead of the canonical enum schemas",
       "severity": "low",
-      "severityRaw": "LOW",
       "tier": "finding",
-      "slices": [6],
-      "locations": ["apps/api/src/app/services/order-query-service.ts:29-37"],
+      "slices": [
+        6
+      ],
+      "locations": [
+        "apps/api/src/app/services/order-query-service.ts:29-37"
+      ],
       "summary": "Both status fields are z.string().min(1) rather than the shared OrderStatusSchema/ReservationStatusSchema, so the read path can advertise a non-canonical lifecycle value — low impact today, but exactly the vocabulary-drift class the contracts exist to prevent."
     },
     {
@@ -284,10 +355,13 @@
       "code": "F25",
       "title": "Documented per-package test commands do not exist",
       "severity": "medium",
-      "severityRaw": "MEDIUM",
       "tier": "finding",
-      "slices": [7],
-      "locations": ["docs/local_development.md:300-308"],
+      "slices": [
+        7
+      ],
+      "locations": [
+        "docs/local_development.md:300-308"
+      ],
       "summary": "Five of the seven documented \"Useful package commands\" fail with ERR_PNPM_RECURSIVE_RUN_NO_SCRIPT (verified at runtime); the real contract is the root test:api/test:worker/test:integration/test:unit scripts, which the docs never point to."
     },
     {
@@ -295,10 +369,13 @@
       "code": "F26",
       "title": "Load-orchestrator Dockerfile builds the entire workspace",
       "severity": "low",
-      "severityRaw": "LOW–MEDIUM",
       "tier": "finding",
-      "slices": [7],
-      "locations": ["apps/load-orchestrator/Dockerfile:36-38"],
+      "slices": [
+        7
+      ],
+      "locations": [
+        "apps/load-orchestrator/Dockerfile:36-38"
+      ],
       "summary": "An unfiltered pnpm build compiles every package (including the Next.js web bundle) into the load-orchestrator image build, unlike every other Dockerfile's scoped --filter form — wasted time and coupling to packages it never ships."
     },
     {
@@ -306,10 +383,14 @@
       "code": "F27",
       "title": "Compose project names are not worktree-isolated despite the docs guaranteeing it",
       "severity": "low",
-      "severityRaw": "LOW–MEDIUM",
       "tier": "finding",
-      "slices": [7],
-      "locations": ["docker-compose.yml:12", ".devcontainer/docker-compose.yml:13"],
+      "slices": [
+        7
+      ],
+      "locations": [
+        "docker-compose.yml:12",
+        ".devcontainer/docker-compose.yml:13"
+      ],
       "summary": "The default project name is a static branch-derived value, so two worktrees of the same branch share containers and volumes — one worktree's reset/wipe mutates the other's demo state, contrary to the documented isolation guarantee."
     },
     {
@@ -317,10 +398,13 @@
       "code": "F28",
       "title": "infra:down tears down the whole project, not just PostgreSQL/Redis",
       "severity": "low",
-      "severityRaw": "LOW",
       "tier": "finding",
-      "slices": [7],
-      "locations": ["package.json:29-30"],
+      "slices": [
+        7
+      ],
+      "locations": [
+        "package.json:29-30"
+      ],
       "summary": "infra:up scopes to the two data services but infra:down runs an unscoped docker compose down, stopping and removing the entire stack when an operator expects to stop only PostgreSQL and Redis."
     },
     {
@@ -328,10 +412,13 @@
       "code": "F29",
       "title": "Caddy has no healthcheck, so runtime:up --wait can report success without proving the public entry point serves",
       "severity": "low",
-      "severityRaw": "LOW",
       "tier": "finding",
-      "slices": [7],
-      "locations": ["docker-compose.yml:183-196"],
+      "slices": [
+        7
+      ],
+      "locations": [
+        "docker-compose.yml:183-196"
+      ],
       "summary": "Every other long-lived service has a healthcheck; caddy — the single public dashboard origin — is treated as ready as soon as its container is running."
     },
     {
@@ -339,10 +426,14 @@
       "code": "F30",
       "title": "The only real-k6 behavioral test runs in the infrastructure-free unit lane and silently skips (suite stays green) whenever k6 is absent — which is the current state of this environment",
       "severity": "high",
-      "severityRaw": "HIGH",
       "tier": "finding",
-      "slices": [8],
-      "locations": ["apps/load-orchestrator/tests/k6-roundtrip.test.ts:25-33", "vitest.config.ts:33-44"],
+      "slices": [
+        8
+      ],
+      "locations": [
+        "apps/load-orchestrator/tests/k6-roundtrip.test.ts:25-33",
+        "vitest.config.ts:33-44"
+      ],
       "summary": "k6-roundtrip.test.ts sits in the unit lane despite opening a TCP socket and spawning real k6, and degrades to it.skip when k6 is missing — verified to be the case here. The only assertions of real k6 compatibility and the sold-out failure_rate == 0 contract silently vanish while the suite reports green, and no load-orchestrator integration lane exists to move them to."
     },
     {
@@ -350,10 +441,13 @@
       "code": "F31",
       "title": "x-load-run-id header-agreement matching/absent cases assert only the absence of a validation path, so they pass against a no-op header check",
       "severity": "low",
-      "severityRaw": "LOW",
       "tier": "finding",
-      "slices": [8],
-      "locations": ["apps/api/tests/buy-route.unit.test.ts:206-240"],
+      "slices": [
+        8
+      ],
+      "locations": [
+        "apps/api/tests/buy-route.unit.test.ts:206-240"
+      ],
       "summary": "With db: undefined the request fails downstream regardless, so asserting the error paths don't contain runId cannot distinguish an accepted match from an unrelated failure; only the sibling mismatch case pins the detection."
     }
   ]

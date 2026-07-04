@@ -14,7 +14,7 @@
       "vendor": "OpenAI",
       "effort": "xHigh",
       "reportFile": "gpt-5.5_auto_review_findings.md",
-      "notes": "Terse report of 23 findings in three priority buckets (P1/P2/P3) with per-finding reference lists. No explicit slice structure; slice assignment in this dataset is curated."
+      "notes": "Terse report of 23 findings with per-finding reference lists. Originally graded in P1/P2/P3 priority buckets with no slice structure; retrofitted to the unified format, slice assignment curated."
     },
     {
       "id": "opus-4.8",

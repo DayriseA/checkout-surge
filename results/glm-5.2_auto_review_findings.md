@@ -8,16 +8,16 @@ Each slice reviewed a distinct area but some concerns overlapped. The following
 deduplication was applied:
 
 - **Merged (single finding).** "Worker readiness check `notification_record_worker_running`
-  is contracted/documented but never emitted" appeared as Slice 6 Finding 2 **and**
-  Slice 7 Finding 3. They are the same issue and are merged here as
-  **Finding 22** (its evidence combines both slices).
+  is contracted/documented but never emitted" appeared in both the Slice 6 and the
+  Slice 7 review passes. They are the same issue and are merged here as
+  **F22** (its evidence combines both slices).
 - **Kept separate (cross-referenced where noted).** A few findings share context but
   describe different defects and remain distinct entries:
-  - **Finding 19** (fail-closed secret check) is a config/ops-hardening gap that the
+  - **F19** (fail-closed secret check) is a config/ops-hardening gap that the
     slice flagged as overlapping Slice 7's scope, but Slice 7 produced no duplicate
     finding about secrets.
-  - **Finding 25** (documented per-package test commands do not exist) and
-    **Finding 30** (the only real-k6 test silently skips in the unit lane) both touch
+  - **F25** (documented per-package test commands do not exist) and
+    **F30** (the only real-k6 test silently skips in the unit lane) both touch
     load-orchestrator test scripts but report different problems.
 
 Severities are preserved verbatim from the slices. The sections below keep the original
@@ -27,41 +27,41 @@ review areas (slices) so navigation maps to the source slices.
 
 ## Index
 
-| # | Area | Finding | Severity |
+| Code | Area | Finding | Severity |
 |---|------|---------|----------|
-| 1 | API reservation hot path | No Redis-first run-sale eligibility gate on the buy hot path | HIGH |
-| 2 | API reservation hot path | Realtime publications awaited synchronously on the buy hot path | MEDIUM |
-| 3 | Persistence / domain state / seeds | Startup reconciliation reports a run as reconciled when it did not fail it | MEDIUM |
-| 4 | Persistence / domain state / seeds | `getRunSecuredVsConfirmed` counts all reservation statuses, not just `secured` | LOW |
-| 5 | Persistence / domain state / seeds | Preset mutation adapters return `preset_not_found` for a config-validation failure | LOW |
-| 6 | Persistence / domain state / seeds | `seedDemoData` silently overwrites admin/API-owned editable rows on re-run | LOW |
-| 7 | Worker / queue / mock ERP / notifications | Run-scoped ERP behavior and backpressure captured in the run snapshot are never applied | HIGH |
-| 8 | Worker / queue / mock ERP / notifications | Circuit breaker half-open allows multiple concurrent trial calls | LOW–MEDIUM |
-| 9 | Worker / queue / mock ERP / notifications | Production worker has no BullMQ retry; unexpected throws strand orders in `processing` | LOW |
-| 10 | Run lifecycle / load orchestration / finalization | Finalization writes summary + transition non-atomically; `already_finalized` strands the run in `draining` forever | HIGH |
-| 11 | Run lifecycle / load orchestration / finalization | `trafficDeliveryStatus` carries mixed execution-vs-delivery vocabulary; classified delivery status discarded on the draining path | MEDIUM |
-| 12 | Run lifecycle / load orchestration / finalization | The one-current-run start gate is a TOCTOU read-then-write; concurrent starts can create two overlapping runs | MEDIUM |
-| 13 | Run lifecycle / load orchestration / finalization | The finalization poller does not serialize ticks | LOW |
-| 14 | Run lifecycle / load orchestration / finalization | k6 metrics streaming re-reads/re-parses the whole output file every window (quadratic) | LOW |
-| 15 | Run lifecycle / load orchestration / finalization | Finalization does not wait for post-confirmation notifications; `notificationsRecorded` undercounts | LOW |
-| 16 | Dashboard / realtime / admin / history | Live Watch observes a static seeded sale offer, not the active run's generated offer | HIGH |
-| 17 | Dashboard / realtime / admin / history | Public run start promises a `/watch` redirect that never happens | MEDIUM |
-| 18 | Dashboard / realtime / admin / history | No client-side recovery re-fetch on SSE reconnect or terminal run events; recovery-sourced counts freeze | MEDIUM |
-| 19 | Dashboard / realtime / admin / history | "Fail-closed" secret strength check accepts the committed dev sentinel; no startup validation forces an override | LOW |
-| 20 | Dashboard / realtime / admin / history | Public "Demo Picker" cards are decorative: fictional preset slugs and no start action | LOW |
-| 21 | Shared contracts / logging / vocabulary | Stable error codes returned by every service are absent from the documented `ERROR_CODES` vocabulary | MEDIUM |
-| 22 | Shared contracts / runtime / ops *(merged: slices 6 & 7)* | Worker readiness check `notification_record_worker_running` is contracted and documented but never emitted | MEDIUM |
-| 23 | Shared contracts / logging / vocabulary | `IsoTimestamp` accepts any non-empty string; timezone clarity not enforced at the contract boundary | LOW |
-| 24 | Shared contracts / logging / vocabulary | `OrderReadResponseSchema` types order/reservation `status` as a free-form string instead of the canonical enum schemas | LOW |
-| 25 | Runtime / configuration / ops | Documented per-package test commands do not exist | MEDIUM |
-| 26 | Runtime / configuration / ops | Load-orchestrator Dockerfile builds the entire workspace | LOW–MEDIUM |
-| 27 | Runtime / configuration / ops | Compose project names are not worktree-isolated despite the docs guaranteeing it | LOW–MEDIUM |
-| 28 | Runtime / configuration / ops | `infra:down` tears down the whole project, not just PostgreSQL/Redis | LOW |
-| 29 | Runtime / configuration / ops | Caddy has no healthcheck; `runtime:up --wait` can report success without proving the public entry point serves | LOW |
-| 30 | Test suite quality | The only real-k6 behavioral test runs in the infrastructure-free unit lane and silently skips when k6 is absent (suite stays green) | HIGH |
-| 31 | Test suite quality | `x-load-run-id` header-agreement "matching/absent" cases assert only the absence of a validation path | LOW |
+| F1 | API reservation hot path | No Redis-first run-sale eligibility gate on the buy hot path | High |
+| F2 | API reservation hot path | Realtime publications awaited synchronously on the buy hot path | Medium |
+| F3 | Persistence / domain state / seeds | Startup reconciliation reports a run as reconciled when it did not fail it | Medium |
+| F4 | Persistence / domain state / seeds | `getRunSecuredVsConfirmed` counts all reservation statuses, not just `secured` | Low |
+| F5 | Persistence / domain state / seeds | Preset mutation adapters return `preset_not_found` for a config-validation failure | Low |
+| F6 | Persistence / domain state / seeds | `seedDemoData` silently overwrites admin/API-owned editable rows on re-run | Low |
+| F7 | Worker / queue / mock ERP / notifications | Run-scoped ERP behavior and backpressure captured in the run snapshot are never applied | High |
+| F8 | Worker / queue / mock ERP / notifications | Circuit breaker half-open allows multiple concurrent trial calls | Low |
+| F9 | Worker / queue / mock ERP / notifications | Production worker has no BullMQ retry; unexpected throws strand orders in `processing` | Low |
+| F10 | Run lifecycle / load orchestration / finalization | Finalization writes summary + transition non-atomically; `already_finalized` strands the run in `draining` forever | High |
+| F11 | Run lifecycle / load orchestration / finalization | `trafficDeliveryStatus` carries mixed execution-vs-delivery vocabulary; classified delivery status discarded on the draining path | Medium |
+| F12 | Run lifecycle / load orchestration / finalization | The one-current-run start gate is a TOCTOU read-then-write; concurrent starts can create two overlapping runs | Medium |
+| F13 | Run lifecycle / load orchestration / finalization | The finalization poller does not serialize ticks | Low |
+| F14 | Run lifecycle / load orchestration / finalization | k6 metrics streaming re-reads/re-parses the whole output file every window (quadratic) | Low |
+| F15 | Run lifecycle / load orchestration / finalization | Finalization does not wait for post-confirmation notifications; `notificationsRecorded` undercounts | Low |
+| F16 | Dashboard / realtime / admin / history | Live Watch observes a static seeded sale offer, not the active run's generated offer | High |
+| F17 | Dashboard / realtime / admin / history | Public run start promises a `/watch` redirect that never happens | Medium |
+| F18 | Dashboard / realtime / admin / history | No client-side recovery re-fetch on SSE reconnect or terminal run events; recovery-sourced counts freeze | Medium |
+| F19 | Dashboard / realtime / admin / history | "Fail-closed" secret strength check accepts the committed dev sentinel; no startup validation forces an override | Low |
+| F20 | Dashboard / realtime / admin / history | Public "Demo Picker" cards are decorative: fictional preset slugs and no start action | Low |
+| F21 | Shared contracts / logging / vocabulary | Stable error codes returned by every service are absent from the documented `ERROR_CODES` vocabulary | Medium |
+| F22 | Shared contracts / runtime / ops *(merged: slices 6 & 7)* | Worker readiness check `notification_record_worker_running` is contracted and documented but never emitted | Medium |
+| F23 | Shared contracts / logging / vocabulary | `IsoTimestamp` accepts any non-empty string; timezone clarity not enforced at the contract boundary | Low |
+| F24 | Shared contracts / logging / vocabulary | `OrderReadResponseSchema` types order/reservation `status` as a free-form string instead of the canonical enum schemas | Low |
+| F25 | Runtime / configuration / ops | Documented per-package test commands do not exist | Medium |
+| F26 | Runtime / configuration / ops | Load-orchestrator Dockerfile builds the entire workspace | Low |
+| F27 | Runtime / configuration / ops | Compose project names are not worktree-isolated despite the docs guaranteeing it | Low |
+| F28 | Runtime / configuration / ops | `infra:down` tears down the whole project, not just PostgreSQL/Redis | Low |
+| F29 | Runtime / configuration / ops | Caddy has no healthcheck; `runtime:up --wait` can report success without proving the public entry point serves | Low |
+| F30 | Test suite quality | The only real-k6 behavioral test runs in the infrastructure-free unit lane and silently skips when k6 is absent (suite stays green) | High |
+| F31 | Test suite quality | `x-load-run-id` header-agreement "matching/absent" cases assert only the absence of a validation path | Low |
 
-Severity totals: **5 HIGH**, **9 MEDIUM**, **3 LOW–MEDIUM**, **14 LOW** (31 findings).
+Severity totals: **5 High**, **9 Medium**, **17 Low** (31 findings).
 
 ---
 
@@ -73,7 +73,9 @@ Scope: `apps/api` reservation/buy path + Redis inventory code
 idempotency replay/conflict, sold-out cheap path, pending-persistence `order: null`,
 queue hand-off after durable write, thin `buy` route, `x-load-run-id` header agreement.)
 
-### Finding 1 — No Redis-first run-sale eligibility gate on the buy hot path (HIGH)
+### F1 — No Redis-first run-sale eligibility gate on the buy hot path (High)
+
+**Slices:** 1
 
 The atomic reservation gate is the documented eligibility signal, but it decides
 eligibility **only** from the per-`saleOfferId` inventory `:state` hash existence. It
@@ -147,7 +149,9 @@ wrong-run / stale / closed / catalog offers return `not_initialized` on the chea
 (matching the contract). At minimum, the hot path must not decrement stock for a
 `runId` that cannot own the offer.
 
-### Finding 2 — Realtime publications are awaited synchronously on the buy hot path in production (MEDIUM / performance)
+### F2 — Realtime publications are awaited synchronously on the buy hot path in production (Medium)
+
+**Slices:** 1
 
 Now that Task 6.1 wired a real Redis Pub/Sub publisher in the composition root
 (`apps/api/src/index.ts:66`), every accepted reservation serializes several awaited
@@ -193,7 +197,9 @@ run-attribution PL/pgSQL triggers, write-once immutable summaries via
 surviving via `onConflictDoUpdate`, seed-time contract validation, generated-run offer
 purpose enforcement.)
 
-### Finding 3 — Startup reconciliation reports a run as reconciled even when it did not fail it (MEDIUM)
+### F3 — Startup reconciliation reports a run as reconciled even when it did not fail it (Medium)
+
+**Slices:** 2
 
 `reconcileInterruptedRunsOnStartup` selects `starting`/`active` runs, then per run fails
 the run inside a transaction guarded by `status in (starting, active)`. When that guarded
@@ -233,7 +239,9 @@ transitioned (move the push inside the `failed.length > 0` branch, or have the
 transaction return a `transitioned` boolean and push on it), so the returned set
 reflects runs this reconciliation actually failed.
 
-### Finding 4 — `getRunSecuredVsConfirmed` counts all reservation statuses, not just `secured` (LOW / latent)
+### F4 — `getRunSecuredVsConfirmed` counts all reservation statuses, not just `secured` (Low)
+
+**Slices:** 2
 
 `acceptedReservations` is documented as "Durable reservations secured (reservation status
 `secured`)", but the query counts every reservation row for the run with no status
@@ -261,7 +269,9 @@ finalization `run-finalization-service.ts:302`).
 semantic (and the analogous orders-by-status filters), so the read stays correct when
 reservation lifecycle writes broaden.
 
-### Finding 5 — Preset mutation adapters return `preset_not_found` for a config-validation failure (LOW)
+### F5 — Preset mutation adapters return `preset_not_found` for a config-validation failure (Low)
+
+**Slices:** 2
 
 `saveDemoPreset`, `duplicateDemoPreset`, and `copyToCustomPreset` each re-parse the config
 through `DemoPresetConfigSchema.safeParse` as a defensive check, but on a parse failure
@@ -286,7 +296,9 @@ malformed/invalid config — misleading for an operator and hard to diagnose.
 (and map parse failures to it), or drop the redundant defensive parse since the service
 already validates upstream — but do not report a validation failure as "not found".
 
-### Finding 6 — `seedDemoData` silently overwrites admin/API-owned editable rows on every re-run (LOW / observation)
+### F6 — `seedDemoData` silently overwrites admin/API-owned editable rows on every re-run (Low)
+
+**Slices:** 2
 
 The seed is upsert-based and treats **editable** rows the same as read-only baseline rows:
 re-running it (e.g. `pnpm runtime:setup`) resets the active public runtime policy and
@@ -332,7 +344,9 @@ exponential backoff math, real mock-ERP state machine
 `queued -> processing -> confirmed | failed`, idempotent terminal guards, best-effort
 notification recording after confirmation, correlation-id threading.)
 
-### Finding 7 — Run-scoped ERP behavior and backpressure captured in the run snapshot are never applied (HIGH)
+### F7 — Run-scoped ERP behavior and backpressure captured in the run snapshot are never applied (High)
+
+**Slices:** 3
 
 The demo-run snapshot freezes `erpConfig` (`latencyMs`, `maxTps`, `errorRate`,
 `forcedOutage`) and `backpressureConfig` (`enabled`, `orderProcessConcurrency`,
@@ -391,7 +405,9 @@ attributes), and have the worker resolve concurrency/breaker settings from the r
 env. At minimum, document the current state as a known limitation rather than describing
 run-scoped behavior as implemented in `docs/architecture.md`.
 
-### Finding 8 — Circuit breaker half-open allows multiple concurrent trial calls, not a single trial (LOW–MEDIUM)
+### F8 — Circuit breaker half-open allows multiple concurrent trial calls, not a single trial (Low)
+
+**Slices:** 3
 
 `allow()` documents a half-open "single trial call" but implements an unconditional pass,
 so under `ORDER_PROCESS_CONCURRENCY > 1` several confirmations flow during each recovery
@@ -419,7 +435,9 @@ success closes, sustained failure re-opens), so the deviation is bounded and low
 `recordSuccess`/`recordFailure`), or correct the inline comment to state the approximate
 multi-trial behavior explicitly.
 
-### Finding 9 — Production worker has no BullMQ retry; unexpected throws strand orders in `processing` and the code comments assume retries that don't exist (LOW)
+### F9 — Production worker has no BullMQ retry; unexpected throws strand orders in `processing` and the code comments assume retries that don't exist (Low)
+
+**Slices:** 3
 
 The in-service retry loop only handles RESULT failures (resolved `succeeded`/`failed`/
 `timed_out`/`circuit_open` outcomes). An unexpected throw is meant to propagate to BullMQ,
@@ -477,7 +495,9 @@ Redis aggregate not per-rejection rows, k6 success → `draining` never → term
 sold-out runs treated as expected via the response-callback override, recovery sourced
 from durable truth.)
 
-### Finding 10 — Finalization writes the summary and the lifecycle transition non-atomically; the `already_finalized` early-return then strands the run in `draining` forever (HIGH)
+### F10 — Finalization writes the summary and the lifecycle transition non-atomically; the `already_finalized` early-return then strands the run in `draining` forever (High)
+
+**Slices:** 4
 
 `finalizeRun` writes the immutable summary, then — in separate statements — upserts the
 sold-out aggregate and transitions the lifecycle. If anything interrupts the run after the
@@ -526,7 +546,9 @@ summary was freshly written (the transition is already idempotent, guarded on
 Alternatively wrap summary + transition in one transaction, or transition first and write
 the summary after.
 
-### Finding 11 — `trafficDeliveryStatus` carries mixed execution-vs-delivery vocabulary across lifecycle events; the API-classified delivery status is computed on the draining path and then discarded (MEDIUM)
+### F11 — `trafficDeliveryStatus` carries mixed execution-vs-delivery vocabulary across lifecycle events; the API-classified delivery status is computed on the draining path and then discarded (Medium)
+
+**Slices:** 4
 
 The same payload field `trafficDeliveryStatus` is populated with load-orchestrator
 **execution** status (`active`/`succeeded`/`failed`) on `run.active`/`run.draining`, but
@@ -571,7 +593,9 @@ and the field's vocabulary is unstable across a run's lifetime, so any UI logic 
 name/vocabulary with the event field, or introduce a distinct field for execution status
 vs delivery status.
 
-### Finding 12 — The one-current-run start gate is a TOCTOU read-then-write; concurrent starts can create two overlapping runs (MEDIUM)
+### F12 — The one-current-run start gate is a TOCTOU read-then-write; concurrent starts can create two overlapping runs (Medium)
+
+**Slices:** 4
 
 `canStartRun()` reads for a blocking run with no lock, and the `starting` row is inserted
 much later in a separate call. Two start requests that both pass the gate before either
@@ -603,7 +627,9 @@ concurrent public traffic).
 guarded on no existing recoverable run, or an advisory/row lock held across the gate check
 and insert — or serialize starts through a single-flight lock.
 
-### Finding 13 — The finalization poller does not serialize ticks; slow finalization lets overlapping ticks race on the same draining run (LOW)
+### F13 — The finalization poller does not serialize ticks; slow finalization lets overlapping ticks race on the same draining run (Low)
+
+**Slices:** 4
 
 `setInterval` fires on a fixed cadence regardless of whether the previous tick resolved,
 and the handler is fire-and-forget.
@@ -618,13 +644,15 @@ and the handler is fire-and-forget.
 two ticks overlap and both evaluate the same draining run before either transitions it.
 The idempotent guards (run-unique summary, `status = 'draining'` transition guard) prevent
 duplicate artifacts in the common case, so this is benign on its own, but it multiplies
-redundant DB reads and — combined with Finding 10 — widens the window in which a summary
+redundant DB reads and — combined with F10 — widens the window in which a summary
 exists without a transition.
 
 **Suggested direction.** Self-schedule the next tick after the current one resolves
 (`setTimeout`-style re-arming) instead of fixed `setInterval`, or add an in-flight guard.
 
-### Finding 14 — k6 metrics streaming re-reads and re-parses the whole output file every window (quadratic in run length); a partially-written line can be dropped from an intermediate window (LOW)
+### F14 — k6 metrics streaming re-reads and re-parses the whole output file every window (quadratic in run length); a partially-written line can be dropped from an intermediate window (Low)
+
+**Slices:** 4
 
 Each flush window reads the entire growing NDJSON file and slices by a positional sample
 count, which is O(samples × windows) over the run, and the positional slicing can
@@ -657,7 +685,9 @@ on the final summary or any business invariant.
 **Suggested direction.** Track a byte offset (or line count written by k6) and append-read
 from there instead of re-reading the whole file each window.
 
-### Finding 15 — Finalization does not wait for post-confirmation notifications, so a run can finalize while notifications are still missing/dropped and `notificationsRecorded` undercounts (LOW)
+### F15 — Finalization does not wait for post-confirmation notifications, so a run can finalize while notifications are still missing/dropped and `notificationsRecorded` undercounts (Low)
+
+**Slices:** 4
 
 The "settled" gate waits for queued/processing orders and unreconciled
 pending-persistence holds, but not for simulated notifications. Notifications are recorded
@@ -700,7 +730,9 @@ defense-in-depth `requireAdmin` on every mutation route, constant-time
 passphrase/signature compares, public-safe run-history DTO mirroring the immutable
 summary, thin proxy routes that forward unvalidated bodies for API-side validation.)
 
-### Finding 16 — Live Watch observes a static seeded sale offer, not the active run's generated offer (HIGH)
+### F16 — Live Watch observes a static seeded sale offer, not the active run's generated offer (High)
+
+**Slices:** 5
 
 The Live Watch page reads inventory for the **default seeded** sale offer
 (`ACTIVE_SALE_OFFER_ID = 00000000-0000-4000-8000-000000000010`) via the env knob
@@ -750,7 +782,9 @@ for the inventory read (fall back to the env knob only when there is no current 
 the run-scoped follow is intentionally deferred, update the `config.ts`/phase-6 claims and
 document the manual env override as the only supported path.
 
-### Finding 17 — Public run start promises a `/watch` redirect that never happens (MEDIUM)
+### F17 — Public run start promises a `/watch` redirect that never happens (Medium)
+
+**Slices:** 5
 
 On a successful public preset start the toast says "Redirecting to watch…" but the handler
 returns immediately and never navigates. The server action only calls `revalidatePath("/")`,
@@ -775,7 +809,9 @@ run id and the trigger can `router.push("/watch")`, or the trigger can read the 
 navigate), or change the copy to reflect what actually happens (e.g. "Run started — open
 Watch to see it live").
 
-### Finding 18 — No client-side recovery re-fetch on SSE reconnect or terminal run events; recovery-sourced counts freeze for the whole watch session (MEDIUM)
+### F18 — No client-side recovery re-fetch on SSE reconnect or terminal run events; recovery-sourced counts freeze for the whole watch session (Medium)
+
+**Slices:** 5
 
 The realtime contract documents `/dashboard/recovery` as the authoritative
 reconnect/refresh path ("The dashboard discards live events received while a recovery
@@ -820,7 +856,9 @@ plus lifecycle surfacing, not the durable numbers.)
 live events during that window. At minimum, re-fetch recovery once on the first `open`
 after an `error` and on `run.completed`/`run.failed`.
 
-### Finding 19 — "Fail-closed" secret strength check accepts the committed dev sentinel; no startup validation forces an override (LOW)
+### F19 — "Fail-closed" secret strength check accepts the committed dev sentinel; no startup validation forces an override (Low)
+
+**Slices:** 5
 
 `isSecretStrongEnough` gates admin-session signing/verification (and visitor-cookie
 issuance) and is documented as a "fail closed" guard against an unverifiable session
@@ -855,7 +893,9 @@ the `change-me-*` values treated as "not configured"), or add startup validation
 fails closed when `NODE_ENV=production` and any of the secrets/tokens is unset or equal to
 its sentinel.
 
-### Finding 20 — Public "Demo Picker" cards are decorative: fictional preset slugs and no start action (LOW)
+### F20 — Public "Demo Picker" cards are decorative: fictional preset slugs and no start action (Low)
+
+**Slices:** 5
 
 The home page is headed "Public Demo Picker" and lists three "Available demo runs"
 (`scarcity-burst`, `steady-drain`, `erp-stall`), but those slugs do not correspond to any
@@ -901,7 +941,9 @@ the web `api-client.ts` parses every projection through the shared contract sche
 than duplicating shapes, and worker/API realtime projections consistently thread
 `correlationId`/`runId`.)
 
-### Finding 21 — Stable error codes returned by every service are absent from the documented `ERROR_CODES` vocabulary (MEDIUM)
+### F21 — Stable error codes returned by every service are absent from the documented `ERROR_CODES` vocabulary (Medium)
+
+**Slices:** 6
 
 `packages/contracts/src/errors.ts` owns `ERROR_CODES` as the "documented baseline set" of
 stable, machine-readable error codes and ships the shared `ErrorPayloadSchema` every HTTP
@@ -955,9 +997,11 @@ and consumed by the dashboard), and tighten `ErrorPayloadSchema.code` toward an
 enum-or-baseline check so the vocabulary is enforced at the contract boundary rather than
 only documented.
 
-### Finding 22 — Worker readiness check `notification_record_worker_running` is contracted and documented but never emitted (MEDIUM)
+### F22 — Worker readiness check `notification_record_worker_running` is contracted and documented but never emitted (Medium)
 
-*(Consolidated from Slice 6 Finding 2 and Slice 7 Finding 3 — the same defect reported
+**Slices:** 6, 7
+
+*(Consolidated from the Slice 6 and Slice 7 review passes — the same defect reported
 under both the contracts/vocabulary area and the runtime/ops area.)*
 
 The readiness vocabulary advertises a `notification_record_worker_running` check as part
@@ -1002,7 +1046,9 @@ reflect the inline behavior; and update the readiness-service comment, which is 
 relative to Phase 8. If a distinct notification loop is intended later, track it
 explicitly.
 
-### Finding 23 — `IsoTimestamp` accepts any non-empty string, so timezone clarity is not enforced at the contract boundary (LOW)
+### F23 — `IsoTimestamp` accepts any non-empty string, so timezone clarity is not enforced at the contract boundary (Low)
+
+**Slices:** 6
 
 The shared timestamp schema used for every `occurredAt` / `capturedAt` / `timestamp` /
 `securedAt` / `expiresAt` field validates only `z.string().min(1)`, despite the convention
@@ -1030,7 +1076,9 @@ would protect every boundary at once.
 ISO-8601-with-offset regex) so the documented UTC-`Z`/offset invariant is enforced at the
 contract boundary rather than left to each producer's discipline.
 
-### Finding 24 — `OrderReadResponseSchema` types order/reservation `status` as a free-form string instead of the canonical enum schemas (LOW)
+### F24 — `OrderReadResponseSchema` types order/reservation `status` as a free-form string instead of the canonical enum schemas (Low)
+
+**Slices:** 6
 
 The GET `/orders/:publicOrderId` response defines both the order and reservation `status`
 fields as `z.string().min(1)` rather than the shared `OrderStatusSchema` /
@@ -1071,11 +1119,13 @@ test-env port-isolation guard + per-package DB/Redis rewrite, FLUSHALL confined 
 `reset-test-infra.mjs`, API readiness honestly probes DB+queue, `.env` git-ignored and
 `.dockerignore` strips secrets.)
 
-> Note: Slice 7 Finding 3 (`notification_record_worker_running` readiness check) is the
-> same defect as Slice 6 Finding 2 and is consolidated above as **Finding 22**. It is not
+> Note: the Slice 7 `notification_record_worker_running` readiness-check report is the
+> same defect as the Slice 6 one and is consolidated above as **F22**. It is not
 > repeated here.
 
-### Finding 25 — Documented per-package test commands do not exist (MEDIUM)
+### F25 — Documented per-package test commands do not exist (Medium)
+
+**Slices:** 7
 
 `docs/local_development.md` "Useful package commands" advertises five per-package test
 entry points that none of the packages define. Running any of them fails immediately.
@@ -1116,7 +1166,9 @@ and the existing `pnpm --filter @checkout-surge/db db:migrate`/`seed` and
 `pnpm --filter @checkout-surge/web test:unit`), or add the missing per-package scripts
 that delegate to the test-env runner.
 
-### Finding 26 — Load-orchestrator Dockerfile builds the entire workspace (LOW–MEDIUM)
+### F26 — Load-orchestrator Dockerfile builds the entire workspace (Low)
+
+**Slices:** 7
 
 `apps/load-orchestrator/Dockerfile` runs an unfiltered `pnpm build`, so the
 load-orchestrator image build compiles every package in the monorepo (including the
@@ -1150,7 +1202,9 @@ not rebuild the … application bundles", `packages/db/Dockerfile:5-7`).
 `pnpm --filter=@checkout-surge/load-orchestrator... build` so only
 contracts/logger/load-orchestrator are built, matching the other Dockerfiles.
 
-### Finding 27 — Compose project names are NOT worktree-isolated despite the docs guaranteeing it (LOW–MEDIUM)
+### F27 — Compose project names are NOT worktree-isolated despite the docs guaranteeing it (Low)
+
+**Slices:** 7
 
 Both runtime docs state Compose project names are "branch-specific by default so separate
 worktrees do not share project runtime state." The implementation uses a single static
@@ -1181,7 +1235,9 @@ documented "do not share project runtime state" guarantee is not delivered by de
 docs to state that worktree isolation requires an explicit
 `COMPOSE_PROJECT_NAME`/`DEVCONTAINER_COMPOSE_PROJECT_NAME` override per worktree.
 
-### Finding 28 — `infra:down` tears down the whole project, not just PostgreSQL/Redis (LOW)
+### F28 — `infra:down` tears down the whole project, not just PostgreSQL/Redis (Low)
+
+**Slices:** 7
 
 `infra:up` correctly scopes to the two data services, but `infra:down` runs an unscoped
 `docker compose down`, which stops and removes **every** service in the project —
@@ -1205,7 +1261,9 @@ mock-erp, load-orchestrator, caddy) is stopped and removed instead. (Volumes are
 (`docker compose -f docker-compose.yml down postgres redis`), or update the docs to state
 `infra:down` stops the whole project.
 
-### Finding 29 — Caddy has no healthcheck, so `runtime:up --wait` can report success without proving the public entry point serves (LOW)
+### F29 — Caddy has no healthcheck, so `runtime:up --wait` can report success without proving the public entry point serves (Low)
+
+**Slices:** 7
 
 `docker-compose.yml` defines no healthcheck for the `caddy` service. Because `pnpm
 runtime:up` uses `up -d --build --wait`, Compose treats caddy as ready as soon as its
@@ -1253,7 +1311,9 @@ High-risk persistence is mocked only where the real implementation is preserved 
 re-installed to exercise the pending/reconciliation path. The two items below are the
 genuine test-quality gaps.
 
-### Finding 30 — The only real-k6 behavioral test runs in the infrastructure-free unit lane and silently skips (suite stays green) whenever k6 is absent — which is the current state of this environment (HIGH)
+### F30 — The only real-k6 behavioral test runs in the infrastructure-free unit lane and silently skips (suite stays green) whenever k6 is absent — which is the current state of this environment (High)
+
+**Slices:** 8
 
 `apps/load-orchestrator/tests/k6-roundtrip.test.ts` is named `*.test.ts` (not
 `*.integration.test.ts`), so it is picked up by the **root unit lane**
@@ -1295,8 +1355,8 @@ script at all (only `dev`/`build`/`start`/`type-check`), and the root `package.j
 exposes no load-orchestrator lane — `test:api`/`test:worker`/`test:integration` all filter
 `@checkout-surge/{api,worker,db}`, so **every** load-orchestrator test (unit or otherwise)
 reaches CI only through the root `test:unit` (`pnpm test:unit` = `vitest run && ...`).
-*(This is related to Finding 25's stale documented test commands, but a distinct defect:
-Finding 25 is the wrong docs table; this is the silent skip of the only behavioral k6
+*(This is related to F25's stale documented test commands, but a distinct defect:
+F25 is the wrong docs table; this is the silent skip of the only behavioral k6
 test.)*
 
 **Impact.** In any runner without a host `k6` (local `test:unit`/`test:watch`, and any CI
@@ -1319,7 +1379,9 @@ but the runner makes no such guarantee and the skip is silent.
   zero-test run. Keep the graceful host skip only for an explicitly opt-in "no-k6"
   convenience mode if desired.
 
-### Finding 31 — `x-load-run-id` header-agreement "matching/absent" cases assert only the absence of a validation path, so they pass against a no-op header check (LOW)
+### F31 — `x-load-run-id` header-agreement "matching/absent" cases assert only the absence of a validation path, so they pass against a no-op header check (Low)
+
+**Slices:** 8
 
 `apps/api/tests/buy-route.unit.test.ts` wires `db: undefined` (`:164-182`), so a request
 that clears the header-agreement guard then fails inside the reservation service for an
@@ -1362,9 +1424,9 @@ assert its explicit result, so a no-op guard turns these tests red.
   - Section 6 (shared contracts/logging/vocabulary): Slice 6.
   - Section 7 (runtime/configuration/ops): Slice 7.
   - Section 8 (test suite quality): Slice 8.
-- Deduplication applied: Slice 6 Finding 2 + Slice 7 Finding 3 → **Finding 22** (single
-  entry).
-- Cross-referenced-but-distinct: **Finding 19** (secret check; overlaps slice 7 scope),
-  **Finding 25** vs **Finding 30** (test commands vs silent k6 skip).
+- Deduplication applied: the duplicate Slice 6 / Slice 7 readiness-check reports →
+  **F22** (single entry).
+- Cross-referenced-but-distinct: **F19** (secret check; overlaps slice 7 scope),
+  **F25** vs **F30** (test commands vs silent k6 skip).
 - The "Final Pass Questions" checklist that frames this review lives in
   `p1-10_review_helper.md` and is not reproduced here.

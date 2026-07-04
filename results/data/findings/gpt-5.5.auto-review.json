@@ -4,68 +4,86 @@
   "source": "gpt-5.5_auto_review_findings.md",
   "findings": [
     {
-      "id": "gpt-5.5:P1-01",
-      "code": "P1-01",
+      "id": "gpt-5.5:F1",
+      "code": "F1",
       "title": "Redis-secured holds can remain permanently pending after a transient PostgreSQL failure",
       "severity": "high",
-      "severityRaw": "P1",
       "tier": "finding",
-      "slices": [1],
-      "locations": ["apps/api/src/services/reserve-order-service.ts:173-204", "apps/api/src/services/postgres-buy-persistence.ts:143"],
+      "slices": [
+        1
+      ],
+      "locations": [
+        "apps/api/src/services/reserve-order-service.ts:173-204",
+        "apps/api/src/services/postgres-buy-persistence.ts:143"
+      ],
       "summary": "After a failed durable write the service returns reservation_pending_persistence forever: replays only check for an already-persisted row and never retry the insert from the stored hold, and no code path ever marks pending_reconciliation reconciled. The buyer holds Redis stock with no order and the run can stay draining until timeout — and a test locks the behavior in."
     },
     {
-      "id": "gpt-5.5:P1-02",
-      "code": "P1-02",
+      "id": "gpt-5.5:F2",
+      "code": "F2",
       "title": "Run closure is best-effort, so stale Redis eligibility can keep accepting a closed run",
       "severity": "high",
-      "severityRaw": "P1",
       "tier": "finding",
-      "slices": [4],
-      "locations": ["apps/api/src/services/demo-run-service.ts:627-645", "packages/db/src/redis-stock-reservation.ts:121"],
+      "slices": [
+        4
+      ],
+      "locations": [
+        "apps/api/src/services/demo-run-service.ts:627-645",
+        "packages/db/src/redis-stock-reservation.ts:121"
+      ],
       "summary": "The buy path trusts only Redis for generated-run eligibility, while lifecycle code moves the durable run to draining/failed and then suppresses Redis-close failures. A transient close failure leaves runSaleStatus: accepting, so later /buy calls with the old runId keep reserving stock for a closed run."
     },
     {
-      "id": "gpt-5.5:P1-03",
-      "code": "P1-03",
+      "id": "gpt-5.5:F3",
+      "code": "F3",
       "title": "Admin reset fails runs without writing immutable run-history summaries",
       "severity": "high",
-      "severityRaw": "P1",
       "tier": "finding",
-      "slices": [4],
-      "locations": ["apps/api/src/services/demo-maintenance-service.ts:47-87"],
+      "slices": [
+        4
+      ],
+      "locations": [
+        "apps/api/src/services/demo-maintenance-service.ts:47-87"
+      ],
       "summary": "reset() directly updates in-progress runs to failed with admin_reset but never calls the terminal summary writer, leaving terminal runs with no immutable history record, no terminal inventory snapshot, and no preserved sold-out accounting — violating the documented one-summary-per-terminal-run invariant."
     },
     {
-      "id": "gpt-5.5:P1-04",
-      "code": "P1-04",
+      "id": "gpt-5.5:F4",
+      "code": "F4",
       "title": "Generated-run cleanup can delete non-generated sale offers",
       "severity": "high",
-      "severityRaw": "P1",
       "tier": "finding",
-      "slices": [2],
-      "locations": ["apps/api/src/services/demo-maintenance-service.ts:122-152"],
+      "slices": [
+        2
+      ],
+      "locations": [
+        "apps/api/src/services/demo-maintenance-service.ts:122-152"
+      ],
       "summary": "cleanupOldRuns collects saleOfferId values from deletable runs and deletes sale_offers by ID only, never verifying generated-run ownership. A terminal run pointing at a catalog offer (legacy data, manual repair, or a bug) can delete baseline demo data outside generated-run ownership."
     },
     {
-      "id": "gpt-5.5:P1-05",
-      "code": "P1-05",
+      "id": "gpt-5.5:F5",
+      "code": "F5",
       "title": "Orders are not constrained to match a secured reservation",
       "severity": "high",
-      "severityRaw": "P1",
       "tier": "finding",
-      "slices": [2],
-      "locations": ["packages/db/src/schema.ts:282-300"],
+      "slices": [
+        2
+      ],
+      "locations": [
+        "packages/db/src/schema.ts:282-300"
+      ],
       "summary": "orders.reservationId is a plain unique FK; no trigger or check ensures the referenced reservation is secured or that saleOfferId/runId/correlationId/quantity match, so PostgreSQL accepts orders whose reservation was never actually secured for the same run/offer, and summaries can count them as confirmed."
     },
     {
-      "id": "gpt-5.5:P1-06",
-      "code": "P1-06",
+      "id": "gpt-5.5:F6",
+      "code": "F6",
       "title": "Successful ERP confirmations can be replayed after local persistence failures",
       "severity": "high",
-      "severityRaw": "P1",
       "tier": "finding",
-      "slices": [3],
+      "slices": [
+        3
+      ],
       "locations": [
         "apps/worker/src/application/order-process-job-handler.ts:135-175",
         "apps/mock-erp/src/application/confirmation-service.ts:59"
@@ -73,13 +91,14 @@
       "summary": "The worker calls the ERP before durably marking the order confirmed; if transitionToConfirmed fails, redelivery resumes the processing order and calls the ERP again, and the mock ERP never dedupes by orderId — duplicate downstream confirmations, with a unit test explicitly expecting confirm to be called twice."
     },
     {
-      "id": "gpt-5.5:P1-07",
-      "code": "P1-07",
+      "id": "gpt-5.5:F7",
+      "code": "F7",
       "title": "Open ERP circuit retries can exhaust the job before the circuit can recover",
       "severity": "high",
-      "severityRaw": "P1",
       "tier": "finding",
-      "slices": [3],
+      "slices": [
+        3
+      ],
       "locations": [
         "apps/api/src/queue/bullmq-order-process-job-publisher.ts:56",
         "apps/worker/src/runtime/config.ts:50"
@@ -87,13 +106,14 @@
       "summary": "ErpCircuitOpenError carries retryAfterMs but the BullMQ schedule ignores it: 4 attempts at 500ms exponential backoff versus a 10s circuit reset means a job can burn every retry on immediate circuit-open errors and terminally fail valid orders while the circuit is deliberately protecting the ERP."
     },
     {
-      "id": "gpt-5.5:P1-08",
-      "code": "P1-08",
+      "id": "gpt-5.5:F8",
+      "code": "F8",
       "title": "Lost notification enqueue can fail an otherwise completed run",
       "severity": "high",
-      "severityRaw": "P1",
       "tier": "finding",
-      "slices": [3],
+      "slices": [
+        3
+      ],
       "locations": [
         "apps/worker/src/application/order-process-job-handler.ts:207-227",
         "apps/api/src/services/demo-run-finalization-service.ts:407"
@@ -101,13 +121,14 @@
       "summary": "Notification work exists only as a BullMQ job with no durable outbox or repair path; a failed publish after confirmation is only logged. But finalization blocks while notificationsRecorded < confirmedOrders, so a single transient publish failure can keep a run draining until it fails with business_drain_timeout."
     },
     {
-      "id": "gpt-5.5:P1-09",
-      "code": "P1-09",
+      "id": "gpt-5.5:F9",
+      "code": "F9",
       "title": "Lost traffic-completion reports can leave runs permanently active",
       "severity": "high",
-      "severityRaw": "P1",
       "tier": "finding",
-      "slices": [4],
+      "slices": [
+        4
+      ],
       "locations": [
         "apps/load-orchestrator/src/application/k6-runner.ts:152-162",
         "apps/api/src/services/demo-run-service.ts:603-627"
@@ -115,13 +136,14 @@
       "summary": "Completion delivery is fire-and-forget: one failed POST is logged, the temp dir removed, and no retry/outbox/reconciliation exists, while recordTrafficCompletion is the only normal path into draining. A brief API blip during completion ingestion leaves the run stuck active, blocking future starts until an operator reset."
     },
     {
-      "id": "gpt-5.5:P1-10",
-      "code": "P1-10",
+      "id": "gpt-5.5:F10",
+      "code": "F10",
       "title": "Expected sold-out responses are counted as HTTP failures in k6 summaries",
       "severity": "high",
-      "severityRaw": "P1",
       "tier": "finding",
-      "slices": [4],
+      "slices": [
+        4
+      ],
       "locations": [
         "apps/load-orchestrator/src/application/k6-script.ts:90-98",
         "apps/load-orchestrator/src/application/k6-output-parser.ts:54-89"
@@ -129,13 +151,14 @@
       "summary": "The generated script classifies expected 409 sold-out responses via custom counters and check(), but never configures k6's expected-status response callback — so built-in http_req_failed still counts them as failed and the accumulator copies that raw metric into httpSummary.failedRequests/failureRate, making sold-out demos look like HTTP failure."
     },
     {
-      "id": "gpt-5.5:P2-01",
-      "code": "P2-01",
+      "id": "gpt-5.5:F11",
+      "code": "F11",
       "title": "Accepted reservations synchronously run dashboard aggregate reads before responding",
       "severity": "medium",
-      "severityRaw": "P2",
       "tier": "finding",
-      "slices": [1],
+      "slices": [
+        1
+      ],
       "locations": [
         "apps/api/src/services/reserve-order-service.ts:232",
         "packages/db/src/business-outcome-dashboard.ts:52-224"
@@ -143,24 +166,28 @@
       "summary": "After persistence, enqueue, and promotion, the service awaits a dashboard publication that fans out into multiple PostgreSQL aggregate count queries on every accepted reservation — avoidable read load and latency directly on the documented one-second surge target."
     },
     {
-      "id": "gpt-5.5:P2-02",
-      "code": "P2-02",
+      "id": "gpt-5.5:F12",
+      "code": "F12",
       "title": "Mock ERP TPS limiting is global despite request-scoped run config",
       "severity": "medium",
-      "severityRaw": "P2",
       "tier": "finding",
-      "slices": [3],
-      "locations": ["apps/mock-erp/src/application/chaos-control-service.ts:115-163"],
+      "slices": [
+        3
+      ],
+      "locations": [
+        "apps/mock-erp/src/application/chaos-control-service.ts:115-163"
+      ],
       "summary": "Per-request erpConfig is resolved correctly, but the TPS window is a single process-wide counter that receives only maxTps — confirmations from one run/config consume capacity for another, producing unexpected 429s attributed to the wrong run."
     },
     {
-      "id": "gpt-5.5:P2-03",
-      "code": "P2-03",
+      "id": "gpt-5.5:F13",
+      "code": "F13",
       "title": "Terminal summary writes can race with direct reset updates and create split-brain run history",
       "severity": "medium",
-      "severityRaw": "P2",
       "tier": "finding",
-      "slices": [4],
+      "slices": [
+        4
+      ],
       "locations": [
         "apps/api/src/services/demo-run-finalization-service.ts:66-129",
         "apps/api/src/services/demo-maintenance-service.ts:54"
@@ -168,35 +195,42 @@
       "summary": "The summary writer inserts before proving the guarded run update matched, and admin reset bypasses the writer's advisory lock entirely — a reset racing finalization can leave demo_runs saying failed/admin_reset while demo_run_summaries records a different terminal status for the same run."
     },
     {
-      "id": "gpt-5.5:P2-04",
-      "code": "P2-04",
+      "id": "gpt-5.5:F14",
+      "code": "F14",
       "title": "Stale SSE events can overwrite a fresher recovery snapshot",
       "severity": "medium",
-      "severityRaw": "P2",
       "tier": "finding",
-      "slices": [5],
-      "locations": ["apps/web/src/app/components/operator-dashboard.tsx:139-291"],
+      "slices": [
+        5
+      ],
+      "locations": [
+        "apps/web/src/app/components/operator-dashboard.tsx:139-291"
+      ],
       "summary": "The watch reducer applies every live event as a direct state patch with no runId, saleOfferId, or timestamp guard, even though events carry run attribution — after reconnect, reset, or a quick new run, a delayed previous-run event repaints old state as current."
     },
     {
-      "id": "gpt-5.5:P2-05",
-      "code": "P2-05",
+      "id": "gpt-5.5:F15",
+      "code": "F15",
       "title": "Protected admin proxy routes accept the raw passphrase instead of requiring the documented admin session",
       "severity": "medium",
-      "severityRaw": "P2",
       "tier": "finding",
-      "slices": [5],
-      "locations": ["apps/web/src/app/lib/server/backend-proxy.ts:30-37"],
+      "slices": [
+        5
+      ],
+      "locations": [
+        "apps/web/src/app/lib/server/backend-proxy.ts:30-37"
+      ],
       "summary": "The shared route helper accepts either a valid session cookie or a raw x-admin-passphrase header, so destructive actions can be invoked without ever establishing the documented HttpOnly admin session — and the history-deletion UI still sends the passphrase directly."
     },
     {
-      "id": "gpt-5.5:P2-06",
-      "code": "P2-06",
+      "id": "gpt-5.5:F16",
+      "code": "F16",
       "title": "Internal load-orchestration calls split correlation IDs between bodies, headers, and logs",
       "severity": "medium",
-      "severityRaw": "P2",
       "tier": "finding",
-      "slices": [6],
+      "slices": [
+        6
+      ],
       "locations": [
         "apps/api/src/services/demo-run-service.ts:202-206",
         "apps/load-orchestrator/src/application/api-client.ts:33-41"
@@ -204,83 +238,104 @@
       "summary": "Internal HTTP clients send correlationId in payloads but never the shared x-correlation-id header both Fastify servers derive request/log/error correlation from — so traces fragment exactly around traffic start, metric ingestion, and completion, and a start response's header and body can disagree."
     },
     {
-      "id": "gpt-5.5:P2-07",
-      "code": "P2-07",
+      "id": "gpt-5.5:F17",
+      "code": "F17",
       "title": "Load-orchestrator readiness can pass with an unreachable API target",
       "severity": "medium",
-      "severityRaw": "P2",
       "tier": "finding",
-      "slices": [7],
-      "locations": ["apps/load-orchestrator/src/runtime/readiness.ts:15-24", "docker-compose.yml:179-181"],
+      "slices": [
+        7
+      ],
+      "locations": [
+        "apps/load-orchestrator/src/runtime/readiness.ts:15-24",
+        "docker-compose.yml:179-181"
+      ],
       "summary": "Readiness only checks that an API URL string is non-empty and Compose starts the orchestrator after the API is merely started, not healthy — a bad in-container URL or unready API leaves health:check and runtime:smoke green until the first real run fails at execution time."
     },
     {
-      "id": "gpt-5.5:P2-08",
-      "code": "P2-08",
+      "id": "gpt-5.5:F18",
+      "code": "F18",
       "title": "Load-orchestrator tests do not exercise the production k6 runner or completion reporting path",
       "severity": "medium",
-      "severityRaw": "P2",
       "tier": "finding",
-      "slices": [8],
-      "locations": ["apps/load-orchestrator/src/application/k6-runner.ts:32-154"],
+      "slices": [
+        8
+      ],
+      "locations": [
+        "apps/load-orchestrator/src/application/k6-runner.ts:32-154"
+      ],
       "summary": "The suite string-checks generated scripts, feeds hand-written JSON to the accumulator, and tests routes with a fake runner — SpawnK6Runner's spawn/stdout/metrics/completion/cleanup path, which finalization depends on, is never instantiated in any test."
     },
     {
-      "id": "gpt-5.5:P2-09",
-      "code": "P2-09",
+      "id": "gpt-5.5:F19",
+      "code": "F19",
       "title": "Web tests stop at static markup and proxy units, leaving browser workflows untested",
       "severity": "medium",
-      "severityRaw": "P2",
       "tier": "finding",
-      "slices": [8],
-      "locations": ["apps/web/test/dashboard-control-surface.test.ts:20-53"],
+      "slices": [
+        8
+      ],
+      "locations": [
+        "apps/web/test/dashboard-control-surface.test.ts:20-53"
+      ],
       "summary": "Components are rendered with renderToStaticMarkup and proxy routes called directly, so the browser event handlers that build request bodies, handle sessions, navigate, refresh recovery, and delete history rows are never executed, and no page-level smoke tests exist."
     },
     {
-      "id": "gpt-5.5:P2-10",
-      "code": "P2-10",
+      "id": "gpt-5.5:F20",
+      "code": "F20",
       "title": "Some tests lock in known-bad recovery behavior as expected behavior",
       "severity": "medium",
-      "severityRaw": "P2",
       "tier": "finding",
-      "slices": [8],
+      "slices": [
+        8
+      ],
       "locations": [
         "apps/api/test/api.test.ts:2752-2795",
         "apps/worker/test/unit/order-process-job-handler.test.ts:218-241"
       ],
-      "summary": "Tests assert the permanently-pending replay behavior (P1-01) and the double ERP confirmation (P1-06) as expected outcomes, so the suite actively protects those defects rather than merely lacking coverage."
+      "summary": "Tests assert the permanently-pending replay behavior (F1) and the double ERP confirmation (F6) as expected outcomes, so the suite actively protects those defects rather than merely lacking coverage."
     },
     {
-      "id": "gpt-5.5:P3-01",
-      "code": "P3-01",
+      "id": "gpt-5.5:F21",
+      "code": "F21",
       "title": "Admin cleanup can return a correlation ID that disagrees with the response header",
       "severity": "low",
-      "severityRaw": "P3",
       "tier": "finding",
-      "slices": [6],
-      "locations": ["apps/api/src/routes/admin-maintenance-routes.ts:38-47"],
+      "slices": [
+        6
+      ],
+      "locations": [
+        "apps/api/src/routes/admin-maintenance-routes.ts:38-47"
+      ],
       "summary": "The cleanup route normalizes the body correlationId into the payload but never refreshes the x-correlation-id response header, unlike sibling body-correlation routes — clients keying on the standard header can disagree with the JSON payload."
     },
     {
-      "id": "gpt-5.5:P3-02",
-      "code": "P3-02",
+      "id": "gpt-5.5:F22",
+      "code": "F22",
       "title": "runtime:setup is documented as DB-only but rebuilds the whole app workspace",
       "severity": "low",
-      "severityRaw": "P3",
       "tier": "finding",
-      "slices": [7],
-      "locations": ["Dockerfile:21-58", "docs/runtime_topology.md:182"],
+      "slices": [
+        7
+      ],
+      "locations": [
+        "Dockerfile:21-58",
+        "docs/runtime_topology.md:182"
+      ],
       "summary": "Every runtime target inherits from a workspace stage that runs a full pnpm build, so the documented DB-only setup image actually rebuilds web, API, worker, mock ERP, and load-orchestrator bundles on ordinary seed changes."
     },
     {
-      "id": "gpt-5.5:P3-03",
-      "code": "P3-03",
+      "id": "gpt-5.5:F23",
+      "code": "F23",
       "title": "Local runtime docs contain stale operational guidance",
       "severity": "low",
-      "severityRaw": "P3",
       "tier": "finding",
-      "slices": [7],
-      "locations": ["docs/local_development.md:73-218"],
+      "slices": [
+        7
+      ],
+      "locations": [
+        "docs/local_development.md:73-218"
+      ],
       "summary": "The clean wipe-and-rebuild recipe omits runtime:up (leaving all app services stopped), and the health-check examples list readiness check names that no longer exist in the implemented API and worker readiness code."
     }
   ]

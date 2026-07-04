@@ -1,20 +1,8 @@
 import type { Severity } from "@/lib/schema";
 import { cn, severityColorVar, severityLabel } from "@/lib/utils";
 
-/**
- * Severity chip: colored dot + text label in ink (color never alone).
- * Pass `raw` to also show the report's verbatim grade when it differs.
- */
-export function SeverityBadge({
-  severity,
-  raw,
-  className,
-}: {
-  severity: Severity;
-  raw?: string;
-  className?: string;
-}) {
-  const showRaw = raw && raw.toLowerCase() !== severity && severity !== "info";
+/** Severity chip: colored dot + text label in ink (color never alone). */
+export function SeverityBadge({ severity, className }: { severity: Severity; className?: string }) {
   return (
     <span
       className={cn(
@@ -28,7 +16,6 @@ export function SeverityBadge({
         style={{ background: severityColorVar[severity] }}
       />
       {severityLabel[severity]}
-      {showRaw && <span className="font-mono text-[0.65rem] text-ink-3">({raw})</span>}
     </span>
   );
 }

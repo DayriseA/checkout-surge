@@ -4,48 +4,48 @@ This document merges the eight per-slice review files (`findings_slice_1.md` …
 
 Each finding is tagged with the originating slice(s). Two findings were reported in more than one slice and have been merged:
 
-- **Sold-out 409s graded as k6 traffic failures** — reported as a product defect in Slice 4 (Finding 1) and as a masking test gap in Slice 8 (Finding 1). Merged into **Finding 1** below.
-- **API readiness never probes Redis reachability** — reported in Slice 6 (F1) and cross-referenced from Slice 7 for its runtime/smoke impact. Merged into **Finding 9** below.
+- **Sold-out 409s graded as k6 traffic failures** — reported as a product defect in Slice 4 and as a masking test gap in Slice 8. Merged into **F1** below.
+- **API readiness never probes Redis reachability** — reported in Slice 6 and cross-referenced from Slice 7 for its runtime/smoke impact. Merged into **F9** below.
 
 Related-but-distinct items (e.g. the two separate dead-schema findings, and the `requestFailureRate` upper-bound vs. its grading semantics) are kept separate and cross-referenced.
 
 ## Summary
 
-| # | Finding | Severity | Source |
+| Code | Finding | Severity | Slices |
 |---|---------|----------|--------|
-| 1 | Expected `sold_out` / idempotency 409s graded as k6 traffic failures → flagship surge always finalizes `failed` (and the path is untested) | High | Slice 4 F1 + Slice 8 F1 |
-| 2 | Run-scoped ERP behavior and worker backpressure are frozen into the run but never applied | High | Slice 3 F1 |
-| 3 | Root `pnpm test:db:migrate` is a stale "not implemented" placeholder that errors out | High | Slice 7 F1 |
-| 4 | Catalog (null-`runId`) buy against a live run's generated offer leaks a Redis hold | Medium | Slice 1 F1 |
-| 5 | `demo_run_reservation_outcomes` is a dead durable table despite comments claiming active use | Medium | Slice 2 F1 |
-| 6 | `orders:process` completed jobs are never trimmed → unbounded Redis growth during a surge | Medium | Slice 3 F2 |
-| 7 | Traffic metrics are forwarded only once (after k6 exits) → no live in-run traffic telemetry | Medium | Slice 4 F2 |
-| 8 | Live dashboard retains the previous run's order-outcome overlay across a run change | Medium | Slice 5 F1 |
-| 9 | API readiness never probes Redis reachability; a down Redis is hidden as `degraded`/HTTP 200 | Medium | Slice 6 F1 + Slice 7 |
-| 10 | `WEB_ORIGIN` is documented/compose-injected as the API CORS allow-list, but no CORS is implemented | Medium | Slice 7 F2 |
-| 11 | Concurrent idempotent replay can return `reservation_secured` for an order that will never exist | Medium/Low | Slice 1 F2 |
-| 12 | `PUBLIC_CUSTOM_*` env knobs are inert; the public runtime policy is hardcoded in the seed | Medium-low | Slice 7 F3 |
-| 13 | Live `inventory.updated` publish is awaited inline on the winning hot path | Low | Slice 1 F3 |
-| 14 | `clearRunLiveState` leaks the run's sale-eligibility Redis key on cleanup | Low/Medium | Slice 2 F2 |
-| 15 | `resetTestDatabase` wipes with no guard that the target is actually a test database | Low | Slice 2 F3 |
-| 16 | Seed is idempotent for durable rows but hard-resets Redis inventory | Low | Slice 2 F4 |
-| 17 | Worker readiness reports `ok` even when the consumer is not consuming | Low | Slice 3 F3 |
-| 18 | A persisted-transition failure can double-confirm at the (non-idempotent) Mock ERP | Low | Slice 3 F4 |
-| 19 | Admin console cannot launch the admin-only / `Custom` presets it can create | Low | Slice 5 F2 |
-| 20 | `formatClock` slices the ISO string as if it were always UTC | Low | Slice 5 F3 |
-| 21 | Run-summary / finalization tables carry summary columns that are never written, read, or in the contract | Low | Slice 6 F2 |
-| 22 | `requestFailureRate` is documented as `(0..1)` but only bounded below | Low | Slice 6 F3 |
-| 23 | Unused contract exports add vocabulary surface with no consumer | Low/info | Slice 6 F4 |
-| 24 | `runtime:smoke:load` permanently lowers the `admin-soak-steady` preset and never restores it | Low | Slice 7 F4 |
-| 25 | The only real-k6 end-to-end test self-skips silently; parsers are otherwise validated only against canned JSON | Low-Medium | Slice 8 F2 |
+| F1 | Expected `sold_out` / idempotency 409s graded as k6 traffic failures → flagship surge always finalizes `failed` (and the path is untested) | High | 4, 8 |
+| F2 | Run-scoped ERP behavior and worker backpressure are frozen into the run but never applied | High | 3 |
+| F3 | Root `pnpm test:db:migrate` is a stale "not implemented" placeholder that errors out | High | 7 |
+| F4 | Catalog (null-`runId`) buy against a live run's generated offer leaks a Redis hold | Medium | 1 |
+| F5 | `demo_run_reservation_outcomes` is a dead durable table despite comments claiming active use | Medium | 2 |
+| F6 | `orders:process` completed jobs are never trimmed → unbounded Redis growth during a surge | Medium | 3 |
+| F7 | Traffic metrics are forwarded only once (after k6 exits) → no live in-run traffic telemetry | Medium | 4 |
+| F8 | Live dashboard retains the previous run's order-outcome overlay across a run change | Medium | 5 |
+| F9 | API readiness never probes Redis reachability; a down Redis is hidden as `degraded`/HTTP 200 | Medium | 6, 7 |
+| F10 | `WEB_ORIGIN` is documented/compose-injected as the API CORS allow-list, but no CORS is implemented | Medium | 7 |
+| F11 | Concurrent idempotent replay can return `reservation_secured` for an order that will never exist | Medium | 1 |
+| F12 | `PUBLIC_CUSTOM_*` env knobs are inert; the public runtime policy is hardcoded in the seed | Medium | 7 |
+| F13 | Live `inventory.updated` publish is awaited inline on the winning hot path | Low | 1 |
+| F14 | `clearRunLiveState` leaks the run's sale-eligibility Redis key on cleanup | Low | 2 |
+| F15 | `resetTestDatabase` wipes with no guard that the target is actually a test database | Low | 2 |
+| F16 | Seed is idempotent for durable rows but hard-resets Redis inventory | Low | 2 |
+| F17 | Worker readiness reports `ok` even when the consumer is not consuming | Low | 3 |
+| F18 | A persisted-transition failure can double-confirm at the (non-idempotent) Mock ERP | Low | 3 |
+| F19 | Admin console cannot launch the admin-only / `Custom` presets it can create | Low | 5 |
+| F20 | `formatClock` slices the ISO string as if it were always UTC | Low | 5 |
+| F21 | Run-summary / finalization tables carry summary columns that are never written, read, or in the contract | Low | 6 |
+| F22 | `requestFailureRate` is documented as `(0..1)` but only bounded below | Low | 6 |
+| F23 | Unused contract exports add vocabulary surface with no consumer | Low | 6 |
+| F24 | `runtime:smoke:load` permanently lowers the `admin-soak-steady` preset and never restores it | Low | 7 |
+| F25 | The only real-k6 end-to-end test self-skips silently; parsers are otherwise validated only against canned JSON | Low | 8 |
 
 ---
 
 ## High
 
-### Finding 1 — Expected `sold_out` / idempotency 409s are graded as k6 traffic failures, so the flagship surge (and any sold-out run) always finalizes `failed` — and the path is untested (High)
+### F1 — Expected `sold_out` / idempotency 409s are graded as k6 traffic failures, so the flagship surge (and any sold-out run) always finalizes `failed` — and the path is untested (High)
 
-*Source: Slice 4 Finding 1 (product defect) + Slice 8 Finding 1 (masking test gap).*
+**Slices:** 4, 8
 
 **Where:**
 - `apps/load-orchestrator/src/services/k6-script.ts:98-145` — the generated script issues `http.post(...)` with **no** `http.setResponseCallback(http.expectedStatuses(...))` override, no `check()`, and no custom unexpected-response counter.
@@ -77,9 +77,9 @@ This directly contradicts `docs/load_generation_metrics_streaming.md:45`: "Zero 
 
 ---
 
-### Finding 2 — Run-scoped ERP behavior and worker backpressure are frozen into the run but never applied (High)
+### F2 — Run-scoped ERP behavior and worker backpressure are frozen into the run but never applied (High)
 
-*Source: Slice 3 Finding 1.*
+**Slices:** 3
 
 **Where:**
 - `apps/api/src/services/run-start-service.ts:168-187` (`#resolveEffectiveConfig` assembles `erp` + `backpressure` into the run config) and `:216-265` (`#provisionAndLaunch` freezes the whole `config` into the durable snapshot at `:239`, but delegates only `config.traffic` to the launcher at `:253`).
@@ -101,9 +101,9 @@ A full-repo search confirms `config_snapshot.erp` / `backpressureConfig` are onl
 
 ---
 
-### Finding 3 — Root `pnpm test:db:migrate` is a stale "not implemented" placeholder that errors out (High)
+### F3 — Root `pnpm test:db:migrate` is a stale "not implemented" placeholder that errors out (High)
 
-*Source: Slice 7 Finding 1.*
+**Slices:** 7
 
 **Where:** `package.json:36` — `"test:db:migrate": "node scripts/not-implemented.mjs 'pnpm test:db:migrate' 'Task 1.3'"`.
 
@@ -119,9 +119,9 @@ Meanwhile it is documented in three places as a working migration-authoring aid 
 
 ## Medium
 
-### Finding 4 — Catalog (null-`runId`) buy against a live run's generated offer leaks a Redis hold (Medium)
+### F4 — Catalog (null-`runId`) buy against a live run's generated offer leaks a Redis hold (Medium)
 
-*Source: Slice 1 Finding 1.*
+**Slices:** 1
 
 **Where:** `apps/api/src/services/reserve-order-service.ts:100-102` (eligibility check only runs when `request.runId` is set) and `:257-260` (a classified `ApiError` from persistence is re-thrown without releasing the hold), together with `apps/api/src/services/postgres-buy-persistence.ts:94-106` and the run-ownership trigger `enforce_run_owned_sale_offer_attribution` (`packages/db/drizzle/0001_run_ownership_triggers.sql:27-52`).
 
@@ -139,9 +139,9 @@ This is exactly the failure `postgres-buy-persistence.ts:18-21` says the design 
 
 ---
 
-### Finding 5 — `demo_run_reservation_outcomes` is a dead durable table despite comments claiming it is the Phase 10 durable outcome record (Medium)
+### F5 — `demo_run_reservation_outcomes` is a dead durable table despite comments claiming it is the Phase 10 durable outcome record (Medium)
 
-*Source: Slice 2 Finding 1.*
+**Slices:** 2
 
 **Where:** `packages/db/src/schema.ts:342-357` (table + `reservation_outcome_aggregate` enum), migration `0000_past_red_wolf.sql:45`, plus assertive comments at `packages/db/src/redis-keys.ts:84` and `packages/db/src/order-outcomes.ts:11`.
 
@@ -149,13 +149,13 @@ This is exactly the failure `postgres-buy-persistence.ts:18-21` says the design 
 
 **Impact:** Doc-vs-implementation drift and dead schema. A reviewer trusting the comments would believe a normalized durable run-outcome record exists. Because Phase 10 is nominally complete, this is an oversight to resolve rather than deferred work.
 
-**Suggested fix:** Either (a) have finalization actually persist the run's terminal aggregate into `demo_run_reservation_outcomes` as the comments claim, or (b) delete the unused table/enum/constraint and correct the three comments to point at `demo_run_summaries.terminalInventorySnapshot`. *(Related dead-schema item: Finding 21, unused summary columns.)*
+**Suggested fix:** Either (a) have finalization actually persist the run's terminal aggregate into `demo_run_reservation_outcomes` as the comments claim, or (b) delete the unused table/enum/constraint and correct the three comments to point at `demo_run_summaries.terminalInventorySnapshot`. *(Related dead-schema item: F21, unused summary columns.)*
 
 ---
 
-### Finding 6 — `orders:process` completed jobs are never trimmed, so the completed set grows unbounded during the surge (Medium)
+### F6 — `orders:process` completed jobs are never trimmed, so the completed set grows unbounded during the surge (Medium)
 
-*Source: Slice 3 Finding 2.*
+**Slices:** 3
 
 **Where:** `apps/api/src/services/order-process-queue.ts:47-57` — `defaultJobOptions` sets `attempts` and `backoff` but no `removeOnComplete`/`removeOnCount`. Contrast the notification queue, `apps/worker/src/adapters/record-notification-queue.ts:31-38`, which deliberately sets `removeOnComplete: true`.
 
@@ -167,9 +167,9 @@ This is exactly the failure `postgres-buy-persistence.ts:18-21` says the design 
 
 ---
 
-### Finding 7 — Traffic metrics are forwarded only once, after k6 exits, so there is no live in-run traffic telemetry (Medium)
+### F7 — Traffic metrics are forwarded only once, after k6 exits, so there is no live in-run traffic telemetry (Medium)
 
-*Source: Slice 4 Finding 2.*
+**Slices:** 4
 
 **Where:**
 - `apps/load-orchestrator/src/services/traffic-run-service.ts:129-146` — `#runK6` `await`s the k6 process to completion, *then* `parseK6Output(result.output)` and a single `reporter.reportMetrics(samples)`.
@@ -184,9 +184,9 @@ This is exactly the failure `postgres-buy-persistence.ts:18-21` says the design 
 
 ---
 
-### Finding 8 — Live dashboard retains the previous run's order-outcome overlay across a run change (stale state shown as current) (Medium)
+### F8 — Live dashboard retains the previous run's order-outcome overlay across a run change (stale state shown as current) (Medium)
 
-*Source: Slice 5 Finding 1.*
+**Slices:** 5
 
 **Where:** `apps/web/src/lib/live-dashboard-state.ts` (`liveDashboardReducer` `"recovery"` case, ~lines 120-129; overlay fields in `LiveDashboardState`), `apps/web/src/components/live-dashboard.tsx` (single persistent mount), `apps/web/src/components/panels.tsx` (`RunOutcomesPanel`).
 
@@ -198,9 +198,9 @@ Because each order-lifecycle event carries a full run-scoped `outcomes` snapshot
 
 ---
 
-### Finding 9 — API readiness never probes Redis reachability; a down Redis is hidden as `degraded`/HTTP 200 (Medium)
+### F9 — API readiness never probes Redis reachability; a down Redis is hidden as `degraded`/HTTP 200 (Medium)
 
-*Source: Slice 6 Finding F1, with the runtime/smoke impact from Slice 7 ("already covered elsewhere").*
+**Slices:** 6, 7
 
 **Where:** `apps/api/src/services/readiness.ts:28-36` (and the design note at `:3-8`).
 
@@ -212,9 +212,9 @@ Because each order-lifecycle event carries a full run-scoped `outcomes` snapshot
 
 ---
 
-### Finding 10 — `WEB_ORIGIN` is documented and compose-injected as the API realtime-CORS allow-list, but no code implements CORS (Medium)
+### F10 — `WEB_ORIGIN` is documented and compose-injected as the API realtime-CORS allow-list, but no code implements CORS (Medium)
 
-*Source: Slice 7 Finding 2.*
+**Slices:** 7
 
 **Where:** `docker-compose.yml:73` (api) and `:154` (web) inject `WEB_ORIGIN: http://localhost:8080`; `.env.example:26-28` documents it; `apps/web/.env.example:4` references it. Docs describe it as an enforced control: `docs/architecture.md:27`, `docs/local_development.md:96,356`, `docs/runtime_topology.md:140` ("API realtime CORS should allow the dashboard proxy origin").
 
@@ -226,9 +226,9 @@ Because each order-lifecycle event carries a full run-scoped `outcomes` snapshot
 
 ---
 
-### Finding 11 — Concurrent idempotent replay can return `reservation_secured` for an order that will never exist (Medium/Low)
+### F11 — Concurrent idempotent replay can return `reservation_secured` for an order that will never exist (Medium)
 
-*Source: Slice 1 Finding 2.*
+**Slices:** 1
 
 **Where:** `apps/api/src/services/reserve-order-service.ts:218-231` (`#replayResponse`) and the invariant in the comment at `:213-217`.
 
@@ -246,15 +246,15 @@ The window needs a concurrent same-key duplicate *and* a durable-write failure �
 
 ---
 
-### Finding 12 — `PUBLIC_CUSTOM_*` env knobs in `apps/api/.env.example` are inert; the public runtime policy is hardcoded in the seed (Medium-low)
+### F12 — `PUBLIC_CUSTOM_*` env knobs in `apps/api/.env.example` are inert; the public runtime policy is hardcoded in the seed (Medium)
 
-*Source: Slice 7 Finding 3.*
+**Slices:** 7
 
 **Where:** `apps/api/.env.example:45-57` documents 13 `PUBLIC_CUSTOM_*` variables under "Public custom-run caps". The actual policy is the hardcoded `DEFAULT_PUBLIC_RUNTIME_POLICY` in `packages/db/src/presets.ts:23-33`, seeded verbatim at `:258-261`.
 
 **What happens:** No code reads any `PUBLIC_CUSTOM_*` variable — a repo grep finds only the env example and one explanatory comment (`presets.ts:12`). `loadApiConfig` does not read them and the seed does not consult env. So editing any `PUBLIC_CUSTOM_*` has **zero effect**; the public custom-run caps can only change by editing the seed constant (or later via the admin runtime-policy API). Secondary mismatch: `PUBLIC_CUSTOM_MAX_ERP_MAX_TPS=100` (`.env.example:56`) has no corresponding policy field — `DEFAULT_PUBLIC_RUNTIME_POLICY.erp` only carries `minMaxTps` (no upper `maxMaxTps`), so even the intent is unrepresentable.
 
-**Impact:** Misleading configuration surface. An operator tuning `PUBLIC_CUSTOM_*` silently gets the hardcoded defaults. Same drift class as Finding 10.
+**Impact:** Misleading configuration surface. An operator tuning `PUBLIC_CUSTOM_*` silently gets the hardcoded defaults. Same drift class as F10.
 
 **Suggested fix:** Either wire the public runtime policy seed to read `PUBLIC_CUSTOM_*` (with current values as fallbacks, validated against the deployment caps), or drop the block from `apps/api/.env.example` and note the seeded policy is the source of truth (admin-tunable at runtime). Reconcile the stray `MAX_ERP_MAX_TPS` either way.
 
@@ -262,9 +262,9 @@ The window needs a concurrent same-key duplicate *and* a durable-write failure �
 
 ## Low
 
-### Finding 13 — Live `inventory.updated` publish is awaited inline on the winning hot path (Low)
+### F13 — Live `inventory.updated` publish is awaited inline on the winning hot path (Low)
 
-*Source: Slice 1 Finding 3.*
+**Slices:** 1
 
 **Where:** `apps/api/src/services/reserve-order-service.ts:155` — `#publishInventoryUpdated` is `await`ed before `#persistReservedHold` on every newly-`reserved` buy.
 
@@ -274,9 +274,9 @@ The publisher is best-effort and swallows its own failures (`dashboard-event-pub
 
 ---
 
-### Finding 14 — `clearRunLiveState` leaks the run's sale-eligibility Redis key on cleanup (Low/Medium)
+### F14 — `clearRunLiveState` leaks the run's sale-eligibility Redis key on cleanup (Low)
 
-*Source: Slice 2 Finding 2.*
+**Slices:** 2
 
 **Where:** `packages/db/src/run-cleanup.ts:80-86` (`clearRunLiveState`); the missed key is `runSaleEligibilityKey(runId)` (`redis-keys.ts:107`, `run-sale-eligibility.ts`).
 
@@ -288,9 +288,9 @@ The publisher is best-effort and swallows its own failures (`dashboard-event-pub
 
 ---
 
-### Finding 15 — `resetTestDatabase` performs `DROP SCHEMA` / `TRUNCATE` with no guard that the target is actually a test database (Low)
+### F15 — `resetTestDatabase` performs `DROP SCHEMA` / `TRUNCATE` with no guard that the target is actually a test database (Low)
 
-*Source: Slice 2 Finding 3.*
+**Slices:** 2
 
 **Where:** `packages/db/src/testing/index.ts:94-115`.
 
@@ -302,9 +302,9 @@ The publisher is best-effort and swallows its own failures (`dashboard-event-pub
 
 ---
 
-### Finding 16 — Seed is idempotent for durable rows but hard-resets Redis inventory (Low)
+### F16 — Seed is idempotent for durable rows but hard-resets Redis inventory (Low)
 
-*Source: Slice 2 Finding 4.*
+**Slices:** 2
 
 **Where:** `packages/db/src/seed.ts:24-54` — durable rows use `onConflictDoNothing` (idempotent), but `initializeInventoryState` (`seed.ts:48-51`, `inventory.ts:30-41`) unconditionally `HSET`s `remainingStock`/`reservedStock` back to the full allocation.
 
@@ -316,9 +316,9 @@ The publisher is best-effort and swallows its own failures (`dashboard-event-pub
 
 ---
 
-### Finding 17 — Worker readiness reports `order_process_worker_running: ok` even when the consumer is not consuming (Low)
+### F17 — Worker readiness reports `order_process_worker_running: ok` even when the consumer is not consuming (Low)
 
-*Source: Slice 3 Finding 3.*
+**Slices:** 3
 
 **Where:** `apps/worker/src/adapters/order-process-worker.ts:88-90` (`isRunning()` → `Worker.isRunning()`) and `apps/worker/src/adapters/record-notification-worker.ts:61-63`, wired into readiness at `apps/worker/src/services/readiness.ts:49-56` and `apps/worker/src/index.ts:168-169`.
 
@@ -330,9 +330,9 @@ The publisher is best-effort and swallows its own failures (`dashboard-event-pub
 
 ---
 
-### Finding 18 — A confirmation persisted-transition failure can double-confirm at the (non-idempotent) Mock ERP (Low)
+### F18 — A confirmation persisted-transition failure can double-confirm at the (non-idempotent) Mock ERP (Low)
 
-*Source: Slice 3 Finding 4.*
+**Slices:** 3
 
 **Where:** `apps/worker/src/services/process-order-service.ts:130-162` (ERP confirm at `:132`, then `markConfirmed` at `:158`); the Mock ERP confirmation has no idempotency (`apps/mock-erp/src/services/erp-confirmation-service.ts:48-96`; the request already carries `orderId` at `apps/worker/src/adapters/http-erp-client.ts:126-135` / `packages/contracts/src/erp.ts:10-18`).
 
@@ -344,9 +344,9 @@ The publisher is best-effort and swallows its own failures (`dashboard-event-pub
 
 ---
 
-### Finding 19 — Admin console cannot launch admin-only or `Custom` presets it can create (Low)
+### F19 — Admin console cannot launch admin-only or `Custom` presets it can create (Low)
 
-*Source: Slice 5 Finding 2.*
+**Slices:** 5
 
 **Where:** `apps/web/src/components/run-controls.tsx` (hard-coded `PUBLIC_PRESETS`, lines 14-19), `apps/web/src/app/admin/page.tsx` (uses `<RunControls />` as the only run-start affordance, line 61).
 
@@ -356,9 +356,9 @@ The publisher is best-effort and swallows its own failures (`dashboard-event-pub
 
 ---
 
-### Finding 20 — `formatClock` slices the ISO string as if it were always UTC, but the timestamp schema permits an explicit offset (Low)
+### F20 — `formatClock` slices the ISO string as if it were always UTC, but the timestamp schema permits an explicit offset (Low)
 
-*Source: Slice 5 Finding 3.*
+**Slices:** 5
 
 **Where:** `apps/web/src/components/panels.tsx` (`formatClock`, ~lines 279-282; used for `Traffic ended` / `Finalized` at 315-316).
 
@@ -368,9 +368,9 @@ The publisher is best-effort and swallows its own failures (`dashboard-event-pub
 
 ---
 
-### Finding 21 — DB run-summary/finalization tables carry summary columns that are never written, read, or in the contract (Low)
+### F21 — DB run-summary/finalization tables carry summary columns that are never written, read, or in the contract (Low)
 
-*Source: Slice 6 Finding F2.*
+**Slices:** 6
 
 **Where:** `packages/db/src/schema.ts:359-398` (`demoRunFinalizations`, `demoRunSummaries`); contract `packages/contracts/src/run-history.ts:88-96` (`demoRunSummarySchema`).
 
@@ -378,27 +378,27 @@ The publisher is best-effort and swallows its own failures (`dashboard-event-pub
 - `demo_run_summaries`: `httpTimingBreakdownSummary`, `loadRunDiagnosticsSummary`, `apiRequestLifecycleSummary` — not written by `run-summary-writer.ts`, not selected by `run-history-reader.ts`.
 - `demo_run_finalizations`: `trafficOutcomeSummary`, `trafficDeliverySummary`, `httpTimingBreakdownSummary`, `loadRunDiagnosticsSummary`, `apiRequestLifecycleSummary` — not written by `finalization-store.ts` (which sets only `exitCode`, `errorMessage`, `httpSummary`, `trafficSummaryReceivedAt`).
 
-**Why it matters:** Dead schema and DB↔contract drift. Not a functional defect, but it signals either an abandoned richer-summary feature or cruft a reviewer keeps having to reconcile. *(Related dead-schema item: Finding 5.)*
+**Why it matters:** Dead schema and DB↔contract drift. Not a functional defect, but it signals either an abandoned richer-summary feature or cruft a reviewer keeps having to reconcile. *(Related dead-schema item: F5.)*
 
 **Suggested fix:** Either wire and expose these summaries through the contract, or remove the unused columns (and migration lines) so `demoRunSummarySchema` and the persisted shape agree.
 
 ---
 
-### Finding 22 — `requestFailureRate` is documented as `(0..1)` but only bounded below (Low)
+### F22 — `requestFailureRate` is documented as `(0..1)` but only bounded below (Low)
 
-*Source: Slice 6 Finding F3.*
+**Slices:** 6
 
 **Where:** `packages/contracts/src/load.ts:140` (`trafficHttpSummarySchema.requestFailureRate`) and `packages/contracts/src/run-history.ts:67` (`trafficDeliverySummarySchema.requestFailureRate`).
 
 **What:** Both fields are `z.number().min(0)` with a doc comment describing a `(0..1)` rate, while the comparable ERP rate fields enforce the full range (`errorRate: z.number().min(0).max(1)` in `erp.ts:45`, `maxErrorRate` likewise). The upper bound is missing. Harmless in practice (the k6 summary parser always derives this from `http_req_failed`'s 0..1 rate and floors at 0), but the schema would silently accept a malformed over-range producer value.
 
-**Suggested fix:** Add `.max(1)` to both fields for consistency with the ERP rate contracts, or relax the comment if over-range values are ever intentionally allowed. *(Distinct from Finding 1, which concerns how this value is graded, not its bounds.)*
+**Suggested fix:** Add `.max(1)` to both fields for consistency with the ERP rate contracts, or relax the comment if over-range values are ever intentionally allowed. *(Distinct from F1, which concerns how this value is graded, not its bounds.)*
 
 ---
 
-### Finding 23 — Unused contract exports add vocabulary surface with no consumer (Low / informational)
+### F23 — Unused contract exports add vocabulary surface with no consumer (Low)
 
-*Source: Slice 6 Finding F4.*
+**Slices:** 6
 
 **Where:** `packages/contracts/src/enums.ts:74-83` (`SIMULATED_PURCHASE_STATUSES` / `simulatedPurchaseStatusSchema` / `SimulatedPurchaseStatus`); `packages/contracts/src/load.ts:66-71` (`trafficSnapshotRefSchema` / `TrafficSnapshotRef`).
 
@@ -408,9 +408,9 @@ The publisher is best-effort and swallows its own failures (`dashboard-event-pub
 
 ---
 
-### Finding 24 — `runtime:smoke:load` permanently lowers the `admin-soak-steady` preset and never restores it (Low)
+### F24 — `runtime:smoke:load` permanently lowers the `admin-soak-steady` preset and never restores it (Low)
 
-*Source: Slice 7 Finding 4.*
+**Slices:** 7
 
 **Where:** `scripts/runtime-smoke-load.mjs:97-121` (step 3, "lower preset") — a read-modify-write `PUT` to `/api/dashboard/admin/presets/{slug}` overriding the preset's `traffic` + `erp` to a tiny shape (default `5/s for 8s`). The cleanup phase (`:208-234`) removes only the run's rows + Redis keys.
 
@@ -422,9 +422,9 @@ The publisher is best-effort and swallows its own failures (`dashboard-event-pub
 
 ---
 
-### Finding 25 — The only real-k6 end-to-end test self-skips silently; the k6 parsers are otherwise validated solely against hand-authored canned JSON (Low-Medium)
+### F25 — The only real-k6 end-to-end test self-skips silently; the k6 parsers are otherwise validated solely against hand-authored canned JSON (Low)
 
-*Source: Slice 8 Finding 2.*
+**Slices:** 8
 
 **Where:**
 - `apps/load-orchestrator/test/integration/k6-run.test.ts:19-20,36` — `describe.skipIf(!k6Available)` guarded by a `spawnSync("k6", ["version"])` probe.
@@ -440,13 +440,29 @@ The publisher is best-effort and swallows its own failures (`dashboard-event-pub
 
 ## Lower-confidence notes (not full findings)
 
-- **ERP timeout vs. admin latency cap mismatch** *(Slice 3).* The worker's `ERP_REQUEST_TIMEOUT_MS` defaults to 2000ms (`worker config.ts:81`) while the Mock ERP admin latency cap `ADMIN_MAX_LATENCY_MS` defaults to 5000ms (`mock-erp config.ts:107`). Global chaos latency set in (2000, 5000]ms turns "slow ERP" into universal timeouts (circuit opens) rather than slow-but-successful confirmations. All *preset* ERP latencies are ≤1200ms, so this only bites the global chaos knob — and only once Finding 2 is fixed — but the two bounds should be made coherent (or the interaction documented).
+### N1 — ERP timeout vs. admin latency cap mismatch
 
-- **`run:catalog:order-outcomes` aggregate is never cleared** *(Slice 3).* Catalog (null-`runId`) traffic increments the `CATALOG_RUN_SCOPE` order-outcome hash (`packages/db/src/redis-keys.ts:76-87`, `order-outcomes.ts:67-77`), which carries no TTL and is not covered by run cleanup. Harmless (non-run scope) but an ever-growing key.
+**Slices:** 3
 
-- **Rate-named metrics store per-request counter deltas, not rates** *(Slice 4).* `k6-output.ts:13-17` maps `http_reqs` → `traffic.scheduled_request_rate` and `http_req_failed` → `traffic.failure_rate`, but k6 JSON `Point`s carry the per-observation value (`http_reqs` = `1` per request; `http_req_failed` = `0`/`1`), not a windowed rate. Combined with `recordLatestLoadMetrics` keeping only the latest point, the stored "request rate" ends up `1` and "failure rate" the last request's `0`/`1`. Unless the dashboard derives a rate from a window, the projected rate values look meaningless.
+The worker's `ERP_REQUEST_TIMEOUT_MS` defaults to 2000ms (`worker config.ts:81`) while the Mock ERP admin latency cap `ADMIN_MAX_LATENCY_MS` defaults to 5000ms (`mock-erp config.ts:107`). Global chaos latency set in (2000, 5000]ms turns "slow ERP" into universal timeouts (circuit opens) rather than slow-but-successful confirmations. All *preset* ERP latencies are ≤1200ms, so this only bites the global chaos knob — and only once F2 is fixed — but the two bounds should be made coherent (or the interaction documented).
 
-- **`markTrafficFailed` sets `finalizedAt = trafficEndedAt`** *(Slice 4)* (`postgres-run-store.ts:116-130`). Defensible (a traffic-failed run terminalizes at traffic end), but it is the one path where `trafficEndedAt` and `finalizedAt` are the same instant; `markCompleted` keeps them distinct. Worth confirming history consumers never treat equal timestamps as "finalized == traffic ended" for other states.
+### N2 — `run:catalog:order-outcomes` aggregate is never cleared
+
+**Slices:** 3
+
+Catalog (null-`runId`) traffic increments the `CATALOG_RUN_SCOPE` order-outcome hash (`packages/db/src/redis-keys.ts:76-87`, `order-outcomes.ts:67-77`), which carries no TTL and is not covered by run cleanup. Harmless (non-run scope) but an ever-growing key.
+
+### N3 — Rate-named metrics store per-request counter deltas, not rates
+
+**Slices:** 4
+
+`k6-output.ts:13-17` maps `http_reqs` → `traffic.scheduled_request_rate` and `http_req_failed` → `traffic.failure_rate`, but k6 JSON `Point`s carry the per-observation value (`http_reqs` = `1` per request; `http_req_failed` = `0`/`1`), not a windowed rate. Combined with `recordLatestLoadMetrics` keeping only the latest point, the stored "request rate" ends up `1` and "failure rate" the last request's `0`/`1`. Unless the dashboard derives a rate from a window, the projected rate values look meaningless.
+
+### N4 — `markTrafficFailed` sets `finalizedAt = trafficEndedAt`
+
+**Slices:** 4
+
+See `postgres-run-store.ts:116-130`. Defensible (a traffic-failed run terminalizes at traffic end), but it is the one path where `trafficEndedAt` and `finalizedAt` are the same instant; `markCompleted` keeps them distinct. Worth confirming history consumers never treat equal timestamps as "finalized == traffic ended" for other states.
 
 ---
 

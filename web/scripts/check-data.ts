@@ -53,7 +53,7 @@ for (const file of readdirSync(join(dataDir, "findings"))) {
       if (!finding.id.startsWith(`${parsed.model}:`)) {
         throw new Error(`${finding.id} does not match file model ${parsed.model}`);
       }
-      if (finding.tier === "finding" && !extractSection(report, parsed.model, finding.code)) {
+      if (!extractSection(report, finding.code)) {
         throw new Error(`${finding.id}: section not found in ${model.reportFile}`);
       }
     }

@@ -256,6 +256,20 @@ Useful checks:
 - run build/type-check/lint where changes touch shared contracts, runtime scripts, or cross-package APIs
 - note skipped runtime checks clearly
 
+## Report Format
+
+Publish one consolidated markdown report. How you organize your working notes is up to you, but the published findings must follow this shape so reports stay comparable across agents and machine-readable by the results tooling on the `ai/results` branch:
+
+- **One `###` heading per finding:** `### F{n} — {Title} ({Severity})`
+  - Number findings `F1 … Fn` sequentially in document order. Never skip or reuse a code; codes are permanent once published.
+  - `{Severity}` is exactly one of `High`, `Medium`, or `Low`. No hybrid grades (`Low–Medium`), no qualifiers inside the parentheses (`Low / latent`), no priority tiers (`P1`). If a finding sits between two grades, pick the one that matches its real impact and argue the nuance in the body.
+- **First line under each heading:** `**Slices:** {n[, m]}` — the review-slice number(s) from this guide the finding belongs to.
+- **Body is free-form**, but cover: what happens, evidence as `path:line` references, impact, a suggested fix, and the test gap if one exists.
+- **Lower-confidence observations** that don't meet the finding bar go in their own section as `### N{n} — {Title}` entries (same `**Slices:**` line, no severity grade). They are notes, not findings — keep them out of finding totals.
+- **Grouping is free** — by severity or by review slice, whichever reads better; the codes and `**Slices:**` lines carry the semantics either way.
+- **Recommended:** an index table (`| Code | Finding | Severity | Slices |`) near the top, and a closing `## Appendix — Checked and found sound` section listing areas examined and judged correct, so the absence of a finding is distinguishable from the absence of review.
+- **Cross-references** to other findings use their codes (`see F7`), never prose numbering ("Finding 7").
+
 ## Final Pass Questions
 
 - Can stock be oversold?

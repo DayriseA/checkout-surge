@@ -18,26 +18,21 @@ This directory is the machine-readable layer over the reports in `results/`. The
 ```jsonc
 {
   "id": "opus-4.8:F14",        // "<model>:<code>", unique across the experiment
-  "code": "F14",                // the report's own label (F14, P2-03, N1 for notes)
+  "code": "F14",                // the report's own code (F{n}; N{n} for notes)
   "title": "…",                 // heading title, lightly trimmed
-  "severity": "low",            // normalized: high | medium | low | info
-  "severityRaw": "Low/Medium",  // the report's own label, verbatim
-  "tier": "finding",            // finding | note (note = lower-confidence, no own section)
+  "severity": "low",            // high | medium | low (info for notes)
+  "tier": "finding",            // finding | note (note = lower-confidence observation)
   "slices": [2],                // review areas (see slices.json); can span two for merged findings
   "locations": ["packages/db/src/run-cleanup.ts:80-86"],
   "summary": "…"                // curated 1–3 sentence summary; full prose lives in the report
 }
 ```
 
-### Severity normalization
+### Severity and codes
 
-The three reports use incompatible scales, so each record carries both the verbatim label and a normalized value:
+Reports follow the unified format specified in `docs/auto_review_helper.md` (Report Format section): `F{n}` codes, one severity vocabulary (`High | Medium | Low`), and a `**Slices:**` metadata line per finding — so codes and severities here mirror the reports directly. Lower-confidence report notes are `tier: "note"` with severity `info`.
 
-- **GPT 5.5** buckets: `P1` → `high`, `P2` → `medium`, `P3` → `low`.
-- **Hybrid labels** (Opus `Medium/Low`, GLM `LOW–MEDIUM`, …) normalize to their **leading** term — the author's primary grade. The raw label is preserved for anyone who wants to weigh them differently.
-- Opus's four lower-confidence notes are `tier: "note"`, severity `info`.
-
-Slice assignment is native for Opus and GLM (their reports are slice-structured). The GPT report has no slice structure, so its slice tags are curated here from finding content — treat them as editorial.
+The three original reports predate the format spec and were retrofitted to it: GPT's `P1/P2/P3` priority codes became sequential `F1…F23` (P1 → High, P2 → Medium, P3 → Low), and hybrid grades (`Medium/Low`, `LOW–MEDIUM`) were collapsed to their leading term. GPT's slice tags are curated (its original report had no slice structure) — treat them as editorial.
 
 ## Clusters
 

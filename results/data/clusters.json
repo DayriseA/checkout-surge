@@ -7,7 +7,7 @@
       "confidence": "high",
       "members": [
         { "findingId": "opus-4.8:F1", "note": "Worst variant: no override at all, and the raw rate feeds terminal grading, so the flagship surge presets always finalize failed." },
-        { "findingId": "gpt-5.5:P1-10", "note": "Script has custom expected-outcome counters and checks, but http_req_failed is still copied raw into the persisted summary — cosmetic/history damage, not terminal-status damage." }
+        { "findingId": "gpt-5.5:F10", "note": "Script has custom expected-outcome counters and checks, but http_req_failed is still copied raw into the persisted summary — cosmetic/history damage, not terminal-status damage." }
       ],
       "notObserved": [
         { "model": "glm-5.2", "note": "GLM's generated script overrides the k6 response callback; its self-review lists clean sold-out handling as verified and its k6 roundtrip test asserts failure_rate == 0 for all-sold-out traffic." }
@@ -21,7 +21,7 @@
       "members": [
         { "findingId": "opus-4.8:F2", "note": "Nothing applied: Mock ERP uses only the global chaos store, worker concurrency fixed from env." },
         { "findingId": "glm-5.2:F7", "note": "Same shape: resolveControl ignores runId, worker reads every knob from env; global chaos leaks between runs structurally." },
-        { "findingId": "gpt-5.5:P2-02", "note": "Narrower variant: request-scoped ERP config IS applied, except the TPS window, which remains a single global counter." }
+        { "findingId": "gpt-5.5:F12", "note": "Narrower variant: request-scoped ERP config IS applied, except the TPS window, which remains a single global counter." }
       ]
     },
     {
@@ -32,7 +32,7 @@
       "members": [
         { "findingId": "opus-4.8:F25", "note": "Real-k6 integration test self-skips silently when k6 is absent; parsers otherwise validated against canned JSON." },
         { "findingId": "glm-5.2:F30", "note": "Same silent skip, aggravated: the test sits in the infrastructure-free unit lane and k6 is absent in the environment, so it never runs. Graded HIGH by GLM." },
-        { "findingId": "gpt-5.5:P2-08", "note": "Different mechanism: no skip involved — the production SpawnK6Runner path is simply never instantiated by any test." }
+        { "findingId": "gpt-5.5:F18", "note": "Different mechanism: no skip involved — the production SpawnK6Runner path is simply never instantiated by any test." }
       ]
     },
     {
@@ -43,7 +43,7 @@
       "members": [
         { "findingId": "opus-4.8:F13", "note": "One awaited Redis PUBLISH before the durable write." },
         { "findingId": "glm-5.2:F2", "note": "Several awaited publishes plus redundant Redis reads (inventory state re-read, queue.getJobCounts)." },
-        { "findingId": "gpt-5.5:P2-01", "note": "Heaviest variant: multiple PostgreSQL aggregate count queries awaited per accepted reservation." }
+        { "findingId": "gpt-5.5:F11", "note": "Heaviest variant: multiple PostgreSQL aggregate count queries awaited per accepted reservation." }
       ]
     },
     {
@@ -54,7 +54,7 @@
       "members": [
         { "findingId": "opus-4.8:F8", "note": "Recovery keeps the live overlay with no run-change detection; a sold-out-only run shows the previous run's outcome counts throughout." },
         { "findingId": "glm-5.2:F18", "note": "Recovery is never re-fetched on reconnect or terminal events, so recovery-sourced counts freeze for the session." },
-        { "findingId": "gpt-5.5:P2-04", "note": "Live events are applied with no runId/timestamp guard, so a delayed previous-run event overwrites fresher state." }
+        { "findingId": "gpt-5.5:F14", "note": "Live events are applied with no runId/timestamp guard, so a delayed previous-run event overwrites fresher state." }
       ]
     },
     {
@@ -65,7 +65,7 @@
       "members": [
         { "findingId": "glm-5.2:F1", "note": "Largest gap: no run-scoped eligibility signal exists at all; wrong-run buys leak permanently unreconcilable holds and closed runs stay buyable." },
         { "findingId": "opus-4.8:F4", "note": "Gate exists but is skipped for null-runId catalog buys against run-owned offers, leaking a Redis hold per rejected write." },
-        { "findingId": "gpt-5.5:P1-02", "note": "Gate exists but closure is best-effort: a failed Redis close leaves a closed run accepting." }
+        { "findingId": "gpt-5.5:F2", "note": "Gate exists but closure is best-effort: a failed Redis close leaves a closed run accepting." }
       ]
     },
     {
@@ -75,7 +75,7 @@
       "confidence": "high",
       "members": [
         { "findingId": "opus-4.8:F18", "note": "Graded Low: bounded to duplicate downstream confirmations; order state stays correct." },
-        { "findingId": "gpt-5.5:P1-06", "note": "Graded P1, and a unit test explicitly locks in the double confirm; persistent local failures can even end with the order failed after downstream acceptance." }
+        { "findingId": "gpt-5.5:F6", "note": "Graded High, and a unit test explicitly locks in the double confirm; persistent local failures can even end with the order failed after downstream acceptance." }
       ],
       "notObserved": [
         { "model": "glm-5.2", "note": "Not raised in GLM's self-review. Its slice 3 lists persist-before-side-effect ordering as verified, but ERP-confirmation idempotency across a confirm-then-persist failure was not explicitly addressed." }
@@ -87,7 +87,7 @@
       "description": "Loose grouping: distinct defects in the Redis-hold pending-persistence protocol (what happens when the durable write fails after Redis secured stock). Same protocol, different failure modes.",
       "confidence": "low",
       "members": [
-        { "findingId": "gpt-5.5:P1-01", "note": "Pending holds are never durably reconciled — pending forever, stock held with no order." },
+        { "findingId": "gpt-5.5:F1", "note": "Pending holds are never durably reconciled — pending forever, stock held with no order." },
         { "findingId": "opus-4.8:F11", "note": "Race: a concurrent idempotent replay reads the pending sentinel before the loser writes it and promises an order that will never exist. Opus's reconciler otherwise exists." }
       ]
     },
@@ -98,7 +98,7 @@
       "confidence": "low",
       "members": [
         { "findingId": "glm-5.2:F10", "note": "Crash between summary write and lifecycle transition strands the run in draining; the already_finalized early-return prevents any retry." },
-        { "findingId": "gpt-5.5:P1-09", "note": "Fire-and-forget completion report: one failed POST leaves the run active with no retry or reconciliation path." }
+        { "findingId": "gpt-5.5:F9", "note": "Fire-and-forget completion report: one failed POST leaves the run active with no retry or reconciliation path." }
       ],
       "notObserved": [
         { "model": "opus-4.8", "note": "Opus's appendix records guarded duplicate/concurrent finalization and startup reconciliation as checked and sound; no equivalent stuck-run path was reported." }
@@ -112,7 +112,7 @@
       "members": [
         { "findingId": "opus-4.8:F3", "note": "Root test:db:migrate still points at a not-implemented placeholder that exits 1, while documented in three places." },
         { "findingId": "glm-5.2:F25", "note": "Five documented per-package test commands fail with ERR_PNPM_RECURSIVE_RUN_NO_SCRIPT (verified at runtime)." },
-        { "findingId": "gpt-5.5:P3-03", "note": "Wipe-and-rebuild recipe omits runtime:up; health-check docs list readiness check names that no longer exist." }
+        { "findingId": "gpt-5.5:F23", "note": "Wipe-and-rebuild recipe omits runtime:up; health-check docs list readiness check names that no longer exist." }
       ]
     },
     {
@@ -123,7 +123,7 @@
       "members": [
         { "findingId": "opus-4.8:F9", "note": "API readiness checks only Redis config presence; a down Redis reads as degraded/200 while every buy 503s." },
         { "findingId": "opus-4.8:F17", "note": "Worker readiness trusts BullMQ isRunning(), which stays true while the consumer is disconnected and consuming nothing." },
-        { "findingId": "gpt-5.5:P2-07", "note": "Load-orchestrator readiness validates only that the API URL string is non-empty, never that the API is reachable." }
+        { "findingId": "gpt-5.5:F17", "note": "Load-orchestrator readiness validates only that the API URL string is non-empty, never that the API is reachable." }
       ]
     },
     {
@@ -133,7 +133,7 @@
       "confidence": "low",
       "members": [
         { "findingId": "glm-5.2:F15", "note": "Settled gate excludes notifications, so notificationsRecorded is best-effort at finalization time." },
-        { "findingId": "gpt-5.5:P1-08", "note": "Finalization blocks on notificationsRecorded == confirmedOrders with no repair path, so one lost enqueue drives business_drain_timeout." }
+        { "findingId": "gpt-5.5:F8", "note": "Finalization blocks on notificationsRecorded == confirmedOrders with no repair path, so one lost enqueue drives business_drain_timeout." }
       ]
     }
   ]
