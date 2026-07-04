@@ -1,0 +1,140 @@
+{
+  "clusters": [
+    {
+      "id": "sold-out-409s-graded-as-failures",
+      "title": "Expected sold-out 409s counted as k6 HTTP failures",
+      "description": "k6's built-in http_req_failed classifies the buy path's expected 409 responses (sold_out, idempotency_conflict) as failed requests unless the generated script overrides response classification. The docs explicitly call clean sold-out runs a valid demonstration.",
+      "confidence": "high",
+      "members": [
+        { "findingId": "opus-4.8:F1", "note": "Worst variant: no override at all, and the raw rate feeds terminal grading, so the flagship surge presets always finalize failed." },
+        { "findingId": "gpt-5.5:P1-10", "note": "Script has custom expected-outcome counters and checks, but http_req_failed is still copied raw into the persisted summary — cosmetic/history damage, not terminal-status damage." }
+      ],
+      "notObserved": [
+        { "model": "glm-5.2", "note": "GLM's generated script overrides the k6 response callback; its self-review lists clean sold-out handling as verified and its k6 roundtrip test asserts failure_rate == 0 for all-sold-out traffic." }
+      ]
+    },
+    {
+      "id": "run-scoped-erp-backpressure-not-applied",
+      "title": "Run-scoped ERP behavior / backpressure frozen into the run snapshot but not applied",
+      "description": "All three implementations freeze per-run ERP chaos and backpressure config into the run snapshot and validate/display it; applying it at runtime is where they diverge.",
+      "confidence": "high",
+      "members": [
+        { "findingId": "opus-4.8:F2", "note": "Nothing applied: Mock ERP uses only the global chaos store, worker concurrency fixed from env." },
+        { "findingId": "glm-5.2:F7", "note": "Same shape: resolveControl ignores runId, worker reads every knob from env; global chaos leaks between runs structurally." },
+        { "findingId": "gpt-5.5:P2-02", "note": "Narrower variant: request-scoped ERP config IS applied, except the TPS window, which remains a single global counter." }
+      ]
+    },
+    {
+      "id": "real-k6-path-untested",
+      "title": "The real k6 execution path is effectively untested",
+      "description": "The load-generation contract (real k6 compatibility, output parsing, completion reporting) lacks reliable automated coverage in all three implementations, via different mechanisms.",
+      "confidence": "medium",
+      "members": [
+        { "findingId": "opus-4.8:F25", "note": "Real-k6 integration test self-skips silently when k6 is absent; parsers otherwise validated against canned JSON." },
+        { "findingId": "glm-5.2:F30", "note": "Same silent skip, aggravated: the test sits in the infrastructure-free unit lane and k6 is absent in the environment, so it never runs. Graded HIGH by GLM." },
+        { "findingId": "gpt-5.5:P2-08", "note": "Different mechanism: no skip involved — the production SpawnK6Runner path is simply never instantiated by any test." }
+      ]
+    },
+    {
+      "id": "hot-path-synchronous-observability",
+      "title": "Synchronous observability work on the accepted-buy hot path",
+      "description": "All three await best-effort dashboard/telemetry work inline on the winning reservation path, adding latency to the one-second surge target for no correctness benefit.",
+      "confidence": "high",
+      "members": [
+        { "findingId": "opus-4.8:F13", "note": "One awaited Redis PUBLISH before the durable write." },
+        { "findingId": "glm-5.2:F2", "note": "Several awaited publishes plus redundant Redis reads (inventory state re-read, queue.getJobCounts)." },
+        { "findingId": "gpt-5.5:P2-01", "note": "Heaviest variant: multiple PostgreSQL aggregate count queries awaited per accepted reservation." }
+      ]
+    },
+    {
+      "id": "watch-dashboard-stale-state",
+      "title": "Watch dashboard can present stale or previous-run state as current",
+      "description": "Different mechanisms, same user-facing failure: the live watch surface shows data that does not belong to the current run or the current moment. Related to the documented recovery-baseline / events-as-hints contract.",
+      "confidence": "medium",
+      "members": [
+        { "findingId": "opus-4.8:F8", "note": "Recovery keeps the live overlay with no run-change detection; a sold-out-only run shows the previous run's outcome counts throughout." },
+        { "findingId": "glm-5.2:F18", "note": "Recovery is never re-fetched on reconnect or terminal events, so recovery-sourced counts freeze for the session." },
+        { "findingId": "gpt-5.5:P2-04", "note": "Live events are applied with no runId/timestamp guard, so a delayed previous-run event overwrites fresher state." }
+      ]
+    },
+    {
+      "id": "run-eligibility-fails-open",
+      "title": "Run-sale eligibility on the buy path does not fail closed in every case",
+      "description": "Each implementation has a gap where the run-scoped eligibility guard can be bypassed or go stale, letting buys decrement stock they should not — the severity of the gap varies widely.",
+      "confidence": "medium",
+      "members": [
+        { "findingId": "glm-5.2:F1", "note": "Largest gap: no run-scoped eligibility signal exists at all; wrong-run buys leak permanently unreconcilable holds and closed runs stay buyable." },
+        { "findingId": "opus-4.8:F4", "note": "Gate exists but is skipped for null-runId catalog buys against run-owned offers, leaking a Redis hold per rejected write." },
+        { "findingId": "gpt-5.5:P1-02", "note": "Gate exists but closure is best-effort: a failed Redis close leaves a closed run accepting." }
+      ]
+    },
+    {
+      "id": "erp-confirm-not-idempotent",
+      "title": "ERP confirmation is not idempotent across worker persistence failures",
+      "description": "The worker calls the ERP before durably recording the confirmed transition, and the mock ERP does not dedupe by orderId, so a transient persistence failure after a successful ERP call double-confirms downstream.",
+      "confidence": "high",
+      "members": [
+        { "findingId": "opus-4.8:F18", "note": "Graded Low: bounded to duplicate downstream confirmations; order state stays correct." },
+        { "findingId": "gpt-5.5:P1-06", "note": "Graded P1, and a unit test explicitly locks in the double confirm; persistent local failures can even end with the order failed after downstream acceptance." }
+      ],
+      "notObserved": [
+        { "model": "glm-5.2", "note": "Not raised in GLM's self-review. Its slice 3 lists persist-before-side-effect ordering as verified, but ERP-confirmation idempotency across a confirm-then-persist failure was not explicitly addressed." }
+      ]
+    },
+    {
+      "id": "pending-persistence-edge-cases",
+      "title": "Pending-persistence protocol edge cases",
+      "description": "Loose grouping: distinct defects in the Redis-hold pending-persistence protocol (what happens when the durable write fails after Redis secured stock). Same protocol, different failure modes.",
+      "confidence": "low",
+      "members": [
+        { "findingId": "gpt-5.5:P1-01", "note": "Pending holds are never durably reconciled — pending forever, stock held with no order." },
+        { "findingId": "opus-4.8:F11", "note": "Race: a concurrent idempotent replay reads the pending sentinel before the loser writes it and promises an order that will never exist. Opus's reconciler otherwise exists." }
+      ]
+    },
+    {
+      "id": "run-stuck-non-terminal",
+      "title": "A single transient failure can leave a run permanently non-terminal",
+      "description": "One missed message or one crash at the wrong instant leaves the run stuck in a non-terminal state, blocking all future starts until manual admin intervention.",
+      "confidence": "low",
+      "members": [
+        { "findingId": "glm-5.2:F10", "note": "Crash between summary write and lifecycle transition strands the run in draining; the already_finalized early-return prevents any retry." },
+        { "findingId": "gpt-5.5:P1-09", "note": "Fire-and-forget completion report: one failed POST leaves the run active with no retry or reconciliation path." }
+      ],
+      "notObserved": [
+        { "model": "opus-4.8", "note": "Opus's appendix records guarded duplicate/concurrent finalization and startup reconciliation as checked and sound; no equivalent stuck-run path was reported." }
+      ]
+    },
+    {
+      "id": "stale-documented-commands",
+      "title": "Documented dev/runtime commands drift from the implementation",
+      "description": "Commands or operational recipes that the docs present as working but that fail or behave differently when actually run.",
+      "confidence": "medium",
+      "members": [
+        { "findingId": "opus-4.8:F3", "note": "Root test:db:migrate still points at a not-implemented placeholder that exits 1, while documented in three places." },
+        { "findingId": "glm-5.2:F25", "note": "Five documented per-package test commands fail with ERR_PNPM_RECURSIVE_RUN_NO_SCRIPT (verified at runtime)." },
+        { "findingId": "gpt-5.5:P3-03", "note": "Wipe-and-rebuild recipe omits runtime:up; health-check docs list readiness check names that no longer exist." }
+      ]
+    },
+    {
+      "id": "readiness-false-green",
+      "title": "Readiness reports healthy while a critical dependency is down",
+      "description": "Readiness endpoints that gate healthchecks and smoke tests pass while a dependency the service cannot function without is unreachable. (GLM's related finding F22 is vocabulary drift on the readiness surface rather than a false-green probe, so it is not a member.)",
+      "confidence": "medium",
+      "members": [
+        { "findingId": "opus-4.8:F9", "note": "API readiness checks only Redis config presence; a down Redis reads as degraded/200 while every buy 503s." },
+        { "findingId": "opus-4.8:F17", "note": "Worker readiness trusts BullMQ isRunning(), which stays true while the consumer is disconnected and consuming nothing." },
+        { "findingId": "gpt-5.5:P2-07", "note": "Load-orchestrator readiness validates only that the API URL string is non-empty, never that the API is reachable." }
+      ]
+    },
+    {
+      "id": "notifications-vs-finalization",
+      "title": "Notification recording vs finalization contract",
+      "description": "Mirror-image handling of the same design question — must notifications settle before a run finalizes? GLM finalizes without waiting (undercount); GPT waits unconditionally (a lost enqueue fails the run). Worth deciding the intended contract when comparing implementations.",
+      "confidence": "low",
+      "members": [
+        { "findingId": "glm-5.2:F15", "note": "Settled gate excludes notifications, so notificationsRecorded is best-effort at finalization time." },
+        { "findingId": "gpt-5.5:P1-08", "note": "Finalization blocks on notificationsRecorded == confirmedOrders with no repair path, so one lost enqueue drives business_drain_timeout." }
+      ]
+    }
+  ]
+}

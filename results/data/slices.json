@@ -1,0 +1,12 @@
+{
+  "slices": [
+    { "id": 1, "name": "API Reservation Hot Path", "focus": "apps/api buy path and Redis inventory: oversell, idempotency, sold-out cheap path, hold persistence." },
+    { "id": 2, "name": "Persistence, Domain State & Seeds", "focus": "packages/db schema, migrations, seed/reset helpers, maintenance cleanup ownership." },
+    { "id": 3, "name": "Worker, Queue, Mock ERP & Notifications", "focus": "Order lifecycle, retries, circuit breaker, run-scoped ERP behavior, notification recording." },
+    { "id": 4, "name": "Run Lifecycle, Load Orchestration & Finalization", "focus": "k6 execution, metric ingestion, run state machine, finalization and summaries." },
+    { "id": 5, "name": "Dashboard, Realtime, Admin & Run History", "focus": "apps/web surfaces, SSE/recovery protocol, admin session boundary, public-safe DTOs." },
+    { "id": 6, "name": "Shared Contracts, Logging & Vocabulary", "focus": "packages/contracts and logger: schemas, error codes, correlation IDs, lifecycle vocabulary." },
+    { "id": 7, "name": "Runtime, Configuration & Operations", "focus": "Compose, Dockerfiles, Caddy, scripts, env examples, health checks, command contracts." },
+    { "id": 8, "name": "Test Suite Quality", "focus": "Coverage of high-risk invariants, test isolation, skipped tests, tests locking in bad behavior." }
+  ]
+}

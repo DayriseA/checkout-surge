@@ -1,0 +1,145 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+ * Instrument-panel palette: warm-neutral paper surfaces; each model keeps one
+ * stable identity hue (validated categorical slots 1–3); severity uses the
+ * status palette and is always paired with a text label, never color alone.
+ */
+:root {
+  --paper: #f9f9f7;
+  --surface: #fcfcfb;
+  --ink: #0b0b0b;
+  --ink-2: #52514e;
+  --ink-3: #898781;
+  --hairline: #e1e0d9;
+  --edge: rgba(11, 11, 11, 0.1);
+  --wash: rgba(11, 11, 11, 0.04);
+
+  --model-glm-5-2: #2a78d6;
+  --model-gpt-5-5: #1baf7a;
+  --model-opus-4-8: #eda100;
+
+  --sev-high: #d03b3b;
+  --sev-medium: #ec835a;
+  --sev-low: #fab219;
+  --sev-info: #898781;
+}
+
+.dark {
+  --paper: #0d0d0d;
+  --surface: #1a1a19;
+  --ink: #ffffff;
+  --ink-2: #c3c2b7;
+  --ink-3: #898781;
+  --hairline: #2c2c2a;
+  --edge: rgba(255, 255, 255, 0.1);
+  --wash: rgba(255, 255, 255, 0.05);
+
+  --model-glm-5-2: #3987e5;
+  --model-gpt-5-5: #199e70;
+  --model-opus-4-8: #c98500;
+}
+
+@theme inline {
+  --color-paper: var(--paper);
+  --color-surface: var(--surface);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-hairline: var(--hairline);
+  --color-edge: var(--edge);
+  --color-wash: var(--wash);
+  --color-sev-high: var(--sev-high);
+  --color-sev-medium: var(--sev-medium);
+  --color-sev-low: var(--sev-low);
+  --color-sev-info: var(--sev-info);
+
+  --font-sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", monospace;
+}
+
+html {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  scrollbar-gutter: stable;
+}
+
+::selection {
+  background: color-mix(in oklab, var(--ink) 12%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Rendered-markdown styling for the reports (dense technical prose). */
+.report-md {
+  @apply text-[0.9rem] leading-relaxed text-ink-2;
+}
+.report-md h1 {
+  @apply mt-10 mb-4 text-2xl font-semibold tracking-tight text-ink first:mt-0;
+}
+.report-md h2 {
+  @apply mt-10 mb-3 border-b border-hairline pb-2 text-lg font-semibold tracking-tight text-ink;
+}
+.report-md h3 {
+  @apply mt-8 mb-2 text-[1rem] font-semibold text-ink;
+}
+.report-md p {
+  @apply my-3;
+}
+.report-md a {
+  @apply text-ink underline decoration-ink-3 underline-offset-2 hover:decoration-ink;
+}
+.report-md ul,
+.report-md ol {
+  @apply my-3 space-y-1.5 pl-5;
+}
+.report-md ul {
+  @apply list-disc;
+}
+.report-md ol {
+  @apply list-decimal;
+}
+.report-md li > ul,
+.report-md li > ol {
+  @apply my-1.5;
+}
+.report-md strong {
+  @apply font-semibold text-ink;
+}
+.report-md code {
+  @apply rounded bg-wash px-1 py-0.5 font-mono text-[0.8em] text-ink;
+}
+.report-md pre {
+  @apply my-4 overflow-x-auto rounded-md border border-hairline bg-surface p-3;
+}
+.report-md pre code {
+  @apply bg-transparent p-0 text-[0.78rem] leading-relaxed;
+}
+.report-md blockquote {
+  @apply my-3 border-l-2 border-hairline pl-3 text-ink-3;
+}
+.report-md hr {
+  @apply my-8 border-hairline;
+}
+.report-md table {
+  @apply my-4 w-full border-collapse text-[0.82rem];
+}
+.report-md th {
+  @apply border-b border-hairline px-2 py-1.5 text-left font-semibold text-ink;
+}
+.report-md td {
+  @apply border-b border-hairline px-2 py-1.5 align-top;
+}
+.report-md .table-wrap {
+  @apply overflow-x-auto;
+}
