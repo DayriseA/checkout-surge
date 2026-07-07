@@ -4,6 +4,15 @@ This document specifies the **shape** of the report you create. Follow this shap
 
 Write one consolidated markdown report. How you organize working notes during the session is up to you; only the final report must follow this shape.
 
+## Evaluation context
+
+Agentic exploratory testing happens after the implementation agent has already self-audited its own work, received issues for those self-audit findings on its branch, attempted fixes, and claimed completion. The report should therefore focus on behavior still reproducible in the claimed-fixed implementation.
+
+Downstream structured data classifies each `E{n}` finding as either:
+
+- `self-audit-caught-but-reproduced`: the self-audit identified this issue class, but the issue or a materially equivalent variant survived the claimed fix.
+- `self-audit-missed`: the self-audit did not identify this issue class.
+
 ## Findings
 
 - **One `###` heading per finding:** `### E{n} — {Title} ({Severity})`

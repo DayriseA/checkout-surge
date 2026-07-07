@@ -10,8 +10,20 @@ This directory is the machine-readable layer over the reports in `results/`. The
 | `slices.json` | The eight review areas from the shared review helper; findings reference them by id. |
 | `findings/<model>.auto-review.json` | One record per finding from that model's post-phase-10 self-audit. |
 | `clusters.json` | Cross-model groupings of findings that describe the same underlying issue class. |
-| `agentic-test-findings/<model>.json` | Bugs found by AI agents running exploratory browser sessions against that model's implementation (empty for now). |
+| `agentic-test-findings/<model>.json` | Bugs found by independent AI tester agents after the model self-audited, received issues for those findings, attempted fixes, and claimed completion. |
 | `comparisons/*.json` | Per-topic implementation comparisons against the reference project (empty for now). |
+
+## Evaluation order
+
+The data here assumes this chronology:
+
+1. Each model built its own Checkout-Surge implementation.
+2. Each model self-audited that implementation; those results are the `findings/<model>.auto-review.json` records.
+3. The self-audit findings were filed as issues on the respective implementation branches.
+4. The model agents attempted to fix their own findings and claimed completion.
+5. Independent agentic exploratory testing then exercised the claimed-fixed implementations through the browser.
+
+Agentic test records therefore measure post-fix accountability. A finding can either be an issue class the self-audit caught but the claimed fix failed to eliminate, or an issue class the self-audit missed entirely.
 
 ## Finding record
 
@@ -51,7 +63,7 @@ A cluster groups findings across models that describe the same underlying issue 
 
 The initial cluster mapping was AI-curated — review the `confidence` field and adjust membership freely; the app re-derives all overlap views from this file.
 
-## Agentic test findings (to fill during agentic exploratory testing)
+## Agentic test findings
 
 ```jsonc
 {
@@ -60,13 +72,21 @@ The initial cluster mapping was AI-curated — review the `confidence` field and
   "severity": "medium",          // same normalized scale
   "slices": [5],                 // optional
   "status": "open",              // open | confirmed | fixed | wont-fix
-  "caughtInSelfAudit": false,    // the key metric: did the model's own audit see this?
-  "relatedFindingIds": [],       // auto-review findings this overlaps, if any
+  "postFixAssessment": "self-audit-missed",
+  // self-audit-caught-but-reproduced | self-audit-missed
+  "relatedFindingIds": [],       // self-audit findings that overlap or should have covered this
   "description": "…"             // markdown allowed
 }
 ```
 
 These findings come from capable AI tester agents simulating real user interactions through browser use ability. Source reports follow `docs/agentic_test_report_format.md`, so the `E{n}` codes here mirror the reports directly.
+
+`postFixAssessment` is the key post-remediation classification:
+
+- `self-audit-caught-but-reproduced`: the model's own audit identified this issue class, the model later claimed to have fixed its self-audit issues, and independent exploratory testing still reproduced the issue or a materially equivalent variant.
+- `self-audit-missed`: independent exploratory testing found the issue after the claimed-fix phase, and the self-audit did not identify the issue class.
+
+Use `relatedFindingIds` as evidence for the classification. For `self-audit-caught-but-reproduced`, the schema requires at least one linked self-audit finding that should have covered the post-fix failure.
 
 ## Comparisons (to fill during the comparison phase)
 

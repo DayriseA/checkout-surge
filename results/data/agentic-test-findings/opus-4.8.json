@@ -1,5 +1,36 @@
 {
   "model": "opus-4.8",
   "reviewType": "agentic-exploratory-test",
-  "findings": []
+  "findings": [
+    {
+      "id": "opus-4.8:E1",
+      "title": "Live watch shows stale/global dashboard metrics when no run is active",
+      "severity": "medium",
+      "slices": [5],
+      "status": "confirmed",
+      "postFixAssessment": "self-audit-caught-but-reproduced",
+      "relatedFindingIds": ["opus-4.8:F8"],
+      "description": "After a small public custom run completed, reloading `/watch` showed `No run in progress` and zero current-run reservation/outcome counts, but other live panels still displayed concrete historical values such as inventory drain, ERP confirmation timings, and consistency-lag numbers over 100 confirmed.\n\nThis makes the live dashboard internally contradictory after completion or reload: panels presented as current-run telemetry appear to carry stale or global data when there is no active run. Opus's self-audit had already identified stale Live Watch state being retained and shown as current in `opus-4.8:F8`, so this is classified as a reproduced post-fix dashboard-state issue."
+    },
+    {
+      "id": "opus-4.8:E2",
+      "title": "Run outcomes panel mixes terminal outcomes with live transition/pressure counters",
+      "severity": "medium",
+      "slices": [5],
+      "status": "confirmed",
+      "postFixAssessment": "self-audit-missed",
+      "relatedFindingIds": [],
+      "description": "During an active public custom run on `/watch`, the `Run outcomes` panel displayed terminal business outcomes such as `Confirmed` and `Failed` beside cumulative transition or pressure counters such as `Processing`, `Retrying`, and `Delayed`. The counts appeared intentional, but the panel title and description made them read as one comparable final outcome set.\n\nUsers can misread valid worker/backpressure signals as contradictory terminal outcomes while watching a surge. Opus's self-audit covered several worker and dashboard defects, but it did not identify this UI vocabulary and grouping problem."
+    },
+    {
+      "id": "opus-4.8:E3",
+      "title": "Watch page exposes an empty/internal load-run controls section",
+      "severity": "low",
+      "slices": [5],
+      "status": "confirmed",
+      "postFixAssessment": "self-audit-missed",
+      "relatedFindingIds": [],
+      "description": "The `/watch` page rendered a visible `Load-run controls` section with a `TASK 6.4` badge and explanatory copy, but no actual controls appeared in that section. If run controls intentionally live on `/` and `/admin`, this section should not expose an empty placeholder or internal roadmap label.\n\nThe defect has low functional impact, but it makes the operator-facing page look unfinished and can confuse users searching for the promised controls. Opus's self-audit did not identify this public Watch page placeholder issue."
+    }
+  ]
 }

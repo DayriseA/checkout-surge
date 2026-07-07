@@ -68,16 +68,35 @@ export type Cluster = z.infer<typeof clusterSchema>;
 
 export const clustersFileSchema = z.object({ clusters: z.array(clusterSchema) });
 
-export const agenticTestFindingSchema = z.object({
-  id: z.string().regex(/^[a-z0-9.-]+:E\d+$/, "expected '<model>:E{n}'"),
-  title: z.string().min(1),
-  severity: severitySchema,
-  slices: z.array(z.number().int().min(1).max(8)).optional(),
-  status: z.enum(["open", "confirmed", "fixed", "wont-fix"]),
-  caughtInSelfAudit: z.boolean(),
-  relatedFindingIds: z.array(z.string()).default([]),
-  description: z.string().min(1),
-});
+export const postFixAssessmentSchema = z.enum([
+  "self-audit-caught-but-reproduced",
+  "self-audit-missed",
+]);
+export type PostFixAssessment = z.infer<typeof postFixAssessmentSchema>;
+
+export const agenticTestFindingSchema = z
+  .object({
+    id: z.string().regex(/^[a-z0-9.-]+:E\d+$/, "expected '<model>:E{n}'"),
+    title: z.string().min(1),
+    severity: severitySchema,
+    slices: z.array(z.number().int().min(1).max(8)).optional(),
+    status: z.enum(["open", "confirmed", "fixed", "wont-fix"]),
+    postFixAssessment: postFixAssessmentSchema,
+    relatedFindingIds: z.array(z.string()).default([]),
+    description: z.string().min(1),
+  })
+  .superRefine((finding, ctx) => {
+    if (
+      finding.postFixAssessment === "self-audit-caught-but-reproduced" &&
+      finding.relatedFindingIds.length === 0
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["relatedFindingIds"],
+        message: "post-fix reproduced findings must link the self-audit finding that should have covered them",
+      });
+    }
+  });
 export type AgenticTestFinding = z.infer<typeof agenticTestFindingSchema>;
 
 export const agenticTestFindingsFileSchema = z.object({

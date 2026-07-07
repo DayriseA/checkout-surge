@@ -1,5 +1,66 @@
 {
   "model": "gpt-5.5",
   "reviewType": "agentic-exploratory-test",
-  "findings": []
+  "findings": [
+    {
+      "id": "gpt-5.5:E1",
+      "title": "Fresh dashboard loads emit React hydration error #418",
+      "severity": "medium",
+      "slices": [5],
+      "status": "confirmed",
+      "postFixAssessment": "self-audit-missed",
+      "relatedFindingIds": [],
+      "description": "A clean load of the public dashboard at `/` rendered usable content, but Chrome recorded `Minified React error #418` from a Next.js static chunk during hydration. The same hydration/runtime error also appeared during navigation and run transitions.\n\nThis affects every visitor's first load, can force React to discard or re-render server markup, and makes real frontend regressions harder to detect because normal demo use produces noisy console errors. GPT's self-audit identified missing browser workflow coverage, but it did not identify this hydration failure as a product defect."
+    },
+    {
+      "id": "gpt-5.5:E2",
+      "title": "Malformed Run History detail IDs expose raw contract validation output",
+      "severity": "low",
+      "slices": [5, 6],
+      "status": "confirmed",
+      "postFixAssessment": "self-audit-missed",
+      "relatedFindingIds": [],
+      "description": "Navigating to `/run-history/not-a-real-run` rendered `Detail unavailable` followed by raw Zod/shared-contract validation details, including internal paths such as `summary`, `run`, `orders`, `erpAttempts`, `notifications`, and `eventTimeline`. A UUID-shaped missing run ID rendered a cleaner `Run not found` state, so the exposure appears specific to malformed route parameters or malformed error-response handling.\n\nThis does not break valid history navigation, but a mistyped or shared bad URL exposes implementation details on a public page and looks broken to visitors. GPT's self-audit did not identify this public-safe error handling issue."
+    },
+    {
+      "id": "gpt-5.5:E3",
+      "title": "Authenticated admin state is not reflected consistently in admin UI",
+      "severity": "low",
+      "slices": [5],
+      "status": "confirmed",
+      "postFixAssessment": "self-audit-missed",
+      "relatedFindingIds": [],
+      "description": "After signing in at `/admin`, protected sections such as `PUBLIC POLICY`, `PRESETS`, `MAINTENANCE`, and `ERP DIAGNOSTICS` became visible and usable, but the page still showed unauthenticated wording including `access required`. On `/run-history`, the cleanup panel continued to show the `Admin passphrase` field and `Sign In` button after an admin session was established.\n\nOperators can still work, but the mixed state makes it unclear whether the session is valid and invites repeated passphrase entry around destructive history controls. GPT's self-audit identified a different admin session boundary concern, but not this browser-visible authenticated-state inconsistency."
+    },
+    {
+      "id": "gpt-5.5:E4",
+      "title": "Out-of-range Run History pages show contradictory empty-state copy",
+      "severity": "low",
+      "slices": [5],
+      "status": "confirmed",
+      "postFixAssessment": "self-audit-missed",
+      "relatedFindingIds": [],
+      "description": "With seven run-history summaries available, navigating to `/run-history?page=2` rendered `7 summaries` while the completed-runs panel simultaneously showed `No history yet` and explained that terminal summaries would appear after a load run finalizes. Invalid page query values such as non-numeric or zero values fell back to page 1, so the contradiction is specific to out-of-range positive page numbers.\n\nThis is confusing for users or crawlers that land on impossible pagination URLs. GPT's self-audit did not identify this run-history pagination empty-state issue."
+    },
+    {
+      "id": "gpt-5.5:E5",
+      "title": "Clearing the admin duplicate slug can still create a preset from stale state",
+      "severity": "medium",
+      "slices": [5],
+      "status": "confirmed",
+      "postFixAssessment": "self-audit-missed",
+      "relatedFindingIds": [],
+      "description": "In the signed-in `/admin` preset editor, clearing the `Duplicate slug` field and immediately clicking `Duplicate` created a persisted duplicate using the previous slug value instead of showing empty-slug validation. The UI reported `Preset duplicated.`, selected the new `preview-1k-copy` preset, and advanced the duplicate input to `preview-1k-copy-copy`.\n\nThis is protected-admin-only, but it creates unintended persistent preset records and makes the duplicate validation path unreliable for fast or careless operator interactions. GPT's self-audit noted broad gaps in browser workflow testing, but it did not identify this stale-state mutation bug."
+    },
+    {
+      "id": "gpt-5.5:E6",
+      "title": "Admin-created presets have no visible delete path",
+      "severity": "medium",
+      "slices": [2, 5],
+      "status": "confirmed",
+      "postFixAssessment": "self-audit-missed",
+      "relatedFindingIds": [],
+      "description": "After duplicating a preset in `/admin`, the new persisted preset remained selectable, but the visible actions were only `Start Admin Run`, `Save Preset`, `Copy to Custom`, and `Duplicate`; no delete, remove, or archive action was available. The tester's code scan also found preset list/save/duplicate/copy-to-custom paths, but no preset delete route or control path.\n\nThis makes accidental duplicate presets difficult to recover from and can permanently clutter the operator console during demo preparation, especially when combined with E5. GPT's self-audit did not identify this persistent admin preset cleanup gap."
+    }
+  ]
 }

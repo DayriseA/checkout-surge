@@ -19,11 +19,17 @@ export function OverviewPage() {
           From the same docs, specs, and roadmap, each agent independently implemented phases 1–10
           in an isolated worktree, then reviewed its own implementation for bugs and oversights.
           Every number below describes an agent's findings <em>about its own codebase</em> — counts
-          measure a mix of code quality and audit thoroughness, so read them alongside the{" "}
+          measure a mix of code quality and audit thoroughness. Those self-audit findings were later
+          filed as issues for attempted fixes, then independently retested through the browser, so
+          read them alongside the{" "}
           <Link to="/clusters" className="underline hover:text-ink">
             cluster view
           </Link>{" "}
-          and, later, the agentic exploratory testing results.
+          and the{" "}
+          <Link to="/agentic-testing" className="underline hover:text-ink">
+            post-fix agentic testing results
+          </Link>
+          .
         </p>
       </header>
 

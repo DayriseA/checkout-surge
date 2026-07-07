@@ -1,5 +1,76 @@
 {
   "model": "glm-5.2",
   "reviewType": "agentic-exploratory-test",
-  "findings": []
+  "findings": [
+    {
+      "id": "glm-5.2:E1",
+      "title": "Mobile layout has horizontal overflow in the top navigation and run history table",
+      "severity": "low",
+      "slices": [5],
+      "status": "confirmed",
+      "postFixAssessment": "self-audit-missed",
+      "relatedFindingIds": [],
+      "description": "At a narrow mobile viewport, `/`, `/admin`, and `/run-history` became wider than the viewport instead of wrapping, collapsing, or containing overflow in an intentional scroller. The tester measured `document.documentElement.scrollWidth` at `600` while `clientWidth` was `375`, with top-nav links and run-history table columns beyond the right edge.\n\nThis was recorded as Low because mobile support was not part of the evaluated implementation scope, but it was not identified in GLM's self-audit."
+    },
+    {
+      "id": "glm-5.2:E2",
+      "title": "Public home mixes stale future-phase copy with a missing public custom/guardrail surface",
+      "severity": "medium",
+      "slices": [5],
+      "status": "confirmed",
+      "postFixAssessment": "self-audit-missed",
+      "relatedFindingIds": [],
+      "description": "The public home page still described already-delivered surfaces as future work, including copy that said queue pressure, realtime events, ERP health, admin controls, ERP tuning, and reset would land in later phases. The `Surge Guardrails` panel also remained a placeholder (`Static placeholder surface - wired up in a later phase`) even though the roadmap/source review indicated `/` should expose bounded public custom/guardrail controls.\n\nGLM's self-audit did identify a different public demo-picker problem, but it did not identify this stale-copy and public custom/guardrail surface gap."
+    },
+    {
+      "id": "glm-5.2:E3",
+      "title": "Admin run start accepts the run but does not move the operator to /watch",
+      "severity": "low",
+      "slices": [5],
+      "status": "confirmed",
+      "postFixAssessment": "self-audit-missed",
+      "relatedFindingIds": [],
+      "description": "After signing in to `/admin`, selecting `Admin Custom (admin)`, and clicking `Start run`, the run became active and the start control was disabled, but the browser stayed on `/admin` instead of navigating the operator to `/watch`. Public starts from the home-page load-run control did navigate to `/watch`, so the admin flow remained inconsistent.\n\nThe self-audit caught a public-start redirect defect, but it did not identify this admin-start navigation gap."
+    },
+    {
+      "id": "glm-5.2:E4",
+      "title": "Live Watch can get stuck with partial run counters and a contradictory no-active-run completion panel",
+      "severity": "medium",
+      "slices": [4, 5],
+      "status": "confirmed",
+      "postFixAssessment": "self-audit-caught-but-reproduced",
+      "relatedFindingIds": ["glm-5.2:F16", "glm-5.2:F18"],
+      "description": "After a public start navigated to `/watch`, the page showed live counters from the new run (`secured 62`, `queued 62`, `confirmed 62`, and inventory `938 of 1,000 remaining`) while the `Completion Outcomes` panel simultaneously said `No active run - completion outcomes appear once a run is in progress.` The contradictory state remained for at least 30 seconds, and `/run-history` later showed the same run as terminal `Failed`.\n\nThis is classified as a survived claimed fix because GLM's self-audit had already identified Live Watch state/recovery problems: `glm-5.2:F18` covered frozen recovery-sourced counts and missing terminal recovery refresh, while `glm-5.2:F16` covered Live Watch observing the wrong inventory target."
+    },
+    {
+      "id": "glm-5.2:E5",
+      "title": "Admin start control is enabled with no preset selected and fails silently",
+      "severity": "low",
+      "slices": [5],
+      "status": "confirmed",
+      "postFixAssessment": "self-audit-missed",
+      "relatedFindingIds": [],
+      "description": "On signed-in `/admin`, the `Start run` button was enabled while the preset select still showed the placeholder `Select a preset...`. Clicking it produced no inline validation, toast, status change, or focus feedback.\n\nThis was not identified in GLM's self-audit."
+    },
+    {
+      "id": "glm-5.2:E6",
+      "title": "Repeated action buttons have indistinguishable accessible names",
+      "severity": "low",
+      "slices": [5],
+      "status": "confirmed",
+      "postFixAssessment": "self-audit-missed",
+      "relatedFindingIds": [],
+      "description": "Several repeated controls exposed identical accessible button names without target-specific labels. Public preset cards and the separate load-run panel exposed multiple buttons named `Start load run`, and admin preset management exposed repeated `Duplicate` and `Copy to Custom` actions without target-specific accessible names.\n\nThis was not identified in GLM's self-audit."
+    },
+    {
+      "id": "glm-5.2:E7",
+      "title": "Failed runs do not expose an actionable explanation or detail view",
+      "severity": "medium",
+      "slices": [5],
+      "status": "confirmed",
+      "postFixAssessment": "self-audit-missed",
+      "relatedFindingIds": [],
+      "description": "Multiple non-idempotency runs finalized as `Failed` in `/run-history`, but the UI did not explain why. Rows showed high-level status, delivered counts, and outcome totals; outcome cards showed aggregate counts such as `CONFIRMED`, `FAILED`, `PROCESSING`, `QUEUED`, `ERP SUCCEEDED`, `ERP FAILED`, `ERP TIMED OUT`, and `NOTIFICATIONS`, but there was no visible detail route, expandable panel, or actionable failure explanation.\n\nThis makes the post-fix demo output hard to interpret because delivered orders can all be confirmed while the run status is still `Failed`. GLM's self-audit did not identify this run-history explanation/detail gap."
+    }
+  ]
 }
