@@ -1,0 +1,9 @@
+{
+  "id": "c6-shared-error-payload-and-code-governance",
+  "topic": "C6 - Shared error payload and code governance",
+  "reference": "Forge's shared error payload matches the required shape: `code`, `message`, optional `details`, `correlationId`, and timestamp. The `code` field is any non-empty string, so stability depends on route implementations staying disciplined.\n\n**References:**\n- `checkout-forge/packages/contracts/src/common.ts:41` - shared error response with free-form code.",
+  "verdicts": {
+    "glm-5.2": "better"
+  },
+  "notes": "**Compared behavior**\n\nGLM uses the same payload shape but constrains `code` to a documented error-code vocabulary unioned with failure and rejection reason vocabularies. It also adds a structured validation-issue shape, helper constructors, a control-token header constant, and tests for the error contract.\n\n**References:**\n- `checkout-surge-glm/packages/contracts/src/errors.ts:26` - stable error-code vocabulary.\n- `checkout-surge-glm/packages/contracts/src/errors.ts:97` - error `code` validated against the vocabulary.\n- `checkout-surge-glm/packages/contracts/src/errors.ts:136` - validation issue shape and helper.\n- `checkout-surge-glm/packages/contracts/tests/errors.test.ts:1` - error-contract tests.\n\n**Verdict rationale**\n\nGLM keeps the same external shape while making machine-readable codes governed by the shared contract. That is exactly the right friction for a cross-service error surface."
+}

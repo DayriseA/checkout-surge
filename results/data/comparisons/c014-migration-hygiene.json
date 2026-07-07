@@ -1,0 +1,9 @@
+{
+  "id": "c14-migration-hygiene",
+  "topic": "C14 - Migration hygiene",
+  "reference": "Forge keeps an incremental Drizzle migration history with a generated initial schema and a separate hand-authored trigger migration. The trigger migration is known to be invisible to ORM introspection and fragile under squashing.\n\n**References:**\n- `checkout-forge/packages/db/drizzle/0001_run_attribution_triggers.sql:1` - separate trigger migration.\n- `checkout-forge/packages/db/drizzle/meta/_journal.json:1` - Drizzle journal for migration history.",
+  "verdicts": {
+    "glm-5.2": "same"
+  },
+  "notes": "**Compared behavior**\n\nGLM keeps a three-step incremental migration history: initial schema with embedded triggers, benchmark-signal additions, and the current-run index. It documents the same trigger-preservation caveat, has a dedicated migrator entry point, and tests migration application and idempotent re-run.\n\n**References:**\n- `checkout-surge-glm/packages/db/migrations/meta/_journal.json:1` - incremental migration journal.\n- `checkout-surge-glm/packages/db/src/schema.ts:14` - trigger-preservation caveat.\n- `checkout-surge-glm/packages/db/src/migrate.ts:41` - migration entry point.\n- `checkout-surge-glm/packages/db/tests/migrations.integration.test.ts:1` - migration integration tests.\n\n**Verdict rationale**\n\nBoth use real incremental migrations and both carry hand-authored trigger SQL with the same long-term fragility. GLM's embedded triggers are slightly easier to lose during regeneration, but its migration tests and migrator are stronger. Net: same."
+}

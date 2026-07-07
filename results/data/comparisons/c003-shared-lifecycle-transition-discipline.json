@@ -1,0 +1,9 @@
+{
+  "id": "c3-shared-lifecycle-transition-discipline",
+  "topic": "C3 - Shared lifecycle transition discipline",
+  "reference": "Forge defines the canonical reservation, order, run, and traffic status sets and keeps retry state out of order status. Legal transitions, however, are not part of the shared contract layer; services enforce lifecycle ordering in their own code.\n\n**References:**\n- `checkout-forge/packages/contracts/src/load.ts:13` - run lifecycle and traffic execution status enums.\n- `checkout-forge/packages/contracts/src/dashboard.ts:62` - retry surfaced as derived fields rather than as order status.",
+  "verdicts": {
+    "glm-5.2": "better"
+  },
+  "notes": "**Compared behavior**\n\nGLM adds shared transition maps and guard helpers for reservations and orders, plus a shared transition-to-event mapping. It also documents and types the distinction between traffic execution status, traffic delivery classification, and API-owned run lifecycle status so those vocabularies do not cross-contaminate payloads.\n\n**References:**\n- `checkout-surge-glm/packages/contracts/src/lifecycle.ts:24` - legal reservation and order transition maps.\n- `checkout-surge-glm/packages/contracts/src/lifecycle.ts:60` - transition-to-event-name derivation.\n- `checkout-surge-glm/packages/contracts/src/dashboard-events.ts:79` - typed split between delivery and execution status on run-state events.\n- `checkout-surge-glm/packages/contracts/src/vocabularies.ts:129` - source documentation for traffic vocabulary separation.\n\n**Verdict rationale**\n\nBoth honor the spec's state vocabulary split. GLM turns transition legality and event derivation into shared, reusable contract behavior, reducing cross-service drift. That is a real improvement in the shared lifecycle layer."
+}

@@ -1,0 +1,9 @@
+{
+  "id": "c16-lifecycle-timestamp-invariants-in-postgresql",
+  "topic": "C16 - Lifecycle timestamp invariants in PostgreSQL",
+  "reference": "Forge enforces timestamp coherence in PostgreSQL. Released and expired reservations require the matching timestamp; confirmed and failed orders require terminal timestamps; in-progress orders require processing timestamps; terminal timestamps cannot precede queue time; ERP attempts must finish after they start with non-negative latency. Integration tests exercise these invariants.\n\n**References:**\n- `checkout-forge/packages/db/src/schema.ts:271` - order status/timestamp CHECK block.\n- `checkout-forge/packages/db/src/schema.ts:318` - ERP attempt timing CHECK.\n- `checkout-forge/packages/db/test/lifecycle-timestamp-invariants.integration.test.ts:1` - invariant tests.",
+  "verdicts": {
+    "glm-5.2": "worse"
+  },
+  "notes": "**Compared behavior**\n\nGLM does not enforce these timestamp invariants in the database. Terminal order timestamps are nullable with no coherence checks, ERP `finished_at` and `latency_ms` are nullable with no ordering checks, and `reservations.secured_at` is nullable. The durable audit trail can accept inconsistent lifecycles if application code miswrites.\n\n**References:**\n- `checkout-surge-glm/packages/db/src/schema.ts:202` - order timestamps nullable with no coherence checks.\n- `checkout-surge-glm/packages/db/src/schema.ts:237` - ERP attempt latency and finish time nullable.\n- `checkout-surge-glm/packages/db/src/schema.ts:190` - reservation secured timestamp nullable.\n\n**Verdict rationale**\n\nThe baseline enforces and tests these lifecycle facts at the durable boundary; GLM assumes them. That is a clear regression for audit integrity."
+}

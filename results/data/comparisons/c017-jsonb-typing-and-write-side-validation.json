@@ -1,0 +1,9 @@
+{
+  "id": "c17-jsonb-typing-and-write-side-validation",
+  "topic": "C17 - JSONB typing and write-side validation",
+  "reference": "Forge types JSONB columns with contract-derived TypeScript types, covering preset configs, run snapshots, summaries, and policy. Runtime policy is parsed on write and read. Structured versus JSONB boundaries are reasonable: queryable facts are columns, config and summary documents are JSONB.\n\n**References:**\n- `checkout-forge/packages/db/src/schema.ts:126` - preset JSONB typed to contract types.\n- `checkout-forge/packages/db/src/schema.ts:466` - summary JSONB blocks typed to contract types.\n- `checkout-forge/packages/db/src/public-runtime-policy.ts:27` - policy runtime parse on write and read.",
+  "verdicts": {
+    "glm-5.2": "same"
+  },
+  "notes": "**Compared behavior**\n\nGLM deliberately keeps JSONB columns typed as `unknown` at the storage boundary and validates at higher-level write edges. Preset configs are parsed on create/update and at seed time, and policy is parsed on read. Run snapshots and summary blocks are generally written from typed call sites and cast back on read rather than runtime-parsed at write.\n\n**References:**\n- `checkout-surge-glm/packages/db/src/schema.ts:126` - JSONB storage typed as `unknown` with rationale.\n- `checkout-surge-glm/packages/db/src/run-lifecycle/preset-management.ts:93` - preset write validation.\n- `checkout-surge-glm/packages/db/src/run-lifecycle/run-finalization.ts:426` - summary read casts rather than parsing.\n\n**Verdict rationale**\n\nForge has stronger compile-time JSONB coverage; GLM has stronger runtime validation for presets and seeds. Neither fully runtime-validates run snapshots or summaries at write time. The designs are different but comparable."
+}

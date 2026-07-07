@@ -1,0 +1,9 @@
+{
+  "id": "c15-seed-data-and-re-seed-idempotency",
+  "topic": "C15 - Seed data and re-seed idempotency",
+  "reference": "Forge seeds the required baseline product, catalog offer, inventory event, Redis inventory state, public/admin presets, and runtime-policy singleton using fixed IDs and idempotent upsert/insert behavior. Re-seeding converges rather than duplicating, and tests cover idempotency and preset modes.\n\n**References:**\n- `checkout-forge/packages/db/src/seed.ts:42` - fixed-ID baseline seed and Redis reset.\n- `checkout-forge/packages/db/src/public-runtime-policy.ts:49` - insert-only policy seed.\n- `checkout-forge/packages/db/test/schema-seed.integration.test.ts:1` - seed idempotency tests.",
+  "verdicts": {
+    "glm-5.2": "same"
+  },
+  "notes": "**Compared behavior**\n\nGLM seeds the same required baseline with fixed IDs and idempotent behavior. It contract-validates preset configs and policy data before persistence and uses an explicit ownership split: code-owned read-only rows are updated by seed, while operator-owned editable rows and policy survive routine setup.\n\n**References:**\n- `checkout-surge-glm/packages/db/src/seed-data.ts:241` - contract parsing of seeded preset configs.\n- `checkout-surge-glm/packages/db/src/seed-data.ts:349` - ownership-based upsert strategy.\n- `checkout-surge-glm/packages/db/src/seed-data.ts:405` - insert-only policy singleton.\n- `checkout-surge-glm/packages/db/tests/seed.integration.test.ts:1` - seed idempotency and ownership tests.\n\n**Verdict rationale**\n\nBoth satisfy the required baseline and are re-seed safe. GLM is stronger on contract-validating seeded JSON; Forge additionally seeds an inventory event and supports explicit preset reseed behavior. Equivalent outcome."
+}

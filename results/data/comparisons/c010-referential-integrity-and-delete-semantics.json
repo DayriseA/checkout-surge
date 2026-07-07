@@ -1,0 +1,9 @@
+{
+  "id": "c10-referential-integrity-and-delete-semantics",
+  "topic": "C10 - Referential integrity and delete semantics",
+  "reference": "Forge uses restrictive foreign keys for run-attributed business rows so accidental run deletion fails instead of detaching audit history. Runs have a non-null, unique sale-offer relationship, and orders are tied to reservations with a non-null unique reservation reference.\n\n**References:**\n- `checkout-forge/packages/db/src/schema.ts:205` - run-attributed reservation FK uses `onDelete: \"restrict\"`.\n- `checkout-forge/packages/db/src/schema.ts:160` - `demo_runs.sale_offer_id` is non-null, restricted, and unique.\n- `checkout-forge/packages/db/src/schema.ts:245` - order-to-reservation reference is non-null, restricted, and unique.",
+  "verdicts": {
+    "glm-5.2": "worse"
+  },
+  "notes": "**Compared behavior**\n\nGLM preserves the order-to-reservation anchor, but most business-row `run_id` references use `ON DELETE SET NULL`. Deleting a run can detach reservations, orders, attempts, events, and notifications from their run. `demo_runs.sale_offer_id` is nullable, set-null, and non-unique; the ownership link's sale-offer FK cascades.\n\n**References:**\n- `checkout-surge-glm/packages/db/src/schema.ts:185` - reservations `run_id` uses `set null`, repeated across business rows.\n- `checkout-surge-glm/packages/db/src/schema.ts:322` - `demo_runs.sale_offer_id` nullable and set-null.\n- `checkout-surge-glm/packages/db/src/schema.ts:361` - ownership link cascades on sale-offer deletion.\n- `checkout-surge-glm/packages/db/src/schema.ts:211` - order-to-reservation anchor preserved.\n\n**Verdict rationale**\n\nThe intended cleanup path may still delete rows deliberately, but the schema's failure mode is weaker: unintended deletes silently erase attribution rather than failing loudly. That undermines auditability compared with the baseline."
+}

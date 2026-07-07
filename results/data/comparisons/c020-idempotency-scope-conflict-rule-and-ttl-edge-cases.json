@@ -1,0 +1,9 @@
+{
+  "id": "c20-idempotency-scope-conflict-rule-and-ttl-edge-cases",
+  "topic": "C20 - Idempotency scope, conflict rule, and TTL edge cases",
+  "reference": "Forge scopes idempotency to `saleOfferId + idempotencyKey`, compares quantity for conflicts, does not store sold-out outcomes, treats retry after TTL as a fresh attempt, and URL-encodes keys before embedding them in Redis keys. TTL is environment-configurable with a 1800-second default.\n\n**References:**\n- `checkout-forge/packages/db/src/redis-inventory.ts:145` - replay/conflict decision compares quantity.\n- `checkout-forge/apps/api/src/config.ts:48` - configurable idempotency TTL.\n- `checkout-forge/packages/db/src/redis-inventory.ts:298` - idempotency key encoding.\n- `checkout-forge/docs/redis_inventory_hot_path.md:63` - sold-out and late-retry semantics.",
+  "verdicts": {
+    "glm-5.2": "same"
+  },
+  "notes": "**Compared behavior**\n\nGLM uses the same scope, quantity-only conflict rule, sold-out-never-stored behavior, and fresh-attempt-after-TTL stance. It returns a richer conflict payload. Its production TTL is effectively hardcoded to 3600 seconds despite a primitive override parameter, and its idempotency key primitive is unbounded and embedded raw.\n\n**References:**\n- `checkout-surge-glm/packages/db/src/inventory/reservation-gate.ts:195` - quantity-only replay/conflict logic.\n- `checkout-surge-glm/packages/db/src/inventory/reservation-gate.ts:58` - default 3600-second TTL constant.\n- `checkout-surge-glm/packages/contracts/src/common.ts:37` - unbounded idempotency key primitive.\n- `checkout-surge-glm/packages/db/tests/reservation-gate.integration.test.ts:152` - sold-out retry evaluated fresh.\n\n**Verdict rationale**\n\nThe spec-level idempotency behavior is equivalent. Forge is cleaner on configurability and key hygiene; GLM is more explicit in conflict responses. Net: same."
+}

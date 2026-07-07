@@ -11,7 +11,7 @@ This directory is the machine-readable layer over the reports in `results/`. The
 | `findings/<model>.auto-review.json` | One record per finding from that model's post-phase-10 self-audit. |
 | `clusters.json` | Cross-model groupings of findings that describe the same underlying issue class. |
 | `agentic-test-findings/<model>.json` | Bugs found by independent AI tester agents after the model self-audited, received issues for those findings, attempted fixes, and claimed completion. |
-| `comparisons/*.json` | Per-topic implementation comparisons against the reference project (empty for now). |
+| `comparisons/*.json` | Per-topic implementation comparisons against the reference project. |
 
 ## Evaluation order
 

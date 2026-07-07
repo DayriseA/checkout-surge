@@ -1,0 +1,9 @@
+{
+  "id": "c60-public-custom-run-form",
+  "topic": "C60 - Public custom run form",
+  "reference": "Forge's public picker includes the required bounded public custom run form. The draft is seeded from runtime-policy defaults, fields are bounded by policy limits with inline clamp messaging, worker-profile choices are restricted, and the form resets from policy defaults. This gives public visitors controlled customization without bypassing governance.\n\n**References:**\n- `checkout-forge/apps/web/src/app/public-home-client.tsx:246` - public custom run form section.\n- `checkout-forge/apps/web/src/app/public-home-client.tsx:80` - draft initialized from runtime-policy defaults.\n- `checkout-forge/apps/web/src/app/public-home-client.tsx:945` - public-policy clamp feedback.",
+  "verdicts": {
+    "glm-5.2": "missing"
+  },
+  "notes": "**Compared behavior**\n\nGLM's public surface offers curated preset starts only. The demo picker filters out the `public-custom` base preset, the start controls launch fixed preset slugs, and the web app has no runtime-policy read for public custom bounds. Public visitors cannot configure run parameters from the UI.\n\n**References:**\n- `checkout-surge-glm/apps/web/components/demo-picker.tsx:23` - custom presets filtered out of the picker.\n- `checkout-surge-glm/apps/web/components/load-run-trigger.tsx:29` - fixed preset slug start control.\n- `checkout-surge-glm/apps/web/components/run-start-panel.tsx:70` - home panel hardcodes `preview-1k`.\n\n**Verdict rationale**\n\nThe public picker is supposed to provide curated presets plus bounded public custom starts. GLM implements only the curated preset half; there is no form, no policy-bound inputs, and no custom draft state. This is missing rather than merely weaker."
+}

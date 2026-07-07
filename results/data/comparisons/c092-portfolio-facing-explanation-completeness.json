@@ -1,0 +1,9 @@
+{
+  "id": "c92-portfolio-facing-explanation-completeness",
+  "topic": "C92 - Portfolio-facing explanation completeness",
+  "reference": "Forge includes a richer portfolio-facing explainer surface. The roadmap marks Task 8.5 complete, and the `/about` page explains the real-vs-simulated boundary, request path, gold signals, resilience controls, stack, and what the system proves. This aligns with the portfolio-story purpose of the documentation deliverable.\n\n**References:**\n- `checkout-forge/working_docs/project_planning.md:524` - portfolio-facing technical documentation marked complete.\n- `checkout-forge/apps/web/src/app/about/page.tsx:184` - About page explains real concurrency, Redis, queue, worker, and ERP boundary.\n- `checkout-forge/apps/web/src/app/about/page.tsx:309` - About page explicitly states what the system proves.",
+  "verdicts": {
+    "glm-5.2": "worse"
+  },
+  "notes": "**Compared behavior**\n\nGLM has an `/about` page, but it is much thinner. It explains synthetic buyers and lists the four signals, but it does not reach Forge's depth on request-path storytelling, resilience controls, stack choices, or the \"what this proves\" portfolio framing. More importantly, the roadmap itself still leaves portfolio-facing technical documentation unchecked.\n\n**References:**\n- `checkout-surge-glm/working_docs/project_planning.md:754` - portfolio-facing documentation task remains unchecked.\n- `checkout-surge-glm/apps/web/app/about/page.tsx:38` - About page exists.\n- `checkout-surge-glm/apps/web/app/about/page.tsx:45` - About page explains synthetic buyers.\n- `checkout-surge-glm/apps/web/app/about/page.tsx:61` - About page lists the four signals.\n\n**Verdict rationale**\n\nGLM is worse because it has only a minimal explainer while still claiming a mostly complete local demo. This is not a runtime correctness problem, but it matters because the product's self-description is part of the deliverable."
+}

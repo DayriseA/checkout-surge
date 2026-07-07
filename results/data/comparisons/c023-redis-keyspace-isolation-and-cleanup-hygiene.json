@@ -1,0 +1,9 @@
+{
+  "id": "c23-redis-keyspace-isolation-and-cleanup-hygiene",
+  "topic": "C23 - Redis keyspace isolation and cleanup hygiene",
+  "reference": "Forge uses per-offer keys for state, reservations, expirations, pending persistence, events, outcome aggregates, and TTL-backed idempotency records. Run isolation comes from generated sale-offer IDs. Cleanup deletes the named keys and sweeps idempotency keys with blocking `KEYS`, which is complete but can stall Redis. Recent events are capped at 500.\n\n**References:**\n- `checkout-forge/packages/db/src/redis-inventory.ts:287` - key builders for inventory key families.\n- `checkout-forge/packages/db/src/redis-inventory.ts:313` - cleanup sweeps idempotency keys with `KEYS`.\n- `checkout-forge/packages/db/src/redis-inventory.ts:211` - recent-events list cap.",
+  "verdicts": {
+    "glm-5.2": "same"
+  },
+  "notes": "**Compared behavior**\n\nGLM uses the same core key families and adds a per-offer run-eligibility key, included in the canonical teardown list. Cleanup deletes named keys but does not sweep idempotency records, leaving them to a one-hour TTL. Because each run uses a fresh sale-offer ID, the residue is bounded and cannot collide with later runs. Events are capped at 100.\n\n**References:**\n- `checkout-surge-glm/packages/db/src/inventory/redis-keys.ts:90` - all named inventory keys for teardown.\n- `checkout-surge-glm/packages/db/src/run-lifecycle/run-maintenance.ts:71` - teardown deletes named keys.\n- `checkout-surge-glm/packages/db/src/inventory/redis-keys.ts:72` - run-eligibility key.\n- `checkout-surge-glm/packages/db/src/inventory/reservation-gate.ts:64` - event-list cap.\n\n**Verdict rationale**\n\nBoth keyspaces are isolated and bounded. Forge is complete but blocking; GLM is non-blocking but leaves TTL-bounded idempotency residue. Neither choice changes correctness at the demo scale, so this is `same`."
+}
