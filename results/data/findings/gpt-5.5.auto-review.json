@@ -1,7 +1,7 @@
 {
   "model": "gpt-5.5",
   "reviewType": "auto-review",
-  "source": "gpt-5.5_auto_review_findings.md",
+  "source": "p1-10_auto_review/gpt-5.5_auto_review_findings.md",
   "findings": [
     {
       "id": "gpt-5.5:F1",

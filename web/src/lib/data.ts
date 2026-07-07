@@ -36,7 +36,7 @@ const comparisonModules = import.meta.glob("../../../results/data/comparisons/*.
   eager: true,
   import: "default",
 });
-const reportModules = import.meta.glob("../../../results/*.md", {
+const reportModules = import.meta.glob("../../../results/**/*.md", {
   eager: true,
   import: "default",
   query: "?raw",

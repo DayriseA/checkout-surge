@@ -1,7 +1,7 @@
 {
   "model": "glm-5.2",
   "reviewType": "auto-review",
-  "source": "glm-5.2_auto_review_findings.md",
+  "source": "p1-10_auto_review/glm-5.2_auto_review_findings.md",
   "findings": [
     {
       "id": "glm-5.2:F1",

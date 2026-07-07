@@ -1,7 +1,7 @@
 {
   "model": "opus-4.8",
   "reviewType": "auto-review",
-  "source": "opus-4.8_auto_review_findings.md",
+  "source": "p1-10_auto_review/opus-4.8_auto_review_findings.md",
   "findings": [
     {
       "id": "opus-4.8:F1",

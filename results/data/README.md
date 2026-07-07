@@ -85,4 +85,4 @@ Source reports follow `docs/comparison_report_format.md`; these records are inge
 
 ## Adding future reports
 
-For new agent-generated reports, prefer emitting this JSON directly alongside the markdown prose (hand the schema above, or `web/src/lib/schema.ts`, to the agent). Then add the model to `models.json` and drop the files in place — the app picks up everything by glob.
+For new agent-generated reports, prefer emitting this JSON directly alongside the markdown prose (hand the schema above, or `web/src/lib/schema.ts`, to the agent). Then add the model to `models.json`, put the markdown under an appropriate `results/` subfolder, and set `reportFile` to that path relative to `results/` — the app picks up matching markdown by glob.

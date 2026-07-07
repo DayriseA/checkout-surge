@@ -5,7 +5,7 @@
       "name": "GLM 5.2",
       "vendor": "Zhipu AI",
       "effort": "High",
-      "reportFile": "glm-5.2_auto_review_findings.md",
+      "reportFile": "p1-10_auto_review/glm-5.2_auto_review_findings.md",
       "notes": "Consolidated the eight review slices into 31 findings organized by slice section. Severity labels preserved verbatim, including hybrid grades (LOW–MEDIUM)."
     },
     {
@@ -13,7 +13,7 @@
       "name": "GPT 5.5",
       "vendor": "OpenAI",
       "effort": "xHigh",
-      "reportFile": "gpt-5.5_auto_review_findings.md",
+      "reportFile": "p1-10_auto_review/gpt-5.5_auto_review_findings.md",
       "notes": "Terse report of 23 findings with per-finding reference lists. Originally graded in P1/P2/P3 priority buckets with no slice structure; retrofitted to the unified format, slice assignment curated."
     },
     {
@@ -21,7 +21,7 @@
       "name": "Opus 4.8",
       "vendor": "Anthropic",
       "effort": "xHigh",
-      "reportFile": "opus-4.8_auto_review_findings.md",
+      "reportFile": "p1-10_auto_review/opus-4.8_auto_review_findings.md",
       "notes": "25 deduplicated findings merged from eight slice files, plus four lower-confidence notes and an appendix of areas checked and found sound."
     }
   ]
