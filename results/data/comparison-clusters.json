@@ -11,6 +11,9 @@
         },
         {
           "entryId": "gpt-5.5:C1"
+        },
+        {
+          "entryId": "opus-4.8:C3"
         }
       ]
     },
@@ -26,6 +29,13 @@
         },
         {
           "entryId": "gpt-5.5:C2"
+        },
+        {
+          "entryId": "opus-4.8:C1",
+          "note": "Broader package-organization and vocabulary single-sourcing topic."
+        },
+        {
+          "entryId": "opus-4.8:C2"
         }
       ]
     },
@@ -40,6 +50,9 @@
         },
         {
           "entryId": "gpt-5.5:C3"
+        },
+        {
+          "entryId": "opus-4.8:C10"
         }
       ]
     },
@@ -54,6 +67,9 @@
         },
         {
           "entryId": "gpt-5.5:C4"
+        },
+        {
+          "entryId": "opus-4.8:C19"
         }
       ]
     },
@@ -70,6 +86,9 @@
         {
           "entryId": "gpt-5.5:C5",
           "note": "Covers validation discipline across several service boundaries."
+        },
+        {
+          "entryId": "opus-4.8:C11"
         }
       ]
     },
@@ -87,6 +106,9 @@
         },
         {
           "entryId": "gpt-5.5:C6"
+        },
+        {
+          "entryId": "opus-4.8:C5"
         }
       ]
     },
@@ -105,6 +127,12 @@
         },
         {
           "entryId": "gpt-5.5:C8"
+        },
+        {
+          "entryId": "opus-4.8:C4"
+        },
+        {
+          "entryId": "opus-4.8:C8"
         }
       ]
     },
@@ -119,6 +147,9 @@
         },
         {
           "entryId": "gpt-5.5:C9"
+        },
+        {
+          "entryId": "opus-4.8:C7"
         }
       ]
     },
@@ -134,6 +165,9 @@
         },
         {
           "entryId": "gpt-5.5:C34"
+        },
+        {
+          "entryId": "opus-4.8:C6"
         }
       ]
     },
@@ -149,6 +183,9 @@
         },
         {
           "entryId": "gpt-5.5:C10"
+        },
+        {
+          "entryId": "opus-4.8:C38"
         }
       ]
     },
@@ -163,6 +200,9 @@
         },
         {
           "entryId": "gpt-5.5:C11"
+        },
+        {
+          "entryId": "opus-4.8:C13"
         }
       ]
     },
@@ -177,6 +217,9 @@
         },
         {
           "entryId": "gpt-5.5:C13"
+        },
+        {
+          "entryId": "opus-4.8:C31"
         }
       ]
     },
@@ -194,6 +237,9 @@
         },
         {
           "entryId": "gpt-5.5:C14"
+        },
+        {
+          "entryId": "opus-4.8:C12"
         }
       ]
     },
@@ -208,6 +254,9 @@
         },
         {
           "entryId": "gpt-5.5:C15"
+        },
+        {
+          "entryId": "opus-4.8:C18"
         }
       ]
     },
@@ -222,6 +271,9 @@
         },
         {
           "entryId": "gpt-5.5:C16"
+        },
+        {
+          "entryId": "opus-4.8:C15"
         }
       ]
     },
@@ -236,6 +288,9 @@
         },
         {
           "entryId": "gpt-5.5:C17"
+        },
+        {
+          "entryId": "opus-4.8:C16"
         }
       ]
     },
@@ -250,6 +305,9 @@
         },
         {
           "entryId": "gpt-5.5:C18"
+        },
+        {
+          "entryId": "opus-4.8:C17"
         }
       ]
     },
@@ -267,6 +325,13 @@
         },
         {
           "entryId": "gpt-5.5:C28"
+        },
+        {
+          "entryId": "opus-4.8:C29"
+        },
+        {
+          "entryId": "opus-4.8:C30",
+          "note": "Focuses on idempotency-key hygiene in Redis keys."
         }
       ]
     },
@@ -281,6 +346,9 @@
         },
         {
           "entryId": "gpt-5.5:C20"
+        },
+        {
+          "entryId": "opus-4.8:C20"
         }
       ]
     },
@@ -301,6 +369,12 @@
         },
         {
           "entryId": "gpt-5.5:C41"
+        },
+        {
+          "entryId": "opus-4.8:C21"
+        },
+        {
+          "entryId": "opus-4.8:C35"
         }
       ]
     },
@@ -318,6 +392,12 @@
         },
         {
           "entryId": "gpt-5.5:C29"
+        },
+        {
+          "entryId": "opus-4.8:C22"
+        },
+        {
+          "entryId": "opus-4.8:C28"
         }
       ]
     },
@@ -335,6 +415,12 @@
         },
         {
           "entryId": "gpt-5.5:C39"
+        },
+        {
+          "entryId": "opus-4.8:C23"
+        },
+        {
+          "entryId": "opus-4.8:C36"
         }
       ]
     },
@@ -358,6 +444,16 @@
         },
         {
           "entryId": "gpt-5.5:C38"
+        },
+        {
+          "entryId": "opus-4.8:C24"
+        },
+        {
+          "entryId": "opus-4.8:C25"
+        },
+        {
+          "entryId": "opus-4.8:C26",
+          "note": "Covers compensating reversal when durable persistence rejects a held reservation."
         }
       ]
     },
@@ -375,6 +471,13 @@
         },
         {
           "entryId": "gpt-5.5:C27"
+        },
+        {
+          "entryId": "opus-4.8:C27"
+        },
+        {
+          "entryId": "opus-4.8:C32",
+          "note": "Also covers recent inventory event retention."
         }
       ]
     },
@@ -389,6 +492,13 @@
         },
         {
           "entryId": "gpt-5.5:C32"
+        },
+        {
+          "entryId": "opus-4.8:C34"
+        },
+        {
+          "entryId": "opus-4.8:C45",
+          "note": "Late-traffic lifecycle gating variant."
         }
       ]
     },
@@ -406,6 +516,9 @@
         },
         {
           "entryId": "gpt-5.5:C48"
+        },
+        {
+          "entryId": "opus-4.8:C48"
         }
       ]
     },
@@ -423,6 +536,9 @@
         },
         {
           "entryId": "gpt-5.5:C40"
+        },
+        {
+          "entryId": "opus-4.8:C37"
         }
       ]
     },
@@ -440,6 +556,13 @@
         },
         {
           "entryId": "gpt-5.5:C43"
+        },
+        {
+          "entryId": "opus-4.8:C9",
+          "note": "Also covers runtime-policy vocabulary."
+        },
+        {
+          "entryId": "opus-4.8:C46"
         }
       ]
     },
@@ -454,6 +577,9 @@
         },
         {
           "entryId": "gpt-5.5:C44"
+        },
+        {
+          "entryId": "opus-4.8:C40"
         }
       ]
     },
@@ -468,6 +594,9 @@
         },
         {
           "entryId": "gpt-5.5:C45"
+        },
+        {
+          "entryId": "opus-4.8:C14"
         }
       ]
     },
@@ -482,6 +611,9 @@
         },
         {
           "entryId": "gpt-5.5:C46"
+        },
+        {
+          "entryId": "opus-4.8:C41"
         }
       ]
     },
@@ -496,6 +628,9 @@
         },
         {
           "entryId": "gpt-5.5:C47"
+        },
+        {
+          "entryId": "opus-4.8:C42"
         }
       ]
     },
@@ -510,6 +645,13 @@
         },
         {
           "entryId": "gpt-5.5:C49"
+        },
+        {
+          "entryId": "opus-4.8:C39",
+          "note": "Run-start failure handling and history preservation."
+        },
+        {
+          "entryId": "opus-4.8:C43"
         }
       ]
     },
@@ -524,6 +666,9 @@
         },
         {
           "entryId": "gpt-5.5:C50"
+        },
+        {
+          "entryId": "opus-4.8:C44"
         }
       ]
     },
@@ -538,6 +683,9 @@
         },
         {
           "entryId": "gpt-5.5:C51"
+        },
+        {
+          "entryId": "opus-4.8:C47"
         }
       ]
     },
@@ -558,6 +706,9 @@
         },
         {
           "entryId": "gpt-5.5:C54"
+        },
+        {
+          "entryId": "opus-4.8:C52"
         }
       ]
     },
@@ -575,6 +726,9 @@
         },
         {
           "entryId": "gpt-5.5:C56"
+        },
+        {
+          "entryId": "opus-4.8:C53"
         }
       ]
     },
@@ -592,6 +746,9 @@
         },
         {
           "entryId": "gpt-5.5:C58"
+        },
+        {
+          "entryId": "opus-4.8:C51"
         }
       ]
     },
@@ -606,6 +763,9 @@
         },
         {
           "entryId": "gpt-5.5:C59"
+        },
+        {
+          "entryId": "opus-4.8:C57"
         }
       ]
     },
@@ -620,6 +780,9 @@
         },
         {
           "entryId": "gpt-5.5:C60"
+        },
+        {
+          "entryId": "opus-4.8:C55"
         }
       ]
     },
@@ -634,6 +797,13 @@
         },
         {
           "entryId": "gpt-5.5:C61"
+        },
+        {
+          "entryId": "opus-4.8:C56"
+        },
+        {
+          "entryId": "opus-4.8:C94",
+          "note": "Authorization aspect of chaos-control governance."
         }
       ]
     },
@@ -648,6 +818,9 @@
         },
         {
           "entryId": "gpt-5.5:C64"
+        },
+        {
+          "entryId": "opus-4.8:C59"
         }
       ]
     },
@@ -662,6 +835,9 @@
         },
         {
           "entryId": "gpt-5.5:C65"
+        },
+        {
+          "entryId": "opus-4.8:C60"
         }
       ]
     },
@@ -676,6 +852,17 @@
         },
         {
           "entryId": "gpt-5.5:C66"
+        },
+        {
+          "entryId": "opus-4.8:C61",
+          "note": "Server-side live delivery of headline run and traffic signals."
+        },
+        {
+          "entryId": "opus-4.8:C77"
+        },
+        {
+          "entryId": "opus-4.8:C83",
+          "note": "Render cadence and update-economy angle."
         }
       ]
     },
@@ -704,6 +891,9 @@
         },
         {
           "entryId": "gpt-5.5:C68"
+        },
+        {
+          "entryId": "opus-4.8:C65"
         }
       ]
     },
@@ -718,6 +908,13 @@
         },
         {
           "entryId": "gpt-5.5:C69"
+        },
+        {
+          "entryId": "opus-4.8:C66"
+        },
+        {
+          "entryId": "opus-4.8:C67",
+          "note": "Attempt identity through idempotency keys and correlation IDs."
         }
       ]
     },
@@ -735,6 +932,12 @@
         },
         {
           "entryId": "gpt-5.5:C74"
+        },
+        {
+          "entryId": "opus-4.8:C69"
+        },
+        {
+          "entryId": "opus-4.8:C70"
         }
       ]
     },
@@ -749,6 +952,9 @@
         },
         {
           "entryId": "gpt-5.5:C71"
+        },
+        {
+          "entryId": "opus-4.8:C68"
         }
       ]
     },
@@ -763,6 +969,12 @@
         },
         {
           "entryId": "gpt-5.5:C72"
+        },
+        {
+          "entryId": "opus-4.8:C71"
+        },
+        {
+          "entryId": "opus-4.8:C72"
         }
       ]
     },
@@ -777,6 +989,9 @@
         },
         {
           "entryId": "gpt-5.5:C73"
+        },
+        {
+          "entryId": "opus-4.8:C73"
         }
       ]
     },
@@ -808,6 +1023,12 @@
         },
         {
           "entryId": "gpt-5.5:C76"
+        },
+        {
+          "entryId": "opus-4.8:C81"
+        },
+        {
+          "entryId": "opus-4.8:C97"
         }
       ]
     },
@@ -822,6 +1043,9 @@
         },
         {
           "entryId": "gpt-5.5:C77"
+        },
+        {
+          "entryId": "opus-4.8:C75"
         }
       ]
     },
@@ -836,6 +1060,9 @@
         },
         {
           "entryId": "gpt-5.5:C78"
+        },
+        {
+          "entryId": "opus-4.8:C76"
         }
       ]
     },
@@ -850,6 +1077,9 @@
         },
         {
           "entryId": "gpt-5.5:C79"
+        },
+        {
+          "entryId": "opus-4.8:C82"
         }
       ]
     },
@@ -867,6 +1097,12 @@
         },
         {
           "entryId": "gpt-5.5:C80"
+        },
+        {
+          "entryId": "opus-4.8:C78"
+        },
+        {
+          "entryId": "opus-4.8:C80"
         }
       ]
     },
@@ -881,6 +1117,9 @@
         },
         {
           "entryId": "gpt-5.5:C81"
+        },
+        {
+          "entryId": "opus-4.8:C79"
         }
       ]
     },
@@ -895,6 +1134,9 @@
         },
         {
           "entryId": "gpt-5.5:C82"
+        },
+        {
+          "entryId": "opus-4.8:C85"
         }
       ]
     },
@@ -912,6 +1154,12 @@
         },
         {
           "entryId": "gpt-5.5:C90"
+        },
+        {
+          "entryId": "opus-4.8:C86"
+        },
+        {
+          "entryId": "opus-4.8:C88"
         }
       ]
     },
@@ -926,6 +1174,12 @@
         },
         {
           "entryId": "gpt-5.5:C85"
+        },
+        {
+          "entryId": "opus-4.8:C89"
+        },
+        {
+          "entryId": "opus-4.8:C90"
         }
       ]
     },
@@ -943,6 +1197,9 @@
         },
         {
           "entryId": "gpt-5.5:C87"
+        },
+        {
+          "entryId": "opus-4.8:C91"
         }
       ]
     },
@@ -957,6 +1214,9 @@
         },
         {
           "entryId": "gpt-5.5:C88"
+        },
+        {
+          "entryId": "opus-4.8:C92"
         }
       ]
     },
@@ -971,6 +1231,9 @@
         },
         {
           "entryId": "gpt-5.5:C89"
+        },
+        {
+          "entryId": "opus-4.8:C93"
         }
       ]
     },
@@ -988,6 +1251,12 @@
         },
         {
           "entryId": "gpt-5.5:C91"
+        },
+        {
+          "entryId": "opus-4.8:C96"
+        },
+        {
+          "entryId": "opus-4.8:C99"
         }
       ]
     },
@@ -1005,6 +1274,9 @@
         },
         {
           "entryId": "gpt-5.5:C95"
+        },
+        {
+          "entryId": "opus-4.8:C100"
         }
       ]
     },
@@ -1019,6 +1291,9 @@
         },
         {
           "entryId": "gpt-5.5:C93"
+        },
+        {
+          "entryId": "opus-4.8:C98"
         }
       ]
     },
@@ -1033,6 +1308,9 @@
         },
         {
           "entryId": "gpt-5.5:C94"
+        },
+        {
+          "entryId": "opus-4.8:C104"
         }
       ]
     },
@@ -1050,6 +1328,9 @@
         },
         {
           "entryId": "gpt-5.5:C97"
+        },
+        {
+          "entryId": "opus-4.8:C101"
         }
       ]
     },
@@ -1064,6 +1345,9 @@
         },
         {
           "entryId": "gpt-5.5:C98"
+        },
+        {
+          "entryId": "opus-4.8:C102"
         }
       ]
     },
@@ -1078,6 +1362,13 @@
         },
         {
           "entryId": "gpt-5.5:C100"
+        },
+        {
+          "entryId": "opus-4.8:C106"
+        },
+        {
+          "entryId": "opus-4.8:C121",
+          "note": "Specific frontend TSX discovery issue in standard commands."
         }
       ]
     },
@@ -1095,6 +1386,19 @@
         },
         {
           "entryId": "gpt-5.5:C101"
+        },
+        {
+          "entryId": "opus-4.8:C105"
+        },
+        {
+          "entryId": "opus-4.8:C107"
+        },
+        {
+          "entryId": "opus-4.8:C108"
+        },
+        {
+          "entryId": "opus-4.8:C110",
+          "note": "Broader determinism and flake-discipline topic."
         }
       ]
     },
@@ -1109,6 +1413,12 @@
         },
         {
           "entryId": "gpt-5.5:C102"
+        },
+        {
+          "entryId": "opus-4.8:C33"
+        },
+        {
+          "entryId": "opus-4.8:C109"
         }
       ]
     },
@@ -1123,6 +1433,13 @@
         },
         {
           "entryId": "gpt-5.5:C103"
+        },
+        {
+          "entryId": "opus-4.8:C49",
+          "note": "Lifecycle decomposition and testability architecture."
+        },
+        {
+          "entryId": "opus-4.8:C111"
         }
       ]
     },
@@ -1137,6 +1454,9 @@
         },
         {
           "entryId": "gpt-5.5:C104"
+        },
+        {
+          "entryId": "opus-4.8:C113"
         }
       ]
     },
@@ -1151,6 +1471,9 @@
         },
         {
           "entryId": "gpt-5.5:C105"
+        },
+        {
+          "entryId": "opus-4.8:C114"
         }
       ]
     },
@@ -1165,6 +1488,9 @@
         },
         {
           "entryId": "gpt-5.5:C106"
+        },
+        {
+          "entryId": "opus-4.8:C117"
         }
       ]
     },
@@ -1179,6 +1505,13 @@
         },
         {
           "entryId": "gpt-5.5:C107"
+        },
+        {
+          "entryId": "opus-4.8:C115"
+        },
+        {
+          "entryId": "opus-4.8:C116",
+          "note": "Specific stale runtime_topology snapshot claim."
         }
       ]
     },
@@ -1193,6 +1526,9 @@
         },
         {
           "entryId": "gpt-5.5:C111"
+        },
+        {
+          "entryId": "opus-4.8:C119"
         }
       ]
     },
@@ -1207,6 +1543,142 @@
         },
         {
           "entryId": "gpt-5.5:C114"
+        },
+        {
+          "entryId": "opus-4.8:C62"
+        },
+        {
+          "entryId": "opus-4.8:C63"
+        },
+        {
+          "entryId": "opus-4.8:C64"
+        }
+      ]
+    },
+    {
+      "id": "queue-producer-handoff",
+      "title": "Queue producer discipline and job handoff",
+      "description": "Reservation-to-order handoff, queue producer discipline, and keeping ERP work off the buy path.",
+      "confidence": "medium",
+      "members": [
+        {
+          "entryId": "gpt-5.5:C31"
+        },
+        {
+          "entryId": "opus-4.8:C50"
+        }
+      ]
+    },
+    {
+      "id": "at-least-once-consumption",
+      "title": "At-least-once consumption and duplicate delivery",
+      "description": "Worker idempotence, duplicate job delivery handling, and at-least-once queue semantics.",
+      "confidence": "high",
+      "members": [
+        {
+          "entryId": "gpt-5.5:C62"
+        },
+        {
+          "entryId": "opus-4.8:C54"
+        }
+      ]
+    },
+    {
+      "id": "worker-runtime-shutdown",
+      "title": "Worker runtime readiness and shutdown",
+      "description": "Worker runtime resource lifecycle, graceful shutdown, readiness, and configuration behavior.",
+      "confidence": "medium",
+      "members": [
+        {
+          "entryId": "gpt-5.5:C63"
+        },
+        {
+          "entryId": "opus-4.8:C58",
+          "note": "Also covers worker readiness and runtime configuration."
+        }
+      ]
+    },
+    {
+      "id": "public-run-start-trust-boundary",
+      "title": "Public run-start trust boundary",
+      "description": "Protection of public run-start operations and server-side privilege derivation.",
+      "confidence": "high",
+      "members": [
+        {
+          "entryId": "gpt-5.5:C84"
+        },
+        {
+          "entryId": "opus-4.8:C87"
+        }
+      ]
+    },
+    {
+      "id": "reset-maintenance-command-surface",
+      "title": "Reset and maintenance command surface",
+      "description": "Operational reset, cleanup, and maintenance command behavior.",
+      "confidence": "high",
+      "members": [
+        {
+          "entryId": "gpt-5.5:C99"
+        },
+        {
+          "entryId": "opus-4.8:C103"
+        }
+      ]
+    },
+    {
+      "id": "local-command-documentation-alignment",
+      "title": "Local command and setup documentation alignment",
+      "description": "Documented local commands, setup instructions, defaults, and configured runtime reality.",
+      "confidence": "high",
+      "members": [
+        {
+          "entryId": "gpt-5.5:C108"
+        },
+        {
+          "entryId": "opus-4.8:C120"
+        }
+      ]
+    },
+    {
+      "id": "honest-scoping-deferrals",
+      "title": "Honest scoping of deferrals",
+      "description": "Explicit documentation of intentional non-goals, deferred capabilities, and live caveats.",
+      "confidence": "high",
+      "members": [
+        {
+          "entryId": "gpt-5.5:C110"
+        },
+        {
+          "entryId": "opus-4.8:C118"
+        }
+      ]
+    },
+    {
+      "id": "frontend-behavior-test-coverage",
+      "title": "Frontend behavior test coverage",
+      "description": "Frontend pure-module, realtime, DOM, and accessibility-oriented behavior tests.",
+      "confidence": "high",
+      "members": [
+        {
+          "entryId": "glm-5.2:C66"
+        },
+        {
+          "entryId": "opus-4.8:C112"
+        }
+      ]
+    },
+    {
+      "id": "security-test-coverage",
+      "title": "Security and governance test coverage",
+      "description": "Tests for access control, public governance, budget enforcement, and protected mutations.",
+      "confidence": "high",
+      "members": [
+        {
+          "entryId": "glm-5.2:C86"
+        },
+        {
+          "entryId": "opus-4.8:C95"
         }
       ]
     },
@@ -1255,17 +1727,6 @@
       ]
     },
     {
-      "id": "singleton-glm-5-2-c66",
-      "title": "Frontend behavior test coverage",
-      "description": "No confident cross-report match has been assigned yet. Kept as a standalone comparison entry so the original section remains visible.",
-      "confidence": "low",
-      "members": [
-        {
-          "entryId": "glm-5.2:C66"
-        }
-      ]
-    },
-    {
       "id": "singleton-glm-5-2-c71",
       "title": "Secret defaults and production fail-closed posture",
       "description": "No confident cross-report match has been assigned yet. Kept as a standalone comparison entry so the original section remains visible.",
@@ -1273,17 +1734,6 @@
       "members": [
         {
           "entryId": "glm-5.2:C71"
-        }
-      ]
-    },
-    {
-      "id": "singleton-glm-5-2-c86",
-      "title": "Access-control and public-governance test coverage",
-      "description": "No confident cross-report match has been assigned yet. Kept as a standalone comparison entry so the original section remains visible.",
-      "confidence": "low",
-      "members": [
-        {
-          "entryId": "glm-5.2:C86"
         }
       ]
     },
@@ -1321,72 +1771,6 @@
       ]
     },
     {
-      "id": "singleton-gpt-5-5-c31",
-      "title": "Two-phase buy orchestration and ERP separation",
-      "description": "No confident cross-report match has been assigned yet. Kept as a standalone comparison entry so the original section remains visible.",
-      "confidence": "low",
-      "members": [
-        {
-          "entryId": "gpt-5.5:C31"
-        }
-      ]
-    },
-    {
-      "id": "singleton-gpt-5-5-c62",
-      "title": "At-least-once consumption and duplicate-delivery discipline",
-      "description": "No confident cross-report match has been assigned yet. Kept as a standalone comparison entry so the original section remains visible.",
-      "confidence": "low",
-      "members": [
-        {
-          "entryId": "gpt-5.5:C62"
-        }
-      ]
-    },
-    {
-      "id": "singleton-gpt-5-5-c63",
-      "title": "Worker graceful shutdown",
-      "description": "No confident cross-report match has been assigned yet. Kept as a standalone comparison entry so the original section remains visible.",
-      "confidence": "low",
-      "members": [
-        {
-          "entryId": "gpt-5.5:C63"
-        }
-      ]
-    },
-    {
-      "id": "singleton-gpt-5-5-c84",
-      "title": "Public run-start trust boundary",
-      "description": "No confident cross-report match has been assigned yet. Kept as a standalone comparison entry so the original section remains visible.",
-      "confidence": "low",
-      "members": [
-        {
-          "entryId": "gpt-5.5:C84"
-        }
-      ]
-    },
-    {
-      "id": "singleton-gpt-5-5-c99",
-      "title": "Reset and maintenance command surface",
-      "description": "No confident cross-report match has been assigned yet. Kept as a standalone comparison entry so the original section remains visible.",
-      "confidence": "low",
-      "members": [
-        {
-          "entryId": "gpt-5.5:C99"
-        }
-      ]
-    },
-    {
-      "id": "singleton-gpt-5-5-c108",
-      "title": "Local command and runtime documentation alignment",
-      "description": "No confident cross-report match has been assigned yet. Kept as a standalone comparison entry so the original section remains visible.",
-      "confidence": "low",
-      "members": [
-        {
-          "entryId": "gpt-5.5:C108"
-        }
-      ]
-    },
-    {
       "id": "singleton-gpt-5-5-c109",
       "title": "Access-surface and run-history documentation fidelity",
       "description": "No confident cross-report match has been assigned yet. Kept as a standalone comparison entry so the original section remains visible.",
@@ -1394,17 +1778,6 @@
       "members": [
         {
           "entryId": "gpt-5.5:C109"
-        }
-      ]
-    },
-    {
-      "id": "singleton-gpt-5-5-c110",
-      "title": "Honest scoping of deferred work",
-      "description": "No confident cross-report match has been assigned yet. Kept as a standalone comparison entry so the original section remains visible.",
-      "confidence": "low",
-      "members": [
-        {
-          "entryId": "gpt-5.5:C110"
         }
       ]
     },
@@ -1460,6 +1833,28 @@
       "members": [
         {
           "entryId": "gpt-5.5:C117"
+        }
+      ]
+    },
+    {
+      "id": "singleton-opus-4-8-c74",
+      "title": "Load-orchestrator test coverage",
+      "description": "No confident cross-report match has been assigned yet. Kept as a standalone comparison entry so the original section remains visible.",
+      "confidence": "low",
+      "members": [
+        {
+          "entryId": "opus-4.8:C74"
+        }
+      ]
+    },
+    {
+      "id": "singleton-opus-4-8-c84",
+      "title": "Dashboard accessibility & states-of-the-world coverage",
+      "description": "No confident cross-report match has been assigned yet. Kept as a standalone comparison entry so the original section remains visible.",
+      "confidence": "low",
+      "members": [
+        {
+          "entryId": "opus-4.8:C84"
         }
       ]
     }

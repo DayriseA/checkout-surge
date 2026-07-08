@@ -615,6 +615,334 @@ const clusterSeeds: ClusterSeed[] = [
   },
 ];
 
+clusterSeeds.push(
+  {
+    id: "queue-producer-handoff",
+    title: "Queue producer discipline and job handoff",
+    description: "Reservation-to-order handoff, queue producer discipline, and keeping ERP work off the buy path.",
+    confidence: "medium",
+    members: ["gpt-5.5:C31", "opus-4.8:C50"],
+  },
+  {
+    id: "at-least-once-consumption",
+    title: "At-least-once consumption and duplicate delivery",
+    description: "Worker idempotence, duplicate job delivery handling, and at-least-once queue semantics.",
+    confidence: "high",
+    members: ["gpt-5.5:C62", "opus-4.8:C54"],
+  },
+  {
+    id: "worker-runtime-shutdown",
+    title: "Worker runtime readiness and shutdown",
+    description: "Worker runtime resource lifecycle, graceful shutdown, readiness, and configuration behavior.",
+    confidence: "medium",
+    members: [
+      "gpt-5.5:C63",
+      {
+        entryId: "opus-4.8:C58",
+        note: "Also covers worker readiness and runtime configuration.",
+      },
+    ],
+  },
+  {
+    id: "public-run-start-trust-boundary",
+    title: "Public run-start trust boundary",
+    description: "Protection of public run-start operations and server-side privilege derivation.",
+    confidence: "high",
+    members: ["gpt-5.5:C84", "opus-4.8:C87"],
+  },
+  {
+    id: "reset-maintenance-command-surface",
+    title: "Reset and maintenance command surface",
+    description: "Operational reset, cleanup, and maintenance command behavior.",
+    confidence: "high",
+    members: ["gpt-5.5:C99", "opus-4.8:C103"],
+  },
+  {
+    id: "local-command-documentation-alignment",
+    title: "Local command and setup documentation alignment",
+    description: "Documented local commands, setup instructions, defaults, and configured runtime reality.",
+    confidence: "high",
+    members: ["gpt-5.5:C108", "opus-4.8:C120"],
+  },
+  {
+    id: "honest-scoping-deferrals",
+    title: "Honest scoping of deferrals",
+    description: "Explicit documentation of intentional non-goals, deferred capabilities, and live caveats.",
+    confidence: "high",
+    members: ["gpt-5.5:C110", "opus-4.8:C118"],
+  },
+  {
+    id: "frontend-behavior-test-coverage",
+    title: "Frontend behavior test coverage",
+    description: "Frontend pure-module, realtime, DOM, and accessibility-oriented behavior tests.",
+    confidence: "high",
+    members: ["glm-5.2:C66", "opus-4.8:C112"],
+  },
+  {
+    id: "security-test-coverage",
+    title: "Security and governance test coverage",
+    description: "Tests for access control, public governance, budget enforcement, and protected mutations.",
+    confidence: "high",
+    members: ["glm-5.2:C86", "opus-4.8:C95"],
+  },
+);
+
+const opusClusterAssignments: Array<{ clusterId: string; members: Array<string | MemberSeed> }> = [
+  {
+    clusterId: "lifecycle-status-vocabulary",
+    members: [
+      {
+        entryId: "opus-4.8:C1",
+        note: "Broader package-organization and vocabulary single-sourcing topic.",
+      },
+      "opus-4.8:C2",
+    ],
+  },
+  { clusterId: "durable-entity-model", members: ["opus-4.8:C3"] },
+  {
+    clusterId: "realtime-event-and-metric-contracts",
+    members: ["opus-4.8:C4", "opus-4.8:C8"],
+  },
+  { clusterId: "error-and-correlation-contracts", members: ["opus-4.8:C5"] },
+  { clusterId: "buy-response-contract", members: ["opus-4.8:C6"] },
+  { clusterId: "derived-purchase-status", members: ["opus-4.8:C7"] },
+  {
+    clusterId: "preset-catalog-and-run-config",
+    members: [
+      {
+        entryId: "opus-4.8:C9",
+        note: "Also covers runtime-policy vocabulary.",
+      },
+      "opus-4.8:C46",
+    ],
+  },
+  { clusterId: "primitive-and-contract-strictness", members: ["opus-4.8:C10"] },
+  { clusterId: "runtime-boundary-validation", members: ["opus-4.8:C11"] },
+  { clusterId: "database-constraints-and-timestamps", members: ["opus-4.8:C12"] },
+  { clusterId: "run-offer-ownership", members: ["opus-4.8:C13"] },
+  { clusterId: "one-active-run-gate", members: ["opus-4.8:C14"] },
+  { clusterId: "migration-hygiene", members: ["opus-4.8:C15"] },
+  { clusterId: "seed-data-idempotency", members: ["opus-4.8:C16"] },
+  { clusterId: "cleanup-and-retention", members: ["opus-4.8:C17"] },
+  { clusterId: "postgresql-index-coverage", members: ["opus-4.8:C18"] },
+  { clusterId: "json-contract-specificity", members: ["opus-4.8:C19"] },
+  { clusterId: "atomic-stock-gate", members: ["opus-4.8:C20"] },
+  {
+    clusterId: "idempotency-record-and-replay",
+    members: ["opus-4.8:C21", "opus-4.8:C35"],
+  },
+  {
+    clusterId: "idempotency-conflict-and-ttl",
+    members: ["opus-4.8:C22", "opus-4.8:C28"],
+  },
+  {
+    clusterId: "sold-out-and-dashboard-volume",
+    members: ["opus-4.8:C23", "opus-4.8:C36"],
+  },
+  {
+    clusterId: "pending-persistence-reconciliation",
+    members: [
+      "opus-4.8:C24",
+      "opus-4.8:C25",
+      {
+        entryId: "opus-4.8:C26",
+        note: "Covers compensating reversal when durable persistence rejects a held reservation.",
+      },
+    ],
+  },
+  {
+    clusterId: "inventory-status-projection",
+    members: [
+      "opus-4.8:C27",
+      {
+        entryId: "opus-4.8:C32",
+        note: "Also covers recent inventory event retention.",
+      },
+    ],
+  },
+  {
+    clusterId: "redis-keyspace-isolation",
+    members: [
+      "opus-4.8:C29",
+      {
+        entryId: "opus-4.8:C30",
+        note: "Focuses on idempotency-key hygiene in Redis keys.",
+      },
+    ],
+  },
+  { clusterId: "terminal-inventory-history", members: ["opus-4.8:C31"] },
+  {
+    clusterId: "hard-property-regression-tests",
+    members: ["opus-4.8:C33", "opus-4.8:C109"],
+  },
+  {
+    clusterId: "run-sale-eligibility",
+    members: [
+      "opus-4.8:C34",
+      {
+        entryId: "opus-4.8:C45",
+        note: "Late-traffic lifecycle gating variant.",
+      },
+    ],
+  },
+  { clusterId: "surge-hot-path-and-tuning", members: ["opus-4.8:C37"] },
+  { clusterId: "order-status-query-surface", members: ["opus-4.8:C38"] },
+  {
+    clusterId: "terminal-summary-history",
+    members: [
+      {
+        entryId: "opus-4.8:C39",
+        note: "Run-start failure handling and history preservation.",
+      },
+      "opus-4.8:C43",
+    ],
+  },
+  { clusterId: "generated-offers-inventory-init", members: ["opus-4.8:C40"] },
+  { clusterId: "traffic-completion-handoff", members: ["opus-4.8:C41"] },
+  { clusterId: "business-drain-finalization", members: ["opus-4.8:C42"] },
+  { clusterId: "startup-reconciliation", members: ["opus-4.8:C44"] },
+  { clusterId: "admin-reset-recovery", members: ["opus-4.8:C47"] },
+  { clusterId: "traffic-classification", members: ["opus-4.8:C48"] },
+  {
+    clusterId: "service-boundary-testability",
+    members: [
+      {
+        entryId: "opus-4.8:C49",
+        note: "Lifecycle decomposition and testability architecture.",
+      },
+      "opus-4.8:C111",
+    ],
+  },
+  { clusterId: "worker-order-lifecycle", members: ["opus-4.8:C51"] },
+  { clusterId: "downstream-retry-backpressure", members: ["opus-4.8:C52"] },
+  { clusterId: "circuit-breaker-behavior", members: ["opus-4.8:C53"] },
+  { clusterId: "notification-durability", members: ["opus-4.8:C55"] },
+  {
+    clusterId: "mock-erp-chaos",
+    members: [
+      "opus-4.8:C56",
+      {
+        entryId: "opus-4.8:C94",
+        note: "Authorization aspect of chaos-control governance.",
+      },
+    ],
+  },
+  { clusterId: "consistency-lag-pipeline", members: ["opus-4.8:C57"] },
+  { clusterId: "sse-transport-fanout", members: ["opus-4.8:C59"] },
+  { clusterId: "dashboard-recovery-read-model", members: ["opus-4.8:C60"] },
+  {
+    clusterId: "live-dashboard-signals",
+    members: [
+      {
+        entryId: "opus-4.8:C61",
+        note: "Server-side live delivery of headline run and traffic signals.",
+      },
+      "opus-4.8:C77",
+      {
+        entryId: "opus-4.8:C83",
+        note: "Render cadence and update-economy angle.",
+      },
+    ],
+  },
+  {
+    clusterId: "readiness-status-depth",
+    members: [
+      "opus-4.8:C62",
+      "opus-4.8:C63",
+      "opus-4.8:C64",
+    ],
+  },
+  { clusterId: "traffic-model-capacity", members: ["opus-4.8:C65"] },
+  {
+    clusterId: "attempt-identity-script-safety",
+    members: [
+      "opus-4.8:C66",
+      {
+        entryId: "opus-4.8:C67",
+        note: "Attempt identity through idempotency keys and correlation IDs.",
+      },
+    ],
+  },
+  { clusterId: "metric-completion-delivery", members: ["opus-4.8:C68"] },
+  {
+    clusterId: "k6-output-terminal-accounting",
+    members: ["opus-4.8:C69", "opus-4.8:C70"],
+  },
+  { clusterId: "load-run-lifecycle", members: ["opus-4.8:C71", "opus-4.8:C72"] },
+  { clusterId: "containerized-k6-ownership", members: ["opus-4.8:C73"] },
+  { clusterId: "frontend-realtime-recovery", members: ["opus-4.8:C75"] },
+  { clusterId: "frontend-reconnect-ux", members: ["opus-4.8:C76"] },
+  { clusterId: "public-admin-control-ux", members: ["opus-4.8:C78", "opus-4.8:C80"] },
+  { clusterId: "run-history-admin-ux", members: ["opus-4.8:C79"] },
+  {
+    clusterId: "web-bff-same-origin",
+    members: ["opus-4.8:C81", "opus-4.8:C97"],
+  },
+  { clusterId: "frontend-architecture", members: ["opus-4.8:C82"] },
+  { clusterId: "admin-session-cookie", members: ["opus-4.8:C85"] },
+  {
+    clusterId: "internal-authorization-boundaries",
+    members: ["opus-4.8:C86", "opus-4.8:C88"],
+  },
+  {
+    clusterId: "public-visitor-budget",
+    members: ["opus-4.8:C89", "opus-4.8:C90"],
+  },
+  { clusterId: "runtime-policy-hard-caps", members: ["opus-4.8:C91"] },
+  { clusterId: "public-safe-run-history-dto", members: ["opus-4.8:C92"] },
+  { clusterId: "destructive-operation-gates", members: ["opus-4.8:C93"] },
+  { clusterId: "runtime-topology-setup", members: ["opus-4.8:C96", "opus-4.8:C99"] },
+  { clusterId: "container-image-construction", members: ["opus-4.8:C98"] },
+  { clusterId: "compose-env-startup", members: ["opus-4.8:C100"] },
+  { clusterId: "runtime-health-smoke", members: ["opus-4.8:C101"] },
+  { clusterId: "mutating-dashboard-load-smoke", members: ["opus-4.8:C102"] },
+  { clusterId: "dev-container-isolation", members: ["opus-4.8:C104"] },
+  {
+    clusterId: "test-infrastructure-reset",
+    members: [
+      "opus-4.8:C105",
+      "opus-4.8:C107",
+      "opus-4.8:C108",
+      {
+        entryId: "opus-4.8:C110",
+        note: "Broader determinism and flake-discipline topic.",
+      },
+    ],
+  },
+  {
+    clusterId: "test-taxonomy-command-surface",
+    members: [
+      "opus-4.8:C106",
+      {
+        entryId: "opus-4.8:C121",
+        note: "Specific frontend TSX discovery issue in standard commands.",
+      },
+    ],
+  },
+  { clusterId: "repo-quality-gates", members: ["opus-4.8:C113"] },
+  { clusterId: "readme-status-claims", members: ["opus-4.8:C114"] },
+  {
+    clusterId: "design-doc-adaptation",
+    members: [
+      "opus-4.8:C115",
+      {
+        entryId: "opus-4.8:C116",
+        note: "Specific stale runtime_topology snapshot claim.",
+      },
+    ],
+  },
+  { clusterId: "roadmap-auditability", members: ["opus-4.8:C117"] },
+  { clusterId: "historical-verification-evidence", members: ["opus-4.8:C119"] },
+];
+
+for (const assignment of opusClusterAssignments) {
+  const seed = clusterSeeds.find((cluster) => cluster.id === assignment.clusterId);
+  if (!seed) {
+    throw new Error(`Unknown Opus comparison cluster assignment: ${assignment.clusterId}`);
+  }
+  seed.members.push(...assignment.members);
+}
+
 const entries = readEntries();
 const entryIndex = new Map(entries.map((entry) => [entry.id, entry]));
 const assigned = new Set<string>();
