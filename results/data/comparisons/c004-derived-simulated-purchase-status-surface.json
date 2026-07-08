@@ -1,9 +1,0 @@
-{
-  "id": "c4-derived-simulated-purchase-status-surface",
-  "topic": "C4 - Derived simulated purchase status surface",
-  "reference": "Forge implements the buyer-facing simulated purchase status as a derived vocabulary. It appears in buy/order-status-facing contracts and realtime order-status events, is computed from reservation plus order state, and is not persisted as its own database status.\n\n**References:**\n- `checkout-forge/packages/contracts/src/domain.ts:25` - derived customer-status vocabulary.\n- `checkout-forge/packages/contracts/src/buy-flow.ts:99` - order-status response includes customer status and timeline.\n- `checkout-forge/apps/api/src/services/reserve-order-service.ts:1` - service-side derivation feeds responses and events.",
-  "verdicts": {
-    "glm-5.2": "worse"
-  },
-  "notes": "**Compared behavior**\n\nGLM declares the simulated purchase status vocabulary but does not use it outside the contracts package. Buy responses do not carry the derived status, and the order lookup route returns the raw persisted order without a contract-defined response, timeline, or derived customer status. The good part is that GLM also does not persist this presentation vocabulary.\n\n**References:**\n- `checkout-surge-glm/packages/contracts/src/vocabularies.ts:182` - declared simulated purchase statuses.\n- `checkout-surge-glm/apps/api/src/app/routes/orders.ts:13` - order lookup returns raw persisted order data.\n\n**Verdict rationale**\n\nThe baseline delivers the derived presentation surface end to end. GLM has the vocabulary but leaves it inert, so buyers and clients cannot obtain the intended presentation status through the API. This is worse, though not missing entirely because the vocabulary and underlying reservation/order data exist."
-}

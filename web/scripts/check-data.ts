@@ -8,8 +8,9 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   agenticTestFindingsFileSchema,
+  comparisonClustersFileSchema,
+  comparisonEntriesFileSchema,
   clustersFileSchema,
-  comparisonSchema,
   findingsFileSchema,
   modelsFileSchema,
   slicesFileSchema,
@@ -60,6 +61,56 @@ for (const file of readdirSync(join(dataDir, "findings"))) {
   });
 }
 
+const comparisonEntryIds = new Set<string>();
+for (const file of readdirSync(join(dataDir, "comparison-entries")).filter((f) => f.endsWith(".json"))) {
+  check(`comparison-entries/${file}`, () => {
+    const parsed = comparisonEntriesFileSchema.parse(
+      readJson(join(dataDir, "comparison-entries", file)),
+    );
+    if (!models.some((m) => m.id === parsed.model)) {
+      throw new Error(`unknown model ${parsed.model}`);
+    }
+    const report = readFileSync(join(resultsDir, parsed.source), "utf8");
+    for (const entry of parsed.entries) {
+      if (comparisonEntryIds.has(entry.id)) throw new Error(`duplicate comparison entry id ${entry.id}`);
+      comparisonEntryIds.add(entry.id);
+      if (entry.model !== parsed.model) {
+        throw new Error(`${entry.id}: entry model does not match file model ${parsed.model}`);
+      }
+      if (entry.source !== parsed.source) {
+        throw new Error(`${entry.id}: entry source does not match file source ${parsed.source}`);
+      }
+      if (entry.id !== `${parsed.model}:${entry.code}`) {
+        throw new Error(`${entry.id}: expected id ${parsed.model}:${entry.code}`);
+      }
+      if (!extractSection(report, entry.code)) {
+        throw new Error(`${entry.id}: section not found in ${parsed.source}`);
+      }
+    }
+  });
+}
+
+check("comparison-clusters.json", () => {
+  const { clusters } = comparisonClustersFileSchema.parse(
+    readJson(join(dataDir, "comparison-clusters.json")),
+  );
+  const clusterIds = new Set<string>();
+  for (const cluster of clusters) {
+    if (clusterIds.has(cluster.id)) throw new Error(`duplicate comparison cluster id ${cluster.id}`);
+    clusterIds.add(cluster.id);
+    const memberIds = new Set<string>();
+    for (const member of cluster.members) {
+      if (!comparisonEntryIds.has(member.entryId)) {
+        throw new Error(`comparison cluster ${cluster.id}: unknown entry ${member.entryId}`);
+      }
+      if (memberIds.has(member.entryId)) {
+        throw new Error(`comparison cluster ${cluster.id}: duplicate member ${member.entryId}`);
+      }
+      memberIds.add(member.entryId);
+    }
+  }
+});
+
 check("clusters.json", () => {
   const { clusters } = clustersFileSchema.parse(readJson(join(dataDir, "clusters.json")));
   for (const cluster of clusters) {
@@ -97,16 +148,9 @@ for (const file of readdirSync(join(dataDir, "agentic-test-findings"))) {
   });
 }
 
-for (const file of readdirSync(join(dataDir, "comparisons")).filter((f) => f.endsWith(".json"))) {
-  check(`comparisons/${file}`, () => {
-    const parsed = comparisonSchema.parse(readJson(join(dataDir, "comparisons", file)));
-    for (const modelId of Object.keys(parsed.verdicts)) {
-      if (!models.some((m) => m.id === modelId)) {
-        throw new Error(`${parsed.id}: unknown model ${modelId}`);
-      }
-    }
-  });
-}
-
-console.log(failures === 0 ? `\nAll data valid (${findingIds.size} findings).` : `\n${failures} file(s) failed.`);
+console.log(
+  failures === 0
+    ? `\nAll data valid (${findingIds.size} findings, ${comparisonEntryIds.size} comparison entries).`
+    : `\n${failures} file(s) failed.`,
+);
 process.exit(failures === 0 ? 0 : 1);

@@ -1,9 +1,0 @@
-{
-  "id": "c65-degraded-state-handling-of-web-backend-reads",
-  "topic": "C65 - Degraded-state handling of web backend reads",
-  "reference": "Forge's route handlers generally degrade with stable coded JSON errors, and the live client has explicit recovering/sync-issue states. The root public page is less resilient: if preset or runtime-policy reads fail during server rendering, it throws and can become a Next.js error page instead of a degraded picker.\n\n**References:**\n- `checkout-forge/apps/web/src/app/page.tsx:42` - home page throws on preset read failure.\n- `checkout-forge/apps/web/src/app/page.tsx:54` - home page throws on runtime-policy read failure.\n- `checkout-forge/apps/web/src/app/api/dashboard/dashboard-read-proxy.ts:33` - read proxies return stable errors.",
-  "verdicts": {
-    "glm-5.2": "better"
-  },
-  "notes": "**Compared behavior**\n\nGLM applies a uniform never-throw reader convention across server-side reads and client recovery. Network, timeout, HTTP, JSON, and contract failures degrade into stable reasons, and panels render purpose-built fallbacks and skeletons rather than erroring. The dashboard remains navigable even when backend reads fail.\n\n**References:**\n- `checkout-surge-glm/apps/web/lib/api-client.ts:85` - never-throw, contract-validated readers.\n- `checkout-surge-glm/apps/web/lib/client-recovery.ts:31` - client recovery fetch degrades to stable reasons.\n- `checkout-surge-glm/apps/web/components/demo-picker.tsx:51` - picker fallback for unavailable presets.\n- `checkout-surge-glm/apps/web/components/watch/completion-outcomes-panel.tsx:29` - per-panel degraded state.\n\n**Verdict rationale**\n\nGLM treats backend unavailability as a first-class web state across the app. Forge handles degraded states well in several layers but lets its front door hard-fail on key read failures. For a public demo dashboard, GLM's approach is better."
-}

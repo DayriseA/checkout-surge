@@ -11,7 +11,8 @@ This directory is the machine-readable layer over the reports in `results/`. The
 | `findings/<model>.auto-review.json` | One record per finding from that model's post-phase-10 self-audit. |
 | `clusters.json` | Cross-model groupings of findings that describe the same underlying issue class. |
 | `agentic-test-findings/<model>.json` | Bugs found by independent AI tester agents after the model self-audited, received issues for those findings, attempted fixes, and claimed completion. |
-| `comparisons/*.json` | Per-topic implementation comparisons against the reference project. |
+| `comparison-entries/<model>.json` | Lossless imported `C{n}` sections from each model's comparison-vs-base report. |
+| `comparison-clusters.json` | Editorial groupings of semantically similar comparison entries. |
 
 ## Evaluation order
 
@@ -88,19 +89,59 @@ These findings come from capable AI tester agents simulating real user interacti
 
 Use `relatedFindingIds` as evidence for the classification. For `self-audit-caught-but-reproduced`, the schema requires at least one linked self-audit finding that should have covered the post-fix failure.
 
-## Comparisons (to fill during the comparison phase)
+## Comparison entries and clusters
 
-Source reports follow `docs/comparison_report_format.md`; these records are ingested from its per-topic `C{n}` sections. One JSON file per topic in `comparisons/`:
+Source reports follow `docs/comparison_report_format.md`. Because each report was written independently, `C{n}` numbering is only meaningful inside that one report. The browser therefore stores every source section as its own entry and groups similar entries separately.
+
+Entry files live under `comparison-entries/`, one file per model:
 
 ```jsonc
 {
-  "id": "inventory-hot-path",
-  "topic": "Inventory hot path design",
-  "reference": "How the original project handles it (markdown)",
-  "verdicts": { "glm-5.2": "same", "gpt-5.5": "worse", "opus-4.8": "better" },
-  // verdict scale: better | same | worse | missing | unknown
-  "notes": "Free-form markdown analysis"
+  "model": "gpt-5.5",
+  "reviewType": "comparison-vs-base",
+  "source": "comparison_vs_base/gpt-5.5_vs_base.md",
+  "entries": [
+    {
+      "id": "gpt-5.5:C34",
+      "model": "gpt-5.5",
+      "code": "C34",
+      "topic": "Buy response taxonomy, status codes, and retry guidance",
+      "verdict": "better",
+      "source": "comparison_vs_base/gpt-5.5_vs_base.md",
+      "reference": "Markdown from the source section's Reference behavior block.",
+      "compared": "Markdown from the Compared behavior block.",
+      "rationale": "Markdown from the Verdict rationale block."
+    }
+  ]
 }
+```
+
+Clusters live in `comparison-clusters.json`:
+
+```jsonc
+{
+  "clusters": [
+    {
+      "id": "buy-response-contract",
+      "title": "Buy response contract and taxonomy",
+      "description": "HTTP buy response body shape, status-code taxonomy, pending-persistence guidance, and validation.",
+      "confidence": "high",
+      "members": [
+        { "entryId": "glm-5.2:C5", "note": "Also covers outcome headers." },
+        { "entryId": "gpt-5.5:C34" }
+      ]
+    }
+  ]
+}
+```
+
+Clustering is editorial. Prefer under-clustering to over-clustering: if two sections are only remotely similar, keep them separate. If one report splits a concern into several sections and another report combines it, a cluster may contain multiple entries from the same model. The browser renders each member entry independently so reference behavior, compared behavior, rationale, verdict, and source remain reachable.
+
+Use the helper scripts from `web/` for mechanical imports and first-pass cluster seeding:
+
+```bash
+npm run import-comparison-report -- gpt-5.5 comparison_vs_base/gpt-5.5_vs_base.md
+npm run seed-comparison-clusters
 ```
 
 ## Adding future reports

@@ -1,9 +1,0 @@
-{
-  "id": "c25-terminal-redis-inventory-snapshot-in-durable-history",
-  "topic": "C25 - Terminal Redis inventory snapshot in durable history",
-  "reference": "Forge copies Redis-derived terminal inventory facts into the immutable run summary: starting stock, final remaining/reserved stock, accepted reservations, sold-out rejections, pending persistence, capture time, and source. This preserves audit data after Redis cleanup.\n\n**References:**\n- `checkout-forge/apps/api/src/services/demo-run-terminal-summary-service.ts:136` - terminal snapshot assembled for summary.\n- `checkout-forge/apps/api/src/services/demo-run-terminal-summary-service.ts:304` - snapshot sourced from live Redis status and aggregates.",
-  "verdicts": {
-    "glm-5.2": "same"
-  },
-  "notes": "**Compared behavior**\n\nGLM captures the same category of Redis-derived terminal snapshot during finalization, using live inventory state and drain signals, and writes it into a contract-validated summary shape. It tolerates missing Redis state by recording a null snapshot and captures before live keys are torn down.\n\n**References:**\n- `checkout-surge-glm/packages/contracts/src/run-summary.ts:158` - terminal inventory snapshot schema.\n- `checkout-surge-glm/apps/api/src/app/services/run-finalization-service.ts:283` - snapshot built during finalization.\n\n**Verdict rationale**\n\nBoth satisfy the durable audit-copy requirement. Broader finalization correctness is covered separately, but the Redis snapshot obligation is met on both sides."
-}

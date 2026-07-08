@@ -15,7 +15,7 @@ const pages: Array<{ path: string; expect: string[] }> = [
   { path: "/clusters", expect: ["confidence", "Expected sold-out 409s counted as k6 HTTP failures"] },
   { path: "/models/opus-4.8", expect: ["Opus 4.8", "F25"] },
   { path: "/models/glm-5.2?tab=report", expect: ["Consolidated Findings", "Section 8"] },
-  { path: "/comparisons", expect: ["No comparisons recorded yet"] },
+  { path: "/comparisons", expect: ["211 entries", "Buy response contract and taxonomy"] },
   { path: "/agentic-testing", expect: ["7 post-fix exploratory findings", "survived claimed fixes", "self-audit blind spots"] },
 ];
 

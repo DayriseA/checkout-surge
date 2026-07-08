@@ -1,10 +1,9 @@
 /**
- * Locates a finding's own section inside its source report markdown.
+ * Locates a coded section inside its source report markdown.
  *
- * All reports follow the unified format from docs/auto_review_helper.md
- * (Report Format): findings are "### F{n} — Title (Severity)" headings and
- * lower-confidence notes are "### N{n} — Title" headings, so the matcher is
- * derived from the finding code alone.
+ * Self-audit reports use F{n}/N{n}; implementation-comparison reports use
+ * C{n}. In both formats the heading starts with "### {code} —", so the
+ * matcher is derived from the code alone.
  */
 export function findingHeadingPattern(code: string): RegExp {
   return new RegExp(`^###\\s+${escapeRegExp(code)}\\s+—`);

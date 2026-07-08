@@ -1,9 +1,0 @@
-{
-  "id": "c11-run-offer-ownership-enforcement-and-nullable-run-edge-case",
-  "topic": "C11 - Run-offer ownership enforcement and nullable-run edge case",
-  "reference": "Forge enforces generated-run sale-offer ownership with composite foreign keys plus hand-authored PL/pgSQL triggers. The triggers cover the important nullable-`runId` edge case where composite FKs under `MATCH SIMPLE` can silently skip enforcement, and also ensure ownership links point only at generated-run offers.\n\n**References:**\n- `checkout-forge/packages/db/src/schema.ts:220` - composite FK from reservations to the run-offer ownership pair.\n- `checkout-forge/packages/db/drizzle/0001_run_attribution_triggers.sql:1` - trigger enforcing generated-run offer purpose.\n- `checkout-forge/packages/db/drizzle/0001_run_attribution_triggers.sql:26` - trigger closing the nullable-run attribution gap.",
-  "verdicts": {
-    "glm-5.2": "same"
-  },
-  "notes": "**Compared behavior**\n\nGLM independently implements equivalent trigger enforcement and explicitly documents the same `MATCH SIMPLE` pitfall in the migration. It covers the same business tables and tests mismatched and null `run_id` rejection. It does not add Forge's extra composite-FK layer, so the trigger is the primary defense, but the invariant coverage is equivalent.\n\n**References:**\n- `checkout-surge-glm/packages/db/migrations/0000_burly_random.sql:276` - migration comment naming the `MATCH SIMPLE` gap.\n- `checkout-surge-glm/packages/db/migrations/0000_burly_random.sql:308` - attribution trigger rejecting null or mismatched run IDs for generated offers.\n- `checkout-surge-glm/packages/db/tests/triggers.integration.test.ts:1` - trigger integration tests.\n\n**Verdict rationale**\n\nThis is one of the most subtle data-integrity traps in the system, and GLM catches it. Forge has a thicker defense stack because it also has composite FKs, but both prevent the edge case that matters."
-}

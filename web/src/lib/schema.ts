@@ -109,11 +109,39 @@ export type AgenticTestFindingsFile = z.infer<typeof agenticTestFindingsFileSche
 export const verdictSchema = z.enum(["better", "same", "worse", "missing", "unknown"]);
 export type Verdict = z.infer<typeof verdictSchema>;
 
-export const comparisonSchema = z.object({
-  id: z.string().min(1),
+export const comparisonEntrySchema = z.object({
+  id: z.string().regex(/^[a-z0-9.-]+:C\d+$/, "expected '<model>:C{n}'"),
+  model: z.string().min(1),
+  code: z.string().regex(/^C\d+$/, "expected C{n}"),
   topic: z.string().min(1),
+  verdict: verdictSchema,
+  source: z.string().min(1),
   reference: z.string().min(1),
-  verdicts: z.record(z.string(), verdictSchema),
-  notes: z.string().min(1),
+  compared: z.string().min(1),
+  rationale: z.string().min(1),
 });
-export type Comparison = z.infer<typeof comparisonSchema>;
+export type ComparisonEntry = z.infer<typeof comparisonEntrySchema>;
+
+export const comparisonEntriesFileSchema = z.object({
+  model: z.string().min(1),
+  reviewType: z.literal("comparison-vs-base"),
+  source: z.string().min(1),
+  entries: z.array(comparisonEntrySchema).min(1),
+});
+export type ComparisonEntriesFile = z.infer<typeof comparisonEntriesFileSchema>;
+
+export const comparisonClusterSchema = z.object({
+  id: z.string().min(1),
+  title: z.string().min(1),
+  description: z.string().min(1),
+  confidence: z.enum(["high", "medium", "low"]),
+  members: z
+    .array(z.object({ entryId: z.string().min(1), note: z.string().optional() }))
+    .min(1),
+  notes: z.string().optional(),
+});
+export type ComparisonCluster = z.infer<typeof comparisonClusterSchema>;
+
+export const comparisonClustersFileSchema = z.object({
+  clusters: z.array(comparisonClusterSchema),
+});

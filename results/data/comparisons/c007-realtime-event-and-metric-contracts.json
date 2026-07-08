@@ -1,9 +1,0 @@
-{
-  "id": "c7-realtime-event-and-metric-contracts",
-  "topic": "C7 - Realtime event and metric contracts",
-  "reference": "Forge uses a four-type realtime dashboard union and validates events at publish, fan-out, and browser consumption. Its payload typing is looser in places: metrics are a generic name/value/unit/dimensions shape with optional per-metric refinements, and `customerStatus` on order events is a bare string.\n\n**References:**\n- `checkout-forge/packages/contracts/src/events.ts:51` - four-type realtime union.\n- `checkout-forge/packages/contracts/src/events.ts:24` - order event customer status typed as string.\n- `checkout-forge/packages/contracts/src/metrics.ts:20` - generic metric sample shape.\n- `checkout-forge/apps/api/src/realtime/dashboard-sse-gateway.ts:167` - consumer-side validation.",
-  "verdicts": {
-    "glm-5.2": "better"
-  },
-  "notes": "**Compared behavior**\n\nGLM models realtime as a larger discriminated union over typed event names, reuses durable event payload schemas where appropriate, defines per-metric sample schemas, validates before publication and at fan-out, and revalidates in the web client. It also defines SSE frame shape and a realtime publisher port.\n\n**References:**\n- `checkout-surge-glm/packages/contracts/src/dashboard-events.ts:99` - typed event union.\n- `checkout-surge-glm/packages/contracts/src/load.ts:214` - per-metric sample schemas.\n- `checkout-surge-glm/apps/api/src/app/dashboard-realtime/fanout.ts:115` - fan-out validation and malformed-event drop.\n- `checkout-surge-glm/apps/web/components/realtime/use-dashboard-events.ts:136` - browser-side schema validation.\n\n**Verdict rationale**\n\nBoth implementations validate realtime data at the important boundaries. GLM's per-event and per-metric typing removes stringly and grab-bag areas in the baseline. That stronger contract precision earns `better`; C21 separately covers GLM's sold-out event volume problem."
-}

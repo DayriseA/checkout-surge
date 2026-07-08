@@ -1,9 +1,0 @@
-{
-  "id": "c61-run-history-frontend-surface",
-  "topic": "C61 - Run history frontend surface",
-  "reference": "Forge's run history is a full public-safe surface: cursor pagination with a back-stack, a summary table, per-run detail pages, and admin deletion flows for single, selected, and all runs. Delete-all requires a typed confirmation token. Summary and traffic rendering logic is factored into tested view-model modules.\n\n**References:**\n- `checkout-forge/apps/web/src/app/run-history/run-history-client.tsx:55` - cursor-stack pagination.\n- `checkout-forge/apps/web/src/app/run-history/run-history-client.tsx:133` - delete-all sends typed confirmation.\n- `checkout-forge/apps/web/src/app/run-history/[runId]/page.tsx:1` - per-run detail route.\n- `checkout-forge/apps/web/src/app/run-history/run-history-summary-view.ts:1` - summary view-model module.",
-  "verdicts": {
-    "glm-5.2": "worse"
-  },
-  "notes": "**Compared behavior**\n\nGLM's run history is a single server-rendered page with one unpaginated table of terminal summaries and outcome cards for only the three most recent runs. It has no per-run detail route and no deletion UI, even though admin proxy routes for single and bulk deletion exist. Failure reasons are mostly hidden behind hover text.\n\n**References:**\n- `checkout-surge-glm/apps/web/app/run-history/page.tsx:56` - unpaginated table.\n- `checkout-surge-glm/apps/web/app/run-history/page.tsx:100` - drill-down limited to three runs.\n- `checkout-surge-glm/apps/web/app/api/admin/run-history/delete/route.ts:1` - bulk-delete proxy exists without UI.\n- `checkout-surge-glm/apps/web/app/run-history/page.tsx:148` - failure reason only in a title tooltip.\n\n**Verdict rationale**\n\nGLM provides a readable sanitized summary, but it lacks pagination, public detail depth, and usable admin deletion flows. The baseline covers the specified public history and operator deletion workflows, including the explicit delete-all confirmation."
-}

@@ -4,15 +4,18 @@
  */
 import {
   agenticTestFindingsFileSchema,
+  comparisonClustersFileSchema,
+  comparisonEntriesFileSchema,
   clustersFileSchema,
-  comparisonSchema,
   findingsFileSchema,
   modelsFileSchema,
   slicesFileSchema,
   SEVERITY_ORDER,
   type AgenticTestFindingsFile,
+  type ComparisonCluster,
+  type ComparisonEntry,
+  type ComparisonEntriesFile,
   type Cluster,
-  type Comparison,
   type Finding,
   type FindingsFile,
   type Model,
@@ -23,6 +26,7 @@ import {
 import modelsRaw from "../../../results/data/models.json";
 import slicesRaw from "../../../results/data/slices.json";
 import clustersRaw from "../../../results/data/clusters.json";
+import comparisonClustersRaw from "../../../results/data/comparison-clusters.json";
 
 const findingsModules = import.meta.glob("../../../results/data/findings/*.json", {
   eager: true,
@@ -32,7 +36,7 @@ const agenticTestModules = import.meta.glob("../../../results/data/agentic-test-
   eager: true,
   import: "default",
 });
-const comparisonModules = import.meta.glob("../../../results/data/comparisons/*.json", {
+const comparisonEntryModules = import.meta.glob("../../../results/data/comparison-entries/*.json", {
   eager: true,
   import: "default",
 });
@@ -66,12 +70,16 @@ export const agenticTestFiles: AgenticTestFindingsFile[] = Object.entries(agenti
   ([path, raw]) => parseOrThrow(path, () => agenticTestFindingsFileSchema.parse(raw)),
 );
 
-export const comparisons: Comparison[] = Object.entries(comparisonModules).map(
-  ([path, raw]) => parseOrThrow(path, () => comparisonSchema.parse(raw)),
+export const comparisonEntryFiles: ComparisonEntriesFile[] = Object.entries(comparisonEntryModules).map(
+  ([path, raw]) => parseOrThrow(path, () => comparisonEntriesFileSchema.parse(raw)),
 );
 
 export const clusters: Cluster[] = parseOrThrow("clusters.json", () =>
   clustersFileSchema.parse(clustersRaw),
+).clusters;
+
+export const comparisonClusters: ComparisonCluster[] = parseOrThrow("comparison-clusters.json", () =>
+  comparisonClustersFileSchema.parse(comparisonClustersRaw),
 ).clusters;
 
 /* ---------- derived views ---------- */
@@ -84,12 +92,23 @@ export const allFindings: FindingWithModel[] = findingsFiles.flatMap((file) =>
   file.findings.map((finding) => ({ ...finding, model: file.model })),
 );
 
+export const comparisonEntries: ComparisonEntry[] = comparisonEntryFiles.flatMap((file) =>
+  file.entries,
+);
+
 const findingIndex = new Map(allFindings.map((finding) => [finding.id, finding]));
+const comparisonEntryIndex = new Map(comparisonEntries.map((entry) => [entry.id, entry]));
 
 export function findingById(id: string): FindingWithModel {
   const finding = findingIndex.get(id);
   if (!finding) throw new Error(`Unknown finding id referenced: ${id}`);
   return finding;
+}
+
+export function comparisonEntryById(id: string): ComparisonEntry {
+  const entry = comparisonEntryIndex.get(id);
+  if (!entry) throw new Error(`Unknown comparison entry id referenced: ${id}`);
+  return entry;
 }
 
 export function modelById(id: string): Model | undefined {
@@ -105,6 +124,12 @@ export function reportMarkdown(model: Model): string {
     path.endsWith(`/${model.reportFile}`),
   );
   if (!entry) throw new Error(`Report file not found for ${model.id}: ${model.reportFile}`);
+  return entry[1];
+}
+
+export function comparisonSourceMarkdown(source: string): string {
+  const entry = Object.entries(reportModules).find(([path]) => path.endsWith(`/${source}`));
+  if (!entry) throw new Error(`Comparison report file not found: ${source}`);
   return entry[1];
 }
 
@@ -139,4 +164,8 @@ for (const cluster of clusters) {
       throw new Error(`Cluster ${cluster.id} references unknown model ${entry.model}`);
     }
   }
+}
+
+for (const cluster of comparisonClusters) {
+  for (const member of cluster.members) comparisonEntryById(member.entryId);
 }

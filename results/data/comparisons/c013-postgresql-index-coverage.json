@@ -1,9 +1,0 @@
-{
-  "id": "c13-postgresql-index-coverage",
-  "topic": "C13 - PostgreSQL index coverage",
-  "reference": "Forge includes secondary indexes for the product's actual read patterns: run-scoped orders, events, ERP attempts, pending persistence, notifications, run history, run status, start times, and presets. These support finalization polling, event timelines, history pagination, and run-scoped reads.\n\n**References:**\n- `checkout-forge/packages/db/drizzle/0000_initial_schema.sql:274` - block of secondary indexes.\n- `checkout-forge/packages/db/src/schema.ts:264` - composite order index for run-scoped reads.",
-  "verdicts": {
-    "glm-5.2": "worse"
-  },
-  "notes": "**Compared behavior**\n\nGLM has no secondary indexes beyond unique constraints and the one-current-run partial index. Run-scoped reads, finalization checks, event timelines, attempt history, and history pagination fall back to sequential scans; FK columns are also unindexed.\n\n**References:**\n- `checkout-surge-glm/packages/db/migrations/0000_burly_random.sql:12` - initial DDL lacks `CREATE INDEX` statements.\n- `checkout-surge-glm/packages/db/src/schema.ts:528` - schema table definitions without secondary index declarations.\n\n**Verdict rationale**\n\nThe dataset may stay small enough for demo operation, but the compared implementation omits the indexes aligned with repeated run-scoped access patterns. This is a clear database fitness gap."
-}
