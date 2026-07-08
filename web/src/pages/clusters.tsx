@@ -16,18 +16,20 @@ const confidenceStyle: Record<string, string> = {
  * implementation, a cluster reads as "this class of issue existed there and
  * the self-audit caught it".
  */
-export function ClustersPage() {
+export function ClustersView({ showHeader = true }: { showHeader?: boolean }) {
   return (
     <div className="space-y-6">
-      <header className="max-w-[70ch]">
-        <h1 className="text-2xl font-semibold tracking-tight">Clusters</h1>
-        <p className="mt-1 text-sm leading-relaxed text-ink-2">
-          Findings across models that describe the same underlying issue class. The grouping is
-          editorial and AI-curated — each cluster carries a confidence grade, and the mapping is
-          plain JSON (<code className="rounded bg-wash px-1 font-mono text-xs">results/data/clusters.json</code>)
-          meant to be corrected as you learn more.
-        </p>
-      </header>
+      {showHeader && (
+        <header className="max-w-[70ch]">
+          <h1 className="text-2xl font-semibold tracking-tight">Clusters</h1>
+          <p className="mt-1 text-sm leading-relaxed text-ink-2">
+            Findings across models that describe the same underlying issue class. The grouping is
+            editorial and AI-curated — each cluster carries a confidence grade, and the mapping is
+            plain JSON (<code className="rounded bg-wash px-1 font-mono text-xs">results/data/clusters.json</code>)
+            meant to be corrected as you learn more.
+          </p>
+        </header>
+      )}
 
       {clusters.map((cluster) => (
         <Card key={cluster.id} id={cluster.id} className="scroll-mt-6">
@@ -80,7 +82,7 @@ export function ClustersPage() {
 
       <p className="text-xs text-ink-3">
         Findings outside any cluster are unique to one report — browse them in the{" "}
-        <Link to="/findings" className="underline hover:text-ink">
+        <Link to="/auto-review" className="underline hover:text-ink">
           findings explorer
         </Link>
         .

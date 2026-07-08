@@ -11,8 +11,8 @@ const shotDir = process.env.SMOKE_SHOT_DIR;
 
 const pages: Array<{ path: string; expect: string[] }> = [
   { path: "/", expect: ["Results bench", "Who caught what", "Severity distribution"] },
-  { path: "/findings", expect: ["of 83 findings", "Expected sold-out"] },
-  { path: "/clusters", expect: ["confidence", "Expected sold-out 409s counted as k6 HTTP failures"] },
+  { path: "/auto-review", expect: ["Auto-Review", "of 83 findings", "Expected sold-out"] },
+  { path: "/auto-review?view=clusters", expect: ["Auto-Review", "confidence", "Expected sold-out 409s counted as k6 HTTP failures"] },
   { path: "/models/opus-4.8", expect: ["Opus 4.8", "F25"] },
   { path: "/models/glm-5.2?tab=report", expect: ["Consolidated Findings", "Section 8"] },
   { path: "/comparisons", expect: ["211 entries", "Buy response contract and taxonomy"] },

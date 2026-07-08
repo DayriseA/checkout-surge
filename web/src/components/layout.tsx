@@ -1,13 +1,12 @@
 import { useEffect, useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
-import { FlaskConical, GitCompareArrows, Layers, ListChecks, Moon, ScrollText, Sun } from "lucide-react";
+import { FlaskConical, GitCompareArrows, ListChecks, Moon, ScrollText, Sun } from "lucide-react";
 import { models } from "@/lib/data";
 import { cn, modelColorVar } from "@/lib/utils";
 
 const sections = [
   { to: "/", label: "Overview", icon: FlaskConical, end: true },
-  { to: "/findings", label: "Findings", icon: ListChecks },
-  { to: "/clusters", label: "Clusters", icon: Layers },
+  { to: "/auto-review", label: "Auto-Review", icon: ListChecks },
   { to: "/comparisons", label: "Comparisons", icon: GitCompareArrows },
   { to: "/agentic-testing", label: "Agentic testing", icon: ScrollText },
 ];

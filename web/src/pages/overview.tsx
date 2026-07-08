@@ -22,7 +22,7 @@ export function OverviewPage() {
           measure a mix of code quality and audit thoroughness. Those self-audit findings were later
           filed as issues for attempted fixes, then independently retested through the browser, so
           read them alongside the{" "}
-          <Link to="/clusters" className="underline hover:text-ink">
+          <Link to="/auto-review?view=clusters" className="underline hover:text-ink">
             cluster view
           </Link>{" "}
           and the{" "}
@@ -176,7 +176,7 @@ function CoverageMatrix() {
             <tr key={cluster.id} className="border-b border-hairline last:border-b-0 hover:bg-wash">
               <th scope="row" className="max-w-[26rem] px-4 py-2.5 text-left font-normal">
                 <Link
-                  to={`/clusters#${cluster.id}`}
+                  to={`/auto-review?view=clusters#${cluster.id}`}
                   className="font-medium text-ink hover:underline"
                 >
                   {cluster.title}

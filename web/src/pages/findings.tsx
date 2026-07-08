@@ -11,7 +11,7 @@ import { Card } from "@/components/ui/card";
  * Every finding across the three self-audits in one filterable list.
  * Filters live in the URL so views can be shared/bookmarked.
  */
-export function FindingsPage() {
+export function FindingsView({ showHeader = true }: { showHeader?: boolean }) {
   const [params, setParams] = useSearchParams();
 
   const selectedModels = params.getAll("model");
@@ -48,13 +48,15 @@ export function FindingsPage() {
 
   return (
     <div className="space-y-6">
-      <header>
-        <h1 className="text-2xl font-semibold tracking-tight">Findings</h1>
-        <p className="mt-1 text-sm text-ink-2">
-          All self-audit findings, cross-model. Each row expands to the full section from its
-          source report.
-        </p>
-      </header>
+      {showHeader && (
+        <header>
+          <h1 className="text-2xl font-semibold tracking-tight">Findings</h1>
+          <p className="mt-1 text-sm text-ink-2">
+            All self-audit findings, cross-model. Each row expands to the full section from its
+            source report.
+          </p>
+        </header>
+      )}
 
       <div className="space-y-2.5">
         <FilterGroup label="Agent">

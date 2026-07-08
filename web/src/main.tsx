@@ -11,8 +11,7 @@ import "./index.css";
 
 import { Layout } from "./components/layout";
 import { OverviewPage } from "./pages/overview";
-import { FindingsPage } from "./pages/findings";
-import { ClustersPage } from "./pages/clusters";
+import { AutoReviewPage } from "./pages/auto-review";
 import { ModelPage } from "./pages/model";
 import { ComparisonsPage } from "./pages/comparisons";
 import { AgenticTestingPage } from "./pages/agentic-testing";
@@ -22,8 +21,7 @@ const router = createBrowserRouter([
     element: <Layout />,
     children: [
       { path: "/", element: <OverviewPage /> },
-      { path: "/findings", element: <FindingsPage /> },
-      { path: "/clusters", element: <ClustersPage /> },
+      { path: "/auto-review", element: <AutoReviewPage /> },
       { path: "/models/:modelId", element: <ModelPage /> },
       { path: "/comparisons", element: <ComparisonsPage /> },
       { path: "/agentic-testing", element: <AgenticTestingPage /> },
