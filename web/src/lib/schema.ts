@@ -52,6 +52,32 @@ export const findingsFileSchema = z.object({
 });
 export type FindingsFile = z.infer<typeof findingsFileSchema>;
 
+/**
+ * Independent-review findings: the same fixed reviewer model reviews each
+ * agent's post-fix implementation branch, following the same report format
+ * as the self-audits (docs/review_helper.md). The `ir-` id namespace keeps
+ * these globally distinct from the auto-review findings while the report
+ * codes themselves stay plain F{n}/N{n}.
+ */
+export const independentFindingSchema = findingSchema.extend({
+  id: z
+    .string()
+    .regex(/^[a-z0-9.-]+:ir-[FN]\d+$/, "expected '<model>:ir-<code>'"),
+  // auto-review findings on the same branch that cover the same issue class;
+  // empty means the self-audit did not identify this issue class
+  relatedFindingIds: z.array(z.string()).default([]),
+});
+export type IndependentFinding = z.infer<typeof independentFindingSchema>;
+
+export const independentFindingsFileSchema = z.object({
+  model: z.string().min(1), // the agent/branch under review
+  reviewType: z.literal("independent-review"),
+  reviewer: z.string().min(1), // the fixed reviewer model
+  source: z.string().min(1),
+  findings: z.array(independentFindingSchema).min(1),
+});
+export type IndependentFindingsFile = z.infer<typeof independentFindingsFileSchema>;
+
 export const clusterSchema = z.object({
   id: z.string().min(1),
   title: z.string().min(1),

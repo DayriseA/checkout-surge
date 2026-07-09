@@ -8,6 +8,7 @@ import {
   comparisonEntriesFileSchema,
   clustersFileSchema,
   findingsFileSchema,
+  independentFindingsFileSchema,
   modelsFileSchema,
   slicesFileSchema,
   SEVERITY_ORDER,
@@ -18,6 +19,8 @@ import {
   type Cluster,
   type Finding,
   type FindingsFile,
+  type IndependentFinding,
+  type IndependentFindingsFile,
   type Model,
   type Severity,
   type Slice,
@@ -27,6 +30,7 @@ import modelsRaw from "../../../results/data/models.json";
 import slicesRaw from "../../../results/data/slices.json";
 import clustersRaw from "../../../results/data/clusters.json";
 import comparisonClustersRaw from "../../../results/data/comparison-clusters.json";
+import independentReviewClustersRaw from "../../../results/data/independent-review-clusters.json";
 
 const findingsModules = import.meta.glob("../../../results/data/findings/*.json", {
   eager: true,
@@ -36,6 +40,10 @@ const agenticTestModules = import.meta.glob("../../../results/data/agentic-test-
   eager: true,
   import: "default",
 });
+const independentFindingsModules = import.meta.glob(
+  "../../../results/data/independent-review-findings/*.json",
+  { eager: true, import: "default" },
+);
 const comparisonEntryModules = import.meta.glob("../../../results/data/comparison-entries/*.json", {
   eager: true,
   import: "default",
@@ -70,6 +78,10 @@ export const agenticTestFiles: AgenticTestFindingsFile[] = Object.entries(agenti
   ([path, raw]) => parseOrThrow(path, () => agenticTestFindingsFileSchema.parse(raw)),
 );
 
+export const independentFindingsFiles: IndependentFindingsFile[] = Object.entries(
+  independentFindingsModules,
+).map(([path, raw]) => parseOrThrow(path, () => independentFindingsFileSchema.parse(raw)));
+
 export const comparisonEntryFiles: ComparisonEntriesFile[] = Object.entries(comparisonEntryModules).map(
   ([path, raw]) => parseOrThrow(path, () => comparisonEntriesFileSchema.parse(raw)),
 );
@@ -80,6 +92,11 @@ export const clusters: Cluster[] = parseOrThrow("clusters.json", () =>
 
 export const comparisonClusters: ComparisonCluster[] = parseOrThrow("comparison-clusters.json", () =>
   comparisonClustersFileSchema.parse(comparisonClustersRaw),
+).clusters;
+
+export const independentReviewClusters: Cluster[] = parseOrThrow(
+  "independent-review-clusters.json",
+  () => clustersFileSchema.parse(independentReviewClustersRaw),
 ).clusters;
 
 /* ---------- derived views ---------- */
@@ -96,12 +113,31 @@ export const comparisonEntries: ComparisonEntry[] = comparisonEntryFiles.flatMap
   file.entries,
 );
 
+export interface IndependentFindingWithContext extends IndependentFinding {
+  model: string;
+  reviewer: string;
+}
+
+export const allIndependentFindings: IndependentFindingWithContext[] =
+  independentFindingsFiles.flatMap((file) =>
+    file.findings.map((finding) => ({ ...finding, model: file.model, reviewer: file.reviewer })),
+  );
+
 const findingIndex = new Map(allFindings.map((finding) => [finding.id, finding]));
 const comparisonEntryIndex = new Map(comparisonEntries.map((entry) => [entry.id, entry]));
+const independentFindingIndex = new Map(
+  allIndependentFindings.map((finding) => [finding.id, finding]),
+);
 
 export function findingById(id: string): FindingWithModel {
   const finding = findingIndex.get(id);
   if (!finding) throw new Error(`Unknown finding id referenced: ${id}`);
+  return finding;
+}
+
+export function independentFindingById(id: string): IndependentFindingWithContext {
+  const finding = independentFindingIndex.get(id);
+  if (!finding) throw new Error(`Unknown independent finding id referenced: ${id}`);
   return finding;
 }
 
@@ -168,4 +204,17 @@ for (const cluster of clusters) {
 
 for (const cluster of comparisonClusters) {
   for (const member of cluster.members) comparisonEntryById(member.entryId);
+}
+
+for (const finding of allIndependentFindings) {
+  for (const related of finding.relatedFindingIds) findingById(related);
+}
+
+for (const cluster of independentReviewClusters) {
+  for (const member of cluster.members) independentFindingById(member.findingId);
+  for (const entry of cluster.notObserved ?? []) {
+    if (!modelById(entry.model)) {
+      throw new Error(`Independent-review cluster ${cluster.id} references unknown model ${entry.model}`);
+    }
+  }
 }

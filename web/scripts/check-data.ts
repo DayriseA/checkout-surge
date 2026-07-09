@@ -3,7 +3,7 @@
  * referential integrity, and verifies each finding's section can be located
  * in its source report. Run with: npm run check-data  (Node ≥ 23.6)
  */
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -12,6 +12,7 @@ import {
   comparisonEntriesFileSchema,
   clustersFileSchema,
   findingsFileSchema,
+  independentFindingsFileSchema,
   modelsFileSchema,
   slicesFileSchema,
 } from "../src/lib/schema.ts";
@@ -60,6 +61,58 @@ for (const file of readdirSync(join(dataDir, "findings"))) {
     }
   });
 }
+
+const independentFindingIds = new Set<string>();
+const independentFindingsDir = join(dataDir, "independent-review-findings");
+for (const file of existsSync(independentFindingsDir)
+  ? readdirSync(independentFindingsDir).filter((f) => f.endsWith(".json"))
+  : []) {
+  check(`independent-review-findings/${file}`, () => {
+    const parsed = independentFindingsFileSchema.parse(readJson(join(independentFindingsDir, file)));
+    if (!models.some((m) => m.id === parsed.model)) {
+      throw new Error(`unknown model ${parsed.model}`);
+    }
+    const report = readFileSync(join(resultsDir, parsed.source), "utf8");
+    for (const finding of parsed.findings) {
+      if (independentFindingIds.has(finding.id)) {
+        throw new Error(`duplicate independent finding id ${finding.id}`);
+      }
+      independentFindingIds.add(finding.id);
+      if (finding.id !== `${parsed.model}:ir-${finding.code}`) {
+        throw new Error(`${finding.id}: expected id ${parsed.model}:ir-${finding.code}`);
+      }
+      if (!extractSection(report, finding.code)) {
+        throw new Error(`${finding.id}: section not found in ${parsed.source}`);
+      }
+      for (const related of finding.relatedFindingIds) {
+        if (!findingIds.has(related)) {
+          throw new Error(`${finding.id}: unknown related auto-review finding ${related}`);
+        }
+      }
+    }
+  });
+}
+
+check("independent-review-clusters.json", () => {
+  const { clusters } = clustersFileSchema.parse(
+    readJson(join(dataDir, "independent-review-clusters.json")),
+  );
+  const clusterIds = new Set<string>();
+  for (const cluster of clusters) {
+    if (clusterIds.has(cluster.id)) throw new Error(`duplicate cluster id ${cluster.id}`);
+    clusterIds.add(cluster.id);
+    for (const member of cluster.members) {
+      if (!independentFindingIds.has(member.findingId)) {
+        throw new Error(`cluster ${cluster.id}: unknown independent finding ${member.findingId}`);
+      }
+    }
+    for (const entry of cluster.notObserved ?? []) {
+      if (!models.some((m) => m.id === entry.model)) {
+        throw new Error(`cluster ${cluster.id}: unknown model ${entry.model}`);
+      }
+    }
+  }
+});
 
 const comparisonEntryIds = new Set<string>();
 for (const file of readdirSync(join(dataDir, "comparison-entries")).filter((f) => f.endsWith(".json"))) {
@@ -150,7 +203,7 @@ for (const file of readdirSync(join(dataDir, "agentic-test-findings"))) {
 
 console.log(
   failures === 0
-    ? `\nAll data valid (${findingIds.size} findings, ${comparisonEntryIds.size} comparison entries).`
+    ? `\nAll data valid (${findingIds.size} findings, ${independentFindingIds.size} independent-review findings, ${comparisonEntryIds.size} comparison entries).`
     : `\n${failures} file(s) failed.`,
 );
 process.exit(failures === 0 ? 0 : 1);

@@ -10,6 +10,8 @@ This directory is the machine-readable layer over the reports in `results/`. The
 | `slices.json` | The eight review areas from the shared review helper; findings reference them by id. |
 | `findings/<model>.auto-review.json` | One record per finding from that model's post-phase-10 self-audit. |
 | `clusters.json` | Cross-model groupings of findings that describe the same underlying issue class. |
+| `independent-review-findings/<model>.json` | One record per finding from the fixed-reviewer independent review of that model's post-fix branch. |
+| `independent-review-clusters.json` | Cross-model groupings of independent-review findings, same shape as `clusters.json`. |
 | `agentic-test-findings/<model>.json` | Bugs found by independent AI tester agents after the model self-audited, received issues for those findings, attempted fixes, and claimed completion. |
 | `comparison-entries/<model>.json` | Lossless imported `C{n}` sections from each model's comparison-vs-base report. |
 | `comparison-clusters.json` | Editorial groupings of semantically similar comparison entries. |
@@ -23,8 +25,11 @@ The data here assumes this chronology:
 3. The self-audit findings were filed as issues on the respective implementation branches.
 4. The model agents attempted to fix their own findings and claimed completion.
 5. Independent agentic exploratory testing then exercised the claimed-fixed implementations through the browser.
+6. A single fixed reviewer model then code-reviewed each post-fix implementation branch using the same guide (`docs/review_helper.md`); those results are the `independent-review-findings/<model>.json` records.
 
 Agentic test records therefore measure post-fix accountability. A finding can either be an issue class the self-audit caught but the claimed fix failed to eliminate, or an issue class the self-audit missed entirely.
+
+Independent-review records serve a different purpose: because every self-audit was performed by the model that wrote the code, a low self-audit finding count is ambiguous (few issues, or a reviewer blind to its own issues). Holding the reviewer constant across branches makes finding counts comparable across agents. Note the review target is the *post-fix* branch state, so an independent finding count is not directly comparable to the same branch's pre-fix self-audit count — the meaningful comparisons are across branches, and per-finding against the self-audit via `relatedFindingIds`.
 
 ## Finding record
 
@@ -43,7 +48,7 @@ Agentic test records therefore measure post-fix accountability. A finding can ei
 
 ### Severity and codes
 
-Reports follow the unified format specified in `docs/auto_review_helper.md` (Report Format section): `F{n}` codes, one severity vocabulary (`High | Medium | Low`), and a `**Slices:**` metadata line per finding — so codes and severities here mirror the reports directly. Lower-confidence report notes are `tier: "note"` with severity `info`.
+Reports follow the unified format specified in `docs/review_helper.md` (Report Format section): `F{n}` codes, one severity vocabulary (`High | Medium | Low`), and a `**Slices:**` metadata line per finding — so codes and severities here mirror the reports directly. Lower-confidence report notes are `tier: "note"` with severity `info`.
 
 The three original reports predate the format spec and were retrofitted to it: GPT's `P1/P2/P3` priority codes became sequential `F1…F23` (P1 → High, P2 → Medium, P3 → Low), and hybrid grades (`Medium/Low`, `LOW–MEDIUM`) were collapsed to their leading term. GPT's slice tags are curated (its original report had no slice structure) — treat them as editorial.
 
@@ -63,6 +68,36 @@ A cluster groups findings across models that describe the same underlying issue 
 ```
 
 The initial cluster mapping was AI-curated — review the `confidence` field and adjust membership freely; the app re-derives all overlap views from this file.
+
+## Independent review findings
+
+Source reports live under `results/independent_review/` (see the README there for report conventions) and follow the same `docs/review_helper.md` format as the self-audits. Each file records which model performed the review:
+
+```jsonc
+{
+  "model": "opus-4.8",                    // the agent/branch under review
+  "reviewType": "independent-review",
+  "reviewer": "…",                        // the fixed reviewer model, same for every file
+  "source": "independent_review/opus-4.8_independent_review.md",
+  "findings": [
+    {
+      "id": "opus-4.8:ir-F1",             // "<model>:ir-<code>" — the ir- namespace keeps ids
+                                          // globally unique vs. auto-review findings
+      "code": "F1",                       // the report's own code, plain F{n}/N{n}
+      "title": "…",
+      "severity": "high",
+      "tier": "finding",
+      "slices": [1],
+      "locations": ["apps/api/src/…:42"],
+      "summary": "…",
+      "relatedFindingIds": ["opus-4.8:F3"] // auto-review findings on the same branch covering the
+                                           // same issue class; empty = the self-audit missed it
+    }
+  ]
+}
+```
+
+Cross-model clusters of these findings go in `independent-review-clusters.json`, which has exactly the shape of `clusters.json` but whose `members[].findingId` values reference the `ir-` namespace.
 
 ## Agentic test findings
 

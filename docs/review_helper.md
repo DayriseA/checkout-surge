@@ -1,6 +1,11 @@
-# Phase 1-10 Final Review
+# Phase 1-10 Review Helper
 
-Suggested slice scopes to divide the final review and avoid an overwhelming monolithic review.
+Suggested slice scopes to divide a full-implementation review and avoid an overwhelming monolithic review.
+
+This guide serves two review contexts, and everything below applies identically to both:
+
+- **Auto-review (self-audit):** the agent that built an implementation reviews its own work after phase 10.
+- **Independent review:** a single fixed reviewer model reviews an implementation branch it did not necessarily build. The reviewer only reports — it does not modify the branch under review.
 
 Use this as a review guide, not as an implementation freeze. Different agents may reasonably shape code, names, and UI details differently; anchor the review on documented product invariants, ownership boundaries, and observable behavior rather than exact internal structure unless a document states it explicitly.
 
@@ -251,7 +256,7 @@ Look for bugs around:
 
 Useful checks:
 
-- run the narrow test near each fix
+- run the narrow test nearest each suspected bug to confirm the current behavior
 - run broader unit/API/integration suites when practical
 - run build/type-check/lint where changes touch shared contracts, runtime scripts, or cross-package APIs
 - note skipped runtime checks clearly
