@@ -1,0 +1,697 @@
+{
+  "model": "opus-4.8",
+  "reviewType": "independent-review",
+  "reviewer": "gpt-5.6-sol (high)",
+  "source": "independent_review/opus-4.8_independent_review.md",
+  "findings": [
+    {
+      "id": "opus-4.8:ir-F1",
+      "code": "F1",
+      "title": "Terminalization is not atomic with sale closure and summary creation",
+      "severity": "high",
+      "tier": "finding",
+      "slices": [1, 2, 4],
+      "locations": [
+        "apps/api/src/services/run-finalization-service.ts:132",
+        "apps/api/src/services/reserve-order-service.ts:105",
+        "packages/db/src/reserve-stock.ts:63",
+        "apps/api/src/services/finalization-store.ts:86"
+      ],
+      "summary": "Finalization marks a run terminal and writes its summary before closing eligibility, and the atomic stock Lua script never re-checks the eligibility key, so a concurrent buy can commit after terminal accounting. If summary creation fails after the terminal transition, later polls cannot repair it because they scan only draining runs — leaving a terminal run with no history summary and late orders excluded from immutable accounting.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "opus-4.8:ir-F2",
+      "code": "F2",
+      "title": "The load-orchestrator start endpoint bypasses API ownership and deployment caps",
+      "severity": "high",
+      "tier": "finding",
+      "slices": [4],
+      "locations": [
+        "apps/load-orchestrator/src/routes/load-routes.ts:17",
+        "packages/contracts/src/load.ts:24",
+        "docker-compose.yml:121"
+      ],
+      "summary": "POST /internal/load/runs has no service-token guard and accepts traffic values without deployment maxima, and the reference runtime publishes the orchestrator's port 4200 directly. A reachable caller can start arbitrary k6 traffic with invented or reused run identifiers, bypassing API lifecycle, public budgets, overlap rules, and hard caps.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "opus-4.8:ir-F3",
+      "code": "F3",
+      "title": "A single failed completion callback strands the API run indefinitely",
+      "severity": "high",
+      "tier": "finding",
+      "slices": [4],
+      "locations": [
+        "apps/load-orchestrator/src/services/traffic-run-service.ts:128",
+        "apps/load-orchestrator/src/services/traffic-reporter.ts:109",
+        "apps/api/src/services/finalization-store.ts:86"
+      ],
+      "summary": "After k6 exits, the orchestrator attempts exactly one completion callback and swallows network and non-2xx failures, yet only that callback can move the API run to draining/failed. A transient failure leaves the run active forever, blocking later runs and preventing a summary.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "opus-4.8:ir-F4",
+      "code": "F4",
+      "title": "A non-ERP error can strand the circuit breaker half-open forever",
+      "severity": "high",
+      "tier": "finding",
+      "slices": [3],
+      "locations": [
+        "apps/worker/src/services/circuit-breaker.ts:49",
+        "apps/worker/src/services/circuit-breaking-order-confirmation.ts:88"
+      ],
+      "summary": "The half-open breaker reserves a single probe, but the decorator only records a result for ERP success/failure — a database, config, or persistence error is rethrown without releasing the probe. Later requests are perpetually deferred because the in-flight probe flag never clears.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "opus-4.8:ir-F5",
+      "code": "F5",
+      "title": "Queue handoff can hang the request or permanently strand durable work",
+      "severity": "high",
+      "tier": "finding",
+      "slices": [1, 3],
+      "locations": [
+        "apps/api/src/index.ts:108",
+        "apps/api/src/services/reserve-order-service.ts:372",
+        "apps/api/src/services/reserve-order-service.ts:247"
+      ],
+      "summary": "Queue producers use Redis clients with maxRetriesPerRequest: null, so an unreachable broker can leave awaited Queue.add() calls pending indefinitely. If enqueue does reject, the buy workflow returns success after the durable order commit but no outbox or reconciler re-drives queued orders and idempotent replay does not enqueue again — the buyer can hang or receive success for an order stranded forever.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "opus-4.8:ir-F6",
+      "code": "F6",
+      "title": "Overlapping deliveries can overwrite a terminal order result",
+      "severity": "high",
+      "tier": "finding",
+      "slices": [2, 3],
+      "locations": [
+        "apps/worker/src/services/process-order-service.ts:90",
+        "apps/worker/src/adapters/postgres-order-progress-store.ts:44"
+      ],
+      "summary": "The worker loads an order, awaits ERP work, then updates by order ID without an expected-status predicate. Under BullMQ at-least-once overlap, a stale delivery can overwrite confirmed with failed or vice versa, and both contradictory events are appended.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "opus-4.8:ir-F7",
+      "code": "F7",
+      "title": "A process failure after the Redis decision leaves no recoverable persistence obligation",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [1],
+      "locations": [
+        "packages/db/src/reserve-stock.ts:96",
+        "apps/api/src/services/reserve-order-service.ts:294",
+        "apps/api/src/services/pending-persistence-reconciler.ts:45"
+      ],
+      "summary": "The stock Lua script creates the hold without a pending-persistence sentinel; the service records that sentinel only in a caught PostgreSQL failure. Process exit or a hung call after Redis commits leaves nothing for the reconciler and replay only returns a pending response, so inventory is consumed without durable business state or terminal accounting.",
+      "relatedFindingIds": ["opus-4.8:F11"]
+    },
+    {
+      "id": "opus-4.8:ir-F8",
+      "code": "F8",
+      "title": "Best-effort dashboard publication can block the synchronous buy response",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [1],
+      "locations": [
+        "apps/api/src/services/reserve-order-service.ts:166",
+        "packages/db/src/dashboard-events.ts:24"
+      ],
+      "summary": "The accepted path unconditionally awaits dashboard publication before returning, and the publisher directly awaits Redis PUBLISH without a timeout. A slow reconnect can hold a successfully persisted checkout open for observability work.",
+      "relatedFindingIds": ["opus-4.8:F13"]
+    },
+    {
+      "id": "opus-4.8:ir-F9",
+      "code": "F9",
+      "title": "Unbounded idempotency keys allow disproportionate Redis resource consumption",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [1],
+      "locations": [
+        "packages/contracts/src/buy.ts:10",
+        "packages/db/src/redis-keys.ts:53",
+        "packages/db/src/reserve-stock.ts:100"
+      ],
+      "summary": "The public schema accepts any non-empty idempotency string, embeds it verbatim in a Redis key, and retains accepted keys for the configured TTL. Large request keys amplify Redis bandwidth and memory across accepted units.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "opus-4.8:ir-F10",
+      "code": "F10",
+      "title": "Missing traffic evidence is graded as complete",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [2, 4],
+      "locations": [
+        "apps/api/src/services/load-completion-ingest.ts:62",
+        "apps/api/src/services/load-completion-ingest.ts:113",
+        "apps/api/src/services/grade-traffic-delivery.ts:71"
+      ],
+      "summary": "Successful completion moves the run to draining before best-effort finalization-input persistence, the poller can race the insert, and a failed insert cannot be repaired by a duplicate callback. Missing input or a null k6 summary is then graded complete with all delivery measurements null, so a run with no trustworthy delivery evidence can become an immutable successful benchmark.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "opus-4.8:ir-F11",
+      "code": "F11",
+      "title": "An unguarded failure transition can overwrite another terminal run result",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [2],
+      "locations": [
+        "apps/api/src/services/postgres-run-store.ts:90",
+        "apps/api/src/services/demo-reset-service.ts:75"
+      ],
+      "summary": "PostgresRunStore.markFailed updates solely by run ID. Reset can read a nonterminal run, lose a race to normal completion, then overwrite completed with failed while the insert-only summary remains completed.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "opus-4.8:ir-F12",
+      "code": "F12",
+      "title": "Child rows can contradict the reservation or order they describe",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [2],
+      "locations": [
+        "packages/db/src/schema.ts:200",
+        "packages/db/src/schema.ts:232",
+        "packages/db/src/schema.ts:312"
+      ],
+      "summary": "Orders independently store offer, run, correlation, quantity, and status while only foreign-keying reservation_id, and downstream ERP attempts and notifications likewise duplicate identity without agreement constraints. PostgreSQL accepts a confirmed order backed by a rejected or differently attributed reservation, corrupting run cleanup and summaries.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "opus-4.8:ir-F13",
+      "code": "F13",
+      "title": "Notification idempotency is not safe under concurrent delivery",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [2, 3],
+      "locations": [
+        "apps/worker/src/adapters/postgres-notification-recorder.ts:53",
+        "packages/db/src/schema.ts:330"
+      ],
+      "summary": "The recorder performs SELECT then INSERT while the schema has only a non-unique order_id index. Concurrent at-least-once deliveries can both insert rows and notification.recorded events, inflating terminal summaries.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "opus-4.8:ir-F14",
+      "code": "F14",
+      "title": "Test Redis resets have no target guard",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [2],
+      "locations": [
+        "packages/db/src/testing/index.ts:19",
+        "packages/db/test/integration/schema.test.ts:47"
+      ],
+      "summary": "The PostgreSQL test reset validates a test-only target, but integration suites call Redis FLUSHDB directly without equivalent validation. A mistaken TEST_REDIS_URL can erase a shared logical database before assertions run.",
+      "relatedFindingIds": ["opus-4.8:F15"]
+    },
+    {
+      "id": "opus-4.8:ir-F15",
+      "code": "F15",
+      "title": "PostgreSQL cleanup can commit while Redis cleanup becomes unrecoverable",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [2],
+      "locations": [
+        "packages/db/src/run-cleanup.ts:165",
+        "packages/db/src/cli/cleanup-runs.ts:31"
+      ],
+      "summary": "Maintenance cleanup deletes durable run/offer ownership first, then clears Redis. If Redis cleanup fails, retry can no longer derive the deleted run-to-offer mapping, leaving eligibility/inventory keys orphaned and potentially accepting holds for nonexistent durable state.",
+      "relatedFindingIds": ["opus-4.8:F14"]
+    },
+    {
+      "id": "opus-4.8:ir-F16",
+      "code": "F16",
+      "title": "Run-scoped worker concurrency is applied after BullMQ admits work",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [3],
+      "locations": [
+        "apps/worker/src/index.ts:160",
+        "apps/worker/src/services/run-concurrency-controller.ts:40"
+      ],
+      "summary": "The worker starts at global default concurrency, and only inside an admitted job does the handler load the run snapshot and mutate Worker.concurrency. A low-concurrency run can start with a full default-sized batch, violating its frozen backpressure policy.",
+      "relatedFindingIds": ["opus-4.8:F2"]
+    },
+    {
+      "id": "opus-4.8:ir-F17",
+      "code": "F17",
+      "title": "Mock ERP idempotency permits concurrent and post-restart duplicate confirmations",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [3],
+      "locations": [
+        "apps/mock-erp/src/services/erp-confirmation-service.ts:69",
+        "apps/mock-erp/src/services/confirmation-ledger.ts:10"
+      ],
+      "summary": "The Mock ERP checks its ledger, awaits latency, then stores a new reference, so concurrent calls can both pass the check and return different confirmations. The in-memory ledger also resets on process restart.",
+      "relatedFindingIds": ["opus-4.8:F18"]
+    },
+    {
+      "id": "opus-4.8:ir-F18",
+      "code": "F18",
+      "title": "Worker readiness reports success without probing PostgreSQL",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [3, 7],
+      "locations": [
+        "apps/worker/src/services/readiness.ts:23",
+        "apps/worker/src/index.ts:186"
+      ],
+      "summary": "Readiness receives only a databaseUrlConfigured flag and maps any nonempty URL to healthy. Redis consumers may remain running while every job fails its required PostgreSQL work, yet /health/ready stays 200.",
+      "relatedFindingIds": ["opus-4.8:F17", "opus-4.8:F9"]
+    },
+    {
+      "id": "opus-4.8:ir-F19",
+      "code": "F19",
+      "title": "Fast traffic completion can be overwritten back to active",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [4],
+      "locations": [
+        "apps/api/src/services/run-start-service.ts:248",
+        "apps/api/src/services/postgres-run-store.ts:78"
+      ],
+      "summary": "Run start launches traffic before promoting the database row, so a fast completion may move starting to draining/failed, after which unconditional markActive regresses it to active. This can strand a contradictory run outside finalization.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "opus-4.8:ir-F20",
+      "code": "F20",
+      "title": "Treating every HTTP 409 as expected hides lifecycle and attribution failures",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [4],
+      "locations": [
+        "apps/load-orchestrator/src/services/k6-script.ts:119",
+        "apps/api/src/services/reserve-order-service.ts:186"
+      ],
+      "summary": "The k6 script marks every 409 expected, but the buy path also uses 409 for closed runs and run/offer mismatch. A completely broken run can therefore report clean traffic delivery just like legitimate sold-out or idempotency-conflict traffic.",
+      "relatedFindingIds": ["opus-4.8:F1"]
+    },
+    {
+      "id": "opus-4.8:ir-F21",
+      "code": "F21",
+      "title": "The drain timeout does not bound pending-persistence reconciliation failures",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [4],
+      "locations": [
+        "apps/api/src/services/run-finalization-service.ts:114",
+        "apps/api/src/services/run-finalization-service.ts:172"
+      ],
+      "summary": "The settle timeout allows unsettled orders to proceed, but reconciliation runs afterward and is unconditional. A poison record or persistent materialization failure is retried forever, leaving the run draining and blocking new starts.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "opus-4.8:ir-F22",
+      "code": "F22",
+      "title": "Direct run starts can forge the per-visitor budget identity",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [5],
+      "locations": [
+        "apps/api/src/routes/run-routes.ts:59",
+        "docker-compose.yml:60"
+      ],
+      "summary": "POST /demo/runs trusts the caller-provided x-visitor-id header as the budget key while the API is directly published on port 4000. Callers can rotate header values to bypass the per-visitor limit while consuming the shared global allowance.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "opus-4.8:ir-F23",
+      "code": "F23",
+      "title": "Realtime events from other run scopes corrupt the live dashboard",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [5],
+      "locations": [
+        "apps/web/src/lib/live-dashboard-state.ts:167",
+        "apps/web/src/lib/live-dashboard-state.ts:185"
+      ],
+      "summary": "The browser reducer applies global SSE order/notification aggregates without comparing their run/offer to the recovery baseline, and foreign inventory events enter the surge-rate window before scope checking. Delayed prior-run or catalog traffic can overwrite current-run outcomes.",
+      "relatedFindingIds": ["opus-4.8:F8"]
+    },
+    {
+      "id": "opus-4.8:ir-F24",
+      "code": "F24",
+      "title": "A stale live inventory overlay overrides authoritative recovery",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [5],
+      "locations": [
+        "apps/web/src/lib/live-dashboard-state.ts:138",
+        "apps/web/src/lib/live-dashboard-state.ts:326"
+      ],
+      "summary": "Same-run recovery deliberately retains liveInventory, and the selector always prefers that overlay over the new backend snapshot. After a missed SSE event, refresh can fetch correct lower stock but continue displaying stale stock indefinitely.",
+      "relatedFindingIds": ["opus-4.8:F8"]
+    },
+    {
+      "id": "opus-4.8:ir-F25",
+      "code": "F25",
+      "title": "Recovery omits the existing order-outcome aggregate",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [5],
+      "locations": [
+        "packages/db/src/order-outcomes.ts:80",
+        "packages/contracts/src/recovery.ts:54",
+        "apps/api/src/services/dashboard-recovery-reader.ts:35"
+      ],
+      "summary": "The Redis package exposes readOrderOutcomeAggregate, but the recovery contract and reader omit it. A refreshed viewer can show zero processing/confirmation/failure/notification counts forever if no later event repairs them.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "opus-4.8:ir-F26",
+      "code": "F26",
+      "title": "The public SSE endpoint has no connection limit",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [5],
+      "locations": [
+        "apps/api/src/routes/dashboard-routes.ts:24",
+        "apps/api/src/services/dashboard-sse-hub.ts:32"
+      ],
+      "summary": "The unauthenticated events route registers every hijacked socket, while the SSE hub keeps an unbounded connection set and fans every heartbeat/event to all clients. Per-connection buffering does not prevent file-descriptor, memory, or broadcast-work exhaustion.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "opus-4.8:ir-F27",
+      "code": "F27",
+      "title": "Run History returns every summary without pagination",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [5],
+      "locations": [
+        "packages/contracts/src/run-history.ts:98",
+        "apps/api/src/services/run-history-reader.ts:38"
+      ],
+      "summary": "The public contract is an unbounded array, the route accepts no cursor, and the database query has no limit. Anonymous requests grow without a resource bound and the page renders the entire history.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "opus-4.8:ir-F28",
+      "code": "F28",
+      "title": "Admin passphrase login allows unlimited online guesses",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [5],
+      "locations": [
+        "apps/web/src/app/api/admin/session/route.ts:19",
+        "apps/web/src/lib/admin-session.ts:94"
+      ],
+      "summary": "The public session route verifies every submitted passphrase with no client/global budget, delay, or lockout. A successful guess grants unsafe administrative controls, making the shared secret an unlimited cheap online oracle.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "opus-4.8:ir-F29",
+      "code": "F29",
+      "title": "Invalid advanced VU relationships pass validation and fail after run acceptance",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [6],
+      "locations": [
+        "packages/contracts/src/load.ts:38",
+        "packages/contracts/src/preset-validation.ts:120",
+        "apps/load-orchestrator/src/services/k6-script.ts:73"
+      ],
+      "summary": "The steady-arrival schema and cap validator check preAllocatedVUs and maxVUs independently but never require maxVUs >= preAllocatedVUs, and the generator copies the invalid pair to k6. API acceptance can consume a run slot and budget before execution fails.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "opus-4.8:ir-F30",
+      "code": "F30",
+      "title": "Traffic boundary contracts accept impossible lifecycle states",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [6],
+      "locations": [
+        "packages/contracts/src/load.ts:151",
+        "packages/contracts/src/load.ts:167",
+        "apps/api/src/services/load-completion-ingest.ts:62"
+      ],
+      "summary": "Completion and start-ack schemas reuse the full execution enum, so an active completion passes validation and is treated as terminal failure, while a failed start acknowledgement can be treated as successful delegation.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "opus-4.8:ir-F31",
+      "code": "F31",
+      "title": "The reference runtime can report healthy without required secrets",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [7],
+      "locations": [
+        "docker-compose.yml:11",
+        "apps/api/src/runtime/config.ts:179",
+        "apps/load-orchestrator/src/index.ts:18"
+      ],
+      "summary": "Compose makes .env optional, API/orchestrator allow a missing control token, and web secrets are read lazily; readiness does not expose these unavailable capabilities. Services can be healthy while completion callbacks are rejected, admin controls are unavailable, and public visitors collapse to the same anonymous identity.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "opus-4.8:ir-F32",
+      "code": "F32",
+      "title": "The isolated migration command can target an ambient development database",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [7],
+      "locations": [
+        "scripts/run-with-test-env.mjs:50",
+        "packages/db/src/cli/migrate.ts:17"
+      ],
+      "summary": "The test runner suffixes TEST_DATABASE_URL but preserves ambient shell variables, while the migration CLI prefers DATABASE_URL. With both set, pnpm test:db:migrate can silently migrate development or hosted data.",
+      "relatedFindingIds": ["opus-4.8:F15"]
+    },
+    {
+      "id": "opus-4.8:ir-F33",
+      "code": "F33",
+      "title": "Worker integration files can erase each other's shared Redis state",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [7],
+      "locations": [
+        "scripts/run-with-test-env.mjs:19",
+        "apps/worker/test/integration/process-order.test.ts:81",
+        "apps/worker/test/integration/order-process-worker.test.ts:20"
+      ],
+      "summary": "The worker package shares one Redis logical DB; DB-backed files serialize a database lock but call flushdb, while Redis-only queue tests use the same DB without that lock. Parallel files can delete each other's queue state, producing timing-dependent results.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "opus-4.8:ir-F34",
+      "code": "F34",
+      "title": "The by-id cleanup command can delete an active run with jobs in flight",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [7],
+      "locations": [
+        "packages/db/src/run-cleanup.ts:170",
+        "packages/db/src/cli/cleanup-run.ts:20",
+        "scripts/runtime-smoke-load.mjs:186"
+      ],
+      "summary": "maintenance:cleanup-run deletes any specified run regardless of status and does not coordinate with queues, and the smoke waits a fixed three seconds after traffic success — when the run may still be draining — before invoking it. Consumers can race deleted rows and unfinished state is discarded.",
+      "relatedFindingIds": ["opus-4.8:F14"]
+    },
+    {
+      "id": "opus-4.8:ir-F35",
+      "code": "F35",
+      "title": "The root unit, watch, and coverage lane cannot run the complete web unit suite",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [8],
+      "locations": [
+        "vitest.unit.config.ts:7",
+        "vitest.aliases.ts:8",
+        "apps/web/vitest.config.ts:11"
+      ],
+      "summary": "Root Vitest includes only *.test.ts, uses Node, and lacks the web @/ alias, unlike the package config. pnpm test:unit fails on an included web import, and all 13 .test.tsx React suites are silently omitted from unit/watch/coverage.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "opus-4.8:ir-F36",
+      "code": "F36",
+      "title": "Automated tests never exercise the deployed cross-service composition",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [8],
+      "locations": [
+        "apps/api/test/api/demo-runs.test.ts:102",
+        "apps/worker/test/integration/process-order.test.ts:220"
+      ],
+      "summary": "API lifecycle tests replace queues/launchers with recorders, worker tests wire consumers with ERP doubles, and no automated test imports the production composition roots. The full suite can pass if API-to-BullMQ-to-worker-to-HTTP-ERP-to-notification wiring is disabled or miswired.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "opus-4.8:ir-F37",
+      "code": "F37",
+      "title": "Catalog offers remain purchasable after their eligibility window closes",
+      "severity": "low",
+      "tier": "finding",
+      "slices": [1],
+      "locations": [
+        "packages/db/src/schema.ts:89",
+        "apps/api/src/services/reserve-order-service.ts:105"
+      ],
+      "summary": "Catalog offers have active/start/end fields, but requests without runId skip eligibility checking and go directly to Redis. Stale initialized inventory can authorize an inactive or expired offer.",
+      "relatedFindingIds": ["opus-4.8:F4"]
+    },
+    {
+      "id": "opus-4.8:ir-F38",
+      "code": "F38",
+      "title": "Frozen run snapshots and immutable summaries remain updateable",
+      "severity": "low",
+      "tier": "finding",
+      "slices": [2],
+      "locations": [
+        "packages/db/src/schema.ts:117",
+        "packages/db/src/schema.ts:350"
+      ],
+      "summary": "demo_runs.config_snapshot and demo_run_summaries are ordinary updateable data despite caching and audit assumptions. Operational or future writes can make workers and API readers disagree or rewrite history.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "opus-4.8:ir-F39",
+      "code": "F39",
+      "title": "API recovery reports traffic as starting for the entire active execution",
+      "severity": "low",
+      "tier": "finding",
+      "slices": [4],
+      "locations": [
+        "apps/api/src/services/run-start-service.ts:255",
+        "apps/api/src/services/load-completion-ingest.ts:65"
+      ],
+      "summary": "The API marks a run active while retaining trafficStatus \"starting\" and receives no callback until terminal completion. Refreshed dashboards misreport long active executions as still starting.",
+      "relatedFindingIds": ["opus-4.8:F7"]
+    },
+    {
+      "id": "opus-4.8:ir-F40",
+      "code": "F40",
+      "title": "The orchestrator breaks the run-start correlation chain for callbacks",
+      "severity": "low",
+      "tier": "finding",
+      "slices": [6],
+      "locations": [
+        "apps/load-orchestrator/src/routes/load-routes.ts:27",
+        "apps/load-orchestrator/src/services/traffic-reporter.ts:68"
+      ],
+      "summary": "The API forwards the request correlation ID, but the orchestrator route drops it when starting background work and reporters generate fresh IDs for callbacks. Start, execution, metric, and completion logs cannot be followed as one trace.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "opus-4.8:ir-F41",
+      "code": "F41",
+      "title": "The web BFF exposes two incompatible error payload vocabularies",
+      "severity": "low",
+      "tier": "finding",
+      "slices": [6],
+      "locations": [
+        "apps/web/src/lib/admin-api.ts:33",
+        "apps/web/src/lib/admin-api.ts:63",
+        "apps/web/src/components/admin-runtime-policy-form.tsx:54"
+      ],
+      "summary": "Upstream API errors use a top-level ErrorPayload while local proxy errors are nested { error: ... }, and clients only read the nested shape. Real API details and correlation IDs collapse to generic UI messages.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "opus-4.8:ir-F42",
+      "code": "F42",
+      "title": "The documented format gate fails on the current branch",
+      "severity": "low",
+      "tier": "finding",
+      "slices": [7],
+      "locations": [
+        "apps/api/test/unit/sold-out-finalization.test.ts:78",
+        "packages/db/test/integration/schema.test.ts:128"
+      ],
+      "summary": "pnpm format:check exits 1 on two files, leaving the standard handoff/CI command red on the current branch.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "opus-4.8:ir-F43",
+      "code": "F43",
+      "title": "Runtime documentation contains stale lifecycle and wipe instructions",
+      "severity": "low",
+      "tier": "finding",
+      "slices": [7],
+      "locations": [
+        "README.md:7",
+        "scripts/runtime-smoke-load.mjs:9",
+        "docs/local_development.md:65"
+      ],
+      "summary": "README and smoke/env comments describe delivered finalization/run-offer behavior as future work, and wipe recipes omit runtime:up even though setup starts only data services. Reviewers can misread delivered behavior or finish with a stopped runtime.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "opus-4.8:ir-F44",
+      "code": "F44",
+      "title": "Web tests pass while React reports unsynchronized state updates",
+      "severity": "low",
+      "tier": "finding",
+      "slices": [8],
+      "locations": [
+        "apps/web/test/unit/admin-run-controls.test.tsx:48",
+        "apps/web/src/components/run-controls.tsx:34"
+      ],
+      "summary": "Web tests assert initial renders while mount effects later update state, producing five act(...) warnings without failing the suite.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "opus-4.8:ir-N1",
+      "code": "N1",
+      "title": "Pending-persistence Redis transaction results are not inspected",
+      "severity": "info",
+      "tier": "note",
+      "slices": [1],
+      "locations": [
+        "packages/db/src/inventory.ts:195"
+      ],
+      "summary": "markReservationPendingPersistence() ignores per-command MULTI/EXEC result tuples, so a command-level error can leave the index/hash partially updated while the wrapper reports success.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "opus-4.8:ir-N2",
+      "code": "N2",
+      "title": "Pending-persistence reconciliation materializes but does not resolve the hold",
+      "severity": "info",
+      "tier": "note",
+      "slices": [2],
+      "locations": [
+        "apps/api/src/services/pending-persistence-reconciler.ts:44",
+        "apps/api/src/services/run-finalization-service.ts:117"
+      ],
+      "summary": "The reconciler copies the Redis sentinel to a durable pending_reconciliation row but leaves both unresolved, while finalization may proceed. Product policy should explicitly decide whether explained pending holds permit completion or require timeout/failure.",
+      "relatedFindingIds": ["opus-4.8:F11"]
+    },
+    {
+      "id": "opus-4.8:ir-N3",
+      "code": "N3",
+      "title": "Startup reconciliation is a one-shot best-effort repair",
+      "severity": "info",
+      "tier": "note",
+      "slices": [4],
+      "locations": [
+        "apps/api/src/services/startup-reconciliation-service.ts:69",
+        "apps/api/src/index.ts:406"
+      ],
+      "summary": "Per-run errors are swallowed and reconciliation runs only once before listening, so a transient repair failure can leave stale state for the process lifetime.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "opus-4.8:ir-N4",
+      "code": "N4",
+      "title": "Runtime validation is inconsistent outside typed service config loaders",
+      "severity": "info",
+      "tier": "note",
+      "slices": [7],
+      "locations": [
+        "apps/worker/src/runtime/config.ts:77",
+        "apps/web/src/lib/api.ts:32"
+      ],
+      "summary": "Worker Mock ERP and web upstream URL/numeric settings receive weaker or lazy validation than the typed service config loaders. Compose defaults are valid, so this is retained as a note; shared startup validation would make the documented fail-fast contract reliable.",
+      "relatedFindingIds": []
+    }
+  ]
+}

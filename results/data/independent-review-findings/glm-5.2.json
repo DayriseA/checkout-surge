@@ -1,0 +1,881 @@
+{
+  "model": "glm-5.2",
+  "reviewType": "independent-review",
+  "reviewer": "gpt-5.6-sol (high)",
+  "source": "independent_review/glm-5.2_independent_review.md",
+  "findings": [
+    {
+      "id": "glm-5.2:ir-F1",
+      "code": "F1",
+      "title": "k6 traffic can start before the run is buyable",
+      "severity": "high",
+      "tier": "finding",
+      "slices": [1, 4],
+      "locations": [
+        "apps/api/src/app/services/demo-run-start-service.ts:435",
+        "apps/load-orchestrator/src/app/services/traffic-execution-service.ts:293",
+        "packages/db/src/seed-data.ts:111"
+      ],
+      "summary": "The start handshake is ordered backwards: the API delegates to the load orchestrator (which spawns k6 with a zero-second delay) before it marks the run active or writes the Redis eligibility payload, so early valid buys receive not_initialized after an accepted start. Adjacent boundaries compound it: a failed eligibility write is only logged, a very short run's completion is refused while the run still says starting and never replayed, and the guarded active-transition result is ignored against a concurrent reset.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "glm-5.2:ir-F2",
+      "code": "F2",
+      "title": "Draining and terminal runs can remain buyable",
+      "severity": "high",
+      "tier": "finding",
+      "slices": [1, 4],
+      "locations": [
+        "apps/api/src/app/services/traffic-completion-ingestion-service.ts:155",
+        "apps/api/src/app/services/run-finalization-service.ts:405-417",
+        "packages/db/src/inventory/reservation-gate.ts:213"
+      ],
+      "summary": "Traffic-completion ingestion moves the run to draining without closing the Redis acceptingTraffic gate; eligibility is cleared only after finalization writes the immutable summary, so fresh reservations remain possible throughout the drain window and can race the settled reads. Terminal cleanup is also lossy: a failed Redis DEL is swallowed, later poller passes select only draining runs, so the terminal run's eligibility is never retried.",
+      "relatedFindingIds": ["glm-5.2:F1"]
+    },
+    {
+      "id": "glm-5.2:ir-F3",
+      "code": "F3",
+      "title": "Some post-gate failures leave secured holds invisible and return 500",
+      "severity": "high",
+      "tier": "finding",
+      "slices": [1],
+      "locations": [
+        "apps/api/src/app/services/reserve-order-service.ts:512-561",
+        "packages/db/src/inventory/reservation-gate.ts:257"
+      ],
+      "summary": "After the Lua gate secures a hold, a PostgreSQL ownership lookup runs outside the failure boundary and the pending-sentinel write is awaited outside its own recovery block, so failures there escape as 500 while Redis has already decremented stock and no durable pending ledger entry exists. Finalization can then consider the run settled and omit an actually secured unit; recovery depends entirely on the same client retrying before the idempotency record expires.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "glm-5.2:ir-F4",
+      "code": "F4",
+      "title": "Run-start failures can strand a blocking run or create a terminal run with no history",
+      "severity": "high",
+      "tier": "finding",
+      "slices": [2, 4],
+      "locations": [
+        "packages/db/src/run-lifecycle/run-creation.ts:204-254",
+        "apps/api/src/app/services/demo-run-start-service.ts:404-444"
+      ],
+      "summary": "A Redis-seed failure after the durable commit throws without the created IDs and the caller's generic catch returns 503 without compensating, leaving a starting row that blocks every subsequent start until admin reset or restart. A structured orchestrator rejection only calls failRun() — no offer deactivation, Redis teardown, or immutable failure summary — violating the contract that every terminal run has a summary-backed history record.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "glm-5.2:ir-F5",
+      "code": "F5",
+      "title": "A single lost completion POST strands a run as active forever",
+      "severity": "high",
+      "tier": "finding",
+      "slices": [4],
+      "locations": [
+        "apps/load-orchestrator/src/app/k6/api-traffic-completion-sink.ts:59-72",
+        "apps/api/src/app/services/traffic-completion-ingestion-service.ts:155",
+        "packages/db/src/run-lifecycle/run-finalization.ts:157-168"
+      ],
+      "summary": "The completion handoff is a one-shot best-effort HTTP POST whose failures are only logged; the API moves active -> draining only when it arrives and the finalization poller selects only draining rows, so one transient failure or orchestrator death leaves the run active indefinitely and blocks all future starts. The receiver also acks accepted:true even when the finalization-input insert failed, making a successful traffic run later time out as failed.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "glm-5.2:ir-F6",
+      "code": "F6",
+      "title": "Drain timeout can mark unsettled business work completed",
+      "severity": "high",
+      "tier": "finding",
+      "slices": [4],
+      "locations": [
+        "apps/api/src/app/services/run-finalization-service.ts:243-279",
+        "apps/api/src/app/services/run-finalization-service.ts:354"
+      ],
+      "summary": "Once the drain timeout fires the finalizer bypasses its own settlement gate and derives terminal status solely from traffic delivery, so complete HTTP delivery produces lifecycle 'completed' while orders are still processing or pending persistence. The summary is immutable and first-writer-wins, so later worker transitions can never correct its counts, and a new run is allowed while old business work still executes.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "glm-5.2:ir-F7",
+      "code": "F7",
+      "title": "An open circuit permanently fails work that should remain buffered",
+      "severity": "high",
+      "tier": "finding",
+      "slices": [3],
+      "locations": [
+        "apps/worker/src/app/erp/resilience.ts:48-55",
+        "apps/worker/src/app/services/order-process-service.ts:265-282"
+      ],
+      "summary": "circuit_open is classified as a terminal rather than retryable result, so every order picked up while the breaker is open (or waiting behind the single half-open probe) is transitioned to durable failed without a single ERP call — contradicting the documented invariant that orders remain buffered in BullMQ until recovery. A short ERP outage can permanently fail the entire queued backlog, and the existing integration suite encodes the defect.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "glm-5.2:ir-F8",
+      "code": "F8",
+      "title": "Redelivery after ERP success can confirm the same order twice",
+      "severity": "high",
+      "tier": "finding",
+      "slices": [3],
+      "locations": [
+        "apps/worker/src/app/services/order-process-service.ts:223-232",
+        "packages/contracts/src/erp.ts:55",
+        "apps/mock-erp/src/app/services/erp-behavior-service.ts:147-216"
+      ],
+      "summary": "The worker calls the ERP before durably recording the attempt; a crash between the ERP applying the confirmation and the attempt-row commit makes BullMQ redeliver, and because no attempt row exists the same attempt number is reused and the ERP is called again. Neither side provides an idempotency barrier — the request carries no confirmation idempotency contract and the mock ERP never replays a prior outcome — so a real confirmation boundary could apply the same business side effect twice.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "glm-5.2:ir-F9",
+      "code": "F9",
+      "title": "Production service processes accept committed control secrets",
+      "severity": "high",
+      "tier": "finding",
+      "slices": [7],
+      "locations": [
+        "apps/api/src/app/config.ts:128-130",
+        "apps/mock-erp/src/app/config.ts:128",
+        "apps/load-orchestrator/src/app/config.ts:146",
+        "apps/web/lib/config.ts:172-199"
+      ],
+      "summary": "The API, Mock ERP, and load orchestrator all fall back to the committed change-me shared control token (the API also to the committed cookie secret) and none of their composition roots rejects an unset or sentinel credential before listening — only the web process performs production secret validation. With all direct service ports published and the Dockerfiles anticipated for hosted reuse, a missed environment variable leaves reset, chaos, run-start, and ingestion surfaces protected by a public, known token.",
+      "relatedFindingIds": ["glm-5.2:F19"]
+    },
+    {
+      "id": "glm-5.2:ir-F10",
+      "code": "F10",
+      "title": "A transient enqueue failure permanently strands a durable queued order",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [1, 3],
+      "locations": [
+        "apps/api/src/app/services/reserve-order-service.ts:268-270",
+        "apps/api/src/app/services/reserve-order-service.ts:397"
+      ],
+      "summary": "After the reservation/order transaction commits, queue.add failures are logged and swallowed while the service still returns reservation_secured, and there is no transactional outbox or scanner comparing durable queued orders with BullMQ. A client retry does not repair the handoff because the idempotent replay returns immediately without attempting enqueue, so the order stays queued forever and the run drains to timeout.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "glm-5.2:ir-F11",
+      "code": "F11",
+      "title": "Idempotency replay bypasses run eligibility",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [1],
+      "locations": [
+        "packages/db/src/inventory/reservation-gate.ts:194-219",
+        "apps/api/src/app/services/reserve-order-service.ts:397-401",
+        "docs/architecture.md:49-50"
+      ],
+      "summary": "The Lua script resolves stored idempotency replays before checking the owning run and accepting-traffic fields, and the replay branch never compares the stored runId to the request's, so a wrong-run request with the same offer/key/quantity receives the original run's reservation token. Consolidation confirmed this is a documentation-versus-implementation inversion (both authoritative docs specify eligibility before idempotency); the fix is a run-matched replay check so same-run drain-window retries keep working while wrong-run replays fail closed.",
+      "relatedFindingIds": ["glm-5.2:F1"]
+    },
+    {
+      "id": "glm-5.2:ir-F12",
+      "code": "F12",
+      "title": "Every sold-out request performs a synchronous realtime publication",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [1, 5],
+      "locations": [
+        "apps/api/src/app/services/reserve-order-service.ts:477",
+        "apps/api/src/app/services/inventory-drain.ts:101-109"
+      ],
+      "summary": "Every losing request awaits publishSoldOutPressure — which directly awaits the realtime transport rather than the background scheduler — generating one Pub/Sub/SSE event per loser, contradicting the documented design that the sold-out path emits no per-loser events and flushes aggregate pressure periodically. In the headline 10,000-request spike the majority of requests are expected losers, adding awaited Redis publish latency exactly where the design calls for the cheapest path.",
+      "relatedFindingIds": ["glm-5.2:F2"]
+    },
+    {
+      "id": "glm-5.2:ir-F13",
+      "code": "F13",
+      "title": "Configurable reservation holds can outlive the fixed idempotency window",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [1, 7],
+      "locations": [
+        "packages/db/src/inventory/reservation-gate.ts:51",
+        "apps/api/src/app/config.ts:117"
+      ],
+      "summary": "Accepted idempotency records always expire after 3,600 seconds while RESERVATION_HOLD_MINUTES accepts any positive integer with no validated relationship to that TTL. With a hold of 61+ minutes, a retry after key expiry is treated as a fresh request and consumes stock again, so one logical duplicate creates a second reservation and order.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "glm-5.2:ir-F14",
+      "code": "F14",
+      "title": "Startup reconciliation freezes in-flight outcomes and destroys Redis-only sold-out accounting",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [2, 4],
+      "locations": [
+        "packages/db/src/run-lifecycle/run-lifecycle.ts:193-256",
+        "apps/api/src/app/services/run-lifecycle-service.ts:101-111"
+      ],
+      "summary": "Startup reconciliation immediately fails every starting/active run and writes its immutable summary from a point-in-time PostgreSQL read — hard-coded zero sold-out rejections, no terminal inventory snapshot — then deletes all Redis inventory keys for the offer, permanently destroying the only remaining sold-out accounting. Workers may still complete queued/processing orders after the restart, but the first-writer-wins summary permanently records the pre-completion snapshot as the final business outcome.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "glm-5.2:ir-F15",
+      "code": "F15",
+      "title": "Generated run-sale ownership can be mutated into an invalid state",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [2],
+      "locations": [
+        "packages/db/src/schema.ts:322",
+        "packages/db/src/schema.ts:354",
+        "packages/db/migrations/0000_burly_random.sql:278-304"
+      ],
+      "summary": "demo_runs.sale_offer_id and demo_run_sale_contexts.sale_offer_id are independent foreign keys with nothing enforcing agreement, and the purpose trigger validates a generated offer only at context insertion — there is no reverse guard preventing a referenced offer from later changing purpose to catalog. The maintenance test demonstrates the invalid transition at the storage boundary, after which cleanup trusts the mutated purpose and preserves the invalid run forever.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "glm-5.2:ir-F16",
+      "code": "F16",
+      "title": "PostgreSQL accepts impossible order and ERP histories",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [2, 3],
+      "locations": [
+        "packages/db/src/schema.ts:207-214",
+        "packages/db/src/schema.ts:241-251",
+        "packages/db/src/run-lifecycle/run-finalization.ts:326"
+      ],
+      "summary": "Orders duplicate offer, run, correlation, and quantity identity while foreign-keying only the reservation ID — nothing requires those fields to match the referenced reservation, requires the reservation to be secured, or ties status to timestamps — and ERP attempts likewise carry independent run/correlation identity, zero/negative attempt numbers, and nullable completion fields. Finalization counts child rows by their standalone run_id values, so an inconsistent row is counted in the wrong run or makes an impossible confirmation look successful.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "glm-5.2:ir-F17",
+      "code": "F17",
+      "title": "Documented public-custom, runtime-policy, and admin preset-save surfaces are unreachable or inert end-to-end",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [2, 5, 6, 7],
+      "locations": [
+        "packages/db/src/seed-data.ts:255",
+        "packages/db/src/run-lifecycle/public-runtime-policy.ts:31",
+        "apps/web/components/demo-picker.tsx:13-24",
+        "apps/web/components/admin/preset-actions.tsx:19-29"
+      ],
+      "summary": "Three layers of the documented public-custom/policy contract are each missing their half: the environment-backed policy seeding is hard-coded and the setup container receives none of the documented variables; no policy-update persistence function, API route, DTO, or dashboard control exists; and the public picker renders slug-only starts with no public-custom form while the admin preset-save proxy has no calling component. The public bounded-custom demo and the core admin save workflow are marked complete in planning but exist only as handcrafted direct API requests.",
+      "relatedFindingIds": ["glm-5.2:F20"]
+    },
+    {
+      "id": "glm-5.2:ir-F18",
+      "code": "F18",
+      "title": "Destructive test-reset primitives do not verify their target",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [2, 7, 8],
+      "locations": [
+        "packages/db/src/reset.ts:108-117",
+        "scripts/run-with-test-env.mjs:72-87",
+        "packages/db/src/index.ts:119"
+      ],
+      "summary": "resetTestDatabase truncates every table on whatever DrizzleDb it receives and flushRedisDb runs FLUSHDB on whatever client it receives, with no runtime guard; the command wrapper only rejects the literal ports 5432 and 6379 rather than verifying an approved test host, database name, or Redis index. A misconfigured test URL can truncate databases or flush a logical Redis DB on the wrong server, and direct callers bypass even the port check.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "glm-5.2:ir-F19",
+      "code": "F19",
+      "title": "Exhausted queue jobs leave durable orders permanently processing — and the tests bless it",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [3, 4, 8],
+      "locations": [
+        "apps/worker/src/app/services/order-process-service.ts:197-204",
+        "apps/worker/src/index.ts:151-163",
+        "apps/worker/tests/order-async-pipeline.integration.test.ts:333-358"
+      ],
+      "summary": "After BullMQ's fixed attempt budget is exhausted there is no durable compensation path: the order stays in processing, the worker's failed handler only logs, and run finalization waits until its drain timeout — after which F6 can label the run completed with a stranded processing order. The strongest real-BullMQ integration test explicitly asserts this broken business result, keeping the suite green.",
+      "relatedFindingIds": ["glm-5.2:F9"]
+    },
+    {
+      "id": "glm-5.2:ir-F20",
+      "code": "F20",
+      "title": "Run-scoped backpressure is applied after jobs are already in flight and fails open",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [3],
+      "locations": [
+        "apps/worker/src/index.ts:137-141",
+        "apps/worker/src/app/services/order-process-service.ts:113-132",
+        "apps/worker/src/app/services/run-behavior-resolver.ts:66-77"
+      ],
+      "summary": "The BullMQ worker starts at global concurrency and only mutates its settings after each processor loads the accepted run snapshot, so a run that accepted a cap of one can have five jobs dispatched before the first resolver call finishes. Resolution also fails open: snapshot-read exceptions are swallowed and a missing snapshot selects global defaults, so a transient PostgreSQL error can make a forced-outage run confirm successfully or overload the ERP past the accepted cap.",
+      "relatedFindingIds": ["glm-5.2:F7"]
+    },
+    {
+      "id": "glm-5.2:ir-F21",
+      "code": "F21",
+      "title": "A throwing half-open probe wedges the circuit indefinitely",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [3],
+      "locations": [
+        "apps/worker/src/app/erp/circuit-breaker.ts:159-176",
+        "apps/worker/src/app/erp/resilience.ts:104-118"
+      ],
+      "summary": "The half-open probe flag is released only by recordSuccess/recordFailure, but the confirmer wrapper awaits the inner client without a catch/finally — if the admitted probe throws, every later allow() sees probeInFlight and returns false forever. Reproduced with the shipped modules; in production only a worker restart recovers, and while wedged F7 permanently fails every picked-up order.",
+      "relatedFindingIds": ["glm-5.2:F8"]
+    },
+    {
+      "id": "glm-5.2:ir-F22",
+      "code": "F22",
+      "title": "Queue health reports success when no worker is consuming",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [3, 7],
+      "locations": [
+        "apps/api/src/app/services/queue-health-service.ts:96-104",
+        "apps/worker/src/app/services/readiness-service.ts:57-63"
+      ],
+      "summary": "GET /queue/status returns 200 whenever the producer-side Queue object is wired, reporting Redis job counts with no consumer heartbeat or running signal; the only consumer-running indicator lives on the worker's separate health port and is never combined with the operator-facing projection. An offline worker looks like a healthy queue whose waiting depth happens to be growing.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "glm-5.2:ir-F23",
+      "code": "F23",
+      "title": "The mock ERP TPS bucket leaks state across runs",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [3],
+      "locations": [
+        "apps/mock-erp/src/app/services/erp-behavior-service.ts:122-143",
+        "apps/mock-erp/src/app/services/erp-behavior-service.ts:239-242"
+      ],
+      "summary": "The ERP behavior service owns one process-wide mutable token bucket that is never selected or reset by runId, so one run's accepted maxTps behavior depends on traffic from earlier runs or diagnostic calls. Reproduced with a frozen clock and two distinct run IDs: the second run's first request was immediately throttled because it inherited the exhausted bucket.",
+      "relatedFindingIds": ["glm-5.2:F7"]
+    },
+    {
+      "id": "glm-5.2:ir-F24",
+      "code": "F24",
+      "title": "Reset and recovery do not stop the active k6 process",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [4],
+      "locations": [
+        "apps/api/src/app/services/reset-service.ts:282-322",
+        "apps/load-orchestrator/src/app/routes/run-control.ts:40-75",
+        "apps/load-orchestrator/src/app/services/traffic-execution-service.ts:310"
+      ],
+      "summary": "Admin reset force-fails the run, clears the queue, and deletes Redis state but never contacts the load orchestrator, which exposes only start and status routes while its spawned k6 process continues independently. Reset returns success and permits a new run immediately even though the old k6 process may keep sending thousands of requests that consume capacity and can corrupt the next benchmark.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "glm-5.2:ir-F25",
+      "code": "F25",
+      "title": "Every HTTP 409 is classified as expected traffic",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [4],
+      "locations": [
+        "apps/load-orchestrator/src/app/k6/script-generator.ts:161-165",
+        "apps/api/src/app/services/traffic-completion-ingestion-service.ts:126"
+      ],
+      "summary": "The generated k6 script marks the entire 409 status class as expected without inspecting the response code, but the API uses 409 for not_initialized and idempotency_conflict as well as sold-out. A run where every request hits missing eligibility or a wrong run/sale pair can show zero unexpected responses and complete delivery, masking F1 and other correctness failures as a clean benchmark.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "glm-5.2:ir-F26",
+      "code": "F26",
+      "title": "Reconnect recovery leaves most live panels stale",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [5],
+      "locations": [
+        "apps/web/components/watch/live-watch.tsx:55-69",
+        "apps/web/lib/dashboard-state.ts:307-315",
+        "apps/web/components/realtime/use-dashboard-events.ts:85-94"
+      ],
+      "summary": "The browser's reconnect recovery refreshes only state.recovery while inventory, queue, ERP, and consistency-lag panels are one-time server-rendered props, so events lost during an SSE gap leave those panels permanently stale; the first EventSource open also deliberately skips recovery. The existing recovery test pins the defect by expecting old stock to stay displayed after a discarded inventory event.",
+      "relatedFindingIds": ["glm-5.2:F18"]
+    },
+    {
+      "id": "glm-5.2:ir-F27",
+      "code": "F27",
+      "title": "The global realtime feed is applied without run or sale-offer scoping",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [5],
+      "locations": [
+        "apps/web/components/realtime/use-dashboard-events.ts:83-109",
+        "apps/web/components/watch/live-watch.tsx:96-103",
+        "apps/web/lib/dashboard-state.ts:328-425"
+      ],
+      "summary": "All API and worker events share one channel and the reducer applies inventory, order, ERP, notification, and lag events without comparing their identity to the current run or watched sale offer; even a terminal event for an unrelated run triggers a recovery. Catalog traffic, a late previous-run event, or another producer's event can drain the displayed stock or inflate current-run counters.",
+      "relatedFindingIds": ["glm-5.2:F16"]
+    },
+    {
+      "id": "glm-5.2:ir-F28",
+      "code": "F28",
+      "title": "The dashboard ignores the authoritative traffic metrics",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [5],
+      "locations": [
+        "apps/web/lib/dashboard-state.ts:264-286",
+        "apps/web/lib/dashboard-state.ts:427-433",
+        "apps/web/components/watch/request-surge-panel.tsx:12-21"
+      ],
+      "summary": "The web state discards recovery's trafficMetrics and the reducer explicitly ignores traffic.* events, while the surge panel counts only reservation events received since page load. A viewer who opens /watch after the spike or misses Pub/Sub frames sees zero traffic even when recovery contains a completed 10,000-request burst, hiding under-delivery, latency, and unexpected failures.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "glm-5.2:ir-F29",
+      "code": "F29",
+      "title": "Documented deployment safety caps are compile-time constants",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [5, 7],
+      "locations": [
+        "apps/api/src/app/config.ts:107-143",
+        "apps/api/src/app/services/demo-run-start-service.ts:319-345",
+        "apps/api/src/app/services/preset-management-service.ts:61-92"
+      ],
+      "summary": "The docs present seven DEMO_MAX_* environment variables as API safety caps, but parseConfig reads none of them — run start and admin preset save validate against the compile-time default caps (100,000 buyers/requests, 10,000 RPS/VUs, 300 seconds). An operator lowering the environment values gets silent success while the API still accepts snapshots up to the hardcoded defaults, defeating the server-side backstop against an admin typo or compromised session.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "glm-5.2:ir-F30",
+      "code": "F30",
+      "title": "Public callers can apply custom overrides to curated presets outside public-custom policy",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [5],
+      "locations": [
+        "apps/api/src/app/routes/demo-run-start.ts:26-47",
+        "apps/api/src/app/services/demo-run-start-service.ts:319-367"
+      ],
+      "summary": "The start service merges input.runScopedConfig into every preset before validation, but the stricter persisted public-runtime-policy limits apply only when the slug is exactly public-custom — non-custom public presets are constrained only by the much larger deployment hard caps. Any public-boundary caller with a valid signed visitor identity can turn a safe curated start into a 100,000-buyer or high-chaos run.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "glm-5.2:ir-F31",
+      "code": "F31",
+      "title": "Run History has no pagination, arbitrary detail, or usable admin deletion UI",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [5],
+      "locations": [
+        "apps/web/lib/api-client.ts:352-369",
+        "apps/web/app/run-history/page.tsx:61-105",
+        "apps/api/src/app/routes/run-history.ts:35-79"
+      ],
+      "summary": "The public reader always requests the fixed newest-25 endpoint with no cursor, no individual detail route exists, and although admin-protected delete proxies exist, neither /run-history nor /admin renders controls that call them. Older retained summaries become inaccessible after 25 runs and the documented one/selected/all deletion workflow cannot be used from the admin surface.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "glm-5.2:ir-F32",
+      "code": "F32",
+      "title": "The admin login endpoint has no online-guessing protection",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [5],
+      "locations": [
+        "apps/web/app/api/admin/login/route.ts:24-53",
+        "infra/caddy/Caddyfile:12-25"
+      ],
+      "summary": "POST /api/admin/login compares every submitted passphrase and immediately returns 401 on mismatch, with no attempt budget, delay, lockout, or caller identity, and the reference Caddy configuration applies no rate limiting. The passphrase is the sole human credential guarding reset, destructive cleanup, ERP outages, preset mutation, and history deletion, so an internet-facing deployment permits unlimited online guessing.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "glm-5.2:ir-F33",
+      "code": "F33",
+      "title": "The web type-check can consume stale or missing contract artifacts",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [6, 7],
+      "locations": [
+        "apps/web/tsconfig.json:4-13",
+        "packages/contracts/package.json:6-15",
+        "turbo.json:11-14"
+      ],
+      "summary": "The web tsconfig's local paths object replaces the root mappings, so @checkout-surge/contracts resolves through the package manifest to the ignored dist build artifact; turbo neither makes type-check depend on dependency builds nor includes dependency sources as inputs. On a clean checkout dist is absent, in the audited workspace it was stale and the web type-check reported dozens of current exports missing, and a cached check can stay green after a contract source change.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "glm-5.2:ir-F34",
+      "code": "F34",
+      "title": "Reachable HTTP errors bypass the canonical error contract",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [5, 6],
+      "locations": [
+        "apps/api/src/app/routes/dashboard.ts:63-77",
+        "packages/contracts/src/errors.ts:26-72",
+        "apps/web/lib/admin-proxy.ts:15-47"
+      ],
+      "summary": "The SSE route emits realtime_not_configured and realtime_at_capacity codes that appear nowhere in ERROR_CODES (the actual 503 body fails ErrorPayloadSchema), and the same-origin admin boundary has a second incompatible error family without trace/time fields plus a bare {ok:false, reason} shape for proxy failures. Clients receive incompatible error payloads depending on which hop rejected the same logical action, and web-local failures carry no correlation ID.",
+      "relatedFindingIds": ["glm-5.2:F21"]
+    },
+    {
+      "id": "glm-5.2:ir-F35",
+      "code": "F35",
+      "title": "Run IDs are logged as correlation IDs during finalization and reset",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [6],
+      "locations": [
+        "packages/logger/src/logger.ts:65-71",
+        "apps/api/src/app/services/run-finalization-service.ts:200-208",
+        "apps/api/src/app/services/reset-service.ts:268-291"
+      ],
+      "summary": "Finalization and reset repeatedly pass run.runId to withCorrelationId, which binds it under the canonical correlationId field — during admin reset this discards the actual cross-service trace the service already holds, and during background finalization it fabricates a correlation. Searching by the operator's correlation misses the destructive logs while the fabricated value groups unrelated background work as one request.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "glm-5.2:ir-F36",
+      "code": "F36",
+      "title": "The realtime schema accepts contradictory and untraceable business events",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [5, 6],
+      "locations": [
+        "packages/contracts/src/dashboard-events.ts:125-148",
+        "packages/contracts/src/dashboard-events.ts:94-97",
+        "apps/api/src/app/dashboard-realtime/fanout.ts:104-123"
+      ],
+      "summary": "Every order event reuses one payload schema whose toStatus is any order status and all five run.* events share one broad payload, so an order.queued event with toStatus confirmed and a run.completed event with status active both validate (confirmed by direct safeParse probes); correlationId is optional for every event and repeated run IDs are never checked for agreement. Both the Redis fanout and the browser trust this schema as their validation gate, so a producer regression can be schema-valid and corrupt live counters.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "glm-5.2:ir-F37",
+      "code": "F37",
+      "title": "`runtime:up` can report healthy before the database schema exists",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [7],
+      "locations": [
+        "package.json:31",
+        "docker-compose.yml:95-100",
+        "apps/api/src/app/services/readiness-service.ts:18-33"
+      ],
+      "summary": "The documented quick-start order is runtime:up before runtime:setup, but API readiness only executes select 1, which succeeds on an unmigrated database — so Compose --wait marks the API healthy and brings up the full runtime on a fresh volume even though every table-backed read fails. The dashboard becomes reachable in a broken, not-ready-for-demo state.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "glm-5.2:ir-F38",
+      "code": "F38",
+      "title": "Compose discards most documented service configuration overrides",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [7],
+      "locations": [
+        "docker-compose.yml:79-87",
+        "docker-compose.yml:161-164",
+        "apps/api/src/app/config.ts:129-130"
+      ],
+      "summary": "Compose passes only a small fixed environment subset into each container, so documented and parsed settings — pool sizes, SSE limits, worker concurrency, ERP behavior caps, orchestrator timeouts — silently use code defaults in the reference runtime. Concretely, PUBLIC_CLIENT_COOKIE_SECRET reaches web but not the API that verifies the same signatures, so replacing the sentinel as instructed breaks public run starts.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "glm-5.2:ir-F39",
+      "code": "F39",
+      "title": "Host-native service and database commands do not load `.env`",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [7],
+      "locations": [
+        "docs/local_development.md:20-24",
+        "package.json:24-28",
+        "packages/db/package.json:20-26"
+      ],
+      "summary": "The host-native guide promises dev, migration, and seed commands load the root .env through the loader script, but the root dev:* commands invoke filtered package scripts that run tsx/node directly. A direct probe confirmed pnpm does not load the root file for filtered scripts, so the documented clean workflow fails unless the shell already exports the same variables.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "glm-5.2:ir-F40",
+      "code": "F40",
+      "title": "Worker readiness stays green when PostgreSQL or Redis is unreachable",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [7],
+      "locations": [
+        "apps/worker/src/app/services/readiness-service.ts:25-46",
+        "apps/worker/src/app/services/readiness-service.ts:57-63",
+        "docker-compose.yml:125-130"
+      ],
+      "summary": "Worker readiness marks its database/redis checks ok solely when a URL string and client object exist — it never executes a query or ping — and the queue-consumer check only calls BullMQ's process-local isRunning(). If PostgreSQL or Redis becomes unavailable after startup, /health/ready keeps returning 200 while no orders can be consumed or persisted, and Compose and both health scripts trust that endpoint.",
+      "relatedFindingIds": ["glm-5.2:F22"]
+    },
+    {
+      "id": "glm-5.2:ir-F41",
+      "code": "F41",
+      "title": "`.env.test` cannot override the committed test defaults",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [7],
+      "locations": [
+        "scripts/run-with-test-env.mjs:58-70",
+        "docs/automated_testing_infrastructure.md:115-119"
+      ],
+      "summary": "The loader applies the committed example first and the local override second, both with applyIfUndefined, so .env.test values are always ignored for every key the example already defines — breaking the documented TEST_POSTGRES_HOST_PORT workflow. A deliberately isolated configuration is silently redirected at the default port/project, where another checkout's test service could receive the destructive test setup.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "glm-5.2:ir-F42",
+      "code": "F42",
+      "title": "`type-check:test` succeeds without checking any test code",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [7, 8],
+      "locations": [
+        "package.json:14",
+        "turbo.json:16-19"
+      ],
+      "summary": "The root command runs turbo type-check:test but no workspace package defines that script and every tsconfig includes only src, so the command exits 0 with 'No tasks were executed' — confirmed independently by two slices. The command is documented as a real repository check, so CI and reviewers get a false green while test-only TypeScript errors remain undiscovered.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "glm-5.2:ir-F43",
+      "code": "F43",
+      "title": "The root full-suite command omits the only real-k6 integration lane",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [7, 8],
+      "locations": [
+        "package.json:19",
+        "vitest.config.ts:28-44",
+        "apps/load-orchestrator/tests/k6-roundtrip.integration.test.ts:34"
+      ],
+      "summary": "pnpm test never invokes test:load-orchestrator and the root unit config excludes every integration file, so the repository's only real generated-script/k6/output roundtrip guarantees are not exercised by the standard gate; the standalone command also searches the host PATH while the reference design installs k6 only in the orchestrator image, and it failed during the audit for that reason. A script-generation or expected-409 metric regression can survive all standard automated checks.",
+      "relatedFindingIds": ["glm-5.2:F30"]
+    },
+    {
+      "id": "glm-5.2:ir-F44",
+      "code": "F44",
+      "title": "Integration locks cannot recover after an interrupted test process",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [8],
+      "locations": [
+        "apps/api/tests/helpers.ts:63-70",
+        "packages/db/src/reset.ts:69-88",
+        "vitest.integration.config.ts:22-26"
+      ],
+      "summary": "The per-database file lock records the owner PID but the EEXIST path never checks whether the owner still exists — it polls for up to 120 seconds — and the only normal cleanup is per-file afterAll, so a killed Vitest worker leaves a permanent lock. This happened during the audit: a stale lock with a dead PID made pnpm test:api wait 120 seconds and report many files as zero-test, unusable until someone deletes an undocumented file in /tmp.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "glm-5.2:ir-F45",
+      "code": "F45",
+      "title": "Known races make the fast unit lane nondeterministic and skip the web suite",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [8],
+      "locations": [
+        "apps/load-orchestrator/src/app/services/traffic-execution-service.ts:228-262",
+        "packages/contracts/tests/admin-access.test.ts:94-97",
+        "package.json:20"
+      ],
+      "summary": "The orchestrator marks an execution terminal before awaiting its completion report and its unit test asserts the report immediately (reproduced failing in the audit), and a signature-tampering test's mutation is a no-op roughly one run in sixteen — both flakes acknowledged in the repository's own notes. Because test:unit joins the root and web lanes with &&, either backend flake prevents the healthy 202-test frontend suite from running at all.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "glm-5.2:ir-F46",
+      "code": "F46",
+      "title": "Idempotency keys are effectively unbounded",
+      "severity": "low",
+      "tier": "finding",
+      "slices": [1, 6],
+      "locations": [
+        "packages/contracts/src/common.ts:36",
+        "packages/db/src/inventory/reservation-gate.ts:287"
+      ],
+      "summary": "The shared IdempotencyKey schema requires only a non-empty string and /buy embeds it in both the Redis key name and the stored idempotency value, with Fastify's body limit as the only practical ceiling. Large accepted keys consume their size twice in Redis for an hour and add parsing cost on the critical path.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "glm-5.2:ir-F47",
+      "code": "F47",
+      "title": "`preview-1k` does not implement the documented buyer spike",
+      "severity": "low",
+      "tier": "finding",
+      "slices": [2, 7],
+      "locations": [
+        "docs/runtime_topology.md:182",
+        "packages/db/src/seed-data.ts:81-90"
+      ],
+      "summary": "The runtime contract lists preview-1k among the buyer-spike presets, but the seed defines it as steady-arrival-rate at 1,000 requests per second — exercising scheduler-driven arrival traffic rather than the concurrent buyer-spike behavior advertised by the public preset progression.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "glm-5.2:ir-F48",
+      "code": "F48",
+      "title": "Short/final metric windows use the full polling interval",
+      "severity": "low",
+      "tier": "finding",
+      "slices": [4],
+      "locations": [
+        "apps/load-orchestrator/src/app/services/traffic-execution-service.ts:205-226",
+        "apps/load-orchestrator/src/app/k6/metrics-aggregator.ts:71-77"
+      ],
+      "summary": "Every streamed metric flush is told its samples cover exactly the fixed polling interval, including the final flush after k6 exits, and the aggregator divides observed requests by that duration. A one-second spike that exits after 200 ms has its final window reported as a full second, under-reporting the live request rate by 5x; the immutable total request count remains correct.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "glm-5.2:ir-F49",
+      "code": "F49",
+      "title": "An invalid visitor cookie permanently blocks public starts in that browser",
+      "severity": "low",
+      "tier": "finding",
+      "slices": [5],
+      "locations": [
+        "apps/web/app/actions.ts:22-38",
+        "apps/web/lib/visitor-id.ts:45-54"
+      ],
+      "summary": "resolveVisitorId returns any existing cookie without verification even though a verify helper exists; the API correctly rejects a malformed or stale signature and subsequent attempts keep forwarding the same value. A truncated cookie or secret rotation leaves that visitor receiving 403 on every public start until they manually clear cookies — a fail-closed posture with a broken recovery path, not a budget bypass.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "glm-5.2:ir-F50",
+      "code": "F50",
+      "title": "Curated start buttons remain enabled while another run is in progress",
+      "severity": "low",
+      "tier": "finding",
+      "slices": [5],
+      "locations": [
+        "apps/web/components/demo-picker.tsx:13-46",
+        "apps/web/components/run-start-panel.tsx:48-70"
+      ],
+      "summary": "The standalone Load-Run Controls panel disables its trigger during starting/active/draining, but the primary curated cards never read recovery and always render enabled triggers, relying on API rejection. Users can click a prominent start and receive a rejection while a smaller duplicate control on the same page is correctly disabled.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "glm-5.2:ir-F51",
+      "code": "F51",
+      "title": "Public and terminal DTO schemas do not enforce their advertised boundary invariants",
+      "severity": "low",
+      "tier": "finding",
+      "slices": [5, 6],
+      "locations": [
+        "packages/contracts/src/demo-control.ts:585-598",
+        "packages/contracts/src/run-summary.ts:404-445"
+      ],
+      "summary": "The public preset response schema accepts admin/editable rows and the run-summary schema uses the entire lifecycle enum — direct probes confirmed Run History accepts an active summary, a failed summary with no reason, and a completed summary with a failure reason. The implementation filters correctly today, but the shared consumer boundary would not catch a projection regression.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "glm-5.2:ir-F52",
+      "code": "F52",
+      "title": "Run-start privilege remains a required, ignored request-body field",
+      "severity": "low",
+      "tier": "finding",
+      "slices": [5, 6],
+      "locations": [
+        "packages/contracts/src/demo-control.ts:132-152",
+        "apps/api/src/app/routes/demo-run-start.ts:26-47"
+      ],
+      "summary": "The contract says privilege is never read from the body, yet StartDemoRunRequestSchema requires operatorMode; the API parses and then ignores it in favor of the token/header-derived option, so clients must send a privilege-looking field that is semantically meaningless. Not an escalation vulnerability, but a misleading public contract that invites future code to trust an untrusted field.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "glm-5.2:ir-F53",
+      "code": "F53",
+      "title": "The order-read API keeps a local schema and does not validate its response",
+      "severity": "low",
+      "tier": "finding",
+      "slices": [6],
+      "locations": [
+        "apps/api/src/app/services/order-query-service.ts:25-49",
+        "apps/api/src/app/routes/orders.ts:12-28"
+      ],
+      "summary": "GET /orders/:publicOrderId has a stable cross-service response whose schema is locally declared in the API service pending a promotion that never happened; the service never parses its constructed result and consumers outside the API cannot import the contract. This is the sole production z.object schema found under the apps.",
+      "relatedFindingIds": ["glm-5.2:F24"]
+    },
+    {
+      "id": "glm-5.2:ir-F54",
+      "code": "F54",
+      "title": "Several service URLs are not validated at startup",
+      "severity": "low",
+      "tier": "finding",
+      "slices": [7],
+      "locations": [
+        "apps/api/src/app/config.ts:146-159",
+        "apps/worker/src/app/config.ts:45-51",
+        "apps/web/lib/config.ts:113-135"
+      ],
+      "summary": "API LOAD_ORCHESTRATOR_BASE_URL parsing silently replaces malformed input with localhost, the worker accepts any nonempty URL strings, and web URL getters return arbitrary strings. A typo boots successfully, sometimes passes readiness, and fails only at delegation or processing time — and the API's localhost fallback points back into its own container.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "glm-5.2:ir-N1",
+      "code": "N1",
+      "title": "Run-summary immutability and JSON contract validity are application conventions",
+      "severity": "info",
+      "tier": "note",
+      "slices": [2, 6],
+      "locations": [
+        "packages/db/src/run-lifecycle/run-finalization.ts:213-237",
+        "packages/db/src/run-lifecycle/run-finalization.ts:415-426"
+      ],
+      "summary": "PostgreSQL prevents duplicate summary rows but not UPDATE, non-terminal statuses, or invalid JSONB sub-summaries, and the read adapter casts every JSONB field without parsing — an out-of-band mutation would be served by the public history endpoint as if valid. No current application path updates a summary, so this remains hardening rather than a confirmed bug.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "glm-5.2:ir-N2",
+      "code": "N2",
+      "title": "Re-seeding resets catalog counters without reconciling related Redis keys",
+      "severity": "info",
+      "tier": "note",
+      "slices": [2, 7],
+      "locations": [
+        "packages/db/src/seed-data.ts:413",
+        "packages/db/src/inventory/redis-keys.ts:191"
+      ],
+      "summary": "Every seed run overwrites the baseline catalog offer's live state back to full stock but does not remove existing reservation, expiry, pending-persistence, outcome, or idempotency keys, so re-running setup after catalog activity could produce full counters alongside stale holds. The run-scoped buy flow does not make catalog offers eligible, which limits present impact.",
+      "relatedFindingIds": ["glm-5.2:F6"]
+    },
+    {
+      "id": "glm-5.2:ir-N3",
+      "code": "N3",
+      "title": "Terminal execution states accumulate for the lifetime of the orchestrator",
+      "severity": "info",
+      "tier": "note",
+      "slices": [4],
+      "locations": [
+        "apps/load-orchestrator/src/app/services/traffic-execution-service.ts:78",
+        "apps/load-orchestrator/src/app/services/traffic-execution-service.ts:320"
+      ],
+      "summary": "The process-local runs map adds state on every start and never evicts terminal entries, so a long-lived public orchestrator grows without bound — though each entry is small and the intended retention period for the debug status endpoint is undocumented.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "glm-5.2:ir-N4",
+      "code": "N4",
+      "title": "The run snapshot duplicates starting stock without an equality invariant",
+      "severity": "info",
+      "tier": "note",
+      "slices": [6],
+      "locations": [
+        "packages/contracts/src/demo-control.ts:95-100",
+        "apps/api/src/app/services/demo-run-start-service.ts:385-396"
+      ],
+      "summary": "DemoRunConfigSnapshotSchema carries both top-level startingStock and inventoryConfig.startingStock and accepts different values; creation copies the same value into both, but finalization and reset read only the top-level copy, so a future divergence would report a different starting allocation from the accepted config while still parsing.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "glm-5.2:ir-N5",
+      "code": "N5",
+      "title": "Three reserved ERP metric names have no metric-sample or realtime-event shape",
+      "severity": "info",
+      "tier": "note",
+      "slices": [6],
+      "locations": [
+        "packages/contracts/src/vocabularies.ts:192-214",
+        "packages/contracts/src/load.ts:144-223"
+      ],
+      "summary": "The canonical vocabulary reserves erp.circuit_open, erp.failure_rate, and erp.confirmation_latency, but no metric-sample or dashboard-event contract covers them; current ERP health is exposed through a separate projection, so this may be an intentionally reserved future vocabulary.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "glm-5.2:ir-N6",
+      "code": "N6",
+      "title": "Notification settlement is an adjudicated tradeoff; only the phase-plan checklist is stale",
+      "severity": "info",
+      "tier": "note",
+      "slices": [3, 8],
+      "locations": [
+        "docs/core_business_entities.md:484",
+        "working_docs/project_planning.md:922",
+        "apps/api/tests/run-finalization.integration.test.ts:891-913"
+      ],
+      "summary": "Slices disagreed on whether notification-less finalization is an open requirements conflict; consolidation resolved it as an adjudicated, accepted design — the entity docs explicitly state finalization does not wait for notifications and cite their own adjudication trail, while the contradicting text is a stale phase-plan checklist. Remaining action is housekeeping only: align the planning checklist and project-description wording.",
+      "relatedFindingIds": ["glm-5.2:F15"]
+    }
+  ]
+}

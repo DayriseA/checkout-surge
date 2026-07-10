@@ -1,0 +1,705 @@
+{
+  "model": "gpt-5.5",
+  "reviewType": "independent-review",
+  "reviewer": "gpt-5.6-sol (high)",
+  "source": "independent_review/gpt-5.5_independent_review.md",
+  "findings": [
+    {
+      "id": "gpt-5.5:ir-F1",
+      "code": "F1",
+      "title": "Pending Redis holds have no recovery path once run traffic closes",
+      "severity": "high",
+      "tier": "finding",
+      "slices": [1],
+      "locations": [
+        "apps/api/src/services/reserve-order-service.ts:159",
+        "packages/db/src/redis-stock-reservation.ts:121",
+        "apps/api/src/services/reserve-order-service.ts:421"
+      ],
+      "summary": "A failed PostgreSQL write leaves a real, stock-consuming Redis hold whose only reconciliation path is another /buy request — and once traffic completion closes run eligibility, the durable gate rejects retries before the reconciliation branch. Pending-insert and accepted-promotion failures are swallowed and no autonomous scanner exists, so a secured reservation can stay off the durable ledger or keep a false pending sentinel until drain timeout.",
+      "relatedFindingIds": ["gpt-5.5:F1"]
+    },
+    {
+      "id": "gpt-5.5:ir-F2",
+      "code": "F2",
+      "title": "A PostgreSQL commit can permanently outrun the BullMQ handoff",
+      "severity": "high",
+      "tier": "finding",
+      "slices": [1],
+      "locations": [
+        "apps/api/src/services/reserve-order-service.ts:246",
+        "apps/api/src/services/reserve-order-service.ts:263"
+      ],
+      "summary": "The reservation, queued order, and initial events commit before enqueue, with no transactional outbox or background scan for undispatched queued orders. If enqueue fails or the process dies in that window, repair depends entirely on a later same-key request; a caller that never retries leaves the order permanently queued and the run drains to timeout.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "gpt-5.5:ir-F3",
+      "code": "F3",
+      "title": "Concurrent idempotent requests can create a false durable pending marker",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [1],
+      "locations": [
+        "apps/api/src/services/reserve-order-service.ts:284",
+        "apps/api/src/services/postgres-buy-persistence.ts:158",
+        "packages/db/src/business-outcome-dashboard.ts:70"
+      ],
+      "summary": "Two simultaneous requests with one idempotency key can share the same Redis hold, both miss the durable lookup, and race the non-idempotent insert; the loser's uniqueness failure is misread as an outage and unconditionally writes a pending_reconciliation row even though the durable order now exists. That false row counts as pending in business outcomes, so a correct run can drain to timeout.",
+      "relatedFindingIds": ["gpt-5.5:F1"]
+    },
+    {
+      "id": "gpt-5.5:ir-F4",
+      "code": "F4",
+      "title": "Idempotent replays leak asynchronous terminal order state through `/buy`",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [1],
+      "locations": [
+        "apps/api/src/services/postgres-buy-persistence.ts:133",
+        "apps/api/src/services/reserve-order-service.ts:217"
+      ],
+      "summary": "Replay lookups return the order's current row, including terminal status and timestamps, so the synchronous buy endpoint becomes an order-status endpoint depending on replay timing. A diagnostic confirmed a replayed confirmed order returns status confirmed and confirmedAt, leaking ERP outcomes and violating the documented fast-reservation/slow-confirmation split.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "gpt-5.5:ir-F5",
+      "code": "F5",
+      "title": "Every generated-run loser is gated on PostgreSQL before Redis",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [1],
+      "locations": [
+        "apps/api/src/services/reserve-order-service.ts:159",
+        "apps/api/src/services/generated-run-sale-gate.ts:10"
+      ],
+      "summary": "Every generated-run request performs a PostgreSQL gate query before Redis — including the roughly 9,000 expected sold-out losers of surge-10k against a 10-connection API pool — making PostgreSQL the first hot-path bottleneck against the 10,000-in-one-second target. The durable gate prevents stale-run acceptance, so any fix must retain that safety property.",
+      "relatedFindingIds": ["gpt-5.5:F2"]
+    },
+    {
+      "id": "gpt-5.5:ir-F6",
+      "code": "F6",
+      "title": "Finalization discards an already-durable terminal inventory snapshot when Redis is unavailable",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [2, 4],
+      "locations": [
+        "apps/api/src/services/demo-run-finalization-service.ts:156",
+        "apps/api/src/services/demo-run-finalization-service.ts:227",
+        "apps/api/src/services/demo-run-service.ts:570"
+      ],
+      "summary": "Traffic completion durably embeds a Redis-derived inventory snapshot in the finalization row, but finalization ignores it and performs a fresh live Redis read whose errors become null. A transient Redis outage during the final poll permanently strips inventory detail from the immutable run summary even though PostgreSQL already holds the exact terminal snapshot.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "gpt-5.5:ir-F7",
+      "code": "F7",
+      "title": "Generated-run sale ownership can be invalidated after guarded insertion",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [2],
+      "locations": [
+        "packages/db/src/schema.ts:198",
+        "packages/db/drizzle/0000_initial_schema.sql:455",
+        "apps/api/src/services/generated-run-sale-gate.ts:10"
+      ],
+      "summary": "Run and sale-context rows store sale-offer ownership independently with no constraint tying them together, and the guard trigger fires only on context insertion. A later contradictory write can make the durable admission gate approve Redis holds whose PostgreSQL rows are rejected, stranding secured stock in pending persistence.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "gpt-5.5:ir-F8",
+      "code": "F8",
+      "title": "Seed configuration can persist a self-contradictory public runtime policy",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [2, 7],
+      "locations": [
+        "packages/db/src/scripts/seed.ts:32",
+        "packages/db/src/scripts/env.ts:11",
+        "packages/db/src/scripts/seed.ts:146"
+      ],
+      "summary": "The seed writes policy JSON without shared-contract parsing or the cross-field validation used by admin updates, environment parsing accepts partial, decimal, zero, and negative values, and onConflictDoNothing means a corrected rerun never repairs a bad row. Setup can succeed while later policy reads fail schema parsing or the displayed default run is rejected.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "gpt-5.5:ir-F9",
+      "code": "F9",
+      "title": "The test-database reset guard accepts unrelated names containing `test`",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [2, 7],
+      "locations": [
+        "packages/db/src/testing.ts:153",
+        "packages/db/src/testing.ts:43"
+      ],
+      "summary": "resetTestDatabase() truncates every business table with CASCADE but accepts any database name containing the substring 'test' — a direct probe confirmed checkout_surge_latest and contest_production pass. A misconfigured test URL can erase an unrelated database despite the documented naming convention.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "gpt-5.5:ir-F10",
+      "code": "F10",
+      "title": "Test reset does not implement its documented schema-integrity repair",
+      "severity": "low",
+      "tier": "finding",
+      "slices": [2, 8],
+      "locations": [
+        "packages/db/src/testing.ts:43",
+        "docs/automated_testing_infrastructure.md:23"
+      ],
+      "summary": "The documented journal/fingerprint drift-repair behavior does not exist: reset only creates the database if missing, migrates, and truncates. Drizzle will not recreate a dropped or modified trigger its journal says already ran, so tests that intentionally mutate triggers can poison later suites after interrupted cleanup.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "gpt-5.5:ir-F11",
+      "code": "F11",
+      "title": "ERP-attempt persistence failures can exhaust BullMQ while leaving orders permanently processing",
+      "severity": "high",
+      "tier": "finding",
+      "slices": [3, 4],
+      "locations": [
+        "apps/worker/src/index.ts:307",
+        "apps/worker/src/application/order-process-job-handler.ts:139",
+        "apps/worker/src/queue/bullmq-order-process-consumer.ts:183"
+      ],
+      "summary": "Every ErpAttemptPersistenceError is classified retryable and rethrown without a terminal transition, yet each retry consumes the finite BullMQ attempt budget (default four). If PostgreSQL is unavailable while attempt history is recorded — including for ERP-accepted confirmations — the job fails while the order stays processing forever, no recovery scanner resumes it, and the run drains to timeout.",
+      "relatedFindingIds": ["gpt-5.5:F6", "gpt-5.5:F7"]
+    },
+    {
+      "id": "gpt-5.5:ir-F12",
+      "code": "F12",
+      "title": "Retained failed notification jobs defeat the recovery scanner",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [3, 4],
+      "locations": [
+        "apps/worker/src/queue/bullmq-notification-record-publisher.ts:31",
+        "apps/worker/src/application/notification-recovery-scanner.ts:55",
+        "apps/api/src/services/demo-run-finalization-service.ts:315"
+      ],
+      "summary": "Notification jobs use a deterministic ID and retain failed jobs, so the recovery scanner's re-add is deduplicated against the dead job while every scan reports successful publication. Missing notifications block finalization, so a temporary persistence problem can permanently fail the run.",
+      "relatedFindingIds": ["gpt-5.5:F8"]
+    },
+    {
+      "id": "gpt-5.5:ir-F13",
+      "code": "F13",
+      "title": "The reference worker cannot honor the two largest public presets' accepted concurrency",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [3, 7],
+      "locations": [
+        "apps/worker/src/application/run-backpressure.ts:18",
+        "apps/worker/src/runtime/config.ts:23",
+        "packages/db/src/scripts/seed.ts:235"
+      ],
+      "summary": "Run-scoped backpressure is a semaphore inside a BullMQ worker whose global concurrency ceiling is five, while the seeded surge-5k and surge-10k presets request eight and ten. The reference runtime cannot execute the frozen policy it reports, materially changing ERP drain rate and reproducibility.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "gpt-5.5:ir-F14",
+      "code": "F14",
+      "title": "Concurrent duplicate ERP confirmations bypass idempotency",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [3],
+      "locations": [
+        "apps/mock-erp/src/application/confirmation-service.ts:46",
+        "apps/mock-erp/src/application/confirmation-service.ts:70"
+      ],
+      "summary": "ConfirmationService.confirm checks its completed-response map before awaiting the chaos decision and stores the result only afterward, so overlapping same-key requests both miss; a barrier probe reproduced two decisions and two confirmation IDs for one key. This breaks the retry invariant needed when a worker times out while the ERP continues processing.",
+      "relatedFindingIds": ["gpt-5.5:F6"]
+    },
+    {
+      "id": "gpt-5.5:ir-F15",
+      "code": "F15",
+      "title": "One global circuit breaker lets one ERP scope block every other scope",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [3, 6],
+      "locations": [
+        "apps/worker/src/index.ts:153",
+        "apps/worker/src/application/erp-circuit-breaker.ts:43"
+      ],
+      "summary": "The worker constructs a single ErpCircuitBreaker for all orders with no run or config key, so once one run opens it, unrelated runs and catalog orders fail before their own ERP behavior is considered. A two-run probe confirmed run A blocking healthy run B without its confirmation path being called.",
+      "relatedFindingIds": ["gpt-5.5:F12"]
+    },
+    {
+      "id": "gpt-5.5:ir-F16",
+      "code": "F16",
+      "title": "A late start acknowledgement can resurrect a draining or terminal run",
+      "severity": "high",
+      "tier": "finding",
+      "slices": [4],
+      "locations": [
+        "apps/api/src/services/demo-run-service.ts:827",
+        "apps/api/src/services/demo-run-service.ts:628",
+        "apps/load-orchestrator/src/application/k6-runner.ts:63"
+      ],
+      "summary": "A short run can complete — or an admin can reset — while startRun() still awaits the orchestrator, and the late acknowledgement then updates the run by ID with no expected-status predicate, writing active over a draining or terminal state. The resurrected run keeps its terminal timestamps and immutable summary, the finalizer ignores it, and future starts stay blocked.",
+      "relatedFindingIds": ["gpt-5.5:F13"]
+    },
+    {
+      "id": "gpt-5.5:ir-F17",
+      "code": "F17",
+      "title": "Admin reset can admit and lose business state after writing the terminal summary",
+      "severity": "high",
+      "tier": "finding",
+      "slices": [1, 4],
+      "locations": [
+        "apps/api/src/services/demo-maintenance-service.ts:65",
+        "apps/api/src/services/demo-maintenance-service.ts:112",
+        "apps/api/src/services/reserve-order-service.ts:159"
+      ],
+      "summary": "Reset commits the immutable failed summary before closing Redis eligibility and cleaning queues, so a /buy that passed the durable gate can reserve, persist, and enqueue after the outcome was captured — and queue cleanup may then delete the new job. Reset reports success while secured business state is absent from the immutable summary; the terminal transition itself is unfenced even with healthy infrastructure.",
+      "relatedFindingIds": ["gpt-5.5:F3", "gpt-5.5:F13"]
+    },
+    {
+      "id": "gpt-5.5:ir-F18",
+      "code": "F18",
+      "title": "Lossy, unbounded load handoffs can strand the only run indefinitely",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [4, 7],
+      "locations": [
+        "apps/api/src/services/demo-run-service.ts:196",
+        "apps/load-orchestrator/src/application/k6-runner.ts:244",
+        "apps/api/src/services/demo-run-finalization-service.ts:57"
+      ],
+      "summary": "The API's start delegation has no deadline, completion delivery is retried only five times and then discarded, orchestrator shutdown tracks neither child k6 processes nor pending delivery, and the API has no traffic watchdog for starting/active runs. A transient outage, hung internal request, or orchestrator restart can wedge the only allowed run indefinitely until manual reset or API restart.",
+      "relatedFindingIds": ["gpt-5.5:F9"]
+    },
+    {
+      "id": "gpt-5.5:ir-F19",
+      "code": "F19",
+      "title": "Raw k6 point values are presented as live request and failure rates",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [4, 5, 6],
+      "locations": [
+        "apps/load-orchestrator/src/application/k6-output-parser.ts:47",
+        "apps/web/src/app/components/dashboard-panels.tsx:378"
+      ],
+      "summary": "Each parsed http_reqs point is forwarded directly as the scheduled request rate and http_req_failed as a ratio with no time-window aggregation, while the dashboard labels the latest point as the HTTP request rate. The headline live rate can display one raw sample rather than requests per second, and the failure rate lacks a stable interval denominator.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "gpt-5.5:ir-F20",
+      "code": "F20",
+      "title": "The accepted traffic quantity is ignored during k6 generation",
+      "severity": "low",
+      "tier": "finding",
+      "slices": [4, 6],
+      "locations": [
+        "packages/contracts/src/load.ts:20",
+        "apps/load-orchestrator/src/application/k6-script.ts:68"
+      ],
+      "summary": "trafficConfig.quantityPerAttempt and inventoryConfig.quantityPerCheckout are independently configurable with no equality refinement, and generated buy bodies ignore the former; a diagnostic with values three and seven emitted quantity seven. Seeds currently set both to one, limiting default impact.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "gpt-5.5:ir-F21",
+      "code": "F21",
+      "title": "The reference runtime boots with public, known control credentials",
+      "severity": "high",
+      "tier": "finding",
+      "slices": [5, 7],
+      "locations": [
+        "docker-compose.yml:3",
+        "apps/api/src/runtime/config.ts:60",
+        "apps/web/src/app/lib/server/backend-proxy.ts:23"
+      ],
+      "summary": "Production compose supplies checked-in fallback control-token, admin-passphrase, and session secrets, services validate only non-emptiness, and compose publishes every service port to the host. Anyone who has read the repository gets working credentials for admin reset, cleanup, history deletion, preset mutation, unsafe starts, and ERP chaos, bypassing the web session.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "gpt-5.5:ir-F22",
+      "code": "F22",
+      "title": "The API trusts an unauthenticated caller's visitor identity for public budgets",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [5],
+      "locations": [
+        "apps/api/src/routes/demo-run-routes.ts:188",
+        "apps/api/src/services/demo-run-service.ts:125"
+      ],
+      "summary": "The API accepts x-public-visitor-id directly on unauthenticated calls and uses the caller-controlled string as the budget Redis key, so a direct caller can rotate values to bypass perVisitorMaxStarts, leaving only the broader global window — and a focused test pins the behavior.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "gpt-5.5:ir-F23",
+      "code": "F23",
+      "title": "Inventory and queue dashboard events have no production publisher",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [5],
+      "locations": [
+        "packages/contracts/src/dashboard-events.ts:16",
+        "packages/db/src/redis-stock-reservation.ts:256"
+      ],
+      "summary": "Contracts and the dashboard client handle inventory.updated and queue.updated, but no production code publishes them: inventory mutation writes to a separate internal list with no bridge, and no queue producer exists. Live inventory-drain and queue-pressure panels stay frozen at HTTP recovery values, undermining the realtime demo.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "gpt-5.5:ir-F24",
+      "code": "F24",
+      "title": "A new-run event relabels projections retained from the previous scope",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [5],
+      "locations": [
+        "apps/web/src/app/components/operator-dashboard.tsx:242",
+        "apps/api/src/services/dashboard-recovery-service.ts:70"
+      ],
+      "summary": "On run.started the reducer updates only currentRun and recoveredAt while retaining inventory, metrics, business outcomes, lag, and completion outcomes from the previous scope, and only terminal events trigger recovery. A diagnostic confirmed the new run ID rendered alongside old-scope data.",
+      "relatedFindingIds": ["gpt-5.5:F14"]
+    },
+    {
+      "id": "gpt-5.5:ir-F25",
+      "code": "F25",
+      "title": "Out-of-order same-run live events can overwrite newer dashboard state",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [5],
+      "locations": [
+        "apps/web/src/app/components/operator-dashboard.tsx:255",
+        "packages/db/src/business-outcome-dashboard.ts:223"
+      ],
+      "summary": "The client rejects events older than the HTTP snapshot baseline but never advances a watermark when applying live projections, and asynchronous worker projection reads/publishes can complete out of order. A diagnostic applied T+10 then T+5 and observed dashboard state regressing.",
+      "relatedFindingIds": ["gpt-5.5:F14"]
+    },
+    {
+      "id": "gpt-5.5:ir-F26",
+      "code": "F26",
+      "title": "Public dashboard read and SSE paths have no resource limits",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [5, 7],
+      "locations": [
+        "apps/api/src/realtime/dashboard-event-fanout.ts:30",
+        "apps/api/src/services/dashboard-recovery-service.ts:149"
+      ],
+      "summary": "Every public SSE client enters an unbounded in-memory map with no global or per-source cap, and unthrottled public recovery fans each request into seven PostgreSQL, Redis, BullMQ, and ERP projections. An unauthenticated caller can consume sockets, memory, and dependency capacity in competition with the buy path, despite the security design explicitly requiring these limits.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "gpt-5.5:ir-F27",
+      "code": "F27",
+      "title": "Admin passphrase authentication permits unlimited online guesses",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [5],
+      "locations": [
+        "apps/web/src/app/api/admin/session/route.ts:6",
+        "apps/web/src/app/lib/server/backend-proxy.ts:23"
+      ],
+      "summary": "The session endpoint compares one header with the configured passphrase with no attempt counter, delay, lockout, or source limit, and the comparison is not constant-time. Attackers can guess without bound against the credential controlling destructive and unsafe actions, independent of the F21 default-credential issue.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "gpt-5.5:ir-F28",
+      "code": "F28",
+      "title": "Browser proxy errors abandon the canonical correlation envelope",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [5, 6],
+      "locations": [
+        "apps/web/src/app/lib/server/backend-proxy.ts:104",
+        "apps/web/src/app/lib/server/backend-proxy.ts:184"
+      ],
+      "summary": "Locally constructed web errors return only {code, message} instead of the shared error payload, backend requests never forward a browser correlation ID, and reconstructed responses discard the backend x-correlation-id. Browser failures have incompatible shapes and operators cannot join local or proxy errors to logs even when the backend emitted a trace ID.",
+      "relatedFindingIds": ["gpt-5.5:F16", "gpt-5.5:F21"]
+    },
+    {
+      "id": "gpt-5.5:ir-F29",
+      "code": "F29",
+      "title": "Purchase rejections mislabel non-sold-out failures and alias run closure",
+      "severity": "low",
+      "tier": "finding",
+      "slices": [1, 6],
+      "locations": [
+        "packages/contracts/src/buy.ts:56",
+        "apps/api/src/services/reserve-order-service.ts:182"
+      ],
+      "summary": "Every rejected-buy branch is forced to simulatedStatus sold_out — including invalid quantities and idempotency conflicts — and run_not_accepting_traffic is rewritten to inventory_not_initialized because the canonical decision vocabulary lacks it. Consumers can report request conflicts or a closed run as exhausted or missing inventory.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "gpt-5.5:ir-F30",
+      "code": "F30",
+      "title": "Routine HTTP logs do not inherit the request correlation ID",
+      "severity": "low",
+      "tier": "finding",
+      "slices": [6],
+      "locations": [
+        "apps/api/src/server.ts:60",
+        "apps/mock-erp/src/routes/chaos-routes.ts:27"
+      ],
+      "summary": "Server hooks normalize correlation only onto a request property and response header, not request.log, so routine request logs omit the correlation ID and cannot be queried by the value returned to the client — only explicit error logging and manually annotated business logs carry it.",
+      "relatedFindingIds": ["gpt-5.5:F16"]
+    },
+    {
+      "id": "gpt-5.5:ir-F31",
+      "code": "F31",
+      "title": "Load smoke tears down a run before business draining is complete",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [7],
+      "locations": [
+        "scripts/runtime-smoke-load.mjs:33",
+        "scripts/runtime-smoke-load.mjs:152"
+      ],
+      "summary": "The load smoke declares success when traffic succeeds even though that only reaches draining, then its finally block immediately deletes the run's durable graph and Redis inventory without removing BullMQ jobs. A slow worker can process surviving jobs after their order and run disappear, and the smoke never proves asynchronous business completion.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "gpt-5.5:ir-F32",
+      "code": "F32",
+      "title": "Old-run cleanup deletes terminal state outside generated-run ownership",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [2, 7],
+      "locations": [
+        "apps/api/src/services/demo-maintenance-service.ts:150",
+        "apps/api/src/services/demo-maintenance-service.ts:177"
+      ],
+      "summary": "Cleanup selects candidate runs only by terminality, age, and retention — the generated-ownership join decides only which offer rows to remove — so catalog-offer runs and their history are deleted too, and a maintenance test explicitly blesses that deletion. Documentation scopes cleanup to generated demo runs.",
+      "relatedFindingIds": ["gpt-5.5:F4"]
+    },
+    {
+      "id": "gpt-5.5:ir-F33",
+      "code": "F33",
+      "title": "Old-run cleanup leaves permanent generated Redis namespaces behind",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [2, 7],
+      "locations": [
+        "apps/api/src/services/demo-maintenance-service.ts:52",
+        "packages/db/src/redis-inventory.ts:102"
+      ],
+      "summary": "Generated initialization creates inventory and run-eligibility namespaces without TTLs, and cleanupOldRuns receives Redis but deletes only PostgreSQL rows, so the namespaces persist indefinitely after the run and offer disappear. Repeated runs leak Redis memory and make cleanup accounting misleading.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "gpt-5.5:ir-F34",
+      "code": "F34",
+      "title": "Runtime policy overrides are sent to a process that does not consume them",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [2, 7],
+      "locations": [
+        "docker-compose.yml:62",
+        "docker-compose.yml:241",
+        "packages/db/src/scripts/seed.ts:426"
+      ],
+      "summary": "Compose puts cap, budget, and custom-limit overrides on the API — whose config loader never reads them — while the seed-owning runtime-setup service receives none of them; resolved-compose diagnostics confirmed the mismatch. Valid .env overrides are silently ignored and higher default policy can remain exposed.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "gpt-5.5:ir-F35",
+      "code": "F35",
+      "title": "The root watch command omits every application unit suite",
+      "severity": "low",
+      "tier": "finding",
+      "slices": [7, 8],
+      "locations": [
+        "package.json:24",
+        "vitest.unit.config.ts:3"
+      ],
+      "summary": "test:watch uses the root Vitest config whose include covers only contracts and logger, while test:unit spans six packages; vitest list found 31 tests exclusive to the packages the watcher never runs. Developers can change any application while the advertised fast loop stays green.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "gpt-5.5:ir-F36",
+      "code": "F36",
+      "title": "The automated suite never proves the deployed services work together",
+      "severity": "medium",
+      "tier": "finding",
+      "slices": [8],
+      "locations": [
+        "package.json:20",
+        "apps/api/test/api.test.ts:1932",
+        "apps/worker/test/integration/order-processing-workflow.test.ts:544"
+      ],
+      "summary": "pnpm test never starts or exercises the reference service topology, and each major cross-service handoff stops at a substitute: API/BullMQ tests run with no worker, worker integration confirms through a mocked ERP, and web smoke stubs server reads. Wrong compose URLs, tokens, wiring, or response assumptions can break the demo while the suite stays green.",
+      "relatedFindingIds": ["gpt-5.5:F18", "gpt-5.5:F19"]
+    },
+    {
+      "id": "gpt-5.5:ir-F37",
+      "code": "F37",
+      "title": "The coverage command excludes the highest-risk suites and enforces no floor",
+      "severity": "low",
+      "tier": "finding",
+      "slices": [7, 8],
+      "locations": [
+        "package.json:25",
+        "apps/api/vitest.api.config.ts:3"
+      ],
+      "summary": "test:coverage runs only six unit configurations, omitting every API test, DB integration file, and worker integration file — the Redis Lua, PostgreSQL invariant, concurrency, and real BullMQ paths — and none of the invoked configs define thresholds, so the command can pass with arbitrarily low coverage.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "gpt-5.5:ir-F38",
+      "code": "F38",
+      "title": "Test-source type checking is broken outside the normal gates",
+      "severity": "low",
+      "tier": "finding",
+      "slices": [8],
+      "locations": [
+        "package.json:14",
+        "apps/api/test/reserve-order-service.test.ts:247"
+      ],
+      "summary": "type-check:test exists but is invoked by neither type-check nor test, and it currently fails on this branch at a deferred-callback narrowing while the same file passes 18 Vitest tests through unchecked transpilation. The declared command is broken, and test mocks and fixtures can drift from TypeScript interfaces behind green gates.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "gpt-5.5:ir-N1",
+      "code": "N1",
+      "title": "ERP attempt and event attribution relies mostly on application discipline",
+      "severity": "info",
+      "tier": "note",
+      "slices": [2, 3],
+      "locations": [
+        "packages/db/src/schema.ts:309",
+        "packages/db/src/schema.ts:341"
+      ],
+      "summary": "erp_attempts and order_events store order, run, and correlation attribution independently without enforcing identity agreement, timestamp ordering, or status-appropriate error data. Current worker adapters validate durable identity before normal writes, so no ordinary corrupting path was identified; focused integrity tests would preserve the boundary.",
+      "relatedFindingIds": ["gpt-5.5:F5"]
+    },
+    {
+      "id": "gpt-5.5:ir-N2",
+      "code": "N2",
+      "title": "Process-local run state has no retention bound",
+      "severity": "info",
+      "tier": "note",
+      "slices": [3, 7],
+      "locations": [
+        "apps/mock-erp/src/application/confirmation-service.ts:35",
+        "apps/worker/src/application/run-backpressure.ts:9"
+      ],
+      "summary": "Successful mock-ERP confirmations remain indefinitely in an in-memory map and run-scoped semaphores are never removed, so repeated hosted runs grow both structures. Practical severity depends on run volume and idempotency-retention expectations.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "gpt-5.5:ir-N3",
+      "code": "N3",
+      "title": "Restart reconciliation freezes partial active-run outcomes as if they were final",
+      "severity": "info",
+      "tier": "note",
+      "slices": [3, 4],
+      "locations": [
+        "apps/api/src/services/demo-run-startup-reconciliation-service.ts:52",
+        "apps/api/src/services/demo-run-startup-reconciliation-service.ts:219"
+      ],
+      "summary": "Startup reconciliation terminalizes every active run and writes the current business projection to the immutable summary without coordinating with still-running workers, and records zero emitted/completed traffic even when business outcomes prove acceptance. Authoritative history needs an explicit partial/unknown model or delayed settling.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "gpt-5.5:ir-N4",
+      "code": "N4",
+      "title": "Internal traffic inputs are shape-valid but not bound to the accepted run",
+      "severity": "info",
+      "tier": "note",
+      "slices": [4, 6],
+      "locations": [
+        "apps/api/src/services/demo-run-service.ts:528",
+        "packages/contracts/src/load.ts:119"
+      ],
+      "summary": "Metric ingestion accepts any shape-valid service-token payload without checking run existence or traffic-active status, and completion stores supplied counts, identity, and timestamps without comparing them to the accepted snapshot. The current trusted client is consistent; explicit binding would make stale or misrouted output fail closed.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "gpt-5.5:ir-N5",
+      "code": "N5",
+      "title": "The admin bearer cookie is never marked `Secure`",
+      "severity": "info",
+      "tier": "note",
+      "slices": [5],
+      "locations": [
+        "apps/web/src/app/lib/server/backend-proxy.ts:57"
+      ],
+      "summary": "createAdminSessionCookie() always emits HttpOnly; SameSite=Lax but never Secure, unlike the request-protocol-aware visitor cookie. A hardening gap for HTTPS deployments; the reference runtime deliberately supports local HTTP, so the right enforcement mode depends on deployment expectations.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "gpt-5.5:ir-N6",
+      "code": "N6",
+      "title": "Cookie-only admin mutations have no explicit origin or CSRF assertion",
+      "severity": "info",
+      "tier": "note",
+      "slices": [5],
+      "locations": [
+        "apps/web/src/app/lib/server/backend-proxy.ts:39",
+        "apps/web/src/app/api/admin/demo/reset/route.ts:10"
+      ],
+      "summary": "Protected proxies authorize solely with the signed cookie and mutating routes perform no Origin or CSRF check; SameSite=Lax blocks common cross-site subrequests but not a hostile same-site sibling. Risk depends on deployment and domain isolation.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "gpt-5.5:ir-N7",
+      "code": "N7",
+      "title": "Database enums duplicate canonical lifecycle vocabulary without a parity guard",
+      "severity": "info",
+      "tier": "note",
+      "slices": [2, 6],
+      "locations": [
+        "packages/db/src/schema.ts:18",
+        "packages/contracts/src/lifecycle.ts:12"
+      ],
+      "summary": "The DB schema independently redeclares the purpose, status, event, and lifecycle vocabularies that currently match packages/contracts, with no parity test or migration checklist guarding future drift.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "gpt-5.5:ir-N8",
+      "code": "N8",
+      "title": "Lifecycle DTO schemas validate values but not state/timestamp coherence",
+      "severity": "info",
+      "tier": "note",
+      "slices": [3, 4, 5, 6],
+      "locations": [
+        "packages/contracts/src/demo.ts:94",
+        "packages/contracts/src/erp.ts:48"
+      ],
+      "summary": "Snapshot, completion-outcome, and ERP confirmation schemas accept incoherent combinations, such as success without a confirmation ID or lifecycle timestamps independent of state. Inspected producers are coherent, so this is hardening; discriminated unions and negative tests would enforce the advertised lifecycle.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "gpt-5.5:ir-N9",
+      "code": "N9",
+      "title": "The infra-only shutdown command owns the entire runtime Compose project",
+      "severity": "info",
+      "tier": "note",
+      "slices": [7],
+      "locations": [
+        "package.json:31"
+      ],
+      "summary": "infra:up targets only PostgreSQL and Redis, but infra:down runs an unscoped docker compose down identical to runtime:down, so the \"infra-only\" command can stop every app and proxy service sharing the project.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "gpt-5.5:ir-N10",
+      "code": "N10",
+      "title": "Smoke budget cleanup can decrement a different window than it consumed",
+      "severity": "info",
+      "tier": "note",
+      "slices": [7],
+      "locations": [
+        "scripts/runtime-smoke-load.mjs:10",
+        "scripts/runtime-smoke-load.mjs:226"
+      ],
+      "summary": "The smoke computes its budget window at process start while the API consumes the current window later, so crossing a window boundary makes cleanup decrement earlier keys, leaving actual consumption in place and possibly reducing other visitors' shared count. The timing window is narrow.",
+      "relatedFindingIds": []
+    },
+    {
+      "id": "gpt-5.5:ir-N11",
+      "code": "N11",
+      "title": "The only real k6 compatibility assertion is optional",
+      "severity": "info",
+      "tier": "note",
+      "slices": [8],
+      "locations": [
+        "apps/load-orchestrator/test/load-orchestrator.test.ts:139"
+      ],
+      "summary": "The always-run script check uses Node syntax and string assertions while the actual k6 inspect test is skipped when no binary exists — this audit observed the skip. A mandatory k6-equipped release lane would catch import or options incompatibility before traffic starts.",
+      "relatedFindingIds": ["gpt-5.5:F18"]
+    }
+  ]
+}

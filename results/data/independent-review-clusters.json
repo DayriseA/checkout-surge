@@ -1,3 +1,423 @@
 {
-  "clusters": []
+  "clusters": [
+    {
+      "id": "ir-redis-hold-without-durable-recovery",
+      "title": "Redis-secured hold can be left without durable state or recovery",
+      "description": "A process/PostgreSQL failure after the atomic Redis stock decision leaves a real stock-consuming hold with no autonomous reconciliation path back to durable business state.",
+      "confidence": "high",
+      "members": [
+        { "findingId": "gpt-5.5:ir-F1", "note": "Reconciliation exists but is only reachable via another /buy and is cut off once run eligibility closes." },
+        { "findingId": "opus-4.8:ir-F7", "note": "The pending-persistence sentinel is written only in a caught failure, so process exit leaves no obligation at all." },
+        { "findingId": "opus-4.8:ir-N2", "note": "Even when the sentinel lands, reconciliation materializes a durable row without resolving the hold." },
+        { "findingId": "glm-5.2:ir-F3", "note": "A PostgreSQL lookup outside the failure boundary and a failed sentinel write both escape as 500 with the secured hold invisible to the pending ledger." }
+      ]
+    },
+    {
+      "id": "ir-commit-outruns-queue-handoff",
+      "title": "Durable order commit can permanently outrun the BullMQ enqueue",
+      "description": "Reservation/order rows commit before the queue handoff with no transactional outbox or background re-drive, so a failed or lost enqueue strands a durable queued order forever.",
+      "confidence": "high",
+      "members": [
+        { "findingId": "gpt-5.5:ir-F2" },
+        { "findingId": "opus-4.8:ir-F5", "note": "Additionally, maxRetriesPerRequest: null can leave the awaited enqueue hanging the request indefinitely." },
+        { "findingId": "glm-5.2:ir-F10", "note": "The idempotent replay path returns early without re-attempting enqueue, so client retries cannot repair the handoff either." }
+      ]
+    },
+    {
+      "id": "ir-erp-confirmation-idempotency-races",
+      "title": "ERP confirmation is not reliably idempotent",
+      "description": "Duplicate deliveries of the same order confirmation are not safely deduplicated — via a racy check-then-store ledger, a non-durable ledger, or no idempotency contract at all — so the same business confirmation can apply twice.",
+      "confidence": "high",
+      "members": [
+        { "findingId": "gpt-5.5:ir-F14" },
+        { "findingId": "opus-4.8:ir-F17", "note": "Also flags loss of the ledger across process restart." },
+        { "findingId": "glm-5.2:ir-F8", "note": "No idempotency barrier exists at all: a crash between ERP success and the attempt-row commit reuses the same attempt number and confirms again." }
+      ]
+    },
+    {
+      "id": "ir-unguarded-run-promotion-race",
+      "title": "Unguarded start-phase transition races a fast completion",
+      "description": "The run-start acknowledgement/promotion writes run state without an expected-state predicate, so a completion that lands first can be regressed or a terminal run resurrected.",
+      "confidence": "high",
+      "members": [
+        { "findingId": "gpt-5.5:ir-F16", "note": "A late start acknowledgement resurrects a draining or terminal run." },
+        { "findingId": "opus-4.8:ir-F19", "note": "Unconditional markActive overwrites a fast draining/failed completion back to active." },
+        { "findingId": "glm-5.2:ir-F1", "note": "The inverse loss: a fast completion is refused while the run still says starting and the missed transition is never replayed; the guarded activation result is also ignored against a concurrent reset." }
+      ]
+    },
+    {
+      "id": "ir-completion-handoff-strands-run",
+      "title": "Unreliable orchestrator-to-API completion handoff strands the run",
+      "description": "The traffic-completion signal from the load orchestrator to the API is lossy (single attempt, swallowed failures, no durable retry), and only that signal can move the run out of active — so a transient failure strands the run and blocks later starts.",
+      "confidence": "high",
+      "members": [
+        { "findingId": "gpt-5.5:ir-F18" },
+        { "findingId": "opus-4.8:ir-F3" },
+        { "findingId": "glm-5.2:ir-F5", "note": "The receiver also acks accepted:true when its durable insert failed, so a delivered report can still finalize as a timeout failure." }
+      ]
+    },
+    {
+      "id": "ir-admin-reset-terminal-state-race",
+      "title": "Admin reset racing normal completion corrupts terminal run state",
+      "description": "Reset reads a nonterminal run, loses the race to normal finalization, and then applies an unguarded failure transition that contradicts the already-written terminal outcome.",
+      "confidence": "medium",
+      "members": [
+        { "findingId": "gpt-5.5:ir-F17", "note": "Reset can also admit and lose business state after the terminal summary is written." },
+        { "findingId": "opus-4.8:ir-F11" }
+      ]
+    },
+    {
+      "id": "ir-forgeable-visitor-identity",
+      "title": "Caller-supplied visitor identity bypasses public run budgets",
+      "description": "The API trusts an unauthenticated caller-provided visitor identifier as the per-visitor budget key while being directly reachable, so rotating the header bypasses per-visitor limits.",
+      "confidence": "high",
+      "members": [
+        { "findingId": "gpt-5.5:ir-F22" },
+        { "findingId": "opus-4.8:ir-F22" }
+      ],
+      "notObserved": [
+        { "model": "glm-5.2", "note": "The review verified public budgets are enforced from a web-signed visitor identity the API cryptographically verifies and fails closed on; the observed failure mode is over-blocking (ir-F49), not bypass." }
+      ]
+    },
+    {
+      "id": "ir-cross-run-dashboard-contamination",
+      "title": "Live dashboard applies or retains data from a different run scope",
+      "description": "The browser dashboard state does not consistently scope events/projections to the current run, so prior-run, catalog, or foreign-run data can be displayed as current.",
+      "confidence": "high",
+      "members": [
+        { "findingId": "gpt-5.5:ir-F24", "note": "A new-run event relabels projections retained from the previous scope." },
+        { "findingId": "opus-4.8:ir-F23", "note": "Foreign-scope SSE events are applied before (or without) scope checking." },
+        { "findingId": "glm-5.2:ir-F27", "note": "The reducer applies every valid event unconditionally; even an unrelated run's terminal event triggers a recovery." }
+      ]
+    },
+    {
+      "id": "ir-stale-dashboard-state-wins",
+      "title": "Stale live dashboard state wins over newer authoritative data",
+      "description": "Ordering/precedence in the live dashboard lets older data override newer authoritative state, so a missed or reordered event leaves the display permanently wrong.",
+      "confidence": "medium",
+      "members": [
+        { "findingId": "gpt-5.5:ir-F25", "note": "Out-of-order same-run events overwrite newer state." },
+        { "findingId": "opus-4.8:ir-F24", "note": "The retained live inventory overlay always beats the freshly recovered backend snapshot." },
+        { "findingId": "glm-5.2:ir-F26", "note": "Reconnect recovery refreshes only the recovery object; inventory, queue, ERP, and lag panels keep their pre-disconnect values permanently." }
+      ]
+    },
+    {
+      "id": "ir-public-endpoint-resource-limits",
+      "title": "Public dashboard read and SSE paths have no resource limits",
+      "description": "Unauthenticated dashboard endpoints (SSE connections, history/read queries) have no connection caps, pagination, or rate limits, allowing unbounded resource consumption.",
+      "confidence": "high",
+      "members": [
+        { "findingId": "gpt-5.5:ir-F26" },
+        { "findingId": "opus-4.8:ir-F26", "note": "Unbounded SSE connection set." },
+        { "findingId": "opus-4.8:ir-F27", "note": "Run History returns every summary without pagination." }
+      ]
+    },
+    {
+      "id": "ir-admin-passphrase-online-guessing",
+      "title": "Admin passphrase authentication permits unlimited online guesses",
+      "description": "The public admin session route verifies every submitted passphrase with no rate limit, delay, or lockout, making the shared secret a cheap online oracle.",
+      "confidence": "high",
+      "members": [
+        { "findingId": "gpt-5.5:ir-F27" },
+        { "findingId": "opus-4.8:ir-F28" },
+        { "findingId": "glm-5.2:ir-F32" }
+      ]
+    },
+    {
+      "id": "ir-bff-error-envelope-loss",
+      "title": "Web BFF error responses abandon the canonical error envelope",
+      "description": "Proxy/BFF failure paths emit an error shape incompatible with the canonical API error contract, collapsing upstream details and correlation IDs into generic client messages.",
+      "confidence": "high",
+      "members": [
+        { "findingId": "gpt-5.5:ir-F28" },
+        { "findingId": "opus-4.8:ir-F41" },
+        { "findingId": "glm-5.2:ir-F34", "note": "Two incompatible web error families without correlation IDs, plus API-side SSE codes outside the shared vocabulary." }
+      ]
+    },
+    {
+      "id": "ir-test-tooling-wrong-database-target",
+      "title": "Test tooling can mutate a non-test database",
+      "description": "Destructive or schema-mutating test commands rely on weak or missing target validation, so a mis-set environment can wipe or migrate development/shared data.",
+      "confidence": "medium",
+      "members": [
+        { "findingId": "gpt-5.5:ir-F9", "note": "The PostgreSQL reset guard accepts unrelated names containing 'test'." },
+        { "findingId": "opus-4.8:ir-F14", "note": "Redis FLUSHDB in integration suites has no target guard at all." },
+        { "findingId": "opus-4.8:ir-F32", "note": "The isolated migration command can silently prefer an ambient development DATABASE_URL." },
+        { "findingId": "glm-5.2:ir-F18", "note": "Truncate/FLUSHDB helpers act on whatever client they receive; the wrapper rejects only the two literal default ports." }
+      ]
+    },
+    {
+      "id": "ir-cleanup-orphans-redis-state",
+      "title": "Run cleanup can leave orphaned Redis state behind",
+      "description": "Cleanup deletes or loses the durable mapping needed to clear the run's Redis namespaces, leaving eligibility/inventory keys orphaned after a partial failure or by design.",
+      "confidence": "medium",
+      "members": [
+        { "findingId": "gpt-5.5:ir-F33", "note": "Old-run cleanup permanently leaves generated Redis namespaces behind." },
+        { "findingId": "opus-4.8:ir-F15", "note": "PostgreSQL-first ordering makes a failed Redis cleanup unrecoverable." },
+        { "findingId": "glm-5.2:ir-F2", "note": "Terminal-cleanup Redis DEL failures are swallowed and never retried; the poller only selects draining rows, so terminal runs are never repaired." }
+      ]
+    },
+    {
+      "id": "ir-cleanup-deletes-unsettled-runs",
+      "title": "Cleanup and smoke teardown delete run state that is not settled or owned",
+      "description": "By-id/old-run cleanup paths delete runs regardless of lifecycle status or ownership, and the load smoke invokes them on a fixed timer before business draining completes.",
+      "confidence": "medium",
+      "members": [
+        { "findingId": "gpt-5.5:ir-F31", "note": "Load smoke tears down before draining completes." },
+        { "findingId": "gpt-5.5:ir-F32", "note": "Old-run cleanup deletes terminal state outside generated-run ownership." },
+        { "findingId": "opus-4.8:ir-F34", "note": "By-id cleanup deletes an active run with jobs in flight after the smoke's fixed 3-second wait." },
+        { "findingId": "glm-5.2:ir-F24", "note": "Admin reset tears down durable and Redis state and releases the one-run gate while the old k6 process keeps sending traffic." }
+      ]
+    },
+    {
+      "id": "ir-runtime-secrets-not-enforced",
+      "title": "Reference runtime does not enforce its control-plane secrets",
+      "description": "The reference deployment boots and reports healthy without operator-provided secrets — either shipping public known defaults or tolerating their absence — leaving control endpoints and identity guarantees silently weakened.",
+      "confidence": "medium",
+      "members": [
+        { "findingId": "gpt-5.5:ir-F21", "note": "Boots with public, known control credentials." },
+        { "findingId": "opus-4.8:ir-F31", "note": "Boots healthy with the secrets missing entirely." },
+        { "findingId": "glm-5.2:ir-F9", "note": "Only the web process validates production secrets; API, Mock ERP, and orchestrator fall back to committed tokens." }
+      ]
+    },
+    {
+      "id": "ir-root-test-lanes-incomplete",
+      "title": "Root workspace test lanes silently omit application suites",
+      "description": "The repo-root unit/watch/coverage commands cannot collect or run substantial parts of the per-package test suites, so the convenient top-level lanes give false coverage confidence.",
+      "confidence": "high",
+      "members": [
+        { "findingId": "gpt-5.5:ir-F35", "note": "Root watch omits every application unit suite." },
+        { "findingId": "gpt-5.5:ir-F37", "note": "Coverage excludes the highest-risk suites and enforces no floor." },
+        { "findingId": "opus-4.8:ir-F35", "note": "Root unit/watch/coverage cannot run the web unit suite (missing alias, jsdom, TSX discovery)." }
+      ]
+    },
+    {
+      "id": "ir-no-composition-test",
+      "title": "No automated test exercises the deployed cross-service composition",
+      "description": "Every automated suite substitutes doubles at the service boundaries, so the full suite can pass while the production API-to-queue-to-worker-to-ERP wiring is broken.",
+      "confidence": "high",
+      "members": [
+        { "findingId": "gpt-5.5:ir-F36" },
+        { "findingId": "opus-4.8:ir-F36" }
+      ]
+    },
+    {
+      "id": "ir-finalization-accepts-missing-evidence",
+      "title": "Finalization builds the immutable summary from best-effort reads instead of durable evidence",
+      "description": "The terminal summary tolerates missing or unreadable delivery/inventory evidence at finalization time and still produces an authoritative record, instead of blocking on (or reusing) durable evidence that already exists.",
+      "confidence": "medium",
+      "members": [
+        { "findingId": "gpt-5.5:ir-F6", "note": "A live Redis re-read replaces the already-durable terminal inventory snapshot; outages become permanent nulls." },
+        { "findingId": "opus-4.8:ir-F10", "note": "Missing traffic evidence or a null k6 summary is graded complete." }
+      ]
+    },
+    {
+      "id": "ir-run-concurrency-policy-not-honored",
+      "title": "Accepted run worker-concurrency policy is not actually honored",
+      "description": "The backpressure/concurrency policy frozen into an accepted run is not reliably applied by the worker at execution time.",
+      "confidence": "medium",
+      "members": [
+        { "findingId": "gpt-5.5:ir-F13", "note": "The reference worker cannot honor the two largest public presets' accepted concurrency." },
+        { "findingId": "opus-4.8:ir-F16", "note": "Run-scoped concurrency is applied only after BullMQ has already admitted a default-sized batch." },
+        { "findingId": "glm-5.2:ir-F20", "note": "Same late application, and the snapshot resolver additionally fails open to global defaults on errors." }
+      ]
+    },
+    {
+      "id": "ir-lifecycle-contracts-lack-coherence",
+      "title": "Lifecycle boundary contracts validate values but not state coherence",
+      "description": "Shared schemas at service boundaries reuse broad lifecycle enums and per-field checks without cross-field/state invariants, so impossible lifecycle payloads pass validation.",
+      "confidence": "medium",
+      "members": [
+        { "findingId": "gpt-5.5:ir-N8" },
+        { "findingId": "opus-4.8:ir-F30", "note": "An 'active' completion and a 'failed' start acknowledgement both validate." },
+        { "findingId": "glm-5.2:ir-F36", "note": "order.queued with toStatus confirmed and run.completed with status active both validate at the realtime gate." },
+        { "findingId": "glm-5.2:ir-F51", "note": "Run History accepts an active summary and contradictory failure fields; the public preset schema accepts admin/editable rows." }
+      ]
+    },
+    {
+      "id": "ir-startup-reconciliation-best-effort",
+      "title": "Startup/restart reconciliation is one-shot and best-effort",
+      "description": "Recovery-on-start swallows per-run errors and runs once, so a transient repair failure (or a partial view of an interrupted run) persists for the process lifetime.",
+      "confidence": "medium",
+      "members": [
+        { "findingId": "gpt-5.5:ir-N3", "note": "Restart reconciliation freezes partial active-run outcomes as if final." },
+        { "findingId": "opus-4.8:ir-N3" },
+        { "findingId": "glm-5.2:ir-F14", "note": "The immutable summary is written from a point-in-time read with zero sold-out counts and no terminal snapshot, then the Redis-only accounting is destroyed." }
+      ]
+    },
+    {
+      "id": "ir-correlation-chain-broken",
+      "title": "Correlation IDs are not propagated across the whole request chain",
+      "description": "Parts of the observability chain mint fresh correlation IDs or omit them instead of inheriting the initiating request's ID, breaking end-to-end traceability.",
+      "confidence": "medium",
+      "members": [
+        { "findingId": "gpt-5.5:ir-F30", "note": "Routine HTTP logs do not inherit the request correlation ID." },
+        { "findingId": "opus-4.8:ir-F40", "note": "The orchestrator drops the run-start correlation ID for background work and callbacks." },
+        { "findingId": "glm-5.2:ir-F35", "note": "Run IDs are bound as correlationId, fabricating traces and discarding the admin-reset request correlation." }
+      ]
+    },
+    {
+      "id": "ir-half-open-probe-wedged",
+      "title": "An unexpected throw during the half-open probe wedges the circuit breaker",
+      "description": "The single half-open probe flag is released only when a result is recorded; a non-ERP error thrown through the wrapper never records success or failure, so the breaker stays half-open with a permanently in-flight probe until process restart.",
+      "confidence": "high",
+      "members": [
+        { "findingId": "opus-4.8:ir-F4" },
+        { "findingId": "glm-5.2:ir-F21", "note": "Reproduced with the shipped modules; while wedged, ir-F7 permanently fails every picked-up order." }
+      ]
+    },
+    {
+      "id": "ir-sync-dashboard-publish-blocks-buy",
+      "title": "Awaited dashboard publication sits on the synchronous buy path",
+      "description": "Best-effort realtime/dashboard publication is awaited before the buy response returns, adding observability latency and fan-out load to the hot path the design says must stay cheap.",
+      "confidence": "high",
+      "members": [
+        { "findingId": "opus-4.8:ir-F8", "note": "The accepted path awaits Redis PUBLISH without a timeout." },
+        { "findingId": "glm-5.2:ir-F12", "note": "Every sold-out loser awaits its own publication, contradicting the documented aggregate-only sold-out path." }
+      ]
+    },
+    {
+      "id": "ir-unbounded-idempotency-keys",
+      "title": "Idempotency keys are unbounded and amplified into Redis",
+      "description": "The shared idempotency-key schema accepts any non-empty string and the buy path embeds it in Redis keys and stored values with a long TTL, so large keys amplify memory and bandwidth on the critical path.",
+      "confidence": "high",
+      "members": [
+        { "findingId": "opus-4.8:ir-F9" },
+        { "findingId": "glm-5.2:ir-F46" }
+      ]
+    },
+    {
+      "id": "ir-child-rows-contradict-parents",
+      "title": "PostgreSQL accepts child rows that contradict the parent they describe",
+      "description": "Orders, ERP attempts, and related child rows duplicate run/offer/correlation identity with only a single foreign key and no agreement or status/timestamp constraints, so the durable source of truth accepts impossible histories.",
+      "confidence": "high",
+      "members": [
+        { "findingId": "opus-4.8:ir-F12" },
+        { "findingId": "glm-5.2:ir-F16" },
+        { "findingId": "gpt-5.5:ir-N1", "note": "Same class observed at lower severity: attribution integrity rests mostly on application discipline." }
+      ]
+    },
+    {
+      "id": "ir-409-graded-expected",
+      "title": "Grading every HTTP 409 as expected traffic hides lifecycle failures",
+      "description": "The generated k6 script marks the whole 409 status class expected while the buy path also uses 409 for closed runs, missing eligibility, and idempotency conflicts — so a completely broken run can report clean traffic delivery.",
+      "confidence": "high",
+      "members": [
+        { "findingId": "opus-4.8:ir-F20" },
+        { "findingId": "glm-5.2:ir-F25" }
+      ]
+    },
+    {
+      "id": "ir-run-offer-ownership-mutable",
+      "title": "Generated run-sale ownership can be invalidated after guarded insertion",
+      "description": "Run and sale-context rows store sale-offer ownership independently with guards firing only at insertion, so a later contradictory write (offer purpose or pointer change) silently invalidates the ownership relationship downstream code trusts.",
+      "confidence": "high",
+      "members": [
+        { "findingId": "gpt-5.5:ir-F7" },
+        { "findingId": "glm-5.2:ir-F15", "note": "Demonstrated at the storage boundary by the branch's own maintenance test, which flips a context-owned offer to catalog." }
+      ]
+    },
+    {
+      "id": "ir-worker-readiness-no-probe",
+      "title": "Worker readiness reports healthy without probing its dependencies",
+      "description": "The worker readiness endpoint maps configuration presence or process-local object state to healthy without any real PostgreSQL/Redis round trip, so orchestration and monitoring stay green while no order can actually be processed.",
+      "confidence": "high",
+      "members": [
+        { "findingId": "opus-4.8:ir-F18" },
+        { "findingId": "glm-5.2:ir-F40", "note": "Also covers the consumer check, which reports BullMQ object lifecycle rather than connectivity." }
+      ]
+    },
+    {
+      "id": "ir-immutable-artifacts-updateable",
+      "title": "Frozen snapshots and immutable summaries are ordinary updateable rows",
+      "description": "Run config snapshots and terminal summaries are treated as immutable by the application but PostgreSQL enforces neither update rejection nor content validity, so out-of-band writes can rewrite history that readers trust without re-validation.",
+      "confidence": "medium",
+      "members": [
+        { "findingId": "opus-4.8:ir-F38" },
+        { "findingId": "glm-5.2:ir-N1", "note": "The read adapter also casts summary JSONB without parsing, so a mutated row is served as if valid." }
+      ]
+    },
+    {
+      "id": "ir-process-local-state-unbounded",
+      "title": "Process-local run state has no retention bound",
+      "description": "Long-lived services accumulate per-run in-memory state (execution maps, idempotency ledgers, semaphores) that is never evicted, growing without bound across hosted runs.",
+      "confidence": "medium",
+      "members": [
+        { "findingId": "gpt-5.5:ir-N2" },
+        { "findingId": "glm-5.2:ir-N3" }
+      ]
+    },
+    {
+      "id": "ir-k6-lane-not-required",
+      "title": "The only real-k6 verification is optional and skipped by standard gates",
+      "description": "The single test lane that exercises real generated-script/k6 compatibility is either skipped when the binary is absent or omitted from the root suite entirely, so k6 incompatibility regressions survive every standard automated check.",
+      "confidence": "high",
+      "members": [
+        { "findingId": "gpt-5.5:ir-N11" },
+        { "findingId": "glm-5.2:ir-F43", "note": "The lane exists but pnpm test never invokes it, and it is not runnable in the documented reference setup (k6 lives only in the orchestrator image)." }
+      ]
+    },
+    {
+      "id": "ir-test-type-check-broken",
+      "title": "Test-source type checking is declared but not effective",
+      "description": "A type-check:test command exists in the workspace contract but either resolves to zero package tasks or is invoked by no gate, so test-only TypeScript errors and fixture drift hide behind green checks.",
+      "confidence": "high",
+      "members": [
+        { "findingId": "gpt-5.5:ir-F38", "note": "The command exists and currently fails, but no gate invokes it." },
+        { "findingId": "glm-5.2:ir-F42", "note": "The command exists but no package defines the script, so it exits 0 having checked nothing." }
+      ]
+    },
+    {
+      "id": "ir-env-overrides-inert",
+      "title": "Documented environment configuration is silently inert in the reference runtime",
+      "description": "Documented environment variables — deployment caps, policy defaults, service tuning — are either never parsed by the owning process or never forwarded by Compose, so operator overrides silently do nothing.",
+      "confidence": "medium",
+      "members": [
+        { "findingId": "gpt-5.5:ir-F34", "note": "Compose puts policy overrides on a process that does not read them while the seed-owning setup service receives none." },
+        { "findingId": "glm-5.2:ir-F38", "note": "Compose forwards only a small fixed subset, including giving the shared cookie secret to web but not the API that verifies it." },
+        { "findingId": "glm-5.2:ir-F29", "note": "The documented DEMO_MAX_* deployment caps are never parsed; validation silently uses compile-time constants." },
+        { "findingId": "glm-5.2:ir-F17", "note": "One facet of a broader finding: public-policy env defaults are hard-coded and never passed to the setup job." }
+      ]
+    },
+    {
+      "id": "ir-live-rate-misreported",
+      "title": "Streamed k6 metrics are converted to live rates with a wrong denominator",
+      "description": "Live request/failure rates are derived from streamed k6 samples without a correct time-window denominator — raw points forwarded as rates, or partial windows divided by the full polling interval — so the headline live rate misstates actual traffic.",
+      "confidence": "medium",
+      "members": [
+        { "findingId": "gpt-5.5:ir-F19" },
+        { "findingId": "glm-5.2:ir-F48" }
+      ]
+    },
+    {
+      "id": "ir-buyable-after-close",
+      "title": "Purchases remain accepted after the sale's eligibility window closes",
+      "description": "The hot-path acceptance gate is not closed in step with the sale's lifecycle — offers or runs whose window has ended keep accepting fresh reservations until a later, best-effort projection update lands.",
+      "confidence": "medium",
+      "members": [
+        { "findingId": "opus-4.8:ir-F37", "note": "Catalog offers with stale initialized inventory are authorized after their active/start/end window." },
+        { "findingId": "glm-5.2:ir-F2", "note": "Draining and even terminal runs keep accepting fresh reservations until finalization's late eligibility clear succeeds." }
+      ]
+    },
+    {
+      "id": "ir-drain-timeout-unsettled",
+      "title": "The drain timeout mishandles unsettled business work",
+      "description": "When the drain timeout fires with business work still unsettled, finalization takes a wrong branch — either retrying reconciliation forever and blocking new runs, or bypassing the settlement gate and recording the run as completed.",
+      "confidence": "medium",
+      "members": [
+        { "findingId": "opus-4.8:ir-F21", "note": "Unbounded post-timeout reconciliation leaves the run draining and blocks new starts." },
+        { "findingId": "glm-5.2:ir-F6", "note": "The timeout bypasses the settlement gate and labels a run with processing orders completed in an immutable summary." }
+      ]
+    },
+    {
+      "id": "ir-exhausted-jobs-strand-processing",
+      "title": "Queue-attempt exhaustion leaves durable orders permanently processing",
+      "description": "When BullMQ exhausts a job's retry budget there is no durable dead-letter or compensation path, so the order stays in processing forever, run finalization waits for the drain timeout, and the failure is invisible to business state.",
+      "confidence": "high",
+      "members": [
+        { "findingId": "gpt-5.5:ir-F11", "note": "ERP-attempt persistence failures are one path that exhausts the budget." },
+        { "findingId": "glm-5.2:ir-F19", "note": "The strongest real-BullMQ integration test explicitly asserts the stranded-processing result." }
+      ]
+    }
+  ]
 }
