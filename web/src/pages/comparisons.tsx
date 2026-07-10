@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { ChevronRight } from "lucide-react";
 import {
   comparisonClusters,
@@ -133,8 +134,16 @@ function ClusterModelSummary({ entries }: { entries: ComparisonEntry[] }) {
 }
 
 function ComparisonEntryDetail({ entry, note }: { entry: ComparisonEntry; note?: string }) {
+  // Markdown bodies are expensive to render at page scale (~1k instances), so
+  // they only mount once the entry has been expanded at least once.
+  const [hasOpened, setHasOpened] = useState(false);
   return (
-    <details className="group border-b border-hairline last:border-b-0">
+    <details
+      className="group border-b border-hairline last:border-b-0"
+      onToggle={(event) => {
+        if (event.currentTarget.open) setHasOpened(true);
+      }}
+    >
       <summary
         className={cn(
           "grid cursor-pointer list-none grid-cols-[auto_1fr_auto] items-start gap-3 px-4 py-3 text-left",
@@ -163,14 +172,16 @@ function ComparisonEntryDetail({ entry, note }: { entry: ComparisonEntry; note?:
           results/{entry.source}
         </span>
       </summary>
-      <div className="space-y-4 border-t border-dashed border-hairline bg-wash/40 px-4 py-4 pl-11">
-        <ComparisonBodySection title="Reference behavior" body={entry.reference} />
-        <ComparisonBodySection title="Compared behavior" body={entry.compared} />
-        <ComparisonBodySection title="Verdict rationale" body={entry.rationale} />
-        <p className="font-mono text-[0.68rem] break-all text-ink-3">
-          source: results/{entry.source} · {entry.code}
-        </p>
-      </div>
+      {hasOpened && (
+        <div className="space-y-4 border-t border-dashed border-hairline bg-wash/40 px-4 py-4 pl-11">
+          <ComparisonBodySection title="Reference behavior" body={entry.reference} />
+          <ComparisonBodySection title="Compared behavior" body={entry.compared} />
+          <ComparisonBodySection title="Verdict rationale" body={entry.rationale} />
+          <p className="font-mono text-[0.68rem] break-all text-ink-3">
+            source: results/{entry.source} · {entry.code}
+          </p>
+        </div>
+      )}
     </details>
   );
 }
