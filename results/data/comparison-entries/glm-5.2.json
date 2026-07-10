@@ -1,6 +1,7 @@
 {
   "model": "glm-5.2",
   "reviewType": "comparison-vs-base",
+  "reviewer": "fable-5 (high)",
   "source": "comparison_vs_base/glm-5.2_vs_base.md",
   "entries": [
     {

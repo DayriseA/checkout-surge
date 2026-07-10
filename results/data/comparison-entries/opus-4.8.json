@@ -1,6 +1,7 @@
 {
   "model": "opus-4.8",
   "reviewType": "comparison-vs-base",
+  "reviewer": "fable-5 (high)",
   "source": "comparison_vs_base/opus-4.8_vs_base.md",
   "entries": [
     {

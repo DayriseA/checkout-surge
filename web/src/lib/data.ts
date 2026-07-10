@@ -12,6 +12,7 @@ import {
   modelsFileSchema,
   slicesFileSchema,
   SEVERITY_ORDER,
+  VERDICT_ORDER,
   type BrowserUseTestFindingsFile,
   type ComparisonCluster,
   type ComparisonEntry,
@@ -24,6 +25,7 @@ import {
   type Model,
   type Severity,
   type Slice,
+  type Verdict,
 } from "./schema";
 
 import modelsRaw from "../../../results/data/models.json";
@@ -214,6 +216,70 @@ function computeModelStats(source: BrowsableFinding[]): ModelStats[] {
 
 export const modelStats: ModelStats[] = computeModelStats(allFindings);
 export const independentModelStats: ModelStats[] = computeModelStats(allIndependentFindings);
+
+/** The fixed comparer is the same across every comparison-entries file. */
+export const comparisonReviewer: string | null = comparisonEntryFiles[0]?.reviewer ?? null;
+
+/**
+ * Self-audit blind spots: independent-review findings whose issue class the
+ * branch's own audit never identified (empty relatedFindingIds).
+ */
+export interface BlindSpotStats {
+  model: Model;
+  missed: number;
+  total: number;
+}
+
+export const independentBlindSpots: BlindSpotStats[] = models.map((model) => {
+  const findings = allIndependentFindings.filter(
+    (finding) => finding.model === model.id && finding.tier === "finding",
+  );
+  return {
+    model,
+    missed: findings.filter((finding) => finding.relatedFindingIds.length === 0).length,
+    total: findings.length,
+  };
+});
+
+export interface BrowserUseStats {
+  model: Model;
+  total: number;
+  selfAuditMissed: number;
+  reproduced: number;
+}
+
+export const browserUseStats: BrowserUseStats[] = models.map((model) => {
+  const findings = browserUseTestFiles.find((file) => file.model === model.id)?.findings ?? [];
+  return {
+    model,
+    total: findings.length,
+    selfAuditMissed: findings.filter((f) => f.postFixAssessment === "self-audit-missed").length,
+    reproduced: findings.filter((f) => f.postFixAssessment === "self-audit-caught-but-reproduced")
+      .length,
+  };
+});
+
+export interface ComparisonVerdictStats {
+  model: Model;
+  total: number;
+  byVerdict: Record<Verdict, number>;
+}
+
+export const comparisonVerdictStats: ComparisonVerdictStats[] = models.map((model) => {
+  const entries = comparisonEntries.filter((entry) => entry.model === model.id);
+  const byVerdict = Object.fromEntries(
+    VERDICT_ORDER.map((verdict) => [
+      verdict,
+      entries.filter((entry) => entry.verdict === verdict).length,
+    ]),
+  ) as Record<Verdict, number>;
+  return { model, total: entries.length, byVerdict };
+});
+
+/** Distinct models represented in a cluster's members. */
+export function clusterModelSpan(cluster: Cluster, resolve: (id: string) => BrowsableFinding): number {
+  return new Set(cluster.members.map((member) => resolve(member.findingId).model)).size;
+}
 
 // referential integrity: every cluster member and notObserved model must exist
 for (const cluster of clusters) {

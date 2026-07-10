@@ -27,6 +27,8 @@ The data here assumes this chronology:
 5. Independent browser-use testing then exercised the claimed-fixed implementations through the browser.
 6. A single fixed reviewer model then code-reviewed each post-fix implementation branch using the same guide (`docs/review_helper.md`); those results are the `independent-review-findings/<model>.json` records.
 
+Separately from the review chronology, a single fixed comparer model graded each implementation topic-by-topic against the reference project `checkout-forge`; those results are the `comparison-entries/<model>.json` records. The comparer is recorded in each file's `reviewer` field and is the same for every report, so comparison verdicts are directly comparable across agents.
+
 Browser-use records provide a supplementary behavioral check after remediation. A finding can either be an issue class the self-audit caught but the claimed fix failed to eliminate, or a blind spot that the self-audit did not identify.
 
 Independent-review records serve a different purpose: because every self-audit was performed by the model that wrote the code, a low self-audit finding count is ambiguous (few issues, or a reviewer blind to its own issues). Holding the reviewer constant across branches makes finding counts comparable across agents. Note the review target is the *post-fix* branch state, so an independent finding count is not directly comparable to the same branch's pre-fix self-audit count — the meaningful comparisons are across branches, and per-finding against the self-audit via `relatedFindingIds`.
@@ -143,6 +145,7 @@ Entry files live under `comparison-entries/`, one file per model:
 {
   "model": "gpt-5.5",
   "reviewType": "comparison-vs-base",
+  "reviewer": "fable-5 (high)",           // the fixed comparer model, same for every file
   "source": "comparison_vs_base/gpt-5.5_vs_base.md",
   "entries": [
     {
@@ -184,7 +187,7 @@ Clustering is editorial. Prefer under-clustering to over-clustering: if two sect
 Use the helper scripts from `web/` for mechanical imports and first-pass cluster seeding:
 
 ```bash
-npm run import-comparison-report -- gpt-5.5 comparison_vs_base/gpt-5.5_vs_base.md
+npm run import-comparison-report -- gpt-5.5 comparison_vs_base/gpt-5.5_vs_base.md "fable-5 (high)"
 npm run seed-comparison-clusters
 ```
 

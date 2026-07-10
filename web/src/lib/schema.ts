@@ -146,6 +146,8 @@ export type BrowserUseTestFindingsFile = z.infer<typeof browserUseTestFindingsFi
 export const verdictSchema = z.enum(["better", "same", "worse", "missing", "unknown"]);
 export type Verdict = z.infer<typeof verdictSchema>;
 
+export const VERDICT_ORDER: Verdict[] = ["better", "same", "worse", "missing", "unknown"];
+
 export const comparisonEntrySchema = z.object({
   id: z.string().regex(/^[a-z0-9.-]+:C\d+$/, "expected '<model>:C{n}'"),
   model: z.string().min(1),
@@ -162,6 +164,7 @@ export type ComparisonEntry = z.infer<typeof comparisonEntrySchema>;
 export const comparisonEntriesFileSchema = z.object({
   model: z.string().min(1),
   reviewType: z.literal("comparison-vs-base"),
+  reviewer: z.string().min(1), // the fixed comparer model, same for every file
   source: z.string().min(1),
   entries: z.array(comparisonEntrySchema).min(1),
 });

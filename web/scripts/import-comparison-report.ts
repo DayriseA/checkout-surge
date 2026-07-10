@@ -2,7 +2,7 @@
  * Imports one consolidated comparison report into the lossless entry format.
  *
  * Usage:
- *   node scripts/import-comparison-report.ts gpt-5.5 comparison_vs_base/gpt-5.5_vs_base.md
+ *   node scripts/import-comparison-report.ts gpt-5.5 comparison_vs_base/gpt-5.5_vs_base.md "fable-5 (high)"
  */
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -23,9 +23,11 @@ interface Entry {
   rationale: string;
 }
 
-const [model, source] = process.argv.slice(2);
-if (!model || !source) {
-  console.error("Usage: node scripts/import-comparison-report.ts <model-id> <source-relative-to-results>");
+const [model, source, reviewer] = process.argv.slice(2);
+if (!model || !source || !reviewer) {
+  console.error(
+    'Usage: node scripts/import-comparison-report.ts <model-id> <source-relative-to-results> "<comparer model (effort)>"',
+  );
   process.exit(1);
 }
 
@@ -43,7 +45,7 @@ const outputPath = join(resultsDir, "data", "comparison-entries", `${model}.json
 mkdirSync(dirname(outputPath), { recursive: true });
 writeFileSync(
   outputPath,
-  `${JSON.stringify({ model, reviewType: "comparison-vs-base", source, entries }, null, 2)}\n`,
+  `${JSON.stringify({ model, reviewType: "comparison-vs-base", reviewer, source, entries }, null, 2)}\n`,
 );
 
 console.log(`Imported ${entries.length} comparison entries from ${source}`);

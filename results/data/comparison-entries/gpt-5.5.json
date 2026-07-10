@@ -1,6 +1,7 @@
 {
   "model": "gpt-5.5",
   "reviewType": "comparison-vs-base",
+  "reviewer": "fable-5 (high)",
   "source": "comparison_vs_base/gpt-5.5_vs_base.md",
   "entries": [
     {

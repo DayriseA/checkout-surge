@@ -1,9 +1,12 @@
 import { Link } from "react-router-dom";
 import {
-  allFindings,
-  allIndependentFindings,
+  browserUseStats,
+  clusterModelSpan,
   clusters,
+  comparisonReviewer,
+  comparisonVerdictStats,
   findingById,
+  independentBlindSpots,
   independentFindingById,
   independentModelStats,
   independentReviewClusters,
@@ -12,42 +15,36 @@ import {
   modelStats,
   type BrowsableFinding,
 } from "@/lib/data";
-import { SEVERITY_ORDER, type Cluster, type Severity } from "@/lib/schema";
+import { SEVERITY_ORDER, type Cluster, type Verdict } from "@/lib/schema";
 import { modelColorVar, severityColorVar, severityLabel } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ModelMark } from "@/components/model-mark";
 
 export function OverviewPage() {
+  const sharedIrClusters = independentReviewClusters.filter(
+    (cluster) =>
+      cluster.confidence === "high" &&
+      clusterModelSpan(cluster, independentFindingById) === models.length,
+  );
+  const highConfSelfAuditClusters = clusters.filter((cluster) => cluster.confidence === "high");
+
   return (
     <div className="space-y-10">
-      <header className="max-w-[70ch]">
+      <header>
         <p className="font-mono text-[0.65rem] tracking-[0.2em] text-ink-3 uppercase">
           Phase 1–10 · Agent evaluation
         </p>
-        <h1 className="mt-2 text-3xl font-semibold tracking-tight text-balance">
+        <h1 className="mt-2 max-w-[70ch] text-3xl font-semibold tracking-tight text-balance">
           Three agents built Checkout-Surge. Then each audited its own work.
         </h1>
-        <p className="mt-3 text-sm leading-relaxed text-ink-2">
+        <p className="mt-3 max-w-[70ch] text-sm leading-relaxed text-ink-2">
           From the same docs, specs, and roadmap, each agent independently implemented phases 1–10
-          in an isolated worktree, then reviewed its own implementation for bugs and oversights.
-          Every number below describes an agent's findings <em>about its own codebase</em> — counts
-          measure a mix of code quality and audit thoroughness. Those self-audit findings were later
-          filed as issues for attempted fixes, then independently retested through the browser, so
-          read them alongside the{" "}
-          <Link to="/auto-review?view=clusters" className="underline hover:text-ink">
-            cluster view
-          </Link>{" "}
-          and the{" "}
-          <Link to="/independent-review?view=browser-use" className="underline hover:text-ink">
-            supplementary browser-use results
-          </Link>
-          . Finally, one fixed reviewer — {independentReviewer} — code-reviewed every post-fix
-          branch with the same guide; the{" "}
-          <Link to="/independent-review" className="underline hover:text-ink">
-            independent review
-          </Link>{" "}
-          is the one count that compares directly across agents.
+          in an isolated worktree. Four evaluation passes followed — the pipeline below shows where
+          each dataset comes from. Self-audit counts mix code quality with audit thoroughness; the
+          fixed-reviewer and fixed-comparer passes are the ones that compare directly across
+          agents.
         </p>
+        <Pipeline />
       </header>
 
       <section aria-labelledby="tally-heading">
@@ -55,60 +52,52 @@ export function OverviewPage() {
           Findings per agent
         </h2>
         <div className="grid gap-4 sm:grid-cols-3">
-          {modelStats.map(({ model, total, bySeverity, notes }) => {
-            const independent = independentModelStats.find((s) => s.model.id === model.id);
-            return (
-              <Link key={model.id} to={`/models/${model.id}`} className="group">
-                <Card className="h-full transition-colors group-hover:border-ink-3">
-                  <CardContent className="py-4">
-                    <ModelMark modelId={model.id} detail />
-                    <p className="mt-3 text-4xl font-semibold tracking-tight tabular-nums">{total}</p>
-                    <p className="mt-0.5 text-xs text-ink-3">
-                      findings{notes > 0 && ` · +${notes} lower-confidence notes`}
-                    </p>
-                    <dl className="mt-3 flex gap-4 border-t border-hairline pt-3">
-                      {SEVERITY_ORDER.filter((s) => s !== "info").map((severity) => (
-                        <div key={severity}>
-                          <dt className="flex items-center gap-1 text-[0.65rem] text-ink-3">
-                            <span
-                              aria-hidden
-                              className="size-1.5 rounded-full"
-                              style={{ background: severityColorVar[severity] }}
-                            />
-                            {severityLabel[severity]}
-                          </dt>
-                          <dd className="text-sm font-medium tabular-nums">{bySeverity[severity]}</dd>
-                        </div>
-                      ))}
-                    </dl>
-                    {independent && independent.total > 0 && (
-                      <p className="mt-3 border-t border-hairline pt-3 text-xs text-ink-3">
-                        <span className="font-medium text-ink-2 tabular-nums">
-                          {independent.total}
-                        </span>{" "}
-                        independent-review findings ·{" "}
-                        <span className="tabular-nums">{independent.bySeverity.high}</span> high
-                      </p>
-                    )}
-                  </CardContent>
-                </Card>
-              </Link>
-            );
-          })}
+          {models.map((model) => (
+            <AgentCard key={model.id} modelId={model.id} />
+          ))}
         </div>
+        <p className="mt-2 text-[0.7rem] leading-relaxed text-ink-3">
+          Headline counts are the fixed reviewer's post-fix findings — the one code-review count
+          that compares across agents. Pre-fix self-audit totals are shown for context only.
+        </p>
       </section>
 
-      <section aria-labelledby="dist-heading">
+      <Synthesis sharedClusterCount={sharedIrClusters.length} />
+
+      <ComparisonVerdicts />
+
+      <section aria-labelledby="ir-matrix-heading">
         <Card>
           <CardHeader>
-            <CardTitle id="dist-heading">Severity distribution</CardTitle>
+            <CardTitle id="ir-matrix-heading">
+              Shared issue classes — every branch, same defect
+            </CardTitle>
             <p className="text-xs text-ink-2">
-              Normalized grades (each report's verbatim label is preserved on the finding itself).
-              Lower-confidence notes excluded.
+              High-confidence issue classes the fixed reviewer, {independentReviewer}, found in all
+              three post-fix implementations. Three independent codebases converging on the same
+              defect class points at systematic agent blind spots, not one-off mistakes.
             </p>
           </CardHeader>
-          <CardContent>
-            <SeverityChart />
+          <CardContent className="px-0 pb-0">
+            <CoverageMatrix
+              clusters={sharedIrClusters}
+              resolveFinding={independentFindingById}
+              linkBase="/independent-review?view=code-clusters"
+              footer={
+                <>
+                  {independentReviewClusters.filter(
+                    (c) => clusterModelSpan(c, independentFindingById) === models.length,
+                  ).length}{" "}
+                  of {independentReviewClusters.length} independent-review classes span all three
+                  branches; the {sharedIrClusters.length} high-confidence ones are shown here. Full
+                  matrix in{" "}
+                  <Link to="/independent-review?view=code-clusters" className="underline hover:text-ink">
+                    Independent review › Code clusters
+                  </Link>
+                  .
+                </>
+              }
+            />
           </CardContent>
         </Card>
       </section>
@@ -116,44 +105,30 @@ export function OverviewPage() {
       <section aria-labelledby="matrix-heading">
         <Card>
           <CardHeader>
-            <CardTitle id="matrix-heading">Who caught what</CardTitle>
+            <CardTitle id="matrix-heading">Who caught what — self-audits</CardTitle>
             <p className="text-xs text-ink-2">
-              Issue classes reported by more than one self-audit. Each agent audited its own
-              implementation, so an empty cell means the issue wasn't reported there — either it
-              doesn't exist in that implementation or the audit missed it. ⊘ marks classes the
-              report explicitly verified as sound.
+              Issue classes reported by more than one self-audit, high-confidence groupings only.
+              Each agent audited its own implementation, so an empty cell means the issue wasn't
+              reported there — either it doesn't exist in that implementation or the audit missed
+              it. ⊘ marks classes the report explicitly verified as sound.
             </p>
           </CardHeader>
           <CardContent className="px-0 pb-0">
             <CoverageMatrix
-              clusters={clusters}
+              clusters={highConfSelfAuditClusters}
               resolveFinding={findingById}
               linkBase="/auto-review?view=clusters"
-              totalFindings={allFindings.length}
-              jsonPath="results/data/clusters.json"
-            />
-          </CardContent>
-        </Card>
-      </section>
-
-      <section aria-labelledby="ir-matrix-heading">
-        <Card>
-          <CardHeader>
-            <CardTitle id="ir-matrix-heading">Independent review — shared issue classes</CardTitle>
-            <p className="text-xs text-ink-2">
-              Issue classes the fixed reviewer, {independentReviewer}, found in more than one
-              post-fix implementation. The reviewer is the same everywhere, so an empty cell leans
-              closer to "not present in that branch" than in the self-audit matrix above — though
-              it's still not proof of absence.
-            </p>
-          </CardHeader>
-          <CardContent className="px-0 pb-0">
-            <CoverageMatrix
-              clusters={independentReviewClusters}
-              resolveFinding={independentFindingById}
-              linkBase="/independent-review?view=code-clusters"
-              totalFindings={allIndependentFindings.length}
-              jsonPath="results/data/independent-review-clusters.json"
+              footer={
+                <>
+                  Showing {highConfSelfAuditClusters.length} of {clusters.length} multi-audit
+                  classes (the mapping is editorial — see results/data/clusters.json). Full matrix
+                  in{" "}
+                  <Link to="/auto-review?view=clusters" className="underline hover:text-ink">
+                    Auto-Review › Clusters
+                  </Link>
+                  .
+                </>
+              }
             />
           </CardContent>
         </Card>
@@ -162,54 +137,289 @@ export function OverviewPage() {
   );
 }
 
-function SeverityChart() {
-  const visible: Severity[] = ["high", "medium", "low"];
-  const max = Math.max(
-    ...modelStats.flatMap(({ bySeverity }) => visible.map((s) => bySeverity[s])),
-  );
+const PIPELINE_STEPS: Array<{ title: string; detail: string; to?: string }> = [
+  {
+    title: "Build",
+    detail: "Each agent implemented phases 1–10 from the same docs, in an isolated worktree.",
+  },
+  {
+    title: "Self-audit",
+    detail: "Each agent code-reviewed its own implementation for bugs and oversights.",
+    to: "/auto-review",
+  },
+  {
+    title: "Fix attempt",
+    detail: "Self-audit findings were filed as issues; each agent fixed them and claimed completion.",
+  },
+  {
+    title: "Browser-use test",
+    detail: "Independent testers exercised each claimed-fixed app through a real browser.",
+    to: "/independent-review?view=browser-use",
+  },
+  {
+    title: "Independent review",
+    detail: "One fixed reviewer code-reviewed every post-fix branch with the same guide.",
+    to: "/independent-review",
+  },
+];
 
+function Pipeline() {
   return (
-    <div className="space-y-5">
-      {visible.map((severity) => (
-        <div key={severity}>
-          <p className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-ink-2">
-            <span
-              aria-hidden
-              className="size-2 rounded-full"
-              style={{ background: severityColorVar[severity] }}
-            />
-            {severityLabel[severity]}
-          </p>
-          <div className="space-y-[3px]">
-            {modelStats.map(({ model, bySeverity }) => {
-              const value = bySeverity[severity];
-              return (
-                <div key={model.id} className="grid grid-cols-[5.5rem_1fr] items-center gap-2">
-                  <span className="truncate text-right text-xs text-ink-3">{model.name}</span>
-                  <div className="flex items-center gap-2">
-                    <div
-                      role="img"
-                      aria-label={`${model.name}: ${value} ${severityLabel[severity].toLowerCase()}`}
-                      className="h-4 rounded-r-[4px]"
-                      style={{
-                        width: `calc(${(value / max) * 100}% * 0.9)`,
-                        minWidth: value > 0 ? "3px" : "0",
-                        background: severityColorVar[severity],
-                      }}
-                    />
-                    <span className="text-xs font-medium tabular-nums">{value}</span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      ))}
-      <p className="border-t border-hairline pt-3 text-[0.7rem] leading-relaxed text-ink-3">
-        Same scale across severities; bars measure each agent's report about its own code, not a
-        shared benchmark.
+    <div className="mt-6 max-w-[900px]">
+      <ol className="grid gap-px overflow-hidden rounded-lg border border-hairline bg-hairline sm:grid-cols-2 lg:grid-cols-5">
+        {PIPELINE_STEPS.map((step, index) => (
+          <li key={step.title} className="bg-surface p-3">
+            <p className="font-mono text-[0.62rem] tracking-[0.15em] text-ink-3 uppercase">
+              Step {index + 1}
+            </p>
+            <p className="mt-1 text-sm font-medium">
+              {step.to ? (
+                <Link to={step.to} className="hover:underline">
+                  {step.title}
+                </Link>
+              ) : (
+                step.title
+              )}
+            </p>
+            <p className="mt-1 text-xs leading-relaxed text-ink-3">{step.detail}</p>
+          </li>
+        ))}
+      </ol>
+      <p className="mt-2 text-xs leading-relaxed text-ink-3">
+        In parallel, one fixed comparer — {comparisonReviewer} — graded each implementation
+        topic-by-topic against the reference codebase; see{" "}
+        <Link to="/comparisons" className="underline hover:text-ink">
+          Comparisons
+        </Link>
+        .
       </p>
     </div>
+  );
+}
+
+function AgentCard({ modelId }: { modelId: string }) {
+  const independent = independentModelStats.find((s) => s.model.id === modelId);
+  const selfAudit = modelStats.find((s) => s.model.id === modelId);
+  const blindSpot = independentBlindSpots.find((s) => s.model.id === modelId);
+  const browserUse = browserUseStats.find((s) => s.model.id === modelId);
+  if (!independent || !selfAudit || !blindSpot || !browserUse) return null;
+
+  const blindSpotPct = Math.round((blindSpot.missed / blindSpot.total) * 100);
+
+  return (
+    <Link to={`/models/${modelId}`} className="group">
+      <Card className="h-full transition-colors group-hover:border-ink-3">
+        <CardContent className="py-4">
+          <ModelMark modelId={modelId} detail />
+          <p className="mt-3 text-4xl font-semibold tracking-tight tabular-nums">
+            {independent.total}
+          </p>
+          <p className="mt-0.5 text-xs text-ink-3">
+            post-fix findings by the fixed reviewer
+            {independent.notes > 0 && ` · +${independent.notes} notes`}
+          </p>
+          <dl className="mt-3 flex gap-4 border-t border-hairline pt-3">
+            {SEVERITY_ORDER.filter((s) => s !== "info").map((severity) => (
+              <div key={severity}>
+                <dt className="flex items-center gap-1 text-[0.65rem] text-ink-3">
+                  <span
+                    aria-hidden
+                    className="size-1.5 rounded-full"
+                    style={{ background: severityColorVar[severity] }}
+                  />
+                  {severityLabel[severity]}
+                </dt>
+                <dd className="text-sm font-medium tabular-nums">
+                  {independent.bySeverity[severity]}
+                </dd>
+              </div>
+            ))}
+          </dl>
+          <div className="mt-3 space-y-1 border-t border-hairline pt-3 text-xs leading-relaxed text-ink-3">
+            <p>
+              <span className="font-medium text-ink-2 tabular-nums">
+                {blindSpot.missed} of {blindSpot.total}
+              </span>{" "}
+              ({blindSpotPct}%) never flagged by its own self-audit
+            </p>
+            <p>
+              <span className="font-medium text-ink-2 tabular-nums">{browserUse.total}</span>{" "}
+              confirmed browser-use bugs post-fix
+            </p>
+            <p>
+              Self-audit (pre-fix): {selfAudit.total} findings · {selfAudit.bySeverity.high} high
+              {selfAudit.notes > 0 && ` · +${selfAudit.notes} notes`}
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+    </Link>
+  );
+}
+
+function Synthesis({ sharedClusterCount }: { sharedClusterCount: number }) {
+  const blindSpotPcts = independentBlindSpots.map((s) =>
+    Math.round((s.missed / s.total) * 100),
+  );
+  const missedSum = independentBlindSpots.reduce((n, s) => n + s.missed, 0);
+  const irSum = independentBlindSpots.reduce((n, s) => n + s.total, 0);
+  const buTotal = browserUseStats.reduce((n, s) => n + s.total, 0);
+  const buMissed = browserUseStats.reduce((n, s) => n + s.selfAuditMissed, 0);
+
+  const fewestIr = [...independentModelStats].sort((a, b) => a.total - b.total)[0];
+  const mostHigh = [...independentModelStats].sort(
+    (a, b) => b.bySeverity.high - a.bySeverity.high,
+  )[0];
+  const nets = comparisonVerdictStats
+    .map((s) => ({ model: s.model, net: s.byVerdict.better - s.byVerdict.worse }))
+    .sort((a, b) => b.net - a.net);
+  const formatNet = (net: number) => (net > 0 ? `+${net}` : `${net}`);
+
+  return (
+    <section aria-labelledby="synthesis-heading">
+      <Card>
+        <CardHeader>
+          <CardTitle id="synthesis-heading">What the data says so far</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4 text-sm leading-relaxed text-ink-2">
+          <div>
+            <p className="font-medium text-ink">Self-audits have large blind spots.</p>
+            <p className="mt-1">
+              {Math.min(...blindSpotPcts)}–{Math.max(...blindSpotPcts)}% of what the fixed reviewer
+              found on each post-fix branch ({missedSum} of {irSum} findings overall) had no
+              counterpart in that branch's own self-audit, and {buMissed} of {buTotal} confirmed
+              browser-use bugs were classes the self-audit never identified. Part of that gap is
+              capability rather than self-blindness alone: the fixed reviewer,{" "}
+              {independentReviewer}, is a stronger model than the three builders — so read these as
+              what a stronger reviewer adds, not purely as what the agents refused to see.
+            </p>
+          </div>
+          <div>
+            <p className="font-medium text-ink">
+              The three implementations share the same weak spots.
+            </p>
+            <p className="mt-1">
+              {
+                independentReviewClusters.filter(
+                  (c) => clusterModelSpan(c, independentFindingById) === models.length,
+                ).length
+              }{" "}
+              of {independentReviewClusters.length} independent-review issue classes appear in all
+              three branches — external-confirmation idempotency, holds left without durable state,
+              stale dashboard scope, admin auth hardening. Three independent codebases converging
+              on the same defect classes reads as systematic blind spots of current agents, not
+              individual slips; the {sharedClusterCount} high-confidence ones are tabled below.
+            </p>
+          </div>
+          <div>
+            <p className="font-medium text-ink">No branch leads on every lens.</p>
+            <ul className="mt-1 space-y-1">
+              <li>
+                Fewest post-fix findings: <ModelMark modelId={fewestIr.model.id} className="text-xs" />{" "}
+                ({independentModelStats.map((s) => `${s.model.name} ${s.total}`).join(" · ")})
+              </li>
+              <li>
+                Most high-severity post-fix findings:{" "}
+                <ModelMark modelId={mostHigh.model.id} className="text-xs" /> (
+                {independentModelStats
+                  .map((s) => `${s.model.name} ${s.bySeverity.high}`)
+                  .join(" · ")}
+                )
+              </li>
+              <li>
+                Best verdict balance vs the reference:{" "}
+                <ModelMark modelId={nets[0].model.id} className="text-xs" /> (net:{" "}
+                {comparisonVerdictStats
+                  .map((s) => `${s.model.name} ${formatNet(s.byVerdict.better - s.byVerdict.worse)}`)
+                  .join(" · ")}
+                )
+              </li>
+            </ul>
+            <p className="mt-1 text-xs text-ink-3">
+              Finding counts measure defect density under one reviewer; comparison verdicts measure
+              capability against a reference. They rank the branches differently — which lens
+              matters depends on the question being asked, and no cross-branch decision is implied
+              here.
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+    </section>
+  );
+}
+
+const VERDICT_BAR: Array<{ verdict: Verdict; label: string; color: string }> = [
+  { verdict: "better", label: "Better", color: "#0ca30c" },
+  { verdict: "same", label: "Same", color: "var(--ink-3)" },
+  { verdict: "worse", label: "Worse", color: "var(--sev-medium)" },
+  { verdict: "missing", label: "Missing", color: "var(--sev-high)" },
+];
+
+function ComparisonVerdicts() {
+  return (
+    <section aria-labelledby="verdicts-heading">
+      <Card>
+        <CardHeader>
+          <CardTitle id="verdicts-heading">Verdicts vs the reference implementation</CardTitle>
+          <p className="text-xs text-ink-2">
+            Each implementation graded topic-by-topic against the reference codebase by the same
+            fixed comparer — {comparisonReviewer} — so the verdict mixes compare across agents.
+            Topic totals differ because each report merged concerns differently; bars show
+            composition.
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {comparisonVerdictStats.map(({ model, total, byVerdict }) => {
+            const net = byVerdict.better - byVerdict.worse;
+            return (
+              <div key={model.id}>
+                <div className="mb-1.5 flex items-baseline justify-between gap-2">
+                  <ModelMark modelId={model.id} className="text-xs" />
+                  <span className="font-mono text-[0.68rem] text-ink-3 tabular-nums">
+                    {total} topics · net {net > 0 ? `+${net}` : net}
+                  </span>
+                </div>
+                <div
+                  role="img"
+                  aria-label={`${model.name}: ${VERDICT_BAR.map(
+                    ({ verdict, label }) => `${byVerdict[verdict]} ${label.toLowerCase()}`,
+                  ).join(", ")} of ${total} topics`}
+                  className="flex h-4 w-full overflow-hidden rounded-[4px]"
+                >
+                  {VERDICT_BAR.map(({ verdict, color }) =>
+                    byVerdict[verdict] > 0 ? (
+                      <span
+                        key={verdict}
+                        style={{ width: `${(byVerdict[verdict] / total) * 100}%`, background: color }}
+                      />
+                    ) : null,
+                  )}
+                </div>
+                <p className="mt-1 text-[0.7rem] text-ink-3 tabular-nums">
+                  {VERDICT_BAR.filter(({ verdict }) => byVerdict[verdict] > 0)
+                    .map(({ verdict, label }) => `${byVerdict[verdict]} ${label.toLowerCase()}`)
+                    .join(" · ")}
+                  {byVerdict.unknown > 0 && ` · ${byVerdict.unknown} unknown`}
+                </p>
+              </div>
+            );
+          })}
+          <p className="border-t border-hairline pt-3 text-[0.7rem] leading-relaxed text-ink-3">
+            <span className="mr-3 inline-flex items-center gap-1.5">
+              {VERDICT_BAR.map(({ verdict, label, color }) => (
+                <span key={verdict} className="mr-2 inline-flex items-center gap-1">
+                  <span aria-hidden className="size-2 rounded-[2px]" style={{ background: color }} />
+                  {label}
+                </span>
+              ))}
+            </span>
+            <Link to="/comparisons" className="underline hover:text-ink">
+              Browse every topic and rationale →
+            </Link>
+          </p>
+        </CardContent>
+      </Card>
+    </section>
   );
 }
 
@@ -217,14 +427,12 @@ function CoverageMatrix({
   clusters,
   resolveFinding,
   linkBase,
-  totalFindings,
-  jsonPath,
+  footer,
 }: {
   clusters: Cluster[];
   resolveFinding: (id: string) => BrowsableFinding;
   linkBase: string;
-  totalFindings: number;
-  jsonPath: string;
+  footer: React.ReactNode;
 }) {
   return (
     <div className="overflow-x-auto">
@@ -293,11 +501,7 @@ function CoverageMatrix({
           ))}
         </tbody>
       </table>
-      <p className="border-t border-hairline px-4 py-3 text-[0.7rem] text-ink-3">
-        {clusters.length} clusters covering{" "}
-        {clusters.reduce((n, c) => n + c.members.length, 0)} of {totalFindings} findings — the
-        mapping is editorial (see {jsonPath}) and worth reviewing as the experiment progresses.
-      </p>
+      <p className="border-t border-hairline px-4 py-3 text-[0.7rem] text-ink-3">{footer}</p>
     </div>
   );
 }
