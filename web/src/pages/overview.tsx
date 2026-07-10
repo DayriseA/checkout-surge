@@ -1,6 +1,18 @@
 import { Link } from "react-router-dom";
-import { allFindings, clusters, findingById, models, modelStats } from "@/lib/data";
-import { SEVERITY_ORDER, type Severity } from "@/lib/schema";
+import {
+  allFindings,
+  allIndependentFindings,
+  clusters,
+  findingById,
+  independentFindingById,
+  independentModelStats,
+  independentReviewClusters,
+  independentReviewer,
+  models,
+  modelStats,
+  type BrowsableFinding,
+} from "@/lib/data";
+import { SEVERITY_ORDER, type Cluster, type Severity } from "@/lib/schema";
 import { modelColorVar, severityColorVar, severityLabel } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ModelMark } from "@/components/model-mark";
@@ -10,7 +22,7 @@ export function OverviewPage() {
     <div className="space-y-10">
       <header className="max-w-[70ch]">
         <p className="font-mono text-[0.65rem] tracking-[0.2em] text-ink-3 uppercase">
-          Phase 1–10 · Self-audit reports
+          Phase 1–10 · Agent evaluation
         </p>
         <h1 className="mt-2 text-3xl font-semibold tracking-tight text-balance">
           Three agents built Checkout-Surge. Then each audited its own work.
@@ -29,7 +41,12 @@ export function OverviewPage() {
           <Link to="/agentic-testing" className="underline hover:text-ink">
             post-fix agentic testing results
           </Link>
-          .
+          . Finally, one fixed reviewer — {independentReviewer} — code-reviewed every post-fix
+          branch with the same guide; the{" "}
+          <Link to="/independent-review" className="underline hover:text-ink">
+            independent review
+          </Link>{" "}
+          is the one count that compares directly across agents.
         </p>
       </header>
 
@@ -38,34 +55,46 @@ export function OverviewPage() {
           Findings per agent
         </h2>
         <div className="grid gap-4 sm:grid-cols-3">
-          {modelStats.map(({ model, total, bySeverity, notes }) => (
-            <Link key={model.id} to={`/models/${model.id}`} className="group">
-              <Card className="h-full transition-colors group-hover:border-ink-3">
-                <CardContent className="py-4">
-                  <ModelMark modelId={model.id} detail />
-                  <p className="mt-3 text-4xl font-semibold tracking-tight tabular-nums">{total}</p>
-                  <p className="mt-0.5 text-xs text-ink-3">
-                    findings{notes > 0 && ` · +${notes} lower-confidence notes`}
-                  </p>
-                  <dl className="mt-3 flex gap-4 border-t border-hairline pt-3">
-                    {SEVERITY_ORDER.filter((s) => s !== "info").map((severity) => (
-                      <div key={severity}>
-                        <dt className="flex items-center gap-1 text-[0.65rem] text-ink-3">
-                          <span
-                            aria-hidden
-                            className="size-1.5 rounded-full"
-                            style={{ background: severityColorVar[severity] }}
-                          />
-                          {severityLabel[severity]}
-                        </dt>
-                        <dd className="text-sm font-medium tabular-nums">{bySeverity[severity]}</dd>
-                      </div>
-                    ))}
-                  </dl>
-                </CardContent>
-              </Card>
-            </Link>
-          ))}
+          {modelStats.map(({ model, total, bySeverity, notes }) => {
+            const independent = independentModelStats.find((s) => s.model.id === model.id);
+            return (
+              <Link key={model.id} to={`/models/${model.id}`} className="group">
+                <Card className="h-full transition-colors group-hover:border-ink-3">
+                  <CardContent className="py-4">
+                    <ModelMark modelId={model.id} detail />
+                    <p className="mt-3 text-4xl font-semibold tracking-tight tabular-nums">{total}</p>
+                    <p className="mt-0.5 text-xs text-ink-3">
+                      findings{notes > 0 && ` · +${notes} lower-confidence notes`}
+                    </p>
+                    <dl className="mt-3 flex gap-4 border-t border-hairline pt-3">
+                      {SEVERITY_ORDER.filter((s) => s !== "info").map((severity) => (
+                        <div key={severity}>
+                          <dt className="flex items-center gap-1 text-[0.65rem] text-ink-3">
+                            <span
+                              aria-hidden
+                              className="size-1.5 rounded-full"
+                              style={{ background: severityColorVar[severity] }}
+                            />
+                            {severityLabel[severity]}
+                          </dt>
+                          <dd className="text-sm font-medium tabular-nums">{bySeverity[severity]}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                    {independent && independent.total > 0 && (
+                      <p className="mt-3 border-t border-hairline pt-3 text-xs text-ink-3">
+                        <span className="font-medium text-ink-2 tabular-nums">
+                          {independent.total}
+                        </span>{" "}
+                        independent-review findings ·{" "}
+                        <span className="tabular-nums">{independent.bySeverity.high}</span> high
+                      </p>
+                    )}
+                  </CardContent>
+                </Card>
+              </Link>
+            );
+          })}
         </div>
       </section>
 
@@ -96,7 +125,36 @@ export function OverviewPage() {
             </p>
           </CardHeader>
           <CardContent className="px-0 pb-0">
-            <CoverageMatrix />
+            <CoverageMatrix
+              clusters={clusters}
+              resolveFinding={findingById}
+              linkBase="/auto-review?view=clusters"
+              totalFindings={allFindings.length}
+              jsonPath="results/data/clusters.json"
+            />
+          </CardContent>
+        </Card>
+      </section>
+
+      <section aria-labelledby="ir-matrix-heading">
+        <Card>
+          <CardHeader>
+            <CardTitle id="ir-matrix-heading">Independent review — shared issue classes</CardTitle>
+            <p className="text-xs text-ink-2">
+              Issue classes the fixed reviewer, {independentReviewer}, found in more than one
+              post-fix implementation. The reviewer is the same everywhere, so an empty cell leans
+              closer to "not present in that branch" than in the self-audit matrix above — though
+              it's still not proof of absence.
+            </p>
+          </CardHeader>
+          <CardContent className="px-0 pb-0">
+            <CoverageMatrix
+              clusters={independentReviewClusters}
+              resolveFinding={independentFindingById}
+              linkBase="/independent-review?view=clusters"
+              totalFindings={allIndependentFindings.length}
+              jsonPath="results/data/independent-review-clusters.json"
+            />
           </CardContent>
         </Card>
       </section>
@@ -155,7 +213,19 @@ function SeverityChart() {
   );
 }
 
-function CoverageMatrix() {
+function CoverageMatrix({
+  clusters,
+  resolveFinding,
+  linkBase,
+  totalFindings,
+  jsonPath,
+}: {
+  clusters: Cluster[];
+  resolveFinding: (id: string) => BrowsableFinding;
+  linkBase: string;
+  totalFindings: number;
+  jsonPath: string;
+}) {
   return (
     <div className="overflow-x-auto">
       <table className="w-full border-collapse text-sm">
@@ -176,7 +246,7 @@ function CoverageMatrix() {
             <tr key={cluster.id} className="border-b border-hairline last:border-b-0 hover:bg-wash">
               <th scope="row" className="max-w-[26rem] px-4 py-2.5 text-left font-normal">
                 <Link
-                  to={`/auto-review?view=clusters#${cluster.id}`}
+                  to={`${linkBase}#${cluster.id}`}
                   className="font-medium text-ink hover:underline"
                 >
                   {cluster.title}
@@ -187,7 +257,7 @@ function CoverageMatrix() {
               </th>
               {models.map((model) => {
                 const member = cluster.members
-                  .map((m) => findingById(m.findingId))
+                  .map((m) => resolveFinding(m.findingId))
                   .find((f) => f.model === model.id);
                 const notObserved = cluster.notObserved?.find((n) => n.model === model.id);
                 return (
@@ -225,9 +295,8 @@ function CoverageMatrix() {
       </table>
       <p className="border-t border-hairline px-4 py-3 text-[0.7rem] text-ink-3">
         {clusters.length} clusters covering{" "}
-        {clusters.reduce((n, c) => n + c.members.length, 0)} of {allFindings.length} findings — the
-        mapping is editorial (see results/data/clusters.json) and worth reviewing as the experiment
-        progresses.
+        {clusters.reduce((n, c) => n + c.members.length, 0)} of {totalFindings} findings — the
+        mapping is editorial (see {jsonPath}) and worth reviewing as the experiment progresses.
       </p>
     </div>
   );

@@ -116,12 +116,29 @@ export const comparisonEntries: ComparisonEntry[] = comparisonEntryFiles.flatMap
 export interface IndependentFindingWithContext extends IndependentFinding {
   model: string;
   reviewer: string;
+  source: string;
 }
 
 export const allIndependentFindings: IndependentFindingWithContext[] =
   independentFindingsFiles.flatMap((file) =>
-    file.findings.map((finding) => ({ ...finding, model: file.model, reviewer: file.reviewer })),
+    file.findings.map((finding) => ({
+      ...finding,
+      model: file.model,
+      reviewer: file.reviewer,
+      source: file.source,
+    })),
   );
+
+/** Any finding the browser can render in a FindingRow. */
+export type BrowsableFinding = FindingWithModel | IndependentFindingWithContext;
+
+/** The fixed reviewer is the same across every independent-review file. */
+export const independentReviewer: string | null =
+  independentFindingsFiles[0]?.reviewer ?? null;
+
+export function independentReviewFileFor(modelId: string): IndependentFindingsFile | undefined {
+  return independentFindingsFiles.find((file) => file.model === modelId);
+}
 
 const findingIndex = new Map(allFindings.map((finding) => [finding.id, finding]));
 const comparisonEntryIndex = new Map(comparisonEntries.map((entry) => [entry.id, entry]));
@@ -163,9 +180,10 @@ export function reportMarkdown(model: Model): string {
   return entry[1];
 }
 
-export function comparisonSourceMarkdown(source: string): string {
+/** Looks up any results/ markdown by its data-file `source` path (relative to results/). */
+export function sourceMarkdown(source: string): string {
   const entry = Object.entries(reportModules).find(([path]) => path.endsWith(`/${source}`));
-  if (!entry) throw new Error(`Comparison report file not found: ${source}`);
+  if (!entry) throw new Error(`Report file not found: ${source}`);
   return entry[1];
 }
 
@@ -176,21 +194,26 @@ export interface ModelStats {
   notes: number;
 }
 
-export const modelStats: ModelStats[] = models.map((model) => {
-  const findings = allFindings.filter((f) => f.model === model.id && f.tier === "finding");
-  const bySeverity = Object.fromEntries(
-    SEVERITY_ORDER.map((severity) => [
-      severity,
-      findings.filter((f) => f.severity === severity).length,
-    ]),
-  ) as Record<Severity, number>;
-  return {
-    model,
-    total: findings.length,
-    bySeverity,
-    notes: allFindings.filter((f) => f.model === model.id && f.tier === "note").length,
-  };
-});
+function computeModelStats(source: BrowsableFinding[]): ModelStats[] {
+  return models.map((model) => {
+    const findings = source.filter((f) => f.model === model.id && f.tier === "finding");
+    const bySeverity = Object.fromEntries(
+      SEVERITY_ORDER.map((severity) => [
+        severity,
+        findings.filter((f) => f.severity === severity).length,
+      ]),
+    ) as Record<Severity, number>;
+    return {
+      model,
+      total: findings.length,
+      bySeverity,
+      notes: source.filter((f) => f.model === model.id && f.tier === "note").length,
+    };
+  });
+}
+
+export const modelStats: ModelStats[] = computeModelStats(allFindings);
+export const independentModelStats: ModelStats[] = computeModelStats(allIndependentFindings);
 
 // referential integrity: every cluster member and notObserved model must exist
 for (const cluster of clusters) {

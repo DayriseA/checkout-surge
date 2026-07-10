@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
-import { clusters, findingById } from "@/lib/data";
+import { clusters as autoReviewClusters, findingById, type BrowsableFinding } from "@/lib/data";
+import type { Cluster } from "@/lib/schema";
 import { FindingRow } from "@/components/finding-row";
 import { ModelMark } from "@/components/model-mark";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -12,11 +13,24 @@ const confidenceStyle: Record<string, string> = {
 };
 
 /**
- * Cross-model issue classes. Because each agent audited its own independent
- * implementation, a cluster reads as "this class of issue existed there and
- * the self-audit caught it".
+ * Cross-model issue classes over a cluster dataset (self-audit by default).
+ * For the self-audits, a cluster reads as "this class of issue existed there
+ * and the self-audit caught it"; for the independent reviews the single fixed
+ * reviewer makes membership comparable across agents.
  */
-export function ClustersView({ showHeader = true }: { showHeader?: boolean }) {
+export function ClustersView({
+  showHeader = true,
+  clusters = autoReviewClusters,
+  resolveFinding = findingById,
+  jsonPath = "results/data/clusters.json",
+  explorerPath = "/auto-review",
+}: {
+  showHeader?: boolean;
+  clusters?: Cluster[];
+  resolveFinding?: (id: string) => BrowsableFinding;
+  jsonPath?: string;
+  explorerPath?: string;
+}) {
   return (
     <div className="space-y-6">
       {showHeader && (
@@ -25,7 +39,7 @@ export function ClustersView({ showHeader = true }: { showHeader?: boolean }) {
           <p className="mt-1 text-sm leading-relaxed text-ink-2">
             Findings across models that describe the same underlying issue class. The grouping is
             editorial and AI-curated — each cluster carries a confidence grade, and the mapping is
-            plain JSON (<code className="rounded bg-wash px-1 font-mono text-xs">results/data/clusters.json</code>)
+            plain JSON (<code className="rounded bg-wash px-1 font-mono text-xs">{jsonPath}</code>)
             meant to be corrected as you learn more.
           </p>
         </header>
@@ -52,7 +66,7 @@ export function ClustersView({ showHeader = true }: { showHeader?: boolean }) {
           <CardContent className="space-y-4 px-0 pb-0">
             <div>
               {cluster.members.map((member) => {
-                const finding = findingById(member.findingId);
+                const finding = resolveFinding(member.findingId);
                 return (
                   <div key={member.findingId} className="border-b border-hairline last:border-b-0">
                     <FindingRow finding={finding} />
@@ -82,7 +96,7 @@ export function ClustersView({ showHeader = true }: { showHeader?: boolean }) {
 
       <p className="text-xs text-ink-3">
         Findings outside any cluster are unique to one report — browse them in the{" "}
-        <Link to="/auto-review" className="underline hover:text-ink">
+        <Link to={explorerPath} className="underline hover:text-ink">
           findings explorer
         </Link>
         .

@@ -1,7 +1,14 @@
 import { useMemo, useState } from "react";
 import { ChevronRight } from "lucide-react";
 import { Link } from "react-router-dom";
-import { modelById, reportMarkdown, sliceById, type FindingWithModel } from "@/lib/data";
+import {
+  findingById,
+  modelById,
+  reportMarkdown,
+  sliceById,
+  sourceMarkdown,
+  type BrowsableFinding,
+} from "@/lib/data";
 import { extractSection } from "@/lib/report-sections";
 import { cn } from "@/lib/utils";
 import { Markdown } from "./markdown";
@@ -10,14 +17,16 @@ import { SeverityBadge } from "./severity-badge";
 
 /**
  * One finding, collapsed to a scannable row; expands in place to the finding's
- * full section extracted from the source report.
+ * full section extracted from the source report. Handles both self-audit
+ * findings and independent-review findings — the latter carry their own
+ * `source` report and a self-audit caught/missed relation.
  */
 export function FindingRow({
   finding,
   showModel = true,
   defaultOpen = false,
 }: {
-  finding: FindingWithModel;
+  finding: BrowsableFinding;
   showModel?: boolean;
   defaultOpen?: boolean;
 }) {
@@ -51,6 +60,19 @@ export function FindingRow({
                 S{sliceId} · {sliceById(sliceId)?.name}
               </span>
             ))}
+            {"relatedFindingIds" in finding &&
+              (finding.relatedFindingIds.length > 0 ? (
+                <span className="font-mono text-[0.68rem] tracking-wide text-ink-3 uppercase">
+                  self-audit · caught
+                </span>
+              ) : (
+                <span
+                  className="font-mono text-[0.68rem] tracking-wide uppercase"
+                  style={{ color: "var(--sev-medium)" }}
+                >
+                  self-audit · missed
+                </span>
+              ))}
           </span>
         </span>
       </button>
@@ -59,10 +81,11 @@ export function FindingRow({
   );
 }
 
-function FindingDetail({ finding }: { finding: FindingWithModel }) {
+function FindingDetail({ finding }: { finding: BrowsableFinding }) {
   const model = modelById(finding.model);
 
   const section = useMemo(() => {
+    if ("source" in finding) return extractSection(sourceMarkdown(finding.source), finding.code);
     if (!model) return null;
     return extractSection(reportMarkdown(model), finding.code);
   }, [model, finding]);
@@ -79,6 +102,24 @@ function FindingDetail({ finding }: { finding: FindingWithModel }) {
           ))}
         </ul>
       )}
+      {"relatedFindingIds" in finding &&
+        (finding.relatedFindingIds.length > 0 ? (
+          <div className="mt-3">
+            <p className="font-mono text-xs tracking-wider text-ink-3 uppercase">
+              Same issue class in the self-audit
+            </p>
+            <div className="mt-1.5 rounded-md border border-hairline bg-surface">
+              {finding.relatedFindingIds.map((id) => (
+                <FindingRow key={id} finding={findingById(id)} showModel={false} />
+              ))}
+            </div>
+          </div>
+        ) : (
+          <p className="mt-3 max-w-prose text-xs leading-relaxed text-ink-3">
+            No self-audit finding covers this issue class — the branch's own review did not report
+            it.
+          </p>
+        ))}
       {section ? (
         <details className="mt-3">
           <summary className="cursor-pointer font-mono text-xs tracking-wider text-ink-3 uppercase hover:text-ink">
@@ -91,7 +132,10 @@ function FindingDetail({ finding }: { finding: FindingWithModel }) {
       ) : (
         <p className="mt-3 text-xs text-ink-3">
           Section not located in the report.{" "}
-          <Link to={`/models/${finding.model}?tab=report`} className="underline hover:text-ink">
+          <Link
+            to={`/models/${finding.model}?tab=${"source" in finding ? "independent-report" : "report"}`}
+            className="underline hover:text-ink"
+          >
             Open the report
           </Link>
         </p>

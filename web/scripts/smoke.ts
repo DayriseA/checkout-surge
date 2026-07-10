@@ -10,13 +10,17 @@ const base = process.env.BASE_URL ?? "http://localhost:4173";
 const shotDir = process.env.SMOKE_SHOT_DIR;
 
 const pages: Array<{ path: string; expect: string[] }> = [
-  { path: "/", expect: ["Results bench", "Who caught what", "Severity distribution"] },
+  { path: "/", expect: ["Results bench", "Who caught what", "Severity distribution", "Independent review — shared issue classes"] },
   { path: "/auto-review", expect: ["Auto-Review", "of 83 findings", "Expected sold-out"] },
   { path: "/auto-review?view=clusters", expect: ["Auto-Review", "confidence", "Expected sold-out 409s counted as k6 HTTP failures"] },
-  { path: "/models/opus-4.8", expect: ["Opus 4.8", "F25"] },
+  { path: "/models/opus-4.8", expect: ["Opus 4.8", "F25", "Independent findings"] },
   { path: "/models/glm-5.2?tab=report", expect: ["Consolidated Findings", "Section 8"] },
+  { path: "/models/opus-4.8?tab=independent", expect: ["gpt-5.6-sol", "Terminalization is not atomic"] },
+  { path: "/models/opus-4.8?tab=independent-report", expect: ["source: results/independent_review/opus-4.8_independent_review.md"] },
   { path: "/comparisons", expect: ["332 entries", "Buy response contract and taxonomy"] },
   { path: "/agentic-testing", expect: ["16 post-fix exploratory findings", "survived claimed fixes", "self-audit blind spots"] },
+  { path: "/independent-review", expect: ["Independent review", "of 157 findings", "gpt-5.6-sol"] },
+  { path: "/independent-review?view=clusters", expect: ["confidence", "Redis-secured hold can be left without durable state or recovery"] },
 ];
 
 const browser = await chromium.launch();

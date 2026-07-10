@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
-import { allFindings, models, slices } from "@/lib/data";
+import { allFindings, models, slices, type BrowsableFinding } from "@/lib/data";
 import { SEVERITY_ORDER, type Severity } from "@/lib/schema";
 import { modelColorVar, severityColorVar, severityLabel } from "@/lib/utils";
 import { FilterChip } from "@/components/filter-chip";
@@ -8,10 +8,16 @@ import { FindingRow } from "@/components/finding-row";
 import { Card } from "@/components/ui/card";
 
 /**
- * Every finding across the three self-audits in one filterable list.
+ * Every finding of a dataset (self-audit by default) in one filterable list.
  * Filters live in the URL so views can be shared/bookmarked.
  */
-export function FindingsView({ showHeader = true }: { showHeader?: boolean }) {
+export function FindingsView({
+  showHeader = true,
+  findings = allFindings,
+}: {
+  showHeader?: boolean;
+  findings?: BrowsableFinding[];
+}) {
   const [params, setParams] = useSearchParams();
 
   const selectedModels = params.getAll("model");
@@ -30,7 +36,7 @@ export function FindingsView({ showHeader = true }: { showHeader?: boolean }) {
 
   const filtered = useMemo(
     () =>
-      allFindings
+      findings
         .filter((f) => (includeNotes ? true : f.tier === "finding"))
         .filter((f) => selectedModels.length === 0 || selectedModels.includes(f.model))
         .filter((f) => selectedSeverities.length === 0 || selectedSeverities.includes(f.severity))
@@ -43,7 +49,7 @@ export function FindingsView({ showHeader = true }: { showHeader?: boolean }) {
             a.model.localeCompare(b.model) ||
             a.code.localeCompare(b.code, undefined, { numeric: true }),
         ),
-    [selectedModels, selectedSeverities, selectedSlices, includeNotes],
+    [findings, selectedModels, selectedSeverities, selectedSlices, includeNotes],
   );
 
   return (
@@ -108,7 +114,7 @@ export function FindingsView({ showHeader = true }: { showHeader?: boolean }) {
       </div>
 
       <p className="font-mono text-xs text-ink-3" role="status">
-        {filtered.length} of {allFindings.length} findings
+        {filtered.length} of {findings.length} findings
       </p>
 
       <Card>
