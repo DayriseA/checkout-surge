@@ -14,7 +14,6 @@ import { OverviewPage } from "./pages/overview";
 import { AutoReviewPage } from "./pages/auto-review";
 import { ModelPage } from "./pages/model";
 import { ComparisonsPage } from "./pages/comparisons";
-import { AgenticTestingPage } from "./pages/agentic-testing";
 import { IndependentReviewPage } from "./pages/independent-review";
 
 const router = createBrowserRouter([
@@ -25,7 +24,6 @@ const router = createBrowserRouter([
       { path: "/auto-review", element: <AutoReviewPage /> },
       { path: "/models/:modelId", element: <ModelPage /> },
       { path: "/comparisons", element: <ComparisonsPage /> },
-      { path: "/agentic-testing", element: <AgenticTestingPage /> },
       { path: "/independent-review", element: <IndependentReviewPage /> },
       { path: "*", element: <OverviewPage /> },
     ],

@@ -3,7 +3,7 @@
  * A schema mismatch throws here, on purpose — bad data should be loud.
  */
 import {
-  agenticTestFindingsFileSchema,
+  browserUseTestFindingsFileSchema,
   comparisonClustersFileSchema,
   comparisonEntriesFileSchema,
   clustersFileSchema,
@@ -12,7 +12,7 @@ import {
   modelsFileSchema,
   slicesFileSchema,
   SEVERITY_ORDER,
-  type AgenticTestFindingsFile,
+  type BrowserUseTestFindingsFile,
   type ComparisonCluster,
   type ComparisonEntry,
   type ComparisonEntriesFile,
@@ -36,7 +36,7 @@ const findingsModules = import.meta.glob("../../../results/data/findings/*.json"
   eager: true,
   import: "default",
 });
-const agenticTestModules = import.meta.glob("../../../results/data/agentic-test-findings/*.json", {
+const browserUseTestModules = import.meta.glob("../../../results/data/browser-use-test-findings/*.json", {
   eager: true,
   import: "default",
 });
@@ -74,8 +74,8 @@ export const findingsFiles: FindingsFile[] = Object.entries(findingsModules).map
   ([path, raw]) => parseOrThrow(path, () => findingsFileSchema.parse(raw)),
 );
 
-export const agenticTestFiles: AgenticTestFindingsFile[] = Object.entries(agenticTestModules).map(
-  ([path, raw]) => parseOrThrow(path, () => agenticTestFindingsFileSchema.parse(raw)),
+export const browserUseTestFiles: BrowserUseTestFindingsFile[] = Object.entries(browserUseTestModules).map(
+  ([path, raw]) => parseOrThrow(path, () => browserUseTestFindingsFileSchema.parse(raw)),
 );
 
 export const independentFindingsFiles: IndependentFindingsFile[] = Object.entries(
@@ -231,6 +231,19 @@ for (const cluster of comparisonClusters) {
 
 for (const finding of allIndependentFindings) {
   for (const related of finding.relatedFindingIds) findingById(related);
+}
+
+for (const file of browserUseTestFiles) {
+  for (const finding of file.findings) {
+    for (const relation of finding.relatedIndependentReviewFindings) {
+      const related = independentFindingById(relation.findingId);
+      if (related.model !== file.model) {
+        throw new Error(
+          `${finding.id} links an independent-review finding from another model: ${relation.findingId}`,
+        );
+      }
+    }
+  }
 }
 
 for (const cluster of independentReviewClusters) {

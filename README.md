@@ -12,9 +12,9 @@ The results in this branch follow a specific order:
 2. Each agent self-audited its own implementation and produced the findings stored under `results/p1-10_auto_review/` and `results/data/findings/`.
 3. Those self-audit findings were turned into issues on the respective implementation branches.
 4. The same agents were given a chance to fix the issues they found and claimed completion.
-5. Only after those claimed fixes did independent agentic exploratory testing run against the implementations.
+5. Only after those claimed fixes did independent browser-use testing run against the implementations.
 
-That ordering matters for `results/data/agentic-test-findings/`: a post-fix exploratory finding is either a self-audit issue that survived the claimed fix, or a blind spot the self-audit did not identify.
+That ordering matters for `results/data/browser-use-test-findings/`: a post-fix browser finding is either a self-audit issue that survived the claimed fix, or a blind spot the self-audit did not identify.
 
 ## License
 

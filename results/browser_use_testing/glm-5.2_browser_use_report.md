@@ -1,8 +1,8 @@
-# Exploratory Testing Report
+# Browser-Use Testing Report
 
 Date: 2026-07-04  
 Target: `http://localhost:8080/` reference runtime  
-Tester: Codex browser exploratory session
+Tester: Codex browser-use session
 
 ## Findings Index
 

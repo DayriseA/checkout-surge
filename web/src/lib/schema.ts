@@ -100,7 +100,16 @@ export const postFixAssessmentSchema = z.enum([
 ]);
 export type PostFixAssessment = z.infer<typeof postFixAssessmentSchema>;
 
-export const agenticTestFindingSchema = z
+export const independentReviewRelationSchema = z.object({
+  findingId: z
+    .string()
+    .regex(/^[a-z0-9.-]+:ir-[FN]\d+$/, "expected '<model>:ir-<code>'"),
+  relationship: z.enum(["same-issue", "related-symptom"]),
+  note: z.string().min(1),
+});
+export type IndependentReviewRelation = z.infer<typeof independentReviewRelationSchema>;
+
+export const browserUseTestFindingSchema = z
   .object({
     id: z.string().regex(/^[a-z0-9.-]+:E\d+$/, "expected '<model>:E{n}'"),
     title: z.string().min(1),
@@ -109,6 +118,7 @@ export const agenticTestFindingSchema = z
     status: z.enum(["open", "confirmed", "fixed", "wont-fix"]),
     postFixAssessment: postFixAssessmentSchema,
     relatedFindingIds: z.array(z.string()).default([]),
+    relatedIndependentReviewFindings: z.array(independentReviewRelationSchema).default([]),
     description: z.string().min(1),
   })
   .superRefine((finding, ctx) => {
@@ -123,14 +133,15 @@ export const agenticTestFindingSchema = z
       });
     }
   });
-export type AgenticTestFinding = z.infer<typeof agenticTestFindingSchema>;
+export type BrowserUseTestFinding = z.infer<typeof browserUseTestFindingSchema>;
 
-export const agenticTestFindingsFileSchema = z.object({
+export const browserUseTestFindingsFileSchema = z.object({
   model: z.string().min(1),
-  reviewType: z.literal("agentic-exploratory-test"),
-  findings: z.array(agenticTestFindingSchema),
+  reviewType: z.literal("browser-use-test"),
+  source: z.string().min(1),
+  findings: z.array(browserUseTestFindingSchema),
 });
-export type AgenticTestFindingsFile = z.infer<typeof agenticTestFindingsFileSchema>;
+export type BrowserUseTestFindingsFile = z.infer<typeof browserUseTestFindingsFileSchema>;
 
 export const verdictSchema = z.enum(["better", "same", "worse", "missing", "unknown"]);
 export type Verdict = z.infer<typeof verdictSchema>;

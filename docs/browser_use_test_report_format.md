@@ -1,4 +1,4 @@
-# Exploratory Test Session — Report Format
+# Browser-Use Test Session — Report Format
 
 This document specifies the **shape** of the report you create. Follow this shape so reports stay comparable across testing agents and easy to process downstream.
 
@@ -6,7 +6,7 @@ Write one consolidated markdown report. How you organize working notes during th
 
 ## Evaluation context
 
-Agentic exploratory testing happens after the implementation agent has already self-audited its own work, received issues for those self-audit findings on its branch, attempted fixes, and claimed completion. The report should therefore focus on behavior still reproducible in the claimed-fixed implementation.
+Browser-use testing happens after the implementation agent has already self-audited its own work, received issues for those self-audit findings on its branch, attempted fixes, and claimed completion. The report should therefore focus on behavior still reproducible in the claimed-fixed implementation.
 
 Downstream structured data classifies each `E{n}` finding as either:
 

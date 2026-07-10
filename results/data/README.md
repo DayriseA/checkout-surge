@@ -12,7 +12,7 @@ This directory is the machine-readable layer over the reports in `results/`. The
 | `clusters.json` | Cross-model groupings of findings that describe the same underlying issue class. |
 | `independent-review-findings/<model>.json` | One record per finding from the fixed-reviewer independent review of that model's post-fix branch. |
 | `independent-review-clusters.json` | Cross-model groupings of independent-review findings, same shape as `clusters.json`. |
-| `agentic-test-findings/<model>.json` | Bugs found by independent AI tester agents after the model self-audited, received issues for those findings, attempted fixes, and claimed completion. |
+| `browser-use-test-findings/<model>.json` | Supplementary bugs found by independent testers exercising each claimed-fixed implementation through a browser. |
 | `comparison-entries/<model>.json` | Lossless imported `C{n}` sections from each model's comparison-vs-base report. |
 | `comparison-clusters.json` | Editorial groupings of semantically similar comparison entries. |
 
@@ -24,10 +24,10 @@ The data here assumes this chronology:
 2. Each model self-audited that implementation; those results are the `findings/<model>.auto-review.json` records.
 3. The self-audit findings were filed as issues on the respective implementation branches.
 4. The model agents attempted to fix their own findings and claimed completion.
-5. Independent agentic exploratory testing then exercised the claimed-fixed implementations through the browser.
+5. Independent browser-use testing then exercised the claimed-fixed implementations through the browser.
 6. A single fixed reviewer model then code-reviewed each post-fix implementation branch using the same guide (`docs/review_helper.md`); those results are the `independent-review-findings/<model>.json` records.
 
-Agentic test records therefore measure post-fix accountability. A finding can either be an issue class the self-audit caught but the claimed fix failed to eliminate, or an issue class the self-audit missed entirely.
+Browser-use records provide a supplementary behavioral check after remediation. A finding can either be an issue class the self-audit caught but the claimed fix failed to eliminate, or a blind spot that the self-audit did not identify.
 
 Independent-review records serve a different purpose: because every self-audit was performed by the model that wrote the code, a low self-audit finding count is ambiguous (few issues, or a reviewer blind to its own issues). Holding the reviewer constant across branches makes finding counts comparable across agents. Note the review target is the *post-fix* branch state, so an independent finding count is not directly comparable to the same branch's pre-fix self-audit count — the meaningful comparisons are across branches, and per-finding against the self-audit via `relatedFindingIds`.
 
@@ -99,7 +99,7 @@ Source reports live under `results/independent_review/` (see the README there fo
 
 Cross-model clusters of these findings go in `independent-review-clusters.json`, which has exactly the shape of `clusters.json` but whose `members[].findingId` values reference the `ir-` namespace.
 
-## Agentic test findings
+## Browser-use test findings
 
 ```jsonc
 {
@@ -111,18 +111,27 @@ Cross-model clusters of these findings go in `independent-review-clusters.json`,
   "postFixAssessment": "self-audit-missed",
   // self-audit-caught-but-reproduced | self-audit-missed
   "relatedFindingIds": [],       // self-audit findings that overlap or should have covered this
+  "relatedIndependentReviewFindings": [
+    {
+      "findingId": "glm-5.2:ir-F17",
+      "relationship": "same-issue", // same-issue | related-symptom
+      "note": "Why the two reports are related without overstating equivalence."
+    }
+  ],
   "description": "…"             // markdown allowed
 }
 ```
 
-These findings come from capable AI tester agents simulating real user interactions through browser use ability. Source reports follow `docs/agentic_test_report_format.md`, so the `E{n}` codes here mirror the reports directly.
+These findings come from independent testers simulating real user interactions through a browser. Source reports follow `docs/browser_use_test_report_format.md`, so the `E{n}` codes here mirror the reports directly.
 
 `postFixAssessment` is the key post-remediation classification:
 
-- `self-audit-caught-but-reproduced`: the model's own audit identified this issue class, the model later claimed to have fixed its self-audit issues, and independent exploratory testing still reproduced the issue or a materially equivalent variant.
-- `self-audit-missed`: independent exploratory testing found the issue after the claimed-fix phase, and the self-audit did not identify the issue class.
+- `self-audit-caught-but-reproduced`: the model's own audit identified this issue class, the model later claimed to have fixed its self-audit issues, and browser-use testing still reproduced the issue or a materially equivalent variant.
+- `self-audit-missed`: browser-use testing found the issue after the claimed-fix phase, and the self-audit did not identify the issue class.
 
 Use `relatedFindingIds` as evidence for the classification. For `self-audit-caught-but-reproduced`, the schema requires at least one linked self-audit finding that should have covered the post-fix failure.
+
+`relatedIndependentReviewFindings` is a separate editorial mapping to the fixed-reviewer code audit. Use `same-issue` only when both methods identify the same underlying defect; use `related-symptom` when the browser observation is plausibly explained by, or shares a boundary with, a broader code-review finding. An empty array means the independent code review did not report a defensible matching issue. Every relation must stay within the same implementation model.
 
 ## Comparison entries and clusters
 

@@ -1,4 +1,4 @@
-# Exploratory Test Session — Chrome Runtime
+# Browser-Use Test Session — Chrome Runtime
 
 Tested against `http://localhost:8080/` on July 5, 2026 using the Chrome plugin. The session covered public demo starts, live watch behavior, run history list/detail, admin sign-in and admin starts, public budget exhaustion, malformed routes, and console errors.
 

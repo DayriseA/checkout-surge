@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
-import { FlaskConical, GitCompareArrows, ListChecks, Moon, ScrollText, SearchCheck, Sun } from "lucide-react";
+import { FlaskConical, GitCompareArrows, ListChecks, Moon, SearchCheck, Sun } from "lucide-react";
 import { models } from "@/lib/data";
 import { cn, modelColorVar } from "@/lib/utils";
 
@@ -9,7 +9,6 @@ const sections = [
   { to: "/auto-review", label: "Auto-Review", icon: ListChecks },
   { to: "/independent-review", label: "Independent review", icon: SearchCheck },
   { to: "/comparisons", label: "Comparisons", icon: GitCompareArrows },
-  { to: "/agentic-testing", label: "Agentic testing", icon: ScrollText },
 ];
 
 export function Layout() {

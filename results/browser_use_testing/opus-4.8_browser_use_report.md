@@ -1,4 +1,4 @@
-# Exploratory Test Session
+# Browser-Use Test Session
 
 ## Findings
 

@@ -7,7 +7,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  agenticTestFindingsFileSchema,
+  browserUseTestFindingsFileSchema,
   comparisonClustersFileSchema,
   comparisonEntriesFileSchema,
   clustersFileSchema,
@@ -185,17 +185,30 @@ check("clusters.json", () => {
   }
 });
 
-for (const file of readdirSync(join(dataDir, "agentic-test-findings"))) {
-  check(`agentic-test-findings/${file}`, () => {
-    const parsed = agenticTestFindingsFileSchema.parse(readJson(join(dataDir, "agentic-test-findings", file)));
+const browserUseFindingsDir = join(dataDir, "browser-use-test-findings");
+for (const file of readdirSync(browserUseFindingsDir)) {
+  check(`browser-use-test-findings/${file}`, () => {
+    const parsed = browserUseTestFindingsFileSchema.parse(readJson(join(browserUseFindingsDir, file)));
     const model = models.find((m) => m.id === parsed.model);
     if (!model) throw new Error(`unknown model ${parsed.model}`);
+    const report = readFileSync(join(resultsDir, parsed.source), "utf8");
     for (const finding of parsed.findings) {
       if (!finding.id.startsWith(`${parsed.model}:`)) {
         throw new Error(`${finding.id} does not match file model ${parsed.model}`);
       }
       for (const related of finding.relatedFindingIds) {
         if (!findingIds.has(related)) throw new Error(`${finding.id}: unknown related id ${related}`);
+      }
+      if (!extractSection(report, finding.id.split(":")[1])) {
+        throw new Error(`${finding.id}: section not found in ${parsed.source}`);
+      }
+      for (const relation of finding.relatedIndependentReviewFindings) {
+        if (!independentFindingIds.has(relation.findingId)) {
+          throw new Error(`${finding.id}: unknown independent-review relation ${relation.findingId}`);
+        }
+        if (!relation.findingId.startsWith(`${parsed.model}:ir-`)) {
+          throw new Error(`${finding.id}: cross-model relation ${relation.findingId}`);
+        }
       }
     }
   });

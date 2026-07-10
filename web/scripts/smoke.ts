@@ -18,9 +18,9 @@ const pages: Array<{ path: string; expect: string[] }> = [
   { path: "/models/opus-4.8?tab=independent", expect: ["gpt-5.6-sol", "Terminalization is not atomic"] },
   { path: "/models/opus-4.8?tab=independent-report", expect: ["source: results/independent_review/opus-4.8_independent_review.md"] },
   { path: "/comparisons", expect: ["332 entries", "Buy response contract and taxonomy"] },
-  { path: "/agentic-testing", expect: ["16 post-fix exploratory findings", "survived claimed fixes", "self-audit blind spots"] },
-  { path: "/independent-review", expect: ["Independent review", "of 157 findings", "gpt-5.6-sol"] },
-  { path: "/independent-review?view=clusters", expect: ["confidence", "Redis-secured hold can be left without durable state or recovery"] },
+  { path: "/independent-review", expect: ["Independent review", "Code findings", "of 157 findings", "gpt-5.6-sol"] },
+  { path: "/independent-review?view=code-clusters", expect: ["confidence", "Redis-secured hold can be left without durable state or recovery"] },
+  { path: "/independent-review?view=browser-use", expect: ["16 browser-use findings", "survived claimed fixes", "also covered by the independent code review"] },
 ];
 
 const browser = await chromium.launch();

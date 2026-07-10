@@ -38,8 +38,8 @@ export function OverviewPage() {
             cluster view
           </Link>{" "}
           and the{" "}
-          <Link to="/agentic-testing" className="underline hover:text-ink">
-            post-fix agentic testing results
+          <Link to="/independent-review?view=browser-use" className="underline hover:text-ink">
+            supplementary browser-use results
           </Link>
           . Finally, one fixed reviewer — {independentReviewer} — code-reviewed every post-fix
           branch with the same guide; the{" "}
@@ -151,7 +151,7 @@ export function OverviewPage() {
             <CoverageMatrix
               clusters={independentReviewClusters}
               resolveFinding={independentFindingById}
-              linkBase="/independent-review?view=clusters"
+              linkBase="/independent-review?view=code-clusters"
               totalFindings={allIndependentFindings.length}
               jsonPath="results/data/independent-review-clusters.json"
             />
