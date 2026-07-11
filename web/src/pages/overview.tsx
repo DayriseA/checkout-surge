@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import {
   browserUseStats,
+  baseSelection,
   clusterModelSpan,
   clusters,
   comparisonReviewer,
@@ -63,6 +64,8 @@ export function OverviewPage() {
       </section>
 
       <Synthesis sharedClusterCount={sharedIrClusters.length} />
+
+      <BaseSelectionCallout />
 
       <ComparisonVerdicts />
 
@@ -134,6 +137,37 @@ export function OverviewPage() {
         </Card>
       </section>
     </div>
+  );
+}
+
+function BaseSelectionCallout() {
+  return (
+    <section aria-labelledby="base-selection-heading">
+      <Card className="border-ink-2">
+        <CardHeader>
+          <p className="font-mono text-[0.65rem] tracking-[0.16em] text-ink-3 uppercase">
+            Decision synthesis
+          </p>
+          <CardTitle id="base-selection-heading">GPT-5.5 is the recommended consolidation base</CardTitle>
+        </CardHeader>
+        <CardContent className="text-sm leading-relaxed text-ink-2">
+          <p className="max-w-[80ch]">
+            The base-selection review weights representative runtime evidence, defect severity and
+            location, repair radius, and donor compatibility—not the raw comparison net alone.
+            Opus-4.8 is the primary architectural donor; GLM-5.2 is a selective donor.
+          </p>
+          <p className="mt-3 font-mono text-[0.68rem] text-ink-3">
+            Decision {baseSelection.decisionVersion} · {baseSelection.decisionDate} · {baseSelection.confidence} confidence
+          </p>
+          <Link
+            to="/base-selection"
+            className="mt-4 inline-flex items-center rounded-md border border-ink-2 px-3 py-1.5 text-xs font-medium text-ink hover:bg-wash"
+          >
+            Read the recommendation →
+          </Link>
+        </CardContent>
+      </Card>
+    </section>
   );
 }
 

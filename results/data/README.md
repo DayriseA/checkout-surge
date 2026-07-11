@@ -15,6 +15,7 @@ This directory is the machine-readable layer over the reports in `results/`. The
 | `browser-use-test-findings/<model>.json` | Supplementary bugs found by independent testers exercising each claimed-fixed implementation through a browser. |
 | `comparison-entries/<model>.json` | Lossless imported `C{n}` sections from each model's comparison-vs-base report. |
 | `comparison-clusters.json` | Editorial groupings of semantically similar comparison entries. |
+| `base-selection.json` | Minimal metadata for the current cross-branch base recommendation: evaluated commits, ranking, intended donor roles, evidence links, limitations, and consolidation phases. Full reasoning remains in the linked Markdown report. |
 
 ## Evaluation order
 
@@ -194,3 +195,9 @@ npm run seed-comparison-clusters
 ## Adding future reports
 
 For new agent-generated reports, prefer emitting this JSON directly alongside the markdown prose (hand the schema above, or `web/src/lib/schema.ts`, to the agent). Then add the model to `models.json`, put the markdown under an appropriate `results/` subfolder, and set `reportFile` to that path relative to `results/` — the app picks up matching markdown by glob.
+
+## Base-selection decision
+
+`base-selection.json` is a deliberately small decision index rather than another finding dataset. It records the recommendation and points to existing independent-review, comparison, and browser-use IDs for referential validation. The canonical narrative lives at the `source` path under `results/`.
+
+When the decision is revisited, preserve the evaluated branch SHAs and evidence qualifications. Prefer incrementing `decisionVersion` and updating the canonical report; if historical decisions need to remain simultaneously browsable, introduce a versioned collection before adding a second record rather than silently changing the meaning of the current schema.

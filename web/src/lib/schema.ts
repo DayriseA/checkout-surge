@@ -185,3 +185,51 @@ export type ComparisonCluster = z.infer<typeof comparisonClusterSchema>;
 export const comparisonClustersFileSchema = z.object({
   clusters: z.array(comparisonClusterSchema),
 });
+
+export const baseSelectionRoleSchema = z.enum(["base", "primary-donor", "selective-donor"]);
+export type BaseSelectionRole = z.infer<typeof baseSelectionRoleSchema>;
+
+export const repairRadiusSchema = z.enum(["medium-high", "high", "very-high"]);
+export type RepairRadius = z.infer<typeof repairRadiusSchema>;
+
+const baseSelectionEvidenceSchema = z.object({
+  independentFindingIds: z.array(z.string()).default([]),
+  comparisonEntryIds: z.array(z.string()).default([]),
+  browserFindingIds: z.array(z.string()).default([]),
+});
+
+const baseSelectionCandidateSchema = z.object({
+  rank: z.number().int().min(1),
+  model: z.string().min(1),
+  role: baseSelectionRoleSchema,
+  repairRadius: repairRadiusSchema,
+  headline: z.string().min(1),
+  rationale: z.string().min(1),
+  keyEvidence: baseSelectionEvidenceSchema,
+});
+export type BaseSelectionCandidate = z.infer<typeof baseSelectionCandidateSchema>;
+
+export const baseSelectionSchema = z.object({
+  decisionVersion: z.string().min(1),
+  decisionDate: z.string().date(),
+  status: z.enum(["current", "superseded"]),
+  source: z.string().min(1),
+  question: z.string().min(1),
+  recommendedBase: z.string().min(1),
+  confidence: z.enum(["high", "medium", "low"]),
+  branchHeads: z
+    .array(
+      z.object({
+        model: z.string().min(1),
+        branch: z.string().min(1),
+        commit: z.string().regex(/^[a-f0-9]{40}$/, "expected full Git commit SHA"),
+      }),
+    )
+    .min(1),
+  candidates: z.array(baseSelectionCandidateSchema).min(1),
+  limitations: z.array(z.string().min(1)),
+  consolidationPhases: z
+    .array(z.object({ title: z.string().min(1), summary: z.string().min(1) }))
+    .min(1),
+});
+export type BaseSelection = z.infer<typeof baseSelectionSchema>;

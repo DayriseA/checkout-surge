@@ -1,0 +1,162 @@
+{
+  "decisionVersion": "1.0",
+  "decisionDate": "2026-07-11",
+  "status": "current",
+  "source": "base_selection/base_branch_recommendation.md",
+  "question": "Which current implementation minimizes the risk and scope of reaching a trustworthy consolidation branch while preserving the best available ideas from all three agents?",
+  "recommendedBase": "gpt-5.5",
+  "confidence": "high",
+  "branchHeads": [
+    {
+      "model": "gpt-5.5",
+      "branch": "ai/gpt-5.5",
+      "commit": "01f71e4ab3a23b27be522393d2c7d5de4a303cef"
+    },
+    {
+      "model": "opus-4.8",
+      "branch": "ai/opus-4.8",
+      "commit": "6d2585646ea94fc357aab10769ff805314e0d396"
+    },
+    {
+      "model": "glm-5.2",
+      "branch": "ai/glm-5.2",
+      "commit": "c07e0de15be815d84419a1c2abd2967f72de0463"
+    }
+  ],
+  "candidates": [
+    {
+      "rank": 1,
+      "model": "gpt-5.5",
+      "role": "base",
+      "repairRadius": "medium-high",
+      "headline": "Preserve the only representative, demonstrated end-to-end surge workflow.",
+      "rationale": "GPT has the strongest functional evidence and the smallest fixed-reviewer finding set. Its systemic defects are serious, but they primarily harden durable handoffs, partial failures, and lifecycle races around an already joined-up execution chain.",
+      "keyEvidence": {
+        "independentFindingIds": [
+          "gpt-5.5:ir-F1",
+          "gpt-5.5:ir-F2",
+          "gpt-5.5:ir-F5",
+          "gpt-5.5:ir-F11",
+          "gpt-5.5:ir-F16",
+          "gpt-5.5:ir-F17",
+          "gpt-5.5:ir-F18",
+          "gpt-5.5:ir-F21"
+        ],
+        "comparisonEntryIds": [
+          "gpt-5.5:C24",
+          "gpt-5.5:C25",
+          "gpt-5.5:C32",
+          "gpt-5.5:C38",
+          "gpt-5.5:C49",
+          "gpt-5.5:C55",
+          "gpt-5.5:C60",
+          "gpt-5.5:C62",
+          "gpt-5.5:C63",
+          "gpt-5.5:C96"
+        ],
+        "browserFindingIds": ["gpt-5.5:E1", "gpt-5.5:E5", "gpt-5.5:E6"]
+      }
+    },
+    {
+      "rank": 2,
+      "model": "opus-4.8",
+      "role": "primary-donor",
+      "repairRadius": "high",
+      "headline": "Use the strongest architectural donor without inheriting its lifecycle protocol.",
+      "rationale": "Opus leads the unweighted reference comparison and contains excellent decomposition, Redis, metrics, packaging, and testing ideas. Its completion delivery and terminal-summary workflow require structural stabilization before it can be trusted as a base.",
+      "keyEvidence": {
+        "independentFindingIds": [
+          "opus-4.8:ir-F1",
+          "opus-4.8:ir-F2",
+          "opus-4.8:ir-F3",
+          "opus-4.8:ir-F4",
+          "opus-4.8:ir-F5",
+          "opus-4.8:ir-F6",
+          "opus-4.8:ir-F19",
+          "opus-4.8:ir-F21"
+        ],
+        "comparisonEntryIds": [
+          "opus-4.8:C21",
+          "opus-4.8:C24",
+          "opus-4.8:C25",
+          "opus-4.8:C26",
+          "opus-4.8:C33",
+          "opus-4.8:C42",
+          "opus-4.8:C43",
+          "opus-4.8:C49",
+          "opus-4.8:C68",
+          "opus-4.8:C69",
+          "opus-4.8:C109"
+        ],
+        "browserFindingIds": ["opus-4.8:E1", "opus-4.8:E2", "opus-4.8:E3"]
+      }
+    },
+    {
+      "rank": 3,
+      "model": "glm-5.2",
+      "role": "selective-donor",
+      "repairRadius": "very-high",
+      "headline": "Port bounded strengths after separating the local load-envelope bug from systemic debt.",
+      "rationale": "GLM's visible under-delivery is partly a fixable k6 capacity problem, but its residual activation, completion, admission, finalization, worker, and ERP defects create the broadest cross-service repair surface.",
+      "keyEvidence": {
+        "independentFindingIds": [
+          "glm-5.2:ir-F1",
+          "glm-5.2:ir-F2",
+          "glm-5.2:ir-F3",
+          "glm-5.2:ir-F4",
+          "glm-5.2:ir-F5",
+          "glm-5.2:ir-F6",
+          "glm-5.2:ir-F7",
+          "glm-5.2:ir-F8",
+          "glm-5.2:ir-F9",
+          "glm-5.2:ir-F10",
+          "glm-5.2:ir-F12",
+          "glm-5.2:ir-F19",
+          "glm-5.2:ir-F25"
+        ],
+        "comparisonEntryIds": [
+          "glm-5.2:C18",
+          "glm-5.2:C19",
+          "glm-5.2:C22",
+          "glm-5.2:C46",
+          "glm-5.2:C53",
+          "glm-5.2:C55",
+          "glm-5.2:C64",
+          "glm-5.2:C65",
+          "glm-5.2:C67",
+          "glm-5.2:C69",
+          "glm-5.2:C93"
+        ],
+        "browserFindingIds": [
+          "glm-5.2:E2",
+          "glm-5.2:E4",
+          "glm-5.2:E7"
+        ]
+      }
+    }
+  ],
+  "limitations": [
+    "This assessment was read-only: no runtime or test suite was started.",
+    "Browser-use sessions covered different flows and scales, so finding totals are not direct quality scores.",
+    "The Opus browser report records successful tiny custom runs while later representative testing reports unfinished runs; the recommendation treats completion as timing- and load-sensitive rather than universally impossible.",
+    "The user's later representative runtime observations are included as decision evidence but are not yet captured by a standardized cross-branch test protocol."
+  ],
+  "consolidationPhases": [
+    {
+      "title": "Freeze demonstrated behavior",
+      "summary": "Capture representative surge, sold-out, idempotency, lifecycle, history, and recovery behavior before changing architecture."
+    },
+    {
+      "title": "Harden the correctness spine",
+      "summary": "Implement lifecycle fencing, durable completion and order dispatch, autonomous pending-hold recovery, ERP idempotency, Redis-first eligibility, and secret hardening as one coordinated milestone."
+    },
+    {
+      "title": "Port donor invariants",
+      "summary": "Bring selected Opus and GLM behaviors and regression tests through GPT's boundaries instead of merging whole service trees."
+    },
+    {
+      "title": "Consolidate secondary surfaces",
+      "summary": "After the execution spine is trustworthy, merge the best DTO, dashboard, admin, database, test, operational, and documentation choices."
+    }
+  ]
+}

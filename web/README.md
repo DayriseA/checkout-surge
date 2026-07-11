@@ -1,6 +1,6 @@
 # Results bench
 
-Local browser for the Checkout-Surge agent-comparison experiment: the three self-audit reports, cross-model finding clusters, supplementary post-fix browser-use results, implementation comparisons, and the fixed-reviewer independent reviews of each post-fix branch.
+Local browser for the Checkout-Surge agent-comparison experiment: the three self-audit reports, cross-model finding clusters, supplementary post-fix browser-use results, implementation comparisons, the fixed-reviewer independent reviews of each post-fix branch, and the resulting base-branch decision synthesis.
 
 Not meant to be hosted — run it locally on this branch.
 
@@ -26,6 +26,8 @@ The app has no content of its own — everything is read from `../results` at bu
 
 - `results/**/*.md` — the full reports (self-audits and independent reviews), rendered on each agent's page.
 - `results/data/**` — the structured layer (findings index, clusters, independent-review findings and clusters, post-fix browser-use findings, comparisons). Schemas are documented in `results/data/README.md` and enforced by `src/lib/schema.ts`; the app refuses to start on invalid data, and `npm run check-data` gives the same verdict from the CLI (plus checks that every finding's section can be located in its report).
+
+The base-selection narrative lives at `results/base_selection/base_branch_recommendation.md`. Its intentionally small metadata record, `results/data/base-selection.json`, drives the `/base-selection` summary and links back to existing evidence IDs without duplicating the full reasoning.
 
 Edit the JSON, save, and Vite hot-reloads the views. To add a future report: drop the markdown under an appropriate `results/` subfolder, the findings JSON in `results/data/findings/`, and register the model in `results/data/models.json`.
 

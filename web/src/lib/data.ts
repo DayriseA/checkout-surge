@@ -3,6 +3,7 @@
  * A schema mismatch throws here, on purpose — bad data should be loud.
  */
 import {
+  baseSelectionSchema,
   browserUseTestFindingsFileSchema,
   comparisonClustersFileSchema,
   comparisonEntriesFileSchema,
@@ -14,6 +15,7 @@ import {
   SEVERITY_ORDER,
   VERDICT_ORDER,
   type BrowserUseTestFindingsFile,
+  type BaseSelection,
   type ComparisonCluster,
   type ComparisonEntry,
   type ComparisonEntriesFile,
@@ -29,6 +31,7 @@ import {
 } from "./schema";
 
 import modelsRaw from "../../../results/data/models.json";
+import baseSelectionRaw from "../../../results/data/base-selection.json";
 import slicesRaw from "../../../results/data/slices.json";
 import clustersRaw from "../../../results/data/clusters.json";
 import comparisonClustersRaw from "../../../results/data/comparison-clusters.json";
@@ -67,6 +70,10 @@ function parseOrThrow<T>(label: string, parse: () => T): T {
 export const models: Model[] = parseOrThrow("models.json", () =>
   modelsFileSchema.parse(modelsRaw),
 ).models;
+
+export const baseSelection: BaseSelection = parseOrThrow("base-selection.json", () =>
+  baseSelectionSchema.parse(baseSelectionRaw),
+);
 
 export const slices: Slice[] = parseOrThrow("slices.json", () =>
   slicesFileSchema.parse(slicesRaw),
@@ -147,6 +154,9 @@ const comparisonEntryIndex = new Map(comparisonEntries.map((entry) => [entry.id,
 const independentFindingIndex = new Map(
   allIndependentFindings.map((finding) => [finding.id, finding]),
 );
+const browserUseFindingIndex = new Map(
+  browserUseTestFiles.flatMap((file) => file.findings.map((finding) => [finding.id, finding])),
+);
 
 export function findingById(id: string): FindingWithModel {
   const finding = findingIndex.get(id);
@@ -164,6 +174,12 @@ export function comparisonEntryById(id: string): ComparisonEntry {
   const entry = comparisonEntryIndex.get(id);
   if (!entry) throw new Error(`Unknown comparison entry id referenced: ${id}`);
   return entry;
+}
+
+export function browserUseFindingById(id: string) {
+  const finding = browserUseFindingIndex.get(id);
+  if (!finding) throw new Error(`Unknown browser-use finding id referenced: ${id}`);
+  return finding;
 }
 
 export function modelById(id: string): Model | undefined {
@@ -320,3 +336,29 @@ for (const cluster of independentReviewClusters) {
     }
   }
 }
+
+if (!modelById(baseSelection.recommendedBase)) {
+  throw new Error(`Base selection references unknown recommended model ${baseSelection.recommendedBase}`);
+}
+
+const rankedModels = new Set<string>();
+for (const candidate of baseSelection.candidates) {
+  if (!modelById(candidate.model)) {
+    throw new Error(`Base selection candidate references unknown model ${candidate.model}`);
+  }
+  if (rankedModels.has(candidate.model)) {
+    throw new Error(`Base selection ranks model more than once: ${candidate.model}`);
+  }
+  rankedModels.add(candidate.model);
+  for (const id of candidate.keyEvidence.independentFindingIds) independentFindingById(id);
+  for (const id of candidate.keyEvidence.comparisonEntryIds) comparisonEntryById(id);
+  for (const id of candidate.keyEvidence.browserFindingIds) browserUseFindingById(id);
+}
+
+for (const branchHead of baseSelection.branchHeads) {
+  if (!modelById(branchHead.model)) {
+    throw new Error(`Base selection branch head references unknown model ${branchHead.model}`);
+  }
+}
+
+sourceMarkdown(baseSelection.source);

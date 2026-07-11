@@ -13,8 +13,11 @@ The results in this branch follow a specific order:
 3. Those self-audit findings were turned into issues on the respective implementation branches.
 4. The same agents were given a chance to fix the issues they found and claimed completion.
 5. Only after those claimed fixes did independent browser-use testing run against the implementations.
+6. The comparison, fixed-reviewer, browser-use, code-reading, and representative runtime evidence was synthesized into a base-branch recommendation under `results/base_selection/`.
 
 That ordering matters for `results/data/browser-use-test-findings/`: a post-fix browser finding is either a self-audit issue that survived the claimed fix, or a blind spot the self-audit did not identify.
+
+The base-selection report is a decision synthesis over those evidence layers. It does not replace or modify the source comparisons and reviews; it records how their differently weighted signals inform the next consolidation branch.
 
 ## License
 

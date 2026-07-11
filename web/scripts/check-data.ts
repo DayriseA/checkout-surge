@@ -7,6 +7,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  baseSelectionSchema,
   browserUseTestFindingsFileSchema,
   comparisonClustersFileSchema,
   comparisonEntriesFileSchema,
@@ -41,6 +42,7 @@ function readJson(path: string): unknown {
 const { models } = modelsFileSchema.parse(readJson(join(dataDir, "models.json")));
 check("models.json", () => void models);
 check("slices.json", () => slicesFileSchema.parse(readJson(join(dataDir, "slices.json"))));
+const baseSelection = baseSelectionSchema.parse(readJson(join(dataDir, "base-selection.json")));
 
 const findingIds = new Set<string>();
 for (const file of readdirSync(join(dataDir, "findings"))) {
@@ -186,6 +188,7 @@ check("clusters.json", () => {
 });
 
 const browserUseFindingsDir = join(dataDir, "browser-use-test-findings");
+const browserUseFindingIds = new Set<string>();
 for (const file of readdirSync(browserUseFindingsDir)) {
   check(`browser-use-test-findings/${file}`, () => {
     const parsed = browserUseTestFindingsFileSchema.parse(readJson(join(browserUseFindingsDir, file)));
@@ -193,6 +196,10 @@ for (const file of readdirSync(browserUseFindingsDir)) {
     if (!model) throw new Error(`unknown model ${parsed.model}`);
     const report = readFileSync(join(resultsDir, parsed.source), "utf8");
     for (const finding of parsed.findings) {
+      if (browserUseFindingIds.has(finding.id)) {
+        throw new Error(`duplicate browser-use finding id ${finding.id}`);
+      }
+      browserUseFindingIds.add(finding.id);
       if (!finding.id.startsWith(`${parsed.model}:`)) {
         throw new Error(`${finding.id} does not match file model ${parsed.model}`);
       }
@@ -214,9 +221,47 @@ for (const file of readdirSync(browserUseFindingsDir)) {
   });
 }
 
+check("base-selection.json", () => {
+  if (!models.some((model) => model.id === baseSelection.recommendedBase)) {
+    throw new Error(`unknown recommended model ${baseSelection.recommendedBase}`);
+  }
+  if (!existsSync(join(resultsDir, baseSelection.source))) {
+    throw new Error(`source report not found: ${baseSelection.source}`);
+  }
+
+  const ranks = new Set<number>();
+  const rankedModels = new Set<string>();
+  for (const candidate of baseSelection.candidates) {
+    if (!models.some((model) => model.id === candidate.model)) {
+      throw new Error(`candidate references unknown model ${candidate.model}`);
+    }
+    if (ranks.has(candidate.rank)) throw new Error(`duplicate candidate rank ${candidate.rank}`);
+    if (rankedModels.has(candidate.model)) {
+      throw new Error(`model ranked more than once: ${candidate.model}`);
+    }
+    ranks.add(candidate.rank);
+    rankedModels.add(candidate.model);
+    for (const id of candidate.keyEvidence.independentFindingIds) {
+      if (!independentFindingIds.has(id)) throw new Error(`unknown independent finding ${id}`);
+    }
+    for (const id of candidate.keyEvidence.comparisonEntryIds) {
+      if (!comparisonEntryIds.has(id)) throw new Error(`unknown comparison entry ${id}`);
+    }
+    for (const id of candidate.keyEvidence.browserFindingIds) {
+      if (!browserUseFindingIds.has(id)) throw new Error(`unknown browser-use finding ${id}`);
+    }
+  }
+
+  for (const branchHead of baseSelection.branchHeads) {
+    if (!models.some((model) => model.id === branchHead.model)) {
+      throw new Error(`branch head references unknown model ${branchHead.model}`);
+    }
+  }
+});
+
 console.log(
   failures === 0
-    ? `\nAll data valid (${findingIds.size} findings, ${independentFindingIds.size} independent-review findings, ${comparisonEntryIds.size} comparison entries).`
+    ? `\nAll data valid (${findingIds.size} findings, ${independentFindingIds.size} independent-review findings, ${comparisonEntryIds.size} comparison entries, 1 base-selection decision).`
     : `\n${failures} file(s) failed.`,
 );
 process.exit(failures === 0 ? 0 : 1);

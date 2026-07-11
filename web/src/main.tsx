@@ -15,6 +15,7 @@ import { AutoReviewPage } from "./pages/auto-review";
 import { ModelPage } from "./pages/model";
 import { ComparisonsPage } from "./pages/comparisons";
 import { IndependentReviewPage } from "./pages/independent-review";
+import { BaseSelectionPage } from "./pages/base-selection";
 
 const router = createBrowserRouter([
   {
@@ -25,6 +26,7 @@ const router = createBrowserRouter([
       { path: "/models/:modelId", element: <ModelPage /> },
       { path: "/comparisons", element: <ComparisonsPage /> },
       { path: "/independent-review", element: <IndependentReviewPage /> },
+      { path: "/base-selection", element: <BaseSelectionPage /> },
       { path: "*", element: <OverviewPage /> },
     ],
   },
