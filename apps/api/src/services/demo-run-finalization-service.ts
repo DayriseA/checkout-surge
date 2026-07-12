@@ -17,6 +17,9 @@ import {
   demoRunReservationOutcomes,
   demoRuns,
   getInventoryStatus,
+  erpAttempts,
+  orderRecoveryJobs,
+  orders,
   publishDashboardEvent,
   readBusinessOutcomeSummary,
 } from "@checkout-surge/db";
@@ -149,7 +152,15 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
       );
       latestPendingRedisCount = Number.POSITIVE_INFINITY;
     }
-    const latestBlockers = businessDrainBlockers(latestBusinessOutcome, latestPendingRedisCount);
+    const latestRecoveryPressure = await readRecoveryPressure(this.options.db, row.run.id);
+    const latestBlockers = businessDrainBlockers(
+      latestBusinessOutcome,
+      latestPendingRedisCount,
+      latestRecoveryPressure.pendingCount,
+      latestRecoveryPressure.escalatedProcessingCount,
+      latestRecoveryPressure.escalatedRetryingCount,
+      latestRecoveryPressure.escalatedQueuedCount,
+    );
     if (latestBlockers.length > 0 && !timedOut) {
       this.options.logger.debug(
         { runId, blockers: latestBlockers },
@@ -168,6 +179,7 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
       run: row.run,
       finalization: row.finalization,
       timedOut: latestTimedOut,
+      escalatedRecoveryCount: latestRecoveryPressure.escalatedCount,
     });
 
     const wroteSummary = await this.summaryWriter.write({
@@ -218,7 +230,15 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
       );
       pendingRedisCount = Number.POSITIVE_INFINITY;
     }
-    const blockers = businessDrainBlockers(businessOutcome, pendingRedisCount);
+    const recoveryPressure = await readRecoveryPressure(this.options.db, input.run.id);
+    const blockers = businessDrainBlockers(
+      businessOutcome,
+      pendingRedisCount,
+      recoveryPressure.pendingCount,
+      recoveryPressure.escalatedProcessingCount,
+      recoveryPressure.escalatedRetryingCount,
+      recoveryPressure.escalatedQueuedCount,
+    );
     const timedOut = input.now.getTime() >= timeoutAt.getTime();
 
     if (blockers.length > 0 && !timedOut) {
@@ -234,6 +254,7 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
       run: input.run,
       finalization: input.finalization,
       timedOut: blockers.length > 0 && timedOut,
+      escalatedRecoveryCount: recoveryPressure.escalatedCount,
     });
 
     return {
@@ -257,7 +278,11 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
     run: typeof demoRuns.$inferSelect;
     finalization: typeof demoRunFinalizations.$inferSelect;
     timedOut: boolean;
+    escalatedRecoveryCount?: number;
   }): string | null {
+    if ((input.escalatedRecoveryCount ?? 0) > 0) {
+      return "reconciliation_escalated";
+    }
     if (input.timedOut) {
       return "business_drain_timeout";
     }
@@ -368,20 +393,30 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
   }
 }
 
-function businessDrainBlockers(outcome: BusinessOutcomeSummary, pendingRedisCount = 0): string[] {
+function businessDrainBlockers(
+  outcome: BusinessOutcomeSummary,
+  pendingRedisCount = 0,
+  pendingRecoveryCount = 0,
+  escalatedProcessingCount = 0,
+  escalatedRetryingCount = 0,
+  escalatedQueuedCount = 0,
+): string[] {
   const parsed = businessOutcomeSummarySchema.parse(outcome);
   const blockers: string[] = [];
 
   if (parsed.pendingPersistenceCount > 0 || pendingRedisCount > 0) {
     blockers.push("pending_persistence");
   }
-  if (parsed.queuedOrders > 0) {
+  if (pendingRecoveryCount > 0) {
+    blockers.push("reconciliation_pending");
+  }
+  if (parsed.queuedOrders > escalatedQueuedCount) {
     blockers.push("queued_orders");
   }
-  if (parsed.processingOrders > 0) {
+  if (parsed.processingOrders > escalatedProcessingCount) {
     blockers.push("processing_orders");
   }
-  if (parsed.retryingOrders > 0) {
+  if (parsed.retryingOrders > escalatedRetryingCount) {
     blockers.push("retrying_orders");
   }
   if (parsed.notificationsRecorded < parsed.confirmedOrders) {
@@ -389,6 +424,53 @@ function businessDrainBlockers(outcome: BusinessOutcomeSummary, pendingRedisCoun
   }
 
   return blockers;
+}
+
+async function readRecoveryPressure(
+  db: CheckoutSurgeDatabase,
+  runId: string,
+): Promise<{
+  pendingCount: number;
+  escalatedCount: number;
+  escalatedProcessingCount: number;
+  escalatedRetryingCount: number;
+  escalatedQueuedCount: number;
+}> {
+  const rows = await db
+    .select({
+      status: orderRecoveryJobs.status,
+      orderId: orderRecoveryJobs.orderId,
+      orderStatus: orders.status,
+      attemptStatus: erpAttempts.status,
+    })
+    .from(orderRecoveryJobs)
+    .innerJoin(orders, eq(orders.id, orderRecoveryJobs.orderId))
+    .leftJoin(erpAttempts, eq(erpAttempts.orderId, orderRecoveryJobs.orderId))
+    .where(eq(orders.runId, runId));
+  const escalated = rows.filter((row) => row.status === "escalated");
+  const escalatedProcessingIds = new Set(
+    escalated.filter((row) => row.orderStatus === "processing").map((row) => row.orderId),
+  );
+  const escalatedQueuedIds = new Set(
+    escalated.filter((row) => row.orderStatus === "queued").map((row) => row.orderId),
+  );
+  const escalatedRetryingIds = new Set(
+    escalated
+      .filter(
+        (row) =>
+          row.orderStatus === "processing" &&
+          (row.attemptStatus === "failed" || row.attemptStatus === "timed_out"),
+      )
+      .map((row) => row.orderId),
+  );
+  return {
+    pendingCount: rows.filter((row) => row.status === "pending" || row.status === "enqueued")
+      .length,
+    escalatedCount: rows.filter((row) => row.status === "escalated").length,
+    escalatedProcessingCount: escalatedProcessingIds.size,
+    escalatedRetryingCount: escalatedRetryingIds.size,
+    escalatedQueuedCount: escalatedQueuedIds.size,
+  };
 }
 
 function requireSaleOfferId(run: typeof demoRuns.$inferSelect): string {

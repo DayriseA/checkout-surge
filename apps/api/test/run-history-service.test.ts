@@ -363,6 +363,7 @@ async function seedRunDetailRecords(
   await db.insert(erpAttempts).values({
     id: ids.erpAttempt,
     orderId: ids.order,
+    deliveryId: "history-delivery-1",
     correlationId: "corr-history-detail",
     runId: ids.newerRun,
     attemptNumber: 1,

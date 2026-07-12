@@ -6,6 +6,7 @@ export const dbPackageDependencies = [contractsPackageName] as const;
 export * from "./business-outcome-dashboard.js";
 export * from "./client.js";
 export * from "./migrations.js";
+export * from "./json.js";
 export * from "./redis.js";
 export * from "./redis-dashboard-events.js";
 export * from "./redis-erp-resilience.js";

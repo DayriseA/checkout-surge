@@ -21,11 +21,16 @@ import { createNotificationRecordJobHandler } from "./application/notification-r
 import { createNotificationRecoveryScanner } from "./application/notification-recovery-scanner.js";
 import { createOrderDispatchScanner } from "./application/order-dispatch-scanner.js";
 import { createOrderProcessJobHandler } from "./application/order-process-job-handler.js";
+import {
+  createOrderRecoveryHandoff,
+  createOrderRecoveryScanner,
+} from "./application/order-recovery-scanner.js";
 import { RunScopedBackpressureOrderConfirmation } from "./application/run-backpressure.js";
 import { PostgresErpAttemptPersistence } from "./persistence/postgres-erp-attempt-persistence.js";
 import { PostgresNotificationRecordPersistence } from "./persistence/postgres-notification-record-persistence.js";
 import { PostgresNotificationRecoveryPersistence } from "./persistence/postgres-notification-recovery-persistence.js";
 import { PostgresOrderDispatchPersistence } from "./persistence/postgres-order-dispatch-persistence.js";
+import { PostgresOrderRecoveryPersistence } from "./persistence/postgres-order-recovery-persistence.js";
 import { PostgresOrderTransitionPersistence } from "./persistence/postgres-order-transition-persistence.js";
 import { PostgresRunConfigReader } from "./persistence/postgres-run-config-reader.js";
 import { createBullMqNotificationRecordConsumer } from "./queue/bullmq-notification-record-consumer.js";
@@ -91,7 +96,16 @@ export {
   createOrderProcessJobHandler,
   type NotificationRecordPublisher,
   OrderFailurePersistenceError,
+  OrderRecoveryHandoffError,
 } from "./application/order-process-job-handler.js";
+export {
+  createOrderRecoveryHandoff,
+  createOrderRecoveryScanner,
+  type DeadLetterRecord,
+  type OrderRecoveryPersistence,
+  type OrderRecoveryScanner,
+  type RecoverableOrderHandoff,
+} from "./application/order-recovery-scanner.js";
 export { RunScopedBackpressureOrderConfirmation } from "./application/run-backpressure.js";
 export type { RunConfigReader } from "./application/run-config.js";
 export { PostgresErpAttemptPersistence } from "./persistence/postgres-erp-attempt-persistence.js";
@@ -103,6 +117,7 @@ export {
 } from "./persistence/postgres-notification-record-persistence.js";
 export { PostgresNotificationRecoveryPersistence } from "./persistence/postgres-notification-recovery-persistence.js";
 export { PostgresOrderDispatchPersistence } from "./persistence/postgres-order-dispatch-persistence.js";
+export { PostgresOrderRecoveryPersistence } from "./persistence/postgres-order-recovery-persistence.js";
 export {
   InvalidOrderTransitionError,
   OrderJobIdentityMismatchError,
@@ -143,6 +158,17 @@ export async function startWorker(): Promise<void> {
   const orderProcessJobPublisher = createBullMqOrderProcessJobPublisher({
     url: config.redisUrl,
     maxRetriesPerRequest: null,
+  });
+  const orderRecoveryPersistence = new PostgresOrderRecoveryPersistence(database.db);
+  const orderRecoveryScanner = createOrderRecoveryScanner({
+    persistence: orderRecoveryPersistence,
+    publisher: orderProcessJobPublisher,
+    logger,
+    scanIntervalMs: config.orderRecoveryScanIntervalMs,
+    batchSize: config.orderRecoveryBatchSize,
+    maxRecoveryAttempts: config.orderRecoveryMaxAttempts,
+    recoveryLeaseMs: config.orderRecoveryLeaseMs,
+    failedJobReader: orderProcessJobPublisher,
   });
   const notificationRecoveryScanner = createNotificationRecoveryScanner({
     persistence: new PostgresNotificationRecoveryPersistence(database.db),
@@ -213,6 +239,7 @@ export async function startWorker(): Promise<void> {
       }),
       persistence: new PostgresOrderTransitionPersistence(database.db),
       logger,
+      recovery: createOrderRecoveryHandoff(orderRecoveryPersistence),
       isTemporaryConfirmationFailure,
       shouldRetryWithoutFailingOrder,
       notificationRecordPublisher,
@@ -250,6 +277,7 @@ export async function startWorker(): Promise<void> {
       },
     }),
     logger,
+    recovery: orderRecoveryPersistence,
   });
   const notificationRecordConsumer = createBullMqNotificationRecordConsumer({
     connection: {
@@ -300,6 +328,7 @@ export async function startWorker(): Promise<void> {
     notificationRecordConsumer,
     notificationRecoveryScanner,
     orderDispatchScanner,
+    orderRecoveryScanner,
     closeOrderProcessJobPublisher: orderProcessJobPublisher.close,
     closeNotificationRecordPublisher: notificationRecordPublisher.close,
     closePostgres: database.close,

@@ -15,7 +15,7 @@ export class RunScopedBackpressureOrderConfirmation implements OrderConfirmation
     },
   ) {}
 
-  async confirm(job: OrderProcessJob, delivery: OrderProcessDeliveryMetadata): Promise<void> {
+  async confirm(job: OrderProcessJob, delivery: OrderProcessDeliveryMetadata): Promise<unknown> {
     if (!job.runId) {
       return this.options.inner.confirm(job, delivery);
     }

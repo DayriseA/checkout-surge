@@ -16,9 +16,13 @@ import {
 } from "../../src/queue/bullmq-notification-record-consumer.js";
 import {
   createBullMqOrderProcessConsumer,
+  deadLetterFailureMarker,
   type OrderProcessJobFailureReport,
   orderProcessQueueNotReadyMessage,
 } from "../../src/queue/bullmq-order-process-consumer.js";
+import { createOrderRecoveryScanner } from "../../src/application/order-recovery-scanner.js";
+import { createOrderProcessJobPublisher } from "../../src/queue/bullmq-order-process-job-publisher.js";
+import { createOrderProcessJobHandler } from "../../src/application/order-process-job-handler.js";
 import type { NotificationRecordConsumer } from "../../src/queue/notification-record-consumer.js";
 import type { OrderProcessConsumer } from "../../src/queue/order-process-consumer.js";
 
@@ -107,13 +111,18 @@ describe("BullMQ order-processing boundary", () => {
       attemptNumber: 1,
       attemptsMade: 0,
       maxAttempts: 1,
+      deliveryId: job.orderId,
     });
   });
 
   it("passes BullMQ retry delivery metadata across real attempts", async () => {
     const handledTwice = deferred<void>();
-    const deliveries: Array<{ attemptNumber: number; attemptsMade: number; maxAttempts?: number }> =
-      [];
+    const deliveries: Array<{
+      attemptNumber: number;
+      attemptsMade: number;
+      maxAttempts?: number;
+      deliveryId?: string;
+    }> = [];
     consumer = createBullMqOrderProcessConsumer({
       connection: { url: testRedisUrl(), maxRetriesPerRequest: null },
       concurrency: 1,
@@ -141,8 +150,8 @@ describe("BullMQ order-processing boundary", () => {
       interval: 25,
     });
     expect(deliveries).toEqual([
-      { attemptNumber: 1, attemptsMade: 0, maxAttempts: 2 },
-      { attemptNumber: 2, attemptsMade: 1, maxAttempts: 2 },
+      { attemptNumber: 1, attemptsMade: 0, maxAttempts: 2, deliveryId: job.orderId },
+      { attemptNumber: 2, attemptsMade: 1, maxAttempts: 2, deliveryId: job.orderId },
     ]);
     expect((await queue.getJob(job.orderId))?.attemptsMade).toBe(2);
   });
@@ -171,6 +180,187 @@ describe("BullMQ order-processing boundary", () => {
     await expect(trackedConsumer.checkConnectivity()).rejects.toThrow(
       orderProcessQueueNotReadyMessage,
     );
+  });
+
+  it("retains a poison DLQ disposition for scanner reconciliation after handoff failure", async () => {
+    const poisonHandoff = vi.fn().mockRejectedValue(new Error("database unavailable"));
+    const handled = vi.fn();
+    consumer = createBullMqOrderProcessConsumer({
+      connection: { url: testRedisUrl(), maxRetriesPerRequest: null },
+      concurrency: 1,
+      handler: { handle: handled },
+      logger: createSilentLogger("worker"),
+      recovery: { recordRecoverable: vi.fn(), recordDeadLetter: poisonHandoff },
+    });
+    consumer.start();
+    await queue.add(
+      "wrong-name" as typeof orderProcessJobName,
+      { invalid: true } as OrderProcessJob,
+      {
+        attempts: 2,
+        jobId: "poison-dlq-job",
+      },
+    );
+
+    await vi.waitFor(
+      async () => {
+        expect(await queue.getJob("poison-dlq-job")).toBeDefined();
+        expect(await (await queue.getJob("poison-dlq-job"))?.getState()).toBe("failed");
+      },
+      { timeout: 10_000, interval: 25 },
+    );
+    const failed = await queue.getJob("poison-dlq-job");
+    expect(failed?.failedReason).toContain(deadLetterFailureMarker);
+    expect(handled).not.toHaveBeenCalled();
+
+    const publisher = createOrderProcessJobPublisher(queue);
+    const recordDeadLetter = vi.fn().mockResolvedValue(undefined);
+    const scanner = createOrderRecoveryScanner({
+      persistence: {
+        recordRecoverable: vi.fn(),
+        findRecoverable: vi.fn().mockResolvedValue([]),
+        markEnqueued: vi.fn(),
+        markEscalated: vi.fn(),
+        recordDeadLetter,
+      },
+      publisher,
+      logger: createSilentLogger("worker"),
+      scanIntervalMs: 1000,
+      batchSize: 10,
+      failedJobReader: publisher,
+    });
+    await scanner.scanOnce();
+    await scanner.scanOnce();
+    expect(recordDeadLetter).toHaveBeenCalledWith(
+      expect.objectContaining({ jobId: "poison-dlq-job", jobName: "wrong-name" }),
+    );
+    await publisher.close();
+  });
+
+  it("re-enqueues exhausted work through a durable claim and confirms one recovery delivery", async () => {
+    const handled = deferred<OrderProcessJob>();
+    const confirmationCalls = vi.fn();
+    consumer = createBullMqOrderProcessConsumer({
+      connection: { url: testRedisUrl(), maxRetriesPerRequest: null },
+      concurrency: 1,
+      handler: {
+        handle: async (payload) => {
+          confirmationCalls(payload.orderId);
+          handled.resolve(payload);
+        },
+      },
+      logger: createSilentLogger("worker"),
+    });
+    const scanner = createOrderRecoveryScanner({
+      persistence: {
+        recordRecoverable: vi.fn(),
+        findRecoverable: vi.fn().mockResolvedValue([
+          {
+            recoveryKey: `order:${job.orderId}`,
+            job,
+            reason: "erp_local_persistence_unavailable",
+            attempts: 0,
+            createdAt: new Date(),
+          },
+        ]),
+        claimForPublication: vi.fn().mockResolvedValue({ attempt: 1 }),
+        markEnqueued: vi.fn(),
+        markEscalated: vi.fn(),
+        recordDeadLetter: vi.fn(),
+      },
+      publisher: createOrderProcessJobPublisher(queue),
+      logger: createSilentLogger("worker"),
+      scanIntervalMs: 1000,
+      batchSize: 10,
+    });
+    await scanner.scanOnce();
+    expect(await queue.getJob(`recovery-${job.orderId}-1`)).toBeDefined();
+    consumer.start();
+    await expect(handled.promise).resolves.toEqual(job);
+    expect(confirmationCalls).toHaveBeenCalledOnce();
+  });
+
+  it("restores a pre-ERP persistence outage through recovery without an ERP side effect", async () => {
+    let databaseRestored = false;
+    const confirmationCalls = vi.fn();
+    const recoveryRecords = vi.fn();
+    const recoveryPersistence = {
+      recordRecoverable: recoveryRecords,
+      recordDeadLetter: vi.fn(),
+      findRecoverable: vi.fn().mockResolvedValue([
+        {
+          recoveryKey: `order:${job.orderId}`,
+          job,
+          reason: "order_processing_persistence_unavailable",
+          attempts: 0,
+          createdAt: new Date(),
+        },
+      ]),
+      claimForPublication: vi.fn().mockResolvedValue({ attempt: 1 }),
+      markEnqueued: vi.fn(),
+      markEscalated: vi.fn(),
+    };
+    const handler = createOrderProcessJobHandler({
+      confirmation: {
+        confirm: async () => {
+          confirmationCalls();
+        },
+      },
+      persistence: {
+        transitionToProcessing: async () => {
+          if (!databaseRestored) throw new Error("database unavailable");
+          return { status: "processing", resumed: false };
+        },
+        transitionToConfirmed: vi.fn().mockResolvedValue(undefined),
+        transitionToFailed: vi.fn().mockResolvedValue(undefined),
+      },
+      logger: createSilentLogger("worker"),
+      recovery: { handoff: recoveryRecords },
+    });
+    consumer = createBullMqOrderProcessConsumer({
+      connection: { url: testRedisUrl(), maxRetriesPerRequest: null },
+      concurrency: 1,
+      handler,
+      logger: createSilentLogger("worker"),
+      recovery: recoveryPersistence,
+    });
+    consumer.start();
+    await queue.add(orderProcessJobName, job, { attempts: 2, jobId: job.orderId });
+    await vi.waitFor(async () => expect(await queue.getJob(job.orderId)).toBeDefined(), {
+      timeout: 10_000,
+      interval: 25,
+    });
+    await vi.waitFor(
+      async () => {
+        expect(await (await queue.getJob(job.orderId))?.getState()).toBe("failed");
+      },
+      {
+        timeout: 10_000,
+        interval: 25,
+      },
+    );
+    expect(confirmationCalls).not.toHaveBeenCalled();
+    expect(recoveryRecords).toHaveBeenCalled();
+
+    databaseRestored = true;
+    const scanner = createOrderRecoveryScanner({
+      persistence: recoveryPersistence,
+      publisher: createOrderProcessJobPublisher(queue),
+      logger: createSilentLogger("worker"),
+      scanIntervalMs: 1000,
+      batchSize: 10,
+    });
+    await scanner.scanOnce();
+    await vi.waitFor(
+      async () => {
+        expect(await queue.getJob(`recovery-${job.orderId}-1`)).toBeDefined();
+        expect(await (await queue.getJob(`recovery-${job.orderId}-1`))?.getState()).toBe(
+          "completed",
+        );
+      },
+      { timeout: 10_000, interval: 25 },
+    );
+    expect(confirmationCalls).toHaveBeenCalledOnce();
   });
 
   it("fails invalid payloads and reports basic job metadata", async () => {

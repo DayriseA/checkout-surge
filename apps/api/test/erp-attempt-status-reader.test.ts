@@ -55,6 +55,7 @@ describe("PostgresErpAttemptStatusReader", () => {
 
         return {
           orderId: ids.order,
+          deliveryId: `status-reader-delivery-${attemptNumber}`,
           correlationId: "corr-erp-status-reader",
           attemptNumber,
           status,

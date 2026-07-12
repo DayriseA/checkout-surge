@@ -1,15 +1,21 @@
 import { contractsPackageName } from "@checkout-surge/contracts";
+import { createDatabaseConnection, dbPackageName } from "@checkout-surge/db";
 import { createServiceLogger, loggerPackageName } from "@checkout-surge/logger";
 import {
   ChaosConfirmationDecisionProvider,
   ErpChaosConfigStore,
 } from "./application/chaos-control-service.js";
 import { ConfirmationService } from "./application/confirmation-service.js";
+import { PostgresConfirmationLedger } from "./application/postgres-confirmation-ledger.js";
 import { loadMockErpConfig } from "./runtime/config.js";
 import { buildMockErpServer } from "./server.js";
 
 export const mockErpAppName = "mock-erp" as const;
-export const mockErpAppDependencies = [contractsPackageName, loggerPackageName] as const;
+export const mockErpAppDependencies = [
+  contractsPackageName,
+  dbPackageName,
+  loggerPackageName,
+] as const;
 
 export {
   ChaosConfirmationDecisionProvider,
@@ -20,20 +26,26 @@ export {
 export {
   type ConfirmationDecision,
   type ConfirmationDecisionProvider,
+  ConfirmationIdempotencyConflictError,
+  type ConfirmationLedger,
   ConfirmationService,
+  InMemoryConfirmationLedger,
 } from "./application/confirmation-service.js";
+export { PostgresConfirmationLedger } from "./application/postgres-confirmation-ledger.js";
 export { loadMockErpConfig, type MockErpConfig } from "./runtime/config.js";
 export { buildMockErpServer } from "./server.js";
 
 export async function startMockErp(): Promise<void> {
   const config = loadMockErpConfig(process.env);
   const logger = createServiceLogger({ service: "mock-erp" });
+  const database = createDatabaseConnection(requireDatabaseUrl(process.env));
   const chaosConfigStore = new ErpChaosConfigStore(
     config.defaultChaosConfig,
     config.chaosSafetyCaps,
   );
   const server = buildMockErpServer({
     confirmationService: new ConfirmationService({
+      ledger: new PostgresConfirmationLedger(database.db),
       decisionProvider: new ChaosConfirmationDecisionProvider({ configStore: chaosConfigStore }),
     }),
     chaosConfigStore,
@@ -44,7 +56,7 @@ export async function startMockErp(): Promise<void> {
 
   let closePromise: Promise<void> | null = null;
   const close = (): Promise<void> => {
-    closePromise ??= server.close();
+    closePromise ??= server.close().finally(() => database.close());
     return closePromise;
   };
 
@@ -80,6 +92,12 @@ export async function startMockErp(): Promise<void> {
       logger.error({ err: cleanupError }, "Mock ERP startup cleanup failed.");
     }
   }
+}
+
+function requireDatabaseUrl(env: NodeJS.ProcessEnv): string {
+  const value = env.DATABASE_URL?.trim();
+  if (!value) throw new Error("DATABASE_URL is required.");
+  return value;
 }
 
 if (process.env.NODE_ENV !== "test" && import.meta.url === `file://${process.argv[1]}`) {

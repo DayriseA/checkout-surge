@@ -15,6 +15,13 @@
       "when": 1782950400000,
       "tag": "0001_order_secured_reservation_invariant",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1783828026000,
+      "tag": "0002_erp_result_recovery_boundary",
+      "breakpoints": true
     }
   ]
 }

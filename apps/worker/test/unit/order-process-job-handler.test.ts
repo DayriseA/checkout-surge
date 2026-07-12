@@ -9,6 +9,8 @@ import {
 import {
   createOrderProcessJobHandler,
   OrderFailurePersistenceError,
+  OrderProcessingPersistenceError,
+  OrderRecoveryHandoffError,
   type OrderTransitionPersistence,
 } from "../../src/application/order-process-job-handler.js";
 
@@ -39,6 +41,33 @@ function createPersistence(
 }
 
 describe("order-process application workflow", () => {
+  it("classifies processing-state persistence outages before ERP and hands off the final delivery", async () => {
+    const confirmation = { confirm: vi.fn() };
+    const recovery = { handoff: vi.fn().mockResolvedValue(undefined) };
+    const persistence = createPersistence({
+      transitionToProcessing: vi.fn().mockRejectedValue(new Error("database unavailable")),
+    });
+    const handler = createOrderProcessJobHandler({
+      confirmation,
+      persistence,
+      logger: createSilentLogger("worker"),
+      recovery,
+    });
+
+    await expect(
+      handler.handle(job, { attemptNumber: 1, attemptsMade: 0, maxAttempts: 2 }),
+    ).rejects.toBeInstanceOf(OrderProcessingPersistenceError);
+    expect(confirmation.confirm).not.toHaveBeenCalled();
+    expect(recovery.handoff).not.toHaveBeenCalled();
+
+    await expect(
+      handler.handle(job, { attemptNumber: 2, attemptsMade: 1, maxAttempts: 2 }),
+    ).rejects.toBeInstanceOf(OrderProcessingPersistenceError);
+    expect(confirmation.confirm).not.toHaveBeenCalled();
+    expect(recovery.handoff).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: "order_processing_persistence_unavailable" }),
+    );
+  });
   it("moves a queued order through confirmation with delivery metadata", async () => {
     const persistence = createPersistence();
     const confirmation = { confirm: vi.fn().mockResolvedValue(undefined) };
@@ -286,6 +315,92 @@ describe("order-process application workflow", () => {
     expect(persistence.transitionToConfirmed).not.toHaveBeenCalled();
   });
 
+  it("hands accepted ERP persistence failures to recovery on the final delivery", async () => {
+    const confirmationError = new ErpAcceptedConfirmationPersistenceError(
+      new Error("attempt persistence unavailable"),
+      {
+        job,
+        delivery: { attemptNumber: 4, attemptsMade: 3, maxAttempts: 4 },
+        status: "succeeded",
+        httpStatus: 200,
+        latencyMs: 20,
+        startedAt: new Date("2026-06-21T00:00:00.000Z"),
+        finishedAt: new Date("2026-06-21T00:00:00.020Z"),
+      },
+    );
+    const recovery = { handoff: vi.fn().mockResolvedValue(undefined) };
+    const persistence = createPersistence();
+    const handler = createOrderProcessJobHandler({
+      confirmation: { confirm: vi.fn().mockRejectedValue(confirmationError) },
+      persistence,
+      logger: createSilentLogger("worker"),
+      recovery,
+    });
+
+    await expect(
+      handler.handle(job, { attemptNumber: 4, attemptsMade: 3, maxAttempts: 4 }),
+    ).rejects.toBe(confirmationError);
+
+    expect(recovery.handoff).toHaveBeenCalledWith(
+      expect.objectContaining({
+        job,
+        reason: "erp_accepted_local_persistence_incomplete",
+        accepted: true,
+      }),
+    );
+    expect(persistence.transitionToFailed).not.toHaveBeenCalled();
+  });
+
+  it("preserves the accepted source error when recovery handoff fails", async () => {
+    const sourceError = new ErpAcceptedConfirmationPersistenceError(new Error("db down"), {
+      job,
+      delivery,
+      status: "succeeded",
+      httpStatus: 200,
+      latencyMs: 1,
+      startedAt: new Date("2026-06-21T00:00:00.000Z"),
+      finishedAt: new Date("2026-06-21T00:00:00.001Z"),
+    });
+    const handoffError = new Error("recovery db also down");
+    const persistence = createPersistence();
+    const handler = createOrderProcessJobHandler({
+      confirmation: { confirm: vi.fn().mockRejectedValue(sourceError) },
+      persistence,
+      logger: createSilentLogger("worker"),
+      recovery: { handoff: vi.fn().mockRejectedValue(handoffError) },
+    });
+
+    const rejection = await handler.handle(job, delivery).catch((error: unknown) => error);
+    expect(rejection).toBeInstanceOf(OrderRecoveryHandoffError);
+    expect(rejection).toMatchObject({ sourceError, handoffError });
+    expect(persistence.transitionToFailed).not.toHaveBeenCalled();
+  });
+
+  it("hands a confirmed-transition persistence failure to recovery without failing the order", async () => {
+    const transitionError = new Error("confirmed write unavailable");
+    const persistence = createPersistence({
+      transitionToConfirmed: vi.fn().mockRejectedValue(transitionError),
+    });
+    const recovery = { handoff: vi.fn().mockResolvedValue(undefined) };
+    const handler = createOrderProcessJobHandler({
+      confirmation: { confirm: vi.fn().mockResolvedValue({ status: "succeeded" }) },
+      persistence,
+      logger: createSilentLogger("worker"),
+      recovery,
+    });
+
+    await expect(handler.handle(job, { ...delivery, maxAttempts: 4 })).rejects.toBe(
+      transitionError,
+    );
+    expect(recovery.handoff).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reason: "confirmed_transition_persistence_unavailable",
+        accepted: true,
+      }),
+    );
+    expect(persistence.transitionToFailed).not.toHaveBeenCalled();
+  });
+
   it("does not mark circuit-open deliveries failed when the BullMQ attempt budget is reached", async () => {
     const circuitOpenError = new ErpCircuitOpenError(1000);
     const persistence = createPersistence();
@@ -423,7 +538,7 @@ describe("order-process application workflow", () => {
     expect(persistence.transitionToFailed).toHaveBeenCalledWith(
       job,
       {
-        code: "order_confirmation_failed",
+        code: "erp_retries_exhausted",
         message: "ERP still unavailable",
       },
       { attemptNumber: 3, attemptsMade: 2, maxAttempts: 3 },

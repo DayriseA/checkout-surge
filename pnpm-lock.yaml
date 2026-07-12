@@ -88,9 +88,15 @@ importers:
       '@checkout-surge/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@checkout-surge/db':
+        specifier: workspace:*
+        version: link:../../packages/db
       '@checkout-surge/logger':
         specifier: workspace:*
         version: link:../../packages/logger
+      drizzle-orm:
+        specifier: ^0.45.2
+        version: 0.45.2(postgres@3.4.9)
       fastify:
         specifier: ^5.8.5
         version: 5.8.5

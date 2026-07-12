@@ -22,6 +22,7 @@ export interface ErpAttemptRecord {
   latencyMs: number;
   startedAt: Date;
   finishedAt: Date;
+  response?: ErpConfirmationResponse;
 }
 
 export interface ReusableErpConfirmationAttempt {
@@ -152,7 +153,10 @@ export class HttpErpOrderConfirmation implements OrderConfirmation {
     this.runConfigReader = options.runConfigReader;
   }
 
-  async confirm(job: OrderProcessJob, delivery: OrderProcessDeliveryMetadata): Promise<void> {
+  async confirm(
+    job: OrderProcessJob,
+    delivery: OrderProcessDeliveryMetadata,
+  ): Promise<ErpConfirmationResponse | undefined> {
     const reusableAttempt = await this.findSuccessfulAttempt(job);
     if (reusableAttempt) {
       return;
@@ -184,13 +188,16 @@ export class HttpErpOrderConfirmation implements OrderConfirmation {
         startedAt,
         finishedAt,
       });
+      if (parsed.status === "succeeded") {
+        Object.defineProperty(record, "response", { value: parsed, enumerable: false });
+      }
       await this.recordAttempt(record);
 
       if (parsed.status !== "succeeded") {
         throw new ErpConfirmationFailedError(parsed);
       }
 
-      return;
+      return parsed;
     } catch (error) {
       if (isAbortError(error)) {
         const finishedAt = this.now();

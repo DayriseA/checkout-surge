@@ -18,6 +18,7 @@ import {
   demoRuns,
   erpAttempts,
   initializeInventory,
+  orderRecoveryJobs,
   orders,
   products,
   reservationPendingPersistence,
@@ -101,6 +102,7 @@ describe("demo run finalization service", () => {
         await db.insert(erpAttempts).values({
           id: ids.erpAttempt,
           orderId: ids.order1,
+          deliveryId: "finalize-delivery-1",
           correlationId: "corr-finalize-test",
           runId: ids.run,
           attemptNumber: 1,
@@ -210,6 +212,109 @@ describe("demo run finalization service", () => {
       soldOutRejections: 7,
       acceptedReservations: 2,
       source: "redis",
+    });
+  });
+
+  it("blocks on pending reconciliation, then settles after resolution", async () => {
+    const db = requireConnection(connection).db;
+    const redisClient = requireRedis(redis);
+    const service = createService(connection, redis);
+    await seedDrainingRun({ db, redis: redisClient, trafficDeliveryStatus: "complete" });
+    await db.insert(reservations).values(reservationFixture(ids.reservation1));
+    await db.insert(orders).values(orderFixture(ids.order1, ids.reservation1, "confirmed"));
+    await db.insert(simulatedNotifications).values({
+      id: ids.notification,
+      orderId: ids.order1,
+      saleOfferId: ids.saleOffer,
+      runId: ids.run,
+      correlationId: "corr-finalize-test",
+      channel: "email",
+      recipientPlaceholder: "buyer@example.invalid",
+      status: "recorded",
+      recordedAt: new Date("2026-06-20T00:00:08.000Z"),
+    });
+    await db.insert(orderRecoveryJobs).values({
+      recoveryKey: `order:${ids.order1}`,
+      jobId: "pending-recovery",
+      orderId: ids.order1,
+      payload: { orderId: ids.order1 },
+      reason: "erp_local_persistence_unavailable",
+      status: "pending",
+      attempts: 1,
+    });
+
+    await expect(service.finalizeRun(ids.run, "corr-finalize-pending")).resolves.toMatchObject({
+      status: "draining",
+    });
+    await db
+      .update(orderRecoveryJobs)
+      .set({ status: "resolved", resolvedAt: new Date("2026-06-20T00:00:09.000Z") })
+      .where(eq(orderRecoveryJobs.recoveryKey, `order:${ids.order1}`));
+    await expect(service.finalizeRun(ids.run, "corr-finalize-resolved")).resolves.toMatchObject({
+      status: "completed",
+    });
+  });
+
+  it("allows escalated processing orders to fail terminally while unrelated work still blocks", async () => {
+    const db = requireConnection(connection).db;
+    const redisClient = requireRedis(redis);
+    const service = createService(connection, redis);
+    await seedDrainingRun({ db, redis: redisClient, trafficDeliveryStatus: "complete" });
+    await db
+      .insert(reservations)
+      .values([reservationFixture(ids.reservation1), reservationFixture(ids.reservation2)]);
+    await db
+      .insert(orders)
+      .values([
+        orderFixture(ids.order1, ids.reservation1, "processing"),
+        orderFixture(ids.order2, ids.reservation2, "processing"),
+      ]);
+    await db.insert(erpAttempts).values({
+      orderId: ids.order1,
+      deliveryId: "escalated-retry-delivery",
+      correlationId: "corr-finalize-test",
+      runId: ids.run,
+      attemptNumber: 1,
+      status: "failed",
+      errorCode: "erp_unavailable",
+      errorMessage: "ERP unavailable.",
+      latencyMs: 10,
+      startedAt: new Date("2026-06-20T00:00:04.000Z"),
+      finishedAt: new Date("2026-06-20T00:00:04.010Z"),
+    });
+    await db.insert(orderRecoveryJobs).values({
+      recoveryKey: `order:${ids.order1}`,
+      jobId: "escalated-recovery",
+      orderId: ids.order1,
+      payload: { orderId: ids.order1 },
+      reason: "recovery_attempt_limit_exceeded",
+      status: "escalated",
+      attempts: 3,
+    });
+
+    await expect(service.finalizeRun(ids.run, "corr-finalize-unrelated")).resolves.toMatchObject({
+      status: "draining",
+    });
+    await db
+      .update(orders)
+      .set({ status: "confirmed", confirmedAt: new Date("2026-06-20T00:00:05.000Z") })
+      .where(eq(orders.id, ids.order2));
+    await db.insert(simulatedNotifications).values({
+      id: ids.notification,
+      orderId: ids.order2,
+      saleOfferId: ids.saleOffer,
+      runId: ids.run,
+      correlationId: "corr-finalize-test",
+      channel: "email",
+      recipientPlaceholder: "buyer@example.invalid",
+      status: "recorded",
+      recordedAt: new Date("2026-06-20T00:00:08.000Z"),
+    });
+
+    const finalized = await service.finalizeRun(ids.run, "corr-finalize-escalated");
+    expect(finalized).toMatchObject({
+      status: "failed",
+      failureReason: "reconciliation_escalated",
     });
   });
 

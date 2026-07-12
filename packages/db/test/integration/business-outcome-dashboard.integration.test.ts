@@ -170,6 +170,7 @@ describe.skipIf(!databaseUrl)("business outcome dashboard projection", () => {
     });
     await connection.db.insert(erpAttempts).values({
       orderId: "66666666-6666-4666-8666-666666666661",
+      deliveryId: "dashboard-delivery-1",
       runId,
       correlationId: "corr-processing",
       attemptNumber: 1,

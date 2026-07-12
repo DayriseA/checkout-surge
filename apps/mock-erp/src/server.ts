@@ -4,6 +4,7 @@ import { fastify } from "fastify";
 import { ZodError } from "zod";
 import type { ErpChaosConfigStore } from "./application/chaos-control-service.js";
 import type { ConfirmationService } from "./application/confirmation-service.js";
+import { ConfirmationIdempotencyConflictError } from "./application/confirmation-service.js";
 import { registerChaosRoutes } from "./routes/chaos-routes.js";
 import { registerConfirmationRoutes } from "./routes/confirmation-routes.js";
 import { registerHealthRoutes } from "./routes/health-routes.js";
@@ -41,6 +42,16 @@ export function buildMockErpServer(options: BuildMockErpServerOptions) {
           message: "Request validation failed.",
           correlationId,
           ...(error instanceof ZodError ? { details: { issues: error.issues } } : {}),
+        }),
+      );
+    }
+
+    if (error instanceof ConfirmationIdempotencyConflictError) {
+      return reply.status(409).send(
+        createMockErpErrorPayload({
+          code: "idempotency_conflict",
+          message: error.message,
+          correlationId,
         }),
       );
     }

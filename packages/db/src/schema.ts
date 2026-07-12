@@ -14,6 +14,7 @@ import {
 } from "drizzle-orm/pg-core";
 
 export type JsonRecord = Record<string, unknown>;
+export type JsonValue = JsonRecord | JsonValue[] | string | number | boolean | null;
 
 export const saleOfferPurposeValues = ["catalog", "generated_run"] as const;
 export type SaleOfferPurpose = (typeof saleOfferPurposeValues)[number];
@@ -30,6 +31,10 @@ export const orderStatusEnum = pgEnum("order_status", orderStatusValues);
 export const erpAttemptStatusValues = ["succeeded", "failed", "timed_out"] as const;
 export type ErpAttemptStatus = (typeof erpAttemptStatusValues)[number];
 export const erpAttemptStatusEnum = pgEnum("erp_attempt_status", erpAttemptStatusValues);
+
+export const recoveryJobStatusValues = ["pending", "enqueued", "escalated", "resolved"] as const;
+export type RecoveryJobStatus = (typeof recoveryJobStatusValues)[number];
+export const recoveryJobStatusEnum = pgEnum("recovery_job_status", recoveryJobStatusValues);
 
 export const orderEventNameValues = [
   "reservation.secured",
@@ -313,6 +318,7 @@ export const erpAttempts = pgTable(
     orderId: uuid("order_id")
       .notNull()
       .references(() => orders.id, { onDelete: "cascade" }),
+    deliveryId: text("delivery_id").notNull(),
     correlationId: text("correlation_id").notNull(),
     runId: uuid("run_id").references(() => demoRuns.id, { onDelete: "restrict" }),
     attemptNumber: integer("attempt_number").notNull(),
@@ -323,10 +329,18 @@ export const erpAttempts = pgTable(
     latencyMs: integer("latency_ms").notNull(),
     startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
     finishedAt: timestamp("finished_at", { withTimezone: true }).notNull(),
+    confirmationId: text("confirmation_id"),
+    idempotencyKey: text("idempotency_key"),
+    response: jsonb("response").$type<JsonRecord>(),
     createdAt: createdAt(),
   },
   (table) => [
-    uniqueIndex("erp_attempts_order_attempt_unique").on(table.orderId, table.attemptNumber),
+    uniqueIndex("erp_attempts_order_delivery_attempt_unique").on(
+      table.orderId,
+      table.deliveryId,
+      table.attemptNumber,
+    ),
+    uniqueIndex("erp_attempts_success_idempotency_key_unique").on(table.idempotencyKey),
     check("erp_attempts_attempt_number_positive", sql`${table.attemptNumber} > 0`),
     check("erp_attempts_latency_nonnegative", sql`${table.latencyMs} >= 0`),
     check(
@@ -335,6 +349,83 @@ export const erpAttempts = pgTable(
     ),
     index("erp_attempts_order_id_idx").on(table.orderId),
     index("erp_attempts_run_id_idx").on(table.runId),
+  ],
+);
+
+/** Durable first-write-wins ERP result ledger. */
+export const erpConfirmationResults = pgTable(
+  "erp_confirmation_results",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    orderId: text("order_id").notNull(),
+    requestFingerprint: jsonb("request_fingerprint").$type<JsonRecord>().notNull(),
+    response: jsonb("response").$type<JsonRecord>().notNull(),
+    confirmationId: text("confirmation_id").notNull(),
+    httpStatus: integer("http_status").notNull(),
+    processedAt: timestamp("processed_at", { withTimezone: true }).notNull(),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    uniqueIndex("erp_confirmation_results_idempotency_key_unique").on(table.idempotencyKey),
+    index("erp_confirmation_results_created_at_idx").on(table.createdAt),
+  ],
+);
+
+export const orderRecoveryJobs = pgTable(
+  "order_recovery_jobs",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    recoveryKey: text("recovery_key").notNull(),
+    jobId: text("job_id").notNull(),
+    sourceJobId: text("source_job_id"),
+    sourceDisposition: text("source_disposition"),
+    orderId: uuid("order_id")
+      .notNull()
+      .references(() => orders.id, { onDelete: "cascade" }),
+    payload: jsonb("payload").$type<JsonRecord>().notNull(),
+    result: jsonb("result").$type<JsonRecord>(),
+    reason: text("reason").notNull(),
+    status: recoveryJobStatusEnum("status").default("pending").notNull(),
+    attempts: integer("attempts").default(0).notNull(),
+    lastError: text("last_error"),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
+    claimedAt: timestamp("claimed_at", { withTimezone: true }),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    escalatedAt: timestamp("escalated_at", { withTimezone: true }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => [
+    uniqueIndex("order_recovery_jobs_recovery_key_unique").on(table.recoveryKey),
+    index("order_recovery_jobs_status_next_attempt_idx").on(table.status, table.nextAttemptAt),
+    index("order_recovery_jobs_order_id_idx").on(table.orderId),
+  ],
+);
+
+export const orderDeadLetters = pgTable(
+  "order_dead_letters",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    jobId: text("job_id").notNull(),
+    jobName: text("job_name").notNull(),
+    claimedOrderId: text("claimed_order_id"),
+    queueName: text("queue_name").default("orders:process").notNull(),
+    payload: jsonb("payload").$type<JsonValue>(),
+    reason: text("reason").notNull(),
+    mismatchedFields: jsonb("mismatched_fields").$type<string[]>(),
+    attemptsMade: integer("attempts_made").default(0).notNull(),
+    correlationId: text("correlation_id"),
+    observedAt: timestamp("observed_at", { withTimezone: true }).notNull(),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    uniqueIndex("order_dead_letters_queue_job_name_unique").on(
+      table.queueName,
+      table.jobId,
+      table.jobName,
+    ),
+    index("order_dead_letters_observed_at_idx").on(table.observedAt),
   ],
 );
 
@@ -545,6 +636,7 @@ export const demoRunsRelations = relations(demoRuns, ({ one, many }) => ({
   reservations: many(reservations),
   orders: many(orders),
   erpAttempts: many(erpAttempts),
+  recoveryJobs: many(orderRecoveryJobs),
   orderEvents: many(orderEvents),
   pendingPersistence: many(reservationPendingPersistence),
   simulatedNotifications: many(simulatedNotifications),
@@ -603,6 +695,13 @@ export const erpAttemptsRelations = relations(erpAttempts, ({ one }) => ({
   run: one(demoRuns, {
     fields: [erpAttempts.runId],
     references: [demoRuns.id],
+  }),
+}));
+
+export const orderRecoveryJobsRelations = relations(orderRecoveryJobs, ({ one }) => ({
+  order: one(orders, {
+    fields: [orderRecoveryJobs.orderId],
+    references: [orders.id],
   }),
 }));
 
@@ -694,6 +793,12 @@ export type Order = typeof orders.$inferSelect;
 export type NewOrder = typeof orders.$inferInsert;
 export type ErpAttempt = typeof erpAttempts.$inferSelect;
 export type NewErpAttempt = typeof erpAttempts.$inferInsert;
+export type ErpConfirmationResult = typeof erpConfirmationResults.$inferSelect;
+export type NewErpConfirmationResult = typeof erpConfirmationResults.$inferInsert;
+export type OrderRecoveryJob = typeof orderRecoveryJobs.$inferSelect;
+export type NewOrderRecoveryJob = typeof orderRecoveryJobs.$inferInsert;
+export type OrderDeadLetter = typeof orderDeadLetters.$inferSelect;
+export type NewOrderDeadLetter = typeof orderDeadLetters.$inferInsert;
 export type OrderEvent = typeof orderEvents.$inferSelect;
 export type NewOrderEvent = typeof orderEvents.$inferInsert;
 export type ReservationPendingPersistence = typeof reservationPendingPersistence.$inferSelect;

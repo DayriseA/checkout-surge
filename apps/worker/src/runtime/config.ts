@@ -10,6 +10,10 @@ export interface WorkerConfig {
   orderDispatchScanIntervalMs: number;
   orderDispatchBatchSize: number;
   orderDispatchMinimumQueuedAgeMs: number;
+  orderRecoveryScanIntervalMs: number;
+  orderRecoveryBatchSize: number;
+  orderRecoveryLeaseMs: number;
+  orderRecoveryMaxAttempts: number;
   postgresPoolMax: number;
   mockErpBaseUrl: string;
   erpRequestTimeoutMs: number;
@@ -57,6 +61,26 @@ export function loadWorkerConfig(env: NodeJS.ProcessEnv): WorkerConfig {
       env.ORDER_DISPATCH_MINIMUM_QUEUED_AGE_MS,
       "ORDER_DISPATCH_MINIMUM_QUEUED_AGE_MS",
       1000,
+    ),
+    orderRecoveryScanIntervalMs: parsePositiveInteger(
+      env.ORDER_RECOVERY_SCAN_INTERVAL_MS,
+      "ORDER_RECOVERY_SCAN_INTERVAL_MS",
+      1000,
+    ),
+    orderRecoveryBatchSize: parsePositiveInteger(
+      env.ORDER_RECOVERY_BATCH_SIZE,
+      "ORDER_RECOVERY_BATCH_SIZE",
+      100,
+    ),
+    orderRecoveryLeaseMs: parsePositiveInteger(
+      env.ORDER_RECOVERY_LEASE_MS,
+      "ORDER_RECOVERY_LEASE_MS",
+      30_000,
+    ),
+    orderRecoveryMaxAttempts: parsePositiveInteger(
+      env.ORDER_RECOVERY_MAX_ATTEMPTS,
+      "ORDER_RECOVERY_MAX_ATTEMPTS",
+      100,
     ),
     postgresPoolMax: parsePositiveInteger(
       env.WORKER_POSTGRES_POOL_MAX,

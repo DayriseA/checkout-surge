@@ -17,7 +17,11 @@ import {
   ErpChaosConfigSafetyError,
   ErpChaosConfigStore,
 } from "../../src/application/chaos-control-service.js";
-import { ConfirmationService } from "../../src/application/confirmation-service.js";
+import {
+  assertFingerprint,
+  ConfirmationIdempotencyConflictError,
+  ConfirmationService,
+} from "../../src/application/confirmation-service.js";
 import { loadMockErpConfig } from "../../src/runtime/config.js";
 import { buildMockErpServer } from "../../src/server.js";
 
@@ -111,6 +115,21 @@ describe("Mock ERP configuration", () => {
 });
 
 describe("confirmation service", () => {
+  it("compares JSON fingerprints semantically despite reordered keys", () => {
+    expect(() =>
+      assertFingerprint(
+        {
+          quantity: confirmationRequest.quantity,
+          runId: confirmationRequest.runId,
+          saleOfferId: confirmationRequest.saleOfferId,
+          reservationId: confirmationRequest.reservationId,
+          publicOrderId: confirmationRequest.publicOrderId,
+          orderId: confirmationRequest.orderId,
+        },
+        confirmationRequest,
+      ),
+    ).not.toThrow();
+  });
   it("returns a contract-valid successful confirmation with measured latency", async () => {
     const now = sequenceClock(
       new Date("2026-06-22T00:00:00.000Z"),
@@ -177,6 +196,54 @@ describe("confirmation service", () => {
       latencyMs: 40,
       timestamp: "2026-06-22T00:00:00.040Z",
     });
+  });
+
+  it("converges concurrent duplicate requests on one generated confirmation", async () => {
+    const generateConfirmationId = vi.fn().mockReturnValue("erp_confirmation_concurrent");
+    const decide = vi.fn().mockResolvedValue({ status: "succeeded" as const });
+    const service = new ConfirmationService({
+      decisionProvider: { decide },
+      generateConfirmationId,
+    });
+
+    const [first, second] = await Promise.all([
+      service.confirm(confirmationRequest),
+      service.confirm(confirmationRequest),
+    ]);
+
+    expect(first).toEqual(second);
+    expect(decide).toHaveBeenCalledOnce();
+    expect(generateConfirmationId).toHaveBeenCalledOnce();
+  });
+
+  it("rejects an immutable mismatch even while the first request is in flight", async () => {
+    let releaseDecision!: () => void;
+    const decisionReady = new Promise<void>((resolve) => {
+      releaseDecision = resolve;
+    });
+    const service = new ConfirmationService({
+      decisionProvider: {
+        decide: vi.fn(async () => {
+          await decisionReady;
+          return { status: "succeeded" as const };
+        }),
+      },
+    });
+    const first = service.confirm(confirmationRequest);
+    await expect(service.confirm({ ...confirmationRequest, quantity: 2 })).rejects.toBeInstanceOf(
+      ConfirmationIdempotencyConflictError,
+    );
+    releaseDecision();
+    await first;
+  });
+
+  it("rejects reuse of an idempotency key for different immutable order data", async () => {
+    const service = new ConfirmationService({ generateConfirmationId: () => "erp_confirmation" });
+    await service.confirm(confirmationRequest);
+
+    await expect(service.confirm({ ...confirmationRequest, quantity: 2 })).rejects.toBeInstanceOf(
+      ConfirmationIdempotencyConflictError,
+    );
   });
 });
 
@@ -451,6 +518,20 @@ describe("Mock ERP HTTP service", () => {
       httpStatus: 503,
       errorCode: "erp_unavailable",
     });
+  });
+
+  it("returns 409 for an idempotency key conflict", async () => {
+    const server = buildTestServer({ confirmationService: new ConfirmationService() });
+    await server.inject({ method: "POST", url: erpConfirmationPath, payload: confirmationRequest });
+    const conflict = await server.inject({
+      method: "POST",
+      url: erpConfirmationPath,
+      payload: { ...confirmationRequest, quantity: 2 },
+    });
+    await server.close();
+
+    expect(conflict.statusCode).toBe(409);
+    expect(conflict.json()).toMatchObject({ code: "idempotency_conflict" });
   });
 
   it("applies configured latency through the HTTP confirmation boundary", async () => {
