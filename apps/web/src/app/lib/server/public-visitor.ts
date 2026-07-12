@@ -1,4 +1,5 @@
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { readWebSecret } from "./config";
 
 const publicVisitorCookieName = "checkout_surge_public_visitor";
 const publicVisitorMaxAgeSeconds = 365 * 24 * 60 * 60;
@@ -10,8 +11,7 @@ export interface PublicVisitorIdentity {
 }
 
 export function resolvePublicVisitorIdentity(request: Request): PublicVisitorIdentity | Response {
-  const secret = process.env.PUBLIC_CLIENT_COOKIE_SECRET?.trim();
-
+  const secret = readWebSecret(process.env, "PUBLIC_CLIENT_COOKIE_SECRET");
   if (!secret) {
     return Response.json(
       {

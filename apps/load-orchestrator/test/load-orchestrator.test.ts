@@ -29,7 +29,7 @@ import { K6RunAccumulator, parseK6JsonLine } from "../src/application/k6-output-
 import { type K6Runner, SpawnK6Runner } from "../src/application/k6-runner.js";
 import { generateK6Script } from "../src/application/k6-script.js";
 import { TrafficExecutionService } from "../src/application/traffic-execution-service.js";
-import type { LoadOrchestratorConfig } from "../src/runtime/config.js";
+import { type LoadOrchestratorConfig, loadLoadOrchestratorConfig } from "../src/runtime/config.js";
 import { createLoadOrchestratorReadiness } from "../src/runtime/readiness.js";
 import { buildLoadOrchestratorServer } from "../src/server.js";
 
@@ -72,6 +72,24 @@ const startRequest: TrafficExecutionStartRequest = {
     },
   },
 };
+
+describe("load-orchestrator configuration", () => {
+  it.each([
+    undefined,
+    "  ",
+    "change-me-shared-control-token",
+  ])("rejects unsafe control tokens (%s)", (token) => {
+    expect(() => loadLoadOrchestratorConfig({ CONTROL_SERVICE_TOKEN: token })).toThrow(
+      /CONTROL_SERVICE_TOKEN/,
+    );
+  });
+
+  it("accepts a deployment-specific control token", () => {
+    expect(
+      loadLoadOrchestratorConfig({ CONTROL_SERVICE_TOKEN: "deployment-token" }).controlServiceToken,
+    ).toBe("deployment-token");
+  });
+});
 
 describe("durable execution ownership", () => {
   it("recovers accepted state and fences a different run across store instances", async () => {

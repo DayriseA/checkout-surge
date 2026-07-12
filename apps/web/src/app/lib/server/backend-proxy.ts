@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { controlServiceTokenHeaderName } from "@checkout-surge/contracts";
 import { adminPassphraseHeaderName } from "../control-paths";
+import { readWebSecret } from "./config";
 
 const DEFAULT_API_BASE_URL = "http://localhost:4000";
 const DEFAULT_MOCK_ERP_BASE_URL = "http://localhost:4100";
@@ -21,8 +22,7 @@ export function mockErpBaseUrl(): string {
 }
 
 export function requireAdminPassphrase(request: Request): Response | null {
-  const expectedPassphrase = process.env.ADMIN_DASHBOARD_PASSPHRASE?.trim();
-
+  const expectedPassphrase = readWebSecret(process.env, "ADMIN_DASHBOARD_PASSPHRASE");
   if (!expectedPassphrase) {
     return jsonError(503, "admin_passphrase_not_configured", "Admin controls are not configured.");
   }
@@ -37,8 +37,7 @@ export function requireAdminPassphrase(request: Request): Response | null {
 }
 
 export function requireAdminSession(request: Request): Response | null {
-  const secret = process.env.ADMIN_SESSION_SECRET?.trim();
-
+  const secret = readWebSecret(process.env, "ADMIN_SESSION_SECRET");
   if (!secret) {
     return jsonError(
       503,
@@ -47,7 +46,7 @@ export function requireAdminSession(request: Request): Response | null {
     );
   }
 
-  if (hasValidAdminSession(request)) {
+  if (hasValidAdminSession(request, secret)) {
     return null;
   }
 
@@ -55,7 +54,7 @@ export function requireAdminSession(request: Request): Response | null {
 }
 
 export function createAdminSessionCookie(now: Date = new Date()): string | Response {
-  const secret = process.env.ADMIN_SESSION_SECRET?.trim();
+  const secret = readWebSecret(process.env, "ADMIN_SESSION_SECRET");
   if (!secret) {
     return jsonError(
       503,
@@ -76,12 +75,7 @@ export function createAdminSessionCookie(now: Date = new Date()): string | Respo
   return `${adminSessionCookieName}=${encodeURIComponent(value)}; Max-Age=${maxAgeSeconds}; Path=/; HttpOnly; SameSite=Lax`;
 }
 
-function hasValidAdminSession(request: Request): boolean {
-  const secret = process.env.ADMIN_SESSION_SECRET?.trim();
-  if (!secret) {
-    return false;
-  }
-
+function hasValidAdminSession(request: Request, secret: string): boolean {
   const value = readCookie(request, adminSessionCookieName);
   if (!value) {
     return false;
@@ -102,8 +96,7 @@ function hasValidAdminSession(request: Request): boolean {
 }
 
 export function requireControlServiceToken(): string | Response {
-  const token = process.env.CONTROL_SERVICE_TOKEN?.trim();
-
+  const token = readWebSecret(process.env, "CONTROL_SERVICE_TOKEN");
   if (!token) {
     return jsonError(
       503,

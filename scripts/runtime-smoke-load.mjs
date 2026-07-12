@@ -11,6 +11,7 @@ const publicRunBudgetWindowSeconds = positiveIntegerEnv("PUBLIC_RUN_BUDGET_WINDO
 const correlationId = `runtime-smoke-load-${Date.now()}`;
 const smokeVisitorId = "00000000-0000-4000-8000-000000000009";
 const publicBudgetWindowStart = Math.floor(Date.now() / (publicRunBudgetWindowSeconds * 1000));
+const composeRuntime = isComposeRuntimeRunning();
 
 if (!controlServiceToken) {
   console.error("CONTROL_SERVICE_TOKEN is required for runtime load smoke.");
@@ -45,6 +46,11 @@ try {
 }
 
 async function resetRunningDemo() {
+  if (composeRuntime) {
+    runCommand("node", ["scripts/run-in-compose.mjs", "scripts/runtime-reset.mjs"]);
+    return;
+  }
+
   const response = await fetchWithTimeout(`${apiBaseUrl}/admin/demo/reset`, {
     method: "POST",
     headers: {
@@ -57,6 +63,17 @@ async function resetRunningDemo() {
     const body = await response.text().catch(() => "");
     throw new Error(`Runtime reset failed with HTTP ${response.status}: ${body}`);
   }
+}
+
+function isComposeRuntimeRunning() {
+  const result = spawnSync("docker", ["compose", "ps", "--status", "running", "-q", "api"], {
+    cwd: process.cwd(),
+    env: process.env,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+
+  return result.status === 0 && result.stdout.trim().length > 0;
 }
 
 async function startSmokeRun() {

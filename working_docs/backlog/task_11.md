@@ -112,3 +112,25 @@ No app startup is necessary to validate the document, but the implementing agent
 - Do not remove container health checks or internal service ports. Remove host publication from the base runtime while preserving Compose-network reachability.
 - Do not redesign PostgreSQL/Redis authentication in this task. Reducing their default host exposure is in scope; broader infrastructure credential hardening is separate.
 - Preserve the full local reference topology, explicit setup lifecycle, host-native development option, and current single-origin dashboard contract. Adjust scripts/overrides/docs only as needed to make those workflows explicit and compatible with the hardened defaults.
+
+## Implementation status (2026-07-12)
+
+Status: completed; final review passed.
+
+Completed scope:
+
+- Removed checked-in secret fallbacks and broad token inheritance from base Compose; injected application secrets only into API, Mock ERP, load orchestrator, and web. Base Compose now publishes only dashboard-proxy `8080`.
+- Added loopback-only `docker-compose.dev.yml` bindings, wired `infra:up` and `runtime:up:debug`, and merged the override into the devcontainer workflow. Updated runtime topology/local-development docs.
+- Added a Compose-aware runtime command wrapper: reference-runtime health/reset/cleanup checks execute inside the API container and use Compose DNS, while host-native runs retain localhost behavior. Load smoke reset follows the same detection path.
+- Blankified runtime secret examples and documented private, distinct generated values.
+- Added known-placeholder rejection to API/Mock ERP/load-orchestrator startup loaders. Added typed web server-secret validation plus Next `instrumentation.register()` startup enforcement; request guards remain defensive and do not echo values.
+- Added focused API loader, service-loader, web config, and instrumentation tests.
+
+Verification:
+
+- Passed Mock ERP unit tests (31), load-orchestrator unit tests (37 plus 1 existing skip), API runtime-config tests (4), and web proxy/config/instrumentation tests (26).
+- Passed Biome checks for changed TypeScript/scripts and API/Mock ERP/load-orchestrator type checks. Web production builds both with inline dummy secrets and with all four runtime secrets explicitly unset passed, confirming startup validation does not make build-time secrets necessary. The subsequent `pnpm --filter web type-check` also passed; the earlier generated `.next/types` missing-module errors were resolved by disposable build/typegen artifacts and were not caused by this diff.
+- Rendered base, base+development override, and merged devcontainer Compose configs with temporary dummy environment values; confirmed base publication is only `8080`, debug bindings are `127.0.0.1`, and worker/setup/proxy receive no application secrets.
+- The broader API test command ran 42 tests successfully and reported 22 DB-backed test failures because `TEST_DATABASE_URL` was unset; these are environment precondition failures, not skipped tests or diff regressions.
+
+Material decisions: direct host-native scripts continue to use their documented localhost URLs; callers opt into loopback bindings via `infra:up` or `runtime:up:debug`. No insecure runtime bypass was added. No private root `.env` was inspected or modified.

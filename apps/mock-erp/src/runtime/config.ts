@@ -9,6 +9,11 @@ export interface MockErpConfig {
   chaosSafetyCaps: ErpChaosSafetyCaps;
 }
 
+const unsafeControlServiceTokens = new Set([
+  "change-me-shared-control-token",
+  "change-me-control-service-token",
+]);
+
 export function loadMockErpConfig(env: NodeJS.ProcessEnv): MockErpConfig {
   return {
     host: env.HOST?.trim() || "0.0.0.0",
@@ -38,6 +43,10 @@ function requireEnv(env: NodeJS.ProcessEnv, name: string): string {
 
   if (!value) {
     throw new Error(`${name} is required.`);
+  }
+
+  if (name === "CONTROL_SERVICE_TOKEN" && unsafeControlServiceTokens.has(value)) {
+    throw new Error(`${name} must be replaced with a deployment-specific secret.`);
   }
 
   return value;

@@ -3,7 +3,6 @@ name: ${COMPOSE_PROJECT_NAME:-checkout-surge-gpt-55}
 x-app-env: &app-env
   NODE_ENV: production
   LOG_LEVEL: ${LOG_LEVEL:-info}
-  CONTROL_SERVICE_TOKEN: ${CONTROL_SERVICE_TOKEN:-change-me-shared-control-token}
   DATABASE_URL: postgresql://postgres:postgres@postgres:5432/checkout_surge
   REDIS_URL: redis://redis:6379
   API_BASE_URL: http://api:4000
@@ -19,8 +18,6 @@ services:
       POSTGRES_DB: checkout_surge
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-    ports:
-      - "${POSTGRES_HOST_PORT:-5432}:5432"
     volumes:
       - checkout-surge-postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -32,8 +29,6 @@ services:
   redis:
     image: redis:7-alpine
     command: ["redis-server", "--appendonly", "yes"]
-    ports:
-      - "${REDIS_HOST_PORT:-6379}:6379"
     volumes:
       - checkout-surge-redis-data:/data
     healthcheck:
@@ -50,6 +45,7 @@ services:
     restart: on-failure
     environment:
       <<: *app-env
+      CONTROL_SERVICE_TOKEN: ${CONTROL_SERVICE_TOKEN}
       PORT: 4000
       HOST: 0.0.0.0
       API_LISTEN_BACKLOG: ${API_LISTEN_BACKLOG:-8192}
@@ -83,8 +79,6 @@ services:
       PUBLIC_CUSTOM_MIN_ERP_MAX_TPS: ${PUBLIC_CUSTOM_MIN_ERP_MAX_TPS:-1}
       PUBLIC_CUSTOM_MAX_ERP_MAX_TPS: ${PUBLIC_CUSTOM_MAX_ERP_MAX_TPS:-100}
       PUBLIC_CUSTOM_MAX_ERP_ERROR_RATE: ${PUBLIC_CUSTOM_MAX_ERP_ERROR_RATE:-0.25}
-    ports:
-      - "${API_HOST_PORT:-4000}:4000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -118,8 +112,6 @@ services:
       ORDER_DISPATCH_SCAN_INTERVAL_MS: ${ORDER_DISPATCH_SCAN_INTERVAL_MS:-1000}
       ORDER_DISPATCH_BATCH_SIZE: ${ORDER_DISPATCH_BATCH_SIZE:-100}
       ORDER_DISPATCH_MINIMUM_QUEUED_AGE_MS: ${ORDER_DISPATCH_MINIMUM_QUEUED_AGE_MS:-1000}
-    ports:
-      - "${WORKER_HEALTH_HOST_PORT:-4300}:4300"
     depends_on:
       postgres:
         condition: service_healthy
@@ -144,6 +136,7 @@ services:
       target: mock-erp-runtime
     environment:
       <<: *app-env
+      CONTROL_SERVICE_TOKEN: ${CONTROL_SERVICE_TOKEN}
       PORT: 4100
       HOST: 0.0.0.0
       LATENCY_MS: ${LATENCY_MS:-0}
@@ -154,8 +147,6 @@ services:
       ADMIN_MIN_MAX_TPS: ${ADMIN_MIN_MAX_TPS:-1}
       ADMIN_MAX_ERROR_RATE: ${ADMIN_MAX_ERROR_RATE:-1}
       ADMIN_ALLOW_FORCED_OUTAGE: ${ADMIN_ALLOW_FORCED_OUTAGE:-true}
-    ports:
-      - "${MOCK_ERP_HOST_PORT:-4100}:4100"
     healthcheck:
       test:
         [
@@ -173,6 +164,7 @@ services:
       target: load-orchestrator-runtime
     environment:
       <<: *app-env
+      CONTROL_SERVICE_TOKEN: ${CONTROL_SERVICE_TOKEN}
       PORT: 4200
       HOST: 0.0.0.0
       K6_BINARY: /usr/local/bin/k6
@@ -180,8 +172,6 @@ services:
       LOAD_ORCHESTRATOR_STATE_DIR: /var/lib/checkout-surge/load-orchestrator
     volumes:
       - checkout-surge-load-orchestrator-data:/var/lib/checkout-surge/load-orchestrator
-    ports:
-      - "${LOAD_ORCHESTRATOR_HOST_PORT:-4200}:4200"
     depends_on:
       api:
         condition: service_healthy
@@ -202,14 +192,13 @@ services:
       target: web-runtime
     environment:
       <<: *app-env
+      CONTROL_SERVICE_TOKEN: ${CONTROL_SERVICE_TOKEN}
       PORT: 3000
       HOST: 0.0.0.0
-      ADMIN_DASHBOARD_PASSPHRASE: ${ADMIN_DASHBOARD_PASSPHRASE:-change-me-admin-passphrase}
-      ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET:-change-me-admin-session-secret}
+      ADMIN_DASHBOARD_PASSPHRASE: ${ADMIN_DASHBOARD_PASSPHRASE}
+      ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET}
       ADMIN_SESSION_MAX_AGE_SECONDS: ${ADMIN_SESSION_MAX_AGE_SECONDS:-28800}
-      PUBLIC_CLIENT_COOKIE_SECRET: ${PUBLIC_CLIENT_COOKIE_SECRET:-change-me-public-client-cookie-secret}
-    ports:
-      - "${WEB_HOST_PORT:-3000}:3000"
+      PUBLIC_CLIENT_COOKIE_SECRET: ${PUBLIC_CLIENT_COOKIE_SECRET}
     depends_on:
       api:
         condition: service_started

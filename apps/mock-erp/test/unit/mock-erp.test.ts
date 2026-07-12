@@ -93,6 +93,9 @@ describe("Mock ERP configuration", () => {
 
   it("requires a control service token", () => {
     expect(() => loadMockErpConfig({})).toThrow("CONTROL_SERVICE_TOKEN is required");
+    expect(() =>
+      loadMockErpConfig({ CONTROL_SERVICE_TOKEN: "change-me-shared-control-token" }),
+    ).toThrow("CONTROL_SERVICE_TOKEN must be replaced");
   });
 
   it("rejects an invalid port", () => {

@@ -44,7 +44,7 @@ web -> http://mock-erp:4100
 web -> http://load-orchestrator:4200
 ```
 
-The Caddy proxy owns the local edge route contract for dashboard realtime: `/dashboard/events` is routed directly to the API service, while the rest of the dashboard origin is routed to the web service. Dashboard observability remains public for the demo: `/` exposes curated public preset starts, `/watch` observes the current live run, `/run-history` lists terminal summaries, and recovery reads remain public-safe. Editable admin presets, reset, ERP diagnostics, run-history deletion, and other privileged controls live under `/admin` and still require admin sign-in. The direct API, mock ERP, load-orchestrator, and web ports remain published for service health checks and focused debugging, but they are not the normal browser path.
+The Caddy proxy owns the local edge route contract for dashboard realtime: `/dashboard/events` is routed directly to the API service, while the rest of the dashboard origin is routed to the web service. Dashboard observability remains public for the demo: `/` exposes curated public preset starts, `/watch` observes the current live run, `/run-history` lists terminal summaries, and recovery reads remain public-safe. Editable admin presets, reset, ERP diagnostics, run-history deletion, and other privileged controls live under `/admin` and still require admin sign-in. The base Compose runtime publishes only the dashboard proxy; direct service ports are available only through the explicit loopback-only development override.
 
 The web client opens the live stream with same-origin `EventSource("/dashboard/events")` by default. Leave `NEXT_PUBLIC_DASHBOARD_EVENTS_URL` unset for the containerized reference runtime and the host-native Caddy proxy workflow. Set it only for an intentional direct-web debug session, such as opening `http://localhost:3000` and connecting the browser directly to `http://localhost:4000/dashboard/events`; in that mode, keep API realtime CORS aligned through `WEB_ORIGIN`. Do not use `API_BASE_URL` or a browser-readable API base URL for normal dashboard realtime.
 
@@ -58,7 +58,7 @@ Create your local environment file:
 cp .env.example .env
 ```
 
-Start the full local runtime:
+Start the full local runtime (only the dashboard proxy is published):
 
 ```bash
 pnpm runtime:up
@@ -86,7 +86,7 @@ Reset the running demo only when you need explicit admin recovery or a refreshed
 pnpm runtime:reset
 ```
 
-`runtime:reset` calls the running API and Mock ERP admin reset endpoints for explicit recovery or local maintenance. If a demo run is starting, active, or draining, the API first records it as a failed finalized run through the normal recovery path, then clears reset-owned queue/recovery state; Mock ERP chaos controls are also reset. Normal public and admin demo starts create generated run sale offers with isolated inventory, so repeated runs do not require resetting the seeded active sale offer or deleting historical run data.
+`runtime:reset` executes inside the API container when the Compose runtime is running, so it works without publishing the API port. When no API container is running, the same command preserves host-native localhost behavior. If a demo run is starting, active, or draining, the API first records it as a failed finalized run through the normal recovery path, then clears reset-owned queue/recovery state; Mock ERP chaos controls are also reset. Normal public and admin demo starts create generated run sale offers with isolated inventory, so repeated runs do not require resetting the seeded active sale offer or deleting historical run data.
 
 Open the dashboard:
 
@@ -98,7 +98,7 @@ Use `/` for the public demo picker, `/admin` for operator controls, `/watch` for
 
 In Dev Containers and GitHub Codespaces, launch the forwarded `8080` `dashboard-proxy` port. API, mock ERP, load-orchestrator, and direct web ports are forwarded as debugging surfaces, not as the normal dashboard URL. In Codespaces, set `WEB_ORIGIN` to the forwarded `8080` dashboard-proxy URL shown by the Ports panel, for example `https://<codespace>-8080.app.github.dev`.
 
-Check runtime readiness:
+Check runtime readiness (the command uses Compose-network checks for a running reference runtime and localhost checks for host-native services):
 
 ```bash
 pnpm health:check
@@ -256,13 +256,14 @@ The worker-facing Mock ERP confirmation contract is `POST http://localhost:4100/
 
 | Command | Description |
 | :-- | :-- |
-| `pnpm infra:up` | Start development PostgreSQL and Redis with `docker-compose.yml` |
+| `pnpm infra:up` | Start development PostgreSQL and Redis with the loopback-only `docker-compose.dev.yml` override |
 | `pnpm infra:down` | Stop development PostgreSQL and Redis |
 | `pnpm runtime:up` | Build and start the full local reference runtime |
+| `pnpm runtime:up:debug` | Build and start the full runtime with loopback-only direct service ports for host-native debugging |
 | `pnpm runtime:down` | Stop the full local reference runtime |
 | `pnpm runtime:setup` | Run migrations and seed demo baseline data, durable presets, and Redis inventory inside the compose network |
 | `pnpm runtime:reset` | Reset the running demo through the API and Mock ERP admin reset endpoints for recovery/local maintenance |
-| `pnpm runtime:smoke` | Check compose service health, direct service readiness, dashboard proxy reachability, a same-origin dashboard read, SSE reachability through `/dashboard/events`, and k6 execution inside the load-orchestrator container |
+| `pnpm runtime:smoke` | Check compose service health, Compose-network service readiness, dashboard proxy reachability, a same-origin dashboard read, SSE reachability through `/dashboard/events`, and k6 execution inside the load-orchestrator container |
 | `pnpm runtime:smoke:load` | Reset demo data through the API, run a small dashboard-triggered load smoke check through the dashboard proxy, then clean up only that smoke run's rows and Redis keys |
 | `pnpm maintenance:cleanup-runs` | Delete old generated demo runs and related data, preserving active runs and the latest 15 runs by default; pass `-- --keep-latest <count>` to override |
 | `pnpm dev` | Build shared packages, then run all app `dev` tasks through Turbo |
@@ -371,11 +372,11 @@ Most infrastructure URLs have local defaults, but service-to-service control end
 | :-- | :-- | :-- |
 | `DATABASE_URL` | `postgresql://postgres:postgres@localhost:5432/checkout_surge` | API, worker, db package |
 | `REDIS_URL` | `redis://localhost:6379` | API, worker, db package |
-| `CONTROL_SERVICE_TOKEN` | `change-me-shared-control-token` | API, web, mock ERP, load orchestrator |
-| `ADMIN_DASHBOARD_PASSPHRASE` | `change-me-admin-passphrase` | Web admin session |
-| `ADMIN_SESSION_SECRET` | `change-me-admin-session-secret` | Web admin session cookies |
+| `CONTROL_SERVICE_TOKEN` | Required; generate a private deployment-specific value | API, web, mock ERP, load orchestrator |
+| `ADMIN_DASHBOARD_PASSPHRASE` | Required; generate a private admin passphrase | Web admin session |
+| `ADMIN_SESSION_SECRET` | Required; generate a private HMAC secret distinct from `PUBLIC_CLIENT_COOKIE_SECRET` | Web admin session cookies |
 | `ADMIN_SESSION_MAX_AGE_SECONDS` | `28800` | Web admin session cookie lifetime |
-| `PUBLIC_CLIENT_COOKIE_SECRET` | `change-me-public-client-cookie-secret` | Web anonymous public visitor cookies |
+| `PUBLIC_CLIENT_COOKIE_SECRET` | Required; generate a private HMAC secret distinct from `ADMIN_SESSION_SECRET` | Web anonymous public visitor cookies |
 | `API_BASE_URL` | `http://localhost:4000` | Web, load orchestrator |
 | `NEXT_PUBLIC_DASHBOARD_EVENTS_URL` | unset | Optional browser EventSource endpoint override for direct-web debugging only; normal runtime uses same-origin `/dashboard/events` |
 | `MOCK_ERP_BASE_URL` | `http://localhost:4100` | Web, worker |

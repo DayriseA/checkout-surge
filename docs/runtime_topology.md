@@ -65,7 +65,8 @@ Use this for focused development when running app processes directly with `pnpm 
 
 Expected command contract:
 
-- `pnpm infra:up` starts only PostgreSQL and Redis.
+- `pnpm infra:up` starts only PostgreSQL and Redis with loopback-only host bindings from `docker-compose.dev.yml`.
+- `pnpm runtime:up` publishes only the dashboard proxy on port 8080. Use `pnpm runtime:up:debug` when host-native checks need direct service ports; its bindings are explicit and loopback-only.
 - `pnpm infra:down` stops the infra-only services as documented.
 - `pnpm dev:api`, `pnpm dev:worker`, `pnpm dev:mock-erp`, `pnpm dev:load-orchestrator`, and `pnpm dev:dashboard` are provided for focused service work.
 
@@ -195,7 +196,7 @@ Use this checklist when implementing or changing the local runtime topology:
 
 - After the root runtime compose file exists, validate the root topology with `docker compose config`.
 - Validate the test topology with `docker compose -f docker-compose.test.yml config`.
-- Validate the Dev Container merged topology with `docker compose -f docker-compose.yml -f .devcontainer/docker-compose.yml config`. Confirm the merged project name defaults to `checkout-surge-gpt-55-devcontainer` unless `DEVCONTAINER_COMPOSE_PROJECT_NAME` is set.
+- Validate the Dev Container merged topology with `docker compose -f docker-compose.yml -f docker-compose.dev.yml -f .devcontainer/docker-compose.yml config`. Confirm the merged project name defaults to `checkout-surge-gpt-55-devcontainer` unless `DEVCONTAINER_COMPOSE_PROJECT_NAME` is set, and confirm the direct development bindings remain loopback-only.
 - Start services with `pnpm runtime:up`.
 - Apply migrations and seed demo data with `pnpm runtime:setup`.
 - Check service readiness and dashboard reachability with `pnpm health:check`.
