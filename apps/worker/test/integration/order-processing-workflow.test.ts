@@ -3,6 +3,8 @@ import { fileURLToPath } from "node:url";
 import {
   type AcceptedRunConfigSnapshot,
   type NotificationRecordJob,
+  notificationRecordBullMqQueueName,
+  type notificationRecordJobName,
   type OrderProcessJob,
   orderProcessBullMqQueueName,
   orderProcessJobName,
@@ -31,6 +33,7 @@ import { and, asc, eq } from "drizzle-orm";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { DemoRunFinalizationService } from "../../../api/src/services/demo-run-finalization-service.js";
+import { PostgresTerminalDemoRunSummaryWriter } from "../../../api/src/services/terminal-demo-run-transition.js";
 import {
   ErpCircuitBreaker,
   ErpCircuitOpenError,
@@ -557,62 +560,69 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
     ]);
   });
 
-  it("recovers a missed notification after initial enqueue failure so the run can finalize", async () => {
+  it("recovers a terminally failed notification job so the run can finalize", async () => {
     await redis.flushdb();
     await resetTestDatabase({ databaseUrl, migrationsFolder });
     await seedQueuedOrder(connection, { runScoped: true });
     await seedTrafficCompleteRunArtifacts(connection, redis);
 
     const logger = createSilentLogger("worker");
-    const initialPublishError = new Error("notification queue unavailable");
-    const reportNotificationRecordPublishFailure = vi.fn();
-    const orderHandler = createOrderProcessJobHandler({
-      confirmation: { confirm: vi.fn().mockResolvedValue(undefined) },
-      persistence: new PostgresOrderTransitionPersistence(connection.db),
-      logger,
-      notificationRecordPublisher: {
-        publishForConfirmedOrder: vi.fn().mockRejectedValueOnce(initialPublishError),
-      },
-      reportNotificationRecordPublishFailure,
-    });
-
-    await orderHandler.handle(runScopedJob, {
-      attemptNumber: 1,
-      attemptsMade: 0,
-      maxAttempts: 1,
-    });
-    expect(reportNotificationRecordPublishFailure).toHaveBeenCalledWith(
-      expect.objectContaining({
-        error: initialPublishError,
-        orderId: ids.order,
-        runId: ids.run,
-      }),
-    );
-    await expect(readNotificationCount(connection)).resolves.toBe(0);
-
-    const finalizationService = createFinalizationService(connection, redis);
-    await expect(
-      finalizationService.finalizeRun(ids.run, job.correlationId),
-    ).resolves.toMatchObject({
-      status: "draining",
-    });
-
     const notificationRecordPublisher = createBullMqNotificationRecordPublisher({
       connection: { url: redisUrl, maxRetriesPerRequest: null },
       attempts: 1,
     });
+    const notificationQueue = new Queue<
+      NotificationRecordJob,
+      void,
+      typeof notificationRecordJobName
+    >(notificationRecordBullMqQueueName, {
+      connection: { url: redisUrl, maxRetriesPerRequest: 3 },
+    });
+    const durableNotificationPersistence = new PostgresNotificationRecordPersistence(connection.db);
+    let persistenceAvailable = false;
     const notificationRecordConsumer = createBullMqNotificationRecordConsumer({
       connection: { url: redisUrl, maxRetriesPerRequest: null },
       concurrency: 1,
       handler: createNotificationRecordJobHandler({
-        persistence: new PostgresNotificationRecordPersistence(connection.db),
+        persistence: {
+          record: (notificationJob) => {
+            if (!persistenceAvailable) {
+              throw new Error("temporary notification persistence failure");
+            }
+            return durableNotificationPersistence.record(notificationJob);
+          },
+        },
         logger,
       }),
       logger,
     });
+    const orderHandler = createOrderProcessJobHandler({
+      confirmation: { confirm: vi.fn().mockResolvedValue(undefined) },
+      persistence: new PostgresOrderTransitionPersistence(connection.db),
+      logger,
+      notificationRecordPublisher,
+    });
 
     try {
       notificationRecordConsumer.start();
+      await orderHandler.handle(runScopedJob, {
+        attemptNumber: 1,
+        attemptsMade: 0,
+        maxAttempts: 1,
+      });
+      await vi.waitFor(async () => {
+        expect(await notificationQueue.getJob(`${ids.order}-email`)).toBeUndefined();
+      });
+      await expect(readNotificationCount(connection)).resolves.toBe(0);
+
+      const finalizationService = createFinalizationService(connection, redis);
+      await expect(
+        finalizationService.finalizeRun(ids.run, job.correlationId),
+      ).resolves.toMatchObject({
+        status: "draining",
+      });
+
+      persistenceAvailable = true;
       const recoveryPublishFailures: unknown[] = [];
       const scanner = createNotificationRecoveryScanner({
         persistence: new PostgresNotificationRecoveryPersistence(connection.db),
@@ -636,6 +646,11 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
       });
       await waitForNotificationCount(connection, 1);
 
+      const notificationEvents = (await readOrderEvents(connection, ids.order)).filter(
+        (event) => event.eventName === "notification.recorded",
+      );
+      expect(notificationEvents).toHaveLength(1);
+
       await expect(
         finalizationService.finalizeRun(ids.run, job.correlationId),
       ).resolves.toMatchObject({
@@ -654,6 +669,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
     } finally {
       await notificationRecordConsumer.close();
       await notificationRecordPublisher.close();
+      await notificationQueue.close();
     }
   });
 
@@ -1119,6 +1135,7 @@ function createFinalizationService(
     db: connection.db,
     redis,
     logger: createSilentLogger("api"),
+    terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(connection.db),
     now: () => new Date("2026-06-21T00:00:10.000Z"),
     generateId: () => "77777777-7777-4777-8777-777777777777",
   });

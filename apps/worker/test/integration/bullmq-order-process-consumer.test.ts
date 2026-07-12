@@ -16,6 +16,7 @@ import {
   createBullMqNotificationRecordConsumer,
   notificationRecordQueueNotReadyMessage,
 } from "../../src/queue/bullmq-notification-record-consumer.js";
+import { createBullMqNotificationRecordPublisher } from "../../src/queue/bullmq-notification-record-publisher.js";
 import {
   createBullMqOrderProcessConsumer,
   deadLetterFailureMarker,
@@ -464,6 +465,46 @@ describe("BullMQ notification-recording boundary", () => {
 
     await expect(handled.promise).resolves.toEqual(notificationJob);
     await expect(consumer.checkConnectivity()).resolves.toBeUndefined();
+  });
+
+  it("removes terminal failures so the deterministic job ID can be processed again", async () => {
+    const deterministicJobId = `${job.orderId}-email`;
+    const secondDeliveryHandled = deferred<NotificationRecordJob>();
+    let shouldFail = true;
+    const publisher = createBullMqNotificationRecordPublisher({
+      connection: { url: testRedisUrl(), maxRetriesPerRequest: null },
+      attempts: 1,
+    });
+    consumer = createBullMqNotificationRecordConsumer({
+      connection: { url: testRedisUrl(), maxRetriesPerRequest: null },
+      concurrency: 1,
+      handler: {
+        handle: async (payload) => {
+          if (shouldFail) {
+            throw new Error("temporary notification persistence failure");
+          }
+          secondDeliveryHandled.resolve(payload);
+        },
+      },
+      logger: createSilentLogger("worker"),
+    });
+
+    try {
+      consumer.start();
+      await publisher.publishForConfirmedOrder(job, notificationJob.confirmedAt);
+
+      await vi.waitFor(async () => expect(await queue.getJob(deterministicJobId)).toBeUndefined());
+
+      shouldFail = false;
+      await publisher.publishForConfirmedOrder(job, notificationJob.confirmedAt);
+      await expect(secondDeliveryHandled.promise).resolves.toEqual(notificationJob);
+      await vi.waitFor(async () => {
+        const completedJob = await queue.getJob(deterministicJobId);
+        await expect(completedJob?.getState()).resolves.toBe("completed");
+      });
+    } finally {
+      await publisher.close();
+    }
   });
 
   it("reports notification queue connectivity before readiness", async () => {

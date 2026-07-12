@@ -33,7 +33,7 @@ export function createBullMqNotificationRecordPublisher(options: {
         backoff: { type: "exponential", delay: 250 },
         jobId: `${job.orderId}-email`,
         removeOnComplete: 1000,
-        removeOnFail: 1000,
+        removeOnFail: true,
       });
     },
     close: () => queue.close(),
