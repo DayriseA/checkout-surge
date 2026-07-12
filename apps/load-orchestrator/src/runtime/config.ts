@@ -5,6 +5,7 @@ export interface LoadOrchestratorConfig {
   buyEndpointPath: string;
   k6Binary: string;
   controlServiceToken: string;
+  stateDirectory: string;
 }
 
 export function loadLoadOrchestratorConfig(env: NodeJS.ProcessEnv): LoadOrchestratorConfig {
@@ -15,6 +16,7 @@ export function loadLoadOrchestratorConfig(env: NodeJS.ProcessEnv): LoadOrchestr
     buyEndpointPath: parsePath(env.BUY_ENDPOINT_PATH, "BUY_ENDPOINT_PATH", "/buy"),
     k6Binary: env.K6_BINARY?.trim() || "k6",
     controlServiceToken: requireEnv(env, "CONTROL_SERVICE_TOKEN"),
+    stateDirectory: env.LOAD_ORCHESTRATOR_STATE_DIR?.trim() || ".checkout-surge/load-orchestrator",
   };
 }
 

@@ -322,6 +322,9 @@ export async function startApiServer(): Promise<void> {
     }
 
     finalizationPoller = setInterval(() => {
+      void demoRunService.reconcileStartingRuns().catch((error: unknown) => {
+        logger.error({ err: error }, "Demo run traffic-start reconciliation failed.");
+      });
       void demoRunFinalizationService.finalizeReadyRuns().catch((error: unknown) => {
         logger.error({ err: error }, "Demo run finalization poll failed.");
       });

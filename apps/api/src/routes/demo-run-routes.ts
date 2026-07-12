@@ -19,6 +19,7 @@ import {
   saveDemoPresetRequestSchema,
   startDemoRunPath,
   startDemoRunRequestSchema,
+  trafficCompletionAcknowledgementSchema,
   trafficCompletionReportSchema,
 } from "@checkout-surge/contracts";
 import { correlationIdHeaderName, normalizeCorrelationId } from "@checkout-surge/logger";
@@ -180,8 +181,14 @@ export function registerDemoRunRoutes(
 
     const parsedReport = trafficCompletionReportSchema.parse(request.body);
     applyInternalBodyCorrelation(request, reply, parsedReport.correlationId);
-    const run = await options.demoRunService.recordTrafficCompletion(parsedReport);
-    return reply.status(202).send({ run });
+    await options.demoRunService.recordTrafficCompletion(parsedReport);
+    return reply.status(202).send(
+      trafficCompletionAcknowledgementSchema.parse({
+        runId: parsedReport.runId,
+        acknowledged: true,
+        correlationId: parsedReport.correlationId,
+      }),
+    );
   });
 }
 

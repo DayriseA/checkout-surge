@@ -47,7 +47,9 @@ export class DemoRunStartupReconciliationService {
     const runs = await this.options.db
       .select()
       .from(demoRuns)
-      .where(inArray(demoRuns.status, ["starting", "active", "draining"]));
+      // Starting/active traffic is owned by the orchestrator's durable execution
+      // journal. API restart must not terminalize it while k6 may still run.
+      .where(inArray(demoRuns.status, ["draining"]));
     const interruptedRuns = runs.filter(
       (run) => run.status === "starting" || run.status === "active",
     );

@@ -6,6 +6,7 @@ import {
   loadMetricIngestRequestSchema,
   type MetricSample,
   type TrafficCompletionReport,
+  trafficCompletionAcknowledgementSchema,
   trafficCompletionReportSchema,
 } from "@checkout-surge/contracts";
 import { correlationIdHeaderName } from "@checkout-surge/logger";
@@ -20,6 +21,8 @@ export class HttpLoadApiClient implements LoadApiClient {
     private readonly options: {
       apiBaseUrl: string;
       controlServiceToken: string;
+      requestTimeoutMs?: number;
+      fetch?: typeof fetch;
     },
   ) {}
 
@@ -30,24 +33,43 @@ export class HttpLoadApiClient implements LoadApiClient {
 
   async sendCompletion(report: TrafficCompletionReport): Promise<void> {
     const payload = trafficCompletionReportSchema.parse(report);
-    await this.postJson(internalTrafficCompletionPath, payload, payload.correlationId);
+    const acknowledgement = trafficCompletionAcknowledgementSchema.parse(
+      await this.postJson(internalTrafficCompletionPath, payload, payload.correlationId),
+    );
+    if (
+      acknowledgement.runId !== payload.runId ||
+      acknowledgement.correlationId !== payload.correlationId
+    ) {
+      throw new Error("API completion acknowledgement did not match the delivered report.");
+    }
   }
 
-  private async postJson(path: string, body: unknown, correlationId: string): Promise<void> {
-    const response = await fetch(`${this.options.apiBaseUrl}${path}`, {
-      method: "POST",
-      headers: {
-        accept: "application/json",
-        "content-type": "application/json",
-        [correlationIdHeaderName]: correlationId,
-        [controlServiceTokenHeaderName]: this.options.controlServiceToken,
-      },
-      body: JSON.stringify(body),
-    });
+  private async postJson(path: string, body: unknown, correlationId: string): Promise<unknown> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.options.requestTimeoutMs ?? 5_000);
+    let response: Response;
+    try {
+      response = await (this.options.fetch ?? fetch)(`${this.options.apiBaseUrl}${path}`, {
+        method: "POST",
+        headers: {
+          accept: "application/json",
+          "content-type": "application/json",
+          [correlationIdHeaderName]: correlationId,
+          [controlServiceTokenHeaderName]: this.options.controlServiceToken,
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+    } catch (error) {
+      throw new Error("API load ingestion request failed.", { cause: error });
+    } finally {
+      clearTimeout(timeout);
+    }
 
     if (!response.ok) {
       throw new Error(`API load ingestion failed with HTTP ${response.status}.`);
     }
+    return response.json();
   }
 }
 

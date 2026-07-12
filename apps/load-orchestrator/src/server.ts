@@ -5,6 +5,7 @@ import {
   trafficExecutionStartPath,
   trafficExecutionStartRequestSchema,
   trafficExecutionStartResponseSchema,
+  trafficExecutionStatusResponseSchema,
 } from "@checkout-surge/contracts";
 import {
   type CheckoutSurgeLogger,
@@ -15,6 +16,7 @@ import {
 } from "@checkout-surge/logger";
 import { type FastifyReply, type FastifyRequest, fastify } from "fastify";
 import { ZodError } from "zod";
+import { ExecutionConflictError } from "./application/execution-store.js";
 import type { TrafficExecutionService } from "./application/traffic-execution-service.js";
 import type { LoadOrchestratorConfig } from "./runtime/config.js";
 import type { LoadOrchestratorReadiness } from "./runtime/readiness.js";
@@ -48,6 +50,14 @@ export function buildLoadOrchestratorServer(options: BuildLoadOrchestratorServer
       return reply.status(400).send(
         errorPayload("invalid_request", "Request validation failed.", correlationId, {
           issues: error.issues,
+        }),
+      );
+    }
+
+    if (error instanceof ExecutionConflictError) {
+      return reply.status(409).send(
+        errorPayload("traffic_execution_conflict", error.message, correlationId, {
+          currentRunId: error.currentRunId,
         }),
       );
     }
@@ -102,6 +112,22 @@ export function buildLoadOrchestratorServer(options: BuildLoadOrchestratorServer
       await options.trafficExecutionService.start(startRequest),
     );
     return reply.status(202).send(response);
+  });
+
+  app.get<{ Params: { runId: string } }>("/traffic/status/:runId", async (request, reply) => {
+    const unauthorized = requireControlServiceToken(
+      request,
+      reply,
+      options.config.controlServiceToken,
+    );
+    if (unauthorized) return unauthorized;
+    const snapshot = await options.trafficExecutionService.statusSnapshot(request.params.runId);
+    return trafficExecutionStatusResponseSchema.parse({
+      runId: request.params.runId,
+      ...snapshot,
+      correlationId: request.correlationId,
+      observedAt: new Date().toISOString(),
+    });
   });
 
   return app;

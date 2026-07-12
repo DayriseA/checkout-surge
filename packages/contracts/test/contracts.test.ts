@@ -54,10 +54,13 @@ import {
   startDemoRunPath,
   startDemoRunRequestSchema,
   stockReservationDecisionSchema,
+  trafficCompletionAcknowledgementSchema,
   trafficCompletionReportSchema,
   trafficDeliveryStatusValues,
   trafficExecutionStartPath,
   trafficExecutionStartRequestSchema,
+  trafficExecutionStatusPath,
+  trafficExecutionStatusResponseSchema,
   trafficExecutionStatusValues,
 } from "../src/index.js";
 
@@ -65,6 +68,28 @@ const timestamp = "2026-06-20T12:00:00.000Z";
 const correlationId = "corr-test-1";
 const saleOfferId = "22222222-2222-4222-8222-222222222222";
 const runId = "55555555-5555-4555-8555-555555555555";
+
+describe("traffic ownership contracts", () => {
+  it("defines strict run-fenced status and completion acknowledgements", () => {
+    expect(trafficExecutionStatusPath).toBe("/traffic/status/:runId");
+    expect(
+      trafficExecutionStatusResponseSchema.parse({
+        runId: "55555555-5555-4555-8555-555555555555",
+        state: "accepted",
+        acceptedAt: "2026-06-20T00:00:01.000Z",
+        observedAt: "2026-06-20T00:00:02.000Z",
+        correlationId: "contract-test",
+      }),
+    ).toMatchObject({ state: "accepted" });
+    expect(
+      trafficCompletionAcknowledgementSchema.parse({
+        runId: "55555555-5555-4555-8555-555555555555",
+        acknowledged: true,
+        correlationId: "contract-test",
+      }),
+    ).toMatchObject({ acknowledged: true });
+  });
+});
 
 describe("shared lifecycle vocabulary", () => {
   it("keeps reservation and order states distinct", () => {

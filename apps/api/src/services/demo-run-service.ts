@@ -44,6 +44,8 @@ import {
   trafficExecutionStartPath,
   trafficExecutionStartRequestSchema,
   trafficExecutionStartResponseSchema,
+  trafficExecutionStatusPath,
+  trafficExecutionStatusResponseSchema,
 } from "@checkout-surge/contracts";
 import {
   type CheckoutSurgeDatabase,
@@ -191,24 +193,42 @@ export class HttpTrafficExecutionGateway implements TrafficExecutionGateway {
     private readonly options: {
       loadOrchestratorBaseUrl: string;
       controlServiceToken: string;
+      requestTimeoutMs?: number;
+      fetch?: typeof fetch;
     },
   ) {}
 
   async start(request: TrafficExecutionStartRequest): Promise<TrafficExecutionStartResponse> {
     const startRequest = trafficExecutionStartRequestSchema.parse(request);
-    const response = await fetch(
-      `${this.options.loadOrchestratorBaseUrl}${trafficExecutionStartPath}`,
-      {
-        method: "POST",
-        headers: {
-          accept: "application/json",
-          "content-type": "application/json",
-          [correlationIdHeaderName]: startRequest.correlationId,
-          [controlServiceTokenHeaderName]: this.options.controlServiceToken,
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.options.requestTimeoutMs ?? 5_000);
+    let response: Response;
+    try {
+      response = await (this.options.fetch ?? fetch)(
+        `${this.options.loadOrchestratorBaseUrl}${trafficExecutionStartPath}`,
+        {
+          method: "POST",
+          headers: {
+            accept: "application/json",
+            "content-type": "application/json",
+            [correlationIdHeaderName]: startRequest.correlationId,
+            [controlServiceTokenHeaderName]: this.options.controlServiceToken,
+          },
+          body: JSON.stringify(startRequest),
+          signal: controller.signal,
         },
-        body: JSON.stringify(startRequest),
-      },
-    );
+      );
+    } catch {
+      const recovered = await this.recoverAmbiguousStart(startRequest).catch(() => null);
+      if (recovered) return recovered;
+      throw new ApiHttpError({
+        statusCode: 502,
+        code: "load_orchestrator_start_ambiguous",
+        message: "The load orchestrator start outcome could not be confirmed.",
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
 
     const payload = await response.json().catch(() => null);
     if (!response.ok) {
@@ -224,6 +244,38 @@ export class HttpTrafficExecutionGateway implements TrafficExecutionGateway {
     }
 
     return trafficExecutionStartResponseSchema.parse(payload);
+  }
+
+  private async recoverAmbiguousStart(
+    request: TrafficExecutionStartRequest,
+  ): Promise<TrafficExecutionStartResponse | null> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.options.requestTimeoutMs ?? 5_000);
+    try {
+      const statusPath = trafficExecutionStatusPath.replace(":runId", request.runId);
+      const response = await (this.options.fetch ?? fetch)(
+        `${this.options.loadOrchestratorBaseUrl}${statusPath}`,
+        {
+          headers: {
+            accept: "application/json",
+            [correlationIdHeaderName]: request.correlationId,
+            [controlServiceTokenHeaderName]: this.options.controlServiceToken,
+          },
+          signal: controller.signal,
+        },
+      );
+      if (!response.ok) return null;
+      const status = trafficExecutionStatusResponseSchema.parse(await response.json());
+      if (status.state === "unknown" || !status.acceptedAt) return null;
+      return trafficExecutionStartResponseSchema.parse({
+        runId: request.runId,
+        status: status.state === "accepted" ? "starting" : "active",
+        startedAt: status.acceptedAt,
+        correlationId: request.correlationId,
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 }
 
@@ -529,7 +581,9 @@ export class DemoRunService implements DemoRunController {
         configSnapshot: acceptedConfig.snapshot,
       });
     } catch (error) {
-      await this.failRun(accepted.run.runId, "load_orchestrator_start_failed", correlationId);
+      if (!(error instanceof ApiHttpError && error.code === "load_orchestrator_start_ambiguous")) {
+        await this.failRun(accepted.run.runId, "load_orchestrator_start_failed", correlationId);
+      }
       throw error;
     }
 
@@ -566,10 +620,40 @@ export class DemoRunService implements DemoRunController {
     }
   }
 
+  async reconcileStartingRuns(): Promise<number> {
+    const rows = await this.options.db
+      .select()
+      .from(demoRuns)
+      .where(eq(demoRuns.status, "starting"));
+    let reconciled = 0;
+    for (const run of rows) {
+      if (!run.saleOfferId) continue;
+      const correlationId = `traffic-reconcile-${run.id}`;
+      try {
+        const response = await this.options.trafficExecutionGateway.start({
+          runId: run.id,
+          saleOfferId: run.saleOfferId,
+          apiBaseUrl: this.options.apiBaseUrl,
+          buyEndpointPath: this.options.buyEndpointPath,
+          correlationId,
+          configSnapshot: acceptedRunConfigSnapshotSchema.parse(run.configSnapshot),
+        });
+        await this.updateRunAfterTrafficStart(run.id, response, this.now());
+        reconciled += 1;
+      } catch (error) {
+        this.options.logger.warn(
+          { err: error, runId: run.id },
+          "Starting traffic intent remains pending reconciliation.",
+        );
+      }
+    }
+    return reconciled;
+  }
+
   async recordTrafficCompletion(input: TrafficCompletionReport): Promise<DemoRunSnapshot> {
-    const report = trafficCompletionReportSchema.parse(input);
+    let report = trafficCompletionReportSchema.parse(input);
     const now = this.now();
-    const [run] = await this.options.db
+    let [run] = await this.options.db
       .select()
       .from(demoRuns)
       .where(eq(demoRuns.id, report.runId))
@@ -586,17 +670,81 @@ export class DemoRunService implements DemoRunController {
       });
     }
 
+    const claimed = await this.options.db.transaction(async (tx) => {
+      const [inserted] = await tx
+        .insert(demoRunFinalizations)
+        .values({
+          runId: report.runId,
+          exitCode: report.exitCode ?? null,
+          errorMessage: report.errorMessage ?? null,
+          httpSummary: report.httpSummary,
+          trafficOutcomeSummary: report.trafficOutcomeSummary,
+          trafficDeliverySummary: report.trafficDeliverySummary,
+          httpTimingBreakdownSummary: report.httpTimingBreakdownSummary,
+          loadRunDiagnosticsSummary: report.loadRunDiagnosticsSummary,
+          apiRequestLifecycleSummary: report.apiRequestLifecycleSummary,
+          trafficSummaryReceivedAt: now,
+          createdAt: now,
+          updatedAt: now,
+        })
+        .onConflictDoNothing({ target: demoRunFinalizations.runId })
+        .returning({ runId: demoRunFinalizations.runId });
+      if (inserted) {
+        await tx
+          .update(demoRuns)
+          .set({
+            status: "draining",
+            trafficStatus: report.status,
+            trafficEndedAt: new Date(report.completedAt),
+            updatedAt: now,
+          })
+          .where(
+            and(eq(demoRuns.id, report.runId), inArray(demoRuns.status, ["starting", "active"])),
+          );
+      }
+      return inserted;
+    });
+    if (!claimed) {
+      [run] = await this.options.db
+        .select()
+        .from(demoRuns)
+        .where(eq(demoRuns.id, report.runId))
+        .limit(1);
+      if (!run) throw new Error("Traffic completion run disappeared during reconciliation.");
+      const [first] = await this.options.db
+        .select()
+        .from(demoRunFinalizations)
+        .where(eq(demoRunFinalizations.runId, report.runId))
+        .limit(1);
+      if (!first) throw new Error("Traffic completion claim disappeared during reconciliation.");
+      report = trafficCompletionReportSchema.parse({
+        runId: report.runId,
+        status: run.trafficStatus === "succeeded" ? "succeeded" : "failed",
+        ...(first.exitCode === null ? {} : { exitCode: first.exitCode }),
+        ...(first.errorMessage ? { errorMessage: first.errorMessage } : {}),
+        httpSummary: first.httpSummary,
+        trafficOutcomeSummary: first.trafficOutcomeSummary,
+        trafficDeliverySummary: first.trafficDeliverySummary,
+        httpTimingBreakdownSummary: first.httpTimingBreakdownSummary,
+        loadRunDiagnosticsSummary: first.loadRunDiagnosticsSummary,
+        apiRequestLifecycleSummary: first.apiRequestLifecycleSummary,
+        completedAt: (run.trafficEndedAt ?? now).toISOString(),
+        correlationId: report.correlationId,
+      });
+    }
+
+    const completionSaleOfferId = requireRunSaleOfferId(toDemoRunSnapshot(run));
     const initialBusinessOutcome = await this.options.businessOutcomeReader.read({
-      saleOfferId: run.saleOfferId,
+      saleOfferId: completionSaleOfferId,
       runId: run.id,
     });
     const terminalInventorySnapshot = await this.captureTerminalInventorySnapshot(
-      run.saleOfferId,
+      completionSaleOfferId,
       initialBusinessOutcome,
       now,
     );
     const businessOutcome = await this.options.businessOutcomeReader.read({
-      saleOfferId: run.saleOfferId,
+      saleOfferId: completionSaleOfferId,
       runId: run.id,
     });
 
@@ -625,12 +773,8 @@ export class DemoRunService implements DemoRunController {
       }
 
       await tx
-        .insert(demoRunFinalizations)
-        .values({
-          runId: report.runId,
-          exitCode: report.exitCode ?? null,
-          errorMessage: report.errorMessage ?? null,
-          httpSummary: report.httpSummary,
+        .update(demoRunFinalizations)
+        .set({
           trafficOutcomeSummary: {
             ...report.trafficOutcomeSummary,
             businessOutcomeAtTrafficCompletion: businessOutcome,
@@ -641,24 +785,9 @@ export class DemoRunService implements DemoRunController {
           loadRunDiagnosticsSummary: report.loadRunDiagnosticsSummary,
           apiRequestLifecycleSummary: report.apiRequestLifecycleSummary,
           trafficSummaryReceivedAt: now,
-          createdAt: now,
           updatedAt: now,
         })
-        .onConflictDoNothing({
-          target: demoRunFinalizations.runId,
-        });
-
-      await tx
-        .update(demoRuns)
-        .set({
-          status: "draining",
-          trafficStatus: report.status,
-          trafficEndedAt: new Date(report.completedAt),
-          updatedAt: now,
-        })
-        .where(
-          and(eq(demoRuns.id, report.runId), inArray(demoRuns.status, ["starting", "active"])),
-        );
+        .where(eq(demoRunFinalizations.runId, report.runId));
     });
 
     if (run.saleOfferId) {
@@ -666,16 +795,11 @@ export class DemoRunService implements DemoRunController {
         runId: report.runId,
         saleOfferId: run.saleOfferId,
         status: "closed",
-      }).catch((error: unknown) => {
-        this.options.logger.warn(
-          { err: error, runId: report.runId, saleOfferId: run.saleOfferId },
-          "Could not close run sale eligibility after traffic completion.",
-        );
       });
     }
 
     const updatedRun = await this.readRunSnapshot(report.runId);
-    await this.publishRunEvent("run.updated", updatedRun, report.correlationId, now);
+    if (claimed) await this.publishRunEvent("run.updated", updatedRun, report.correlationId, now);
     return (
       (await this.options.finalizationService?.finalizeRun(report.runId, report.correlationId)) ??
       updatedRun

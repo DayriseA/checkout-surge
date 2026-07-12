@@ -1607,7 +1607,11 @@ describe("API gateway routes", () => {
     expect(unauthorized.statusCode).toBe(401);
     expect(accepted.statusCode).toBe(202);
     expect(accepted.headers[correlationIdHeaderName]).toBe(fixtureCorrelationId);
-    expect(accepted.json().run.runId).toBe(fixtureIds.run);
+    expect(accepted.json()).toEqual({
+      runId: fixtureIds.run,
+      acknowledged: true,
+      correlationId: fixtureCorrelationId,
+    });
     expect(recordTrafficCompletion).toHaveBeenCalledWith(report);
   });
 

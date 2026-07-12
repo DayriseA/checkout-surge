@@ -4,7 +4,9 @@ import type {
   AcceptedRunConfigSnapshot,
   BusinessOutcomeSummary,
   PublicRuntimePolicy,
+  TrafficCompletionReport,
   TrafficConfig,
+  TrafficExecutionStartRequest,
 } from "@checkout-surge/contracts";
 import {
   controlServiceTokenHeaderName,
@@ -26,6 +28,7 @@ import { resetTestDatabase } from "@checkout-surge/db/testing";
 import { correlationIdHeaderName, createSilentLogger } from "@checkout-surge/logger";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { ApiHttpError } from "../src/runtime/errors.js";
 import { DemoMaintenanceService } from "../src/services/demo-maintenance-service.js";
 import {
   DemoRunService,
@@ -383,6 +386,44 @@ describe("demo-run lifecycle start gating", () => {
       code: "demo_run_already_active",
       details: { status },
     });
+  });
+
+  it("replays a durable starting intent with the same run identity and activates it", async () => {
+    const start = vi
+      .fn(async (request: TrafficExecutionStartRequest) => ({
+        runId: request.runId,
+        status: "active" as const,
+        startedAt: "2026-06-20T00:00:11.000Z",
+        correlationId: request.correlationId,
+      }))
+      .mockRejectedValueOnce(
+        new ApiHttpError({
+          statusCode: 502,
+          code: "load_orchestrator_start_ambiguous",
+          message: "ambiguous",
+        }),
+      );
+    const service = createStartService(requireConnection(connection), requireRedis(redis), {
+      trafficExecutionGateway: { start },
+    });
+    await expect(
+      service.startRun({ presetSlug: "preview-1k", operatorMode: "admin" }, "initial-start"),
+    ).rejects.toMatchObject({ code: "load_orchestrator_start_ambiguous" });
+    const [starting] = await requireConnection(connection)
+      .db.select()
+      .from(demoRuns)
+      .where(eq(demoRuns.status, "starting"));
+    const runId = starting?.id;
+    expect(runId).toBeTruthy();
+    await expect(service.reconcileStartingRuns()).resolves.toBe(1);
+    expect(start).toHaveBeenCalledWith(
+      expect.objectContaining({ runId, correlationId: `traffic-reconcile-${runId}` }),
+    );
+    const [row] = await requireConnection(connection)
+      .db.select()
+      .from(demoRuns)
+      .where(eq(demoRuns.id, runId as string));
+    expect(row).toMatchObject({ status: "active", trafficStatus: "active" });
   });
 
   it("accepts exactly one of two concurrent starts", async () => {
@@ -842,6 +883,82 @@ describe("demo-run lifecycle start gating", () => {
     }
   });
 
+  it("keeps the first conflicting completion authoritative while concurrent redelivery repairs finalization", async () => {
+    let releaseFirstEnrichment: () => void = () => undefined;
+    let firstEnrichmentEntered: () => void = () => undefined;
+    const firstEnrichmentGate = new Promise<void>((resolve) => {
+      releaseFirstEnrichment = resolve;
+    });
+    const firstEnrichmentEnteredPromise = new Promise<void>((resolve) => {
+      firstEnrichmentEntered = resolve;
+    });
+    let businessReads = 0;
+    const finalizeRun = vi.fn().mockRejectedValueOnce(new Error("finalization temporarily failed"));
+    const service = createStartService(requireConnection(connection), requireRedis(redis), {
+      businessOutcomeReader: {
+        read: async () => {
+          businessReads += 1;
+          if (businessReads === 1) {
+            firstEnrichmentEntered();
+            await firstEnrichmentGate;
+          }
+          return emptyBusinessOutcomeSummary();
+        },
+      },
+      finalizationService: { finalizeRun, finalizeReadyRuns: async () => 0 },
+    });
+    const started = await service.startRun(
+      { presetSlug: "preview-1k", operatorMode: "admin" },
+      "corr-completion-concurrency-start",
+    );
+    const firstReport = trafficCompletionFixture({
+      runId: started.run.runId,
+      status: "succeeded",
+      exitCode: 0,
+      completedAt: "2026-06-20T00:00:12.000Z",
+      plannedRequests: 111,
+      correlationId: "corr-completion-first",
+    });
+    const conflictingReport = trafficCompletionFixture({
+      runId: started.run.runId,
+      status: "failed",
+      exitCode: 9,
+      errorMessage: "conflicting duplicate",
+      completedAt: "2026-06-20T00:00:13.000Z",
+      plannedRequests: 999,
+      correlationId: "corr-completion-conflict",
+    });
+
+    const first = service.recordTrafficCompletion(firstReport);
+    await firstEnrichmentEnteredPromise;
+    const duplicate = service.recordTrafficCompletion(conflictingReport);
+    releaseFirstEnrichment();
+    const results = await Promise.allSettled([first, duplicate]);
+
+    const [run] = await requireConnection(connection)
+      .db.select()
+      .from(demoRuns)
+      .where(eq(demoRuns.id, started.run.runId));
+    const [finalization] = await requireConnection(connection)
+      .db.select()
+      .from(demoRunFinalizations)
+      .where(eq(demoRunFinalizations.runId, started.run.runId));
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
+    expect(finalizeRun).toHaveBeenCalledTimes(2);
+    expect(run).toMatchObject({
+      status: "draining",
+      trafficStatus: "succeeded",
+      trafficEndedAt: new Date(firstReport.completedAt),
+    });
+    expect(finalization).toMatchObject({
+      exitCode: 0,
+      errorMessage: null,
+      httpSummary: expect.objectContaining({ plannedRequests: 111 }),
+      trafficDeliverySummary: expect.objectContaining({ plannedRequests: 111 }),
+    });
+  });
+
   it("returns the reset run when a delayed orchestrator acknowledgement loses activation CAS", async () => {
     const startConnection = requireConnection(connection);
     const resetConnection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
@@ -1027,6 +1144,10 @@ function createStartService(
     >[0]["trafficExecutionGateway"];
     publicRunBudgetStore?: ConstructorParameters<typeof DemoRunService>[0]["publicRunBudgetStore"];
     terminalRunWriter?: ConstructorParameters<typeof DemoRunService>[0]["terminalRunWriter"];
+    businessOutcomeReader?: ConstructorParameters<
+      typeof DemoRunService
+    >[0]["businessOutcomeReader"];
+    finalizationService?: ConstructorParameters<typeof DemoRunService>[0]["finalizationService"];
   } = {},
 ): DemoRunService {
   const ids = [
@@ -1051,7 +1172,10 @@ function createStartService(
     },
     publicRunBudgetStore: overrides.publicRunBudgetStore ?? { consume: async () => undefined },
     trafficMetricStore: {} as never,
-    businessOutcomeReader: { read: async () => emptyBusinessOutcomeSummary() },
+    businessOutcomeReader: overrides.businessOutcomeReader ?? {
+      read: async () => emptyBusinessOutcomeSummary(),
+    },
+    finalizationService: overrides.finalizationService,
     apiBaseUrl: "http://api.test",
     buyEndpointPath: "/buy",
     logger: createSilentLogger("api"),
@@ -1118,6 +1242,46 @@ function emptyBusinessOutcomeSummary(): BusinessOutcomeSummary {
     failedOrders: 0,
     pendingPersistenceCount: 0,
     notificationsRecorded: 0,
+  };
+}
+
+function trafficCompletionFixture(input: {
+  runId: string;
+  status: "succeeded" | "failed";
+  exitCode: number;
+  errorMessage?: string;
+  completedAt: string;
+  plannedRequests: number;
+  correlationId: string;
+}): TrafficCompletionReport {
+  return {
+    runId: input.runId,
+    status: input.status,
+    exitCode: input.exitCode,
+    ...(input.errorMessage ? { errorMessage: input.errorMessage } : {}),
+    httpSummary: {
+      plannedRequests: input.plannedRequests,
+      emittedRequests: 0,
+      completedRequests: 0,
+      failedRequests: 0,
+      acceptedResponses: 0,
+      soldOutResponses: 0,
+      unexpectedResponses: 0,
+      failureRate: 0,
+    },
+    trafficOutcomeSummary: {},
+    trafficDeliverySummary: {
+      plannedRequests: input.plannedRequests,
+      emittedRequests: 0,
+      droppedIterations: input.plannedRequests,
+      trafficDeliveryStatus: "failed",
+      notes: [],
+    },
+    httpTimingBreakdownSummary: {},
+    loadRunDiagnosticsSummary: {},
+    apiRequestLifecycleSummary: {},
+    completedAt: input.completedAt,
+    correlationId: input.correlationId,
   };
 }
 

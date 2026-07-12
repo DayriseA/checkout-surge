@@ -1,6 +1,7 @@
 import { contractsPackageName } from "@checkout-surge/contracts";
 import { createServiceLogger, loggerPackageName } from "@checkout-surge/logger";
 import { HttpLoadApiClient } from "./application/api-client.js";
+import { FileExecutionStore } from "./application/execution-store.js";
 import { SpawnK6Runner } from "./application/k6-runner.js";
 import { TrafficExecutionService } from "./application/traffic-execution-service.js";
 import { loadLoadOrchestratorConfig } from "./runtime/config.js";
@@ -11,6 +12,7 @@ export const loadOrchestratorAppName = "load-orchestrator" as const;
 export const loadOrchestratorAppDependencies = [contractsPackageName, loggerPackageName] as const;
 
 export { HttpLoadApiClient, MetricBatcher } from "./application/api-client.js";
+export { ExecutionConflictError, FileExecutionStore } from "./application/execution-store.js";
 export { K6RunAccumulator, parseK6JsonLine } from "./application/k6-output-parser.js";
 export { type K6Runner, SpawnK6Runner } from "./application/k6-runner.js";
 export { generateK6Script } from "./application/k6-script.js";
@@ -29,24 +31,27 @@ export async function startLoadOrchestrator(): Promise<void> {
     apiBaseUrl: config.apiBaseUrl,
     controlServiceToken: config.controlServiceToken,
   });
+  const trafficExecutionService = new TrafficExecutionService(
+    new SpawnK6Runner({
+      k6Binary: config.k6Binary,
+      apiClient,
+      logger,
+      executionStore: new FileExecutionStore(config.stateDirectory),
+    }),
+  );
+  await trafficExecutionService.initialize();
   const server = buildLoadOrchestratorServer({
     config,
     logger,
     readiness: createLoadOrchestratorReadiness(config),
-    trafficExecutionService: new TrafficExecutionService(
-      new SpawnK6Runner({
-        k6Binary: config.k6Binary,
-        apiClient,
-        logger,
-      }),
-    ),
+    trafficExecutionService,
     startedAt: new Date(),
   });
 
   let closePromise: Promise<void> | null = null;
   const close = (): Promise<void> => {
     if (!closePromise) {
-      closePromise = server.close();
+      closePromise = server.close().then(() => trafficExecutionService.close());
     }
     return closePromise;
   };

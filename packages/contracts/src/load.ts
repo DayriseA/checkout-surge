@@ -14,6 +14,7 @@ import {
 import { orderProcessBullMqQueueName, orderProcessQueueName } from "./queue.js";
 
 export const trafficExecutionStartPath = "/traffic/start" as const;
+export const trafficExecutionStatusPath = "/traffic/status/:runId" as const;
 export const internalLoadMetricIngestPath = "/internal/load/metrics" as const;
 export const internalTrafficCompletionPath = "/internal/load/completion" as const;
 
@@ -115,6 +116,28 @@ export const trafficExecutionStartResponseSchema = z
   })
   .strict();
 export type TrafficExecutionStartResponse = z.infer<typeof trafficExecutionStartResponseSchema>;
+
+export const trafficExecutionStatusResponseSchema = z
+  .object({
+    runId: uuidSchema,
+    state: z.enum(["accepted", "executing", "completion_pending", "completed", "unknown"]),
+    acceptedAt: isoTimestampSchema.optional(),
+    correlationId: correlationIdSchema,
+    observedAt: isoTimestampSchema,
+  })
+  .strict();
+export type TrafficExecutionStatusResponse = z.infer<typeof trafficExecutionStatusResponseSchema>;
+
+export const trafficCompletionAcknowledgementSchema = z
+  .object({
+    runId: uuidSchema,
+    acknowledged: z.literal(true),
+    correlationId: correlationIdSchema,
+  })
+  .strict();
+export type TrafficCompletionAcknowledgement = z.infer<
+  typeof trafficCompletionAcknowledgementSchema
+>;
 
 export const trafficHttpSummarySchema = z
   .object({

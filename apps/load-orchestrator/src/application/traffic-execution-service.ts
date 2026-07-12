@@ -18,4 +18,16 @@ export class TrafficExecutionService {
       correlationId: input.correlationId,
     });
   }
+
+  statusSnapshot(runId: string) {
+    return this.runner.statusSnapshot(runId);
+  }
+
+  async initialize(): Promise<void> {
+    await this.runner.initialize();
+  }
+
+  async close(): Promise<void> {
+    await this.runner.close();
+  }
 }

@@ -62,7 +62,7 @@ describe("demo run startup reconciliation service", () => {
     }
   });
 
-  it("fails an interrupted active run through the terminal writer", async () => {
+  it("preserves an orchestrator-owned active run across an API restart", async () => {
     const db = requireConnection(connection).db;
     const redisClient = requireRedis(redis);
     const reconcileSaleOffer = vi.fn(async () => ({
@@ -96,53 +96,25 @@ describe("demo run startup reconciliation service", () => {
       .where(inArray(demoRunSummaries.runId, [ids.startingRun, ids.activeRun, ids.drainingRun]));
 
     expect(summary).toEqual({
-      interruptedRunCount: 1,
-      closedSaleOfferCount: 1,
-      summaryCreatedCount: 1,
+      interruptedRunCount: 0,
+      closedSaleOfferCount: 0,
+      summaryCreatedCount: 0,
       recoverableDrainingRunCount: 0,
     });
-    expect(writeTerminalRun).toHaveBeenCalledOnce();
-    expect(writeTerminalRun).toHaveBeenCalledWith(
-      expect.objectContaining({
-        run: expect.objectContaining({ id: ids.activeRun }),
-        allowedCurrentStatuses: ["starting", "active"],
-        terminalTrafficStatus: "failed",
-      }),
-    );
+    expect(writeTerminalRun).not.toHaveBeenCalled();
     expect(reconcileSaleOffer).not.toHaveBeenCalled();
     expect(runs.find((run) => run.id === ids.activeRun)).toMatchObject({
-      status: "failed",
-      trafficStatus: "failed",
-      failureReason: "api_restart_interrupted_run",
+      status: "active",
+      trafficStatus: "active",
+      failureReason: null,
     });
-    expect(summaries).toHaveLength(1);
-    expect(
-      summaries.map((runSummary) => ({
-        runId: runSummary.runId,
-        status: runSummary.status,
-        failureReason: runSummary.failureReason,
-      })),
-    ).toEqual(
-      expect.arrayContaining([
-        {
-          runId: ids.activeRun,
-          status: "failed",
-          failureReason: "api_restart_interrupted_run",
-        },
-      ]),
-    );
-    expect(summaries[0]?.trafficDeliverySummary).toMatchObject({
-      plannedRequests: 10,
-      emittedRequests: 0,
-      droppedIterations: 10,
-      trafficDeliveryStatus: "failed",
-    });
+    expect(summaries).toHaveLength(0);
     await expect(
       isRunSaleEligible(redisClient, {
         runId: ids.activeRun,
         saleOfferId: ids.activeOffer,
       }),
-    ).resolves.toBe(false);
+    ).resolves.toBe(true);
   });
 
   it("is idempotent when startup reconciliation runs more than once", async () => {
@@ -167,7 +139,7 @@ describe("demo run startup reconciliation service", () => {
 
     expect(second.interruptedRunCount).toBe(0);
     expect(second.summaryCreatedCount).toBe(0);
-    expect(summaries).toHaveLength(1);
+    expect(summaries).toHaveLength(0);
   });
 
   it("keeps a draining run recoverable and reconciles its pending persistence", async () => {
