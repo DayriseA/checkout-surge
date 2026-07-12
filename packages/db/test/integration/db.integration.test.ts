@@ -966,6 +966,24 @@ describe("database migrations, seed data, and reset behavior", () => {
     });
   });
 
+  it("recovers the connection-scoped reservation command after SCRIPT FLUSH", async () => {
+    const saleOfferId = "10000000-0000-4000-8000-000000000091";
+    await initializeInventory(redis, { saleOfferId, allocatedStock: 2 });
+
+    await expect(
+      reserveInventoryStock(redis, buildReservationInput({ saleOfferId, sequence: 91 })),
+    ).resolves.toMatchObject({ outcome: "reservation_secured" });
+    await redis.script("FLUSH");
+    await expect(
+      reserveInventoryStock(redis, buildReservationInput({ saleOfferId, sequence: 92 })),
+    ).resolves.toMatchObject({ outcome: "reservation_secured" });
+
+    await expect(getInventoryStatus(redis, saleOfferId)).resolves.toMatchObject({
+      remainingStock: 0,
+      reservedStock: 2,
+    });
+  });
+
   it("keeps pre-scope seeded inventory compatible as catalog inventory", async () => {
     const saleOfferId = "10000000-0000-4000-8000-000000000017";
     const keys = inventoryKeys(saleOfferId);

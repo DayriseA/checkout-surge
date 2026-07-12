@@ -29,11 +29,11 @@ Payment authorization, customer cancel, payment timeout release, and automatic h
 
 ## Atomic Reservation Behavior
 
-Generated-run buy requests first pass a narrow durable lifecycle guard: the API verifies that the supplied `runId` still belongs to the supplied generated `saleOfferId` and that the durable run status is `starting` or `active`. This prevents stale Redis inventory from accepting a run that PostgreSQL has already moved to `draining`, `completed`, or `failed`. Catalog buy requests skip this guard.
+Generated-run buy requests first pass the Redis inventory projection. The projection verifies that the supplied `runId` owns the generated `saleOfferId` and that `runSaleStatus` is `accepting`; catalog requests must omit `runId`. Missing, malformed, closed, or mismatched projections fail before PostgreSQL is touched. Lifecycle compare-and-set transitions close the projection when traffic begins draining or the run becomes terminal.
 
 The stock-decision Lua operation then reads inventory scope, run identity, and accepting/closed state directly from the inventory hash before considering idempotency or stock. Generated-run inventory fails closed when `runId` is omitted, mismatched, or no longer accepting traffic. Catalog inventory rejects requests that supply a `runId`. Redis remains the stock-decision authority; PostgreSQL lifecycle state is consulted only for run-scoped eligibility.
 
-Run lifecycle changes update the authoritative inventory hash and the separate run-scoped eligibility payload in one Redis Lua operation. The separate payload remains a useful lifecycle/read projection, but the buy path never consults it. Because closure and reservation are both Redis Lua operations, they serialize: a reservation ordered before closure may succeed, while one ordered after closure rejects without changing counters, holds, pending-persistence state, throughput, events, or idempotency records.
+Run lifecycle changes update the authoritative inventory hash and the separate run-scoped eligibility payload in one Redis Lua operation. The separate payload remains a useful lifecycle/read projection, but the buy path never consults it. Because closure and reservation are both Redis Lua operations, they serialize: a reservation ordered before closure may succeed, while one ordered after closure rejects without changing counters, holds, pending-persistence state, throughput, events, or idempotency records. A late traffic-start acknowledgement is fenced by the durable lifecycle compare-and-set and does not write Redis, so it cannot reopen a closed projection.
 
 The Lua operation:
 

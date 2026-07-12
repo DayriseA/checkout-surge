@@ -20,8 +20,10 @@ import {
   demoRunSaleContexts,
   demoRunSummaries,
   demoRuns,
+  isRunSaleEligible,
   products,
   publicRuntimePolicies,
+  reserveInventoryStock,
   saleOffers,
 } from "@checkout-surge/db";
 import { resetTestDatabase } from "@checkout-surge/db/testing";
@@ -787,6 +789,65 @@ describe("demo-run lifecycle start gating", () => {
     });
   });
 
+  it("repairs stale Redis acceptance when an existing summary terminalizes a failed start", async () => {
+    const db = requireConnection(connection).db;
+    const redisClient = requireRedis(redis);
+    const service = createStartService(requireConnection(connection), redisClient, {
+      trafficExecutionGateway: {
+        start: async (request) => {
+          await db.insert(demoRunSummaries).values({
+            runId: request.runId,
+            presetName: "Preview 1k",
+            status: "failed",
+            failureReason: "existing_terminal_summary",
+            startedAt: new Date("2026-06-20T00:00:10.000Z"),
+            endedAt: new Date("2026-06-20T00:00:12.000Z"),
+            httpSummary: {
+              plannedRequests: 10_000,
+              emittedRequests: 0,
+              completedRequests: 0,
+              failedRequests: 0,
+              acceptedResponses: 0,
+              soldOutResponses: 0,
+              unexpectedResponses: 0,
+              failureRate: 0,
+            },
+            trafficDeliverySummary: {
+              plannedRequests: 10_000,
+              emittedRequests: 0,
+              droppedIterations: 10_000,
+              trafficDeliveryStatus: "failed",
+              notes: [],
+            },
+            httpTimingBreakdownSummary: {},
+            loadRunDiagnosticsSummary: { source: "existing-summary" },
+            apiRequestLifecycleSummary: { source: "existing-summary" },
+            businessOutcomeSummary: emptyBusinessOutcomeSummary(),
+            terminalInventorySnapshot: null,
+            capturedAt: new Date("2026-06-20T00:00:12.000Z"),
+          });
+          throw new Error("load orchestrator unavailable");
+        },
+      },
+    });
+
+    await expect(
+      service.startRun({ presetSlug: "preview-1k", operatorMode: "admin" }, "corr-start"),
+    ).rejects.toThrow("load orchestrator unavailable");
+
+    const [run] = await db
+      .select()
+      .from(demoRuns)
+      .where(eq(demoRuns.id, "77777777-7777-4777-8777-777777777777"));
+    expect(run?.status).toBe("failed");
+    await expect(
+      isRunSaleEligible(redisClient, {
+        runId: "77777777-7777-4777-8777-777777777777",
+        saleOfferId: "77777777-7777-4777-8777-777777777778",
+      }),
+    ).resolves.toBe(false);
+  });
+
   it("returns the draining run when fast traffic completion wins activation CAS", async () => {
     let releaseTrafficStart: (() => void) | undefined;
     let trafficStartEntered: (() => void) | undefined;
@@ -878,6 +939,12 @@ describe("demo-run lifecycle start gating", () => {
         runId: "77777777-7777-4777-8777-777777777777",
         trafficSummaryReceivedAt: expect.any(Date),
       });
+      await expect(
+        isRunSaleEligible(requireRedis(redis), {
+          runId: "77777777-7777-4777-8777-777777777777",
+          saleOfferId: "77777777-7777-4777-8777-777777777778",
+        }),
+      ).resolves.toBe(false);
     } finally {
       releaseTrafficStart?.();
     }
@@ -931,6 +998,29 @@ describe("demo-run lifecycle start gating", () => {
 
     const first = service.recordTrafficCompletion(firstReport);
     await firstEnrichmentEnteredPromise;
+    await expect(
+      isRunSaleEligible(requireRedis(redis), {
+        runId: started.run.runId,
+        saleOfferId: started.run.saleOfferId,
+      }),
+    ).resolves.toBe(false);
+    await expect(
+      reserveInventoryStock(requireRedis(redis), {
+        idempotencyKey: "completion-race-buy",
+        idempotencyTtlSeconds: 1800,
+        reservation: {
+          id: "aaaaaaaa-aaaa-4aaa-8aaa-000000000093",
+          saleOfferId: started.run.saleOfferId,
+          runId: started.run.runId,
+          correlationId: "completion-race-buy-correlation",
+          quantity: 1,
+          status: "secured",
+          reservationToken: "completion-race-buy-token",
+          securedAt: "2026-06-20T00:00:12.000Z",
+          expiresAt: "2026-06-20T00:15:12.000Z",
+        },
+      }),
+    ).resolves.toEqual({ outcome: "run_not_accepting_traffic", reservation: null });
     const duplicate = service.recordTrafficCompletion(conflictingReport);
     releaseFirstEnrichment();
     const results = await Promise.allSettled([first, duplicate]);

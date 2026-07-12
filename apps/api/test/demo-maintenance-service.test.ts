@@ -25,7 +25,6 @@ import { createSilentLogger } from "@checkout-surge/logger";
 import { eq, inArray } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { DemoMaintenanceService } from "../src/services/demo-maintenance-service.js";
-import { PostgresGeneratedRunSaleGate } from "../src/services/generated-run-sale-gate.js";
 import { PostgresBuyPersistence } from "../src/services/postgres-buy-persistence.js";
 import {
   ReserveOrderService,
@@ -424,7 +423,7 @@ describe("demo maintenance service", () => {
     expect(summary?.apiRequestLifecycleSummary).not.toHaveProperty("previousStatus");
   });
 
-  it("rechecks Redis admission after a stale PostgreSQL gate read", async () => {
+  it("rejects through Redis after reset closes admission without durable buy work", async () => {
     const db = requireConnection(connection).db;
     const redisClient = requireRedis(redis);
     await seedBase(db);
@@ -437,22 +436,6 @@ describe("demo maintenance service", () => {
       runInventoryStatus: "accepting",
     });
 
-    let releaseGate: (() => void) | undefined;
-    const gateRelease = new Promise<void>((resolve) => {
-      releaseGate = resolve;
-    });
-    let gateRead: (() => void) | undefined;
-    const gateReadCompleted = new Promise<void>((resolve) => {
-      gateRead = resolve;
-    });
-    const generatedRunSaleGate = {
-      isAccepting: async (input: { runId: string; saleOfferId: string }) => {
-        const accepted = await new PostgresGeneratedRunSaleGate(db).isAccepting(input);
-        gateRead?.();
-        await gateRelease;
-        return accepted;
-      },
-    };
     const reserveService = new ReserveOrderService({
       persistence: new PostgresBuyPersistence(db),
       stockReservations: {
@@ -460,7 +443,6 @@ describe("demo maintenance service", () => {
         markPendingPersistence: (input) => markReservationPendingPersistence(redisClient, input),
         promoteAccepted: async () => undefined,
       },
-      generatedRunSaleGate,
       orderProcessJobPublisher: { enqueue: async () => undefined },
       reservationHoldMinutes: 15,
       idempotencyTtlSeconds: 1800,
@@ -479,6 +461,7 @@ describe("demo maintenance service", () => {
       now: () => new Date("2026-06-20T00:00:10.000Z"),
     });
 
+    await maintenanceService.reset("corr-reset-gate-race");
     const reservePromise = reserveService.reserve({
       request: {
         saleOfferId: ids.activeOffer,
@@ -489,10 +472,6 @@ describe("demo maintenance service", () => {
       correlationId: "corr-reset-gate-race",
       now: new Date("2026-06-20T00:00:02.000Z"),
     });
-    await gateReadCompleted;
-    await maintenanceService.reset("corr-reset-gate-race");
-    releaseGate?.();
-
     await expect(reservePromise).resolves.toMatchObject({
       outcome: "inventory_not_initialized",
       reason: "run_not_accepting_traffic",

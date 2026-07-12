@@ -42,7 +42,6 @@ import {
   PostgresErpAttemptStatusReader,
   RedisErpCircuitBreakerStateReader,
 } from "./services/erp-status-service.js";
-import { PostgresGeneratedRunSaleGate } from "./services/generated-run-sale-gate.js";
 import { InventoryStatusService } from "./services/inventory-status-service.js";
 import { PendingPersistenceReconciler } from "./services/pending-persistence-reconciler.js";
 import { PostgresBuyPersistence } from "./services/postgres-buy-persistence.js";
@@ -80,7 +79,6 @@ export {
   PostgresErpAttemptStatusReader,
   RedisErpCircuitBreakerStateReader,
 } from "./services/erp-status-service.js";
-export { PostgresGeneratedRunSaleGate } from "./services/generated-run-sale-gate.js";
 export { InventoryStatusService } from "./services/inventory-status-service.js";
 export type { OrderProcessJobPublisher } from "./services/order-process-job-publisher.js";
 export { PendingPersistenceReconciler } from "./services/pending-persistence-reconciler.js";
@@ -187,7 +185,6 @@ export async function startApiServer(): Promise<void> {
     logger,
   });
   const businessOutcomeReader = new PostgresDashboardBusinessOutcomeReader(connection.db);
-  const generatedRunSaleGate = new PostgresGeneratedRunSaleGate(connection.db);
   const demoRunFinalizationService = new DemoRunFinalizationService({
     db: connection.db,
     redis,
@@ -222,7 +219,6 @@ export async function startApiServer(): Promise<void> {
     persistence,
     orderProcessJobPublisher,
     stockReservations: stockReservationGateway,
-    generatedRunSaleGate,
     reservationHoldMinutes: config.reservationHoldMinutes,
     idempotencyTtlSeconds: config.idempotencyTtlSeconds,
     pendingPersistenceRetryAfterSeconds: config.pendingPersistenceRetryAfterSeconds,

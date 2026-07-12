@@ -14,6 +14,12 @@ import {
 } from "./redis-inventory.js";
 
 const inventoryEventHistoryLimit = 100;
+const reserveInventoryCommandName = "checkoutSurgeReserveInventory";
+const reserveInventoryCommandConnections = new WeakSet<CheckoutSurgeRedis>();
+
+type RedisWithReserveInventoryCommand = CheckoutSurgeRedis & {
+  checkoutSurgeReserveInventory(...args: Array<string | number>): Promise<unknown>;
+};
 
 const markPendingPersistenceScript = `
 local pendingType = redis.call("TYPE", KEYS[3]).ok
@@ -472,9 +478,8 @@ export async function reserveInventoryStock(
   assertValidHoldWindow(reservation);
 
   const keys = inventoryKeys(reservation.saleOfferId);
-  const rawDecision = await redis.eval(
-    reserveInventoryScript,
-    10,
+  const command = ensureReserveInventoryCommand(redis);
+  const rawDecision = await command.checkoutSurgeReserveInventory(
     keys.state,
     keys.reservations,
     keys.reservationExpirations,
@@ -502,6 +507,20 @@ export async function reserveInventoryStock(
   }
 
   return stockReservationDecisionSchema.parse(JSON.parse(rawDecision));
+}
+
+function ensureReserveInventoryCommand(
+  redis: CheckoutSurgeRedis,
+): RedisWithReserveInventoryCommand {
+  if (!reserveInventoryCommandConnections.has(redis)) {
+    redis.defineCommand(reserveInventoryCommandName, {
+      numberOfKeys: 10,
+      lua: reserveInventoryScript,
+    });
+    reserveInventoryCommandConnections.add(redis);
+  }
+
+  return redis as RedisWithReserveInventoryCommand;
 }
 
 export type AcceptedPromotionResult = "promoted" | "already_accepted";

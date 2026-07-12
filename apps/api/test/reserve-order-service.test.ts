@@ -9,7 +9,6 @@ import type { OrderProcessJobPublisher } from "../src/services/order-process-job
 import {
   type BusinessOutcomeUpdateFailureReport,
   type BuyPersistence,
-  type GeneratedRunSaleGate,
   type OrderEnqueueFailureReport,
   type ReservationPartialFailureReport,
   ReserveOrderService,
@@ -28,7 +27,6 @@ const now = new Date("2026-06-20T12:00:00.000Z");
 function buildService(options: {
   persistence: BuyPersistence;
   stockReservations: StockReservationGateway;
-  generatedRunSaleGate?: GeneratedRunSaleGate;
   orderProcessJobPublisher?: OrderProcessJobPublisher;
   reportPersistenceFailure?: (report: ReservationPartialFailureReport) => void;
   reportPendingPersistenceRecordFailure?: (report: ReservationPartialFailureReport) => void;
@@ -46,7 +44,6 @@ function buildService(options: {
   return new ReserveOrderService({
     persistence: options.persistence,
     stockReservations: options.stockReservations,
-    ...(options.generatedRunSaleGate ? { generatedRunSaleGate: options.generatedRunSaleGate } : {}),
     orderProcessJobPublisher: options.orderProcessJobPublisher ?? {
       enqueue: async () => undefined,
     },
@@ -125,15 +122,17 @@ function persistedBuy(hold: SecuredReservationHold): {
 }
 
 describe("ReserveOrderService queue handoff", () => {
-  it("rejects non-accepting generated runs before Redis can reserve stock", async () => {
-    const reserveStock = vi.fn();
+  it("rejects non-accepting generated runs from Redis without touching persistence", async () => {
+    const persistSecuredReservation = vi.fn();
+    const getPersistedBuyByReservationId = vi.fn();
     const service = buildService({
       persistence: {
-        persistSecuredReservation: async ({ reservation }) => persistedBuy(reservation),
-        getPersistedBuyByReservationId: async () => null,
+        persistSecuredReservation,
+        getPersistedBuyByReservationId,
       },
-      stockReservations: acceptingGateway({ reserve: reserveStock }),
-      generatedRunSaleGate: { isAccepting: async () => false },
+      stockReservations: acceptingGateway({
+        reserve: async () => ({ outcome: "run_not_accepting_traffic", reservation: null }),
+      }),
     });
 
     const response = await service.reserve({ request, correlationId, now });
@@ -144,7 +143,33 @@ describe("ReserveOrderService queue handoff", () => {
       reservation: null,
       order: null,
     });
-    expect(reserveStock).not.toHaveBeenCalled();
+    expect(persistSecuredReservation).not.toHaveBeenCalled();
+    expect(getPersistedBuyByReservationId).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "inventory_not_initialized",
+    "sold_out",
+    "idempotency_conflict",
+    "quantity_invalid",
+  ] as const)("does no persistence or lookup work for Redis %s", async (outcome) => {
+    const persistSecuredReservation = vi.fn();
+    const getPersistedBuyByReservationId = vi.fn();
+    const service = buildService({
+      persistence: { persistSecuredReservation, getPersistedBuyByReservationId },
+      stockReservations: acceptingGateway({
+        reserve: async () => ({ outcome, reservation: null }),
+      }),
+    });
+
+    await expect(service.reserve({ request, correlationId, now })).resolves.toMatchObject({
+      outcome,
+      reason: outcome,
+      reservation: null,
+      order: null,
+    });
+    expect(persistSecuredReservation).not.toHaveBeenCalled();
+    expect(getPersistedBuyByReservationId).not.toHaveBeenCalled();
   });
 
   it("enqueues the persisted summaries before Redis promotion and returns immediately after acceptance", async () => {

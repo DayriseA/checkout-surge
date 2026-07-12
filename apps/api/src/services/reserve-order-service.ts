@@ -89,10 +89,6 @@ export interface StockReservationGateway {
   }): Promise<"reversed" | "not_held">;
 }
 
-export interface GeneratedRunSaleGate {
-  isAccepting(input: { runId: string; saleOfferId: string }): Promise<boolean>;
-}
-
 export interface ReservationPartialFailureReport {
   error: unknown;
   reservationId: string;
@@ -136,7 +132,6 @@ function safelyReportPartialFailure<Report extends ReservationPartialFailureRepo
 export class ReserveOrderService {
   private readonly persistence: BuyPersistence;
   private readonly stockReservations: StockReservationGateway;
-  private readonly generatedRunSaleGate: GeneratedRunSaleGate | undefined;
   private readonly orderProcessJobPublisher: OrderProcessJobPublisher;
   private readonly reservationHoldMinutes: number;
   private readonly idempotencyTtlSeconds: number;
@@ -157,7 +152,6 @@ export class ReserveOrderService {
   constructor(options: {
     persistence: BuyPersistence;
     stockReservations: StockReservationGateway;
-    generatedRunSaleGate?: GeneratedRunSaleGate;
     orderProcessJobPublisher: OrderProcessJobPublisher;
     reservationHoldMinutes: number;
     idempotencyTtlSeconds: number;
@@ -175,7 +169,6 @@ export class ReserveOrderService {
   }) {
     this.persistence = options.persistence;
     this.stockReservations = options.stockReservations;
-    this.generatedRunSaleGate = options.generatedRunSaleGate;
     this.orderProcessJobPublisher = options.orderProcessJobPublisher;
     this.reservationHoldMinutes = options.reservationHoldMinutes;
     this.idempotencyTtlSeconds = options.idempotencyTtlSeconds;
@@ -207,22 +200,6 @@ export class ReserveOrderService {
     now?: Date;
   }): Promise<BuyResponse> {
     const now = input.now ?? new Date();
-
-    if (input.request.runId && this.generatedRunSaleGate) {
-      const isAccepting = await this.generatedRunSaleGate.isAccepting({
-        runId: input.request.runId,
-        saleOfferId: input.request.saleOfferId,
-      });
-
-      if (!isAccepting) {
-        return this.rejectedResponse(
-          "inventory_not_initialized",
-          "run_not_accepting_traffic",
-          input.correlationId,
-          now,
-        );
-      }
-    }
 
     const reservation = this.createReservationHold(input.request, input.correlationId, now);
     const decision = await this.stockReservations.reserve({

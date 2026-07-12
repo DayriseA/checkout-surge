@@ -69,6 +69,7 @@ import {
   reservations,
   reserveInventoryStock,
   saleOffers,
+  setRunSaleEligibility,
 } from "@checkout-surge/db";
 import { resetTestDatabase } from "@checkout-surge/db/testing";
 import { correlationIdHeaderName, createSilentLogger } from "@checkout-surge/logger";
@@ -92,7 +93,6 @@ import {
 import type { DemoMaintenanceService } from "../src/services/demo-maintenance-service.js";
 import type { DemoRunController } from "../src/services/demo-run-service.js";
 import type { ErpStatusService } from "../src/services/erp-status-service.js";
-import { PostgresGeneratedRunSaleGate } from "../src/services/generated-run-sale-gate.js";
 import {
   type InventoryStatusReader,
   InventoryStatusService,
@@ -106,7 +106,6 @@ import {
 } from "../src/services/queue-status-service.js";
 import {
   type BuyPersistence,
-  type GeneratedRunSaleGate,
   ReserveOrderService,
   type StockReservationGateway,
 } from "../src/services/reserve-order-service.js";
@@ -177,7 +176,6 @@ function queueStatusFixture(): QueueStatus {
 async function buildTestServer(options: {
   persistence: BuyPersistence;
   stockReservations?: StockReservationGateway;
-  generatedRunSaleGate?: GeneratedRunSaleGate;
   inventoryReader?: InventoryStatusReader | null;
   readiness?: "ok" | "unavailable";
   generateId?: () => string;
@@ -264,9 +262,6 @@ async function buildTestServer(options: {
         enqueue: async () => undefined,
       },
       stockReservations: options.stockReservations ?? new AcceptingStockReservations(),
-      ...(options.generatedRunSaleGate
-        ? { generatedRunSaleGate: options.generatedRunSaleGate }
-        : {}),
       reservationHoldMinutes: 15,
       idempotencyTtlSeconds: 1800,
       pendingPersistenceRetryAfterSeconds: 30,
@@ -807,7 +802,6 @@ describe("API gateway routes", () => {
   async function trackedServer(options: {
     persistence: BuyPersistence;
     stockReservations?: StockReservationGateway;
-    generatedRunSaleGate?: GeneratedRunSaleGate;
     inventoryReader?: InventoryStatusReader | null;
     readiness?: "ok" | "unavailable";
     generateId?: () => string;
@@ -1821,6 +1815,97 @@ describe("API gateway routes", () => {
     });
   });
 
+  it.each([
+    ["run_not_accepting_traffic", 503, "inventory_not_initialized"],
+    ["inventory_not_initialized", 503, "inventory_not_initialized"],
+    ["idempotency_conflict", 409, "idempotency_conflict"],
+    ["sold_out", 409, "sold_out"],
+  ] as const)("does no PostgreSQL work for the route-level Redis %s decision", async (decision, expectedStatus, expectedOutcome) => {
+    const persistSecuredReservation = vi.fn();
+    const getPersistedBuyByReservationId = vi.fn();
+    const server = await trackedServer({
+      persistence: { persistSecuredReservation, getPersistedBuyByReservationId },
+      stockReservations: {
+        reserve: async () => ({ outcome: decision, reservation: null }),
+        markPendingPersistence: async () => undefined,
+        promoteAccepted: async () => undefined,
+      },
+    });
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/buy",
+      payload: {
+        saleOfferId: fixtureIds.saleOffer,
+        idempotencyKey: `route-rejection-${decision}`,
+        quantity: 1,
+      },
+    });
+
+    expect(response.statusCode).toBe(expectedStatus);
+    expect(buyResponseSchema.parse(response.json()).outcome).toBe(expectedOutcome);
+    expect(persistSecuredReservation).not.toHaveBeenCalled();
+    expect(getPersistedBuyByReservationId).not.toHaveBeenCalled();
+  });
+
+  it("does no PostgreSQL work when malformed Redis projection state raises an error", async () => {
+    const persistSecuredReservation = vi.fn();
+    const getPersistedBuyByReservationId = vi.fn();
+    const server = await trackedServer({
+      persistence: { persistSecuredReservation, getPersistedBuyByReservationId },
+      stockReservations: {
+        reserve: async () => {
+          throw new Error("Inventory scope must be catalog or generated_run");
+        },
+        markPendingPersistence: async () => undefined,
+        promoteAccepted: async () => undefined,
+      },
+    });
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/buy",
+      payload: {
+        saleOfferId: fixtureIds.saleOffer,
+        idempotencyKey: "route-malformed-projection",
+        quantity: 1,
+      },
+    });
+
+    expect(response.statusCode).toBe(500);
+    expect(persistSecuredReservation).not.toHaveBeenCalled();
+    expect(getPersistedBuyByReservationId).not.toHaveBeenCalled();
+  });
+
+  it("rejects invalid quantity at the HTTP schema without Redis or PostgreSQL work", async () => {
+    const persistSecuredReservation = vi.fn();
+    const getPersistedBuyByReservationId = vi.fn();
+    const reserve = vi.fn();
+    const server = await trackedServer({
+      persistence: { persistSecuredReservation, getPersistedBuyByReservationId },
+      stockReservations: {
+        reserve,
+        markPendingPersistence: async () => undefined,
+        promoteAccepted: async () => undefined,
+      },
+    });
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/buy",
+      payload: {
+        saleOfferId: fixtureIds.saleOffer,
+        idempotencyKey: "route-invalid-quantity",
+        quantity: 0,
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(reserve).not.toHaveBeenCalled();
+    expect(persistSecuredReservation).not.toHaveBeenCalled();
+    expect(getPersistedBuyByReservationId).not.toHaveBeenCalled();
+  });
+
   it("requires Redis configuration for production composition", () => {
     expect(() => loadApiConfig({ DATABASE_URL: "postgresql://localhost/test" })).toThrow(
       "REDIS_URL is required.",
@@ -1870,6 +1955,41 @@ describe("API buy persistence", () => {
     await connection?.close();
     await redis?.flushdb();
     redis?.disconnect();
+  });
+
+  it("keeps fresh catalog persistence within the measured six-round-trip budget", async () => {
+    const wireQueries: string[] = [];
+    const measuredConnection = createDatabaseConnection(requireTestDatabaseUrl(), {
+      max: 1,
+      debug: (_connection, query) => wireQueries.push(query),
+    });
+    try {
+      await measuredConnection.sql`select 1`;
+      expect(wireQueries.map((query) => query.trim().split(/\s+/u)[0]?.toLowerCase())).toEqual([
+        "select",
+        "select",
+      ]);
+      wireQueries.length = 0;
+      await new PostgresBuyPersistence(measuredConnection.db).persistSecuredReservation({
+        reservation: {
+          id: "aaaaaaaa-aaaa-4aaa-8aaa-000000000090",
+          saleOfferId: fixtureIds.saleOffer,
+          correlationId: "persistence-budget-correlation",
+          quantity: 1,
+          status: "secured",
+          reservationToken: "persistence-budget-token",
+          securedAt: "2026-06-20T12:00:00.000Z",
+          expiresAt: "2026-06-20T12:15:00.000Z",
+        },
+      });
+
+      const operationQueries = wireQueries.map((query) =>
+        query.trim().split(/\s+/u)[0]?.toLowerCase(),
+      );
+      expect(operationQueries).toEqual(["begin", "insert", "insert", "insert", "update", "commit"]);
+    } finally {
+      await measuredConnection.close();
+    }
   });
 
   it("persists a secured reservation, queued order, and initial events", async () => {
@@ -2733,7 +2853,7 @@ describe("API buy persistence", () => {
     }
   });
 
-  it("rejects generated-run buys after durable closure even when Redis sale state is stale", async () => {
+  it("rejects generated-run buys after lifecycle closure updates Redis admission", async () => {
     if (!connection || !redis) {
       throw new Error("Test infrastructure was not initialized.");
     }
@@ -2796,11 +2916,15 @@ describe("API buy persistence", () => {
         updatedAt: new Date("2026-01-01T00:00:05.000Z"),
       })
       .where(eq(demoRuns.id, fixtureIds.run));
+    await setRunSaleEligibility(redis, {
+      runId: fixtureIds.run,
+      saleOfferId: generatedSaleOfferId,
+      status: "closed",
+    });
 
     const server = await buildTestServer({
       persistence: new PostgresBuyPersistence(connection.db),
       stockReservations: createRedisStockReservations(redis),
-      generatedRunSaleGate: new PostgresGeneratedRunSaleGate(connection.db),
       generateId: randomUUID,
     });
 
@@ -2828,7 +2952,7 @@ describe("API buy persistence", () => {
         order: null,
       });
       expect(await redis.hget(inventoryKeys(generatedSaleOfferId).state, "runSaleStatus")).toBe(
-        "accepting",
+        "closed",
       );
       expect(await getInventoryStatus(redis, generatedSaleOfferId)).toMatchObject({
         remainingStock: 3,

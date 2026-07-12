@@ -41,8 +41,9 @@ export class PostgresBuyPersistence implements BuyPersistence {
   private async persistSecuredReservationInTransaction(
     tx: PostgresTransaction,
     hold: SecuredReservationHold,
+    runAdmissionVerified = false,
   ): Promise<PersistedBuy> {
-    if (hold.runId) {
+    if (hold.runId && !runAdmissionVerified) {
       const [run] = await tx
         .select({ saleOfferId: demoRuns.saleOfferId, status: demoRuns.status })
         .from(demoRuns)
@@ -295,7 +296,13 @@ export class PostgresBuyPersistence implements BuyPersistence {
 
     return {
       persistSecuredReservation: (input) =>
-        runTransaction((tx) => this.persistSecuredReservationInTransaction(tx, input.reservation)),
+        runTransaction((tx) =>
+          this.persistSecuredReservationInTransaction(
+            tx,
+            input.reservation,
+            Boolean(reservedClient),
+          ),
+        ),
       getPersistedBuyByReservationId: (reservationId) =>
         this.getPersistedBuyByReservationIdInDatabase(database, reservationId),
       recordPendingPersistence: (input) =>

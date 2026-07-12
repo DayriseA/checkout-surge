@@ -670,7 +670,7 @@ export class DemoRunService implements DemoRunController {
       });
     }
 
-    const claimed = await this.options.db.transaction(async (tx) => {
+    const completionClaim = await this.options.db.transaction(async (tx) => {
       const [inserted] = await tx
         .insert(demoRunFinalizations)
         .values({
@@ -689,8 +689,9 @@ export class DemoRunService implements DemoRunController {
         })
         .onConflictDoNothing({ target: demoRunFinalizations.runId })
         .returning({ runId: demoRunFinalizations.runId });
+      let transitioned = false;
       if (inserted) {
-        await tx
+        const [updated] = await tx
           .update(demoRuns)
           .set({
             status: "draining",
@@ -700,17 +701,35 @@ export class DemoRunService implements DemoRunController {
           })
           .where(
             and(eq(demoRuns.id, report.runId), inArray(demoRuns.status, ["starting", "active"])),
-          );
+          )
+          .returning({ id: demoRuns.id });
+        transitioned = Boolean(updated);
       }
-      return inserted;
+      return { inserted: Boolean(inserted), transitioned };
     });
-    if (!claimed) {
+
+    if (completionClaim.transitioned || (completionClaim.inserted && run.status === "draining")) {
+      await setRunSaleEligibility(this.options.redis, {
+        runId: report.runId,
+        saleOfferId: run.saleOfferId,
+        status: "closed",
+      });
+    }
+
+    if (!completionClaim.inserted) {
       [run] = await this.options.db
         .select()
         .from(demoRuns)
         .where(eq(demoRuns.id, report.runId))
         .limit(1);
       if (!run) throw new Error("Traffic completion run disappeared during reconciliation.");
+      if (run.status === "draining") {
+        await setRunSaleEligibility(this.options.redis, {
+          runId: report.runId,
+          saleOfferId: requireRunSaleOfferId(toDemoRunSnapshot(run)),
+          status: "closed",
+        });
+      }
       const [first] = await this.options.db
         .select()
         .from(demoRunFinalizations)
@@ -790,16 +809,9 @@ export class DemoRunService implements DemoRunController {
         .where(eq(demoRunFinalizations.runId, report.runId));
     });
 
-    if (run.saleOfferId) {
-      await setRunSaleEligibility(this.options.redis, {
-        runId: report.runId,
-        saleOfferId: run.saleOfferId,
-        status: "closed",
-      });
-    }
-
     const updatedRun = await this.readRunSnapshot(report.runId);
-    if (claimed) await this.publishRunEvent("run.updated", updatedRun, report.correlationId, now);
+    if (completionClaim.inserted)
+      await this.publishRunEvent("run.updated", updatedRun, report.correlationId, now);
     return (
       (await this.options.finalizationService?.finalizeRun(report.runId, report.correlationId)) ??
       updatedRun
@@ -1046,14 +1058,17 @@ export class DemoRunService implements DemoRunController {
       });
       const updatedRun = await this.readRunSnapshot(runId);
 
-      if (run.saleOfferId) {
+      if (
+        (updatedRun.status === "completed" || updatedRun.status === "failed") &&
+        updatedRun.saleOfferId
+      ) {
         await setRunSaleEligibility(this.options.redis, {
           runId,
-          saleOfferId: run.saleOfferId,
+          saleOfferId: updatedRun.saleOfferId,
           status: "closed",
         }).catch((error: unknown) => {
           this.options.logger.warn(
-            { err: error, runId, saleOfferId: run.saleOfferId },
+            { err: error, runId, saleOfferId: updatedRun.saleOfferId },
             "Could not close run sale eligibility after run failure.",
           );
         });

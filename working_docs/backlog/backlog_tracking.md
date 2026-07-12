@@ -2,25 +2,25 @@
 
 Tasks are listed in their intended execution order. Replace `⬜` with `✅` when a task is complete.
 
-⬜ [Task 01: Add an automated cross-service composition test (and the frozen-behavior characterization suite)](./task_01.md)
+✅ [Task 01: Add an automated cross-service composition test (and the frozen-behavior characterization suite)](./task_01.md)
 
-⬜ [Task 02: Build a durable PostgreSQL-to-BullMQ order-dispatch handoff (transactional outbox or autonomous scanner)](./task_02.md)
+✅ [Task 02: Build a durable PostgreSQL-to-BullMQ order-dispatch handoff (transactional outbox or autonomous scanner)](./task_02.md)
 
-⬜ [Task 03: Add autonomous reconciliation for pending Redis holds after run eligibility closes](./task_03.md)
+✅ [Task 03: Add autonomous reconciliation for pending Redis holds after run eligibility closes](./task_03.md)
 
-⬜ [Task 04: Give ERP results a durable persistence/idempotency boundary so orders cannot be stranded `processing`](./task_04.md)
+✅ [Task 04: Give ERP results a durable persistence/idempotency boundary so orders cannot be stranded `processing`](./task_04.md)
 
-⬜ [Task 05: Fence all run lifecycle transitions with compare-and-set (late start acknowledgement can resurrect a terminal run)](./task_05.md)
+✅ [Task 05: Fence all run lifecycle transitions with compare-and-set (late start acknowledgement can resurrect a terminal run)](./task_05.md)
 
-⬜ [Task 06: Make admin reset a fenced terminal transition (no admission or job cleanup after the summary is written)](./task_06.md)
+✅ [Task 06: Make admin reset a fenced terminal transition (no admission or job cleanup after the summary is written)](./task_06.md)
 
-⬜ [Task 07: Enforce the single-active-run invariant at the database level](./task_07.md)
+✅ [Task 07: Enforce the single-active-run invariant at the database level](./task_07.md)
 
-⬜ [Task 08: Adopt ports-and-adapters seams in the lifecycle services](./task_08.md)
+✅ [Task 08: Adopt ports-and-adapters seams in the lifecycle services](./task_08.md)
 
-⬜ [Task 09: Make load-completion delivery durably owned (outbox with idempotent acknowledgement, or an API traffic watchdog)](./task_09.md)
+✅ [Task 09: Make load-completion delivery durably owned (outbox with idempotent acknowledgement, or an API traffic watchdog)](./task_09.md)
 
-⬜ [Task 10: Replace the per-request PostgreSQL eligibility gate with a Redis-first, fail-closed projection and streamline accepted-path persistence](./task_10.md)
+✅ [Task 10: Replace the per-request PostgreSQL eligibility gate with a Redis-first, fail-closed projection and streamline accepted-path persistence](./task_10.md)
 
 ⬜ [Task 11: Remove default control-plane credentials and unnecessary published ports from the Docker Compose runtime](./task_11.md)
 
