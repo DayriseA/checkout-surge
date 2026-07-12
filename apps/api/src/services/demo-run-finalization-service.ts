@@ -26,7 +26,7 @@ import {
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { and, eq, inArray } from "drizzle-orm";
 import type { PendingPersistenceReconciler } from "./pending-persistence-reconciler.js";
-import { PostgresTerminalDemoRunSummaryWriter } from "./terminal-demo-run-transition.js";
+import type { TerminalDemoRunWriter } from "./terminal-demo-run-writer.js";
 
 export interface DemoRunFinalizationController {
   finalizeRun(runId: string, correlationId?: string): Promise<DemoRunSnapshot | null>;
@@ -44,20 +44,17 @@ type FinalizationDecision =
     };
 
 export class DemoRunFinalizationService implements DemoRunFinalizationController {
-  private readonly summaryWriter: PostgresTerminalDemoRunSummaryWriter;
-
   constructor(
     private readonly options: {
       db: CheckoutSurgeDatabase;
       redis: CheckoutSurgeRedis;
       logger: CheckoutSurgeLogger;
       pendingPersistenceReconciler?: Pick<PendingPersistenceReconciler, "reconcileSaleOffer">;
+      terminalRunWriter: Pick<TerminalDemoRunWriter, "write">;
       now?: () => Date;
       generateId?: () => string;
     },
-  ) {
-    this.summaryWriter = new PostgresTerminalDemoRunSummaryWriter(options.db);
-  }
+  ) {}
 
   async finalizeReadyRuns(): Promise<number> {
     const rows = await this.options.db
@@ -182,7 +179,7 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
       escalatedRecoveryCount: latestRecoveryPressure.escalatedCount,
     });
 
-    const wroteSummary = await this.summaryWriter.write({
+    const wroteSummary = await this.options.terminalRunWriter.write({
       run: row.run,
       terminalStatus: latestFailureReason ? "failed" : "completed",
       failureReason: latestFailureReason,

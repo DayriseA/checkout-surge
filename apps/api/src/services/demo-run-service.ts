@@ -66,7 +66,7 @@ import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { ApiHttpError } from "../runtime/errors.js";
 import type { DashboardBusinessOutcomeReader } from "./dashboard-recovery-service.js";
 import type { DemoRunFinalizationController } from "./demo-run-finalization-service.js";
-import { PostgresTerminalDemoRunSummaryWriter } from "./terminal-demo-run-transition.js";
+import type { TerminalDemoRunWriter } from "./terminal-demo-run-writer.js";
 
 const demoRunStartLockKey = "checkout_surge_demo_run_start";
 const singleNonTerminalRunIndexName = "demo_runs_single_non_terminal_idx";
@@ -264,8 +264,6 @@ export function isSingleNonTerminalRunViolation(error: unknown): boolean {
 }
 
 export class DemoRunService implements DemoRunController {
-  private readonly summaryWriter: PostgresTerminalDemoRunSummaryWriter;
-
   constructor(
     private readonly options: {
       db: CheckoutSurgeDatabase;
@@ -274,6 +272,7 @@ export class DemoRunService implements DemoRunController {
       publicRunBudgetStore: PublicRunBudgetStore;
       trafficMetricStore: RedisDashboardTrafficMetricStore;
       businessOutcomeReader: DashboardBusinessOutcomeReader;
+      terminalRunWriter: Pick<TerminalDemoRunWriter, "write">;
       finalizationService?: DemoRunFinalizationController;
       apiBaseUrl: string;
       buyEndpointPath: string;
@@ -281,9 +280,7 @@ export class DemoRunService implements DemoRunController {
       now?: () => Date;
       generateId?: () => string;
     },
-  ) {
-    this.summaryWriter = new PostgresTerminalDemoRunSummaryWriter(options.db);
-  }
+  ) {}
 
   async listPublicPresets(): Promise<PublicPresetListResponse> {
     const rows = await this.options.db
@@ -900,7 +897,7 @@ export class DemoRunService implements DemoRunController {
         failureReason,
       );
 
-      await this.summaryWriter.write({
+      await this.options.terminalRunWriter.write({
         run,
         terminalStatus: "failed",
         failureReason,

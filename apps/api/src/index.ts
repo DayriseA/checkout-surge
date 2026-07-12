@@ -54,6 +54,7 @@ import {
   ReserveOrderService,
 } from "./services/reserve-order-service.js";
 import { RunHistoryService } from "./services/run-history-service.js";
+import { PostgresTerminalDemoRunSummaryWriter } from "./services/terminal-demo-run-transition.js";
 
 export const apiAppName = "api" as const;
 export const apiAppDependencies = [contractsPackageName, dbPackageName, loggerPackageName] as const;
@@ -165,10 +166,12 @@ export async function startApiServer(): Promise<void> {
     getStatus: (saleOfferId) => getInventoryStatus(redis, saleOfferId),
   });
   const trafficMetricStore = new RedisDashboardTrafficMetricStore(redis);
+  const terminalRunWriter = new PostgresTerminalDemoRunSummaryWriter(connection.db);
   const demoMaintenanceService = new DemoMaintenanceService({
     db: connection.db,
     redis,
     queueMaintenance: demoQueueMaintenance,
+    terminalRunWriter,
     logger,
   });
   const runHistoryService = new RunHistoryService({ db: connection.db });
@@ -190,12 +193,14 @@ export async function startApiServer(): Promise<void> {
     redis,
     logger,
     pendingPersistenceReconciler,
+    terminalRunWriter,
   });
   const demoRunStartupReconciliationService = new DemoRunStartupReconciliationService({
     db: connection.db,
     redis,
     logger,
     pendingPersistenceReconciler,
+    terminalRunWriter,
   });
   const demoRunService = new DemoRunService({
     db: connection.db,
@@ -207,6 +212,7 @@ export async function startApiServer(): Promise<void> {
     publicRunBudgetStore: new RedisPublicRunBudgetStore(redis),
     trafficMetricStore,
     businessOutcomeReader,
+    terminalRunWriter,
     finalizationService: demoRunFinalizationService,
     apiBaseUrl: config.apiBaseUrl,
     buyEndpointPath: "/buy",

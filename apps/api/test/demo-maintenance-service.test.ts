@@ -31,6 +31,7 @@ import {
   ReserveOrderService,
   type StockReservationGateway,
 } from "../src/services/reserve-order-service.js";
+import { PostgresTerminalDemoRunSummaryWriter } from "../src/services/terminal-demo-run-transition.js";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const dbPackageRoot = path.resolve(packageRoot, "../../packages/db");
@@ -85,8 +86,23 @@ describe("demo maintenance service", () => {
   it("fails in-progress runs, closes sale eligibility, and cleans reset-owned queues", async () => {
     const db = requireConnection(connection).db;
     const redisClient = requireRedis(redis);
+    const writerOperations: string[] = [];
+    const postgresTerminalRunWriter = new PostgresTerminalDemoRunSummaryWriter(db);
+    const claimTerminalRun = vi.fn(
+      async (...args: Parameters<typeof postgresTerminalRunWriter.claimTerminalRun>) => {
+        writerOperations.push("claim");
+        return postgresTerminalRunWriter.claimTerminalRun(...args);
+      },
+    );
+    const writeAfterTerminalClaims = vi.fn(
+      async (...args: Parameters<typeof postgresTerminalRunWriter.writeAfterTerminalClaims>) => {
+        writerOperations.push("write");
+        return postgresTerminalRunWriter.writeAfterTerminalClaims(...args);
+      },
+    );
     const queueMaintenance = {
       cleanResetOwnedQueues: vi.fn(async () => {
+        writerOperations.push("cleanup");
         const runsAtCleanup = await db
           .select({ id: demoRuns.id, status: demoRuns.status })
           .from(demoRuns)
@@ -104,6 +120,7 @@ describe("demo maintenance service", () => {
     };
     const service = new DemoMaintenanceService({
       db,
+      terminalRunWriter: { claimTerminalRun, writeAfterTerminalClaims },
       redis: redisClient,
       queueMaintenance,
       logger: createSilentLogger("api"),
@@ -140,6 +157,16 @@ describe("demo maintenance service", () => {
       correlationId: "corr-reset",
     });
     expect(queueMaintenance.cleanResetOwnedQueues).toHaveBeenCalledOnce();
+    expect(claimTerminalRun).toHaveBeenCalledOnce();
+    expect(claimTerminalRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: ids.activeRun,
+        allowedCurrentStatuses: ["starting", "active", "draining"],
+      }),
+    );
+    expect(writeAfterTerminalClaims).toHaveBeenCalledOnce();
+    expect(writeAfterTerminalClaims.mock.calls[0]?.[0]).toHaveLength(3);
+    expect(writerOperations).toEqual(["claim", "cleanup", "write"]);
     const inProgressRunIds = new Set<string>([ids.startingRun, ids.activeRun, ids.drainingRun]);
     expect(
       runs
@@ -158,7 +185,7 @@ describe("demo maintenance service", () => {
           status: "failed",
           trafficStatus: "failed",
           failureReason: "admin_reset",
-          finalizedAt: new Date("2026-06-20T00:00:10.000Z"),
+          finalizedAt: new Date("2026-06-20T00:00:06.000Z"),
         },
         {
           id: ids.activeRun,
@@ -172,7 +199,7 @@ describe("demo maintenance service", () => {
           status: "failed",
           trafficStatus: "failed",
           failureReason: "admin_reset",
-          finalizedAt: new Date("2026-06-20T00:00:10.000Z"),
+          finalizedAt: new Date("2026-06-20T00:00:06.000Z"),
         },
       ]),
     );
@@ -192,7 +219,7 @@ describe("demo maintenance service", () => {
           runId: ids.startingRun,
           status: "failed",
           failureReason: "admin_reset",
-          endedAt: new Date("2026-06-20T00:00:10.000Z"),
+          endedAt: new Date("2026-06-20T00:00:06.000Z"),
         },
         {
           runId: ids.activeRun,
@@ -204,7 +231,7 @@ describe("demo maintenance service", () => {
           runId: ids.drainingRun,
           status: "failed",
           failureReason: "admin_reset",
-          endedAt: new Date("2026-06-20T00:00:10.000Z"),
+          endedAt: new Date("2026-06-20T00:00:06.000Z"),
         },
       ]),
     );
@@ -229,14 +256,14 @@ describe("demo maintenance service", () => {
     expect(summaries.find((summary) => summary.runId === ids.drainingRun)).toMatchObject({
       httpSummary: {
         plannedRequests: 10,
-        emittedRequests: 10,
-        completedRequests: 10,
+        emittedRequests: 0,
+        completedRequests: 0,
       },
       trafficDeliverySummary: {
         plannedRequests: 10,
-        emittedRequests: 10,
-        droppedIterations: 0,
-        trafficDeliveryStatus: "complete",
+        emittedRequests: 0,
+        droppedIterations: 10,
+        trafficDeliveryStatus: "failed",
       },
     });
     await expect(
@@ -269,6 +296,7 @@ describe("demo maintenance service", () => {
     };
     const service = new DemoMaintenanceService({
       db,
+      terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db),
       redis: redisClient,
       queueMaintenance,
       logger: createSilentLogger("api"),
@@ -350,6 +378,7 @@ describe("demo maintenance service", () => {
     let resetNow = new Date("2026-06-20T00:00:10.000Z");
     const service = new DemoMaintenanceService({
       db,
+      terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db),
       redis: redisClient,
       queueMaintenance,
       logger: createSilentLogger("api"),
@@ -439,6 +468,7 @@ describe("demo maintenance service", () => {
     });
     const maintenanceService = new DemoMaintenanceService({
       db,
+      terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db),
       redis: redisClient,
       queueMaintenance: {
         cleanResetOwnedQueues: vi
@@ -505,6 +535,7 @@ describe("demo maintenance service", () => {
     };
     const service = new DemoMaintenanceService({
       db,
+      terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db),
       redis: redisClient,
       queueMaintenance: {
         cleanResetOwnedQueues: vi
@@ -618,6 +649,7 @@ describe("demo maintenance service", () => {
     };
     const maintenanceService = new DemoMaintenanceService({
       db,
+      terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db),
       redis: redisClient,
       queueMaintenance,
       logger: createSilentLogger("api"),
@@ -686,6 +718,7 @@ describe("demo maintenance service", () => {
     };
     const service = new DemoMaintenanceService({
       db,
+      terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db),
       redis: redisClient,
       queueMaintenance,
       logger: createSilentLogger("api"),
@@ -719,6 +752,7 @@ describe("demo maintenance service", () => {
     const redisClient = requireRedis(redis);
     const service = new DemoMaintenanceService({
       db,
+      terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db),
       redis: redisClient,
       queueMaintenance: {
         cleanResetOwnedQueues: vi
@@ -772,6 +806,7 @@ describe("demo maintenance service", () => {
     const redisClient = requireRedis(redis);
     const service = new DemoMaintenanceService({
       db,
+      terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db),
       redis: redisClient,
       queueMaintenance: {
         cleanResetOwnedQueues: vi
@@ -806,6 +841,78 @@ describe("demo maintenance service", () => {
     expect(runRows).toHaveLength(0);
     expect(saleOfferRows).toEqual([{ id: ids.catalogOffer, purpose: "catalog" }]);
   });
+
+  it.each([
+    {
+      status: "starting" as const,
+      trafficStatus: "starting" as const,
+      runId: ids.startingRun,
+      saleOfferId: ids.startingOffer,
+      runInventoryStatus: "accepting" as const,
+    },
+    {
+      status: "active" as const,
+      trafficStatus: "active" as const,
+      runId: ids.activeRun,
+      saleOfferId: ids.activeOffer,
+      runInventoryStatus: "accepting" as const,
+    },
+    {
+      status: "draining" as const,
+      trafficStatus: "succeeded" as const,
+      runId: ids.drainingRun,
+      saleOfferId: ids.drainingOffer,
+      runInventoryStatus: "closed" as const,
+    },
+  ])("freshly claims and summarizes one $status run", async (fixture) => {
+    const db = requireConnection(connection).db;
+    const redisClient = requireRedis(redis);
+    await seedBase(db);
+    await seedRun(db, redisClient, {
+      ...fixture,
+      failureReason: null,
+    });
+    const postgresTerminalRunWriter = new PostgresTerminalDemoRunSummaryWriter(db);
+    const claimTerminalRun = vi.fn(
+      postgresTerminalRunWriter.claimTerminalRun.bind(postgresTerminalRunWriter),
+    );
+    const service = new DemoMaintenanceService({
+      db,
+      redis: redisClient,
+      queueMaintenance: {
+        cleanResetOwnedQueues: async () => ({ cleanedQueueCount: 0, cleanedJobCount: 0 }),
+      },
+      terminalRunWriter: {
+        claimTerminalRun,
+        writeAfterTerminalClaims:
+          postgresTerminalRunWriter.writeAfterTerminalClaims.bind(postgresTerminalRunWriter),
+      },
+      logger: createSilentLogger("api"),
+      now: () => new Date("2026-06-20T00:00:10.000Z"),
+    });
+
+    await expect(service.reset(`corr-reset-${fixture.status}`)).resolves.toMatchObject({
+      failedRunCount: 1,
+    });
+    expect(claimTerminalRun).toHaveBeenCalledOnce();
+    expect(claimTerminalRun).toHaveBeenCalledWith({
+      runId: fixture.runId,
+      terminalStatus: "failed",
+      failureReason: "admin_reset",
+      finalizedAt: new Date("2026-06-20T00:00:10.000Z"),
+      allowedCurrentStatuses: ["starting", "active", "draining"],
+      terminalTrafficStatus: "failed",
+    });
+    await expect(
+      db.select().from(demoRunSummaries).where(eq(demoRunSummaries.runId, fixture.runId)),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        runId: fixture.runId,
+        status: "failed",
+        failureReason: "admin_reset",
+      }),
+    ]);
+  });
 });
 
 async function seedRuns(
@@ -816,9 +923,9 @@ async function seedRuns(
   await seedRun(db, redis, {
     runId: ids.startingRun,
     saleOfferId: ids.startingOffer,
-    status: "starting",
-    trafficStatus: "starting",
-    failureReason: null,
+    status: "failed",
+    trafficStatus: "failed",
+    failureReason: "admin_reset",
     runInventoryStatus: "accepting",
   });
   await seedRun(db, redis, {
@@ -832,9 +939,9 @@ async function seedRuns(
   await seedRun(db, redis, {
     runId: ids.drainingRun,
     saleOfferId: ids.drainingOffer,
-    status: "draining",
-    trafficStatus: "succeeded",
-    failureReason: null,
+    status: "failed",
+    trafficStatus: "failed",
+    failureReason: "admin_reset",
     runInventoryStatus: "closed",
   });
   await seedRun(db, redis, {

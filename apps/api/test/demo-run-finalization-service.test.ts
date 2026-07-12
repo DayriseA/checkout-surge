@@ -33,7 +33,10 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { DemoMaintenanceService } from "../src/services/demo-maintenance-service.js";
 import { DemoRunFinalizationService } from "../src/services/demo-run-finalization-service.js";
 import type { PendingPersistenceReconciler } from "../src/services/pending-persistence-reconciler.js";
-import { terminalDemoRunTransitionLockKey } from "../src/services/terminal-demo-run-transition.js";
+import {
+  PostgresTerminalDemoRunSummaryWriter,
+  terminalDemoRunTransitionLockKey,
+} from "../src/services/terminal-demo-run-transition.js";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const dbPackageRoot = path.resolve(packageRoot, "../../packages/db");
@@ -151,7 +154,11 @@ describe("demo run finalization service", () => {
   it("writes one immutable completed summary after business work settles", async () => {
     const db = requireConnection(connection).db;
     const redisClient = requireRedis(redis);
-    const service = createService(connection, redis);
+    const postgresTerminalRunWriter = new PostgresTerminalDemoRunSummaryWriter(db);
+    const writeTerminalRun = vi.fn(postgresTerminalRunWriter.write.bind(postgresTerminalRunWriter));
+    const service = createService(connection, redis, {
+      terminalRunWriter: { write: writeTerminalRun },
+    });
 
     await seedDrainingRun({ db, redis: redisClient, trafficDeliveryStatus: "complete" });
     await db.insert(demoRunReservationOutcomes).values({
@@ -213,6 +220,14 @@ describe("demo run finalization service", () => {
       acceptedReservations: 2,
       source: "redis",
     });
+    expect(writeTerminalRun).toHaveBeenCalledOnce();
+    expect(writeTerminalRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        terminalStatus: "completed",
+        allowedCurrentStatuses: ["draining"],
+        finalizedAt: new Date("2026-06-20T00:00:10.000Z"),
+      }),
+    );
   });
 
   it("blocks on pending reconciliation, then settles after resolution", async () => {
@@ -347,6 +362,7 @@ describe("demo run finalization service", () => {
     const resetConnection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
     const resetService = new DemoMaintenanceService({
       db: resetConnection.db,
+      terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(resetConnection.db),
       redis: redisClient,
       queueMaintenance: {
         cleanResetOwnedQueues: async () => ({ cleanedQueueCount: 0, cleanedJobCount: 0 }),
@@ -454,10 +470,16 @@ function createService(
   redis: ReturnType<typeof createRedisClient> | null,
   options: {
     pendingPersistenceReconciler?: Pick<PendingPersistenceReconciler, "reconcileSaleOffer">;
+    terminalRunWriter?: ConstructorParameters<
+      typeof DemoRunFinalizationService
+    >[0]["terminalRunWriter"];
   } = {},
 ): DemoRunFinalizationService {
   return new DemoRunFinalizationService({
     db: requireConnection(connection).db,
+    terminalRunWriter:
+      options.terminalRunWriter ??
+      new PostgresTerminalDemoRunSummaryWriter(requireConnection(connection).db),
     redis: requireRedis(redis),
     logger: createSilentLogger("api"),
     now: () => new Date("2026-06-20T00:00:10.000Z"),

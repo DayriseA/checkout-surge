@@ -36,6 +36,7 @@ import {
   validateAcceptedRunSnapshot,
   validatePublicRuntimePolicyUpdate,
 } from "../src/services/demo-run-service.js";
+import { PostgresTerminalDemoRunSummaryWriter } from "../src/services/terminal-demo-run-transition.js";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const dbPackageRoot = path.resolve(packageRoot, "../../packages/db");
@@ -677,7 +678,12 @@ describe("demo-run lifecycle start gating", () => {
   });
 
   it("writes a terminal summary when inventory initialization fails", async () => {
-    const service = createStartService(requireConnection(connection), redisUnavailable());
+    const db = requireConnection(connection).db;
+    const postgresTerminalRunWriter = new PostgresTerminalDemoRunSummaryWriter(db);
+    const writeTerminalRun = vi.fn(postgresTerminalRunWriter.write.bind(postgresTerminalRunWriter));
+    const service = createStartService(requireConnection(connection), redisUnavailable(), {
+      terminalRunWriter: { write: writeTerminalRun },
+    });
 
     await expect(
       service.startRun({ presetSlug: "preview-1k", operatorMode: "admin" }, "corr-start"),
@@ -700,6 +706,14 @@ describe("demo-run lifecycle start gating", () => {
       trafficDeliveryStatus: "failed",
       droppedIterations: 10_000,
     });
+    expect(writeTerminalRun).toHaveBeenCalledOnce();
+    expect(writeTerminalRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        failureReason: "inventory_initialization_failed",
+        allowedCurrentStatuses: ["starting", "active"],
+        terminalTrafficStatus: "failed",
+      }),
+    );
   });
 
   it("writes a terminal summary when load-orchestrator traffic start fails", async () => {
@@ -856,6 +870,7 @@ describe("demo-run lifecycle start gating", () => {
     });
     const resetService = new DemoMaintenanceService({
       db: resetConnection.db,
+      terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(resetConnection.db),
       redis: requireRedis(redis),
       queueMaintenance: {
         cleanResetOwnedQueues: async () => ({ cleanedQueueCount: 0, cleanedJobCount: 0 }),
@@ -982,6 +997,7 @@ function createPresetManagementService(
 ): DemoRunService {
   return new DemoRunService({
     db: connection.db,
+    terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(connection.db),
     redis: {} as never,
     trafficExecutionGateway: {
       start: async () => ({
@@ -1010,6 +1026,7 @@ function createStartService(
       typeof DemoRunService
     >[0]["trafficExecutionGateway"];
     publicRunBudgetStore?: ConstructorParameters<typeof DemoRunService>[0]["publicRunBudgetStore"];
+    terminalRunWriter?: ConstructorParameters<typeof DemoRunService>[0]["terminalRunWriter"];
   } = {},
 ): DemoRunService {
   const ids = [
@@ -1021,6 +1038,8 @@ function createStartService(
 
   return new DemoRunService({
     db: connection.db,
+    terminalRunWriter:
+      overrides.terminalRunWriter ?? new PostgresTerminalDemoRunSummaryWriter(connection.db),
     redis,
     trafficExecutionGateway: overrides.trafficExecutionGateway ?? {
       start: async (request) => ({

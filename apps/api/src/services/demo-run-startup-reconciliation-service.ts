@@ -19,7 +19,7 @@ import {
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { and, eq, inArray } from "drizzle-orm";
 import type { PendingPersistenceReconciler } from "./pending-persistence-reconciler.js";
-import { PostgresTerminalDemoRunSummaryWriter } from "./terminal-demo-run-transition.js";
+import type { TerminalDemoRunWriter } from "./terminal-demo-run-writer.js";
 
 const apiRestartInterruptedRunReason = "api_restart_interrupted_run";
 
@@ -31,19 +31,16 @@ export interface DemoRunStartupReconciliationSummary {
 }
 
 export class DemoRunStartupReconciliationService {
-  private readonly summaryWriter: PostgresTerminalDemoRunSummaryWriter;
-
   constructor(
     private readonly options: {
       db: CheckoutSurgeDatabase;
       redis: CheckoutSurgeRedis;
       logger: CheckoutSurgeLogger;
       pendingPersistenceReconciler?: Pick<PendingPersistenceReconciler, "reconcileSaleOffer">;
+      terminalRunWriter: Pick<TerminalDemoRunWriter, "write">;
       now?: () => Date;
     },
-  ) {
-    this.summaryWriter = new PostgresTerminalDemoRunSummaryWriter(options.db);
-  }
+  ) {}
 
   async reconcile(): Promise<DemoRunStartupReconciliationSummary> {
     const now = this.now();
@@ -84,7 +81,7 @@ export class DemoRunStartupReconciliationService {
         capturedAt: now,
       });
       const trafficSummary = interruptedTrafficSummary(configSnapshot);
-      const wroteSummary = await this.summaryWriter.write({
+      const wroteSummary = await this.options.terminalRunWriter.write({
         run,
         terminalStatus: "failed",
         failureReason: apiRestartInterruptedRunReason,

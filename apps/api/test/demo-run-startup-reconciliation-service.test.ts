@@ -18,6 +18,7 @@ import { createSilentLogger } from "@checkout-surge/logger";
 import { eq, inArray } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { DemoRunStartupReconciliationService } from "../src/services/demo-run-startup-reconciliation-service.js";
+import { PostgresTerminalDemoRunSummaryWriter } from "../src/services/terminal-demo-run-transition.js";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const dbPackageRoot = path.resolve(packageRoot, "../../packages/db");
@@ -61,7 +62,7 @@ describe("demo run startup reconciliation service", () => {
     }
   });
 
-  it("fails interrupted starting and active runs while preserving draining recovery", async () => {
+  it("fails an interrupted active run through the terminal writer", async () => {
     const db = requireConnection(connection).db;
     const redisClient = requireRedis(redis);
     const reconcileSaleOffer = vi.fn(async () => ({
@@ -71,15 +72,18 @@ describe("demo run startup reconciliation service", () => {
       reversed: 0,
       failed: 0,
     }));
+    const postgresTerminalRunWriter = new PostgresTerminalDemoRunSummaryWriter(db);
+    const writeTerminalRun = vi.fn(postgresTerminalRunWriter.write.bind(postgresTerminalRunWriter));
     const service = new DemoRunStartupReconciliationService({
       db,
+      terminalRunWriter: { write: writeTerminalRun },
       redis: redisClient,
       logger: createSilentLogger("api"),
       pendingPersistenceReconciler: { reconcileSaleOffer },
       now: () => new Date("2026-06-20T00:00:10.000Z"),
     });
 
-    await seedRunFixtures(db, redisClient);
+    await seedRunFixtures(db, redisClient, "active");
 
     const summary = await service.reconcile();
     const runs = await db
@@ -92,29 +96,26 @@ describe("demo run startup reconciliation service", () => {
       .where(inArray(demoRunSummaries.runId, [ids.startingRun, ids.activeRun, ids.drainingRun]));
 
     expect(summary).toEqual({
-      interruptedRunCount: 2,
-      closedSaleOfferCount: 3,
-      summaryCreatedCount: 2,
-      recoverableDrainingRunCount: 1,
+      interruptedRunCount: 1,
+      closedSaleOfferCount: 1,
+      summaryCreatedCount: 1,
+      recoverableDrainingRunCount: 0,
     });
-    expect(reconcileSaleOffer).toHaveBeenCalledWith(ids.drainingOffer, {
-      runId: ids.drainingRun,
-    });
-    expect(runs.find((run) => run.id === ids.startingRun)).toMatchObject({
-      status: "failed",
-      trafficStatus: "failed",
-      failureReason: "api_restart_interrupted_run",
-    });
+    expect(writeTerminalRun).toHaveBeenCalledOnce();
+    expect(writeTerminalRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        run: expect.objectContaining({ id: ids.activeRun }),
+        allowedCurrentStatuses: ["starting", "active"],
+        terminalTrafficStatus: "failed",
+      }),
+    );
+    expect(reconcileSaleOffer).not.toHaveBeenCalled();
     expect(runs.find((run) => run.id === ids.activeRun)).toMatchObject({
       status: "failed",
       trafficStatus: "failed",
       failureReason: "api_restart_interrupted_run",
     });
-    expect(runs.find((run) => run.id === ids.drainingRun)).toMatchObject({
-      status: "draining",
-      trafficStatus: "succeeded",
-    });
-    expect(summaries).toHaveLength(2);
+    expect(summaries).toHaveLength(1);
     expect(
       summaries.map((runSummary) => ({
         runId: runSummary.runId,
@@ -124,41 +125,22 @@ describe("demo run startup reconciliation service", () => {
     ).toEqual(
       expect.arrayContaining([
         {
-          runId: ids.startingRun,
-          status: "failed",
-          failureReason: "api_restart_interrupted_run",
-        },
-        {
           runId: ids.activeRun,
           status: "failed",
           failureReason: "api_restart_interrupted_run",
         },
       ]),
     );
-    expect(
-      summaries.find((runSummary) => runSummary.runId === ids.startingRun)?.trafficDeliverySummary,
-    ).toMatchObject({
-      plannedRequests: 20,
+    expect(summaries[0]?.trafficDeliverySummary).toMatchObject({
+      plannedRequests: 10,
       emittedRequests: 0,
-      droppedIterations: 20,
+      droppedIterations: 10,
       trafficDeliveryStatus: "failed",
     });
     await expect(
       isRunSaleEligible(redisClient, {
-        runId: ids.startingRun,
-        saleOfferId: ids.startingOffer,
-      }),
-    ).resolves.toBe(false);
-    await expect(
-      isRunSaleEligible(redisClient, {
         runId: ids.activeRun,
         saleOfferId: ids.activeOffer,
-      }),
-    ).resolves.toBe(false);
-    await expect(
-      isRunSaleEligible(redisClient, {
-        runId: ids.drainingRun,
-        saleOfferId: ids.drainingOffer,
       }),
     ).resolves.toBe(false);
   });
@@ -168,12 +150,13 @@ describe("demo run startup reconciliation service", () => {
     const redisClient = requireRedis(redis);
     const service = new DemoRunStartupReconciliationService({
       db,
+      terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db),
       redis: redisClient,
       logger: createSilentLogger("api"),
       now: () => new Date("2026-06-20T00:00:10.000Z"),
     });
 
-    await seedRunFixtures(db, redisClient);
+    await seedRunFixtures(db, redisClient, "starting");
 
     await service.reconcile();
     const second = await service.reconcile();
@@ -184,13 +167,47 @@ describe("demo run startup reconciliation service", () => {
 
     expect(second.interruptedRunCount).toBe(0);
     expect(second.summaryCreatedCount).toBe(0);
-    expect(summaries).toHaveLength(2);
+    expect(summaries).toHaveLength(1);
+  });
+
+  it("keeps a draining run recoverable and reconciles its pending persistence", async () => {
+    const db = requireConnection(connection).db;
+    const redisClient = requireRedis(redis);
+    const reconcileSaleOffer = vi.fn(async () => ({
+      found: 0,
+      materialized: 0,
+      reconciled: 0,
+      reversed: 0,
+      failed: 0,
+    }));
+    const writeTerminalRun = vi.fn(async () => true);
+    const service = new DemoRunStartupReconciliationService({
+      db,
+      terminalRunWriter: { write: writeTerminalRun },
+      redis: redisClient,
+      logger: createSilentLogger("api"),
+      pendingPersistenceReconciler: { reconcileSaleOffer },
+      now: () => new Date("2026-06-20T00:00:10.000Z"),
+    });
+    await seedRunFixtures(db, redisClient, "draining");
+
+    await expect(service.reconcile()).resolves.toEqual({
+      interruptedRunCount: 0,
+      closedSaleOfferCount: 1,
+      summaryCreatedCount: 0,
+      recoverableDrainingRunCount: 1,
+    });
+    expect(writeTerminalRun).not.toHaveBeenCalled();
+    expect(reconcileSaleOffer).toHaveBeenCalledWith(ids.drainingOffer, {
+      runId: ids.drainingRun,
+    });
   });
 });
 
 async function seedRunFixtures(
   db: ReturnType<typeof createDatabaseConnection>["db"],
   redis: ReturnType<typeof createRedisClient>,
+  status: "starting" | "active" | "draining",
 ): Promise<void> {
   await db.insert(products).values({
     id: ids.product,
@@ -218,29 +235,30 @@ async function seedRunFixtures(
     updatedAt: new Date("2026-06-20T00:00:00.000Z"),
   });
 
+  const fixtureByStatus = {
+    starting: {
+      runId: ids.startingRun,
+      saleOfferId: ids.startingOffer,
+      trafficStatus: "starting" as const,
+      runInventoryStatus: "accepting" as const,
+    },
+    active: {
+      runId: ids.activeRun,
+      saleOfferId: ids.activeOffer,
+      trafficStatus: "active" as const,
+      runInventoryStatus: "accepting" as const,
+    },
+    draining: {
+      runId: ids.drainingRun,
+      saleOfferId: ids.drainingOffer,
+      trafficStatus: "succeeded" as const,
+      runInventoryStatus: "closed" as const,
+    },
+  };
   await seedRun(db, redis, {
-    runId: ids.startingRun,
-    saleOfferId: ids.startingOffer,
-    status: "starting",
-    trafficStatus: "starting",
-    configSnapshot: configSnapshotFixture({ duplicateEachBuyerAttempt: true }),
-    runInventoryStatus: "accepting",
-  });
-  await seedRun(db, redis, {
-    runId: ids.activeRun,
-    saleOfferId: ids.activeOffer,
-    status: "active",
-    trafficStatus: "active",
-    configSnapshot: configSnapshotFixture(),
-    runInventoryStatus: "accepting",
-  });
-  await seedRun(db, redis, {
-    runId: ids.drainingRun,
-    saleOfferId: ids.drainingOffer,
-    status: "draining",
-    trafficStatus: "succeeded",
-    configSnapshot: configSnapshotFixture(),
-    runInventoryStatus: "closed",
+    ...fixtureByStatus[status],
+    status,
+    configSnapshot: configSnapshotFixture({ duplicateEachBuyerAttempt: status === "starting" }),
   });
 }
 

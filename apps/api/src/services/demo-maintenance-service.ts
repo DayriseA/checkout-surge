@@ -35,10 +35,10 @@ import {
 } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { and, desc, eq, inArray, isNull, lt, notInArray, or } from "drizzle-orm";
-import {
-  PostgresTerminalDemoRunSummaryWriter,
-  type TerminalDemoRunSummaryInput,
-} from "./terminal-demo-run-transition.js";
+import type {
+  TerminalDemoRunSummaryInput,
+  TerminalDemoRunWriter,
+} from "./terminal-demo-run-writer.js";
 
 export interface QueueCleanupSummary {
   cleanedQueueCount: number;
@@ -58,7 +58,6 @@ type FencedResetRun = {
 };
 
 export class DemoMaintenanceService {
-  private readonly terminalRunWriter: PostgresTerminalDemoRunSummaryWriter;
   private static resetTail: Promise<void> = Promise.resolve();
   private static resetPendingCount = 0;
 
@@ -67,12 +66,14 @@ export class DemoMaintenanceService {
       db: CheckoutSurgeDatabase;
       redis: CheckoutSurgeRedis;
       queueMaintenance: DemoQueueMaintenance;
+      terminalRunWriter: Pick<
+        TerminalDemoRunWriter,
+        "claimTerminalRun" | "writeAfterTerminalClaims"
+      >;
       logger: CheckoutSurgeLogger;
       now?: () => Date;
     },
-  ) {
-    this.terminalRunWriter = new PostgresTerminalDemoRunSummaryWriter(options.db);
-  }
+  ) {}
 
   async reset(correlationId: string): Promise<AdminDemoResetResponse> {
     const arrivedDuringReset = DemoMaintenanceService.resetPendingCount > 0;
@@ -130,7 +131,7 @@ export class DemoMaintenanceService {
         continue;
       }
 
-      const claimed = await this.terminalRunWriter.claimTerminalRun({
+      const claimed = await this.options.terminalRunWriter.claimTerminalRun({
         runId: candidate.run.id,
         terminalStatus: "failed",
         failureReason: "admin_reset",
@@ -234,7 +235,8 @@ export class DemoMaintenanceService {
         terminalTrafficStatus: "failed",
       });
     }
-    const failedRunCount = await this.terminalRunWriter.writeAfterTerminalClaims(summaryInputs);
+    const failedRunCount =
+      await this.options.terminalRunWriter.writeAfterTerminalClaims(summaryInputs);
 
     return adminDemoResetResponseSchema.parse({
       failedRunCount,

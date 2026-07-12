@@ -1,55 +1,23 @@
-import {
-  type BusinessOutcomeSummary,
-  type TerminalInventorySnapshot,
-  type TrafficDeliverySummary,
-  type TrafficHttpSummary,
-  trafficDeliverySummarySchema,
-  trafficHttpSummarySchema,
-} from "@checkout-surge/contracts";
-import type {
-  CheckoutSurgeDatabase,
-  DemoRunStatus,
-  DemoRunTrafficStatus,
-} from "@checkout-surge/db";
+import { trafficDeliverySummarySchema, trafficHttpSummarySchema } from "@checkout-surge/contracts";
+import type { CheckoutSurgeDatabase } from "@checkout-surge/db";
 import { demoRunSummaries, demoRuns } from "@checkout-surge/db";
 import { and, eq, inArray, sql } from "drizzle-orm";
+import type {
+  TerminalDemoRunStatus,
+  TerminalDemoRunSummaryInput,
+  TerminalDemoRunTransitionInput,
+  TerminalDemoRunWriter,
+} from "./terminal-demo-run-writer.js";
 
-type TerminalDemoRunStatus = "completed" | "failed";
 type TerminalDemoRunTransitionTransaction = Parameters<
   Parameters<CheckoutSurgeDatabase["transaction"]>[0]
 >[0];
-
-export interface TerminalDemoRunTransitionInput {
-  runId: string;
-  terminalStatus: TerminalDemoRunStatus;
-  failureReason: string | null;
-  finalizedAt: Date;
-  allowedCurrentStatuses: DemoRunStatus[];
-  terminalTrafficStatus?: DemoRunTrafficStatus;
-}
-
-export interface TerminalDemoRunSummaryInput {
-  run: typeof demoRuns.$inferSelect;
-  terminalStatus: TerminalDemoRunStatus;
-  failureReason: string | null;
-  finalizedAt: Date;
-  capturedAt?: Date;
-  httpSummary: TrafficHttpSummary;
-  trafficDeliverySummary: TrafficDeliverySummary;
-  httpTimingBreakdownSummary: Record<string, unknown>;
-  loadRunDiagnosticsSummary: Record<string, unknown>;
-  apiRequestLifecycleSummary: Record<string, unknown>;
-  businessOutcome: BusinessOutcomeSummary;
-  terminalInventorySnapshot: TerminalInventorySnapshot | null;
-  allowedCurrentStatuses: DemoRunStatus[];
-  terminalTrafficStatus?: DemoRunTrafficStatus;
-}
 
 export function terminalDemoRunTransitionLockKey(runId: string): string {
   return `demo_run_finalize:${runId}`;
 }
 
-export class PostgresTerminalDemoRunSummaryWriter {
+export class PostgresTerminalDemoRunSummaryWriter implements TerminalDemoRunWriter {
   constructor(private readonly db: CheckoutSurgeDatabase) {}
 
   async claimTerminalRun(input: TerminalDemoRunTransitionInput): Promise<boolean> {
