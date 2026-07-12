@@ -33,3 +33,11 @@
 - **Locations:** run store / schema for the active-or-draining gate
 
 GPT's start gate holds only when callers follow the intended repository path. Natural companion to the lifecycle fencing in entry 5.
+
+## Implementation record
+
+- **Status:** Implemented the database invariant, exact service translation, and focused boundary coverage.
+- **Completed scope:** Added the hand-authored `demo_runs_single_non_terminal_idx` partial unique expression index for `starting`, `active`, and `draining`, with no historical-data repair. `DemoRunService` retains its fast read and advisory transaction lock, while translating only a bounded cause-chain match for SQLSTATE `23505` and this exact index into the existing `demo_run_already_active` validation error. The generated offer, authoritative run claim, and ownership context remain one transaction, so a losing claim rolls back before Redis initialization or traffic delegation. Added direct-database status, terminal-release/history, exact-error, and concurrent-writer coverage, plus concurrent service acceptance and a direct-writer interleaving that forces the storage violation after the fast read and verifies rollback/no side effects.
+- **Decisions/deviations:** Kept the expression index out of `schema.ts` and documented it there and in the migration because Drizzle does not reliably round-trip expression indexes. The migration intentionally fails on inconsistent historical state and includes a diagnostic preflight query. No route or contract vocabulary changed.
+- **Verification:** `pnpm --filter @checkout-surge/db test:db:migrate` (passed after recreating stale test infrastructure); focused DB integration suite (38 passed); `pnpm --filter api exec node ../../scripts/run-with-test-env.mjs vitest run --config vitest.api.config.ts test/demo-run-service.test.ts` (28 passed after rebuilding current `@checkout-surge/db` output); `pnpm --filter @checkout-surge/db type-check` (passed); `pnpm --filter api type-check` (passed after rebuilding current `@checkout-surge/contracts` output); Biome check for all touched TypeScript files (passed); `git diff --check` (passed).
+- **Blockers/follow-ups:** None known. Prohibited composition and characterization suites were not run.

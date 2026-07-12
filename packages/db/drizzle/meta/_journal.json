@@ -22,6 +22,13 @@
       "when": 1783828026000,
       "tag": "0002_erp_result_recovery_boundary",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1783900800000,
+      "tag": "0003_demo_runs_single_non_terminal",
+      "breakpoints": true
     }
   ]
 }

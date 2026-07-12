@@ -222,6 +222,10 @@ export const demoRuns = pgTable(
     updatedAt: updatedAt(),
   },
   (table) => [
+    // The constant-expression partial unique index that admits only one
+    // non-terminal run is hand-authored in 0003_demo_runs_single_non_terminal.sql.
+    // Keep it out of this declaration because Drizzle does not reliably
+    // round-trip expression indexes; do not generate a duplicate schema index.
     uniqueIndex("demo_runs_sale_offer_id_unique").on(table.saleOfferId),
     index("demo_runs_preset_id_idx").on(table.presetId),
     index("demo_runs_status_idx").on(table.status),

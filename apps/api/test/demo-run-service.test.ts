@@ -15,10 +15,12 @@ import {
   createRedisClient,
   demoPresets,
   demoRunFinalizations,
+  demoRunSaleContexts,
   demoRunSummaries,
   demoRuns,
   products,
   publicRuntimePolicies,
+  saleOffers,
 } from "@checkout-surge/db";
 import { resetTestDatabase } from "@checkout-surge/db/testing";
 import { correlationIdHeaderName, createSilentLogger } from "@checkout-surge/logger";
@@ -29,6 +31,7 @@ import {
   DemoRunService,
   DemoRunValidationError,
   HttpTrafficExecutionGateway,
+  isSingleNonTerminalRunViolation,
   RedisPublicRunBudgetStore,
   validateAcceptedRunSnapshot,
   validatePublicRuntimePolicyUpdate,
@@ -39,6 +42,29 @@ const dbPackageRoot = path.resolve(packageRoot, "../../packages/db");
 const migrationsFolder = path.join(dbPackageRoot, "drizzle");
 
 describe("demo-run service validation", () => {
+  it("identifies only the exact wrapped single-run unique violation", () => {
+    expect(
+      isSingleNonTerminalRunViolation({
+        cause: {
+          code: "23505",
+          constraint_name: "demo_runs_single_non_terminal_idx",
+        },
+      }),
+    ).toBe(true);
+    expect(
+      isSingleNonTerminalRunViolation({
+        code: "23505",
+        constraint_name: "demo_runs_sale_offer_id_unique",
+      }),
+    ).toBe(false);
+    expect(
+      isSingleNonTerminalRunViolation({
+        code: "23503",
+        constraint_name: "demo_runs_single_non_terminal_idx",
+      }),
+    ).toBe(false);
+  });
+
   it("allows curated public presets to exceed public-custom caps while enforcing deployment caps", () => {
     expect(() =>
       validateAcceptedRunSnapshot(surge10kSnapshot(), publicRuntimePolicy(), {
@@ -356,6 +382,88 @@ describe("demo-run lifecycle start gating", () => {
       code: "demo_run_already_active",
       details: { status },
     });
+  });
+
+  it("accepts exactly one of two concurrent starts", async () => {
+    const trafficStart = vi.fn(async (request) => ({
+      runId: request.runId,
+      status: "active" as const,
+      startedAt: "2026-06-20T00:00:11.000Z",
+      correlationId: request.correlationId,
+    }));
+    const services = [
+      createStartService(requireConnection(connection), requireRedis(redis), {
+        trafficExecutionGateway: { start: trafficStart },
+      }),
+      createStartService(requireConnection(connection), requireRedis(redis), {
+        trafficExecutionGateway: { start: trafficStart },
+      }),
+    ];
+
+    const results = await Promise.allSettled(
+      services.map((service, index) =>
+        service.startRun(
+          { presetSlug: "preview-1k", operatorMode: "admin" },
+          `corr-concurrent-${index}`,
+        ),
+      ),
+    );
+    const accepted = results.filter((result) => result.status === "fulfilled");
+    const rejected = results.filter((result) => result.status === "rejected");
+
+    expect(accepted).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]).toMatchObject({
+      reason: { code: "demo_run_already_active" },
+    });
+    expect(await requireConnection(connection).db.select().from(demoRuns)).toHaveLength(1);
+    expect(await requireConnection(connection).db.select().from(saleOffers)).toHaveLength(1);
+    expect(await requireConnection(connection).db.select().from(demoRunSaleContexts)).toHaveLength(
+      1,
+    );
+    expect(trafficStart).toHaveBeenCalledTimes(1);
+  });
+
+  it("maps a direct-writer claim race and rolls back all losing start side effects", async () => {
+    const directConnection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
+    const trafficStart = vi.fn();
+    const service = createStartService(requireConnection(connection), requireRedis(redis), {
+      trafficExecutionGateway: { start: trafficStart },
+      publicRunBudgetStore: {
+        consume: async () => {
+          await seedExistingRun(directConnection, {
+            runId: "88888888-8888-4888-8888-888888888888",
+            status: "starting",
+          });
+        },
+      },
+    });
+
+    try {
+      await expect(
+        service.startRun(
+          {
+            presetSlug: "preview-1k",
+            operatorMode: "public",
+            publicVisitorId: "direct-writer-race",
+          },
+          "corr-direct-writer-race",
+        ),
+      ).rejects.toMatchObject({ code: "demo_run_already_active" });
+
+      expect(await requireConnection(connection).db.select().from(demoRuns)).toHaveLength(1);
+      expect(await requireConnection(connection).db.select().from(saleOffers)).toHaveLength(0);
+      expect(
+        await requireConnection(connection).db.select().from(demoRunSaleContexts),
+      ).toHaveLength(0);
+      expect(await requireConnection(connection).db.select().from(demoRunSummaries)).toHaveLength(
+        0,
+      );
+      expect(trafficStart).not.toHaveBeenCalled();
+      expect(await requireRedis(redis).dbsize()).toBe(0);
+    } finally {
+      await directConnection.close();
+    }
   });
 
   it.each([

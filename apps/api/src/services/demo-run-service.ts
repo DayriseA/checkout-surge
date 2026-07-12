@@ -69,6 +69,7 @@ import type { DemoRunFinalizationController } from "./demo-run-finalization-serv
 import { PostgresTerminalDemoRunSummaryWriter } from "./terminal-demo-run-transition.js";
 
 const demoRunStartLockKey = "checkout_surge_demo_run_start";
+const singleNonTerminalRunIndexName = "demo_runs_single_non_terminal_idx";
 const generatedRunSaleDurationMs = 24 * 60 * 60 * 1000;
 const recentMetricLimit = 50;
 
@@ -235,6 +236,31 @@ export class DemoRunValidationError extends Error {
     super(message);
     this.name = "DemoRunValidationError";
   }
+}
+
+export function isSingleNonTerminalRunViolation(error: unknown): boolean {
+  let candidate: unknown = error;
+
+  for (let depth = 0; depth < 5 && candidate !== null; depth += 1) {
+    if (typeof candidate !== "object") {
+      return false;
+    }
+
+    const databaseError = candidate as {
+      code?: unknown;
+      constraint?: unknown;
+      constraint_name?: unknown;
+      cause?: unknown;
+    };
+    const constraintName = databaseError.constraint_name ?? databaseError.constraint;
+
+    if (databaseError.code === "23505" && constraintName === singleNonTerminalRunIndexName) {
+      return true;
+    }
+    candidate = databaseError.cause;
+  }
+
+  return false;
 }
 
 export class DemoRunService implements DemoRunController {
@@ -669,85 +695,95 @@ export class DemoRunService implements DemoRunController {
     const runId = this.generateId();
     const saleOfferId = this.generateId();
 
-    return this.options.db.transaction(async (tx) => {
-      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${demoRunStartLockKey}))`);
+    try {
+      return await this.options.db.transaction(async (tx) => {
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${demoRunStartLockKey}))`);
 
-      const [existingRun] = await tx
-        .select({ id: demoRuns.id, status: demoRuns.status })
-        .from(demoRuns)
-        .where(inArray(demoRuns.status, ["starting", "active", "draining"]))
-        .limit(1);
+        const [existingRun] = await tx
+          .select({ id: demoRuns.id, status: demoRuns.status })
+          .from(demoRuns)
+          .where(inArray(demoRuns.status, ["starting", "active", "draining"]))
+          .limit(1);
 
-      if (existingRun) {
+        if (existingRun) {
+          throw new DemoRunValidationError(
+            "demo_run_already_active",
+            "A demo run is already starting, active, or draining.",
+            {
+              runId: existingRun.id,
+              status: existingRun.status,
+            },
+          );
+        }
+
+        await beforeInsert?.();
+
+        const [product] = await tx
+          .select({ id: products.id })
+          .from(products)
+          .where(eq(products.isActive, true))
+          .orderBy(desc(products.updatedAt))
+          .limit(1);
+
+        if (!product) {
+          throw new DemoRunValidationError(
+            "active_product_not_found",
+            "No active product is available for demo runs.",
+          );
+        }
+
+        await tx.insert(saleOffers).values({
+          id: saleOfferId,
+          productId: product.id,
+          name: `${preset.display.name} Generated Run Offer`,
+          allocatedStock: snapshot.inventoryConfig.startingStock,
+          saleStartsAt: now,
+          saleEndsAt: new Date(now.getTime() + generatedRunSaleDurationMs),
+          isActive: true,
+          purpose: "generated_run",
+          createdAt: now,
+          updatedAt: now,
+        });
+
+        const [run] = await tx
+          .insert(demoRuns)
+          .values({
+            id: runId,
+            presetId: preset.id,
+            presetName: preset.display.name,
+            operatorMode: request.operatorMode,
+            status: "starting",
+            trafficStatus: "starting",
+            configSnapshot: snapshot,
+            saleOfferId,
+            startedAt: now,
+            createdAt: now,
+            updatedAt: now,
+          })
+          .returning();
+
+        if (!run) {
+          throw new Error("Failed to create demo run.");
+        }
+
+        await tx.insert(demoRunSaleContexts).values({
+          runId,
+          saleOfferId,
+          createdAt: now,
+          updatedAt: now,
+        });
+
+        return { run: toDemoRunSnapshot(run) };
+      });
+    } catch (error) {
+      if (isSingleNonTerminalRunViolation(error)) {
         throw new DemoRunValidationError(
           "demo_run_already_active",
           "A demo run is already starting, active, or draining.",
-          {
-            runId: existingRun.id,
-            status: existingRun.status,
-          },
         );
       }
-
-      await beforeInsert?.();
-
-      const [product] = await tx
-        .select({ id: products.id })
-        .from(products)
-        .where(eq(products.isActive, true))
-        .orderBy(desc(products.updatedAt))
-        .limit(1);
-
-      if (!product) {
-        throw new DemoRunValidationError(
-          "active_product_not_found",
-          "No active product is available for demo runs.",
-        );
-      }
-
-      await tx.insert(saleOffers).values({
-        id: saleOfferId,
-        productId: product.id,
-        name: `${preset.display.name} Generated Run Offer`,
-        allocatedStock: snapshot.inventoryConfig.startingStock,
-        saleStartsAt: now,
-        saleEndsAt: new Date(now.getTime() + generatedRunSaleDurationMs),
-        isActive: true,
-        purpose: "generated_run",
-        createdAt: now,
-        updatedAt: now,
-      });
-
-      const [run] = await tx
-        .insert(demoRuns)
-        .values({
-          id: runId,
-          presetId: preset.id,
-          presetName: preset.display.name,
-          operatorMode: request.operatorMode,
-          status: "starting",
-          trafficStatus: "starting",
-          configSnapshot: snapshot,
-          saleOfferId,
-          startedAt: now,
-          createdAt: now,
-          updatedAt: now,
-        })
-        .returning();
-
-      if (!run) {
-        throw new Error("Failed to create demo run.");
-      }
-
-      await tx.insert(demoRunSaleContexts).values({
-        runId,
-        saleOfferId,
-        createdAt: now,
-        updatedAt: now,
-      });
-
-      return { run: toDemoRunSnapshot(run) };
-    });
+      throw error;
+    }
   }
 
   private async resolveAcceptedConfig(

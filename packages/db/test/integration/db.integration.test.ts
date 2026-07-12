@@ -368,6 +368,86 @@ describe("database migrations, seed data, and reset behavior", () => {
     ]);
   });
 
+  it("enforces one non-terminal demo run across direct and concurrent writers", async () => {
+    const presetId = "39000000-0000-4000-8000-000000000001";
+    await withDatabase(async (sql) => {
+      await sql`
+        INSERT INTO demo_presets (
+          id, slug, visibility, is_editable, display,
+          traffic_config, inventory_config, erp_config, backpressure_config
+        ) VALUES (
+          ${presetId}, 'single-run-invariant', 'admin', true,
+          ${JSON.stringify({ name: "Single Run Invariant" })}::jsonb,
+          '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb
+        )
+      `;
+
+      for (const [index, status] of ["starting", "active", "draining"].entries()) {
+        const blockerId = `39000000-0000-4000-8000-${(index * 2 + 2).toString().padStart(12, "0")}`;
+        const rejectedId = `39000000-0000-4000-8000-${(index * 2 + 3).toString().padStart(12, "0")}`;
+        await sql`
+          INSERT INTO demo_runs (id, preset_id, preset_name, operator_mode, status, config_snapshot)
+          VALUES (${blockerId}, ${presetId}, 'Single Run Invariant', 'admin', ${status}, '{}'::jsonb)
+        `;
+
+        const violation = await sql`
+          INSERT INTO demo_runs (id, preset_id, preset_name, operator_mode, status, config_snapshot)
+          VALUES (${rejectedId}, ${presetId}, 'Single Run Invariant', 'admin', 'starting', '{}'::jsonb)
+        `.catch((error: unknown) => error);
+
+        expect(violation).toMatchObject({
+          code: "23505",
+          constraint_name: "demo_runs_single_non_terminal_idx",
+        });
+        await sql`UPDATE demo_runs SET status = 'failed' WHERE id = ${blockerId}`;
+      }
+
+      await sql`
+        INSERT INTO demo_runs (id, preset_id, preset_name, operator_mode, status, config_snapshot)
+        VALUES
+          ('39000000-0000-4000-8000-000000000008', ${presetId}, 'Completed History', 'admin', 'completed', '{}'::jsonb),
+          ('39000000-0000-4000-8000-000000000009', ${presetId}, 'Failed History', 'admin', 'failed', '{}'::jsonb)
+      `;
+    });
+
+    const claimConnections = [
+      createDatabaseConnection(requireTestEnv("TEST_DATABASE_URL"), { max: 1 }),
+      createDatabaseConnection(requireTestEnv("TEST_DATABASE_URL"), { max: 1 }),
+    ];
+    try {
+      const claims = await Promise.allSettled(
+        claimConnections.map(
+          (connection, index) =>
+            connection.sql`
+            INSERT INTO demo_runs (id, preset_id, preset_name, operator_mode, status, config_snapshot)
+            VALUES (
+              ${`39000000-0000-4000-8000-${(index + 10).toString().padStart(12, "0")}`},
+              ${presetId}, 'Concurrent Claim', 'admin', 'starting', '{}'::jsonb
+            )
+          `,
+        ),
+      );
+
+      expect(claims.filter((claim) => claim.status === "fulfilled")).toHaveLength(1);
+      const rejectedClaim = claims.find((claim) => claim.status === "rejected");
+      expect(rejectedClaim).toMatchObject({
+        reason: { code: "23505", constraint_name: "demo_runs_single_non_terminal_idx" },
+      });
+      const cleanupConnection = claimConnections[0];
+      if (!cleanupConnection) {
+        throw new Error("Expected a database connection for cleanup.");
+      }
+      await cleanupConnection.sql`
+        UPDATE demo_runs SET status = 'failed'
+        WHERE status IN ('starting', 'active', 'draining')
+      `;
+      await cleanupConnection.sql`DELETE FROM demo_runs WHERE preset_id = ${presetId}`;
+      await cleanupConnection.sql`DELETE FROM demo_presets WHERE id = ${presetId}`;
+    } finally {
+      await Promise.all(claimConnections.map((connection) => connection.close()));
+    }
+  });
+
   it("seeds PostgreSQL demo rows and Redis inventory idempotently", async () => {
     await runSeedScript();
     await runSeedScript();
