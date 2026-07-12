@@ -1,3 +1,4 @@
+import type { OrderProcessJob } from "@checkout-surge/contracts";
 import {
   createDatabaseConnection,
   orderDeadLetters,
@@ -8,7 +9,6 @@ import {
   saleOffers,
 } from "@checkout-surge/db";
 import { resetTestDatabase } from "@checkout-surge/db/testing";
-import type { OrderProcessJob } from "@checkout-surge/contracts";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { PostgresOrderRecoveryPersistence } from "../../src/persistence/postgres-order-recovery-persistence.js";

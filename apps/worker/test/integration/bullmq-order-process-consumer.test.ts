@@ -10,6 +10,8 @@ import { createSilentLogger } from "@checkout-surge/logger";
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createOrderProcessJobHandler } from "../../src/application/order-process-job-handler.js";
+import { createOrderRecoveryScanner } from "../../src/application/order-recovery-scanner.js";
 import {
   createBullMqNotificationRecordConsumer,
   notificationRecordQueueNotReadyMessage,
@@ -20,9 +22,7 @@ import {
   type OrderProcessJobFailureReport,
   orderProcessQueueNotReadyMessage,
 } from "../../src/queue/bullmq-order-process-consumer.js";
-import { createOrderRecoveryScanner } from "../../src/application/order-recovery-scanner.js";
 import { createOrderProcessJobPublisher } from "../../src/queue/bullmq-order-process-job-publisher.js";
-import { createOrderProcessJobHandler } from "../../src/application/order-process-job-handler.js";
 import type { NotificationRecordConsumer } from "../../src/queue/notification-record-consumer.js";
 import type { OrderProcessConsumer } from "../../src/queue/order-process-consumer.js";
 

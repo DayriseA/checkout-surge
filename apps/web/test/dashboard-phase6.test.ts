@@ -355,11 +355,7 @@ function businessOutcomeEventFixture(
 }
 
 function trafficMetricEventFixture(
-  options: {
-    runId?: string;
-    occurredAt?: string;
-    value?: number;
-  } = {},
+  options: { runId?: string; occurredAt?: string; value?: number } = {},
 ): Extract<DashboardEvent, { type: "traffic.metric" }> {
   return {
     type: "traffic.metric",

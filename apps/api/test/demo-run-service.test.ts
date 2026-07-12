@@ -14,6 +14,7 @@ import {
   createDatabaseConnection,
   createRedisClient,
   demoPresets,
+  demoRunFinalizations,
   demoRunSummaries,
   demoRuns,
   products,
@@ -21,7 +22,9 @@ import {
 } from "@checkout-surge/db";
 import { resetTestDatabase } from "@checkout-surge/db/testing";
 import { correlationIdHeaderName, createSilentLogger } from "@checkout-surge/logger";
+import { eq } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { DemoMaintenanceService } from "../src/services/demo-maintenance-service.js";
 import {
   DemoRunService,
   DemoRunValidationError,
@@ -619,6 +622,178 @@ describe("demo-run lifecycle start gating", () => {
       acceptedReservations: 0,
       source: "redis",
     });
+  });
+
+  it("returns the draining run when fast traffic completion wins activation CAS", async () => {
+    let releaseTrafficStart: (() => void) | undefined;
+    let trafficStartEntered: (() => void) | undefined;
+    const trafficStartEnteredPromise = new Promise<void>((resolve) => {
+      trafficStartEntered = resolve;
+    });
+    const trafficStartReleasePromise = new Promise<void>((resolve) => {
+      releaseTrafficStart = resolve;
+    });
+    const service = createStartService(requireConnection(connection), requireRedis(redis), {
+      trafficExecutionGateway: {
+        start: async (request) => {
+          trafficStartEntered?.();
+          await trafficStartReleasePromise;
+          return {
+            runId: request.runId,
+            status: "active",
+            startedAt: "2026-06-20T00:00:11.000Z",
+            correlationId: request.correlationId,
+          };
+        },
+      },
+    });
+
+    try {
+      const startPromise = service.startRun(
+        { presetSlug: "preview-1k", operatorMode: "admin" },
+        "corr-fast-completion-start",
+      );
+      await trafficStartEnteredPromise;
+
+      const completionRun = await service.recordTrafficCompletion({
+        runId: "77777777-7777-4777-8777-777777777777",
+        status: "succeeded",
+        httpSummary: {
+          plannedRequests: 10_000,
+          emittedRequests: 0,
+          completedRequests: 0,
+          failedRequests: 0,
+          acceptedResponses: 0,
+          soldOutResponses: 0,
+          unexpectedResponses: 0,
+          failureRate: 0,
+        },
+        trafficOutcomeSummary: {},
+        trafficDeliverySummary: {
+          plannedRequests: 10_000,
+          emittedRequests: 0,
+          droppedIterations: 10_000,
+          trafficDeliveryStatus: "complete",
+          notes: [],
+        },
+        httpTimingBreakdownSummary: {},
+        loadRunDiagnosticsSummary: {},
+        apiRequestLifecycleSummary: {},
+        completedAt: "2026-06-20T00:00:12.000Z",
+        correlationId: "corr-fast-completion",
+      });
+      expect(completionRun).toMatchObject({
+        runId: "77777777-7777-4777-8777-777777777777",
+        status: "draining",
+        trafficStatus: "succeeded",
+        trafficEndedAt: "2026-06-20T00:00:12.000Z",
+      });
+
+      releaseTrafficStart?.();
+      const startResponse = await startPromise;
+
+      expect(startResponse.run).toMatchObject({
+        runId: "77777777-7777-4777-8777-777777777777",
+        status: "draining",
+        trafficStatus: "succeeded",
+        trafficEndedAt: "2026-06-20T00:00:12.000Z",
+      });
+      const [run] = await requireConnection(connection)
+        .db.select()
+        .from(demoRuns)
+        .where(eq(demoRuns.id, "77777777-7777-4777-8777-777777777777"));
+      const [finalization] = await requireConnection(connection)
+        .db.select()
+        .from(demoRunFinalizations)
+        .where(eq(demoRunFinalizations.runId, "77777777-7777-4777-8777-777777777777"));
+      expect(run).toMatchObject({
+        status: "draining",
+        trafficStatus: "succeeded",
+        trafficEndedAt: new Date("2026-06-20T00:00:12.000Z"),
+      });
+      expect(finalization).toMatchObject({
+        runId: "77777777-7777-4777-8777-777777777777",
+        trafficSummaryReceivedAt: expect.any(Date),
+      });
+    } finally {
+      releaseTrafficStart?.();
+    }
+  });
+
+  it("returns the reset run when a delayed orchestrator acknowledgement loses activation CAS", async () => {
+    const startConnection = requireConnection(connection);
+    const resetConnection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
+    let releaseTrafficStart: (() => void) | undefined;
+    let trafficStartEntered: (() => void) | undefined;
+    const trafficStartEnteredPromise = new Promise<void>((resolve) => {
+      trafficStartEntered = resolve;
+    });
+    const trafficStartReleasePromise = new Promise<void>((resolve) => {
+      releaseTrafficStart = resolve;
+    });
+
+    const service = createStartService(startConnection, requireRedis(redis), {
+      trafficExecutionGateway: {
+        start: async (request) => {
+          trafficStartEntered?.();
+          await trafficStartReleasePromise;
+          return {
+            runId: request.runId,
+            status: "active",
+            startedAt: "2026-06-20T00:00:11.000Z",
+            correlationId: request.correlationId,
+          };
+        },
+      },
+    });
+    const resetService = new DemoMaintenanceService({
+      db: resetConnection.db,
+      redis: requireRedis(redis),
+      queueMaintenance: {
+        cleanResetOwnedQueues: async () => ({ cleanedQueueCount: 0, cleanedJobCount: 0 }),
+      },
+      logger: createSilentLogger("api"),
+      now: () => new Date("2026-06-20T00:00:20.000Z"),
+    });
+
+    try {
+      const startPromise = service.startRun(
+        { presetSlug: "preview-1k", operatorMode: "admin" },
+        "corr-delayed-start",
+      );
+      await trafficStartEnteredPromise;
+
+      const resetResponse = await resetService.reset("corr-reset-race");
+      expect(resetResponse.failedRunCount).toBe(1);
+
+      releaseTrafficStart?.();
+      const startResponse = await startPromise;
+
+      expect(startResponse.run).toMatchObject({
+        runId: "77777777-7777-4777-8777-777777777777",
+        status: "failed",
+        trafficStatus: "failed",
+        failureReason: "admin_reset",
+        finalizedAt: "2026-06-20T00:00:20.000Z",
+      });
+      const [run] = await startConnection.db
+        .select()
+        .from(demoRuns)
+        .where(eq(demoRuns.id, "77777777-7777-4777-8777-777777777777"));
+      const [summary] = await startConnection.db
+        .select()
+        .from(demoRunSummaries)
+        .where(eq(demoRunSummaries.runId, "77777777-7777-4777-8777-777777777777"));
+      expect(run).toMatchObject({ status: "failed", failureReason: "admin_reset" });
+      expect(summary).toMatchObject({
+        status: "failed",
+        failureReason: "admin_reset",
+        endedAt: new Date("2026-06-20T00:00:20.000Z"),
+      });
+    } finally {
+      releaseTrafficStart?.();
+      await resetConnection.close();
+    }
   });
 });
 

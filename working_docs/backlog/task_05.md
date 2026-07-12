@@ -17,3 +17,11 @@
 - **Locations:** `apps/api/src/services/demo-run-service.ts:827`, `apps/api/src/services/demo-run-service.ts:628`, `apps/load-orchestrator/src/application/k6-runner.ts:63`
 
 A short run can complete — or an admin can reset — while `startRun()` still awaits the orchestrator; the late acknowledgement then updates the run by ID with no expected-status predicate, writing `active` over a draining or terminal state. The resurrected run keeps its terminal timestamps and immutable summary, the finalizer ignores it, and future starts stay blocked. Implement compare-and-set transitions across the lifecycle (this is the umbrella fix; entries 6 and 9 depend on the same fence).
+
+## Implementation record
+
+- **Status:** Implemented the focused activation fence and race coverage.
+- **Completed scope:** `DemoRunService.updateRunAfterTrafficStart()` now performs a `starting -> active` compare-and-set. If the predicate loses to completion, finalization, or reset, it reads and returns the authoritative persisted run instead of resurrecting it. Added integration-level delayed orchestrator acknowledgement races against fast traffic completion and admin reset, covering returned responses and persisted terminal/draining state and summaries.
+- **Decisions/deviations:** Existing completion and terminal transitions already use expected-status predicates and were left unchanged. Reset sequencing, run-store refactoring, and durable completion delivery remain out of scope.
+- **Verification:** `pnpm --filter api exec node ../../scripts/run-with-test-env.mjs vitest run --config vitest.api.config.ts test/demo-run-service.test.ts` (25 passed); `pnpm --filter api type-check` (passed); `pnpm exec biome check apps/api/src/services/demo-run-service.ts apps/api/test/demo-run-service.test.ts` (passed); `git diff --check` (passed). Test infrastructure was started with `pnpm test:infra:up` because the focused API suite requires PostgreSQL/Redis.
+- **Blockers/follow-ups:** None known. The prohibited composition and characterization suites were not run.

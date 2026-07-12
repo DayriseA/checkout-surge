@@ -1,3 +1,4 @@
+import type { OrderProcessJob } from "@checkout-surge/contracts";
 import {
   createDatabaseConnection,
   erpAttempts,
@@ -8,12 +9,11 @@ import {
   saleOffers,
 } from "@checkout-surge/db";
 import { resetTestDatabase } from "@checkout-surge/db/testing";
-import type { OrderProcessJob } from "@checkout-surge/contracts";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
-  PostgresErpAttemptPersistence,
   ErpAttemptContradictionError,
+  PostgresErpAttemptPersistence,
 } from "../../src/persistence/postgres-erp-attempt-persistence.js";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
@@ -57,14 +57,12 @@ run("PostgreSQL ERP attempt delivery identity", () => {
     });
   });
   beforeEach(async () => {
-    await requireConnection()
-      .db.insert(products)
-      .values({
-        id: ids.product,
-        sku: "ERP-ATTEMPT-TEST",
-        slug: "erp-attempt-test",
-        name: "ERP Attempt Test",
-      });
+    await requireConnection().db.insert(products).values({
+      id: ids.product,
+      sku: "ERP-ATTEMPT-TEST",
+      slug: "erp-attempt-test",
+      name: "ERP Attempt Test",
+    });
     await requireConnection()
       .db.insert(saleOffers)
       .values({

@@ -1,13 +1,13 @@
 import { orderProcessJobName } from "@checkout-surge/contracts";
 import { describe, expect, it, vi } from "vitest";
 import {
-  createOrderProcessJobPublisher,
-  type WorkerOrderProcessJobPublisher,
-} from "../../src/queue/bullmq-order-process-job-publisher.js";
-import {
   deadLetterFailureMarker,
   recoverableFailureMarker,
 } from "../../src/queue/bullmq-order-process-consumer.js";
+import {
+  createOrderProcessJobPublisher,
+  type WorkerOrderProcessJobPublisher,
+} from "../../src/queue/bullmq-order-process-job-publisher.js";
 
 const job = {
   orderId: "11111111-1111-4111-8111-111111111111",

@@ -510,15 +510,15 @@ export class DemoRunService implements DemoRunController {
       throw error;
     }
 
-    const activeRun = await this.updateRunAfterTrafficStart(
+    const runAfterTrafficStart = await this.updateRunAfterTrafficStart(
       accepted.run.runId,
       trafficResponse,
       now,
     );
-    await this.publishRunEvent("run.updated", activeRun, correlationId, now);
+    await this.publishRunEvent("run.updated", runAfterTrafficStart, correlationId, now);
 
     return startDemoRunResponseSchema.parse({
-      run: activeRun,
+      run: runAfterTrafficStart,
       recovery: { establishedAt: now.toISOString() },
       correlationId,
       timestamp: now.toISOString(),
@@ -832,11 +832,15 @@ export class DemoRunService implements DemoRunController {
         trafficStartedAt: new Date(trafficResponse.startedAt),
         updatedAt: now,
       })
-      .where(eq(demoRuns.id, runId))
+      .where(and(eq(demoRuns.id, runId), eq(demoRuns.status, "starting")))
       .returning();
 
     if (!run) {
-      throw new DemoRunValidationError("run_not_found", "Demo run was not found.", { runId });
+      // The orchestrator acknowledgement can arrive after traffic completion,
+      // finalization, or an admin reset has claimed the run. In that case the
+      // compare-and-set intentionally loses; return the row that won the race
+      // instead of applying a stale activation and resurrecting the run.
+      return this.readRunSnapshot(runId);
     }
 
     return toDemoRunSnapshot(run);

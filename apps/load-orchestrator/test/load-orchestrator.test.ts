@@ -77,7 +77,9 @@ describe("load-orchestrator k6 mapping", () => {
     expect(script.contents).toContain('"vus":200');
     expect(script.contents).toContain('"iterations":2');
     expect(script.contents).toContain("http.post");
-    expect(script.contents).toContain("const expectedCheckoutStatuses = http.expectedStatuses(202, 409);");
+    expect(script.contents).toContain(
+      "const expectedCheckoutStatuses = http.expectedStatuses(202, 409);",
+    );
     expect(script.contents).toContain("responseCallback: expectedCheckoutStatuses");
     expect(script.contents).toContain("run:");
     expect(script.contents).toContain(":buyer:");
