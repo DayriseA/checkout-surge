@@ -29,9 +29,9 @@ Replace `⬜` with `✅` when a task is complete. Optional `⏳` for work in pro
 
 ✅ [Task 13: Make idempotent replays faithful: acceptance-shaped response, no terminal-state leak, stable outcome label](./task_13.md)
 
-⬜ [Task 14: Close the concurrent-duplicate window in mock-ERP confirmation idempotency](./task_14.md)
+✅ [Task 14: Close the concurrent-duplicate window in mock-ERP confirmation idempotency](./task_14.md)
 
-⬜ [Task 15: Scope the ERP circuit breaker per run (and honor snapshot breaker thresholds)](./task_15.md)
+✅ [Task 15: Scope the ERP circuit breaker per run (and honor snapshot breaker thresholds)](./task_15.md)
 
 ⬜ [Task 16: Fix notification recovery: retained failed jobs deduplicate the scanner's re-adds](./task_16.md)
 

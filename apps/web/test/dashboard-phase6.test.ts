@@ -278,6 +278,8 @@ function runFixture() {
         orderProcessConcurrency: 5,
         drainTimeoutSeconds: 300,
         pendingPersistenceRetryAfterSeconds: 30,
+        circuitBreakerFailureThreshold: 5,
+        circuitBreakerResetTimeoutMs: 10_000,
       },
     },
     saleOfferId: "33333333-3333-4333-8333-333333333333",

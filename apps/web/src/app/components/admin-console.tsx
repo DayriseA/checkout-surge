@@ -80,6 +80,8 @@ type RunConfigDraft = Pick<
   | "orderProcessConcurrency"
   | "drainTimeoutSeconds"
   | "pendingPersistenceRetryAfterSeconds"
+  | "circuitBreakerFailureThreshold"
+  | "circuitBreakerResetTimeoutMs"
 >;
 
 interface PresetDraft {
@@ -106,6 +108,8 @@ interface PresetDraft {
   orderProcessConcurrency: string;
   drainTimeoutSeconds: string;
   pendingPersistenceRetryAfterSeconds: string;
+  circuitBreakerFailureThreshold: string;
+  circuitBreakerResetTimeoutMs: string;
 }
 
 interface RuntimePolicyDraft extends RunConfigDraft {
@@ -1192,6 +1196,22 @@ function RunConfigFields({
           type="number"
           value={draft.pendingPersistenceRetryAfterSeconds}
         />
+        <LabeledTextInput
+          label="Circuit failure threshold"
+          onChange={(circuitBreakerFailureThreshold) =>
+            onUpdateDraft({ circuitBreakerFailureThreshold })
+          }
+          type="number"
+          value={draft.circuitBreakerFailureThreshold}
+        />
+        <LabeledTextInput
+          label="Circuit reset timeout ms"
+          onChange={(circuitBreakerResetTimeoutMs) =>
+            onUpdateDraft({ circuitBreakerResetTimeoutMs })
+          }
+          type="number"
+          value={draft.circuitBreakerResetTimeoutMs}
+        />
       </div>
       <div className="grid grid-cols-5 gap-3 max-[900px]:grid-cols-2 max-[560px]:grid-cols-1">
         <LabeledTextInput
@@ -1384,6 +1404,10 @@ function draftFromConfigSnapshot(config: RunConfigBase): RunConfigDraft {
     pendingPersistenceRetryAfterSeconds: String(
       config.backpressureConfig.pendingPersistenceRetryAfterSeconds,
     ),
+    circuitBreakerFailureThreshold: String(
+      config.backpressureConfig.circuitBreakerFailureThreshold,
+    ),
+    circuitBreakerResetTimeoutMs: String(config.backpressureConfig.circuitBreakerResetTimeoutMs),
   };
 }
 
@@ -1466,6 +1490,8 @@ function configFromDraft(draft: RunConfigDraft, base: RunConfigBase): AcceptedRu
         draft.pendingPersistenceRetryAfterSeconds,
         1,
       ),
+      circuitBreakerFailureThreshold: parseInteger(draft.circuitBreakerFailureThreshold, 1),
+      circuitBreakerResetTimeoutMs: parseInteger(draft.circuitBreakerResetTimeoutMs, 1),
     },
   };
 }

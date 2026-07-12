@@ -32,6 +32,8 @@ const request: TrafficExecutionStartRequest = {
       orderProcessConcurrency: 1,
       drainTimeoutSeconds: 30,
       pendingPersistenceRetryAfterSeconds: 5,
+      circuitBreakerFailureThreshold: 5,
+      circuitBreakerResetTimeoutMs: 10_000,
     },
   },
 };

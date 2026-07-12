@@ -679,6 +679,8 @@ function configSnapshotFixture(
       orderProcessConcurrency: 2,
       drainTimeoutSeconds: options.drainTimeoutSeconds ?? 300,
       pendingPersistenceRetryAfterSeconds: 30,
+      circuitBreakerFailureThreshold: 5,
+      circuitBreakerResetTimeoutMs: 10_000,
     },
   };
 }

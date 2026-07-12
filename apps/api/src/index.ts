@@ -1,5 +1,6 @@
 import { contractsPackageName } from "@checkout-surge/contracts";
 import {
+  clearErpCircuitBreakerSnapshots,
   createDatabaseConnection,
   createRedisClient,
   createRedisDashboardEventSubscriber,
@@ -39,6 +40,7 @@ import {
 import { DemoRunStartupReconciliationService } from "./services/demo-run-startup-reconciliation-service.js";
 import {
   ErpStatusService,
+  PostgresActiveErpRunReader,
   PostgresErpAttemptStatusReader,
   RedisErpCircuitBreakerStateReader,
 } from "./services/erp-status-service.js";
@@ -159,6 +161,7 @@ export async function startApiServer(): Promise<void> {
     attemptStatusReader: new PostgresErpAttemptStatusReader(connection.db),
     queueStatusService,
     logger,
+    activeRunReader: new PostgresActiveErpRunReader(connection.db),
   });
   const inventoryStatusService = new InventoryStatusService({
     getStatus: (saleOfferId) => getInventoryStatus(redis, saleOfferId),
@@ -168,6 +171,7 @@ export async function startApiServer(): Promise<void> {
   const demoMaintenanceService = new DemoMaintenanceService({
     db: connection.db,
     redis,
+    clearErpCircuitBreakerState: () => clearErpCircuitBreakerSnapshots(redis),
     queueMaintenance: demoQueueMaintenance,
     terminalRunWriter,
     logger,

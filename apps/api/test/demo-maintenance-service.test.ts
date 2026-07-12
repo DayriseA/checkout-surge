@@ -117,11 +117,13 @@ describe("demo maintenance service", () => {
         return { cleanedQueueCount: 2, cleanedJobCount: 5 };
       }),
     };
+    const clearErpCircuitBreakerState = vi.fn().mockResolvedValue(undefined);
     const service = new DemoMaintenanceService({
       db,
       terminalRunWriter: { claimTerminalRun, writeAfterTerminalClaims },
       redis: redisClient,
       queueMaintenance,
+      clearErpCircuitBreakerState,
       logger: createSilentLogger("api"),
       now: () => new Date("2026-06-20T00:00:10.000Z"),
     });
@@ -130,6 +132,7 @@ describe("demo maintenance service", () => {
     await seedActiveRunBusinessState(db, redisClient);
 
     const response = await service.reset("corr-reset");
+    expect(clearErpCircuitBreakerState).toHaveBeenCalledOnce();
     const runs = await db
       .select()
       .from(demoRuns)
@@ -1261,6 +1264,8 @@ function configSnapshotFixture(): AcceptedRunConfigSnapshot {
       orderProcessConcurrency: 2,
       drainTimeoutSeconds: 300,
       pendingPersistenceRetryAfterSeconds: 30,
+      circuitBreakerFailureThreshold: 5,
+      circuitBreakerResetTimeoutMs: 10_000,
     },
   };
 }

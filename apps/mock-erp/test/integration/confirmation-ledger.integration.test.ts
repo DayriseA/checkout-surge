@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { ErpConfirmationRequest, ErpConfirmationResponse } from "@checkout-surge/contracts";
-import { createDatabaseConnection, erpConfirmationResults } from "@checkout-surge/db";
-import { and, eq } from "drizzle-orm";
+import { createDatabaseConnection } from "@checkout-surge/db";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   ConfirmationIdempotencyConflictError,
@@ -19,12 +18,13 @@ run("PostgreSQL ERP confirmation ledger", () => {
     return connection;
   };
   const orderId = "11111111-1111-4111-8111-111111111111";
+  const keyPrefix = `integration:${randomUUID()}`;
   const request: ErpConfirmationRequest = {
     orderId,
     publicOrderId: "ord_ledger_integration",
     reservationId: "22222222-2222-4222-8222-222222222222",
     saleOfferId: "33333333-3333-4333-8333-333333333333",
-    idempotencyKey: `integration:${randomUUID()}`,
+    idempotencyKey: `${keyPrefix}:replay`,
     correlationId: "corr-ledger-integration",
     quantity: 1,
   };
@@ -32,23 +32,17 @@ run("PostgreSQL ERP confirmation ledger", () => {
     status: "succeeded",
     confirmationId: "erp-ledger-confirmation",
     httpStatus: 200,
-    latencyMs: 1,
+    latencyMs: 0,
     timestamp: "2026-06-22T00:00:00.000Z",
   };
 
   beforeAll(async () => {
     await requireConnection()
-      .sql`delete from erp_confirmation_results where idempotency_key like 'integration:%'`;
+      .sql`delete from erp_confirmation_results where idempotency_key like ${`${keyPrefix}:%`}`;
   });
   afterEach(async () => {
     await requireConnection()
-      .db.delete(erpConfirmationResults)
-      .where(
-        and(
-          eq(erpConfirmationResults.orderId, orderId),
-          eq(erpConfirmationResults.idempotencyKey, request.idempotencyKey),
-        ),
-      );
+      .sql`delete from erp_confirmation_results where idempotency_key like ${`${keyPrefix}:%`}`;
   });
   afterAll(async () => requireConnection().close());
 
@@ -80,7 +74,7 @@ run("PostgreSQL ERP confirmation ledger", () => {
 
   it("converges concurrent duplicates to one produced confirmation", async () => {
     let produced = 0;
-    const concurrentRequest = { ...request, idempotencyKey: `integration:${randomUUID()}` };
+    const concurrentRequest = { ...request, idempotencyKey: `${keyPrefix}:concurrent` };
     const decisionProvider = {
       decide: async () => {
         produced += 1;
@@ -110,7 +104,7 @@ run("PostgreSQL ERP confirmation ledger", () => {
 
   it("does not cache failed ERP outcomes", async () => {
     let decisions = 0;
-    const failedThenSuccessRequest = { ...request, idempotencyKey: `integration:${randomUUID()}` };
+    const failedThenSuccessRequest = { ...request, idempotencyKey: `${keyPrefix}:failure-retry` };
     const service = new ConfirmationService({
       ledger: new PostgresConfirmationLedger(requireConnection().db),
       decisionProvider: {

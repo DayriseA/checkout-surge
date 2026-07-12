@@ -81,6 +81,8 @@ export const backpressureConfigSchema = z
     orderProcessConcurrency: positiveIntegerSchema,
     drainTimeoutSeconds: positiveIntegerSchema,
     pendingPersistenceRetryAfterSeconds: positiveIntegerSchema,
+    circuitBreakerFailureThreshold: positiveIntegerSchema,
+    circuitBreakerResetTimeoutMs: positiveIntegerSchema,
   })
   .strict();
 export type BackpressureConfig = z.infer<typeof backpressureConfigSchema>;

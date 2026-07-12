@@ -71,6 +71,7 @@ export class DemoMaintenanceService {
         "claimTerminalRun" | "writeAfterTerminalClaims"
       >;
       logger: CheckoutSurgeLogger;
+      clearErpCircuitBreakerState?: () => Promise<void>;
       now?: () => Date;
     },
   ) {}
@@ -237,6 +238,7 @@ export class DemoMaintenanceService {
     }
     const failedRunCount =
       await this.options.terminalRunWriter.writeAfterTerminalClaims(summaryInputs);
+    await this.options.clearErpCircuitBreakerState?.();
 
     return adminDemoResetResponseSchema.parse({
       failedRunCount,

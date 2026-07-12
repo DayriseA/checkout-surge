@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  acceptedRunConfigSnapshotSchema,
   adminDeleteRunHistoryRequestSchema,
   adminDeleteRunHistoryResponseSchema,
   adminDemoResetResponseSchema,
@@ -68,6 +69,75 @@ const timestamp = "2026-06-20T12:00:00.000Z";
 const correlationId = "corr-test-1";
 const saleOfferId = "22222222-2222-4222-8222-222222222222";
 const runId = "55555555-5555-4555-8555-555555555555";
+
+describe("accepted run breaker configuration", () => {
+  const snapshot = {
+    trafficConfig: {
+      mode: "buyer-spike",
+      buyerCount: 1,
+      duplicateEachBuyerAttempt: false,
+      startDelaySeconds: 0,
+      maxDurationSeconds: 1,
+      quantityPerAttempt: 1,
+    },
+    inventoryConfig: { startingStock: 1, quantityPerCheckout: 1, reservationHoldMinutes: 1 },
+    erpConfig: { latencyMs: 0, maxTps: 1, errorRate: 0, forcedOutage: false, requestTimeoutMs: 1 },
+    backpressureConfig: {
+      queueName: "orders:process",
+      physicalQueueName: "orders-process",
+      orderProcessConcurrency: 1,
+      drainTimeoutSeconds: 1,
+      pendingPersistenceRetryAfterSeconds: 1,
+      circuitBreakerFailureThreshold: 2,
+      circuitBreakerResetTimeoutMs: 100,
+    },
+  };
+
+  it("accepts positive integer breaker configuration", () => {
+    expect(acceptedRunConfigSnapshotSchema.safeParse(snapshot).success).toBe(true);
+  });
+
+  it.each([
+    ["circuitBreakerFailureThreshold", 0],
+    ["circuitBreakerFailureThreshold", -1],
+    ["circuitBreakerFailureThreshold", 1.5],
+    ["circuitBreakerResetTimeoutMs", 0],
+    ["circuitBreakerResetTimeoutMs", -1],
+    ["circuitBreakerResetTimeoutMs", 1.5],
+  ] as const)("rejects invalid %s value %s", (field, value) => {
+    expect(
+      acceptedRunConfigSnapshotSchema.safeParse({
+        ...snapshot,
+        backpressureConfig: {
+          ...snapshot.backpressureConfig,
+          [field]: value,
+        },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("requires both breaker fields and remains strict", () => {
+    const { circuitBreakerFailureThreshold: _missingThreshold, ...withoutThreshold } =
+      snapshot.backpressureConfig;
+    const { circuitBreakerResetTimeoutMs: _missing, ...withoutReset } = snapshot.backpressureConfig;
+    expect(
+      acceptedRunConfigSnapshotSchema.safeParse({
+        ...snapshot,
+        backpressureConfig: withoutThreshold,
+      }).success,
+    ).toBe(false);
+    expect(
+      acceptedRunConfigSnapshotSchema.safeParse({ ...snapshot, backpressureConfig: withoutReset })
+        .success,
+    ).toBe(false);
+    expect(
+      acceptedRunConfigSnapshotSchema.safeParse({
+        ...snapshot,
+        backpressureConfig: { ...snapshot.backpressureConfig, unknown: true },
+      }).success,
+    ).toBe(false);
+  });
+});
 
 describe("traffic ownership contracts", () => {
   it("defines strict run-fenced status and completion acknowledgements", () => {
@@ -832,6 +902,8 @@ describe("public runtime policy contract", () => {
             orderProcessConcurrency: 2,
             drainTimeoutSeconds: 300,
             pendingPersistenceRetryAfterSeconds: 30,
+            circuitBreakerFailureThreshold: 5,
+            circuitBreakerResetTimeoutMs: 10_000,
           },
         },
         startedAt: timestamp,
@@ -993,6 +1065,8 @@ describe("public runtime policy contract", () => {
           orderProcessConcurrency: 5,
           drainTimeoutSeconds: 300,
           pendingPersistenceRetryAfterSeconds: 30,
+          circuitBreakerFailureThreshold: 5,
+          circuitBreakerResetTimeoutMs: 10_000,
         },
       },
       publicCustomLimits: {
@@ -1119,6 +1193,8 @@ describe("public runtime policy contract", () => {
         orderProcessConcurrency: 5,
         drainTimeoutSeconds: 300,
         pendingPersistenceRetryAfterSeconds: 30,
+        circuitBreakerFailureThreshold: 5,
+        circuitBreakerResetTimeoutMs: 10_000,
       },
     };
 
@@ -1195,6 +1271,8 @@ function acceptedRunSnapshot() {
       orderProcessConcurrency: 2,
       drainTimeoutSeconds: 300,
       pendingPersistenceRetryAfterSeconds: 30,
+      circuitBreakerFailureThreshold: 5,
+      circuitBreakerResetTimeoutMs: 10_000,
     },
   };
 }

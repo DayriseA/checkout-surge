@@ -149,6 +149,7 @@ export async function startWorker(): Promise<void> {
     maxRetriesPerRequest: 3,
   });
   const runConfigReader = new PostgresRunConfigReader(database.db);
+  const erpAttemptPersistence = new PostgresErpAttemptPersistence(database.db);
   const notificationRecordPublisher = createBullMqNotificationRecordPublisher({
     connection: {
       url: config.redisUrl,
@@ -222,20 +223,49 @@ export async function startWorker(): Promise<void> {
           confirmation: new HttpErpOrderConfirmation({
             baseUrl: config.mockErpBaseUrl,
             requestTimeoutMs: config.erpRequestTimeoutMs,
-            attemptPersistence: new PostgresErpAttemptPersistence(database.db),
-            runConfigReader,
+            attemptPersistence: erpAttemptPersistence,
           }),
           failureThreshold: config.erpCircuitFailureThreshold,
           resetTimeoutMs: config.erpCircuitResetTimeoutMs,
           isCountedFailure: isTemporaryErpDependencyError,
           onStateChange: async (snapshot) => {
             try {
-              await setErpCircuitBreakerSnapshot(redis, snapshot);
+              await setErpCircuitBreakerSnapshot(redis, snapshot, { type: "catalog" });
             } catch (error) {
               logger.error({ err: error }, "Could not publish ERP circuit breaker state.");
             }
           },
         }),
+        circuitBreakerFactory: (snapshot, runId) =>
+          new ErpCircuitBreaker({
+            confirmation: new HttpErpOrderConfirmation({
+              baseUrl: config.mockErpBaseUrl,
+              requestTimeoutMs: config.erpRequestTimeoutMs,
+              attemptPersistence: erpAttemptPersistence,
+              runConfigReader: {
+                read: async (requestedRunId) => (requestedRunId === runId ? snapshot : null),
+              },
+            }),
+            failureThreshold: snapshot.backpressureConfig.circuitBreakerFailureThreshold,
+            resetTimeoutMs: snapshot.backpressureConfig.circuitBreakerResetTimeoutMs,
+            isCountedFailure: isTemporaryErpDependencyError,
+            onStateChange: async (breakerSnapshot) => {
+              try {
+                await setErpCircuitBreakerSnapshot(redis, breakerSnapshot, { type: "run", runId });
+              } catch (error) {
+                logger.error(
+                  { err: error, runId },
+                  "Could not publish run ERP circuit breaker state.",
+                );
+              }
+            },
+          }),
+        onMissingRunSnapshot: (runId) => {
+          logger.warn(
+            { runId },
+            "Run configuration snapshot was not found; using the catalog ERP circuit breaker fallback.",
+          );
+        },
       }),
       persistence: new PostgresOrderTransitionPersistence(database.db),
       logger,

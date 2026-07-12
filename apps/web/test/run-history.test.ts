@@ -161,6 +161,8 @@ function runHistoryDetailFixture(): RunHistoryDetailResponse {
           orderProcessConcurrency: 2,
           drainTimeoutSeconds: 300,
           pendingPersistenceRetryAfterSeconds: 30,
+          circuitBreakerFailureThreshold: 5,
+          circuitBreakerResetTimeoutMs: 10_000,
         },
       },
       startedAt: "2026-06-20T00:00:00.000Z",

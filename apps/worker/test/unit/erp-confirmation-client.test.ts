@@ -511,6 +511,8 @@ function runConfigSnapshot(
       orderProcessConcurrency: 5,
       drainTimeoutSeconds: 300,
       pendingPersistenceRetryAfterSeconds: 30,
+      circuitBreakerFailureThreshold: 5,
+      circuitBreakerResetTimeoutMs: 10_000,
     },
     ...overrides,
   };

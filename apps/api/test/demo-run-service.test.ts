@@ -1155,6 +1155,8 @@ function surge10kSnapshot(): AcceptedRunConfigSnapshot {
       orderProcessConcurrency: 10,
       drainTimeoutSeconds: 300,
       pendingPersistenceRetryAfterSeconds: 30,
+      circuitBreakerFailureThreshold: 5,
+      circuitBreakerResetTimeoutMs: 10_000,
     },
   };
 }
@@ -1537,6 +1539,8 @@ function publicRuntimePolicy(): PublicRuntimePolicy {
         orderProcessConcurrency: 5,
         drainTimeoutSeconds: 300,
         pendingPersistenceRetryAfterSeconds: 30,
+        circuitBreakerFailureThreshold: 5,
+        circuitBreakerResetTimeoutMs: 10_000,
       },
     },
     publicCustomLimits: {

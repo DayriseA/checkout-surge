@@ -732,6 +732,8 @@ function startDemoRunPayload(operatorMode: "public" | "admin" = "public") {
           orderProcessConcurrency: 5,
           drainTimeoutSeconds: 300,
           pendingPersistenceRetryAfterSeconds: 30,
+          circuitBreakerFailureThreshold: 5,
+          circuitBreakerResetTimeoutMs: 10_000,
         },
       },
       startedAt: "2026-06-20T00:00:10.000Z",
@@ -793,6 +795,8 @@ function configSnapshotPayload() {
       orderProcessConcurrency: 5,
       drainTimeoutSeconds: 300,
       pendingPersistenceRetryAfterSeconds: 30,
+      circuitBreakerFailureThreshold: 5,
+      circuitBreakerResetTimeoutMs: 10_000,
     },
   };
 }

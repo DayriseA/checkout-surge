@@ -1199,6 +1199,8 @@ function configSnapshotFixture(): AcceptedRunConfigSnapshot {
       orderProcessConcurrency: 1,
       drainTimeoutSeconds: 300,
       pendingPersistenceRetryAfterSeconds: 30,
+      circuitBreakerFailureThreshold: 5,
+      circuitBreakerResetTimeoutMs: 10_000,
     },
   };
 }

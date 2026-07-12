@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import {
+  backpressureConfigSchema,
   type DashboardEvent,
   dashboardEventsRedisChannel,
   publicRuntimePolicySchema,
@@ -10,8 +11,12 @@ import {
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
+  clearErpCircuitBreakerSnapshots,
   createDatabaseConnection,
   createRedisDashboardEventSubscriber,
+  erpCircuitBreakerSnapshotKey,
+  getErpCircuitBreakerSnapshot,
+  getErpCircuitBreakerSnapshotKey,
   getInventoryStatus,
   InventoryNotInitializedError,
   initializeInventory,
@@ -22,8 +27,10 @@ import {
   publishDashboardEvent,
   reserveInventoryStock,
   reverseReservation,
+  setErpCircuitBreakerSnapshot,
   setRunSaleEligibility,
 } from "../../src/index.js";
+import { runDatabaseMigrations } from "../../src/migrations.js";
 import { resetTestDatabase } from "../../src/testing.js";
 
 const execFileAsync = promisify(execFile);
@@ -283,7 +290,11 @@ async function insertOrder(
   `;
 }
 
-async function runSeedScript(): Promise<void> {
+async function runSeedScript(
+  overrides: Partial<
+    Record<"ERP_CIRCUIT_FAILURE_THRESHOLD" | "ERP_CIRCUIT_RESET_TIMEOUT_MS", string>
+  > = {},
+): Promise<void> {
   const command = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 
   await execFileAsync(command, ["exec", "tsx", "src/scripts/seed.ts"], {
@@ -292,6 +303,7 @@ async function runSeedScript(): Promise<void> {
       ...process.env,
       DATABASE_URL: requireTestEnv("TEST_DATABASE_URL"),
       REDIS_URL: requireTestEnv("TEST_REDIS_URL"),
+      ...overrides,
     },
   });
 }
@@ -366,6 +378,113 @@ describe("database migrations, seed data, and reset behavior", () => {
       "reservations_enforce_run_owned_sale_offer_attribution",
       "reservations_preserve_order_backing_secured_reservation",
     ]);
+  });
+
+  it("backfills legacy breaker configuration during a migrate-only upgrade", async () => {
+    await runSeedScript();
+    await withDatabase(async (sql) => {
+      await sql`
+        UPDATE demo_presets
+        SET backpressure_config = (backpressure_config
+          - 'circuitBreakerFailureThreshold'
+          - 'circuitBreakerResetTimeoutMs')
+        WHERE slug = 'admin-smoke-steady'
+      `;
+      await sql`
+        UPDATE public_runtime_policies
+        SET policy = jsonb_set(
+          jsonb_set(policy, '{publicRunBudget,windowSeconds}', '999'::jsonb),
+          '{publicCustomDefaults,backpressureConfig}',
+          (policy #> '{publicCustomDefaults,backpressureConfig}')
+            - 'circuitBreakerFailureThreshold'
+            - 'circuitBreakerResetTimeoutMs',
+          true
+        )
+        WHERE id = 'active'
+      `;
+      await sql`
+        DELETE FROM drizzle.__drizzle_migrations
+        WHERE id = (SELECT max(id) FROM drizzle.__drizzle_migrations)
+      `;
+    });
+
+    await runDatabaseMigrations({
+      databaseUrl: requireTestEnv("TEST_DATABASE_URL"),
+      migrationsFolder,
+    });
+
+    const [preset] = await withDatabase(
+      (sql) => sql<{ backpressure_config: Record<string, unknown> }[]>`
+        SELECT backpressure_config
+        FROM demo_presets
+        WHERE slug = 'admin-smoke-steady'
+      `,
+    );
+    const [policy] = await withDatabase(
+      (sql) => sql<{ policy: unknown }[]>`
+        SELECT policy
+        FROM public_runtime_policies
+        WHERE id = 'active'
+      `,
+    );
+    expect(preset?.backpressure_config).toMatchObject({
+      circuitBreakerFailureThreshold: 5,
+      circuitBreakerResetTimeoutMs: 10_000,
+      queueName: "orders:process",
+    });
+    expect(policy?.policy).toMatchObject({
+      publicCustomDefaults: {
+        backpressureConfig: {
+          circuitBreakerFailureThreshold: 5,
+          circuitBreakerResetTimeoutMs: 10_000,
+        },
+      },
+      publicRunBudget: { windowSeconds: 999 },
+    });
+    expect(() => publicRuntimePolicySchema.parse(policy?.policy)).not.toThrow();
+  });
+
+  it("isolates scoped ERP circuit snapshots, applies TTL, and clears scoped and legacy state", async () => {
+    const base = {
+      state: "closed" as const,
+      consecutiveFailureCount: 0,
+      failureThreshold: 5,
+      resetTimeoutMs: 10_000,
+      openedAt: null,
+      nextAttemptAt: null,
+      halfOpenProbeInFlight: false,
+      updatedAt: "2026-06-20T12:00:00.000Z",
+    };
+    const runA = { type: "run" as const, runId: "55555555-5555-4555-8555-555555555555" };
+    const runB = { type: "run" as const, runId: "66666666-6666-4666-8666-666666666666" };
+    await redis.set(erpCircuitBreakerSnapshotKey, JSON.stringify({ ...base, state: "open" }));
+    await setErpCircuitBreakerSnapshot(redis, { ...base, failureThreshold: 2 }, runA);
+    await setErpCircuitBreakerSnapshot(
+      redis,
+      { ...base, failureThreshold: 3, resetTimeoutMs: 172_800_001 },
+      runB,
+    );
+    await setErpCircuitBreakerSnapshot(redis, base, { type: "catalog" });
+
+    await expect(getErpCircuitBreakerSnapshot(redis, runA)).resolves.toMatchObject({
+      failureThreshold: 2,
+    });
+    await expect(getErpCircuitBreakerSnapshot(redis, runB)).resolves.toMatchObject({
+      failureThreshold: 3,
+    });
+    await expect(getErpCircuitBreakerSnapshot(redis, { type: "catalog" })).resolves.toMatchObject({
+      failureThreshold: 5,
+    });
+    expect(await redis.ttl(getErpCircuitBreakerSnapshotKey(runA))).toBeGreaterThan(86_300);
+    expect(await redis.ttl(getErpCircuitBreakerSnapshotKey(runB))).toBeGreaterThan(345_500);
+    expect(await redis.get(erpCircuitBreakerSnapshotKey)).toBeNull();
+
+    await redis.set(erpCircuitBreakerSnapshotKey, JSON.stringify(base));
+    await clearErpCircuitBreakerSnapshots(redis);
+    await expect(getErpCircuitBreakerSnapshot(redis, runA)).resolves.toBeNull();
+    await expect(getErpCircuitBreakerSnapshot(redis, runB)).resolves.toBeNull();
+    await expect(getErpCircuitBreakerSnapshot(redis, { type: "catalog" })).resolves.toBeNull();
+    expect(await redis.get(erpCircuitBreakerSnapshotKey)).toBeNull();
   });
 
   it("enforces one non-terminal demo run across direct and concurrent writers", async () => {
@@ -493,6 +612,98 @@ describe("database migrations, seed data, and reset behavior", () => {
       remainingStock: "1000",
       reservedStock: "0",
     });
+  });
+
+  it("backfills legacy preset and runtime-policy breaker defaults without overwriting existing JSON", async () => {
+    await runSeedScript();
+    await withDatabase(async (sql) => {
+      await sql`
+        UPDATE demo_presets
+        SET backpressure_config = backpressure_config - 'circuitBreakerFailureThreshold' - 'circuitBreakerResetTimeoutMs'
+        WHERE slug = 'admin-smoke-steady'
+      `;
+      await sql`
+        UPDATE demo_presets
+        SET backpressure_config = (backpressure_config - 'circuitBreakerResetTimeoutMs')
+          || '{"circuitBreakerFailureThreshold":77}'::jsonb
+        WHERE slug = 'admin-failure-path'
+      `;
+      await sql`
+        UPDATE public_runtime_policies
+        SET policy = jsonb_set(jsonb_set(
+          policy, '{publicRunBudget,windowSeconds}', '999'::jsonb),
+          '{publicCustomDefaults,backpressureConfig}',
+          (policy #> '{publicCustomDefaults,backpressureConfig}')
+            - 'circuitBreakerFailureThreshold' - 'circuitBreakerResetTimeoutMs',
+          true
+        )
+        WHERE id = 'active'
+      `;
+    });
+
+    const overrides = {
+      ERP_CIRCUIT_FAILURE_THRESHOLD: "7",
+      ERP_CIRCUIT_RESET_TIMEOUT_MS: "12345",
+    };
+    await runSeedScript(overrides);
+    const readBackfilledState = () =>
+      withDatabase(
+        (sql) => sql<{ slug: string; backpressure_config: Record<string, unknown> }[]>`
+        SELECT slug, backpressure_config
+        FROM demo_presets
+        WHERE slug IN ('admin-smoke-steady', 'admin-failure-path')
+        ORDER BY slug
+      `,
+      );
+    const firstPresetState = await readBackfilledState();
+    const [policyRow] = await withDatabase(
+      (sql) => sql<{ policy: unknown }[]>`
+      SELECT policy FROM public_runtime_policies WHERE id = 'active'
+    `,
+    );
+    expect(firstPresetState).toEqual([
+      {
+        slug: "admin-failure-path",
+        backpressure_config: expect.objectContaining({
+          circuitBreakerFailureThreshold: 77,
+          circuitBreakerResetTimeoutMs: 12_345,
+          queueName: "orders:process",
+        }),
+      },
+      {
+        slug: "admin-smoke-steady",
+        backpressure_config: expect.objectContaining({
+          circuitBreakerFailureThreshold: 7,
+          circuitBreakerResetTimeoutMs: 12_345,
+          orderProcessConcurrency: 5,
+        }),
+      },
+    ]);
+    for (const preset of firstPresetState) {
+      expect(() => backpressureConfigSchema.parse(preset.backpressure_config)).not.toThrow();
+    }
+    expect(() => publicRuntimePolicySchema.parse(policyRow?.policy)).not.toThrow();
+    expect(policyRow?.policy).toMatchObject({
+      publicCustomDefaults: {
+        backpressureConfig: {
+          circuitBreakerFailureThreshold: 7,
+          circuitBreakerResetTimeoutMs: 12_345,
+        },
+      },
+      publicRunBudget: { windowSeconds: 999 },
+    });
+
+    await runSeedScript({
+      ERP_CIRCUIT_FAILURE_THRESHOLD: "9",
+      ERP_CIRCUIT_RESET_TIMEOUT_MS: "54321",
+    });
+    expect(await readBackfilledState()).toEqual(firstPresetState);
+    const [policyAfterRerun] = await withDatabase(
+      (sql) => sql<{ policy: unknown }[]>`
+      SELECT policy FROM public_runtime_policies WHERE id = 'active'
+    `,
+    );
+    expect(policyAfterRerun?.policy).toEqual(policyRow?.policy);
   });
 
   it("accepts orders backed by matching secured reservations", async () => {

@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { createDatabaseConnection } from "../client.js";
 import { createRedisClient } from "../redis.js";
 import { initializeInventory } from "../redis-inventory.js";
@@ -46,6 +46,8 @@ interface SeedPreset {
 const databaseUrl = requireEnv("DATABASE_URL");
 const redisUrl = requireEnv("REDIS_URL");
 const now = new Date();
+const circuitBreakerFailureThreshold = optionalIntegerEnv("ERP_CIRCUIT_FAILURE_THRESHOLD", 5);
+const circuitBreakerResetTimeoutMs = optionalIntegerEnv("ERP_CIRCUIT_RESET_TIMEOUT_MS", 10_000);
 
 const connection = createDatabaseConnection(databaseUrl, { max: 1 });
 
@@ -154,6 +156,45 @@ try {
       .onConflictDoNothing({
         target: publicRuntimePolicies.id,
       });
+
+    await tx
+      .update(demoPresets)
+      .set({
+        backpressureConfig: sql`coalesce(${demoPresets.backpressureConfig}, '{}'::jsonb)
+          || CASE WHEN coalesce(${demoPresets.backpressureConfig}, '{}'::jsonb) ? 'circuitBreakerFailureThreshold'
+            THEN '{}'::jsonb ELSE jsonb_build_object('circuitBreakerFailureThreshold', ${circuitBreakerFailureThreshold}::int) END
+          || CASE WHEN coalesce(${demoPresets.backpressureConfig}, '{}'::jsonb) ? 'circuitBreakerResetTimeoutMs'
+            THEN '{}'::jsonb ELSE jsonb_build_object('circuitBreakerResetTimeoutMs', ${circuitBreakerResetTimeoutMs}::int) END`,
+        updatedAt: now,
+      })
+      .where(
+        sql`NOT (coalesce(${demoPresets.backpressureConfig}, '{}'::jsonb) ? 'circuitBreakerFailureThreshold')
+          OR NOT (coalesce(${demoPresets.backpressureConfig}, '{}'::jsonb) ? 'circuitBreakerResetTimeoutMs')`,
+      );
+
+    await tx
+      .update(publicRuntimePolicies)
+      .set({
+        policy: sql`jsonb_set(
+          ${publicRuntimePolicies.policy},
+          '{publicCustomDefaults}',
+          coalesce(${publicRuntimePolicies.policy} -> 'publicCustomDefaults', '{}'::jsonb)
+            || jsonb_build_object(
+              'backpressureConfig',
+              coalesce(${publicRuntimePolicies.policy} #> '{publicCustomDefaults,backpressureConfig}', '{}'::jsonb)
+                || CASE WHEN coalesce(${publicRuntimePolicies.policy} #> '{publicCustomDefaults,backpressureConfig}', '{}'::jsonb) ? 'circuitBreakerFailureThreshold'
+                  THEN '{}'::jsonb ELSE jsonb_build_object('circuitBreakerFailureThreshold', ${circuitBreakerFailureThreshold}::int) END
+                || CASE WHEN coalesce(${publicRuntimePolicies.policy} #> '{publicCustomDefaults,backpressureConfig}', '{}'::jsonb) ? 'circuitBreakerResetTimeoutMs'
+                  THEN '{}'::jsonb ELSE jsonb_build_object('circuitBreakerResetTimeoutMs', ${circuitBreakerResetTimeoutMs}::int) END
+            ),
+          true
+        )`,
+        updatedAt: now,
+      })
+      .where(
+        sql`NOT (coalesce(${publicRuntimePolicies.policy} #> '{publicCustomDefaults,backpressureConfig}', '{}'::jsonb) ? 'circuitBreakerFailureThreshold')
+          OR NOT (coalesce(${publicRuntimePolicies.policy} #> '{publicCustomDefaults,backpressureConfig}', '{}'::jsonb) ? 'circuitBreakerResetTimeoutMs')`,
+      );
   });
 
   const [activeOffer] = await connection.db
@@ -416,6 +457,8 @@ function backpressureConfig(options: { orderProcessConcurrency: number }): JsonR
       "PENDING_PERSISTENCE_RETRY_AFTER_SECONDS",
       30,
     ),
+    circuitBreakerFailureThreshold,
+    circuitBreakerResetTimeoutMs,
   };
 }
 

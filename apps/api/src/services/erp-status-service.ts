@@ -7,12 +7,13 @@ import type {
 import {
   type CheckoutSurgeDatabase,
   type CheckoutSurgeRedis,
+  demoRuns,
   erpAttempts,
   getErpCircuitBreakerSnapshot,
   orders,
 } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
-import { desc, eq, gte, sql } from "drizzle-orm";
+import { desc, eq, gte, inArray, sql } from "drizzle-orm";
 import type { QueueStatusService } from "./queue-status-service.js";
 
 export interface ErpStatusReadModel {
@@ -29,14 +30,35 @@ export interface ErpAttemptStatusReader {
 }
 
 export interface ErpCircuitBreakerStateReader {
-  readSnapshot(): Promise<ErpCircuitBreakerSnapshot | null>;
+  readSnapshot(runId: string | null): Promise<ErpCircuitBreakerSnapshot | null>;
 }
 
 export class RedisErpCircuitBreakerStateReader implements ErpCircuitBreakerStateReader {
   constructor(private readonly redis: CheckoutSurgeRedis) {}
 
-  readSnapshot(): Promise<ErpCircuitBreakerSnapshot | null> {
-    return getErpCircuitBreakerSnapshot(this.redis);
+  readSnapshot(runId: string | null): Promise<ErpCircuitBreakerSnapshot | null> {
+    return getErpCircuitBreakerSnapshot(
+      this.redis,
+      runId ? { type: "run", runId } : { type: "catalog" },
+    );
+  }
+}
+
+export interface ActiveErpRunReader {
+  readActiveRunId(): Promise<string | null>;
+}
+
+export class PostgresActiveErpRunReader implements ActiveErpRunReader {
+  constructor(private readonly db: CheckoutSurgeDatabase) {}
+
+  async readActiveRunId(): Promise<string | null> {
+    const [row] = await this.db
+      .select({ id: demoRuns.id })
+      .from(demoRuns)
+      .where(inArray(demoRuns.status, ["starting", "active", "draining"]))
+      .orderBy(desc(demoRuns.updatedAt))
+      .limit(1);
+    return row?.id ?? null;
   }
 }
 
@@ -98,14 +120,21 @@ export class ErpStatusService {
       logger: CheckoutSurgeLogger;
       recentAttemptWindowSeconds?: number;
       now?: () => Date;
+      activeRunReader?: ActiveErpRunReader;
     },
   ) {}
 
   async getStatus(): Promise<ErpResilienceStatus> {
     const now = this.options.now?.() ?? new Date();
     const recentAttemptWindowSeconds = this.options.recentAttemptWindowSeconds ?? 60;
+    const activeRunResult = await readSafely(
+      () => this.options.activeRunReader?.readActiveRunId() ?? Promise.resolve(null),
+    );
+    const runId = activeRunResult.ok ? activeRunResult.value : null;
     const [circuitResult, queueResult, attemptReadModel] = await Promise.all([
-      readSafely(() => this.options.circuitBreakerStateReader.readSnapshot()),
+      activeRunResult.ok
+        ? readSafely(() => this.options.circuitBreakerStateReader.readSnapshot(runId))
+        : Promise.resolve({ ok: false as const, error: activeRunResult.error }),
       readSafely(() => this.options.queueStatusService.getStatus()),
       this.options.attemptStatusReader.readStatus(now, recentAttemptWindowSeconds),
     ]);
@@ -120,7 +149,7 @@ export class ErpStatusService {
     };
     const derived = deriveDependencyState({
       circuit,
-      isCircuitReadUnavailable: !circuitResult.ok,
+      isCircuitReadUnavailable: !activeRunResult.ok || !circuitResult.ok,
       isQueueReadUnavailable: !queueResult.ok,
       latestAttempt: attemptReadModel.latestAttempt,
       recentFailureCount: attemptReadModel.recentFailureCount,
@@ -132,6 +161,12 @@ export class ErpStatusService {
       this.options.logger.error(
         { err: circuitResult.error },
         "ERP circuit breaker state read failed.",
+      );
+    }
+    if (!activeRunResult.ok) {
+      this.options.logger.error(
+        { err: activeRunResult.error },
+        "Active ERP run scope read failed.",
       );
     }
     if (!queueResult.ok) {

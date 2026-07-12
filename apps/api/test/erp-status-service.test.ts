@@ -4,7 +4,7 @@ import type {
   QueueStatus,
 } from "@checkout-surge/contracts";
 import { createSilentLogger } from "@checkout-surge/logger";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ErpStatusService } from "../src/services/erp-status-service.js";
 import { QueueStatusService } from "../src/services/queue-status-service.js";
 
@@ -79,12 +79,52 @@ describe("ErpStatusService", () => {
       circuit: null,
     });
   });
+
+  it("reads the active run circuit and uses catalog scope when no run is active", async () => {
+    const readSnapshot = vi.fn().mockResolvedValue(circuitSnapshot());
+    const activeRunReader = {
+      readActiveRunId: vi.fn().mockResolvedValue("55555555-5555-4555-8555-555555555555"),
+    };
+    const service = buildService({
+      circuit: circuitSnapshot(),
+      queueStatus: queueStatusFixture(),
+      readModel: erpReadModel(),
+      readSnapshot,
+      activeRunReader,
+    });
+    await service.getStatus();
+    expect(readSnapshot).toHaveBeenCalledWith("55555555-5555-4555-8555-555555555555");
+    activeRunReader.readActiveRunId.mockResolvedValue(null);
+    await service.getStatus();
+    expect(readSnapshot).toHaveBeenLastCalledWith(null);
+  });
+
+  it("reports circuit scope lookup failure as unavailable without reading catalog state", async () => {
+    const readSnapshot = vi.fn();
+    const service = buildService({
+      circuit: null,
+      queueStatus: queueStatusFixture(),
+      readModel: erpReadModel(),
+      readSnapshot,
+      activeRunReader: {
+        readActiveRunId: vi.fn().mockRejectedValue(new Error("database unavailable")),
+      },
+    });
+    await expect(service.getStatus()).resolves.toMatchObject({
+      status: "unavailable",
+      reason: "circuit_state_unavailable",
+      circuit: null,
+    });
+    expect(readSnapshot).not.toHaveBeenCalled();
+  });
 });
 
 function buildService(options: {
   circuit: ErpCircuitBreakerSnapshot | null;
   queueStatus: QueueStatus;
   readModel: Awaited<ReturnType<typeof erpReadModel>>;
+  readSnapshot?: (runId: string | null) => Promise<ErpCircuitBreakerSnapshot | null>;
+  activeRunReader?: { readActiveRunId(): Promise<string | null> };
 }): ErpStatusService {
   const queueStatusService = new QueueStatusService(
     { inspect: async () => options.queueStatus },
@@ -92,11 +132,14 @@ function buildService(options: {
   );
 
   return new ErpStatusService({
-    circuitBreakerStateReader: { readSnapshot: async () => options.circuit },
+    circuitBreakerStateReader: {
+      readSnapshot: options.readSnapshot ?? (async () => options.circuit),
+    },
     attemptStatusReader: { readStatus: async () => options.readModel },
     queueStatusService,
     logger: createSilentLogger("api"),
     now: () => now,
+    ...(options.activeRunReader ? { activeRunReader: options.activeRunReader } : {}),
   });
 }
 
