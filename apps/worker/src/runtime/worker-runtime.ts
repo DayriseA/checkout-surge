@@ -1,5 +1,6 @@
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import type { NotificationRecoveryScanner } from "../application/notification-recovery-scanner.js";
+import type { OrderDispatchScanner } from "../application/order-dispatch-scanner.js";
 import type { NotificationRecordConsumer } from "../queue/notification-record-consumer.js";
 import type { OrderProcessConsumer } from "../queue/order-process-consumer.js";
 import type { WorkerHealthServer } from "../server.js";
@@ -16,6 +17,8 @@ export function createWorkerRuntime(options: {
   orderProcessConsumer: OrderProcessConsumer;
   notificationRecordConsumer: NotificationRecordConsumer;
   notificationRecoveryScanner?: NotificationRecoveryScanner;
+  orderDispatchScanner?: OrderDispatchScanner;
+  closeOrderProcessJobPublisher?: () => Promise<void>;
   closeNotificationRecordPublisher?: () => Promise<void>;
   closePostgres: () => Promise<void>;
   closeRedis: () => Promise<void>;
@@ -37,6 +40,7 @@ export function createWorkerRuntime(options: {
         options.orderProcessConsumer.start();
         options.notificationRecordConsumer.start();
         options.notificationRecoveryScanner?.start();
+        options.orderDispatchScanner?.start();
         await options.healthServer.listen({
           host: options.healthHost,
           port: options.healthPort,
@@ -90,6 +94,13 @@ async function closeResources(options: Parameters<typeof createWorkerRuntime>[0]
   const notificationRecoveryScanner = options.notificationRecoveryScanner;
   if (notificationRecoveryScanner) {
     await close(() => notificationRecoveryScanner.close());
+  }
+  const orderDispatchScanner = options.orderDispatchScanner;
+  if (orderDispatchScanner) {
+    await close(() => orderDispatchScanner.close());
+  }
+  if (options.closeOrderProcessJobPublisher) {
+    await close(options.closeOrderProcessJobPublisher);
   }
   if (options.closeNotificationRecordPublisher) {
     await close(options.closeNotificationRecordPublisher);

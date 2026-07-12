@@ -19,16 +19,19 @@ import {
 } from "./application/erp-confirmation-client.js";
 import { createNotificationRecordJobHandler } from "./application/notification-record-job-handler.js";
 import { createNotificationRecoveryScanner } from "./application/notification-recovery-scanner.js";
+import { createOrderDispatchScanner } from "./application/order-dispatch-scanner.js";
 import { createOrderProcessJobHandler } from "./application/order-process-job-handler.js";
 import { RunScopedBackpressureOrderConfirmation } from "./application/run-backpressure.js";
 import { PostgresErpAttemptPersistence } from "./persistence/postgres-erp-attempt-persistence.js";
 import { PostgresNotificationRecordPersistence } from "./persistence/postgres-notification-record-persistence.js";
 import { PostgresNotificationRecoveryPersistence } from "./persistence/postgres-notification-recovery-persistence.js";
+import { PostgresOrderDispatchPersistence } from "./persistence/postgres-order-dispatch-persistence.js";
 import { PostgresOrderTransitionPersistence } from "./persistence/postgres-order-transition-persistence.js";
 import { PostgresRunConfigReader } from "./persistence/postgres-run-config-reader.js";
 import { createBullMqNotificationRecordConsumer } from "./queue/bullmq-notification-record-consumer.js";
 import { createBullMqNotificationRecordPublisher } from "./queue/bullmq-notification-record-publisher.js";
 import { createBullMqOrderProcessConsumer } from "./queue/bullmq-order-process-consumer.js";
+import { createBullMqOrderProcessJobPublisher } from "./queue/bullmq-order-process-job-publisher.js";
 import { loadWorkerConfig } from "./runtime/config.js";
 import { createWorkerReadiness } from "./runtime/readiness.js";
 import { createWorkerRuntime } from "./runtime/worker-runtime.js";
@@ -77,6 +80,13 @@ export {
   type RecoverableNotificationOrder,
 } from "./application/notification-recovery-scanner.js";
 export {
+  createOrderDispatchScanner,
+  type OrderDispatchPersistence,
+  type OrderDispatchPublisher,
+  type OrderDispatchScanner,
+  type OrderDispatchScanResult,
+} from "./application/order-dispatch-scanner.js";
+export {
   createLocalOrderConfirmation,
   createOrderProcessJobHandler,
   type NotificationRecordPublisher,
@@ -92,6 +102,7 @@ export {
   PostgresNotificationRecordPersistence,
 } from "./persistence/postgres-notification-record-persistence.js";
 export { PostgresNotificationRecoveryPersistence } from "./persistence/postgres-notification-recovery-persistence.js";
+export { PostgresOrderDispatchPersistence } from "./persistence/postgres-order-dispatch-persistence.js";
 export {
   InvalidOrderTransitionError,
   OrderJobIdentityMismatchError,
@@ -102,6 +113,11 @@ export { PostgresRunConfigReader } from "./persistence/postgres-run-config-reade
 export { createBullMqNotificationRecordConsumer } from "./queue/bullmq-notification-record-consumer.js";
 export { createBullMqNotificationRecordPublisher } from "./queue/bullmq-notification-record-publisher.js";
 export { createBullMqOrderProcessConsumer } from "./queue/bullmq-order-process-consumer.js";
+export {
+  createBullMqOrderProcessJobPublisher,
+  createOrderProcessJobPublisher,
+  type WorkerOrderProcessJobPublisher,
+} from "./queue/bullmq-order-process-job-publisher.js";
 export type { NotificationRecordConsumer } from "./queue/notification-record-consumer.js";
 export type { OrderProcessConsumer } from "./queue/order-process-consumer.js";
 export { loadWorkerConfig, type WorkerConfig } from "./runtime/config.js";
@@ -124,6 +140,10 @@ export async function startWorker(): Promise<void> {
       maxRetriesPerRequest: null,
     },
   });
+  const orderProcessJobPublisher = createBullMqOrderProcessJobPublisher({
+    url: config.redisUrl,
+    maxRetriesPerRequest: null,
+  });
   const notificationRecoveryScanner = createNotificationRecoveryScanner({
     persistence: new PostgresNotificationRecoveryPersistence(database.db),
     publisher: notificationRecordPublisher,
@@ -140,6 +160,26 @@ export async function startWorker(): Promise<void> {
           correlationId: report.correlationId,
         },
         "Notification recovery could not publish a notification-recording job.",
+      );
+    },
+  });
+  const orderDispatchScanner = createOrderDispatchScanner({
+    persistence: new PostgresOrderDispatchPersistence(database.db),
+    publisher: orderProcessJobPublisher,
+    logger,
+    scanIntervalMs: config.orderDispatchScanIntervalMs,
+    batchSize: config.orderDispatchBatchSize,
+    minimumQueuedAgeMs: config.orderDispatchMinimumQueuedAgeMs,
+    reportPublishFailure: (report) => {
+      logger.error(
+        {
+          err: report.error,
+          orderId: report.job.orderId,
+          saleOfferId: report.job.saleOfferId,
+          ...(report.job.runId ? { runId: report.job.runId } : {}),
+          correlationId: report.job.correlationId,
+        },
+        "Order dispatch recovery could not publish an order-processing job.",
       );
     },
   });
@@ -259,6 +299,8 @@ export async function startWorker(): Promise<void> {
     orderProcessConsumer,
     notificationRecordConsumer,
     notificationRecoveryScanner,
+    orderDispatchScanner,
+    closeOrderProcessJobPublisher: orderProcessJobPublisher.close,
     closeNotificationRecordPublisher: notificationRecordPublisher.close,
     closePostgres: database.close,
     closeRedis: async () => {

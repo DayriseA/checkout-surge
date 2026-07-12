@@ -22,6 +22,9 @@ describe("worker configuration", () => {
       notificationRecordConcurrency: 5,
       notificationRecoveryScanIntervalMs: 1000,
       notificationRecoveryBatchSize: 100,
+      orderDispatchScanIntervalMs: 1000,
+      orderDispatchBatchSize: 100,
+      orderDispatchMinimumQueuedAgeMs: 1000,
       postgresPoolMax: 10,
       mockErpBaseUrl: "http://localhost:4100/",
       erpRequestTimeoutMs: 2000,
@@ -92,6 +95,20 @@ describe("worker configuration", () => {
         NOTIFICATION_RECOVERY_SCAN_INTERVAL_MS: "0",
       }),
     ).toThrow("NOTIFICATION_RECOVERY_SCAN_INTERVAL_MS must be a positive integer");
+    expect(() =>
+      loadWorkerConfig({
+        DATABASE_URL: "postgresql://localhost/test",
+        REDIS_URL: "redis://localhost:6379",
+        ORDER_DISPATCH_SCAN_INTERVAL_MS: "0",
+      }),
+    ).toThrow("ORDER_DISPATCH_SCAN_INTERVAL_MS must be a positive integer");
+    expect(
+      loadWorkerConfig({
+        DATABASE_URL: "postgresql://localhost/test",
+        REDIS_URL: "redis://localhost:6379",
+        ORDER_DISPATCH_MINIMUM_QUEUED_AGE_MS: "0",
+      }).orderDispatchMinimumQueuedAgeMs,
+    ).toBe(0);
   });
 });
 
@@ -231,6 +248,11 @@ describe("worker runtime lifecycle", () => {
       close: vi.fn().mockResolvedValue(undefined),
       scanOnce: vi.fn().mockResolvedValue({ candidates: 0, published: 0, failed: 0 }),
     };
+    const orderDispatchScanner = {
+      start: vi.fn(),
+      close: vi.fn().mockResolvedValue(undefined),
+      scanOnce: vi.fn().mockResolvedValue({ candidates: 0, published: 0, failed: 0 }),
+    };
     const runtime = createWorkerRuntime({
       healthServer,
       healthHost: "127.0.0.1",
@@ -238,6 +260,8 @@ describe("worker runtime lifecycle", () => {
       orderProcessConsumer: consumer,
       notificationRecordConsumer: notificationConsumer,
       notificationRecoveryScanner,
+      orderDispatchScanner,
+      closeOrderProcessJobPublisher: vi.fn().mockResolvedValue(undefined),
       closeNotificationRecordPublisher: vi.fn().mockResolvedValue(undefined),
       closePostgres: vi.fn().mockResolvedValue(undefined),
       closeRedis: vi.fn().mockResolvedValue(undefined),
@@ -253,6 +277,8 @@ describe("worker runtime lifecycle", () => {
     expect(notificationConsumer.close).toHaveBeenCalledOnce();
     expect(notificationRecoveryScanner.start).toHaveBeenCalledOnce();
     expect(notificationRecoveryScanner.close).toHaveBeenCalledOnce();
+    expect(orderDispatchScanner.start).toHaveBeenCalledOnce();
+    expect(orderDispatchScanner.close).toHaveBeenCalledOnce();
   });
 
   it("closes serving and consuming boundaries before PostgreSQL and Redis", async () => {
@@ -290,6 +316,16 @@ describe("worker runtime lifecycle", () => {
         }),
         scanOnce: vi.fn().mockResolvedValue({ candidates: 0, published: 0, failed: 0 }),
       },
+      orderDispatchScanner: {
+        start: vi.fn(),
+        close: vi.fn(async () => {
+          closeOrder.push("order-dispatch");
+        }),
+        scanOnce: vi.fn().mockResolvedValue({ candidates: 0, published: 0, failed: 0 }),
+      },
+      closeOrderProcessJobPublisher: vi.fn(async () => {
+        closeOrder.push("order-publisher");
+      }),
       closeNotificationRecordPublisher: vi.fn(async () => {
         closeOrder.push("notification-publisher");
       }),
@@ -310,6 +346,8 @@ describe("worker runtime lifecycle", () => {
       "consumer",
       "notifications",
       "notification-recovery",
+      "order-dispatch",
+      "order-publisher",
       "notification-publisher",
       "postgres",
       "redis",

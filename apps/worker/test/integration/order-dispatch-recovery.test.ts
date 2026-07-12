@@ -1,0 +1,198 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { type OrderProcessJob, orderProcessBullMqQueueName } from "@checkout-surge/contracts";
+import {
+  createDatabaseConnection,
+  orderEvents,
+  orders,
+  products,
+  reservations,
+  saleOffers,
+} from "@checkout-surge/db";
+import { resetTestDatabase } from "@checkout-surge/db/testing";
+import { createSilentLogger } from "@checkout-surge/logger";
+import { Queue } from "bullmq";
+import { eq } from "drizzle-orm";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { createOrderDispatchScanner } from "../../src/application/order-dispatch-scanner.js";
+import {
+  createLocalOrderConfirmation,
+  createOrderProcessJobHandler,
+} from "../../src/application/order-process-job-handler.js";
+import { PostgresOrderDispatchPersistence } from "../../src/persistence/postgres-order-dispatch-persistence.js";
+import { PostgresOrderTransitionPersistence } from "../../src/persistence/postgres-order-transition-persistence.js";
+import { createBullMqOrderProcessConsumer } from "../../src/queue/bullmq-order-process-consumer.js";
+import { createBullMqOrderProcessJobPublisher } from "../../src/queue/bullmq-order-process-job-publisher.js";
+
+const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const migrationsFolder = path.resolve(packageRoot, "../../packages/db/drizzle");
+const databaseUrl = requireTestEnv("TEST_DATABASE_URL");
+const redisUrl = requireTestEnv("TEST_REDIS_URL");
+const ids = {
+  product: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa01",
+  saleOffer: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb01",
+  reservation: "cccccccc-cccc-4ccc-8ccc-cccccccccc01",
+  order: "dddddddd-dddd-4ddd-8ddd-dddddddddd01",
+};
+const queuedAt = new Date("2026-06-21T00:00:00.000Z");
+const job: OrderProcessJob = {
+  orderId: ids.order,
+  publicOrderId: "ord_dispatch_recovery",
+  reservationId: ids.reservation,
+  saleOfferId: ids.saleOffer,
+  correlationId: "corr-dispatch-recovery",
+  quantity: 1,
+  queuedAt: queuedAt.toISOString(),
+};
+
+describe("queued order dispatch recovery", () => {
+  let connection!: ReturnType<typeof createDatabaseConnection>;
+
+  beforeAll(async () => {
+    await resetTestDatabase({ databaseUrl, migrationsFolder });
+    connection = createDatabaseConnection(databaseUrl, { max: 8 });
+  });
+
+  beforeEach(async () => {
+    await resetTestDatabase({ databaseUrl, migrationsFolder });
+    await seedQueuedOrder();
+  });
+
+  afterAll(async () => {
+    await connection?.close();
+  });
+
+  it("recovers an order when the API never successfully enqueued its initial job", async () => {
+    const queue = new Queue(orderProcessBullMqQueueName, { connection: { url: redisUrl } });
+    await queue.obliterate({ force: true });
+    const publisher = createBullMqOrderProcessJobPublisher({
+      url: redisUrl,
+      maxRetriesPerRequest: null,
+    });
+    const scanner = createOrderDispatchScanner({
+      persistence: new PostgresOrderDispatchPersistence(connection.db),
+      publisher,
+      logger: createSilentLogger("worker"),
+      scanIntervalMs: 10_000,
+      batchSize: 10,
+      minimumQueuedAgeMs: 0,
+      now: () => new Date("2026-06-21T00:00:10.000Z"),
+    });
+    const consumer = createBullMqOrderProcessConsumer({
+      connection: { url: redisUrl, maxRetriesPerRequest: null },
+      concurrency: 1,
+      handler: createOrderProcessJobHandler({
+        confirmation: createLocalOrderConfirmation(),
+        persistence: new PostgresOrderTransitionPersistence(connection.db),
+        logger: createSilentLogger("worker"),
+      }),
+      logger: createSilentLogger("worker"),
+    });
+
+    try {
+      await expect(scanner.scanOnce()).resolves.toEqual({
+        candidates: 1,
+        published: 1,
+        failed: 0,
+      });
+      await expect(scanner.scanOnce()).resolves.toEqual({
+        candidates: 1,
+        published: 1,
+        failed: 0,
+      });
+      const waitingJobs = await queue.getJobs(["waiting", "delayed", "prioritized"]);
+      expect(waitingJobs.map((queuedJob) => queuedJob.id)).toEqual([job.orderId]);
+
+      consumer.start();
+      await waitForOrderStatus("confirmed");
+
+      const [order] = await connection.db.select().from(orders).where(eq(orders.id, ids.order));
+      expect(order?.status).toBe("confirmed");
+      expect(await queue.getJob(job.orderId).then((queuedJob) => queuedJob?.id)).toBe(job.orderId);
+    } finally {
+      await scanner.close();
+      await consumer.close();
+      await publisher.close();
+      await queue.close();
+    }
+  });
+
+  async function waitForOrderStatus(status: "confirmed"): Promise<void> {
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline) {
+      const [order] = await connection.db.select().from(orders).where(eq(orders.id, ids.order));
+      if (order?.status === status) {
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    throw new Error(`Order did not reach ${status} before the timeout.`);
+  }
+
+  async function seedQueuedOrder(): Promise<void> {
+    await connection.db.insert(products).values({
+      id: ids.product,
+      sku: "DISPATCH-RECOVERY-SKU",
+      slug: "dispatch-recovery-product",
+      name: "Dispatch Recovery Product",
+    });
+    await connection.db.insert(saleOffers).values({
+      id: ids.saleOffer,
+      productId: ids.product,
+      name: "Dispatch Recovery Offer",
+      allocatedStock: 10,
+      saleStartsAt: new Date("2026-01-01T00:00:00.000Z"),
+      saleEndsAt: new Date("2030-01-01T00:00:00.000Z"),
+    });
+    await connection.db.insert(reservations).values({
+      id: ids.reservation,
+      saleOfferId: ids.saleOffer,
+      correlationId: job.correlationId,
+      quantity: job.quantity,
+      status: "secured",
+      reservationToken: "dispatch-recovery-token",
+      securedAt: queuedAt,
+      expiresAt: new Date("2026-06-21T00:15:00.000Z"),
+    });
+    await connection.db.insert(orders).values({
+      id: ids.order,
+      publicOrderId: job.publicOrderId,
+      saleOfferId: ids.saleOffer,
+      reservationId: ids.reservation,
+      correlationId: job.correlationId,
+      quantity: job.quantity,
+      status: "queued",
+      queuedAt,
+    });
+    await connection.db.insert(orderEvents).values([
+      {
+        orderId: ids.order,
+        reservationId: ids.reservation,
+        saleOfferId: ids.saleOffer,
+        correlationId: job.correlationId,
+        eventName: "reservation.secured",
+        payload: { quantity: job.quantity, reservationStatus: "secured" },
+        source: "api",
+        occurredAt: queuedAt,
+      },
+      {
+        orderId: ids.order,
+        reservationId: ids.reservation,
+        saleOfferId: ids.saleOffer,
+        correlationId: job.correlationId,
+        eventName: "order.queued",
+        payload: { quantity: job.quantity, orderStatus: "queued" },
+        source: "api",
+        occurredAt: queuedAt,
+      },
+    ]);
+  }
+});
+
+function requireTestEnv(name: "TEST_DATABASE_URL" | "TEST_REDIS_URL"): string {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(`${name} is required for order dispatch integration tests.`);
+  }
+  return value;
+}

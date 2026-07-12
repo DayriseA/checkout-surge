@@ -7,6 +7,9 @@ export interface WorkerConfig {
   notificationRecordConcurrency: number;
   notificationRecoveryScanIntervalMs: number;
   notificationRecoveryBatchSize: number;
+  orderDispatchScanIntervalMs: number;
+  orderDispatchBatchSize: number;
+  orderDispatchMinimumQueuedAgeMs: number;
   postgresPoolMax: number;
   mockErpBaseUrl: string;
   erpRequestTimeoutMs: number;
@@ -39,6 +42,21 @@ export function loadWorkerConfig(env: NodeJS.ProcessEnv): WorkerConfig {
       env.NOTIFICATION_RECOVERY_BATCH_SIZE,
       "NOTIFICATION_RECOVERY_BATCH_SIZE",
       100,
+    ),
+    orderDispatchScanIntervalMs: parsePositiveInteger(
+      env.ORDER_DISPATCH_SCAN_INTERVAL_MS,
+      "ORDER_DISPATCH_SCAN_INTERVAL_MS",
+      1000,
+    ),
+    orderDispatchBatchSize: parsePositiveInteger(
+      env.ORDER_DISPATCH_BATCH_SIZE,
+      "ORDER_DISPATCH_BATCH_SIZE",
+      100,
+    ),
+    orderDispatchMinimumQueuedAgeMs: parseNonnegativeInteger(
+      env.ORDER_DISPATCH_MINIMUM_QUEUED_AGE_MS,
+      "ORDER_DISPATCH_MINIMUM_QUEUED_AGE_MS",
+      1000,
     ),
     postgresPoolMax: parsePositiveInteger(
       env.WORKER_POSTGRES_POOL_MAX,
@@ -88,6 +106,26 @@ function parsePositiveInteger(value: string | undefined, name: string, fallback:
 
   if (!Number.isInteger(parsed) || parsed <= 0) {
     throw new Error(`${name} must be a positive integer.`);
+  }
+
+  return parsed;
+}
+
+function parseNonnegativeInteger(
+  value: string | undefined,
+  name: string,
+  fallback: number,
+): number {
+  const raw = value?.trim();
+
+  if (!raw) {
+    return fallback;
+  }
+
+  const parsed = Number(raw);
+
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new Error(`${name} must be a nonnegative integer.`);
   }
 
   return parsed;
