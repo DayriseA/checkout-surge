@@ -26,13 +26,29 @@ export const buyRequestSchema = z
   .strict();
 export type BuyRequest = z.infer<typeof buyRequestSchema>;
 
+export const acceptedReservationSummarySchema = reservationSummarySchema.extend({
+  status: z.literal("secured"),
+});
+export type AcceptedReservationSummary = z.infer<typeof acceptedReservationSummarySchema>;
+
+export const acceptedOrderSummarySchema = orderSummarySchema
+  .omit({
+    failureCode: true,
+    failureMessage: true,
+    processingAt: true,
+    confirmedAt: true,
+    failedAt: true,
+  })
+  .extend({ status: z.literal("queued") });
+export type AcceptedOrderSummary = z.infer<typeof acceptedOrderSummarySchema>;
+
 export const reservationAcceptedResponseSchema = z
   .object({
-    outcome: z.union([z.literal("reservation_secured"), z.literal("idempotent_replay")]),
+    outcome: z.literal("reservation_secured"),
     correlationId: correlationIdSchema,
     timestamp: isoTimestampSchema,
-    reservation: reservationSummarySchema,
-    order: orderSummarySchema,
+    reservation: acceptedReservationSummarySchema,
+    order: acceptedOrderSummarySchema,
     simulatedStatus: simulatedPurchaseStatusSchema.extract(["reservation_secured"]),
   })
   .strict();

@@ -90,7 +90,7 @@ async function characterizeSoldOutIdempotencyAndRecovery() {
     "first purchase did not reserve inventory",
   );
   assert(
-    replay.status === 202 && replay.body.outcome === "idempotent_replay",
+    replay.status === 202 && replay.body.outcome === "reservation_secured",
     "duplicate purchase was not an idempotent replay",
   );
   assert(

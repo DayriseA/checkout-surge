@@ -484,6 +484,59 @@ describe("buy and dashboard contracts", () => {
   });
 
   it("validates accepted and sold-out reservation outcomes", () => {
+    const accepted = {
+      outcome: "reservation_secured",
+      correlationId,
+      timestamp,
+      reservation: {
+        id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        saleOfferId,
+        correlationId: "original-correlation",
+        quantity: 1,
+        status: "secured",
+        reservationToken: "reservation-token",
+        securedAt: timestamp,
+        expiresAt: "2026-06-20T12:15:00.000Z",
+      },
+      order: {
+        id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        publicOrderId: "ord_contract",
+        saleOfferId,
+        reservationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        correlationId: "original-correlation",
+        quantity: 1,
+        status: "queued",
+        queuedAt: timestamp,
+      },
+      simulatedStatus: "reservation_secured",
+    } as const;
+    expect(buyResponseSchema.parse(accepted).outcome).toBe("reservation_secured");
+    expect(() => buyResponseSchema.parse({ ...accepted, outcome: "idempotent_replay" })).toThrow();
+    expect(() =>
+      buyResponseSchema.parse({
+        ...accepted,
+        order: { ...accepted.order, status: "confirmed", confirmedAt: timestamp },
+      }),
+    ).toThrow();
+    expect(() =>
+      buyResponseSchema.parse({
+        ...accepted,
+        order: {
+          ...accepted.order,
+          status: "failed",
+          failedAt: timestamp,
+          failureCode: "erp_rejected",
+          failureMessage: "Rejected",
+        },
+      }),
+    ).toThrow();
+    expect(() =>
+      buyResponseSchema.parse({
+        ...accepted,
+        reservation: { ...accepted.reservation, status: "released" },
+      }),
+    ).toThrow();
+
     expect(
       buyResponseSchema.parse({
         outcome: "sold_out",

@@ -92,7 +92,6 @@ function parseLoadRunIdHeader(headerValue: string | string[] | undefined): strin
 function buyStatusCode(outcome: ReturnType<typeof buyResponseSchema.parse>["outcome"]): number {
   switch (outcome) {
     case "reservation_secured":
-    case "idempotent_replay":
     case "reservation_pending_persistence":
       return 202;
     case "quantity_invalid":

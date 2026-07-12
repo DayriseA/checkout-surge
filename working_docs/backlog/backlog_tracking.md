@@ -1,6 +1,7 @@
 # Backlog tracking
 
-Tasks are listed in their intended execution order. Replace `⬜` with `✅` when a task is complete.
+Tasks are listed in their intended execution order.
+Replace `⬜` with `✅` when a task is complete. Optional `⏳` for work in progress.
 
 ✅ [Task 01: Add an automated cross-service composition test (and the frozen-behavior characterization suite)](./task_01.md)
 
@@ -22,11 +23,11 @@ Tasks are listed in their intended execution order. Replace `⬜` with `✅` whe
 
 ✅ [Task 10: Replace the per-request PostgreSQL eligibility gate with a Redis-first, fail-closed projection and streamline accepted-path persistence](./task_10.md)
 
-⬜ [Task 11: Remove default control-plane credentials and unnecessary published ports from the Docker Compose runtime](./task_11.md)
+✅ [Task 11: Remove default control-plane credentials and unnecessary published ports from the Docker Compose runtime](./task_11.md)
 
-⬜ [Task 12: Stop writing a false durable pending marker when concurrent idempotent requests race the insert](./task_12.md)
+✅ [Task 12: Stop writing a false durable pending marker when concurrent idempotent requests race the insert](./task_12.md)
 
-⬜ [Task 13: Make idempotent replays faithful: acceptance-shaped response, no terminal-state leak, stable outcome label](./task_13.md)
+✅ [Task 13: Make idempotent replays faithful: acceptance-shaped response, no terminal-state leak, stable outcome label](./task_13.md)
 
 ⬜ [Task 14: Close the concurrent-duplicate window in mock-ERP confirmation idempotency](./task_14.md)
 
@@ -163,4 +164,3 @@ Tasks are listed in their intended execution order. Replace `⬜` with `✅` whe
 ⬜ [Task 80: Scope the infra-only shutdown command to the infra services](./task_80.md)
 
 ⬜ [Task 81: Compute the smoke's budget-cleanup window at consumption time](./task_81.md)
-

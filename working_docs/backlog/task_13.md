@@ -66,3 +66,13 @@ The durable acceptance facts already exist without consulting current state: fro
 ## Scope and non-goals
 
 This task is limited to the public accepted-response contract, durable acceptance projection, replay response shaping, and focused tests at those boundaries. Do not turn `/buy` into an order-status endpoint; change worker transitions, Redis stock/idempotency conflict semantics, pending-persistence reconciliation, queue job identity, or promotion/error-handling policy; add duplicate-attempt accounting or finalization logic (task 40); or introduce a general event-sourced rebuild of historical responses. Do not copy Forge's Redis-only response cache as the replay authority or Opus's no-re-enqueue behavior. Preserve the fast reservation/slow confirmation split and existing crash recovery while making a durable replay represent the original acceptance.
+
+## Implementation record
+
+- **Status:** Complete (2026-07-12).
+- Removed the replay-only discriminator from the public buy contract and HTTP status mapping while retaining the internal Redis `idempotent_replay` decision.
+- PostgreSQL replay lookup now selects only immutable reservation/order acceptance columns and projects literal `secured`/`queued` states, preventing confirmed or failed live state and terminal metadata from leaking through `/buy`.
+- Durable responses use the original reservation `securedAt` timestamp. The current request correlation ID remains top-level while nested correlation IDs remain the durable workflow values.
+- Preserved deterministic enqueue before Redis promotion and acceptance response, including uniqueness-race recovery and pending-to-durable reconciliation.
+- **Scoped deviation:** The requested order-status endpoint assertions were not added because Task 52 explicitly owns that endpoint and states it does not exist yet. Terminal confirmed/failed behavior is instead covered at both the persistence projection and real PostgreSQL/Redis/API replay boundaries; no Task 52 surface was introduced.
+- **Verification:** shared packages built; API production type-check passed; focused service/persistence tests passed (37 tests); contracts tests passed (26 tests); focused real PostgreSQL/Redis/API terminal-replay integration passed (1 passed, 60 skipped by name filter); targeted Biome and diff checks passed. Full test-source type-check still reports 20 pre-existing errors; the changed-file filter contains only the existing API builder exact-optional mismatch, nullable Redis argument, and deferred test callback narrowing error, with no Task 13 DTO/fixture regressions. Composition/characterization suites were not run per repository instructions.

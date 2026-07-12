@@ -15,7 +15,37 @@ const hold: SecuredReservationHold = {
   expiresAt: "2026-07-12T12:15:00.000Z",
 };
 
-const durableRow = {
+interface DurableAcceptanceLiveRow {
+  reservation: {
+    id: string;
+    saleOfferId: string;
+    runId: string | null;
+    correlationId: string;
+    quantity: number;
+    status: "secured";
+    reservationToken: string;
+    securedAt: Date;
+    expiresAt: Date;
+  };
+  order: {
+    id: string;
+    publicOrderId: string;
+    saleOfferId: string;
+    reservationId: string;
+    runId: string | null;
+    correlationId: string;
+    quantity: number;
+    status: "queued" | "processing" | "confirmed" | "failed";
+    failureCode: string | null;
+    failureMessage: string | null;
+    queuedAt: Date;
+    processingAt: Date | null;
+    confirmedAt: Date | null;
+    failedAt: Date | null;
+  };
+}
+
+const durableRow: DurableAcceptanceLiveRow = {
   reservation: {
     id: hold.id,
     saleOfferId: hold.saleOfferId,
@@ -46,6 +76,54 @@ const durableRow = {
 };
 
 describe("PostgresBuyPersistence uniqueness-race recovery", () => {
+  it.each([
+    {
+      status: "confirmed",
+      processingAt: new Date("2026-07-12T12:00:01.000Z"),
+      confirmedAt: new Date("2026-07-12T12:00:02.000Z"),
+      failedAt: null,
+      failureCode: null,
+      failureMessage: null,
+    },
+    {
+      status: "failed",
+      processingAt: new Date("2026-07-12T12:00:01.000Z"),
+      confirmedAt: null,
+      failedAt: new Date("2026-07-12T12:00:02.000Z"),
+      failureCode: "erp_rejected",
+      failureMessage: "Payment declined",
+    },
+  ] satisfies Array<
+    Partial<DurableAcceptanceLiveRow["order"]>
+  >)("projects a terminal $status row back to its immutable acceptance", async (terminalState) => {
+    const persistence = new PostgresBuyPersistence(
+      fakeDatabase(new Error("unused"), {
+        ...durableRow,
+        order: { ...durableRow.order, ...terminalState },
+      }),
+    );
+
+    await expect(persistence.getPersistedBuyByReservationId(hold.id)).resolves.toEqual({
+      reservation: {
+        ...hold,
+        correlationId: "winner-correlation",
+        securedAt: "2026-07-12T11:59:59.123Z",
+        expiresAt: "2026-07-12T12:14:59.123Z",
+      },
+      order: {
+        id: durableRow.order.id,
+        publicOrderId: durableRow.order.publicOrderId,
+        saleOfferId: hold.saleOfferId,
+        reservationId: hold.id,
+        runId: hold.runId,
+        correlationId: "winner-correlation",
+        quantity: hold.quantity,
+        status: "queued",
+        queuedAt: "2026-07-12T11:59:59.456Z",
+      },
+    });
+  });
+
   it.each([
     "reservations_pkey",
     "reservations_reservation_token_unique",
@@ -143,7 +221,7 @@ describe("PostgresBuyPersistence uniqueness-race recovery", () => {
 
 function fakeDatabase(
   transactionError: Error,
-  row: typeof durableRow | null,
+  row: DurableAcceptanceLiveRow | null,
 ): CheckoutSurgeDatabase {
   const query = {
     from: () => query,

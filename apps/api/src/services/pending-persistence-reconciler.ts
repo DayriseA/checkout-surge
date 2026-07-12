@@ -14,7 +14,7 @@ import type { OrderProcessJobPublisher } from "./order-process-job-publisher.js"
 import type {
   BuyPersistence,
   BuyPersistenceOperations,
-  PersistedBuy,
+  PersistedBuyAcceptance,
   StockReservationGateway,
 } from "./reserve-order-service.js";
 import { isDefinitivePersistenceRejection } from "./reserve-order-service.js";
@@ -240,7 +240,7 @@ export class PendingPersistenceReconciler {
   }
 }
 
-function toOrderProcessJob(persisted: PersistedBuy): OrderProcessJob {
+function toOrderProcessJob(persisted: PersistedBuyAcceptance): OrderProcessJob {
   return {
     orderId: persisted.order.id,
     publicOrderId: persisted.order.publicOrderId,

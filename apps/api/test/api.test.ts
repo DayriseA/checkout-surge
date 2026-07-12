@@ -3,6 +3,8 @@ import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  type AcceptedOrderSummary,
+  type AcceptedReservationSummary,
   adminDeleteRunHistoryResponseSchema,
   adminDemoResetPath,
   adminMaintenanceCleanupRunsPath,
@@ -29,7 +31,6 @@ import {
   livenessResponseSchema,
   loadRunIdHeaderName,
   type OrderProcessJob,
-  type OrderSummary,
   orderProcessBullMqQueueName,
   orderProcessJobName,
   publicPresetListPath,
@@ -39,7 +40,6 @@ import {
   publicVisitorIdHeaderName,
   type QueueStatus,
   queueStatusSchema,
-  type ReservationSummary,
   type RunHistoryDetailResponse,
   type RunHistoryListResponse,
   runHistoryDetailPath,
@@ -107,6 +107,7 @@ import {
 } from "../src/services/queue-status-service.js";
 import {
   type BuyPersistence,
+  type PersistedBuyAcceptance,
   type ReservationPartialFailureReport,
   ReserveOrderService,
   type StockReservationGateway,
@@ -760,20 +761,17 @@ async function readStreamUntil(
 }
 
 class AcceptingPersistence implements BuyPersistence {
-  private readonly persisted = new Map<
-    string,
-    { reservation: ReservationSummary; order: OrderSummary }
-  >();
+  private readonly persisted = new Map<string, PersistedBuyAcceptance>();
 
   async persistSecuredReservation(input: {
     reservation: import("@checkout-surge/contracts").SecuredReservationHold;
   }) {
     const hold = input.reservation;
-    const reservation: ReservationSummary = {
+    const reservation: AcceptedReservationSummary = {
       ...hold,
       status: "secured",
     };
-    const order: OrderSummary = {
+    const order: AcceptedOrderSummary = {
       id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
       publicOrderId: "ord_test",
       saleOfferId: hold.saleOfferId,
@@ -2417,7 +2415,7 @@ describe("API buy persistence", () => {
       }
 
       expect(retryResponse.statusCode).toBe(202);
-      expect(retryPayload.outcome).toBe("idempotent_replay");
+      expect(retryPayload.outcome).toBe("reservation_secured");
       expect(enqueueAttempts).toBe(2);
       expect(await queue.getWaitingCount()).toBe(1);
       expect((await queue.getJob(retryPayload.order.id))?.id).toBe(retryPayload.order.id);
@@ -2640,15 +2638,10 @@ describe("API buy persistence", () => {
 
       expect(responses.every((response) => response.statusCode === 202)).toBe(true);
       expect(reportPersistenceFailure).not.toHaveBeenCalled();
-      expect(
-        payloads.every((payload) =>
-          ["reservation_secured", "idempotent_replay"].includes(payload.outcome),
-        ),
-      ).toBe(true);
+      expect(payloads.every((payload) => payload.outcome === "reservation_secured")).toBe(true);
       expect(payloads.filter((payload) => payload.outcome === "reservation_secured")).toHaveLength(
-        1,
+        2,
       );
-      expect(payloads.filter((payload) => payload.outcome === "idempotent_replay")).toHaveLength(1);
       expect(persistCallCount).toBe(2);
       expect(recordPendingCallCount).toBe(0);
       expect(new Set(payloads.map((payload) => payload.reservation?.id)).size).toBe(1);
@@ -2757,7 +2750,7 @@ describe("API buy persistence", () => {
         .where(eq(reservationPendingPersistence.reservationId, payload.reservation?.id ?? ""));
 
       expect(retry.statusCode).toBe(202);
-      expect(retryPayload.outcome).toBe("idempotent_replay");
+      expect(retryPayload.outcome).toBe("reservation_secured");
       expect(retryPayload.reservation?.id).toBe(payload.reservation?.id);
       expect(retryPayload.order?.reservationId).toBe(payload.reservation?.id);
       expect(await connection.db.select().from(reservations)).toHaveLength(1);
@@ -3252,10 +3245,10 @@ describe("API buy persistence", () => {
       const inventoryStatus = await getInventoryStatus(redis, fixtureIds.saleOffer);
 
       expect(firstPayload.outcome).toBe("reservation_secured");
-      expect(replayPayload.outcome).toBe("idempotent_replay");
+      expect(replayPayload.outcome).toBe("reservation_secured");
       if (
         firstPayload.outcome !== "reservation_secured" ||
-        replayPayload.outcome !== "idempotent_replay"
+        replayPayload.outcome !== "reservation_secured"
       ) {
         throw new Error("Expected secured and idempotent replay outcomes.");
       }
@@ -3266,6 +3259,115 @@ describe("API buy persistence", () => {
       expect(eventRows).toHaveLength(2);
       expect(inventoryStatus.reservationThroughput.successfulReservationCount).toBe(1);
       expect(await redis.llen(inventoryKeys(fixtureIds.saleOffer).events)).toBe(2);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("keeps confirmed and failed durable replays acceptance-shaped", async () => {
+    if (!connection || !redis) {
+      throw new Error("Test infrastructure was not initialized.");
+    }
+    const enqueue = vi.fn<OrderProcessJobPublisher["enqueue"]>(async () => undefined);
+    const server = await buildTestServer({
+      persistence: new PostgresBuyPersistence(connection.db),
+      stockReservations: createRedisStockReservations(redis),
+      orderProcessJobPublisher: { enqueue },
+      generateId: randomUUID,
+    });
+
+    try {
+      const cases = [
+        {
+          idempotencyKey: "confirmed-acceptance-replay",
+          originalCorrelationId: "confirmed-original-correlation",
+          retryCorrelationId: "confirmed-retry-correlation",
+          terminal: {
+            status: "confirmed" as const,
+            processingAt: new Date("2026-07-12T12:01:00.000Z"),
+            confirmedAt: new Date("2026-07-12T12:02:00.000Z"),
+          },
+        },
+        {
+          idempotencyKey: "failed-acceptance-replay",
+          originalCorrelationId: "failed-original-correlation",
+          retryCorrelationId: "failed-retry-correlation",
+          terminal: {
+            status: "failed" as const,
+            processingAt: new Date("2026-07-12T12:03:00.000Z"),
+            failedAt: new Date("2026-07-12T12:04:00.000Z"),
+            failureCode: "erp_rejected",
+            failureMessage: "Payment declined",
+          },
+        },
+      ];
+
+      for (const testCase of cases) {
+        const payload = {
+          saleOfferId: fixtureIds.saleOffer,
+          idempotencyKey: testCase.idempotencyKey,
+          quantity: 1,
+        };
+        const firstResponse = await server.inject({
+          method: "POST",
+          url: "/buy",
+          headers: { [correlationIdHeaderName]: testCase.originalCorrelationId },
+          payload,
+        });
+        if (firstResponse.statusCode !== 202) {
+          throw new Error(`Initial buy failed: ${firstResponse.body}`);
+        }
+        const first = buyResponseSchema.parse(firstResponse.json());
+        if (first.outcome !== "reservation_secured") {
+          throw new Error("Expected initial durable acceptance.");
+        }
+
+        await connection.db
+          .update(orders)
+          .set(testCase.terminal)
+          .where(eq(orders.id, first.order.id));
+
+        const replayResponse = await server.inject({
+          method: "POST",
+          url: "/buy",
+          headers: { [correlationIdHeaderName]: testCase.retryCorrelationId },
+          payload,
+        });
+        const replay = buyResponseSchema.parse(replayResponse.json());
+        if (replay.outcome !== "reservation_secured") {
+          throw new Error("Expected acceptance-shaped durable replay.");
+        }
+
+        const { correlationId: _firstCorrelation, ...stableFirst } = first;
+        const { correlationId: _replayCorrelation, ...stableReplay } = replay;
+        expect(stableReplay).toEqual(stableFirst);
+        expect(replay.correlationId).toBe(testCase.retryCorrelationId);
+        expect(replayResponse.headers[correlationIdHeaderName]).toBe(testCase.retryCorrelationId);
+        expect(replay.timestamp).toBe(first.timestamp);
+        expect(replay.reservation.correlationId).toBe(testCase.originalCorrelationId);
+        expect(replay.order.correlationId).toBe(testCase.originalCorrelationId);
+        expect(replay.order.status).toBe("queued");
+      }
+
+      const durableOrders = await connection.db.select().from(orders);
+      const reservationRows = await connection.db.select().from(reservations);
+      const eventRows = await connection.db.select().from(orderEvents);
+      expect(durableOrders.map((order) => order.status).sort()).toEqual(["confirmed", "failed"]);
+      expect(reservationRows).toHaveLength(2);
+      expect(durableOrders).toHaveLength(2);
+      expect(eventRows).toHaveLength(4);
+      expect(eventRows.map((event) => event.eventName).sort()).toEqual([
+        "order.queued",
+        "order.queued",
+        "reservation.secured",
+        "reservation.secured",
+      ]);
+      expect(await getInventoryStatus(redis, fixtureIds.saleOffer)).toMatchObject({
+        remainingStock: 3,
+        reservedStock: 2,
+      });
+      expect(enqueue).toHaveBeenCalledTimes(4);
+      expect(new Set(enqueue.mock.calls.map(([job]) => job.orderId)).size).toBe(2);
     } finally {
       await server.close();
     }
@@ -3353,7 +3455,7 @@ describe("API buy persistence", () => {
       expect(firstResponse.statusCode).toBe(202);
       expect(firstPayload.outcome).toBe("reservation_secured");
       expect(statusBeforeRetry.pendingPersistenceCount).toBe(1);
-      expect(replayPayload.outcome).toBe("idempotent_replay");
+      expect(replayPayload.outcome).toBe("reservation_secured");
       expect(await connection.db.select().from(reservations)).toHaveLength(1);
       expect(await connection.db.select().from(orders)).toHaveLength(1);
       expect((await getInventoryStatus(redis, fixtureIds.saleOffer)).pendingPersistenceCount).toBe(

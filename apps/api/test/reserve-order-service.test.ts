@@ -1,15 +1,11 @@
-import type {
-  BuyRequest,
-  OrderSummary,
-  ReservationSummary,
-  SecuredReservationHold,
-} from "@checkout-surge/contracts";
+import type { BuyRequest, SecuredReservationHold } from "@checkout-surge/contracts";
 import { describe, expect, it, vi } from "vitest";
 import type { OrderProcessJobPublisher } from "../src/services/order-process-job-publisher.js";
 import {
   type BusinessOutcomeUpdateFailureReport,
   type BuyPersistence,
   type OrderEnqueueFailureReport,
+  type PersistedBuyAcceptance,
   type ReservationPartialFailureReport,
   ReserveOrderService,
   type StockReservationGateway,
@@ -101,10 +97,7 @@ function acceptingGateway(
   };
 }
 
-function persistedBuy(hold: SecuredReservationHold): {
-  reservation: ReservationSummary;
-  order: OrderSummary;
-} {
+function persistedBuy(hold: SecuredReservationHold): PersistedBuyAcceptance {
   return {
     reservation: hold,
     order: {
@@ -453,7 +446,7 @@ describe("ReserveOrderService queue handoff", () => {
     );
     const replay = await service.reserve({ request, correlationId, now });
 
-    expect(replay.outcome).toBe("idempotent_replay");
+    expect(replay.outcome).toBe("reservation_secured");
     expect(persistSecuredReservation).toHaveBeenCalledOnce();
     expect(enqueueAttempts).toBe(2);
     expect(promoteAccepted).toHaveBeenCalledOnce();
@@ -503,15 +496,23 @@ describe("ReserveOrderService queue handoff", () => {
     await flushScheduledDashboardUpdate();
 
     expect(first.outcome).toBe("reservation_pending_persistence");
-    expect(replay.outcome).toBe("idempotent_replay");
+    expect(replay.outcome).toBe("reservation_secured");
     if (
       first.outcome !== "reservation_pending_persistence" ||
-      replay.outcome !== "idempotent_replay"
+      replay.outcome !== "reservation_secured"
     ) {
       throw new Error("Expected pending response followed by durable idempotent replay.");
     }
+    const reconciledHold = persistSecuredReservation.mock.calls[1]?.[0].reservation;
+    if (!reconciledHold) {
+      throw new Error("Expected the original hold to be reconciled.");
+    }
+    const reconciledWinner = persistedBuy(reconciledHold);
     expect(replay.reservation.id).toBe(first.reservation.id);
     expect(replay.order.reservationId).toBe(first.reservation.id);
+    expect(replay.timestamp).toBe(reconciledHold.securedAt);
+    expect(replay.order.id).toBe(reconciledWinner.order.id);
+    expect(replay.order.publicOrderId).toBe(reconciledWinner.order.publicOrderId);
     expect(persistSecuredReservation).toHaveBeenCalledTimes(2);
     expect(persistSecuredReservation.mock.calls[1]?.[0].reservation).toEqual(originalHold);
     expect(recordPendingPersistence).toHaveBeenCalledOnce();
@@ -563,7 +564,7 @@ describe("ReserveOrderService queue handoff", () => {
     const response = await service.reserve({ request, correlationId, now });
 
     expect(response).toMatchObject({
-      outcome: "idempotent_replay",
+      outcome: "reservation_secured",
       correlationId,
       reservation: { id: originalHold.id },
       order: { id: winner.order.id, publicOrderId: winner.order.publicOrderId },
@@ -580,7 +581,7 @@ describe("ReserveOrderService queue handoff", () => {
       id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
       saleOfferId: request.saleOfferId,
       runId: request.runId,
-      correlationId,
+      correlationId: "original-workflow-correlation",
       quantity: 1,
       status: "secured",
       reservationToken: "res_historical",
@@ -603,9 +604,30 @@ describe("ReserveOrderService queue handoff", () => {
       orderProcessJobPublisher: { enqueue },
     });
 
-    const response = await service.reserve({ request, correlationId, now });
+    const retryCorrelationId = "current-retry-correlation";
+    const retryNow = new Date(now.getTime() + 60_000);
+    const response = await service.reserve({
+      request,
+      correlationId: retryCorrelationId,
+      now: retryNow,
+    });
 
-    expect(response.outcome).toBe("idempotent_replay");
+    expect(response.outcome).toBe("reservation_secured");
+    if (response.outcome !== "reservation_secured") {
+      throw new Error("Expected a durable acceptance replay.");
+    }
+    expect(response).toEqual({
+      outcome: "reservation_secured",
+      correlationId: retryCorrelationId,
+      timestamp: hold.securedAt,
+      reservation: hold,
+      order: persistedBuy(hold).order,
+      simulatedStatus: "reservation_secured",
+    });
+    expect(response.timestamp).not.toBe(retryNow.toISOString());
+    expect(response.reservation.correlationId).toBe("original-workflow-correlation");
+    expect(response.order.correlationId).toBe("original-workflow-correlation");
+    expect(response.order.status).toBe("queued");
     expect(enqueue).toHaveBeenCalledOnce();
     expect(enqueue.mock.invocationCallOrder[0]).toBeLessThan(
       promoteAccepted.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,

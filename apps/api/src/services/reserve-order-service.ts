@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
 import {
+  type AcceptedOrderSummary,
+  type AcceptedReservationSummary,
   type BuyRequest,
   type BuyResponse,
   buyResponseSchema,
   type OrderProcessJob,
-  type OrderSummary,
-  type ReservationSummary,
   type SecuredReservationHold,
   type StockReservationDecision,
 } from "@checkout-surge/contracts";
@@ -46,14 +46,16 @@ export function isDefinitivePersistenceRejection(error: unknown): boolean {
   );
 }
 
-export interface PersistedBuy {
-  reservation: ReservationSummary;
-  order: OrderSummary;
+export interface PersistedBuyAcceptance {
+  reservation: AcceptedReservationSummary;
+  order: AcceptedOrderSummary;
 }
 
 export interface BuyPersistenceOperations {
-  persistSecuredReservation(input: { reservation: SecuredReservationHold }): Promise<PersistedBuy>;
-  getPersistedBuyByReservationId(reservationId: string): Promise<PersistedBuy | null>;
+  persistSecuredReservation(input: {
+    reservation: SecuredReservationHold;
+  }): Promise<PersistedBuyAcceptance>;
+  getPersistedBuyByReservationId(reservationId: string): Promise<PersistedBuyAcceptance | null>;
   recordPendingPersistence?(input: {
     reservation: SecuredReservationHold;
     idempotencyKey: string;
@@ -254,12 +256,12 @@ export class ReserveOrderService {
     correlationId: string;
     now: Date;
   }): Promise<BuyResponse> {
-    let persisted: PersistedBuy | null;
+    let persisted: PersistedBuyAcceptance | null;
     try {
       persisted = await this.withPersistenceAdmissionLock(
         input.reservation,
         async (persistence) => {
-          let persisted: PersistedBuy;
+          let persisted: PersistedBuyAcceptance;
 
           try {
             persisted = await persistence.persistSecuredReservation({
@@ -299,7 +301,7 @@ export class ReserveOrderService {
 
     await this.promoteWithoutHidingDurableSuccess(input.idempotencyKey, input.reservation);
     this.scheduleBusinessOutcomeUpdateWithoutHidingDurableSuccess(input.reservation, input.now);
-    return this.acceptedResponse("reservation_secured", persisted, input.correlationId, input.now);
+    return this.acceptedResponse(persisted, input.correlationId);
   }
 
   private async compensateHold(
@@ -326,7 +328,7 @@ export class ReserveOrderService {
     now: Date;
     outcome: "reservation_pending_persistence" | "idempotent_replay";
   }): Promise<BuyResponse> {
-    let persisted: PersistedBuy | null;
+    let persisted: PersistedBuyAcceptance | null;
     try {
       persisted = await this.withPersistenceAdmissionLock(
         input.reservation,
@@ -343,7 +345,7 @@ export class ReserveOrderService {
             );
           }
 
-          let materialized: PersistedBuy;
+          let materialized: PersistedBuyAcceptance;
           try {
             materialized = await persistence.persistSecuredReservation({
               reservation: input.reservation,
@@ -382,7 +384,7 @@ export class ReserveOrderService {
 
     await this.promoteWithoutHidingDurableSuccess(input.idempotencyKey, input.reservation);
     this.scheduleBusinessOutcomeUpdateWithoutHidingDurableSuccess(input.reservation, input.now);
-    return this.acceptedResponse("idempotent_replay", persisted, input.correlationId, input.now);
+    return this.acceptedResponse(persisted, input.correlationId);
   }
 
   private scheduleBusinessOutcomeUpdateWithoutHidingDurableSuccess(
@@ -442,7 +444,7 @@ export class ReserveOrderService {
   }
 
   private async enqueuePersistedBuy(
-    persisted: PersistedBuy,
+    persisted: PersistedBuyAcceptance,
     idempotencyKey: string,
     reservation: SecuredReservationHold,
   ): Promise<void> {
@@ -463,7 +465,7 @@ export class ReserveOrderService {
     await enqueue();
   }
 
-  private toOrderProcessJob(persisted: PersistedBuy): OrderProcessJob {
+  private toOrderProcessJob(persisted: PersistedBuyAcceptance): OrderProcessJob {
     return {
       orderId: persisted.order.id,
       publicOrderId: persisted.order.publicOrderId,
@@ -557,16 +559,11 @@ export class ReserveOrderService {
     };
   }
 
-  private acceptedResponse(
-    outcome: "reservation_secured" | "idempotent_replay",
-    persisted: PersistedBuy,
-    correlationId: string,
-    now: Date,
-  ): BuyResponse {
+  private acceptedResponse(persisted: PersistedBuyAcceptance, correlationId: string): BuyResponse {
     return buyResponseSchema.parse({
-      outcome,
+      outcome: "reservation_secured",
       correlationId,
-      timestamp: now.toISOString(),
+      timestamp: persisted.reservation.securedAt,
       reservation: persisted.reservation,
       order: persisted.order,
       simulatedStatus: "reservation_secured",

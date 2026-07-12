@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type {
-  OrderSummary,
-  ReservationSummary,
+  AcceptedOrderSummary,
+  AcceptedReservationSummary,
   SecuredReservationHold,
 } from "@checkout-surge/contracts";
 import {
@@ -19,7 +19,7 @@ import {
   type BuyPersistence,
   type BuyPersistenceOperations,
   DefinitivePersistenceRejectionError,
-  type PersistedBuy,
+  type PersistedBuyAcceptance,
   TerminalRunPersistenceRejectionError,
 } from "./reserve-order-service.js";
 import { terminalDemoRunTransitionLockKey } from "./terminal-demo-run-transition.js";
@@ -38,7 +38,7 @@ export class PostgresBuyPersistence implements BuyPersistence {
 
   async persistSecuredReservation(input: {
     reservation: SecuredReservationHold;
-  }): Promise<PersistedBuy> {
+  }): Promise<PersistedBuyAcceptance> {
     return this.databaseOperations(this.db).persistSecuredReservation(input);
   }
 
@@ -46,7 +46,7 @@ export class PostgresBuyPersistence implements BuyPersistence {
     tx: PostgresTransaction,
     hold: SecuredReservationHold,
     runAdmissionVerified = false,
-  ): Promise<PersistedBuy> {
+  ): Promise<PersistedBuyAcceptance> {
     if (hold.runId && !runAdmissionVerified) {
       const [run] = await tx
         .select({ saleOfferId: demoRuns.saleOfferId, status: demoRuns.status })
@@ -81,7 +81,6 @@ export class PostgresBuyPersistence implements BuyPersistence {
         correlationId: reservations.correlationId,
         runId: reservations.runId,
         quantity: reservations.quantity,
-        status: reservations.status,
         reservationToken: reservations.reservationToken,
         expiresAt: reservations.expiresAt,
         securedAt: reservations.securedAt,
@@ -111,13 +110,7 @@ export class PostgresBuyPersistence implements BuyPersistence {
         correlationId: orders.correlationId,
         runId: orders.runId,
         quantity: orders.quantity,
-        status: orders.status,
-        failureCode: orders.failureCode,
-        failureMessage: orders.failureMessage,
         queuedAt: orders.queuedAt,
-        processingAt: orders.processingAt,
-        confirmedAt: orders.confirmedAt,
-        failedAt: orders.failedAt,
       });
 
     if (!order) {
@@ -216,7 +209,9 @@ export class PostgresBuyPersistence implements BuyPersistence {
     }
   }
 
-  async getPersistedBuyByReservationId(reservationId: string): Promise<PersistedBuy | null> {
+  async getPersistedBuyByReservationId(
+    reservationId: string,
+  ): Promise<PersistedBuyAcceptance | null> {
     return this.databaseOperations(this.db).getPersistedBuyByReservationId(reservationId);
   }
 
@@ -355,9 +350,30 @@ export class PostgresBuyPersistence implements BuyPersistence {
   private async getPersistedBuyByReservationIdInDatabase(
     database: CheckoutSurgeDatabase,
     reservationId: string,
-  ): Promise<PersistedBuy | null> {
+  ): Promise<PersistedBuyAcceptance | null> {
     const [row] = await database
-      .select({ reservation: reservations, order: orders })
+      .select({
+        reservation: {
+          id: reservations.id,
+          saleOfferId: reservations.saleOfferId,
+          correlationId: reservations.correlationId,
+          runId: reservations.runId,
+          quantity: reservations.quantity,
+          reservationToken: reservations.reservationToken,
+          expiresAt: reservations.expiresAt,
+          securedAt: reservations.securedAt,
+        },
+        order: {
+          id: orders.id,
+          publicOrderId: orders.publicOrderId,
+          saleOfferId: orders.saleOfferId,
+          reservationId: orders.reservationId,
+          correlationId: orders.correlationId,
+          runId: orders.runId,
+          quantity: orders.quantity,
+          queuedAt: orders.queuedAt,
+        },
+      })
       .from(reservations)
       .innerJoin(orders, eq(orders.reservationId, reservations.id))
       .where(eq(reservations.id, reservationId))
@@ -398,7 +414,10 @@ function isRecoverableReservationConflict(error: unknown): boolean {
   return false;
 }
 
-function isSameDurableBuy(persisted: PersistedBuy, hold: SecuredReservationHold): boolean {
+function isSameDurableBuy(
+  persisted: PersistedBuyAcceptance,
+  hold: SecuredReservationHold,
+): boolean {
   const expectedRunId = hold.runId;
   return (
     persisted.reservation.id === hold.id &&
@@ -419,18 +438,17 @@ function toReservationSummary(row: {
   correlationId: string;
   runId: string | null;
   quantity: number;
-  status: ReservationSummary["status"];
   reservationToken: string;
   expiresAt: Date;
   securedAt: Date;
-}): ReservationSummary {
+}): AcceptedReservationSummary {
   return {
     id: row.id,
     saleOfferId: row.saleOfferId,
     correlationId: row.correlationId,
     ...(row.runId ? { runId: row.runId } : {}),
     quantity: row.quantity,
-    status: row.status,
+    status: "secured",
     reservationToken: row.reservationToken,
     expiresAt: row.expiresAt.toISOString(),
     securedAt: row.securedAt.toISOString(),
@@ -445,14 +463,8 @@ function toOrderSummary(row: {
   correlationId: string;
   runId: string | null;
   quantity: number;
-  status: OrderSummary["status"];
-  failureCode: string | null;
-  failureMessage: string | null;
   queuedAt: Date;
-  processingAt: Date | null;
-  confirmedAt: Date | null;
-  failedAt: Date | null;
-}): OrderSummary {
+}): AcceptedOrderSummary {
   return {
     id: row.id,
     publicOrderId: row.publicOrderId,
@@ -461,12 +473,7 @@ function toOrderSummary(row: {
     correlationId: row.correlationId,
     ...(row.runId ? { runId: row.runId } : {}),
     quantity: row.quantity,
-    status: row.status,
-    ...(row.failureCode ? { failureCode: row.failureCode } : {}),
-    ...(row.failureMessage ? { failureMessage: row.failureMessage } : {}),
+    status: "queued",
     queuedAt: row.queuedAt.toISOString(),
-    ...(row.processingAt ? { processingAt: row.processingAt.toISOString() } : {}),
-    ...(row.confirmedAt ? { confirmedAt: row.confirmedAt.toISOString() } : {}),
-    ...(row.failedAt ? { failedAt: row.failedAt.toISOString() } : {}),
   };
 }
