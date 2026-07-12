@@ -524,6 +524,57 @@ describe("ReserveOrderService queue handoff", () => {
     expect(publishBusinessOutcomeUpdate).toHaveBeenCalledOnce();
   });
 
+  it("uses a persistence-race recovery as durable replay without pending side effects", async () => {
+    const originalHold: SecuredReservationHold = {
+      id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+      saleOfferId: request.saleOfferId,
+      runId: request.runId,
+      correlationId: "winner-correlation",
+      quantity: request.quantity,
+      status: "secured",
+      reservationToken: "shared-race-token",
+      securedAt: now.toISOString(),
+      expiresAt: new Date(now.getTime() + 900_000).toISOString(),
+    };
+    const winner = persistedBuy(originalHold);
+    const recordPendingPersistence = vi.fn();
+    const markPendingPersistence = vi.fn();
+    const reportPersistenceFailure = vi.fn();
+    const enqueue = vi.fn();
+    const promoteAccepted = vi.fn();
+    const service = buildService({
+      persistence: {
+        getPersistedBuyByReservationId: async () => null,
+        persistSecuredReservation: async () => winner,
+        recordPendingPersistence,
+      },
+      stockReservations: acceptingGateway({
+        reserve: async () => ({
+          outcome: "reservation_pending_persistence",
+          reservation: originalHold,
+        }),
+        markPendingPersistence,
+        promoteAccepted,
+      }),
+      orderProcessJobPublisher: { enqueue },
+      reportPersistenceFailure,
+    });
+
+    const response = await service.reserve({ request, correlationId, now });
+
+    expect(response).toMatchObject({
+      outcome: "idempotent_replay",
+      correlationId,
+      reservation: { id: originalHold.id },
+      order: { id: winner.order.id, publicOrderId: winner.order.publicOrderId },
+    });
+    expect(reportPersistenceFailure).not.toHaveBeenCalled();
+    expect(recordPendingPersistence).not.toHaveBeenCalled();
+    expect(markPendingPersistence).not.toHaveBeenCalled();
+    expect(enqueue).toHaveBeenCalledOnce();
+    expect(promoteAccepted).toHaveBeenCalledOnce();
+  });
+
   it("re-enqueues an accepted historical replay before returning it", async () => {
     const hold: SecuredReservationHold = {
       id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",

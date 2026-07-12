@@ -65,6 +65,7 @@ import {
   orders,
   products,
   promoteReservationIdempotencyToAccepted,
+  readBusinessOutcomeSummary,
   reservationPendingPersistence,
   reservations,
   reserveInventoryStock,
@@ -106,6 +107,7 @@ import {
 } from "../src/services/queue-status-service.js";
 import {
   type BuyPersistence,
+  type ReservationPartialFailureReport,
   ReserveOrderService,
   type StockReservationGateway,
 } from "../src/services/reserve-order-service.js";
@@ -187,6 +189,7 @@ async function buildTestServer(options: {
   demoRunService?: DemoRunController;
   demoMaintenanceService?: DemoMaintenanceService;
   runHistoryService?: RunHistoryController;
+  reportPersistenceFailure?: (report: ReservationPartialFailureReport) => void;
 }): Promise<ApiFastifyInstance> {
   const inventoryReader =
     options.inventoryReader === undefined
@@ -266,6 +269,7 @@ async function buildTestServer(options: {
       idempotencyTtlSeconds: 1800,
       pendingPersistenceRetryAfterSeconds: 30,
       generateId: options.generateId ?? deterministicIdGenerator(),
+      reportPersistenceFailure: options.reportPersistenceFailure,
     }),
     demoRunService: options.demoRunService ?? demoRunControllerFixture(),
     demoMaintenanceService:
@@ -702,6 +706,25 @@ function createRedisStockReservations(redis: CheckoutSurgeRedis): StockReservati
     promoteAccepted: (input) =>
       promoteReservationIdempotencyToAccepted(redis, input).then(() => undefined),
   };
+}
+
+async function waitForInsertRaceBarrier(barrier: Promise<void>): Promise<void> {
+  let timeout: NodeJS.Timeout | undefined;
+  try {
+    await Promise.race([
+      barrier,
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error("Timed out waiting for the insert-race barrier.")),
+          2_000,
+        );
+      }),
+    ]);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  }
 }
 
 async function readStreamUntil(
@@ -2557,15 +2580,42 @@ describe("API buy persistence", () => {
       throw new Error("Test infrastructure was not initialized.");
     }
 
+    const realPersistence = new PostgresBuyPersistence(connection.db);
+    let persistCallCount = 0;
+    let recordPendingCallCount = 0;
+    let releasePersistenceBarrier: (() => void) | undefined;
+    const persistenceBarrier = new Promise<void>((resolve) => {
+      releasePersistenceBarrier = resolve;
+    });
+    const controlledPersistence: BuyPersistence = {
+      getPersistedBuyByReservationId: (reservationId) =>
+        realPersistence.getPersistedBuyByReservationId(reservationId),
+      persistSecuredReservation: async (input) => {
+        persistCallCount += 1;
+        if (persistCallCount === 2) {
+          releasePersistenceBarrier?.();
+        }
+        await waitForInsertRaceBarrier(persistenceBarrier);
+        return realPersistence.persistSecuredReservation(input);
+      },
+      recordPendingPersistence: async (input) => {
+        recordPendingCallCount += 1;
+        await realPersistence.recordPendingPersistence(input);
+      },
+      markPendingPersistenceReconciled: (input) =>
+        realPersistence.markPendingPersistenceReconciled(input),
+    };
+    const reportPersistenceFailure = vi.fn();
     const server = await buildTestServer({
-      persistence: new PostgresBuyPersistence(connection.db),
+      persistence: controlledPersistence,
       stockReservations: createRedisStockReservations(redis),
       generateId: randomUUID,
+      reportPersistenceFailure,
     });
 
     try {
       const responses = await Promise.all(
-        Array.from({ length: 8 }, () =>
+        Array.from({ length: 2 }, () =>
           server.inject({
             method: "POST",
             url: "/buy",
@@ -2581,16 +2631,26 @@ describe("API buy persistence", () => {
       const reservationRows = await connection.db.select().from(reservations);
       const orderRows = await connection.db.select().from(orders);
       const eventRows = await connection.db.select().from(orderEvents);
+      const pendingRows = await connection.db.select().from(reservationPendingPersistence);
       const inventoryStatus = await getInventoryStatus(redis, fixtureIds.saleOffer);
+      const businessOutcome = await readBusinessOutcomeSummary(connection.db, {
+        saleOfferId: fixtureIds.saleOffer,
+      });
+      const keys = inventoryKeys(fixtureIds.saleOffer);
 
       expect(responses.every((response) => response.statusCode === 202)).toBe(true);
+      expect(reportPersistenceFailure).not.toHaveBeenCalled();
       expect(
         payloads.every((payload) =>
-          ["reservation_secured", "idempotent_replay", "reservation_pending_persistence"].includes(
-            payload.outcome,
-          ),
+          ["reservation_secured", "idempotent_replay"].includes(payload.outcome),
         ),
       ).toBe(true);
+      expect(payloads.filter((payload) => payload.outcome === "reservation_secured")).toHaveLength(
+        1,
+      );
+      expect(payloads.filter((payload) => payload.outcome === "idempotent_replay")).toHaveLength(1);
+      expect(persistCallCount).toBe(2);
+      expect(recordPendingCallCount).toBe(0);
       expect(new Set(payloads.map((payload) => payload.reservation?.id)).size).toBe(1);
       expect(
         new Set(payloads.flatMap((payload) => (payload.order ? [payload.order.id] : []))).size,
@@ -2598,6 +2658,14 @@ describe("API buy persistence", () => {
       expect(reservationRows).toHaveLength(1);
       expect(orderRows).toHaveLength(1);
       expect(eventRows).toHaveLength(2);
+      expect(eventRows.map((event) => event.eventName).sort()).toEqual([
+        "order.queued",
+        "reservation.secured",
+      ]);
+      expect(pendingRows).toEqual([]);
+      expect(await redis.zcard(keys.pendingPersistence)).toBe(0);
+      expect(await redis.hlen(keys.pendingPersistenceRecords)).toBe(0);
+      expect(businessOutcome.pendingPersistenceCount).toBe(0);
       expect(inventoryStatus).toMatchObject({
         remainingStock: 4,
         reservedStock: 1,

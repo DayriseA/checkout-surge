@@ -25,6 +25,10 @@ import {
 import { terminalDemoRunTransitionLockKey } from "./terminal-demo-run-transition.js";
 
 const acceptingPersistenceRunStatuses = new Set(["starting", "active", "draining"]);
+const recoverableReservationConstraints = new Set([
+  "reservations_pkey",
+  "reservations_reservation_token_unique",
+]);
 type PostgresTransaction = Parameters<Parameters<CheckoutSurgeDatabase["transaction"]>[0]>[0];
 type DatabaseWithClient = CheckoutSurgeDatabase & { $client: SqlClient };
 type ReservedClient = Awaited<ReturnType<SqlClient["reserve"]>>;
@@ -295,14 +299,33 @@ export class PostgresBuyPersistence implements BuyPersistence {
     };
 
     return {
-      persistSecuredReservation: (input) =>
-        runTransaction((tx) =>
-          this.persistSecuredReservationInTransaction(
-            tx,
-            input.reservation,
-            Boolean(reservedClient),
-          ),
-        ),
+      persistSecuredReservation: async (input) => {
+        try {
+          return await runTransaction((tx) =>
+            this.persistSecuredReservationInTransaction(
+              tx,
+              input.reservation,
+              Boolean(reservedClient),
+            ),
+          );
+        } catch (error) {
+          if (!isRecoverableReservationConflict(error)) {
+            throw error;
+          }
+
+          // runTransaction has fully unwound here, so this fresh read never
+          // uses an aborted transaction (including on a reserved session).
+          const persisted = await this.getPersistedBuyByReservationIdInDatabase(
+            database,
+            input.reservation.id,
+          );
+          if (!persisted || !isSameDurableBuy(persisted, input.reservation)) {
+            throw error;
+          }
+
+          return persisted;
+        }
+      },
       getPersistedBuyByReservationId: (reservationId) =>
         this.getPersistedBuyByReservationIdInDatabase(database, reservationId),
       recordPendingPersistence: (input) =>
@@ -322,12 +345,9 @@ export class PostgresBuyPersistence implements BuyPersistence {
       await client`commit`;
       return result;
     } catch (error) {
-      try {
-        await client`rollback`;
-      } catch {
-        // Preserve the original persistence error; the reserved session is
-        // released by the outer finally regardless of rollback failure.
-      }
+      // If rollback fails, propagate that failure rather than exposing the
+      // uniqueness error as recoverable while the session may remain aborted.
+      await client`rollback`;
       throw error;
     }
   }
@@ -352,6 +372,45 @@ export class PostgresBuyPersistence implements BuyPersistence {
       order: toOrderSummary(row.order),
     };
   }
+}
+
+function isRecoverableReservationConflict(error: unknown): boolean {
+  let candidate = error;
+  const visited = new Set<unknown>();
+  while (typeof candidate === "object" && candidate !== null && !visited.has(candidate)) {
+    visited.add(candidate);
+    const postgresError = candidate as {
+      code?: unknown;
+      constraint_name?: unknown;
+      constraint?: unknown;
+      cause?: unknown;
+    };
+    const constraint = postgresError.constraint_name ?? postgresError.constraint;
+    if (
+      postgresError.code === "23505" &&
+      typeof constraint === "string" &&
+      recoverableReservationConstraints.has(constraint)
+    ) {
+      return true;
+    }
+    candidate = postgresError.cause;
+  }
+  return false;
+}
+
+function isSameDurableBuy(persisted: PersistedBuy, hold: SecuredReservationHold): boolean {
+  const expectedRunId = hold.runId;
+  return (
+    persisted.reservation.id === hold.id &&
+    persisted.reservation.saleOfferId === hold.saleOfferId &&
+    persisted.reservation.reservationToken === hold.reservationToken &&
+    persisted.reservation.quantity === hold.quantity &&
+    persisted.reservation.runId === expectedRunId &&
+    persisted.order.reservationId === hold.id &&
+    persisted.order.saleOfferId === hold.saleOfferId &&
+    persisted.order.quantity === hold.quantity &&
+    persisted.order.runId === expectedRunId
+  );
 }
 
 function toReservationSummary(row: {
