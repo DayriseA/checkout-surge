@@ -33,6 +33,7 @@ export interface TerminalDemoRunSummaryInput {
   terminalStatus: TerminalDemoRunStatus;
   failureReason: string | null;
   finalizedAt: Date;
+  capturedAt?: Date;
   httpSummary: TrafficHttpSummary;
   trafficDeliverySummary: TrafficDeliverySummary;
   httpTimingBreakdownSummary: Record<string, unknown>;
@@ -93,25 +94,67 @@ export class PostgresTerminalDemoRunSummaryWriter {
         return false;
       }
 
-      await tx.insert(demoRunSummaries).values({
-        runId: input.run.id,
-        presetName: input.run.presetName,
-        status: input.terminalStatus,
-        failureReason: input.failureReason,
-        startedAt: input.run.startedAt,
-        endedAt: input.finalizedAt,
-        httpSummary: trafficHttpSummarySchema.parse(input.httpSummary),
-        trafficDeliverySummary: trafficDeliverySummarySchema.parse(input.trafficDeliverySummary),
-        httpTimingBreakdownSummary: input.httpTimingBreakdownSummary,
-        loadRunDiagnosticsSummary: input.loadRunDiagnosticsSummary,
-        apiRequestLifecycleSummary: input.apiRequestLifecycleSummary,
-        businessOutcomeSummary: input.businessOutcome,
-        terminalInventorySnapshot: input.terminalInventorySnapshot,
-        capturedAt: input.finalizedAt,
-        createdAt: input.finalizedAt,
-      });
+      return this.insertTerminalSummaryInsideLock(tx, input);
+    });
+  }
 
-      return true;
+  /**
+   * Inserts the immutable summary after a caller has already claimed the
+   * terminal transition. Reset uses this split phase to fence admission before
+   * it captures business state. Ordinary finalization should continue to use
+   * write(), which keeps its claim and summary insert atomic.
+   */
+  async writeAfterTerminalClaim(input: TerminalDemoRunSummaryInput): Promise<boolean> {
+    return (await this.writeAfterTerminalClaims([input])) === 1;
+  }
+
+  /**
+   * Inserts all summaries in one transaction after their terminal claims. A
+   * reset can therefore retry a failed batch without cleaning queues after a
+   * subset of immutable summaries has already committed.
+   */
+  async writeAfterTerminalClaims(inputs: TerminalDemoRunSummaryInput[]): Promise<number> {
+    if (inputs.length === 0) {
+      return 0;
+    }
+
+    return this.db.transaction(async (tx) => {
+      const orderedInputs = [...inputs].sort((left, right) =>
+        left.run.id.localeCompare(right.run.id),
+      );
+      for (const input of orderedInputs) {
+        await tx.execute(
+          sql`select pg_advisory_xact_lock(hashtext(${terminalDemoRunTransitionLockKey(input.run.id)}))`,
+        );
+      }
+
+      let wroteSummaryCount = 0;
+      for (const input of orderedInputs) {
+        const [existingSummary] = await tx
+          .select({ id: demoRunSummaries.id })
+          .from(demoRunSummaries)
+          .where(eq(demoRunSummaries.runId, input.run.id))
+          .limit(1);
+
+        if (existingSummary) {
+          continue;
+        }
+
+        const [terminalRun] = await tx
+          .select({ status: demoRuns.status })
+          .from(demoRuns)
+          .where(and(eq(demoRuns.id, input.run.id), eq(demoRuns.status, input.terminalStatus)))
+          .limit(1);
+
+        if (!terminalRun) {
+          continue;
+        }
+
+        await this.insertTerminalSummaryInsideLock(tx, input);
+        wroteSummaryCount += 1;
+      }
+
+      return wroteSummaryCount;
     });
   }
 
@@ -147,5 +190,31 @@ export class PostgresTerminalDemoRunSummaryWriter {
       .returning({ id: demoRuns.id });
 
     return Boolean(updatedRun);
+  }
+
+  private async insertTerminalSummaryInsideLock(
+    tx: TerminalDemoRunTransitionTransaction,
+    input: TerminalDemoRunSummaryInput,
+  ): Promise<true> {
+    const capturedAt = input.capturedAt ?? input.finalizedAt;
+    await tx.insert(demoRunSummaries).values({
+      runId: input.run.id,
+      presetName: input.run.presetName,
+      status: input.terminalStatus,
+      failureReason: input.failureReason,
+      startedAt: input.run.startedAt,
+      endedAt: input.finalizedAt,
+      httpSummary: trafficHttpSummarySchema.parse(input.httpSummary),
+      trafficDeliverySummary: trafficDeliverySummarySchema.parse(input.trafficDeliverySummary),
+      httpTimingBreakdownSummary: input.httpTimingBreakdownSummary,
+      loadRunDiagnosticsSummary: input.loadRunDiagnosticsSummary,
+      apiRequestLifecycleSummary: input.apiRequestLifecycleSummary,
+      businessOutcomeSummary: input.businessOutcome,
+      terminalInventorySnapshot: input.terminalInventorySnapshot,
+      capturedAt,
+      createdAt: capturedAt,
+    });
+
+    return true;
   }
 }

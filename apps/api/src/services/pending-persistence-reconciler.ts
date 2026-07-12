@@ -13,6 +13,7 @@ import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import type { OrderProcessJobPublisher } from "./order-process-job-publisher.js";
 import type {
   BuyPersistence,
+  BuyPersistenceOperations,
   PersistedBuy,
   StockReservationGateway,
 } from "./reserve-order-service.js";
@@ -66,19 +67,23 @@ export class PendingPersistenceReconciler {
 
     for (const record of candidates) {
       try {
-        const result = await this.reconcileRecord(
-          {
-            id: record.id,
-            saleOfferId: record.saleOfferId,
-            correlationId: record.correlationId,
-            ...(record.runId ? { runId: record.runId } : {}),
-            quantity: record.quantity,
-            status: "secured",
-            reservationToken: record.reservationToken,
-            securedAt: record.securedAt,
-            expiresAt: record.expiresAt,
-          },
-          idempotencyKeySchema.parse(record.idempotencyKey),
+        const reservation: SecuredReservationHold = {
+          id: record.id,
+          saleOfferId: record.saleOfferId,
+          correlationId: record.correlationId,
+          ...(record.runId ? { runId: record.runId } : {}),
+          quantity: record.quantity,
+          status: "secured",
+          reservationToken: record.reservationToken,
+          securedAt: record.securedAt,
+          expiresAt: record.expiresAt,
+        };
+        const result = await this.withPersistenceAdmissionLock(reservation, (persistence) =>
+          this.reconcileRecord(
+            reservation,
+            idempotencyKeySchema.parse(record.idempotencyKey),
+            persistence,
+          ),
         );
         if (result.status === "reversed") {
           summary.reversed += 1;
@@ -173,18 +178,19 @@ export class PendingPersistenceReconciler {
   private async reconcileRecord(
     reservation: SecuredReservationHold,
     idempotencyKey: string,
+    persistence: BuyPersistenceOperations,
   ): Promise<{ status: "reconciled" | "reversed"; materialized: boolean }> {
-    let persisted = await this.options.persistence.getPersistedBuyByReservationId(reservation.id);
+    let persisted = await persistence.getPersistedBuyByReservationId(reservation.id);
     let materialized = false;
 
     if (!persisted) {
       try {
-        persisted = await this.options.persistence.persistSecuredReservation({ reservation });
+        persisted = await persistence.persistSecuredReservation({ reservation });
         materialized = true;
       } catch (error) {
         // Concurrent request/reconciler may have committed between the read and
         // insert. Re-read before classifying the original write as a failure.
-        persisted = await this.options.persistence.getPersistedBuyByReservationId(reservation.id);
+        persisted = await persistence.getPersistedBuyByReservationId(reservation.id);
         if (!persisted) {
           if (isDefinitivePersistenceRejection(error) && this.options.stockReservations.reverse) {
             await this.options.stockReservations.reverse({
@@ -192,7 +198,7 @@ export class PendingPersistenceReconciler {
               reservation,
               occurredAt: this.now(),
             });
-            await this.markPendingReconciled(reservation.id);
+            await this.markPendingReconciled(reservation.id, persistence);
             return { status: "reversed", materialized: false };
           }
           throw error;
@@ -204,16 +210,29 @@ export class PendingPersistenceReconciler {
     // Marking the durable pending row before promotion keeps Redis discoverable
     // if the promotion fails; Redis is the final source of truth for pending
     // stock and will be retried by the next reconciliation pass.
-    await this.markPendingReconciled(reservation.id);
+    await this.markPendingReconciled(reservation.id, persistence);
     await this.options.stockReservations.promoteAccepted({ idempotencyKey, reservation });
     return { status: "reconciled", materialized };
   }
 
-  private async markPendingReconciled(reservationId: string): Promise<void> {
-    if (!this.options.persistence.markPendingPersistenceReconciled) {
+  private async markPendingReconciled(
+    reservationId: string,
+    persistence: BuyPersistenceOperations,
+  ): Promise<void> {
+    if (!persistence.markPendingPersistenceReconciled) {
       return;
     }
-    await this.options.persistence.markPendingPersistenceReconciled({ reservationId });
+    await persistence.markPendingPersistenceReconciled({ reservationId });
+  }
+
+  private async withPersistenceAdmissionLock<T>(
+    reservation: SecuredReservationHold,
+    operation: (persistence: BuyPersistenceOperations) => Promise<T>,
+  ): Promise<T> {
+    if (reservation.runId && this.options.persistence.withRunAdmissionLock) {
+      return this.options.persistence.withRunAdmissionLock({ reservation, operation });
+    }
+    return operation(this.options.persistence);
   }
 
   private now(): Date {

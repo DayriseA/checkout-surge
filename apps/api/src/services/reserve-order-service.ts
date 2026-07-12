@@ -12,13 +12,26 @@ import {
 import type { OrderProcessJobPublisher } from "./order-process-job-publisher.js";
 
 export const definitivePersistenceRejectionCode = "run_sale_offer_mismatch" as const;
+export const terminalPersistenceRejectionCode = "run_terminal" as const;
 
 export class DefinitivePersistenceRejectionError extends Error {
-  readonly code = definitivePersistenceRejectionCode;
+  readonly code:
+    | typeof definitivePersistenceRejectionCode
+    | typeof terminalPersistenceRejectionCode = definitivePersistenceRejectionCode;
 
   constructor(message = "Reservation run and sale offer do not match.") {
     super(message);
     this.name = "DefinitivePersistenceRejectionError";
+  }
+}
+
+export class TerminalRunPersistenceRejectionError extends DefinitivePersistenceRejectionError {
+  readonly code = terminalPersistenceRejectionCode;
+  readonly reason = "run_terminal" as const;
+
+  constructor() {
+    super("Generated run is terminal and no longer accepts reservations.");
+    this.name = "TerminalRunPersistenceRejectionError";
   }
 }
 
@@ -28,7 +41,8 @@ export function isDefinitivePersistenceRejection(error: unknown): boolean {
     (typeof error === "object" &&
       error !== null &&
       "code" in error &&
-      (error as { code?: unknown }).code === definitivePersistenceRejectionCode)
+      ((error as { code?: unknown }).code === definitivePersistenceRejectionCode ||
+        (error as { code?: unknown }).code === terminalPersistenceRejectionCode))
   );
 }
 
@@ -37,14 +51,21 @@ export interface PersistedBuy {
   order: OrderSummary;
 }
 
-export interface BuyPersistence {
+export interface BuyPersistenceOperations {
   persistSecuredReservation(input: { reservation: SecuredReservationHold }): Promise<PersistedBuy>;
   getPersistedBuyByReservationId(reservationId: string): Promise<PersistedBuy | null>;
-  markPendingPersistenceReconciled?(input: { reservationId: string }): Promise<void>;
   recordPendingPersistence?(input: {
     reservation: SecuredReservationHold;
     idempotencyKey: string;
   }): Promise<void>;
+  markPendingPersistenceReconciled?(input: { reservationId: string }): Promise<void>;
+}
+
+export interface BuyPersistence extends BuyPersistenceOperations {
+  withRunAdmissionLock?<T>(input: {
+    reservation: SecuredReservationHold;
+    operation: (persistence: BuyPersistenceOperations) => Promise<T>;
+  }): Promise<T>;
 }
 
 export interface StockReservationGateway {
@@ -241,28 +262,12 @@ export class ReserveOrderService {
       });
     }
 
-    const persisted = await this.persistence.getPersistedBuyByReservationId(
-      decision.reservation.id,
-    );
-
-    if (persisted) {
-      await this.enqueuePersistedBuy(persisted, input.request.idempotencyKey, decision.reservation);
-      await this.promoteWithoutHidingDurableSuccess(
-        input.request.idempotencyKey,
-        decision.reservation,
-      );
-      return this.acceptedResponse("idempotent_replay", persisted, input.correlationId, now);
-    }
-
-    if (decision.outcome === "idempotent_replay") {
-      throw new Error("Accepted Redis idempotency record has no durable reservation and order.");
-    }
-
-    return this.reconcilePendingReservation({
+    return this.replayOrReconcilePendingReservation({
       reservation: decision.reservation,
       idempotencyKey: input.request.idempotencyKey,
       correlationId: input.correlationId,
       now,
+      outcome: decision.outcome,
     });
   }
 
@@ -272,30 +277,49 @@ export class ReserveOrderService {
     correlationId: string;
     now: Date;
   }): Promise<BuyResponse> {
-    let persisted: PersistedBuy;
-
+    let persisted: PersistedBuy | null;
     try {
-      persisted = await this.persistence.persistSecuredReservation({
-        reservation: input.reservation,
-      });
-    } catch (error) {
-      safelyReportPartialFailure(
-        this.reportPersistenceFailure,
-        this.partialFailureReport(error, input.idempotencyKey, input.reservation),
+      persisted = await this.withPersistenceAdmissionLock(
+        input.reservation,
+        async (persistence) => {
+          let persisted: PersistedBuy;
+
+          try {
+            persisted = await persistence.persistSecuredReservation({
+              reservation: input.reservation,
+            });
+          } catch (error) {
+            safelyReportPartialFailure(
+              this.reportPersistenceFailure,
+              this.partialFailureReport(error, input.idempotencyKey, input.reservation),
+            );
+            if (isDefinitivePersistenceRejection(error)) {
+              throw error;
+            }
+            await this.recordPendingPersistenceWithoutHidingPending(
+              input.idempotencyKey,
+              input.reservation,
+              persistence,
+            );
+            await this.ensurePendingPersistence(input.idempotencyKey, input.reservation);
+            return null;
+          }
+
+          await this.enqueuePersistedBuy(persisted, input.idempotencyKey, input.reservation);
+          return persisted;
+        },
       );
+    } catch (error) {
       if (isDefinitivePersistenceRejection(error) && this.stockReservations.reverse) {
         await this.compensateHold(input.idempotencyKey, input.reservation, error);
-        throw error;
       }
-      await this.recordPendingPersistenceWithoutHidingPending(
-        input.idempotencyKey,
-        input.reservation,
-      );
-      await this.ensurePendingPersistence(input.idempotencyKey, input.reservation);
+      throw error;
+    }
+
+    if (!persisted) {
       return this.pendingResponse(input.reservation, input.correlationId, input.now);
     }
 
-    await this.enqueuePersistedBuy(persisted, input.idempotencyKey, input.reservation);
     await this.promoteWithoutHidingDurableSuccess(input.idempotencyKey, input.reservation);
     this.scheduleBusinessOutcomeUpdateWithoutHidingDurableSuccess(input.reservation, input.now);
     return this.acceptedResponse("reservation_secured", persisted, input.correlationId, input.now);
@@ -318,36 +342,67 @@ export class ReserveOrderService {
     }
   }
 
-  private async reconcilePendingReservation(input: {
+  private async replayOrReconcilePendingReservation(input: {
     reservation: SecuredReservationHold;
     idempotencyKey: string;
     correlationId: string;
     now: Date;
+    outcome: "reservation_pending_persistence" | "idempotent_replay";
   }): Promise<BuyResponse> {
-    let persisted: PersistedBuy;
-
+    let persisted: PersistedBuy | null;
     try {
-      persisted = await this.persistence.persistSecuredReservation({
-        reservation: input.reservation,
-      });
-    } catch (error) {
-      safelyReportPartialFailure(
-        this.reportPersistenceFailure,
-        this.partialFailureReport(error, input.idempotencyKey, input.reservation),
+      persisted = await this.withPersistenceAdmissionLock(
+        input.reservation,
+        async (persistence) => {
+          const existing = await persistence.getPersistedBuyByReservationId(input.reservation.id);
+          if (existing) {
+            await this.enqueuePersistedBuy(existing, input.idempotencyKey, input.reservation);
+            return existing;
+          }
+
+          if (input.outcome === "idempotent_replay") {
+            throw new Error(
+              "Accepted Redis idempotency record has no durable reservation and order.",
+            );
+          }
+
+          let materialized: PersistedBuy;
+          try {
+            materialized = await persistence.persistSecuredReservation({
+              reservation: input.reservation,
+            });
+          } catch (error) {
+            safelyReportPartialFailure(
+              this.reportPersistenceFailure,
+              this.partialFailureReport(error, input.idempotencyKey, input.reservation),
+            );
+            if (isDefinitivePersistenceRejection(error)) {
+              throw error;
+            }
+            await this.recordPendingPersistenceWithoutHidingPending(
+              input.idempotencyKey,
+              input.reservation,
+              persistence,
+            );
+            await this.ensurePendingPersistence(input.idempotencyKey, input.reservation);
+            return null;
+          }
+
+          await this.enqueuePersistedBuy(materialized, input.idempotencyKey, input.reservation);
+          return materialized;
+        },
       );
+    } catch (error) {
       if (isDefinitivePersistenceRejection(error) && this.stockReservations.reverse) {
         await this.compensateHold(input.idempotencyKey, input.reservation, error);
-        throw error;
       }
-      await this.recordPendingPersistenceWithoutHidingPending(
-        input.idempotencyKey,
-        input.reservation,
-      );
-      await this.ensurePendingPersistence(input.idempotencyKey, input.reservation);
+      throw error;
+    }
+
+    if (!persisted) {
       return this.pendingResponse(input.reservation, input.correlationId, input.now);
     }
 
-    await this.enqueuePersistedBuy(persisted, input.idempotencyKey, input.reservation);
     await this.promoteWithoutHidingDurableSuccess(input.idempotencyKey, input.reservation);
     this.scheduleBusinessOutcomeUpdateWithoutHidingDurableSuccess(input.reservation, input.now);
     return this.acceptedResponse("idempotent_replay", persisted, input.correlationId, input.now);
@@ -398,22 +453,37 @@ export class ReserveOrderService {
     }
   }
 
+  private async withPersistenceAdmissionLock<T>(
+    reservation: SecuredReservationHold,
+    operation: (persistence: BuyPersistenceOperations) => Promise<T>,
+  ): Promise<T> {
+    if (reservation.runId && this.persistence.withRunAdmissionLock) {
+      return this.persistence.withRunAdmissionLock({ reservation, operation });
+    }
+
+    return operation(this.persistence);
+  }
+
   private async enqueuePersistedBuy(
     persisted: PersistedBuy,
     idempotencyKey: string,
     reservation: SecuredReservationHold,
   ): Promise<void> {
-    try {
-      // PostgreSQL and BullMQ are not atomic. Every durable replay re-asserts this
-      // deterministic job before Redis can be promoted to an accepted response.
-      await this.orderProcessJobPublisher.enqueue(this.toOrderProcessJob(persisted));
-    } catch (error) {
-      safelyReportPartialFailure(this.reportOrderEnqueueFailure, {
-        ...this.partialFailureReport(error, idempotencyKey, reservation),
-        orderId: persisted.order.id,
-      });
-      throw error;
-    }
+    const enqueue = async (): Promise<void> => {
+      try {
+        // PostgreSQL and BullMQ are not atomic. Every durable replay re-asserts this
+        // deterministic job before Redis can be promoted to an accepted response.
+        await this.orderProcessJobPublisher.enqueue(this.toOrderProcessJob(persisted));
+      } catch (error) {
+        safelyReportPartialFailure(this.reportOrderEnqueueFailure, {
+          ...this.partialFailureReport(error, idempotencyKey, reservation),
+          orderId: persisted.order.id,
+        });
+        throw error;
+      }
+    };
+
+    await enqueue();
   }
 
   private toOrderProcessJob(persisted: PersistedBuy): OrderProcessJob {
@@ -460,13 +530,14 @@ export class ReserveOrderService {
   private async recordPendingPersistenceWithoutHidingPending(
     idempotencyKey: string,
     reservation: SecuredReservationHold,
+    persistence: BuyPersistenceOperations,
   ): Promise<void> {
-    if (!this.persistence.recordPendingPersistence) {
+    if (!persistence.recordPendingPersistence) {
       return;
     }
 
     try {
-      await this.persistence.recordPendingPersistence({ idempotencyKey, reservation });
+      await persistence.recordPendingPersistence({ idempotencyKey, reservation });
     } catch (error) {
       safelyReportPartialFailure(
         this.reportPendingPersistenceRecordFailure,

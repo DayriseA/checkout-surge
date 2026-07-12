@@ -23,6 +23,7 @@ import {
   demoRuns,
   erpAttempts,
   getInventoryStatus,
+  InventoryNotInitializedError,
   orderEvents,
   orders,
   readBusinessOutcomeSummary,
@@ -33,8 +34,11 @@ import {
   simulatedNotifications,
 } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
-import { and, desc, eq, inArray, lt, notInArray } from "drizzle-orm";
-import { PostgresTerminalDemoRunSummaryWriter } from "./terminal-demo-run-transition.js";
+import { and, desc, eq, inArray, isNull, lt, notInArray, or } from "drizzle-orm";
+import {
+  PostgresTerminalDemoRunSummaryWriter,
+  type TerminalDemoRunSummaryInput,
+} from "./terminal-demo-run-transition.js";
 
 export interface QueueCleanupSummary {
   cleanedQueueCount: number;
@@ -45,8 +49,18 @@ export interface DemoQueueMaintenance {
   cleanResetOwnedQueues(): Promise<QueueCleanupSummary>;
 }
 
+type FencedResetRun = {
+  run: typeof demoRuns.$inferSelect;
+  finalization: typeof demoRunFinalizations.$inferSelect | null;
+  finalizedAt: Date;
+  previousStatus?: typeof demoRuns.$inferSelect.status;
+  previousTrafficStatus?: typeof demoRuns.$inferSelect.trafficStatus;
+};
+
 export class DemoMaintenanceService {
   private readonly terminalRunWriter: PostgresTerminalDemoRunSummaryWriter;
+  private static resetTail: Promise<void> = Promise.resolve();
+  private static resetPendingCount = 0;
 
   constructor(
     private readonly options: {
@@ -61,55 +75,83 @@ export class DemoMaintenanceService {
   }
 
   async reset(correlationId: string): Promise<AdminDemoResetResponse> {
+    const arrivedDuringReset = DemoMaintenanceService.resetPendingCount > 0;
+    DemoMaintenanceService.resetPendingCount += 1;
+    const operation = DemoMaintenanceService.resetTail.then(() =>
+      this.resetWithoutConcurrentReset(correlationId, arrivedDuringReset),
+    );
+    DemoMaintenanceService.resetTail = operation.then(
+      () => {
+        DemoMaintenanceService.resetPendingCount -= 1;
+      },
+      () => {
+        DemoMaintenanceService.resetPendingCount -= 1;
+      },
+    );
+    return operation;
+  }
+
+  private async resetWithoutConcurrentReset(
+    correlationId: string,
+    arrivedDuringReset: boolean,
+  ): Promise<AdminDemoResetResponse> {
     const now = this.now();
-    const activeRuns = await this.options.db
-      .select({ run: demoRuns, finalization: demoRunFinalizations })
+    const resetCandidates = await this.options.db
+      .select({
+        run: demoRuns,
+        finalization: demoRunFinalizations,
+        summary: demoRunSummaries,
+      })
       .from(demoRuns)
       .leftJoin(demoRunFinalizations, eq(demoRunFinalizations.runId, demoRuns.id))
-      .where(inArray(demoRuns.status, ["starting", "active", "draining"]));
+      .leftJoin(demoRunSummaries, eq(demoRunSummaries.runId, demoRuns.id))
+      .where(
+        or(
+          and(
+            inArray(demoRuns.status, ["starting", "active", "draining"]),
+            isNull(demoRunSummaries.id),
+          ),
+          and(
+            eq(demoRuns.status, "failed"),
+            eq(demoRuns.failureReason, "admin_reset"),
+            isNull(demoRunSummaries.id),
+          ),
+        ),
+      );
 
-    let failedRunCount = 0;
-    let closedSaleOfferCount = 0;
-    for (const row of activeRuns) {
-      const businessOutcome = await this.readBusinessOutcome(row.run);
-      const terminalInventorySnapshot = await this.captureTerminalInventorySnapshot({
-        run: row.run,
-        businessOutcome,
-        capturedAt: now,
-      });
-      const trafficSummary = adminResetTrafficSummary(row.run, row.finalization);
-      const wroteSummary = await this.terminalRunWriter.write({
-        run: row.run,
-        terminalStatus: "failed",
-        failureReason: "admin_reset",
-        finalizedAt: now,
-        httpSummary: trafficSummary.httpSummary,
-        trafficDeliverySummary: trafficSummary.trafficDeliverySummary,
-        httpTimingBreakdownSummary: trafficSummary.httpTimingBreakdownSummary,
-        loadRunDiagnosticsSummary: {
-          ...trafficSummary.loadRunDiagnosticsSummary,
-          failureReason: "admin_reset",
-          previousStatus: row.run.status,
-          previousTrafficStatus: row.run.trafficStatus,
-        },
-        apiRequestLifecycleSummary: {
-          ...trafficSummary.apiRequestLifecycleSummary,
-          failureReason: "admin_reset",
-          previousStatus: row.run.status,
-          previousTrafficStatus: row.run.trafficStatus,
-          resetAt: now.toISOString(),
-          correlationId,
-        },
-        businessOutcome,
-        terminalInventorySnapshot,
-        allowedCurrentStatuses: ["starting", "active", "draining"],
-        terminalTrafficStatus: "failed",
-      });
-      if (!wroteSummary) {
+    const fencedRuns: FencedResetRun[] = [];
+    for (const candidate of resetCandidates) {
+      if (candidate.run.status === "failed") {
+        fencedRuns.push({
+          run: candidate.run,
+          finalization: candidate.finalization,
+          finalizedAt: candidate.run.finalizedAt ?? now,
+        });
         continue;
       }
 
-      failedRunCount += 1;
+      const claimed = await this.terminalRunWriter.claimTerminalRun({
+        runId: candidate.run.id,
+        terminalStatus: "failed",
+        failureReason: "admin_reset",
+        finalizedAt: now,
+        allowedCurrentStatuses: ["starting", "active", "draining"],
+        terminalTrafficStatus: "failed",
+      });
+      if (claimed) {
+        fencedRuns.push({
+          run: candidate.run,
+          finalization: candidate.finalization,
+          finalizedAt: now,
+          previousStatus: candidate.run.status,
+          previousTrafficStatus: candidate.run.trafficStatus,
+        });
+      }
+    }
+
+    let closedSaleOfferCount = 0;
+    const closureFailures: unknown[] = [];
+    for (const row of fencedRuns) {
       if (!row.run.saleOfferId) {
         continue;
       }
@@ -121,6 +163,12 @@ export class DemoMaintenanceService {
         });
         closedSaleOfferCount += 1;
       } catch (error) {
+        if (error instanceof InventoryNotInitializedError) {
+          // A run that never initialized inventory has no Redis admission to
+          // close; it is already fenced by the PostgreSQL terminal claim.
+          continue;
+        }
+        closureFailures.push(error);
         this.options.logger.warn(
           { err: error, runId: row.run.id, saleOfferId: row.run.saleOfferId },
           "Could not close run sale eligibility during admin reset.",
@@ -128,7 +176,65 @@ export class DemoMaintenanceService {
       }
     }
 
-    const queueCleanup = await this.options.queueMaintenance.cleanResetOwnedQueues();
+    if (closureFailures.length > 0) {
+      throw new Error(
+        `Admin reset could not close sale eligibility for ${closureFailures.length} run(s). Retry reset to resume the fenced transition.`,
+      );
+    }
+
+    const queueCleanup =
+      fencedRuns.length > 0 || !arrivedDuringReset
+        ? await this.options.queueMaintenance.cleanResetOwnedQueues()
+        : { cleanedQueueCount: 0, cleanedJobCount: 0 };
+
+    const summaryInputs: TerminalDemoRunSummaryInput[] = [];
+    for (const fencedRun of fencedRuns) {
+      const latest = await this.readResetRun(fencedRun.run.id);
+      if (!latest) {
+        continue;
+      }
+
+      const businessOutcome = await this.readBusinessOutcome(latest.run);
+      const terminalInventorySnapshot = await this.captureTerminalInventorySnapshot({
+        run: latest.run,
+        businessOutcome,
+        capturedAt: now,
+      });
+      const trafficSummary = adminResetTrafficSummary(latest.run, latest.finalization);
+      summaryInputs.push({
+        run: latest.run,
+        terminalStatus: "failed",
+        failureReason: "admin_reset",
+        finalizedAt: fencedRun.finalizedAt,
+        capturedAt: now,
+        httpSummary: trafficSummary.httpSummary,
+        trafficDeliverySummary: trafficSummary.trafficDeliverySummary,
+        httpTimingBreakdownSummary: trafficSummary.httpTimingBreakdownSummary,
+        loadRunDiagnosticsSummary: {
+          ...trafficSummary.loadRunDiagnosticsSummary,
+          failureReason: "admin_reset",
+          ...(fencedRun.previousStatus ? { previousStatus: fencedRun.previousStatus } : {}),
+          ...(fencedRun.previousTrafficStatus
+            ? { previousTrafficStatus: fencedRun.previousTrafficStatus }
+            : {}),
+        },
+        apiRequestLifecycleSummary: {
+          ...trafficSummary.apiRequestLifecycleSummary,
+          failureReason: "admin_reset",
+          ...(fencedRun.previousStatus ? { previousStatus: fencedRun.previousStatus } : {}),
+          ...(fencedRun.previousTrafficStatus
+            ? { previousTrafficStatus: fencedRun.previousTrafficStatus }
+            : {}),
+          resetAt: fencedRun.finalizedAt.toISOString(),
+          correlationId,
+        },
+        businessOutcome,
+        terminalInventorySnapshot,
+        allowedCurrentStatuses: ["failed"],
+        terminalTrafficStatus: "failed",
+      });
+    }
+    const failedRunCount = await this.terminalRunWriter.writeAfterTerminalClaims(summaryInputs);
 
     return adminDemoResetResponseSchema.parse({
       failedRunCount,
@@ -235,6 +341,20 @@ export class DemoMaintenanceService {
 
   private now(): Date {
     return this.options.now?.() ?? new Date();
+  }
+
+  private async readResetRun(runId: string): Promise<{
+    run: typeof demoRuns.$inferSelect;
+    finalization: typeof demoRunFinalizations.$inferSelect | null;
+  } | null> {
+    const [row] = await this.options.db
+      .select({ run: demoRuns, finalization: demoRunFinalizations })
+      .from(demoRuns)
+      .leftJoin(demoRunFinalizations, eq(demoRunFinalizations.runId, demoRuns.id))
+      .where(eq(demoRuns.id, runId))
+      .limit(1);
+
+    return row ?? null;
   }
 
   private async readBusinessOutcome(

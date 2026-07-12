@@ -12,6 +12,7 @@ import {
   demoRuns,
   initializeInventory,
   isRunSaleEligible,
+  markReservationPendingPersistence,
   orders,
   products,
   promoteReservationIdempotencyToAccepted,
@@ -24,6 +25,12 @@ import { createSilentLogger } from "@checkout-surge/logger";
 import { eq, inArray } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { DemoMaintenanceService } from "../src/services/demo-maintenance-service.js";
+import { PostgresGeneratedRunSaleGate } from "../src/services/generated-run-sale-gate.js";
+import { PostgresBuyPersistence } from "../src/services/postgres-buy-persistence.js";
+import {
+  ReserveOrderService,
+  type StockReservationGateway,
+} from "../src/services/reserve-order-service.js";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const dbPackageRoot = path.resolve(packageRoot, "../../packages/db");
@@ -79,9 +86,21 @@ describe("demo maintenance service", () => {
     const db = requireConnection(connection).db;
     const redisClient = requireRedis(redis);
     const queueMaintenance = {
-      cleanResetOwnedQueues: vi
-        .fn()
-        .mockResolvedValue({ cleanedQueueCount: 2, cleanedJobCount: 5 }),
+      cleanResetOwnedQueues: vi.fn(async () => {
+        const runsAtCleanup = await db
+          .select({ id: demoRuns.id, status: demoRuns.status })
+          .from(demoRuns)
+          .where(inArray(demoRuns.id, [ids.startingRun, ids.activeRun, ids.drainingRun]));
+        expect(runsAtCleanup.every((run) => run.status === "failed")).toBe(true);
+        await expect(
+          isRunSaleEligible(redisClient, {
+            runId: ids.activeRun,
+            saleOfferId: ids.activeOffer,
+          }),
+        ).resolves.toBe(false);
+        expect(await db.select().from(demoRunSummaries)).toHaveLength(0);
+        return { cleanedQueueCount: 2, cleanedJobCount: 5 };
+      }),
     };
     const service = new DemoMaintenanceService({
       db,
@@ -243,14 +262,15 @@ describe("demo maintenance service", () => {
   it("allows reset after all runs are terminal without changing history", async () => {
     const db = requireConnection(connection).db;
     const redisClient = requireRedis(redis);
+    const queueMaintenance = {
+      cleanResetOwnedQueues: vi
+        .fn()
+        .mockResolvedValue({ cleanedQueueCount: 2, cleanedJobCount: 0 }),
+    };
     const service = new DemoMaintenanceService({
       db,
       redis: redisClient,
-      queueMaintenance: {
-        cleanResetOwnedQueues: vi
-          .fn()
-          .mockResolvedValue({ cleanedQueueCount: 2, cleanedJobCount: 0 }),
-      },
+      queueMaintenance,
       logger: createSilentLogger("api"),
       now: () => new Date("2026-06-20T00:00:10.000Z"),
     });
@@ -293,6 +313,9 @@ describe("demo maintenance service", () => {
 
     expect(response.failedRunCount).toBe(0);
     expect(response.closedSaleOfferCount).toBe(0);
+    expect(response.cleanedQueueCount).toBe(2);
+    expect(response.cleanedJobCount).toBe(0);
+    expect(queueMaintenance.cleanResetOwnedQueues).toHaveBeenCalledOnce();
     expect(summariesAfterReset).toEqual(summariesBeforeReset);
     expect(terminalRuns).toEqual(
       expect.arrayContaining([
@@ -304,6 +327,391 @@ describe("demo maintenance service", () => {
         }),
       ]),
     );
+  });
+
+  it("leaves a fenced run resumable when admission closure fails", async () => {
+    const db = requireConnection(connection).db;
+    const redisClient = requireRedis(redis);
+    await seedBase(db);
+    await seedRun(db, redisClient, {
+      runId: ids.activeRun,
+      saleOfferId: ids.activeOffer,
+      status: "active",
+      trafficStatus: "active",
+      failureReason: null,
+      runInventoryStatus: "accepting",
+    });
+
+    const queueMaintenance = {
+      cleanResetOwnedQueues: vi
+        .fn()
+        .mockResolvedValue({ cleanedQueueCount: 2, cleanedJobCount: 0 }),
+    };
+    let resetNow = new Date("2026-06-20T00:00:10.000Z");
+    const service = new DemoMaintenanceService({
+      db,
+      redis: redisClient,
+      queueMaintenance,
+      logger: createSilentLogger("api"),
+      now: () => resetNow,
+    });
+
+    const evalSpy = vi
+      .spyOn(redisClient, "eval")
+      .mockRejectedValueOnce(new Error("temporary Redis outage"));
+    await expect(service.reset("corr-reset-failure")).rejects.toThrow(
+      "Retry reset to resume the fenced transition",
+    );
+    evalSpy.mockRestore();
+
+    await expect(db.select().from(demoRuns).where(eq(demoRuns.id, ids.activeRun))).resolves.toEqual(
+      [
+        expect.objectContaining({
+          status: "failed",
+          trafficStatus: "failed",
+          failureReason: "admin_reset",
+        }),
+      ],
+    );
+    expect(await db.select().from(demoRunSummaries)).toHaveLength(0);
+    expect(queueMaintenance.cleanResetOwnedQueues).not.toHaveBeenCalled();
+
+    resetNow = new Date("2026-06-20T00:00:20.000Z");
+    const response = await service.reset("corr-reset-retry");
+    expect(response).toMatchObject({
+      failedRunCount: 1,
+      closedSaleOfferCount: 1,
+      cleanedQueueCount: 2,
+      cleanedJobCount: 0,
+      correlationId: "corr-reset-retry",
+    });
+    expect(queueMaintenance.cleanResetOwnedQueues).toHaveBeenCalledOnce();
+    const [summary] = await db.select().from(demoRunSummaries);
+    expect(summary).toMatchObject({
+      endedAt: new Date("2026-06-20T00:00:10.000Z"),
+      capturedAt: new Date("2026-06-20T00:00:20.000Z"),
+    });
+    expect(summary?.loadRunDiagnosticsSummary).not.toHaveProperty("previousStatus");
+    expect(summary?.apiRequestLifecycleSummary).not.toHaveProperty("previousStatus");
+  });
+
+  it("rechecks Redis admission after a stale PostgreSQL gate read", async () => {
+    const db = requireConnection(connection).db;
+    const redisClient = requireRedis(redis);
+    await seedBase(db);
+    await seedRun(db, redisClient, {
+      runId: ids.activeRun,
+      saleOfferId: ids.activeOffer,
+      status: "active",
+      trafficStatus: "active",
+      failureReason: null,
+      runInventoryStatus: "accepting",
+    });
+
+    let releaseGate: (() => void) | undefined;
+    const gateRelease = new Promise<void>((resolve) => {
+      releaseGate = resolve;
+    });
+    let gateRead: (() => void) | undefined;
+    const gateReadCompleted = new Promise<void>((resolve) => {
+      gateRead = resolve;
+    });
+    const generatedRunSaleGate = {
+      isAccepting: async (input: { runId: string; saleOfferId: string }) => {
+        const accepted = await new PostgresGeneratedRunSaleGate(db).isAccepting(input);
+        gateRead?.();
+        await gateRelease;
+        return accepted;
+      },
+    };
+    const reserveService = new ReserveOrderService({
+      persistence: new PostgresBuyPersistence(db),
+      stockReservations: {
+        reserve: (input) => reserveInventoryStock(redisClient, input),
+        markPendingPersistence: (input) => markReservationPendingPersistence(redisClient, input),
+        promoteAccepted: async () => undefined,
+      },
+      generatedRunSaleGate,
+      orderProcessJobPublisher: { enqueue: async () => undefined },
+      reservationHoldMinutes: 15,
+      idempotencyTtlSeconds: 1800,
+      pendingPersistenceRetryAfterSeconds: 30,
+    });
+    const maintenanceService = new DemoMaintenanceService({
+      db,
+      redis: redisClient,
+      queueMaintenance: {
+        cleanResetOwnedQueues: vi
+          .fn()
+          .mockResolvedValue({ cleanedQueueCount: 2, cleanedJobCount: 0 }),
+      },
+      logger: createSilentLogger("api"),
+      now: () => new Date("2026-06-20T00:00:10.000Z"),
+    });
+
+    const reservePromise = reserveService.reserve({
+      request: {
+        saleOfferId: ids.activeOffer,
+        runId: ids.activeRun,
+        idempotencyKey: "reset-gate-race",
+        quantity: 1,
+      },
+      correlationId: "corr-reset-gate-race",
+      now: new Date("2026-06-20T00:00:02.000Z"),
+    });
+    await gateReadCompleted;
+    await maintenanceService.reset("corr-reset-gate-race");
+    releaseGate?.();
+
+    await expect(reservePromise).resolves.toMatchObject({
+      outcome: "inventory_not_initialized",
+      reason: "run_not_accepting_traffic",
+    });
+    expect(await db.select().from(reservations)).toHaveLength(0);
+    expect(await db.select().from(orders)).toHaveLength(0);
+  });
+
+  it("rejects a Redis-secured hold that reaches persistence after reset fences the run", async () => {
+    const db = requireConnection(connection).db;
+    const redisClient = requireRedis(redis);
+    await seedBase(db);
+    await seedRun(db, redisClient, {
+      runId: ids.activeRun,
+      saleOfferId: ids.activeOffer,
+      status: "active",
+      trafficStatus: "active",
+      failureReason: null,
+      runInventoryStatus: "accepting",
+    });
+
+    let releasePersistence: (() => void) | undefined;
+    const persistenceRelease = new Promise<void>((resolve) => {
+      releasePersistence = resolve;
+    });
+    let reservationReachedPersistence: (() => void) | undefined;
+    const reservationReady = new Promise<void>((resolve) => {
+      reservationReachedPersistence = resolve;
+    });
+    const reverse = vi.fn(async () => "reversed" as const);
+    const stockReservations: StockReservationGateway = {
+      reserve: async ({ reservation }) => {
+        reservationReachedPersistence?.();
+        await persistenceRelease;
+        return { outcome: "reservation_secured", reservation };
+      },
+      markPendingPersistence: async () => undefined,
+      promoteAccepted: async () => undefined,
+      reverse,
+    };
+    const service = new DemoMaintenanceService({
+      db,
+      redis: redisClient,
+      queueMaintenance: {
+        cleanResetOwnedQueues: vi
+          .fn()
+          .mockResolvedValue({ cleanedQueueCount: 2, cleanedJobCount: 0 }),
+      },
+      logger: createSilentLogger("api"),
+      now: () => new Date("2026-06-20T00:00:10.000Z"),
+    });
+    const reserveService = new ReserveOrderService({
+      persistence: new PostgresBuyPersistence(db),
+      stockReservations,
+      orderProcessJobPublisher: { enqueue: async () => undefined },
+      reservationHoldMinutes: 15,
+      idempotencyTtlSeconds: 1800,
+      pendingPersistenceRetryAfterSeconds: 30,
+      generateId: (() => {
+        const generatedIds = [
+          "99999999-9999-4999-8999-999999999991",
+          "99999999-9999-4999-8999-999999999992",
+        ];
+        let index = 0;
+        return () => generatedIds[index++] ?? "99999999-9999-4999-8999-999999999991";
+      })(),
+    });
+
+    const reservePromise = reserveService.reserve({
+      request: {
+        saleOfferId: ids.activeOffer,
+        runId: ids.activeRun,
+        idempotencyKey: "reset-persistence-race",
+        quantity: 1,
+      },
+      correlationId: "corr-reset-persistence-race",
+      now: new Date("2026-06-20T00:00:02.000Z"),
+    });
+    await reservationReady;
+    await service.reset("corr-reset-persistence-race");
+    releasePersistence?.();
+
+    await expect(reservePromise).rejects.toMatchObject({
+      code: "run_terminal",
+      reason: "run_terminal",
+      message: "Generated run is terminal and no longer accepts reservations.",
+    });
+    expect(reverse).toHaveBeenCalledOnce();
+    expect(await db.select().from(reservations)).toHaveLength(0);
+    expect(await db.select().from(orders)).toHaveLength(0);
+    expect(await db.select().from(demoRunSummaries)).toHaveLength(1);
+  });
+
+  it("holds reset behind an admitted enqueue so cleanup cannot race its job handoff", async () => {
+    const db = requireConnection(connection).db;
+    const redisClient = requireRedis(redis);
+    await seedBase(db);
+    await seedRun(db, redisClient, {
+      runId: ids.activeRun,
+      saleOfferId: ids.activeOffer,
+      status: "active",
+      trafficStatus: "active",
+      failureReason: null,
+      runInventoryStatus: "accepting",
+    });
+
+    let releaseEnqueue: (() => void) | undefined;
+    const enqueueRelease = new Promise<void>((resolve) => {
+      releaseEnqueue = resolve;
+    });
+    let enqueueStarted: (() => void) | undefined;
+    const enqueueReady = new Promise<void>((resolve) => {
+      enqueueStarted = resolve;
+    });
+    const enqueueConnection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
+    const queuePublisher = {
+      enqueue: vi.fn(async () => {
+        const visibleOrders = await enqueueConnection.db
+          .select()
+          .from(orders)
+          .where(eq(orders.saleOfferId, ids.activeOffer));
+        expect(visibleOrders).toHaveLength(1);
+        enqueueStarted?.();
+        await enqueueRelease;
+      }),
+    };
+    const stockReservations: StockReservationGateway = {
+      reserve: async ({ reservation }) => ({ outcome: "reservation_secured", reservation }),
+      markPendingPersistence: async () => undefined,
+      promoteAccepted: async () => undefined,
+    };
+    const reserveService = new ReserveOrderService({
+      persistence: new PostgresBuyPersistence(db),
+      stockReservations,
+      orderProcessJobPublisher: queuePublisher,
+      reservationHoldMinutes: 15,
+      idempotencyTtlSeconds: 1800,
+      pendingPersistenceRetryAfterSeconds: 30,
+      generateId: (() => {
+        const generatedIds = [
+          "99999999-9999-4999-8999-999999999981",
+          "99999999-9999-4999-8999-999999999982",
+        ];
+        let index = 0;
+        return () => generatedIds[index++] ?? "99999999-9999-4999-8999-999999999981";
+      })(),
+    });
+    const queueMaintenance = {
+      cleanResetOwnedQueues: vi.fn(async () => {
+        expect(await db.select().from(demoRunSummaries)).toHaveLength(0);
+        return { cleanedQueueCount: 2, cleanedJobCount: 0 };
+      }),
+    };
+    const maintenanceService = new DemoMaintenanceService({
+      db,
+      redis: redisClient,
+      queueMaintenance,
+      logger: createSilentLogger("api"),
+      now: () => new Date("2026-06-20T00:00:10.000Z"),
+    });
+
+    try {
+      const reservePromise = reserveService.reserve({
+        request: {
+          saleOfferId: ids.activeOffer,
+          runId: ids.activeRun,
+          idempotencyKey: "reset-enqueue-race",
+          quantity: 1,
+        },
+        correlationId: "corr-reset-enqueue-race",
+        now: new Date("2026-06-20T00:00:02.000Z"),
+      });
+      await enqueueReady;
+      let resetFinished = false;
+      const resetPromise = maintenanceService.reset("corr-reset-enqueue-race").then((response) => {
+        resetFinished = true;
+        return response;
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(resetFinished).toBe(false);
+      releaseEnqueue?.();
+
+      await expect(reservePromise).resolves.toMatchObject({ outcome: "reservation_secured" });
+      await expect(resetPromise).resolves.toMatchObject({ failedRunCount: 1 });
+      expect(queuePublisher.enqueue).toHaveBeenCalledOnce();
+      expect(queueMaintenance.cleanResetOwnedQueues).toHaveBeenCalledOnce();
+      await expect(db.select().from(demoRunSummaries)).resolves.toHaveLength(1);
+      await expect(db.select().from(orders)).resolves.toHaveLength(1);
+    } finally {
+      await enqueueConnection.close();
+    }
+  });
+
+  it("serializes concurrent resets so a losing caller cannot clean after summary commit", async () => {
+    const db = requireConnection(connection).db;
+    const redisClient = requireRedis(redis);
+    await seedBase(db);
+    await seedRun(db, redisClient, {
+      runId: ids.activeRun,
+      saleOfferId: ids.activeOffer,
+      status: "active",
+      trafficStatus: "active",
+      failureReason: null,
+      runInventoryStatus: "accepting",
+    });
+
+    let releaseCleanup: (() => void) | undefined;
+    const cleanupRelease = new Promise<void>((resolve) => {
+      releaseCleanup = resolve;
+    });
+    let cleanupStarted: (() => void) | undefined;
+    const cleanupReady = new Promise<void>((resolve) => {
+      cleanupStarted = resolve;
+    });
+    const queueMaintenance = {
+      cleanResetOwnedQueues: vi.fn(async () => {
+        cleanupStarted?.();
+        await cleanupRelease;
+        return { cleanedQueueCount: 2, cleanedJobCount: 0 };
+      }),
+    };
+    const service = new DemoMaintenanceService({
+      db,
+      redis: redisClient,
+      queueMaintenance,
+      logger: createSilentLogger("api"),
+      now: () => new Date("2026-06-20T00:00:10.000Z"),
+    });
+
+    const firstReset = service.reset("corr-reset-concurrent-1");
+    await cleanupReady;
+    let secondFinished = false;
+    const secondReset = service.reset("corr-reset-concurrent-2").then((response) => {
+      secondFinished = true;
+      return response;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(secondFinished).toBe(false);
+    releaseCleanup?.();
+
+    await expect(firstReset).resolves.toMatchObject({ failedRunCount: 1 });
+    await expect(secondReset).resolves.toMatchObject({
+      failedRunCount: 0,
+      closedSaleOfferCount: 0,
+      cleanedQueueCount: 0,
+      cleanedJobCount: 0,
+    });
+    expect(queueMaintenance.cleanResetOwnedQueues).toHaveBeenCalledOnce();
+    expect(await db.select().from(demoRunSummaries)).toHaveLength(1);
   });
 
   it("cleans eligible terminal generated-run sale offers through sale contexts", async () => {
