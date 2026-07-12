@@ -280,7 +280,9 @@ The worker-facing Mock ERP confirmation contract is `POST http://localhost:4100/
 | `pnpm lint:fix` | Apply Biome's safe lint fixes across the workspace |
 | `pnpm format` | Format the whole workspace with Biome and organize imports |
 | `pnpm format:check` | Check Biome formatting and import organization without writing changes |
-| `pnpm test` | Run unit, API, and integration tests through Turbo |
+| `pnpm test` | Run the default unit, API, and integration test suite |
+| `pnpm test:composition` | Build and test the isolated deployed service topology; slow and opt-in |
+| `pnpm test:characterization` | Run focused browser recovery plus the slow, opt-in deployed-topology characterization |
 | `pnpm test:unit` | Run unit tests that do not require external infrastructure |
 | `pnpm test:integration` | Run integration tests against isolated test PostgreSQL/Redis |
 | `pnpm test:api` | Run API/service-boundary tests against isolated test PostgreSQL/Redis |
@@ -305,11 +307,22 @@ Useful package commands:
 
 ## Testing Workflow
 
-The full suite can be run with:
+The default development suite can be run with:
 
 ```bash
 pnpm test
 ```
+
+`pnpm test` intentionally excludes deployed-topology composition coverage so routine development and agent verification remain fast. The opt-in `test:composition` command is slow by nature and requires a functioning Docker daemon. It creates a uniquely named Compose project, migrates and seeds isolated PostgreSQL and Redis volumes, starts the deployed API, worker, mock ERP, load orchestrator, web, and dashboard proxy topology, runs its characterization scenarios, and removes the project and volumes afterward. Its host ports default to the `53xxx`-`58xxx` range and can be overridden with the `COMPOSITION_*_PORT` environment variables when those ports are occupied.
+
+Run the deployed topology only when its cross-service safety net is specifically needed, or when explicitly requested during agent-assisted work. The characterization command runs the focused browser recovery suite followed by that topology:
+
+```bash
+pnpm test:composition
+pnpm test:characterization
+```
+
+Set `COMPOSITION_KEEP_RUNTIME=true` to retain a failed composition project for inspection. The 10k characterization preserves the 10,000-buyer burst and requires the exact 1,000 accepted / 9,000 sold-out result when the host delivers every planned iteration. On constrained hosts it permits k6-dropped iterations but still requires complete request accounting, no unexpected responses, consistent inventory, and every accepted reservation to traverse the worker, ERP, notification, and Run History boundaries.
 
 For infrastructure-backed tests, start the isolated test services first — the test databases themselves are created and migrated on demand:
 

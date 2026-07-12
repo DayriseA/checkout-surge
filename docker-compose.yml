@@ -20,7 +20,7 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
     ports:
-      - "5432:5432"
+      - "${POSTGRES_HOST_PORT:-5432}:5432"
     volumes:
       - checkout-surge-postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -33,7 +33,7 @@ services:
     image: redis:7-alpine
     command: ["redis-server", "--appendonly", "yes"]
     ports:
-      - "6379:6379"
+      - "${REDIS_HOST_PORT:-6379}:6379"
     volumes:
       - checkout-surge-redis-data:/data
     healthcheck:
@@ -84,7 +84,7 @@ services:
       PUBLIC_CUSTOM_MAX_ERP_MAX_TPS: ${PUBLIC_CUSTOM_MAX_ERP_MAX_TPS:-100}
       PUBLIC_CUSTOM_MAX_ERP_ERROR_RATE: ${PUBLIC_CUSTOM_MAX_ERP_ERROR_RATE:-0.25}
     ports:
-      - "4000:4000"
+      - "${API_HOST_PORT:-4000}:4000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -116,7 +116,7 @@ services:
       ORDER_PROCESS_CONCURRENCY: ${ORDER_PROCESS_CONCURRENCY:-5}
       NOTIFICATION_RECORD_CONCURRENCY: ${NOTIFICATION_RECORD_CONCURRENCY:-5}
     ports:
-      - "4300:4300"
+      - "${WORKER_HEALTH_HOST_PORT:-4300}:4300"
     depends_on:
       postgres:
         condition: service_healthy
@@ -152,7 +152,7 @@ services:
       ADMIN_MAX_ERROR_RATE: ${ADMIN_MAX_ERROR_RATE:-1}
       ADMIN_ALLOW_FORCED_OUTAGE: ${ADMIN_ALLOW_FORCED_OUTAGE:-true}
     ports:
-      - "4100:4100"
+      - "${MOCK_ERP_HOST_PORT:-4100}:4100"
     healthcheck:
       test:
         [
@@ -175,7 +175,7 @@ services:
       K6_BINARY: /usr/local/bin/k6
       BUY_ENDPOINT_PATH: /buy
     ports:
-      - "4200:4200"
+      - "${LOAD_ORCHESTRATOR_HOST_PORT:-4200}:4200"
     depends_on:
       api:
         condition: service_healthy
@@ -203,7 +203,7 @@ services:
       ADMIN_SESSION_MAX_AGE_SECONDS: ${ADMIN_SESSION_MAX_AGE_SECONDS:-28800}
       PUBLIC_CLIENT_COOKIE_SECRET: ${PUBLIC_CLIENT_COOKIE_SECRET:-change-me-public-client-cookie-secret}
     ports:
-      - "3000:3000"
+      - "${WEB_HOST_PORT:-3000}:3000"
     depends_on:
       api:
         condition: service_started
@@ -224,7 +224,7 @@ services:
   dashboard-proxy:
     image: caddy:2-alpine
     ports:
-      - "8080:8080"
+      - "${DASHBOARD_PROXY_HOST_PORT:-8080}:8080"
     volumes:
       - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
     depends_on:

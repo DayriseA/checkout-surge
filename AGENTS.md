@@ -2,7 +2,7 @@
 
 ## Required Workflow
 
-- Before starting work involving brainstorming, planning, implementing or refactoring, read `working_docs/quality_checklists.md`. This is NOT relevant for simple read only questions about the codebase.
+- Before starting work involving brainstorming, planning, implementing or refactoring, read `working_docs/quality_checklists.md`. This is NOT relevant for simple read-only tasks.
 - Use the checklist to identify the intended ownership boundary, phase scope, and relevant tests before editing.
 - Before handing work back, review the change against the final self-review checklist in that document.
 - If a task conflicts with the checklist, prefer the checklist by default and call out the conflict clearly to obtain explicit user instructions about it.
@@ -16,3 +16,4 @@
 ## Miscellaneous
 
 - Do not force character length limit per line for markdown (*.md) files.
+- Do not run `pnpm test:composition` or `pnpm test:characterization` unless explicitly asked; they are super slow and require a functioning Docker daemon.

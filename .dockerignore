@@ -10,3 +10,5 @@
 .env.test
 .env.test.local
 *.log
+working_docs
+scripts/composition-characterization.mjs
