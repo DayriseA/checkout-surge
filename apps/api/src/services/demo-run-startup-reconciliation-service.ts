@@ -18,6 +18,7 @@ import {
 } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { and, eq, inArray } from "drizzle-orm";
+import type { PendingPersistenceReconciler } from "./pending-persistence-reconciler.js";
 import { PostgresTerminalDemoRunSummaryWriter } from "./terminal-demo-run-transition.js";
 
 const apiRestartInterruptedRunReason = "api_restart_interrupted_run";
@@ -37,6 +38,7 @@ export class DemoRunStartupReconciliationService {
       db: CheckoutSurgeDatabase;
       redis: CheckoutSurgeRedis;
       logger: CheckoutSurgeLogger;
+      pendingPersistenceReconciler?: Pick<PendingPersistenceReconciler, "reconcileSaleOffer">;
       now?: () => Date;
     },
   ) {
@@ -128,6 +130,19 @@ export class DemoRunStartupReconciliationService {
           { err: error, runId: run.id, saleOfferId: run.saleOfferId },
           "Could not repair run sale eligibility during API startup reconciliation.",
         );
+      }
+
+      if (this.options.pendingPersistenceReconciler) {
+        try {
+          await this.options.pendingPersistenceReconciler.reconcileSaleOffer(run.saleOfferId, {
+            runId: run.id,
+          });
+        } catch (error) {
+          this.options.logger.warn(
+            { err: error, runId: run.id, saleOfferId: run.saleOfferId },
+            "Pending Redis reservation reconciliation failed during API startup.",
+          );
+        }
       }
     }
 

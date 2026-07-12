@@ -28,9 +28,10 @@ import {
 import { resetTestDatabase } from "@checkout-surge/db/testing";
 import { createSilentLogger } from "@checkout-surge/logger";
 import { count, eq, sql } from "drizzle-orm";
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { DemoMaintenanceService } from "../src/services/demo-maintenance-service.js";
 import { DemoRunFinalizationService } from "../src/services/demo-run-finalization-service.js";
+import type { PendingPersistenceReconciler } from "../src/services/pending-persistence-reconciler.js";
 import { terminalDemoRunTransitionLockKey } from "../src/services/terminal-demo-run-transition.js";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -212,6 +213,27 @@ describe("demo run finalization service", () => {
     });
   });
 
+  it("invokes pending reconciliation before finalization readiness", async () => {
+    const db = requireConnection(connection).db;
+    const redisClient = requireRedis(redis);
+    await seedDrainingRun({ db, redis: redisClient, trafficDeliveryStatus: "complete" });
+    const reconcileSaleOffer = vi.fn(async () => ({
+      found: 0,
+      materialized: 0,
+      reconciled: 0,
+      reversed: 0,
+      failed: 0,
+    }));
+    const service = createService(connection, redis, {
+      pendingPersistenceReconciler: { reconcileSaleOffer },
+    });
+
+    const finalized = await service.finalizeRun(ids.run, "corr-finalize-reconcile");
+
+    expect(finalized?.status).toBe("completed");
+    expect(reconcileSaleOffer).toHaveBeenCalledWith(ids.saleOffer, { runId: ids.run });
+  });
+
   it("keeps run and summary terminal state consistent when reset races with finalization", async () => {
     const db = requireConnection(connection).db;
     const redisClient = requireRedis(redis);
@@ -288,7 +310,7 @@ describe("demo run finalization service", () => {
     expect(summary?.failureReason).toBe("traffic_delivery_major_shortfall");
   });
 
-  it("finalizes as failed when business work exceeds the drain timeout", async () => {
+  it("fails with the documented drain-timeout policy when pending work remains", async () => {
     const db = requireConnection(connection).db;
     const redisClient = requireRedis(redis);
     const service = createService(connection, redis);
@@ -325,6 +347,9 @@ describe("demo run finalization service", () => {
 function createService(
   connection: ReturnType<typeof createDatabaseConnection> | null,
   redis: ReturnType<typeof createRedisClient> | null,
+  options: {
+    pendingPersistenceReconciler?: Pick<PendingPersistenceReconciler, "reconcileSaleOffer">;
+  } = {},
 ): DemoRunFinalizationService {
   return new DemoRunFinalizationService({
     db: requireConnection(connection).db,
@@ -332,6 +357,7 @@ function createService(
     logger: createSilentLogger("api"),
     now: () => new Date("2026-06-20T00:00:10.000Z"),
     generateId: () => "77777777-7777-4777-8777-777777777777",
+    ...options,
   });
 }
 

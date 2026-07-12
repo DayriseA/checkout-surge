@@ -6,13 +6,18 @@ import type {
 } from "@checkout-surge/contracts";
 import {
   type CheckoutSurgeDatabase,
+  demoRuns,
   orderEvents,
   orders,
   reservationPendingPersistence,
   reservations,
 } from "@checkout-surge/db";
 import { eq } from "drizzle-orm";
-import type { BuyPersistence, PersistedBuy } from "./reserve-order-service.js";
+import {
+  type BuyPersistence,
+  DefinitivePersistenceRejectionError,
+  type PersistedBuy,
+} from "./reserve-order-service.js";
 
 export class PostgresBuyPersistence implements BuyPersistence {
   constructor(private readonly db: CheckoutSurgeDatabase) {}
@@ -22,6 +27,17 @@ export class PostgresBuyPersistence implements BuyPersistence {
   }): Promise<PersistedBuy> {
     const hold = input.reservation;
     return this.db.transaction(async (tx) => {
+      if (hold.runId) {
+        const [run] = await tx
+          .select({ saleOfferId: demoRuns.saleOfferId })
+          .from(demoRuns)
+          .where(eq(demoRuns.id, hold.runId))
+          .limit(1);
+        if (!run || run.saleOfferId !== hold.saleOfferId) {
+          throw new DefinitivePersistenceRejectionError();
+        }
+      }
+
       const [reservation] = await tx
         .insert(reservations)
         .values({
@@ -184,6 +200,16 @@ export class PostgresBuyPersistence implements BuyPersistence {
           updatedAt: now,
         },
       });
+  }
+
+  async markPendingPersistenceReconciled(input: { reservationId: string }): Promise<void> {
+    await this.db
+      .update(reservationPendingPersistence)
+      .set({
+        status: "reconciled",
+        updatedAt: new Date(),
+      })
+      .where(eq(reservationPendingPersistence.reservationId, input.reservationId));
   }
 }
 

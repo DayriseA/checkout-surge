@@ -9,6 +9,7 @@ import {
   promoteReservationIdempotencyToAccepted,
   publishBusinessOutcomeDashboardUpdate,
   reserveInventoryStock,
+  reverseReservation,
 } from "@checkout-surge/db";
 import { createServiceLogger, loggerPackageName } from "@checkout-surge/logger";
 import { createBullMqDemoQueueMaintenance } from "./queue/bullmq-demo-queue-maintenance.js";
@@ -43,6 +44,7 @@ import {
 } from "./services/erp-status-service.js";
 import { PostgresGeneratedRunSaleGate } from "./services/generated-run-sale-gate.js";
 import { InventoryStatusService } from "./services/inventory-status-service.js";
+import { PendingPersistenceReconciler } from "./services/pending-persistence-reconciler.js";
 import { PostgresBuyPersistence } from "./services/postgres-buy-persistence.js";
 import { QueueStatusService } from "./services/queue-status-service.js";
 import {
@@ -80,6 +82,7 @@ export {
 export { PostgresGeneratedRunSaleGate } from "./services/generated-run-sale-gate.js";
 export { InventoryStatusService } from "./services/inventory-status-service.js";
 export type { OrderProcessJobPublisher } from "./services/order-process-job-publisher.js";
+export { PendingPersistenceReconciler } from "./services/pending-persistence-reconciler.js";
 export { PostgresBuyPersistence } from "./services/postgres-buy-persistence.js";
 export { QueueStatusService } from "./services/queue-status-service.js";
 export { ReserveOrderService } from "./services/reserve-order-service.js";
@@ -117,6 +120,22 @@ export async function startApiServer(): Promise<void> {
   });
 
   const persistence = new PostgresBuyPersistence(connection.db);
+  const stockReservationGateway = {
+    reserve: (input: Parameters<typeof reserveInventoryStock>[1]) =>
+      reserveInventoryStock(redis, input),
+    markPendingPersistence: (input: Parameters<typeof markReservationPendingPersistence>[1]) =>
+      markReservationPendingPersistence(redis, input),
+    promoteAccepted: (input: Parameters<typeof promoteReservationIdempotencyToAccepted>[1]) =>
+      promoteReservationIdempotencyToAccepted(redis, input).then(() => undefined),
+    reverse: (input: Parameters<typeof reverseReservation>[1]) => reverseReservation(redis, input),
+  };
+  const pendingPersistenceReconciler = new PendingPersistenceReconciler({
+    redis,
+    persistence,
+    stockReservations: stockReservationGateway,
+    orderProcessJobPublisher,
+    logger,
+  });
   const dashboardEventFanout = new DashboardEventFanout({ logger });
   const dashboardEventSubscriber = createRedisDashboardEventSubscriber(
     dashboardEventSubscriberRedis,
@@ -170,11 +189,13 @@ export async function startApiServer(): Promise<void> {
     db: connection.db,
     redis,
     logger,
+    pendingPersistenceReconciler,
   });
   const demoRunStartupReconciliationService = new DemoRunStartupReconciliationService({
     db: connection.db,
     redis,
     logger,
+    pendingPersistenceReconciler,
   });
   const demoRunService = new DemoRunService({
     db: connection.db,
@@ -194,12 +215,7 @@ export async function startApiServer(): Promise<void> {
   const reserveOrderService = new ReserveOrderService({
     persistence,
     orderProcessJobPublisher,
-    stockReservations: {
-      reserve: (input) => reserveInventoryStock(redis, input),
-      markPendingPersistence: (input) => markReservationPendingPersistence(redis, input),
-      promoteAccepted: (input) =>
-        promoteReservationIdempotencyToAccepted(redis, input).then(() => undefined),
-    },
+    stockReservations: stockReservationGateway,
     generatedRunSaleGate,
     reservationHoldMinutes: config.reservationHoldMinutes,
     idempotencyTtlSeconds: config.idempotencyTtlSeconds,
@@ -232,6 +248,12 @@ export async function startApiServer(): Promise<void> {
       logger.error(
         orderEnqueueFailureLogContext(report),
         "Durable reservation succeeded but order-processing enqueue failed.",
+      );
+    },
+    reportReservationReversalFailure: (report) => {
+      logger.error(
+        partialFailureLogContext(report),
+        "Could not reverse a definitively rejected Redis reservation hold.",
       );
     },
     publishBusinessOutcomeUpdate: async (input) => {
@@ -278,6 +300,14 @@ export async function startApiServer(): Promise<void> {
 
   try {
     const startupReconciliation = await demoRunStartupReconciliationService.reconcile();
+    try {
+      await pendingPersistenceReconciler.reconcileAll();
+    } catch (error) {
+      logger.warn(
+        { err: error },
+        "Global pending Redis reservation reconciliation will retry on the next lifecycle pass.",
+      );
+    }
     if (
       startupReconciliation.interruptedRunCount > 0 ||
       startupReconciliation.recoverableDrainingRunCount > 0

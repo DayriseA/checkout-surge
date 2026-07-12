@@ -640,6 +640,51 @@ describe("ReserveOrderService partial failures", () => {
     );
   });
 
+  it("reverses a hold once for a definitive sale-offer persistence rejection", async () => {
+    const persistenceError = Object.assign(new Error("run_sale_offer_mismatch"), {
+      code: "run_sale_offer_mismatch",
+    });
+    const reverse = vi.fn(async () => "reversed" as const);
+    const markPendingPersistence = vi.fn();
+    const recordPendingPersistence = vi.fn();
+    const service = buildService({
+      persistence: {
+        persistSecuredReservation: async () => {
+          throw persistenceError;
+        },
+        getPersistedBuyByReservationId: async () => null,
+        recordPendingPersistence,
+      },
+      stockReservations: acceptingGateway({ reverse, markPendingPersistence }),
+    });
+
+    await expect(service.reserve({ request, correlationId, now })).rejects.toBe(persistenceError);
+    expect(reverse).toHaveBeenCalledWith({
+      idempotencyKey: request.idempotencyKey,
+      reservation: expect.objectContaining({ id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee" }),
+    });
+    expect(markPendingPersistence).not.toHaveBeenCalled();
+    expect(recordPendingPersistence).not.toHaveBeenCalled();
+  });
+
+  it("keeps incidental persistence messages retryable", async () => {
+    const reverse = vi.fn(async () => "reversed" as const);
+    const service = buildService({
+      persistence: {
+        persistSecuredReservation: async () => {
+          throw new Error("run_sale_offer_mismatch was mentioned by a downstream diagnostic");
+        },
+        getPersistedBuyByReservationId: async () => null,
+      },
+      stockReservations: acceptingGateway({ reverse }),
+    });
+
+    const response = await service.reserve({ request, correlationId, now });
+
+    expect(response.outcome).toBe("reservation_pending_persistence");
+    expect(reverse).not.toHaveBeenCalled();
+  });
+
   it("returns explicit pending when PostgreSQL, the marker ensure, and both reporters fail", async () => {
     const reportPersistenceFailure = vi.fn(() => {
       throw new Error("persistence reporter unavailable");

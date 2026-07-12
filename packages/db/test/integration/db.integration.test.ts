@@ -21,6 +21,7 @@ import {
   promoteReservationIdempotencyToAccepted,
   publishDashboardEvent,
   reserveInventoryStock,
+  reverseReservation,
   setRunSaleEligibility,
 } from "../../src/index.js";
 import { resetTestDatabase } from "../../src/testing.js";
@@ -844,6 +845,23 @@ describe("database migrations, seed data, and reset behavior", () => {
     expect(await redis.zscore(keys.pendingPersistence, input.reservation.id)).toBe(
       new Date(reservationSecuredAt).getTime().toString(),
     );
+    expect(
+      JSON.parse(
+        (await redis.hget(keys.pendingPersistenceRecords, input.reservation.id)) ?? "null",
+      ),
+    ).toMatchObject({
+      id: input.reservation.id,
+      saleOfferId,
+      idempotencyKey: input.idempotencyKey,
+      quantity: input.reservation.quantity,
+      reservationToken: input.reservation.reservationToken,
+    });
+    expect(
+      await redis.zscore(
+        "inventory:pending-persistence-index",
+        `${saleOfferId}:${input.reservation.id}`,
+      ),
+    ).toBe(new Date(reservationSecuredAt).getTime().toString());
     expect(await getInventoryStatus(redis, saleOfferId)).toMatchObject({
       pendingPersistenceCount: 1,
     });
@@ -1054,6 +1072,70 @@ describe("database migrations, seed data, and reset behavior", () => {
     expect(await redis.hlen(keys.reservations)).toBe(1);
     expect(await redis.llen(keys.events)).toBe(2);
     expect(await redis.zcard(keys.pendingPersistence)).toBe(0);
+  });
+
+  it("reverses a pending hold atomically and is idempotent on repetition", async () => {
+    const saleOfferId = "10000000-0000-4000-8000-000000000009";
+    const keys = inventoryKeys(saleOfferId);
+    const input = buildReservationInput({ saleOfferId, sequence: 9, quantity: 2 });
+    await initializeInventory(redis, { saleOfferId, allocatedStock: 5 });
+    await reserveInventoryStock(redis, input);
+    await markReservationPendingPersistence(redis, input);
+
+    await expect(
+      reverseReservation(redis, {
+        idempotencyKey: input.idempotencyKey,
+        reservation: input.reservation,
+      }),
+    ).resolves.toBe("reversed");
+    expect(await redis.hget(keys.state, "remainingStock")).toBe("5");
+    expect(await redis.hget(keys.state, "reservedStock")).toBe("0");
+    expect(await redis.hget(keys.reservations, input.reservation.id)).toBeNull();
+    expect(await redis.zscore(keys.pendingPersistence, input.reservation.id)).toBeNull();
+    expect(await redis.hget(keys.pendingPersistenceRecords, input.reservation.id)).toBeNull();
+    expect(
+      await redis.zscore(
+        "inventory:pending-persistence-index",
+        `${saleOfferId}:${input.reservation.id}`,
+      ),
+    ).toBeNull();
+    expect(await redis.get(keys.idempotency(input.idempotencyKey))).toBeNull();
+    await expect(
+      reverseReservation(redis, {
+        idempotencyKey: input.idempotencyKey,
+        reservation: input.reservation,
+      }),
+    ).resolves.toBe("not_held");
+  });
+
+  it("rejects a mismatched reversal without mutation and handles an expired idempotency key", async () => {
+    const saleOfferId = "10000000-0000-4000-8000-000000000010";
+    const keys = inventoryKeys(saleOfferId);
+    const input = buildReservationInput({ saleOfferId, sequence: 10 });
+    await initializeInventory(redis, { saleOfferId, allocatedStock: 2 });
+    await reserveInventoryStock(redis, input);
+    await markReservationPendingPersistence(redis, input);
+
+    await expect(
+      reverseReservation(redis, {
+        idempotencyKey: "wrong-reversal-key",
+        reservation: input.reservation,
+      }),
+    ).rejects.toThrow("mismatch");
+    expect(await redis.hget(keys.state, "reservedStock")).toBe("1");
+    expect(await redis.hget(keys.reservations, input.reservation.id)).not.toBeNull();
+    expect(await redis.get(keys.idempotency(input.idempotencyKey))).not.toBeNull();
+
+    await redis.pexpire(keys.idempotency(input.idempotencyKey), 1);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await expect(
+      reverseReservation(redis, {
+        idempotencyKey: input.idempotencyKey,
+        reservation: input.reservation,
+      }),
+    ).resolves.toBe("reversed");
+    expect(await redis.hget(keys.state, "reservedStock")).toBe("0");
+    expect(await redis.hget(keys.pendingPersistenceRecords, input.reservation.id)).toBeNull();
   });
 
   it("verifies pending and accepted transitions against the original hold", async () => {

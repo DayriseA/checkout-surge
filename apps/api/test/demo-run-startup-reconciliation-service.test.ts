@@ -16,7 +16,7 @@ import {
 import { resetTestDatabase } from "@checkout-surge/db/testing";
 import { createSilentLogger } from "@checkout-surge/logger";
 import { eq, inArray } from "drizzle-orm";
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { DemoRunStartupReconciliationService } from "../src/services/demo-run-startup-reconciliation-service.js";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -64,10 +64,18 @@ describe("demo run startup reconciliation service", () => {
   it("fails interrupted starting and active runs while preserving draining recovery", async () => {
     const db = requireConnection(connection).db;
     const redisClient = requireRedis(redis);
+    const reconcileSaleOffer = vi.fn(async () => ({
+      found: 0,
+      materialized: 0,
+      reconciled: 0,
+      reversed: 0,
+      failed: 0,
+    }));
     const service = new DemoRunStartupReconciliationService({
       db,
       redis: redisClient,
       logger: createSilentLogger("api"),
+      pendingPersistenceReconciler: { reconcileSaleOffer },
       now: () => new Date("2026-06-20T00:00:10.000Z"),
     });
 
@@ -88,6 +96,9 @@ describe("demo run startup reconciliation service", () => {
       closedSaleOfferCount: 3,
       summaryCreatedCount: 2,
       recoverableDrainingRunCount: 1,
+    });
+    expect(reconcileSaleOffer).toHaveBeenCalledWith(ids.drainingOffer, {
+      runId: ids.drainingRun,
     });
     expect(runs.find((run) => run.id === ids.startingRun)).toMatchObject({
       status: "failed",

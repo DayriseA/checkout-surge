@@ -9,6 +9,7 @@ import type { CheckoutSurgeRedis } from "./redis.js";
 const inventoryEventHistoryLimit = 100;
 const inventoryNamespaceScanBatchSize = 100;
 export const reservationThroughputWindowSeconds = 60;
+export const pendingPersistenceIndexKey = "inventory:pending-persistence-index";
 
 export interface InventoryKeys {
   prefix: string;
@@ -16,6 +17,7 @@ export interface InventoryKeys {
   reservations: string;
   reservationExpirations: string;
   pendingPersistence: string;
+  pendingPersistenceRecords: string;
   events: string;
   reservationOutcomes: string;
   reservationThroughput: string;
@@ -108,6 +110,7 @@ export function inventoryKeys(saleOfferId: string): InventoryKeys {
     reservations: `${prefix}:reservations`,
     reservationExpirations: `${prefix}:reservation-expirations`,
     pendingPersistence: `${prefix}:pending-persistence`,
+    pendingPersistenceRecords: `${prefix}:pending-persistence-records`,
     events: `${prefix}:events`,
     reservationOutcomes: `${prefix}:reservation-outcomes`,
     reservationThroughput: `${prefix}:reservation-throughput`,

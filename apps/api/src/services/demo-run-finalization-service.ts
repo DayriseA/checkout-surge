@@ -22,6 +22,7 @@ import {
 } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { and, eq, inArray } from "drizzle-orm";
+import type { PendingPersistenceReconciler } from "./pending-persistence-reconciler.js";
 import { PostgresTerminalDemoRunSummaryWriter } from "./terminal-demo-run-transition.js";
 
 export interface DemoRunFinalizationController {
@@ -47,6 +48,7 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
       db: CheckoutSurgeDatabase;
       redis: CheckoutSurgeRedis;
       logger: CheckoutSurgeLogger;
+      pendingPersistenceReconciler?: Pick<PendingPersistenceReconciler, "reconcileSaleOffer">;
       now?: () => Date;
       generateId?: () => string;
     },
@@ -92,6 +94,19 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
       return toDemoRunSnapshot(row.run);
     }
 
+    if (this.options.pendingPersistenceReconciler) {
+      try {
+        await this.options.pendingPersistenceReconciler.reconcileSaleOffer(row.run.saleOfferId, {
+          runId: row.run.id,
+        });
+      } catch (error) {
+        this.options.logger.warn(
+          { err: error, runId, saleOfferId: row.run.saleOfferId },
+          "Pending Redis reservation reconciliation failed during run finalization.",
+        );
+      }
+    }
+
     const decision = await this.decideFinalization({
       run: row.run,
       finalization: row.finalization,
@@ -110,10 +125,55 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
       return toDemoRunSnapshot(row.run);
     }
 
+    // A request that crossed the admission boundary before the run closed can
+    // finish while the first readiness query is in flight. Recompute all
+    // business blockers immediately before the terminal transition.
+    const latestBusinessOutcome = await readBusinessOutcomeSummary(this.options.db, {
+      saleOfferId: requireSaleOfferId(row.run),
+      runId: row.run.id,
+    });
+    const timeoutAt = this.drainTimeoutAt(
+      row.run,
+      acceptedRunConfigSnapshotSchema.parse(row.run.configSnapshot),
+    );
+    const timedOut = now.getTime() >= timeoutAt.getTime();
+    let latestPendingRedisCount = 0;
+    try {
+      latestPendingRedisCount = (
+        await getInventoryStatus(this.options.redis, requireSaleOfferId(row.run), now)
+      ).pendingPersistenceCount;
+    } catch (error) {
+      this.options.logger.warn(
+        { err: error, runId, saleOfferId: requireSaleOfferId(row.run) },
+        "Could not recheck pending Redis reservations before terminal transition.",
+      );
+      latestPendingRedisCount = Number.POSITIVE_INFINITY;
+    }
+    const latestBlockers = businessDrainBlockers(latestBusinessOutcome, latestPendingRedisCount);
+    if (latestBlockers.length > 0 && !timedOut) {
+      this.options.logger.debug(
+        { runId, blockers: latestBlockers },
+        "Demo run remains draining after late business work was observed.",
+      );
+      return toDemoRunSnapshot(row.run);
+    }
+
+    const latestTerminalInventorySnapshot = await this.captureTerminalInventorySnapshot({
+      run: row.run,
+      businessOutcome: latestBusinessOutcome,
+      capturedAt: now,
+    });
+    const latestTimedOut = latestBlockers.length > 0 && timedOut;
+    const latestFailureReason = this.deriveFailureReason({
+      run: row.run,
+      finalization: row.finalization,
+      timedOut: latestTimedOut,
+    });
+
     const wroteSummary = await this.summaryWriter.write({
       run: row.run,
-      terminalStatus: decision.terminalStatus,
-      failureReason: decision.failureReason,
+      terminalStatus: latestFailureReason ? "failed" : "completed",
+      failureReason: latestFailureReason,
       finalizedAt: now,
       httpSummary: trafficHttpSummarySchema.parse(row.finalization.httpSummary),
       trafficDeliverySummary: trafficDeliverySummarySchema.parse(
@@ -122,8 +182,8 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
       httpTimingBreakdownSummary: row.finalization.httpTimingBreakdownSummary,
       loadRunDiagnosticsSummary: row.finalization.loadRunDiagnosticsSummary,
       apiRequestLifecycleSummary: row.finalization.apiRequestLifecycleSummary,
-      businessOutcome: decision.businessOutcome,
-      terminalInventorySnapshot: decision.terminalInventorySnapshot,
+      businessOutcome: latestBusinessOutcome,
+      terminalInventorySnapshot: latestTerminalInventorySnapshot,
       allowedCurrentStatuses: ["draining"],
     });
     const updatedRun = await this.readRun(runId);
@@ -146,7 +206,19 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
       saleOfferId: requireSaleOfferId(input.run),
       runId: input.run.id,
     });
-    const blockers = businessDrainBlockers(businessOutcome);
+    let pendingRedisCount = 0;
+    try {
+      pendingRedisCount = (
+        await getInventoryStatus(this.options.redis, requireSaleOfferId(input.run), input.now)
+      ).pendingPersistenceCount;
+    } catch (error) {
+      this.options.logger.warn(
+        { err: error, runId: input.run.id, saleOfferId: requireSaleOfferId(input.run) },
+        "Could not read pending Redis reservations during finalization.",
+      );
+      pendingRedisCount = Number.POSITIVE_INFINITY;
+    }
+    const blockers = businessDrainBlockers(businessOutcome, pendingRedisCount);
     const timedOut = input.now.getTime() >= timeoutAt.getTime();
 
     if (blockers.length > 0 && !timedOut) {
@@ -296,11 +368,11 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
   }
 }
 
-function businessDrainBlockers(outcome: BusinessOutcomeSummary): string[] {
+function businessDrainBlockers(outcome: BusinessOutcomeSummary, pendingRedisCount = 0): string[] {
   const parsed = businessOutcomeSummarySchema.parse(outcome);
   const blockers: string[] = [];
 
-  if (parsed.pendingPersistenceCount > 0) {
+  if (parsed.pendingPersistenceCount > 0 || pendingRedisCount > 0) {
     blockers.push("pending_persistence");
   }
   if (parsed.queuedOrders > 0) {

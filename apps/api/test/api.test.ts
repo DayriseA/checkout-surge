@@ -98,6 +98,7 @@ import {
   InventoryStatusService,
 } from "../src/services/inventory-status-service.js";
 import type { OrderProcessJobPublisher } from "../src/services/order-process-job-publisher.js";
+import { PendingPersistenceReconciler } from "../src/services/pending-persistence-reconciler.js";
 import { PostgresBuyPersistence } from "../src/services/postgres-buy-persistence.js";
 import {
   type OrderProcessQueueInspector,
@@ -1927,6 +1928,70 @@ describe("API buy persistence", () => {
     } finally {
       await server.close();
     }
+  });
+
+  it("converges a Redis-only pending hold into durable rows, one queue handoff, and accepted replay", async () => {
+    if (!connection || !redis) {
+      throw new Error("Test infrastructure was not initialized.");
+    }
+    const idempotencyKey = "reconciler-full-convergence";
+    const decision = await reserveInventoryStock(redis, {
+      idempotencyKey,
+      idempotencyTtlSeconds: 1800,
+      reservation: {
+        id: "aaaaaaaa-aaaa-4aaa-8aaa-000000000077",
+        saleOfferId: fixtureIds.saleOffer,
+        correlationId: "reconciler-full-convergence-correlation",
+        quantity: 1,
+        status: "secured",
+        reservationToken: "reservation-token-77",
+        securedAt: "2026-06-20T12:00:00.000Z",
+        expiresAt: "2026-06-20T12:15:00.000Z",
+      },
+    });
+    if (!decision.reservation) {
+      throw new Error("Expected a secured Redis hold.");
+    }
+    const jobs: OrderProcessJob[] = [];
+    const reconciler = new PendingPersistenceReconciler({
+      redis,
+      persistence: new PostgresBuyPersistence(connection.db),
+      stockReservations: {
+        promoteAccepted: (input) =>
+          promoteReservationIdempotencyToAccepted(redis, input).then(() => undefined),
+      },
+      orderProcessJobPublisher: {
+        enqueue: async (job) => {
+          jobs.push(job);
+        },
+      },
+      logger: createSilentLogger("api"),
+    });
+
+    const result = await reconciler.reconcileSaleOffer(fixtureIds.saleOffer);
+    const reservationRows = await connection.db.select().from(reservations);
+    const orderRows = await connection.db.select().from(orders);
+    const eventRows = await connection.db
+      .select()
+      .from(orderEvents)
+      .where(eq(orderEvents.reservationId, decision.reservation.id));
+    const inventoryStatus = await getInventoryStatus(redis, fixtureIds.saleOffer);
+    const replay = await reserveInventoryStock(redis, {
+      idempotencyKey,
+      idempotencyTtlSeconds: 1800,
+      reservation: decision.reservation,
+    });
+
+    expect(result).toMatchObject({ found: 1, materialized: 1, reconciled: 1, failed: 0 });
+    expect(reservationRows).toHaveLength(1);
+    expect(orderRows).toHaveLength(1);
+    expect(eventRows.map((event) => event.eventName)).toEqual([
+      "reservation.secured",
+      "order.queued",
+    ]);
+    expect(jobs).toHaveLength(1);
+    expect(inventoryStatus.pendingPersistenceCount).toBe(0);
+    expect(replay.outcome).toBe("idempotent_replay");
   });
 
   it("returns 202 after publishing one deterministic BullMQ job without a running worker", async () => {

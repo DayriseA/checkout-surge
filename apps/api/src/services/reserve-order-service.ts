@@ -11,6 +11,27 @@ import {
 } from "@checkout-surge/contracts";
 import type { OrderProcessJobPublisher } from "./order-process-job-publisher.js";
 
+export const definitivePersistenceRejectionCode = "run_sale_offer_mismatch" as const;
+
+export class DefinitivePersistenceRejectionError extends Error {
+  readonly code = definitivePersistenceRejectionCode;
+
+  constructor(message = "Reservation run and sale offer do not match.") {
+    super(message);
+    this.name = "DefinitivePersistenceRejectionError";
+  }
+}
+
+export function isDefinitivePersistenceRejection(error: unknown): boolean {
+  return (
+    error instanceof DefinitivePersistenceRejectionError ||
+    (typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      (error as { code?: unknown }).code === definitivePersistenceRejectionCode)
+  );
+}
+
 export interface PersistedBuy {
   reservation: ReservationSummary;
   order: OrderSummary;
@@ -19,6 +40,7 @@ export interface PersistedBuy {
 export interface BuyPersistence {
   persistSecuredReservation(input: { reservation: SecuredReservationHold }): Promise<PersistedBuy>;
   getPersistedBuyByReservationId(reservationId: string): Promise<PersistedBuy | null>;
+  markPendingPersistenceReconciled?(input: { reservationId: string }): Promise<void>;
   recordPendingPersistence?(input: {
     reservation: SecuredReservationHold;
     idempotencyKey: string;
@@ -39,6 +61,11 @@ export interface StockReservationGateway {
     idempotencyKey: string;
     reservation: SecuredReservationHold;
   }): Promise<void>;
+  reverse?(input: {
+    idempotencyKey: string;
+    reservation: SecuredReservationHold;
+    occurredAt?: Date;
+  }): Promise<"reversed" | "not_held">;
 }
 
 export interface GeneratedRunSaleGate {
@@ -99,6 +126,7 @@ export class ReserveOrderService {
   private readonly reportPendingPersistenceEnsureFailure: ReservationPartialFailureReporter;
   private readonly reportPromotionFailure: ReservationPartialFailureReporter;
   private readonly reportOrderEnqueueFailure: (report: OrderEnqueueFailureReport) => void;
+  private readonly reportReservationReversalFailure: ReservationPartialFailureReporter;
   private readonly publishBusinessOutcomeUpdate: BusinessOutcomeUpdatePublisher;
   private readonly scheduleBusinessOutcomeUpdate: BusinessOutcomeUpdateScheduler;
   private readonly reportBusinessOutcomeUpdateFailure: (
@@ -119,6 +147,7 @@ export class ReserveOrderService {
     reportPendingPersistenceEnsureFailure?: ReservationPartialFailureReporter;
     reportPromotionFailure?: ReservationPartialFailureReporter;
     reportOrderEnqueueFailure?: (report: OrderEnqueueFailureReport) => void;
+    reportReservationReversalFailure?: ReservationPartialFailureReporter;
     publishBusinessOutcomeUpdate?: BusinessOutcomeUpdatePublisher;
     scheduleBusinessOutcomeUpdate?: BusinessOutcomeUpdateScheduler;
     reportBusinessOutcomeUpdateFailure?: (report: BusinessOutcomeUpdateFailureReport) => void;
@@ -138,6 +167,8 @@ export class ReserveOrderService {
       options.reportPendingPersistenceEnsureFailure ?? (() => undefined);
     this.reportPromotionFailure = options.reportPromotionFailure ?? (() => undefined);
     this.reportOrderEnqueueFailure = options.reportOrderEnqueueFailure ?? (() => undefined);
+    this.reportReservationReversalFailure =
+      options.reportReservationReversalFailure ?? (() => undefined);
     this.publishBusinessOutcomeUpdate =
       options.publishBusinessOutcomeUpdate ?? (async () => undefined);
     this.scheduleBusinessOutcomeUpdate =
@@ -252,6 +283,10 @@ export class ReserveOrderService {
         this.reportPersistenceFailure,
         this.partialFailureReport(error, input.idempotencyKey, input.reservation),
       );
+      if (isDefinitivePersistenceRejection(error) && this.stockReservations.reverse) {
+        await this.compensateHold(input.idempotencyKey, input.reservation, error);
+        throw error;
+      }
       await this.recordPendingPersistenceWithoutHidingPending(
         input.idempotencyKey,
         input.reservation,
@@ -262,11 +297,25 @@ export class ReserveOrderService {
 
     await this.enqueuePersistedBuy(persisted, input.idempotencyKey, input.reservation);
     await this.promoteWithoutHidingDurableSuccess(input.idempotencyKey, input.reservation);
-    this.scheduleBusinessOutcomeUpdateWithoutHidingDurableSuccess(
-      input.reservation,
-      input.now,
-    );
+    this.scheduleBusinessOutcomeUpdateWithoutHidingDurableSuccess(input.reservation, input.now);
     return this.acceptedResponse("reservation_secured", persisted, input.correlationId, input.now);
+  }
+
+  private async compensateHold(
+    idempotencyKey: string,
+    reservation: SecuredReservationHold,
+    originalError: unknown,
+  ): Promise<void> {
+    try {
+      await this.stockReservations.reverse?.({ idempotencyKey, reservation });
+    } catch (error) {
+      safelyReportPartialFailure(
+        this.reportReservationReversalFailure,
+        this.partialFailureReport(error, idempotencyKey, reservation),
+      );
+      // Preserve the original persistence rejection for the request caller.
+      void originalError;
+    }
   }
 
   private async reconcilePendingReservation(input: {
@@ -286,6 +335,10 @@ export class ReserveOrderService {
         this.reportPersistenceFailure,
         this.partialFailureReport(error, input.idempotencyKey, input.reservation),
       );
+      if (isDefinitivePersistenceRejection(error) && this.stockReservations.reverse) {
+        await this.compensateHold(input.idempotencyKey, input.reservation, error);
+        throw error;
+      }
       await this.recordPendingPersistenceWithoutHidingPending(
         input.idempotencyKey,
         input.reservation,
@@ -296,10 +349,7 @@ export class ReserveOrderService {
 
     await this.enqueuePersistedBuy(persisted, input.idempotencyKey, input.reservation);
     await this.promoteWithoutHidingDurableSuccess(input.idempotencyKey, input.reservation);
-    this.scheduleBusinessOutcomeUpdateWithoutHidingDurableSuccess(
-      input.reservation,
-      input.now,
-    );
+    this.scheduleBusinessOutcomeUpdateWithoutHidingDurableSuccess(input.reservation, input.now);
     return this.acceptedResponse("idempotent_replay", persisted, input.correlationId, input.now);
   }
 
@@ -309,10 +359,7 @@ export class ReserveOrderService {
   ): void {
     try {
       this.scheduleBusinessOutcomeUpdate(() => {
-        void this.publishBusinessOutcomeUpdateWithoutHidingDurableSuccess(
-          reservation,
-          occurredAt,
-        );
+        void this.publishBusinessOutcomeUpdateWithoutHidingDurableSuccess(reservation, occurredAt);
       });
     } catch (error) {
       this.reportBusinessOutcomeUpdateFailureSafely(error, reservation);
