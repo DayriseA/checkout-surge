@@ -116,6 +116,57 @@ describe("useDashboardRecovery", () => {
     expect(result.current.isRefreshing).toBe(false);
     expect(result.current.liveEventCount).toBe(1);
   });
+
+  it("clears old-run projections immediately and serializes recovery after a new-run event", async () => {
+    const first = deferred<Response>();
+    const newRun = runFixture(
+      "22222222-2222-4222-8222-222222222222",
+      "2026-06-20T00:01:00.000Z",
+    );
+    const authoritativeRecovery = {
+      ...recoveryFixture("2026-06-20T00:01:02.000Z"),
+      currentRun: newRun,
+    };
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(() => first.promise)
+      .mockResolvedValueOnce(jsonResponse(authoritativeRecovery));
+    vi.stubGlobal("fetch", fetchMock);
+    const oldRecovery = {
+      ...recoveryFixture(),
+      currentRun: runFixture(
+        "11111111-1111-4111-8111-111111111111",
+        "2026-06-20T00:00:00.000Z",
+      ),
+      recentMetrics: [
+        {
+          metricName: "queue.depth",
+          value: 7,
+          unit: "jobs",
+          timestamp: "2026-06-20T00:00:10.000Z",
+        },
+      ],
+    };
+    const { result } = renderHook(() => useDashboardRecovery(available(oldRecovery)));
+
+    act(() => result.current.applyEvent(runEventFixture(newRun)));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    expect(result.current.recovery.status).toBe("available");
+    if (result.current.recovery.status !== "available") {
+      throw new Error("Expected the incoming run snapshot to remain available.");
+    }
+    expect(result.current.recovery.data.currentRun).toEqual(newRun);
+    expect(result.current.recovery.data.recentMetrics).toEqual([]);
+    expect(result.current.isRefreshing).toBe(true);
+
+    act(() => result.current.applyEvent(eventFixture()));
+    first.resolve(jsonResponse(authoritativeRecovery));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(result.current.isRefreshing).toBe(false));
+    expect(result.current.liveEventCount).toBe(2);
+  });
 });
 
 function eventFixture(): DashboardEvent {
@@ -127,6 +178,67 @@ function eventFixture(): DashboardEvent {
     metricName: "queue.depth",
     value: 3,
     unit: "jobs",
+  };
+}
+
+function runEventFixture(
+  run: NonNullable<DashboardRecoveryResponse["currentRun"]>,
+): DashboardEvent {
+  return {
+    type: "run.updated",
+    eventId: "66666666-6666-4666-8666-666666666666",
+    runId: run.runId,
+    correlationId: "corr-run-live",
+    occurredAt: "2026-06-20T00:01:01.000Z",
+    run,
+  };
+}
+
+function runFixture(
+  runId: string,
+  startedAt: string,
+): NonNullable<DashboardRecoveryResponse["currentRun"]> {
+  return {
+    runId,
+    presetId: "33333333-3333-4333-8333-333333333333",
+    presetName: "Hook run",
+    operatorMode: "public",
+    status: "active",
+    trafficStatus: "active",
+    saleOfferId: "44444444-4444-4444-8444-444444444444",
+    startedAt,
+    configSnapshot: {
+      trafficConfig: {
+        mode: "buyer-spike",
+        buyerCount: 100,
+        duplicateEachBuyerAttempt: false,
+        startDelaySeconds: 0,
+        maxDurationSeconds: 2,
+        quantityPerAttempt: 1,
+      },
+      inventoryConfig: {
+        startingStock: 25,
+        quantityPerCheckout: 1,
+        reservationHoldMinutes: 15,
+      },
+      erpConfig: {
+        latencyMs: 80,
+        maxTps: 250,
+        errorRate: 0,
+        forcedOutage: false,
+        requestTimeoutMs: 2_000,
+      },
+      backpressureConfig: {
+        queueName: "orders:process",
+        physicalQueueName: "orders-process",
+        orderProcessConcurrency: 5,
+        retryPolicy: { maxAttempts: 4, initialBackoffMs: 500 },
+        drainTimeoutSeconds: 300,
+        pendingPersistenceRetryAfterSeconds: 30,
+        circuitBreakerFailureThreshold: 5,
+        circuitBreakerResetTimeoutMs: 10_000,
+      },
+    },
   };
 }
 

@@ -12,7 +12,7 @@ import { dashboardRecoveryProxyPath } from "../../lib/control-paths";
 import {
   createDashboardState,
   dashboardStateReducer,
-  shouldRequestAuthoritativeRecoveryAfterEvent,
+  shouldRequestAuthoritativeRecoveryAfterScopedEvent,
 } from "../../lib/dashboard-state";
 
 export function useDashboardRecovery(initialRecovery: BackendRead<DashboardRecoveryResponse>) {
@@ -60,12 +60,16 @@ export function useDashboardRecovery(initialRecovery: BackendRead<DashboardRecov
     (event: DashboardEvent) => {
       const discard = requestRef.current !== null;
       if (discard) eventDiscardedRef.current = true;
+      const shouldRecover = shouldRequestAuthoritativeRecoveryAfterScopedEvent(
+        state.recovery,
+        event,
+      );
       dispatch({ type: "event-received", event, discard });
-      if (!requestRef.current && shouldRequestAuthoritativeRecoveryAfterEvent(event)) {
+      if (!requestRef.current && shouldRecover) {
         void refresh();
       }
     },
-    [refresh],
+    [refresh, state.recovery],
   );
 
   useEffect(() => {

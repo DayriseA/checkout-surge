@@ -1,4 +1,8 @@
-import type { DashboardEvent, DashboardRecoveryResponse } from "@checkout-surge/contracts";
+import type {
+  DashboardEvent,
+  DashboardRecoveryResponse,
+  RunDashboardEvent,
+} from "@checkout-surge/contracts";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
@@ -15,7 +19,10 @@ import {
 import type { BackendRead } from "../src/app/lib/api.js";
 import {
   applyDashboardEvent,
+  createDashboardState,
+  dashboardStateReducer,
   shouldRequestAuthoritativeRecoveryAfterEvent,
+  shouldRequestAuthoritativeRecoveryAfterScopedEvent,
 } from "../src/app/lib/dashboard-state.js";
 
 describe("Phase 6 dashboard behavior", () => {
@@ -305,6 +312,127 @@ describe("Phase 6 dashboard behavior", () => {
     expect(afterQueue.data.queue?.depth).toBe(2);
   });
 
+  it("resets idle catalog projections before installing a newly started run", () => {
+    const recovery = availableRecovery(populatedRecovery(null));
+    const event = runEventFixture("run.started", {
+      ...runFixture(),
+      startedAt: "2026-06-20T00:00:11.000Z",
+    });
+
+    const nextState = dashboardStateReducer(createDashboardState(recovery), {
+      type: "event-received",
+      event,
+      discard: false,
+    });
+
+    expect(nextState.recovery).toEqual(
+      availableRecovery({
+        currentRun: event.run,
+        inventory: null,
+        recentMetrics: [],
+        queue: null,
+        erp: null,
+        businessOutcome: null,
+        consistencyLag: null,
+        recentCompletionOutcomes: [],
+        recoveredAt: event.occurredAt,
+      }),
+    );
+  });
+
+  it("resets run A projections when a newer run B update establishes a missed transition", () => {
+    const currentRun = runFixture();
+    const incomingRun = {
+      ...previousRunFixture(),
+      runId: "88888888-8888-4888-8888-888888888888",
+      presetName: "Newer run",
+      startedAt: "2026-06-20T00:01:00.000Z",
+    };
+    const recovery = availableRecovery(populatedRecovery(currentRun));
+    const event = runEventFixture("run.updated", incomingRun);
+
+    const next = applyDashboardEvent(recovery, event);
+
+    expect(next.status).toBe("available");
+    if (next.status !== "available") throw new Error("Expected the new run scope to be available.");
+    expect(next.data.currentRun).toEqual(event.run);
+    expect(scopeDerivedProjections(next.data)).toEqual({
+      inventory: null,
+      recentMetrics: [],
+      queue: null,
+      erp: null,
+      businessOutcome: null,
+      consistencyLag: null,
+      recentCompletionOutcomes: [],
+    });
+    expect(shouldRequestAuthoritativeRecoveryAfterScopedEvent(recovery, event)).toBe(true);
+  });
+
+  it("retains scope projections for same-run lifecycle updates", () => {
+    const run = runFixture();
+    const recoveryData = populatedRecovery(run);
+    const recovery = availableRecovery(recoveryData);
+
+    const next = applyDashboardEvent(recovery, runEventFixture("run.updated", run));
+
+    expect(next.status).toBe("available");
+    if (next.status !== "available") throw new Error("Expected same-run recovery to be available.");
+    expect(scopeDerivedProjections(next.data)).toEqual(scopeDerivedProjections(recoveryData));
+    expect(
+      shouldRequestAuthoritativeRecoveryAfterScopedEvent(
+        recovery,
+        runEventFixture("run.updated", run),
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects a same-run lifecycle event whose top-level run ID contradicts its payload", () => {
+    const run = runFixture();
+    const recovery = availableRecovery(populatedRecovery(run));
+    const inconsistentEvent = {
+      ...runEventFixture("run.updated", run),
+      runId: previousRunFixture().runId,
+    };
+
+    expect(applyDashboardEvent(recovery, inconsistentEvent)).toBe(recovery);
+    expect(shouldRequestAuthoritativeRecoveryAfterScopedEvent(recovery, inconsistentEvent)).toBe(
+      false,
+    );
+  });
+
+  it("rejects a newer-run transition whose top-level run ID contradicts its payload", () => {
+    const recovery = availableRecovery(populatedRecovery(runFixture()));
+    const incomingRun = {
+      ...previousRunFixture(),
+      runId: "88888888-8888-4888-8888-888888888888",
+      startedAt: "2026-06-20T00:01:00.000Z",
+    };
+    const inconsistentEvent = {
+      ...runEventFixture("run.updated", incomingRun),
+      runId: "77777777-7777-4777-8777-777777777777",
+    };
+
+    expect(applyDashboardEvent(recovery, inconsistentEvent)).toBe(recovery);
+    expect(shouldRequestAuthoritativeRecoveryAfterScopedEvent(recovery, inconsistentEvent)).toBe(
+      false,
+    );
+  });
+
+  it("does not revive an older run into an idle recovery scope", () => {
+    const recovery = availableRecovery(recoveryFixture());
+    const oldRun = {
+      ...previousRunFixture(),
+      startedAt: "2026-06-19T23:59:00.000Z",
+    };
+    const delayedEvent = {
+      ...runEventFixture("run.updated", oldRun),
+      occurredAt: "2026-06-20T00:00:12.000Z",
+    };
+
+    expect(applyDashboardEvent(recovery, delayedEvent)).toBe(recovery);
+    expect(shouldRequestAuthoritativeRecoveryAfterScopedEvent(recovery, delayedEvent)).toBe(false);
+  });
+
   it("uses authoritative recovery after terminal run events", () => {
     expect(shouldRequestAuthoritativeRecoveryAfterEvent(runEventFixture("run.completed"))).toBe(
       true,
@@ -377,9 +505,9 @@ function previousRunFixture(): ReturnType<typeof runFixture> {
 }
 
 function runEventFixture(
-  type: "run.updated" | "run.completed" | "run.failed",
+  type: "run.started" | "run.updated" | "run.completed" | "run.failed",
   run: ReturnType<typeof runFixture> = runFixture(),
-): DashboardEvent {
+): RunDashboardEvent {
   return {
     type,
     eventId: "44444444-4444-4444-8444-444444444444",
@@ -395,6 +523,47 @@ function runEventFixture(
       ...(type === "run.failed" ? { failureReason: "traffic_failed" } : {}),
     },
     occurredAt: "2026-06-20T00:00:12.000Z",
+  };
+}
+
+function populatedRecovery(
+  currentRun: ReturnType<typeof runFixture> | null,
+): DashboardRecoveryResponse {
+  return {
+    ...recoveryFixture(),
+    currentRun,
+    inventory: inventoryFixture(currentRun?.saleOfferId),
+    recentMetrics: [
+      {
+        metricName: "queue.depth",
+        value: 4,
+        unit: "jobs",
+        timestamp: "2026-06-20T00:00:10.000Z",
+      },
+    ],
+    queue: queueFixture(4, "2026-06-20T00:00:10.000Z"),
+    erp: erpFixture(),
+  };
+}
+
+function scopeDerivedProjections(recovery: DashboardRecoveryResponse) {
+  const {
+    inventory,
+    recentMetrics,
+    queue,
+    erp,
+    businessOutcome,
+    consistencyLag,
+    recentCompletionOutcomes,
+  } = recovery;
+  return {
+    inventory,
+    recentMetrics,
+    queue,
+    erp,
+    businessOutcome,
+    consistencyLag,
+    recentCompletionOutcomes,
   };
 }
 
