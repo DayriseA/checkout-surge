@@ -2,6 +2,9 @@ import {
   controlServiceTokenHeaderName,
   healthResponseSchema,
   livenessResponseSchema,
+  trafficExecutionAbortPath,
+  trafficExecutionAbortRequestSchema,
+  trafficExecutionAbortResponseSchema,
   trafficExecutionStartPath,
   trafficExecutionStartRequestSchema,
   trafficExecutionStartResponseSchema,
@@ -17,7 +20,14 @@ import {
 import { type FastifyReply, type FastifyRequest, fastify } from "fastify";
 import { ZodError } from "zod";
 import { ExecutionConflictError } from "./application/execution-store.js";
-import type { TrafficExecutionService } from "./application/traffic-execution-service.js";
+import {
+  ExecutionSlotConflictError,
+  TrafficTerminationUnconfirmedError,
+} from "./application/k6-runner.js";
+import {
+  TrafficAbortConflictError,
+  type TrafficExecutionService,
+} from "./application/traffic-execution-service.js";
 import type { LoadOrchestratorConfig } from "./runtime/config.js";
 import type { LoadOrchestratorReadiness } from "./runtime/readiness.js";
 
@@ -54,13 +64,21 @@ export function buildLoadOrchestratorServer(options: BuildLoadOrchestratorServer
       );
     }
 
-    if (error instanceof ExecutionConflictError) {
+    if (
+      error instanceof ExecutionConflictError ||
+      error instanceof TrafficAbortConflictError ||
+      error instanceof ExecutionSlotConflictError
+    ) {
       return reply.status(409).send(
         errorPayload("traffic_execution_conflict", error.message, correlationId, {
           currentRunId: error.currentRunId,
         }),
       );
     }
+    if (error instanceof TrafficTerminationUnconfirmedError)
+      return reply
+        .status(503)
+        .send(errorPayload("traffic_termination_unconfirmed", error.message, correlationId));
 
     request.log.error({ err: error, correlationId }, "Unhandled load-orchestrator error.");
     return reply
@@ -112,6 +130,26 @@ export function buildLoadOrchestratorServer(options: BuildLoadOrchestratorServer
       await options.trafficExecutionService.start(startRequest),
     );
     return reply.status(202).send(response);
+  });
+
+  app.post(trafficExecutionAbortPath, async (request, reply) => {
+    const unauthorized = requireControlServiceToken(
+      request,
+      reply,
+      options.config.controlServiceToken,
+    );
+    if (unauthorized) return unauthorized;
+    const parsed = trafficExecutionAbortRequestSchema.parse(request.body ?? {});
+    const correlationId = parsed.correlationId ?? request.correlationId;
+    request.correlationId = correlationId;
+    reply.header(correlationIdHeaderName, correlationId);
+    return reply
+      .status(200)
+      .send(
+        trafficExecutionAbortResponseSchema.parse(
+          await options.trafficExecutionService.abortCurrent({ ...parsed, correlationId }),
+        ),
+      );
   });
 
   app.get<{ Params: { runId: string } }>("/traffic/status/:runId", async (request, reply) => {

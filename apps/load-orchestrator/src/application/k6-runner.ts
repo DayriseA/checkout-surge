@@ -13,10 +13,11 @@ import {
   type FileExecutionStore,
   withCompletion,
 } from "./execution-store.js";
-import { K6RunAccumulator, parseK6JsonLine } from "./k6-output-parser.js";
 import { K6JsonLineFramer } from "./k6-json-line-framer.js";
 import { K6LiveMetricAggregator } from "./k6-live-metric-aggregator.js";
+import { BoundedStderrCollector, K6RunAccumulator, parseK6JsonLine } from "./k6-output-parser.js";
 import { generateK6Script } from "./k6-script.js";
+import { collectLoadRunDiagnostics, type DiagnosticsDependencies } from "./load-run-diagnostics.js";
 
 export interface K6ExecutionStart {
   startedAt: Date;
@@ -29,6 +30,11 @@ export interface K6Runner {
     runId: string,
   ): Promise<{ state: DurableExecution["state"] | "unknown"; acceptedAt?: string }>;
   initialize(): Promise<void>;
+  currentRunId(): string | null;
+  abort(
+    runId: string,
+    context?: { reason?: string; correlationId?: string },
+  ): Promise<"aborted" | "natural_completion">;
   close(): Promise<void>;
 }
 
@@ -69,6 +75,7 @@ export class SpawnK6Runner implements K6Runner {
       maxK6OutputLineLength?: number;
       metricBatchSize?: number;
       maxBufferedMetricSamples?: number;
+      diagnostics?: DiagnosticsDependencies;
     },
   ) {}
 
@@ -80,6 +87,11 @@ export class SpawnK6Runner implements K6Runner {
   } | null = null;
   private retryTimer: NodeJS.Timeout | null = null;
   private closing = false;
+  private cancellingRunId: string | null = null;
+  private cancellationOperation: Promise<"aborted" | "natural_completion"> | null = null;
+  private activeCleanup: Promise<void> | null = null;
+  private unconfirmedTerminationRunId: string | null = null;
+  private readonly terminationOperations = new Map<ReturnType<typeof spawn>, Promise<void>>();
   private readonly completionTasks = new Set<Promise<void>>();
   private deliveryAttempt: Promise<void> | null = null;
   private pendingPersistence: {
@@ -95,6 +107,7 @@ export class SpawnK6Runner implements K6Runner {
         correlationId: execution.request.correlationId,
         plannedRequests: generateK6Script(execution.request).plannedRequests,
         startedAt: new Date(execution.acceptedAt),
+        executionPlan: generateK6Script(execution.request).executionPlan,
       });
       await this.options.executionStore?.update(
         withCompletion(
@@ -124,14 +137,83 @@ export class SpawnK6Runner implements K6Runner {
       : { state: "unknown" };
   }
 
+  currentRunId(): string | null {
+    return (
+      this.cancellingRunId ??
+      this.currentPreparation?.runId ??
+      (this.currentChild ? this.activeRunId : null)
+    );
+  }
+
+  private activeRunId: string | null = null;
+
+  abort(
+    runId: string,
+    context: { reason?: string; correlationId?: string } = {},
+  ): Promise<"aborted" | "natural_completion"> {
+    if (this.cancellingRunId === runId && this.cancellationOperation)
+      return this.cancellationOperation;
+    if (this.unconfirmedTerminationRunId === runId && this.currentChild)
+      return Promise.reject(new TrafficTerminationUnconfirmedError());
+    if (this.currentRunId() !== runId) return Promise.resolve("natural_completion");
+    this.cancellingRunId = runId;
+    this.options.logger.info(
+      { runId, correlationId: context.correlationId, reason: context.reason },
+      "Cancelling k6 traffic execution.",
+    );
+    return this.startCancellationOperation(runId);
+  }
+
+  private startCancellationOperation(runId: string): Promise<"aborted" | "natural_completion"> {
+    const operation = this.performCancellation(runId);
+    this.cancellationOperation = operation;
+    return operation;
+  }
+
+  private async performCancellation(runId: string): Promise<"aborted"> {
+    const ownedChild = this.currentChild;
+    const termination = ownedChild ? this.terminateAndReap(ownedChild) : null;
+    try {
+      const preparation = this.currentPreparation?.promise;
+      if (preparation) await Promise.allSettled([preparation]);
+      const child = ownedChild ?? this.currentChild;
+      if (termination) await termination;
+      else if (child) await this.terminateAndReap(child);
+      if (this.activeCleanup) await this.activeCleanup;
+      const execution = await this.options.executionStore?.read();
+      if (execution?.request.runId === runId) {
+        const { completion: _completion, ...withoutCompletion } = execution;
+        await this.options.executionStore?.update({ ...withoutCompletion, state: "completed" });
+      }
+      this.cancellingRunId = null;
+      this.unconfirmedTerminationRunId = null;
+      this.cancellationOperation = null;
+      return "aborted";
+    } catch (error) {
+      // Retain ownership while allowing an explicit abort or shutdown call to retry cleanup.
+      this.cancellationOperation = null;
+      if (error instanceof TrafficTerminationUnconfirmedError)
+        this.unconfirmedTerminationRunId = runId;
+      throw error;
+    }
+  }
+
   async close(): Promise<void> {
     this.closing = true;
     if (this.retryTimer) clearInterval(this.retryTimer);
-    const preparation = this.currentPreparation?.promise;
-    if (!this.currentChild && preparation) await Promise.allSettled([preparation]);
-    const child = this.currentChild;
-    if (child) await this.terminateAndReap(child);
-    if (preparation) await Promise.allSettled([preparation]);
+    const cancellationRunId = this.cancellingRunId;
+    const cancellation = cancellationRunId
+      ? (this.cancellationOperation ?? this.startCancellationOperation(cancellationRunId))
+      : null;
+    if (cancellation) {
+      await cancellation;
+    } else {
+      const preparation = this.currentPreparation?.promise;
+      if (!this.currentChild && preparation) await Promise.allSettled([preparation]);
+      const child = this.currentChild;
+      if (child) await this.terminateAndReap(child);
+      if (preparation) await Promise.allSettled([preparation]);
+    }
     await Promise.allSettled([...this.completionTasks]);
     await this.deliverPending();
     if (this.pendingPersistence)
@@ -140,11 +222,12 @@ export class SpawnK6Runner implements K6Runner {
 
   async start(input: TrafficExecutionStartRequest): Promise<K6ExecutionStart> {
     if (this.closing) throw new Error("Traffic execution owner is shutting down.");
+    if (this.cancellingRunId) throw new ExecutionSlotConflictError(this.cancellingRunId);
     if (this.currentPreparation) {
       if (this.currentPreparation.runId === input.runId) {
         return this.currentPreparation.promise;
       }
-      throw new Error("A k6 execution is still being prepared.");
+      throw new ExecutionSlotConflictError(this.currentPreparation.runId);
     }
     if (this.currentChild) {
       const current = await this.options.executionStore?.read();
@@ -154,7 +237,7 @@ export class SpawnK6Runner implements K6Runner {
           plannedRequests: generateK6Script(input).plannedRequests,
         };
       }
-      throw new Error("A k6 child still owns the execution slot.");
+      throw new ExecutionSlotConflictError(this.activeRunId ?? "unknown");
     }
 
     const preparation = this.prepareAndStart(input);
@@ -181,23 +264,32 @@ export class SpawnK6Runner implements K6Runner {
       throw new Error("A previous preparation failure is still being reconciled.");
     }
     const generated = generateK6Script(input);
+    const diagnostics = await collectLoadRunDiagnostics(
+      this.options.k6Binary,
+      generated.executionPlan,
+      this.options.diagnostics,
+    );
     let workDir: string | null = null;
     let childWasSpawned = false;
     try {
       workDir = await mkdtemp(path.join(tmpdir(), "checkout-surge-k6-"));
       const scriptPath = path.join(workDir, "scenario.js");
       await writeFile(scriptPath, generated.contents, "utf8");
+      if (this.cancellingRunId === input.runId) throw new CancellationRequestedError();
       if (this.closing)
         throw new Error("Traffic execution owner began shutting down during preparation.");
       const child = (this.options.spawnProcess ?? spawn)(
         this.options.k6Binary,
         ["run", "--quiet", "--out", "json=-", scriptPath],
         {
+          detached: false,
+          shell: false,
           stdio: ["ignore", "pipe", "pipe"],
         },
       );
       childWasSpawned = true;
       this.currentChild = child;
+      this.activeRunId = input.runId;
       this.currentChildExit = new Promise((resolve) => {
         child.once("close", resolve);
       });
@@ -206,8 +298,11 @@ export class SpawnK6Runner implements K6Runner {
         input,
         startedAt,
         plannedRequests: generated.plannedRequests,
+        executionPlan: generated.executionPlan,
+        diagnostics,
         workDir,
       });
+      this.activeCleanup = completionSettled;
       try {
         if (accepted)
           await this.options.executionStore?.update({ ...accepted, state: "executing" });
@@ -217,16 +312,20 @@ export class SpawnK6Runner implements K6Runner {
         throw error;
       }
     } catch (error) {
-      if (!childWasSpawned) {
+      if (!childWasSpawned && !(error instanceof CancellationRequestedError)) {
         await this.persistPreparationFailure(
           input,
           accepted,
           generated.plannedRequests,
+          generated.executionPlan,
+          diagnostics,
           startedAt,
           error,
           workDir,
         );
       }
+      if (!childWasSpawned && error instanceof CancellationRequestedError && workDir)
+        await rm(workDir, { recursive: true, force: true }).catch(() => undefined);
       throw error;
     }
 
@@ -237,6 +336,8 @@ export class SpawnK6Runner implements K6Runner {
     input: TrafficExecutionStartRequest,
     execution: DurableExecution | undefined,
     plannedRequests: number,
+    executionPlan: ReturnType<typeof generateK6Script>["executionPlan"],
+    diagnostics: Awaited<ReturnType<typeof collectLoadRunDiagnostics>>,
     startedAt: Date,
     error: unknown,
     workDir: string | null,
@@ -250,6 +351,8 @@ export class SpawnK6Runner implements K6Runner {
       correlationId: input.correlationId,
       plannedRequests,
       startedAt,
+      executionPlan,
+      diagnostics,
     });
     const report = accumulator.completionReport({
       status: "failed",
@@ -274,13 +377,19 @@ export class SpawnK6Runner implements K6Runner {
     input: TrafficExecutionStartRequest;
     startedAt: Date;
     plannedRequests: number;
+    executionPlan: ReturnType<typeof generateK6Script>["executionPlan"];
+    diagnostics: Awaited<ReturnType<typeof collectLoadRunDiagnostics>>;
     workDir: string;
   }): Promise<void> {
+    const stderrCollector = new BoundedStderrCollector();
     const accumulator = new K6RunAccumulator({
       runId: input.input.runId,
       correlationId: input.input.correlationId,
       plannedRequests: input.plannedRequests,
       startedAt: input.startedAt,
+      executionPlan: input.executionPlan,
+      diagnostics: input.diagnostics,
+      stderr: stderrCollector,
     });
     const batcher = new MetricBatcher({
       runId: input.input.runId,
@@ -318,6 +427,7 @@ export class SpawnK6Runner implements K6Runner {
           accumulator,
           liveMetrics,
           batcher,
+          acceptPoint: () => this.cancellingRunId !== input.input.runId,
           ...(this.options.maxK6OutputLineLength === undefined
             ? {}
             : { maxLineLength: this.options.maxK6OutputLineLength }),
@@ -345,6 +455,19 @@ export class SpawnK6Runner implements K6Runner {
       }
 
       completionReported = true;
+      if (this.cancellingRunId === input.input.runId) {
+        completionReported = true;
+        stderrCollector.finish();
+        const task = Promise.allSettled([stdoutDrain, batcher.discard()]).then(async () => {
+          await rm(input.workDir, { recursive: true, force: true }).catch(() => undefined);
+        });
+        this.completionTasks.add(task);
+        void task.finally(() => {
+          this.completionTasks.delete(task);
+          settleCompletion();
+        });
+        return;
+      }
       const task = this.reportCompletion({
         accumulator,
         liveMetrics,
@@ -366,9 +489,11 @@ export class SpawnK6Runner implements K6Runner {
       );
     };
 
+    stderr?.setEncoding("utf8");
     stderr?.on("data", (chunk) => {
+      stderrCollector.push(String(chunk));
       this.options.logger.warn(
-        { runId: input.input.runId, stderr: chunk.toString("utf8") },
+        { runId: input.input.runId, stderrBytesObserved: Buffer.byteLength(chunk) },
         "k6 wrote to stderr.",
       );
     });
@@ -378,6 +503,8 @@ export class SpawnK6Runner implements K6Runner {
     });
 
     input.child.once("close", (exitCode) => {
+      this.terminationOperations.delete(input.child);
+      stderrCollector.finish();
       reportCompletionOnce({
         status: !processError && stdout && stderr && exitCode === 0 ? "succeeded" : "failed",
         completedAt: this.now(),
@@ -395,21 +522,48 @@ export class SpawnK6Runner implements K6Runner {
       if (this.currentChild === input.child) {
         this.currentChild = null;
         this.currentChildExit = null;
+        this.activeRunId = null;
       }
     });
     if (!stdout || !stderr) input.child.kill("SIGTERM");
+    void completionSettled.finally(() => {
+      if (this.activeCleanup === completionSettled) this.activeCleanup = null;
+    });
     return completionSettled;
   }
 
   private async terminateAndReap(child: ReturnType<typeof spawn>): Promise<void> {
+    const existing = this.terminationOperations.get(child);
+    if (existing) return existing;
+    const operation = this.performTerminationAndReap(child);
+    this.terminationOperations.set(child, operation);
+    void operation.then(
+      () => {
+        if (this.terminationOperations.get(child) === operation)
+          this.terminationOperations.delete(child);
+      },
+      () => undefined,
+    );
+    return operation;
+  }
+
+  private async performTerminationAndReap(child: ReturnType<typeof spawn>): Promise<void> {
     const exit = this.currentChild === child ? this.currentChildExit : null;
-    if (!child.killed) child.kill("SIGTERM");
+    try {
+      if (!child.killed) child.kill("SIGTERM");
+    } catch (error) {
+      throw new TrafficTerminationUnconfirmedError(error);
+    }
     const exited = await waitForPromise(exit, this.options.shutdownGraceMs ?? 5_000);
     if (exited || this.currentChild !== child) return;
-    child.kill("SIGKILL");
+    try {
+      child.kill("SIGKILL");
+    } catch (error) {
+      throw new TrafficTerminationUnconfirmedError(error);
+    }
     const killed = await waitForPromise(exit, this.options.shutdownKillWaitMs ?? 5_000);
     if (!killed && this.currentChild === child) {
-      throw new Error("Could not confirm that the k6 child exited during shutdown.");
+      throw new TrafficTerminationUnconfirmedError();
     }
   }
 
@@ -563,12 +717,26 @@ export class SpawnK6Runner implements K6Runner {
   }
 }
 
+class CancellationRequestedError extends Error {}
+export class TrafficTerminationUnconfirmedError extends Error {
+  constructor(cause?: unknown) {
+    super("Could not confirm that the k6 child exited after cancellation.", { cause });
+    this.name = "TrafficTerminationUnconfirmedError";
+  }
+}
+export class ExecutionSlotConflictError extends Error {
+  constructor(readonly currentRunId: string) {
+    super(`Traffic execution ${currentRunId} still owns the execution slot.`);
+  }
+}
+
 async function consumeK6Stdout(input: {
   stdout: NonNullable<ReturnType<typeof spawn>["stdout"]>;
   accumulator: K6RunAccumulator;
   liveMetrics: K6LiveMetricAggregator;
   batcher: MetricBatcher;
   maxLineLength?: number;
+  acceptPoint: () => boolean;
 }): Promise<void> {
   const framer = new K6JsonLineFramer(
     input.maxLineLength === undefined ? {} : { maxLineLength: input.maxLineLength },
@@ -576,11 +744,11 @@ async function consumeK6Stdout(input: {
   input.stdout.setEncoding("utf8");
   for await (const chunk of input.stdout) {
     for (const line of framer.push(String(chunk))) {
-      await consumeK6Line(line, input);
+      if (input.acceptPoint()) await consumeK6Line(line, input);
     }
   }
   for (const line of framer.finish()) {
-    await consumeK6Line(line, input);
+    if (input.acceptPoint()) await consumeK6Line(line, input);
   }
 }
 

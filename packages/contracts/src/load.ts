@@ -14,6 +14,7 @@ import {
 import { orderProcessBullMqQueueName, orderProcessQueueName } from "./queue.js";
 
 export const trafficExecutionStartPath = "/traffic/start" as const;
+export const trafficExecutionAbortPath = "/traffic/current/abort" as const;
 export const trafficExecutionStatusPath = "/traffic/status/:runId" as const;
 export const internalLoadMetricIngestPath = "/internal/load/metrics" as const;
 export const internalTrafficCompletionPath = "/internal/load/completion" as const;
@@ -129,6 +130,42 @@ export const trafficExecutionStartResponseSchema = z
   .strict();
 export type TrafficExecutionStartResponse = z.infer<typeof trafficExecutionStartResponseSchema>;
 
+export const trafficExecutionAbortRequestSchema = z
+  .object({
+    runId: uuidSchema.optional(),
+    reason: z.string().trim().min(1).max(500).optional(),
+    correlationId: correlationIdSchema.optional(),
+  })
+  .strict();
+export type TrafficExecutionAbortRequest = z.infer<typeof trafficExecutionAbortRequestSchema>;
+
+export const trafficExecutionAbortOutcomeSchema = z.enum(["no_current_run", "current_run_aborted"]);
+export const trafficExecutionAbortResponseSchema = z
+  .object({
+    outcome: trafficExecutionAbortOutcomeSchema,
+    requestedRunId: uuidSchema.optional(),
+    abortedRunId: uuidSchema.optional(),
+    observedAt: isoTimestampSchema,
+    correlationId: correlationIdSchema,
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (value.outcome === "current_run_aborted" && !value.abortedRunId) {
+      context.addIssue({ code: "custom", path: ["abortedRunId"], message: "required" });
+    }
+    if (value.outcome === "no_current_run" && value.abortedRunId) {
+      context.addIssue({ code: "custom", path: ["abortedRunId"], message: "not allowed" });
+    }
+    if (value.requestedRunId && value.abortedRunId && value.requestedRunId !== value.abortedRunId) {
+      context.addIssue({
+        code: "custom",
+        path: ["abortedRunId"],
+        message: "must match requestedRunId",
+      });
+    }
+  });
+export type TrafficExecutionAbortResponse = z.infer<typeof trafficExecutionAbortResponseSchema>;
+
 export const trafficExecutionStatusResponseSchema = z
   .object({
     runId: uuidSchema,
@@ -177,6 +214,148 @@ export const trafficDeliverySummarySchema = z
   .strict();
 export type TrafficDeliverySummary = z.infer<typeof trafficDeliverySummarySchema>;
 
+export const loadExecutionPlanSchema = z
+  .discriminatedUnion("trafficMode", [
+    z
+      .object({
+        trafficMode: z.literal("buyer-spike"),
+        buyerCount: positiveIntegerSchema,
+        duplicateEachBuyerAttempt: z.boolean(),
+        iterationsPerVu: positiveIntegerSchema,
+        plannedEmittedAttempts: positiveIntegerSchema,
+        startDelaySeconds: nonnegativeIntegerSchema,
+        maxDurationSeconds: positiveIntegerSchema,
+      })
+      .strict(),
+    z
+      .object({
+        trafficMode: z.literal("steady-arrival-rate"),
+        ratePerSecond: positiveIntegerSchema,
+        durationSeconds: positiveIntegerSchema,
+        plannedEmittedAttempts: positiveIntegerSchema,
+        startDelaySeconds: nonnegativeIntegerSchema,
+        preAllocatedVus: positiveIntegerSchema,
+        maxVus: positiveIntegerSchema,
+      })
+      .strict(),
+  ])
+  .superRefine((value, context) => {
+    const expected =
+      value.trafficMode === "buyer-spike"
+        ? value.buyerCount * value.iterationsPerVu
+        : value.ratePerSecond * value.durationSeconds;
+    if (value.plannedEmittedAttempts !== expected)
+      context.addIssue({
+        code: "custom",
+        path: ["plannedEmittedAttempts"],
+        message: "must match the resolved plan",
+      });
+    if (
+      value.trafficMode === "buyer-spike" &&
+      value.iterationsPerVu !== (value.duplicateEachBuyerAttempt ? 2 : 1)
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["iterationsPerVu"],
+        message: "must match duplicateEachBuyerAttempt",
+      });
+    if (value.trafficMode === "steady-arrival-rate" && value.maxVus < value.preAllocatedVus)
+      context.addIssue({
+        code: "custom",
+        path: ["maxVus"],
+        message: "must be greater than or equal to preAllocatedVus",
+      });
+  });
+export type LoadExecutionPlan = z.infer<typeof loadExecutionPlanSchema>;
+
+const nullablePositiveIntegerSchema = positiveIntegerSchema.nullable();
+const nullableNonnegativeIntegerSchema = nonnegativeIntegerSchema.nullable();
+export const loadRunDiagnosticsSummarySchema = z
+  .object({
+    startedAt: isoTimestampSchema,
+    completedAt: isoTimestampSchema,
+    nproc: nullablePositiveIntegerSchema,
+    ulimitNofile: nullablePositiveIntegerSchema,
+    processMaxOpenFiles: z
+      .object({ soft: positiveIntegerSchema, hard: positiveIntegerSchema })
+      .strict()
+      .superRefine((value, context) => {
+        if (value.hard < value.soft)
+          context.addIssue({
+            code: "custom",
+            path: ["hard"],
+            message: "must be greater than or equal to soft",
+          });
+      })
+      .nullable(),
+    networkDiagnostics: z
+      .object({
+        ipLocalPortRange: z.string().trim().min(1).nullable(),
+        tcpTwReuse: nullableNonnegativeIntegerSchema,
+        tcpTimestamps: nullableNonnegativeIntegerSchema,
+      })
+      .strict()
+      .superRefine((value, context) => {
+        if (value.ipLocalPortRange !== null) {
+          const match = /^([0-9]+) ([0-9]+)$/.exec(value.ipLocalPortRange);
+          const start = Number(match?.[1]);
+          const end = Number(match?.[2]);
+          if (
+            !match ||
+            !Number.isSafeInteger(start) ||
+            !Number.isSafeInteger(end) ||
+            start <= 0 ||
+            start > end ||
+            end > 65_535
+          )
+            context.addIssue({
+              code: "custom",
+              path: ["ipLocalPortRange"],
+              message: "must be a valid two-integer TCP port range",
+            });
+        }
+        if (
+          value.ipLocalPortRange === null &&
+          value.tcpTwReuse === null &&
+          value.tcpTimestamps === null
+        )
+          context.addIssue({
+            code: "custom",
+            message: "all-unavailable network diagnostics must be null",
+          });
+      })
+      .nullable(),
+    k6Version: z.string().trim().min(1).nullable(),
+    executionPlan: loadExecutionPlanSchema,
+    stderrLines: z.array(z.string().max(500)).max(50),
+    stderrLineCountObserved: nonnegativeIntegerSchema,
+    stderrLineCountRetained: nonnegativeIntegerSchema,
+    stderrRetainedLineLimit: z.literal(50),
+    stderrLineTruncationLength: z.literal(500),
+    stderrLineTruncatedCount: nonnegativeIntegerSchema,
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (
+      value.stderrLineCountRetained !== value.stderrLines.length ||
+      value.stderrLineCountObserved < value.stderrLineCountRetained ||
+      value.stderrLineTruncatedCount > value.stderrLineCountObserved
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["stderrLines"],
+        message: "stderr counts are inconsistent",
+      });
+    }
+    if (Date.parse(value.startedAt) > Date.parse(value.completedAt))
+      context.addIssue({
+        code: "custom",
+        path: ["completedAt"],
+        message: "must not precede startedAt",
+      });
+  });
+export type LoadRunDiagnosticsSummary = z.infer<typeof loadRunDiagnosticsSummarySchema>;
+
 export const trafficCompletionReportSchema = z
   .object({
     runId: uuidSchema,
@@ -187,12 +366,20 @@ export const trafficCompletionReportSchema = z
     trafficOutcomeSummary: jsonObjectSchema,
     trafficDeliverySummary: trafficDeliverySummarySchema,
     httpTimingBreakdownSummary: jsonObjectSchema,
-    loadRunDiagnosticsSummary: jsonObjectSchema,
+    loadRunDiagnosticsSummary: loadRunDiagnosticsSummarySchema,
     apiRequestLifecycleSummary: jsonObjectSchema,
     completedAt: isoTimestampSchema,
     correlationId: correlationIdSchema,
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    if (value.loadRunDiagnosticsSummary.completedAt !== value.completedAt)
+      context.addIssue({
+        code: "custom",
+        path: ["loadRunDiagnosticsSummary", "completedAt"],
+        message: "must match completedAt",
+      });
+  });
 export type TrafficCompletionReport = z.infer<typeof trafficCompletionReportSchema>;
 
 export const loadMetricIngestRequestSchema = z

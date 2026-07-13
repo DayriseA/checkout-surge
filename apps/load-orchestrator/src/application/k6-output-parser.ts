@@ -1,4 +1,69 @@
-import type { TrafficCompletionReport } from "@checkout-surge/contracts";
+import type {
+  LoadExecutionPlan,
+  LoadRunDiagnosticsSummary,
+  TrafficCompletionReport,
+} from "@checkout-surge/contracts";
+import type { InitialLoadRunDiagnostics } from "./load-run-diagnostics.js";
+
+export class BoundedStderrCollector {
+  private pending = "";
+  private pendingCarriageReturn = false;
+  private pendingWasTruncated = false;
+  private readonly lines: string[] = [];
+  private observed = 0;
+  private truncated = 0;
+  push(chunk: string): void {
+    let remainingChunk = chunk;
+    if (this.pendingCarriageReturn) {
+      this.pendingCarriageReturn = false;
+      if (remainingChunk.startsWith("\n")) {
+        this.rememberPending();
+        remainingChunk = remainingChunk.slice(1);
+      } else {
+        this.append("\r");
+      }
+    }
+    const segments = remainingChunk.split("\n");
+    for (const [index, segment] of segments.entries()) {
+      const isComplete = index < segments.length - 1;
+      const endsWithCarriageReturn = segment.endsWith("\r");
+      const normalized = endsWithCarriageReturn ? segment.slice(0, -1) : segment;
+      this.append(normalized);
+      if (isComplete) this.rememberPending();
+      else if (endsWithCarriageReturn) this.pendingCarriageReturn = true;
+    }
+  }
+  finish(): void {
+    if (this.pendingCarriageReturn) {
+      this.pendingCarriageReturn = false;
+      this.append("\r");
+    }
+    if (this.pending.length > 0 || this.pendingWasTruncated) this.rememberPending();
+  }
+  private append(value: string) {
+    const remaining = 500 - this.pending.length;
+    if (value.length > remaining) this.pendingWasTruncated = true;
+    if (remaining > 0) this.pending += value.slice(0, remaining);
+  }
+  snapshot() {
+    return {
+      stderrLines: [...this.lines],
+      stderrLineCountObserved: this.observed,
+      stderrLineCountRetained: this.lines.length,
+      stderrRetainedLineLimit: 50 as const,
+      stderrLineTruncationLength: 500 as const,
+      stderrLineTruncatedCount: this.truncated,
+    };
+  }
+  private rememberPending() {
+    this.observed += 1;
+    if (this.pendingWasTruncated) this.truncated += 1;
+    this.lines.push(this.pending);
+    if (this.lines.length > 50) this.lines.shift();
+    this.pending = "";
+    this.pendingWasTruncated = false;
+  }
+}
 
 export type K6Point = {
   type?: string;
@@ -24,6 +89,9 @@ export class K6RunAccumulator {
       correlationId: string;
       plannedRequests: number;
       startedAt: Date;
+      diagnostics?: InitialLoadRunDiagnostics;
+      executionPlan: LoadExecutionPlan;
+      stderr?: BoundedStderrCollector;
     },
   ) {}
 
@@ -104,7 +172,23 @@ export class K6RunAccumulator {
       loadRunDiagnosticsSummary: {
         startedAt: this.options.startedAt.toISOString(),
         completedAt: input.completedAt.toISOString(),
-      },
+        ...(this.options.diagnostics ?? {
+          nproc: null,
+          ulimitNofile: null,
+          processMaxOpenFiles: null,
+          networkDiagnostics: null,
+          k6Version: null,
+          executionPlan: this.options.executionPlan,
+        }),
+        ...(this.options.stderr?.snapshot() ?? {
+          stderrLines: [],
+          stderrLineCountObserved: 0,
+          stderrLineCountRetained: 0,
+          stderrRetainedLineLimit: 50 as const,
+          stderrLineTruncationLength: 500 as const,
+          stderrLineTruncatedCount: 0,
+        }),
+      } satisfies LoadRunDiagnosticsSummary,
       apiRequestLifecycleSummary: {
         completedRequests: this.emittedRequests,
         failedRequests,

@@ -69,7 +69,7 @@ Replace `⬜` with `✅` when a task is complete. Optional `⏳` for work in pro
 
 ✅ [Task 32: Make the load smoke prove business completion and clean up through a targeted, owned API](./task_32.md)
 
-⬜ [Task 33: Add load-run cancellation, real readiness probes, and richer diagnostics to the orchestrator](./task_33.md)
+✅ [Task 33: Add load-run cancellation, real readiness probes, and richer diagnostics to the orchestrator](./task_33.md)
 
 ⬜ [Task 34: Complete the admin reset workflow: traffic abort, ERP chaos reset, live dashboard clear, multi-service reset client](./task_34.md)
 

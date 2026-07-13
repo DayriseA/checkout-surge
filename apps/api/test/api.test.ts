@@ -1773,7 +1773,7 @@ describe("API gateway routes", () => {
         notes: [],
       },
       httpTimingBreakdownSummary: {},
-      loadRunDiagnosticsSummary: {},
+      loadRunDiagnosticsSummary: runnerDiagnosticsFixture(),
       apiRequestLifecycleSummary: {},
       completedAt: "2026-06-20T00:00:10.000Z",
       correlationId: fixtureCorrelationId,
@@ -3640,3 +3640,30 @@ describe("API buy persistence", () => {
     }
   });
 });
+
+function runnerDiagnosticsFixture() {
+  return {
+    startedAt: "2026-06-20T00:00:00.000Z",
+    completedAt: "2026-06-20T00:00:10.000Z",
+    nproc: null,
+    ulimitNofile: null,
+    processMaxOpenFiles: null,
+    networkDiagnostics: null,
+    k6Version: null,
+    executionPlan: {
+      trafficMode: "buyer-spike",
+      buyerCount: 1,
+      duplicateEachBuyerAttempt: false,
+      iterationsPerVu: 1,
+      plannedEmittedAttempts: 1,
+      startDelaySeconds: 0,
+      maxDurationSeconds: 1,
+    },
+    stderrLines: [],
+    stderrLineCountObserved: 0,
+    stderrLineCountRetained: 0,
+    stderrRetainedLineLimit: 50,
+    stderrLineTruncationLength: 500,
+    stderrLineTruncatedCount: 0,
+  };
+}

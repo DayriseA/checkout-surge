@@ -14,24 +14,43 @@ import {
   type ReadinessCheck,
   type TrafficCompletionReport,
   type TrafficExecutionStartRequest,
+  trafficExecutionAbortPath,
+  trafficExecutionAbortResponseSchema,
   trafficExecutionStartPath,
   trafficExecutionStartResponseSchema,
 } from "@checkout-surge/contracts";
 import { correlationIdHeaderName, createSilentLogger } from "@checkout-surge/logger";
 import { describe, expect, it, vi } from "vitest";
-import { HttpLoadApiClient, type LoadApiClient } from "../src/application/api-client.js";
+import {
+  HttpLoadApiClient,
+  type LoadApiClient,
+  MetricBatcher,
+} from "../src/application/api-client.js";
 import {
   ExecutionConflictError,
   FileExecutionStore,
   withCompletion,
 } from "../src/application/execution-store.js";
 import { K6LiveMetricAggregator } from "../src/application/k6-live-metric-aggregator.js";
-import { K6RunAccumulator, parseK6JsonLine } from "../src/application/k6-output-parser.js";
-import { type K6Runner, SpawnK6Runner } from "../src/application/k6-runner.js";
+import {
+  BoundedStderrCollector,
+  K6RunAccumulator,
+  parseK6JsonLine,
+} from "../src/application/k6-output-parser.js";
+import {
+  ExecutionSlotConflictError,
+  type K6Runner,
+  SpawnK6Runner,
+  TrafficTerminationUnconfirmedError,
+} from "../src/application/k6-runner.js";
 import { generateK6Script } from "../src/application/k6-script.js";
+import {
+  collectLoadRunDiagnostics,
+  runBoundedDiagnosticCommand,
+} from "../src/application/load-run-diagnostics.js";
 import { TrafficExecutionService } from "../src/application/traffic-execution-service.js";
 import { type LoadOrchestratorConfig, loadLoadOrchestratorConfig } from "../src/runtime/config.js";
-import { createLoadOrchestratorReadiness } from "../src/runtime/readiness.js";
+import { checkK6Executable, createLoadOrchestratorReadiness } from "../src/runtime/readiness.js";
 import { buildLoadOrchestratorServer } from "../src/server.js";
 
 const timestamp = "2026-06-20T12:00:00.000Z";
@@ -96,6 +115,72 @@ describe("load-orchestrator configuration", () => {
 });
 
 describe("durable execution ownership", () => {
+  it("migrates Task-9 completion journals with timestamp-only diagnostics", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "checkout-surge-legacy-journal-"));
+    try {
+      const report = new K6RunAccumulator({
+        runId: startRequest.runId,
+        correlationId: startRequest.correlationId,
+        plannedRequests: 400,
+        startedAt: new Date(timestamp),
+        executionPlan: generateK6Script(startRequest).executionPlan,
+      }).completionReport({ status: "failed", completedAt: new Date(completionTimestamp) });
+      await writeFile(
+        path.join(directory, "execution.json"),
+        JSON.stringify({
+          request: startRequest,
+          state: "completion_pending",
+          acceptedAt: timestamp,
+          completion: {
+            ...report,
+            loadRunDiagnosticsSummary: { startedAt: timestamp, completedAt: completionTimestamp },
+          },
+        }),
+      );
+      expect(
+        (await new FileExecutionStore(directory).read())?.completion?.loadRunDiagnosticsSummary,
+      ).toMatchObject({
+        executionPlan: generateK6Script(startRequest).executionPlan,
+        stderrLines: [],
+        nproc: null,
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("does not broaden legacy migration to diagnostic objects with extra fields", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "checkout-surge-legacy-journal-"));
+    try {
+      const report = new K6RunAccumulator({
+        runId: startRequest.runId,
+        correlationId: startRequest.correlationId,
+        plannedRequests: 400,
+        startedAt: new Date(timestamp),
+        executionPlan: generateK6Script(startRequest).executionPlan,
+      }).completionReport({ status: "failed", completedAt: new Date(completionTimestamp) });
+      await writeFile(
+        path.join(directory, "execution.json"),
+        JSON.stringify({
+          request: startRequest,
+          state: "completion_pending",
+          acceptedAt: timestamp,
+          completion: {
+            ...report,
+            loadRunDiagnosticsSummary: {
+              startedAt: timestamp,
+              completedAt: completionTimestamp,
+              recoveryReason: "not-a-Task-9-runner-summary",
+            },
+          },
+        }),
+      );
+      await expect(new FileExecutionStore(directory).read()).rejects.toThrow();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("recovers accepted state and fences a different run across store instances", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "checkout-surge-execution-store-"));
     try {
@@ -123,6 +208,7 @@ describe("durable execution ownership", () => {
       const store = new FileExecutionStore(directory);
       const { execution: accepted } = await store.accept(startRequest, new Date(timestamp));
       const accumulator = new K6RunAccumulator({
+        executionPlan: generateK6Script(startRequest).executionPlan,
         runId: startRequest.runId,
         correlationId: startRequest.correlationId,
         plannedRequests: 1,
@@ -145,10 +231,140 @@ describe("durable execution ownership", () => {
 });
 
 describe("load-orchestrator k6 mapping", () => {
+  it("runs production diagnostic commands with bounded stdout/stderr and argv spawning", async () => {
+    for (const target of ["stdout", "stderr"] as const) {
+      const fixture = createK6ProcessFixture();
+      const result = runBoundedDiagnosticCommand("tool", ["version"], {
+        spawnProcess: fixture.spawnProcess,
+      });
+      fixture[target].write("v".repeat(2_500));
+      fixture.child.emit("close", 0);
+      expect(await result).toHaveLength(2_000);
+      expect(fixture.spawnProcess).toHaveBeenCalledWith("tool", ["version"], {
+        shell: false,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    }
+  });
+
+  it("kills and settles a timed-out production diagnostic command once", async () => {
+    const fixture = createK6ProcessFixture();
+    const result = runBoundedDiagnosticCommand("tool", [], {
+      spawnProcess: fixture.spawnProcess,
+      timeoutMs: 1,
+      reapMs: 20,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(fixture.child.kill).toHaveBeenCalledTimes(1);
+    fixture.child.emit("close", null, "SIGKILL");
+    expect(await result).toBeNull();
+    fixture.child.emit("close", 0);
+    expect(fixture.child.kill).toHaveBeenCalledTimes(1);
+  });
+
+  it("collects bounded diagnostics and degrades malformed facts to null", async () => {
+    const plan = generateK6Script(startRequest).executionPlan;
+    const diagnostics = await collectLoadRunDiagnostics("k6", plan, {
+      runCommand: vi.fn(async (command, args) =>
+        command === "nproc"
+          ? "8\n"
+          : command === "sh"
+            ? "bad"
+            : args[0] === "version"
+              ? "k6 v1\nextra"
+              : null,
+      ),
+      readText: vi.fn(async (file) =>
+        file.endsWith("limits")
+          ? "Max open files 1024 2048 files\n"
+          : file.endsWith("ip_local_port_range")
+            ? "32768\t60999\n"
+            : file.endsWith("tcp_tw_reuse")
+              ? "2"
+              : "malformed",
+      ),
+    });
+    expect(diagnostics).toEqual({
+      nproc: 8,
+      ulimitNofile: null,
+      processMaxOpenFiles: { soft: 1024, hard: 2048 },
+      networkDiagnostics: { ipLocalPortRange: "32768 60999", tcpTwReuse: 2, tcpTimestamps: null },
+      k6Version: "k6 v1",
+      executionPlan: plan,
+    });
+  });
+
+  it("rejects partially parsed diagnostic integers and malformed port ranges", async () => {
+    const plan = generateK6Script(startRequest).executionPlan;
+    const diagnostics = await collectLoadRunDiagnostics("k6", plan, {
+      runCommand: vi.fn(async (command) => (command === "nproc" ? "8junk" : "2 garbage")),
+      readText: vi.fn(async (file) =>
+        file.endsWith("limits")
+          ? "Max open files 1024garbage 2048 files\n"
+          : file.endsWith("ip_local_port_range")
+            ? "32768 60999 trailing"
+            : file.endsWith("tcp_tw_reuse")
+              ? "2garbage"
+              : "1 2",
+      ),
+    });
+    expect(diagnostics).toMatchObject({
+      nproc: null,
+      ulimitNofile: null,
+      processMaxOpenFiles: null,
+      networkDiagnostics: null,
+      k6Version: "2 garbage",
+    });
+  });
+
+  it("frames and bounds retained stderr by logical line", () => {
+    const collector = new BoundedStderrCollector();
+    collector.push("split");
+    collector.push("-line\nsecond\n");
+    for (let index = 0; index < 50; index += 1) collector.push(`line-${index}\n`);
+    collector.push("x".repeat(501));
+    collector.finish();
+    expect(collector.snapshot()).toMatchObject({
+      stderrLineCountObserved: 53,
+      stderrLineCountRetained: 50,
+      stderrLineTruncatedCount: 1,
+    });
+    expect(collector.snapshot().stderrLines.at(-1)).toHaveLength(500);
+    expect(collector.snapshot().stderrLines[0]).toBe("line-1");
+    const huge = new BoundedStderrCollector();
+    huge.push("z".repeat(1_000_000));
+    huge.finish();
+    expect(huge.snapshot()).toMatchObject({
+      stderrLines: ["z".repeat(500)],
+      stderrLineTruncatedCount: 1,
+    });
+  });
+
+  it("frames CRLF split across chunks without retaining the carriage return", () => {
+    const collector = new BoundedStderrCollector();
+    collector.push("first\r");
+    collector.push("\n\r");
+    collector.push("\nlast\r");
+    collector.finish();
+    expect(collector.snapshot()).toMatchObject({
+      stderrLines: ["first", "", "last\r"],
+      stderrLineCountObserved: 3,
+      stderrLineTruncatedCount: 0,
+    });
+  });
   it("generates a contract-driven buyer-spike script without shell interpolation", () => {
     const script = generateK6Script(startRequest);
 
     expect(script.plannedRequests).toBe(400);
+    expect(script.executionPlan).toEqual({
+      trafficMode: "buyer-spike",
+      buyerCount: 200,
+      duplicateEachBuyerAttempt: true,
+      iterationsPerVu: 2,
+      plannedEmittedAttempts: 400,
+      startDelaySeconds: 1,
+      maxDurationSeconds: 5,
+    });
     expect(script.contents).toContain('"executor":"per-vu-iterations"');
     expect(script.contents).toContain('"vus":200');
     expect(script.contents).toContain('"iterations":2');
@@ -183,6 +399,30 @@ describe("load-orchestrator k6 mapping", () => {
     expect(script.contents).toContain('"rate":20');
     expect(script.contents).toContain('"preAllocatedVUs":10');
     expect(script.contents).toContain('"maxVUs":50');
+    expect(script.executionPlan).toMatchObject({
+      preAllocatedVus: 10,
+      maxVus: 50,
+      plannedEmittedAttempts: 200,
+    });
+  });
+
+  it("uses the same default steady VU values in the script and diagnostic plan", () => {
+    const script = generateK6Script({
+      ...startRequest,
+      configSnapshot: {
+        ...startRequest.configSnapshot,
+        trafficConfig: {
+          mode: "steady-arrival-rate",
+          ratePerSecond: 21,
+          startDelaySeconds: 0,
+          durationSeconds: 2,
+          quantityPerAttempt: 1,
+        },
+      },
+    });
+    expect(script.executionPlan).toMatchObject({ preAllocatedVus: 11, maxVus: 42 });
+    expect(script.contents).toContain('"preAllocatedVUs":11');
+    expect(script.contents).toContain('"maxVUs":42');
   });
 
   it("emits a parseable k6 module using the expected public k6 APIs", async () => {
@@ -244,6 +484,7 @@ describe("load-orchestrator k6 mapping", () => {
 
   it("keeps terminal totals independent from windowed dashboard metrics", () => {
     const accumulator = new K6RunAccumulator({
+      executionPlan: generateK6Script(startRequest).executionPlan,
       runId: startRequest.runId,
       correlationId: startRequest.correlationId,
       plannedRequests: 2,
@@ -306,6 +547,7 @@ describe("load-orchestrator k6 mapping", () => {
 
   it("reports successful k6 execution as traffic success without terminal demo-run state", () => {
     const accumulator = new K6RunAccumulator({
+      executionPlan: generateK6Script(startRequest).executionPlan,
       runId: startRequest.runId,
       correlationId: startRequest.correlationId,
       plannedRequests: 1,
@@ -338,6 +580,7 @@ describe("load-orchestrator k6 mapping", () => {
 
   it("does not count clean sold-out responses as failed HTTP summary outcomes", () => {
     const accumulator = new K6RunAccumulator({
+      executionPlan: generateK6Script(startRequest).executionPlan,
       runId: startRequest.runId,
       correlationId: startRequest.correlationId,
       plannedRequests: 2,
@@ -379,6 +622,7 @@ describe("load-orchestrator k6 mapping", () => {
 
   it("counts unexpected checkout responses as failed HTTP summary outcomes", () => {
     const accumulator = new K6RunAccumulator({
+      executionPlan: generateK6Script(startRequest).executionPlan,
       runId: startRequest.runId,
       correlationId: startRequest.correlationId,
       plannedRequests: 1,
@@ -423,6 +667,376 @@ describe("load-orchestrator k6 mapping", () => {
 });
 
 describe("SpawnK6Runner completion reporting", () => {
+  it("cancels preparation before spawn and retains the slot until preparation settles", async () => {
+    let releaseDiagnostics: () => void = () => undefined;
+    const diagnosticGate = new Promise<string | null>((resolve) => {
+      releaseDiagnostics = () => resolve(null);
+    });
+    const spawnProcess = vi.fn() as unknown as typeof spawn;
+    const runner = new SpawnK6Runner({
+      k6Binary: "k6",
+      logger: createSilentLogger("load-orchestrator"),
+      spawnProcess,
+      diagnostics: {
+        runCommand: async () => diagnosticGate,
+        readText: async () => {
+          throw new Error("missing");
+        },
+      },
+      apiClient: { sendMetrics: async () => undefined, sendCompletion: async () => undefined },
+    });
+    const start = runner.start(startRequest);
+    const cancellation = runner.abort(startRequest.runId);
+    await expect(runner.start(startRequest)).rejects.toBeInstanceOf(ExecutionSlotConflictError);
+    releaseDiagnostics();
+    await expect(start).rejects.toThrow();
+    await expect(cancellation).resolves.toBe("aborted");
+    expect(spawnProcess).not.toHaveBeenCalled();
+    expect(runner.currentRunId()).toBeNull();
+  });
+
+  it("waits for a matching child to close and suppresses normal completion on cancellation", async () => {
+    const k6Process = createK6ProcessFixture();
+    const completions: TrafficCompletionReport[] = [];
+    const runner = new SpawnK6Runner({
+      k6Binary: "k6",
+      logger: createSilentLogger("load-orchestrator"),
+      spawnProcess: k6Process.spawnProcess,
+      shutdownGraceMs: 100,
+      apiClient: {
+        sendMetrics: async () => undefined,
+        sendCompletion: async (report) => {
+          completions.push(report);
+        },
+      },
+    });
+    await runner.start(startRequest);
+    const cancellation = runner.abort(startRequest.runId);
+    const duplicateCancellation = runner.abort(startRequest.runId);
+    expect(duplicateCancellation).toBe(cancellation);
+    expect(k6Process.child.kill).toHaveBeenCalledWith("SIGTERM");
+    expect(runner.currentRunId()).toBe(startRequest.runId);
+    await expect(runner.start(startRequest)).rejects.toBeInstanceOf(ExecutionSlotConflictError);
+    k6Process.child.emit("close", null, "SIGTERM");
+    await cancellation;
+    expect(runner.currentRunId()).toBeNull();
+    expect(completions).toEqual([]);
+    expect(k6Process.child.kill).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a confirmed cancellation fenced until shutdown can durably release its journal", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "checkout-surge-cancel-release-"));
+    class FailingCancellationReleaseStore extends FileExecutionStore {
+      failCancellationRelease = true;
+
+      override async update(execution: Parameters<FileExecutionStore["update"]>[0]) {
+        if (
+          this.failCancellationRelease &&
+          execution.state === "completed" &&
+          !execution.completion
+        )
+          throw new Error("cancellation journal unavailable");
+        return super.update(execution);
+      }
+    }
+    const store = new FailingCancellationReleaseStore(directory);
+    const fixture = createK6ProcessFixture();
+    const completions: TrafficCompletionReport[] = [];
+    const runner = new SpawnK6Runner({
+      k6Binary: "k6",
+      executionStore: store,
+      logger: createSilentLogger("load-orchestrator"),
+      spawnProcess: fixture.spawnProcess,
+      shutdownGraceMs: 20,
+      apiClient: {
+        sendMetrics: async () => undefined,
+        sendCompletion: async (report) => {
+          completions.push(report);
+        },
+      },
+    });
+    try {
+      await runner.start(startRequest);
+      const cancellation = runner.abort(startRequest.runId);
+      fixture.child.emit("close", null, "SIGTERM");
+      await expect(cancellation).rejects.toThrow("cancellation journal unavailable");
+      expect(runner.currentRunId()).toBe(startRequest.runId);
+      await expect(
+        runner.start({ ...startRequest, runId: "66666666-6666-4666-8666-666666666666" }),
+      ).rejects.toBeInstanceOf(ExecutionSlotConflictError);
+      await expect(runner.close()).rejects.toThrow("cancellation journal unavailable");
+
+      store.failCancellationRelease = false;
+      await expect(runner.close()).resolves.toBeUndefined();
+      expect(await store.read()).toMatchObject({ state: "completed" });
+      expect((await store.read())?.completion).toBeUndefined();
+      expect(completions).toEqual([]);
+      expect(fixture.child.kill).toHaveBeenCalledTimes(1);
+      expect(runner.currentRunId()).toBeNull();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("finishes a fenced cancellation during shutdown after an unconfirmed child closes late", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "checkout-surge-cancel-late-close-"));
+    const store = new FileExecutionStore(directory);
+    const fixture = createK6ProcessFixture();
+    const completions: TrafficCompletionReport[] = [];
+    const runner = new SpawnK6Runner({
+      k6Binary: "k6",
+      executionStore: store,
+      logger: createSilentLogger("load-orchestrator"),
+      spawnProcess: fixture.spawnProcess,
+      shutdownGraceMs: 0,
+      shutdownKillWaitMs: 1,
+      apiClient: {
+        sendMetrics: async () => undefined,
+        sendCompletion: async (report) => {
+          completions.push(report);
+        },
+      },
+    });
+    try {
+      await runner.start(startRequest);
+      await expect(runner.abort(startRequest.runId)).rejects.toBeInstanceOf(
+        TrafficTerminationUnconfirmedError,
+      );
+      fixture.child.emit("close", null, "SIGKILL");
+
+      await expect(runner.close()).resolves.toBeUndefined();
+      expect(await store.read()).toMatchObject({ state: "completed" });
+      expect((await store.read())?.completion).toBeUndefined();
+      expect(completions).toEqual([]);
+      expect(fixture.child.kill).toHaveBeenCalledTimes(2);
+      expect(runner.currentRunId()).toBeNull();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("shares termination and journal release when shutdown races cancellation", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "checkout-surge-cancel-close-race-"));
+    let releaseJournal: () => void = () => undefined;
+    const journalGate = new Promise<void>((resolve) => {
+      releaseJournal = resolve;
+    });
+    class GatedCancellationReleaseStore extends FileExecutionStore {
+      cancellationReleaseCount = 0;
+
+      override async update(execution: Parameters<FileExecutionStore["update"]>[0]) {
+        if (execution.state === "completed" && !execution.completion) {
+          this.cancellationReleaseCount += 1;
+          await journalGate;
+        }
+        return super.update(execution);
+      }
+    }
+    const store = new GatedCancellationReleaseStore(directory);
+    const fixture = createK6ProcessFixture();
+    const runner = new SpawnK6Runner({
+      k6Binary: "k6",
+      executionStore: store,
+      logger: createSilentLogger("load-orchestrator"),
+      spawnProcess: fixture.spawnProcess,
+      shutdownGraceMs: 20,
+      apiClient: { sendMetrics: async () => undefined, sendCompletion: async () => undefined },
+    });
+    try {
+      await runner.start(startRequest);
+      const cancellation = runner.abort(startRequest.runId);
+      const closing = runner.close();
+      expect(fixture.child.kill).toHaveBeenCalledTimes(1);
+      fixture.child.emit("close", null, "SIGTERM");
+      await waitForCondition(
+        () => store.cancellationReleaseCount === 1,
+        "cancellation journal release",
+      );
+      expect(fixture.child.kill).toHaveBeenCalledTimes(1);
+      releaseJournal();
+
+      await expect(Promise.all([cancellation, closing])).resolves.toEqual(["aborted", undefined]);
+      expect(store.cancellationReleaseCount).toBe(1);
+      expect(fixture.child.kill).toHaveBeenCalledTimes(1);
+      expect((await store.read())?.completion).toBeUndefined();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("does not confirm cancellation while an already-active metric flush can still complete", async () => {
+    const fixture = createK6ProcessFixture();
+    let releaseMetrics: () => void = () => undefined;
+    const metricGate = new Promise<void>((resolve) => {
+      releaseMetrics = resolve;
+    });
+    const sendMetrics = vi.fn(async () => metricGate);
+    const runner = new SpawnK6Runner({
+      k6Binary: "k6",
+      logger: createSilentLogger("load-orchestrator"),
+      spawnProcess: fixture.spawnProcess,
+      metricBatchSize: 1,
+      shutdownGraceMs: 100,
+      apiClient: { sendMetrics, sendCompletion: async () => undefined },
+    });
+    await runner.start(startRequest);
+    fixture.stdout.write(
+      `${JSON.stringify({ type: "Point", metric: "http_reqs", data: { value: 1, time: timestamp } })}\n`,
+    );
+    fixture.stdout.write(
+      `${JSON.stringify({ type: "Point", metric: "http_reqs", data: { value: 1, time: completionTimestamp } })}\n`,
+    );
+    await waitForCondition(() => sendMetrics.mock.calls.length === 1, "active metric flush");
+    let cancellationSettled = false;
+    const cancellation = runner.abort(startRequest.runId).then(() => {
+      cancellationSettled = true;
+    });
+    fixture.child.emit("close", null, "SIGTERM");
+    await Promise.resolve();
+    expect(cancellationSettled).toBe(false);
+    releaseMetrics();
+    await cancellation;
+    expect(cancellationSettled).toBe(true);
+    expect(sendMetrics).toHaveBeenCalledTimes(1);
+  });
+
+  it("lets natural close win before abort without suppressing or duplicating completion", async () => {
+    const fixture = createK6ProcessFixture();
+    const completions: TrafficCompletionReport[] = [];
+    const runner = new SpawnK6Runner({
+      k6Binary: "k6",
+      logger: createSilentLogger("load-orchestrator"),
+      spawnProcess: fixture.spawnProcess,
+      apiClient: {
+        sendMetrics: async () => undefined,
+        sendCompletion: async (report) => {
+          completions.push(report);
+        },
+      },
+    });
+    await runner.start(startRequest);
+    fixture.child.emit("close", 0);
+    await expect(runner.abort(startRequest.runId)).resolves.toBe("natural_completion");
+    await waitForCompletionReport(completions, 1);
+    expect(completions).toHaveLength(1);
+    expect(fixture.child.kill).not.toHaveBeenCalled();
+  });
+
+  it("identity-fences stale child callbacks from a successor", async () => {
+    const first = createK6ProcessFixture();
+    const second = createK6ProcessFixture();
+    const spawnProcess = vi
+      .fn()
+      .mockReturnValueOnce(first.child)
+      .mockReturnValueOnce(second.child) as unknown as typeof spawn;
+    const completions: TrafficCompletionReport[] = [];
+    const runner = new SpawnK6Runner({
+      k6Binary: "k6",
+      logger: createSilentLogger("load-orchestrator"),
+      spawnProcess,
+      apiClient: {
+        sendMetrics: async () => undefined,
+        sendCompletion: async (report) => {
+          completions.push(report);
+        },
+      },
+    });
+    await runner.start(startRequest);
+    first.child.emit("close", 0);
+    await waitForCompletionReport(completions, 1);
+    const successor = { ...startRequest, runId: "66666666-6666-4666-8666-666666666666" };
+    await runner.start(successor);
+    first.child.emit("error", new Error("late"));
+    first.child.emit("close", 1);
+    expect(runner.currentRunId()).toBe(successor.runId);
+    expect(completions).toHaveLength(1);
+    const cancellation = runner.abort(successor.runId);
+    second.child.emit("close", null, "SIGTERM");
+    await cancellation;
+  });
+
+  it("escalates cancellation once and retains the fence when reap is unconfirmed", async () => {
+    const k6Process = createK6ProcessFixture();
+    const runner = new SpawnK6Runner({
+      k6Binary: "k6",
+      logger: createSilentLogger("load-orchestrator"),
+      spawnProcess: k6Process.spawnProcess,
+      shutdownGraceMs: 0,
+      shutdownKillWaitMs: 1,
+      apiClient: { sendMetrics: async () => undefined, sendCompletion: async () => undefined },
+    });
+    await runner.start(startRequest);
+    await expect(runner.abort(startRequest.runId)).rejects.toBeInstanceOf(
+      TrafficTerminationUnconfirmedError,
+    );
+    expect(k6Process.child.kill).toHaveBeenNthCalledWith(1, "SIGTERM");
+    expect(k6Process.child.kill).toHaveBeenNthCalledWith(2, "SIGKILL");
+    expect(k6Process.child.kill).toHaveBeenCalledTimes(2);
+    expect(runner.currentRunId()).toBe(startRequest.runId);
+    await expect(
+      runner.start({ ...startRequest, runId: "66666666-6666-4666-8666-666666666666" }),
+    ).rejects.toBeInstanceOf(ExecutionSlotConflictError);
+  });
+
+  it("retains the cancellation fence when sending a termination signal throws", async () => {
+    const fixture = createK6ProcessFixture();
+    vi.mocked(fixture.child.kill).mockImplementation(() => {
+      throw new Error("kill unavailable");
+    });
+    const runner = new SpawnK6Runner({
+      k6Binary: "k6",
+      logger: createSilentLogger("load-orchestrator"),
+      spawnProcess: fixture.spawnProcess,
+      apiClient: { sendMetrics: async () => undefined, sendCompletion: async () => undefined },
+    });
+    await runner.start(startRequest);
+    await expect(runner.abort(startRequest.runId)).rejects.toBeInstanceOf(
+      TrafficTerminationUnconfirmedError,
+    );
+    expect(runner.currentRunId()).toBe(startRequest.runId);
+  });
+
+  it("shares termination when cancellation races executing-journal publication failure", async () => {
+    const fixture = createK6ProcessFixture();
+    let rejectExecuting: (_error: Error) => void = () => undefined;
+    const executingUpdate = new Promise<never>((_resolve, reject) => {
+      rejectExecuting = reject;
+    });
+    const accepted = { request: startRequest, state: "accepted" as const, acceptedAt: timestamp };
+    const store = {
+      accept: vi.fn(async () => ({ execution: accepted, created: true })),
+      read: vi.fn(async () => accepted),
+      update: vi.fn((value: { state: string }) =>
+        value.state === "executing" ? executingUpdate : Promise.resolve(),
+      ),
+    } as unknown as FileExecutionStore;
+    const runner = new SpawnK6Runner({
+      k6Binary: "k6",
+      logger: createSilentLogger("load-orchestrator"),
+      executionStore: store,
+      spawnProcess: fixture.spawnProcess,
+      shutdownGraceMs: 1,
+      apiClient: { sendMetrics: async () => undefined, sendCompletion: async () => undefined },
+    });
+    const start = runner.start(startRequest);
+    await waitForCondition(
+      () => vi.mocked(fixture.spawnProcess).mock.calls.length === 1,
+      "spawn publication",
+    );
+    const cancellation = runner.abort(startRequest.runId);
+    rejectExecuting(new Error("journal failed"));
+    await waitForCondition(
+      () => vi.mocked(fixture.child.kill).mock.calls.length >= 2,
+      "kill escalation",
+    );
+    fixture.child.emit("close", null, "SIGKILL");
+    await expect(start).rejects.toThrow("journal failed");
+    await cancellation;
+    expect(fixture.child.kill).toHaveBeenNthCalledWith(1, "SIGTERM");
+    expect(fixture.child.kill).toHaveBeenNthCalledWith(2, "SIGKILL");
+    expect(fixture.child.kill).toHaveBeenCalledTimes(2);
+  });
+
   it("durably reports a synchronous spawn preparation failure", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "checkout-surge-spawn-failure-"));
     const store = new FileExecutionStore(directory);
@@ -546,6 +1160,9 @@ describe("SpawnK6Runner completion reporting", () => {
         data: { value: 1, time: timestamp },
       },
     ]);
+    const encodedStderr = Buffer.from("prefix-€\r\n", "utf8");
+    k6Process.stderr.write(encodedStderr.subarray(0, 8));
+    k6Process.stderr.write(encodedStderr.subarray(8));
     await waitForReadline();
     k6Process.child.emit("close", 0);
 
@@ -555,7 +1172,11 @@ describe("SpawnK6Runner completion reporting", () => {
     expect(start).toEqual({ startedAt: new Date(timestamp), plannedRequests: 400 });
     expect(spawnCall.binary).toBe("k6");
     expect(spawnCall.args).toEqual(["run", "--quiet", "--out", "json=-", spawnCall.scriptPath]);
-    expect(spawnCall.options).toEqual({ stdio: ["ignore", "pipe", "pipe"] });
+    expect(spawnCall.options).toEqual({
+      detached: false,
+      shell: false,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     expect(script).toContain('export const options = {"scenarios":{"checkout":');
     expect(script).toContain(startRequest.runId);
     expect(apiClient.sendMetrics).toHaveBeenCalledTimes(1);
@@ -596,6 +1217,10 @@ describe("SpawnK6Runner completion reporting", () => {
         plannedRequests: 400,
         emittedRequests: 1,
         trafficDeliveryStatus: "failed",
+      },
+      loadRunDiagnosticsSummary: {
+        stderrLines: ["prefix-€"],
+        stderrLineCountObserved: 1,
       },
     });
   });
@@ -1196,6 +1821,35 @@ describe("SpawnK6Runner completion reporting", () => {
 });
 
 describe("load-orchestrator API client", () => {
+  it("waits for an active metric flush to quiesce when discarding cancellation data", async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const sendMetrics = vi.fn(async () => gate);
+    const batcher = new MetricBatcher({
+      runId: startRequest.runId,
+      correlationId: startRequest.correlationId,
+      client: { sendMetrics, sendCompletion: async () => undefined },
+      maxBatchSize: 1,
+    });
+    const add = batcher.add({
+      metricName: "traffic.latency",
+      value: 1,
+      unit: "ms",
+      timestamp,
+    });
+    await waitForCondition(() => sendMetrics.mock.calls.length === 1, "active metric flush");
+    let discarded = false;
+    const discard = batcher.discard().then(() => {
+      discarded = true;
+    });
+    await Promise.resolve();
+    expect(discarded).toBe(false);
+    release();
+    await Promise.all([add, discard]);
+    expect(discarded).toBe(true);
+  });
   it("rejects a mismatched successful completion acknowledgement", async () => {
     const client = new HttpLoadApiClient({
       apiBaseUrl: "http://api.test",
@@ -1213,6 +1867,7 @@ describe("load-orchestrator API client", () => {
       ),
     });
     const report = new K6RunAccumulator({
+      executionPlan: generateK6Script(startRequest).executionPlan,
       runId: startRequest.runId,
       correlationId: startRequest.correlationId,
       plannedRequests: 1,
@@ -1271,6 +1926,7 @@ describe("load-orchestrator API client", () => {
       controlServiceToken: "test-token",
     });
     const completionReport = new K6RunAccumulator({
+      executionPlan: generateK6Script(startRequest).executionPlan,
       runId: startRequest.runId,
       correlationId: startRequest.correlationId,
       plannedRequests: 1,
@@ -1355,6 +2011,73 @@ describe("load-orchestrator API client", () => {
 });
 
 describe("load-orchestrator readiness", () => {
+  it.each([
+    { event: ["close", 0, null], ok: true },
+    { event: ["close", 2, null], ok: false },
+    { event: ["close", null, "SIGTERM"], ok: false },
+    { event: ["error", new Error("ENOENT")], ok: false },
+  ])("settles direct executable probes for $event", async ({ event, ok }) => {
+    const child = new EventEmitter() as ReturnType<typeof spawn>;
+    Object.assign(child, { kill: vi.fn() });
+    const spawnProcess = vi.fn(() => child) as unknown as typeof spawn;
+    const resultPromise = checkK6Executable("k6", ["version"], 100, spawnProcess);
+    child.emit(event[0] as string, ...event.slice(1));
+    expect(await resultPromise).toMatchObject({ ok });
+    expect(spawnProcess).toHaveBeenCalledWith("k6", ["version"], { stdio: "ignore", shell: false });
+  });
+
+  it("kills a timed-out executable probe once and ignores a late close", async () => {
+    const child = new EventEmitter() as ReturnType<typeof spawn>;
+    const kill = vi.fn();
+    Object.assign(child, { kill });
+    const resultPromise = checkK6Executable(
+      "k6",
+      ["version"],
+      1,
+      vi.fn(() => child) as unknown as typeof spawn,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    child.emit("close", null, "SIGKILL");
+    expect(await resultPromise).toMatchObject({
+      ok: false,
+      message: expect.stringContaining("timed out"),
+    });
+    child.emit("close", 0);
+    expect(kill).toHaveBeenCalledTimes(1);
+  });
+  it("degrades synchronous executable spawn failures", async () => {
+    await expect(
+      checkK6Executable("k6", ["version"], 10, (() => {
+        throw new Error("spawn failed");
+      }) as typeof spawn),
+    ).resolves.toMatchObject({ ok: false, message: "Configured k6 binary could not be executed." });
+  });
+  it("executes both PATH and explicit k6 values with the version argv", async () => {
+    for (const binary of ["k6", "C:\\tools\\k6.exe"]) {
+      const checkExecutable = vi.fn(async () => ({ ok: true }));
+      const readiness = createLoadOrchestratorReadiness(createConfig({ k6Binary: binary }), {
+        fetch: vi.fn(async () => jsonResponse(apiHealthPayload("ok"))),
+        checkExecutable,
+      });
+      expect(readinessCheck(await readiness.checks(), "k6_binary_executable").status).toBe("ok");
+      expect(checkExecutable).toHaveBeenCalledWith(binary, ["version"], 3000);
+    }
+  });
+
+  it("degrades a rejected injected executable checker instead of rejecting readiness", async () => {
+    const readiness = createLoadOrchestratorReadiness(createConfig(), {
+      fetch: vi.fn(async () => jsonResponse(apiHealthPayload("ok"))),
+      checkExecutable: vi.fn(async () => {
+        throw new Error("checker failed");
+      }),
+    });
+    await expect(readiness.checks()).resolves.toContainEqual({
+      name: "k6_binary_executable",
+      status: "unavailable",
+      message: "Configured k6 binary could not be checked.",
+    });
+  });
+
   it("marks the API readiness dependency ok when the configured API target is reachable", async () => {
     const fetchApi = vi
       .fn<typeof globalThis.fetch>()
@@ -1448,6 +2171,8 @@ describe("load-orchestrator HTTP boundary", () => {
     const runner: K6Runner = {
       start: vi.fn(async () => ({ startedAt: new Date(timestamp), plannedRequests: 400 })),
       statusSnapshot: vi.fn(async () => ({ state: "unknown" as const })),
+      currentRunId: vi.fn(() => startRequest.runId),
+      abort: vi.fn(async () => "aborted" as const),
       initialize: vi.fn(async () => undefined),
       close: vi.fn(async () => undefined),
     };
@@ -1458,7 +2183,7 @@ describe("load-orchestrator HTTP boundary", () => {
         checks: async () => [
           { name: "api_readiness_reachable", status: "ok" },
           { name: "preset_traffic_start_enabled", status: "ok" },
-          { name: "k6_binary_executable", status: "degraded" },
+          { name: "k6_binary_executable", status: "unavailable" },
         ],
       },
       trafficExecutionService: new TrafficExecutionService(runner),
@@ -1491,12 +2216,88 @@ describe("load-orchestrator HTTP boundary", () => {
         url: `/traffic/status/${startRequest.runId}`,
         headers: { [controlServiceTokenHeaderName]: "test-token" },
       });
+      const abortUnauthorized = await server.inject({
+        method: "POST",
+        url: trafficExecutionAbortPath,
+      });
+      const abortWrongToken = await server.inject({
+        method: "POST",
+        url: trafficExecutionAbortPath,
+        headers: { [controlServiceTokenHeaderName]: "wrong-token" },
+        payload: {},
+      });
+      const abortMalformed = await server.inject({
+        method: "POST",
+        url: trafficExecutionAbortPath,
+        headers: { [controlServiceTokenHeaderName]: "test-token" },
+        payload: { reason: "x".repeat(501) },
+      });
+      const abortMismatch = await server.inject({
+        method: "POST",
+        url: trafficExecutionAbortPath,
+        headers: { [controlServiceTokenHeaderName]: "test-token" },
+        payload: { runId: "66666666-6666-4666-8666-666666666666" },
+      });
+      const aborted = await server.inject({
+        method: "POST",
+        url: trafficExecutionAbortPath,
+        headers: {
+          [controlServiceTokenHeaderName]: "test-token",
+          [correlationIdHeaderName]: "abort-correlation",
+        },
+        payload: { runId: startRequest.runId, reason: "operator reset" },
+      });
+      vi.mocked(runner.abort).mockRejectedValueOnce(new TrafficTerminationUnconfirmedError());
+      const unconfirmed = await server.inject({
+        method: "POST",
+        url: trafficExecutionAbortPath,
+        headers: { [controlServiceTokenHeaderName]: "test-token" },
+        payload: { runId: startRequest.runId },
+      });
+      vi.mocked(runner.abort).mockRejectedValueOnce(new Error("cancellation journal unavailable"));
+      const cancellationJournalFailure = await server.inject({
+        method: "POST",
+        url: trafficExecutionAbortPath,
+        headers: { [controlServiceTokenHeaderName]: "test-token" },
+        payload: { runId: startRequest.runId },
+      });
+      vi.mocked(runner.currentRunId).mockReturnValueOnce(null);
+      const noCurrent = await server.inject({
+        method: "POST",
+        url: trafficExecutionAbortPath,
+        headers: { [controlServiceTokenHeaderName]: "test-token" },
+      });
+      vi.mocked(runner.currentRunId).mockReturnValueOnce(null);
+      const noCurrentEmpty = await server.inject({
+        method: "POST",
+        url: trafficExecutionAbortPath,
+        headers: { [controlServiceTokenHeaderName]: "test-token" },
+        payload: {},
+      });
+      vi.mocked(runner.start).mockRejectedValueOnce(
+        new ExecutionSlotConflictError(startRequest.runId),
+      );
+      const startDuringCancellation = await server.inject({
+        method: "POST",
+        url: trafficExecutionStartPath,
+        headers: { [controlServiceTokenHeaderName]: "test-token" },
+        payload: startRequest,
+      });
 
-      expect(healthResponseSchema.parse(ready.json()).status).toBe("degraded");
+      expect(ready.statusCode).toBe(503);
+      expect(healthResponseSchema.parse(ready.json()).status).toBe("unavailable");
       expect(unauthorized.statusCode).toBe(401);
       expect(accepted.statusCode).toBe(202);
       expect(statusUnauthorized.statusCode).toBe(401);
       expect(status.statusCode).toBe(200);
+      expect(abortUnauthorized.statusCode).toBe(401);
+      expect(abortWrongToken.statusCode).toBe(401);
+      expect(abortMalformed.statusCode).toBe(400);
+      expect(abortMismatch.statusCode).toBe(409);
+      expect(unconfirmed.statusCode).toBe(503);
+      expect(cancellationJournalFailure.statusCode).toBe(500);
+      expect(cancellationJournalFailure.json()).toMatchObject({ code: "internal_error" });
+      expect(cancellationJournalFailure.body).not.toContain("cancellation journal unavailable");
       expect(status.json()).toMatchObject({
         runId: startRequest.runId,
         state: "executing",
@@ -1509,6 +2310,22 @@ describe("load-orchestrator HTTP boundary", () => {
         correlationId: startRequest.correlationId,
       });
       expect(runner.start).toHaveBeenCalledWith(startRequest);
+      expect(trafficExecutionAbortResponseSchema.parse(aborted.json())).toMatchObject({
+        outcome: "current_run_aborted",
+        abortedRunId: startRequest.runId,
+        correlationId: "abort-correlation",
+      });
+      expect(trafficExecutionAbortResponseSchema.parse(noCurrent.json()).outcome).toBe(
+        "no_current_run",
+      );
+      expect(trafficExecutionAbortResponseSchema.parse(noCurrentEmpty.json()).outcome).toBe(
+        "no_current_run",
+      );
+      expect(startDuringCancellation.statusCode).toBe(409);
+      expect(runner.abort).toHaveBeenCalledWith(startRequest.runId, {
+        reason: "operator reset",
+        correlationId: "abort-correlation",
+      });
     } finally {
       await server.close();
     }
@@ -1523,6 +2340,7 @@ function createConfig(overrides: Partial<LoadOrchestratorConfig> = {}): LoadOrch
     buyEndpointPath: "/buy",
     k6Binary: "k6",
     controlServiceToken: "test-token",
+    stateDirectory: "/tmp/checkout-surge-test-state",
     ...overrides,
   };
 }

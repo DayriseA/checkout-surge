@@ -37,6 +37,8 @@ import {
   internalTrafficCompletionPath,
   inventoryStatusSchema,
   inventoryUpdatedEventPayloadSchema,
+  loadExecutionPlanSchema,
+  loadRunDiagnosticsSummarySchema,
   loadRunIdHeaderName,
   metricNameValues,
   orderProcessBullMqQueueName,
@@ -65,6 +67,9 @@ import {
   trafficCompletionAcknowledgementSchema,
   trafficCompletionReportSchema,
   trafficDeliveryStatusValues,
+  trafficExecutionAbortPath,
+  trafficExecutionAbortRequestSchema,
+  trafficExecutionAbortResponseSchema,
   trafficExecutionStartPath,
   trafficExecutionStartRequestSchema,
   trafficExecutionStatusPath,
@@ -219,6 +224,114 @@ describe("shared lifecycle vocabulary", () => {
 });
 
 describe("run lifecycle contracts", () => {
+  it("validates the fenced traffic abort control contract", () => {
+    expect(trafficExecutionAbortPath).toBe("/traffic/current/abort");
+    expect(trafficExecutionAbortRequestSchema.parse({})).toEqual({});
+    expect(trafficExecutionAbortRequestSchema.parse({ reason: "  reset  " }).reason).toBe("reset");
+    expect(
+      trafficExecutionAbortRequestSchema.parse({ reason: "x".repeat(500) }).reason,
+    ).toHaveLength(500);
+    expect(() => trafficExecutionAbortRequestSchema.parse({ runId: "not-a-uuid" })).toThrow();
+    expect(() => trafficExecutionAbortRequestSchema.parse({ reason: "x".repeat(501) })).toThrow();
+    expect(
+      trafficExecutionAbortResponseSchema.parse({
+        outcome: "current_run_aborted",
+        requestedRunId: runId,
+        abortedRunId: runId,
+        observedAt: timestamp,
+        correlationId,
+      }),
+    ).toBeTruthy();
+    expect(() =>
+      trafficExecutionAbortResponseSchema.parse({
+        outcome: "current_run_aborted",
+        observedAt: timestamp,
+        correlationId,
+      }),
+    ).toThrow();
+    expect(() =>
+      trafficExecutionAbortResponseSchema.parse({
+        outcome: "current_run_aborted",
+        requestedRunId: runId,
+        abortedRunId: "66666666-6666-4666-8666-666666666666",
+        observedAt: timestamp,
+        correlationId,
+      }),
+    ).toThrow();
+  });
+  it("enforces resolved execution-plan and diagnostic count invariants", () => {
+    expect(() =>
+      loadExecutionPlanSchema.parse({
+        ...runnerDiagnostics().executionPlan,
+        plannedEmittedAttempts: 9,
+      }),
+    ).toThrow();
+    expect(
+      loadExecutionPlanSchema.parse({
+        trafficMode: "steady-arrival-rate",
+        ratePerSecond: 5,
+        durationSeconds: 2,
+        plannedEmittedAttempts: 10,
+        startDelaySeconds: 0,
+        preAllocatedVus: 3,
+        maxVus: 10,
+      }),
+    ).toBeTruthy();
+    expect(() =>
+      loadRunDiagnosticsSummarySchema.parse({
+        ...runnerDiagnostics(),
+        networkDiagnostics: { ipLocalPortRange: null, tcpTwReuse: null, tcpTimestamps: null },
+      }),
+    ).toThrow();
+    expect(() =>
+      loadRunDiagnosticsSummarySchema.parse({
+        ...runnerDiagnostics(),
+        stderrLines: ["line"],
+        stderrLineCountRetained: 0,
+      }),
+    ).toThrow();
+    expect(() =>
+      loadRunDiagnosticsSummarySchema.parse({
+        ...runnerDiagnostics(),
+        stderrLineTruncatedCount: 1,
+        stderrLineCountObserved: 0,
+      }),
+    ).toThrow();
+    expect(() =>
+      loadExecutionPlanSchema.parse({
+        ...runnerDiagnostics().executionPlan,
+        iterationsPerVu: 2,
+        plannedEmittedAttempts: 20,
+      }),
+    ).toThrow();
+    expect(() =>
+      loadExecutionPlanSchema.parse({
+        trafficMode: "steady-arrival-rate",
+        ratePerSecond: 5,
+        durationSeconds: 2,
+        plannedEmittedAttempts: 10,
+        startDelaySeconds: 0,
+        preAllocatedVus: 11,
+        maxVus: 10,
+      }),
+    ).toThrow();
+    expect(() =>
+      loadRunDiagnosticsSummarySchema.parse({
+        ...runnerDiagnostics(),
+        networkDiagnostics: {
+          ipLocalPortRange: "32768 60999 trailing",
+          tcpTwReuse: null,
+          tcpTimestamps: null,
+        },
+      }),
+    ).toThrow();
+    expect(() =>
+      loadRunDiagnosticsSummarySchema.parse({
+        ...runnerDiagnostics(),
+        completedAt: "2026-06-20T11:59:59.000Z",
+      }),
+    ).toThrow();
+  });
   it("validates run-attributed buy and load payloads without deriving identity from correlation IDs", () => {
     expect(loadRunIdHeaderName).toBe("x-load-run-id");
 
@@ -280,7 +393,7 @@ describe("run lifecycle contracts", () => {
         notes: [],
       },
       httpTimingBreakdownSummary: {},
-      loadRunDiagnosticsSummary: {},
+      loadRunDiagnosticsSummary: runnerDiagnostics(),
       apiRequestLifecycleSummary: {},
       completedAt: timestamp,
       correlationId,
@@ -1373,7 +1486,7 @@ describe("public runtime policy contract", () => {
           notes: [],
         },
         httpTimingBreakdownSummary: {},
-        loadRunDiagnosticsSummary: {},
+        loadRunDiagnosticsSummary: runnerDiagnostics(),
         apiRequestLifecycleSummary: {},
         completedAt: timestamp,
         correlationId,
@@ -1414,6 +1527,33 @@ function acceptedRunSnapshot(): AcceptedRunConfigSnapshot {
       circuitBreakerFailureThreshold: 5,
       circuitBreakerResetTimeoutMs: 10_000,
     },
+  };
+}
+
+function runnerDiagnostics() {
+  return {
+    startedAt: timestamp,
+    completedAt: timestamp,
+    nproc: null,
+    ulimitNofile: null,
+    processMaxOpenFiles: null,
+    networkDiagnostics: null,
+    k6Version: null,
+    executionPlan: {
+      trafficMode: "buyer-spike",
+      buyerCount: 10,
+      duplicateEachBuyerAttempt: false,
+      iterationsPerVu: 1,
+      plannedEmittedAttempts: 10,
+      startDelaySeconds: 0,
+      maxDurationSeconds: 1,
+    },
+    stderrLines: [],
+    stderrLineCountObserved: 0,
+    stderrLineCountRetained: 0,
+    stderrRetainedLineLimit: 50,
+    stderrLineTruncationLength: 500,
+    stderrLineTruncatedCount: 0,
   };
 }
 

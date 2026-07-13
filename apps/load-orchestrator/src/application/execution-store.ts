@@ -8,15 +8,19 @@ import {
   trafficExecutionStartRequestSchema,
 } from "@checkout-surge/contracts";
 import { z } from "zod";
+import { generateK6Script } from "./k6-script.js";
 
-const durableExecutionSchema = z
-  .object({
-    request: trafficExecutionStartRequestSchema,
-    state: z.enum(["accepted", "executing", "completion_pending", "completed"]),
-    acceptedAt: z.string().datetime({ offset: true }),
-    completion: trafficCompletionReportSchema.optional(),
-  })
-  .strict();
+const durableExecutionSchema = z.preprocess(
+  migrateLegacyDiagnostics,
+  z
+    .object({
+      request: trafficExecutionStartRequestSchema,
+      state: z.enum(["accepted", "executing", "completion_pending", "completed"]),
+      acceptedAt: z.string().datetime({ offset: true }),
+      completion: trafficCompletionReportSchema.optional(),
+    })
+    .strict(),
+);
 
 export type DurableExecution = z.infer<typeof durableExecutionSchema>;
 
@@ -95,6 +99,52 @@ export class FileExecutionStore {
     this.writeChain = operation.catch(() => undefined);
     await operation;
   }
+}
+
+function migrateLegacyDiagnostics(value: unknown): unknown {
+  if (!value || typeof value !== "object") return value;
+  const journal = value as Record<string, unknown>;
+  const request = journal.request;
+  const completion = journal.completion;
+  if (!request || typeof request !== "object" || !completion || typeof completion !== "object")
+    return value;
+  const report = completion as Record<string, unknown>;
+  const diagnostics = report.loadRunDiagnosticsSummary;
+  if (!diagnostics || typeof diagnostics !== "object") return value;
+  const legacy = diagnostics as Record<string, unknown>;
+  const legacyKeys = Object.keys(legacy);
+  if (
+    legacyKeys.length !== 2 ||
+    !legacyKeys.every((key) => key === "startedAt" || key === "completedAt") ||
+    typeof legacy.startedAt !== "string" ||
+    typeof legacy.completedAt !== "string" ||
+    "executionPlan" in legacy
+  )
+    return value;
+  const parsedRequest = trafficExecutionStartRequestSchema.safeParse(request);
+  if (!parsedRequest.success) return value;
+  return {
+    ...journal,
+    completion: {
+      ...report,
+      loadRunDiagnosticsSummary: {
+        startedAt: legacy.startedAt,
+        completedAt: legacy.completedAt,
+        nproc: null,
+        ulimitNofile: null,
+        processMaxOpenFiles: null,
+        networkDiagnostics: null,
+        k6Version: null,
+        executionPlan: generateK6Script(parsedRequest.data).executionPlan,
+        stderrLines: [],
+        stderrLineCountObserved: 0,
+        stderrLineCountRetained: 0,
+        stderrRetainedLineLimit: 50,
+        stderrLineTruncationLength: 500,
+        stderrLineTruncatedCount: 0,
+      },
+    },
+  };
 }
 
 export class ExecutionConflictError extends Error {

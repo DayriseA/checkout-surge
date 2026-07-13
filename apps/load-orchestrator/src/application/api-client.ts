@@ -155,6 +155,16 @@ export class MetricBatcher {
     await this.requestFlush(true);
   }
 
+  /** Stops future delivery and drops buffered samples when cancellation takes ownership. */
+  async discard(): Promise<void> {
+    this.closed = true;
+    this.samples.length = 0;
+    this.forceFlushRequested = false;
+    if (this.flushTimer) clearTimeout(this.flushTimer);
+    this.flushTimer = null;
+    await this.activeFlush;
+  }
+
   private get maxBatchSize(): number {
     return this.options.maxBatchSize ?? 100;
   }

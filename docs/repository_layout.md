@@ -93,6 +93,8 @@ checkout-surge/
 
 - Owns k6 script execution, scenario parameterization, traffic execution state, and the output-parsing pipeline.
 - Persists one atomic execution journal outside PostgreSQL, including accepted/executing/completed state, and retains slot ownership until completion acknowledgement.
+- Owns authenticated, run-ID-fenced cancellation and retains the slot until child exit is confirmed; routes and callers never signal k6 directly.
+- Directly probes the configured k6 executable for readiness and attaches bounded stderr plus system, k6-version, and resolved-plan diagnostics to natural completion reports.
 - Uses the traffic-execution lifecycle `starting -> active -> succeeded | failed`.
 - Receives only an API-accepted run ID, generated sale offer, and frozen configuration; the API establishes the durable dashboard recovery baseline before delegation.
 - Forwards fixed-window traffic metrics (observed RPS, mean latency, and failure-observation fraction) and traffic-completion reports to `apps/api`; terminal completion continues to report p95 latency separately.

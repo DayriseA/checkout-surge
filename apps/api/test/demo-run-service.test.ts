@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import type {
   AcceptedRunConfigSnapshot,
   BusinessOutcomeSummary,
+  LoadRunDiagnosticsSummary,
   PublicRuntimePolicy,
   TrafficCompletionReport,
   TrafficConfig,
@@ -44,8 +45,8 @@ import {
   HttpTrafficExecutionGateway,
   hydratePublicRuntimePolicy,
   isSingleNonTerminalRunViolation,
-  validateActivePublicRuntimePolicyAtStartup,
   validateAcceptedRunSnapshot,
+  validateActivePublicRuntimePolicyAtStartup,
   validatePublicRuntimePolicyUpdate,
 } from "../src/services/demo-run-service.js";
 import { RedisPublicRunBudgetStore } from "../src/services/public-run-budget-store.js";
@@ -449,7 +450,9 @@ describe("demo-run public runtime policy management", () => {
     });
 
     expect((await first.getPublicRuntimePolicy()).policy.deploymentHardCaps.maxBuyers).toBe(20_000);
-    expect((await second.getPublicRuntimePolicy()).policy.deploymentHardCaps.maxBuyers).toBe(30_000);
+    expect((await second.getPublicRuntimePolicy()).policy.deploymentHardCaps.maxBuyers).toBe(
+      30_000,
+    );
   });
 
   it("reports missing and malformed active policy rows before startup", async () => {
@@ -1267,7 +1270,10 @@ describe("demo-run lifecycle start gating", () => {
           notes: [],
         },
         httpTimingBreakdownSummary: {},
-        loadRunDiagnosticsSummary: {},
+        loadRunDiagnosticsSummary: {
+          ...runnerDiagnosticsFixture(),
+          completedAt: "2026-06-20T00:00:12.000Z",
+        },
         apiRequestLifecycleSummary: {},
         completedAt: "2026-06-20T00:00:12.000Z",
         correlationId: "corr-fast-completion",
@@ -1567,11 +1573,13 @@ describe("demo-run lifecycle start gating", () => {
       .from(demoRunReservationOutcomes)
       .where(eq(demoRunReservationOutcomes.runId, started.run.runId));
     const authoritativeOutcome = structuredClone(committedFinalization?.trafficOutcomeSummary);
-    const authoritativeSnapshot = (
-      authoritativeOutcome as { terminalInventorySnapshot?: unknown }
-    ).terminalInventorySnapshot;
+    const authoritativeSnapshot = (authoritativeOutcome as { terminalInventorySnapshot?: unknown })
+      .terminalInventorySnapshot;
 
     expect(committedFinalization?.completionEnrichmentStatus).toBe("completed");
+    expect(committedFinalization?.loadRunDiagnosticsSummary).toEqual(
+      report.loadRunDiagnosticsSummary,
+    );
     expect(authoritativeOutcome).toMatchObject({
       businessOutcomeAtTrafficCompletion: enrichmentBusinessOutcome,
       terminalInventorySnapshot: {
@@ -1621,6 +1629,7 @@ describe("demo-run lifecycle start gating", () => {
     expect(soldOutAfterRedelivery?.count).toBe(23);
     expect(summaries).toHaveLength(1);
     expect(summaries[0]?.terminalInventorySnapshot).toEqual(authoritativeSnapshot);
+    expect(summaries[0]?.loadRunDiagnosticsSummary).toEqual(report.loadRunDiagnosticsSummary);
     expect(captureReadCount).toBe(1);
     expect(readBusinessOutcome).toHaveBeenCalledOnce();
     expect(write).toHaveBeenCalledTimes(2);
@@ -2281,10 +2290,39 @@ function trafficCompletionFixture(input: {
       notes: [],
     },
     httpTimingBreakdownSummary: {},
-    loadRunDiagnosticsSummary: {},
+    loadRunDiagnosticsSummary: runnerDiagnosticsFixture(input.completedAt),
     apiRequestLifecycleSummary: {},
     completedAt: input.completedAt,
     correlationId: input.correlationId,
+  };
+}
+
+function runnerDiagnosticsFixture(
+  completedAt = "2026-06-20T00:00:05.000Z",
+): LoadRunDiagnosticsSummary {
+  return {
+    startedAt: "2026-06-20T00:00:00.000Z",
+    completedAt,
+    nproc: null,
+    ulimitNofile: null,
+    processMaxOpenFiles: null,
+    networkDiagnostics: null,
+    k6Version: null,
+    executionPlan: {
+      trafficMode: "buyer-spike",
+      buyerCount: 1,
+      duplicateEachBuyerAttempt: false,
+      iterationsPerVu: 1,
+      plannedEmittedAttempts: 1,
+      startDelaySeconds: 0,
+      maxDurationSeconds: 1,
+    },
+    stderrLines: [],
+    stderrLineCountObserved: 0,
+    stderrLineCountRetained: 0,
+    stderrRetainedLineLimit: 50,
+    stderrLineTruncationLength: 500,
+    stderrLineTruncatedCount: 0,
   };
 }
 

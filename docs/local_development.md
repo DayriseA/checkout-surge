@@ -230,7 +230,7 @@ Healthy readiness includes these checks:
 | Mock ERP | `confirmation_endpoint_ready=ok` |
 | Load orchestrator | `api_readiness_reachable=ok`, `preset_traffic_start_enabled=ok`, `k6_binary_executable=ok` |
 
-`status: "degraded"` means the process is reachable but one non-fatal readiness check is not ideal. In host-native mode, the load orchestrator reports `k6_binary_executable=degraded` when `K6_BINARY` is a bare PATH command such as `k6`; set `K6_BINARY` to an absolute executable path when `pnpm health:check` must pass. `status: "unavailable"` means a required dependency or worker loop is not ready; the API, worker, and load orchestrator return HTTP 503 for unavailable readiness.
+`status: "degraded"` means the process is reachable but one non-fatal readiness check is not ideal. The load orchestrator directly executes the configured `K6_BINARY` with `version`, including bare PATH commands such as `k6`; spawn failure, non-zero exit, signal exit, or timeout makes readiness unavailable. `status: "unavailable"` means a required dependency or worker loop is not ready; the API, worker, and load orchestrator return HTTP 503 for unavailable readiness.
 
 For the host-native infrastructure-only workflow, stop PostgreSQL and Redis when finished:
 

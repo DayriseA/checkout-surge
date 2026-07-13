@@ -5,6 +5,7 @@ import type {
   AcceptedRunConfigSnapshot,
   AdminDemoResetResponse,
   BusinessOutcomeSummary,
+  LoadRunDiagnosticsSummary,
   TerminalInventorySnapshot,
   TrafficCompletionReport,
 } from "@checkout-surge/contracts";
@@ -672,7 +673,7 @@ async function seedDrainingRun(input: {
     trafficDeliverySummary: trafficCompletionReportFixture(input.trafficDeliveryStatus)
       .trafficDeliverySummary,
     httpTimingBreakdownSummary: {},
-    loadRunDiagnosticsSummary: {},
+    loadRunDiagnosticsSummary: runnerDiagnosticsFixture(),
     apiRequestLifecycleSummary: {},
     trafficSummaryReceivedAt: trafficEndedAt,
     createdAt: trafficEndedAt,
@@ -684,6 +685,33 @@ async function seedDrainingRun(input: {
     initializedAt: new Date("2026-06-20T00:00:00.000Z"),
     run: { runId: ids.run, status: "closed" },
   });
+}
+
+function runnerDiagnosticsFixture(): LoadRunDiagnosticsSummary {
+  return {
+    startedAt: "2026-06-20T00:00:00.000Z",
+    completedAt: "2026-06-20T00:00:05.000Z",
+    nproc: null,
+    ulimitNofile: null,
+    processMaxOpenFiles: null,
+    networkDiagnostics: null,
+    k6Version: null,
+    executionPlan: {
+      trafficMode: "buyer-spike",
+      buyerCount: 1,
+      duplicateEachBuyerAttempt: false,
+      iterationsPerVu: 1,
+      plannedEmittedAttempts: 1,
+      startDelaySeconds: 0,
+      maxDurationSeconds: 1,
+    },
+    stderrLines: [],
+    stderrLineCountObserved: 0,
+    stderrLineCountRetained: 0,
+    stderrRetainedLineLimit: 50,
+    stderrLineTruncationLength: 500,
+    stderrLineTruncatedCount: 0,
+  };
 }
 
 function reservationFixture(id: string): typeof reservations.$inferInsert {
@@ -822,7 +850,7 @@ function trafficCompletionReportFixture(
       notes: trafficDeliveryStatus === "failed" ? ["Major request delivery shortfall."] : [],
     },
     httpTimingBreakdownSummary: {},
-    loadRunDiagnosticsSummary: {},
+    loadRunDiagnosticsSummary: runnerDiagnosticsFixture(),
     apiRequestLifecycleSummary: {},
     completedAt: "2026-06-20T00:00:05.000Z",
     correlationId: "corr-finalize-test",
