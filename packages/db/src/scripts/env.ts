@@ -11,13 +11,14 @@ export function requireEnv(name: string): string {
 export function optionalIntegerEnv(name: string, fallback: number): number {
   const value = process.env[name];
 
-  if (!value) {
+  if (value === undefined) {
     return fallback;
   }
 
-  const parsed = Number.parseInt(value, 10);
+  const normalized = value.trim();
+  const parsed = Number(normalized);
 
-  if (!Number.isFinite(parsed)) {
+  if (normalized.length === 0 || !Number.isFinite(parsed) || !Number.isInteger(parsed)) {
     throw new Error(`${name} must be an integer when provided.`);
   }
 
@@ -27,13 +28,14 @@ export function optionalIntegerEnv(name: string, fallback: number): number {
 export function optionalNumberEnv(name: string, fallback: number): number {
   const value = process.env[name];
 
-  if (!value) {
+  if (value === undefined) {
     return fallback;
   }
 
-  const parsed = Number.parseFloat(value);
+  const normalized = value.trim();
+  const parsed = Number(normalized);
 
-  if (!Number.isFinite(parsed)) {
+  if (normalized.length === 0 || !Number.isFinite(parsed)) {
     throw new Error(`${name} must be a number when provided.`);
   }
 

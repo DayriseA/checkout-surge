@@ -299,11 +299,7 @@ async function insertOrder(
   `;
 }
 
-async function runSeedScript(
-  overrides: Partial<
-    Record<"ERP_CIRCUIT_FAILURE_THRESHOLD" | "ERP_CIRCUIT_RESET_TIMEOUT_MS", string>
-  > = {},
-): Promise<void> {
+async function runSeedScript(overrides: Partial<Record<string, string>> = {}): Promise<void> {
   const command = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 
   await execFileAsync(command, ["exec", "tsx", "src/scripts/seed.ts"], {
@@ -883,9 +879,23 @@ describe("database migrations, seed data, and reset behavior", () => {
     }
   });
 
-  it("seeds PostgreSQL demo rows and Redis inventory idempotently", async () => {
+  it("seeds idempotently and repairs the active runtime policy as a full reset", async () => {
     await runSeedScript();
-    await runSeedScript();
+    const [initialPolicyRow] = await withDatabase(
+      (sql) => sql<{ created_at: string; updated_at: string }[]>`
+        SELECT created_at, updated_at
+        FROM public_runtime_policies
+        WHERE id = 'active'
+      `,
+    );
+    await withDatabase(
+      (sql) => sql`
+        UPDATE public_runtime_policies
+        SET policy = '{"malformed":true}'::jsonb
+        WHERE id = 'active'
+      `,
+    );
+    await runSeedScript({ PUBLIC_RUN_BUDGET_WINDOW_SECONDS: " 301 " });
 
     const [counts] = await withDatabase(
       (sql) =>
@@ -906,8 +916,8 @@ describe("database migrations, seed data, and reset behavior", () => {
     );
     const [policyRow] = await withDatabase(
       (sql) =>
-        sql<{ policy: unknown }[]>`
-        SELECT policy
+        sql<{ policy: unknown; created_at: string; updated_at: string }[]>`
+        SELECT policy, created_at, updated_at
         FROM public_runtime_policies
         WHERE id = 'active'
       `,
@@ -920,7 +930,13 @@ describe("database migrations, seed data, and reset behavior", () => {
       demo_presets: 8,
       public_runtime_policies: 1,
     });
-    expect(() => publicRuntimePolicySchema.parse(policyRow?.policy)).not.toThrow();
+    expect(publicRuntimePolicySchema.parse(policyRow?.policy).publicRunBudget.windowSeconds).toBe(
+      301,
+    );
+    expect(policyRow?.created_at).toEqual(initialPolicyRow?.created_at);
+    expect(new Date(policyRow?.updated_at ?? 0).getTime()).toBeGreaterThan(
+      new Date(initialPolicyRow?.updated_at ?? 0).getTime(),
+    );
     expect(inventoryState).toMatchObject({
       saleOfferId: seededSaleOfferId,
       inventoryScope: "catalog",
@@ -930,7 +946,52 @@ describe("database migrations, seed data, and reset behavior", () => {
     });
   });
 
-  it("backfills legacy preset and runtime-policy breaker defaults without overwriting existing JSON", async () => {
+  it("rejects invalid seed environment without changing the active runtime policy", async () => {
+    await runSeedScript();
+    const readPolicy = () =>
+      withDatabase(
+        (sql) => sql<{ policy: unknown; created_at: string; updated_at: string }[]>`
+          SELECT policy, created_at, updated_at
+          FROM public_runtime_policies
+          WHERE id = 'active'
+        `,
+      );
+    const [before] = await readPolicy();
+
+    const partialIntegerFailure = await runSeedScript({
+      PUBLIC_CUSTOM_MAX_TOTAL_REQUESTS: "10oops",
+    }).catch((error: unknown) => error);
+    expect(partialIntegerFailure).toMatchObject({
+      stderr: expect.stringContaining("PUBLIC_CUSTOM_MAX_TOTAL_REQUESTS must be an integer"),
+    });
+    expect((await readPolicy())[0]).toEqual(before);
+
+    const emptyIntegerFailure = await runSeedScript({
+      PUBLIC_CUSTOM_MAX_TOTAL_REQUESTS: "",
+    }).catch((error: unknown) => error);
+    expect(emptyIntegerFailure).toMatchObject({
+      stderr: expect.stringContaining("PUBLIC_CUSTOM_MAX_TOTAL_REQUESTS must be an integer"),
+    });
+    expect((await readPolicy())[0]).toEqual(before);
+
+    const whitespaceNumberFailure = await runSeedScript({
+      PUBLIC_CUSTOM_MAX_ERP_ERROR_RATE: "   ",
+    }).catch((error: unknown) => error);
+    expect(whitespaceNumberFailure).toMatchObject({
+      stderr: expect.stringContaining("PUBLIC_CUSTOM_MAX_ERP_ERROR_RATE must be a number"),
+    });
+    expect((await readPolicy())[0]).toEqual(before);
+
+    const semanticFailure = await runSeedScript({
+      PUBLIC_CUSTOM_MAX_BUYERS: "100",
+    }).catch((error: unknown) => error);
+    expect(semanticFailure).toMatchObject({
+      stderr: expect.stringContaining("public_custom_default_public_buyers_exceeded"),
+    });
+    expect((await readPolicy())[0]).toEqual(before);
+  });
+
+  it("backfills legacy preset breaker defaults while fully resetting runtime policy JSON", async () => {
     await runSeedScript();
     await withDatabase(async (sql) => {
       await sql`
@@ -1007,7 +1068,7 @@ describe("database migrations, seed data, and reset behavior", () => {
           circuitBreakerResetTimeoutMs: 12_345,
         },
       },
-      publicRunBudget: { windowSeconds: 999 },
+      publicRunBudget: { windowSeconds: 300 },
     });
 
     await runSeedScript({
@@ -1020,7 +1081,15 @@ describe("database migrations, seed data, and reset behavior", () => {
       SELECT policy FROM public_runtime_policies WHERE id = 'active'
     `,
     );
-    expect(policyAfterRerun?.policy).toEqual(policyRow?.policy);
+    expect(policyAfterRerun?.policy).toMatchObject({
+      publicCustomDefaults: {
+        backpressureConfig: {
+          circuitBreakerFailureThreshold: 9,
+          circuitBreakerResetTimeoutMs: 54_321,
+        },
+      },
+      publicRunBudget: { windowSeconds: 300 },
+    });
   });
 
   it("accepts orders backed by matching secured reservations", async () => {

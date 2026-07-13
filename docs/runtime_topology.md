@@ -56,7 +56,7 @@ Expected command contract:
 
 - `pnpm runtime:up` starts the full containerized topology.
 - `pnpm runtime:down` stops the full containerized topology.
-- `pnpm runtime:setup` explicitly runs migrations and seeds the demo product, baseline sale offer, durable presets, and Redis inventory for first-time or refreshed local use.
+- `pnpm runtime:setup` explicitly runs migrations and seeds the demo product, baseline sale offer, durable presets, Redis inventory, and a validated environment-backed public runtime policy for first-time or refreshed local use. Rerunning setup resets the complete active policy (including admin edits) while preserving its original creation timestamp; invalid policy input leaves the existing row unchanged.
 - `pnpm health:check` verifies full demo readiness, including the dashboard and backend service readiness.
 
 `runtime:up` should not automatically run migrations or seed demo data.

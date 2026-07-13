@@ -156,13 +156,26 @@ describe("demo-run service validation", () => {
       "Accepted run configuration exceeds a configured cap.",
     );
     expect(() => validatePublicRuntimePolicyUpdate(policy)).toThrow(DemoRunValidationError);
+    expect(() => validatePublicRuntimePolicyUpdate(policy)).toThrowError(
+      expect.objectContaining({
+        code: "public_limit_total_requests_exceeds_deployment_cap",
+        details: { value: 100_001, cap: 100_000 },
+      }),
+    );
   });
 
   it("rejects public custom defaults that exceed the updated public limits", () => {
     const policy = publicRuntimePolicy();
     policy.publicCustomLimits.maxBuyers = 100;
 
-    expect(() => validatePublicRuntimePolicyUpdate(policy)).toThrow(DemoRunValidationError);
+    expect(() => validatePublicRuntimePolicyUpdate(policy)).toThrowError(
+      expect.objectContaining({
+        name: "DemoRunValidationError",
+        code: "public_custom_default_public_buyers_exceeded",
+        message: "Public custom defaults must fit within the active public runtime policy.",
+        details: { value: 500, cap: 100 },
+      }),
+    );
   });
 });
 

@@ -11,6 +11,9 @@ import {
   adminPublicRuntimePolicyResponseSchema,
   type BusinessOutcomeSummary,
   type CopyDemoPresetToCustomRequest,
+  calculatePlannedRequests,
+  collectAcceptedRunConfigSnapshotViolations,
+  collectPublicRuntimePolicyViolations,
   controlServiceTokenHeaderName,
   type DemoPresetContract,
   type DemoRunConfigOverride,
@@ -35,7 +38,6 @@ import {
   startDemoRunResponseSchema,
   type TerminalInventorySnapshot,
   type TrafficCompletionReport,
-  type TrafficConfig,
   type TrafficDeliverySummary,
   type TrafficExecutionStartRequest,
   type TrafficExecutionStartResponse,
@@ -440,17 +442,18 @@ export class DemoRunService implements DemoRunController {
     const currentRow = await this.readPublicRuntimePolicyRow();
     const currentPolicy = publicRuntimePolicySchema.parse(currentRow.policy);
     const mutablePolicy = publicRuntimePolicyMutableSchema.parse(request.policy);
-    const nextPolicy = publicRuntimePolicySchema.parse({
+    const nextPolicy: PublicRuntimePolicy = {
       ...mutablePolicy,
       deploymentHardCaps: currentPolicy.deploymentHardCaps,
-    });
+    };
 
     validatePublicRuntimePolicyUpdate(nextPolicy);
+    const validatedNextPolicy = publicRuntimePolicySchema.parse(nextPolicy);
 
     const [updated] = await this.options.db
       .update(publicRuntimePolicies)
       .set({
-        policy: nextPolicy,
+        policy: validatedNextPolicy,
         updatedAt: now,
       })
       .where(eq(publicRuntimePolicies.id, "active"))
@@ -1144,190 +1147,17 @@ export function validateAcceptedRunSnapshot(
   policy: PublicRuntimePolicy,
   options: { operatorMode: OperatorMode; enforcePublicCustomLimits: boolean },
 ): void {
-  const totalRequests = calculatePlannedRequests(snapshot.trafficConfig);
-  const requestRate =
-    snapshot.trafficConfig.mode === "steady-arrival-rate"
-      ? snapshot.trafficConfig.ratePerSecond
-      : Math.ceil(
-          snapshot.trafficConfig.buyerCount /
-            Math.max(snapshot.trafficConfig.maxDurationSeconds, 1),
-        );
-  const durationSeconds =
-    snapshot.trafficConfig.mode === "steady-arrival-rate"
-      ? snapshot.trafficConfig.durationSeconds
-      : snapshot.trafficConfig.maxDurationSeconds;
-  const startDelaySeconds = snapshot.trafficConfig.startDelaySeconds;
-  const k6Vus =
-    snapshot.trafficConfig.mode === "steady-arrival-rate"
-      ? snapshot.trafficConfig.k6Vus
-      : undefined;
-
-  assertCap(
-    totalRequests,
-    policy.deploymentHardCaps.maxTotalRequests,
-    "deployment_total_requests_exceeded",
-  );
-  assertCap(
-    requestRate,
-    policy.deploymentHardCaps.maxRequestsPerSecond,
-    "deployment_request_rate_exceeded",
-  );
-  assertCap(
-    durationSeconds,
-    policy.deploymentHardCaps.maxTrafficDurationSeconds,
-    "deployment_duration_exceeded",
-  );
-  assertCap(
-    startDelaySeconds,
-    policy.deploymentHardCaps.maxTrafficStartDelaySeconds,
-    "deployment_start_delay_exceeded",
-  );
-
-  if (snapshot.trafficConfig.mode === "buyer-spike") {
-    assertCap(
-      snapshot.trafficConfig.buyerCount,
-      policy.deploymentHardCaps.maxBuyers,
-      "deployment_buyers_exceeded",
-    );
-  }
-  if (k6Vus) {
-    assertCap(
-      k6Vus.preAllocatedVus,
-      policy.deploymentHardCaps.maxPreAllocatedVus,
-      "deployment_preallocated_vus_exceeded",
-    );
-    assertCap(k6Vus.maxVus, policy.deploymentHardCaps.maxVus, "deployment_max_vus_exceeded");
-  }
-
-  if (options.operatorMode !== "public" || !options.enforcePublicCustomLimits) {
-    return;
-  }
-
-  const limits = policy.publicCustomLimits;
-  if (!limits.allowedTrafficModes.includes(snapshot.trafficConfig.mode)) {
-    throw new DemoRunValidationError(
-      "public_traffic_mode_not_allowed",
-      "Traffic mode is not allowed for public runs.",
-    );
-  }
-  assertCap(totalRequests, limits.maxTotalRequests, "public_total_requests_exceeded");
-  assertCap(requestRate, limits.maxRequestsPerSecond, "public_request_rate_exceeded");
-  assertCap(durationSeconds, limits.maxTrafficDurationSeconds, "public_duration_exceeded");
-  assertCap(startDelaySeconds, limits.maxTrafficStartDelaySeconds, "public_start_delay_exceeded");
-  assertCap(
-    snapshot.inventoryConfig.startingStock,
-    limits.maxStartingStock,
-    "public_starting_stock_exceeded",
-  );
-  assertCap(snapshot.erpConfig.latencyMs, limits.maxErpLatencyMs, "public_erp_latency_exceeded");
-  if (
-    snapshot.erpConfig.maxTps < limits.minErpMaxTps ||
-    snapshot.erpConfig.maxTps > limits.maxErpMaxTps
-  ) {
-    throw new DemoRunValidationError(
-      "public_erp_tps_exceeded",
-      "ERP TPS is outside public custom limits.",
-    );
-  }
-  if (snapshot.erpConfig.errorRate > limits.maxErpErrorRate) {
-    throw new DemoRunValidationError(
-      "public_erp_error_rate_exceeded",
-      "ERP error rate exceeds public custom limits.",
-    );
-  }
-  if (snapshot.erpConfig.forcedOutage && !limits.allowForcedOutage) {
-    throw new DemoRunValidationError(
-      "public_forced_outage_not_allowed",
-      "Forced outage is not allowed for public runs.",
-    );
-  }
-  if (snapshot.trafficConfig.mode === "buyer-spike") {
-    assertCap(snapshot.trafficConfig.buyerCount, limits.maxBuyers, "public_buyers_exceeded");
-  }
-  if (k6Vus) {
-    assertCap(k6Vus.preAllocatedVus, limits.maxPreAllocatedVus, "public_preallocated_vus_exceeded");
-    assertCap(k6Vus.maxVus, limits.maxVus, "public_max_vus_exceeded");
+  const [violation] = collectAcceptedRunConfigSnapshotViolations(snapshot, policy, options);
+  if (violation) {
+    throw new DemoRunValidationError(violation.code, violation.message, violation.details);
   }
 }
 
 export function validatePublicRuntimePolicyUpdate(policy: PublicRuntimePolicy): void {
-  const caps = policy.deploymentHardCaps;
-  const limits = policy.publicCustomLimits;
-
-  assertCap(
-    limits.maxTotalRequests,
-    caps.maxTotalRequests,
-    "public_limit_total_requests_exceeds_deployment_cap",
-  );
-  assertCap(
-    limits.maxRequestsPerSecond,
-    caps.maxRequestsPerSecond,
-    "public_limit_request_rate_exceeds_deployment_cap",
-  );
-  assertCap(
-    limits.maxTrafficDurationSeconds,
-    caps.maxTrafficDurationSeconds,
-    "public_limit_duration_exceeds_deployment_cap",
-  );
-  assertCap(
-    limits.maxTrafficStartDelaySeconds,
-    caps.maxTrafficStartDelaySeconds,
-    "public_limit_start_delay_exceeds_deployment_cap",
-  );
-  assertCap(limits.maxBuyers, caps.maxBuyers, "public_limit_buyers_exceeds_deployment_cap");
-  assertCap(
-    limits.maxPreAllocatedVus,
-    caps.maxPreAllocatedVus,
-    "public_limit_preallocated_vus_exceeds_deployment_cap",
-  );
-  assertCap(limits.maxVus, caps.maxVus, "public_limit_max_vus_exceeds_deployment_cap");
-
-  if (limits.minErpMaxTps > limits.maxErpMaxTps) {
-    throw new DemoRunValidationError(
-      "public_erp_tps_limit_invalid",
-      "Public ERP TPS minimum cannot exceed the maximum.",
-      {
-        minErpMaxTps: limits.minErpMaxTps,
-        maxErpMaxTps: limits.maxErpMaxTps,
-      },
-    );
+  const [violation] = collectPublicRuntimePolicyViolations(policy);
+  if (violation) {
+    throw new DemoRunValidationError(violation.code, violation.message, violation.details);
   }
-
-  if (limits.maxPreAllocatedVus > limits.maxVus) {
-    throw new DemoRunValidationError(
-      "public_vus_limit_invalid",
-      "Public preallocated VUs cannot exceed max VUs.",
-      {
-        maxPreAllocatedVus: limits.maxPreAllocatedVus,
-        maxVus: limits.maxVus,
-      },
-    );
-  }
-
-  try {
-    validateAcceptedRunSnapshot(policy.publicCustomDefaults, policy, {
-      operatorMode: "public",
-      enforcePublicCustomLimits: true,
-    });
-  } catch (error) {
-    if (error instanceof DemoRunValidationError) {
-      throw new DemoRunValidationError(
-        `public_custom_default_${error.code}`,
-        "Public custom defaults must fit within the active public runtime policy.",
-        error.details,
-      );
-    }
-
-    throw error;
-  }
-}
-
-function calculatePlannedRequests(trafficConfig: TrafficConfig): number {
-  if (trafficConfig.mode === "buyer-spike") {
-    return trafficConfig.buyerCount * (trafficConfig.duplicateEachBuyerAttempt ? 2 : 1);
-  }
-
-  return trafficConfig.ratePerSecond * trafficConfig.durationSeconds;
 }
 
 function failedBeforeTrafficStartSummary(
@@ -1372,15 +1202,6 @@ function emptyBusinessOutcomeSummary(): BusinessOutcomeSummary {
     pendingPersistenceCount: 0,
     notificationsRecorded: 0,
   };
-}
-
-function assertCap(value: number, cap: number, code: string): void {
-  if (value > cap) {
-    throw new DemoRunValidationError(code, "Accepted run configuration exceeds a configured cap.", {
-      value,
-      cap,
-    });
-  }
 }
 
 function trafficMetricKey(runId: string): string {

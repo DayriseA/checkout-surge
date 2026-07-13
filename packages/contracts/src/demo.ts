@@ -33,6 +33,7 @@ import {
   positiveIntegerSchema,
   uuidSchema,
 } from "./primitives.js";
+import { collectPublicRuntimePolicyViolations } from "./public-runtime-policy-validation.js";
 import { queueStatusSchema } from "./queue.js";
 
 export const publicPresetListPath = "/demo/presets/public" as const;
@@ -397,12 +398,28 @@ export const publicRuntimePolicyMutableSchema = z
   .strict();
 export type PublicRuntimePolicyMutable = z.infer<typeof publicRuntimePolicyMutableSchema>;
 
-export const publicRuntimePolicySchema = publicRuntimePolicyMutableSchema
+const publicRuntimePolicyStructureSchema = publicRuntimePolicyMutableSchema
   .extend({
     deploymentHardCaps: deploymentHardCapsSchema,
   })
   .strict();
-export type PublicRuntimePolicy = z.infer<typeof publicRuntimePolicySchema>;
+export type PublicRuntimePolicy = z.infer<typeof publicRuntimePolicyStructureSchema>;
+
+export const publicRuntimePolicySchema = publicRuntimePolicyStructureSchema.superRefine(
+  (policy, context) => {
+    for (const violation of collectPublicRuntimePolicyViolations(policy)) {
+      context.addIssue({
+        code: "custom",
+        message: violation.message,
+        path: violation.path,
+        params: {
+          violationCode: violation.code,
+          ...(violation.details ? { details: violation.details } : {}),
+        },
+      });
+    }
+  },
+);
 
 export const publicRuntimePolicyResponseSchema = z
   .object({

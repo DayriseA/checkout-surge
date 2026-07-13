@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  type AcceptedRunConfigSnapshot,
   acceptedRunConfigSnapshotSchema,
   adminDeleteRunHistoryRequestSchema,
   adminDeleteRunHistoryResponseSchema,
@@ -9,6 +10,7 @@ import {
   adminPublicRuntimePolicyUpdateRequestSchema,
   buyRequestSchema,
   buyResponseSchema,
+  collectPublicRuntimePolicyViolations,
   controlServiceTokenHeaderName,
   dashboardEventSchema,
   dashboardEventsPath,
@@ -37,6 +39,7 @@ import {
   orderProcessJobSchema,
   orderProcessQueueName,
   orderStatusValues,
+  type PublicRuntimePolicy,
   publicPresetListPath,
   publicRuntimePolicyMutableSchema,
   publicRuntimePolicyPath,
@@ -1129,6 +1132,51 @@ describe("public runtime policy contract", () => {
     expect(policy.publicCustomLimits.maxStartingStock).toBe(1000);
   });
 
+  it.each([
+    {
+      name: "a public limit above its deployment cap",
+      update: (policy: ReturnType<typeof semanticRuntimePolicy>) => {
+        policy.publicCustomLimits.maxTotalRequests = 101;
+      },
+      code: "public_limit_total_requests_exceeds_deployment_cap",
+      path: ["publicCustomLimits", "maxTotalRequests"],
+    },
+    {
+      name: "an ERP minimum above its maximum",
+      update: (policy: ReturnType<typeof semanticRuntimePolicy>) => {
+        policy.publicCustomLimits.minErpMaxTps = 11;
+      },
+      code: "public_erp_tps_limit_invalid",
+      path: ["publicCustomLimits", "minErpMaxTps"],
+    },
+    {
+      name: "preallocated VUs above max VUs",
+      update: (policy: ReturnType<typeof semanticRuntimePolicy>) => {
+        policy.publicCustomLimits.maxPreAllocatedVus = 11;
+      },
+      code: "public_vus_limit_invalid",
+      path: ["publicCustomLimits", "maxPreAllocatedVus"],
+    },
+    {
+      name: "a structurally valid default above an updated public limit",
+      update: (policy: ReturnType<typeof semanticRuntimePolicy>) => {
+        policy.publicCustomLimits.maxBuyers = 5;
+      },
+      code: "public_custom_default_public_buyers_exceeded",
+      path: ["publicCustomDefaults", "trafficConfig", "buyerCount"],
+    },
+  ])("rejects $name with stable violation vocabulary", ({ update, code, path }) => {
+    const policy = semanticRuntimePolicy();
+    update(policy);
+
+    expect(collectPublicRuntimePolicyViolations(policy)[0]).toMatchObject({ code, path });
+    const parsed = publicRuntimePolicySchema.safeParse(policy);
+    expect(parsed.success).toBe(false);
+    if (!parsed.success) {
+      expect(parsed.error.issues[0]?.path).toEqual(path);
+    }
+  });
+
   it("validates protected public runtime policy reads and update requests", () => {
     const policy = publicRuntimePolicySchema.parse({
       isPublicRunBudgetEnforced: true,
@@ -1274,7 +1322,7 @@ describe("public runtime policy contract", () => {
   });
 });
 
-function acceptedRunSnapshot() {
+function acceptedRunSnapshot(): AcceptedRunConfigSnapshot {
   return {
     trafficConfig: {
       mode: "buyer-spike",
@@ -1305,6 +1353,39 @@ function acceptedRunSnapshot() {
       pendingPersistenceRetryAfterSeconds: 30,
       circuitBreakerFailureThreshold: 5,
       circuitBreakerResetTimeoutMs: 10_000,
+    },
+  };
+}
+
+function semanticRuntimePolicy(): PublicRuntimePolicy {
+  return {
+    isPublicRunBudgetEnforced: true,
+    publicRunBudget: { windowSeconds: 300, perVisitorMaxStarts: 2, globalMaxStarts: 6 },
+    publicCustomDefaults: acceptedRunSnapshot(),
+    publicCustomLimits: {
+      maxTotalRequests: 100,
+      maxBuyers: 100,
+      maxRequestsPerSecond: 100,
+      maxTrafficDurationSeconds: 100,
+      maxTrafficStartDelaySeconds: 10,
+      maxPreAllocatedVus: 10,
+      maxVus: 10,
+      maxStartingStock: 100,
+      maxErpLatencyMs: 100,
+      minErpMaxTps: 1,
+      maxErpMaxTps: 10,
+      maxErpErrorRate: 0.25,
+      allowForcedOutage: false,
+      allowedTrafficModes: ["buyer-spike", "steady-arrival-rate"],
+    },
+    deploymentHardCaps: {
+      maxBuyers: 100,
+      maxTotalRequests: 100,
+      maxRequestsPerSecond: 100,
+      maxTrafficDurationSeconds: 100,
+      maxTrafficStartDelaySeconds: 10,
+      maxPreAllocatedVus: 100,
+      maxVus: 100,
     },
   };
 }

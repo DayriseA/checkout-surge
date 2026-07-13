@@ -680,7 +680,7 @@ Logical fields:
 Notes:
 
 - The singleton row uses the stable id `active`.
-- The policy is seeded from environment-backed defaults when missing.
+- An explicit seed/setup validates and upserts the complete environment-backed policy baseline. Rerunning it repairs or replaces the active policy, including admin-edited mutable values, while preserving the singleton row's original `createdAt`.
 - Admin-protected controls may update this row, but updates are still validated against deployment hard caps before persistence.
 - Public runtime policy changes do not mutate public preset definitions; they control public custom-run bounds and public budget behavior.
 

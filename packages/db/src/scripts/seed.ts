@@ -1,3 +1,4 @@
+import { type PublicRuntimePolicy, publicRuntimePolicySchema } from "@checkout-surge/contracts";
 import { eq, sql } from "drizzle-orm";
 import { createDatabaseConnection } from "../client.js";
 import { createRedisClient } from "../redis.js";
@@ -50,6 +51,7 @@ const circuitBreakerFailureThreshold = optionalIntegerEnv("ERP_CIRCUIT_FAILURE_T
 const circuitBreakerResetTimeoutMs = optionalIntegerEnv("ERP_CIRCUIT_RESET_TIMEOUT_MS", 10_000);
 const orderProcessMaxAttempts = optionalIntegerEnv("ORDER_PROCESS_MAX_ATTEMPTS", 4);
 const orderProcessInitialBackoffMs = optionalIntegerEnv("ORDER_PROCESS_BACKOFF_BASE_MS", 500);
+const seededPublicRuntimePolicy = buildPublicRuntimePolicy();
 
 const connection = createDatabaseConnection(databaseUrl, { max: 1 });
 
@@ -151,12 +153,16 @@ try {
       .insert(publicRuntimePolicies)
       .values({
         id: "active",
-        policy: buildPublicRuntimePolicy(),
+        policy: seededPublicRuntimePolicy as unknown as JsonRecord,
         createdAt: now,
         updatedAt: now,
       })
-      .onConflictDoNothing({
+      .onConflictDoUpdate({
         target: publicRuntimePolicies.id,
+        set: {
+          policy: seededPublicRuntimePolicy as unknown as JsonRecord,
+          updatedAt: now,
+        },
       });
 
     await tx
@@ -175,33 +181,6 @@ try {
         sql`NOT (coalesce(${demoPresets.backpressureConfig}, '{}'::jsonb) ? 'circuitBreakerFailureThreshold')
           OR NOT (coalesce(${demoPresets.backpressureConfig}, '{}'::jsonb) ? 'circuitBreakerResetTimeoutMs')
           OR NOT (coalesce(${demoPresets.backpressureConfig}, '{}'::jsonb) ? 'retryPolicy')`,
-      );
-
-    await tx
-      .update(publicRuntimePolicies)
-      .set({
-        policy: sql`jsonb_set(
-          ${publicRuntimePolicies.policy},
-          '{publicCustomDefaults}',
-          coalesce(${publicRuntimePolicies.policy} -> 'publicCustomDefaults', '{}'::jsonb)
-            || jsonb_build_object(
-              'backpressureConfig',
-              coalesce(${publicRuntimePolicies.policy} #> '{publicCustomDefaults,backpressureConfig}', '{}'::jsonb)
-                || CASE WHEN coalesce(${publicRuntimePolicies.policy} #> '{publicCustomDefaults,backpressureConfig}', '{}'::jsonb) ? 'circuitBreakerFailureThreshold'
-                  THEN '{}'::jsonb ELSE jsonb_build_object('circuitBreakerFailureThreshold', ${circuitBreakerFailureThreshold}::int) END
-                || CASE WHEN coalesce(${publicRuntimePolicies.policy} #> '{publicCustomDefaults,backpressureConfig}', '{}'::jsonb) ? 'circuitBreakerResetTimeoutMs'
-                  THEN '{}'::jsonb ELSE jsonb_build_object('circuitBreakerResetTimeoutMs', ${circuitBreakerResetTimeoutMs}::int) END
-                || CASE WHEN coalesce(${publicRuntimePolicies.policy} #> '{publicCustomDefaults,backpressureConfig}', '{}'::jsonb) ? 'retryPolicy'
-                  THEN '{}'::jsonb ELSE jsonb_build_object('retryPolicy', jsonb_build_object('maxAttempts', ${orderProcessMaxAttempts}::int, 'initialBackoffMs', ${orderProcessInitialBackoffMs}::int)) END
-            ),
-          true
-        )`,
-        updatedAt: now,
-      })
-      .where(
-        sql`NOT (coalesce(${publicRuntimePolicies.policy} #> '{publicCustomDefaults,backpressureConfig}', '{}'::jsonb) ? 'circuitBreakerFailureThreshold')
-          OR NOT (coalesce(${publicRuntimePolicies.policy} #> '{publicCustomDefaults,backpressureConfig}', '{}'::jsonb) ? 'circuitBreakerResetTimeoutMs')
-          OR NOT (coalesce(${publicRuntimePolicies.policy} #> '{publicCustomDefaults,backpressureConfig}', '{}'::jsonb) ? 'retryPolicy')`,
       );
   });
 
@@ -474,8 +453,8 @@ function backpressureConfig(options: { orderProcessConcurrency: number }): JsonR
   };
 }
 
-function buildPublicRuntimePolicy(): JsonRecord {
-  return {
+function buildPublicRuntimePolicy(): PublicRuntimePolicy {
+  return publicRuntimePolicySchema.parse({
     isPublicRunBudgetEnforced: true,
     publicRunBudget: {
       windowSeconds: optionalIntegerEnv("PUBLIC_RUN_BUDGET_WINDOW_SECONDS", 300),
@@ -519,7 +498,7 @@ function buildPublicRuntimePolicy(): JsonRecord {
       maxPreAllocatedVus: optionalIntegerEnv("DEMO_MAX_PRE_ALLOCATED_VUS", 10_000),
       maxVus: optionalIntegerEnv("DEMO_MAX_VUS", 10_000),
     },
-  };
+  });
 }
 
 async function seedRedisInventory(

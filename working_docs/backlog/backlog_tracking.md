@@ -49,7 +49,7 @@ Replace `⬜` with `✅` when a task is complete. Optional `⏳` for work in pro
 
 ✅ [Task 22: Enforce run–sale-offer ownership after guarded insertion](./task_22.md)
 
-⬜ [Task 23: Validate seeded runtime policy through the shared contract (and make reruns repair bad rows)](./task_23.md)
+✅ [Task 23: Validate seeded runtime policy through the shared contract (and make reruns repair bad rows)](./task_23.md)
 
 ⬜ [Task 24: Make documented environment overrides real: wire compose vars to their consumers and re-validate hard caps at boot](./task_24.md)
 

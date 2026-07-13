@@ -82,6 +82,8 @@ pnpm runtime:setup
 
 `runtime:setup` uses `docker compose run` and auto-starts PostgreSQL and Redis as dependencies, so it can be run without a prior `runtime:up`. By itself it does not start the API, worker, mock ERP, load orchestrator, or dashboard services.
 
+Setup is also an explicit public-runtime-policy reset: it strictly validates the complete environment-backed policy before database mutations, then replaces the `active` policy JSON if the row already exists. This repairs malformed policy data but also overwrites admin-edited public budgets, defaults, and limits. Invalid policy input fails setup without changing the existing row.
+
 For a clean wipe-and-rebuild (drops all data and re-seeds):
 
 ```bash
