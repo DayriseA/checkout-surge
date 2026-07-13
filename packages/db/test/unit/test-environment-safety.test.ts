@@ -1,0 +1,94 @@
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  assertTestEnvironment,
+  validateDedicatedTestDatabaseUrl,
+} from "../../src/test-environment-safety.js";
+
+const originalNodeEnvironment = process.env.NODE_ENV;
+const originalPortWaiver = process.env.ALLOW_TEST_DEFAULT_PORTS;
+
+afterEach(() => {
+  setEnvironment("NODE_ENV", originalNodeEnvironment);
+  setEnvironment("ALLOW_TEST_DEFAULT_PORTS", originalPortWaiver);
+});
+
+describe("destructive database helper safety", () => {
+  it.each([
+    "checkout_surge_test",
+    "checkout_surge_test_api",
+    "checkout_surge_test_worker",
+    "checkout_surge_test_db",
+    "checkout_surge_test_web",
+    "checkout_surge_test_mock_erp",
+    "checkout_surge_test_load_orchestrator",
+    "checkout_surge_test_contracts",
+    "checkout_surge_test_logger",
+  ])("accepts approved database %s", (databaseName) => {
+    process.env.ALLOW_TEST_DEFAULT_PORTS = "";
+    expect(() =>
+      validateDedicatedTestDatabaseUrl(`postgresql://localhost:56432/${databaseName}`),
+    ).not.toThrow();
+  });
+
+  it.each([
+    "checkout_surge_latest",
+    "contest_production",
+    "checkout_surge_test_backup",
+    "",
+    "checkout_surge_test%2Fother",
+    "checkout_surge_test%5Cother",
+  ])("rejects database target %s", (databaseName) => {
+    expect(() =>
+      validateDedicatedTestDatabaseUrl(`postgresql://localhost:56432/${databaseName}`),
+    ).toThrow();
+  });
+
+  it("rejects malformed URLs without leaking credentials", () => {
+    expect(() => validateDedicatedTestDatabaseUrl("not a URL")).toThrow("must be valid");
+    const password = "credential-must-stay-private";
+    expect(
+      captureError(() =>
+        validateDedicatedTestDatabaseUrl(
+          `postgresql://postgres:${password}@localhost/checkout_surge_test_db`,
+        ),
+      ),
+    ).not.toContain(password);
+  });
+
+  it.each([undefined, "development", "production"])("rejects NODE_ENV=%s", (nodeEnvironment) => {
+    setEnvironment("NODE_ENV", nodeEnvironment);
+    expect(() => assertTestEnvironment("reset test state")).toThrow(
+      'NODE_ENV must be exactly "test"',
+    );
+  });
+
+  it("normalizes an omitted port and limits the waiver to port policy", () => {
+    expect(() =>
+      validateDedicatedTestDatabaseUrl("postgresql://localhost/checkout_surge_test_db"),
+    ).toThrow("localhost:5432");
+    process.env.ALLOW_TEST_DEFAULT_PORTS = "1";
+    expect(() =>
+      validateDedicatedTestDatabaseUrl("postgresql://postgres-test/checkout_surge_test_db"),
+    ).not.toThrow();
+    expect(() =>
+      validateDedicatedTestDatabaseUrl("postgresql://postgres-test/checkout_surge_test_backup"),
+    ).toThrow("not an approved isolated database");
+  });
+});
+
+function captureError(action: () => void): string {
+  try {
+    action();
+    return "";
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+}
+
+function setEnvironment(name: string, value: string | undefined): void {
+  if (value === undefined) {
+    delete process.env[name];
+  } else {
+    process.env[name] = value;
+  }
+}

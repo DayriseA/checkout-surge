@@ -16,7 +16,7 @@ The goal is to make tests reliable across host-native development, local Dev Con
 | Test compose strategy | Add `docker-compose.test.yml` instead of overloading the baseline compose file | Keeps local development infrastructure simple while giving tests their own ports, names, and lifecycle. |
 | Test database | Per-package databases derived from `checkout_surge_test` (e.g. `checkout_surge_test_api`, `_worker`, `_db`) | Makes the database purpose obvious, avoids accidental use of the development database, and lets packages run integration/API suites concurrently. `scripts/run-with-test-env.mjs` derives the name from the package at its working directory; missing databases are created on demand by `resetTestDatabase`. |
 | Test Redis isolation | Per-package logical databases on the test Redis instance (`api` → `/1`, `worker` → `/2`, `db` → `/3`) | Prevents concurrently running packages from wiping or polluting each other's keys. Derived by `scripts/run-with-test-env.mjs`; test-time resets must use `FLUSHDB`, never `FLUSHALL`. |
-| Test serialization | Per-database file lock (`acquireTestInfrastructureLock` in `@checkout-surge/db`) | Test files within one package still reset shared state and must serialize; the lock is scoped to the package's database so it never blocks other packages. |
+| Test serialization | Per-database filesystem lock plus a PostgreSQL advisory lock (`acquireTestInfrastructureLock` and `resetTestDatabase` in `@checkout-surge/db`) | The filesystem lock serializes cooperating processes on one host. The database-session lock also serializes containers or hosts with different filesystems. Locks are scoped to the package database and are always acquired filesystem-first, database-second. |
 | Test PostgreSQL port | `56432` on the host, overrideable with `TEST_POSTGRES_HOST_PORT` | Avoids conflicting with the development PostgreSQL service on `5432` and common Windows reserved port ranges. |
 | Test Redis port | `6380` on the host | Avoids conflicting with the development Redis service on `6379`. |
 | Test env convention | Use `.env.test.example` as the committed default and optional `.env.test` for local overrides | Gives contributors a safe default without committing local overrides. |
@@ -99,6 +99,10 @@ The test services may use disposable container storage or dedicated test volumes
 
 Tests must never call broad destructive operations against `DATABASE_URL` or `REDIS_URL`. Destructive setup belongs only to `TEST_DATABASE_URL` and `TEST_REDIS_URL`, or to an explicitly loaded test environment.
 
+The test command wrapper validates the final, package-rewritten URLs before spawning a child process. It requires `NODE_ENV=test`, a valid PostgreSQL URL whose decoded database name is exactly `checkout_surge_test` or one of the repository's package-isolated names, and valid PostgreSQL/Redis URLs that do not use the effective default ports (`5432`/`6379`). An omitted port is treated as the protocol default. Diagnostics identify only the variable and host/port and never print URL credentials.
+
+Dedicated CI or Dev Container service containers may use their internal default ports only when their test command environment explicitly sets `ALLOW_TEST_DEFAULT_PORTS=1`. This waiver bypasses only the port deny; environment, URL validity, exact database naming, connected-database identity, migration journal, and fingerprint checks still apply. It is intentionally absent from `.env.test.example` because local host execution uses `56432` and `6380`.
+
 ---
 
 ## Environment Variables
@@ -122,6 +126,8 @@ Application code may continue to use `DATABASE_URL` and `REDIS_URL` for normal d
 
 After loading the env files, `run-with-test-env.mjs` rewrites both URLs per package: the database name gains a suffix derived from the package name (`checkout_surge_test_api`, `_worker`, `_db`, ...), and packages with Redis-backed tests get a dedicated logical database index. Tests and app configs keep reading the plain `TEST_DATABASE_URL` / `TEST_REDIS_URL` variables and stay unaware of the isolation.
 
+Caller environment values win during environment loading, but they cannot weaken the safety boundary: the wrapper checks the resulting URLs and `NODE_ENV` after package isolation. The DB package repeats the PostgreSQL checks in every destructive test helper so direct imports cannot bypass the wrapper.
+
 If a contributor overrides `TEST_POSTGRES_HOST_PORT` for Docker Compose, their local `.env.test` should set `TEST_DATABASE_URL` to the same host port.
 
 ---
@@ -129,6 +135,14 @@ If a contributor overrides `TEST_POSTGRES_HOST_PORT` for Docker Compose, their l
 ## Database Reset and Fixtures
 
 Integration tests need deterministic database state.
+
+`resetTestDatabase` holds the per-database filesystem lock and then a PostgreSQL advisory lock for the complete decision, rebuild/fingerprint write, or truncate operation. It verifies `current_database()` against the already validated URL name before destructive SQL. It compares the complete ordered Drizzle `drizzle.__drizzle_migrations` rows with hashes and timestamps derived by Drizzle's own migration reader, and independently compares a stored `public.__test_schema_fingerprint` marker with the live public schema. Only a double match takes the fast truncate path.
+
+Missing, malformed, duplicate, or stale markers, journal drift, and schema drift drop and recreate `public` and Drizzle's journal schema, then apply the existing checked-in Drizzle migrator from the beginning. The marker is written only after migration succeeds and the new journal is verified. A failed migration therefore leaves no trusted marker and the next reset retries the rebuild.
+
+The fingerprint covers public relations, columns (including types, nullability, identity/generated state, collation, and defaults), constraints, indexes, non-internal triggers, functions/procedures and their definitions, enum/domain/standalone composite types, sequence settings and sequence-to-column dependency links, views/materialized views, RLS flags and policies, and public extensions. These are the object classes current Surge migrations and chaos tests can mutate. General object ownership, grants, security labels, and comments are not fingerprinted because current migrations/tests do not manage them; a future migration that relies on one of those classes must extend the fingerprint first.
+
+When the journal and fingerprint match, reset discovers ordinary and partitioned public tables from PostgreSQL, excludes only the fingerprint metadata table, quotes every identifier, and issues one `TRUNCATE ... RESTART IDENTITY CASCADE`. The real Drizzle journal lives in its separate `drizzle` schema and is therefore outside the target set. A nonsensical current state with no business tables fails closed. Migration and fingerprint metadata remain intact.
 
 The test database setup should:
 

@@ -53,7 +53,7 @@ Replace `⬜` with `✅` when a task is complete. Optional `⏳` for work in pro
 
 ✅ [Task 24: Make documented environment overrides real: wire compose vars to their consumers and re-validate hard caps at boot](./task_24.md)
 
-⬜ [Task 25: Fix the test-database reset guard and reset determinism](./task_25.md)
+✅ [Task 25: Fix the test-database reset guard and reset determinism](./task_25.md)
 
 ⬜ [Task 26: Decompose the monolithic dashboard and admin-console components](./task_26.md)
 

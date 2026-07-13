@@ -3,29 +3,16 @@ import { mkdir, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import postgres from "postgres";
-import { createDatabaseConnection } from "./client.js";
-import { runDatabaseMigrations } from "./migrations.js";
+import { createDatabaseConnection, type SqlClient } from "./client.js";
+import { readExpectedDatabaseMigrations, runDatabaseMigrations } from "./migrations.js";
+import {
+  assertTestEnvironment,
+  validateDedicatedTestDatabaseUrl,
+} from "./test-environment-safety.js";
 
-const resettableTables = [
-  "demo_run_summaries",
-  "demo_run_finalizations",
-  "demo_run_reservation_outcomes",
-  "simulated_notifications",
-  "reservation_pending_persistence",
-  "order_events",
-  "order_dead_letters",
-  "order_recovery_jobs",
-  "erp_confirmation_results",
-  "erp_attempts",
-  "orders",
-  "reservations",
-  "demo_run_sale_contexts",
-  "demo_runs",
-  "demo_presets",
-  "public_runtime_policies",
-  "sale_offers",
-  "products",
-] as const;
+const fingerprintTable = "__test_schema_fingerprint";
+const fingerprintMarkerId = "migrated-public-schema-v1";
+const advisoryLockNamespace = "checkout-surge-test-database-reset";
 
 export interface ResetTestDatabaseOptions {
   databaseUrl?: string;
@@ -44,28 +31,40 @@ export interface AcquireTestInfrastructureLockOptions {
 }
 
 export async function resetTestDatabase(options: ResetTestDatabaseOptions = {}): Promise<void> {
-  const databaseUrl = options.databaseUrl ?? process.env.TEST_DATABASE_URL;
-
-  if (!databaseUrl) {
-    throw new Error("TEST_DATABASE_URL is required to reset test database state.");
-  }
-
-  assertDedicatedTestDatabaseUrl(databaseUrl);
+  assertTestEnvironment("reset test database state");
+  const databaseUrl = requireTestDatabaseUrl(options.databaseUrl ?? process.env.TEST_DATABASE_URL);
+  const { databaseName } = validateDedicatedTestDatabaseUrl(databaseUrl);
+  const migrationsFolder = options.migrationsFolder ?? path.resolve(process.cwd(), "drizzle");
   const lock = await acquireTestInfrastructureLock({ databaseUrl });
 
   try {
     await createTestDatabaseIfMissing(databaseUrl);
-    await runDatabaseMigrations({
-      databaseUrl,
-      migrationsFolder: options.migrationsFolder ?? path.resolve(process.cwd(), "drizzle"),
-    });
-
     const connection = createDatabaseConnection(databaseUrl, { max: 1 });
 
     try {
-      await connection.sql.unsafe(
-        `TRUNCATE TABLE ${resettableTables.map(quoteIdentifier).join(", ")} RESTART IDENTITY CASCADE`,
-      );
+      await assertConnectedDatabaseIdentity(connection.sql, databaseName);
+      await acquireDatabaseAdvisoryLock(connection.sql, databaseName);
+      try {
+        const journalMatches = await appliedMigrationsMatchJournal(
+          connection.sql,
+          migrationsFolder,
+        );
+        const fingerprintMatches = journalMatches
+          ? await storedSchemaFingerprintMatches(connection.sql)
+          : false;
+
+        if (!journalMatches || !fingerprintMatches) {
+          await rebuildTestSchema(connection.sql, {
+            databaseName,
+            databaseUrl,
+            migrationsFolder,
+          });
+        } else {
+          await truncatePublicTables(connection.sql);
+        }
+      } finally {
+        await releaseDatabaseAdvisoryLock(connection.sql, databaseName);
+      }
     } finally {
       await connection.close();
     }
@@ -77,13 +76,9 @@ export async function resetTestDatabase(options: ResetTestDatabaseOptions = {}):
 export async function acquireTestInfrastructureLock(
   options: AcquireTestInfrastructureLockOptions = {},
 ): Promise<TestInfrastructureLock> {
-  const databaseUrl = options.databaseUrl ?? process.env.TEST_DATABASE_URL;
-
-  if (!databaseUrl) {
-    throw new Error("TEST_DATABASE_URL is required to acquire the test infrastructure lock.");
-  }
-
-  assertDedicatedTestDatabaseUrl(databaseUrl);
+  assertTestEnvironment("acquire the test infrastructure lock");
+  const databaseUrl = requireTestDatabaseUrl(options.databaseUrl ?? process.env.TEST_DATABASE_URL);
+  validateDedicatedTestDatabaseUrl(databaseUrl);
 
   const retryDelayMs = options.retryDelayMs ?? 50;
   const staleLockMs = options.staleLockMs ?? 10 * 60_000;
@@ -120,15 +115,8 @@ export async function acquireTestInfrastructureLock(
 }
 
 export async function createTestDatabaseIfMissing(databaseUrl: string): Promise<void> {
-  assertDedicatedTestDatabaseUrl(databaseUrl);
-
-  const target = new URL(databaseUrl);
-  const databaseName = decodeURIComponent(target.pathname.replace(/^\/+/, ""));
-
-  if (!databaseName) {
-    throw new Error("TEST_DATABASE_URL must include a database name.");
-  }
-
+  assertTestEnvironment("create the test database");
+  const { databaseName, url: target } = validateDedicatedTestDatabaseUrl(databaseUrl);
   const adminUrl = new URL(target);
   adminUrl.pathname = "/postgres";
 
@@ -143,25 +131,264 @@ export async function createTestDatabaseIfMissing(databaseUrl: string): Promise<
       ) AS "exists"
     `;
 
-    if (rows[0]?.exists) {
-      return;
+    if (!rows[0]?.exists) {
+      await admin.unsafe(`CREATE DATABASE ${quoteIdentifier(databaseName)}`);
     }
-
-    await admin.unsafe(`CREATE DATABASE ${quoteIdentifier(databaseName)}`);
   } finally {
     await admin.end({ timeout: 5 });
   }
 }
 
 export function assertDedicatedTestDatabaseUrl(databaseUrl: string): void {
-  const url = new URL(databaseUrl);
-  const databaseName = decodeURIComponent(url.pathname.replace(/^\/+/, ""));
+  assertTestEnvironment("access a destructive test database helper");
+  validateDedicatedTestDatabaseUrl(databaseUrl);
+}
 
-  if (!databaseName.includes("test")) {
-    throw new Error(
-      `Refusing to reset non-test database "${databaseName}". Use TEST_DATABASE_URL.`,
-    );
+async function rebuildTestSchema(
+  sql: SqlClient,
+  options: { databaseName: string; databaseUrl: string; migrationsFolder: string },
+): Promise<void> {
+  await assertConnectedDatabaseIdentity(sql, options.databaseName);
+  await sql.unsafe("DROP SCHEMA IF EXISTS public CASCADE");
+  await sql.unsafe("DROP SCHEMA IF EXISTS drizzle CASCADE");
+  await sql.unsafe("CREATE SCHEMA public");
+
+  await runDatabaseMigrations({
+    databaseUrl: options.databaseUrl,
+    expectedDatabaseName: options.databaseName,
+    migrationsFolder: options.migrationsFolder,
+  });
+
+  if (!(await appliedMigrationsMatchJournal(sql, options.migrationsFolder))) {
+    throw new Error("Test database migration journal did not match after schema rebuild.");
   }
+
+  await createFingerprintTable(sql);
+  const fingerprint = await computeSchemaFingerprint(sql);
+  await sql`
+    INSERT INTO ${sql(fingerprintTable)} (marker_id, fingerprint)
+    VALUES (${fingerprintMarkerId}, ${fingerprint})
+  `;
+}
+
+async function appliedMigrationsMatchJournal(
+  sql: SqlClient,
+  migrationsFolder: string,
+): Promise<boolean> {
+  const expected = readExpectedDatabaseMigrations(migrationsFolder);
+  const [table] = await sql<{ exists: boolean }[]>`
+    SELECT to_regclass('drizzle.__drizzle_migrations') IS NOT NULL AS "exists"
+  `;
+  if (!table?.exists) {
+    return false;
+  }
+
+  const applied = await sql<{ created_at: string; hash: string }[]>`
+    SELECT created_at::text, hash
+    FROM drizzle.__drizzle_migrations
+    ORDER BY id
+  `;
+
+  return (
+    applied.length === expected.length &&
+    applied.every(
+      (migration, index) =>
+        migration.hash === expected[index]?.hash &&
+        Number(migration.created_at) === expected[index]?.createdAt,
+    )
+  );
+}
+
+async function storedSchemaFingerprintMatches(sql: SqlClient): Promise<boolean> {
+  const [table] = await sql<{ exists: boolean }[]>`
+    SELECT to_regclass(${`public.${fingerprintTable}`}) IS NOT NULL AS "exists"
+  `;
+  if (!table?.exists) {
+    return false;
+  }
+
+  const markers = await sql<{ fingerprint: string; marker_id: string }[]>`
+    SELECT marker_id, fingerprint
+    FROM ${sql(fingerprintTable)}
+  `;
+  if (
+    markers.length !== 1 ||
+    markers[0]?.marker_id !== fingerprintMarkerId ||
+    !/^[a-f0-9]{64}$/.test(markers[0]?.fingerprint ?? "")
+  ) {
+    return false;
+  }
+
+  return markers[0].fingerprint === (await computeSchemaFingerprint(sql));
+}
+
+async function createFingerprintTable(sql: SqlClient): Promise<void> {
+  await sql.unsafe(`
+    CREATE TABLE ${quoteIdentifier(fingerprintTable)} (
+      marker_id text NOT NULL,
+      fingerprint text NOT NULL
+    )
+  `);
+}
+
+async function computeSchemaFingerprint(sql: SqlClient): Promise<string> {
+  const rows = await sql<{ canonical: string }[]>`
+    SELECT canonical
+    FROM (
+      SELECT 'relation|' || jsonb_build_array(
+        c.relname, c.relkind, c.relpersistence, c.relrowsecurity, c.relforcerowsecurity
+      )::text AS canonical
+      FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'v', 'm', 'S')
+
+      UNION ALL
+      SELECT 'column|' || jsonb_build_array(
+        c.relname, a.attnum, a.attname, format_type(a.atttypid, a.atttypmod),
+        a.attnotnull, a.attidentity, a.attgenerated, pg_get_expr(d.adbin, d.adrelid),
+        coll.collname
+      )::text
+      FROM pg_attribute a
+      JOIN pg_class c ON c.oid = a.attrelid
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+      LEFT JOIN pg_collation coll ON coll.oid = a.attcollation AND a.attcollation <> 0
+      WHERE n.nspname = 'public' AND a.attnum > 0 AND NOT a.attisdropped
+
+      UNION ALL
+      SELECT 'constraint|' || jsonb_build_array(
+        c.relname, con.conname, con.contype, con.convalidated,
+        pg_get_constraintdef(con.oid, true)
+      )::text
+      FROM pg_constraint con
+      JOIN pg_class c ON c.oid = con.conrelid
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'public'
+
+      UNION ALL
+      SELECT 'index|' || jsonb_build_array(t.relname, i.relname, pg_get_indexdef(i.oid))::text
+      FROM pg_index x
+      JOIN pg_class i ON i.oid = x.indexrelid
+      JOIN pg_class t ON t.oid = x.indrelid
+      JOIN pg_namespace n ON n.oid = t.relnamespace
+      WHERE n.nspname = 'public'
+
+      UNION ALL
+      SELECT 'trigger|' || jsonb_build_array(
+        c.relname, t.tgname, t.tgenabled, pg_get_triggerdef(t.oid, true)
+      )::text
+      FROM pg_trigger t
+      JOIN pg_class c ON c.oid = t.tgrelid
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'public' AND NOT t.tgisinternal
+
+      UNION ALL
+      SELECT 'routine|' || jsonb_build_array(
+        p.proname, p.prokind, pg_get_function_identity_arguments(p.oid),
+        p.proconfig, pg_get_functiondef(p.oid)
+      )::text
+      FROM pg_proc p
+      JOIN pg_namespace n ON n.oid = p.pronamespace
+      WHERE n.nspname = 'public' AND p.prokind IN ('f', 'p')
+
+      UNION ALL
+      SELECT 'type|' || jsonb_build_array(
+        t.typname, t.typtype, t.typcategory, format_type(t.typbasetype, t.typtypmod),
+        COALESCE((
+          SELECT jsonb_agg(e.enumlabel ORDER BY e.enumsortorder)
+          FROM pg_enum e WHERE e.enumtypid = t.oid
+        ), '[]'::jsonb)
+      )::text
+      FROM pg_type t
+      JOIN pg_namespace n ON n.oid = t.typnamespace
+      WHERE n.nspname = 'public' AND t.typtype IN ('e', 'd', 'c')
+        AND NOT EXISTS (SELECT 1 FROM pg_class c WHERE c.reltype = t.oid)
+
+      UNION ALL
+      SELECT 'sequence|' || jsonb_build_array(
+        c.relname, s.seqtypid::regtype::text, s.seqstart, s.seqincrement,
+        s.seqmax, s.seqmin, s.seqcache, s.seqcycle, owned_table.relname, owned_column.attname
+      )::text
+      FROM pg_sequence s
+      JOIN pg_class c ON c.oid = s.seqrelid
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      LEFT JOIN pg_depend dependency
+        ON dependency.objid = c.oid AND dependency.deptype IN ('a', 'i')
+      LEFT JOIN pg_class owned_table ON owned_table.oid = dependency.refobjid
+      LEFT JOIN pg_attribute owned_column
+        ON owned_column.attrelid = dependency.refobjid
+        AND owned_column.attnum = dependency.refobjsubid
+      WHERE n.nspname = 'public'
+
+      UNION ALL
+      SELECT 'view|' || jsonb_build_array(c.relname, pg_get_viewdef(c.oid, true))::text
+      FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'public' AND c.relkind IN ('v', 'm')
+
+      UNION ALL
+      SELECT 'policy|' || jsonb_build_array(
+        schemaname, tablename, policyname, permissive, roles, cmd, qual, with_check
+      )::text
+      FROM pg_policies
+      WHERE schemaname = 'public'
+
+      UNION ALL
+      SELECT 'extension|' || jsonb_build_array(e.extname, e.extversion)::text
+      FROM pg_extension e
+      JOIN pg_namespace n ON n.oid = e.extnamespace
+      WHERE n.nspname = 'public'
+    ) details
+    ORDER BY canonical
+  `;
+
+  return createHash("sha256")
+    .update(rows.map((row) => row.canonical).join("\n"))
+    .digest("hex");
+}
+
+async function truncatePublicTables(sql: SqlClient): Promise<void> {
+  const tables = await sql<{ table_name: string }[]>`
+    SELECT tablename AS table_name
+    FROM pg_tables
+    WHERE schemaname = 'public'
+      AND tablename <> ${fingerprintTable}
+    ORDER BY tablename
+  `;
+  if (tables.length === 0) {
+    throw new Error("Refusing to truncate a test schema with no business tables.");
+  }
+
+  await sql.unsafe(
+    `TRUNCATE TABLE ${tables.map((table) => quoteIdentifier(table.table_name)).join(", ")} RESTART IDENTITY CASCADE`,
+  );
+}
+
+async function assertConnectedDatabaseIdentity(
+  sql: SqlClient,
+  expectedDatabaseName: string,
+): Promise<void> {
+  const [identity] = await sql<{ database_name: string }[]>`
+    SELECT current_database() AS database_name
+  `;
+  if (identity?.database_name !== expectedDatabaseName) {
+    throw new Error("Refusing destructive SQL: connected database identity did not match target.");
+  }
+}
+
+async function acquireDatabaseAdvisoryLock(sql: SqlClient, databaseName: string): Promise<void> {
+  await sql`SELECT pg_advisory_lock(hashtextextended(${`${advisoryLockNamespace}:${databaseName}`}, 0))`;
+}
+
+async function releaseDatabaseAdvisoryLock(sql: SqlClient, databaseName: string): Promise<void> {
+  await sql`SELECT pg_advisory_unlock(hashtextextended(${`${advisoryLockNamespace}:${databaseName}`}, 0))`;
+}
+
+function requireTestDatabaseUrl(databaseUrl: string | undefined): string {
+  if (!databaseUrl) {
+    throw new Error("TEST_DATABASE_URL is required for destructive test database access.");
+  }
+  return databaseUrl;
 }
 
 function quoteIdentifier(identifier: string): string {
@@ -169,8 +396,7 @@ function quoteIdentifier(identifier: string): string {
 }
 
 function databaseLockId(databaseUrl: string): string {
-  const url = new URL(databaseUrl);
-  const databaseName = decodeURIComponent(url.pathname.replace(/^\/+/, ""));
+  const { databaseName } = validateDedicatedTestDatabaseUrl(databaseUrl);
   const safeName = databaseName.replace(/[^A-Za-z0-9_-]+/g, "_");
   const hash = createHash("sha256").update(databaseUrl).digest("hex").slice(0, 12);
 

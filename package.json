@@ -18,7 +18,7 @@
     "format": "biome check --write .",
     "format:check": "biome check .",
     "test": "pnpm test:unit && pnpm test:api && pnpm test:integration",
-    "test:unit": "turbo run test:unit --filter @checkout-surge/contracts --filter @checkout-surge/logger --filter mock-erp --filter worker --filter web --filter load-orchestrator",
+    "test:unit": "node --test scripts/test-environment-safety.test.mjs && turbo run test:unit --filter @checkout-surge/contracts --filter @checkout-surge/db --filter @checkout-surge/logger --filter mock-erp --filter worker --filter web --filter load-orchestrator",
     "test:integration": "turbo run test:integration --filter @checkout-surge/db --filter worker",
     "test:api": "turbo run test:api --filter api",
     "test:characterization": "pnpm build:shared && pnpm --filter web exec node ../../scripts/run-with-test-env.mjs vitest run --config vitest.config.ts test/browser-workflows.test.ts && node scripts/run-with-env.mjs node scripts/composition-characterization.mjs",
