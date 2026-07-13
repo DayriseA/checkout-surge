@@ -20,6 +20,7 @@ import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { and, eq, inArray } from "drizzle-orm";
 import type { PendingPersistenceReconciler } from "./pending-persistence-reconciler.js";
 import type { TerminalDemoRunWriter } from "./terminal-demo-run-writer.js";
+import type { TrafficCompletionEnrichmentController } from "./traffic-completion-enrichment-service.js";
 
 const apiRestartInterruptedRunReason = "api_restart_interrupted_run";
 
@@ -37,6 +38,10 @@ export class DemoRunStartupReconciliationService {
       redis: CheckoutSurgeRedis;
       logger: CheckoutSurgeLogger;
       pendingPersistenceReconciler?: Pick<PendingPersistenceReconciler, "reconcileSaleOffer">;
+      completionEnrichmentService?: Pick<
+        TrafficCompletionEnrichmentController,
+        "completePendingEnrichment"
+      >;
       terminalRunWriter: Pick<TerminalDemoRunWriter, "write">;
       now?: () => Date;
     },
@@ -129,6 +134,17 @@ export class DemoRunStartupReconciliationService {
           { err: error, runId: run.id, saleOfferId: run.saleOfferId },
           "Could not repair run sale eligibility during API startup reconciliation.",
         );
+      }
+
+      if (this.options.completionEnrichmentService) {
+        try {
+          await this.options.completionEnrichmentService.completePendingEnrichment(run.id);
+        } catch (error) {
+          this.options.logger.warn(
+            { err: error, runId: run.id, saleOfferId: run.saleOfferId },
+            "Traffic-completion enrichment remains pending after API startup repair.",
+          );
+        }
       }
 
       if (this.options.pendingPersistenceReconciler) {

@@ -42,6 +42,7 @@ import {
   RedisDashboardTrafficMetricStore,
 } from "./services/demo-run-service.js";
 import { DemoRunStartupReconciliationService } from "./services/demo-run-startup-reconciliation-service.js";
+import { TrafficCompletionEnrichmentService } from "./services/traffic-completion-enrichment-service.js";
 import {
   ErpStatusService,
   PostgresActiveErpRunReader,
@@ -81,6 +82,7 @@ export {
 export { DemoMaintenanceService } from "./services/demo-maintenance-service.js";
 export { DemoRunFinalizationService } from "./services/demo-run-finalization-service.js";
 export { DemoRunStartupReconciliationService } from "./services/demo-run-startup-reconciliation-service.js";
+export { TrafficCompletionEnrichmentService } from "./services/traffic-completion-enrichment-service.js";
 export {
   ErpStatusService,
   PostgresErpAttemptStatusReader,
@@ -207,6 +209,12 @@ export async function startApiServer(): Promise<void> {
     logger,
   });
   const businessOutcomeReader = new PostgresDashboardBusinessOutcomeReader(connection.db);
+  const trafficCompletionEnrichmentService = new TrafficCompletionEnrichmentService({
+    db: connection.db,
+    redis,
+    businessOutcomeReader,
+    logger,
+  });
   const demoRunFinalizationService = new DemoRunFinalizationService({
     db: connection.db,
     redis,
@@ -219,6 +227,7 @@ export async function startApiServer(): Promise<void> {
     redis,
     logger,
     pendingPersistenceReconciler,
+    completionEnrichmentService: trafficCompletionEnrichmentService,
     terminalRunWriter,
   });
   const demoRunService = new DemoRunService({
@@ -231,6 +240,7 @@ export async function startApiServer(): Promise<void> {
     publicRunBudgetStore: new RedisPublicRunBudgetStore(redis),
     trafficMetricStore,
     businessOutcomeReader,
+    completionEnrichmentService: trafficCompletionEnrichmentService,
     terminalRunWriter,
     finalizationService: demoRunFinalizationService,
     apiBaseUrl: config.apiBaseUrl,
@@ -344,8 +354,11 @@ export async function startApiServer(): Promise<void> {
       void demoRunService.reconcileStartingRuns().catch((error: unknown) => {
         logger.error({ err: error }, "Demo run traffic-start reconciliation failed.");
       });
-      void demoRunFinalizationService.finalizeReadyRuns().catch((error: unknown) => {
-        logger.error({ err: error }, "Demo run finalization poll failed.");
+      void (async () => {
+        await trafficCompletionEnrichmentService.reconcilePendingEnrichments();
+        await demoRunFinalizationService.finalizeReadyRuns();
+      })().catch((error: unknown) => {
+        logger.error({ err: error }, "Demo run completion lifecycle poll failed.");
       });
     }, config.demoRunFinalizationPollIntervalSeconds * 1000);
     finalizationPoller.unref();

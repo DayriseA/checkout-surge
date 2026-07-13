@@ -607,6 +607,7 @@ Logical fields:
 - `httpTimingBreakdownSummary`
 - `loadRunDiagnosticsSummary`
 - `apiRequestLifecycleSummary`
+- `completionEnrichmentStatus`
 - `trafficSummaryReceivedAt`
 - `createdAt`
 - `updatedAt`
@@ -614,7 +615,9 @@ Logical fields:
 Notes:
 
 - k6 success or failure is not the same thing as API-owned demo-run completion.
-- The first completion report inserted for a run is authoritative. Duplicate or conflicting deliveries reconstruct enrichment and finalization from that stored report instead of replacing it.
+- The first completion report inserted for a run is authoritative. It is inserted with `completionEnrichmentStatus: pending`; legacy rows default to `completed` for compatibility. Duplicate or conflicting deliveries re-drive sale closure and finalization without replacing the stored report.
+- Traffic-completion enrichment performs Redis and PostgreSQL reads outside a database transaction, then changes `pending` to `completed` with a database compare-and-set. The winning update atomically persists the API-owned nested snapshot/business outcome and matching sold-out aggregate. A completed Redis capture failure is represented by `completed` with no snapshot and is not retried into a later observation.
+- Pending enrichment is an incomplete finalization input, not a drain blocker or timeout: no terminal run transition or summary is allowed until it concludes. Startup and periodic lifecycle recovery retry pending enrichment.
 - The API acknowledges completion only after the draining transition, sale closure, outcome enrichment, reconciliation, and finalization pass are safely re-drivable.
 - Successful traffic completion moves a run into business draining; finalization waits for run-scoped business work to settle.
 - `trafficOutcomeSummary.terminalInventorySnapshot`, when present, is the strict, durable Redis observation captured during traffic-completion enrichment. Normal finalization copies that exact snapshot into Run History while independently re-reading the latest PostgreSQL business outcome; an absent snapshot remains `null` and an invalid present snapshot is treated as corrupt durable data.

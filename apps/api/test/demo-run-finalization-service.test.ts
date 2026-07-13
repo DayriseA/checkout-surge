@@ -270,8 +270,41 @@ describe("demo run finalization service", () => {
       .select()
       .from(demoRunSummaries)
       .where(eq(demoRunSummaries.runId, ids.run));
+    const [legacyFinalization] = await db
+      .select()
+      .from(demoRunFinalizations)
+      .where(eq(demoRunFinalizations.runId, ids.run));
 
     expect(summary?.terminalInventorySnapshot).toBeNull();
+    expect(legacyFinalization?.completionEnrichmentStatus).toBe("completed");
+  });
+
+  it("does not treat pending completion enrichment as a drain timeout or write a summary", async () => {
+    const db = requireConnection(connection).db;
+    const redisClient = requireRedis(redis);
+    const reconcileSaleOffer = vi.fn();
+    const service = createService(connection, redis, {
+      pendingPersistenceReconciler: { reconcileSaleOffer } as never,
+      now: () => new Date("2026-06-20T01:00:00.000Z"),
+    });
+
+    await seedDrainingRun({ db, redis: redisClient, trafficDeliveryStatus: "complete" });
+    await db
+      .update(demoRunFinalizations)
+      .set({ completionEnrichmentStatus: "pending" })
+      .where(eq(demoRunFinalizations.runId, ids.run));
+
+    await expect(service.finalizeRun(ids.run, "corr-finalize-pending")).resolves.toMatchObject({
+      status: "draining",
+    });
+    await expect(service.finalizeReadyRuns()).resolves.toBe(0);
+    const [summaryCount] = await db
+      .select({ value: count() })
+      .from(demoRunSummaries)
+      .where(eq(demoRunSummaries.runId, ids.run));
+
+    expect(summaryCount?.value).toBe(0);
+    expect(reconcileSaleOffer).not.toHaveBeenCalled();
   });
 
   it("rejects a present but invalid durable inventory snapshot", async () => {
@@ -546,6 +579,7 @@ function createService(
     terminalRunWriter?: ConstructorParameters<
       typeof DemoRunFinalizationService
     >[0]["terminalRunWriter"];
+    now?: () => Date;
   } = {},
 ): DemoRunFinalizationService {
   return new DemoRunFinalizationService({

@@ -45,6 +45,8 @@ Replace `⬜` with `✅` when a task is complete. Optional `⏳` for work in pro
 
 ✅ [Task 21: Reuse the durable terminal inventory snapshot at finalization instead of a live Redis re-read](./task_21.md)
 
+✅ [Task 21 follow-up: Make traffic-completion enrichment first-write authoritative and safe to finalize](./task_21_followup.md)
+
 ⬜ [Task 22: Enforce run–sale-offer ownership after guarded insertion](./task_22.md)
 
 ⬜ [Task 23: Validate seeded runtime policy through the shared contract (and make reruns repair bad rows)](./task_23.md)

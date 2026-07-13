@@ -24,7 +24,7 @@ import {
   readBusinessOutcomeSummary,
 } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import type { PendingPersistenceReconciler } from "./pending-persistence-reconciler.js";
 import type { TerminalDemoRunWriter } from "./terminal-demo-run-writer.js";
 
@@ -60,7 +60,13 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
     const rows = await this.options.db
       .select({ id: demoRuns.id })
       .from(demoRuns)
-      .where(inArray(demoRuns.status, ["draining"]));
+      .innerJoin(demoRunFinalizations, eq(demoRunFinalizations.runId, demoRuns.id))
+      .where(
+        and(
+          inArray(demoRuns.status, ["draining"]),
+          eq(demoRunFinalizations.completionEnrichmentStatus, "completed"),
+        ),
+      );
 
     let finalizedCount = 0;
     for (const row of rows) {
@@ -91,6 +97,14 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
     }
 
     if (row.run.status !== "draining" || !row.finalization || !row.run.saleOfferId) {
+      return toDemoRunSnapshot(row.run);
+    }
+
+    if (row.finalization.completionEnrichmentStatus === "pending") {
+      this.options.logger.debug(
+        { runId },
+        "Demo run remains draining while traffic-completion enrichment is pending.",
+      );
       return toDemoRunSnapshot(row.run);
     }
 

@@ -53,7 +53,6 @@ import {
   type CheckoutSurgeRedis,
   demoPresets,
   demoRunFinalizations,
-  demoRunReservationOutcomes,
   demoRunSaleContexts,
   demoRuns,
   getInventoryStatus,
@@ -74,6 +73,7 @@ import type {
   PublicRunBudgetStore,
 } from "./public-run-budget-store.js";
 import type { TerminalDemoRunWriter } from "./terminal-demo-run-writer.js";
+import type { TrafficCompletionEnrichmentController } from "./traffic-completion-enrichment-service.js";
 
 const demoRunStartLockKey = "checkout_surge_demo_run_start";
 const singleNonTerminalRunIndexName = "demo_runs_single_non_terminal_idx";
@@ -270,6 +270,10 @@ export class DemoRunService implements DemoRunController {
       trafficMetricStore: RedisDashboardTrafficMetricStore;
       businessOutcomeReader: DashboardBusinessOutcomeReader;
       terminalRunWriter: Pick<TerminalDemoRunWriter, "write">;
+      completionEnrichmentService: Pick<
+        TrafficCompletionEnrichmentController,
+        "completePendingEnrichment"
+      >;
       finalizationService?: DemoRunFinalizationController;
       apiBaseUrl: string;
       buyEndpointPath: string;
@@ -636,9 +640,9 @@ export class DemoRunService implements DemoRunController {
   }
 
   async recordTrafficCompletion(input: TrafficCompletionReport): Promise<DemoRunSnapshot> {
-    let report = trafficCompletionReportSchema.parse(input);
+    const report = trafficCompletionReportSchema.parse(input);
     const now = this.now();
-    let [run] = await this.options.db
+    const [run] = await this.options.db
       .select()
       .from(demoRuns)
       .where(eq(demoRuns.id, report.runId))
@@ -668,15 +672,15 @@ export class DemoRunService implements DemoRunController {
           httpTimingBreakdownSummary: report.httpTimingBreakdownSummary,
           loadRunDiagnosticsSummary: report.loadRunDiagnosticsSummary,
           apiRequestLifecycleSummary: report.apiRequestLifecycleSummary,
+          completionEnrichmentStatus: "pending",
           trafficSummaryReceivedAt: now,
           createdAt: now,
           updatedAt: now,
         })
         .onConflictDoNothing({ target: demoRunFinalizations.runId })
         .returning({ runId: demoRunFinalizations.runId });
-      let transitioned = false;
       if (inserted) {
-        const [updated] = await tx
+        await tx
           .update(demoRuns)
           .set({
             status: "draining",
@@ -688,111 +692,11 @@ export class DemoRunService implements DemoRunController {
             and(eq(demoRuns.id, report.runId), inArray(demoRuns.status, ["starting", "active"])),
           )
           .returning({ id: demoRuns.id });
-        transitioned = Boolean(updated);
       }
-      return { inserted: Boolean(inserted), transitioned };
+      return { inserted: Boolean(inserted) };
     });
 
-    if (completionClaim.transitioned || (completionClaim.inserted && run.status === "draining")) {
-      await setRunSaleEligibility(this.options.redis, {
-        runId: report.runId,
-        saleOfferId: run.saleOfferId,
-        status: "closed",
-      });
-    }
-
-    if (!completionClaim.inserted) {
-      [run] = await this.options.db
-        .select()
-        .from(demoRuns)
-        .where(eq(demoRuns.id, report.runId))
-        .limit(1);
-      if (!run) throw new Error("Traffic completion run disappeared during reconciliation.");
-      if (run.status === "draining") {
-        await setRunSaleEligibility(this.options.redis, {
-          runId: report.runId,
-          saleOfferId: requireRunSaleOfferId(toDemoRunSnapshot(run)),
-          status: "closed",
-        });
-      }
-      const [first] = await this.options.db
-        .select()
-        .from(demoRunFinalizations)
-        .where(eq(demoRunFinalizations.runId, report.runId))
-        .limit(1);
-      if (!first) throw new Error("Traffic completion claim disappeared during reconciliation.");
-      report = trafficCompletionReportSchema.parse({
-        runId: report.runId,
-        status: run.trafficStatus === "succeeded" ? "succeeded" : "failed",
-        ...(first.exitCode === null ? {} : { exitCode: first.exitCode }),
-        ...(first.errorMessage ? { errorMessage: first.errorMessage } : {}),
-        httpSummary: first.httpSummary,
-        trafficOutcomeSummary: first.trafficOutcomeSummary,
-        trafficDeliverySummary: first.trafficDeliverySummary,
-        httpTimingBreakdownSummary: first.httpTimingBreakdownSummary,
-        loadRunDiagnosticsSummary: first.loadRunDiagnosticsSummary,
-        apiRequestLifecycleSummary: first.apiRequestLifecycleSummary,
-        completedAt: (run.trafficEndedAt ?? now).toISOString(),
-        correlationId: report.correlationId,
-      });
-    }
-
-    const completionSaleOfferId = requireRunSaleOfferId(toDemoRunSnapshot(run));
-    const initialBusinessOutcome = await this.options.businessOutcomeReader.read({
-      saleOfferId: completionSaleOfferId,
-      runId: run.id,
-    });
-    const terminalInventorySnapshot = await this.captureTerminalInventorySnapshot(
-      completionSaleOfferId,
-      initialBusinessOutcome,
-      now,
-    );
-    const businessOutcome = await this.options.businessOutcomeReader.read({
-      saleOfferId: completionSaleOfferId,
-      runId: run.id,
-    });
-
-    await this.options.db.transaction(async (tx) => {
-      if (terminalInventorySnapshot) {
-        await tx
-          .insert(demoRunReservationOutcomes)
-          .values({
-            runId: report.runId,
-            outcome: "api_sold_out_decision",
-            count: terminalInventorySnapshot.soldOutRejections,
-            latestObservedAt: terminalInventorySnapshot.soldOutRejections > 0 ? now : null,
-            source: "redis",
-            capturedAt: now,
-            createdAt: now,
-          })
-          .onConflictDoUpdate({
-            target: [demoRunReservationOutcomes.runId, demoRunReservationOutcomes.outcome],
-            set: {
-              count: terminalInventorySnapshot.soldOutRejections,
-              latestObservedAt: terminalInventorySnapshot.soldOutRejections > 0 ? now : null,
-              source: "redis",
-              capturedAt: now,
-            },
-          });
-      }
-
-      await tx
-        .update(demoRunFinalizations)
-        .set({
-          trafficOutcomeSummary: {
-            ...report.trafficOutcomeSummary,
-            businessOutcomeAtTrafficCompletion: businessOutcome,
-            ...(terminalInventorySnapshot ? { terminalInventorySnapshot } : {}),
-          },
-          trafficDeliverySummary: report.trafficDeliverySummary,
-          httpTimingBreakdownSummary: report.httpTimingBreakdownSummary,
-          loadRunDiagnosticsSummary: report.loadRunDiagnosticsSummary,
-          apiRequestLifecycleSummary: report.apiRequestLifecycleSummary,
-          trafficSummaryReceivedAt: now,
-          updatedAt: now,
-        })
-        .where(eq(demoRunFinalizations.runId, report.runId));
-    });
+    await this.options.completionEnrichmentService.completePendingEnrichment(report.runId);
 
     const updatedRun = await this.readRunSnapshot(report.runId);
     if (completionClaim.inserted)

@@ -381,6 +381,64 @@ describe("database migrations, seed data, and reset behavior", () => {
     ]);
   });
 
+  it("backfills legacy traffic completions as enrichment-completed during migration", async () => {
+    const legacyRunId = "55555555-5555-4555-8555-555555555559";
+    await runSeedScript();
+    await withDatabase(async (sql) => {
+      await sql`ALTER TABLE demo_run_finalizations DROP COLUMN completion_enrichment_status`;
+      await sql`DROP TYPE traffic_completion_enrichment_status`;
+      await sql`
+        DELETE FROM drizzle.__drizzle_migrations
+        WHERE id = (SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 1)
+      `;
+      await sql`
+        INSERT INTO demo_runs (
+          id, preset_id, preset_name, operator_mode, status, traffic_status, config_snapshot
+        )
+        SELECT
+          ${legacyRunId},
+          id,
+          display ->> 'name',
+          'admin',
+          'completed',
+          'succeeded',
+          jsonb_build_object(
+            'trafficConfig', traffic_config,
+            'inventoryConfig', inventory_config,
+            'erpConfig', erp_config,
+            'backpressureConfig', backpressure_config
+          )
+        FROM demo_presets
+        WHERE slug = 'admin-smoke-steady'
+      `;
+      await sql`
+        INSERT INTO demo_run_finalizations (
+          run_id,
+          http_summary,
+          traffic_outcome_summary,
+          traffic_delivery_summary,
+          http_timing_breakdown_summary,
+          load_run_diagnostics_summary,
+          api_request_lifecycle_summary
+        ) VALUES (${legacyRunId}, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb)
+      `;
+    });
+
+    await runDatabaseMigrations({
+      databaseUrl: requireTestEnv("TEST_DATABASE_URL"),
+      migrationsFolder,
+    });
+
+    const [legacyFinalization] = await withDatabase(
+      (sql) => sql<{ completion_enrichment_status: string }[]>`
+        SELECT completion_enrichment_status
+        FROM demo_run_finalizations
+        WHERE run_id = ${legacyRunId}
+      `,
+    );
+    expect(legacyFinalization?.completion_enrichment_status).toBe("completed");
+  });
+
   it("backfills legacy breaker and retry configuration during a migrate-only upgrade", async () => {
     await runSeedScript();
     await withDatabase(async (sql) => {
@@ -430,9 +488,15 @@ describe("database migrations, seed data, and reset behavior", () => {
         WHERE slug = 'admin-smoke-steady'
       `;
       await sql`
+        ALTER TABLE demo_run_finalizations DROP COLUMN completion_enrichment_status
+      `;
+      await sql`
+        DROP TYPE traffic_completion_enrichment_status
+      `;
+      await sql`
         DELETE FROM drizzle.__drizzle_migrations
         WHERE id IN (
-          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 2
+          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 3
         )
       `;
     });

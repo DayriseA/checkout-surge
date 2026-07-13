@@ -145,13 +145,21 @@ describe("demo run startup reconciliation service", () => {
   it("keeps a draining run recoverable and reconciles its pending persistence", async () => {
     const db = requireConnection(connection).db;
     const redisClient = requireRedis(redis);
-    const reconcileSaleOffer = vi.fn(async () => ({
-      found: 0,
-      materialized: 0,
-      reconciled: 0,
-      reversed: 0,
-      failed: 0,
-    }));
+    const lifecycleOrder: string[] = [];
+    const completePendingEnrichment = vi.fn(async () => {
+      lifecycleOrder.push("enrichment");
+      return "completed" as const;
+    });
+    const reconcileSaleOffer = vi.fn(async () => {
+      lifecycleOrder.push("pending-persistence");
+      return {
+        found: 0,
+        materialized: 0,
+        reconciled: 0,
+        reversed: 0,
+        failed: 0,
+      };
+    });
     const writeTerminalRun = vi.fn(async () => true);
     const service = new DemoRunStartupReconciliationService({
       db,
@@ -159,6 +167,7 @@ describe("demo run startup reconciliation service", () => {
       redis: redisClient,
       logger: createSilentLogger("api"),
       pendingPersistenceReconciler: { reconcileSaleOffer },
+      completionEnrichmentService: { completePendingEnrichment },
       now: () => new Date("2026-06-20T00:00:10.000Z"),
     });
     await seedRunFixtures(db, redisClient, "draining");
@@ -173,6 +182,8 @@ describe("demo run startup reconciliation service", () => {
     expect(reconcileSaleOffer).toHaveBeenCalledWith(ids.drainingOffer, {
       runId: ids.drainingRun,
     });
+    expect(completePendingEnrichment).toHaveBeenCalledWith(ids.drainingRun);
+    expect(lifecycleOrder).toEqual(["enrichment", "pending-persistence"]);
   });
 });
 

@@ -43,6 +43,13 @@
       "when": 1784073600000,
       "tag": "0005_backfill_order_retry_policy",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1784160000000,
+      "tag": "0006_traffic_completion_enrichment_state",
+      "breakpoints": true
     }
   ]
 }

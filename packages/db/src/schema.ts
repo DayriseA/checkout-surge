@@ -87,6 +87,14 @@ export const demoRunTrafficStatusEnum = pgEnum(
   demoRunTrafficStatusValues,
 );
 
+export const trafficCompletionEnrichmentStatusValues = ["pending", "completed"] as const;
+export type TrafficCompletionEnrichmentStatus =
+  (typeof trafficCompletionEnrichmentStatusValues)[number];
+export const trafficCompletionEnrichmentStatusEnum = pgEnum(
+  "traffic_completion_enrichment_status",
+  trafficCompletionEnrichmentStatusValues,
+);
+
 export const reservationPendingPersistenceStatusValues = [
   "pending_reconciliation",
   "reconciled",
@@ -558,6 +566,11 @@ export const demoRunFinalizations = pgTable(
     httpTimingBreakdownSummary: jsonObject("http_timing_breakdown_summary"),
     loadRunDiagnosticsSummary: jsonObject("load_run_diagnostics_summary"),
     apiRequestLifecycleSummary: jsonObject("api_request_lifecycle_summary"),
+    completionEnrichmentStatus: trafficCompletionEnrichmentStatusEnum(
+      "completion_enrichment_status",
+    )
+      .default("completed")
+      .notNull(),
     trafficSummaryReceivedAt: timestamp("traffic_summary_received_at", { withTimezone: true }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
