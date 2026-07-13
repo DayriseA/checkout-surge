@@ -617,6 +617,7 @@ Notes:
 - The first completion report inserted for a run is authoritative. Duplicate or conflicting deliveries reconstruct enrichment and finalization from that stored report instead of replacing it.
 - The API acknowledges completion only after the draining transition, sale closure, outcome enrichment, reconciliation, and finalization pass are safely re-drivable.
 - Successful traffic completion moves a run into business draining; finalization waits for run-scoped business work to settle.
+- `trafficOutcomeSummary.terminalInventorySnapshot`, when present, is the strict, durable Redis observation captured during traffic-completion enrichment. Normal finalization copies that exact snapshot into Run History while independently re-reading the latest PostgreSQL business outcome; an absent snapshot remains `null` and an invalid present snapshot is treated as corrupt durable data.
 - `trafficDeliverySummary` can include API-enriched `trafficDeliveryStatus` values of `complete`, `warning`, `degraded`, or `failed`. Warning and degraded delivery can still produce a completed run when business invariants pass; failed traffic fidelity uses the terminal failure reason `traffic_delivery_major_shortfall` after drainable accepted work settles.
 
 ### 18. DemoRunSummary
@@ -651,7 +652,7 @@ Logical fields:
 Notes:
 
 - Run summaries are separate from live dashboard recovery state.
-- `terminalInventorySnapshot` carries the Redis-derived terminal inventory snapshot described under Inventory Ownership Projection, so completed runs stay auditable after live Redis state is reset.
+- `terminalInventorySnapshot` carries the Redis-derived terminal observation produced by the applicable terminal workflow, so completed runs stay auditable after live Redis state is reset. Normal post-traffic finalization reuses the exact durable snapshot persisted during traffic-completion enrichment; admin reset, startup reconciliation, and early-failure workflows may capture their own terminal observations.
 - Run History displays traffic delivery quality from `trafficDeliverySummary.trafficDeliveryStatus` next to the terminal run status, rather than encoding warning/degraded delivery as separate demo-run lifecycle states.
 - A terminal run should have one summary-backed history record whether it ended through normal finalization, admin recovery, traffic-start failure, or initialization failure.
 

@@ -7,6 +7,7 @@ import {
   type DemoRunSnapshot,
   demoRunSnapshotSchema,
   type TerminalInventorySnapshot,
+  terminalInventorySnapshotSchema,
   trafficDeliverySummarySchema,
   trafficHttpSummarySchema,
 } from "@checkout-surge/contracts";
@@ -14,7 +15,6 @@ import {
   type CheckoutSurgeDatabase,
   type CheckoutSurgeRedis,
   demoRunFinalizations,
-  demoRunReservationOutcomes,
   demoRuns,
   erpAttempts,
   getInventoryStatus,
@@ -24,7 +24,7 @@ import {
   readBusinessOutcomeSummary,
 } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
-import { and, eq, inArray } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import type { PendingPersistenceReconciler } from "./pending-persistence-reconciler.js";
 import type { TerminalDemoRunWriter } from "./terminal-demo-run-writer.js";
 
@@ -166,11 +166,6 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
       return toDemoRunSnapshot(row.run);
     }
 
-    const latestTerminalInventorySnapshot = await this.captureTerminalInventorySnapshot({
-      run: row.run,
-      businessOutcome: latestBusinessOutcome,
-      capturedAt: now,
-    });
     const latestTimedOut = latestBlockers.length > 0 && timedOut;
     const latestFailureReason = this.deriveFailureReason({
       run: row.run,
@@ -192,7 +187,7 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
       loadRunDiagnosticsSummary: row.finalization.loadRunDiagnosticsSummary,
       apiRequestLifecycleSummary: row.finalization.apiRequestLifecycleSummary,
       businessOutcome: latestBusinessOutcome,
-      terminalInventorySnapshot: latestTerminalInventorySnapshot,
+      terminalInventorySnapshot: decision.terminalInventorySnapshot,
       allowedCurrentStatuses: ["draining"],
     });
     const updatedRun = await this.readRun(runId);
@@ -242,11 +237,9 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
       return { ready: false, blockers, timeoutAt };
     }
 
-    const terminalInventorySnapshot = await this.captureTerminalInventorySnapshot({
-      run: input.run,
-      businessOutcome,
-      capturedAt: input.now,
-    });
+    const terminalInventorySnapshot = extractTerminalInventorySnapshot(
+      input.finalization.trafficOutcomeSummary,
+    );
     const failureReason = this.deriveFailureReason({
       run: input.run,
       finalization: input.finalization,
@@ -296,53 +289,6 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
     }
 
     return null;
-  }
-
-  private async captureTerminalInventorySnapshot(input: {
-    run: typeof demoRuns.$inferSelect;
-    businessOutcome: BusinessOutcomeSummary;
-    capturedAt: Date;
-  }): Promise<TerminalInventorySnapshot | null> {
-    const saleOfferId = requireSaleOfferId(input.run);
-
-    try {
-      const inventory = await getInventoryStatus(this.options.redis, saleOfferId, input.capturedAt);
-      return {
-        saleOfferId,
-        startingStock: inventory.allocatedStock,
-        remainingStock: inventory.remainingStock,
-        reservedStock: inventory.reservedStock,
-        acceptedReservations: input.businessOutcome.acceptedReservations,
-        soldOutRejections: await this.readSoldOutRejections(input.run.id, inventory),
-        pendingPersistenceCount: inventory.pendingPersistenceCount,
-        capturedAt: input.capturedAt.toISOString(),
-        source: "redis",
-      };
-    } catch (error) {
-      this.options.logger.warn(
-        { err: error, runId: input.run.id, saleOfferId },
-        "Could not capture terminal inventory snapshot during run finalization.",
-      );
-      return null;
-    }
-  }
-
-  private async readSoldOutRejections(
-    runId: string,
-    inventory: Awaited<ReturnType<typeof getInventoryStatus>>,
-  ): Promise<number> {
-    const [row] = await this.options.db
-      .select({ count: demoRunReservationOutcomes.count })
-      .from(demoRunReservationOutcomes)
-      .where(
-        and(
-          eq(demoRunReservationOutcomes.runId, runId),
-          eq(demoRunReservationOutcomes.outcome, "api_sold_out_decision"),
-        ),
-      )
-      .limit(1);
-
-    return row?.count ?? inventory.soldOutPressure.rejectionCount;
   }
 
   private async readRun(runId: string): Promise<DemoRunSnapshot> {
@@ -468,6 +414,22 @@ async function readRecoveryPressure(
     escalatedRetryingCount: escalatedRetryingIds.size,
     escalatedQueuedCount: escalatedQueuedIds.size,
   };
+}
+
+function extractTerminalInventorySnapshot(
+  trafficOutcomeSummary: unknown,
+): TerminalInventorySnapshot | null {
+  if (
+    typeof trafficOutcomeSummary !== "object" ||
+    trafficOutcomeSummary === null ||
+    !Object.hasOwn(trafficOutcomeSummary, "terminalInventorySnapshot")
+  ) {
+    return null;
+  }
+
+  return terminalInventorySnapshotSchema.parse(
+    (trafficOutcomeSummary as Record<string, unknown>).terminalInventorySnapshot,
+  );
 }
 
 function requireSaleOfferId(run: typeof demoRuns.$inferSelect): string {

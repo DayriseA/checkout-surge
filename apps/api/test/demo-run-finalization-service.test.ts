@@ -5,6 +5,7 @@ import type {
   AcceptedRunConfigSnapshot,
   AdminDemoResetResponse,
   BusinessOutcomeSummary,
+  TerminalInventorySnapshot,
   TrafficCompletionReport,
 } from "@checkout-surge/contracts";
 import {
@@ -54,6 +55,18 @@ const ids = {
   erpAttempt: "88888888-8888-4888-8888-888888888888",
   notification: "99999999-9999-4999-8999-999999999999",
 } as const;
+
+const durableTerminalInventorySnapshot: TerminalInventorySnapshot = {
+  saleOfferId: ids.saleOffer,
+  startingStock: 73,
+  remainingStock: 11,
+  reservedStock: 62,
+  acceptedReservations: 61,
+  soldOutRejections: 43,
+  pendingPersistenceCount: 0,
+  capturedAt: "2026-06-20T00:00:05.123Z",
+  source: "redis",
+};
 
 describe("demo run finalization service", () => {
   let connection: ReturnType<typeof createDatabaseConnection> | null = null;
@@ -161,6 +174,15 @@ describe("demo run finalization service", () => {
     });
 
     await seedDrainingRun({ db, redis: redisClient, trafficDeliveryStatus: "complete" });
+    await db
+      .update(demoRunFinalizations)
+      .set({
+        trafficOutcomeSummary: {
+          loadGeneratorOutcome: "preserved",
+          terminalInventorySnapshot: durableTerminalInventorySnapshot,
+        },
+      })
+      .where(eq(demoRunFinalizations.runId, ids.run));
     await db.insert(demoRunReservationOutcomes).values({
       runId: ids.run,
       outcome: "api_sold_out_decision",
@@ -214,20 +236,71 @@ describe("demo run finalization service", () => {
       notificationsRecorded: 1,
       pendingPersistenceCount: 0,
     });
-    expect(summaries[0]?.terminalInventorySnapshot).toMatchObject({
-      saleOfferId: ids.saleOffer,
-      soldOutRejections: 7,
-      acceptedReservations: 2,
-      source: "redis",
-    });
+    expect(summaries[0]?.terminalInventorySnapshot).toEqual(durableTerminalInventorySnapshot);
     expect(writeTerminalRun).toHaveBeenCalledOnce();
     expect(writeTerminalRun).toHaveBeenCalledWith(
       expect.objectContaining({
         terminalStatus: "completed",
+        businessOutcome: expect.objectContaining({
+          acceptedReservations: 2,
+          soldOutRejections: 7,
+        }),
+        terminalInventorySnapshot: durableTerminalInventorySnapshot,
         allowedCurrentStatuses: ["draining"],
         finalizedAt: new Date("2026-06-20T00:00:10.000Z"),
       }),
     );
+  });
+
+  it("finalizes legacy traffic outcomes without a durable inventory snapshot as null", async () => {
+    const db = requireConnection(connection).db;
+    const redisClient = requireRedis(redis);
+    const service = createService(connection, redis);
+
+    await seedDrainingRun({ db, redis: redisClient, trafficDeliveryStatus: "complete" });
+    await db
+      .update(demoRunFinalizations)
+      .set({ trafficOutcomeSummary: { loadGeneratorOutcome: "legacy" } })
+      .where(eq(demoRunFinalizations.runId, ids.run));
+
+    await expect(service.finalizeRun(ids.run, "corr-finalize-legacy")).resolves.toMatchObject({
+      status: "completed",
+    });
+    const [summary] = await db
+      .select()
+      .from(demoRunSummaries)
+      .where(eq(demoRunSummaries.runId, ids.run));
+
+    expect(summary?.terminalInventorySnapshot).toBeNull();
+  });
+
+  it("rejects a present but invalid durable inventory snapshot", async () => {
+    const db = requireConnection(connection).db;
+    const redisClient = requireRedis(redis);
+    const service = createService(connection, redis);
+
+    await seedDrainingRun({ db, redis: redisClient, trafficDeliveryStatus: "complete" });
+    await db
+      .update(demoRunFinalizations)
+      .set({
+        trafficOutcomeSummary: {
+          terminalInventorySnapshot: {
+            ...durableTerminalInventorySnapshot,
+            capturedAt: "not-an-iso-timestamp",
+          },
+        },
+      })
+      .where(eq(demoRunFinalizations.runId, ids.run));
+
+    await expect(service.finalizeRun(ids.run, "corr-finalize-invalid")).rejects.toThrow();
+    const [run] = await db.select().from(demoRuns).where(eq(demoRuns.id, ids.run));
+    const [summaryCount] = await db
+      .select({ value: count() })
+      .from(demoRunSummaries)
+      .where(eq(demoRunSummaries.runId, ids.run));
+
+    expect(run?.status).toBe("draining");
+    expect(summaryCount?.value).toBe(0);
   });
 
   it("blocks on pending reconciliation, then settles after resolution", async () => {

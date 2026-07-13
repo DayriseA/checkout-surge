@@ -43,7 +43,7 @@ Replace `⬜` with `✅` when a task is complete. Optional `⏳` for work in pro
 
 ✅ [Task 20: Harden the admin session end-to-end: rate-limited constant-time passphrase check, `Secure` cookie, CSRF posture](./task_20.md)
 
-⬜ [Task 21: Reuse the durable terminal inventory snapshot at finalization instead of a live Redis re-read](./task_21.md)
+✅ [Task 21: Reuse the durable terminal inventory snapshot at finalization instead of a live Redis re-read](./task_21.md)
 
 ⬜ [Task 22: Enforce run–sale-offer ownership after guarded insertion](./task_22.md)
 
