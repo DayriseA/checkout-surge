@@ -1,6 +1,6 @@
 # Admin Access Protection - Decisions & Rationale
 
-This document records the intended access-protection model for the deployed demo admin surface. It is scoped to preventing abuse, accidental cost spikes, and unsafe failure-mode controls while preserving the public demo value of the dashboard.
+This document records the implemented access-protection model for the deployed demo admin surface. It is scoped to preventing abuse, accidental cost spikes, and unsafe failure-mode controls while preserving the public demo value of the dashboard.
 
 ---
 
@@ -39,7 +39,7 @@ Use a lightweight server-side dashboard session/proxy model:
 1. The Next.js dashboard exposes a passphrase-based admin login.
 2. Successful login sets a signed `HttpOnly` session cookie.
 3. Browser clients call Next.js dashboard API routes for control actions.
-4. Next.js server routes proxy protected calls to the API gateway, Mock ERP, and Load Orchestrator.
+4. Next.js server routes proxy protected calls to the owning API or Mock ERP boundary. Normal demo starts go to the API, which owns the lifecycle and delegates accepted traffic execution to the Load Orchestrator.
 5. Service-to-service calls use private tokens from environment variables.
 
 The shared secret or passphrase must never be exposed through browser-readable JavaScript, `NEXT_PUBLIC_*` variables, or persisted client state. Frontend button visibility is only a usability layer; backend and service enforcement are the source of truth.
@@ -47,6 +47,8 @@ The shared secret or passphrase must never be exposed through browser-readable J
 Unsafe browser admin requests must carry an exact `Origin` matching `WEB_ORIGIN`. Admin login attempts use bounded per-client and global windows in shared Redis in production and fail closed when Redis is unavailable. Caddy overwrites the internal client-identity and attestation headers; the web service accepts that identity only when the server-only `ADMIN_EDGE_ATTESTATION_SECRET` matches. Direct or host-native requests without that trusted edge assertion share the conservative `unknown` bucket; `Forwarded` and `X-Forwarded-For` are never trusted. The in-memory limiter is restricted to non-production development/test processes and does not provide multi-instance enforcement.
 
 `WEB_ORIGIN` is a comma-separated exact allowlist of canonical HTTP or HTTPS origins. Entries with credentials, paths, queries, fragments, empty values, or mixed HTTP/HTTPS schemes are invalid. `ADMIN_SESSION_MAX_AGE_SECONDS`, `ADMIN_LOGIN_CLIENT_ATTEMPTS`, `ADMIN_LOGIN_GLOBAL_ATTEMPTS`, and `ADMIN_LOGIN_WINDOW_SECONDS` must be positive integers; only absent values receive the documented example defaults. Production additionally requires a valid `REDIS_URL` and non-placeholder `ADMIN_EDGE_ATTESTATION_SECRET`. Cookie `Secure` is derived only from the validated origin scheme: every HTTPS deployment is secure, while an intentional HTTP origin remains usable even when the production server build is exercised locally.
+
+The passphrase decision hashes both inputs to fixed length before constant-time comparison. Admin session tokens are versioned and HMAC-authenticated before their payload is decoded; cookies are `HttpOnly`, `SameSite=Strict`, path-scoped to `/`, and `Secure` on configured HTTPS origins. All unsafe `/api/admin` requests, including session creation, pass through the exact-Origin check. The shared admin proxy guard adds the service token and privileged operator assertion only after session and CSRF admission succeeds.
 
 Direct service endpoints that mutate demo state or start load must reject unauthenticated requests even if the dashboard hides the corresponding control.
 
@@ -61,6 +63,7 @@ Public mutation should be narrow:
 - Reject requests when a run is already active or draining.
 - Use a server-issued visitor identity rather than trusting browser-supplied forwarding headers.
 - Apply shared-store run-budget limiting in the API layer.
+- Reserve visitor/global budget atomically and release the exact reservation when a later synchronous start step rejects, so denied or failed starts do not burn capacity.
 - Keep public starts inside API-enforced traffic caps.
 
 Examples of acceptable public controls:
@@ -93,6 +96,8 @@ Admin operators can use the full demo surface:
 
 Admin authorization is not a substitute for safety limits. All dangerous controls must still enforce server-side caps so a typo, compromised browser session, or unexpected UI bug cannot request unbounded infrastructure work.
 
+Reset is a fenced terminal workflow, not an unordered cleanup script. It serializes reset calls, claims the terminal transition under the same PostgreSQL advisory admission lock used by accepted purchases, closes Redis eligibility, performs reset-owned queue/state cleanup, then rereads business truth and inserts the immutable summary transactionally. A closure failure prevents a successful reset response, and a claimed run missing its summary remains selectable by a later repair attempt.
+
 ---
 
 ## Configured Safety Caps
@@ -111,7 +116,7 @@ Expected cap categories:
 | Realtime/read paths | Connection limits, request rate limits, maximum snapshot page sizes. |
 | Internal ingestion | Required service token, accepted caller identity, maximum metric/run-summary payload size. |
 
-The configured limits should be documented in deployment instructions once the hosting target is chosen.
+The local defaults and environment names are documented in `docs/local_development.md`. A hosted deployment must choose deployment-specific values instead of reusing those examples.
 
 ---
 
@@ -119,6 +124,7 @@ The configured limits should be documented in deployment instructions once the h
 
 | Surface | Public read | Public mutate | Admin session | Service token | Notes |
 | :-- | :-: | :-: | :-: | :-: | :-- |
+| Admin session creation | No | No | Created on success | No | Exact trusted Origin, per-client/global login admission, and constant-time passphrase verification are required. |
 | Dashboard snapshot/status reads | Yes | No | Optional | No | Public portfolio visibility is intentional. |
 | Dashboard realtime connection | Yes | No | Optional | No | Payloads must not include secrets or unsafe control tokens. |
 | Demo reset/recovery | No | No | Yes | Yes behind proxy | Avoid anonymous state erasure and repeated expensive cleanup. Reset is recovery/local maintenance, not normal public demo preparation. |
@@ -142,13 +148,13 @@ The configured limits should be documented in deployment instructions once the h
 - Rate limits and run budgets should use an explicit shared or injected store where needed, not module-level infrastructure clients.
 - Shared request/response types and error vocabulary should live in `@checkout-surge/contracts` when they cross package boundaries.
 
-Current implementation note: The principal (runner) is derived from the validated admin session at the Next.js proxy and asserted to the API on the operator-mode header, which the API honors only alongside a valid `CONTROL_SERVICE_TOKEN`; privilege is never read from the browser request body, which carries run intent only (which preset, optional configuration). The public run budget is enforced by the API through Redis using a signed server-issued visitor id forwarded by the proxy, via a single named policy keyed on the principal (`isPublicRunBudgetEnforced`): admin starts bypass the per-visitor and global budgets while still passing environment hard caps and active/draining lifecycle rules; anything that is not an authenticated admin is enforced (fail-closed). A run records who ran it with `operatorMode`, and public run detail displays that operator. Public visitors may start only public-visible presets, and public visitor configuration is accepted only through the public custom flow under the public runtime policy. Admins may start public or admin presets with optional run-scoped configuration validated against deployment hard caps; this does not save changes back to read-only public presets. The public runtime policy is a singleton persisted API-owned policy seeded from the environment-backed default when missing; admin-protected dashboard controls can update future public budgets, defaults, and limits within deployment hard caps.
+Current implementation note: Every run start first authenticates the control-service channel. The principal (runner) is derived from the validated admin session at the Next.js proxy and asserted to the API on the operator-mode header, which the API honors only alongside a valid `CONTROL_SERVICE_TOKEN`; privilege is never read from the browser request body, which carries run intent only. Public starts also require the complete HMAC-signed server-issued visitor credential, independently verified by the API with the shared `PUBLIC_CLIENT_COOKIE_SECRET`. The cookie is issued for one year; the credential itself is a replayable bearer value and does not enforce expiry or key rotation. The public run budget is enforced by the API through a Redis reservation/release protocol keyed on the verified visitor. Admin starts bypass per-visitor/global budgets while still passing hard caps and active/draining lifecycle rules; public-mode starts fail closed. A run records `operatorMode`, and public run detail displays it. Public visitors may start only public-visible presets, and public visitor configuration is accepted only through the public custom flow under the public runtime policy. Admins may start public or admin presets with optional run-scoped configuration validated against deployment hard caps; this does not save changes back to read-only public presets. The public runtime policy is a singleton persisted API-owned policy seeded from the environment-backed default when missing; admin-protected dashboard controls can update future public budgets, defaults, and limits within deployment hard caps.
 
 Run History implementation note: Public visitors may read paginated historical run summaries at `/run-history` and public-safe details for individual runs. Authenticated admins can hard-delete individual summaries, selected visible summaries, or all summaries. The delete-all path requires the `DELETE_ALL_RUN_SUMMARIES` confirmation value in addition to the admin session and service-token proxy boundary. Demo reset does not delete historical summaries.
 
 Current preset/run implementation note: Public preset definitions are durable database rows seeded from checked-in defaults. Public presets are read-only, while admin-only presets are editable. `public-custom` is a read-only base preset used by the public UI for bounded run-scoped starts; submitted public custom values are validated by API policy and frozen into the run snapshot but never saved back to `public-custom` or `Custom`. The `Custom` preset remains a persisted admin-only scratch preset mutated only through preset management endpoints. A normal run start freezes the accepted configuration into `demo_runs.configSnapshot`, creates a generated run sale offer with isolated inventory, and uses API-enforced traffic caps for buyer count, emitted attempts, steady requests per second, duration, start delay, and optional admin steady-arrival VU controls.
 
-Target frontend route note: The public route `/` contains the visitor demo picker, bounded public custom controls, and the admin passphrase flow without navigating anonymous visitors into the dashboard shell. Public and admin starts navigate to `/watch` for current-run observation. Privileged preset editing, reset/recovery, and ERP diagnostics live behind the authenticated `/admin` surface; direct anonymous `/admin` requests render only the sign-in gate. The watch route is backed by current-run dashboard recovery and realtime events; completed arbitrary run detail remains a Run History concern.
+Current frontend route note: The public route `/` contains the visitor demo picker, bounded public custom controls, and the admin passphrase flow without navigating anonymous visitors into the dashboard shell. Public and admin starts navigate to `/watch` for current-run observation. Privileged preset editing, reset/recovery, and ERP diagnostics live behind the authenticated `/admin` surface; direct anonymous `/admin` requests render only the sign-in gate. The watch route is backed by current-run dashboard recovery and realtime events; completed arbitrary run detail remains a Run History concern.
 
 ---
 

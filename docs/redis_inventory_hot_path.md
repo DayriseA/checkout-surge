@@ -10,6 +10,8 @@ Inventory keys are scoped per sale offer:
 - `inventory:{saleOfferId}:reservations` stores reservation hold records by reservation ID.
 - `inventory:{saleOfferId}:reservation-expirations` stores reservation IDs scored by hold expiry time.
 - `inventory:{saleOfferId}:pending-persistence` stores reservation IDs that have a Redis hold but still need durable PostgreSQL reconciliation.
+- `inventory:{saleOfferId}:pending-persistence-records` stores the self-sufficient hold and idempotency context needed to reconcile those IDs without scanning Redis keys.
+- `inventory:pending-persistence-index` is a global sorted index of namespaced pending reservation IDs used in bounded batches by API startup reconciliation.
 - `inventory:{saleOfferId}:events` stores recent hot-path inventory events.
 - `inventory:{saleOfferId}:reservation-throughput` stores an exact fixed 60-slot ring of per-second successful reservation-request counts.
 - `inventory:{saleOfferId}:reservation-outcomes` stores run-scoped aggregate reservation-outcome counters, initially the `api_sold_out_decision` count and its latest-observed time, for durable sold-out accounting at finalization.
@@ -31,7 +33,7 @@ Payment authorization, customer cancel, payment timeout release, and automatic h
 
 Generated-run buy requests first pass the Redis inventory projection. The projection verifies that the supplied `runId` owns the generated `saleOfferId` and that `runSaleStatus` is `accepting`; catalog requests must omit `runId`. Missing, malformed, closed, or mismatched projections fail before PostgreSQL is touched. Lifecycle compare-and-set transitions close the projection when traffic begins draining or the run becomes terminal.
 
-The stock-decision Lua operation then reads inventory scope, run identity, and accepting/closed state directly from the inventory hash before considering idempotency or stock. Generated-run inventory fails closed when `runId` is omitted, mismatched, or no longer accepting traffic. Catalog inventory rejects requests that supply a `runId`. Redis remains the stock-decision authority; PostgreSQL lifecycle state is consulted only for run-scoped eligibility.
+The stock-decision Lua operation reads inventory scope, run identity, and accepting/closed state directly from the inventory hash before considering idempotency or stock. Generated-run inventory fails closed when `runId` is omitted, mismatched, or no longer accepting traffic. Catalog inventory rejects requests that supply a `runId`. Redis is the first persistence operation and the stock-decision authority. Only an accepted generated-run hold reaches the subsequent PostgreSQL advisory-lock boundary, where durable run/sale ownership and non-terminal status are checked before business rows commit.
 
 Run lifecycle changes update the authoritative inventory hash and the separate run-scoped eligibility payload in one Redis Lua operation. The separate payload remains a useful lifecycle/read projection, but the buy path never consults it. Because closure and reservation are both Redis Lua operations, they serialize: a reservation ordered before closure may succeed, while one ordered after closure rejects without changing counters, holds, pending-persistence state, throughput, events, or idempotency records. A late traffic-start acknowledgement is fenced by the durable lifecycle compare-and-set and does not write Redis, so it cannot reopen a closed projection.
 
@@ -43,6 +45,7 @@ The Lua operation:
 - rejects sold-out attempts without decrementing stock or storing a per-request sold-out idempotency response, incrementing only the run-scoped `api_sold_out_decision` aggregate counter;
 - decrements `remainingStock` and increments `reservedStock` atomically when stock is available;
 - records the reservation hold, expiration score, pending-persistence sentinel, and `inventory.updated` event before returning success.
+- records the companion pending-persistence recovery payload and global index member in that same atomic operation.
 
 Before its first write, the operation validates the required stock counters, their allocation invariant, and the Redis types of every collection it controls. This matters because Redis does not roll back writes performed before a Lua runtime error.
 
@@ -64,19 +67,23 @@ After Redis succeeds, the API writes:
 - the initial `orders` row in `queued` state;
 - `reservation.secured` and `order.queued` events.
 
+If concurrent requests for the same secured hold race the durable insert, recovery is deliberately narrow: only the reservation primary-key or reservation-token uniqueness boundary is eligible. After the losing transaction has rolled back, the adapter rereads through the outer database connection and returns the winner only when reservation and order identity fully match. Unrelated constraint failures or mismatched/incomplete rows stay on the real persistence-failure path instead of creating a false reconciled outcome.
+
 The initial stock decision and pending-persistence sentinel are one atomic Redis operation, so a process crash immediately after stock is secured cannot hide the hold from inventory status. After PostgreSQL commits, accepted-idempotency promotion and sentinel removal are also one atomic Redis operation.
 
 If PostgreSQL persistence fails after Redis has secured stock, the API preserves the Redis hold and returns `reservation_pending_persistence`.
 
 That response intentionally has `order: null` because no durable order row exists yet.
 
-On an eligible retry with the same idempotency key, the API reuses the original Redis hold to retry the durable reservation/order write. When that write succeeds, PostgreSQL marks the pending-persistence row `reconciled`, the API enqueues the order-processing job, promotes the Redis idempotency record to accepted, removes the Redis pending sentinel, and returns the durable accepted replay without consuming additional stock.
+On an eligible retry with the same idempotency key, the API reuses the original Redis hold to retry the durable reservation/order write. When that write succeeds, PostgreSQL marks the pending-persistence row `reconciled`, the API enqueues the order-processing job, promotes the Redis idempotency record to accepted, removes the Redis pending metadata, and returns the durable accepted replay without consuming additional stock.
+
+Admission closure intentionally prevents `/buy` from replaying a pending hold. The API-owned `PendingPersistenceReconciler` therefore runs outside the buy path during draining finalization and startup repair. It reads self-sufficient pending records without a keyspace scan, finds or creates the durable reservation/order, reasserts the deterministic queue job, marks the durable pending row reconciled, and promotes Redis. If the durable boundary definitively proves a run/sale attribution mismatch, an atomic reversal restores stock and removes the hold, expiration, idempotency, and pending metadata. Other failures remain discoverable and retryable.
 
 ## Idempotency and Retry Behavior
 
 Idempotency is scoped by `saleOfferId + idempotencyKey`.
 
-Retries for accepted or pending reservations with the same sale offer, key, and quantity replay the stored Redis hold only after the inventory scope and run state remain eligible. Accepted holds return the existing durable reservation and order. Pending holds first check for a durable buy and otherwise retry durable persistence from the original hold; they return `reservation_pending_persistence` again only while the durable write is still unavailable.
+Request retries for accepted or pending reservations with the same sale offer, key, and quantity replay the stored Redis hold only while the inventory scope and run state remain eligible. Accepted holds return the existing durable acceptance projection, always shaped as reservation `secured` plus order `queued` even if the live order has since advanced. Pending holds first check for a durable buy and otherwise retry durable persistence from the original hold; they return `reservation_pending_persistence` again only while the durable write is still unavailable. After closure, only the autonomous reconciler may converge an existing pending hold, and it does not admit a new purchase.
 
 Retries with the same sale offer and key but a different quantity are rejected with `idempotency_conflict`.
 
@@ -114,6 +121,6 @@ Pending persistence is not hidden:
 - Redis tracks the reservation in `pending-persistence`;
 - inventory status exposes pending count and oldest pending age.
 
-The service may idempotently ensure the marker again after a PostgreSQL failure. If that ensure reports an error, the API still returns the explicit pending response because the original atomic stock decision already created the sentinel. PostgreSQL persistence, marker-ensure, and accepted-promotion failures are reported through structured logs with correlation and reservation context. A pending retry that can reach PostgreSQL reconciles the original hold into durable rows, marks the pending record reconciled, enqueues the order, promotes the Redis outcome, and removes the sentinel. A promotion failure after PostgreSQL commits still returns truthful `reservation_secured`; the sentinel remains visible until an idempotent retry finds the durable rows, promotes the Redis outcome, and removes the sentinel.
+The service may idempotently ensure the marker again after a PostgreSQL failure. If that ensure reports an error, the API still returns the explicit pending response because the original atomic stock decision already created the sentinel and recovery record. PostgreSQL persistence, marker-ensure, enqueue, and accepted-promotion failures are reported through structured logs with correlation and reservation context. A request retry or autonomous lifecycle reconciliation can converge the original hold into durable rows, mark the pending record reconciled, reassert the deterministic order job, promote the Redis outcome, and remove pending metadata. A promotion failure after PostgreSQL commits still returns truthful `reservation_secured`; the sentinel remains visible until the next reconciliation finds the durable rows and repairs Redis.
 
 This keeps the user-facing behavior realistic while making reconciliation work visible to operators.

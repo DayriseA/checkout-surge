@@ -2,7 +2,7 @@
 
 This document defines the shared language that every service, contract, and UI surface in Checkout-Surge should use.
 
-The goal is to establish one canonical vocabulary before shared contracts, persistence models, and observability work become distributed across multiple apps and packages.
+The goal is to preserve one canonical vocabulary across the implemented shared contracts, persistence models, observability paths, and UI surfaces.
 
 ---
 
@@ -148,7 +148,8 @@ Queue names follow these rules:
 - Use plural domain names by default.
 - The first canonical queue is `orders:process`.
 - When an infrastructure adapter cannot use the semantic name directly, define an explicit physical name beside the semantic constant. The order-processing BullMQ queue uses `orders-process`, while contracts and dashboard metrics continue to expose `orders:process`.
-- Dead-letter naming is deferred until failure-routing behavior is implemented.
+- The notification-recording queue uses semantic `notifications:record`, physical `notifications-record`, and job name `notification.record`.
+- Poison order jobs are persisted in the `order_dead_letters` audit table. There is no separate dead-letter BullMQ queue in the current implementation.
 
 ---
 
@@ -180,6 +181,6 @@ Dashboard traffic metrics also use:
 This document establishes a single shared vocabulary for the repository:
 
 - keep reservation and order semantics distinct,
-- standardize lifecycle names before contracts and schemas are implemented,
+- keep lifecycle names aligned across contracts and schemas,
 - use consistent naming for events, queues, metrics, timestamps, correlation IDs, and error payloads,
 - preserve a short semantic reference that later work can build on without redefining core terms.

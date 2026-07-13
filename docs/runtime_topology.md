@@ -34,13 +34,15 @@ The full local reference runtime includes:
 
 - `apps/web` dashboard with public demo, live watch, admin console, and run history routes
 - `apps/api` API gateway and SSE fan-out owner
-- `apps/worker` order-processing and notification workers
+- `apps/worker` order-processing and notification workers plus autonomous dispatch, ERP-result, and notification recovery scanners
 - `apps/mock-erp` simulated downstream ERP
 - `apps/load-orchestrator` k6 wrapper and metric streamer
 - PostgreSQL
 - Redis
 
 The load orchestrator is part of the demonstrated system. The reference runtime must therefore run it in its own container with k6 installed inside that runtime image.
+
+Its one-execution journal is mounted on the named `checkout-surge-load-orchestrator-data` volume. Container restarts therefore preserve accepted, executing, or completed traffic evidence and pending API completion delivery; `runtime:wipe` removes that volume together with the database and Redis volumes.
 
 ---
 
@@ -58,6 +60,8 @@ Expected command contract:
 - `pnpm health:check` verifies full demo readiness, including the dashboard and backend service readiness.
 
 `runtime:up` should not automatically run migrations or seed demo data.
+
+The reference containers run with `NODE_ENV=production`. Before startup, `.env` must provide private values for the control token, admin passphrase/session secret, public visitor-cookie secret, and Caddy-to-web edge attestation secret described in `docs/local_development.md`; blank example values intentionally fail startup validation.
 
 ### Host-Native Convenience Runtime
 
@@ -144,7 +148,7 @@ The containerized runtime should override internal service-to-service URLs in co
 - API, mock ERP, and load orchestrator service-to-service calls should use their Compose service names.
 - API realtime CORS should allow the dashboard proxy origin, `http://localhost:8080`.
 
-Browser-facing dashboard traffic should not depend on `NEXT_PUBLIC_*` backend service URLs. The browser uses the public dashboard origin, while `apps/web` uses server-side `API_BASE_URL`, `MOCK_ERP_BASE_URL`, and `LOAD_ORCHESTRATOR_BASE_URL` values for internal calls.
+Browser-facing dashboard traffic should not depend on `NEXT_PUBLIC_*` backend service URLs. The browser uses the public dashboard origin. `apps/web` uses server-side `API_BASE_URL` and `MOCK_ERP_BASE_URL`; `apps/api` uses server-side `LOAD_ORCHESTRATOR_BASE_URL` for accepted traffic execution.
 
 The browser EventSource endpoint defaults to same-origin `/dashboard/events`, which Caddy routes directly to `apps/api`. `NEXT_PUBLIC_DASHBOARD_EVENTS_URL` is reserved for intentional direct-web debug sessions that bypass the dashboard proxy; when set, it must be the full browser-reachable SSE endpoint, not a general API base URL.
 

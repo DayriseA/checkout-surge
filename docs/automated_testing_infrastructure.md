@@ -1,6 +1,6 @@
 # Automated Testing Infrastructure - Decisions & Rationale
 
-This document records the target testing foundation for Checkout-Surge. It is a repository-wide working agreement to implement, not a feature of one service.
+This document records the implemented testing foundation for Checkout-Surge. It is a repository-wide working agreement, not a feature of one service.
 
 The goal is to make tests reliable across host-native development, local Dev Containers, GitHub Codespaces, and later CI. Tests must never depend on normal development data or leave shared infrastructure in an unknown state.
 
@@ -11,7 +11,7 @@ The goal is to make tests reliable across host-native development, local Dev Con
 | Decision | Choice | Rationale |
 | :-- | :-- | :-- |
 | Baseline TypeScript test runner | Vitest | Fits the TypeScript monorepo, supports fast unit tests, integration tests, coverage, and watch mode without heavy configuration. |
-| Test taxonomy | Separate unit, integration, API/service, and later end-to-end/benchmark-adjacent tests | Keeps fast feedback fast while making external-service tests explicit. |
+| Test taxonomy | Separate unit, integration, API/service, browser-workflow, and opt-in deployed-topology characterization tests | Keeps fast feedback fast while making external-service and expensive cross-service tests explicit. |
 | Test infrastructure isolation | Dedicated PostgreSQL and Redis test services | Prevents tests from mutating normal development data and makes destructive reset operations safe. |
 | Test compose strategy | Add `docker-compose.test.yml` instead of overloading the baseline compose file | Keeps local development infrastructure simple while giving tests their own ports, names, and lifecycle. |
 | Test database | Per-package databases derived from `checkout_surge_test` (e.g. `checkout_surge_test_api`, `_worker`, `_db`) | Makes the database purpose obvious, avoids accidental use of the development database, and lets packages run integration/API suites concurrently. `scripts/run-with-test-env.mjs` derives the name from the package at its working directory; missing databases are created on demand by `resetTestDatabase`. |
@@ -48,10 +48,14 @@ The goal is to make tests reliable across host-native development, local Dev Con
 - Use test PostgreSQL and test Redis dependencies, not module-level production clients.
 - Should validate response codes, response shapes, persistence side effects, and error behavior.
 
-### Later End-to-End and Benchmark-Adjacent Tests
+### Browser Workflow and Deployed-Topology Characterization
 
-- End-to-end smoke tests may start multiple services once the worker, mock ERP, real-time transport, and dashboard are mature enough.
-- k6 scenarios are performance and benchmark artifacts, not correctness tests. They complement automated tests but do not replace them.
+- Focused browser-workflow tests exercise recovery behavior with controlled backend boundaries.
+- `pnpm test:composition` starts an isolated deployed API, worker, mock ERP, load orchestrator, web app, dashboard proxy, PostgreSQL, and Redis topology. It covers wiring, SSE reconnect, sold-out and duplicate behavior, worker/ERP/notification handoffs, finalization/history, and the representative 10,000-buyer scenario.
+- `pnpm test:characterization` runs the focused browser workflow followed by the same deployed topology.
+- Composition state uses a unique Compose project and disposable volumes and is removed by default. `COMPOSITION_KEEP_RUNTIME=true` retains a failed runtime for inspection.
+- These suites are intentionally excluded from `pnpm test` because they are slow and require a functioning Docker daemon. Repository agents must not run them unless explicitly requested.
+- k6 characterization complements correctness tests; it does not replace focused boundary coverage.
 
 ---
 
@@ -68,6 +72,8 @@ The repository must provide root scripts with stable names:
 - `pnpm test:infra:down` stops dedicated test services.
 - `pnpm test:infra:reset` resets only the dedicated test database and Redis instance.
 - `pnpm test:db:migrate` rehearses the real incremental `drizzle-kit` migration path (the one deployment uses) against the db package's isolated test database, creating it on demand. Useful when authoring a new migration; not required before running tests, which provision and migrate their databases automatically.
+- `pnpm test:composition` runs the slow isolated deployed-topology characterization.
+- `pnpm test:characterization` runs focused browser recovery coverage and then the deployed-topology characterization.
 
 Package and app-level scripts should use the same names where applicable so Turbo can orchestrate them predictably.
 
@@ -77,7 +83,7 @@ Package and app-level scripts should use the same names where applicable so Turb
 
 The test infrastructure should be separate from the normal development infrastructure.
 
-Target `docker-compose.test.yml` shape:
+Current `docker-compose.test.yml` shape:
 
 - `postgres-test`
   - image aligned with the development PostgreSQL version
@@ -177,7 +183,7 @@ For the API gateway, `buildApiServer()` should follow this pattern by accepting 
 ### Local Dev Container
 
 - Docker-in-Docker is available through the seed Dev Container setup.
-- The Dev Container should forward test ports `56432` and `6380` once the test services are added.
+- The Dev Container forwards test ports `56432` and `6380` for the dedicated services.
 - The same root pnpm commands should work inside the container.
 - Named `node_modules` volumes remain the dependency isolation strategy.
 
@@ -204,7 +210,7 @@ Expected future CI behavior:
 
 ## Summary
 
-The repository's testing foundation must provide:
+The repository's testing foundation provides:
 
 - Vitest as the baseline TypeScript test runner,
 - separate test commands for unit, integration, and API tests,
@@ -212,4 +218,5 @@ The repository's testing foundation must provide:
 - `.env.test.example` and explicit test URLs,
 - deterministic DB and Redis reset rules,
 - Dev Container and Codespaces port/config support,
-- service app factories and dependency injection for clean integration tests.
+- service app factories and dependency injection for clean integration tests,
+- opt-in browser and deployed-topology characterization without slowing the default suite.

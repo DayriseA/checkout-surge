@@ -4,9 +4,9 @@ This guide covers the day-to-day setup for running Checkout-Surge locally. The d
 
 ## Prerequisites
 
-- Node.js with Corepack/pnpm
+- Node.js 22 or newer with Corepack/pnpm 10 or newer
 - Docker with Docker Compose
-- Caddy for the host-native dashboard proxy
+- Caddy only for the host-native single-origin dashboard proxy workflow
 - k6 CLI only for the alternate host-native load-orchestrator workflow
 
 The reference local runtime runs the load orchestrator in its own container with k6 installed inside that image. Host-native load runs still work as a focused development convenience, but that alternate path requires a local k6 binary.
@@ -22,6 +22,16 @@ cp .env.example .env
 Local `dev`, database migration, and seed commands should load `.env` automatically through `scripts/run-with-env.mjs`, so the setup works from Bash, PowerShell, cmd, Git Bash, and WSL. Real shell environment variables take precedence over file values. Optional `.env.local` files override `.env`, and app-specific `.env` / `.env.local` files can override root values for that service.
 
 The root `.env.example` contains host-native shared infrastructure URLs and control secrets. Per-app `.env.example` files document service-specific defaults and optional knobs.
+
+The checked-in secret values are intentionally blank. Before `pnpm runtime:up`, set private, distinct values for:
+
+- `CONTROL_SERVICE_TOKEN`
+- `ADMIN_DASHBOARD_PASSPHRASE`
+- `ADMIN_SESSION_SECRET`
+- `PUBLIC_CLIENT_COOKIE_SECRET`
+- `ADMIN_EDGE_ATTESTATION_SECRET`
+
+The reference Compose services run with `NODE_ENV=production`; they reject blank, weak, or known-placeholder trust secrets. `PUBLIC_CLIENT_COOKIE_SECRET` must be at least 16 bytes and is shared only by the web issuer and API verifier. `ADMIN_EDGE_ATTESTATION_SECRET` authenticates Caddy's normalized client identity to the web service and is also required by the production-mode local reference runtime.
 
 ## Runtime Modes
 
@@ -366,39 +376,52 @@ Web DOM component tests run in the unit-test lane with jsdom and React Testing L
 
 ## Configuration Reference
 
-Most infrastructure URLs have local defaults, but service-to-service control endpoints require `CONTROL_SERVICE_TOKEN`, and the dashboard admin session requires `ADMIN_DASHBOARD_PASSPHRASE` and `ADMIN_SESSION_SECRET`. Signing anonymous public visitor cookies requires a dedicated `PUBLIC_CLIENT_COOKIE_SECRET`, kept distinct from `ADMIN_SESSION_SECRET`. Runtime services validate environment values on startup and fail fast when required values are missing or malformed.
+Most infrastructure URLs have local defaults, but every run/control service channel requires `CONTROL_SERVICE_TOKEN`, and the dashboard admin session requires `ADMIN_DASHBOARD_PASSPHRASE` and `ADMIN_SESSION_SECRET`. Signing anonymous public visitor cookies requires a dedicated `PUBLIC_CLIENT_COOKIE_SECRET`, kept distinct from `ADMIN_SESSION_SECRET`; the API independently verifies the complete signed credential before trusting public mode or reserving a budget. The visitor cookie is issued for one year, but the signed credential itself has no enforced expiry or secret-rotation support. Runtime services validate environment values on startup and fail fast when required values are missing or malformed.
 
 | Variable | Default / Example | Used by |
 | :-- | :-- | :-- |
-| `DATABASE_URL` | `postgresql://postgres:postgres@localhost:5432/checkout_surge` | API, worker, db package |
-| `REDIS_URL` | `redis://localhost:6379` | API, worker, db package |
+| `NODE_ENV` | `development` host-native; `production` in reference Compose; `test` in test commands | Runtime mode and strict production-only security/storage requirements |
+| `DATABASE_URL` | `postgresql://postgres:postgres@localhost:5432/checkout_surge` | API, worker, Mock ERP durable result ledger, db package |
+| `REDIS_URL` | `redis://localhost:6379` | API, worker, web production login limiter, db package |
 | `CONTROL_SERVICE_TOKEN` | Required; generate a private deployment-specific value | API, web, mock ERP, load orchestrator |
 | `ADMIN_DASHBOARD_PASSPHRASE` | Required; generate a private admin passphrase | Web admin session |
 | `ADMIN_SESSION_SECRET` | Required; generate a private HMAC secret distinct from `PUBLIC_CLIENT_COOKIE_SECRET` | Web admin session cookies |
 | `ADMIN_SESSION_MAX_AGE_SECONDS` | `28800` | Web admin session cookie lifetime |
+| `ADMIN_LOGIN_CLIENT_ATTEMPTS` | `5` per window | Web admin login per-client token bucket |
+| `ADMIN_LOGIN_GLOBAL_ATTEMPTS` | `20` per window | Web admin login global token bucket |
+| `ADMIN_LOGIN_WINDOW_SECONDS` | `60` | Web admin login refill/window duration |
+| `ADMIN_EDGE_ATTESTATION_SECRET` | Required in production/reference Compose; generate a private value | Caddy-to-web attestation for normalized login source identity |
 | `PUBLIC_CLIENT_COOKIE_SECRET` | Required; generate a private HMAC secret distinct from `ADMIN_SESSION_SECRET` | Web issuance and API verification of anonymous public visitor credentials |
 | `API_BASE_URL` | `http://localhost:4000` | Web, load orchestrator |
 | `NEXT_PUBLIC_DASHBOARD_EVENTS_URL` | unset | Optional browser EventSource endpoint override for direct-web debugging only; normal runtime uses same-origin `/dashboard/events` |
 | `MOCK_ERP_BASE_URL` | `http://localhost:4100` | Web, worker |
-| `LOAD_ORCHESTRATOR_BASE_URL` | `http://localhost:4200` | Web |
+| `LOAD_ORCHESTRATOR_BASE_URL` | `http://localhost:4200` | API traffic-execution gateway |
 | `WORKER_HEALTH_BASE_URL` | `http://localhost:4300` | Web/local tooling |
 | `WEB_BASE_URL` | `http://localhost:8080` | Local tooling (`health:check`, `runtime:smoke`) dashboard reachability checks |
 | `PORT` | service-specific | Web `3000`, API `4000`, mock ERP `4100`, load orchestrator `4200` |
 | `HOST` | `0.0.0.0` | API, mock ERP, load orchestrator |
-| `WEB_ORIGIN` | `http://localhost:8080` | Public dashboard origins allowed by API realtime CORS and optional direct service debug CORS; comma-separated when set. In Codespaces, use the forwarded `8080` dashboard-proxy URL. |
+| `HEALTH_HOST` | `0.0.0.0` (falls back to `HOST`) | Worker health server bind address |
+| `WEB_ORIGIN` | `http://localhost:8080` | Exact web admin Origin/cookie policy and API realtime/direct-debug CORS allowlist; comma-separated when set. In Codespaces, use the forwarded `8080` dashboard-proxy URL. |
 | `RESERVATION_HOLD_MINUTES` | `15` | API reservation flow |
 | `IDEMPOTENCY_TTL_SECONDS` | `1800` | API reservation flow |
 | `PENDING_PERSISTENCE_RETRY_AFTER_SECONDS` | `30` | API reservation flow |
-| `ORDER_PROCESS_MAX_ATTEMPTS` | `4` | API queue handoff retry budget for order-processing jobs |
-| `ORDER_PROCESS_BACKOFF_BASE_MS` | `500` | API queue handoff exponential-backoff base delay for order-processing jobs |
+| `ORDER_PROCESS_MAX_ATTEMPTS` | `4` | API default/backfill for the frozen order-job retry budget |
+| `ORDER_PROCESS_BACKOFF_BASE_MS` | `500` | API default/backfill for frozen exponential retry backoff |
 | `API_LISTEN_BACKLOG` | `8192` | API listener accept backlog for one-second public spike validation |
 | `API_POSTGRES_POOL_MAX` | `10` | API PostgreSQL connection pool maximum |
 | `WORKER_POSTGRES_POOL_MAX` | `10` | Worker PostgreSQL connection pool maximum |
 | `HEALTH_PORT` | `4300` | Worker health server |
 | `ERP_REQUEST_TIMEOUT_MS` | `2000` | Worker ERP client default; run snapshots can supply the active demonstration policy |
-| `ERP_CIRCUIT_FAILURE_THRESHOLD` | `5` | Worker circuit breaker |
-| `ERP_CIRCUIT_RESET_TIMEOUT_MS` | `10000` | Worker circuit breaker |
+| `ERP_CIRCUIT_FAILURE_THRESHOLD` | `5` | Worker catalog/missing-snapshot circuit-breaker fallback and seed default |
+| `ERP_CIRCUIT_RESET_TIMEOUT_MS` | `10000` | Worker catalog/missing-snapshot circuit-breaker fallback and seed default |
 | `ORDER_PROCESS_CONCURRENCY` | `10` | Aggregate worker queue-scanning ceiling; must be at least the shared accepted-run hard cap of 10. Per-run snapshots independently limit admitted handlers. |
+| `NOTIFICATION_RECORD_CONCURRENCY` | `5` | Worker notification-record consumer concurrency |
+| `NOTIFICATION_RECOVERY_SCAN_INTERVAL_MS` / `NOTIFICATION_RECOVERY_BATCH_SIZE` | `1000` / `100` | Worker scan cadence and batch for confirmed orders missing notification records |
+| `ORDER_DISPATCH_SCAN_INTERVAL_MS` / `ORDER_DISPATCH_BATCH_SIZE` | `1000` / `100` | Worker scan cadence and batch for committed queued orders whose immediate enqueue may have been lost |
+| `ORDER_DISPATCH_MINIMUM_QUEUED_AGE_MS` | `1000` | Minimum queued age before dispatch recovery reasserts a deterministic job; `0` is allowed |
+| `ORDER_RECOVERY_SCAN_INTERVAL_MS` / `ORDER_RECOVERY_BATCH_SIZE` | `1000` / `100` | Worker durable ERP/order-recovery scan cadence and batch |
+| `ORDER_RECOVERY_LEASE_MS` | `30000` | Worker recovery claim lease; must exceed normal ERP and handoff latency |
+| `ORDER_RECOVERY_MAX_ATTEMPTS` | `100` | Worker recovery-attempt ceiling before escalation |
 | `LATENCY_MS` | `0` | Mock ERP global fallback/diagnostic chaos behavior when no run-scoped ERP behavior is supplied |
 | `MAX_TPS` | `100` | Mock ERP global fallback/diagnostic chaos behavior |
 | `ERROR_RATE` | `0` | Mock ERP global fallback/diagnostic chaos behavior, from `0` to `1` |
@@ -438,8 +461,11 @@ Most infrastructure URLs have local defaults, but service-to-service control end
 | `PUBLIC_CUSTOM_MAX_ERP_MAX_TPS` | `100` | API public custom maximum for run-scoped ERP TPS cap |
 | `PUBLIC_CUSTOM_MAX_ERP_ERROR_RATE` | `0.25` | API public custom cap for run-scoped ERP error rate |
 | `K6_BINARY` | `k6` host-native; `/usr/local/bin/k6` in compose | Load orchestrator |
+| `LOAD_ORCHESTRATOR_STATE_DIR` | `.checkout-surge/load-orchestrator` host-native; named-volume path in Compose | Durable single-slot traffic execution journal |
 | `BUY_ENDPOINT_PATH` | `/buy` | Load orchestrator |
 | `LOG_LEVEL` | `info` | Shared logger |
+
+The notification and durable order-recovery variables above are read by the host-native worker and documented in `apps/worker/.env.example`. The current reference Compose file does not forward overrides for `NOTIFICATION_RECORD_CONCURRENCY`, `NOTIFICATION_RECOVERY_*`, or `ORDER_RECOVERY_*`, so its worker uses the built-in values shown in this table. Compose does forward the `ORDER_DISPATCH_*`, aggregate order concurrency, ERP fallback, and pool-size settings.
 
 Dashboard SSE and recovery admission rejections advise a 10-second retry through `Retry-After`. Recovery requests proxied by Next carry the existing HMAC-verified public visitor credential; direct/debug requests fall back to the trusted network source. Arbitrary visitor headers and direct `X-Forwarded-For` values are not trusted. Redis limiter failures reject recovery reads rather than exposing dependency capacity.
 

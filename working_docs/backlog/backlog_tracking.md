@@ -39,9 +39,9 @@ Replace `⬜` with `✅` when a task is complete. Optional `⏳` for work in pro
 
 ✅ [Task 18: Restore the public run-start trust boundary: service-token channel, verifiable visitor identity, non-burning budgets](./task_18.md)
 
-⬜ [Task 19: Add resource limits to public dashboard reads and SSE connections](./task_19.md)
+✅ [Task 19: Add resource limits to public dashboard reads and SSE connections](./task_19.md)
 
-⬜ [Task 20: Harden the admin session end-to-end: rate-limited constant-time passphrase check, `Secure` cookie, CSRF posture](./task_20.md)
+✅ [Task 20: Harden the admin session end-to-end: rate-limited constant-time passphrase check, `Secure` cookie, CSRF posture](./task_20.md)
 
 ⬜ [Task 21: Reuse the durable terminal inventory snapshot at finalization instead of a live Redis re-read](./task_21.md)
 
