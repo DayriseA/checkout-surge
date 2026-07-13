@@ -39,6 +39,18 @@ export function runSaleEligibilityKey(runId: string): string {
   return `demo-run:${runId}:sale-eligibility`;
 }
 
+/** Removes all persistent Redis state owned by one generated run. */
+export async function deleteGeneratedRunRedisState(
+  redis: CheckoutSurgeRedis,
+  input: { runId: string; saleOfferId: string },
+): Promise<void> {
+  const runId = uuidSchema.parse(input.runId);
+  const saleOfferId = uuidSchema.parse(input.saleOfferId);
+
+  await deleteInventoryNamespace(redis, inventoryKeys(saleOfferId).prefix);
+  await redis.unlink(runSaleEligibilityKey(runId));
+}
+
 export async function setRunSaleEligibility(
   redis: CheckoutSurgeRedis,
   eligibility: RunSaleEligibility,

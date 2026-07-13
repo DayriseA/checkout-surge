@@ -16,25 +16,21 @@ import {
 import {
   type CheckoutSurgeDatabase,
   type CheckoutSurgeRedis,
+  deleteGeneratedRunDurable,
+  deleteGeneratedRunRedisState,
   demoRunFinalizations,
   demoRunReservationOutcomes,
   demoRunSaleContexts,
   demoRunSummaries,
   demoRuns,
-  erpAttempts,
   getInventoryStatus,
   InventoryNotInitializedError,
-  orderEvents,
-  orders,
   readBusinessOutcomeSummary,
-  reservationPendingPersistence,
-  reservations,
   saleOffers,
   setRunSaleEligibility,
-  simulatedNotifications,
 } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
-import { and, desc, eq, inArray, isNull, lt, notInArray, or } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, lt, notInArray, or } from "drizzle-orm";
 import type {
   TerminalDemoRunSummaryInput,
   TerminalDemoRunWriter,
@@ -71,6 +67,8 @@ export class DemoMaintenanceService {
         "claimTerminalRun" | "writeAfterTerminalClaims"
       >;
       logger: CheckoutSurgeLogger;
+      deleteGeneratedRunDurable?: typeof deleteGeneratedRunDurable;
+      deleteGeneratedRunRedisState?: typeof deleteGeneratedRunRedisState;
       clearErpCircuitBreakerState?: () => Promise<void>;
       now?: () => Date;
     },
@@ -275,65 +273,54 @@ export class DemoMaintenanceService {
       ...(latestRunIds.length > 0 ? [notInArray(demoRuns.id, latestRunIds)] : []),
       ...(activeRunIds.length > 0 ? [notInArray(demoRuns.id, activeRunIds)] : []),
     ];
-    const deletableRuns = await this.options.db
-      .select({ id: demoRuns.id, saleOfferId: demoRuns.saleOfferId })
+    const generatedRunCandidates = await this.options.db
+      .select({ runId: demoRuns.id, saleOfferId: demoRunSaleContexts.saleOfferId })
       .from(demoRuns)
-      .where(and(...filters));
-    const runIds = deletableRuns.map((run) => run.id);
+      .innerJoin(
+        demoRunSaleContexts,
+        and(
+          eq(demoRunSaleContexts.runId, demoRuns.id),
+          eq(demoRunSaleContexts.saleOfferId, demoRuns.saleOfferId),
+        ),
+      )
+      .innerJoin(saleOffers, eq(saleOffers.id, demoRunSaleContexts.saleOfferId))
+      .where(and(...filters, eq(saleOffers.purpose, "generated_run")))
+      .orderBy(asc(demoRuns.createdAt));
 
+    let deletedRunCount = 0;
     let deletedSaleOfferCount = 0;
-    if (runIds.length > 0) {
-      deletedSaleOfferCount = await this.options.db.transaction(async (tx) => {
-        const generatedSaleOfferRows = await tx
-          .select({ id: saleOffers.id })
-          .from(demoRuns)
-          .innerJoin(
-            demoRunSaleContexts,
-            and(
-              eq(demoRunSaleContexts.runId, demoRuns.id),
-              eq(demoRunSaleContexts.saleOfferId, demoRuns.saleOfferId),
-            ),
-          )
-          .innerJoin(saleOffers, eq(saleOffers.id, demoRunSaleContexts.saleOfferId))
-          .where(and(inArray(demoRuns.id, runIds), eq(saleOffers.purpose, "generated_run")));
-        const generatedSaleOfferIds = generatedSaleOfferRows.map((row) => row.id);
+    for (const candidate of generatedRunCandidates) {
+      const result = await (this.options.deleteGeneratedRunDurable ?? deleteGeneratedRunDurable)(
+        this.options.db,
+        candidate,
+      );
+      deletedRunCount += result.deletedRunCount;
+      deletedSaleOfferCount += result.deletedSaleOfferCount;
 
-        await tx
-          .delete(simulatedNotifications)
-          .where(inArray(simulatedNotifications.runId, runIds));
-        await tx.delete(erpAttempts).where(inArray(erpAttempts.runId, runIds));
-        await tx.delete(orderEvents).where(inArray(orderEvents.runId, runIds));
-        await tx.delete(orders).where(inArray(orders.runId, runIds));
-        await tx.delete(reservations).where(inArray(reservations.runId, runIds));
-        await tx
-          .delete(reservationPendingPersistence)
-          .where(inArray(reservationPendingPersistence.runId, runIds));
-        await tx
-          .delete(demoRunReservationOutcomes)
-          .where(inArray(demoRunReservationOutcomes.runId, runIds));
-        await tx.delete(demoRunFinalizations).where(inArray(demoRunFinalizations.runId, runIds));
-        await tx.delete(demoRunSummaries).where(inArray(demoRunSummaries.runId, runIds));
-        await tx.delete(demoRunSaleContexts).where(inArray(demoRunSaleContexts.runId, runIds));
-        await tx.delete(demoRuns).where(inArray(demoRuns.id, runIds));
-        if (generatedSaleOfferIds.length === 0) {
-          return 0;
-        }
-        const deletedSaleOffers = await tx
-          .delete(saleOffers)
-          .where(
-            and(
-              inArray(saleOffers.id, generatedSaleOfferIds),
-              eq(saleOffers.purpose, "generated_run"),
-            ),
-          )
-          .returning({ id: saleOffers.id });
+      if (result.deletedRunCount === 0) {
+        continue;
+      }
 
-        return deletedSaleOffers.length;
-      });
+      try {
+        await (this.options.deleteGeneratedRunRedisState ?? deleteGeneratedRunRedisState)(
+          this.options.redis,
+          candidate,
+        );
+      } catch (error) {
+        this.options.logger.warn(
+          {
+            err: error,
+            runId: candidate.runId,
+            saleOfferId: candidate.saleOfferId,
+            correlationId: input.correlationId,
+          },
+          "Could not remove generated-run Redis state after durable cleanup.",
+        );
+      }
     }
 
     return adminMaintenanceCleanupRunsResponseSchema.parse({
-      deletedRunCount: runIds.length,
+      deletedRunCount,
       deletedSaleOfferCount,
       preservedLatestCount: latestRunIds.length,
       preservedActiveRunCount: activeRunIds.length,

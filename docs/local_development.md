@@ -277,7 +277,7 @@ The worker-facing Mock ERP confirmation contract is `POST http://localhost:4100/
 | `pnpm runtime:reset` | Reset the running demo through the API and Mock ERP admin reset endpoints for recovery/local maintenance |
 | `pnpm runtime:smoke` | Check compose service health, Compose-network service readiness, dashboard proxy reachability, a same-origin dashboard read, SSE reachability through `/dashboard/events`, and k6 execution inside the load-orchestrator container |
 | `pnpm runtime:smoke:load` | Reset demo data through the API, run a small dashboard-triggered load smoke check through the dashboard proxy, then clean up only that smoke run's rows and Redis keys |
-| `pnpm maintenance:cleanup-runs` | Delete old generated demo runs and related data, preserving active runs and the latest 15 runs by default; pass `-- --keep-latest <count>` to override |
+| `pnpm maintenance:cleanup-runs` | Authoritatively delete old terminal generated demo runs and durable subtrees from PostgreSQL, then attempt best-effort post-commit inventory/eligibility Redis teardown with a structured warning on failure; catalog-backed runs, active runs, and the latest 15 runs remain preserved by default; pass `-- --keep-latest <count>` to override |
 | `pnpm dev` | Build shared packages, then run all app `dev` tasks through Turbo |
 | `pnpm dev:dashboard` | Build shared packages, then start the Next.js operator dashboard |
 | `pnpm dev:api` | Build and start the API gateway |

@@ -4,24 +4,31 @@ import type { AcceptedRunConfigSnapshot } from "@checkout-surge/contracts";
 import {
   createDatabaseConnection,
   createRedisClient,
+  deleteGeneratedRunDurable,
+  type deleteGeneratedRunRedisState,
   demoPresets,
   demoRunFinalizations,
   demoRunReservationOutcomes,
   demoRunSaleContexts,
   demoRunSummaries,
   demoRuns,
+  erpAttempts,
   initializeInventory,
+  inventoryKeys,
   isRunSaleEligible,
   markReservationPendingPersistence,
+  orderEvents,
   orders,
   products,
   promoteReservationIdempotencyToAccepted,
+  reservationPendingPersistence,
   reservations,
   reserveInventoryStock,
   saleOffers,
+  simulatedNotifications,
 } from "@checkout-surge/db";
 import { resetTestDatabase } from "@checkout-surge/db/testing";
-import { createSilentLogger } from "@checkout-surge/logger";
+import { type CheckoutSurgeLogger, createSilentLogger } from "@checkout-surge/logger";
 import { eq, inArray } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { DemoMaintenanceService } from "../src/services/demo-maintenance-service.js";
@@ -52,7 +59,9 @@ const ids = {
   failedOffer: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb5",
   catalogOffer: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb6",
   activeReservation: "77777777-7777-4777-8777-777777777771",
+  completedReservation: "77777777-7777-4777-8777-777777777772",
   activeOrder: "88888888-8888-4888-8888-888888888881",
+  completedOrder: "88888888-8888-4888-8888-888888888882",
 } as const;
 
 describe("demo maintenance service", () => {
@@ -752,10 +761,26 @@ describe("demo maintenance service", () => {
       status: "completed",
       trafficStatus: "succeeded",
       failureReason: null,
+      runInventoryStatus: "closed",
     });
+    await seedCleanupDurableGraph(db);
+    const completedInventoryKeys = inventoryKeys(ids.completedOffer);
+    const dynamicInventoryKey = completedInventoryKeys.idempotency("cleanup-dynamic-key");
+    await redisClient.set(dynamicInventoryKey, "stored");
+
+    await seedRun(db, redisClient, {
+      runId: ids.failedRun,
+      saleOfferId: ids.failedOffer,
+      status: "failed",
+      trafficStatus: "failed",
+      failureReason: "traffic_failed",
+      runInventoryStatus: "closed",
+      createdAt: new Date("2026-06-24T12:00:00.000Z"),
+    });
+    const retainedInventoryKeys = inventoryKeys(ids.failedOffer);
 
     const response = await service.cleanupOldRuns({
-      keepLatest: 0,
+      keepLatest: 1,
       olderThanDays: 1,
       correlationId: "corr-cleanup-generated",
     });
@@ -772,7 +797,7 @@ describe("demo maintenance service", () => {
     expect(response).toEqual({
       deletedRunCount: 1,
       deletedSaleOfferCount: 1,
-      preservedLatestCount: 0,
+      preservedLatestCount: 1,
       preservedActiveRunCount: 0,
       cutoffBefore: "2026-06-24T00:00:00.000Z",
       cleanedAt: "2026-06-25T00:00:00.000Z",
@@ -781,6 +806,21 @@ describe("demo maintenance service", () => {
     expect(runRows).toHaveLength(0);
     expect(contextRows).toHaveLength(0);
     expect(saleOfferRows).toHaveLength(0);
+    expect(await redisClient.keys(`${completedInventoryKeys.prefix}:*`)).toHaveLength(0);
+    expect(await redisClient.get(`demo-run:${ids.completedRun}:sale-eligibility`)).toBeNull();
+    expect(await redisClient.exists(retainedInventoryKeys.state)).toBe(1);
+    expect(await redisClient.get(`demo-run:${ids.failedRun}:sale-eligibility`)).not.toBeNull();
+    expect(await readRunScopedGraphCounts(db, ids.completedRun)).toEqual({
+      erpAttempts: 0,
+      finalizations: 0,
+      notifications: 0,
+      orderEvents: 0,
+      orders: 0,
+      outcomes: 0,
+      pendingPersistence: 0,
+      reservations: 0,
+      summaries: 0,
+    });
   });
 
   it("leaves catalog sale offers untouched when an old terminal run references one", async () => {
@@ -808,20 +848,175 @@ describe("demo maintenance service", () => {
       correlationId: "corr-cleanup-catalog",
     });
     const runRows = await db.select().from(demoRuns).where(eq(demoRuns.id, ids.catalogRun));
+    const summaryRows = await db
+      .select()
+      .from(demoRunSummaries)
+      .where(eq(demoRunSummaries.runId, ids.catalogRun));
     const saleOfferRows = await db
       .select({ id: saleOffers.id, purpose: saleOffers.purpose })
       .from(saleOffers)
       .where(eq(saleOffers.id, ids.catalogOffer));
 
     expect(response).toMatchObject({
-      deletedRunCount: 1,
+      deletedRunCount: 0,
       deletedSaleOfferCount: 0,
       preservedLatestCount: 0,
       preservedActiveRunCount: 0,
       correlationId: "corr-cleanup-catalog",
     });
-    expect(runRows).toHaveLength(0);
+    expect(runRows).toHaveLength(1);
+    expect(summaryRows).toHaveLength(1);
     expect(saleOfferRows).toEqual([{ id: ids.catalogOffer, purpose: "catalog" }]);
+  });
+
+  it("keeps earlier per-run commits when a later durable deletion fails", async () => {
+    const dbConnection = requireConnection(connection);
+    const db = dbConnection.db;
+    const redisClient = requireRedis(redis);
+    await seedBase(db);
+    await seedRun(db, redisClient, {
+      runId: ids.completedRun,
+      saleOfferId: ids.completedOffer,
+      status: "completed",
+      trafficStatus: "succeeded",
+      failureReason: null,
+      createdAt: new Date("2026-06-18T00:00:00.000Z"),
+    });
+    await seedRun(db, redisClient, {
+      runId: ids.failedRun,
+      saleOfferId: ids.failedOffer,
+      status: "failed",
+      trafficStatus: "failed",
+      failureReason: "traffic_failed",
+      createdAt: new Date("2026-06-19T00:00:00.000Z"),
+    });
+    await dbConnection.sql`
+      CREATE TABLE maintenance_delete_blocker (
+        run_id uuid PRIMARY KEY REFERENCES demo_runs(id) ON DELETE RESTRICT
+      )
+    `;
+    try {
+      await dbConnection.sql`
+        INSERT INTO maintenance_delete_blocker (run_id) VALUES (${ids.failedRun})
+      `;
+      const service = createCleanupService(db, redisClient);
+
+      await expect(
+        service.cleanupOldRuns({
+          keepLatest: 0,
+          olderThanDays: 1,
+          correlationId: "corr-cleanup-isolation",
+        }),
+      ).rejects.toThrow();
+
+      expect(
+        await db.select().from(demoRuns).where(eq(demoRuns.id, ids.completedRun)),
+      ).toHaveLength(0);
+      expect(await db.select().from(demoRuns).where(eq(demoRuns.id, ids.failedRun))).toHaveLength(
+        1,
+      );
+      expect(
+        await db
+          .select()
+          .from(demoRunSaleContexts)
+          .where(eq(demoRunSaleContexts.runId, ids.failedRun)),
+      ).toHaveLength(1);
+      expect(
+        await db.select().from(saleOffers).where(eq(saleOffers.id, ids.failedOffer)),
+      ).toHaveLength(1);
+    } finally {
+      await dbConnection.sql`DROP TABLE IF EXISTS maintenance_delete_blocker`;
+    }
+  });
+
+  it("revalidates terminal status inside the per-run transaction before deleting", async () => {
+    const db = requireConnection(connection).db;
+    const redisClient = requireRedis(redis);
+    await seedBase(db);
+    await seedRun(db, redisClient, {
+      runId: ids.completedRun,
+      saleOfferId: ids.completedOffer,
+      status: "completed",
+      trafficStatus: "succeeded",
+      failureReason: null,
+    });
+    const deleteRedisState = vi.fn();
+    const changeStatusBeforeDelete = vi.fn(
+      async (...args: Parameters<typeof deleteGeneratedRunDurable>) => {
+        await db
+          .update(demoRuns)
+          .set({ status: "active", trafficStatus: "active" })
+          .where(eq(demoRuns.id, ids.completedRun));
+        return deleteGeneratedRunDurable(...args);
+      },
+    );
+    const service = createCleanupService(db, redisClient, {
+      deleteGeneratedRunDurable: changeStatusBeforeDelete,
+      deleteGeneratedRunRedisState: deleteRedisState,
+    });
+
+    await expect(
+      service.cleanupOldRuns({
+        keepLatest: 0,
+        olderThanDays: 1,
+        correlationId: "corr-cleanup-stale-status",
+      }),
+    ).resolves.toMatchObject({ deletedRunCount: 0, deletedSaleOfferCount: 0 });
+
+    expect(await db.select().from(demoRuns).where(eq(demoRuns.id, ids.completedRun))).toEqual([
+      expect.objectContaining({ status: "active" }),
+    ]);
+    expect(deleteRedisState).not.toHaveBeenCalled();
+  });
+
+  it("warns on Redis cleanup failure and continues with truthful durable counts", async () => {
+    const db = requireConnection(connection).db;
+    const redisClient = requireRedis(redis);
+    await seedBase(db);
+    await seedRun(db, redisClient, {
+      runId: ids.completedRun,
+      saleOfferId: ids.completedOffer,
+      status: "completed",
+      trafficStatus: "succeeded",
+      failureReason: null,
+      createdAt: new Date("2026-06-18T00:00:00.000Z"),
+    });
+    await seedRun(db, redisClient, {
+      runId: ids.failedRun,
+      saleOfferId: ids.failedOffer,
+      status: "failed",
+      trafficStatus: "failed",
+      failureReason: "traffic_failed",
+      createdAt: new Date("2026-06-19T00:00:00.000Z"),
+    });
+    const logger = createSilentLogger("api");
+    const warn = vi.spyOn(logger, "warn");
+    const deleteRedisState = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Redis unavailable"))
+      .mockResolvedValueOnce(undefined);
+    const service = createCleanupService(db, redisClient, {
+      logger,
+      deleteGeneratedRunRedisState: deleteRedisState,
+    });
+
+    await expect(
+      service.cleanupOldRuns({
+        keepLatest: 0,
+        olderThanDays: 1,
+        correlationId: "corr-cleanup-redis-warning",
+      }),
+    ).resolves.toMatchObject({ deletedRunCount: 2, deletedSaleOfferCount: 2 });
+
+    expect(deleteRedisState).toHaveBeenCalledTimes(2);
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: ids.completedRun,
+        saleOfferId: ids.completedOffer,
+        correlationId: "corr-cleanup-redis-warning",
+      }),
+      "Could not remove generated-run Redis state after durable cleanup.",
+    );
   });
 
   it.each([
@@ -980,16 +1175,17 @@ async function seedRun(
     trafficStatus: "starting" | "active" | "succeeded" | "failed";
     failureReason: string | null;
     runInventoryStatus?: "accepting" | "closed";
+    createdAt?: Date;
   },
 ): Promise<void> {
-  const now = new Date("2026-06-20T00:00:00.000Z");
+  const now = input.createdAt ?? new Date("2026-06-20T00:00:00.000Z");
   await db.insert(saleOffers).values({
     id: input.saleOfferId,
     productId: ids.product,
     name: `${input.status} Offer`,
     allocatedStock: 10,
     saleStartsAt: now,
-    saleEndsAt: new Date("2026-06-21T00:00:00.000Z"),
+    saleEndsAt: new Date(now.getTime() + 24 * 60 * 60 * 1000),
     isActive: true,
     purpose: "generated_run",
     createdAt: now,
@@ -1098,6 +1294,12 @@ async function seedCatalogReferencedTerminalRun(
     createdAt: now,
     updatedAt: now,
   });
+  await seedTerminalSummary(db, {
+    runId: ids.catalogRun,
+    saleOfferId: ids.catalogOffer,
+    status: "completed",
+    failureReason: null,
+  });
 }
 
 async function seedActiveRunBusinessState(
@@ -1160,6 +1362,159 @@ async function seedActiveRunBusinessState(
     capturedAt: new Date("2026-06-20T00:00:04.000Z"),
     createdAt: new Date("2026-06-20T00:00:04.000Z"),
   });
+}
+
+async function seedCleanupDurableGraph(
+  db: ReturnType<typeof createDatabaseConnection>["db"],
+): Promise<void> {
+  const now = new Date("2026-06-20T00:00:04.000Z");
+  await db.insert(reservations).values({
+    id: ids.completedReservation,
+    saleOfferId: ids.completedOffer,
+    runId: ids.completedRun,
+    correlationId: "corr-cleanup-graph",
+    quantity: 1,
+    status: "secured",
+    reservationToken: "cleanup-token",
+    securedAt: now,
+    expiresAt: new Date("2026-06-20T00:15:04.000Z"),
+    createdAt: now,
+    updatedAt: now,
+  });
+  await db.insert(orders).values({
+    id: ids.completedOrder,
+    publicOrderId: "cleanup-order",
+    saleOfferId: ids.completedOffer,
+    reservationId: ids.completedReservation,
+    runId: ids.completedRun,
+    correlationId: "corr-cleanup-graph",
+    quantity: 1,
+    status: "confirmed",
+    queuedAt: now,
+    confirmedAt: now,
+    createdAt: now,
+    updatedAt: now,
+  });
+  await db.insert(erpAttempts).values({
+    orderId: ids.completedOrder,
+    deliveryId: "cleanup-delivery",
+    correlationId: "corr-cleanup-graph",
+    runId: ids.completedRun,
+    attemptNumber: 1,
+    status: "succeeded",
+    httpStatus: 200,
+    latencyMs: 5,
+    startedAt: now,
+    finishedAt: now,
+    idempotencyKey: "cleanup-erp-idempotency",
+    createdAt: now,
+  });
+  await db.insert(orderEvents).values({
+    orderId: ids.completedOrder,
+    reservationId: ids.completedReservation,
+    saleOfferId: ids.completedOffer,
+    correlationId: "corr-cleanup-graph",
+    runId: ids.completedRun,
+    eventName: "order.confirmed",
+    payload: {},
+    source: "test",
+    occurredAt: now,
+    createdAt: now,
+  });
+  await db.insert(simulatedNotifications).values({
+    orderId: ids.completedOrder,
+    saleOfferId: ids.completedOffer,
+    correlationId: "corr-cleanup-graph",
+    runId: ids.completedRun,
+    channel: "email",
+    recipientPlaceholder: "buyer@example.invalid",
+    status: "recorded",
+    recordedAt: now,
+    createdAt: now,
+  });
+  await db.insert(reservationPendingPersistence).values({
+    reservationId: "99999999-9999-4999-8999-999999999991",
+    saleOfferId: ids.completedOffer,
+    correlationId: "corr-cleanup-graph-pending",
+    runId: ids.completedRun,
+    idempotencyKey: "cleanup-pending-idempotency",
+    quantity: 1,
+    reservationToken: "cleanup-pending-token",
+    status: "pending_reconciliation",
+    securedAt: now,
+    expiresAt: new Date("2026-06-20T00:15:04.000Z"),
+    createdAt: now,
+    updatedAt: now,
+  });
+  await db.insert(demoRunReservationOutcomes).values({
+    runId: ids.completedRun,
+    outcome: "api_sold_out_decision",
+    count: 2,
+    latestObservedAt: now,
+    source: "redis",
+    capturedAt: now,
+    createdAt: now,
+  });
+  await db.insert(demoRunFinalizations).values({
+    runId: ids.completedRun,
+    exitCode: 0,
+    httpSummary: {},
+    trafficOutcomeSummary: {},
+    trafficDeliverySummary: {},
+    httpTimingBreakdownSummary: {},
+    loadRunDiagnosticsSummary: {},
+    apiRequestLifecycleSummary: {},
+    trafficSummaryReceivedAt: now,
+    createdAt: now,
+    updatedAt: now,
+  });
+  await seedTerminalSummary(db, {
+    runId: ids.completedRun,
+    saleOfferId: ids.completedOffer,
+    status: "completed",
+    failureReason: null,
+  });
+}
+
+async function readRunScopedGraphCounts(
+  db: ReturnType<typeof createDatabaseConnection>["db"],
+  runId: string,
+): Promise<Record<string, number>> {
+  const [
+    notificationRows,
+    erpRows,
+    eventRows,
+    orderRows,
+    reservationRows,
+    pendingRows,
+    outcomeRows,
+    finalizationRows,
+    summaryRows,
+  ] = await Promise.all([
+    db.select().from(simulatedNotifications).where(eq(simulatedNotifications.runId, runId)),
+    db.select().from(erpAttempts).where(eq(erpAttempts.runId, runId)),
+    db.select().from(orderEvents).where(eq(orderEvents.runId, runId)),
+    db.select().from(orders).where(eq(orders.runId, runId)),
+    db.select().from(reservations).where(eq(reservations.runId, runId)),
+    db
+      .select()
+      .from(reservationPendingPersistence)
+      .where(eq(reservationPendingPersistence.runId, runId)),
+    db.select().from(demoRunReservationOutcomes).where(eq(demoRunReservationOutcomes.runId, runId)),
+    db.select().from(demoRunFinalizations).where(eq(demoRunFinalizations.runId, runId)),
+    db.select().from(demoRunSummaries).where(eq(demoRunSummaries.runId, runId)),
+  ]);
+  return {
+    erpAttempts: erpRows.length,
+    finalizations: finalizationRows.length,
+    notifications: notificationRows.length,
+    orderEvents: eventRows.length,
+    orders: orderRows.length,
+    outcomes: outcomeRows.length,
+    pendingPersistence: pendingRows.length,
+    reservations: reservationRows.length,
+    summaries: summaryRows.length,
+  };
 }
 
 async function seedTerminalSummary(
@@ -1234,6 +1589,33 @@ async function readTerminalSummaryRows(
     .where(inArray(demoRunSummaries.runId, [ids.completedRun, ids.failedRun]));
 
   return rows.sort((left, right) => left.runId.localeCompare(right.runId));
+}
+
+function createCleanupService(
+  db: ReturnType<typeof createDatabaseConnection>["db"],
+  redis: ReturnType<typeof createRedisClient>,
+  overrides: {
+    logger?: CheckoutSurgeLogger;
+    deleteGeneratedRunDurable?: typeof deleteGeneratedRunDurable;
+    deleteGeneratedRunRedisState?: typeof deleteGeneratedRunRedisState;
+  } = {},
+): DemoMaintenanceService {
+  return new DemoMaintenanceService({
+    db,
+    redis,
+    queueMaintenance: {
+      cleanResetOwnedQueues: async () => ({ cleanedQueueCount: 0, cleanedJobCount: 0 }),
+    },
+    terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db),
+    logger: overrides.logger ?? createSilentLogger("api"),
+    now: () => new Date("2026-06-25T00:00:00.000Z"),
+    ...(overrides.deleteGeneratedRunDurable
+      ? { deleteGeneratedRunDurable: overrides.deleteGeneratedRunDurable }
+      : {}),
+    ...(overrides.deleteGeneratedRunRedisState
+      ? { deleteGeneratedRunRedisState: overrides.deleteGeneratedRunRedisState }
+      : {}),
+  });
 }
 
 function configSnapshotFixture(): AcceptedRunConfigSnapshot {

@@ -57,15 +57,15 @@ Replace `⬜` with `✅` when a task is complete. Optional `⏳` for work in pro
 
 ✅ [Task 26: Decompose the monolithic dashboard and admin-console components](./task_26.md)
 
-⬜ [Task 27: Complete the live dashboard gold signals: publish inventory and queue updates and promote latency/failure rate](./task_27.md)
+✅ [Task 27: Complete the live dashboard gold signals: publish inventory and queue updates and promote latency/failure rate](./task_27.md)
 
-⬜ [Task 28: Scope dashboard state to the current run (new-run events must not relabel prior-scope projections)](./task_28.md)
+✅ [Task 28: Scope dashboard state to the current run (new-run events must not relabel prior-scope projections)](./task_28.md)
 
-⬜ [Task 29: Add an event watermark so out-of-order live events cannot regress dashboard state](./task_29.md)
+✅ [Task 29: Add an event watermark so out-of-order live events cannot regress dashboard state](./task_29.md)
 
-⬜ [Task 30: Aggregate streamed k6 samples into real windowed rates before presenting them](./task_30.md)
+✅ [Task 30: Aggregate streamed k6 samples into real windowed rates before presenting them](./task_30.md)
 
-⬜ [Task 31: Fix old-run cleanup: respect generated-run ownership and delete the run's Redis namespaces](./task_31.md)
+✅ [Task 31: Fix old-run cleanup: respect generated-run ownership and delete the run's Redis namespaces](./task_31.md)
 
 ⬜ [Task 32: Make the load smoke prove business completion and clean up through a targeted, owned API](./task_32.md)
 

@@ -19,6 +19,8 @@ Inventory keys are scoped per sale offer:
 
 The local seed path initializes these keys from `sale_offers.allocated_stock`, and generated demo runs initialize them from the accepted run configuration snapshot. `sale_offers.allocated_stock` is the durable starting allocation for this demo; it is not a live remaining-inventory counter.
 
+Generated-run inventory keys and the separate `demo-run:{runId}:sale-eligibility` projection are persistent lifecycle state and do not rely on an arbitrary TTL. Old-run maintenance first commits one ownership-guarded PostgreSQL subtree deletion, then scans and asynchronously unlinks the entire `inventory:{saleOfferId}:*` namespace plus that run's eligibility key. Dynamic idempotency children are therefore included. Redis teardown is idempotent and best effort: a failure is logged with the run, offer, and correlation IDs and does not make truthful committed database counts fail or stop later candidates.
+
 ## Inventory Ownership Boundary
 
 Checkout-Surge acknowledges ERP/database inventory ownership at the allocation boundary: a catalog sale offer or generated demo-run sale offer receives a durable stock allocation before traffic starts. PostgreSQL records that allocation on `sale_offers.allocated_stock` and records the run configuration snapshot that selected it.
