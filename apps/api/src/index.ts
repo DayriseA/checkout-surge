@@ -40,6 +40,7 @@ import {
   DemoRunService,
   HttpTrafficExecutionGateway,
   RedisDashboardTrafficMetricStore,
+  validateActivePublicRuntimePolicyAtStartup,
 } from "./services/demo-run-service.js";
 import { DemoRunStartupReconciliationService } from "./services/demo-run-startup-reconciliation-service.js";
 import { TrafficCompletionEnrichmentService } from "./services/traffic-completion-enrichment-service.js";
@@ -221,6 +222,7 @@ export async function startApiServer(): Promise<void> {
     logger,
     pendingPersistenceReconciler,
     terminalRunWriter,
+    drainTimeoutSeconds: config.demoRunDrainTimeoutSeconds,
   });
   const demoRunStartupReconciliationService = new DemoRunStartupReconciliationService({
     db: connection.db,
@@ -247,6 +249,7 @@ export async function startApiServer(): Promise<void> {
     buyEndpointPath: "/buy",
     logger,
     publicClientCookieSecret: config.publicClientCookieSecret,
+    deploymentHardCaps: config.deploymentHardCaps,
   });
   const reserveOrderService = new ReserveOrderService({
     persistence,
@@ -334,6 +337,7 @@ export async function startApiServer(): Promise<void> {
   };
 
   try {
+    await validateActivePublicRuntimePolicyAtStartup(connection.db, config.deploymentHardCaps);
     const startupReconciliation = await demoRunStartupReconciliationService.reconcile();
     try {
       await pendingPersistenceReconciler.reconcileAll();

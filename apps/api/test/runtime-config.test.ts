@@ -55,6 +55,67 @@ describe("API runtime configuration", () => {
     expect(overridden.dashboardRecoveryGlobalMaxRequests).toBe(30);
   });
 
+  it("loads documented deployment caps and drain defaults and maps every override", () => {
+    const defaults = loadApiConfig({ ...baseEnv, CONTROL_SERVICE_TOKEN: "deployment-token" });
+    expect(defaults.deploymentHardCaps).toEqual({
+      maxBuyers: 100_000,
+      maxTotalRequests: 100_000,
+      maxRequestsPerSecond: 10_000,
+      maxTrafficDurationSeconds: 300,
+      maxTrafficStartDelaySeconds: 30,
+      maxPreAllocatedVus: 10_000,
+      maxVus: 10_000,
+    });
+    expect(defaults.demoRunDrainTimeoutSeconds).toBe(300);
+
+    const overridden = loadApiConfig({
+      ...baseEnv,
+      CONTROL_SERVICE_TOKEN: "deployment-token",
+      DEMO_MAX_BUYERS: "11",
+      DEMO_MAX_TOTAL_REQUESTS: "12",
+      DEMO_MAX_REQUESTS_PER_SECOND: "13",
+      DEMO_MAX_TRAFFIC_DURATION_SECONDS: "14",
+      DEMO_MAX_TRAFFIC_START_DELAY_SECONDS: "0",
+      DEMO_MAX_PRE_ALLOCATED_VUS: "15",
+      DEMO_MAX_VUS: "16",
+      DEMO_RUN_DRAIN_TIMEOUT_SECONDS: "17",
+    });
+    expect(overridden.deploymentHardCaps).toEqual({
+      maxBuyers: 11,
+      maxTotalRequests: 12,
+      maxRequestsPerSecond: 13,
+      maxTrafficDurationSeconds: 14,
+      maxTrafficStartDelaySeconds: 0,
+      maxPreAllocatedVus: 15,
+      maxVus: 16,
+    });
+    expect(overridden.demoRunDrainTimeoutSeconds).toBe(17);
+  });
+
+  it.each(["12oops", "1.5", "-1", "0"])(
+    "rejects malformed or non-positive deployment cap values (%s)",
+    (value) => {
+      expect(() =>
+        loadApiConfig({
+          ...baseEnv,
+          CONTROL_SERVICE_TOKEN: "deployment-token",
+          DEMO_MAX_BUYERS: value,
+        }),
+      ).toThrow(/DEMO_MAX_BUYERS/);
+    },
+  );
+
+  it("rejects deployment preallocated VUs above max VUs", () => {
+    expect(() =>
+      loadApiConfig({
+        ...baseEnv,
+        CONTROL_SERVICE_TOKEN: "deployment-token",
+        DEMO_MAX_PRE_ALLOCATED_VUS: "11",
+        DEMO_MAX_VUS: "10",
+      }),
+    ).toThrow(/DEMO_MAX_PRE_ALLOCATED_VUS.*must not exceed.*DEMO_MAX_VUS/);
+  });
+
   it.each([
     "0",
     "-1",

@@ -8,6 +8,10 @@ import {
 import { createAdminLoginHandler, serializeSessionCookie } from "../src/app/lib/server/admin-login";
 import { requireAdminOrigin } from "../src/app/lib/server/admin-origin";
 import {
+  initializeWebServerConfig,
+  resetWebServerConfigForTests,
+} from "../src/app/lib/server/config";
+import {
   createAdminSessionToken,
   isValidAdminSessionToken,
   parseAdminSessionMaxAge,
@@ -212,6 +216,7 @@ describe("admin login workflow", () => {
   const originalEnv = { ...process.env };
 
   afterEach(() => {
+    resetWebServerConfigForTests();
     process.env = { ...originalEnv };
   });
 
@@ -244,6 +249,13 @@ describe("admin login workflow", () => {
       requireOrigin: requireAdminOrigin,
     });
     process.env.WEB_ORIGIN = "https://dashboard.local";
+    initializeWebServerConfig({
+      CONTROL_SERVICE_TOKEN: "control-token",
+      ADMIN_DASHBOARD_PASSPHRASE: "secret",
+      ADMIN_SESSION_SECRET: "signing-secret",
+      PUBLIC_CLIENT_COOKIE_SECRET: "visitor-cookie-secret",
+      WEB_ORIGIN: "https://dashboard.local",
+    });
     for (const origin of [undefined, "null", "not an origin", "https://evil.local"]) {
       const denied = await handler(
         new Request("https://dashboard.local/api/admin/session", {

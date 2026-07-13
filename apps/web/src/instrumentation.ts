@@ -1,5 +1,5 @@
-import { loadWebServerConfig } from "./app/lib/server/config";
+import { initializeWebServerConfig } from "./app/lib/server/config";
 
 export function register(): void {
-  loadWebServerConfig(process.env);
+  initializeWebServerConfig(process.env);
 }

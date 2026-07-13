@@ -42,7 +42,9 @@ import {
   DemoRunService,
   DemoRunValidationError,
   HttpTrafficExecutionGateway,
+  hydratePublicRuntimePolicy,
   isSingleNonTerminalRunViolation,
+  validateActivePublicRuntimePolicyAtStartup,
   validateAcceptedRunSnapshot,
   validatePublicRuntimePolicyUpdate,
 } from "../src/services/demo-run-service.js";
@@ -92,6 +94,7 @@ describe("demo-run service validation", () => {
       buyEndpointPath: "/buy",
       logger: createSilentLogger("api"),
       publicClientCookieSecret: publicCookieSecret,
+      deploymentHardCaps: publicRuntimePolicy().deploymentHardCaps,
     });
     await expect(
       service.startRun(
@@ -176,6 +179,16 @@ describe("demo-run service validation", () => {
         details: { value: 500, cap: 100 },
       }),
     );
+  });
+
+  it("overlays current deployment caps without mutating persisted public policy", () => {
+    const persisted = publicRuntimePolicy();
+    const currentCaps = { ...persisted.deploymentHardCaps, maxBuyers: 20_000 };
+
+    const hydrated = hydratePublicRuntimePolicy(persisted, currentCaps);
+
+    expect(hydrated.deploymentHardCaps.maxBuyers).toBe(20_000);
+    expect(persisted.deploymentHardCaps.maxBuyers).toBe(100_000);
   });
 });
 
@@ -412,6 +425,51 @@ describe("demo-run public runtime policy management", () => {
     const [row] = await requireConnection(connection).db.select().from(publicRuntimePolicies);
     const persistedPolicy = row?.policy as PublicRuntimePolicy | undefined;
     expect(persistedPolicy?.publicCustomLimits.maxTotalRequests).toBe(10_000);
+  });
+
+  it("rejects startup when current deployment caps are below the durable public policy", async () => {
+    const policy = publicRuntimePolicy();
+    await expect(
+      validateActivePublicRuntimePolicyAtStartup(requireConnection(connection).db, {
+        ...policy.deploymentHardCaps,
+        maxBuyers: policy.publicCustomLimits.maxBuyers - 1,
+      }),
+    ).rejects.toThrow(/publicCustomLimits\.maxBuyers.*public_limit_buyers_exceeds_deployment_cap/);
+  });
+
+  it("changes effective hard caps between service boots without reseeding", async () => {
+    const stored = publicRuntimePolicy();
+    const first = createPresetManagementService(requireConnection(connection), {
+      ...stored.deploymentHardCaps,
+      maxBuyers: 20_000,
+    });
+    const second = createPresetManagementService(requireConnection(connection), {
+      ...stored.deploymentHardCaps,
+      maxBuyers: 30_000,
+    });
+
+    expect((await first.getPublicRuntimePolicy()).policy.deploymentHardCaps.maxBuyers).toBe(20_000);
+    expect((await second.getPublicRuntimePolicy()).policy.deploymentHardCaps.maxBuyers).toBe(30_000);
+  });
+
+  it("reports missing and malformed active policy rows before startup", async () => {
+    const db = requireConnection(connection).db;
+    const caps = publicRuntimePolicy().deploymentHardCaps;
+    await db.delete(publicRuntimePolicies);
+
+    await expect(validateActivePublicRuntimePolicyAtStartup(db, caps)).rejects.toThrow(
+      /policy "active" is missing/,
+    );
+
+    await db.insert(publicRuntimePolicies).values({
+      id: "active",
+      policy: { malformed: true },
+      createdAt: new Date("2026-06-20T00:00:00.000Z"),
+      updatedAt: new Date("2026-06-20T00:00:00.000Z"),
+    });
+    await expect(validateActivePublicRuntimePolicyAtStartup(db, caps)).rejects.toThrow(
+      /publicRunBudget|publicCustomDefaults/,
+    );
   });
 });
 
@@ -1459,6 +1517,7 @@ describe("demo-run lifecycle start gating", () => {
       logger: createSilentLogger("api"),
       pendingPersistenceReconciler: { reconcileSaleOffer },
       terminalRunWriter: { write },
+      drainTimeoutSeconds: 300,
       now: () => new Date("2026-06-20T00:00:15.000Z"),
     });
     const service = createStartService(requireConnection(connection), redisClient, {
@@ -1590,6 +1649,7 @@ describe("demo-run lifecycle start gating", () => {
       redis: redisClient,
       logger: createSilentLogger("api"),
       terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db),
+      drainTimeoutSeconds: 300,
       now: () => new Date("2026-06-20T00:00:10.000Z"),
     });
     const service = createStartService(requireConnection(connection), redisClient, {
@@ -1800,6 +1860,7 @@ describe("demo-run lifecycle start gating", () => {
       redis: redisClient,
       logger: createSilentLogger("api"),
       terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db),
+      drainTimeoutSeconds: 300,
       now: () => new Date("2026-06-20T00:00:10.000Z"),
     });
     const service = createStartService(requireConnection(connection), redisClient, {
@@ -2006,6 +2067,7 @@ function requireRedis(
 
 function createPresetManagementService(
   connection: ReturnType<typeof createDatabaseConnection>,
+  deploymentHardCaps = publicRuntimePolicy().deploymentHardCaps,
 ): DemoRunService {
   return new DemoRunService({
     db: connection.db,
@@ -2038,6 +2100,7 @@ function createPresetManagementService(
     buyEndpointPath: "/buy",
     logger: createSilentLogger("api"),
     publicClientCookieSecret: publicCookieSecret,
+    deploymentHardCaps,
     now: () => new Date("2026-06-20T00:00:10.000Z"),
     generateId: () => "66666666-6666-4666-8666-666666666666",
   });
@@ -2118,6 +2181,7 @@ function createStartService(
     buyEndpointPath: "/buy",
     logger,
     publicClientCookieSecret: publicCookieSecret,
+    deploymentHardCaps: publicRuntimePolicy().deploymentHardCaps,
     now: () => new Date("2026-06-20T00:00:10.000Z"),
     generateId: () => {
       const id = ids.shift();

@@ -1,4 +1,8 @@
 import {
+  type DeploymentHardCaps,
+  deploymentHardCapsSchema,
+} from "@checkout-surge/contracts";
+import {
   isValidPublicVisitorCredentialSecret,
   publicVisitorCredentialMinimumSecretBytes,
 } from "@checkout-surge/contracts/public-visitor-credential";
@@ -20,6 +24,8 @@ export interface ApiConfig {
   loadOrchestratorBaseUrl: string;
   controlServiceToken: string;
   publicClientCookieSecret: string;
+  deploymentHardCaps: DeploymentHardCaps;
+  demoRunDrainTimeoutSeconds: number;
   demoRunFinalizationPollIntervalSeconds: number;
   dashboardMaxSseClients: number;
   dashboardMaxSseClientsPerSource: number;
@@ -80,6 +86,40 @@ export function loadApiConfig(env: NodeJS.ProcessEnv): ApiConfig {
     ),
     controlServiceToken: requireEnv(env, "CONTROL_SERVICE_TOKEN"),
     publicClientCookieSecret: requireStrongSecret(env, "PUBLIC_CLIENT_COOKIE_SECRET"),
+    deploymentHardCaps: deploymentHardCapsSchema.parse({
+      maxBuyers: parsePositiveInteger(env.DEMO_MAX_BUYERS, "DEMO_MAX_BUYERS", 100_000),
+      maxTotalRequests: parsePositiveInteger(
+        env.DEMO_MAX_TOTAL_REQUESTS,
+        "DEMO_MAX_TOTAL_REQUESTS",
+        100_000,
+      ),
+      maxRequestsPerSecond: parsePositiveInteger(
+        env.DEMO_MAX_REQUESTS_PER_SECOND,
+        "DEMO_MAX_REQUESTS_PER_SECOND",
+        10_000,
+      ),
+      maxTrafficDurationSeconds: parsePositiveInteger(
+        env.DEMO_MAX_TRAFFIC_DURATION_SECONDS,
+        "DEMO_MAX_TRAFFIC_DURATION_SECONDS",
+        300,
+      ),
+      maxTrafficStartDelaySeconds: parseNonnegativeInteger(
+        env.DEMO_MAX_TRAFFIC_START_DELAY_SECONDS,
+        "DEMO_MAX_TRAFFIC_START_DELAY_SECONDS",
+        30,
+      ),
+      maxPreAllocatedVus: parsePositiveInteger(
+        env.DEMO_MAX_PRE_ALLOCATED_VUS,
+        "DEMO_MAX_PRE_ALLOCATED_VUS",
+        10_000,
+      ),
+      maxVus: parsePositiveInteger(env.DEMO_MAX_VUS, "DEMO_MAX_VUS", 10_000),
+    }),
+    demoRunDrainTimeoutSeconds: parsePositiveInteger(
+      env.DEMO_RUN_DRAIN_TIMEOUT_SECONDS,
+      "DEMO_RUN_DRAIN_TIMEOUT_SECONDS",
+      300,
+    ),
     demoRunFinalizationPollIntervalSeconds: parsePositiveInteger(
       env.DEMO_RUN_FINALIZATION_POLL_INTERVAL_SECONDS,
       "DEMO_RUN_FINALIZATION_POLL_INTERVAL_SECONDS",
@@ -136,6 +176,9 @@ export function loadApiConfig(env: NodeJS.ProcessEnv): ApiConfig {
       "DASHBOARD_MAX_SSE_CLIENTS_PER_SOURCE must not exceed DASHBOARD_MAX_SSE_CLIENTS.",
     );
   }
+  if (config.deploymentHardCaps.maxPreAllocatedVus > config.deploymentHardCaps.maxVus) {
+    throw new Error("DEMO_MAX_PRE_ALLOCATED_VUS must not exceed DEMO_MAX_VUS.");
+  }
   if (config.dashboardRecoveryPerSourceMaxRequests > config.dashboardRecoveryGlobalMaxRequests) {
     throw new Error(
       "DASHBOARD_RECOVERY_PER_SOURCE_MAX_REQUESTS must not exceed DASHBOARD_RECOVERY_GLOBAL_MAX_REQUESTS.",
@@ -185,6 +228,22 @@ function parsePositiveInteger(value: string | undefined, name: string, fallback:
 
   if (!Number.isInteger(parsed) || parsed <= 0) {
     throw new Error(`${name} must be a positive integer.`);
+  }
+
+  return parsed;
+}
+
+function parseNonnegativeInteger(value: string | undefined, name: string, fallback: number): number {
+  const raw = value?.trim();
+
+  if (!raw) {
+    return fallback;
+  }
+
+  const parsed = Number(raw);
+
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new Error(`${name} must be a nonnegative integer.`);
   }
 
   return parsed;

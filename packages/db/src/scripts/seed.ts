@@ -157,12 +157,8 @@ try {
         createdAt: now,
         updatedAt: now,
       })
-      .onConflictDoUpdate({
+      .onConflictDoNothing({
         target: publicRuntimePolicies.id,
-        set: {
-          policy: seededPublicRuntimePolicy as unknown as JsonRecord,
-          updatedAt: now,
-        },
       });
 
     await tx
@@ -443,7 +439,8 @@ function backpressureConfig(options: { orderProcessConcurrency: number }): JsonR
       maxAttempts: orderProcessMaxAttempts,
       initialBackoffMs: orderProcessInitialBackoffMs,
     },
-    drainTimeoutSeconds: optionalIntegerEnv("DEMO_RUN_DRAIN_TIMEOUT_SECONDS", 300),
+    // Historical snapshot/display value. The API runtime owns the active finalization timeout.
+    drainTimeoutSeconds: 300,
     pendingPersistenceRetryAfterSeconds: optionalIntegerEnv(
       "PENDING_PERSISTENCE_RETRY_AFTER_SECONDS",
       30,
@@ -490,6 +487,8 @@ function buildPublicRuntimePolicy(): PublicRuntimePolicy {
       allowedTrafficModes: ["buyer-spike", "steady-arrival-rate"],
     },
     deploymentHardCaps: {
+      // Mirrored for first-seed semantic validation and compatibility storage only.
+      // The API overlays its independently loaded deployment config at runtime.
       maxBuyers: optionalIntegerEnv("DEMO_MAX_BUYERS", 100_000),
       maxTotalRequests: optionalIntegerEnv("DEMO_MAX_TOTAL_REQUESTS", 100_000),
       maxRequestsPerSecond: optionalIntegerEnv("DEMO_MAX_REQUESTS_PER_SECOND", 10_000),

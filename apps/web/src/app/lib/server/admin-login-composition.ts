@@ -1,5 +1,4 @@
 import Redis from "ioredis";
-import { parseAdminSecurityConfig } from "./admin-config";
 import { createAdminLoginHandler, defaultAdminLoginDependencies } from "./admin-login";
 import {
   AdminLoginAttemptLimiter,
@@ -7,21 +6,20 @@ import {
   RedisAdminLoginAttemptStore,
   resolveTrustedAdminClient,
 } from "./admin-login-limiter";
-import { readWebSecret } from "./config";
+import { resetWebServerConfigForTests, webServerConfig } from "./config";
 
 let limiter: AdminLoginAttemptLimiter | undefined;
 
 export function adminLoginAttemptLimiter(): AdminLoginAttemptLimiter {
   if (limiter) return limiter;
-  const config = parseAdminSecurityConfig(process.env);
-  if (!config) throw new Error("Invalid admin security configuration");
+  const config = webServerConfig();
   const policy = {
-    clientCapacity: config.loginClientAttempts,
-    globalCapacity: config.loginGlobalAttempts,
-    refillWindowMs: config.loginWindowSeconds * 1000,
+    clientCapacity: config.adminLoginClientAttempts,
+    globalCapacity: config.adminLoginGlobalAttempts,
+    refillWindowMs: config.adminLoginWindowSeconds * 1000,
   };
   const store =
-    process.env.NODE_ENV === "production" && config.redisUrl
+    config.isProduction && config.redisUrl
       ? new RedisAdminLoginAttemptStore(
           new Redis(config.redisUrl, {
             lazyConnect: true,
@@ -41,16 +39,15 @@ export const handleAdminLogin = createAdminLoginHandler({
   ...defaultAdminLoginDependencies,
   limiter: adminLoginAttemptLimiter,
   resolveClient(request) {
-    return resolveTrustedAdminClient(request, process.env.ADMIN_EDGE_ATTESTATION_SECRET);
+    return resolveTrustedAdminClient(request, webServerConfig().adminEdgeAttestationSecret ?? undefined);
   },
   config() {
-    const security = parseAdminSecurityConfig(process.env);
-    if (!security) return null;
+    const config = webServerConfig();
     return {
-      passphrase: readWebSecret(process.env, "ADMIN_DASHBOARD_PASSPHRASE"),
-      sessionSecret: readWebSecret(process.env, "ADMIN_SESSION_SECRET"),
-      sessionMaxAgeSeconds: security.sessionMaxAgeSeconds,
-      secureCookie: security.secureCookie,
+      passphrase: config.adminDashboardPassphrase,
+      sessionSecret: config.adminSessionSecret,
+      sessionMaxAgeSeconds: config.adminSessionMaxAgeSeconds,
+      secureCookie: config.secureAdminCookie,
     };
   },
   now: () => new Date(),
@@ -58,4 +55,5 @@ export const handleAdminLogin = createAdminLoginHandler({
 
 export function resetAdminLoginAttemptLimiterForTests(): void {
   limiter = undefined;
+  resetWebServerConfigForTests();
 }

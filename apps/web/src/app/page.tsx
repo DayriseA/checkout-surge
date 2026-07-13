@@ -1,6 +1,8 @@
 import { PublicDemoEntry } from "./components/public-demo-entry";
 import { getPublicDemoSurface } from "./lib/api";
 
+export const dynamic = "force-dynamic";
+
 export default async function DemoDashboardPage() {
   const surface = await getPublicDemoSurface();
 

@@ -921,7 +921,7 @@ Completion summary: Task 10.5.4 now replaces the stale root `pnpm dev` placehold
 Subtasks:
 
 - ✅ Add shared admin contracts for reading and updating the active public runtime policy, including public run budgets, public custom defaults, public custom limits, deployment hard-cap validation vocabulary, and correlation IDs.
-- ✅ Add API service and protected route behavior that persists updates to the singleton `public_runtime_policies` row behind the control service token, validates values against deployment hard caps, and leaves starts using the persisted policy rather than environment defaults until an explicit reseed/reset path changes it.
+- ✅ Add API service and protected route behavior that persists mutable updates to the singleton `public_runtime_policies` row behind the control service token, validates values against API-owned deployment hard caps, and preserves those admin edits across setup reruns.
 - ✅ Add protected Next.js proxy routes and `/admin` controls that let an authenticated operator inspect, edit, save, and refresh the active public runtime policy without exposing service tokens or trusting browser-supplied privilege.
 - ✅ Ensure public starts and public custom submissions immediately use the updated persisted budget/default/limit policy, while admin starts continue to bypass public run budgets but still respect deployment hard caps and active/draining start gating.
 - ✅ Add contract, API/service, Redis-budget, and web tests for authorization, persistence, cap rejection, budget enforcement after policy changes, public custom default/limit changes, and anonymous access rejection.

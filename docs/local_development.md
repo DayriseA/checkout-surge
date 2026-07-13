@@ -82,7 +82,7 @@ pnpm runtime:setup
 
 `runtime:setup` uses `docker compose run` and auto-starts PostgreSQL and Redis as dependencies, so it can be run without a prior `runtime:up`. By itself it does not start the API, worker, mock ERP, load orchestrator, or dashboard services.
 
-Setup is also an explicit public-runtime-policy reset: it strictly validates the complete environment-backed policy before database mutations, then replaces the `active` policy JSON if the row already exists. This repairs malformed policy data but also overwrites admin-edited public budgets, defaults, and limits. Invalid policy input fails setup without changing the existing row.
+Setup strictly validates the environment-backed public-policy bootstrap before database mutations and inserts it only when `active` is absent. Rerunning setup preserves the existing PostgreSQL policy, including admin edits. Change an established deployment through the protected admin policy controls, or wipe the database when a new bootstrap from environment values is intended.
 
 For a clean wipe-and-rebuild (drops all data and re-seeds):
 
@@ -441,31 +441,33 @@ Most infrastructure URLs have local defaults, but every run/control service chan
 | `DEMO_MAX_VUS` | `10000` | API safety cap for admin steady-arrival max VUs |
 | `DEMO_RUN_DRAIN_TIMEOUT_SECONDS` | `300` | API timeout while waiting for a demo run to drain before finalization |
 | `DEMO_RUN_FINALIZATION_POLL_INTERVAL_SECONDS` | `5` | API polling interval while waiting for demo run finalization |
-| `PUBLIC_RUN_BUDGET_WINDOW_SECONDS` | `300` | API public run-budget window |
-| `PUBLIC_RUN_BUDGET_PER_VISITOR_MAX_STARTS` | `2` | API public run-budget per-visitor cap |
+| `PUBLIC_RUN_BUDGET_WINDOW_SECONDS` | `300` | `runtime-setup` first-seed public run-budget window |
+| `PUBLIC_RUN_BUDGET_PER_VISITOR_MAX_STARTS` | `2` | `runtime-setup` first-seed public run-budget per-visitor cap |
 | `DASHBOARD_MAX_SSE_CLIENTS` / `DASHBOARD_MAX_SSE_CLIENTS_PER_SOURCE` | `80` / `6` | Per-API-process realtime connection caps; replicas multiply the deployment total |
 | `DASHBOARD_SSE_RETRY_AFTER_SECONDS` | `10` | Retry guidance for rejected realtime connections |
 | `DASHBOARD_RECOVERY_MAX_CONCURRENT` | `3` | Per-process recovery builds, deliberately below the default PostgreSQL pool size of 10 |
 | `DASHBOARD_RECOVERY_GLOBAL_MAX_REQUESTS` / `DASHBOARD_RECOVERY_PER_SOURCE_MAX_REQUESTS` | `60` / `12` per 60 seconds | Redis-backed deployment-wide recovery budgets |
 | `DASHBOARD_RECOVERY_WINDOW_SECONDS` / `DASHBOARD_RECOVERY_RETRY_AFTER_SECONDS` | `60` / `10` | Fixed-window duration and rejection retry guidance |
 | `API_TRUSTED_PROXY_CIDRS` | loopback and Compose Caddy `172.30.0.2/32` | Exact Caddy proxy boundary used for Fastify client-IP derivation; replace with the deployed proxy address |
-| `PUBLIC_RUN_BUDGET_GLOBAL_MAX_STARTS` | `6` | API public run-budget global cap |
-| `PUBLIC_CUSTOM_MAX_TOTAL_REQUESTS` | `10000` | API public custom cap for emitted buy attempts |
-| `PUBLIC_CUSTOM_MAX_BUYERS` | `10000` | API public custom cap for buyer-spike buyer count |
-| `PUBLIC_CUSTOM_MAX_REQUESTS_PER_SECOND` | `1000` | API public custom cap for steady-arrival request rate |
-| `PUBLIC_CUSTOM_MAX_TRAFFIC_DURATION_SECONDS` | `120` | API public custom cap for traffic duration |
-| `PUBLIC_CUSTOM_MAX_TRAFFIC_START_DELAY_SECONDS` | `10` | API public custom cap for traffic start delay |
-| `PUBLIC_CUSTOM_MAX_PRE_ALLOCATED_VUS` | `1000` | API public custom cap for steady-arrival preallocated VUs |
-| `PUBLIC_CUSTOM_MAX_VUS` | `1000` | API public custom cap for steady-arrival max VUs |
-| `PUBLIC_CUSTOM_MAX_STARTING_STOCK` | `1000` | API public custom cap for run starting stock |
-| `PUBLIC_CUSTOM_MAX_ERP_LATENCY_MS` | `2000` | API public custom cap for run-scoped ERP latency |
-| `PUBLIC_CUSTOM_MIN_ERP_MAX_TPS` | `1` | API public custom minimum for run-scoped ERP TPS cap |
-| `PUBLIC_CUSTOM_MAX_ERP_MAX_TPS` | `100` | API public custom maximum for run-scoped ERP TPS cap |
-| `PUBLIC_CUSTOM_MAX_ERP_ERROR_RATE` | `0.25` | API public custom cap for run-scoped ERP error rate |
+| `PUBLIC_RUN_BUDGET_GLOBAL_MAX_STARTS` | `6` | `runtime-setup` first-seed public run-budget global cap |
+| `PUBLIC_CUSTOM_MAX_TOTAL_REQUESTS` | `10000` | `runtime-setup` first-seed public custom emitted-request cap |
+| `PUBLIC_CUSTOM_MAX_BUYERS` | `10000` | `runtime-setup` first-seed public custom buyer cap |
+| `PUBLIC_CUSTOM_MAX_REQUESTS_PER_SECOND` | `1000` | `runtime-setup` first-seed public custom request-rate cap |
+| `PUBLIC_CUSTOM_MAX_TRAFFIC_DURATION_SECONDS` | `120` | `runtime-setup` first-seed public custom duration cap |
+| `PUBLIC_CUSTOM_MAX_TRAFFIC_START_DELAY_SECONDS` | `10` | `runtime-setup` first-seed public custom start-delay cap |
+| `PUBLIC_CUSTOM_MAX_PRE_ALLOCATED_VUS` | `1000` | `runtime-setup` first-seed public custom preallocated-VU cap |
+| `PUBLIC_CUSTOM_MAX_VUS` | `1000` | `runtime-setup` first-seed public custom max-VU cap |
+| `PUBLIC_CUSTOM_MAX_STARTING_STOCK` | `1000` | `runtime-setup` first-seed public custom starting-stock cap |
+| `PUBLIC_CUSTOM_MAX_ERP_LATENCY_MS` | `2000` | `runtime-setup` first-seed public custom ERP-latency cap |
+| `PUBLIC_CUSTOM_MIN_ERP_MAX_TPS` | `1` | `runtime-setup` first-seed public custom minimum ERP TPS |
+| `PUBLIC_CUSTOM_MAX_ERP_MAX_TPS` | `100` | `runtime-setup` first-seed public custom maximum ERP TPS |
+| `PUBLIC_CUSTOM_MAX_ERP_ERROR_RATE` | `0.25` | `runtime-setup` first-seed public custom ERP error-rate cap |
 | `K6_BINARY` | `k6` host-native; `/usr/local/bin/k6` in compose | Load orchestrator |
 | `LOAD_ORCHESTRATOR_STATE_DIR` | `.checkout-surge/load-orchestrator` host-native; named-volume path in Compose | Durable single-slot traffic execution journal |
 | `BUY_ENDPOINT_PATH` | `/buy` | Load orchestrator |
 | `LOG_LEVEL` | `info` | Shared logger |
+
+`DEMO_MAX_*`, `DEMO_RUN_DRAIN_TIMEOUT_SECONDS`, and the finalization poll interval belong to the API process and take effect after an API restart. The seven `DEMO_MAX_*` values are additionally mirrored into `runtime-setup` so a first-seed `PUBLIC_*` policy is validated against the same deployment ceilings and stores a compatible contract field; this mirror is not a second runtime authority. Drain timeout is not mirrored because setup never owns finalization behavior. The API overlays current hard caps onto every persisted-policy read and validates the active PostgreSQL policy before listening; tightening a cap below an admin-tuned public limit prevents startup instead of clamping it. `PUBLIC_RUN_BUDGET_*` and `PUBLIC_CUSTOM_*` belong only to `runtime-setup` and are used when the active row is first created. Once bootstrapped, PostgreSQL/admin updates are authoritative; changing setup values does not overwrite an existing policy. Use the protected admin policy controls, or wipe the database for a new bootstrap.
 
 The notification and durable order-recovery variables above are read by the host-native worker and documented in `apps/worker/.env.example`. The current reference Compose file does not forward overrides for `NOTIFICATION_RECORD_CONCURRENCY`, `NOTIFICATION_RECOVERY_*`, or `ORDER_RECOVERY_*`, so its worker uses the built-in values shown in this table. Compose does forward the `ORDER_DISPATCH_*`, aggregate order concurrency, ERP fallback, and pool-size settings.
 

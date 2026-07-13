@@ -18,6 +18,7 @@ import {
   type DemoPresetContract,
   type DemoRunConfigOverride,
   type DemoRunSnapshot,
+  type DeploymentHardCaps,
   type DuplicateDemoPresetRequest,
   demoPresetContractSchema,
   demoRunSnapshotSchema,
@@ -281,6 +282,7 @@ export class DemoRunService implements DemoRunController {
       buyEndpointPath: string;
       logger: CheckoutSurgeLogger;
       publicClientCookieSecret: string;
+      deploymentHardCaps: DeploymentHardCaps;
       now?: () => Date;
       generateId?: () => string;
     },
@@ -439,12 +441,10 @@ export class DemoRunService implements DemoRunController {
     correlationId: string,
   ): Promise<AdminPublicRuntimePolicyResponse> {
     const now = this.now();
-    const currentRow = await this.readPublicRuntimePolicyRow();
-    const currentPolicy = publicRuntimePolicySchema.parse(currentRow.policy);
     const mutablePolicy = publicRuntimePolicyMutableSchema.parse(request.policy);
     const nextPolicy: PublicRuntimePolicy = {
       ...mutablePolicy,
-      deploymentHardCaps: currentPolicy.deploymentHardCaps,
+      deploymentHardCaps: this.options.deploymentHardCaps,
     };
 
     validatePublicRuntimePolicyUpdate(nextPolicy);
@@ -488,7 +488,7 @@ export class DemoRunService implements DemoRunController {
       );
     }
     const policyRow = await this.readPublicRuntimePolicyRow();
-    const policy = publicRuntimePolicySchema.parse(policyRow.policy);
+    const policy = policyRow.policy;
     const acceptedConfig = await this.resolveAcceptedConfig(request, policy);
     validateAcceptedRunSnapshot(acceptedConfig.snapshot, policy, {
       operatorMode: request.operatorMode,
@@ -863,7 +863,9 @@ export class DemoRunService implements DemoRunController {
     return toDemoPresetContract(preset);
   }
 
-  private async readPublicRuntimePolicyRow(): Promise<typeof publicRuntimePolicies.$inferSelect> {
+  private async readPublicRuntimePolicyRow(): Promise<
+    Omit<typeof publicRuntimePolicies.$inferSelect, "policy"> & { policy: PublicRuntimePolicy }
+  > {
     const [row] = await this.options.db
       .select()
       .from(publicRuntimePolicies)
@@ -877,7 +879,10 @@ export class DemoRunService implements DemoRunController {
       );
     }
 
-    return row;
+    return {
+      ...row,
+      policy: hydratePublicRuntimePolicy(row.policy, this.options.deploymentHardCaps),
+    };
   }
 
   private async updateRunAfterTrafficStart(
@@ -1158,6 +1163,58 @@ export function validatePublicRuntimePolicyUpdate(policy: PublicRuntimePolicy): 
   if (violation) {
     throw new DemoRunValidationError(violation.code, violation.message, violation.details);
   }
+}
+
+export function hydratePublicRuntimePolicy(
+  persistedPolicy: unknown,
+  deploymentHardCaps: DeploymentHardCaps,
+): PublicRuntimePolicy {
+  if (!persistedPolicy || typeof persistedPolicy !== "object" || Array.isArray(persistedPolicy)) {
+    return publicRuntimePolicySchema.parse(persistedPolicy);
+  }
+
+  return publicRuntimePolicySchema.parse({
+    ...persistedPolicy,
+    deploymentHardCaps,
+  });
+}
+
+export async function validateActivePublicRuntimePolicyAtStartup(
+  db: CheckoutSurgeDatabase,
+  deploymentHardCaps: DeploymentHardCaps,
+): Promise<void> {
+  const [row] = await db
+    .select({ policy: publicRuntimePolicies.policy })
+    .from(publicRuntimePolicies)
+    .where(eq(publicRuntimePolicies.id, "active"))
+    .limit(1);
+
+  if (!row) {
+    throw new Error('Active public runtime policy "active" is missing.');
+  }
+
+  const parsed = publicRuntimePolicySchema.safeParse(
+    row.policy && typeof row.policy === "object" && !Array.isArray(row.policy)
+      ? { ...row.policy, deploymentHardCaps }
+      : row.policy,
+  );
+  if (!parsed.success) {
+    const diagnostics = parsed.error.issues.map((issue) => {
+      const path = issue.path.length > 0 ? issue.path.join(".") : "policy";
+      const violationCode =
+        "params" in issue &&
+        issue.params &&
+        typeof issue.params === "object" &&
+        "violationCode" in issue.params &&
+        typeof issue.params.violationCode === "string"
+          ? ` (${issue.params.violationCode})`
+          : "";
+      return `${path}${violationCode}: ${issue.message}`;
+    });
+    throw new Error(`Active public runtime policy is invalid: ${diagnostics.join("; ")}`);
+  }
+
+  validatePublicRuntimePolicyUpdate(parsed.data);
 }
 
 function failedBeforeTrafficStartSummary(

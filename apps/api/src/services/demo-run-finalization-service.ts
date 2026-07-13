@@ -1,7 +1,5 @@
 import { randomUUID } from "node:crypto";
 import {
-  type AcceptedRunConfigSnapshot,
-  acceptedRunConfigSnapshotSchema,
   type BusinessOutcomeSummary,
   businessOutcomeSummarySchema,
   type DemoRunSnapshot,
@@ -51,6 +49,7 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
       logger: CheckoutSurgeLogger;
       pendingPersistenceReconciler?: Pick<PendingPersistenceReconciler, "reconcileSaleOffer">;
       terminalRunWriter: Pick<TerminalDemoRunWriter, "write">;
+      drainTimeoutSeconds: number;
       now?: () => Date;
       generateId?: () => string;
     },
@@ -146,10 +145,7 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
       saleOfferId: requireSaleOfferId(row.run),
       runId: row.run.id,
     });
-    const timeoutAt = this.drainTimeoutAt(
-      row.run,
-      acceptedRunConfigSnapshotSchema.parse(row.run.configSnapshot),
-    );
+    const timeoutAt = this.drainTimeoutAt(row.run);
     const timedOut = now.getTime() >= timeoutAt.getTime();
     let latestPendingRedisCount = 0;
     try {
@@ -218,8 +214,7 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
     finalization: typeof demoRunFinalizations.$inferSelect;
     now: Date;
   }): Promise<FinalizationDecision> {
-    const config = acceptedRunConfigSnapshotSchema.parse(input.run.configSnapshot);
-    const timeoutAt = this.drainTimeoutAt(input.run, config);
+    const timeoutAt = this.drainTimeoutAt(input.run);
     const businessOutcome = await readBusinessOutcomeSummary(this.options.db, {
       saleOfferId: requireSaleOfferId(input.run),
       runId: input.run.id,
@@ -270,12 +265,9 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
     };
   }
 
-  private drainTimeoutAt(
-    run: typeof demoRuns.$inferSelect,
-    config: AcceptedRunConfigSnapshot,
-  ): Date {
+  private drainTimeoutAt(run: typeof demoRuns.$inferSelect): Date {
     const startedAt = run.trafficEndedAt ?? run.updatedAt;
-    return new Date(startedAt.getTime() + config.backpressureConfig.drainTimeoutSeconds * 1000);
+    return new Date(startedAt.getTime() + this.options.drainTimeoutSeconds * 1000);
   }
 
   private deriveFailureReason(input: {

@@ -1,12 +1,10 @@
-import { parseAllowedWebOrigins } from "./admin-config";
+import { webServerConfig } from "./config";
 
 const safeMethods = new Set(["GET", "HEAD", "OPTIONS"]);
 
 export function requireAdminOrigin(request: Request): Response | null {
   if (safeMethods.has(request.method.toUpperCase())) return null;
-  const allowed = parseAllowedWebOrigins(process.env.WEB_ORIGIN);
-  if (!allowed)
-    return error(503, "admin_origin_not_configured", "Admin controls are not configured.");
+  const allowed = webServerConfig().webOrigins;
   const supplied = request.headers.get("origin");
   return supplied && allowed.includes(supplied)
     ? null

@@ -879,7 +879,7 @@ describe("database migrations, seed data, and reset behavior", () => {
     }
   });
 
-  it("seeds idempotently and repairs the active runtime policy as a full reset", async () => {
+  it("seeds idempotently without overwriting an admin-edited active runtime policy", async () => {
     await runSeedScript();
     const [initialPolicyRow] = await withDatabase(
       (sql) => sql<{ created_at: string; updated_at: string }[]>`
@@ -891,7 +891,8 @@ describe("database migrations, seed data, and reset behavior", () => {
     await withDatabase(
       (sql) => sql`
         UPDATE public_runtime_policies
-        SET policy = '{"malformed":true}'::jsonb
+        SET policy = jsonb_set(policy, '{publicRunBudget,windowSeconds}', '999'::jsonb),
+            updated_at = updated_at + interval '1 second'
         WHERE id = 'active'
       `,
     );
@@ -930,9 +931,7 @@ describe("database migrations, seed data, and reset behavior", () => {
       demo_presets: 8,
       public_runtime_policies: 1,
     });
-    expect(publicRuntimePolicySchema.parse(policyRow?.policy).publicRunBudget.windowSeconds).toBe(
-      301,
-    );
+    expect(publicRuntimePolicySchema.parse(policyRow?.policy).publicRunBudget.windowSeconds).toBe(999);
     expect(policyRow?.created_at).toEqual(initialPolicyRow?.created_at);
     expect(new Date(policyRow?.updated_at ?? 0).getTime()).toBeGreaterThan(
       new Date(initialPolicyRow?.updated_at ?? 0).getTime(),
@@ -991,7 +990,56 @@ describe("database migrations, seed data, and reset behavior", () => {
     expect((await readPolicy())[0]).toEqual(before);
   });
 
-  it("backfills legacy preset breaker defaults while fully resetting runtime policy JSON", async () => {
+  it("maps every runtime-setup public policy bootstrap override", async () => {
+    await withDatabase((sql) => sql`DELETE FROM public_runtime_policies WHERE id = 'active'`);
+    await runSeedScript({
+      PUBLIC_RUN_BUDGET_WINDOW_SECONDS: "301",
+      PUBLIC_RUN_BUDGET_PER_VISITOR_MAX_STARTS: "3",
+      PUBLIC_RUN_BUDGET_GLOBAL_MAX_STARTS: "7",
+      DEMO_MAX_BUYERS: "300000",
+      PUBLIC_CUSTOM_MAX_TOTAL_REQUESTS: "20000",
+      PUBLIC_CUSTOM_MAX_BUYERS: "200000",
+      PUBLIC_CUSTOM_MAX_REQUESTS_PER_SECOND: "2000",
+      PUBLIC_CUSTOM_MAX_TRAFFIC_DURATION_SECONDS: "121",
+      PUBLIC_CUSTOM_MAX_TRAFFIC_START_DELAY_SECONDS: "11",
+      PUBLIC_CUSTOM_MAX_PRE_ALLOCATED_VUS: "1001",
+      PUBLIC_CUSTOM_MAX_VUS: "1002",
+      PUBLIC_CUSTOM_MAX_STARTING_STOCK: "1001",
+      PUBLIC_CUSTOM_MAX_ERP_LATENCY_MS: "2001",
+      PUBLIC_CUSTOM_MIN_ERP_MAX_TPS: "2",
+      PUBLIC_CUSTOM_MAX_ERP_MAX_TPS: "300",
+      PUBLIC_CUSTOM_MAX_ERP_ERROR_RATE: "0.3",
+    });
+    const [row] = await withDatabase(
+      (sql) => sql<{ policy: unknown }[]>`
+        SELECT policy FROM public_runtime_policies WHERE id = 'active'
+      `,
+    );
+    const policy = publicRuntimePolicySchema.parse(row?.policy);
+
+    expect(policy.publicRunBudget).toEqual({
+      windowSeconds: 301,
+      perVisitorMaxStarts: 3,
+      globalMaxStarts: 7,
+    });
+    expect(policy.publicCustomLimits).toMatchObject({
+      maxTotalRequests: 20_000,
+      maxBuyers: 200_000,
+      maxRequestsPerSecond: 2000,
+      maxTrafficDurationSeconds: 121,
+      maxTrafficStartDelaySeconds: 11,
+      maxPreAllocatedVus: 1001,
+      maxVus: 1002,
+      maxStartingStock: 1001,
+      maxErpLatencyMs: 2001,
+      minErpMaxTps: 2,
+      maxErpMaxTps: 300,
+      maxErpErrorRate: 0.3,
+    });
+    expect(policy.deploymentHardCaps.maxBuyers).toBe(300_000);
+  });
+
+  it("backfills legacy preset breaker defaults while preserving runtime policy JSON", async () => {
     await runSeedScript();
     await withDatabase(async (sql) => {
       await sql`
@@ -1060,15 +1108,10 @@ describe("database migrations, seed data, and reset behavior", () => {
     for (const preset of firstPresetState) {
       expect(() => backpressureConfigSchema.parse(preset.backpressure_config)).not.toThrow();
     }
-    expect(() => publicRuntimePolicySchema.parse(policyRow?.policy)).not.toThrow();
+    expect(() => publicRuntimePolicySchema.parse(policyRow?.policy)).toThrow();
     expect(policyRow?.policy).toMatchObject({
-      publicCustomDefaults: {
-        backpressureConfig: {
-          circuitBreakerFailureThreshold: 7,
-          circuitBreakerResetTimeoutMs: 12_345,
-        },
-      },
-      publicRunBudget: { windowSeconds: 300 },
+      publicCustomDefaults: { backpressureConfig: { orderProcessConcurrency: 5 } },
+      publicRunBudget: { windowSeconds: 999 },
     });
 
     await runSeedScript({
@@ -1082,13 +1125,8 @@ describe("database migrations, seed data, and reset behavior", () => {
     `,
     );
     expect(policyAfterRerun?.policy).toMatchObject({
-      publicCustomDefaults: {
-        backpressureConfig: {
-          circuitBreakerFailureThreshold: 9,
-          circuitBreakerResetTimeoutMs: 54_321,
-        },
-      },
-      publicRunBudget: { windowSeconds: 300 },
+      publicCustomDefaults: { backpressureConfig: { orderProcessConcurrency: 5 } },
+      publicRunBudget: { windowSeconds: 999 },
     });
   });
 

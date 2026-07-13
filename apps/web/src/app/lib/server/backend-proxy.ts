@@ -1,8 +1,5 @@
 import { controlServiceTokenHeaderName } from "@checkout-surge/contracts";
-import { readWebSecret } from "./config";
-
-const DEFAULT_API_BASE_URL = "http://localhost:4000";
-const DEFAULT_MOCK_ERP_BASE_URL = "http://localhost:4100";
+import { webServerConfig } from "./config";
 export const adminSessionCookieName = "checkout_surge_admin_session" as const;
 
 interface ContractSchema<T> {
@@ -12,24 +9,15 @@ interface ContractSchema<T> {
 }
 
 export function apiBaseUrl(): string {
-  return (process.env.API_BASE_URL ?? DEFAULT_API_BASE_URL).replace(/\/+$/, "");
+  return webServerConfig().apiBaseUrl;
 }
 
 export function mockErpBaseUrl(): string {
-  return (process.env.MOCK_ERP_BASE_URL ?? DEFAULT_MOCK_ERP_BASE_URL).replace(/\/+$/, "");
+  return webServerConfig().mockErpBaseUrl;
 }
 
 export function requireControlServiceToken(): string | Response {
-  const token = readWebSecret(process.env, "CONTROL_SERVICE_TOKEN");
-  if (!token) {
-    return jsonError(
-      503,
-      "control_token_not_configured",
-      "Service control token is not configured.",
-    );
-  }
-
-  return token;
+  return webServerConfig().controlServiceToken;
 }
 
 export async function readJsonRequest(request: Request): Promise<unknown | Response> {

@@ -22,9 +22,8 @@ import {
   runHistoryListResponseSchema,
   runHistoryPath,
 } from "@checkout-surge/contracts";
+import { webServerConfig } from "./server/config";
 
-const DEFAULT_API_BASE_URL = "http://localhost:4000";
-const DEFAULT_MOCK_ERP_BASE_URL = "http://localhost:4100";
 
 interface ContractSchema<T> {
   safeParse(
@@ -58,11 +57,11 @@ export interface PublicDemoSurface {
 }
 
 function apiBaseUrl(): string {
-  return (process.env.API_BASE_URL ?? DEFAULT_API_BASE_URL).replace(/\/+$/, "");
+  return webServerConfig().apiBaseUrl;
 }
 
 function mockErpBaseUrl(): string {
-  return (process.env.MOCK_ERP_BASE_URL ?? DEFAULT_MOCK_ERP_BASE_URL).replace(/\/+$/, "");
+  return webServerConfig().mockErpBaseUrl;
 }
 
 function errorReason(error: unknown): string {

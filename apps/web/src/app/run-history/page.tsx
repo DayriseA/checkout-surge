@@ -3,6 +3,8 @@ import { RunHistoryList } from "../components/run-history-list";
 import { StatusPill } from "../components/status-pill";
 import { getRunHistoryPage } from "../lib/api";
 
+export const dynamic = "force-dynamic";
+
 interface RunHistoryPageProps {
   searchParams?: Promise<{
     page?: string;

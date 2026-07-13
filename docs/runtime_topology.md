@@ -56,7 +56,7 @@ Expected command contract:
 
 - `pnpm runtime:up` starts the full containerized topology.
 - `pnpm runtime:down` stops the full containerized topology.
-- `pnpm runtime:setup` explicitly runs migrations and seeds the demo product, baseline sale offer, durable presets, Redis inventory, and a validated environment-backed public runtime policy for first-time or refreshed local use. Rerunning setup resets the complete active policy (including admin edits) while preserving its original creation timestamp; invalid policy input leaves the existing row unchanged.
+- `pnpm runtime:setup` explicitly runs migrations and seeds the demo product, baseline sale offer, durable presets, Redis inventory, and a validated environment-backed public runtime policy on first bootstrap. Compose mirrors the API-owned seven `DEMO_MAX_*` ceilings into this one-shot service solely so it can validate and compatibility-store the initial policy against the deployed caps; the running API remains authoritative and overlays its own startup config. The runtime drain timeout is not a setup input. Rerunning setup preserves an existing active policy and its admin edits. After bootstrap, use the protected admin policy controls; use a fresh/wiped database when setup defaults should create a new baseline.
 - `pnpm health:check` verifies full demo readiness, including the dashboard and backend service readiness.
 
 `runtime:up` should not automatically run migrations or seed demo data.

@@ -537,16 +537,16 @@ describe("demo run finalization service", () => {
     expect(summary?.failureReason).toBe("traffic_delivery_major_shortfall");
   });
 
-  it("fails with the documented drain-timeout policy when pending work remains", async () => {
+  it("uses the current API drain timeout for an already-draining run", async () => {
     const db = requireConnection(connection).db;
     const redisClient = requireRedis(redis);
-    const service = createService(connection, redis);
+    const service = createService(connection, redis, { drainTimeoutSeconds: 1 });
 
     await seedDrainingRun({
       db,
       redis: redisClient,
       trafficDeliveryStatus: "complete",
-      configSnapshot: configSnapshotFixture({ drainTimeoutSeconds: 1 }),
+      configSnapshot: configSnapshotFixture({ drainTimeoutSeconds: 300 }),
       trafficEndedAt: new Date("2026-06-20T00:00:00.000Z"),
     });
     await db.insert(reservationPendingPersistence).values({
@@ -580,6 +580,7 @@ function createService(
       typeof DemoRunFinalizationService
     >[0]["terminalRunWriter"];
     now?: () => Date;
+    drainTimeoutSeconds?: number;
   } = {},
 ): DemoRunFinalizationService {
   return new DemoRunFinalizationService({
@@ -589,6 +590,7 @@ function createService(
       new PostgresTerminalDemoRunSummaryWriter(requireConnection(connection).db),
     redis: requireRedis(redis),
     logger: createSilentLogger("api"),
+    drainTimeoutSeconds: 300,
     now: () => new Date("2026-06-20T00:00:10.000Z"),
     generateId: () => "77777777-7777-4777-8777-777777777777",
     ...options,

@@ -1177,6 +1177,27 @@ describe("public runtime policy contract", () => {
     }
   });
 
+  it.each([
+    ["maxTotalRequests", "maxTotalRequests", "public_limit_total_requests_exceeds_deployment_cap"],
+    ["maxRequestsPerSecond", "maxRequestsPerSecond", "public_limit_request_rate_exceeds_deployment_cap"],
+    ["maxTrafficDurationSeconds", "maxTrafficDurationSeconds", "public_limit_duration_exceeds_deployment_cap"],
+    ["maxTrafficStartDelaySeconds", "maxTrafficStartDelaySeconds", "public_limit_start_delay_exceeds_deployment_cap"],
+    ["maxBuyers", "maxBuyers", "public_limit_buyers_exceeds_deployment_cap"],
+    ["maxPreAllocatedVus", "maxPreAllocatedVus", "public_limit_preallocated_vus_exceeds_deployment_cap"],
+    ["maxVus", "maxVus", "public_limit_max_vus_exceeds_deployment_cap"],
+  ] as const)(
+    "reports the $2 deployment-cap violation on $0",
+    (limitField, capField, expectedCode) => {
+      const policy = semanticRuntimePolicy();
+      policy.deploymentHardCaps[capField] = policy.publicCustomLimits[limitField] - 1;
+
+      expect(collectPublicRuntimePolicyViolations(policy)[0]).toMatchObject({
+        code: expectedCode,
+        path: ["publicCustomLimits", limitField],
+      });
+    },
+  );
+
   it("validates protected public runtime policy reads and update requests", () => {
     const policy = publicRuntimePolicySchema.parse({
       isPublicRunBudgetEnforced: true,

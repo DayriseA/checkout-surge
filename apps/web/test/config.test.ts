@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { loadWebServerConfig } from "../src/app/lib/server/config";
+import {
+  initializeWebServerConfig,
+  loadWebServerConfig,
+  resetWebServerConfigForTests,
+  webServerConfig,
+} from "../src/app/lib/server/config";
 import { register } from "../src/instrumentation";
 
 const validSecrets = {
@@ -13,6 +18,7 @@ const originalEnv = { ...process.env };
 
 describe("web server secret configuration", () => {
   afterEach(() => {
+    resetWebServerConfigForTests();
     process.env = { ...originalEnv };
   });
 
@@ -46,6 +52,8 @@ describe("web server secret configuration", () => {
 
   it("accepts distinct deployment secrets", () => {
     expect(loadWebServerConfig(validSecrets)).toEqual({
+      apiBaseUrl: "http://localhost:4000",
+      mockErpBaseUrl: "http://localhost:4100",
       controlServiceToken: "control-token",
       adminDashboardPassphrase: "admin-passphrase",
       adminSessionSecret: "session-secret",
@@ -57,7 +65,25 @@ describe("web server secret configuration", () => {
       adminLoginWindowSeconds: 60,
       redisUrl: null,
       adminEdgeAttestationSecret: null,
+      isProduction: false,
+      secureAdminCookie: false,
     });
+  });
+
+  it("validates and normalizes backend URLs", () => {
+    const config = loadWebServerConfig({
+      ...validSecrets,
+      API_BASE_URL: " https://api.internal/ ",
+      MOCK_ERP_BASE_URL: "http://mock-erp.internal/",
+    });
+    expect(config.apiBaseUrl).toBe("https://api.internal");
+    expect(config.mockErpBaseUrl).toBe("http://mock-erp.internal");
+    expect(() => loadWebServerConfig({ ...validSecrets, API_BASE_URL: "not-a-url" })).toThrow(
+      /API_BASE_URL/,
+    );
+    expect(() =>
+      loadWebServerConfig({ ...validSecrets, MOCK_ERP_BASE_URL: "ftp://mock.internal" }),
+    ).toThrow(/MOCK_ERP_BASE_URL/);
   });
 
   it.each([
@@ -119,7 +145,24 @@ describe("web server secret configuration", () => {
     process.env = { ...process.env, ...validSecrets };
     expect(() => register()).not.toThrow();
 
+    const initialized = webServerConfig();
     process.env.ADMIN_SESSION_SECRET = "";
-    expect(() => register()).toThrow(/ADMIN_SESSION_SECRET is missing or blank/);
+    process.env.API_BASE_URL = "https://changed.invalid";
+    expect(webServerConfig()).toBe(initialized);
+    expect(webServerConfig().adminSessionSecret).toBe("session-secret");
+    expect(webServerConfig().apiBaseUrl).toBe("http://localhost:4000");
+    expect(() => register()).toThrow(/already been initialized/);
+  });
+
+  it("fails clearly before instrumentation initializes server config", () => {
+    expect(() => webServerConfig()).toThrow(/instrumentation must run/);
+  });
+
+  it("freezes the active configuration and nested origin list", () => {
+    const config = initializeWebServerConfig(validSecrets);
+
+    expect(Object.isFrozen(config)).toBe(true);
+    expect(Object.isFrozen(config.webOrigins)).toBe(true);
+    expect(() => initializeWebServerConfig(validSecrets)).toThrow(/already been initialized/);
   });
 });

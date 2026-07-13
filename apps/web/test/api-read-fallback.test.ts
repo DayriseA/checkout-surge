@@ -1,14 +1,34 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   getDashboardBackendSnapshot,
   getRunHistoryDetail,
   getRunHistoryPage,
 } from "../src/app/lib/api.js";
+import {
+  initializeWebServerConfig,
+  resetWebServerConfigForTests,
+} from "../src/app/lib/server/config.js";
 
 const originalEnv = { ...process.env };
+const validWebEnv = {
+  CONTROL_SERVICE_TOKEN: "control-token",
+  ADMIN_DASHBOARD_PASSPHRASE: "admin-passphrase",
+  ADMIN_SESSION_SECRET: "session-secret",
+  PUBLIC_CLIENT_COOKIE_SECRET: "visitor-cookie-secret",
+  WEB_ORIGIN: "http://dashboard.local",
+};
 
 describe("dashboard backend API reads", () => {
+  beforeEach(() => {
+    initializeWebServerConfig({
+      ...validWebEnv,
+      API_BASE_URL: "http://api.internal",
+      MOCK_ERP_BASE_URL: "http://mock-erp.internal",
+    });
+  });
+
   afterEach(() => {
+    resetWebServerConfigForTests();
     process.env = { ...originalEnv };
     vi.unstubAllGlobals();
   });
@@ -133,7 +153,6 @@ describe("dashboard backend API reads", () => {
   });
 
   it("reads paginated run history through the shared API contract", async () => {
-    process.env.API_BASE_URL = "http://api.internal";
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
       expect(String(input)).toBe("http://api.internal/demo/runs/history?page=2&pageSize=5");
       return jsonResponse({
@@ -209,7 +228,6 @@ describe("dashboard backend API reads", () => {
   });
 
   it("reads run history detail through the shared API contract", async () => {
-    process.env.API_BASE_URL = "http://api.internal";
     const runId = "55555555-5555-4555-8555-555555555555";
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
       expect(String(input)).toBe(`http://api.internal/demo/runs/history/${runId}`);

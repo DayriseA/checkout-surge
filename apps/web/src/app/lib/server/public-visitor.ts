@@ -4,7 +4,7 @@ import {
   signPublicVisitorCredential,
   verifyPublicVisitorCredential,
 } from "@checkout-surge/contracts/public-visitor-credential";
-import { readWebSecret } from "./config";
+import { webServerConfig } from "./config";
 
 const publicVisitorMaxAgeSeconds = 365 * 24 * 60 * 60;
 
@@ -14,16 +14,7 @@ export interface PublicVisitorIdentity {
 }
 
 export function resolvePublicVisitorIdentity(request: Request): PublicVisitorIdentity | Response {
-  const secret = readWebSecret(process.env, "PUBLIC_CLIENT_COOKIE_SECRET");
-  if (!secret) {
-    return Response.json(
-      {
-        code: "public_client_cookie_secret_not_configured",
-        message: "Public visitor cookie signing is not configured.",
-      },
-      { status: 503 },
-    );
-  }
+  const secret = webServerConfig().publicClientCookieSecret;
 
   const existing = readSignedVisitorCookie(request, secret);
   if (existing) {
