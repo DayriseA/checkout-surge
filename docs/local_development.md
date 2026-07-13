@@ -418,6 +418,12 @@ Most infrastructure URLs have local defaults, but service-to-service control end
 | `DEMO_RUN_FINALIZATION_POLL_INTERVAL_SECONDS` | `5` | API polling interval while waiting for demo run finalization |
 | `PUBLIC_RUN_BUDGET_WINDOW_SECONDS` | `300` | API public run-budget window |
 | `PUBLIC_RUN_BUDGET_PER_VISITOR_MAX_STARTS` | `2` | API public run-budget per-visitor cap |
+| `DASHBOARD_MAX_SSE_CLIENTS` / `DASHBOARD_MAX_SSE_CLIENTS_PER_SOURCE` | `80` / `6` | Per-API-process realtime connection caps; replicas multiply the deployment total |
+| `DASHBOARD_SSE_RETRY_AFTER_SECONDS` | `10` | Retry guidance for rejected realtime connections |
+| `DASHBOARD_RECOVERY_MAX_CONCURRENT` | `3` | Per-process recovery builds, deliberately below the default PostgreSQL pool size of 10 |
+| `DASHBOARD_RECOVERY_GLOBAL_MAX_REQUESTS` / `DASHBOARD_RECOVERY_PER_SOURCE_MAX_REQUESTS` | `60` / `12` per 60 seconds | Redis-backed deployment-wide recovery budgets |
+| `DASHBOARD_RECOVERY_WINDOW_SECONDS` / `DASHBOARD_RECOVERY_RETRY_AFTER_SECONDS` | `60` / `10` | Fixed-window duration and rejection retry guidance |
+| `API_TRUSTED_PROXY_CIDRS` | loopback and Compose Caddy `172.30.0.2/32` | Exact Caddy proxy boundary used for Fastify client-IP derivation; replace with the deployed proxy address |
 | `PUBLIC_RUN_BUDGET_GLOBAL_MAX_STARTS` | `6` | API public run-budget global cap |
 | `PUBLIC_CUSTOM_MAX_TOTAL_REQUESTS` | `10000` | API public custom cap for emitted buy attempts |
 | `PUBLIC_CUSTOM_MAX_BUYERS` | `10000` | API public custom cap for buyer-spike buyer count |
@@ -434,6 +440,8 @@ Most infrastructure URLs have local defaults, but service-to-service control end
 | `K6_BINARY` | `k6` host-native; `/usr/local/bin/k6` in compose | Load orchestrator |
 | `BUY_ENDPOINT_PATH` | `/buy` | Load orchestrator |
 | `LOG_LEVEL` | `info` | Shared logger |
+
+Dashboard SSE and recovery admission rejections advise a 10-second retry through `Retry-After`. Recovery requests proxied by Next carry the existing HMAC-verified public visitor credential; direct/debug requests fall back to the trusted network source. Arbitrary visitor headers and direct `X-Forwarded-For` values are not trusted. Redis limiter failures reject recovery reads rather than exposing dependency capacity.
 
 ## Design Decisions & Rationale
 

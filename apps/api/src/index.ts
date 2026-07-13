@@ -24,6 +24,10 @@ import type { ApiFastifyInstance } from "./runtime/fastify.js";
 import { createInfrastructureReadinessCheck } from "./runtime/readiness.js";
 import { buildApiServer } from "./server.js";
 import {
+  DashboardRecoveryAdmissionService,
+  RedisDashboardRecoveryBudgetStore,
+} from "./services/dashboard-recovery-admission.js";
+import {
   DashboardRecoveryService,
   PostgresDashboardBusinessOutcomeReader,
   PostgresDashboardCompletionOutcomeReader,
@@ -37,7 +41,6 @@ import {
   HttpTrafficExecutionGateway,
   RedisDashboardTrafficMetricStore,
 } from "./services/demo-run-service.js";
-import { RedisPublicRunBudgetStore } from "./services/public-run-budget-store.js";
 import { DemoRunStartupReconciliationService } from "./services/demo-run-startup-reconciliation-service.js";
 import {
   ErpStatusService,
@@ -48,6 +51,7 @@ import {
 import { InventoryStatusService } from "./services/inventory-status-service.js";
 import { PendingPersistenceReconciler } from "./services/pending-persistence-reconciler.js";
 import { PostgresBuyPersistence } from "./services/postgres-buy-persistence.js";
+import { RedisPublicRunBudgetStore } from "./services/public-run-budget-store.js";
 import { QueueStatusService } from "./services/queue-status-service.js";
 import {
   type BusinessOutcomeUpdateFailureReport,
@@ -139,7 +143,19 @@ export async function startApiServer(): Promise<void> {
     orderProcessJobPublisher,
     logger,
   });
-  const dashboardEventFanout = new DashboardEventFanout({ logger });
+  const dashboardEventFanout = new DashboardEventFanout({
+    logger,
+    maxClients: config.dashboardMaxSseClients,
+    maxClientsPerSource: config.dashboardMaxSseClientsPerSource,
+  });
+  const dashboardRecoveryAdmission = new DashboardRecoveryAdmissionService({
+    store: new RedisDashboardRecoveryBudgetStore(redis),
+    maxConcurrent: config.dashboardRecoveryMaxConcurrent,
+    globalMax: config.dashboardRecoveryGlobalMaxRequests,
+    perSourceMax: config.dashboardRecoveryPerSourceMaxRequests,
+    windowSeconds: config.dashboardRecoveryWindowSeconds,
+    logger,
+  });
   const dashboardEventSubscriber = createRedisDashboardEventSubscriber(
     dashboardEventSubscriberRedis,
     {
@@ -344,6 +360,7 @@ export async function startApiServer(): Promise<void> {
       ),
       dashboardEventFanout,
       dashboardRecoveryService,
+      dashboardRecoveryAdmission,
       erpStatusService,
       inventoryStatusService,
       queueStatusService,

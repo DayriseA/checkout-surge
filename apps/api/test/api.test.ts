@@ -87,6 +87,7 @@ import { loadApiConfig } from "../src/runtime/config.js";
 import type { ApiFastifyInstance } from "../src/runtime/fastify.js";
 import { createInfrastructureReadinessCheck } from "../src/runtime/readiness.js";
 import { buildApiServer } from "../src/server.js";
+import type { DashboardRecoveryAdmissionController } from "../src/services/dashboard-recovery-admission.js";
 import {
   type DashboardRecoveryContextReader,
   DashboardRecoveryService,
@@ -187,6 +188,7 @@ async function buildTestServer(options: {
   queueInspector?: OrderProcessQueueInspector;
   erpStatusService?: ErpStatusService;
   dashboardRecoveryService?: DashboardRecoveryService;
+  dashboardRecoveryAdmission?: DashboardRecoveryAdmissionController;
   dashboardEventFanout?: DashboardEventFanout;
   demoRunService?: DemoRunController;
   demoMaintenanceService?: DemoMaintenanceService;
@@ -258,6 +260,9 @@ async function buildTestServer(options: {
         logger,
         now: () => new Date("2026-06-20T00:00:10.000Z"),
       }),
+    dashboardRecoveryAdmission: options.dashboardRecoveryAdmission ?? {
+      admit: async () => ({ outcome: "admitted", release: () => undefined }),
+    },
     erpStatusService,
     inventoryStatusService,
     queueStatusService,

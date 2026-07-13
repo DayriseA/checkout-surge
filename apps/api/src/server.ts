@@ -14,9 +14,11 @@ import { registerInventoryRoutes } from "./routes/inventory-routes.js";
 import { registerQueueRoutes } from "./routes/queue-routes.js";
 import { registerRunHistoryRoutes } from "./routes/run-history-routes.js";
 import type { ApiConfig } from "./runtime/config.js";
+import { createDashboardSourceResolver } from "./runtime/dashboard-source-identity.js";
 import { ApiHttpError, createErrorPayload } from "./runtime/errors.js";
 import type { ApiFastifyInstance } from "./runtime/fastify.js";
 import type { ApiReadiness } from "./runtime/readiness.js";
+import type { DashboardRecoveryAdmissionController } from "./services/dashboard-recovery-admission.js";
 import type { DashboardRecoveryService } from "./services/dashboard-recovery-service.js";
 import type { DemoMaintenanceService } from "./services/demo-maintenance-service.js";
 import type { DemoRunController } from "./services/demo-run-service.js";
@@ -38,6 +40,7 @@ export interface BuildApiServerOptions {
   readiness: ApiReadiness;
   dashboardEventFanout: DashboardEventFanout;
   dashboardRecoveryService: DashboardRecoveryService;
+  dashboardRecoveryAdmission: DashboardRecoveryAdmissionController;
   erpStatusService: ErpStatusService;
   inventoryStatusService: InventoryStatusService;
   queueStatusService: QueueStatusService;
@@ -51,6 +54,7 @@ export interface BuildApiServerOptions {
 export async function buildApiServer(options: BuildApiServerOptions): Promise<ApiFastifyInstance> {
   const app = fastify({
     loggerInstance: options.logger,
+    trustProxy: options.config.trustedProxyCidrs,
   }) as ApiFastifyInstance;
 
   await app.register(cors, {
@@ -123,6 +127,10 @@ export async function buildApiServer(options: BuildApiServerOptions): Promise<Ap
   registerDashboardRoutes(app, {
     dashboardEventFanout: options.dashboardEventFanout,
     dashboardRecoveryService: options.dashboardRecoveryService,
+    dashboardRecoveryAdmission: options.dashboardRecoveryAdmission,
+    sourceResolver: createDashboardSourceResolver(options.config.publicClientCookieSecret),
+    sseRetryAfterSeconds: options.config.dashboardSseRetryAfterSeconds,
+    recoveryRetryAfterSeconds: options.config.dashboardRecoveryRetryAfterSeconds,
   });
 
   return app;

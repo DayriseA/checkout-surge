@@ -21,6 +21,15 @@ export interface ApiConfig {
   controlServiceToken: string;
   publicClientCookieSecret: string;
   demoRunFinalizationPollIntervalSeconds: number;
+  dashboardMaxSseClients: number;
+  dashboardMaxSseClientsPerSource: number;
+  dashboardSseRetryAfterSeconds: number;
+  dashboardRecoveryMaxConcurrent: number;
+  dashboardRecoveryGlobalMaxRequests: number;
+  dashboardRecoveryPerSourceMaxRequests: number;
+  dashboardRecoveryWindowSeconds: number;
+  dashboardRecoveryRetryAfterSeconds: number;
+  trustedProxyCidrs: string[];
 }
 
 const unsafeControlServiceTokens = new Set([
@@ -30,7 +39,7 @@ const unsafeControlServiceTokens = new Set([
 const unsafePublicClientCookieSecrets = new Set(["change-me-public-client-cookie-secret"]);
 
 export function loadApiConfig(env: NodeJS.ProcessEnv): ApiConfig {
-  return {
+  const config: ApiConfig = {
     host: env.HOST?.trim() || "0.0.0.0",
     port: parsePositiveInteger(env.PORT, "PORT", 4000),
     listenBacklog: parsePositiveInteger(env.API_LISTEN_BACKLOG, "API_LISTEN_BACKLOG", 8192),
@@ -76,7 +85,63 @@ export function loadApiConfig(env: NodeJS.ProcessEnv): ApiConfig {
       "DEMO_RUN_FINALIZATION_POLL_INTERVAL_SECONDS",
       5,
     ),
+    dashboardMaxSseClients: parsePositiveInteger(
+      env.DASHBOARD_MAX_SSE_CLIENTS,
+      "DASHBOARD_MAX_SSE_CLIENTS",
+      80,
+    ),
+    dashboardMaxSseClientsPerSource: parsePositiveInteger(
+      env.DASHBOARD_MAX_SSE_CLIENTS_PER_SOURCE,
+      "DASHBOARD_MAX_SSE_CLIENTS_PER_SOURCE",
+      6,
+    ),
+    dashboardSseRetryAfterSeconds: parsePositiveInteger(
+      env.DASHBOARD_SSE_RETRY_AFTER_SECONDS,
+      "DASHBOARD_SSE_RETRY_AFTER_SECONDS",
+      10,
+    ),
+    dashboardRecoveryMaxConcurrent: parsePositiveInteger(
+      env.DASHBOARD_RECOVERY_MAX_CONCURRENT,
+      "DASHBOARD_RECOVERY_MAX_CONCURRENT",
+      3,
+    ),
+    dashboardRecoveryGlobalMaxRequests: parsePositiveInteger(
+      env.DASHBOARD_RECOVERY_GLOBAL_MAX_REQUESTS,
+      "DASHBOARD_RECOVERY_GLOBAL_MAX_REQUESTS",
+      60,
+    ),
+    dashboardRecoveryPerSourceMaxRequests: parsePositiveInteger(
+      env.DASHBOARD_RECOVERY_PER_SOURCE_MAX_REQUESTS,
+      "DASHBOARD_RECOVERY_PER_SOURCE_MAX_REQUESTS",
+      12,
+    ),
+    dashboardRecoveryWindowSeconds: parsePositiveInteger(
+      env.DASHBOARD_RECOVERY_WINDOW_SECONDS,
+      "DASHBOARD_RECOVERY_WINDOW_SECONDS",
+      60,
+    ),
+    dashboardRecoveryRetryAfterSeconds: parsePositiveInteger(
+      env.DASHBOARD_RECOVERY_RETRY_AFTER_SECONDS,
+      "DASHBOARD_RECOVERY_RETRY_AFTER_SECONDS",
+      10,
+    ),
+    trustedProxyCidrs:
+      parseCsv(env.API_TRUSTED_PROXY_CIDRS).length > 0
+        ? parseCsv(env.API_TRUSTED_PROXY_CIDRS)
+        : ["127.0.0.0/8", "::1/128", "172.30.0.2/32"],
   };
+
+  if (config.dashboardMaxSseClientsPerSource > config.dashboardMaxSseClients) {
+    throw new Error(
+      "DASHBOARD_MAX_SSE_CLIENTS_PER_SOURCE must not exceed DASHBOARD_MAX_SSE_CLIENTS.",
+    );
+  }
+  if (config.dashboardRecoveryPerSourceMaxRequests > config.dashboardRecoveryGlobalMaxRequests) {
+    throw new Error(
+      "DASHBOARD_RECOVERY_PER_SOURCE_MAX_REQUESTS must not exceed DASHBOARD_RECOVERY_GLOBAL_MAX_REQUESTS.",
+    );
+  }
+  return config;
 }
 
 function requireStrongSecret(env: NodeJS.ProcessEnv, name: string): string {

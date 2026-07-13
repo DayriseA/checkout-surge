@@ -7,7 +7,7 @@
 
 	# Browser EventSource uses this same-origin path; only the SSE stream bypasses Next.js.
 	handle /dashboard/events {
-		reverse_proxy api:4000
+		reverse_proxy api-dashboard-edge:4000
 	}
 
 	handle {

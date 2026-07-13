@@ -42,19 +42,45 @@ describe("dashboard control proxy routes", () => {
 
   it("proxies dashboard recovery through the API boundary", async () => {
     process.env.API_BASE_URL = "http://api.internal";
+    process.env.PUBLIC_CLIENT_COOKIE_SECRET = "public-cookie-secret";
+    const forwardedCredentials: string[] = [];
     vi.stubGlobal(
       "fetch",
-      vi.fn(async (input: string | URL | Request) => {
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
         expect(String(input)).toBe("http://api.internal/dashboard/recovery");
+        const credential = (init?.headers as Record<string, string>)[publicVisitorIdHeaderName];
+        expect(credential).not.toBe("caller-assertion");
+        expect(credential).toMatch(/^[0-9a-f-]{36}\.\d+\.[0-9a-f]{64}$/);
+        forwardedCredentials.push(credential);
         return jsonResponse(dashboardRecoveryPayload());
       }),
     );
 
-    const response = await getDashboardRecovery();
-    const payload = await response.json();
+    const firstResponse = await getDashboardRecovery(
+      new Request("http://dashboard.local/api/dashboard/recovery", {
+        headers: { [publicVisitorIdHeaderName]: "caller-assertion" },
+      }),
+    );
+    const visitorCookie = firstResponse.headers.get("set-cookie")?.split(";")[0];
+    const repeatedResponse = await getDashboardRecovery(
+      new Request("http://dashboard.local/api/dashboard/recovery", {
+        headers: {
+          ...(visitorCookie ? { cookie: visitorCookie } : {}),
+          [publicVisitorIdHeaderName]: "caller-assertion",
+        },
+      }),
+    );
+    const freshResponse = await getDashboardRecovery(
+      new Request("http://dashboard.local/api/dashboard/recovery"),
+    );
+    const payload = await firstResponse.json();
 
-    expect(response.status).toBe(200);
+    expect(firstResponse.status).toBe(200);
+    expect(repeatedResponse.status).toBe(200);
+    expect(freshResponse.status).toBe(200);
     expect(payload.currentRun).toBeNull();
+    expect(forwardedCredentials[1]).toBe(forwardedCredentials[0]);
+    expect(forwardedCredentials[2]).not.toBe(forwardedCredentials[0]);
   });
 
   it("proxies public demo run starts through the API lifecycle", async () => {

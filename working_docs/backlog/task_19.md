@@ -96,3 +96,14 @@ Choose defaults relative to `API_POSTGRES_POOL_MAX`, expected dashboard tabs, pr
 ## Scope and non-goals
 
 This task is limited to availability controls for `/dashboard/events` and the expensive `/dashboard/recovery` read, their configuration/composition, trusted source derivation, observability, and focused tests. Keep both surfaces publicly readable. Do not add dashboard authentication, change buy-path limits, redesign recovery payloads, add event replay/IDs/backlogs, replace SSE, introduce a general-purpose API gateway rate-limiting platform, paginate unrelated run-history endpoints, or broaden this into the Task 73 transport-mechanics work beyond preserving existing retry/header/backpressure behavior. Cross-replica SSE leases are optional only if implemented completely; otherwise document the per-process multiplication explicitly.
+
+## Implementation record
+
+- **Status:** Implemented.
+- Atomic process-local total/per-source SSE admission now lives in the fan-out owner, with idempotent source accounting and the existing first-client/last-client heartbeat lifecycle preserved.
+- Recovery admission runs before dependency reads and combines process-local in-flight permits with atomic Redis fixed-window global/per-source budgets. Limiter failures fail closed and permits release in `finally`.
+- Next reuses the server-issued HMAC visitor credential for recovery; the API verifies it and falls back to normalized trusted network identity. Compose pins Caddy to `172.30.0.2` on a dedicated internal network, and Fastify trusts that exact address plus host-native loopback only.
+- Defaults reserve buy-path capacity (three concurrent recovery builds for a default PostgreSQL pool of ten). SSE caps are per process, so replicas multiply the total; no incomplete Redis connection counter was added.
+- Authentication, replay, recovery payloads, and projection fallback semantics remain unchanged.
+- **Verification:** `pnpm --filter @checkout-surge/contracts build` passed; six focused API files passed (42 tests: runtime config, fan-out lifecycle/admission, route errors, recovery admission/store behavior, source normalization, trusted proxy); focused web proxy passed (19 tests); API/web lint, web type-check, `docker compose config --quiet`, and `git diff --check` passed. API type-check remained blocked by pre-existing unrelated DB export and ERP reader errors.
+- **Skipped:** No real Redis integration test was run because the focused environment did not provide an isolated Redis fixture. The injected fake-eval tests verify window keys, rollover, TTL arguments, hashed bounded source keys, and concurrent atomic-call behavior; the Lua script still needs real-Redis integration coverage when that fixture is available.

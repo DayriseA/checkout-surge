@@ -161,7 +161,10 @@ export async function proxyJson<T>(options: {
   }
 
   if (!response.ok) {
-    return Response.json(payload.value, { status: response.status });
+    const headers = new Headers();
+    const retryAfter = response.headers.get("retry-after");
+    if (retryAfter) headers.set("retry-after", retryAfter);
+    return Response.json(payload.value, { status: response.status, headers });
   }
 
   const parsed = options.schema.safeParse(payload.value);

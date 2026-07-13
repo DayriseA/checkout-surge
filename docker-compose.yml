@@ -51,6 +51,15 @@ services:
       HOST: 0.0.0.0
       API_LISTEN_BACKLOG: ${API_LISTEN_BACKLOG:-8192}
       API_POSTGRES_POOL_MAX: ${API_POSTGRES_POOL_MAX:-10}
+      API_TRUSTED_PROXY_CIDRS: "${API_TRUSTED_PROXY_CIDRS:-127.0.0.0/8,::1/128,172.30.0.2/32}"
+      DASHBOARD_MAX_SSE_CLIENTS: ${DASHBOARD_MAX_SSE_CLIENTS:-80}
+      DASHBOARD_MAX_SSE_CLIENTS_PER_SOURCE: ${DASHBOARD_MAX_SSE_CLIENTS_PER_SOURCE:-6}
+      DASHBOARD_SSE_RETRY_AFTER_SECONDS: ${DASHBOARD_SSE_RETRY_AFTER_SECONDS:-10}
+      DASHBOARD_RECOVERY_MAX_CONCURRENT: ${DASHBOARD_RECOVERY_MAX_CONCURRENT:-3}
+      DASHBOARD_RECOVERY_GLOBAL_MAX_REQUESTS: ${DASHBOARD_RECOVERY_GLOBAL_MAX_REQUESTS:-60}
+      DASHBOARD_RECOVERY_PER_SOURCE_MAX_REQUESTS: ${DASHBOARD_RECOVERY_PER_SOURCE_MAX_REQUESTS:-12}
+      DASHBOARD_RECOVERY_WINDOW_SECONDS: ${DASHBOARD_RECOVERY_WINDOW_SECONDS:-60}
+      DASHBOARD_RECOVERY_RETRY_AFTER_SECONDS: ${DASHBOARD_RECOVERY_RETRY_AFTER_SECONDS:-10}
       RESERVATION_HOLD_MINUTES: ${RESERVATION_HOLD_MINUTES:-15}
       IDEMPOTENCY_TTL_SECONDS: ${IDEMPOTENCY_TTL_SECONDS:-1800}
       PENDING_PERSISTENCE_RETRY_AFTER_SECONDS: ${PENDING_PERSISTENCE_RETRY_AFTER_SECONDS:-30}
@@ -94,6 +103,11 @@ services:
       interval: 5s
       timeout: 3s
       retries: 30
+    networks:
+      default:
+      dashboard-edge:
+        aliases:
+          - api-dashboard-edge
 
   worker:
     build:
@@ -224,6 +238,10 @@ services:
       - "${DASHBOARD_PROXY_HOST_PORT:-8080}:8080"
     volumes:
       - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+    networks:
+      default:
+      dashboard-edge:
+        ipv4_address: 172.30.0.2
     depends_on:
       api:
         condition: service_started
@@ -253,3 +271,10 @@ volumes:
   checkout-surge-postgres-data:
   checkout-surge-redis-data:
   checkout-surge-load-orchestrator-data:
+
+networks:
+  dashboard-edge:
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
