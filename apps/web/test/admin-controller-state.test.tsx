@@ -1,0 +1,386 @@
+// @vitest-environment jsdom
+
+import type {
+  AdminPresetListResponse,
+  AdminPublicRuntimePolicyResponse,
+  DashboardRecoveryResponse,
+  DemoPresetContract,
+  ErpChaosStatus,
+} from "@checkout-surge/contracts";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  AdminAuthenticatedSurface,
+  AdminErpDiagnosticsController,
+  AdminPresetController,
+  AdminRuntimePolicyController,
+} from "../src/app/components/admin/admin-authenticated-surface.js";
+import type { BackendRead } from "../src/app/lib/api.js";
+import {
+  adminDemoResetProxyPath,
+  adminErpChaosProxyPath,
+  adminPublicRuntimePolicyProxyPath,
+  dashboardRecoveryProxyPath,
+} from "../src/app/lib/control-paths.js";
+
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
+
+describe("admin feature controllers", () => {
+  it("keeps unrelated controls enabled while an ERP mutation is pending", async () => {
+    const pending = deferred<Response>();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        if (String(input) === adminErpChaosProxyPath) return pending.promise;
+        throw new Error(`Unexpected fetch: ${String(input)}`);
+      }),
+    );
+    const user = userEvent.setup();
+    render(<AdminAuthenticatedSurface {...surfaceProps(null)} />);
+
+    await user.click(screen.getByRole("button", { name: "Apply ERP Controls" }));
+    expect(
+      (screen.getByRole("button", { name: "Apply ERP Controls" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+    expect((screen.getByRole("button", { name: "Reset Demo" }) as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+    expect(
+      (screen.getByRole("button", { name: "Start Admin Run" }) as HTMLButtonElement).disabled,
+    ).toBe(false);
+    pending.resolve(jsonResponse(erpFixture()));
+    await waitFor(() =>
+      expect(
+        (screen.getByRole("button", { name: "Apply ERP Controls" }) as HTMLButtonElement).disabled,
+      ).toBe(false),
+    );
+  });
+
+  it("keeps a dirty ERP draft across props and submits its exact values", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <AdminErpDiagnosticsController initialErpChaos={available(erpFixture())} />,
+    );
+    const latency = screen.getByLabelText("Latency ms");
+    await user.clear(latency);
+    await user.type(latency, "250");
+    rerender(
+      <AdminErpDiagnosticsController
+        initialErpChaos={available({ ...erpFixture(), latencyMs: 75 })}
+      />,
+    );
+    expect((screen.getByLabelText("Latency ms") as HTMLInputElement).value).toBe("250");
+
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      jsonResponse({ ...erpFixture(), latencyMs: 250 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    await user.click(screen.getByRole("button", { name: "Apply ERP Controls" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+      latencyMs: 250,
+      maxTps: 100,
+      errorRate: 0,
+      forcedOutage: false,
+    });
+  });
+
+  it("reconciles reset recovery into current-run and preset start gating", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === adminDemoResetProxyPath) {
+        return jsonResponse({
+          failedRunCount: 1,
+          closedSaleOfferCount: 1,
+          cleanedQueueCount: 1,
+          cleanedJobCount: 2,
+          correlationId: "corr-reset",
+          resetAt: "2026-06-20T00:00:12.000Z",
+        });
+      }
+      if (String(input) === dashboardRecoveryProxyPath) return jsonResponse(recoveryFixture(null));
+      throw new Error(`Unexpected fetch: ${String(input)}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<AdminAuthenticatedSurface {...surfaceProps(runFixture())} />);
+    expect(
+      (screen.getByRole("button", { name: "Start Admin Run" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+    await user.click(screen.getByRole("button", { name: "Reset Demo" }));
+    await waitFor(() =>
+      expect(
+        (screen.getByRole("button", { name: "Start Admin Run" }) as HTMLButtonElement).disabled,
+      ).toBe(false),
+    );
+    expect(fetchMock.mock.calls.map(([input]) => String(input))).toEqual([
+      adminDemoResetProxyPath,
+      dashboardRecoveryProxyPath,
+    ]);
+  });
+
+  it("reconciles recovery even when the reset response is unavailable", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === adminDemoResetProxyPath) {
+        return jsonResponse({ message: "Reset outcome is uncertain." }, 503);
+      }
+      if (String(input) === dashboardRecoveryProxyPath) return jsonResponse(recoveryFixture(null));
+      throw new Error(`Unexpected fetch: ${String(input)}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<AdminAuthenticatedSurface {...surfaceProps(runFixture())} />);
+
+    await user.click(screen.getByRole("button", { name: "Reset Demo" }));
+    await waitFor(() =>
+      expect(
+        (screen.getByRole("button", { name: "Start Admin Run" }) as HTMLButtonElement).disabled,
+      ).toBe(false),
+    );
+    expect(await screen.findByText("Reset outcome is uncertain.")).toBeTruthy();
+    expect(fetchMock.mock.calls.map(([input]) => String(input))).toEqual([
+      adminDemoResetProxyPath,
+      dashboardRecoveryProxyPath,
+    ]);
+  });
+
+  it("adopts changed same-slug preset props while the draft is clean", async () => {
+    const recovery = available(recoveryFixture(null));
+    const initialPresets = presetListFixture("Custom");
+    const { rerender } = render(
+      <AdminPresetController initialPresets={initialPresets} recovery={recovery} />,
+    );
+    rerender(
+      <AdminPresetController
+        initialPresets={presetListFixture("Server updated")}
+        recovery={recovery}
+      />,
+    );
+    await waitFor(() =>
+      expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("Server updated"),
+    );
+  });
+
+  it("preserves an in-progress preset draft while refreshed props update start gating", async () => {
+    const user = userEvent.setup();
+    const props = surfaceProps(null);
+    const { rerender } = render(<AdminAuthenticatedSurface {...props} />);
+    const name = screen.getByLabelText("Name");
+    await user.clear(name);
+    await user.type(name, "Edited locally");
+    await user.click(screen.getByRole("button", { name: "Custom" }));
+
+    rerender(
+      <AdminAuthenticatedSurface
+        {...props}
+        initialPresets={presetListFixture("Server updated")}
+        initialRecovery={available(recoveryFixture(runFixture()))}
+      />,
+    );
+    expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("Edited locally");
+    expect(
+      (screen.getByRole("button", { name: "Start Admin Run" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+  });
+
+  it("preserves a dirty policy draft across props and adopts an explicit save response", async () => {
+    const initial = available(runtimePolicyFixture(10_000, 300));
+    const user = userEvent.setup();
+    const { rerender } = render(<AdminRuntimePolicyController initialRuntimePolicy={initial} />);
+    const maxBuyers = screen.getByLabelText("Max buyers");
+    await user.clear(maxBuyers);
+    await user.type(maxBuyers, "4321");
+
+    rerender(
+      <AdminRuntimePolicyController
+        initialRuntimePolicy={available(runtimePolicyFixture(9999, 400))}
+      />,
+    );
+    expect((screen.getByLabelText("Max buyers") as HTMLInputElement).value).toBe("4321");
+
+    const saved = runtimePolicyFixture(4321, 777);
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      jsonResponse(saved),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    await user.click(screen.getByRole("button", { name: "Save Public Policy" }));
+
+    await waitFor(() =>
+      expect((screen.getByLabelText("Budget window seconds") as HTMLInputElement).value).toBe(
+        "777",
+      ),
+    );
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(adminPublicRuntimePolicyProxyPath);
+    expect(fetchMock.mock.calls[0]?.[1]?.method).toBe("PUT");
+    expect((screen.getByLabelText("Max buyers") as HTMLInputElement).value).toBe("4321");
+  });
+});
+
+function surfaceProps(currentRun: DashboardRecoveryResponse["currentRun"]) {
+  return {
+    initialErpChaos: available(erpFixture()),
+    initialPresets: available<AdminPresetListResponse>({
+      presets: [presetFixture()],
+      timestamp: "2026-06-20T00:00:10.000Z",
+    }),
+    initialRecovery: available(recoveryFixture(currentRun)),
+    initialRuntimePolicy: { status: "unavailable" as const, reason: "Not loaded" },
+  };
+}
+
+function presetListFixture(name: string): BackendRead<AdminPresetListResponse> {
+  return available({
+    presets: [{ ...presetFixture(), display: { ...presetFixture().display, name } }],
+    timestamp: "2026-06-20T00:00:11.000Z",
+  });
+}
+
+function available<T>(data: T): BackendRead<T> {
+  return { status: "available", data, httpStatus: 200 };
+}
+
+function erpFixture(): ErpChaosStatus {
+  return {
+    latencyMs: 50,
+    maxTps: 100,
+    errorRate: 0,
+    forcedOutage: false,
+    updatedAt: "2026-06-20T00:00:10.000Z",
+  };
+}
+
+function recoveryFixture(
+  currentRun: DashboardRecoveryResponse["currentRun"],
+): DashboardRecoveryResponse {
+  return {
+    currentRun,
+    inventory: null,
+    recentMetrics: [],
+    queue: null,
+    erp: null,
+    businessOutcome: null,
+    consistencyLag: null,
+    recentCompletionOutcomes: [],
+    recoveredAt: "2026-06-20T00:00:10.000Z",
+  };
+}
+
+function runFixture(): DashboardRecoveryResponse["currentRun"] {
+  return {
+    runId: "11111111-1111-4111-8111-111111111111",
+    presetId: "22222222-2222-4222-8222-222222222222",
+    presetName: "Custom",
+    operatorMode: "admin",
+    status: "active",
+    trafficStatus: "active",
+    configSnapshot: presetFixture(),
+    saleOfferId: "33333333-3333-4333-8333-333333333333",
+    startedAt: "2026-06-20T00:00:00.000Z",
+  };
+}
+
+function presetFixture(): DemoPresetContract {
+  return {
+    id: "22222222-2222-4222-8222-222222222222",
+    slug: "custom",
+    visibility: "admin",
+    isEditable: true,
+    isCustom: true,
+    display: { name: "Custom", description: "Fixture", sortOrder: 100, outcomeFocus: [] },
+    trafficConfig: {
+      mode: "buyer-spike",
+      buyerCount: 1000,
+      duplicateEachBuyerAttempt: false,
+      startDelaySeconds: 0,
+      maxDurationSeconds: 2,
+      quantityPerAttempt: 1,
+    },
+    inventoryConfig: { startingStock: 250, quantityPerCheckout: 1, reservationHoldMinutes: 15 },
+    erpConfig: {
+      latencyMs: 80,
+      maxTps: 100,
+      errorRate: 0,
+      forcedOutage: false,
+      requestTimeoutMs: 2000,
+    },
+    backpressureConfig: {
+      queueName: "orders:process",
+      physicalQueueName: "orders-process",
+      orderProcessConcurrency: 5,
+      retryPolicy: { maxAttempts: 4, initialBackoffMs: 500 },
+      drainTimeoutSeconds: 300,
+      pendingPersistenceRetryAfterSeconds: 30,
+      circuitBreakerFailureThreshold: 5,
+      circuitBreakerResetTimeoutMs: 10_000,
+    },
+    createdAt: "2026-06-20T00:00:00.000Z",
+    updatedAt: "2026-06-20T00:00:00.000Z",
+  };
+}
+
+function runtimePolicyFixture(
+  maxBuyers: number,
+  windowSeconds: number,
+): AdminPublicRuntimePolicyResponse {
+  const config = presetFixture();
+  const publicCustomDefaults = {
+    trafficConfig: config.trafficConfig,
+    inventoryConfig: config.inventoryConfig,
+    erpConfig: config.erpConfig,
+    backpressureConfig: config.backpressureConfig,
+  };
+  return {
+    id: "active",
+    policy: {
+      isPublicRunBudgetEnforced: true,
+      publicRunBudget: { windowSeconds, perVisitorMaxStarts: 2, globalMaxStarts: 6 },
+      publicCustomDefaults,
+      publicCustomLimits: {
+        maxTotalRequests: 10_000,
+        maxBuyers,
+        maxRequestsPerSecond: 1000,
+        maxTrafficDurationSeconds: 120,
+        maxTrafficStartDelaySeconds: 10,
+        maxPreAllocatedVus: 1000,
+        maxVus: 1000,
+        maxStartingStock: 1000,
+        maxErpLatencyMs: 2000,
+        minErpMaxTps: 1,
+        maxErpMaxTps: 100,
+        maxErpErrorRate: 0.25,
+        allowForcedOutage: false,
+        allowedTrafficModes: ["buyer-spike", "steady-arrival-rate"],
+      },
+      deploymentHardCaps: {
+        maxBuyers: 100_000,
+        maxTotalRequests: 100_000,
+        maxRequestsPerSecond: 10_000,
+        maxTrafficDurationSeconds: 300,
+        maxTrafficStartDelaySeconds: 30,
+        maxPreAllocatedVus: 10_000,
+        maxVus: 10_000,
+      },
+    },
+    updatedAt: "2026-06-20T00:00:10.000Z",
+    correlationId: "corr-policy",
+    timestamp: "2026-06-20T00:00:10.000Z",
+  };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
+}
+
+function jsonResponse(payload: unknown, status = 200): Response {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}

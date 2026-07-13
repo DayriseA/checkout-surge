@@ -11,7 +11,7 @@ import {
 import {
   applyDashboardEvent,
   shouldRequestAuthoritativeRecoveryAfterEvent,
-} from "../src/app/components/operator-dashboard.js";
+} from "../src/app/lib/dashboard-state.js";
 import type { BackendRead } from "../src/app/lib/api.js";
 
 describe("Phase 6 dashboard behavior", () => {

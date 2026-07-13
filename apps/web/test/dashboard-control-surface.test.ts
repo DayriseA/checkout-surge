@@ -7,14 +7,13 @@ import type {
   PublicPresetListResponse,
   PublicRuntimePolicyResponse,
 } from "@checkout-surge/contracts";
-import { type ComponentType, createElement } from "react";
+import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { AdminConsole, type AdminConsoleProps } from "../src/app/components/admin-console.js";
+import { AdminAuthenticatedSurface } from "../src/app/components/admin/admin-authenticated-surface.js";
+import { AdminSignInView } from "../src/app/components/admin/admin-sign-in.js";
 import { PublicDemoEntry } from "../src/app/components/public-demo-entry.js";
 import type { BackendRead, PublicDemoSurface } from "../src/app/lib/api.js";
-
-const AdminConsoleForTest = AdminConsole as ComponentType<AdminConsoleProps>;
 
 describe("dashboard control surface", () => {
   it("renders the public visitor entry with curated and bounded custom starts", () => {
@@ -40,7 +39,13 @@ describe("dashboard control surface", () => {
 
   it("renders only the admin sign-in gate for anonymous admin access", () => {
     const markup = renderToStaticMarkup(
-      createElement(AdminConsoleForTest, { autoCheckSession: false }),
+      createElement(AdminSignInView, {
+        error: null,
+        isPending: false,
+        onPassphraseChange: () => undefined,
+        onSignIn: () => undefined,
+        passphrase: "",
+      }),
     );
 
     expect(markup).toContain("Protected operator surface");
@@ -52,9 +57,7 @@ describe("dashboard control surface", () => {
 
   it("renders protected admin controls and disables starts while a run is draining", () => {
     const markup = renderToStaticMarkup(
-      createElement(AdminConsoleForTest, {
-        autoCheckSession: false,
-        initialAuthenticated: true,
+      createElement(AdminAuthenticatedSurface, {
         initialErpChaos: available(erpChaosFixture()),
         initialPresets: available(adminPresetListFixture()),
         initialRecovery: available(recoveryFixture(runFixture("draining"))),

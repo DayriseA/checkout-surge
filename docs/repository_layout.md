@@ -59,6 +59,8 @@ checkout-surge/
 - Consumes `packages/contracts` for API request/response types.
 - Communicates with `apps/api` over same-origin HTTP routes and the live SSE stream at `/dashboard/events`.
 - Proxies `apps/mock-erp` admin-only chaos endpoints server-side so the API gateway does not couple itself to ERP control behavior.
+- Keeps watch event reconciliation in a pure state module, EventSource and recovery coordination in focused hooks, and the watch component as panel composition.
+- Uses a server-side admin session gate and protected read helpers, then composes independent current-run, policy, preset/start, maintenance, and ERP client controllers.
 
 ### `apps/api`
 

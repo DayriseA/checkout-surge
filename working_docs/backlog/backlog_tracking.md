@@ -55,7 +55,7 @@ Replace `⬜` with `✅` when a task is complete. Optional `⏳` for work in pro
 
 ✅ [Task 25: Fix the test-database reset guard and reset determinism](./task_25.md)
 
-⬜ [Task 26: Decompose the monolithic dashboard and admin-console components](./task_26.md)
+✅ [Task 26: Decompose the monolithic dashboard and admin-console components](./task_26.md)
 
 ⬜ [Task 27: Complete the live dashboard gold signals: publish inventory and queue updates and promote latency/failure rate](./task_27.md)
 

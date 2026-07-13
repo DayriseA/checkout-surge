@@ -8,6 +8,6 @@ export default defineConfig({
   oxc: false,
   test: {
     environment: "node",
-    include: ["test/**/*.test.ts"],
+    include: ["test/**/*.test.{ts,tsx}"],
   },
 });

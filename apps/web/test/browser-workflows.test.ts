@@ -20,11 +20,11 @@ import type {
 } from "@checkout-surge/contracts";
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { createElement, type FunctionComponent } from "react";
+import { createElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import AboutPage from "../src/app/about/page.js";
 import AdminPage from "../src/app/admin/page.js";
-import { AdminConsole, type AdminConsoleProps } from "../src/app/components/admin-console.js";
+import { AdminAuthenticatedSurface } from "../src/app/components/admin/admin-authenticated-surface.js";
 import { OperatorDashboard } from "../src/app/components/operator-dashboard.js";
 import { PublicDemoEntry } from "../src/app/components/public-demo-entry.js";
 import { RunHistoryAdminControls } from "../src/app/components/run-history-admin-controls.js";
@@ -37,11 +37,9 @@ import {
 } from "../src/app/lib/api.js";
 import {
   adminErpChaosProxyPath,
-  adminPassphraseHeaderName,
   adminPresetListProxyPath,
   adminPublicRuntimePolicyProxyPath,
   adminRunHistoryProxyPath,
-  adminSessionProxyPath,
   dashboardRecoveryProxyPath,
   demoRunStartProxyPath,
 } from "../src/app/lib/control-paths.js";
@@ -55,6 +53,18 @@ vi.mock("../src/app/lib/api.js", () => ({
   getPublicDemoSurface: vi.fn(),
   getRunHistoryDetail: vi.fn(),
   getRunHistoryPage: vi.fn(),
+}));
+vi.mock("../src/app/lib/server/admin-page-session.js", () => ({
+  hasValidAdminPageSession: vi.fn(async () => false),
+}));
+vi.mock("../src/app/lib/server/admin-reads.js", () => ({
+  readAdminErpChaos: vi.fn(),
+  readAdminPresets: vi.fn(),
+  readAdminRecovery: vi.fn(),
+  readAdminRuntimePolicy: vi.fn(),
+}));
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ refresh: vi.fn() }),
 }));
 
 type FetchCall = [input: string | URL | Request, init: RequestInit | undefined];
@@ -71,11 +81,26 @@ class FakeEventSource {
   onmessage: ((event: MessageEvent) => void) | null = null;
   onopen: ((event: Event) => void) | null = null;
   readonly close = vi.fn();
+  readonly listeners = new Map<string, Set<EventListener>>();
   readonly url: string;
 
   constructor(url: string | URL) {
     this.url = String(url);
     FakeEventSource.instances.push(this);
+  }
+
+  addEventListener(type: string, listener: EventListener) {
+    const listeners = this.listeners.get(type) ?? new Set<EventListener>();
+    listeners.add(listener);
+    this.listeners.set(type, listeners);
+  }
+
+  removeEventListener(type: string, listener: EventListener) {
+    this.listeners.get(type)?.delete(listener);
+  }
+
+  emit(type: string, event: Event) {
+    for (const listener of this.listeners.get(type) ?? []) listener(event);
   }
 }
 
@@ -159,18 +184,10 @@ describe("public browser starts", () => {
 });
 
 describe("admin browser workflows", () => {
-  it("exchanges a passphrase for a session before using protected controls", async () => {
+  it("submits exact ERP chaos values from the authenticated controls", async () => {
     const user = userEvent.setup();
     const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const path = String(input);
-
-      if (path === adminSessionProxyPath) {
-        expect(init?.method).toBe("POST");
-        expect((init?.headers as Record<string, string>)[adminPassphraseHeaderName]).toBe(
-          "admin-pass",
-        );
-        return jsonResponse({ authenticated: true });
-      }
 
       if (path === adminPresetListProxyPath) {
         return jsonResponse(adminPresetListFixture());
@@ -203,13 +220,13 @@ describe("admin browser workflows", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     render(
-      createElement(AdminConsole as FunctionComponent<AdminConsoleProps>, {
-        autoCheckSession: false,
+      createElement(AdminAuthenticatedSurface, {
+        initialErpChaos: available(erpChaosStatusFixture()),
+        initialPresets: available(adminPresetListFixture()),
+        initialRecovery: available(dashboardRecoveryFixture()),
+        initialRuntimePolicy: available(adminRuntimePolicyResponseFixture()),
       }),
     );
-
-    await replaceInputValue("Admin passphrase", "admin-pass", user);
-    await user.click(screen.getByRole("button", { name: "Sign In" }));
     await screen.findByRole("button", { name: "Apply ERP Controls" });
     await replaceInputValue("Latency ms", "250", user);
     await replaceInputValue("Max TPS", "20", user);
@@ -249,12 +266,13 @@ describe("watch browser recovery", () => {
 
     await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
     act(() => {
-      FakeEventSource.instances[0]?.onopen?.(new Event("open"));
+      FakeEventSource.instances[0]?.emit("open", new Event("open"));
     });
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
 
     act(() => {
-      FakeEventSource.instances[0]?.onmessage?.(
+      FakeEventSource.instances[0]?.emit(
+        "message",
         new MessageEvent("message", {
           data: JSON.stringify(runCompletedEventFixture()),
         }),
@@ -334,7 +352,7 @@ describe("web page smoke coverage", () => {
     expect(screen.getByRole("heading", { name: "Live watch" })).toBeTruthy();
     cleanup();
 
-    render(createElement(AdminPage));
+    render(await AdminPage());
     expect(screen.getByRole("heading", { name: "Admin console" })).toBeTruthy();
     cleanup();
 
