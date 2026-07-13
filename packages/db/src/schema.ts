@@ -2,6 +2,7 @@ import { relations, sql } from "drizzle-orm";
 import {
   boolean,
   check,
+  foreignKey,
   index,
   integer,
   jsonb,
@@ -235,6 +236,7 @@ export const demoRuns = pgTable(
     // Keep it out of this declaration because Drizzle does not reliably
     // round-trip expression indexes; do not generate a duplicate schema index.
     uniqueIndex("demo_runs_sale_offer_id_unique").on(table.saleOfferId),
+    uniqueIndex("demo_runs_id_sale_offer_id_unique").on(table.id, table.saleOfferId),
     index("demo_runs_preset_id_idx").on(table.presetId),
     index("demo_runs_status_idx").on(table.status),
   ],
@@ -255,6 +257,11 @@ export const demoRunSaleContexts = pgTable(
   (table) => [
     uniqueIndex("demo_run_sale_contexts_sale_offer_id_unique").on(table.saleOfferId),
     uniqueIndex("demo_run_sale_contexts_run_sale_offer_unique").on(table.runId, table.saleOfferId),
+    foreignKey({
+      name: "demo_run_sale_contexts_run_sale_offer_demo_runs_fk",
+      columns: [table.runId, table.saleOfferId],
+      foreignColumns: [demoRuns.id, demoRuns.saleOfferId],
+    }).onDelete("cascade"),
   ],
 );
 

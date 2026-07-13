@@ -449,7 +449,7 @@ Logical fields:
 Notes:
 
 - Every normal run creates a generated run-scoped `SaleOffer` with isolated PostgreSQL and Redis inventory.
-- The generated sale offer is bound to the run through `DemoRunSaleContext`; run-owned business rows must use the same `(runId, saleOfferId)` pair.
+- The generated sale offer is bound to the run through `DemoRunSaleContext`; a composite foreign key requires the context's `(runId, saleOfferId)` to match `DemoRun`, and run-owned business rows must use that same pair.
 - The load orchestrator owns only traffic execution status; the API owns traffic-delivery quality classification, business draining, and final terminal state.
 - A hand-authored PostgreSQL partial unique index permits at most one `starting`, `active`, or `draining` run even when concurrent callers bypass the API's fast overlap check.
 - Lifecycle changes use expected-status compare-and-set transitions. Traffic-start acknowledgement can move only `starting -> active`; a late acknowledgement reads the authoritative winner and cannot resurrect a draining or terminal run.
@@ -475,16 +475,17 @@ Logical fields:
 Notes:
 
 - The referenced `SaleOffer` must have `purpose = generated_run`.
+- The non-null context pair `(runId, saleOfferId)` has a composite foreign key to the unique `DemoRun.(id, saleOfferId)` pair. This prevents contradictory context inserts and updates as well as later changes to either ownership column on the run. Existing-database migration aborts if contradictory historical rows exist so ownership must be reconciled explicitly rather than guessed.
 - `Reservation`, `Order`, `ReservationPendingPersistence`, `OrderEvent`, and `SimulatedNotification` records for generated sale offers must match the owning run context.
 - The context is deleted with its demo run, while the generated sale offer is cleaned up after dependent run records are removed.
 
 Enforcement note:
 
 - These ownership invariants are guarded at two layers. Redis validates generated-run ownership and accepting state before any PostgreSQL operation. Once Redis secures a hold, the normal write path acquires the PostgreSQL run-admission advisory lock and validates the durable `(runId, saleOfferId)` pairing plus non-terminal lifecycle state before committing run-attributed rows. A terminal-race rejection reverses the Redis hold.
-- Behind that, the same invariants are enforced at the database level by PL/pgSQL trigger functions that act as the last line of defense if a write ever bypasses or contradicts the application check. These triggers are not generated or surfaced by Drizzle:
+- Behind that, PostgreSQL enforces context ownership declaratively with the composite foreign key and enforces the remaining purpose and business-row rules with PL/pgSQL trigger functions that act as the last line of defense if a write ever bypasses or contradicts the application check. These triggers are not generated or surfaced by Drizzle:
   - `enforce_demo_run_sale_context_offer_purpose` rejects a context whose referenced sale offer is not `purpose = generated_run`.
   - `enforce_run_owned_sale_offer_attribution` rejects a run-attributed row (`Reservation`, `Order`, `ReservationPendingPersistence`, `OrderEvent`, `SimulatedNotification`) whose `runId` does not match the run that owns its generated `saleOfferId`.
-- The composite `(runId, saleOfferId)` foreign keys cannot fully cover this on their own: PostgreSQL `MATCH SIMPLE` skips the foreign-key check when `runId` is `NULL`, so the trigger closes the gap where a generated offer is written with a missing or mismatched run. The lookups are single-row probes on indexed/unique columns against a tiny per-run table, so the per-write cost is negligible.
+- A similar composite foreign key on each run-attributed business table would not fully cover its rule: those tables allow `runId = NULL`, and PostgreSQL `MATCH SIMPLE` skips the foreign-key check when any referencing column is `NULL`. The attribution trigger closes that nullable gap where a generated offer is written with a missing run, and also rejects a catalog offer paired with any run. The context table itself has two non-null ownership columns, so its composite foreign key has no corresponding `MATCH SIMPLE` gap. Trigger lookups are single-row probes on indexed/unique columns against a tiny per-run table, so the per-write cost is negligible.
 - These triggers and functions live in a hand-authored SQL migration and are invisible to `schema.ts` and `drizzle-kit` introspection. They must be preserved whenever migrations are regenerated, reset, or squashed, otherwise the enforcement is silently lost.
 
 ### 14. ReservationPendingPersistence

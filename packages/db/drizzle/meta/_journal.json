@@ -50,6 +50,13 @@
       "when": 1784160000000,
       "tag": "0006_traffic_completion_enrichment_state",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1784246400000,
+      "tag": "0007_enforce_run_sale_context_ownership",
+      "breakpoints": true
     }
   ]
 }

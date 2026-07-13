@@ -123,6 +123,14 @@ async function withDatabase<T>(
   }
 }
 
+async function removeRunSaleContextOwnershipConstraint(sql: TestSql): Promise<void> {
+  await sql`
+    ALTER TABLE "demo_run_sale_contexts"
+    DROP CONSTRAINT IF EXISTS "demo_run_sale_contexts_run_sale_offer_demo_runs_fk"
+  `;
+  await sql`DROP INDEX IF EXISTS "demo_runs_id_sale_offer_id_unique"`;
+}
+
 async function insertCatalogSaleOffer(
   sql: TestSql,
   input: { productId: string; saleOfferId: string; purpose?: SaleOfferPurposeForTest },
@@ -342,7 +350,7 @@ describe("database migrations, seed data, and reset behavior", () => {
     redis.disconnect();
   });
 
-  it("applies the initial schema and trigger-backed run sale ownership guards", async () => {
+  it("applies the schema and run sale ownership guards", async () => {
     const tableRows = await withDatabase(
       (sql) =>
         sql<{ table_name: string }[]>`
@@ -365,6 +373,14 @@ describe("database migrations, seed data, and reset behavior", () => {
         )
       `,
     );
+    const ownershipConstraintRows = await withDatabase(
+      (sql) =>
+        sql<{ conname: string; confdeltype: string }[]>`
+        SELECT conname, confdeltype
+        FROM pg_constraint
+        WHERE conname = 'demo_run_sale_contexts_run_sale_offer_demo_runs_fk'
+      `,
+    );
 
     expect(tableRows.map((row) => row.table_name).sort()).toEqual([
       "demo_runs",
@@ -379,17 +395,209 @@ describe("database migrations, seed data, and reset behavior", () => {
       "reservations_enforce_run_owned_sale_offer_attribution",
       "reservations_preserve_order_backing_secured_reservation",
     ]);
+    expect(ownershipConstraintRows).toEqual([
+      {
+        conname: "demo_run_sale_contexts_run_sale_offer_demo_runs_fk",
+        confdeltype: "c",
+      },
+    ]);
+  });
+
+  it("aborts ownership migration when legacy run and context offers contradict", async () => {
+    const presetId = "38000000-0000-4000-8000-000000000001";
+    const runId = "38000000-0000-4000-8000-000000000002";
+    const runSaleOfferId = "38000000-0000-4000-8000-000000000003";
+    const contextSaleOfferId = "38000000-0000-4000-8000-000000000004";
+
+    await withDatabase(async (sql) => {
+      await removeRunSaleContextOwnershipConstraint(sql);
+      await sql`
+        DELETE FROM drizzle.__drizzle_migrations
+        WHERE id = (SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 1)
+      `;
+      await insertCatalogSaleOffer(sql, {
+        productId: "38000000-0000-4000-8000-000000000005",
+        saleOfferId: runSaleOfferId,
+        purpose: "generated_run",
+      });
+      await insertCatalogSaleOffer(sql, {
+        productId: "38000000-0000-4000-8000-000000000006",
+        saleOfferId: contextSaleOfferId,
+        purpose: "generated_run",
+      });
+      await sql`
+        INSERT INTO demo_presets (
+          id, slug, visibility, is_editable, display,
+          traffic_config, inventory_config, erp_config, backpressure_config
+        ) VALUES (
+          ${presetId}, 'legacy-run-sale-ownership', 'admin', true,
+          '{"name":"Legacy ownership"}'::jsonb,
+          '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb
+        )
+      `;
+      await sql`
+        INSERT INTO demo_runs (
+          id, preset_id, preset_name, operator_mode, status, config_snapshot, sale_offer_id
+        ) VALUES (
+          ${runId}, ${presetId}, 'Legacy ownership', 'admin', 'completed', '{}'::jsonb,
+          ${runSaleOfferId}
+        )
+      `;
+      await sql`
+        INSERT INTO demo_run_sale_contexts (run_id, sale_offer_id)
+        VALUES (${runId}, ${contextSaleOfferId})
+      `;
+    });
+
+    const migrationError = await runDatabaseMigrations({
+      databaseUrl: requireTestEnv("TEST_DATABASE_URL"),
+      migrationsFolder,
+    }).catch((error: unknown) => error);
+    expect(migrationError).toMatchObject({
+      cause: {
+        code: "23514",
+        constraint_name: "demo_run_sale_contexts_existing_ownership_consistency",
+      },
+    });
+    await expect(
+      withDatabase(
+        (sql) => sql`
+          SELECT 1
+          FROM pg_constraint
+          WHERE conname = 'demo_run_sale_contexts_run_sale_offer_demo_runs_fk'
+        `,
+      ),
+    ).resolves.toEqual([]);
+
+    await withDatabase(
+      (sql) => sql`
+        UPDATE demo_run_sale_contexts
+        SET sale_offer_id = ${runSaleOfferId}
+        WHERE run_id = ${runId}
+      `,
+    );
+    await runDatabaseMigrations({
+      databaseUrl: requireTestEnv("TEST_DATABASE_URL"),
+      migrationsFolder,
+    });
+    await withDatabase(async (sql) => {
+      await sql`DELETE FROM demo_runs WHERE id = ${runId}`;
+      await sql`DELETE FROM demo_presets WHERE id = ${presetId}`;
+      await sql`
+        DELETE FROM sale_offers WHERE id IN (${runSaleOfferId}, ${contextSaleOfferId})
+      `;
+      await sql`
+        DELETE FROM products
+        WHERE id IN (
+          '38000000-0000-4000-8000-000000000005',
+          '38000000-0000-4000-8000-000000000006'
+        )
+      `;
+    });
+  });
+
+  it("keeps matching run context creation valid and rejects contradictory mutations", async () => {
+    const presetId = "38000000-0000-4000-8000-000000000011";
+    const runAId = "38000000-0000-4000-8000-000000000012";
+    const runBId = "38000000-0000-4000-8000-000000000013";
+    const saleOfferAId = "38000000-0000-4000-8000-000000000014";
+    const saleOfferBId = "38000000-0000-4000-8000-000000000015";
+    const unownedSaleOfferId = "38000000-0000-4000-8000-000000000016";
+
+    await withDatabase(async (sql) => {
+      for (const [productId, saleOfferId] of [
+        ["38000000-0000-4000-8000-000000000017", saleOfferAId],
+        ["38000000-0000-4000-8000-000000000018", saleOfferBId],
+        ["38000000-0000-4000-8000-000000000019", unownedSaleOfferId],
+      ] as const) {
+        await insertCatalogSaleOffer(sql, { productId, saleOfferId, purpose: "generated_run" });
+      }
+      await sql`
+        INSERT INTO demo_presets (
+          id, slug, visibility, is_editable, display,
+          traffic_config, inventory_config, erp_config, backpressure_config
+        ) VALUES (
+          ${presetId}, 'run-sale-ownership', 'admin', true,
+          '{"name":"Run sale ownership"}'::jsonb,
+          '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb
+        )
+      `;
+      await sql`
+        INSERT INTO demo_runs (
+          id, preset_id, preset_name, operator_mode, status, config_snapshot, sale_offer_id
+        ) VALUES
+          (${runAId}, ${presetId}, 'Run A', 'admin', 'completed', '{}'::jsonb, ${saleOfferAId}),
+          (${runBId}, ${presetId}, 'Run B', 'admin', 'completed', '{}'::jsonb, ${saleOfferBId})
+      `;
+      await sql`
+        INSERT INTO demo_run_sale_contexts (run_id, sale_offer_id)
+        VALUES (${runAId}, ${saleOfferAId})
+      `;
+
+      const [matchingContext] = await sql<{ run_id: string; sale_offer_id: string }[]>`
+        SELECT run_id, sale_offer_id
+        FROM demo_run_sale_contexts
+        WHERE run_id = ${runAId}
+      `;
+      expect(matchingContext).toEqual({ run_id: runAId, sale_offer_id: saleOfferAId });
+
+      for (const contradictoryWrite of [
+        sql`
+          INSERT INTO demo_run_sale_contexts (run_id, sale_offer_id)
+          VALUES (${runBId}, ${unownedSaleOfferId})
+        `,
+        sql`
+          UPDATE demo_run_sale_contexts
+          SET sale_offer_id = ${saleOfferBId}
+          WHERE run_id = ${runAId}
+        `,
+        sql`
+          UPDATE demo_run_sale_contexts
+          SET run_id = ${runBId}
+          WHERE run_id = ${runAId}
+        `,
+        sql`
+          UPDATE demo_runs
+          SET sale_offer_id = ${unownedSaleOfferId}
+          WHERE id = ${runAId}
+        `,
+      ]) {
+        const violation = await contradictoryWrite.catch((error: unknown) => error);
+        expect(violation).toMatchObject({
+          code: "23503",
+          constraint_name: "demo_run_sale_contexts_run_sale_offer_demo_runs_fk",
+        });
+      }
+
+      await sql`DELETE FROM demo_runs WHERE id IN (${runAId}, ${runBId})`;
+      await sql`DELETE FROM demo_presets WHERE id = ${presetId}`;
+      await sql`
+        DELETE FROM sale_offers
+        WHERE id IN (${saleOfferAId}, ${saleOfferBId}, ${unownedSaleOfferId})
+      `;
+      await sql`
+        DELETE FROM products
+        WHERE id IN (
+          '38000000-0000-4000-8000-000000000017',
+          '38000000-0000-4000-8000-000000000018',
+          '38000000-0000-4000-8000-000000000019'
+        )
+      `;
+    });
   });
 
   it("backfills legacy traffic completions as enrichment-completed during migration", async () => {
     const legacyRunId = "55555555-5555-4555-8555-555555555559";
     await runSeedScript();
     await withDatabase(async (sql) => {
+      await removeRunSaleContextOwnershipConstraint(sql);
       await sql`ALTER TABLE demo_run_finalizations DROP COLUMN completion_enrichment_status`;
       await sql`DROP TYPE traffic_completion_enrichment_status`;
       await sql`
         DELETE FROM drizzle.__drizzle_migrations
-        WHERE id = (SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 1)
+        WHERE id IN (
+          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 2
+        )
       `;
       await sql`
         INSERT INTO demo_runs (
@@ -442,6 +650,7 @@ describe("database migrations, seed data, and reset behavior", () => {
   it("backfills legacy breaker and retry configuration during a migrate-only upgrade", async () => {
     await runSeedScript();
     await withDatabase(async (sql) => {
+      await removeRunSaleContextOwnershipConstraint(sql);
       await sql`
         UPDATE demo_presets
         SET backpressure_config = (backpressure_config
@@ -496,7 +705,7 @@ describe("database migrations, seed data, and reset behavior", () => {
       await sql`
         DELETE FROM drizzle.__drizzle_migrations
         WHERE id IN (
-          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 3
+          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 4
         )
       `;
     });
