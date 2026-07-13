@@ -60,17 +60,20 @@ describe("dashboard control proxy routes", () => {
   it("proxies public demo run starts through the API lifecycle", async () => {
     process.env.API_BASE_URL = "http://api.internal";
     process.env.PUBLIC_CLIENT_COOKIE_SECRET = "public-cookie-secret";
+    process.env.CONTROL_SERVICE_TOKEN = "public-control-token";
     const forwardedVisitorIds: string[] = [];
     const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       expect(String(input)).toBe(`http://api.internal${startDemoRunPath}`);
       expect(init?.method).toBe("POST");
-      expect(JSON.parse(String(init?.body))).toEqual({ presetSlug: "preview-1k" });
+      expect(JSON.parse(String(init?.body))).toEqual({
+        presetSlug: "preview-1k",
+        correlationId: "corr-web-start",
+      });
       const headers = init?.headers as Record<string, string>;
       const visitorId = headers[publicVisitorIdHeaderName];
       expect(headers[demoRunOperatorModeHeaderName]).toBe("public");
-      expect(visitorId).toMatch(
-        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
-      );
+      expect(headers[controlServiceTokenHeaderName]).toBe("public-control-token");
+      expect(visitorId).toMatch(/^[0-9a-f-]{36}\.\d+\.[0-9a-f]{64}$/);
       forwardedVisitorIds.push(String(visitorId));
       return jsonResponse(startDemoRunPayload(), 202);
     });
@@ -79,7 +82,7 @@ describe("dashboard control proxy routes", () => {
     const firstResponse = await startDemoRun(
       new Request("http://dashboard.local/api/demo/runs/start", {
         method: "POST",
-        body: JSON.stringify({ presetSlug: "preview-1k" }),
+        body: JSON.stringify({ presetSlug: "preview-1k", correlationId: "corr-web-start" }),
       }),
     );
     const firstPayload = await firstResponse.json();
@@ -88,7 +91,7 @@ describe("dashboard control proxy routes", () => {
       new Request("http://dashboard.local/api/demo/runs/start", {
         method: "POST",
         headers: setCookie ? { cookie: setCookie.split(";")[0] ?? "" } : {},
-        body: JSON.stringify({ presetSlug: "preview-1k" }),
+        body: JSON.stringify({ presetSlug: "preview-1k", correlationId: "corr-web-start" }),
       }),
     );
     const secondPayload = await secondResponse.json();
@@ -96,6 +99,7 @@ describe("dashboard control proxy routes", () => {
     expect(firstResponse.status).toBe(202);
     expect(secondResponse.status).toBe(202);
     expect(firstPayload.run.presetName).toBe("Preview 1k");
+    expect(firstPayload.correlationId).toBe("corr-web-start");
     expect(secondPayload.run.presetName).toBe("Preview 1k");
     expect(setCookie).toContain("checkout_surge_public_visitor=");
     expect(setCookie).toContain("HttpOnly");
@@ -107,11 +111,10 @@ describe("dashboard control proxy routes", () => {
   it("rotates malformed public visitor cookies before proxying demo run starts", async () => {
     process.env.API_BASE_URL = "http://api.internal";
     process.env.PUBLIC_CLIENT_COOKIE_SECRET = "public-cookie-secret";
+    process.env.CONTROL_SERVICE_TOKEN = "public-control-token";
     const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
       const headers = init?.headers as Record<string, string>;
-      expect(headers[publicVisitorIdHeaderName]).toMatch(
-        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
-      );
+      expect(headers[publicVisitorIdHeaderName]).toMatch(/^[0-9a-f-]{36}\.\d+\.[0-9a-f]{64}$/);
       return jsonResponse(startDemoRunPayload(), 202);
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -128,9 +131,32 @@ describe("dashboard control proxy routes", () => {
     expect(response.headers.get("set-cookie")).toContain("checkout_surge_public_visitor=");
   });
 
+  it.each([
+    ["missing signing secret", undefined, "public-control-token"],
+    ["weak signing secret", "weak", "public-control-token"],
+    ["missing control token", "public-cookie-secret", undefined],
+  ])("fails closed without fetch for %s", async (_case, cookieSecret, controlToken) => {
+    process.env.PUBLIC_CLIENT_COOKIE_SECRET = cookieSecret;
+    process.env.CONTROL_SERVICE_TOKEN = controlToken;
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const response = await startDemoRun(
+      new Request("http://dashboard.local/api/demo/runs/start", {
+        method: "POST",
+        body: JSON.stringify({ presetSlug: "preview-1k" }),
+      }),
+    );
+    expect(response.status).toBe(503);
+    const serialized = JSON.stringify(await response.json());
+    expect(serialized).not.toContain(cookieSecret ?? "public-cookie-secret");
+    expect(serialized).not.toContain(controlToken ?? "public-control-token");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("proxies public custom submissions as run-scoped public starts", async () => {
     process.env.API_BASE_URL = "http://api.internal";
     process.env.PUBLIC_CLIENT_COOKIE_SECRET = "public-cookie-secret";
+    process.env.CONTROL_SERVICE_TOKEN = "public-control-token";
     const configOverride = {
       trafficConfig: {
         mode: "buyer-spike",
@@ -149,9 +175,7 @@ describe("dashboard control proxy routes", () => {
     const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
       const headers = init?.headers as Record<string, string>;
       expect(headers[demoRunOperatorModeHeaderName]).toBe("public");
-      expect(headers[publicVisitorIdHeaderName]).toMatch(
-        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
-      );
+      expect(headers[publicVisitorIdHeaderName]).toMatch(/^[0-9a-f-]{36}\.\d+\.[0-9a-f]{64}$/);
       expect(JSON.parse(String(init?.body))).toEqual({
         presetSlug: "public-custom",
         configOverride,

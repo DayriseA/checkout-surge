@@ -1,5 +1,6 @@
 import {
   demoRunOperatorModeHeaderName,
+  controlServiceTokenHeaderName,
   publicVisitorIdHeaderName,
   startDemoRunPath,
   startDemoRunRequestSchema,
@@ -10,6 +11,7 @@ import {
   proxyJson,
   readJsonRequest,
   validateJson,
+  requireControlServiceToken,
 } from "../../../../lib/server/backend-proxy";
 import { resolvePublicVisitorIdentity } from "../../../../lib/server/public-visitor";
 
@@ -28,6 +30,8 @@ export async function POST(request: Request) {
   if (visitor instanceof Response) {
     return visitor;
   }
+  const controlToken = requireControlServiceToken();
+  if (controlToken instanceof Response) return controlToken;
 
   const response = await proxyJson({
     url: `${apiBaseUrl()}${startDemoRunPath}`,
@@ -36,7 +40,8 @@ export async function POST(request: Request) {
     body: payload,
     headers: {
       [demoRunOperatorModeHeaderName]: "public",
-      [publicVisitorIdHeaderName]: visitor.id,
+      [publicVisitorIdHeaderName]: visitor.credential,
+      [controlServiceTokenHeaderName]: controlToken,
     },
   });
   if (visitor.setCookie) {

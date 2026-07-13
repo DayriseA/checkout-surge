@@ -139,6 +139,8 @@ export function registerDemoRunRoutes(
   });
 
   app.post(startDemoRunPath, async (request, reply) => {
+    const unauthorized = requireControlServiceToken(request, reply, options.controlServiceToken);
+    if (unauthorized) return unauthorized;
     const parsedRequest = startDemoRunRequestSchema.parse(request.body);
     const correlationId = normalizeCorrelationId(
       parsedRequest.correlationId ?? request.correlationId,
@@ -151,7 +153,7 @@ export function registerDemoRunRoutes(
         await options.demoRunService.startRun(
           {
             ...parsedRequest,
-            ...deriveRunStartPrincipal(request, options.controlServiceToken),
+            ...deriveRunStartPrincipal(request),
           },
           correlationId,
         ),
@@ -194,28 +196,23 @@ export function registerDemoRunRoutes(
 
 function deriveRunStartPrincipal(
   request: FastifyRequest,
-  expectedToken: string,
-): { operatorMode: "public"; publicVisitorId?: string } | { operatorMode: "admin" } {
+): { operatorMode: "public"; publicVisitorCredential?: string } | { operatorMode: "admin" } {
   const suppliedMode = readSingleHeader(request, demoRunOperatorModeHeaderName);
-  const requestedMode = suppliedMode ? operatorModeSchema.parse(suppliedMode) : "public";
-
-  if (requestedMode === "admin") {
-    const suppliedToken = readSingleHeader(request, controlServiceTokenHeaderName);
-    if (suppliedToken !== expectedToken) {
-      throw new ApiHttpError({
-        statusCode: 401,
-        code: "control_token_required",
-        message: "A valid control service token is required for admin demo-run starts.",
-      });
-    }
-
-    return { operatorMode: "admin" };
+  if (!suppliedMode) {
+    throw new ApiHttpError({
+      statusCode: 400,
+      code: "operator_mode_required",
+      message: "An operator mode assertion is required.",
+    });
   }
+  const requestedMode = operatorModeSchema.parse(suppliedMode);
 
-  const publicVisitorId = readSingleHeader(request, publicVisitorIdHeaderName);
+  if (requestedMode === "admin") return { operatorMode: "admin" };
+
+  const publicVisitorCredential = readSingleHeader(request, publicVisitorIdHeaderName);
   return {
     operatorMode: "public",
-    ...(publicVisitorId ? { publicVisitorId } : {}),
+    ...(publicVisitorCredential ? { publicVisitorCredential } : {}),
   };
 }
 
@@ -261,9 +258,16 @@ function mapDemoRunError(error: unknown): unknown {
 
   const conflictCodes = new Set(["demo_run_already_active"]);
   const notFoundCodes = new Set(["preset_not_found", "public_runtime_policy_not_found"]);
+  const forbiddenCodes = new Set(["public_visitor_forbidden"]);
 
   return new ApiHttpError({
-    statusCode: conflictCodes.has(error.code) ? 409 : notFoundCodes.has(error.code) ? 404 : 400,
+    statusCode: forbiddenCodes.has(error.code)
+      ? 403
+      : conflictCodes.has(error.code)
+        ? 409
+        : notFoundCodes.has(error.code)
+          ? 404
+          : 400,
     code: error.code,
     message: error.message,
     ...(error.details ? { details: error.details } : {}),

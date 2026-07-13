@@ -47,6 +47,7 @@ import {
   trafficExecutionStatusPath,
   trafficExecutionStatusResponseSchema,
 } from "@checkout-surge/contracts";
+import { verifyPublicVisitorCredential } from "@checkout-surge/contracts/public-visitor-credential";
 import {
   type CheckoutSurgeDatabase,
   type CheckoutSurgeRedis,
@@ -68,6 +69,10 @@ import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { ApiHttpError } from "../runtime/errors.js";
 import type { DashboardBusinessOutcomeReader } from "./dashboard-recovery-service.js";
 import type { DemoRunFinalizationController } from "./demo-run-finalization-service.js";
+import type {
+  PublicRunBudgetReservation,
+  PublicRunBudgetStore,
+} from "./public-run-budget-store.js";
 import type { TerminalDemoRunWriter } from "./terminal-demo-run-writer.js";
 
 const demoRunStartLockKey = "checkout_surge_demo_run_start";
@@ -77,14 +82,6 @@ const recentMetricLimit = 50;
 
 export interface TrafficExecutionGateway {
   start(request: TrafficExecutionStartRequest): Promise<TrafficExecutionStartResponse>;
-}
-
-export interface PublicRunBudgetStore {
-  consume(input: {
-    policy: PublicRuntimePolicy;
-    publicVisitorId: string;
-    now: Date;
-  }): Promise<void>;
 }
 
 export interface DashboardTrafficMetricReader {
@@ -110,60 +107,8 @@ export interface DemoRunController {
 
 export type StartDemoRunCommand = StartDemoRunRequest & {
   operatorMode: OperatorMode;
-  publicVisitorId?: string;
+  publicVisitorCredential?: string;
 };
-
-export class RedisPublicRunBudgetStore implements PublicRunBudgetStore {
-  constructor(private readonly redis: CheckoutSurgeRedis) {}
-
-  async consume(input: {
-    policy: PublicRuntimePolicy;
-    publicVisitorId: string;
-    now: Date;
-  }): Promise<void> {
-    if (!input.policy.isPublicRunBudgetEnforced) {
-      return;
-    }
-
-    const windowStart = Math.floor(
-      input.now.getTime() / (input.policy.publicRunBudget.windowSeconds * 1000),
-    );
-    const globalKey = `demo-run:public-budget:${windowStart}:global`;
-    const visitorKey = `demo-run:public-budget:${windowStart}:visitor:${input.publicVisitorId}`;
-    const ttlSeconds = input.policy.publicRunBudget.windowSeconds * 2;
-    const [globalCount, visitorCount] = await this.redis
-      .multi()
-      .incr(globalKey)
-      .expire(globalKey, ttlSeconds, "NX")
-      .incr(visitorKey)
-      .expire(visitorKey, ttlSeconds, "NX")
-      .exec()
-      .then((results) => {
-        if (!results) {
-          throw new Error("Redis public run budget update did not return results.");
-        }
-        const globalResult = results[0];
-        const visitorResult = results[2];
-        if (!globalResult || globalResult[0] || !visitorResult || visitorResult[0]) {
-          throw new Error("Redis public run budget update failed.");
-        }
-        return [Number(globalResult[1]), Number(visitorResult[1])] as const;
-      });
-
-    if (globalCount > input.policy.publicRunBudget.globalMaxStarts) {
-      throw new DemoRunValidationError(
-        "public_run_budget_exceeded",
-        "Public run budget is exhausted.",
-      );
-    }
-    if (visitorCount > input.policy.publicRunBudget.perVisitorMaxStarts) {
-      throw new DemoRunValidationError(
-        "public_visitor_run_budget_exceeded",
-        "Public visitor run budget is exhausted.",
-      );
-    }
-  }
-}
 
 export class RedisDashboardTrafficMetricStore implements DashboardTrafficMetricReader {
   constructor(private readonly redis: CheckoutSurgeRedis) {}
@@ -329,6 +274,7 @@ export class DemoRunService implements DemoRunController {
       apiBaseUrl: string;
       buyEndpointPath: string;
       logger: CheckoutSurgeLogger;
+      publicClientCookieSecret: string;
       now?: () => Date;
       generateId?: () => string;
     },
@@ -521,6 +467,19 @@ export class DemoRunService implements DemoRunController {
     correlationId: string,
   ): Promise<StartDemoRunResponse> {
     const now = this.now();
+    const verifiedVisitor =
+      request.operatorMode === "public"
+        ? verifyPublicVisitorCredential(
+            this.options.publicClientCookieSecret,
+            request.publicVisitorCredential,
+          )
+        : null;
+    if (request.operatorMode === "public" && !verifiedVisitor) {
+      throw new DemoRunValidationError(
+        "public_visitor_forbidden",
+        "A valid public visitor credential is required.",
+      );
+    }
     const policyRow = await this.readPublicRuntimePolicyRow();
     const policy = publicRuntimePolicySchema.parse(policyRow.policy);
     const acceptedConfig = await this.resolveAcceptedConfig(request, policy);
@@ -530,76 +489,102 @@ export class DemoRunService implements DemoRunController {
         request.operatorMode === "public" && acceptedConfig.preset.isCustom,
     });
 
-    let consumePublicBudget: (() => Promise<void>) | undefined;
+    let reservation: PublicRunBudgetReservation | undefined;
+    let reservePublicBudget: (() => Promise<void>) | undefined;
     if (request.operatorMode === "public" && policy.isPublicRunBudgetEnforced) {
-      if (!request.publicVisitorId) {
-        throw new DemoRunValidationError(
-          "public_visitor_required",
-          "A public visitor ID is required to enforce public run budgets.",
-        );
-      }
-      consumePublicBudget = () =>
-        this.options.publicRunBudgetStore.consume({
+      if (!verifiedVisitor) throw new Error("Verified public visitor invariant failed.");
+      const publicVisitorId = verifiedVisitor.visitorId;
+      reservePublicBudget = async () => {
+        const decision = await this.options.publicRunBudgetStore.reserve({
           policy,
-          publicVisitorId: request.publicVisitorId as string,
+          publicVisitorId,
           now,
         });
+        if (decision.outcome === "denied") {
+          throw decision.reason === "visitor"
+            ? new DemoRunValidationError(
+                "public_visitor_run_budget_exceeded",
+                "Public visitor run budget is exhausted.",
+              )
+            : new DemoRunValidationError(
+                "public_run_budget_exceeded",
+                "Public run budget is exhausted.",
+              );
+        }
+        reservation = decision.reservation;
+      };
     }
 
-    const accepted = await this.createAcceptedRun(
-      request,
-      acceptedConfig.preset,
-      acceptedConfig.snapshot,
-      now,
-      consumePublicBudget,
-    );
-    const saleOfferId = requireRunSaleOfferId(accepted.run);
-
     try {
-      await initializeInventory(this.options.redis, {
-        saleOfferId,
-        allocatedStock: acceptedConfig.snapshot.inventoryConfig.startingStock,
-        source: "demo_run_start",
-        initializedAt: now,
-        run: { runId: accepted.run.runId, status: "accepting" },
-      });
-    } catch (error) {
-      await this.failRun(accepted.run.runId, "inventory_initialization_failed", correlationId);
-      throw error;
-    }
+      const accepted = await this.createAcceptedRun(
+        request,
+        acceptedConfig.preset,
+        acceptedConfig.snapshot,
+        now,
+        reservePublicBudget,
+      );
+      const saleOfferId = requireRunSaleOfferId(accepted.run);
 
-    await this.publishRunEvent("run.started", accepted.run, correlationId, now);
+      try {
+        await initializeInventory(this.options.redis, {
+          saleOfferId,
+          allocatedStock: acceptedConfig.snapshot.inventoryConfig.startingStock,
+          source: "demo_run_start",
+          initializedAt: now,
+          run: { runId: accepted.run.runId, status: "accepting" },
+        });
+      } catch (error) {
+        await this.failRun(accepted.run.runId, "inventory_initialization_failed", correlationId);
+        throw error;
+      }
 
-    let trafficResponse: TrafficExecutionStartResponse;
-    try {
-      trafficResponse = await this.options.trafficExecutionGateway.start({
-        runId: accepted.run.runId,
-        saleOfferId,
-        apiBaseUrl: this.options.apiBaseUrl,
-        buyEndpointPath: this.options.buyEndpointPath,
+      await this.publishRunEvent("run.started", accepted.run, correlationId, now);
+
+      let trafficResponse: TrafficExecutionStartResponse;
+      try {
+        trafficResponse = await this.options.trafficExecutionGateway.start({
+          runId: accepted.run.runId,
+          saleOfferId,
+          apiBaseUrl: this.options.apiBaseUrl,
+          buyEndpointPath: this.options.buyEndpointPath,
+          correlationId,
+          configSnapshot: acceptedConfig.snapshot,
+        });
+      } catch (error) {
+        if (
+          !(error instanceof ApiHttpError && error.code === "load_orchestrator_start_ambiguous")
+        ) {
+          await this.failRun(accepted.run.runId, "load_orchestrator_start_failed", correlationId);
+        }
+        throw error;
+      }
+
+      const runAfterTrafficStart = await this.updateRunAfterTrafficStart(
+        accepted.run.runId,
+        trafficResponse,
+        now,
+      );
+      await this.publishRunEvent("run.updated", runAfterTrafficStart, correlationId, now);
+
+      return startDemoRunResponseSchema.parse({
+        run: runAfterTrafficStart,
+        recovery: { establishedAt: now.toISOString() },
         correlationId,
-        configSnapshot: acceptedConfig.snapshot,
+        timestamp: now.toISOString(),
       });
     } catch (error) {
-      if (!(error instanceof ApiHttpError && error.code === "load_orchestrator_start_ambiguous")) {
-        await this.failRun(accepted.run.runId, "load_orchestrator_start_failed", correlationId);
+      if (reservation) {
+        try {
+          await this.options.publicRunBudgetStore.release(reservation);
+        } catch (releaseError) {
+          this.options.logger.error(
+            { err: releaseError, correlationId, reservationId: reservation.reservationId },
+            "Failed to release a rejected public run budget reservation.",
+          );
+        }
       }
       throw error;
     }
-
-    const runAfterTrafficStart = await this.updateRunAfterTrafficStart(
-      accepted.run.runId,
-      trafficResponse,
-      now,
-    );
-    await this.publishRunEvent("run.updated", runAfterTrafficStart, correlationId, now);
-
-    return startDemoRunResponseSchema.parse({
-      run: runAfterTrafficStart,
-      recovery: { establishedAt: now.toISOString() },
-      correlationId,
-      timestamp: now.toISOString(),
-    });
   }
 
   async ingestMetrics(input: LoadMetricIngestRequest): Promise<void> {

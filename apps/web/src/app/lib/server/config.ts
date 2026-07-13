@@ -1,3 +1,8 @@
+import {
+  isValidPublicVisitorCredentialSecret,
+  publicVisitorCredentialMinimumSecretBytes,
+} from "@checkout-surge/contracts/public-visitor-credential";
+
 export interface WebServerConfig {
   controlServiceToken: string;
   adminDashboardPassphrase: string;
@@ -31,6 +36,9 @@ export function loadWebServerConfig(env: Record<string, string | undefined>): We
     if (unsafeSecretValues.has(value)) {
       return `${name} uses a known placeholder`;
     }
+    if (name === "PUBLIC_CLIENT_COOKIE_SECRET" && !isValidPublicVisitorCredentialSecret(value)) {
+      return `${name} is shorter than ${publicVisitorCredentialMinimumSecretBytes} UTF-8 bytes`;
+    }
 
     return [];
   });
@@ -59,5 +67,8 @@ export function readWebSecret(
   name: string,
 ): string | null {
   const value = env[name]?.trim();
-  return value && !unsafeSecretValues.has(value) ? value : null;
+  if (!value || unsafeSecretValues.has(value)) return null;
+  if (name === "PUBLIC_CLIENT_COOKIE_SECRET" && !isValidPublicVisitorCredentialSecret(value))
+    return null;
+  return value;
 }

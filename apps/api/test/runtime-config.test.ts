@@ -4,6 +4,7 @@ import { loadApiConfig } from "../src/runtime/config.js";
 const baseEnv = {
   DATABASE_URL: "postgresql://localhost/test",
   REDIS_URL: "redis://localhost:6379",
+  PUBLIC_CLIENT_COOKIE_SECRET: "test-public-cookie-secret",
 };
 
 describe("API runtime configuration", () => {
@@ -22,4 +23,17 @@ describe("API runtime configuration", () => {
       loadApiConfig({ ...baseEnv, CONTROL_SERVICE_TOKEN: "deployment-token" }).controlServiceToken,
     ).toBe("deployment-token");
   });
+
+  it.each([undefined, "weak", "change-me-public-client-cookie-secret"])(
+    "rejects missing, weak, or placeholder public cookie secrets (%s)",
+    (secret) => {
+      expect(() =>
+        loadApiConfig({
+          ...baseEnv,
+          CONTROL_SERVICE_TOKEN: "deployment-token",
+          PUBLIC_CLIENT_COOKIE_SECRET: secret,
+        }),
+      ).toThrow(/PUBLIC_CLIENT_COOKIE_SECRET/);
+    },
+  );
 });

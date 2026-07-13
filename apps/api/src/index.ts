@@ -36,8 +36,8 @@ import {
   DemoRunService,
   HttpTrafficExecutionGateway,
   RedisDashboardTrafficMetricStore,
-  RedisPublicRunBudgetStore,
 } from "./services/demo-run-service.js";
+import { RedisPublicRunBudgetStore } from "./services/public-run-budget-store.js";
 import { DemoRunStartupReconciliationService } from "./services/demo-run-startup-reconciliation-service.js";
 import {
   ErpStatusService,
@@ -220,6 +220,7 @@ export async function startApiServer(): Promise<void> {
     apiBaseUrl: config.apiBaseUrl,
     buyEndpointPath: "/buy",
     logger,
+    publicClientCookieSecret: config.publicClientCookieSecret,
   });
   const reserveOrderService = new ReserveOrderService({
     persistence,

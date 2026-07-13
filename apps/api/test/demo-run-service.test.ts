@@ -12,6 +12,7 @@ import {
   controlServiceTokenHeaderName,
   trafficExecutionStartPath,
 } from "@checkout-surge/contracts";
+import { signPublicVisitorCredential } from "@checkout-surge/contracts/public-visitor-credential";
 import {
   createDatabaseConnection,
   createRedisClient,
@@ -37,17 +38,68 @@ import {
   DemoRunValidationError,
   HttpTrafficExecutionGateway,
   isSingleNonTerminalRunViolation,
-  RedisPublicRunBudgetStore,
   validateAcceptedRunSnapshot,
   validatePublicRuntimePolicyUpdate,
 } from "../src/services/demo-run-service.js";
+import { RedisPublicRunBudgetStore } from "../src/services/public-run-budget-store.js";
 import { PostgresTerminalDemoRunSummaryWriter } from "../src/services/terminal-demo-run-transition.js";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const dbPackageRoot = path.resolve(packageRoot, "../../packages/db");
 const migrationsFolder = path.join(dbPackageRoot, "drizzle");
+const publicCookieSecret = "test-public-cookie-secret";
+const signedVisitor = (visitorId: string) => {
+  const credential = signPublicVisitorCredential(publicCookieSecret, visitorId, 1_750_000_000_000);
+  if (!credential) throw new Error("Fixture visitor credential could not be signed.");
+  return credential;
+};
 
 describe("demo-run service validation", () => {
+  it.each([
+    ["missing", undefined],
+    ["raw", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"],
+    ["malformed", "malformed.credential"],
+    ["tampered", `${signedVisitor("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")}0`],
+    [
+      "wrong secret",
+      signPublicVisitorCredential(
+        "different-cookie-secret",
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        1_750_000_000_000,
+      ),
+    ],
+  ])("rejects %s public credentials before persistence or budget mutation", async (_case, credential) => {
+    const select = vi.fn(() => {
+      throw new Error("Database must not be read.");
+    });
+    const reserve = vi.fn();
+    const service = new DemoRunService({
+      db: { select } as never,
+      redis: {} as never,
+      trafficExecutionGateway: {} as never,
+      publicRunBudgetStore: { reserve, release: vi.fn() },
+      trafficMetricStore: {} as never,
+      businessOutcomeReader: {} as never,
+      terminalRunWriter: {} as never,
+      apiBaseUrl: "http://api.test",
+      buyEndpointPath: "/buy",
+      logger: createSilentLogger("api"),
+      publicClientCookieSecret: publicCookieSecret,
+    });
+    await expect(
+      service.startRun(
+        {
+          presetSlug: "preview-1k",
+          operatorMode: "public",
+          ...(credential ? { publicVisitorCredential: credential } : {}),
+        },
+        "credential-correlation",
+      ),
+    ).rejects.toMatchObject({ code: "public_visitor_forbidden" });
+    expect(select).not.toHaveBeenCalled();
+    expect(reserve).not.toHaveBeenCalled();
+  });
+
   it("identifies only the exact wrapped single-run unique violation", () => {
     expect(
       isSingleNonTerminalRunViolation({
@@ -471,15 +523,26 @@ describe("demo-run lifecycle start gating", () => {
   it("maps a direct-writer claim race and rolls back all losing start side effects", async () => {
     const directConnection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
     const trafficStart = vi.fn();
+    const release = vi.fn(async () => undefined);
     const service = createStartService(requireConnection(connection), requireRedis(redis), {
       trafficExecutionGateway: { start: trafficStart },
       publicRunBudgetStore: {
-        consume: async () => {
+        reserve: async () => {
           await seedExistingRun(directConnection, {
             runId: "88888888-8888-4888-8888-888888888888",
             status: "starting",
           });
+          return {
+            outcome: "allowed" as const,
+            reservation: {
+              reservationId: "race",
+              globalKey: "g",
+              visitorKey: "v",
+              reservationKey: "r",
+            },
+          };
         },
+        release,
       },
     });
 
@@ -489,7 +552,7 @@ describe("demo-run lifecycle start gating", () => {
           {
             presetSlug: "preview-1k",
             operatorMode: "public",
-            publicVisitorId: "direct-writer-race",
+            publicVisitorCredential: signedVisitor("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
           },
           "corr-direct-writer-race",
         ),
@@ -505,9 +568,66 @@ describe("demo-run lifecycle start gating", () => {
       );
       expect(trafficStart).not.toHaveBeenCalled();
       expect(await requireRedis(redis).dbsize()).toBe(0);
+      expect(release).toHaveBeenCalledOnce();
     } finally {
       await directConnection.close();
     }
+  });
+
+  it("keeps public validation and existing-run overlap rejection ahead of reservation", async () => {
+    const reserve = vi.fn();
+    const service = createStartService(requireConnection(connection), requireRedis(redis), {
+      publicRunBudgetStore: { reserve, release: vi.fn() },
+    });
+    await expect(
+      service.startRun(
+        {
+          presetSlug: "custom",
+          operatorMode: "public",
+          publicVisitorCredential: signedVisitor("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+        },
+        "visibility-rejection",
+      ),
+    ).rejects.toMatchObject({ code: "preset_not_public" });
+    expect(reserve).not.toHaveBeenCalled();
+
+    await seedExistingRun(requireConnection(connection), {
+      runId: "88888888-8888-4888-8888-888888888889",
+      status: "active",
+    });
+    await expect(
+      service.startRun(
+        {
+          presetSlug: "preview-1k",
+          operatorMode: "public",
+          publicVisitorCredential: signedVisitor("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+        },
+        "overlap-rejection",
+      ),
+    ).rejects.toMatchObject({ code: "demo_run_already_active" });
+    expect(reserve).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["visitor", "public_visitor_run_budget_exceeded"],
+    ["global", "public_run_budget_exceeded"],
+  ] as const)("maps %s budget denial decisions to stable application errors", async (reason, code) => {
+    const service = createStartService(requireConnection(connection), requireRedis(redis), {
+      publicRunBudgetStore: {
+        reserve: async () => ({ outcome: "denied", reason }),
+        release: vi.fn(),
+      },
+    });
+    await expect(
+      service.startRun(
+        {
+          presetSlug: "preview-1k",
+          operatorMode: "public",
+          publicVisitorCredential: signedVisitor("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+        },
+        `denied-${reason}`,
+      ),
+    ).rejects.toMatchObject({ code });
   });
 
   it.each([
@@ -537,7 +657,7 @@ describe("demo-run lifecycle start gating", () => {
       {
         presetSlug: "public-custom",
         operatorMode: "public",
-        publicVisitorId: "visitor-1",
+        publicVisitorCredential: signedVisitor("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
         configOverride: {
           trafficConfig: {
             mode: "buyer-spike",
@@ -603,7 +723,7 @@ describe("demo-run lifecycle start gating", () => {
       {
         presetSlug: "public-custom",
         operatorMode: "public",
-        publicVisitorId: "visitor-defaults",
+        publicVisitorCredential: signedVisitor("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
       },
       "corr-public-defaults",
     );
@@ -659,8 +779,11 @@ describe("demo-run lifecycle start gating", () => {
   it("does not consume public run budget for admin starts", async () => {
     const service = createStartService(requireConnection(connection), requireRedis(redis), {
       publicRunBudgetStore: {
-        consume: async () => {
+        reserve: async () => {
           throw new Error("Admin starts should not consume public budget.");
+        },
+        release: async () => {
+          throw new Error("Admin starts should not release public budget.");
         },
       },
     });
@@ -673,6 +796,108 @@ describe("demo-run lifecycle start gating", () => {
     expect(response.run.operatorMode).toBe("admin");
   });
 
+  it("releases exactly once after a reserved acceptance failure and retains successful reservations", async () => {
+    const reservation = {
+      reservationId: "reservation-1",
+      globalKey: "g",
+      visitorKey: "v",
+      reservationKey: "r",
+    };
+    const reserve = vi.fn(async () => ({ outcome: "allowed" as const, reservation }));
+    const release = vi.fn(async () => undefined);
+    const failing = createStartService(requireConnection(connection), requireRedis(redis), {
+      publicRunBudgetStore: { reserve, release },
+      trafficExecutionGateway: {
+        start: async () => {
+          throw new Error("orchestrator unavailable");
+        },
+      },
+    });
+    await expect(
+      failing.startRun(
+        {
+          presetSlug: "preview-1k",
+          operatorMode: "public",
+          publicVisitorCredential: signedVisitor("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+        },
+        "compensation-correlation",
+      ),
+    ).rejects.toThrow("orchestrator unavailable");
+    expect(reserve).toHaveBeenCalledOnce();
+    expect(release).toHaveBeenCalledExactlyOnceWith(reservation);
+  });
+
+  it("preserves the primary failure and logs safe metadata when compensation fails", async () => {
+    const reservation = {
+      reservationId: "safe-reservation-id",
+      globalKey: "secret-key",
+      visitorKey: "secret-visitor",
+      reservationKey: "secret-marker",
+    };
+    const logger = createSilentLogger("api");
+    const errorLog = vi.spyOn(logger, "error");
+    const service = createStartService(requireConnection(connection), requireRedis(redis), {
+      logger,
+      publicRunBudgetStore: {
+        reserve: async () => ({ outcome: "allowed", reservation }),
+        release: async () => {
+          throw new Error("release failed");
+        },
+      },
+      trafficExecutionGateway: {
+        start: async () => {
+          throw new Error("primary failure");
+        },
+      },
+    });
+    await expect(
+      service.startRun(
+        {
+          presetSlug: "preview-1k",
+          operatorMode: "public",
+          publicVisitorCredential: signedVisitor("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+        },
+        "safe-correlation",
+      ),
+    ).rejects.toThrow("primary failure");
+    expect(errorLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        correlationId: "safe-correlation",
+        reservationId: "safe-reservation-id",
+      }),
+      expect.any(String),
+    );
+    expect(JSON.stringify(errorLog.mock.calls)).not.toContain("secret-key");
+  });
+
+  it("retains the public budget reservation after a successful accepted response", async () => {
+    const release = vi.fn();
+    const service = createStartService(requireConnection(connection), requireRedis(redis), {
+      publicRunBudgetStore: {
+        reserve: async () => ({
+          outcome: "allowed",
+          reservation: {
+            reservationId: "accepted",
+            globalKey: "g",
+            visitorKey: "v",
+            reservationKey: "r",
+          },
+        }),
+        release,
+      },
+    });
+    const response = await service.startRun(
+      {
+        presetSlug: "preview-1k",
+        operatorMode: "public",
+        publicVisitorCredential: signedVisitor("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+      },
+      "accepted-correlation",
+    );
+    expect(response.run.status).toBe("active");
+    expect(release).not.toHaveBeenCalled();
+  });
+
   it("enforces updated public run-budget windows through Redis", async () => {
     const store = new RedisPublicRunBudgetStore(requireRedis(redis));
     const policy = publicRuntimePolicy();
@@ -682,18 +907,31 @@ describe("demo-run lifecycle start gating", () => {
       globalMaxStarts: 2,
     };
 
-    await store.consume({
+    const firstDecision = await store.reserve({
       policy,
       publicVisitorId: "visitor-budget-1",
       now: new Date("2026-06-20T00:00:00.000Z"),
     });
+    if (firstDecision.outcome !== "allowed") throw new Error("Expected allowed fixture decision.");
+    const firstReservation = firstDecision.reservation;
     await expect(
-      store.consume({
+      store.reserve({
         policy,
         publicVisitorId: "visitor-budget-1",
         now: new Date("2026-06-20T00:00:01.000Z"),
       }),
-    ).rejects.toMatchObject({ code: "public_visitor_run_budget_exceeded" });
+    ).resolves.toEqual({ outcome: "denied", reason: "visitor" });
+    expect(await requireRedis(redis).get(firstReservation.globalKey)).toBe("1");
+    expect(await requireRedis(redis).get(firstReservation.visitorKey)).toBe("1");
+    await store.release(firstReservation);
+    await store.release(firstReservation);
+    expect(await requireRedis(redis).get(firstReservation.globalKey)).toBeNull();
+    expect(await requireRedis(redis).get(firstReservation.visitorKey)).toBeNull();
+    await store.reserve({
+      policy,
+      publicVisitorId: "visitor-budget-1",
+      now: new Date("2026-06-20T00:00:59.000Z"),
+    });
 
     await requireRedis(redis).flushdb();
     policy.publicRunBudget = {
@@ -701,23 +939,73 @@ describe("demo-run lifecycle start gating", () => {
       perVisitorMaxStarts: 10,
       globalMaxStarts: 2,
     };
-    await store.consume({
+    await store.reserve({
       policy,
       publicVisitorId: "visitor-budget-2",
       now: new Date("2026-06-20T00:00:02.000Z"),
     });
-    await store.consume({
+    await store.reserve({
       policy,
       publicVisitorId: "visitor-budget-3",
       now: new Date("2026-06-20T00:00:03.000Z"),
     });
     await expect(
-      store.consume({
+      store.reserve({
         policy,
         publicVisitorId: "visitor-budget-4",
         now: new Date("2026-06-20T00:00:04.000Z"),
       }),
-    ).rejects.toMatchObject({ code: "public_run_budget_exceeded" });
+    ).resolves.toEqual({ outcome: "denied", reason: "global" });
+  });
+
+  it("atomically enforces concurrent budgets and exact-window idempotent release", async () => {
+    const client = requireRedis(redis);
+    await client.flushdb();
+    const store = new RedisPublicRunBudgetStore(client);
+    const policy = publicRuntimePolicy();
+    policy.publicRunBudget = { windowSeconds: 60, perVisitorMaxStarts: 2, globalMaxStarts: 3 };
+    const now = new Date("2026-06-20T00:00:00.000Z");
+
+    const visitorDecisions = await Promise.all(
+      Array.from({ length: 10 }, () =>
+        store.reserve({ policy, publicVisitorId: "concurrent", now }),
+      ),
+    );
+    const visitorReservations = visitorDecisions.flatMap((decision) =>
+      decision.outcome === "allowed" ? [decision.reservation] : [],
+    );
+    expect(visitorReservations).toHaveLength(2);
+    const oldReservation = visitorReservations[0];
+    if (!oldReservation) throw new Error("Expected a visitor reservation fixture.");
+    expect(await client.get(oldReservation.globalKey)).toBe("2");
+    expect(await client.get(oldReservation.visitorKey)).toBe("2");
+
+    const allowedGlobal = await store.reserve({ policy, publicVisitorId: "other-a", now });
+    expect(allowedGlobal.outcome).toBe("allowed");
+    const globalBefore = await client.get(oldReservation.globalKey);
+    const deniedGlobal = await store.reserve({ policy, publicVisitorId: "denied-visitor", now });
+    expect(deniedGlobal).toEqual({ outcome: "denied", reason: "global" });
+    const deniedKey = oldReservation.visitorKey.replace("concurrent", "denied-visitor");
+    expect(await client.get(deniedKey)).toBeNull();
+    expect(await client.get(oldReservation.globalKey)).toBe(globalBefore);
+    const globalHashTag = oldReservation.globalKey.match(/\{\d+\}/)?.[0];
+    expect(globalHashTag).toBeTruthy();
+    expect(oldReservation.visitorKey).toContain(globalHashTag);
+    expect(oldReservation.reservationKey).toContain(globalHashTag);
+
+    const nextDecision = await store.reserve({
+      policy,
+      publicVisitorId: "concurrent",
+      now: new Date("2026-06-20T00:01:00.000Z"),
+    });
+    if (nextDecision.outcome !== "allowed") throw new Error("Expected next-window reservation.");
+    const nextWindow = nextDecision.reservation;
+    expect(await client.ttl(nextWindow.globalKey)).toBeGreaterThanOrEqual(118);
+    expect(await client.ttl(nextWindow.globalKey)).toBeLessThanOrEqual(120);
+    await store.release(oldReservation);
+    await store.release(oldReservation);
+    expect(await client.get(nextWindow.globalKey)).toBe("1");
+    expect(await client.get(nextWindow.visitorKey)).toBe("1");
   });
 
   it("writes a terminal summary when inventory initialization fails", async () => {
@@ -1217,12 +1505,24 @@ function createPresetManagementService(
         correlationId: "unused",
       }),
     },
-    publicRunBudgetStore: { consume: async () => undefined },
+    publicRunBudgetStore: {
+      reserve: async () => ({
+        outcome: "allowed",
+        reservation: {
+          reservationId: "unused",
+          globalKey: "g",
+          visitorKey: "v",
+          reservationKey: "r",
+        },
+      }),
+      release: async () => undefined,
+    },
     trafficMetricStore: {} as never,
     businessOutcomeReader: { read: async () => emptyBusinessOutcomeSummary() },
     apiBaseUrl: "http://api.test",
     buyEndpointPath: "/buy",
     logger: createSilentLogger("api"),
+    publicClientCookieSecret: publicCookieSecret,
     now: () => new Date("2026-06-20T00:00:10.000Z"),
     generateId: () => "66666666-6666-4666-8666-666666666666",
   });
@@ -1241,6 +1541,7 @@ function createStartService(
       typeof DemoRunService
     >[0]["businessOutcomeReader"];
     finalizationService?: ConstructorParameters<typeof DemoRunService>[0]["finalizationService"];
+    logger?: ConstructorParameters<typeof DemoRunService>[0]["logger"];
   } = {},
 ): DemoRunService {
   const ids = [
@@ -1263,7 +1564,18 @@ function createStartService(
         correlationId: request.correlationId,
       }),
     },
-    publicRunBudgetStore: overrides.publicRunBudgetStore ?? { consume: async () => undefined },
+    publicRunBudgetStore: overrides.publicRunBudgetStore ?? {
+      reserve: async () => ({
+        outcome: "allowed",
+        reservation: {
+          reservationId: "unused",
+          globalKey: "g",
+          visitorKey: "v",
+          reservationKey: "r",
+        },
+      }),
+      release: async () => undefined,
+    },
     trafficMetricStore: {} as never,
     businessOutcomeReader: overrides.businessOutcomeReader ?? {
       read: async () => emptyBusinessOutcomeSummary(),
@@ -1271,7 +1583,8 @@ function createStartService(
     finalizationService: overrides.finalizationService,
     apiBaseUrl: "http://api.test",
     buyEndpointPath: "/buy",
-    logger: createSilentLogger("api"),
+    logger: overrides.logger ?? createSilentLogger("api"),
+    publicClientCookieSecret: publicCookieSecret,
     now: () => new Date("2026-06-20T00:00:10.000Z"),
     generateId: () => {
       const id = ids.shift();

@@ -1,12 +1,15 @@
-import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { randomUUID } from "node:crypto";
+import {
+  publicVisitorCookieName,
+  signPublicVisitorCredential,
+  verifyPublicVisitorCredential,
+} from "@checkout-surge/contracts/public-visitor-credential";
 import { readWebSecret } from "./config";
 
-const publicVisitorCookieName = "checkout_surge_public_visitor";
 const publicVisitorMaxAgeSeconds = 365 * 24 * 60 * 60;
-const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 export interface PublicVisitorIdentity {
-  id: string;
+  credential: string;
   setCookie?: string;
 }
 
@@ -24,13 +27,23 @@ export function resolvePublicVisitorIdentity(request: Request): PublicVisitorIde
 
   const existing = readSignedVisitorCookie(request, secret);
   if (existing) {
-    return { id: existing };
+    return { credential: existing };
   }
 
   const id = randomUUID();
+  const credential = signPublicVisitorCredential(secret, id, Date.now());
+  if (!credential) {
+    return Response.json(
+      {
+        code: "public_client_cookie_secret_not_configured",
+        message: "Public visitor cookie signing is not configured.",
+      },
+      { status: 503 },
+    );
+  }
   return {
-    id,
-    setCookie: serializePublicVisitorCookie(id, secret, request),
+    credential,
+    setCookie: serializePublicVisitorCookie(credential, request),
   };
 }
 
@@ -53,23 +66,11 @@ function readSignedVisitorCookie(request: Request, secret: string): string | nul
     return null;
   }
 
-  const separatorIndex = decoded.lastIndexOf(".");
-  if (separatorIndex <= 0) {
-    return null;
-  }
-
-  const id = decoded.slice(0, separatorIndex);
-  const signature = decoded.slice(separatorIndex + 1);
-
-  if (!uuidPattern.test(id) || !isValidSignature(id, signature, secret)) {
-    return null;
-  }
-
-  return id;
+  const verified = verifyPublicVisitorCredential(secret, decoded);
+  return verified ? decoded : null;
 }
 
-function serializePublicVisitorCookie(id: string, secret: string, request: Request): string {
-  const signedValue = `${id}.${sign(id, secret)}`;
+function serializePublicVisitorCookie(signedValue: string, request: Request): string {
   const attributes = [
     `${publicVisitorCookieName}=${encodeURIComponent(signedValue)}`,
     "Path=/",
@@ -83,19 +84,4 @@ function serializePublicVisitorCookie(id: string, secret: string, request: Reque
   }
 
   return attributes.join("; ");
-}
-
-function sign(value: string, secret: string): string {
-  return createHmac("sha256", secret).update(value).digest("base64url");
-}
-
-function isValidSignature(value: string, signature: string, secret: string): boolean {
-  const expected = sign(value, secret);
-  const expectedBuffer = Buffer.from(expected);
-  const actualBuffer = Buffer.from(signature);
-
-  return (
-    expectedBuffer.byteLength === actualBuffer.byteLength &&
-    timingSafeEqual(expectedBuffer, actualBuffer)
-  );
 }

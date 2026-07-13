@@ -140,6 +140,7 @@ function baseConfig() {
     DATABASE_URL: process.env.TEST_DATABASE_URL ?? "postgresql://postgres:postgres@localhost/test",
     REDIS_URL: process.env.TEST_REDIS_URL ?? "redis://localhost:6380",
     CONTROL_SERVICE_TOKEN: "test-control-token",
+    PUBLIC_CLIENT_COOKIE_SECRET: "test-public-cookie-secret",
     LOG_LEVEL: "silent",
   });
 }
@@ -1256,7 +1257,11 @@ describe("API gateway routes", () => {
     const response = await server.inject({
       method: "POST",
       url: startDemoRunPath,
-      headers: { "x-correlation-id": "run-start-correlation" },
+      headers: {
+        "x-correlation-id": "run-start-correlation",
+        [controlServiceTokenHeaderName]: "test-control-token",
+        [demoRunOperatorModeHeaderName]: "public",
+      },
       payload: {
         presetSlug: "preview-1k",
       },
@@ -1305,10 +1310,37 @@ describe("API gateway routes", () => {
     const invalidHeader = await server.inject({
       method: "POST",
       url: startDemoRunPath,
-      headers: { [demoRunOperatorModeHeaderName]: "root" },
+      headers: {
+        [demoRunOperatorModeHeaderName]: "root",
+        [controlServiceTokenHeaderName]: "test-control-token",
+      },
       payload: {
         presetSlug: "preview-1k",
       },
+    });
+    const missingMode = await server.inject({
+      method: "POST",
+      url: startDemoRunPath,
+      headers: { [controlServiceTokenHeaderName]: "test-control-token" },
+      payload: { presetSlug: "preview-1k" },
+    });
+    const wrongPublicToken = await server.inject({
+      method: "POST",
+      url: startDemoRunPath,
+      headers: {
+        [controlServiceTokenHeaderName]: "wrong",
+        [demoRunOperatorModeHeaderName]: "public",
+      },
+      payload: { presetSlug: "preview-1k" },
+    });
+    const wrongAdminToken = await server.inject({
+      method: "POST",
+      url: startDemoRunPath,
+      headers: {
+        [controlServiceTokenHeaderName]: "wrong",
+        [demoRunOperatorModeHeaderName]: "admin",
+      },
+      payload: { presetSlug: "admin-smoke-steady" },
     });
     const trustedHeader = await server.inject({
       method: "POST",
@@ -1322,9 +1354,12 @@ describe("API gateway routes", () => {
       },
     });
 
-    expect(untrustedBody.statusCode).toBe(400);
+    expect(untrustedBody.statusCode).toBe(401);
     expect(untrustedHeader.statusCode).toBe(401);
     expect(invalidHeader.statusCode).toBe(400);
+    expect(missingMode.statusCode).toBe(400);
+    expect(wrongPublicToken.statusCode).toBe(401);
+    expect(wrongAdminToken.statusCode).toBe(401);
     expect(trustedHeader.statusCode).toBe(202);
     expect(startRun).toHaveBeenCalledTimes(1);
     expect(startRun).toHaveBeenCalledWith(
@@ -1487,7 +1522,7 @@ describe("API gateway routes", () => {
     expect(copyPresetToCustom).toHaveBeenCalledWith({ sourceSlug: "preview-1k" });
   });
 
-  it("uses the trusted public visitor header instead of browser-supplied JSON", async () => {
+  it("rejects tokenless visitor assertions and forwards only authenticated proxy assertions", async () => {
     const startRun = vi.fn(demoRunControllerFixture().startRun);
     const server = await trackedServer({
       persistence: new AcceptingPersistence(),
@@ -1497,7 +1532,7 @@ describe("API gateway routes", () => {
       },
     });
 
-    const response = await server.inject({
+    const tokenless = await server.inject({
       method: "POST",
       url: startDemoRunPath,
       headers: { [publicVisitorIdHeaderName]: "signed-visitor-1" },
@@ -1505,13 +1540,24 @@ describe("API gateway routes", () => {
         presetSlug: "preview-1k",
       },
     });
+    const response = await server.inject({
+      method: "POST",
+      url: startDemoRunPath,
+      headers: {
+        [controlServiceTokenHeaderName]: "test-control-token",
+        [demoRunOperatorModeHeaderName]: "public",
+        [publicVisitorIdHeaderName]: "signed-visitor-1",
+      },
+      payload: { presetSlug: "preview-1k" },
+    });
 
+    expect(tokenless.statusCode).toBe(401);
     expect(response.statusCode).toBe(202);
     expect(startRun).toHaveBeenCalledWith(
       {
         presetSlug: "preview-1k",
         operatorMode: "public",
-        publicVisitorId: "signed-visitor-1",
+        publicVisitorCredential: "signed-visitor-1",
       },
       expect.any(String),
     );

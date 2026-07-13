@@ -1,3 +1,8 @@
+import {
+  isValidPublicVisitorCredentialSecret,
+  publicVisitorCredentialMinimumSecretBytes,
+} from "@checkout-surge/contracts/public-visitor-credential";
+
 export interface ApiConfig {
   host: string;
   port: number;
@@ -14,6 +19,7 @@ export interface ApiConfig {
   apiBaseUrl: string;
   loadOrchestratorBaseUrl: string;
   controlServiceToken: string;
+  publicClientCookieSecret: string;
   demoRunFinalizationPollIntervalSeconds: number;
 }
 
@@ -21,6 +27,7 @@ const unsafeControlServiceTokens = new Set([
   "change-me-shared-control-token",
   "change-me-control-service-token",
 ]);
+const unsafePublicClientCookieSecrets = new Set(["change-me-public-client-cookie-secret"]);
 
 export function loadApiConfig(env: NodeJS.ProcessEnv): ApiConfig {
   return {
@@ -63,12 +70,24 @@ export function loadApiConfig(env: NodeJS.ProcessEnv): ApiConfig {
       "http://localhost:4200",
     ),
     controlServiceToken: requireEnv(env, "CONTROL_SERVICE_TOKEN"),
+    publicClientCookieSecret: requireStrongSecret(env, "PUBLIC_CLIENT_COOKIE_SECRET"),
     demoRunFinalizationPollIntervalSeconds: parsePositiveInteger(
       env.DEMO_RUN_FINALIZATION_POLL_INTERVAL_SECONDS,
       "DEMO_RUN_FINALIZATION_POLL_INTERVAL_SECONDS",
       5,
     ),
   };
+}
+
+function requireStrongSecret(env: NodeJS.ProcessEnv, name: string): string {
+  const value = requireEnv(env, name);
+  if (name === "PUBLIC_CLIENT_COOKIE_SECRET" && unsafePublicClientCookieSecrets.has(value))
+    throw new Error(`${name} must be replaced with a deployment-specific secret.`);
+  if (!isValidPublicVisitorCredentialSecret(value))
+    throw new Error(
+      `${name} must be at least ${publicVisitorCredentialMinimumSecretBytes} UTF-8 bytes.`,
+    );
+  return value;
 }
 
 function requireEnv(env: NodeJS.ProcessEnv, name: string): string {

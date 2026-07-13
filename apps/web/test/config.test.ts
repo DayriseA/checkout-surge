@@ -6,7 +6,7 @@ const validSecrets = {
   CONTROL_SERVICE_TOKEN: "control-token",
   ADMIN_DASHBOARD_PASSPHRASE: "admin-passphrase",
   ADMIN_SESSION_SECRET: "session-secret",
-  PUBLIC_CLIENT_COOKIE_SECRET: "visitor-secret",
+  PUBLIC_CLIENT_COOKIE_SECRET: "visitor-cookie-secret",
 };
 const originalEnv = { ...process.env };
 
@@ -48,8 +48,14 @@ describe("web server secret configuration", () => {
       controlServiceToken: "control-token",
       adminDashboardPassphrase: "admin-passphrase",
       adminSessionSecret: "session-secret",
-      publicClientCookieSecret: "visitor-secret",
+      publicClientCookieSecret: "visitor-cookie-secret",
     });
+  });
+
+  it("rejects a public cookie secret shorter than 16 UTF-8 bytes", () => {
+    expect(() =>
+      loadWebServerConfig({ ...validSecrets, PUBLIC_CLIENT_COOKIE_SECRET: "too-short" }),
+    ).toThrow(/shorter than 16 UTF-8 bytes/);
   });
 
   it("rejects reused HMAC secrets", () => {

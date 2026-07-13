@@ -37,7 +37,7 @@ Replace `⬜` with `✅` when a task is complete. Optional `⏳` for work in pro
 
 ✅ [Task 17: Apply run-scoped concurrency, retry policy, and backpressure at the queue boundary](./task_17.md)
 
-⬜ [Task 18: Restore the public run-start trust boundary: service-token channel, verifiable visitor identity, non-burning budgets](./task_18.md)
+✅ [Task 18: Restore the public run-start trust boundary: service-token channel, verifiable visitor identity, non-burning budgets](./task_18.md)
 
 ⬜ [Task 19: Add resource limits to public dashboard reads and SSE connections](./task_19.md)
 
