@@ -108,3 +108,39 @@ The complete watch layout presents inventory drain, queue depth/pressure, ERP ci
 - Traffic presentation tests cover all three signals together, shared window labels, honest scheduled-versus-observed wording, unit formatting, empty windows, and freshness/staleness.
 - ERP tests cover initial `closed` publication, open/half-open/closed transitions, missing/corrupt/stale snapshots, Redis write failure isolation, attempt-window aggregation, queue-read degradation, and visible threshold/next-attempt/last-update fields.
 - Run the relevant contract, API service, DB integration, worker unit, and web component suites after implementation. No application needs to be started for verification.
+
+## Implementation record (2026-07-13)
+
+### Status
+
+Implemented at the Task 27 ownership boundaries. Production API composition now publishes contract-valid full inventory and queue snapshots through a bounded best-effort application scheduler; the watch surface promotes all three current traffic samples without claiming Task 30 window semantics and exposes inventory, queue, ERP breaker/API, traffic, and recovery timestamps.
+
+### Decisions and completed scope
+
+- Added an API-owned `DashboardSnapshotPublicationScheduler` with a maximum of 64 pending scopes, latest-value coalescing per sale offer plus one global queue scope, sequential single-flight inspection/publication, contained logging, deterministic `flush()`, and composition-root `close()`. Shutdown drains it after request acceptance stops and before Redis disconnects.
+- A fresh `reservation_secured` Redis decision dirties inventory immediately; replay, rejection, and non-mutating paths do not. Every successful API-owned deterministic BullMQ handoff dirties queue state, including request replay reassertion and pending-persistence reconciliation; enqueue failure publishes nothing. Scheduling and inspection/publication failure cannot alter the buy or reconciliation result.
+- The scheduler reuses `InventoryStatusService`, `QueueStatusService`, and the existing validated Redis dashboard publisher. Events carry complete existing contracts and use `inventory.lastUpdatedAt` / `queue.updatedAt` as `occurredAt`. The browser separately rejects an older source snapshot even when its publication completed later.
+- Worker dequeue/retry/failure freshness is driven by the API scheduler rather than advertised as enqueue-only or charged to browser recovery. If a full queue snapshot observes depth or active work, one unref'd process timer dirties the global queue scope again after two seconds. The existing single-flight drain re-inspects/publishes until a final snapshot observes no queued or active work; new enqueues update the latest context and trigger immediate coalesced inspection without multiplying timers. Close cancels the timer and does not reschedule.
+- The three current traffic points have equal visual rank. Labels describe raw k6 request-counter, latency, and failure-indicator samples; the panel explicitly disclaims a common observed window or percentile until Task 30. Ratio failure samples are formatted as percentages without changing their contract value.
+- Inventory, queue, latest traffic sample, recovery capture, ERP breaker report, and ERP API projection timestamps are visible. Existing ERP missing semantics and startup/transition snapshot behavior were preserved; threshold, consecutive failures, reset timeout, next probe, report time, projection time, and attempt window were promoted. Added a worker unit assertion for initial configured `closed` publication and Redis-reporting failure isolation.
+- Updated `docs/architecture.md`, `docs/cross_service_conventions.md`, and `docs/load_generation_metrics_streaming.md` to document bounded process-owned queue refresh, freshness, and raw metric semantics.
+
+### Verification
+
+- `node ../../scripts/run-with-test-env.mjs pnpm exec vitest run --config vitest.api.config.ts test/reserve-order-service.test.ts test/dashboard-snapshot-publication-scheduler.test.ts test/api-resource-cleanup.test.ts` (from `apps/api`): 3 files, 35 tests passed, including fake-timer queue refresh/drain/single-flight/close coverage.
+- `node scripts/run-with-test-env.mjs pnpm --filter api exec vitest run --config vitest.api.config.ts test/reserve-order-service.test.ts test/pending-persistence-reconciler.test.ts test/dashboard-snapshot-publication-scheduler.test.ts` (from the repository root): 3 files, 42 tests passed, including API pending-persistence queue handoff scheduling and negative/failure-isolation coverage.
+- `node ../../scripts/run-with-test-env.mjs pnpm exec vitest run --config vitest.config.ts test/dashboard-phase6.test.ts test/dashboard-hooks.test.tsx` (from `apps/web`): 2 files, 13 tests passed.
+- `pnpm exec vitest run --config vitest.unit.config.ts test/unit/erp-circuit-breaker.test.ts` (from `apps/worker`): 1 file, 4 tests passed.
+- `pnpm --filter @checkout-surge/contracts test:unit`: 2 files, 50 tests passed.
+- `pnpm --filter api type-check`, `pnpm --filter web type-check`, `pnpm --filter worker type-check`, and `pnpm --filter @checkout-surge/contracts type-check`: passed.
+- `pnpm --filter api lint`, `pnpm --filter web lint`, `pnpm --filter worker lint`, and `pnpm --filter @checkout-surge/contracts lint`: passed.
+- `git diff --check`: passed.
+- `pnpm type-check:test` was run after correcting the new inventory fixture and Task 27 test typing. It remains blocked by unrelated existing test-type errors in API integration helpers, dashboard-route mocks, load-orchestrator tests, missing web `server-only` declarations, and worker tests; no reported error remains in the Task 27 scheduler fixture or focused tests.
+- Focused DB Redis Pub/Sub integration was attempted with `node ../../scripts/run-with-test-env.mjs pnpm exec vitest run --config vitest.integration.config.ts test/integration/db.integration.test.ts -t "publishes validated dashboard events through the shared Redis Pub/Sub channel"`; it could not run because test Redis at `127.0.0.1:6380` refused the connection, so 47 tests were skipped by suite setup. Existing transport integration code was not changed.
+- `pnpm test:composition` and `pnpm test:characterization` were not run, per repository instructions.
+
+### Follow-up dependencies
+
+- Task 30 still owns fixed event-time aggregation, observed rate/window/percentile semantics, and final units. Once implemented, replace the raw-sample disclaimer and labels with the shared window vocabulary.
+- Task 44 still owns broader burst-cost redesign. The scheduler is intentionally a bounded/single-flight/coalescing seam, but Task 44 may revise the 64-scope limit, cadence, cross-instance policy, and integrate sold-out/business-outcome coalescing without changing reservation or recovery authority.
+- The two-second queue refresh is bounded per API process, not globally across replicas. Task 44 may introduce a shared lease if deployment-wide inspection bounds are required; any such change must continue using `OrderProcessQueueInspector` semantics and cumulative full snapshots.

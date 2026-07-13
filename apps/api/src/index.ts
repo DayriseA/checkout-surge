@@ -9,6 +9,7 @@ import {
   markReservationPendingPersistence,
   promoteReservationIdempotencyToAccepted,
   publishBusinessOutcomeDashboardUpdate,
+  publishDashboardEvent,
   reserveInventoryStock,
   reverseReservation,
 } from "@checkout-surge/db";
@@ -34,6 +35,7 @@ import {
   PostgresDashboardConsistencyLagReader,
   PostgresDashboardRecoveryContextReader,
 } from "./services/dashboard-recovery-service.js";
+import { DashboardSnapshotPublicationScheduler } from "./services/dashboard-snapshot-publication-scheduler.js";
 import { DemoMaintenanceService } from "./services/demo-maintenance-service.js";
 import { DemoRunFinalizationService } from "./services/demo-run-finalization-service.js";
 import {
@@ -43,7 +45,6 @@ import {
   validateActivePublicRuntimePolicyAtStartup,
 } from "./services/demo-run-service.js";
 import { DemoRunStartupReconciliationService } from "./services/demo-run-startup-reconciliation-service.js";
-import { TrafficCompletionEnrichmentService } from "./services/traffic-completion-enrichment-service.js";
 import {
   ErpStatusService,
   PostgresActiveErpRunReader,
@@ -63,6 +64,7 @@ import {
 } from "./services/reserve-order-service.js";
 import { RunHistoryService } from "./services/run-history-service.js";
 import { PostgresTerminalDemoRunSummaryWriter } from "./services/terminal-demo-run-transition.js";
+import { TrafficCompletionEnrichmentService } from "./services/traffic-completion-enrichment-service.js";
 
 export const apiAppName = "api" as const;
 export const apiAppDependencies = [contractsPackageName, dbPackageName, loggerPackageName] as const;
@@ -80,10 +82,10 @@ export {
   PostgresDashboardConsistencyLagReader,
   PostgresDashboardRecoveryContextReader,
 } from "./services/dashboard-recovery-service.js";
+export { DashboardSnapshotPublicationScheduler } from "./services/dashboard-snapshot-publication-scheduler.js";
 export { DemoMaintenanceService } from "./services/demo-maintenance-service.js";
 export { DemoRunFinalizationService } from "./services/demo-run-finalization-service.js";
 export { DemoRunStartupReconciliationService } from "./services/demo-run-startup-reconciliation-service.js";
-export { TrafficCompletionEnrichmentService } from "./services/traffic-completion-enrichment-service.js";
 export {
   ErpStatusService,
   PostgresErpAttemptStatusReader,
@@ -96,6 +98,7 @@ export { PostgresBuyPersistence } from "./services/postgres-buy-persistence.js";
 export { QueueStatusService } from "./services/queue-status-service.js";
 export { ReserveOrderService } from "./services/reserve-order-service.js";
 export { RunHistoryService } from "./services/run-history-service.js";
+export { TrafficCompletionEnrichmentService } from "./services/traffic-completion-enrichment-service.js";
 
 export async function startApiServer(): Promise<void> {
   const config = loadApiConfig(process.env);
@@ -139,13 +142,6 @@ export async function startApiServer(): Promise<void> {
       promoteReservationIdempotencyToAccepted(redis, input).then(() => undefined),
     reverse: (input: Parameters<typeof reverseReservation>[1]) => reverseReservation(redis, input),
   };
-  const pendingPersistenceReconciler = new PendingPersistenceReconciler({
-    redis,
-    persistence,
-    stockReservations: stockReservationGateway,
-    orderProcessJobPublisher,
-    logger,
-  });
   const dashboardEventFanout = new DashboardEventFanout({
     logger,
     maxClients: config.dashboardMaxSseClients,
@@ -186,6 +182,20 @@ export async function startApiServer(): Promise<void> {
   });
   const inventoryStatusService = new InventoryStatusService({
     getStatus: (saleOfferId) => getInventoryStatus(redis, saleOfferId),
+  });
+  const dashboardSnapshotPublications = new DashboardSnapshotPublicationScheduler({
+    readInventory: (saleOfferId) => inventoryStatusService.getStatus(saleOfferId),
+    readQueue: () => queueStatusService.getStatus(),
+    publish: (event) => publishDashboardEvent(redis, event),
+    logger,
+  });
+  const pendingPersistenceReconciler = new PendingPersistenceReconciler({
+    redis,
+    persistence,
+    stockReservations: stockReservationGateway,
+    orderProcessJobPublisher,
+    dashboardSnapshotPublications,
+    logger,
   });
   const trafficMetricStore = new RedisDashboardTrafficMetricStore(redis);
   const terminalRunWriter = new PostgresTerminalDemoRunSummaryWriter(connection.db);
@@ -258,6 +268,7 @@ export async function startApiServer(): Promise<void> {
     reservationHoldMinutes: config.reservationHoldMinutes,
     idempotencyTtlSeconds: config.idempotencyTtlSeconds,
     pendingPersistenceRetryAfterSeconds: config.pendingPersistenceRetryAfterSeconds,
+    dashboardSnapshotPublications,
     reportPersistenceFailure: (report) => {
       logger.error(
         partialFailureLogContext(report),
@@ -319,6 +330,7 @@ export async function startApiServer(): Promise<void> {
           dashboardEventFanout.close();
           await server?.close();
         },
+        closeDashboardPublicationScheduler: () => dashboardSnapshotPublications.close(),
         closeDashboardEventSubscriber: async () => {
           try {
             await dashboardEventSubscriber.close();

@@ -276,7 +276,9 @@ async function buildTestServer(options: {
       idempotencyTtlSeconds: 1800,
       pendingPersistenceRetryAfterSeconds: 30,
       generateId: options.generateId ?? deterministicIdGenerator(),
-      reportPersistenceFailure: options.reportPersistenceFailure,
+      ...(options.reportPersistenceFailure
+        ? { reportPersistenceFailure: options.reportPersistenceFailure }
+        : {}),
     }),
     demoRunService: options.demoRunService ?? demoRunControllerFixture(),
     demoMaintenanceService:

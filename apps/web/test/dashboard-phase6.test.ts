@@ -5,14 +5,18 @@ import { describe, expect, it } from "vitest";
 import {
   CompletionOutcomesPanel,
   ConsistencyLagPanel,
+  ErpHealthPanel,
+  InventoryDrainPanel,
   LoadRunControlsPanel,
+  QueuePressurePanel,
+  RequestSurgePanel,
   RunOutcomesPanel,
 } from "../src/app/components/dashboard-panels.js";
+import type { BackendRead } from "../src/app/lib/api.js";
 import {
   applyDashboardEvent,
   shouldRequestAuthoritativeRecoveryAfterEvent,
 } from "../src/app/lib/dashboard-state.js";
-import type { BackendRead } from "../src/app/lib/api.js";
 
 describe("Phase 6 dashboard behavior", () => {
   it("renders enabled run controls when Phase 7 start handling is available", () => {
@@ -86,6 +90,55 @@ describe("Phase 6 dashboard behavior", () => {
     expect(completionMarkup).toContain("Recent order workflow results");
     expect(completionMarkup).toContain("notification recorded");
     expect(completionMarkup).toContain("ord_recent");
+  });
+
+  it("presents all raw traffic gold samples equally and exposes producer freshness", () => {
+    const recovery = availableRecovery({
+      ...recoveryFixture(),
+      inventory: inventoryFixture(),
+      queue: queueFixture(2, "2026-06-20T00:00:11.000Z"),
+      recentMetrics: [
+        {
+          metricName: "traffic.scheduled_request_rate",
+          value: 1,
+          unit: "requests",
+          timestamp: "2026-06-20T00:00:11.000Z",
+        },
+        {
+          metricName: "traffic.latency",
+          value: 42,
+          unit: "ms",
+          timestamp: "2026-06-20T00:00:11.000Z",
+        },
+        {
+          metricName: "traffic.failure_rate",
+          value: 0.25,
+          unit: "ratio",
+          timestamp: "2026-06-20T00:00:11.000Z",
+        },
+      ],
+      erp: erpFixture(),
+    });
+
+    const traffic = renderToStaticMarkup(
+      createElement(RequestSurgePanel, { recovery, liveEventCount: 3 }),
+    );
+    const inventory = renderToStaticMarkup(createElement(InventoryDrainPanel, { recovery }));
+    const queue = renderToStaticMarkup(createElement(QueuePressurePanel, { recovery }));
+    const erp = renderToStaticMarkup(createElement(ErpHealthPanel, { recovery }));
+
+    expect(traffic).toContain("k6 request counter sample");
+    expect(traffic).toContain("Latest k6 latency sample");
+    expect(traffic).toContain("Latest k6 failure indicator");
+    expect(traffic).toContain("25%");
+    expect(traffic).toContain("no common observed window or percentile is claimed");
+    expect(inventory).toContain("Inventory updated");
+    expect(queue).toContain("Queue inspected");
+    expect(queue).toContain("API refreshes worker drain, retry, and failure state");
+    expect(erp).toContain("Failure threshold");
+    expect(erp).toContain("Next probe");
+    expect(erp).toContain("Breaker reported");
+    expect(erp).toContain("API projection");
   });
 
   it("applies live business-outcome events over the recovery baseline", () => {
@@ -224,6 +277,32 @@ describe("Phase 6 dashboard behavior", () => {
     }
     expect(nextInventory.data.inventory).toEqual(recoveryData.inventory);
     expect(nextQueue.data.queue).toEqual(recoveryData.queue);
+  });
+
+  it("does not let a delayed snapshot read regress a newer source snapshot", () => {
+    const recovery = availableRecovery({
+      ...recoveryFixture(),
+      currentRun: runFixture(),
+      inventory: { ...inventoryFixture(), lastUpdatedAt: "2026-06-20T00:00:12.000Z" },
+      queue: queueFixture(2, "2026-06-20T00:00:12.000Z"),
+    });
+    const delayedInventory = inventoryEventFixture(
+      runFixture().saleOfferId,
+      99,
+      "2026-06-20T00:00:13.000Z",
+    );
+    delayedInventory.inventory.lastUpdatedAt = "2026-06-20T00:00:11.000Z";
+    const delayedQueue = queueEventFixture(99, "2026-06-20T00:00:11.000Z");
+    delayedQueue.occurredAt = "2026-06-20T00:00:13.000Z";
+
+    const afterInventory = applyDashboardEvent(recovery, delayedInventory);
+    const afterQueue = applyDashboardEvent(recovery, delayedQueue);
+
+    if (afterInventory.status !== "available" || afterQueue.status !== "available") {
+      throw new Error("Expected available recovery after delayed snapshots.");
+    }
+    expect(afterInventory.data.inventory?.remainingStock).not.toBe(99);
+    expect(afterQueue.data.queue?.depth).toBe(2);
   });
 
   it("uses authoritative recovery after terminal run events", () => {
@@ -454,6 +533,42 @@ function queueFixture(depth: number, updatedAt: string) {
       inspectionTruncated: false,
     },
     updatedAt,
+  };
+}
+
+function erpFixture(): NonNullable<DashboardRecoveryResponse["erp"]> {
+  return {
+    status: "degraded",
+    reason: "recent_erp_failures",
+    circuit: {
+      state: "open",
+      consecutiveFailureCount: 5,
+      failureThreshold: 5,
+      resetTimeoutMs: 10_000,
+      openedAt: "2026-06-20T00:00:09.000Z",
+      nextAttemptAt: "2026-06-20T00:00:19.000Z",
+      halfOpenProbeInFlight: false,
+      updatedAt: "2026-06-20T00:00:10.000Z",
+    },
+    retryPressure: {
+      retryingJobCount: 1,
+      retryAttemptCount: 2,
+      inspectedJobCount: 2,
+      inspectionLimit: 100,
+      inspectionTruncated: false,
+    },
+    latestAttempt: null,
+    recentAttemptWindowSeconds: 60,
+    recentAttemptCount: 3,
+    recentFailureCount: 2,
+    recentTimeoutCount: 1,
+    confirmationDelay: {
+      processingOrderCount: 1,
+      oldestProcessingAgeSeconds: 2,
+      recentConfirmedCount: 1,
+      averageConfirmationDelayMs: 80,
+    },
+    updatedAt: "2026-06-20T00:00:11.000Z",
   };
 }
 

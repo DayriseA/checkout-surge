@@ -22,6 +22,34 @@ const delivery: OrderProcessDeliveryMetadata = {
 };
 
 describe("ERP circuit breaker", () => {
+  it("publishes the configured closed snapshot at startup without coupling construction to reporting", async () => {
+    const onStateChange = vi.fn().mockRejectedValue(new Error("Redis unavailable"));
+
+    expect(
+      () =>
+        new ErpCircuitBreaker({
+          confirmation: { confirm: vi.fn().mockResolvedValue(undefined) },
+          failureThreshold: 5,
+          resetTimeoutMs: 10_000,
+          isCountedFailure: () => true,
+          onStateChange,
+          now: () => new Date("2026-06-22T00:00:00.000Z"),
+        }),
+    ).not.toThrow();
+    await Promise.resolve();
+
+    expect(onStateChange).toHaveBeenCalledWith({
+      state: "closed",
+      consecutiveFailureCount: 0,
+      failureThreshold: 5,
+      resetTimeoutMs: 10_000,
+      openedAt: null,
+      nextAttemptAt: null,
+      halfOpenProbeInFlight: false,
+      updatedAt: "2026-06-22T00:00:00.000Z",
+    });
+  });
+
   it("opens after consecutive counted failures and blocks calls until reset", async () => {
     let now = new Date("2026-06-22T00:00:00.000Z");
     const confirmationError = new Error("ERP unavailable");

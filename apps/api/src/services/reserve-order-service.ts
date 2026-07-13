@@ -9,6 +9,7 @@ import {
   type SecuredReservationHold,
   type StockReservationDecision,
 } from "@checkout-surge/contracts";
+import type { DashboardSnapshotPublicationSchedulerPort } from "./dashboard-snapshot-publication-scheduler.js";
 import type { OrderProcessJobPublisher } from "./order-process-job-publisher.js";
 
 export const definitivePersistenceRejectionCode = "run_sale_offer_mismatch" as const;
@@ -150,6 +151,7 @@ export class ReserveOrderService {
   private readonly reportBusinessOutcomeUpdateFailure: (
     report: BusinessOutcomeUpdateFailureReport,
   ) => void;
+  private readonly dashboardSnapshotPublications: DashboardSnapshotPublicationSchedulerPort;
 
   constructor(options: {
     persistence: BuyPersistence;
@@ -168,6 +170,7 @@ export class ReserveOrderService {
     publishBusinessOutcomeUpdate?: BusinessOutcomeUpdatePublisher;
     scheduleBusinessOutcomeUpdate?: BusinessOutcomeUpdateScheduler;
     reportBusinessOutcomeUpdateFailure?: (report: BusinessOutcomeUpdateFailureReport) => void;
+    dashboardSnapshotPublications?: DashboardSnapshotPublicationSchedulerPort;
   }) {
     this.persistence = options.persistence;
     this.stockReservations = options.stockReservations;
@@ -194,6 +197,10 @@ export class ReserveOrderService {
       });
     this.reportBusinessOutcomeUpdateFailure =
       options.reportBusinessOutcomeUpdateFailure ?? (() => undefined);
+    this.dashboardSnapshotPublications = options.dashboardSnapshotPublications ?? {
+      scheduleInventory: () => undefined,
+      scheduleQueue: () => undefined,
+    };
   }
 
   async reserve(input: {
@@ -233,6 +240,7 @@ export class ReserveOrderService {
     }
 
     if (decision.outcome === "reservation_secured") {
+      this.scheduleInventorySnapshot(decision.reservation);
       return this.persistNewReservation({
         reservation: decision.reservation,
         idempotencyKey: input.request.idempotencyKey,
@@ -453,6 +461,7 @@ export class ReserveOrderService {
         // PostgreSQL and BullMQ are not atomic. Every durable replay re-asserts this
         // deterministic job before Redis can be promoted to an accepted response.
         await this.orderProcessJobPublisher.enqueue(this.toOrderProcessJob(persisted));
+        this.scheduleQueueSnapshot(reservation);
       } catch (error) {
         safelyReportPartialFailure(this.reportOrderEnqueueFailure, {
           ...this.partialFailureReport(error, idempotencyKey, reservation),
@@ -463,6 +472,29 @@ export class ReserveOrderService {
     };
 
     await enqueue();
+  }
+
+  private scheduleInventorySnapshot(reservation: SecuredReservationHold): void {
+    try {
+      this.dashboardSnapshotPublications.scheduleInventory({
+        saleOfferId: reservation.saleOfferId,
+        ...(reservation.runId ? { runId: reservation.runId } : {}),
+        correlationId: reservation.correlationId,
+      });
+    } catch {
+      // Advisory dashboard scheduling cannot change a fresh Redis reservation decision.
+    }
+  }
+
+  private scheduleQueueSnapshot(reservation: SecuredReservationHold): void {
+    try {
+      this.dashboardSnapshotPublications.scheduleQueue({
+        ...(reservation.runId ? { runId: reservation.runId } : {}),
+        correlationId: reservation.correlationId,
+      });
+    } catch {
+      // Advisory dashboard scheduling cannot hide a successful durable enqueue.
+    }
   }
 
   private toOrderProcessJob(persisted: PersistedBuyAcceptance): OrderProcessJob {

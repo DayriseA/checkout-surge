@@ -65,6 +65,7 @@ describe("PendingPersistenceReconciler", () => {
     const persistSecuredReservation = vi.fn(async () => persistedBuy);
     const enqueue = vi.fn(async () => undefined);
     const promoteAccepted = vi.fn(async () => undefined);
+    const scheduleQueue = vi.fn();
     const reconciler = new PendingPersistenceReconciler({
       redis: pendingRedis() as never,
       persistence: {
@@ -73,6 +74,7 @@ describe("PendingPersistenceReconciler", () => {
       },
       stockReservations: { promoteAccepted },
       orderProcessJobPublisher: { enqueue },
+      dashboardSnapshotPublications: { scheduleQueue },
       logger: createSilentLogger("api"),
     });
 
@@ -84,6 +86,11 @@ describe("PendingPersistenceReconciler", () => {
     expect(persistSecuredReservation).toHaveBeenCalledOnce();
     expect(enqueue).toHaveBeenCalledOnce();
     expect(promoteAccepted).toHaveBeenCalledOnce();
+    expect(scheduleQueue).toHaveBeenCalledOnce();
+    expect(scheduleQueue).toHaveBeenCalledWith({
+      runId: hold.runId,
+      correlationId: hold.correlationId,
+    });
   });
 
   it("reasserts queue and promotion for an already durable hold", async () => {
@@ -145,6 +152,7 @@ describe("PendingPersistenceReconciler", () => {
 
   it("leaves the marker discoverable when queue handoff fails", async () => {
     const queueError = new Error("queue unavailable");
+    const scheduleQueue = vi.fn();
     const reconciler = new PendingPersistenceReconciler({
       redis: pendingRedis() as never,
       persistence: {
@@ -157,6 +165,7 @@ describe("PendingPersistenceReconciler", () => {
           throw queueError;
         }),
       },
+      dashboardSnapshotPublications: { scheduleQueue },
       logger: createSilentLogger("api"),
     });
 
@@ -165,6 +174,33 @@ describe("PendingPersistenceReconciler", () => {
       failed: 1,
       reconciled: 0,
     });
+    expect(scheduleQueue).not.toHaveBeenCalled();
+  });
+
+  it("contains queue snapshot scheduling failure after successful reconciliation", async () => {
+    const promoteAccepted = vi.fn(async () => undefined);
+    const reconciler = new PendingPersistenceReconciler({
+      redis: pendingRedis() as never,
+      persistence: {
+        persistSecuredReservation: vi.fn(),
+        getPersistedBuyByReservationId: vi.fn(async () => persisted()),
+      },
+      stockReservations: { promoteAccepted },
+      orderProcessJobPublisher: { enqueue: vi.fn(async () => undefined) },
+      dashboardSnapshotPublications: {
+        scheduleQueue: () => {
+          throw new Error("dashboard scheduling unavailable");
+        },
+      },
+      logger: createSilentLogger("api"),
+    });
+
+    await expect(reconciler.reconcileSaleOffer(hold.saleOfferId)).resolves.toMatchObject({
+      found: 1,
+      reconciled: 1,
+      failed: 0,
+    });
+    expect(promoteAccepted).toHaveBeenCalledOnce();
   });
 
   it("leaves the marker discoverable when accepted promotion fails", async () => {

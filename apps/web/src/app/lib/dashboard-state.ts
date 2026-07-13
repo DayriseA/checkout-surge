@@ -64,9 +64,13 @@ export function applyDashboardEvent(
         data: { ...current, currentRun: event.run, recoveredAt: event.occurredAt },
       };
     case "inventory.updated":
-      return { ...recovery, data: { ...current, inventory: event.inventory } };
+      return isOlderThan(event.inventory.lastUpdatedAt, current.inventory?.lastUpdatedAt)
+        ? recovery
+        : { ...recovery, data: { ...current, inventory: event.inventory } };
     case "queue.updated":
-      return { ...recovery, data: { ...current, queue: event.queue } };
+      return isOlderThan(event.queue.updatedAt, current.queue?.updatedAt)
+        ? recovery
+        : { ...recovery, data: { ...current, queue: event.queue } };
     case "traffic.metric":
       return {
         ...recovery,
@@ -89,6 +93,10 @@ export function applyDashboardEvent(
         data: { ...current, businessOutcome: event.outcome, consistencyLag: event.consistencyLag },
       };
   }
+}
+
+function isOlderThan(candidate: string, current: string | undefined): boolean {
+  return current !== undefined && Date.parse(candidate) < Date.parse(current);
 }
 
 export function shouldRequestAuthoritativeRecoveryAfterEvent(event: DashboardEvent): boolean {

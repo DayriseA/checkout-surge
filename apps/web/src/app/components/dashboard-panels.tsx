@@ -90,6 +90,12 @@ function formatMetric(value: number, unit: string): string {
   }).format(value)} ${unit}`;
 }
 
+function formatFailureSample(value: number, unit: string): string {
+  return unit === "ratio"
+    ? `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(value * 100)}%`
+    : formatMetric(value, unit);
+}
+
 function recoveryData(
   recovery: BackendRead<DashboardRecoveryResponse>,
 ): DashboardRecoveryResponse | null {
@@ -377,11 +383,17 @@ export function RequestSurgePanel({
   const inventory = data?.inventory ?? null;
   const latestMetric = data?.recentMetrics.at(-1) ?? null;
   const requestRateMetric = data
-    ? findLatestMetric(data.recentMetrics, (metricName) => metricName.includes("request_rate"))
+    ? findLatestMetric(data.recentMetrics, (name) => name === "traffic.scheduled_request_rate")
+    : null;
+  const latencyMetric = data
+    ? findLatestMetric(data.recentMetrics, (name) => name === "traffic.latency")
+    : null;
+  const failureRateMetric = data
+    ? findLatestMetric(data.recentMetrics, (name) => name === "traffic.failure_rate")
     : null;
 
   return (
-    <section className={panelNarrowClassName}>
+    <section className={panelWideClassName}>
       <div className={panelHeaderClassName}>
         <div>
           <p className={eyebrowClassName}>Request surge</p>
@@ -393,34 +405,58 @@ export function RequestSurgePanel({
         />
       </div>
       {data ? (
-        <dl className={stackedFactGridClassName}>
-          <Fact
-            label="HTTP request rate"
-            value={
-              requestRateMetric
-                ? formatMetric(requestRateMetric.value, requestRateMetric.unit)
-                : "Awaiting k6 metrics"
-            }
-          />
-          <Fact
-            label="Reservation rate"
-            value={formatRate(inventory?.reservationThroughput.rate, "holds/s")}
-          />
-          <Fact
-            label="Sold-out pressure"
-            value={formatNumber(inventory?.soldOutPressure.rejectionCount ?? 0)}
-          />
-          <Fact label="Live events" value={formatNumber(liveEventCount)} />
-          <Fact
-            label="Latest metric"
-            value={
-              latestMetric
-                ? `${latestMetric.metricName} at ${formatTime(latestMetric.timestamp)}`
-                : "n/a"
-            }
-            small
-          />
-        </dl>
+        <>
+          <dl className={factGridClassName}>
+            <Fact
+              label="k6 request counter sample"
+              value={
+                requestRateMetric
+                  ? formatMetric(requestRateMetric.value, requestRateMetric.unit)
+                  : "Awaiting k6 metrics"
+              }
+            />
+            <Fact
+              label="Latest k6 latency sample"
+              value={
+                latencyMetric
+                  ? formatMetric(latencyMetric.value, latencyMetric.unit)
+                  : "Awaiting k6 metrics"
+              }
+            />
+            <Fact
+              label="Latest k6 failure indicator"
+              value={
+                failureRateMetric
+                  ? formatFailureSample(failureRateMetric.value, failureRateMetric.unit)
+                  : "Awaiting k6 metrics"
+              }
+            />
+          </dl>
+          <dl className={stackedFactGridClassName}>
+            <Fact
+              label="Reservation rate"
+              value={formatRate(inventory?.reservationThroughput.rate, "holds/s")}
+            />
+            <Fact
+              label="Sold-out pressure"
+              value={formatNumber(inventory?.soldOutPressure.rejectionCount ?? 0)}
+            />
+            <Fact label="Live events" value={formatNumber(liveEventCount)} />
+            <Fact
+              label="Latest metric"
+              value={
+                latestMetric
+                  ? `${latestMetric.metricName} at ${formatTime(latestMetric.timestamp)}`
+                  : "n/a"
+              }
+              small
+            />
+          </dl>
+          <p className="mb-0 mt-3 text-xs leading-5 text-muted">
+            Raw k6 point samples; no common observed window or percentile is claimed until
+            fixed-window aggregation is available.
+          </p>
+        </>
       ) : (
         <UnavailableState read={recovery} />
       )}
@@ -485,6 +521,7 @@ export function InventoryDrainPanel({
               label="Oldest pending"
               value={formatSeconds(inventory.oldestPendingPersistenceAgeSeconds)}
             />
+            <Fact label="Inventory updated" value={formatTime(inventory.lastUpdatedAt)} small />
           </dl>
         </>
       ) : (
@@ -514,14 +551,21 @@ export function QueuePressurePanel({
         />
       </div>
       {queue ? (
-        <dl className={factGridClassName}>
-          <Fact label="Waiting" value={formatNumber(queue.counts.waiting)} />
-          <Fact label="Active" value={formatNumber(queue.counts.active)} />
-          <Fact label="Delayed" value={formatNumber(queue.counts.delayed)} />
-          <Fact label="Retrying" value={formatNumber(queue.retryPressure.retryingJobCount)} />
-          <Fact label="Failed" value={formatNumber(queue.failedJobs.totalCount)} />
-          <Fact label="Oldest wait" value={formatSeconds(queue.oldestWaitingAgeSeconds)} />
-        </dl>
+        <>
+          <dl className={factGridClassName}>
+            <Fact label="Waiting" value={formatNumber(queue.counts.waiting)} />
+            <Fact label="Active" value={formatNumber(queue.counts.active)} />
+            <Fact label="Delayed" value={formatNumber(queue.counts.delayed)} />
+            <Fact label="Retrying" value={formatNumber(queue.retryPressure.retryingJobCount)} />
+            <Fact label="Failed" value={formatNumber(queue.failedJobs.totalCount)} />
+            <Fact label="Oldest wait" value={formatSeconds(queue.oldestWaitingAgeSeconds)} />
+            <Fact label="Queue inspected" value={formatTime(queue.updatedAt)} small />
+          </dl>
+          <p className="mb-0 mt-3 text-xs leading-5 text-muted">
+            Enqueues publish live; the API refreshes worker drain, retry, and failure state from the
+            authoritative inspector every 2 seconds until the queue drains.
+          </p>
+        </>
       ) : (
         <EmptyState>No queue data.</EmptyState>
       )}
@@ -552,6 +596,22 @@ export function ErpHealthPanel({ recovery }: { recovery: BackendRead<DashboardRe
           <Fact label="Recent attempts" value={formatNumber(erp.recentAttemptCount)} />
           <Fact label="Failures" value={formatNumber(erp.recentFailureCount)} />
           <Fact label="Timeouts" value={formatNumber(erp.recentTimeoutCount)} />
+          <Fact
+            label="Failure threshold"
+            value={erp.circuit ? formatNumber(erp.circuit.failureThreshold) : "n/a"}
+          />
+          <Fact
+            label="Consecutive failures"
+            value={erp.circuit ? formatNumber(erp.circuit.consecutiveFailureCount) : "n/a"}
+          />
+          <Fact
+            label="Reset timeout"
+            value={erp.circuit ? formatMilliseconds(erp.circuit.resetTimeoutMs) : "n/a"}
+          />
+          <Fact label="Next probe" value={formatTime(erp.circuit?.nextAttemptAt)} small />
+          <Fact label="Breaker reported" value={formatTime(erp.circuit?.updatedAt)} small />
+          <Fact label="API projection" value={formatTime(erp.updatedAt)} small />
+          <Fact label="Attempt window" value={`${formatNumber(erp.recentAttemptWindowSeconds)}s`} />
         </dl>
       ) : (
         <EmptyState>No ERP health data.</EmptyState>

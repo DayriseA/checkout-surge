@@ -36,6 +36,9 @@ function buildService(options: {
     typeof ReserveOrderService
   >[0]["scheduleBusinessOutcomeUpdate"];
   reportBusinessOutcomeUpdateFailure?: (report: BusinessOutcomeUpdateFailureReport) => void;
+  dashboardSnapshotPublications?: ConstructorParameters<
+    typeof ReserveOrderService
+  >[0]["dashboardSnapshotPublications"];
 }) {
   return new ReserveOrderService({
     persistence: options.persistence,
@@ -74,6 +77,9 @@ function buildService(options: {
       : {}),
     ...(options.reportBusinessOutcomeUpdateFailure
       ? { reportBusinessOutcomeUpdateFailure: options.reportBusinessOutcomeUpdateFailure }
+      : {}),
+    ...(options.dashboardSnapshotPublications
+      ? { dashboardSnapshotPublications: options.dashboardSnapshotPublications }
       : {}),
   });
 }
@@ -115,9 +121,59 @@ function persistedBuy(hold: SecuredReservationHold): PersistedBuyAcceptance {
 }
 
 describe("ReserveOrderService queue handoff", () => {
+  it("schedules full snapshot publication only for a fresh hold and successful enqueue", async () => {
+    const scheduleInventory = vi.fn();
+    const scheduleQueue = vi.fn();
+    const service = buildService({
+      persistence: {
+        persistSecuredReservation: async ({ reservation }) => persistedBuy(reservation),
+        getPersistedBuyByReservationId: async () => null,
+      },
+      stockReservations: acceptingGateway(),
+      dashboardSnapshotPublications: { scheduleInventory, scheduleQueue },
+    });
+
+    await expect(service.reserve({ request, correlationId, now })).resolves.toMatchObject({
+      outcome: "reservation_secured",
+    });
+
+    expect(scheduleInventory).toHaveBeenCalledOnce();
+    expect(scheduleInventory).toHaveBeenCalledWith({
+      saleOfferId: request.saleOfferId,
+      runId: request.runId,
+      correlationId,
+    });
+    expect(scheduleQueue).toHaveBeenCalledOnce();
+    expect(scheduleQueue).toHaveBeenCalledWith({ runId: request.runId, correlationId });
+  });
+
+  it("contains snapshot scheduling failures without changing reservation correctness", async () => {
+    const service = buildService({
+      persistence: {
+        persistSecuredReservation: async ({ reservation }) => persistedBuy(reservation),
+        getPersistedBuyByReservationId: async () => null,
+      },
+      stockReservations: acceptingGateway(),
+      dashboardSnapshotPublications: {
+        scheduleInventory: () => {
+          throw new Error("inventory scheduling failed");
+        },
+        scheduleQueue: () => {
+          throw new Error("queue scheduling failed");
+        },
+      },
+    });
+
+    await expect(service.reserve({ request, correlationId, now })).resolves.toMatchObject({
+      outcome: "reservation_secured",
+    });
+  });
+
   it("rejects non-accepting generated runs from Redis without touching persistence", async () => {
     const persistSecuredReservation = vi.fn();
     const getPersistedBuyByReservationId = vi.fn();
+    const scheduleInventory = vi.fn();
+    const scheduleQueue = vi.fn();
     const service = buildService({
       persistence: {
         persistSecuredReservation,
@@ -126,6 +182,7 @@ describe("ReserveOrderService queue handoff", () => {
       stockReservations: acceptingGateway({
         reserve: async () => ({ outcome: "run_not_accepting_traffic", reservation: null }),
       }),
+      dashboardSnapshotPublications: { scheduleInventory, scheduleQueue },
     });
 
     const response = await service.reserve({ request, correlationId, now });
@@ -138,6 +195,8 @@ describe("ReserveOrderService queue handoff", () => {
     });
     expect(persistSecuredReservation).not.toHaveBeenCalled();
     expect(getPersistedBuyByReservationId).not.toHaveBeenCalled();
+    expect(scheduleInventory).not.toHaveBeenCalled();
+    expect(scheduleQueue).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -148,11 +207,14 @@ describe("ReserveOrderService queue handoff", () => {
   ] as const)("does no persistence or lookup work for Redis %s", async (outcome) => {
     const persistSecuredReservation = vi.fn();
     const getPersistedBuyByReservationId = vi.fn();
+    const scheduleInventory = vi.fn();
+    const scheduleQueue = vi.fn();
     const service = buildService({
       persistence: { persistSecuredReservation, getPersistedBuyByReservationId },
       stockReservations: acceptingGateway({
         reserve: async () => ({ outcome, reservation: null }),
       }),
+      dashboardSnapshotPublications: { scheduleInventory, scheduleQueue },
     });
 
     await expect(service.reserve({ request, correlationId, now })).resolves.toMatchObject({
@@ -163,6 +225,8 @@ describe("ReserveOrderService queue handoff", () => {
     });
     expect(persistSecuredReservation).not.toHaveBeenCalled();
     expect(getPersistedBuyByReservationId).not.toHaveBeenCalled();
+    expect(scheduleInventory).not.toHaveBeenCalled();
+    expect(scheduleQueue).not.toHaveBeenCalled();
   });
 
   it("enqueues the persisted summaries before Redis promotion and returns immediately after acceptance", async () => {
@@ -235,7 +299,7 @@ describe("ReserveOrderService queue handoff", () => {
   });
 
   it("does not await a slow business outcome refresh before returning accepted reservations", async () => {
-    let resolveRefresh: (() => void) | null = null;
+    let resolveRefresh: () => void = () => undefined;
     const publishBusinessOutcomeUpdate = vi.fn(
       () =>
         new Promise<void>((resolve) => {
@@ -283,6 +347,8 @@ describe("ReserveOrderService queue handoff", () => {
       expiresAt: new Date(now.getTime() + 900_000).toISOString(),
     };
     const publishBusinessOutcomeUpdate = vi.fn();
+    const scheduleInventory = vi.fn();
+    const scheduleQueue = vi.fn();
     const service = buildService({
       persistence: {
         persistSecuredReservation: async () => {
@@ -294,11 +360,14 @@ describe("ReserveOrderService queue handoff", () => {
         reserve: async () => ({ outcome: "idempotent_replay", reservation: hold }),
       }),
       publishBusinessOutcomeUpdate,
+      dashboardSnapshotPublications: { scheduleInventory, scheduleQueue },
     });
 
     await service.reserve({ request, correlationId, now });
 
     expect(publishBusinessOutcomeUpdate).not.toHaveBeenCalled();
+    expect(scheduleInventory).not.toHaveBeenCalled();
+    expect(scheduleQueue).toHaveBeenCalledOnce();
   });
 
   it("does not hide durable acceptance when business outcome publication fails", async () => {
@@ -332,6 +401,8 @@ describe("ReserveOrderService queue handoff", () => {
     const enqueueError = new Error("queue unavailable");
     const promoteAccepted = vi.fn();
     const reportOrderEnqueueFailure = vi.fn();
+    const scheduleInventory = vi.fn();
+    const scheduleQueue = vi.fn();
     const service = buildService({
       persistence: {
         persistSecuredReservation: async ({ reservation }) => persistedBuy(reservation),
@@ -344,6 +415,7 @@ describe("ReserveOrderService queue handoff", () => {
         },
       },
       reportOrderEnqueueFailure,
+      dashboardSnapshotPublications: { scheduleInventory, scheduleQueue },
     });
 
     await expect(service.reserve({ request, correlationId, now })).rejects.toBe(enqueueError);
@@ -357,6 +429,8 @@ describe("ReserveOrderService queue handoff", () => {
       idempotencyKey: request.idempotencyKey,
     });
     expect(promoteAccepted).not.toHaveBeenCalled();
+    expect(scheduleInventory).toHaveBeenCalledOnce();
+    expect(scheduleQueue).not.toHaveBeenCalled();
   });
 
   it("does not let a throwing enqueue-failure reporter hide the original enqueue error", async () => {

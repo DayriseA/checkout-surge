@@ -10,6 +10,7 @@ import {
   readPendingPersistenceRecords,
 } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
+import type { DashboardSnapshotPublicationSchedulerPort } from "./dashboard-snapshot-publication-scheduler.js";
 import type { OrderProcessJobPublisher } from "./order-process-job-publisher.js";
 import type {
   BuyPersistence,
@@ -41,6 +42,10 @@ export class PendingPersistenceReconciler {
         Partial<Pick<StockReservationGateway, "reverse">>;
       orderProcessJobPublisher: OrderProcessJobPublisher;
       logger: CheckoutSurgeLogger;
+      dashboardSnapshotPublications?: Pick<
+        DashboardSnapshotPublicationSchedulerPort,
+        "scheduleQueue"
+      >;
       batchSize?: number;
       now?: () => Date;
     },
@@ -207,6 +212,7 @@ export class PendingPersistenceReconciler {
     }
 
     await this.options.orderProcessJobPublisher.enqueue(toOrderProcessJob(persisted));
+    this.scheduleQueueSnapshot(reservation);
     // Marking the durable pending row before promotion keeps Redis discoverable
     // if the promotion fails; Redis is the final source of truth for pending
     // stock and will be retried by the next reconciliation pass.
@@ -223,6 +229,17 @@ export class PendingPersistenceReconciler {
       return;
     }
     await persistence.markPendingPersistenceReconciled({ reservationId });
+  }
+
+  private scheduleQueueSnapshot(reservation: SecuredReservationHold): void {
+    try {
+      this.options.dashboardSnapshotPublications?.scheduleQueue({
+        ...(reservation.runId ? { runId: reservation.runId } : {}),
+        correlationId: reservation.correlationId,
+      });
+    } catch {
+      // Advisory dashboard scheduling cannot turn successful reconciliation into failure.
+    }
   }
 
   private async withPersistenceAdmissionLock<T>(
