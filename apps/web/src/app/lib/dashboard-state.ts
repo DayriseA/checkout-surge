@@ -9,6 +9,16 @@ export interface DashboardState {
   recovery: BackendRead<DashboardRecoveryResponse>;
   liveEventCount: number;
   isRefreshing: boolean;
+  eventWatermarks: DashboardEventWatermarks;
+}
+
+export interface DashboardEventWatermarks {
+  runLifecycle: string | null;
+  inventory: string | null;
+  queue: string | null;
+  businessOutcome: string | null;
+  trafficBaseline: string | null;
+  trafficByMetricName: Record<string, string>;
 }
 
 export type DashboardStateAction =
@@ -24,6 +34,7 @@ export function createDashboardState(
     recovery,
     liveEventCount: 0,
     isRefreshing: false,
+    eventWatermarks: eventWatermarksForRecovery(recovery),
   };
 }
 
@@ -37,52 +48,96 @@ export function dashboardStateReducer(
     case "refresh-started":
       return { ...state, isRefreshing: true };
     case "refresh-completed":
-      return { ...state, recovery: action.recovery, isRefreshing: false };
+      return {
+        ...state,
+        recovery: action.recovery,
+        isRefreshing: false,
+        eventWatermarks: eventWatermarksForRecovery(action.recovery),
+      };
     case "event-received":
       return action.discard || state.isRefreshing
         ? { ...state, liveEventCount: state.liveEventCount + 1 }
-        : {
-            ...state,
-            recovery: applyDashboardEvent(state.recovery, action.event),
-            liveEventCount: state.liveEventCount + 1,
-          };
+        : applyDashboardEventToState(state, action.event);
   }
+}
+
+export function applyDashboardEventToState(
+  state: DashboardState,
+  event: DashboardEvent,
+): DashboardState {
+  const application = applyDashboardEventWithWatermarks(
+    state.recovery,
+    state.eventWatermarks,
+    event,
+  );
+  return {
+    ...state,
+    recovery: application.recovery,
+    eventWatermarks: application.eventWatermarks,
+    liveEventCount: state.liveEventCount + 1,
+  };
 }
 
 export function applyDashboardEvent(
   recovery: BackendRead<DashboardRecoveryResponse>,
   event: DashboardEvent,
 ): BackendRead<DashboardRecoveryResponse> {
+  return applyDashboardEventWithWatermarks(recovery, eventWatermarksForRecovery(recovery), event)
+    .recovery;
+}
+
+function applyDashboardEventWithWatermarks(
+  recovery: BackendRead<DashboardRecoveryResponse>,
+  eventWatermarks: DashboardEventWatermarks,
+  event: DashboardEvent,
+): { recovery: BackendRead<DashboardRecoveryResponse>; eventWatermarks: DashboardEventWatermarks } {
   if (recovery.status !== "available") {
-    return recovery;
+    return { recovery, eventWatermarks };
   }
 
   const current = recovery.data;
   const eventScope = classifyDashboardEventScope(current, event);
-  if (eventScope === "rejected") return recovery;
+  if (eventScope === "rejected") return { recovery, eventWatermarks };
   if (eventScope === "new-run" && canEstablishNewRunScope(current, event)) {
-    return recoveryForIncomingRun(recovery, event);
+    const incomingRecovery = recoveryForIncomingRun(recovery, event);
+    return {
+      recovery: incomingRecovery,
+      eventWatermarks: eventWatermarksForRecovery(incomingRecovery),
+    };
   }
+
+  const projection = dashboardEventProjection(event);
+  const watermark = projectionWatermark(eventWatermarks, projection);
+  if (watermark !== null && !isAfter(event.occurredAt, watermark)) {
+    return { recovery, eventWatermarks };
+  }
+
+  let nextRecovery: BackendRead<DashboardRecoveryResponse>;
 
   switch (event.type) {
     case "run.started":
     case "run.updated":
     case "run.completed":
     case "run.failed":
-      return {
+      nextRecovery = {
         ...recovery,
-        data: { ...current, currentRun: event.run, recoveredAt: event.occurredAt },
+        data: { ...current, currentRun: event.run },
       };
+      break;
     case "inventory.updated":
-      return isOlderThan(event.inventory.lastUpdatedAt, current.inventory?.lastUpdatedAt)
-        ? recovery
-        : { ...recovery, data: { ...current, inventory: event.inventory } };
+      if (isOlderThan(event.inventory.lastUpdatedAt, current.inventory?.lastUpdatedAt)) {
+        return { recovery, eventWatermarks };
+      }
+      nextRecovery = { ...recovery, data: { ...current, inventory: event.inventory } };
+      break;
     case "queue.updated":
-      return isOlderThan(event.queue.updatedAt, current.queue?.updatedAt)
-        ? recovery
-        : { ...recovery, data: { ...current, queue: event.queue } };
+      if (isOlderThan(event.queue.updatedAt, current.queue?.updatedAt)) {
+        return { recovery, eventWatermarks };
+      }
+      nextRecovery = { ...recovery, data: { ...current, queue: event.queue } };
+      break;
     case "traffic.metric":
-      return {
+      nextRecovery = {
         ...recovery,
         data: {
           ...current,
@@ -97,16 +152,92 @@ export function applyDashboardEvent(
           ],
         },
       };
+      break;
     case "business.outcome.updated":
-      return {
+      nextRecovery = {
         ...recovery,
         data: { ...current, businessOutcome: event.outcome, consistencyLag: event.consistencyLag },
       };
+      break;
   }
+
+  return {
+    recovery: nextRecovery,
+    eventWatermarks: advanceProjectionWatermark(eventWatermarks, projection, event.occurredAt),
+  };
 }
 
 function isOlderThan(candidate: string, current: string | undefined): boolean {
   return current !== undefined && Date.parse(candidate) < Date.parse(current);
+}
+
+function isAfter(candidate: string, current: string): boolean {
+  return Date.parse(candidate) > Date.parse(current);
+}
+
+type DashboardEventProjection =
+  | "runLifecycle"
+  | "inventory"
+  | "queue"
+  | "businessOutcome"
+  | { trafficMetricName: string };
+
+function dashboardEventProjection(event: DashboardEvent): DashboardEventProjection {
+  switch (event.type) {
+    case "run.started":
+    case "run.updated":
+    case "run.completed":
+    case "run.failed":
+      return "runLifecycle";
+    case "inventory.updated":
+      return "inventory";
+    case "queue.updated":
+      return "queue";
+    case "business.outcome.updated":
+      return "businessOutcome";
+    case "traffic.metric":
+      return { trafficMetricName: event.metricName };
+  }
+}
+
+function projectionWatermark(
+  watermarks: DashboardEventWatermarks,
+  projection: DashboardEventProjection,
+): string | null {
+  return typeof projection === "string"
+    ? watermarks[projection]
+    : (watermarks.trafficByMetricName[projection.trafficMetricName] ?? watermarks.trafficBaseline);
+}
+
+function advanceProjectionWatermark(
+  watermarks: DashboardEventWatermarks,
+  projection: DashboardEventProjection,
+  occurredAt: string,
+): DashboardEventWatermarks {
+  if (typeof projection === "string") {
+    return { ...watermarks, [projection]: occurredAt };
+  }
+  return {
+    ...watermarks,
+    trafficByMetricName: {
+      ...watermarks.trafficByMetricName,
+      [projection.trafficMetricName]: occurredAt,
+    },
+  };
+}
+
+function eventWatermarksForRecovery(
+  recovery: BackendRead<DashboardRecoveryResponse>,
+): DashboardEventWatermarks {
+  const baseline = recovery.status === "available" ? recovery.data.recoveredAt : null;
+  return {
+    runLifecycle: baseline,
+    inventory: baseline,
+    queue: baseline,
+    businessOutcome: baseline,
+    trafficBaseline: baseline,
+    trafficByMetricName: {},
+  };
 }
 
 export function shouldRequestAuthoritativeRecoveryAfterEvent(event: DashboardEvent): boolean {
@@ -127,11 +258,7 @@ function classifyDashboardEventScope(
   recovery: DashboardRecoveryResponse,
   event: DashboardEvent,
 ): "rejected" | "current" | "new-run" {
-  if (
-    isRunDashboardEvent(event) &&
-    event.runId !== undefined &&
-    event.runId !== event.run.runId
-  ) {
+  if (isRunDashboardEvent(event) && event.runId !== undefined && event.runId !== event.run.runId) {
     return "rejected";
   }
   if (Date.parse(event.occurredAt) < Date.parse(recovery.recoveredAt)) return "rejected";

@@ -442,7 +442,207 @@ describe("Phase 6 dashboard behavior", () => {
       false,
     );
   });
+
+  it("does not regress any finalized projection when live events arrive out of order", () => {
+    const recovery = availableRecovery({ ...recoveryFixture(), currentRun: runFixture() });
+    const newerInventory = inventoryEventFixture(runFixture().saleOfferId, 8, timestamp(20));
+    newerInventory.inventory.lastUpdatedAt = timestamp(20);
+    const olderInventory = inventoryEventFixture(runFixture().saleOfferId, 9, timestamp(15));
+    olderInventory.inventory.lastUpdatedAt = timestamp(15);
+
+    const state = reduceDashboardEvents(createDashboardState(recovery), [
+      runEventAt("run.completed", timestamp(20), runFixture()),
+      runEventAt("run.updated", timestamp(15), runFixture()),
+      newerInventory,
+      olderInventory,
+      queueEventFixture(2, timestamp(20)),
+      queueEventFixture(9, timestamp(15)),
+      businessOutcomeEventFixture({ occurredAt: timestamp(20), acceptedReservations: 20 }),
+      businessOutcomeEventFixture({ occurredAt: timestamp(15), acceptedReservations: 15 }),
+      trafficMetricEventFixture({ occurredAt: timestamp(20), value: 20 }),
+      trafficMetricEventFixture({ occurredAt: timestamp(15), value: 15 }),
+    ]);
+
+    if (state.recovery.status !== "available") throw new Error("Expected available recovery.");
+    expect(state.recovery.data.currentRun?.status).toBe("completed");
+    expect(state.recovery.data.inventory?.remainingStock).toBe(8);
+    expect(state.recovery.data.queue?.depth).toBe(2);
+    expect(state.recovery.data.businessOutcome?.acceptedReservations).toBe(20);
+    expect(state.recovery.data.recentMetrics.at(-1)?.value).toBe(20);
+  });
+
+  it("uses independent traffic watermarks per metric name, including one shared timestamp", () => {
+    const recovery = availableRecovery({ ...recoveryFixture(), currentRun: runFixture() });
+    const state = reduceDashboardEvents(createDashboardState(recovery), [
+      trafficMetricEventFixture({
+        metricName: "traffic.scheduled_request_rate",
+        occurredAt: timestamp(20),
+        value: 50,
+        unit: "requests",
+      }),
+      trafficMetricEventFixture({
+        metricName: "traffic.latency",
+        occurredAt: timestamp(20),
+        value: 42,
+        unit: "ms",
+      }),
+      trafficMetricEventFixture({
+        metricName: "traffic.failure_rate",
+        occurredAt: timestamp(20),
+        value: 0.1,
+        unit: "ratio",
+      }),
+      trafficMetricEventFixture({
+        metricName: "traffic.latency",
+        occurredAt: timestamp(20),
+        value: 99,
+        unit: "ms",
+      }),
+    ]);
+
+    if (state.recovery.status !== "available") throw new Error("Expected available recovery.");
+    expect(state.recovery.data.recentMetrics.slice(-3)).toEqual([
+      expect.objectContaining({ metricName: "traffic.scheduled_request_rate", value: 50 }),
+      expect.objectContaining({ metricName: "traffic.latency", value: 42 }),
+      expect.objectContaining({ metricName: "traffic.failure_rate", value: 0.1 }),
+    ]);
+  });
+
+  it("does not advance watermarks for discarded, foreign-scope, or source-older events", () => {
+    const recovery = availableRecovery({
+      ...recoveryFixture(),
+      currentRun: runFixture(),
+      inventory: { ...inventoryFixture(), lastUpdatedAt: timestamp(18) },
+    });
+    const sourceOlder = inventoryEventFixture(runFixture().saleOfferId, 99, timestamp(30));
+    sourceOlder.inventory.lastUpdatedAt = timestamp(17);
+    const sourceNewer = inventoryEventFixture(runFixture().saleOfferId, 7, timestamp(20));
+    sourceNewer.inventory.lastUpdatedAt = timestamp(19);
+    let state = dashboardStateReducer(createDashboardState(recovery), {
+      type: "event-received",
+      event: trafficMetricEventFixture({ occurredAt: timestamp(30), value: 30 }),
+      discard: true,
+    });
+    state = reduceDashboardEvents(state, [
+      trafficMetricEventFixture({
+        runId: previousRunFixture().runId,
+        occurredAt: timestamp(30),
+        value: 30,
+      }),
+      trafficMetricEventFixture({ occurredAt: timestamp(20), value: 20 }),
+      sourceOlder,
+      sourceNewer,
+    ]);
+
+    if (state.recovery.status !== "available") throw new Error("Expected available recovery.");
+    expect(state.recovery.data.recentMetrics.at(-1)?.value).toBe(20);
+    expect(state.recovery.data.inventory?.remainingStock).toBe(7);
+    expect(state.eventWatermarks.trafficByMetricName["queue.depth"]).toBe(timestamp(20));
+    expect(state.eventWatermarks.inventory).toBe(timestamp(20));
+  });
+
+  it("rebases watermarks when authoritative recovery completes", () => {
+    const initial = availableRecovery({ ...recoveryFixture(), currentRun: runFixture() });
+    let state = reduceDashboardEvents(createDashboardState(initial), [
+      queueEventFixture(2, timestamp(30)),
+    ]);
+    const refreshed = availableRecovery({
+      ...recoveryFixture(),
+      currentRun: runFixture(),
+      queue: queueFixture(4, timestamp(15)),
+      recoveredAt: timestamp(15),
+    });
+    state = dashboardStateReducer(state, { type: "refresh-completed", recovery: refreshed });
+    state = reduceDashboardEvents(state, [queueEventFixture(3, timestamp(20))]);
+
+    if (state.recovery.status !== "available") throw new Error("Expected available recovery.");
+    expect(state.recovery.data.queue?.depth).toBe(3);
+    expect(state.eventWatermarks.queue).toBe(timestamp(20));
+  });
+
+  it("resets old projection watermarks when a new run establishes scope", () => {
+    const initial = availableRecovery(populatedRecovery(runFixture()));
+    let state = reduceDashboardEvents(createDashboardState(initial), [
+      queueEventFixture(2, timestamp(50)),
+    ]);
+    const incomingRun = {
+      ...previousRunFixture(),
+      runId: "88888888-8888-4888-8888-888888888888",
+      startedAt: timestamp(40),
+    };
+    state = reduceDashboardEvents(state, [
+      runEventAt("run.updated", timestamp(40), incomingRun),
+      queueEventFixture(3, timestamp(41)),
+    ]);
+
+    if (state.recovery.status !== "available") throw new Error("Expected available recovery.");
+    expect(state.recovery.data.currentRun?.runId).toBe(incomingRun.runId);
+    expect(state.recovery.data.queue?.depth).toBe(3);
+    expect(state.eventWatermarks.queue).toBe(timestamp(41));
+  });
+
+  it("retains independent projection watermarks across same-run lifecycle updates", () => {
+    const recovery = availableRecovery({ ...recoveryFixture(), currentRun: runFixture() });
+    const state = reduceDashboardEvents(createDashboardState(recovery), [
+      queueEventFixture(2, timestamp(30)),
+      runEventAt("run.completed", timestamp(40), runFixture()),
+      queueEventFixture(9, timestamp(25)),
+    ]);
+
+    if (state.recovery.status !== "available") throw new Error("Expected available recovery.");
+    expect(state.recovery.data.queue?.depth).toBe(2);
+    expect(state.eventWatermarks.queue).toBe(timestamp(30));
+    expect(state.eventWatermarks.runLifecycle).toBe(timestamp(40));
+  });
+
+  it("applies independent projections older than a same-run lifecycle event", () => {
+    const recovery = availableRecovery({ ...recoveryFixture(), currentRun: runFixture() });
+    const inventory = inventoryEventFixture(runFixture().saleOfferId, 8, timestamp(20));
+    inventory.inventory.lastUpdatedAt = timestamp(20);
+    const state = reduceDashboardEvents(createDashboardState(recovery), [
+      runEventAt("run.completed", timestamp(40), runFixture()),
+      inventory,
+      businessOutcomeEventFixture({ occurredAt: timestamp(25), acceptedReservations: 25 }),
+    ]);
+
+    if (state.recovery.status !== "available") throw new Error("Expected available recovery.");
+    expect(state.recovery.data.recoveredAt).toBe(timestamp(10));
+    expect(state.recovery.data.currentRun?.status).toBe("completed");
+    expect(state.recovery.data.inventory?.remainingStock).toBe(8);
+    expect(state.recovery.data.businessOutcome?.acceptedReservations).toBe(25);
+    expect(state.eventWatermarks.inventory).toBe(timestamp(20));
+    expect(state.eventWatermarks.businessOutcome).toBe(timestamp(25));
+    expect(state.eventWatermarks.runLifecycle).toBe(timestamp(40));
+  });
 });
+
+function reduceDashboardEvents(
+  state: ReturnType<typeof createDashboardState>,
+  events: DashboardEvent[],
+): ReturnType<typeof createDashboardState> {
+  return events.reduce(
+    (current, event) =>
+      dashboardStateReducer(current, { type: "event-received", event, discard: false }),
+    state,
+  );
+}
+
+function timestamp(seconds: number): string {
+  return `2026-06-20T00:00:${String(seconds).padStart(2, "0")}.000Z`;
+}
+
+function runEventAt(
+  type: "run.started" | "run.updated" | "run.completed" | "run.failed",
+  occurredAt: string,
+  run: ReturnType<typeof runFixture>,
+): RunDashboardEvent {
+  const event = runEventFixture(type, run);
+  return {
+    ...event,
+    run: type === "run.started" || type === "run.updated" ? { ...event.run, ...run } : event.run,
+    occurredAt,
+  };
+}
 
 function availableRecovery(
   data: DashboardRecoveryResponse,
@@ -606,16 +806,22 @@ function businessOutcomeEventFixture(
 }
 
 function trafficMetricEventFixture(
-  options: { runId?: string; occurredAt?: string; value?: number } = {},
+  options: {
+    runId?: string;
+    occurredAt?: string;
+    value?: number;
+    metricName?: Extract<DashboardEvent, { type: "traffic.metric" }>["metricName"];
+    unit?: Extract<DashboardEvent, { type: "traffic.metric" }>["unit"];
+  } = {},
 ): Extract<DashboardEvent, { type: "traffic.metric" }> {
   return {
     type: "traffic.metric",
     eventId: "55555555-5555-4555-8555-555555555555",
     ...(options.runId ? { runId: options.runId } : {}),
     correlationId: "corr-web-live",
-    metricName: "queue.depth",
+    metricName: options.metricName ?? "queue.depth",
     value: options.value ?? 3,
-    unit: "jobs",
+    unit: options.unit ?? "jobs",
     occurredAt: options.occurredAt ?? "2026-06-20T00:00:11.000Z",
   };
 }
