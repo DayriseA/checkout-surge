@@ -57,6 +57,13 @@
       "when": 1784246400000,
       "tag": "0007_enforce_run_sale_context_ownership",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1784332800000,
+      "tag": "0008_demo_run_teardown_receipts",
+      "breakpoints": true
     }
   ]
 }

@@ -7,6 +7,7 @@ import {
   type AcceptedReservationSummary,
   adminDeleteRunHistoryResponseSchema,
   adminDemoResetPath,
+  adminGeneratedRunTeardownPath,
   adminMaintenanceCleanupRunsPath,
   adminPresetCopyToCustomPath,
   adminPresetDuplicatePath,
@@ -84,6 +85,7 @@ import {
 } from "../src/queue/bullmq-order-process-queue-inspector.js";
 import { DashboardEventFanout } from "../src/realtime/dashboard-event-fanout.js";
 import { loadApiConfig } from "../src/runtime/config.js";
+import { ApiHttpError } from "../src/runtime/errors.js";
 import type { ApiFastifyInstance } from "../src/runtime/fastify.js";
 import { createInfrastructureReadinessCheck } from "../src/runtime/readiness.js";
 import { buildApiServer } from "../src/server.js";
@@ -1456,6 +1458,120 @@ describe("API gateway routes", () => {
       olderThanDays: 14,
       correlationId: "corr-cleanup-test",
     });
+  });
+
+  it("protects targeted generated-run teardown, validates UUIDs, and propagates correlation", async () => {
+    const runId = randomUUID();
+    const teardownGeneratedRun = vi.fn(async (input: { runId: string; correlationId: string }) => ({
+      outcome: "already_absent" as const,
+      runId: input.runId,
+      cleanedAt: "2026-07-13T00:00:00.000Z",
+      correlationId: input.correlationId,
+    }));
+    const server = await trackedServer({
+      persistence: new AcceptingPersistence(),
+      demoMaintenanceService: {
+        reset: vi.fn(),
+        cleanupOldRuns: vi.fn(),
+        teardownGeneratedRun,
+      } as never,
+    });
+    expect(
+      (await server.inject({ method: "DELETE", url: adminGeneratedRunTeardownPath(runId) }))
+        .statusCode,
+    ).toBe(401);
+    expect(
+      (
+        await server.inject({
+          method: "DELETE",
+          url: adminGeneratedRunTeardownPath(runId),
+          headers: { [controlServiceTokenHeaderName]: "wrong-token" },
+        })
+      ).statusCode,
+    ).toBe(401);
+    expect(
+      (
+        await server.inject({
+          method: "DELETE",
+          url: adminGeneratedRunTeardownPath("bad"),
+          headers: { [controlServiceTokenHeaderName]: "test-control-token" },
+        })
+      ).statusCode,
+    ).toBe(400);
+    const response = await server.inject({
+      method: "DELETE",
+      url: adminGeneratedRunTeardownPath(runId),
+      headers: {
+        [controlServiceTokenHeaderName]: "test-control-token",
+        [correlationIdHeaderName]: "corr-targeted-cleanup",
+      },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.headers[correlationIdHeaderName]).toBe("corr-targeted-cleanup");
+    expect(teardownGeneratedRun).toHaveBeenCalledWith({
+      runId,
+      correlationId: "corr-targeted-cleanup",
+    });
+  });
+
+  it.each([
+    ["run_not_terminal", "corr-non-terminal"],
+    ["run_ownership_mismatch", "corr-ownership"],
+    ["run_queue_job_active", "corr-active-job"],
+    ["run_queue_maintenance_owned_by_other_run", "corr-foreign-maintenance"],
+    ["run_queue_not_quiescent", "corr-changing-job"],
+  ])("maps targeted teardown conflict %s to 409", async (code, correlationId) => {
+    const runId = randomUUID();
+    const server = await trackedServer({
+      persistence: new AcceptingPersistence(),
+      demoMaintenanceService: {
+        reset: vi.fn(),
+        cleanupOldRuns: vi.fn(),
+        teardownGeneratedRun: vi.fn(async () => {
+          throw new ApiHttpError({ statusCode: 409, code, message: "retry later" });
+        }),
+      } as never,
+    });
+    const response = await server.inject({
+      method: "DELETE",
+      url: adminGeneratedRunTeardownPath(runId),
+      headers: {
+        [controlServiceTokenHeaderName]: "test-control-token",
+        [correlationIdHeaderName]: correlationId,
+      },
+    });
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toMatchObject({ code, correlationId });
+    expect(response.headers[correlationIdHeaderName]).toBe(correlationId);
+  });
+
+  it("returns the canonical correlated 500 envelope when targeted teardown infrastructure fails", async () => {
+    const runId = randomUUID();
+    const server = await trackedServer({
+      persistence: new AcceptingPersistence(),
+      demoMaintenanceService: {
+        reset: vi.fn(),
+        cleanupOldRuns: vi.fn(),
+        teardownGeneratedRun: vi.fn(async () => {
+          throw new Error("redis unavailable");
+        }),
+      } as never,
+    });
+    const response = await server.inject({
+      method: "DELETE",
+      url: adminGeneratedRunTeardownPath(runId),
+      headers: {
+        [controlServiceTokenHeaderName]: "test-control-token",
+        [correlationIdHeaderName]: "corr-targeted-infrastructure",
+      },
+    });
+
+    expect(response.statusCode).toBe(500);
+    expect(response.json()).toMatchObject({
+      code: "internal_error",
+      correlationId: "corr-targeted-infrastructure",
+    });
+    expect(response.headers[correlationIdHeaderName]).toBe("corr-targeted-infrastructure");
   });
 
   it("protects and delegates admin preset management endpoints", async () => {

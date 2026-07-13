@@ -14,7 +14,10 @@ describe("generated-run Redis cleanup", () => {
 
     expect(scan).toHaveBeenCalledWith("0", "MATCH", `inventory:${saleOfferId}:*`, "COUNT", 100);
     expect(unlink).toHaveBeenCalledOnce();
-    expect(unlink).toHaveBeenCalledWith(`demo-run:${runId}:sale-eligibility`);
+    expect(unlink).toHaveBeenCalledWith(
+      `demo-run:${runId}:sale-eligibility`,
+      `demo-run:${runId}:traffic-metrics`,
+    );
   });
 
   it("scans multiple pages and unlinks dynamic inventory children plus eligibility", async () => {
@@ -37,7 +40,11 @@ describe("generated-run Redis cleanup", () => {
     );
     expect(unlink).toHaveBeenNthCalledWith(1, `inventory:${saleOfferId}:state`, dynamicKey);
     expect(unlink).toHaveBeenNthCalledWith(2, `inventory:${saleOfferId}:events`);
-    expect(unlink).toHaveBeenNthCalledWith(3, `demo-run:${runId}:sale-eligibility`);
+    expect(unlink).toHaveBeenNthCalledWith(
+      3,
+      `demo-run:${runId}:sale-eligibility`,
+      `demo-run:${runId}:traffic-metrics`,
+    );
   });
 
   it("surfaces UNLINK failures", async () => {

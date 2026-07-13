@@ -43,12 +43,16 @@ export function runSaleEligibilityKey(runId: string): string {
 export async function deleteGeneratedRunRedisState(
   redis: CheckoutSurgeRedis,
   input: { runId: string; saleOfferId: string },
-): Promise<void> {
+): Promise<{ deletedKeyCount: number }> {
   const runId = uuidSchema.parse(input.runId);
   const saleOfferId = uuidSchema.parse(input.saleOfferId);
 
-  await deleteInventoryNamespace(redis, inventoryKeys(saleOfferId).prefix);
-  await redis.unlink(runSaleEligibilityKey(runId));
+  let deletedKeyCount = await deleteInventoryNamespace(redis, inventoryKeys(saleOfferId).prefix);
+  deletedKeyCount += await redis.unlink(
+    runSaleEligibilityKey(runId),
+    `demo-run:${runId}:traffic-metrics`,
+  );
+  return { deletedKeyCount };
 }
 
 export async function setRunSaleEligibility(
@@ -371,8 +375,9 @@ function parseThroughputInteger(value: string, slot: number, field: "second" | "
 async function deleteInventoryNamespace(
   redis: CheckoutSurgeRedis,
   inventoryPrefix: string,
-): Promise<void> {
+): Promise<number> {
   let cursor = "0";
+  let deletedKeyCount = 0;
 
   do {
     const [nextCursor, keys] = await redis.scan(
@@ -384,11 +389,12 @@ async function deleteInventoryNamespace(
     );
 
     if (keys.length > 0) {
-      await redis.unlink(...keys);
+      deletedKeyCount += await redis.unlink(...keys);
     }
 
     cursor = nextCursor;
   } while (cursor !== "0");
+  return deletedKeyCount;
 }
 
 function calculateOldestPendingAgeSeconds(oldestPending: string[], now: Date): number {

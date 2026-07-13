@@ -5,6 +5,10 @@ import {
   adminDeleteRunHistoryRequestSchema,
   adminDeleteRunHistoryResponseSchema,
   adminDemoResetResponseSchema,
+  adminGeneratedRunTeardownParamsSchema,
+  adminGeneratedRunTeardownPath,
+  adminGeneratedRunTeardownPathTemplate,
+  adminGeneratedRunTeardownResponseSchema,
   adminPublicRuntimePolicyPath,
   adminPublicRuntimePolicyResponseSchema,
   adminPublicRuntimePolicyUpdateRequestSchema,
@@ -895,6 +899,28 @@ describe("public runtime policy contract", () => {
     expect(runHistoryDetailPathTemplate).toBe("/demo/runs/history/:runId");
     expect(runHistoryDetailPath(runId)).toBe(`/demo/runs/history/${runId}`);
     expect(runHistoryDetailParamsSchema.parse({ runId })).toEqual({ runId });
+    expect(adminGeneratedRunTeardownPath(runId)).toBe(`/admin/demo/runs/${runId}`);
+    expect(adminGeneratedRunTeardownPathTemplate).toBe("/admin/demo/runs/:runId");
+    expect(adminGeneratedRunTeardownParamsSchema.parse({ runId })).toEqual({ runId });
+    expect(() => adminGeneratedRunTeardownParamsSchema.parse({ runId: "bad" })).toThrow();
+    expect(
+      adminGeneratedRunTeardownResponseSchema.parse({
+        outcome: "already_absent",
+        runId,
+        cleanedAt: timestamp,
+        correlationId: "contract-test",
+      }).outcome,
+    ).toBe("already_absent");
+    expect(
+      adminGeneratedRunTeardownResponseSchema.parse({
+        outcome: "deleted",
+        runId,
+        saleOfferId,
+        cleanup: { redisKeysDeleted: 3, queueJobsDeleted: 2 },
+        cleanedAt: timestamp,
+        correlationId: "contract-test",
+      }),
+    ).toMatchObject({ outcome: "deleted", saleOfferId });
 
     const detail = runHistoryDetailResponseSchema.parse({
       summary,
@@ -1179,24 +1205,37 @@ describe("public runtime policy contract", () => {
 
   it.each([
     ["maxTotalRequests", "maxTotalRequests", "public_limit_total_requests_exceeds_deployment_cap"],
-    ["maxRequestsPerSecond", "maxRequestsPerSecond", "public_limit_request_rate_exceeds_deployment_cap"],
-    ["maxTrafficDurationSeconds", "maxTrafficDurationSeconds", "public_limit_duration_exceeds_deployment_cap"],
-    ["maxTrafficStartDelaySeconds", "maxTrafficStartDelaySeconds", "public_limit_start_delay_exceeds_deployment_cap"],
+    [
+      "maxRequestsPerSecond",
+      "maxRequestsPerSecond",
+      "public_limit_request_rate_exceeds_deployment_cap",
+    ],
+    [
+      "maxTrafficDurationSeconds",
+      "maxTrafficDurationSeconds",
+      "public_limit_duration_exceeds_deployment_cap",
+    ],
+    [
+      "maxTrafficStartDelaySeconds",
+      "maxTrafficStartDelaySeconds",
+      "public_limit_start_delay_exceeds_deployment_cap",
+    ],
     ["maxBuyers", "maxBuyers", "public_limit_buyers_exceeds_deployment_cap"],
-    ["maxPreAllocatedVus", "maxPreAllocatedVus", "public_limit_preallocated_vus_exceeds_deployment_cap"],
+    [
+      "maxPreAllocatedVus",
+      "maxPreAllocatedVus",
+      "public_limit_preallocated_vus_exceeds_deployment_cap",
+    ],
     ["maxVus", "maxVus", "public_limit_max_vus_exceeds_deployment_cap"],
-  ] as const)(
-    "reports the $2 deployment-cap violation on $0",
-    (limitField, capField, expectedCode) => {
-      const policy = semanticRuntimePolicy();
-      policy.deploymentHardCaps[capField] = policy.publicCustomLimits[limitField] - 1;
+  ] as const)("reports the $2 deployment-cap violation on $0", (limitField, capField, expectedCode) => {
+    const policy = semanticRuntimePolicy();
+    policy.deploymentHardCaps[capField] = policy.publicCustomLimits[limitField] - 1;
 
-      expect(collectPublicRuntimePolicyViolations(policy)[0]).toMatchObject({
-        code: expectedCode,
-        path: ["publicCustomLimits", limitField],
-      });
-    },
-  );
+    expect(collectPublicRuntimePolicyViolations(policy)[0]).toMatchObject({
+      code: expectedCode,
+      path: ["publicCustomLimits", limitField],
+    });
+  });
 
   it("validates protected public runtime policy reads and update requests", () => {
     const policy = publicRuntimePolicySchema.parse({

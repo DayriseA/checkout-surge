@@ -1,5 +1,7 @@
 import {
   adminDemoResetPath,
+  adminGeneratedRunTeardownParamsSchema,
+  adminGeneratedRunTeardownPathTemplate,
   adminMaintenanceCleanupRunsPath,
   adminMaintenanceCleanupRunsRequestSchema,
   controlServiceTokenHeaderName,
@@ -47,6 +49,20 @@ export function registerAdminMaintenanceRoutes(
         correlationId,
       }),
     );
+  });
+
+  app.delete(adminGeneratedRunTeardownPathTemplate, async (request, reply) => {
+    const unauthorized = requireControlServiceToken(request, reply, options.controlServiceToken);
+    if (unauthorized) return unauthorized;
+    const { runId } = adminGeneratedRunTeardownParamsSchema.parse(request.params);
+    const correlationId = normalizeCorrelationId(
+      request.headers[correlationIdHeaderName] ?? request.correlationId,
+    );
+    request.correlationId = correlationId;
+    reply.header(correlationIdHeaderName, correlationId);
+    return reply
+      .status(200)
+      .send(await options.demoMaintenanceService.teardownGeneratedRun({ runId, correlationId }));
   });
 }
 

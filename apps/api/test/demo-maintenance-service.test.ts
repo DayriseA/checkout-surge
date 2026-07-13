@@ -2,6 +2,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AcceptedRunConfigSnapshot } from "@checkout-surge/contracts";
 import {
+  completeGeneratedRunTeardown,
   createDatabaseConnection,
   createRedisClient,
   deleteGeneratedRunDurable,
@@ -12,6 +13,7 @@ import {
   demoRunSaleContexts,
   demoRunSummaries,
   demoRuns,
+  demoRunTeardownReceipts,
   erpAttempts,
   initializeInventory,
   inventoryKeys,
@@ -19,6 +21,7 @@ import {
   markReservationPendingPersistence,
   orderEvents,
   orders,
+  prepareGeneratedRunTeardown,
   products,
   promoteReservationIdempotencyToAccepted,
   reservationPendingPersistence,
@@ -31,7 +34,11 @@ import { resetTestDatabase } from "@checkout-surge/db/testing";
 import { type CheckoutSurgeLogger, createSilentLogger } from "@checkout-surge/logger";
 import { eq, inArray } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { DemoMaintenanceService } from "../src/services/demo-maintenance-service.js";
+import {
+  DemoMaintenanceService,
+  DemoQueueMaintenanceConflict,
+  type DemoQueueQuiescenceRelease,
+} from "../src/services/demo-maintenance-service.js";
 import { PostgresBuyPersistence } from "../src/services/postgres-buy-persistence.js";
 import {
   ReserveOrderService,
@@ -81,6 +88,507 @@ describe("demo maintenance service", () => {
       maxRetriesPerRequest: 3,
     });
     await redis.flushdb();
+  });
+
+  it("tears down the full terminal graph and safely retries every post-commit stage", async () => {
+    const db = requireConnection(connection).db;
+    const redisClient = requireRedis(redis);
+    await seedBase(db);
+    await seedRun(db, redisClient, {
+      runId: ids.completedRun,
+      saleOfferId: ids.completedOffer,
+      status: "completed",
+      trafficStatus: "succeeded",
+      failureReason: null,
+      runInventoryStatus: "closed",
+    });
+    await seedCleanupDurableGraph(db);
+    await redisClient.set(`demo-run:${ids.completedRun}:traffic-metrics`, "metric");
+    const preflightGeneratedRun = vi.fn(async () => undefined);
+    const cleanGeneratedRun = vi.fn(async () => ({ deletedJobCount: 2 }));
+    const releaseDispositions: DemoQueueQuiescenceRelease["disposition"][] = [];
+    let failRedis = true;
+    let failReceiptCompletion = true;
+    const service = new DemoMaintenanceService({
+      db,
+      redis: redisClient,
+      queueMaintenance: {
+        cleanResetOwnedQueues: async () => ({ cleanedQueueCount: 0, cleanedJobCount: 0 }),
+        acquireGeneratedRunQuiescence: async (_runId) => ({
+          release: async (options) => {
+            releaseDispositions.push(options.disposition);
+            await restoreQueueLease(options);
+          },
+        }),
+        preflightGeneratedRun,
+        cleanGeneratedRun,
+      },
+      terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db),
+      logger: createSilentLogger("api"),
+      deleteGeneratedRunRedisState: async (...args) => {
+        if (failRedis) throw new Error("redis unavailable");
+        const { deleteGeneratedRunRedisState } = await import("@checkout-surge/db");
+        return deleteGeneratedRunRedisState(...args);
+      },
+      completeGeneratedRunTeardown: async (...args) => {
+        if (failReceiptCompletion) throw new Error("receipt completion unavailable");
+        return completeGeneratedRunTeardown(...args);
+      },
+      now: () => new Date("2026-07-13T00:00:00.000Z"),
+    });
+
+    await expect(
+      service.teardownGeneratedRun({ runId: ids.completedRun, correlationId: "corr-first" }),
+    ).rejects.toThrow("redis unavailable");
+    expect(await db.select().from(demoRuns).where(eq(demoRuns.id, ids.completedRun))).toHaveLength(
+      0,
+    );
+    expect(await db.select().from(demoRunTeardownReceipts)).toHaveLength(1);
+    expect(releaseDispositions).toEqual(["restore_owned_pauses"]);
+    expect(await readRunScopedGraphCounts(db, ids.completedRun)).toEqual({
+      erpAttempts: 0,
+      finalizations: 0,
+      notifications: 0,
+      orderEvents: 0,
+      orders: 0,
+      outcomes: 0,
+      pendingPersistence: 0,
+      reservations: 0,
+      summaries: 0,
+    });
+
+    failRedis = false;
+    await expect(
+      service.teardownGeneratedRun({ runId: ids.completedRun, correlationId: "corr-retry" }),
+    ).rejects.toThrow("receipt completion unavailable");
+    expect(await db.select().from(demoRunTeardownReceipts)).toHaveLength(1);
+
+    failReceiptCompletion = false;
+    await expect(
+      service.teardownGeneratedRun({ runId: ids.completedRun, correlationId: "corr-complete" }),
+    ).resolves.toMatchObject({ outcome: "deleted", saleOfferId: ids.completedOffer });
+    expect(await db.select().from(demoRunTeardownReceipts)).toHaveLength(0);
+    expect(await redisClient.get(`demo-run:${ids.completedRun}:traffic-metrics`)).toBeNull();
+    await expect(
+      service.teardownGeneratedRun({ runId: ids.completedRun, correlationId: "corr-absent" }),
+    ).resolves.toMatchObject({ outcome: "already_absent", runId: ids.completedRun });
+    expect(preflightGeneratedRun).toHaveBeenCalledTimes(4);
+    expect(cleanGeneratedRun).toHaveBeenCalledTimes(3);
+  });
+
+  it("re-reads a concurrently committed receipt after the run disappears", async () => {
+    const primary = requireConnection(connection);
+    const redisClient = requireRedis(redis);
+    await seedBase(primary.db);
+    await seedRun(primary.db, redisClient, {
+      runId: ids.completedRun,
+      saleOfferId: ids.completedOffer,
+      status: "completed",
+      trafficStatus: "succeeded",
+      failureReason: null,
+      runInventoryStatus: "closed",
+    });
+    const blocker = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
+    const contender = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
+    let releaseRunLock: (() => void) | undefined;
+    const runLockRelease = new Promise<void>((resolve) => {
+      releaseRunLock = resolve;
+    });
+    let reportRunLocked: (() => void) | undefined;
+    const runLocked = new Promise<void>((resolve) => {
+      reportRunLocked = resolve;
+    });
+    const lock = blocker.db.transaction(async (tx) => {
+      await tx
+        .select({ id: demoRuns.id })
+        .from(demoRuns)
+        .where(eq(demoRuns.id, ids.completedRun))
+        .for("update");
+      reportRunLocked?.();
+      await runLockRelease;
+    });
+    try {
+      await runLocked;
+      const first = prepareGeneratedRunTeardown(
+        primary.db,
+        ids.completedRun,
+        new Date("2026-07-13T00:00:00.000Z"),
+      );
+      const racing = prepareGeneratedRunTeardown(
+        contender.db,
+        ids.completedRun,
+        new Date("2026-07-13T00:00:01.000Z"),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      releaseRunLock?.();
+      await lock;
+      const results = await Promise.all([first, racing]);
+      expect(results).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ outcome: "ready", durableDeleted: true }),
+          expect.objectContaining({
+            outcome: "ready",
+            runId: ids.completedRun,
+            saleOfferId: ids.completedOffer,
+            durableDeleted: false,
+          }),
+        ]),
+      );
+    } finally {
+      releaseRunLock?.();
+      await lock;
+      await blocker.close();
+      await contender.close();
+    }
+  });
+
+  it("rolls back the receipt and every child deletion when the durable transaction fails", async () => {
+    const dbConnection = requireConnection(connection);
+    const db = dbConnection.db;
+    const redisClient = requireRedis(redis);
+    await seedBase(db);
+    await seedRun(db, redisClient, {
+      runId: ids.completedRun,
+      saleOfferId: ids.completedOffer,
+      status: "completed",
+      trafficStatus: "succeeded",
+      failureReason: null,
+      runInventoryStatus: "closed",
+    });
+    await seedCleanupDurableGraph(db);
+    await dbConnection.sql`
+      CREATE TABLE task_32_order_delete_blocker (
+        order_id uuid PRIMARY KEY REFERENCES orders(id) ON DELETE RESTRICT
+      )
+    `;
+    try {
+      await dbConnection.sql`
+        INSERT INTO task_32_order_delete_blocker (order_id) VALUES (${ids.completedOrder})
+      `;
+
+      await expect(
+        prepareGeneratedRunTeardown(db, ids.completedRun, new Date("2026-07-13T00:00:00.000Z")),
+      ).rejects.toThrow();
+
+      expect(await db.select().from(demoRunTeardownReceipts)).toHaveLength(0);
+      expect(
+        await db.select().from(demoRuns).where(eq(demoRuns.id, ids.completedRun)),
+      ).toHaveLength(1);
+      expect(
+        await db.select().from(saleOffers).where(eq(saleOffers.id, ids.completedOffer)),
+      ).toHaveLength(1);
+      expect(await readRunScopedGraphCounts(db, ids.completedRun)).toEqual({
+        erpAttempts: 1,
+        finalizations: 1,
+        notifications: 1,
+        orderEvents: 1,
+        orders: 1,
+        outcomes: 1,
+        pendingPersistence: 1,
+        reservations: 1,
+        summaries: 1,
+      });
+    } finally {
+      await dbConnection.sql`DROP TABLE IF EXISTS task_32_order_delete_blocker`;
+    }
+  });
+
+  it.each([
+    "starting",
+    "active",
+    "draining",
+  ] as const)("rejects %s targeted teardown without mutation", async (status) => {
+    const db = requireConnection(connection).db;
+    const redisClient = requireRedis(redis);
+    await seedBase(db);
+    await seedRun(db, redisClient, {
+      runId: ids.completedRun,
+      saleOfferId: ids.completedOffer,
+      status,
+      trafficStatus:
+        status === "starting" ? "starting" : status === "active" ? "active" : "succeeded",
+      failureReason: null,
+    });
+    const release = vi.fn(restoreQueueLease);
+    const service = new DemoMaintenanceService({
+      db,
+      redis: redisClient,
+      queueMaintenance: {
+        cleanResetOwnedQueues: async () => ({ cleanedQueueCount: 0, cleanedJobCount: 0 }),
+        acquireGeneratedRunQuiescence: async (_runId) => ({
+          release,
+        }),
+        preflightGeneratedRun: async () => undefined,
+        cleanGeneratedRun: async () => ({ deletedJobCount: 0 }),
+      },
+      terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db),
+      logger: createSilentLogger("api"),
+    });
+    await expect(
+      service.teardownGeneratedRun({ runId: ids.completedRun, correlationId: "corr-active" }),
+    ).rejects.toMatchObject({ statusCode: 409, code: "run_not_terminal" });
+    expect(await db.select().from(demoRuns).where(eq(demoRuns.id, ids.completedRun))).toHaveLength(
+      1,
+    );
+    expect(release).toHaveBeenCalledWith({ disposition: "restore_owned_pauses" });
+  });
+
+  it("accepts a terminal failed run and retries a post-commit queue failure", async () => {
+    const db = requireConnection(connection).db;
+    const redisClient = requireRedis(redis);
+    await seedBase(db);
+    await seedRun(db, redisClient, {
+      runId: ids.failedRun,
+      saleOfferId: ids.failedOffer,
+      status: "failed",
+      trafficStatus: "failed",
+      failureReason: "traffic_failed",
+      runInventoryStatus: "closed",
+    });
+    await seedRun(db, redisClient, {
+      runId: ids.activeRun,
+      saleOfferId: ids.activeOffer,
+      status: "active",
+      trafficStatus: "active",
+      failureReason: null,
+      runInventoryStatus: "accepting",
+    });
+    let failQueue = true;
+    let maintenanceOwner: string | null = null;
+    let pauseCalls = 0;
+    const acquireRunIds: string[] = [];
+    const preflightGeneratedRun = vi.fn(async () => undefined);
+    const cleanGeneratedRun = vi.fn(async () => {
+      if (failQueue) throw new Error("queue unavailable");
+      return { deletedJobCount: 0 };
+    });
+    const releaseDispositions: DemoQueueQuiescenceRelease["disposition"][] = [];
+    const service = new DemoMaintenanceService({
+      db,
+      redis: redisClient,
+      queueMaintenance: {
+        cleanResetOwnedQueues: async () => ({ cleanedQueueCount: 0, cleanedJobCount: 0 }),
+        acquireGeneratedRunQuiescence: async (requestedRunId) => {
+          acquireRunIds.push(requestedRunId);
+          if (maintenanceOwner && maintenanceOwner !== requestedRunId) {
+            throw new DemoQueueMaintenanceConflict(
+              "maintenance_owned_by_other_run",
+              `maintenance belongs to ${maintenanceOwner}`,
+            );
+          }
+          if (!maintenanceOwner) pauseCalls += 1;
+          maintenanceOwner = requestedRunId;
+          return {
+            release: async (options) => {
+              releaseDispositions.push(options.disposition);
+              if (options.disposition === "retain_owned_pauses") return;
+              maintenanceOwner = null;
+              await options.afterRestored?.();
+            },
+          };
+        },
+        preflightGeneratedRun,
+        cleanGeneratedRun,
+      },
+      terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db),
+      logger: createSilentLogger("api"),
+    });
+    await expect(
+      service.teardownGeneratedRun({ runId: ids.failedRun, correlationId: "corr-queue-fail" }),
+    ).rejects.toThrow("queue unavailable");
+    expect(await db.select().from(demoRuns).where(eq(demoRuns.id, ids.failedRun))).toHaveLength(0);
+    expect(await db.select().from(demoRunTeardownReceipts)).toHaveLength(1);
+    expect(maintenanceOwner).toBe(ids.failedRun);
+    expect(pauseCalls).toBe(1);
+    expect(releaseDispositions).toEqual(["retain_owned_pauses"]);
+
+    for (const blockedRunId of [ids.completedRun, ids.activeRun]) {
+      await expect(
+        service.teardownGeneratedRun({
+          runId: blockedRunId,
+          correlationId: `corr-foreign-${blockedRunId}`,
+        }),
+      ).rejects.toMatchObject({
+        statusCode: 409,
+        code: "run_queue_maintenance_owned_by_other_run",
+      });
+    }
+    await seedRun(db, redisClient, {
+      runId: ids.completedRun,
+      saleOfferId: ids.completedOffer,
+      status: "completed",
+      trafficStatus: "succeeded",
+      failureReason: null,
+      runInventoryStatus: "closed",
+    });
+    await expect(
+      service.teardownGeneratedRun({
+        runId: ids.completedRun,
+        correlationId: "corr-foreign-terminal",
+      }),
+    ).rejects.toMatchObject({
+      statusCode: 409,
+      code: "run_queue_maintenance_owned_by_other_run",
+    });
+    expect(maintenanceOwner).toBe(ids.failedRun);
+    expect(pauseCalls).toBe(1);
+    expect(preflightGeneratedRun).toHaveBeenCalledTimes(1);
+    expect(cleanGeneratedRun).toHaveBeenCalledTimes(1);
+    expect(await db.select().from(demoRuns).where(eq(demoRuns.id, ids.activeRun))).toHaveLength(1);
+    expect(await db.select().from(demoRuns).where(eq(demoRuns.id, ids.completedRun))).toHaveLength(
+      1,
+    );
+    expect(await db.select().from(demoRunTeardownReceipts)).toHaveLength(1);
+
+    failQueue = false;
+    await expect(
+      service.teardownGeneratedRun({ runId: ids.failedRun, correlationId: "corr-queue-retry" }),
+    ).resolves.toMatchObject({ outcome: "deleted", saleOfferId: ids.failedOffer });
+    expect(await db.select().from(demoRunTeardownReceipts)).toHaveLength(0);
+    expect(maintenanceOwner).toBeNull();
+    expect(pauseCalls).toBe(1);
+    expect(releaseDispositions).toEqual(["retain_owned_pauses", "restore_owned_pauses"]);
+    expect(acquireRunIds).toEqual([
+      ids.failedRun,
+      ids.completedRun,
+      ids.activeRun,
+      ids.completedRun,
+      ids.failedRun,
+    ]);
+  });
+
+  it("retains retry coordinates until queue pause state is restored", async () => {
+    const db = requireConnection(connection).db;
+    const redisClient = requireRedis(redis);
+    await seedBase(db);
+    await seedRun(db, redisClient, {
+      runId: ids.completedRun,
+      saleOfferId: ids.completedOffer,
+      status: "completed",
+      trafficStatus: "succeeded",
+      failureReason: null,
+      runInventoryStatus: "closed",
+    });
+    let failRelease = true;
+    const service = new DemoMaintenanceService({
+      db,
+      redis: redisClient,
+      queueMaintenance: {
+        cleanResetOwnedQueues: async () => ({ cleanedQueueCount: 0, cleanedJobCount: 0 }),
+        acquireGeneratedRunQuiescence: async (_runId) => ({
+          release: async (options) => {
+            if (options.disposition === "retain_owned_pauses") return;
+            if (failRelease) throw new Error("resume unavailable");
+            await options.afterRestored?.();
+          },
+        }),
+        preflightGeneratedRun: async () => undefined,
+        cleanGeneratedRun: async () => ({ deletedJobCount: 0 }),
+      },
+      terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db),
+      logger: createSilentLogger("api"),
+    });
+
+    await expect(
+      service.teardownGeneratedRun({ runId: ids.completedRun, correlationId: "corr-resume-fail" }),
+    ).rejects.toThrow("resume unavailable");
+    expect(await db.select().from(demoRunTeardownReceipts)).toHaveLength(1);
+
+    failRelease = false;
+    await expect(
+      service.teardownGeneratedRun({ runId: ids.completedRun, correlationId: "corr-resume-retry" }),
+    ).resolves.toMatchObject({ outcome: "deleted", saleOfferId: ids.completedOffer });
+    expect(await db.select().from(demoRunTeardownReceipts)).toHaveLength(0);
+  });
+
+  it("rejects catalog ownership and missing context without mutation", async () => {
+    const db = requireConnection(connection).db;
+    const redisClient = requireRedis(redis);
+    await seedBase(db);
+    await seedCatalogReferencedTerminalRun(db);
+    const queueMaintenance = {
+      cleanResetOwnedQueues: async () => ({ cleanedQueueCount: 0, cleanedJobCount: 0 }),
+      acquireGeneratedRunQuiescence: async (_runId) => ({
+        release: restoreQueueLease,
+      }),
+      preflightGeneratedRun: async () => undefined,
+      cleanGeneratedRun: async () => ({ deletedJobCount: 0 }),
+    };
+    const service = new DemoMaintenanceService({
+      db,
+      redis: redisClient,
+      queueMaintenance,
+      terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db),
+      logger: createSilentLogger("api"),
+    });
+    await expect(
+      service.teardownGeneratedRun({ runId: ids.catalogRun, correlationId: "corr-catalog" }),
+    ).rejects.toMatchObject({ statusCode: 409, code: "run_ownership_mismatch" });
+    expect(await db.select().from(demoRuns).where(eq(demoRuns.id, ids.catalogRun))).toHaveLength(1);
+    expect(
+      await db.select().from(saleOffers).where(eq(saleOffers.id, ids.catalogOffer)),
+    ).toHaveLength(1);
+
+    await seedRun(db, redisClient, {
+      runId: ids.completedRun,
+      saleOfferId: ids.completedOffer,
+      status: "completed",
+      trafficStatus: "succeeded",
+      failureReason: null,
+      runInventoryStatus: "closed",
+    });
+    await db.delete(demoRunSaleContexts).where(eq(demoRunSaleContexts.runId, ids.completedRun));
+    await expect(
+      service.teardownGeneratedRun({ runId: ids.completedRun, correlationId: "corr-missing" }),
+    ).rejects.toMatchObject({ statusCode: 409, code: "run_ownership_mismatch" });
+    expect(await db.select().from(demoRuns).where(eq(demoRuns.id, ids.completedRun))).toHaveLength(
+      1,
+    );
+    expect(
+      await db.select().from(saleOffers).where(eq(saleOffers.id, ids.completedOffer)),
+    ).toHaveLength(1);
+  });
+
+  it("validates targeted queue capability before mutation and preserves primary release failure", async () => {
+    const prepare = vi.fn();
+    const incomplete = new DemoMaintenanceService({
+      db: requireConnection(connection).db,
+      redis: requireRedis(redis),
+      queueMaintenance: {
+        cleanResetOwnedQueues: async () => ({ cleanedQueueCount: 0, cleanedJobCount: 0 }),
+      },
+      terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(requireConnection(connection).db),
+      logger: createSilentLogger("api"),
+      prepareGeneratedRunTeardown: prepare,
+    });
+    await expect(
+      incomplete.teardownGeneratedRun({ runId: ids.completedRun, correlationId: "corr-miswired" }),
+    ).rejects.toThrow("not fully configured");
+    expect(prepare).not.toHaveBeenCalled();
+
+    const primary = new Error("primary queue conflict");
+    const release = new Error("release failed");
+    const service = new DemoMaintenanceService({
+      db: requireConnection(connection).db,
+      redis: requireRedis(redis),
+      queueMaintenance: {
+        cleanResetOwnedQueues: async () => ({ cleanedQueueCount: 0, cleanedJobCount: 0 }),
+        acquireGeneratedRunQuiescence: async (_runId) => ({
+          release: async () => {
+            throw release;
+          },
+        }),
+        preflightGeneratedRun: async () => {
+          throw primary;
+        },
+        cleanGeneratedRun: async () => ({ deletedJobCount: 0 }),
+      },
+      terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(requireConnection(connection).db),
+      logger: createSilentLogger("api"),
+    });
+    await expect(
+      service.teardownGeneratedRun({ runId: ids.completedRun, correlationId: "corr-release" }),
+    ).rejects.toMatchObject({ errors: [primary, release] });
   });
 
   afterAll(async () => {
@@ -1616,6 +2124,12 @@ function createCleanupService(
       ? { deleteGeneratedRunRedisState: overrides.deleteGeneratedRunRedisState }
       : {}),
   });
+}
+
+async function restoreQueueLease(options: DemoQueueQuiescenceRelease): Promise<void> {
+  if (options.disposition === "restore_owned_pauses") {
+    await options.afterRestored?.();
+  }
 }
 
 function configSnapshotFixture(): AcceptedRunConfigSnapshot {

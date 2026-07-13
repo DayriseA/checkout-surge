@@ -407,9 +407,12 @@ describe("database migrations, seed data, and reset behavior", () => {
 
     await withDatabase(async (sql) => {
       await removeRunSaleContextOwnershipConstraint(sql);
+      await sql`DROP TABLE demo_run_teardown_receipts`;
       await sql`
         DELETE FROM drizzle.__drizzle_migrations
-        WHERE id = (SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 1)
+        WHERE id IN (
+          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 2
+        )
       `;
       await insertCatalogSaleOffer(sql, {
         productId: "38000000-0000-4000-8000-000000000005",
@@ -587,12 +590,13 @@ describe("database migrations, seed data, and reset behavior", () => {
     await runSeedScript();
     await withDatabase(async (sql) => {
       await removeRunSaleContextOwnershipConstraint(sql);
+      await sql`DROP TABLE demo_run_teardown_receipts`;
       await sql`ALTER TABLE demo_run_finalizations DROP COLUMN completion_enrichment_status`;
       await sql`DROP TYPE traffic_completion_enrichment_status`;
       await sql`
         DELETE FROM drizzle.__drizzle_migrations
         WHERE id IN (
-          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 2
+          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 3
         )
       `;
       await sql`
@@ -647,6 +651,7 @@ describe("database migrations, seed data, and reset behavior", () => {
     await runSeedScript();
     await withDatabase(async (sql) => {
       await removeRunSaleContextOwnershipConstraint(sql);
+      await sql`DROP TABLE demo_run_teardown_receipts`;
       await sql`
         UPDATE demo_presets
         SET backpressure_config = (backpressure_config
@@ -701,7 +706,7 @@ describe("database migrations, seed data, and reset behavior", () => {
       await sql`
         DELETE FROM drizzle.__drizzle_migrations
         WHERE id IN (
-          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 4
+          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 5
         )
       `;
     });
@@ -931,7 +936,9 @@ describe("database migrations, seed data, and reset behavior", () => {
       demo_presets: 8,
       public_runtime_policies: 1,
     });
-    expect(publicRuntimePolicySchema.parse(policyRow?.policy).publicRunBudget.windowSeconds).toBe(999);
+    expect(publicRuntimePolicySchema.parse(policyRow?.policy).publicRunBudget.windowSeconds).toBe(
+      999,
+    );
     expect(policyRow?.created_at).toEqual(initialPolicyRow?.created_at);
     expect(new Date(policyRow?.updated_at ?? 0).getTime()).toBeGreaterThan(
       new Date(initialPolicyRow?.updated_at ?? 0).getTime(),

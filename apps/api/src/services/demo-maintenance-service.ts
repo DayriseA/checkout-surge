@@ -1,9 +1,11 @@
 import {
   type AcceptedRunConfigSnapshot,
   type AdminDemoResetResponse,
+  type AdminGeneratedRunTeardownResponse,
   type AdminMaintenanceCleanupRunsResponse,
   acceptedRunConfigSnapshotSchema,
   adminDemoResetResponseSchema,
+  adminGeneratedRunTeardownResponseSchema,
   adminMaintenanceCleanupRunsResponseSchema,
   type BusinessOutcomeSummary,
   type TerminalInventorySnapshot,
@@ -16,6 +18,7 @@ import {
 import {
   type CheckoutSurgeDatabase,
   type CheckoutSurgeRedis,
+  completeGeneratedRunTeardown,
   deleteGeneratedRunDurable,
   deleteGeneratedRunRedisState,
   demoRunFinalizations,
@@ -25,12 +28,14 @@ import {
   demoRuns,
   getInventoryStatus,
   InventoryNotInitializedError,
+  prepareGeneratedRunTeardown,
   readBusinessOutcomeSummary,
   saleOffers,
   setRunSaleEligibility,
 } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { and, asc, desc, eq, inArray, isNull, lt, notInArray, or } from "drizzle-orm";
+import { ApiHttpError } from "../runtime/errors.js";
 import type {
   TerminalDemoRunSummaryInput,
   TerminalDemoRunWriter,
@@ -41,8 +46,43 @@ export interface QueueCleanupSummary {
   cleanedJobCount: number;
 }
 
+export interface DemoQueueQuiescenceLease {
+  /**
+   * Relinquishes the adapter's exclusive turn. Safe restoration resumes only
+   * maintenance-owned pauses and runs finalization before another lease enters;
+   * unsafe post-commit queue failures retain those pauses for a later retry.
+   */
+  release(options: DemoQueueQuiescenceRelease): Promise<void>;
+}
+
+export type DemoQueueQuiescenceRelease =
+  | { disposition: "retain_owned_pauses" }
+  | {
+      disposition: "restore_owned_pauses";
+      afterRestored?: () => Promise<void>;
+    };
+
 export interface DemoQueueMaintenance {
   cleanResetOwnedQueues(): Promise<QueueCleanupSummary>;
+  acquireGeneratedRunQuiescence?(runId: string): Promise<DemoQueueQuiescenceLease>;
+  preflightGeneratedRun?(runId: string): Promise<void>;
+  cleanGeneratedRun?(runId: string): Promise<{ deletedJobCount: number }>;
+}
+
+export type DemoQueueMaintenanceConflictCode =
+  | "active_job"
+  | "maintenance_owned_by_other_run"
+  | "malformed_claimed_job"
+  | "not_quiescent";
+
+export class DemoQueueMaintenanceConflict extends Error {
+  constructor(
+    readonly code: DemoQueueMaintenanceConflictCode,
+    message: string,
+  ) {
+    super(message);
+    this.name = "DemoQueueMaintenanceConflict";
+  }
 }
 
 type FencedResetRun = {
@@ -69,6 +109,8 @@ export class DemoMaintenanceService {
       logger: CheckoutSurgeLogger;
       deleteGeneratedRunDurable?: typeof deleteGeneratedRunDurable;
       deleteGeneratedRunRedisState?: typeof deleteGeneratedRunRedisState;
+      prepareGeneratedRunTeardown?: typeof prepareGeneratedRunTeardown;
+      completeGeneratedRunTeardown?: typeof completeGeneratedRunTeardown;
       clearErpCircuitBreakerState?: () => Promise<void>;
       now?: () => Date;
     },
@@ -330,6 +372,166 @@ export class DemoMaintenanceService {
     });
   }
 
+  async teardownGeneratedRun(input: {
+    runId: string;
+    correlationId: string;
+  }): Promise<AdminGeneratedRunTeardownResponse> {
+    const targeted = requireTargetedQueueMaintenance(this.options.queueMaintenance);
+    let lease: Awaited<ReturnType<typeof targeted.acquireGeneratedRunQuiescence>> | undefined;
+    let result: AdminGeneratedRunTeardownResponse | undefined;
+    let primaryError: unknown;
+    let retainOwnedQueuePauses = false;
+    try {
+      lease = await targeted.acquireGeneratedRunQuiescence(input.runId);
+      result = await this.teardownQuiescedGeneratedRun(input, targeted);
+    } catch (error) {
+      const failure = unwrapQueueConvergenceError(error);
+      retainOwnedQueuePauses = failure.retainOwnedQueuePauses;
+      primaryError = mapQueueMaintenanceError(failure.error);
+      if (primaryError instanceof ApiHttpError && primaryError.statusCode === 409) {
+        this.options.logger.warn(
+          {
+            runId: input.runId,
+            correlationId: input.correlationId,
+            code: primaryError.code,
+          },
+          "Generated demo run teardown was refused.",
+        );
+      }
+    }
+
+    let releaseError: unknown;
+    if (lease) {
+      try {
+        await lease.release(
+          retainOwnedQueuePauses
+            ? { disposition: "retain_owned_pauses" }
+            : {
+                disposition: "restore_owned_pauses",
+                ...(result?.outcome === "deleted"
+                  ? {
+                      afterRestored: async () => {
+                        try {
+                          await (
+                            this.options.completeGeneratedRunTeardown ??
+                            completeGeneratedRunTeardown
+                          )(this.options.db, input.runId);
+                        } catch (error) {
+                          this.options.logger.warn(
+                            {
+                              err: error,
+                              runId: input.runId,
+                              saleOfferId: result.saleOfferId,
+                              correlationId: input.correlationId,
+                            },
+                            "Generated-run external cleanup succeeded but receipt completion requires retry.",
+                          );
+                          throw error;
+                        }
+                      },
+                    }
+                  : {}),
+              },
+        );
+      } catch (error) {
+        releaseError = error;
+      }
+    }
+    if (primaryError && releaseError) {
+      throw new AggregateError(
+        [primaryError, releaseError],
+        `Generated-run teardown failed and queue state restoration also failed: ${messageOf(primaryError)}`,
+      );
+    }
+    if (primaryError) throw primaryError;
+    if (releaseError) throw releaseError;
+    if (!result) throw new Error("Generated-run teardown completed without a response.");
+    if (result.outcome === "deleted") {
+      this.options.logger.info(result, "Generated demo run teardown completed.");
+    } else {
+      this.options.logger.info(result, "Generated demo run teardown was already absent.");
+    }
+    return result;
+  }
+
+  private async teardownQuiescedGeneratedRun(
+    input: {
+      runId: string;
+      correlationId: string;
+    },
+    targeted: RequiredTargetedQueueMaintenance,
+  ): Promise<AdminGeneratedRunTeardownResponse> {
+    const now = this.now();
+    await targeted.preflightGeneratedRun(input.runId);
+
+    const prepared = await (
+      this.options.prepareGeneratedRunTeardown ?? prepareGeneratedRunTeardown
+    )(this.options.db, input.runId, now);
+    if (prepared.outcome === "absent") {
+      return adminGeneratedRunTeardownResponseSchema.parse({
+        outcome: "already_absent",
+        runId: input.runId,
+        cleanedAt: now.toISOString(),
+        correlationId: input.correlationId,
+      });
+    }
+    if (prepared.outcome !== "ready") {
+      throw new ApiHttpError({
+        statusCode: 409,
+        code: prepared.outcome === "non_terminal" ? "run_not_terminal" : "run_ownership_mismatch",
+        message:
+          prepared.outcome === "non_terminal"
+            ? "The generated run must be terminal before teardown."
+            : "The run is not owned by a matching generated sale offer.",
+      });
+    }
+
+    let queueCleanup: Awaited<ReturnType<RequiredTargetedQueueMaintenance["cleanGeneratedRun"]>>;
+    try {
+      queueCleanup = await targeted.cleanGeneratedRun(input.runId);
+    } catch (error) {
+      this.options.logger.warn(
+        {
+          err: error,
+          runId: input.runId,
+          saleOfferId: prepared.saleOfferId,
+          correlationId: input.correlationId,
+          queuePausesRetained: true,
+        },
+        "Generated-run queue convergence failed after durable deletion; maintenance-owned queues remain paused for retry.",
+      );
+      throw new PostCommitQueueConvergenceError(error);
+    }
+
+    try {
+      const redisCleanup = await (
+        this.options.deleteGeneratedRunRedisState ?? deleteGeneratedRunRedisState
+      )(this.options.redis, prepared);
+      return adminGeneratedRunTeardownResponseSchema.parse({
+        outcome: "deleted",
+        runId: input.runId,
+        saleOfferId: prepared.saleOfferId,
+        cleanup: {
+          redisKeysDeleted: redisCleanup.deletedKeyCount,
+          queueJobsDeleted: queueCleanup.deletedJobCount,
+        },
+        cleanedAt: now.toISOString(),
+        correlationId: input.correlationId,
+      });
+    } catch (error) {
+      this.options.logger.warn(
+        {
+          err: error,
+          runId: input.runId,
+          saleOfferId: prepared.saleOfferId,
+          correlationId: input.correlationId,
+        },
+        "Generated demo run teardown requires retry after durable deletion.",
+      );
+      throw error;
+    }
+  }
+
   private now(): Date {
     return this.options.now?.() ?? new Date();
   }
@@ -413,6 +615,64 @@ export class DemoMaintenanceService {
 
     return row?.count ?? inventory.soldOutPressure.rejectionCount;
   }
+}
+
+type RequiredTargetedQueueMaintenance = {
+  acquireGeneratedRunQuiescence(runId: string): Promise<DemoQueueQuiescenceLease>;
+  preflightGeneratedRun(runId: string): Promise<void>;
+  cleanGeneratedRun(runId: string): Promise<{ deletedJobCount: number }>;
+};
+
+function requireTargetedQueueMaintenance(
+  maintenance: DemoQueueMaintenance,
+): RequiredTargetedQueueMaintenance {
+  if (
+    !maintenance.acquireGeneratedRunQuiescence ||
+    !maintenance.preflightGeneratedRun ||
+    !maintenance.cleanGeneratedRun
+  ) {
+    throw new Error("Targeted queue maintenance is not fully configured.");
+  }
+  return {
+    acquireGeneratedRunQuiescence: maintenance.acquireGeneratedRunQuiescence.bind(maintenance),
+    preflightGeneratedRun: maintenance.preflightGeneratedRun.bind(maintenance),
+    cleanGeneratedRun: maintenance.cleanGeneratedRun.bind(maintenance),
+  };
+}
+
+function mapQueueMaintenanceError(error: unknown): unknown {
+  if (!(error instanceof DemoQueueMaintenanceConflict)) return error;
+  const code =
+    error.code === "active_job"
+      ? "run_queue_job_active"
+      : error.code === "maintenance_owned_by_other_run"
+        ? "run_queue_maintenance_owned_by_other_run"
+        : error.code === "malformed_claimed_job"
+          ? "run_queue_job_malformed"
+          : "run_queue_not_quiescent";
+  return new ApiHttpError({ statusCode: 409, code, message: error.message });
+}
+
+class PostCommitQueueConvergenceError extends Error {
+  constructor(readonly originalError: unknown) {
+    super("Generated-run queue convergence failed after durable deletion.", {
+      cause: originalError,
+    });
+    this.name = "PostCommitQueueConvergenceError";
+  }
+}
+
+function unwrapQueueConvergenceError(error: unknown): {
+  error: unknown;
+  retainOwnedQueuePauses: boolean;
+} {
+  return error instanceof PostCommitQueueConvergenceError
+    ? { error: error.originalError, retainOwnedQueuePauses: true }
+    : { error, retainOwnedQueuePauses: false };
+}
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function adminResetTrafficSummary(

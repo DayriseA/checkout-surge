@@ -1,335 +1,557 @@
 #!/usr/bin/env node
 
-import { spawnSync } from "node:child_process";
-import { createHmac } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
+import { pathToFileURL } from "node:url";
+import {
+  adminGeneratedRunTeardownPath,
+  adminGeneratedRunTeardownResponseSchema,
+  dashboardEventSchema,
+  runHistoryListResponseSchema,
+  startDemoRunResponseSchema,
+  uuidSchema,
+} from "../packages/contracts/dist/index.js";
 
-const dashboardBaseUrl = envUrl("WEB_BASE_URL", "http://localhost:8080");
-const apiBaseUrl = envUrl("API_BASE_URL", "http://localhost:4000");
-const controlServiceToken = process.env.CONTROL_SERVICE_TOKEN?.trim();
-const timeoutMs = positiveIntegerEnv("RUNTIME_SMOKE_LOAD_RUN_TIMEOUT_MS", 60_000);
-const publicRunBudgetWindowSeconds = positiveIntegerEnv("PUBLIC_RUN_BUDGET_WINDOW_SECONDS", 300);
-const correlationId = `runtime-smoke-load-${Date.now()}`;
-const smokeVisitorId = "00000000-0000-4000-8000-000000000009";
-const publicBudgetWindowStart = Math.floor(Date.now() / (publicRunBudgetWindowSeconds * 1000));
-const composeRuntime = isComposeRuntimeRunning();
-
-if (!controlServiceToken) {
-  console.error("CONTROL_SERVICE_TOKEN is required for runtime load smoke.");
-  process.exit(1);
-}
-
-let runId = null;
-let saleOfferId = null;
-
-try {
-  await resetRunningDemo();
-  const started = await startSmokeRun();
-  runId = started.run.runId;
-  saleOfferId = started.run.saleOfferId ?? null;
-
-  if (!saleOfferId) {
-    throw new Error("Started run did not include a generated saleOfferId.");
-  }
-
-  const recovered = await waitForTrafficCompletion(runId);
-  if (recovered.recentMetrics.length === 0) {
-    throw new Error("Dashboard recovery did not expose recent k6 metric samples.");
-  }
-
-  console.log(
-    `Runtime load smoke passed for run ${runId} with trafficStatus=${recovered.currentRun.trafficStatus}.`,
+export async function runRuntimeLoadSmoke(options = {}) {
+  const env = options.env ?? process.env;
+  const fetchImpl = options.fetch ?? fetch;
+  const dashboardBaseUrl = envUrl(env, "WEB_BASE_URL", "http://localhost:8080");
+  const apiBaseUrl = envUrl(env, "API_BASE_URL", "http://localhost:4000");
+  const token = env.CONTROL_SERVICE_TOKEN?.trim();
+  if (!token) throw new Error("CONTROL_SERVICE_TOKEN is required for runtime load smoke.");
+  const correlationId = `runtime-smoke-load-${randomUUID()}`;
+  const durationSeconds = 8;
+  const deadlineMs = derivedDeadlineMs(env, durationSeconds);
+  let runId;
+  let saleOfferId;
+  let primaryError;
+  let cleanupError;
+  let cleanupAllowed = false;
+  const sseAbort = new AbortController();
+  const sseOutcomePromise = collectDashboardEvents(
+    `${dashboardBaseUrl}/dashboard/events`,
+    fetchImpl,
+    sseAbort.signal,
+  ).then(
+    (events) => ({ events }),
+    (error) => ({ error }),
   );
-} finally {
-  if (runId && saleOfferId) {
-    cleanupSmokeRun({ runId, saleOfferId });
-  }
-}
 
-async function resetRunningDemo() {
-  if (composeRuntime) {
-    runCommand("node", ["scripts/run-in-compose.mjs", "scripts/runtime-reset.mjs"]);
-    return;
-  }
-
-  const response = await fetchWithTimeout(`${apiBaseUrl}/admin/demo/reset`, {
-    method: "POST",
-    headers: {
-      accept: "application/json",
-      "x-control-service-token": controlServiceToken,
-    },
-  });
-
-  if (!response.ok) {
-    const body = await response.text().catch(() => "");
-    throw new Error(`Runtime reset failed with HTTP ${response.status}: ${body}`);
-  }
-}
-
-function isComposeRuntimeRunning() {
-  const result = spawnSync("docker", ["compose", "ps", "--status", "running", "-q", "api"], {
-    cwd: process.cwd(),
-    env: process.env,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "ignore"],
-  });
-
-  return result.status === 0 && result.stdout.trim().length > 0;
-}
-
-async function startSmokeRun() {
-  const response = await fetchWithTimeout(`${dashboardBaseUrl}/api/demo/runs/start`, {
-    method: "POST",
-    headers: {
-      accept: "application/json",
-      "content-type": "application/json",
-      cookie: signedPublicVisitorCookie(smokeVisitorId),
-    },
-    body: JSON.stringify({
-      presetSlug: "public-custom",
+  try {
+    await requireReadiness(`${apiBaseUrl}/health/ready`, fetchImpl);
+    await resetDemo(apiBaseUrl, token, correlationId, fetchImpl);
+    const started = await startRun({
+      dashboardBaseUrl,
       correlationId,
-      configOverride: {
-        trafficConfig: {
-          mode: "steady-arrival-rate",
-          ratePerSecond: 2,
-          durationSeconds: 2,
-          startDelaySeconds: 0,
-          quantityPerAttempt: 1,
-          k6Vus: {
-            preAllocatedVus: 1,
-            maxVus: 4,
-          },
-        },
-        inventoryConfig: {
-          startingStock: 10,
-          quantityPerCheckout: 1,
-          reservationHoldMinutes: 15,
-        },
-        erpConfig: {
-          latencyMs: 0,
-          maxTps: 100,
-          errorRate: 0,
-          forcedOutage: false,
-          requestTimeoutMs: 2000,
-        },
-      },
-    }),
-  });
+      durationSeconds,
+      env,
+      fetchImpl,
+    });
+    runId = uuidSchema.parse(started.run.runId);
+    saleOfferId = uuidSchema.parse(started.run.saleOfferId);
+    if (started.correlationId !== correlationId) {
+      throw new Error(
+        `Run start correlation mismatch: expected ${correlationId}, received ${started.correlationId}.`,
+      );
+    }
+    const terminal = await waitForTerminalSummary({
+      dashboardBaseUrl,
+      apiBaseUrl,
+      runId,
+      deadlineMs,
+      fetchImpl,
+    });
+    cleanupAllowed = true;
+    assertBusinessCompletion(terminal);
+    const inventory = await requestJson(
+      `${apiBaseUrl}/inventory/${saleOfferId}/status`,
+      { method: "GET", headers: { accept: "application/json" } },
+      fetchImpl,
+    );
+    if (!(inventory.reservedStock > 0))
+      throw new Error("Live inventory did not show reservedStock > 0.");
+    sseAbort.abort();
+    const sseOutcome = await sseOutcomePromise;
+    if (sseOutcome.error) throw sseOutcome.error;
+    const events = sseOutcome.events;
+    assertSseEvidence(events, runId, correlationId);
+    console.log(
+      `Runtime load smoke business proof passed runId=${runId} correlationId=${correlationId}.`,
+    );
+  } catch (error) {
+    primaryError = error;
+    sseAbort.abort();
+    await sseOutcomePromise;
+    if (runId) {
+      try {
+        await prepareExactRunCleanup({
+          dashboardBaseUrl,
+          apiBaseUrl,
+          token,
+          correlationId,
+          runId,
+          deadlineMs,
+          fetchImpl,
+        });
+        cleanupAllowed = true;
+      } catch (error) {
+        cleanupError = error;
+      }
+    }
+  } finally {
+    if (runId && cleanupAllowed) {
+      try {
+        const cleanup = await teardownWithRetry({
+          apiBaseUrl,
+          token,
+          runId,
+          saleOfferId,
+          correlationId,
+          fetchImpl,
+        });
+        console.log(
+          `Runtime load smoke cleanup completed runId=${runId} correlationId=${cleanup.correlationId}.`,
+        );
+      } catch (error) {
+        cleanupError = cleanupError
+          ? new AggregateError(
+              [cleanupError, error],
+              "Cleanup preparation and teardown both failed.",
+            )
+          : error;
+      }
+    }
+  }
+  throwSmokeFailures(primaryError, cleanupError);
+  return { runId, saleOfferId, correlationId };
+}
 
-  const payload = await response.json().catch(() => null);
-  if (!response.ok) {
-    throw new Error(
-      `Dashboard run start failed with HTTP ${response.status}: ${JSON.stringify(payload)}`,
+export function throwSmokeFailures(primaryError, cleanupError) {
+  if (primaryError && cleanupError) {
+    throw new AggregateError(
+      [primaryError, cleanupError],
+      `Smoke assertion failed: ${message(primaryError)}; cleanup also failed: ${message(cleanupError)}`,
     );
   }
+  if (primaryError) throw primaryError;
+  if (cleanupError) throw cleanupError;
+}
 
+export function assertSseEvidence(events, runId, correlationId) {
+  const mismatched = events.find(
+    (event) =>
+      event.runId === runId &&
+      event.correlationId &&
+      !isCorrelationLineage(event.correlationId, correlationId),
+  );
+  if (mismatched) {
+    throw new Error(
+      `SSE correlation mismatch for run ${runId}: received ${mismatched.correlationId}.`,
+    );
+  }
+  const attributable = events.filter(
+    (event) =>
+      event.runId === runId &&
+      (!event.correlationId || isCorrelationLineage(event.correlationId, correlationId)),
+  );
+  if (attributable.length === 0)
+    throw new Error("SSE yielded no contract-valid event for this run.");
+}
+
+function isCorrelationLineage(candidate, root) {
+  return candidate === root || candidate.startsWith(`${root}:`);
+}
+
+export function parseSseDataFrames(text) {
+  const events = [];
+  for (const frame of text.replaceAll("\r\n", "\n").split("\n\n")) {
+    const data = frame
+      .split("\n")
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5).trimStart())
+      .join("\n");
+    if (!data) continue;
+    try {
+      const parsed = dashboardEventSchema.safeParse(JSON.parse(data));
+      if (parsed.success) events.push(parsed.data);
+    } catch {
+      // Incomplete/invalid frames are not business evidence.
+    }
+  }
+  return events;
+}
+
+export async function collectDashboardEvents(url, fetchImpl, signal) {
+  const response = await fetchImpl(url, { headers: { accept: "text/event-stream" }, signal });
+  if (!response.ok || !response.body)
+    throw new Error(`Dashboard SSE failed with HTTP ${response.status}.`);
+  if (!response.headers.get("content-type")?.toLowerCase().includes("text/event-stream")) {
+    throw new Error("Dashboard SSE response did not use text/event-stream content type.");
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  const events = [];
+  try {
+    while (events.length < 100) {
+      const { done, value } = await reader.read();
+      if (done) {
+        buffer += decoder.decode();
+        break;
+      }
+      buffer += decoder.decode(value, { stream: true });
+      const extracted = extractCompleteSseFrames(buffer);
+      events.push(...extracted.events);
+      buffer = extracted.remainder;
+    }
+  } catch (error) {
+    if (!signal.aborted) throw error;
+  }
+  return events;
+}
+
+export function extractCompleteSseFrames(buffer) {
+  let end = 0;
+  const separator = /\r?\n\r?\n/g;
+  for (const match of buffer.matchAll(separator)) end = (match.index ?? 0) + match[0].length;
+  return end === 0
+    ? { events: [], remainder: buffer }
+    : { events: parseSseDataFrames(buffer.slice(0, end)), remainder: buffer.slice(end) };
+}
+
+export async function teardownWithRetry(input) {
+  let last;
+  let payload;
+  let receivedSuccessfulResponse = false;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      payload = await requestJson(
+        `${input.apiBaseUrl}${adminGeneratedRunTeardownPath(input.runId)}`,
+        {
+          method: "DELETE",
+          headers: {
+            accept: "application/json",
+            "x-control-service-token": input.token,
+            "x-correlation-id": input.correlationId,
+          },
+        },
+        input.fetchImpl,
+      );
+      receivedSuccessfulResponse = true;
+      break;
+    } catch (error) {
+      last = error;
+      if (attempt < 3) await sleep(attempt * 500);
+    }
+  }
+  if (receivedSuccessfulResponse) return validateTeardownResponse(payload, input);
+  throw new Error(
+    `Teardown failed after retries (correlationId=${input.correlationId}): ${message(last)}`,
+  );
+}
+
+export function validateTeardownResponse(payload, expected) {
+  const response = adminGeneratedRunTeardownResponseSchema.parse(payload);
+  if (response.runId !== expected.runId || response.correlationId !== expected.correlationId) {
+    throw new Error("Teardown response did not echo the requested run and correlation IDs.");
+  }
+  if (
+    response.outcome === "deleted" &&
+    expected.saleOfferId &&
+    response.saleOfferId !== expected.saleOfferId
+  ) {
+    throw new Error("Teardown response sale offer did not match the captured run offer.");
+  }
+  return response;
+}
+
+export async function requireReadiness(url, fetchImpl, timeoutMs = 30_000) {
+  await pollUntil(
+    Date.now() + timeoutMs,
+    async () => {
+      const response = await fetchWithTimeout(url, { method: "GET" }, fetchImpl);
+      return response.ok ? true : undefined;
+    },
+    "API readiness",
+  );
+}
+
+async function resetDemo(baseUrl, token, correlationId, fetchImpl) {
+  await requestJson(
+    `${baseUrl}/admin/demo/reset`,
+    {
+      method: "POST",
+      headers: {
+        accept: "application/json",
+        "x-control-service-token": token,
+        "x-correlation-id": correlationId,
+      },
+    },
+    fetchImpl,
+  );
+}
+
+async function startRun({ dashboardBaseUrl, correlationId, durationSeconds, env, fetchImpl }) {
+  const response = await requestJson(
+    `${dashboardBaseUrl}/api/demo/runs/start`,
+    {
+      method: "POST",
+      headers: {
+        accept: "application/json",
+        "content-type": "application/json",
+        cookie: signedVisitorCookie(env),
+      },
+      body: JSON.stringify({
+        presetSlug: "public-custom",
+        correlationId,
+        configOverride: {
+          trafficConfig: {
+            mode: "steady-arrival-rate",
+            ratePerSecond: 2,
+            durationSeconds,
+            startDelaySeconds: 0,
+            quantityPerAttempt: 1,
+            k6Vus: { preAllocatedVus: 1, maxVus: 4 },
+          },
+          inventoryConfig: {
+            startingStock: 32,
+            quantityPerCheckout: 1,
+            reservationHoldMinutes: 15,
+          },
+          erpConfig: {
+            latencyMs: 0,
+            maxTps: 100,
+            errorRate: 0,
+            forcedOutage: false,
+            requestTimeoutMs: 2000,
+          },
+        },
+      }),
+    },
+    fetchImpl,
+  );
+  return startDemoRunResponseSchema.parse(response);
+}
+
+export async function waitForTerminalSummary({
+  dashboardBaseUrl,
+  apiBaseUrl,
+  runId,
+  deadlineMs,
+  fetchImpl,
+  readObservation = readRunObservation,
+}) {
+  const deadline = Date.now() + deadlineMs;
+  let last = { current: "unobserved", history: "unobserved" };
+  let lastRequestError;
+  while (Date.now() < deadline) {
+    try {
+      const observation = await readObservation({ dashboardBaseUrl, apiBaseUrl, runId, fetchImpl });
+      last = describeRunObservation(observation, runId);
+      const terminal = selectTerminalSummary(observation.recovery, observation.summaries, runId);
+      if (terminal) return terminal;
+      lastRequestError = undefined;
+    } catch (error) {
+      if (isTerminalObservationError(error)) throw error;
+      lastRequestError = error;
+    }
+    await sleep(500);
+  }
+  throw new Error(
+    `Timed out waiting for terminal summary: ${JSON.stringify(last)}${lastRequestError ? `; lastRequestError=${message(lastRequestError)}` : ""}`,
+  );
+}
+
+export function selectTerminalSummary(recovery, summaries, runId) {
+  if (recovery.currentRun && recovery.currentRun.runId !== runId) {
+    throw new Error(`Observed foreign current run ${recovery.currentRun.runId}.`);
+  }
+  const summary = summaries.find((candidate) => candidate.runId === runId);
+  if (summary?.status === "failed") {
+    throw new Error(`Run terminalized as failed: ${summary.failureReason ?? "unknown"}.`);
+  }
+  return summary?.status === "completed" ? summary : undefined;
+}
+
+export function assertBusinessCompletion(summary) {
+  const delivery = summary.trafficDeliverySummary;
+  const business = summary.businessOutcomeSummary;
+  const failures = [];
+  if (
+    delivery.trafficDeliveryStatus === "failed" ||
+    delivery.emittedRequests <= 0 ||
+    delivery.droppedIterations > delivery.plannedRequests
+  )
+    failures.push("traffic delivery");
+  if (business.acceptedReservations <= 0 || business.confirmedOrders <= 0)
+    failures.push("accepted/confirmed work");
+  if (
+    business.queuedOrders ||
+    business.processingOrders ||
+    business.retryingOrders ||
+    business.pendingPersistenceCount
+  )
+    failures.push("async blockers");
+  if (business.notificationsRecorded < business.confirmedOrders)
+    failures.push("notification drain");
+  if (failures.length)
+    throw new Error(
+      `Incomplete terminal business outcome: ${failures.join(", ")}; ${JSON.stringify({ delivery, business })}`,
+    );
+}
+
+export async function prepareExactRunCleanup(input) {
+  const deadline = Date.now() + input.deadlineMs;
+  let resetRequested = false;
+  let last = { current: "unobserved", history: "unobserved" };
+  while (Date.now() < deadline) {
+    const observation = await (input.readObservation ?? readRunObservation)(input);
+    last = describeRunObservation(observation, input.runId);
+    const summary = observation.summaries.find((candidate) => candidate.runId === input.runId);
+    if (summary && ["completed", "failed"].includes(summary.status)) return last;
+    const current = observation.recovery.currentRun;
+    if (!current) return last;
+    if (current.runId !== input.runId) {
+      throw new Error(
+        `Refusing cleanup preparation because foreign current run ${current.runId} is active.`,
+      );
+    }
+    if (["completed", "failed"].includes(current.status)) return last;
+    if (!resetRequested) {
+      await (input.resetRun ?? resetDemo)(
+        input.apiBaseUrl,
+        input.token,
+        input.correlationId,
+        input.fetchImpl,
+      );
+      resetRequested = true;
+    }
+    await sleep(500);
+  }
+  throw new Error(
+    `Could not prove exact-run terminality or absence before cleanup: ${JSON.stringify(last)}`,
+  );
+}
+
+async function readRunObservation({ dashboardBaseUrl, apiBaseUrl, runId, fetchImpl }) {
+  const recovery = await requestJson(
+    `${dashboardBaseUrl}/api/dashboard/recovery`,
+    { method: "GET", headers: { accept: "application/json" } },
+    fetchImpl,
+  );
+  const history = runHistoryListResponseSchema.parse(
+    await requestJson(
+      `${apiBaseUrl}/demo/runs/history?page=1&pageSize=50`,
+      { method: "GET", headers: { accept: "application/json" } },
+      fetchImpl,
+    ),
+  );
+  return { recovery, summaries: history.summaries, runId };
+}
+
+function describeRunObservation(observation, runId) {
+  const summary = observation.summaries.find((candidate) => candidate.runId === runId);
+  return {
+    current: observation.recovery.currentRun
+      ? {
+          runId: observation.recovery.currentRun.runId,
+          status: observation.recovery.currentRun.status,
+          trafficStatus: observation.recovery.currentRun.trafficStatus,
+        }
+      : null,
+    history: summary
+      ? {
+          status: summary.status,
+          trafficDeliverySummary: summary.trafficDeliverySummary,
+          businessOutcomeSummary: summary.businessOutcomeSummary,
+        }
+      : null,
+  };
+}
+
+function isTerminalObservationError(error) {
+  return (
+    error instanceof Error &&
+    (error.message.startsWith("Observed foreign current run") ||
+      error.message.startsWith("Run terminalized as failed"))
+  );
+}
+
+async function requestJson(url, init, fetchImpl) {
+  const response = await fetchWithTimeout(url, init, fetchImpl);
+  const text = await response.text();
+  let payload;
+  try {
+    payload = text ? JSON.parse(text) : null;
+  } catch {
+    payload = text;
+  }
+  if (!response.ok)
+    throw new Error(
+      `${init.method ?? "GET"} ${url} failed HTTP ${response.status}: ${JSON.stringify(payload)}`,
+    );
   return payload;
 }
 
-async function waitForTrafficCompletion(expectedRunId) {
-  const startedAt = Date.now();
-  let lastRun = null;
-
-  while (Date.now() - startedAt < timeoutMs) {
-    const recovery = await readRecovery();
-    lastRun = recovery.currentRun;
-
-    if (
-      lastRun?.runId === expectedRunId &&
-      (lastRun.trafficStatus === "succeeded" || lastRun.trafficStatus === "failed")
-    ) {
-      if (lastRun.trafficStatus === "failed") {
-        throw new Error(`Smoke run traffic failed: ${lastRun.failureReason ?? "unknown"}`);
-      }
-      return recovery;
-    }
-
-    await sleep(1000);
-  }
-
-  throw new Error(
-    `Timed out waiting for smoke run traffic completion. Last status: ${
-      lastRun ? `${lastRun.status}/${lastRun.trafficStatus}` : "missing"
-    }.`,
-  );
-}
-
-async function readRecovery() {
-  const response = await fetchWithTimeout(`${dashboardBaseUrl}/api/dashboard/recovery`, {
-    method: "GET",
-    headers: { accept: "application/json" },
-  });
-
-  if (!response.ok) {
-    throw new Error(`Dashboard recovery failed with HTTP ${response.status}.`);
-  }
-
-  return response.json();
-}
-
-function cleanupSmokeRun(input) {
-  console.log(`Cleaning runtime smoke run ${input.runId}.`);
-  cleanupPostgresRows(input);
-  cleanupRedisKeys(input);
-  cleanupPublicBudgetKeys();
-}
-
-function cleanupPostgresRows(input) {
-  const runId = sqlUuidLiteral(input.runId, "runId");
-  const saleOfferId = sqlUuidLiteral(input.saleOfferId, "saleOfferId");
-  const sql = `
-delete from simulated_notifications where run_id = ${runId} or sale_offer_id = ${saleOfferId};
-delete from erp_attempts where run_id = ${runId};
-delete from order_events where run_id = ${runId} or sale_offer_id = ${saleOfferId};
-delete from orders where run_id = ${runId} or sale_offer_id = ${saleOfferId};
-delete from reservations where run_id = ${runId} or sale_offer_id = ${saleOfferId};
-delete from reservation_pending_persistence where run_id = ${runId} or sale_offer_id = ${saleOfferId};
-delete from demo_run_reservation_outcomes where run_id = ${runId};
-delete from demo_run_finalizations where run_id = ${runId};
-delete from demo_run_summaries where run_id = ${runId};
-delete from demo_run_sale_contexts where run_id = ${runId} or sale_offer_id = ${saleOfferId};
-delete from demo_runs where id = ${runId};
-delete from sale_offers where id = ${saleOfferId} and purpose = 'generated_run';
-`;
-
-  runCommand(
-    "docker",
-    [
-      "compose",
-      "exec",
-      "-T",
-      "postgres",
-      "psql",
-      "-U",
-      "postgres",
-      "-d",
-      "checkout_surge",
-      "-v",
-      "ON_ERROR_STOP=1",
-      "-c",
-      sql,
-    ],
-    { silent: true },
-  );
-}
-
-function cleanupRedisKeys(input) {
-  const keys = new Set([
-    `demo-run:${input.runId}:sale-eligibility`,
-    `demo-run:${input.runId}:traffic-metrics`,
-  ]);
-
-  for (const pattern of [`inventory:${input.saleOfferId}:*`, `demo-run:${input.runId}:*`]) {
-    const output = runCommand(
-      "docker",
-      ["compose", "exec", "-T", "redis", "redis-cli", "--scan", "--pattern", pattern],
-      { silent: true },
-    );
-
-    for (const key of output.split(/\r?\n/).filter(Boolean)) {
-      keys.add(key);
-    }
-  }
-
-  const keyList = [...keys];
-  if (keyList.length === 0) {
-    return;
-  }
-
-  runCommand("docker", ["compose", "exec", "-T", "redis", "redis-cli", "DEL", ...keyList], {
-    silent: true,
-  });
-}
-
-function cleanupPublicBudgetKeys() {
-  const globalKey = `demo-run:public-budget:${publicBudgetWindowStart}:global`;
-  const visitorKey = `demo-run:public-budget:${publicBudgetWindowStart}:visitor:${smokeVisitorId}`;
-
-  runCommand("docker", ["compose", "exec", "-T", "redis", "redis-cli", "DEL", visitorKey], {
-    silent: true,
-  });
-  runCommand(
-    "docker",
-    [
-      "compose",
-      "exec",
-      "-T",
-      "redis",
-      "redis-cli",
-      "EVAL",
-      "local v = redis.call('DECR', KEYS[1]); if v <= 0 then redis.call('DEL', KEYS[1]); end; return v",
-      "1",
-      globalKey,
-    ],
-    { silent: true },
-  );
-}
-
-async function fetchWithTimeout(url, init = {}) {
+async function fetchWithTimeout(url, init, fetchImpl) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10_000);
-
   try {
-    return await fetch(url, { cache: "no-store", ...init, signal: controller.signal });
+    return await fetchImpl(url, {
+      cache: "no-store",
+      ...init,
+      signal: init.signal ?? controller.signal,
+    });
   } finally {
     clearTimeout(timeout);
   }
 }
 
-function runCommand(command, args, options = {}) {
-  const result = spawnSync(command, args, {
-    cwd: process.cwd(),
-    env: process.env,
-    encoding: "utf8",
-    stdio: options.silent ? ["ignore", "pipe", "pipe"] : "inherit",
-  });
-
-  if (result.error) {
-    throw result.error;
+async function pollUntil(deadline, operation, label) {
+  let lastError;
+  while (Date.now() < deadline) {
+    try {
+      const value = await operation();
+      if (value !== undefined) return value;
+    } catch (error) {
+      lastError = error;
+    }
+    await sleep(500);
   }
-  if (result.status !== 0) {
-    const stderr = options.silent ? result.stderr.trim() : "";
-    throw new Error(stderr || `${command} ${args.join(" ")} exited with ${result.status}.`);
-  }
-
-  return options.silent ? result.stdout : "";
+  throw new Error(`Timed out waiting for ${label}${lastError ? `: ${message(lastError)}` : "."}`);
 }
 
-function envUrl(name, fallback) {
-  return (process.env[name]?.trim() || fallback).replace(/\/+$/, "");
+function derivedDeadlineMs(env, durationSeconds) {
+  const drain = positiveInteger(env.DEMO_RUN_DRAIN_TIMEOUT_SECONDS, 300);
+  const finalization = positiveInteger(env.DEMO_RUN_FINALIZATION_POLL_INTERVAL_SECONDS, 5);
+  const derived = (durationSeconds + drain + finalization * 3 + 10) * 1000;
+  return positiveInteger(env.RUNTIME_SMOKE_LOAD_RUN_TIMEOUT_MS, derived);
 }
 
-function positiveIntegerEnv(name, fallback) {
-  const raw = process.env[name]?.trim();
-  if (!raw) {
-    return fallback;
-  }
-
-  const parsed = Number(raw);
-  if (!Number.isInteger(parsed) || parsed <= 0) {
-    throw new Error(`${name} must be a positive integer.`);
-  }
-  return parsed;
+function signedVisitorCookie(env) {
+  const id = "00000000-0000-4000-8000-000000000009";
+  const secret = env.PUBLIC_CLIENT_COOKIE_SECRET?.trim();
+  if (!secret) throw new Error("PUBLIC_CLIENT_COOKIE_SECRET is required for runtime load smoke.");
+  return `checkout_surge_public_visitor=${encodeURIComponent(`${id}.${createHmac("sha256", secret).update(id).digest("base64url")}`)}`;
 }
-
-function sqlUuidLiteral(value, name) {
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) {
-    throw new Error(`${name} must be a UUID.`);
-  }
-
-  return `'${value}'`;
+function envUrl(env, name, fallback) {
+  return (env[name]?.trim() || fallback).replace(/\/+$/, "");
 }
-
-function signedPublicVisitorCookie(visitorId) {
-  const secret = process.env.PUBLIC_CLIENT_COOKIE_SECRET?.trim();
-  if (!secret) {
-    throw new Error("PUBLIC_CLIENT_COOKIE_SECRET is required for runtime load smoke.");
-  }
-
-  const signature = createHmac("sha256", secret).update(visitorId).digest("base64url");
-  const value = encodeURIComponent(`${visitorId}.${signature}`);
-  return `checkout_surge_public_visitor=${value}`;
+function positiveInteger(raw, fallback) {
+  const value = raw ? Number(raw) : fallback;
+  if (!Number.isInteger(value) || value <= 0)
+    throw new Error("Expected a positive integer runtime setting.");
+  return value;
 }
-
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+function message(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+  runRuntimeLoadSmoke().catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });
 }

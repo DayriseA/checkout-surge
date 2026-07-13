@@ -117,6 +117,7 @@ Conventions:
 - `message` should be concise and human-readable.
 - `details` should carry optional structured context, not a second free-form paragraph.
 - Errors returned to clients should avoid leaking infrastructure internals unless that information is intentionally part of the user-facing contract.
+- Protected generated-run teardown requires the control service token (`401` when absent or wrong) and a UUID run parameter (`400` when malformed). It uses `409` for a non-terminal run, ownership mismatch, active/changing attributed queue work, or `run_queue_maintenance_owned_by_other_run` when retained queue maintenance belongs to another run. Infrastructure or post-commit cleanup failures return the canonical `5xx` error envelope and retain durable retry coordinates; clients must repeat the same bodyless DELETE. A post-commit queue-convergence failure also keeps maintenance-owned physical queues paused, including across API restart, until that exact run retry removes the remaining jobs; each marker stores its owning run ID, and another run cannot adopt, resume, clear, or clean through it. Pre-existing operator pauses remain untouched. Successful cleanup and receipt retries return the canonical request `correlationId` and UTC cleanup timestamp; a later repeat returns `already_absent`. Multi-replica deployments must send this protected mutation to one maintenance authority because request serialization is process-local.
 
 ---
 

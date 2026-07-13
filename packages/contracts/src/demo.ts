@@ -43,6 +43,7 @@ export const runHistoryPath = "/demo/runs/history" as const;
 export const runHistoryDetailPathTemplate = "/demo/runs/history/:runId" as const;
 export const adminDemoResetPath = "/admin/demo/reset" as const;
 export const adminMaintenanceCleanupRunsPath = "/admin/demo/runs/cleanup" as const;
+export const adminGeneratedRunTeardownPathTemplate = "/admin/demo/runs/:runId" as const;
 export const adminPresetListPath = "/admin/demo/presets" as const;
 export const adminPresetSavePath = "/admin/demo/presets/save" as const;
 export const adminPresetDuplicatePath = "/admin/demo/presets/duplicate" as const;
@@ -53,6 +54,10 @@ export const publicVisitorIdHeaderName = "x-public-visitor-id" as const;
 
 export function runHistoryDetailPath(runId: string): string {
   return `${runHistoryPath}/${encodeURIComponent(runId)}`;
+}
+
+export function adminGeneratedRunTeardownPath(runId: string): string {
+  return `/admin/demo/runs/${encodeURIComponent(runId)}`;
 }
 
 export const demoPresetContractSchema = demoPresetSchema
@@ -565,6 +570,40 @@ export const adminMaintenanceCleanupRunsResponseSchema = z
   .strict();
 export type AdminMaintenanceCleanupRunsResponse = z.infer<
   typeof adminMaintenanceCleanupRunsResponseSchema
+>;
+
+export const adminGeneratedRunTeardownParamsSchema = z.object({ runId: uuidSchema }).strict();
+export type AdminGeneratedRunTeardownParams = z.infer<typeof adminGeneratedRunTeardownParamsSchema>;
+
+const generatedRunTeardownCleanupSchema = z
+  .object({
+    redisKeysDeleted: nonnegativeIntegerSchema,
+    queueJobsDeleted: nonnegativeIntegerSchema,
+  })
+  .strict();
+
+export const adminGeneratedRunTeardownResponseSchema = z.discriminatedUnion("outcome", [
+  z
+    .object({
+      outcome: z.literal("deleted"),
+      runId: uuidSchema,
+      saleOfferId: uuidSchema,
+      cleanup: generatedRunTeardownCleanupSchema,
+      cleanedAt: isoTimestampSchema,
+      correlationId: correlationIdSchema,
+    })
+    .strict(),
+  z
+    .object({
+      outcome: z.literal("already_absent"),
+      runId: uuidSchema,
+      cleanedAt: isoTimestampSchema,
+      correlationId: correlationIdSchema,
+    })
+    .strict(),
+]);
+export type AdminGeneratedRunTeardownResponse = z.infer<
+  typeof adminGeneratedRunTeardownResponseSchema
 >;
 
 export const trafficDeliveryStatusSummarySchema = z

@@ -67,7 +67,7 @@ Replace `⬜` with `✅` when a task is complete. Optional `⏳` for work in pro
 
 ✅ [Task 31: Fix old-run cleanup: respect generated-run ownership and delete the run's Redis namespaces](./task_31.md)
 
-⬜ [Task 32: Make the load smoke prove business completion and clean up through a targeted, owned API](./task_32.md)
+✅ [Task 32: Make the load smoke prove business completion and clean up through a targeted, owned API](./task_32.md)
 
 ⬜ [Task 33: Add load-run cancellation, real readiness probes, and richer diagnostics to the orchestrator](./task_33.md)
 

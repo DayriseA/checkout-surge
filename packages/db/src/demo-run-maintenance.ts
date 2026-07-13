@@ -7,6 +7,7 @@ import {
   demoRunSaleContexts,
   demoRunSummaries,
   demoRuns,
+  demoRunTeardownReceipts,
   erpAttempts,
   orderEvents,
   orders,
@@ -24,6 +25,99 @@ export interface GeneratedRunIdentity {
 export interface DeleteGeneratedRunResult {
   deletedRunCount: number;
   deletedSaleOfferCount: number;
+}
+
+export type PrepareGeneratedRunTeardownResult =
+  | { outcome: "absent" }
+  | { outcome: "non_terminal" }
+  | { outcome: "ownership_mismatch" }
+  | {
+      outcome: "ready";
+      runId: string;
+      saleOfferId: string;
+      presetName: string;
+      durableDeleted: boolean;
+    };
+
+/**
+ * Atomically establishes durable retry coordinates and deletes a terminal,
+ * generated-owned run graph. An existing receipt resumes a post-commit retry.
+ */
+export async function prepareGeneratedRunTeardown(
+  db: CheckoutSurgeDatabase,
+  requestedRunId: string,
+  now: Date = new Date(),
+): Promise<PrepareGeneratedRunTeardownResult> {
+  const runId = uuidSchema.parse(requestedRunId);
+  return db.transaction(async (tx) => {
+    const [receipt] = await tx
+      .select()
+      .from(demoRunTeardownReceipts)
+      .where(eq(demoRunTeardownReceipts.runId, runId))
+      .for("update");
+    if (receipt) {
+      return { outcome: "ready", ...receipt, durableDeleted: false };
+    }
+
+    const [run] = await tx
+      .select({
+        runId: demoRuns.id,
+        saleOfferId: demoRuns.saleOfferId,
+        presetName: demoRuns.presetName,
+        status: demoRuns.status,
+      })
+      .from(demoRuns)
+      .where(eq(demoRuns.id, runId))
+      .for("update");
+    if (!run) {
+      const [committedReceipt] = await tx
+        .select()
+        .from(demoRunTeardownReceipts)
+        .where(eq(demoRunTeardownReceipts.runId, runId))
+        .for("update");
+      return committedReceipt
+        ? { outcome: "ready", ...committedReceipt, durableDeleted: false }
+        : { outcome: "absent" };
+    }
+    if (!(["completed", "failed"] as string[]).includes(run.status)) {
+      return { outcome: "non_terminal" };
+    }
+    const [ownership] = await tx
+      .select({
+        contextSaleOfferId: demoRunSaleContexts.saleOfferId,
+        offerPurpose: saleOffers.purpose,
+      })
+      .from(demoRunSaleContexts)
+      .innerJoin(saleOffers, eq(saleOffers.id, demoRunSaleContexts.saleOfferId))
+      .where(eq(demoRunSaleContexts.runId, runId))
+      .for("update");
+    if (
+      !run.saleOfferId ||
+      ownership?.contextSaleOfferId !== run.saleOfferId ||
+      ownership.offerPurpose !== "generated_run"
+    ) {
+      return { outcome: "ownership_mismatch" };
+    }
+
+    const identity = {
+      runId,
+      saleOfferId: run.saleOfferId,
+      presetName: run.presetName,
+      durableDeletedAt: now,
+    };
+    await tx.insert(demoRunTeardownReceipts).values(identity);
+    await deleteGeneratedRunRows(tx as CheckoutSurgeDatabase, identity);
+    return { outcome: "ready", ...identity, durableDeleted: true };
+  });
+}
+
+export async function completeGeneratedRunTeardown(
+  db: CheckoutSurgeDatabase,
+  runId: string,
+): Promise<void> {
+  await db
+    .delete(demoRunTeardownReceipts)
+    .where(eq(demoRunTeardownReceipts.runId, uuidSchema.parse(runId)));
 }
 
 /**
@@ -66,41 +160,49 @@ export async function deleteGeneratedRunDurable(
       return { deletedRunCount: 0, deletedSaleOfferCount: 0 };
     }
 
-    await tx.delete(simulatedNotifications).where(eq(simulatedNotifications.runId, runId));
-    await tx.delete(erpAttempts).where(eq(erpAttempts.runId, runId));
-    await tx.delete(orderEvents).where(eq(orderEvents.runId, runId));
-    await tx.delete(orders).where(eq(orders.runId, runId));
-    await tx.delete(reservations).where(eq(reservations.runId, runId));
-    await tx
-      .delete(reservationPendingPersistence)
-      .where(eq(reservationPendingPersistence.runId, runId));
-    await tx.delete(demoRunReservationOutcomes).where(eq(demoRunReservationOutcomes.runId, runId));
-    await tx.delete(demoRunFinalizations).where(eq(demoRunFinalizations.runId, runId));
-    await tx.delete(demoRunSummaries).where(eq(demoRunSummaries.runId, runId));
-    await tx.delete(demoRunSaleContexts).where(eq(demoRunSaleContexts.runId, runId));
-
-    const deletedRuns = await tx
-      .delete(demoRuns)
-      .where(
-        and(
-          eq(demoRuns.id, runId),
-          eq(demoRuns.saleOfferId, saleOfferId),
-          inArray(demoRuns.status, ["completed", "failed"]),
-        ),
-      )
-      .returning({ id: demoRuns.id });
-    if (deletedRuns.length !== 1) {
-      throw new Error(`Generated run ${runId} changed during durable deletion.`);
-    }
-
-    const deletedSaleOffers = await tx
-      .delete(saleOffers)
-      .where(and(eq(saleOffers.id, saleOfferId), eq(saleOffers.purpose, "generated_run")))
-      .returning({ id: saleOffers.id });
-    if (deletedSaleOffers.length !== 1) {
-      throw new Error(`Generated sale offer ${saleOfferId} changed during durable deletion.`);
-    }
+    await deleteGeneratedRunRows(tx as CheckoutSurgeDatabase, { runId, saleOfferId });
 
     return { deletedRunCount: 1, deletedSaleOfferCount: 1 };
   });
+}
+
+async function deleteGeneratedRunRows(
+  tx: CheckoutSurgeDatabase,
+  identity: GeneratedRunIdentity,
+): Promise<void> {
+  const { runId, saleOfferId } = identity;
+  await tx.delete(simulatedNotifications).where(eq(simulatedNotifications.runId, runId));
+  await tx.delete(erpAttempts).where(eq(erpAttempts.runId, runId));
+  await tx.delete(orderEvents).where(eq(orderEvents.runId, runId));
+  await tx.delete(orders).where(eq(orders.runId, runId));
+  await tx.delete(reservations).where(eq(reservations.runId, runId));
+  await tx
+    .delete(reservationPendingPersistence)
+    .where(eq(reservationPendingPersistence.runId, runId));
+  await tx.delete(demoRunReservationOutcomes).where(eq(demoRunReservationOutcomes.runId, runId));
+  await tx.delete(demoRunFinalizations).where(eq(demoRunFinalizations.runId, runId));
+  await tx.delete(demoRunSummaries).where(eq(demoRunSummaries.runId, runId));
+  await tx.delete(demoRunSaleContexts).where(eq(demoRunSaleContexts.runId, runId));
+
+  const deletedRuns = await tx
+    .delete(demoRuns)
+    .where(
+      and(
+        eq(demoRuns.id, runId),
+        eq(demoRuns.saleOfferId, saleOfferId),
+        inArray(demoRuns.status, ["completed", "failed"]),
+      ),
+    )
+    .returning({ id: demoRuns.id });
+  if (deletedRuns.length !== 1) {
+    throw new Error(`Generated run ${runId} changed during durable deletion.`);
+  }
+
+  const deletedSaleOffers = await tx
+    .delete(saleOffers)
+    .where(and(eq(saleOffers.id, saleOfferId), eq(saleOffers.purpose, "generated_run")))
+    .returning({ id: saleOffers.id });
+  if (deletedSaleOffers.length !== 1) {
+    throw new Error(`Generated sale offer ${saleOfferId} changed during durable deletion.`);
+  }
 }
