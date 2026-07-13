@@ -96,6 +96,10 @@ function formatFailureSample(value: number, unit: string): string {
     : formatMetric(value, unit);
 }
 
+function formatObservedRequestRate(value: number): string {
+  return formatRate(value, "requests/s");
+}
+
 function recoveryData(
   recovery: BackendRead<DashboardRecoveryResponse>,
 ): DashboardRecoveryResponse | null {
@@ -383,7 +387,10 @@ export function RequestSurgePanel({
   const inventory = data?.inventory ?? null;
   const latestMetric = data?.recentMetrics.at(-1) ?? null;
   const requestRateMetric = data
-    ? findLatestMetric(data.recentMetrics, (name) => name === "traffic.scheduled_request_rate")
+    ? findLatestMetric(
+        data.recentMetrics,
+        (name, unit) => name === "traffic.scheduled_request_rate" && unit === "requests_per_second",
+      )
     : null;
   const latencyMetric = data
     ? findLatestMetric(data.recentMetrics, (name) => name === "traffic.latency")
@@ -408,15 +415,15 @@ export function RequestSurgePanel({
         <>
           <dl className={factGridClassName}>
             <Fact
-              label="k6 request counter sample"
+              label="Observed HTTP request rate"
               value={
                 requestRateMetric
-                  ? formatMetric(requestRateMetric.value, requestRateMetric.unit)
+                  ? formatObservedRequestRate(requestRateMetric.value)
                   : "Awaiting k6 metrics"
               }
             />
             <Fact
-              label="Latest k6 latency sample"
+              label="Window mean HTTP latency"
               value={
                 latencyMetric
                   ? formatMetric(latencyMetric.value, latencyMetric.unit)
@@ -424,7 +431,7 @@ export function RequestSurgePanel({
               }
             />
             <Fact
-              label="Latest k6 failure indicator"
+              label="Window HTTP failure rate"
               value={
                 failureRateMetric
                   ? formatFailureSample(failureRateMetric.value, failureRateMetric.unit)
@@ -453,8 +460,8 @@ export function RequestSurgePanel({
             />
           </dl>
           <p className="mb-0 mt-3 text-xs leading-5 text-muted">
-            Raw k6 point samples; no common observed window or percentile is claimed until
-            fixed-window aggregation is available.
+            Shared 1-second producer event-time window; latency is the window mean and failures are
+            the fraction of valid HTTP failure observations.
           </p>
         </>
       ) : (
@@ -466,12 +473,12 @@ export function RequestSurgePanel({
 
 function findLatestMetric(
   metrics: DashboardRecoveryResponse["recentMetrics"],
-  predicate: (metricName: string) => boolean,
+  predicate: (metricName: string, unit: string) => boolean,
 ): DashboardRecoveryResponse["recentMetrics"][number] | null {
   for (let index = metrics.length - 1; index >= 0; index -= 1) {
     const metric = metrics[index];
 
-    if (metric && predicate(metric.metricName)) {
+    if (metric && predicate(metric.metricName, metric.unit)) {
       return metric;
     }
   }

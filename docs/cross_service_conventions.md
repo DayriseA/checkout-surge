@@ -180,6 +180,8 @@ Dashboard traffic metrics also use:
 - `traffic.latency`
 - `traffic.failure_rate`
 
+For live k6 observations, `traffic.scheduled_request_rate` is the compatibility name for achieved throughput, not the configured traffic target. Its unit is `requests_per_second`. Production uses a shared one-second producer event-time window: `traffic.latency` is its mean in `ms`, and `traffic.failure_rate` is the fraction of valid failure observations in that same window with unit `ratio`.
+
 ---
 
 ## Summary

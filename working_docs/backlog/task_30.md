@@ -72,3 +72,35 @@ The reference `checkout-forge` is not a better live-rate donor. Its `apps/load-o
 - Dashboard test: a windowed sample renders as an observed HTTP rate with a per-second unit, while absence still renders the awaiting state. Keep terminal summary and response-classification regression assertions so this live-metrics fix cannot change sold-out/unexpected outcome grading.
 
 Do not start apps or broaden verification into end-to-end load execution for this task; the pure aggregator, runner coordination, API-client timeout, and focused panel tests are the relevant boundaries.
+
+## Implementation record (2026-07-13)
+
+### Status
+
+Implemented at the load-orchestrator application and dashboard presentation boundaries. Terminal totals/outcomes remain raw and independent; live traffic metrics now use bounded fixed event-time aggregation and ordered delivery before lifecycle completion.
+
+### Decisions and completed scope
+
+- Added a dedicated per-run live-aggregator module with a validated one-second default window, leaving raw parsing/terminal accumulation and incremental framing in separate focused modules. It sums valid nonnegative request deltas over the full window duration, emits mean latency and the fraction of valid `0`/`1` failure observations, aligns strict contract-valid ISO timestamps to the epoch window start, and emits only finite metrics with a denominator. Overflow-causing observations are ignored and a non-finite derived aggregate is omitted. The final short window uses the full configured duration.
+- Retains one active window. Observing a newer window finalizes the active one; points for finalized or older windows are ignored. Malformed timestamps, non-finite/negative request or latency values, invalid failure observations, and unsupported points do not enter live aggregation. Terminal accumulation and p95/outcome classification remain unchanged.
+- Replaced callback `readline` handling with serialized async stdout consumption and a bounded 64 KiB line framer. Split chunks and a final unterminated line are preserved; oversized lines are discarded until newline. Completion awaits stdout drain, final live-window flush, and metric drain before its single lifecycle report.
+- `MetricBatcher` is single-flight and defaults to ten batches of buffered samples. Size-triggered runner calls await the send and apply stream backpressure. Samples arriving during a send retain order for a later batch; overflow drops and reports the newest sample. `close()` waits for the active send and final queued partial batch. Send errors remain best-effort.
+- `HttpLoadApiClient` gives every request a fresh validated deadline and abort signal. A timeout settles even if `fetch` ignores abort, and timers clear in all outcomes. Metric timeout is contained by the batcher; completion timeout enters the existing bounded retry with a fresh request signal.
+- `RequestSurgePanel` presents only `requests_per_second` samples as `Observed HTTP request rate`, formats them as `requests/s`, and names the production runtime's shared one-second producer window for mean latency/failure fraction. Older raw `requests` samples remain in the awaiting state rather than being mislabeled observed.
+- Updated `docs/load_generation_metrics_streaming.md`, `docs/cross_service_conventions.md`, `docs/repository_layout.md`, and the Task 27 record to match the final semantics and resolved follow-up.
+
+### Verification
+
+- `pnpm --filter load-orchestrator test:unit`: 2 files, 51 tests passed and 1 k6-binary-dependent test skipped. Coverage includes aggregation/scaling/closure/final flush/zero/strict timestamp/finite overflow/late/bounds, split and unterminated framing, single-flight ordering/overflow/close drain, final metric-before-completion, lifecycle report-once, terminal response classification/p95, HTTP deadlines/timers/fresh retry signals, and bounded retry behavior.
+- `node ../../scripts/run-with-test-env.mjs pnpm exec vitest run --config vitest.config.ts test/dashboard-phase6.test.ts` (from `apps/web`): 1 file, 25 tests passed, including observed `requests/s` rendering and the awaiting state for a raw/non-rate unit.
+- `pnpm --filter load-orchestrator type-check` and `pnpm --filter web type-check`: passed.
+- `pnpm --filter load-orchestrator lint` and `pnpm --filter web lint`: passed.
+- `git diff --check`: passed.
+- Final review against `working_docs/quality_checklists.md`: scope stayed within load-orchestrator application coordination/client logic, dashboard presentation, focused tests, and matching documentation; no route, persistence, SSE, orchestrator-route, reservation, ERP, or terminal contract behavior was added.
+- `pnpm test:composition` and `pnpm test:characterization` were not run, per repository instructions. No apps or end-to-end load execution were started.
+
+### Remaining caveats
+
+- The reserved metric name `traffic.scheduled_request_rate` remains for contract compatibility even though the value is observed throughput; its `requests_per_second` unit and dashboard wording carry the distinction.
+- The terminal p95 latency array remains unbounded over a run as before. Replacing terminal percentile storage is outside Task 30.
+- Metric overflow intentionally drops the newest sample, and metrics are not retried. Completion retries can duplicate remote acceptance and continue to rely on API run-identity idempotency.

@@ -25,6 +25,7 @@ import {
   FileExecutionStore,
   withCompletion,
 } from "../src/application/execution-store.js";
+import { K6LiveMetricAggregator } from "../src/application/k6-live-metric-aggregator.js";
 import { K6RunAccumulator, parseK6JsonLine } from "../src/application/k6-output-parser.js";
 import { type K6Runner, SpawnK6Runner } from "../src/application/k6-runner.js";
 import { generateK6Script } from "../src/application/k6-script.js";
@@ -241,7 +242,7 @@ describe("load-orchestrator k6 mapping", () => {
     }
   });
 
-  it("parses k6 JSON points into stable dashboard metrics and traffic summaries", () => {
+  it("keeps terminal totals independent from windowed dashboard metrics", () => {
     const accumulator = new K6RunAccumulator({
       runId: startRequest.runId,
       correlationId: startRequest.correlationId,
@@ -271,10 +272,15 @@ describe("load-orchestrator k6 mapping", () => {
         data: { value: 1, time: timestamp },
       }),
     ];
-    const samples = lines
-      .map((line) => parseK6JsonLine(line))
-      .map((point) => (point ? accumulator.observe(point) : null))
-      .filter((sample) => sample !== null);
+    const liveMetrics = new K6LiveMetricAggregator();
+    for (const line of lines) {
+      const point = parseK6JsonLine(line);
+      if (point) {
+        accumulator.observe(point);
+        liveMetrics.observe(point);
+      }
+    }
+    const samples = liveMetrics.flush();
 
     const report = accumulator.completionReport({
       status: "succeeded",
@@ -561,7 +567,7 @@ describe("SpawnK6Runner completion reporting", () => {
           {
             metricName: "traffic.scheduled_request_rate",
             value: 1,
-            unit: "requests",
+            unit: "requests_per_second",
             timestamp,
           },
           { metricName: "traffic.latency", value: 42, unit: "ms", timestamp },
@@ -592,6 +598,53 @@ describe("SpawnK6Runner completion reporting", () => {
         trafficDeliveryStatus: "failed",
       },
     });
+  });
+
+  it("drains split and unterminated stdout and sends the final live window before completion", async () => {
+    const k6Process = createK6ProcessFixture();
+    const calls: string[] = [];
+    const reports: TrafficCompletionReport[] = [];
+    let releaseMetrics: () => void = () => undefined;
+    const metricsGate = new Promise<void>((resolve) => {
+      releaseMetrics = resolve;
+    });
+    const runner = new SpawnK6Runner({
+      k6Binary: "k6",
+      logger: createSilentLogger("load-orchestrator"),
+      spawnProcess: k6Process.spawnProcess,
+      now: createClock([timestamp, completionTimestamp]),
+      apiClient: {
+        sendMetrics: async () => {
+          calls.push("metrics");
+          await metricsGate;
+        },
+        sendCompletion: async (report) => {
+          calls.push("completion");
+          reports.push(report);
+        },
+      },
+    });
+
+    await runner.start(startRequest);
+    const finalLine = JSON.stringify({
+      type: "Point",
+      metric: "http_reqs",
+      data: { value: 2, time: timestamp },
+    });
+    const splitAt = Math.floor(finalLine.length / 2);
+    k6Process.stdout.write("not json\n");
+    k6Process.stdout.write(finalLine.slice(0, splitAt));
+    k6Process.stdout.end(finalLine.slice(splitAt));
+    k6Process.child.emit("close", 0);
+
+    await waitForCondition(() => calls.includes("metrics"), "final window metric send");
+    expect(calls).toEqual(["metrics"]);
+    expect(reports).toEqual([]);
+    releaseMetrics();
+    const report = await waitForCompletionReport(reports, 1);
+
+    expect(calls).toEqual(["metrics", "completion"]);
+    expect(report.httpSummary.emittedRequests).toBe(2);
   });
 
   it("reports non-zero k6 exits as failed completions and cleans up", async () => {
@@ -1095,6 +1148,51 @@ describe("SpawnK6Runner completion reporting", () => {
       },
     });
   });
+
+  it("retries a timed-out completion with a fresh request signal", async () => {
+    const k6Process = createK6ProcessFixture();
+    const signals: AbortSignal[] = [];
+    let accepted: () => void = () => undefined;
+    const acceptedPromise = new Promise<void>((resolve) => {
+      accepted = resolve;
+    });
+    const fetchMock = vi.fn<typeof globalThis.fetch>(async (_url, init) => {
+      if (init?.signal) signals.push(init.signal);
+      if (signals.length === 1) return new Promise<Response>(() => undefined);
+      accepted();
+      return new Response(
+        JSON.stringify({
+          runId: startRequest.runId,
+          acknowledged: true,
+          correlationId: startRequest.correlationId,
+        }),
+        { status: 202 },
+      );
+    });
+    const runner = new SpawnK6Runner({
+      k6Binary: "k6",
+      logger: createSilentLogger("load-orchestrator"),
+      spawnProcess: k6Process.spawnProcess,
+      apiClient: new HttpLoadApiClient({
+        apiBaseUrl: "http://api.test",
+        controlServiceToken: "test-token",
+        requestTimeoutMs: 5,
+        fetch: fetchMock,
+      }),
+      completionRetry: { maxAttempts: 2, initialBackoffMs: 0, sleep: async () => undefined },
+    });
+
+    await runner.start(startRequest);
+    k6Process.child.emit("close", 0);
+    await acceptedPromise;
+    await runner.close();
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(signals).toHaveLength(2);
+    expect(signals[0]?.aborted).toBe(true);
+    expect(signals[1]?.aborted).toBe(false);
+    expect(signals[1]).not.toBe(signals[0]);
+  });
 });
 
 describe("load-orchestrator API client", () => {
@@ -1124,30 +1222,35 @@ describe("load-orchestrator API client", () => {
   });
 
   it("bounds a hung ingestion request and preserves the abort as the cause", async () => {
+    vi.useFakeTimers();
+    let signal: AbortSignal | undefined;
     const client = new HttpLoadApiClient({
       apiBaseUrl: "http://api.test",
       controlServiceToken: "test-token",
       requestTimeoutMs: 5,
-      fetch: vi.fn(
-        (_url, init) =>
-          new Promise((_resolve, reject) => {
-            init?.signal?.addEventListener("abort", () => reject(new Error("aborted")), {
-              once: true,
-            });
-          }),
-      ),
+      fetch: vi.fn((_url, init) => {
+        signal = init?.signal ?? undefined;
+        return new Promise<Response>(() => undefined);
+      }),
     });
-    await expect(
-      client.sendMetrics({
+    try {
+      const request = client.sendMetrics({
         runId: startRequest.runId,
         correlationId: startRequest.correlationId,
         samples: [{ metricName: "traffic.latency", value: 1, unit: "ms", timestamp }],
         observedAt: timestamp,
-      }),
-    ).rejects.toMatchObject({
-      message: "API load ingestion request failed.",
-      cause: expect.any(Error),
-    });
+      });
+      const rejection = expect(request).rejects.toMatchObject({
+        message: "API load ingestion request failed.",
+        cause: expect.objectContaining({ message: expect.stringContaining("timed out") }),
+      });
+      await vi.advanceTimersByTimeAsync(5);
+      await rejection;
+      expect(signal?.aborted).toBe(true);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("sends metric and completion correlation IDs in internal API headers", async () => {
@@ -1195,6 +1298,9 @@ describe("load-orchestrator API client", () => {
       await client.sendCompletion(completionReport);
 
       expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal);
+      expect(fetchMock.mock.calls[1]?.[1]?.signal).toBeInstanceOf(AbortSignal);
+      expect(fetchMock.mock.calls[0]?.[1]?.signal).not.toBe(fetchMock.mock.calls[1]?.[1]?.signal);
       expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
         headers: expect.objectContaining({
           [correlationIdHeaderName]: startRequest.correlationId,
@@ -1207,6 +1313,43 @@ describe("load-orchestrator API client", () => {
       });
     } finally {
       vi.unstubAllGlobals();
+    }
+  });
+
+  it("clears request deadline timers after both success and fetch failure", async () => {
+    vi.useFakeTimers();
+    try {
+      const success = new HttpLoadApiClient({
+        apiBaseUrl: "http://api.test",
+        controlServiceToken: "test-token",
+        fetch: vi.fn(async () => new Response("{}", { status: 202 })),
+      });
+      await success.sendMetrics({
+        runId: startRequest.runId,
+        correlationId: startRequest.correlationId,
+        samples: [{ metricName: "traffic.latency", value: 1, unit: "ms", timestamp }],
+        observedAt: timestamp,
+      });
+      expect(vi.getTimerCount()).toBe(0);
+
+      const failure = new HttpLoadApiClient({
+        apiBaseUrl: "http://api.test",
+        controlServiceToken: "test-token",
+        fetch: vi.fn(async () => {
+          throw new Error("network unavailable");
+        }),
+      });
+      await expect(
+        failure.sendMetrics({
+          runId: startRequest.runId,
+          correlationId: startRequest.correlationId,
+          samples: [{ metricName: "traffic.latency", value: 1, unit: "ms", timestamp }],
+          observedAt: timestamp,
+        }),
+      ).rejects.toThrow("API load ingestion request failed");
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
     }
   });
 });
@@ -1425,6 +1568,10 @@ function createK6ProcessFixture(): {
   });
 
   Object.assign(child, { stdout, stderr, killed: false, kill });
+  child.on("close", () => {
+    stdout.end();
+    stderr.end();
+  });
 
   return {
     child,

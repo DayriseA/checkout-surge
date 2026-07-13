@@ -1,6 +1,6 @@
-import type { MetricSample, TrafficCompletionReport } from "@checkout-surge/contracts";
+import type { TrafficCompletionReport } from "@checkout-surge/contracts";
 
-type K6Point = {
+export type K6Point = {
   type?: string;
   metric?: string;
   data?: {
@@ -8,11 +8,6 @@ type K6Point = {
     value?: number;
   };
 };
-
-export interface K6ParsedPoint {
-  sample: MetricSample | null;
-  rawPoint: K6Point;
-}
 
 export class K6RunAccumulator {
   private emittedRequests = 0;
@@ -32,42 +27,41 @@ export class K6RunAccumulator {
     },
   ) {}
 
-  observe(point: K6Point): MetricSample | null {
+  observe(point: K6Point): void {
     if (point.type !== "Point" || !point.metric || !point.data) {
-      return null;
+      return;
     }
 
     const value = Number(point.data.value);
-    const timestamp = point.data.time ?? new Date().toISOString();
 
     if (!Number.isFinite(value)) {
-      return null;
+      return;
     }
 
     switch (point.metric) {
       case "http_reqs":
         this.emittedRequests += value;
-        return { metricName: "traffic.scheduled_request_rate", value, unit: "requests", timestamp };
+        return;
       case "http_req_duration":
         this.latencies.push(value);
-        return { metricName: "traffic.latency", value, unit: "ms", timestamp };
+        return;
       case "http_req_failed":
         this.httpFailedRequests += value > 0 ? 1 : 0;
-        return { metricName: "traffic.failure_rate", value, unit: "ratio", timestamp };
+        return;
       case "checkout_reservation_accepted":
         this.acceptedResponses += value;
-        return null;
+        return;
       case "checkout_sold_out":
         this.soldOutResponses += value;
-        return null;
+        return;
       case "checkout_unexpected_response":
         this.unexpectedResponses += value;
-        return null;
+        return;
       case "dropped_iterations":
         this.droppedIterations += value;
-        return null;
+        return;
       default:
-        return null;
+        return;
     }
   }
 

@@ -46,36 +46,63 @@ export class HttpLoadApiClient implements LoadApiClient {
 
   private async postJson(path: string, body: unknown, correlationId: string): Promise<unknown> {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.options.requestTimeoutMs ?? 5_000);
-    let response: Response;
+    const requestTimeoutMs = this.options.requestTimeoutMs ?? 5_000;
+    if (!Number.isFinite(requestTimeoutMs) || requestTimeoutMs <= 0) {
+      throw new Error("API requestTimeoutMs must be finite and greater than zero.");
+    }
+    let rejectTimeout: (reason: Error) => void = () => undefined;
+    const timeoutPromise = new Promise<never>((_resolve, reject) => {
+      rejectTimeout = reject;
+    });
+    const timeout = setTimeout(() => {
+      controller.abort();
+      rejectTimeout(new Error(`API load ingestion request timed out after ${requestTimeoutMs}ms.`));
+    }, requestTimeoutMs);
     try {
-      response = await (this.options.fetch ?? fetch)(`${this.options.apiBaseUrl}${path}`, {
-        method: "POST",
-        headers: {
-          accept: "application/json",
-          "content-type": "application/json",
-          [correlationIdHeaderName]: correlationId,
-          [controlServiceTokenHeaderName]: this.options.controlServiceToken,
-        },
-        body: JSON.stringify(body),
-        signal: controller.signal,
-      });
+      return await Promise.race([
+        this.fetchJson(path, body, correlationId, controller.signal),
+        timeoutPromise,
+      ]);
     } catch (error) {
+      if (error instanceof LoadApiHttpError) throw error;
       throw new Error("API load ingestion request failed.", { cause: error });
     } finally {
       clearTimeout(timeout);
     }
+  }
 
+  private async fetchJson(
+    path: string,
+    body: unknown,
+    correlationId: string,
+    signal: AbortSignal,
+  ): Promise<unknown> {
+    const response = await (this.options.fetch ?? fetch)(`${this.options.apiBaseUrl}${path}`, {
+      method: "POST",
+      headers: {
+        accept: "application/json",
+        "content-type": "application/json",
+        [correlationIdHeaderName]: correlationId,
+        [controlServiceTokenHeaderName]: this.options.controlServiceToken,
+      },
+      body: JSON.stringify(body),
+      signal,
+    });
     if (!response.ok) {
-      throw new Error(`API load ingestion failed with HTTP ${response.status}.`);
+      throw new LoadApiHttpError(`API load ingestion failed with HTTP ${response.status}.`);
     }
     return response.json();
   }
 }
 
+class LoadApiHttpError extends Error {}
+
 export class MetricBatcher {
   private readonly samples: MetricSample[] = [];
   private flushTimer: NodeJS.Timeout | null = null;
+  private activeFlush: Promise<void> | null = null;
+  private forceFlushRequested = false;
+  private closed = false;
 
   constructor(
     private readonly options: {
@@ -83,50 +110,89 @@ export class MetricBatcher {
       correlationId: string;
       client: LoadApiClient;
       maxBatchSize?: number;
+      maxBufferedSamples?: number;
       flushIntervalMs?: number;
       now?: () => Date;
       onFlushError?: (error: unknown) => void;
+      onOverflow?: (sample: MetricSample) => void;
     },
-  ) {}
+  ) {
+    if (!Number.isInteger(this.maxBatchSize) || this.maxBatchSize <= 0) {
+      throw new Error("MetricBatcher maxBatchSize must be a positive integer.");
+    }
+    if (!Number.isInteger(this.maxBufferedSamples) || this.maxBufferedSamples < this.maxBatchSize) {
+      throw new Error("MetricBatcher maxBufferedSamples must be at least maxBatchSize.");
+    }
+  }
 
-  add(sample: MetricSample): void {
+  /** Adds in order. On overflow, the newest sample is dropped and reported. */
+  async add(sample: MetricSample): Promise<void> {
+    if (this.closed) throw new Error("Cannot add a metric sample after MetricBatcher.close().");
+    if (this.samples.length >= this.maxBufferedSamples) {
+      this.options.onOverflow?.(sample);
+      return;
+    }
     this.samples.push(sample);
 
-    if (this.samples.length >= (this.options.maxBatchSize ?? 100)) {
-      void this.flush();
+    if (this.samples.length >= this.maxBatchSize) {
+      await this.requestFlush(false);
       return;
     }
 
     this.flushTimer ??= setTimeout(() => {
       this.flushTimer = null;
-      void this.flush();
+      void this.requestFlush(true);
     }, this.options.flushIntervalMs ?? 1000);
   }
 
   async close(): Promise<void> {
+    this.closed = true;
     if (this.flushTimer) {
       clearTimeout(this.flushTimer);
       this.flushTimer = null;
     }
 
-    await this.flush();
+    await this.requestFlush(true);
   }
 
-  private async flush(): Promise<void> {
-    const samples = this.samples.splice(0, this.samples.length);
-    if (samples.length === 0) {
-      return;
-    }
+  private get maxBatchSize(): number {
+    return this.options.maxBatchSize ?? 100;
+  }
 
-    try {
-      await this.options.client.sendMetrics({
-        runId: this.options.runId,
-        correlationId: this.options.correlationId,
-        samples,
-        observedAt: (this.options.now?.() ?? new Date()).toISOString(),
-      });
-    } catch (error) {
-      this.options.onFlushError?.(error);
+  private get maxBufferedSamples(): number {
+    return this.options.maxBufferedSamples ?? this.maxBatchSize * 10;
+  }
+
+  private requestFlush(force: boolean): Promise<void> {
+    this.forceFlushRequested ||= force;
+    this.activeFlush ??= this.drain().finally(() => {
+      this.activeFlush = null;
+    });
+    return this.activeFlush;
+  }
+
+  private async drain(): Promise<void> {
+    while (
+      this.samples.length >= this.maxBatchSize ||
+      (this.forceFlushRequested && this.samples.length > 0)
+    ) {
+      const force = this.forceFlushRequested;
+      const sampleCount = force
+        ? Math.min(this.samples.length, this.maxBatchSize)
+        : this.maxBatchSize;
+      const samples = this.samples.splice(0, sampleCount);
+
+      try {
+        await this.options.client.sendMetrics({
+          runId: this.options.runId,
+          correlationId: this.options.correlationId,
+          samples,
+          observedAt: (this.options.now?.() ?? new Date()).toISOString(),
+        });
+      } catch (error) {
+        this.options.onFlushError?.(error);
+      }
+      if (force && this.samples.length === 0) this.forceFlushRequested = false;
     }
   }
 }

@@ -95,7 +95,7 @@ checkout-surge/
 - Persists one atomic execution journal outside PostgreSQL, including accepted/executing/completed state, and retains slot ownership until completion acknowledgement.
 - Uses the traffic-execution lifecycle `starting -> active -> succeeded | failed`.
 - Receives only an API-accepted run ID, generated sale offer, and frozen configuration; the API establishes the durable dashboard recovery baseline before delegation.
-- Forwards parsed traffic metrics (RPS, p95 latency, failure rate) and traffic-completion reports to `apps/api`.
+- Forwards fixed-window traffic metrics (observed RPS, mean latency, and failure-observation fraction) and traffic-completion reports to `apps/api`; terminal completion continues to report p95 latency separately.
 - Does not own API/business draining, demo-run finalization, dashboard recovery state, or run-summary persistence.
 - Exposes a traffic-execution control API consumed by `apps/api`; the dashboard starts demo runs through the API lifecycle rather than driving load scenarios directly.
 

@@ -2,7 +2,6 @@ import { spawn } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { createInterface } from "node:readline";
 import type {
   TrafficCompletionReport,
   TrafficExecutionStartRequest,
@@ -15,6 +14,8 @@ import {
   withCompletion,
 } from "./execution-store.js";
 import { K6RunAccumulator, parseK6JsonLine } from "./k6-output-parser.js";
+import { K6JsonLineFramer } from "./k6-json-line-framer.js";
+import { K6LiveMetricAggregator } from "./k6-live-metric-aggregator.js";
 import { generateK6Script } from "./k6-script.js";
 
 export interface K6ExecutionStart {
@@ -64,6 +65,10 @@ export class SpawnK6Runner implements K6Runner {
       retryIntervalMs?: number;
       shutdownGraceMs?: number;
       shutdownKillWaitMs?: number;
+      liveMetricWindowMs?: number;
+      maxK6OutputLineLength?: number;
+      metricBatchSize?: number;
+      maxBufferedMetricSamples?: number;
     },
   ) {}
 
@@ -281,15 +286,48 @@ export class SpawnK6Runner implements K6Runner {
       runId: input.input.runId,
       correlationId: input.input.correlationId,
       client: this.options.apiClient,
+      ...(this.options.metricBatchSize === undefined
+        ? {}
+        : { maxBatchSize: this.options.metricBatchSize }),
+      ...(this.options.maxBufferedMetricSamples === undefined
+        ? {}
+        : { maxBufferedSamples: this.options.maxBufferedMetricSamples }),
       onFlushError: (error) => {
         this.options.logger.warn(
           { err: error, runId: input.input.runId },
           "Could not forward k6 metric batch to API.",
         );
       },
+      onOverflow: (sample) => {
+        this.options.logger.warn(
+          { runId: input.input.runId, metricName: sample.metricName },
+          "Dropped newest k6 live metric because the bounded metric buffer was full.",
+        );
+      },
     });
+    const liveMetrics = new K6LiveMetricAggregator(
+      this.options.liveMetricWindowMs === undefined
+        ? {}
+        : { windowMs: this.options.liveMetricWindowMs },
+    );
     const stdout = input.child.stdout;
     const stderr = input.child.stderr;
+    const stdoutDrain = stdout
+      ? consumeK6Stdout({
+          stdout,
+          accumulator,
+          liveMetrics,
+          batcher,
+          ...(this.options.maxK6OutputLineLength === undefined
+            ? {}
+            : { maxLineLength: this.options.maxK6OutputLineLength }),
+        }).catch((error) => {
+          this.options.logger.warn(
+            { err: error, runId: input.input.runId },
+            "Could not completely consume k6 stdout.",
+          );
+        })
+      : Promise.resolve();
     let processError: Error | null = null;
     let completionReported = false;
     let settleCompletion: () => void = () => undefined;
@@ -309,7 +347,9 @@ export class SpawnK6Runner implements K6Runner {
       completionReported = true;
       const task = this.reportCompletion({
         accumulator,
+        liveMetrics,
         batcher,
+        stdoutDrain,
         workDir: input.workDir,
         ...completion,
       });
@@ -325,19 +365,6 @@ export class SpawnK6Runner implements K6Runner {
         },
       );
     };
-
-    if (stdout)
-      createInterface({ input: stdout }).on("line", (line) => {
-        const point = parseK6JsonLine(line);
-        if (!point) {
-          return;
-        }
-
-        const sample = accumulator.observe(point);
-        if (sample) {
-          batcher.add(sample);
-        }
-      });
 
     stderr?.on("data", (chunk) => {
       this.options.logger.warn(
@@ -388,7 +415,9 @@ export class SpawnK6Runner implements K6Runner {
 
   private async reportCompletion(input: {
     accumulator: K6RunAccumulator;
+    liveMetrics: K6LiveMetricAggregator;
     batcher: MetricBatcher;
+    stdoutDrain: Promise<void>;
     status: "succeeded" | "failed";
     exitCode?: number;
     errorMessage?: string;
@@ -396,6 +425,10 @@ export class SpawnK6Runner implements K6Runner {
     workDir: string;
   }): Promise<void> {
     try {
+      await input.stdoutDrain;
+      for (const sample of input.liveMetrics.flush()) {
+        await input.batcher.add(sample);
+      }
       await input.batcher.close();
     } catch (error) {
       this.options.logger.warn({ err: error }, "Could not flush final k6 metric batch.");
@@ -527,6 +560,43 @@ export class SpawnK6Runner implements K6Runner {
 
   private now(): Date {
     return this.options.now?.() ?? new Date();
+  }
+}
+
+async function consumeK6Stdout(input: {
+  stdout: NonNullable<ReturnType<typeof spawn>["stdout"]>;
+  accumulator: K6RunAccumulator;
+  liveMetrics: K6LiveMetricAggregator;
+  batcher: MetricBatcher;
+  maxLineLength?: number;
+}): Promise<void> {
+  const framer = new K6JsonLineFramer(
+    input.maxLineLength === undefined ? {} : { maxLineLength: input.maxLineLength },
+  );
+  input.stdout.setEncoding("utf8");
+  for await (const chunk of input.stdout) {
+    for (const line of framer.push(String(chunk))) {
+      await consumeK6Line(line, input);
+    }
+  }
+  for (const line of framer.finish()) {
+    await consumeK6Line(line, input);
+  }
+}
+
+async function consumeK6Line(
+  line: string,
+  input: {
+    accumulator: K6RunAccumulator;
+    liveMetrics: K6LiveMetricAggregator;
+    batcher: MetricBatcher;
+  },
+): Promise<void> {
+  const point = parseK6JsonLine(line);
+  if (!point) return;
+  input.accumulator.observe(point);
+  for (const sample of input.liveMetrics.observe(point)) {
+    await input.batcher.add(sample);
   }
 }
 

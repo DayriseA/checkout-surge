@@ -107,8 +107,8 @@ describe("Phase 6 dashboard behavior", () => {
       recentMetrics: [
         {
           metricName: "traffic.scheduled_request_rate",
-          value: 1,
-          unit: "requests",
+          value: 12.5,
+          unit: "requests_per_second",
           timestamp: "2026-06-20T00:00:11.000Z",
         },
         {
@@ -134,11 +134,12 @@ describe("Phase 6 dashboard behavior", () => {
     const queue = renderToStaticMarkup(createElement(QueuePressurePanel, { recovery }));
     const erp = renderToStaticMarkup(createElement(ErpHealthPanel, { recovery }));
 
-    expect(traffic).toContain("k6 request counter sample");
-    expect(traffic).toContain("Latest k6 latency sample");
-    expect(traffic).toContain("Latest k6 failure indicator");
+    expect(traffic).toContain("Observed HTTP request rate");
+    expect(traffic).toContain("12.5 requests/s");
+    expect(traffic).toContain("Window mean HTTP latency");
+    expect(traffic).toContain("Window HTTP failure rate");
     expect(traffic).toContain("25%");
-    expect(traffic).toContain("no common observed window or percentile is claimed");
+    expect(traffic).toContain("Shared 1-second producer event-time window");
     expect(inventory).toContain("Inventory updated");
     expect(queue).toContain("Queue inspected");
     expect(queue).toContain("API refreshes worker drain, retry, and failure state");
@@ -146,6 +147,28 @@ describe("Phase 6 dashboard behavior", () => {
     expect(erp).toContain("Next probe");
     expect(erp).toContain("Breaker reported");
     expect(erp).toContain("API projection");
+  });
+
+  it("awaits an observed request rate instead of presenting a configured-style count as observed", () => {
+    const recovery = availableRecovery({
+      ...recoveryFixture(),
+      recentMetrics: [
+        {
+          metricName: "traffic.scheduled_request_rate",
+          value: 50,
+          unit: "requests",
+          timestamp: "2026-06-20T00:00:11.000Z",
+        },
+      ],
+    });
+
+    const traffic = renderToStaticMarkup(
+      createElement(RequestSurgePanel, { recovery, liveEventCount: 0 }),
+    );
+
+    expect(traffic).toContain("Observed HTTP request rate");
+    expect(traffic).toContain("Awaiting k6 metrics");
+    expect(traffic).not.toContain("50 requests/s");
   });
 
   it("applies live business-outcome events over the recovery baseline", () => {
