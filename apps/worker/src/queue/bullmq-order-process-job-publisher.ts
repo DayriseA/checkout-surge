@@ -7,6 +7,7 @@ import {
 import { type ConnectionOptions, Queue } from "bullmq";
 import type { OrderDispatchPublisher } from "../application/order-dispatch-scanner.js";
 import type { FailedOrderJobReader } from "../application/order-recovery-scanner.js";
+import type { RunConfigReader } from "../application/run-config.js";
 import {
   deadLetterFailureMarker,
   recoverableFailureMarker,
@@ -52,13 +53,14 @@ export function createBullMqOrderProcessJobPublisher(
     maxAttempts: 4,
     backoffBaseMs: 500,
   },
+  runConfigReader?: RunConfigReader,
 ): WorkerOrderProcessJobPublisher {
   const queue = new Queue<OrderProcessJob, void, typeof orderProcessJobName>(
     orderProcessBullMqQueueName,
     { connection },
   );
 
-  return createOrderProcessJobPublisher(queue, retryOptions);
+  return createOrderProcessJobPublisher(queue, retryOptions, runConfigReader);
 }
 
 export function createOrderProcessJobPublisher(
@@ -67,13 +69,23 @@ export function createOrderProcessJobPublisher(
     maxAttempts: 4,
     backoffBaseMs: 500,
   },
+  runConfigReader?: RunConfigReader,
 ): WorkerOrderProcessJobPublisher {
   return {
     async enqueue(input, options?: { jobId?: string; attempts?: number }) {
       const job = orderProcessJobSchema.parse(input);
+      const snapshot =
+        job.runId && !options?.attempts ? await runConfigReader?.read(job.runId) : null;
+      if (job.runId && !options?.attempts && !snapshot) {
+        throw new Error(`Accepted run snapshot was not found for order job run ${job.runId}.`);
+      }
+      const retryPolicy = snapshot?.backpressureConfig.retryPolicy;
       await queue.add(orderProcessJobName, job, {
-        attempts: options?.attempts ?? retryOptions.maxAttempts,
-        backoff: { type: "exponential", delay: retryOptions.backoffBaseMs },
+        attempts: options?.attempts ?? retryPolicy?.maxAttempts ?? retryOptions.maxAttempts,
+        backoff: {
+          type: "exponential",
+          delay: retryPolicy?.initialBackoffMs ?? retryOptions.backoffBaseMs,
+        },
         jobId: options?.jobId ?? job.orderId,
       });
     },

@@ -16,6 +16,7 @@ import { createServiceLogger, loggerPackageName } from "@checkout-surge/logger";
 import { createBullMqDemoQueueMaintenance } from "./queue/bullmq-demo-queue-maintenance.js";
 import { createBullMqOrderProcessJobPublisher } from "./queue/bullmq-order-process-job-publisher.js";
 import { createBullMqOrderProcessQueueInspector } from "./queue/bullmq-order-process-queue-inspector.js";
+import { PostgresRunRetryPolicyResolver } from "./queue/postgres-run-retry-policy-resolver.js";
 import { DashboardEventFanout } from "./realtime/dashboard-event-fanout.js";
 import { closeApiResources } from "./runtime/api-resource-cleanup.js";
 import { loadApiConfig } from "./runtime/config.js";
@@ -110,6 +111,7 @@ export async function startApiServer(): Promise<void> {
       maxAttempts: config.orderProcessMaxAttempts,
       backoffBaseMs: config.orderProcessBackoffBaseMs,
     },
+    new PostgresRunRetryPolicyResolver(connection.db),
   );
   const orderProcessQueueInspector = createBullMqOrderProcessQueueInspector({
     url: config.redisUrl,

@@ -86,6 +86,7 @@ describe("accepted run breaker configuration", () => {
       queueName: "orders:process",
       physicalQueueName: "orders-process",
       orderProcessConcurrency: 1,
+      retryPolicy: { maxAttempts: 4, initialBackoffMs: 0 },
       drainTimeoutSeconds: 1,
       pendingPersistenceRetryAfterSeconds: 1,
       circuitBreakerFailureThreshold: 2,
@@ -95,6 +96,33 @@ describe("accepted run breaker configuration", () => {
 
   it("accepts positive integer breaker configuration", () => {
     expect(acceptedRunConfigSnapshotSchema.safeParse(snapshot).success).toBe(true);
+  });
+
+  it("enforces strict retry policy and the deployment concurrency cap", () => {
+    expect(
+      acceptedRunConfigSnapshotSchema.safeParse({
+        ...snapshot,
+        backpressureConfig: { ...snapshot.backpressureConfig, orderProcessConcurrency: 11 },
+      }).success,
+    ).toBe(false);
+    expect(
+      acceptedRunConfigSnapshotSchema.safeParse({
+        ...snapshot,
+        backpressureConfig: {
+          ...snapshot.backpressureConfig,
+          retryPolicy: { maxAttempts: 0, initialBackoffMs: 0 },
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      acceptedRunConfigSnapshotSchema.safeParse({
+        ...snapshot,
+        backpressureConfig: {
+          ...snapshot.backpressureConfig,
+          retryPolicy: { maxAttempts: 1, initialBackoffMs: 0, unknown: true },
+        },
+      }).success,
+    ).toBe(false);
   });
 
   it.each([
@@ -900,6 +928,7 @@ describe("public runtime policy contract", () => {
             queueName: "orders:process",
             physicalQueueName: "orders-process",
             orderProcessConcurrency: 2,
+            retryPolicy: { maxAttempts: 4, initialBackoffMs: 500 },
             drainTimeoutSeconds: 300,
             pendingPersistenceRetryAfterSeconds: 30,
             circuitBreakerFailureThreshold: 5,
@@ -1063,6 +1092,7 @@ describe("public runtime policy contract", () => {
           queueName: "orders:process",
           physicalQueueName: "orders-process",
           orderProcessConcurrency: 5,
+          retryPolicy: { maxAttempts: 4, initialBackoffMs: 500 },
           drainTimeoutSeconds: 300,
           pendingPersistenceRetryAfterSeconds: 30,
           circuitBreakerFailureThreshold: 5,
@@ -1191,6 +1221,7 @@ describe("public runtime policy contract", () => {
         queueName: "orders:process",
         physicalQueueName: "orders-process",
         orderProcessConcurrency: 5,
+        retryPolicy: { maxAttempts: 4, initialBackoffMs: 500 },
         drainTimeoutSeconds: 300,
         pendingPersistenceRetryAfterSeconds: 30,
         circuitBreakerFailureThreshold: 5,
@@ -1269,6 +1300,7 @@ function acceptedRunSnapshot() {
       queueName: "orders:process",
       physicalQueueName: "orders-process",
       orderProcessConcurrency: 2,
+      retryPolicy: { maxAttempts: 4, initialBackoffMs: 500 },
       drainTimeoutSeconds: 300,
       pendingPersistenceRetryAfterSeconds: 30,
       circuitBreakerFailureThreshold: 5,

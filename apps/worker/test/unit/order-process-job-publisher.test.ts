@@ -91,6 +91,26 @@ describe("worker order-processing job publisher", () => {
     });
   });
 
+  it("uses frozen run retry policy for deterministic durable replay", async () => {
+    const add = vi.fn().mockResolvedValue(undefined);
+    const runJob = { ...job, runId: "55555555-5555-4555-8555-555555555555" };
+    const publisher = createOrderProcessJobPublisher(
+      { add, close: vi.fn() },
+      { maxAttempts: 9, backoffBaseMs: 999 },
+      {
+        read: vi.fn().mockResolvedValue({
+          backpressureConfig: { retryPolicy: { maxAttempts: 6, initialBackoffMs: 250 } },
+        }),
+      },
+    );
+    await publisher.enqueue(runJob);
+    expect(add).toHaveBeenCalledWith(orderProcessJobName, runJob, {
+      attempts: 6,
+      backoff: { type: "exponential", delay: 250 },
+      jobId: job.orderId,
+    });
+  });
+
   it("recovers from the stable failedReason marker when progress was not persisted", async () => {
     const publisher = createOrderProcessJobPublisher({
       add: vi.fn(),

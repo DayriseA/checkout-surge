@@ -67,6 +67,7 @@ const startRequest: TrafficExecutionStartRequest = {
       queueName: "orders:process",
       physicalQueueName: "orders-process",
       orderProcessConcurrency: 5,
+      retryPolicy: { maxAttempts: 4, initialBackoffMs: 500 },
       drainTimeoutSeconds: 300,
       pendingPersistenceRetryAfterSeconds: 30,
       circuitBreakerFailureThreshold: 5,

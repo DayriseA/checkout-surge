@@ -18,7 +18,7 @@ const delivery: OrderProcessDeliveryMetadata = { attemptNumber: 1, attemptsMade:
 const runId = "44444444-4444-4444-8444-444444444444";
 
 describe("run-scoped order confirmation backpressure", () => {
-  it("limits concurrent confirmations by the accepted run snapshot", async () => {
+  it("leaves concurrency admission to the queue boundary", async () => {
     const releases: Array<() => void> = [];
     let activeConfirmations = 0;
     let maxActiveConfirmations = 0;
@@ -37,6 +37,7 @@ describe("run-scoped order confirmation backpressure", () => {
             queueName: "orders:process",
             physicalQueueName: "orders-process",
             orderProcessConcurrency: 1,
+            retryPolicy: { maxAttempts: 4, initialBackoffMs: 500 },
             drainTimeoutSeconds: 300,
             pendingPersistenceRetryAfterSeconds: 30,
             circuitBreakerFailureThreshold: 5,
@@ -61,13 +62,10 @@ describe("run-scoped order confirmation backpressure", () => {
       delivery,
     );
 
-    await Promise.resolve();
-    expect(inner.confirm).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(inner.confirm).toHaveBeenCalledTimes(2));
+    expect(maxActiveConfirmations).toBe(2);
 
     releases[0]?.();
-    await vi.waitFor(() => expect(inner.confirm).toHaveBeenCalledTimes(2));
-    expect(maxActiveConfirmations).toBe(1);
-
     releases[1]?.();
     await Promise.all([first, second]);
   });
@@ -261,6 +259,7 @@ describe("run-scoped order confirmation backpressure", () => {
             backpressureConfig: {
               ...runConfigSnapshot().backpressureConfig,
               orderProcessConcurrency: 1,
+              retryPolicy: { maxAttempts: 4, initialBackoffMs: 500 },
               circuitBreakerResetTimeoutMs: 100,
             },
           }),
@@ -337,6 +336,7 @@ function runConfigSnapshot(
       queueName: "orders:process",
       physicalQueueName: "orders-process",
       orderProcessConcurrency: 5,
+      retryPolicy: { maxAttempts: 4, initialBackoffMs: 500 },
       drainTimeoutSeconds: 300,
       pendingPersistenceRetryAfterSeconds: 30,
       circuitBreakerFailureThreshold: 5,

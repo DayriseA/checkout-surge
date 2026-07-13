@@ -398,7 +398,7 @@ Most infrastructure URLs have local defaults, but service-to-service control end
 | `ERP_REQUEST_TIMEOUT_MS` | `2000` | Worker ERP client default; run snapshots can supply the active demonstration policy |
 | `ERP_CIRCUIT_FAILURE_THRESHOLD` | `5` | Worker circuit breaker |
 | `ERP_CIRCUIT_RESET_TIMEOUT_MS` | `10000` | Worker circuit breaker |
-| `ORDER_PROCESS_CONCURRENCY` | `5` | Worker queue consumer default; run snapshots can supply the active demonstration policy |
+| `ORDER_PROCESS_CONCURRENCY` | `10` | Aggregate worker queue-scanning ceiling; must be at least the shared accepted-run hard cap of 10. Per-run snapshots independently limit admitted handlers. |
 | `LATENCY_MS` | `0` | Mock ERP global fallback/diagnostic chaos behavior when no run-scoped ERP behavior is supplied |
 | `MAX_TPS` | `100` | Mock ERP global fallback/diagnostic chaos behavior |
 | `ERROR_RATE` | `0` | Mock ERP global fallback/diagnostic chaos behavior, from `0` to `1` |

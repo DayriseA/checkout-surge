@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import {
+  acceptedRunConfigSnapshotSchema,
   backpressureConfigSchema,
   type DashboardEvent,
   dashboardEventsRedisChannel,
@@ -380,14 +381,15 @@ describe("database migrations, seed data, and reset behavior", () => {
     ]);
   });
 
-  it("backfills legacy breaker configuration during a migrate-only upgrade", async () => {
+  it("backfills legacy breaker and retry configuration during a migrate-only upgrade", async () => {
     await runSeedScript();
     await withDatabase(async (sql) => {
       await sql`
         UPDATE demo_presets
         SET backpressure_config = (backpressure_config
           - 'circuitBreakerFailureThreshold'
-          - 'circuitBreakerResetTimeoutMs')
+          - 'circuitBreakerResetTimeoutMs'
+          - 'retryPolicy')
         WHERE slug = 'admin-smoke-steady'
       `;
       await sql`
@@ -397,14 +399,41 @@ describe("database migrations, seed data, and reset behavior", () => {
           '{publicCustomDefaults,backpressureConfig}',
           (policy #> '{publicCustomDefaults,backpressureConfig}')
             - 'circuitBreakerFailureThreshold'
-            - 'circuitBreakerResetTimeoutMs',
+            - 'circuitBreakerResetTimeoutMs'
+            - 'retryPolicy',
           true
         )
         WHERE id = 'active'
       `;
       await sql`
+        INSERT INTO demo_runs (
+          id, preset_id, preset_name, operator_mode, status, traffic_status, config_snapshot
+        )
+        SELECT
+          '55555555-5555-4555-8555-555555555558',
+          id,
+          display ->> 'name',
+          'admin',
+          'completed',
+          'succeeded',
+          jsonb_build_object(
+            'trafficConfig', traffic_config,
+            'inventoryConfig', inventory_config,
+            'erpConfig', erp_config,
+            'backpressureConfig',
+              (backpressure_config || jsonb_build_object(
+                'circuitBreakerFailureThreshold', 5,
+                'circuitBreakerResetTimeoutMs', 10000
+              )) - 'retryPolicy'
+          )
+        FROM demo_presets
+        WHERE slug = 'admin-smoke-steady'
+      `;
+      await sql`
         DELETE FROM drizzle.__drizzle_migrations
-        WHERE id = (SELECT max(id) FROM drizzle.__drizzle_migrations)
+        WHERE id IN (
+          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 2
+        )
       `;
     });
 
@@ -427,21 +456,35 @@ describe("database migrations, seed data, and reset behavior", () => {
         WHERE id = 'active'
       `,
     );
+    const [legacyRun] = await withDatabase(
+      (sql) => sql<{ config_snapshot: unknown }[]>`
+        SELECT config_snapshot
+        FROM demo_runs
+        WHERE id = '55555555-5555-4555-8555-555555555558'
+      `,
+    );
     expect(preset?.backpressure_config).toMatchObject({
       circuitBreakerFailureThreshold: 5,
       circuitBreakerResetTimeoutMs: 10_000,
       queueName: "orders:process",
+      retryPolicy: { maxAttempts: 4, initialBackoffMs: 500 },
     });
     expect(policy?.policy).toMatchObject({
       publicCustomDefaults: {
         backpressureConfig: {
           circuitBreakerFailureThreshold: 5,
           circuitBreakerResetTimeoutMs: 10_000,
+          retryPolicy: { maxAttempts: 4, initialBackoffMs: 500 },
         },
       },
       publicRunBudget: { windowSeconds: 999 },
     });
     expect(() => publicRuntimePolicySchema.parse(policy?.policy)).not.toThrow();
+    const migratedSnapshot = acceptedRunConfigSnapshotSchema.parse(legacyRun?.config_snapshot);
+    expect(migratedSnapshot.backpressureConfig.retryPolicy).toEqual({
+      maxAttempts: 4,
+      initialBackoffMs: 500,
+    });
   });
 
   it("isolates scoped ERP circuit snapshots, applies TTL, and clears scoped and legacy state", async () => {
@@ -676,6 +719,7 @@ describe("database migrations, seed data, and reset behavior", () => {
           circuitBreakerFailureThreshold: 7,
           circuitBreakerResetTimeoutMs: 12_345,
           orderProcessConcurrency: 5,
+          retryPolicy: { maxAttempts: 4, initialBackoffMs: 500 },
         }),
       },
     ]);

@@ -253,6 +253,7 @@ function configSnapshotFixture() {
       queueName: "orders:process" as const,
       physicalQueueName: "orders-process" as const,
       orderProcessConcurrency: 5,
+      retryPolicy: { maxAttempts: 4, initialBackoffMs: 500 },
       drainTimeoutSeconds: 300,
       pendingPersistenceRetryAfterSeconds: 30,
       circuitBreakerFailureThreshold: 5,

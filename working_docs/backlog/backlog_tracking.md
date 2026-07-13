@@ -33,9 +33,9 @@ Replace `⬜` with `✅` when a task is complete. Optional `⏳` for work in pro
 
 ✅ [Task 15: Scope the ERP circuit breaker per run (and honor snapshot breaker thresholds)](./task_15.md)
 
-⬜ [Task 16: Fix notification recovery: retained failed jobs deduplicate the scanner's re-adds](./task_16.md)
+✅ [Task 16: Fix notification recovery: retained failed jobs deduplicate the scanner's re-adds](./task_16.md)
 
-⬜ [Task 17: Apply run-scoped concurrency, retry policy, and backpressure at the queue boundary](./task_17.md)
+✅ [Task 17: Apply run-scoped concurrency, retry policy, and backpressure at the queue boundary](./task_17.md)
 
 ⬜ [Task 18: Restore the public run-start trust boundary: service-token channel, verifiable visitor identity, non-burning budgets](./task_18.md)
 

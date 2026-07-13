@@ -19,7 +19,12 @@ describe("order-processing job publisher", () => {
   it("validates and publishes with the order ID as the idempotent BullMQ job ID", async () => {
     const add = vi.fn().mockResolvedValue(undefined);
     const close = vi.fn().mockResolvedValue(undefined);
-    const publisher = createOrderProcessJobPublisher({ add, close } as OrderProcessQueue);
+    const resolve = vi.fn();
+    const publisher = createOrderProcessJobPublisher(
+      { add, close } as OrderProcessQueue,
+      undefined,
+      { resolve },
+    );
 
     await publisher.enqueue(job);
     await publisher.close();
@@ -30,6 +35,7 @@ describe("order-processing job publisher", () => {
       jobId: job.orderId,
     });
     expect(close).toHaveBeenCalledOnce();
+    expect(resolve).not.toHaveBeenCalled();
   });
 
   it("uses explicit retry options when supplied", async () => {
@@ -37,6 +43,7 @@ describe("order-processing job publisher", () => {
     const publisher = createOrderProcessJobPublisher(
       { add, close: vi.fn().mockResolvedValue(undefined) } as OrderProcessQueue,
       { maxAttempts: 7, backoffBaseMs: 250 },
+      { resolve: vi.fn() },
     );
 
     await publisher.enqueue(job);
@@ -50,12 +57,36 @@ describe("order-processing job publisher", () => {
 
   it("rejects invalid jobs before publishing", async () => {
     const add = vi.fn().mockResolvedValue(undefined);
-    const publisher = createOrderProcessJobPublisher({
-      add,
-      close: vi.fn().mockResolvedValue(undefined),
-    } as OrderProcessQueue);
+    const publisher = createOrderProcessJobPublisher(
+      { add, close: vi.fn().mockResolvedValue(undefined) } as OrderProcessQueue,
+      undefined,
+      { resolve: vi.fn() },
+    );
 
     await expect(publisher.enqueue({ ...job, orderId: "invalid" })).rejects.toThrow();
     expect(add).not.toHaveBeenCalled();
+  });
+
+  it("uses the frozen run retry policy and rejects a missing run", async () => {
+    const add = vi.fn().mockResolvedValue(undefined);
+    const resolve = vi.fn().mockResolvedValue({ maxAttempts: 6, initialBackoffMs: 0 });
+    const publisher = createOrderProcessJobPublisher(
+      { add, close: vi.fn() } as OrderProcessQueue,
+      { maxAttempts: 9, backoffBaseMs: 999 },
+      { resolve },
+    );
+    const runJob = { ...job, runId: "55555555-5555-4555-8555-555555555555" };
+    await publisher.enqueue(runJob);
+    expect(add).toHaveBeenCalledWith(orderProcessJobName, runJob, {
+      attempts: 6,
+      backoff: { type: "exponential", delay: 0 },
+      jobId: job.orderId,
+    });
+
+    resolve.mockResolvedValueOnce(null);
+    await expect(publisher.enqueue(runJob)).rejects.toThrow("snapshot was not found");
+
+    resolve.mockRejectedValueOnce(new Error("malformed accepted snapshot"));
+    await expect(publisher.enqueue(runJob)).rejects.toThrow("malformed accepted snapshot");
   });
 });

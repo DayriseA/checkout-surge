@@ -375,6 +375,7 @@ function acceptedRunConfigSnapshotFixture() {
       queueName: "orders:process" as const,
       physicalQueueName: "orders-process" as const,
       orderProcessConcurrency: 5,
+      retryPolicy: { maxAttempts: 4, initialBackoffMs: 500 },
       drainTimeoutSeconds: 300,
       pendingPersistenceRetryAfterSeconds: 30,
       circuitBreakerFailureThreshold: 5,
@@ -2147,10 +2148,11 @@ describe("API buy persistence", () => {
     }
 
     const redisUrl = process.env.TEST_REDIS_URL ?? "redis://localhost:6380";
-    const publisher = createBullMqOrderProcessJobPublisher({
-      url: redisUrl,
-      maxRetriesPerRequest: 3,
-    });
+    const publisher = createBullMqOrderProcessJobPublisher(
+      { url: redisUrl, maxRetriesPerRequest: 3 },
+      undefined,
+      { resolve: vi.fn() },
+    );
     const queue = new Queue<OrderProcessJob, void, typeof orderProcessJobName>(
       orderProcessBullMqQueueName,
       { connection: { url: redisUrl, maxRetriesPerRequest: 3 } },
@@ -2358,10 +2360,11 @@ describe("API buy persistence", () => {
     }
 
     const redisUrl = process.env.TEST_REDIS_URL ?? "redis://localhost:6380";
-    const publisher = createBullMqOrderProcessJobPublisher({
-      url: redisUrl,
-      maxRetriesPerRequest: 3,
-    });
+    const publisher = createBullMqOrderProcessJobPublisher(
+      { url: redisUrl, maxRetriesPerRequest: 3 },
+      undefined,
+      { resolve: vi.fn() },
+    );
     const queue = new Queue<OrderProcessJob, void, typeof orderProcessJobName>(
       orderProcessBullMqQueueName,
       { connection: { url: redisUrl, maxRetriesPerRequest: 3 } },

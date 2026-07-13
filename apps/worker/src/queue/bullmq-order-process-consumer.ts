@@ -8,6 +8,7 @@ import {
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { type ConnectionOptions, DelayedError, type Job, Worker } from "bullmq";
 import { ErpCircuitOpenError } from "../application/erp-circuit-breaker.js";
+import type { OrderProcessAdmission } from "../application/order-process-admission.js";
 import type { OrderProcessJobHandler } from "../application/order-process-job-handler.js";
 import type { OrderRecoveryPersistence } from "../application/order-recovery-scanner.js";
 import {
@@ -31,6 +32,8 @@ export interface CreateBullMqOrderProcessConsumerOptions {
   logger: CheckoutSurgeLogger;
   reportFailure?: (report: OrderProcessJobFailureReport) => void | Promise<void>;
   recovery?: Pick<OrderRecoveryPersistence, "recordRecoverable" | "recordDeadLetter">;
+  admission?: OrderProcessAdmission;
+  admissionDelayMs?: number;
 }
 
 export const orderProcessQueueNotReadyMessage =
@@ -170,8 +173,12 @@ export function createBullMqOrderProcessConsumer(
     async close() {
       isClosing = true;
       isQueueConnectionReady = false;
-      await worker.close();
-      await runPromise;
+      try {
+        await worker.close();
+        await runPromise;
+      } finally {
+        await options.admission?.close();
+      }
     },
     isRunning: () => worker.isRunning(),
     async checkConnectivity() {
@@ -216,7 +223,7 @@ function correlationLogContext(data: unknown): { correlationId?: string } {
   return {};
 }
 
-async function processJob(
+export async function processJob(
   job: Job<OrderProcessJob, void, typeof orderProcessJobName>,
   token: string | undefined,
   options: CreateBullMqOrderProcessConsumerOptions,
@@ -249,13 +256,33 @@ async function processJob(
       return;
     }
     const recovery = readRecoveryMetadata(job.id, parsed.data.orderId);
-    await options.handler.handle(parsed.data, {
-      attemptNumber: job.attemptsMade + 1,
-      attemptsMade: job.attemptsMade,
-      maxAttempts: normalizeMaxAttempts(job.opts.attempts),
-      deliveryId: String(job.id ?? parsed.data.orderId),
-      ...(recovery ? { recoveryKey: recovery.recoveryKey, deliveryId: recovery.deliveryId } : {}),
-    });
+    const lease = await options.admission?.tryAcquire(parsed.data);
+    if (options.admission && !lease) {
+      const baseDelay = options.admissionDelayMs ?? 100;
+      const jitter = Math.floor(Math.random() * Math.max(1, baseDelay));
+      await job.moveToDelayed(Date.now() + baseDelay + jitter, token);
+      throw new DelayedError();
+    }
+    try {
+      await options.handler.handle(parsed.data, {
+        attemptNumber: job.attemptsMade + 1,
+        attemptsMade: job.attemptsMade,
+        maxAttempts: normalizeMaxAttempts(job.opts.attempts),
+        deliveryId: String(job.id ?? parsed.data.orderId),
+        ...(recovery ? { recoveryKey: recovery.recoveryKey, deliveryId: recovery.deliveryId } : {}),
+      });
+    } finally {
+      if (lease) {
+        try {
+          await lease.release();
+        } catch (releaseError) {
+          options.logger.error(
+            { err: releaseError, jobId: job.id, ...correlationLogContext(parsed.data) },
+            "Order-processing admission lease release failed; the lease will expire.",
+          );
+        }
+      }
+    }
   } catch (error) {
     if (error instanceof OrderNotFoundError || error instanceof OrderJobIdentityMismatchError) {
       await recordDeadLetter(options, job, {

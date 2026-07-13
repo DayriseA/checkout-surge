@@ -19,7 +19,6 @@ interface RunCircuitBreakerEntry {
 }
 
 export class RunScopedBackpressureOrderConfirmation implements OrderConfirmation {
-  private readonly semaphores = new Map<string, Semaphore>();
   private readonly runCircuitBreakers = new Map<string, RunCircuitBreakerEntry>();
 
   constructor(
@@ -46,13 +45,11 @@ export class RunScopedBackpressureOrderConfirmation implements OrderConfirmation
 
     const nowMs = this.nowMs();
     this.evictExpiredCircuitBreakers(nowMs);
-    const concurrency = snapshot.backpressureConfig.orderProcessConcurrency;
-    const semaphore = this.getSemaphore(job.runId, concurrency);
     const entry = this.getCircuitBreaker(job.runId, snapshot, nowMs);
-    if (!entry) return semaphore.run(() => this.options.inner.confirm(job, delivery));
+    if (!entry) return this.options.inner.confirm(job, delivery);
     entry.activeConfirmationCount += 1;
     try {
-      return await semaphore.run(() => entry.confirmation.confirm(job, delivery));
+      return await entry.confirmation.confirm(job, delivery);
     } finally {
       entry.activeConfirmationCount -= 1;
       entry.lastUsedAtMs = this.nowMs();
@@ -109,56 +106,8 @@ export class RunScopedBackpressureOrderConfirmation implements OrderConfirmation
       // Observability must never prevent the explicitly configured fallback path.
     }
   }
-
-  private getSemaphore(runId: string, concurrency: number): Semaphore {
-    const key = `${runId}:${concurrency}`;
-    let semaphore = this.semaphores.get(key);
-
-    if (!semaphore) {
-      semaphore = new Semaphore(concurrency);
-      this.semaphores.set(key, semaphore);
-    }
-
-    return semaphore;
-  }
 }
 
 function doubledDurationMs(durationMs: number): number {
   return durationMs > Number.MAX_SAFE_INTEGER / 2 ? Number.MAX_SAFE_INTEGER : durationMs * 2;
-}
-
-class Semaphore {
-  private active = 0;
-  private readonly waiters: Array<() => void> = [];
-
-  constructor(private readonly maxActive: number) {}
-
-  async run<T>(work: () => Promise<T>): Promise<T> {
-    await this.acquire();
-    try {
-      return await work();
-    } finally {
-      this.release();
-    }
-  }
-
-  private acquire(): Promise<void> {
-    if (this.active < this.maxActive) {
-      this.active += 1;
-      return Promise.resolve();
-    }
-
-    return new Promise((resolve) => {
-      this.waiters.push(() => {
-        this.active += 1;
-        resolve();
-      });
-    });
-  }
-
-  private release(): void {
-    this.active -= 1;
-    const next = this.waiters.shift();
-    next?.();
-  }
 }

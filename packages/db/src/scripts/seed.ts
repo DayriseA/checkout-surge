@@ -48,6 +48,8 @@ const redisUrl = requireEnv("REDIS_URL");
 const now = new Date();
 const circuitBreakerFailureThreshold = optionalIntegerEnv("ERP_CIRCUIT_FAILURE_THRESHOLD", 5);
 const circuitBreakerResetTimeoutMs = optionalIntegerEnv("ERP_CIRCUIT_RESET_TIMEOUT_MS", 10_000);
+const orderProcessMaxAttempts = optionalIntegerEnv("ORDER_PROCESS_MAX_ATTEMPTS", 4);
+const orderProcessInitialBackoffMs = optionalIntegerEnv("ORDER_PROCESS_BACKOFF_BASE_MS", 500);
 
 const connection = createDatabaseConnection(databaseUrl, { max: 1 });
 
@@ -164,12 +166,15 @@ try {
           || CASE WHEN coalesce(${demoPresets.backpressureConfig}, '{}'::jsonb) ? 'circuitBreakerFailureThreshold'
             THEN '{}'::jsonb ELSE jsonb_build_object('circuitBreakerFailureThreshold', ${circuitBreakerFailureThreshold}::int) END
           || CASE WHEN coalesce(${demoPresets.backpressureConfig}, '{}'::jsonb) ? 'circuitBreakerResetTimeoutMs'
-            THEN '{}'::jsonb ELSE jsonb_build_object('circuitBreakerResetTimeoutMs', ${circuitBreakerResetTimeoutMs}::int) END`,
+            THEN '{}'::jsonb ELSE jsonb_build_object('circuitBreakerResetTimeoutMs', ${circuitBreakerResetTimeoutMs}::int) END
+          || CASE WHEN coalesce(${demoPresets.backpressureConfig}, '{}'::jsonb) ? 'retryPolicy'
+            THEN '{}'::jsonb ELSE jsonb_build_object('retryPolicy', jsonb_build_object('maxAttempts', ${orderProcessMaxAttempts}::int, 'initialBackoffMs', ${orderProcessInitialBackoffMs}::int)) END`,
         updatedAt: now,
       })
       .where(
         sql`NOT (coalesce(${demoPresets.backpressureConfig}, '{}'::jsonb) ? 'circuitBreakerFailureThreshold')
-          OR NOT (coalesce(${demoPresets.backpressureConfig}, '{}'::jsonb) ? 'circuitBreakerResetTimeoutMs')`,
+          OR NOT (coalesce(${demoPresets.backpressureConfig}, '{}'::jsonb) ? 'circuitBreakerResetTimeoutMs')
+          OR NOT (coalesce(${demoPresets.backpressureConfig}, '{}'::jsonb) ? 'retryPolicy')`,
       );
 
     await tx
@@ -186,6 +191,8 @@ try {
                   THEN '{}'::jsonb ELSE jsonb_build_object('circuitBreakerFailureThreshold', ${circuitBreakerFailureThreshold}::int) END
                 || CASE WHEN coalesce(${publicRuntimePolicies.policy} #> '{publicCustomDefaults,backpressureConfig}', '{}'::jsonb) ? 'circuitBreakerResetTimeoutMs'
                   THEN '{}'::jsonb ELSE jsonb_build_object('circuitBreakerResetTimeoutMs', ${circuitBreakerResetTimeoutMs}::int) END
+                || CASE WHEN coalesce(${publicRuntimePolicies.policy} #> '{publicCustomDefaults,backpressureConfig}', '{}'::jsonb) ? 'retryPolicy'
+                  THEN '{}'::jsonb ELSE jsonb_build_object('retryPolicy', jsonb_build_object('maxAttempts', ${orderProcessMaxAttempts}::int, 'initialBackoffMs', ${orderProcessInitialBackoffMs}::int)) END
             ),
           true
         )`,
@@ -193,7 +200,8 @@ try {
       })
       .where(
         sql`NOT (coalesce(${publicRuntimePolicies.policy} #> '{publicCustomDefaults,backpressureConfig}', '{}'::jsonb) ? 'circuitBreakerFailureThreshold')
-          OR NOT (coalesce(${publicRuntimePolicies.policy} #> '{publicCustomDefaults,backpressureConfig}', '{}'::jsonb) ? 'circuitBreakerResetTimeoutMs')`,
+          OR NOT (coalesce(${publicRuntimePolicies.policy} #> '{publicCustomDefaults,backpressureConfig}', '{}'::jsonb) ? 'circuitBreakerResetTimeoutMs')
+          OR NOT (coalesce(${publicRuntimePolicies.policy} #> '{publicCustomDefaults,backpressureConfig}', '{}'::jsonb) ? 'retryPolicy')`,
       );
   });
 
@@ -452,6 +460,10 @@ function backpressureConfig(options: { orderProcessConcurrency: number }): JsonR
     queueName: "orders:process",
     physicalQueueName: "orders-process",
     orderProcessConcurrency: options.orderProcessConcurrency,
+    retryPolicy: {
+      maxAttempts: orderProcessMaxAttempts,
+      initialBackoffMs: orderProcessInitialBackoffMs,
+    },
     drainTimeoutSeconds: optionalIntegerEnv("DEMO_RUN_DRAIN_TIMEOUT_SECONDS", 300),
     pendingPersistenceRetryAfterSeconds: optionalIntegerEnv(
       "PENDING_PERSISTENCE_RETRY_AFTER_SECONDS",

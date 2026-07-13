@@ -37,6 +37,7 @@ import { createBullMqNotificationRecordConsumer } from "./queue/bullmq-notificat
 import { createBullMqNotificationRecordPublisher } from "./queue/bullmq-notification-record-publisher.js";
 import { createBullMqOrderProcessConsumer } from "./queue/bullmq-order-process-consumer.js";
 import { createBullMqOrderProcessJobPublisher } from "./queue/bullmq-order-process-job-publisher.js";
+import { RedisOrderProcessAdmission } from "./queue/redis-order-process-admission.js";
 import { loadWorkerConfig } from "./runtime/config.js";
 import { createWorkerReadiness } from "./runtime/readiness.js";
 import { createWorkerRuntime } from "./runtime/worker-runtime.js";
@@ -156,10 +157,14 @@ export async function startWorker(): Promise<void> {
       maxRetriesPerRequest: null,
     },
   });
-  const orderProcessJobPublisher = createBullMqOrderProcessJobPublisher({
-    url: config.redisUrl,
-    maxRetriesPerRequest: null,
-  });
+  const orderProcessJobPublisher = createBullMqOrderProcessJobPublisher(
+    {
+      url: config.redisUrl,
+      maxRetriesPerRequest: null,
+    },
+    undefined,
+    runConfigReader,
+  );
   const orderRecoveryPersistence = new PostgresOrderRecoveryPersistence(database.db);
   const orderRecoveryScanner = createOrderRecoveryScanner({
     persistence: orderRecoveryPersistence,
@@ -216,6 +221,16 @@ export async function startWorker(): Promise<void> {
       maxRetriesPerRequest: null,
     },
     concurrency: config.orderProcessConcurrency,
+    admission: new RedisOrderProcessAdmission({
+      redis,
+      runConfigReader,
+      fallbackConcurrency: config.orderProcessConcurrency,
+      onError: (operation, error) =>
+        logger.error(
+          { err: error, operation },
+          "Order-processing admission lease operation failed.",
+        ),
+    }),
     handler: createOrderProcessJobHandler({
       confirmation: new RunScopedBackpressureOrderConfirmation({
         runConfigReader,

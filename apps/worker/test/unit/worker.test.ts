@@ -18,7 +18,7 @@ describe("worker configuration", () => {
       healthHost: "0.0.0.0",
       healthPort: 4300,
       redisUrl: "redis://localhost:6379",
-      orderProcessConcurrency: 5,
+      orderProcessConcurrency: 10,
       notificationRecordConcurrency: 5,
       notificationRecoveryScanIntervalMs: 1000,
       notificationRecoveryBatchSize: 100,
@@ -64,6 +64,13 @@ describe("worker configuration", () => {
         ORDER_PROCESS_CONCURRENCY: "0",
       }),
     ).toThrow("ORDER_PROCESS_CONCURRENCY must be a positive integer");
+    expect(() =>
+      loadWorkerConfig({
+        DATABASE_URL: "postgresql://localhost/test",
+        REDIS_URL: "redis://localhost:6379",
+        ORDER_PROCESS_CONCURRENCY: "9",
+      }),
+    ).toThrow("must be at least the accepted run concurrency cap (10)");
     expect(() =>
       loadWorkerConfig({
         DATABASE_URL: "postgresql://localhost/test",

@@ -74,11 +74,21 @@ export const erpRunConfigSchema = z
   .strict();
 export type ErpRunConfig = z.infer<typeof erpRunConfigSchema>;
 
+export const orderProcessConcurrencyHardCap = 10;
+
+export const retryPolicySchema = z
+  .object({
+    maxAttempts: positiveIntegerSchema,
+    initialBackoffMs: nonnegativeIntegerSchema,
+  })
+  .strict();
+
 export const backpressureConfigSchema = z
   .object({
     queueName: z.literal(orderProcessQueueName),
     physicalQueueName: z.literal(orderProcessBullMqQueueName),
-    orderProcessConcurrency: positiveIntegerSchema,
+    orderProcessConcurrency: positiveIntegerSchema.max(orderProcessConcurrencyHardCap),
+    retryPolicy: retryPolicySchema,
     drainTimeoutSeconds: positiveIntegerSchema,
     pendingPersistenceRetryAfterSeconds: positiveIntegerSchema,
     circuitBreakerFailureThreshold: positiveIntegerSchema,

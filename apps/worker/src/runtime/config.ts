@@ -1,3 +1,5 @@
+import { orderProcessConcurrencyHardCap } from "@checkout-surge/contracts";
+
 export interface WorkerConfig {
   databaseUrl: string;
   healthHost: string;
@@ -22,7 +24,7 @@ export interface WorkerConfig {
 }
 
 export function loadWorkerConfig(env: NodeJS.ProcessEnv): WorkerConfig {
-  return {
+  const config = {
     databaseUrl: requireEnv(env, "DATABASE_URL"),
     healthHost: env.HEALTH_HOST?.trim() || env.HOST?.trim() || "0.0.0.0",
     healthPort: parsePositiveInteger(env.HEALTH_PORT, "HEALTH_PORT", 4300),
@@ -30,7 +32,7 @@ export function loadWorkerConfig(env: NodeJS.ProcessEnv): WorkerConfig {
     orderProcessConcurrency: parsePositiveInteger(
       env.ORDER_PROCESS_CONCURRENCY,
       "ORDER_PROCESS_CONCURRENCY",
-      5,
+      orderProcessConcurrencyHardCap,
     ),
     notificationRecordConcurrency: parsePositiveInteger(
       env.NOTIFICATION_RECORD_CONCURRENCY,
@@ -107,6 +109,12 @@ export function loadWorkerConfig(env: NodeJS.ProcessEnv): WorkerConfig {
       10_000,
     ),
   };
+  if (config.orderProcessConcurrency < orderProcessConcurrencyHardCap) {
+    throw new Error(
+      `ORDER_PROCESS_CONCURRENCY must be at least the accepted run concurrency cap (${orderProcessConcurrencyHardCap}).`,
+    );
+  }
+  return config;
 }
 
 function requireEnv(env: NodeJS.ProcessEnv, name: string): string {
