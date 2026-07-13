@@ -3,45 +3,22 @@ import {
   adminPublicRuntimePolicyResponseSchema,
   adminPublicRuntimePolicyUpdateRequestSchema,
 } from "@checkout-surge/contracts";
-import {
-  apiBaseUrl,
-  controlTokenHeaders,
-  proxyJson,
-  readJsonRequest,
-  requireAdminSession,
-  requireControlServiceToken,
-  validateJson,
-} from "../../../../lib/server/backend-proxy";
+import { apiBaseUrl, readJsonRequest, validateJson } from "../../../../lib/server/backend-proxy";
+import { authorizeAdminProxy } from "../../../../lib/server/admin-proxy";
 
 export async function GET(request: Request): Promise<Response> {
-  const unauthorized = requireAdminSession(request);
-  if (unauthorized) {
-    return unauthorized;
-  }
-
-  const token = requireControlServiceToken();
-  if (token instanceof Response) {
-    return token;
-  }
-
-  return proxyJson({
+  const admin = authorizeAdminProxy(request);
+  if (admin instanceof Response) return admin;
+  return admin.proxyJson({
     url: `${apiBaseUrl()}${adminPublicRuntimePolicyPath}`,
     method: "GET",
     schema: adminPublicRuntimePolicyResponseSchema,
-    headers: controlTokenHeaders(token),
   });
 }
 
 export async function PUT(request: Request): Promise<Response> {
-  const unauthorized = requireAdminSession(request);
-  if (unauthorized) {
-    return unauthorized;
-  }
-
-  const token = requireControlServiceToken();
-  if (token instanceof Response) {
-    return token;
-  }
+  const admin = authorizeAdminProxy(request);
+  if (admin instanceof Response) return admin;
 
   const body = await readJsonRequest(request);
   if (body instanceof Response) {
@@ -53,11 +30,10 @@ export async function PUT(request: Request): Promise<Response> {
     return parsed;
   }
 
-  return proxyJson({
+  return admin.proxyJson({
     url: `${apiBaseUrl()}${adminPublicRuntimePolicyPath}`,
     method: "PUT",
     schema: adminPublicRuntimePolicyResponseSchema,
-    headers: controlTokenHeaders(token),
     body: parsed,
   });
 }

@@ -11,6 +11,9 @@
 	}
 
 	handle {
-		reverse_proxy web:3000
+		reverse_proxy web:3000 {
+			header_up X-Checkout-Surge-Client-Id {remote_host}
+			header_up X-Checkout-Surge-Client-Attestation {$ADMIN_EDGE_ATTESTATION_SECRET}
+		}
 	}
 }

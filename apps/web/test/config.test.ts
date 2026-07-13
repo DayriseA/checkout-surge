@@ -7,6 +7,7 @@ const validSecrets = {
   ADMIN_DASHBOARD_PASSPHRASE: "admin-passphrase",
   ADMIN_SESSION_SECRET: "session-secret",
   PUBLIC_CLIENT_COOKIE_SECRET: "visitor-cookie-secret",
+  WEB_ORIGIN: "http://dashboard.local",
 };
 const originalEnv = { ...process.env };
 
@@ -49,7 +50,38 @@ describe("web server secret configuration", () => {
       adminDashboardPassphrase: "admin-passphrase",
       adminSessionSecret: "session-secret",
       publicClientCookieSecret: "visitor-cookie-secret",
+      adminSessionMaxAgeSeconds: 28_800,
+      webOrigins: ["http://dashboard.local"],
+      adminLoginClientAttempts: 5,
+      adminLoginGlobalAttempts: 20,
+      adminLoginWindowSeconds: 60,
+      redisUrl: null,
+      adminEdgeAttestationSecret: null,
     });
+  });
+
+  it.each([
+    ["WEB_ORIGIN", "https://dashboard.local/path"],
+    ["WEB_ORIGIN", "https://dashboard.local,http://localhost:3000"],
+    ["ADMIN_SESSION_MAX_AGE_SECONDS", "0"],
+    ["ADMIN_LOGIN_CLIENT_ATTEMPTS", "2.5"],
+    ["ADMIN_LOGIN_GLOBAL_ATTEMPTS", ""],
+    ["ADMIN_LOGIN_WINDOW_SECONDS", "nope"],
+  ])("rejects invalid admin setting %s=%s", (name, value) => {
+    expect(() => loadWebServerConfig({ ...validSecrets, [name]: value })).toThrow(
+      /Unsafe web admin security configuration/,
+    );
+  });
+
+  it("requires shared limiter and attestation configuration in production", () => {
+    expect(() => loadWebServerConfig({ ...validSecrets, NODE_ENV: "production" })).toThrow();
+    const config = loadWebServerConfig({
+      ...validSecrets,
+      NODE_ENV: "production",
+      REDIS_URL: "redis://redis:6379",
+      ADMIN_EDGE_ATTESTATION_SECRET: "edge-attestation",
+    });
+    expect(config.webOrigins).toEqual(["http://dashboard.local"]);
   });
 
   it("rejects a public cookie secret shorter than 16 UTF-8 bytes", () => {

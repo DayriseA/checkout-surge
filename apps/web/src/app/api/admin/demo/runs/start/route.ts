@@ -1,29 +1,14 @@
 import {
-  demoRunOperatorModeHeaderName,
   startDemoRunPath,
   startDemoRunRequestSchema,
   startDemoRunResponseSchema,
 } from "@checkout-surge/contracts";
-import {
-  apiBaseUrl,
-  controlTokenHeaders,
-  proxyJson,
-  readJsonRequest,
-  requireAdminSession,
-  requireControlServiceToken,
-  validateJson,
-} from "../../../../../lib/server/backend-proxy";
+import { apiBaseUrl, readJsonRequest, validateJson } from "../../../../../lib/server/backend-proxy";
+import { authorizeAdminProxy } from "../../../../../lib/server/admin-proxy";
 
 export async function POST(request: Request): Promise<Response> {
-  const unauthorized = requireAdminSession(request);
-  if (unauthorized) {
-    return unauthorized;
-  }
-
-  const token = requireControlServiceToken();
-  if (token instanceof Response) {
-    return token;
-  }
+  const admin = authorizeAdminProxy(request, { operatorMode: "admin" });
+  if (admin instanceof Response) return admin;
 
   const body = await readJsonRequest(request);
   if (body instanceof Response) {
@@ -35,14 +20,10 @@ export async function POST(request: Request): Promise<Response> {
     return payload;
   }
 
-  return proxyJson({
+  return admin.proxyJson({
     url: `${apiBaseUrl()}${startDemoRunPath}`,
     method: "POST",
     schema: startDemoRunResponseSchema,
     body: payload,
-    headers: {
-      ...controlTokenHeaders(token),
-      [demoRunOperatorModeHeaderName]: "admin",
-    },
   });
 }

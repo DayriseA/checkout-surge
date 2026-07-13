@@ -2,12 +2,20 @@ import {
   isValidPublicVisitorCredentialSecret,
   publicVisitorCredentialMinimumSecretBytes,
 } from "@checkout-surge/contracts/public-visitor-credential";
+import { parseAdminSecurityConfig } from "./admin-config";
 
 export interface WebServerConfig {
   controlServiceToken: string;
   adminDashboardPassphrase: string;
   adminSessionSecret: string;
   publicClientCookieSecret: string;
+  adminSessionMaxAgeSeconds: number;
+  webOrigins: readonly string[];
+  adminLoginClientAttempts: number;
+  adminLoginGlobalAttempts: number;
+  adminLoginWindowSeconds: number;
+  redisUrl: string | null;
+  adminEdgeAttestationSecret: string | null;
 }
 
 const unsafeSecretValues = new Set([
@@ -16,6 +24,7 @@ const unsafeSecretValues = new Set([
   "change-me-admin-passphrase",
   "change-me-admin-session-secret",
   "change-me-public-client-cookie-secret",
+  "change-me-admin-edge-attestation-secret",
 ]);
 
 const requiredSecrets = [
@@ -53,12 +62,37 @@ export function loadWebServerConfig(env: Record<string, string | undefined>): We
   if (invalid.length > 0) {
     throw new Error(`Unsafe web secrets: ${invalid.join("; ")}.`);
   }
+  const adminSecurity = parseAdminSecurityConfig(env);
+  if (!adminSecurity) throw new Error("Unsafe web admin security configuration.");
+  if (
+    adminSecurity.edgeAttestationSecret &&
+    unsafeSecretValues.has(adminSecurity.edgeAttestationSecret)
+  ) {
+    throw new Error(
+      "Unsafe web admin security configuration: ADMIN_EDGE_ATTESTATION_SECRET uses a known placeholder.",
+    );
+  }
+  if (adminSecurity.redisUrl) {
+    try {
+      const redisUrl = new URL(adminSecurity.redisUrl);
+      if (redisUrl.protocol !== "redis:" && redisUrl.protocol !== "rediss:") throw new Error();
+    } catch {
+      throw new Error("Unsafe web admin security configuration: REDIS_URL must be a redis URL.");
+    }
+  }
 
   return {
     controlServiceToken: env.CONTROL_SERVICE_TOKEN?.trim() ?? "",
     adminDashboardPassphrase: env.ADMIN_DASHBOARD_PASSPHRASE?.trim() ?? "",
     adminSessionSecret: env.ADMIN_SESSION_SECRET?.trim() ?? "",
     publicClientCookieSecret: env.PUBLIC_CLIENT_COOKIE_SECRET?.trim() ?? "",
+    adminSessionMaxAgeSeconds: adminSecurity.sessionMaxAgeSeconds,
+    webOrigins: adminSecurity.allowedOrigins,
+    adminLoginClientAttempts: adminSecurity.loginClientAttempts,
+    adminLoginGlobalAttempts: adminSecurity.loginGlobalAttempts,
+    adminLoginWindowSeconds: adminSecurity.loginWindowSeconds,
+    redisUrl: adminSecurity.redisUrl,
+    adminEdgeAttestationSecret: adminSecurity.edgeAttestationSecret,
   };
 }
 

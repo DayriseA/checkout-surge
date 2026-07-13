@@ -1,27 +1,13 @@
 import { adminPresetListPath, adminPresetListResponseSchema } from "@checkout-surge/contracts";
-import {
-  apiBaseUrl,
-  controlTokenHeaders,
-  proxyJson,
-  requireAdminSession,
-  requireControlServiceToken,
-} from "../../../../lib/server/backend-proxy";
+import { authorizeAdminProxy } from "../../../../lib/server/admin-proxy";
+import { apiBaseUrl } from "../../../../lib/server/backend-proxy";
 
 export async function GET(request: Request): Promise<Response> {
-  const unauthorized = requireAdminSession(request);
-  if (unauthorized) {
-    return unauthorized;
-  }
-
-  const token = requireControlServiceToken();
-  if (token instanceof Response) {
-    return token;
-  }
-
-  return proxyJson({
+  const admin = authorizeAdminProxy(request);
+  if (admin instanceof Response) return admin;
+  return admin.proxyJson({
     url: `${apiBaseUrl()}${adminPresetListPath}`,
     method: "GET",
     schema: adminPresetListResponseSchema,
-    headers: controlTokenHeaders(token),
   });
 }

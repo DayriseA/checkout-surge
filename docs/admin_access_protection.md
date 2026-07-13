@@ -44,6 +44,10 @@ Use a lightweight server-side dashboard session/proxy model:
 
 The shared secret or passphrase must never be exposed through browser-readable JavaScript, `NEXT_PUBLIC_*` variables, or persisted client state. Frontend button visibility is only a usability layer; backend and service enforcement are the source of truth.
 
+Unsafe browser admin requests must carry an exact `Origin` matching `WEB_ORIGIN`. Admin login attempts use bounded per-client and global windows in shared Redis in production and fail closed when Redis is unavailable. Caddy overwrites the internal client-identity and attestation headers; the web service accepts that identity only when the server-only `ADMIN_EDGE_ATTESTATION_SECRET` matches. Direct or host-native requests without that trusted edge assertion share the conservative `unknown` bucket; `Forwarded` and `X-Forwarded-For` are never trusted. The in-memory limiter is restricted to non-production development/test processes and does not provide multi-instance enforcement.
+
+`WEB_ORIGIN` is a comma-separated exact allowlist of canonical HTTP or HTTPS origins. Entries with credentials, paths, queries, fragments, empty values, or mixed HTTP/HTTPS schemes are invalid. `ADMIN_SESSION_MAX_AGE_SECONDS`, `ADMIN_LOGIN_CLIENT_ATTEMPTS`, `ADMIN_LOGIN_GLOBAL_ATTEMPTS`, and `ADMIN_LOGIN_WINDOW_SECONDS` must be positive integers; only absent values receive the documented example defaults. Production additionally requires a valid `REDIS_URL` and non-placeholder `ADMIN_EDGE_ATTESTATION_SECRET`. Cookie `Secure` is derived only from the validated origin scheme: every HTTPS deployment is secure, while an intentional HTTP origin remains usable even when the production server build is exercised locally.
+
 Direct service endpoints that mutate demo state or start load must reject unauthenticated requests even if the dashboard hides the corresponding control.
 
 ---

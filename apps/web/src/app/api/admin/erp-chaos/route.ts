@@ -4,14 +4,12 @@ import {
   erpChaosStatusSchema,
 } from "@checkout-surge/contracts";
 import {
-  controlTokenHeaders,
   mockErpBaseUrl,
   proxyJson,
   readJsonRequest,
-  requireAdminSession,
-  requireControlServiceToken,
   validateJson,
 } from "../../../lib/server/backend-proxy";
+import { authorizeAdminProxy } from "../../../lib/server/admin-proxy";
 
 export async function GET(): Promise<Response> {
   return proxyJson({
@@ -22,15 +20,8 @@ export async function GET(): Promise<Response> {
 }
 
 export async function PUT(request: Request): Promise<Response> {
-  const unauthorized = requireAdminSession(request);
-  if (unauthorized) {
-    return unauthorized;
-  }
-
-  const token = requireControlServiceToken();
-  if (token instanceof Response) {
-    return token;
-  }
+  const admin = authorizeAdminProxy(request);
+  if (admin instanceof Response) return admin;
 
   const body = await readJsonRequest(request);
   if (body instanceof Response) {
@@ -42,11 +33,10 @@ export async function PUT(request: Request): Promise<Response> {
     return config;
   }
 
-  return proxyJson({
+  return admin.proxyJson({
     url: `${mockErpBaseUrl()}${erpChaosStatusPath}`,
     method: "PUT",
     schema: erpChaosStatusSchema,
     body: config,
-    headers: controlTokenHeaders(token),
   });
 }

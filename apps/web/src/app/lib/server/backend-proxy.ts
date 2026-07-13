@@ -1,6 +1,4 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
 import { controlServiceTokenHeaderName } from "@checkout-surge/contracts";
-import { adminPassphraseHeaderName } from "../control-paths";
 import { readWebSecret } from "./config";
 
 const DEFAULT_API_BASE_URL = "http://localhost:4000";
@@ -19,80 +17,6 @@ export function apiBaseUrl(): string {
 
 export function mockErpBaseUrl(): string {
   return (process.env.MOCK_ERP_BASE_URL ?? DEFAULT_MOCK_ERP_BASE_URL).replace(/\/+$/, "");
-}
-
-export function requireAdminPassphrase(request: Request): Response | null {
-  const expectedPassphrase = readWebSecret(process.env, "ADMIN_DASHBOARD_PASSPHRASE");
-  if (!expectedPassphrase) {
-    return jsonError(503, "admin_passphrase_not_configured", "Admin controls are not configured.");
-  }
-
-  const suppliedPassphrase = request.headers.get(adminPassphraseHeaderName)?.trim();
-
-  if (suppliedPassphrase === expectedPassphrase) {
-    return null;
-  }
-
-  return jsonError(401, "admin_passphrase_required", "A valid admin passphrase is required.");
-}
-
-export function requireAdminSession(request: Request): Response | null {
-  const secret = readWebSecret(process.env, "ADMIN_SESSION_SECRET");
-  if (!secret) {
-    return jsonError(
-      503,
-      "admin_session_secret_not_configured",
-      "Admin sessions are not configured.",
-    );
-  }
-
-  if (hasValidAdminSession(request, secret)) {
-    return null;
-  }
-
-  return jsonError(401, "admin_session_required", "A valid admin session is required.");
-}
-
-export function createAdminSessionCookie(now: Date = new Date()): string | Response {
-  const secret = readWebSecret(process.env, "ADMIN_SESSION_SECRET");
-  if (!secret) {
-    return jsonError(
-      503,
-      "admin_session_secret_not_configured",
-      "Admin sessions are not configured.",
-    );
-  }
-
-  const maxAgeSeconds = parsePositiveInteger(
-    process.env.ADMIN_SESSION_MAX_AGE_SECONDS,
-    8 * 60 * 60,
-  );
-  const expiresAt = new Date(now.getTime() + maxAgeSeconds * 1000);
-  const payload = `${expiresAt.getTime()}`;
-  const signature = signAdminSession(payload, secret);
-  const value = `${payload}.${signature}`;
-
-  return `${adminSessionCookieName}=${encodeURIComponent(value)}; Max-Age=${maxAgeSeconds}; Path=/; HttpOnly; SameSite=Lax`;
-}
-
-function hasValidAdminSession(request: Request, secret: string): boolean {
-  const value = readCookie(request, adminSessionCookieName);
-  if (!value) {
-    return false;
-  }
-
-  const [expiresAtRaw, signature] = value.split(".");
-  if (!expiresAtRaw || !signature) {
-    return false;
-  }
-
-  const expiresAtMs = Number(expiresAtRaw);
-  if (!Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now()) {
-    return false;
-  }
-
-  const expected = signAdminSession(expiresAtRaw, secret);
-  return safeEqual(signature, expected);
 }
 
 export function requireControlServiceToken(): string | Response {
@@ -186,43 +110,13 @@ export function controlTokenHeaders(token: string): HeadersInit {
   };
 }
 
-function jsonError(status: number, code: string, message: string): Response {
-  return Response.json({ code, message }, { status });
-}
-
-function readCookie(request: Request, name: string): string | null {
-  const cookieHeader = request.headers.get("cookie");
-  if (!cookieHeader) {
-    return null;
-  }
-
-  for (const part of cookieHeader.split(";")) {
-    const [rawName, ...rawValueParts] = part.trim().split("=");
-    if (rawName === name) {
-      return decodeURIComponent(rawValueParts.join("="));
-    }
-  }
-
-  return null;
-}
-
-function signAdminSession(payload: string, secret: string): string {
-  return createHmac("sha256", secret).update(payload).digest("base64url");
-}
-
-function safeEqual(left: string, right: string): boolean {
-  const leftBuffer = Buffer.from(left);
-  const rightBuffer = Buffer.from(right);
-  return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
-}
-
-function parsePositiveInteger(raw: string | undefined, fallback: number): number {
-  if (!raw?.trim()) {
-    return fallback;
-  }
-
-  const parsed = Number(raw);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+export function jsonError(
+  status: number,
+  code: string,
+  message: string,
+  headers?: HeadersInit,
+): Response {
+  return Response.json({ code, message }, { status, ...(headers ? { headers } : {}) });
 }
 
 async function readResponseJson(
