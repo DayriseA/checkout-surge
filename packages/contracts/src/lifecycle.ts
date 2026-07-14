@@ -27,6 +27,7 @@ export const reservationDecisionValues = [
   "idempotency_conflict",
   "quantity_invalid",
   "reservation_pending_persistence",
+  "run_not_accepting_traffic",
 ] as const;
 export const reservationDecisionSchema = z.enum(reservationDecisionValues);
 export type ReservationDecision = z.infer<typeof reservationDecisionSchema>;
@@ -63,6 +64,7 @@ export const simulatedPurchaseStatusValues = [
   "confirmed",
   "failed",
   "reservation_expired",
+  "sale_not_active",
 ] as const;
 export const simulatedPurchaseStatusSchema = z.enum(simulatedPurchaseStatusValues);
 export type SimulatedPurchaseStatus = z.infer<typeof simulatedPurchaseStatusSchema>;

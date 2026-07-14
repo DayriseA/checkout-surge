@@ -100,6 +100,7 @@ function buyStatusCode(outcome: ReturnType<typeof buyResponseSchema.parse>["outc
       return 503;
     case "sold_out":
     case "idempotency_conflict":
+    case "run_not_accepting_traffic":
       return 409;
   }
 }

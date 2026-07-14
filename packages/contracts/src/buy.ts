@@ -1,10 +1,6 @@
 import { z } from "zod";
 import { orderSummarySchema, reservationSummarySchema } from "./entities.js";
-import {
-  reservationDecisionSchema,
-  reservationRejectReasonSchema,
-  simulatedPurchaseStatusSchema,
-} from "./lifecycle.js";
+import { simulatedPurchaseStatusSchema } from "./lifecycle.js";
 import {
   correlationIdSchema,
   idempotencyKeySchema,
@@ -69,27 +65,75 @@ export type ReservationPendingPersistenceResponse = z.infer<
   typeof reservationPendingPersistenceResponseSchema
 >;
 
-export const reservationRejectedResponseSchema = z
+const rejectedResponseBaseShape = {
+  correlationId: correlationIdSchema,
+  timestamp: isoTimestampSchema,
+  reservation: z.null(),
+  order: z.null(),
+} as const;
+
+const soldOutRejectedResponseSchema = z
   .object({
-    outcome: reservationDecisionSchema.extract([
-      "sold_out",
-      "inventory_not_initialized",
-      "idempotency_conflict",
-      "quantity_invalid",
-    ]),
-    reason: reservationRejectReasonSchema,
-    correlationId: correlationIdSchema,
-    timestamp: isoTimestampSchema,
-    reservation: z.null(),
-    order: z.null(),
-    simulatedStatus: simulatedPurchaseStatusSchema.extract(["sold_out"]),
+    outcome: z.literal("sold_out"),
+    reason: z.literal("sold_out"),
+    simulatedStatus: z.literal("sold_out"),
+    ...rejectedResponseBaseShape,
   })
   .strict();
+
+const runNotAcceptingTrafficRejectedResponseSchema = z
+  .object({
+    outcome: z.literal("run_not_accepting_traffic"),
+    reason: z.literal("run_not_accepting_traffic"),
+    simulatedStatus: z.literal("sale_not_active"),
+    ...rejectedResponseBaseShape,
+  })
+  .strict();
+
+const inventoryNotInitializedRejectedResponseSchema = z
+  .object({
+    outcome: z.literal("inventory_not_initialized"),
+    reason: z.literal("inventory_not_initialized"),
+    simulatedStatus: z.null(),
+    ...rejectedResponseBaseShape,
+  })
+  .strict();
+
+const idempotencyConflictRejectedResponseSchema = z
+  .object({
+    outcome: z.literal("idempotency_conflict"),
+    reason: z.literal("idempotency_conflict"),
+    simulatedStatus: z.null(),
+    ...rejectedResponseBaseShape,
+  })
+  .strict();
+
+const quantityInvalidRejectedResponseSchema = z
+  .object({
+    outcome: z.literal("quantity_invalid"),
+    reason: z.literal("quantity_invalid"),
+    simulatedStatus: z.null(),
+    ...rejectedResponseBaseShape,
+  })
+  .strict();
+
+const rejectedResponseVariants = [
+  soldOutRejectedResponseSchema,
+  runNotAcceptingTrafficRejectedResponseSchema,
+  inventoryNotInitializedRejectedResponseSchema,
+  idempotencyConflictRejectedResponseSchema,
+  quantityInvalidRejectedResponseSchema,
+] as const;
+
+export const reservationRejectedResponseSchema = z.discriminatedUnion(
+  "outcome",
+  rejectedResponseVariants,
+);
 export type ReservationRejectedResponse = z.infer<typeof reservationRejectedResponseSchema>;
 
 export const buyResponseSchema = z.discriminatedUnion("outcome", [
   reservationAcceptedResponseSchema,
   reservationPendingPersistenceResponseSchema,
-  reservationRejectedResponseSchema,
+  ...rejectedResponseVariants,
 ]);
 export type BuyResponse = z.infer<typeof buyResponseSchema>;

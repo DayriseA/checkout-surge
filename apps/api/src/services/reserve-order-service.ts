@@ -6,6 +6,7 @@ import {
   type BuyResponse,
   buyResponseSchema,
   type OrderProcessJob,
+  type ReservationRejectedResponse,
   type SecuredReservationHold,
   type StockReservationDecision,
 } from "@checkout-surge/contracts";
@@ -132,6 +133,27 @@ function safelyReportPartialFailure<Report extends ReservationPartialFailureRepo
   }
 }
 
+type RejectedReservationOutcome = ReservationRejectedResponse["outcome"];
+
+function simulatedStatusForRejectedOutcome(
+  outcome: RejectedReservationOutcome,
+): "sold_out" | "sale_not_active" | null {
+  switch (outcome) {
+    case "sold_out":
+      return "sold_out";
+    case "run_not_accepting_traffic":
+      return "sale_not_active";
+    case "inventory_not_initialized":
+    case "idempotency_conflict":
+    case "quantity_invalid":
+      return null;
+    default: {
+      const exhaustive: never = outcome;
+      throw new Error(`Unhandled rejected reservation outcome: ${String(exhaustive)}`);
+    }
+  }
+}
+
 export class ReserveOrderService {
   private readonly persistence: BuyPersistence;
   private readonly stockReservations: StockReservationGateway;
@@ -217,22 +239,14 @@ export class ReserveOrderService {
       reservation,
     });
 
-    if (decision.outcome === "run_not_accepting_traffic") {
-      return this.rejectedResponse(
-        "inventory_not_initialized",
-        "run_not_accepting_traffic",
-        input.correlationId,
-        now,
-      );
-    }
-
     if (
       decision.outcome === "sold_out" ||
+      decision.outcome === "run_not_accepting_traffic" ||
       decision.outcome === "inventory_not_initialized" ||
       decision.outcome === "idempotency_conflict" ||
       decision.outcome === "quantity_invalid"
     ) {
-      return this.rejectedResponse(decision.outcome, decision.outcome, input.correlationId, now);
+      return this.rejectedResponse(decision.outcome, input.correlationId, now);
     }
 
     if (!decision.reservation) {
@@ -619,24 +633,18 @@ export class ReserveOrderService {
   }
 
   private rejectedResponse(
-    outcome: "sold_out" | "inventory_not_initialized" | "idempotency_conflict" | "quantity_invalid",
-    reason:
-      | "sold_out"
-      | "inventory_not_initialized"
-      | "idempotency_conflict"
-      | "quantity_invalid"
-      | "run_not_accepting_traffic",
+    outcome: RejectedReservationOutcome,
     correlationId: string,
     now: Date,
   ): BuyResponse {
     return buyResponseSchema.parse({
       outcome,
-      reason,
+      reason: outcome,
       correlationId,
       timestamp: now.toISOString(),
       reservation: null,
       order: null,
-      simulatedStatus: "sold_out",
+      simulatedStatus: simulatedStatusForRejectedOutcome(outcome),
     });
   }
 }

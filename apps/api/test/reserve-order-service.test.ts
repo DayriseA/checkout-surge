@@ -188,8 +188,9 @@ describe("ReserveOrderService queue handoff", () => {
     const response = await service.reserve({ request, correlationId, now });
 
     expect(response).toMatchObject({
-      outcome: "inventory_not_initialized",
+      outcome: "run_not_accepting_traffic",
       reason: "run_not_accepting_traffic",
+      simulatedStatus: "sale_not_active",
       reservation: null,
       order: null,
     });
@@ -200,34 +201,46 @@ describe("ReserveOrderService queue handoff", () => {
   });
 
   it.each([
-    "inventory_not_initialized",
-    "sold_out",
-    "idempotency_conflict",
-    "quantity_invalid",
-  ] as const)("does no persistence or lookup work for Redis %s", async (outcome) => {
-    const persistSecuredReservation = vi.fn();
-    const getPersistedBuyByReservationId = vi.fn();
-    const scheduleInventory = vi.fn();
-    const scheduleQueue = vi.fn();
-    const service = buildService({
-      persistence: { persistSecuredReservation, getPersistedBuyByReservationId },
-      stockReservations: acceptingGateway({
-        reserve: async () => ({ outcome, reservation: null }),
-      }),
-      dashboardSnapshotPublications: { scheduleInventory, scheduleQueue },
-    });
+    { decision: "sold_out", simulatedStatus: "sold_out" },
+    { decision: "run_not_accepting_traffic", simulatedStatus: "sale_not_active" },
+    { decision: "inventory_not_initialized", simulatedStatus: null },
+    { decision: "idempotency_conflict", simulatedStatus: null },
+    { decision: "quantity_invalid", simulatedStatus: null },
+  ] as const)(
+    "maps the Redis $decision rejection without persistence, lookups, or snapshots",
+    async ({ decision, simulatedStatus }) => {
+      const persistSecuredReservation = vi.fn();
+      const getPersistedBuyByReservationId = vi.fn();
+      const scheduleInventory = vi.fn();
+      const scheduleQueue = vi.fn();
+      const enqueue = vi.fn();
+      const service = buildService({
+        persistence: { persistSecuredReservation, getPersistedBuyByReservationId },
+        stockReservations: acceptingGateway({
+          reserve: async () => ({ outcome: decision, reservation: null }),
+        }),
+        dashboardSnapshotPublications: { scheduleInventory, scheduleQueue },
+        orderProcessJobPublisher: { enqueue },
+      });
 
-    await expect(service.reserve({ request, correlationId, now })).resolves.toMatchObject({
-      outcome,
-      reason: outcome,
-      reservation: null,
-      order: null,
-    });
-    expect(persistSecuredReservation).not.toHaveBeenCalled();
-    expect(getPersistedBuyByReservationId).not.toHaveBeenCalled();
-    expect(scheduleInventory).not.toHaveBeenCalled();
-    expect(scheduleQueue).not.toHaveBeenCalled();
-  });
+      const response = await service.reserve({ request, correlationId, now });
+
+      expect(response).toEqual(
+        expect.objectContaining({
+          outcome: decision,
+          reason: decision,
+          simulatedStatus,
+          reservation: null,
+          order: null,
+        }),
+      );
+      expect(persistSecuredReservation).not.toHaveBeenCalled();
+      expect(getPersistedBuyByReservationId).not.toHaveBeenCalled();
+      expect(scheduleInventory).not.toHaveBeenCalled();
+      expect(scheduleQueue).not.toHaveBeenCalled();
+      expect(enqueue).not.toHaveBeenCalled();
+    },
+  );
 
   it("enqueues the persisted summaries before Redis promotion and returns immediately after acceptance", async () => {
     const callOrder: string[] = [];

@@ -2092,7 +2092,7 @@ describe("API gateway routes", () => {
     });
   });
 
-  it("maps the atomic Redis run rejection to the compatible API response", async () => {
+  it("maps the atomic Redis run rejection to a sale-not-active 409 response", async () => {
     const stockReservations: StockReservationGateway = {
       reserve: async () => ({ outcome: "run_not_accepting_traffic", reservation: null }),
       markPendingPersistence: async () => undefined,
@@ -2115,47 +2115,89 @@ describe("API gateway routes", () => {
     });
     const payload = buyResponseSchema.parse(response.json());
 
-    expect(response.statusCode).toBe(503);
+    expect(response.statusCode).toBe(409);
     expect(payload).toMatchObject({
-      outcome: "inventory_not_initialized",
+      outcome: "run_not_accepting_traffic",
       reason: "run_not_accepting_traffic",
+      simulatedStatus: "sale_not_active",
       reservation: null,
       order: null,
     });
   });
 
   it.each([
-    ["run_not_accepting_traffic", 503, "inventory_not_initialized"],
-    ["inventory_not_initialized", 503, "inventory_not_initialized"],
-    ["idempotency_conflict", 409, "idempotency_conflict"],
-    ["sold_out", 409, "sold_out"],
-  ] as const)("does no PostgreSQL work for the route-level Redis %s decision", async (decision, expectedStatus, expectedOutcome) => {
-    const persistSecuredReservation = vi.fn();
-    const getPersistedBuyByReservationId = vi.fn();
-    const server = await trackedServer({
-      persistence: { persistSecuredReservation, getPersistedBuyByReservationId },
-      stockReservations: {
-        reserve: async () => ({ outcome: decision, reservation: null }),
-        markPendingPersistence: async () => undefined,
-        promoteAccepted: async () => undefined,
-      },
-    });
+    {
+      decision: "sold_out",
+      status: 409,
+      reason: "sold_out",
+      simulatedStatus: "sold_out",
+    },
+    {
+      decision: "run_not_accepting_traffic",
+      status: 409,
+      reason: "run_not_accepting_traffic",
+      simulatedStatus: "sale_not_active",
+    },
+    {
+      decision: "inventory_not_initialized",
+      status: 503,
+      reason: "inventory_not_initialized",
+      simulatedStatus: null,
+    },
+    {
+      decision: "idempotency_conflict",
+      status: 409,
+      reason: "idempotency_conflict",
+      simulatedStatus: null,
+    },
+    {
+      decision: "quantity_invalid",
+      status: 400,
+      reason: "quantity_invalid",
+      simulatedStatus: null,
+    },
+  ] as const)(
+    "does no PostgreSQL work for the route-level Redis $decision rejection",
+    async ({ decision, status, reason, simulatedStatus }) => {
+      const persistSecuredReservation = vi.fn();
+      const getPersistedBuyByReservationId = vi.fn();
+      const enqueue = vi.fn();
+      const server = await trackedServer({
+        persistence: { persistSecuredReservation, getPersistedBuyByReservationId },
+        stockReservations: {
+          reserve: async () => ({ outcome: decision, reservation: null }),
+          markPendingPersistence: async () => undefined,
+          promoteAccepted: async () => undefined,
+        },
+        orderProcessJobPublisher: { enqueue },
+      });
 
-    const response = await server.inject({
-      method: "POST",
-      url: "/buy",
-      payload: {
-        saleOfferId: fixtureIds.saleOffer,
-        idempotencyKey: `route-rejection-${decision}`,
-        quantity: 1,
-      },
-    });
+      const response = await server.inject({
+        method: "POST",
+        url: "/buy",
+        payload: {
+          saleOfferId: fixtureIds.saleOffer,
+          idempotencyKey: `route-rejection-${decision}`,
+          quantity: 1,
+        },
+      });
 
-    expect(response.statusCode).toBe(expectedStatus);
-    expect(buyResponseSchema.parse(response.json()).outcome).toBe(expectedOutcome);
-    expect(persistSecuredReservation).not.toHaveBeenCalled();
-    expect(getPersistedBuyByReservationId).not.toHaveBeenCalled();
-  });
+      const payload = buyResponseSchema.parse(response.json());
+      expect(response.statusCode).toBe(status);
+      expect(payload).toEqual(
+        expect.objectContaining({
+          outcome: decision,
+          reason,
+          simulatedStatus,
+          reservation: null,
+          order: null,
+        }),
+      );
+      expect(persistSecuredReservation).not.toHaveBeenCalled();
+      expect(getPersistedBuyByReservationId).not.toHaveBeenCalled();
+      expect(enqueue).not.toHaveBeenCalled();
+    },
+  );
 
   it("does no PostgreSQL work when malformed Redis projection state raises an error", async () => {
     const persistSecuredReservation = vi.fn();
@@ -2782,10 +2824,11 @@ describe("API buy persistence", () => {
       });
       const payload = buyResponseSchema.parse(response.json());
 
-      expect(response.statusCode).toBe(503);
+      expect(response.statusCode).toBe(409);
       expect(payload).toMatchObject({
-        outcome: "inventory_not_initialized",
+        outcome: "run_not_accepting_traffic",
         reason: "run_not_accepting_traffic",
+        simulatedStatus: "sale_not_active",
         reservation: null,
         order: null,
       });
@@ -3295,10 +3338,11 @@ describe("API buy persistence", () => {
       });
       const payload = buyResponseSchema.parse(response.json());
 
-      expect(response.statusCode).toBe(503);
+      expect(response.statusCode).toBe(409);
       expect(payload).toMatchObject({
-        outcome: "inventory_not_initialized",
+        outcome: "run_not_accepting_traffic",
         reason: "run_not_accepting_traffic",
+        simulatedStatus: "sale_not_active",
         reservation: null,
         order: null,
       });

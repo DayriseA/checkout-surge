@@ -257,3 +257,75 @@ Update tests at the owning boundaries:
 - Do not change reservation atomicity, run eligibility, idempotency semantics, durable persistence, queue publication, or sold-out metrics/counters.
 - Do not rename the internal `run_not_accepting_traffic` decision to the presentation term `sale_not_active`.
 - Do not add UI solely for this vocabulary correction or broaden the task into general error-response redesign.
+
+## Working record (implementation status)
+
+- **Status:** Complete. All targeted checks pass; one pre-existing, unrelated failure is documented below.
+
+### Architecture deviation from the backlog (recorded per task instructions)
+
+There is **no** `GeneratedRunSaleGate` and **no** pre-Redis generated-run eligibility check in the current API. The backlog's test wording describing "both run-closure sources" (`GeneratedRunSaleGate.isAccepting() === false` and the atomic stock gateway) reflects a drifted architecture.
+
+Run eligibility is enforced atomically by `packages/db/src/redis-stock-reservation.ts` (catalog-with-run and generated-run mismatch/closure branches both return `{ outcome: "run_not_accepting_traffic", reservation: null }`). The API service receives that decision solely through `StockReservationGateway.reserve()`. Tests were adapted to the architecture that actually exists: a single atomic stock-gateway source for `run_not_accepting_traffic`. No `GeneratedRunSaleGate` fake was introduced. Redis, stock, persistence, counters, queues, and generated-run admission behavior were not modified.
+
+### Completed scope by boundary
+
+1. **Shared lifecycle vocabulary** (`packages/contracts/src/lifecycle.ts`): added `run_not_accepting_traffic` to `reservationDecisionValues` and `sale_not_active` to `simulatedPurchaseStatusValues`. All existing values preserved.
+2. **Stock contract cleanup** (`packages/contracts/src/inventory.ts`): replaced the `z.union([reservationDecisionSchema.extract([...]), z.literal("run_not_accepting_traffic")])` workaround in `rejectedStockReservationDecisionSchema` with a single canonical `reservationDecisionSchema.extract([... , "run_not_accepting_traffic"])`. Runtime stock behavior unchanged.
+3. **Buy response contract** (`packages/contracts/src/buy.ts`): `reservationRejectedResponseSchema` is now a `z.discriminatedUnion("outcome", ...)` of five strict literal variants, each binding its exact `outcome`/`reason`/`simulatedStatus` triple (`sold_out`→`sold_out`; `run_not_accepting_traffic`→`sale_not_active`; `inventory_not_initialized`/`idempotency_conflict`/`quantity_invalid`→`null`). The same five variants are flattened into the top-level `buyResponseSchema` discriminated union. `.strict()` preserved on every response object; `reservation: null`, `order: null`, correlation ID, and timestamp validation preserved. The exported `reservationRejectedResponseSchema`, `ReservationRejectedResponse`, `buyResponseSchema`, and `BuyResponse` APIs are preserved. Invalid cross-pairs (e.g. `idempotency_conflict` + `sold_out`, mismatched `reason`, `run_not_accepting_traffic` + non-`sale_not_active`) are rejected at parse time.
+4. **Service mapping** (`apps/api/src/services/reserve-order-service.ts`): removed the rewrite of `run_not_accepting_traffic` → `inventory_not_initialized`; the stock gateway decision is now preserved as both `outcome` and `reason`. Derives the internal `RejectedReservationOutcome` alias from the contract-owned `ReservationRejectedResponse["outcome"]` (not exported) and an exhaustive `simulatedStatusForRejectedOutcome` switch with a `never`-checked default that throws (no silent fallback to sold out). `rejectedResponse` now accepts a single rejected outcome and derives `reason` (= outcome) and `simulatedStatus` internally, preventing mismatched pairs. Accepted/replay/pending/persistence/enqueue/snapshot behavior preserved.
+5. **HTTP transport** (`apps/api/src/routes/buy-routes.ts`): added an explicit `run_not_accepting_traffic` case returning 409. All other outcome statuses unchanged. Route remains thin.
+
+### Material contract/modeling decisions
+
+- Chose literal discriminated variants over a broad union of independently valid fields so that invalid `outcome`/`reason`/`simulatedStatus` cross-pairs fail closed at the contract layer.
+- `reason` is always equal to `outcome` across all five rows; the service derives it from the single outcome argument rather than accepting it as an independent input.
+- `simulatedStatus` is present on every rejected variant; the three non-lifecycle rejections use explicit JSON `null` (omission is rejected by `z.null()`).
+- The internal decision remains `run_not_accepting_traffic`; `sale_not_active` is presentation-only (not used as an internal decision name).
+
+### Tests updated at changed boundaries
+
+- `packages/contracts/test/contracts.test.ts`: asserts the new canonical lifecycle members; a table proving all five rows parse with exact `outcome`/`reason`/`simulatedStatus`; invalid cross-pairs rejected (`idempotency_conflict`+`sold_out`, mismatched `reason`, `run_not_accepting_traffic`+`sold_out`, `run_not_accepting_traffic`+`null`, `sold_out`+`null`); explicit `null` cannot be omitted. Fixed the previously stale `quantity_invalid`+`sold_out` assertion to `null`. Accepted/pending coverage preserved.
+- `apps/api/test/reserve-order-service.test.ts`: updated the dedicated run-closure test to expect preserved `outcome`/`reason` and `sale_not_active`; expanded the rejection table to all five gateway decisions asserting exact `outcome`, `reason`, `simulatedStatus`, and no persistence/lookup/snapshot side effects. The five-row table now injects an `enqueue` spy through `orderProcessJobPublisher: { enqueue }` and asserts it was not called, proving rejected requests enqueue no order-processing job.
+- `apps/api/test/api.test.ts`: atomic Redis run rejection now expects HTTP 409 / `run_not_accepting_traffic` / `reason: run_not_accepting_traffic` / `simulatedStatus: sale_not_active`; route-level rejection table expanded to all five decisions with exact HTTP status and parsed fields (including the three `null` presentations); stale run-closure objects (previously ~lines 2787 and ~3300) updated. Operational `inventory_not_initialized` (missing-sale-offer) expectation left intact: HTTP 503, `outcome`/`reason` `inventory_not_initialized`, presentation `null`. The five-row route-level table now passes an `enqueue` spy through `trackedServer({ orderProcessJobPublisher: { enqueue } })` and asserts it was not called.
+- `apps/api/test/demo-maintenance-service.test.ts`: updated the post-reset run-closure expectation from the stale `inventory_not_initialized` rewrite to the preserved `run_not_accepting_traffic` / `sale_not_active` (necessary consequence of the semantic correction; same run-closure-rewrite class as the api.test.ts cases).
+
+### Verification commands and results
+
+- `pnpm --filter @checkout-surge/contracts exec vitest run --config vitest.config.ts test/contracts.test.ts` → 67 passed.
+- `pnpm --filter api exec node ../../scripts/run-with-test-env.mjs vitest run --config vitest.api.config.ts test/reserve-order-service.test.ts test/api.test.ts` → 102 passed.
+- `pnpm --filter @checkout-surge/contracts type-check` → pass.
+- `pnpm --filter api type-check` → pass.
+- `pnpm --filter @checkout-surge/contracts lint` → pass (no fixes).
+- `pnpm --filter api lint` → pass (no fixes).
+- `pnpm type-check` → 11/11 tasks pass.
+- `pnpm lint` → pass (327 files, no fixes).
+- Full API suite (`vitest.api.config.ts`): 339 passed, 1 pre-existing failure (see below).
+- `pnpm test:composition` / `pnpm test:characterization` intentionally NOT run (prohibited by repo instructions unless requested).
+
+Note: the API consumes the built `@checkout-surge/contracts` `dist`, so `pnpm --filter @checkout-surge/contracts build` was run after each source change to refresh `dist` for the API type-check/tests.
+
+### Skipped verification / remaining blocker (pre-existing, unrelated)
+
+- `apps/api/test/demo-run-finalization-service.test.ts` > "keeps run and summary terminal state consistent when reset races with finalization" fails with `Error: Admin reset traffic aborter is not configured.` (`DemoMaintenanceService.resetWithoutConcurrentReset`, `src/services/demo-maintenance-service.ts:190`). This failure is **pre-existing and unrelated to Task 39**: it reproduces identically on the original code with all Task 39 changes stashed (contracts rebuilt to original). It is a test-environment/traffic-aborter configuration issue, not a rejected-buy-classification regression. No Task 39 file touches `DemoMaintenanceService`, `DemoRunFinalizationService`, or traffic-aborter wiring. Left for a separate task; no frontend work needed (no in-repo consumer of `simulatedStatus`).
+
+### Follow-up: review-finding corrections
+
+A reviewer checked the Task 39 implementation and found two focused issues, both corrected without broadening the task or changing runtime behavior:
+
+1. **Rejected-path tests did not prove no job is enqueued.** The five-row rejection tables in `apps/api/test/reserve-order-service.test.ts` and `apps/api/test/api.test.ts` used the default no-op publisher and never asserted it was not called. Each table case now creates an `enqueue` spy, injects it (`orderProcessJobPublisher: { enqueue }` via `buildService` / `trackedServer`), and asserts `enqueue` was not called alongside the existing persistence/lookup/snapshot (service) and no-PostgreSQL-work (route) assertions. All five exact decision/reason/presentation mappings and HTTP statuses are unchanged. No production queue behavior was added; this verifies behavior the implementation already has (rejected paths return before the enqueue path).
+2. **Service duplicated the contract-owned rejected-outcome vocabulary.** `RejectedReservationOutcome` was a separately exported handwritten string union, so the exhaustive `simulatedStatusForRejectedOutcome` switch was exhaustive only over a local duplicate. It is now derived as `type RejectedReservationOutcome = ReservationRejectedResponse["outcome"]` (imported `type` from `@checkout-surge/contracts`), is no longer exported (no in-repo consumer), and the exhaustive switch, `never` check, exact mapping, and `rejectedResponse` behavior are preserved. `ReserveOrderService` was not otherwise refactored.
+
+The reviewer's `docs/architecture.md` and `docs/core_business_entities.md` updates (exact rejection classifications, HTTP statuses, `sale_not_active`, and the explicit-`null` rule for non-lifecycle rejections) were reviewed for accuracy, agree with the five-row mapping, and are preserved with the Task 39 change.
+
+#### Follow-up verification commands and results
+
+- `pnpm --filter @checkout-surge/contracts build` → `dist` refreshed (no contract source changed this follow-up; rebuilt to ensure the API consumed fresh output before its checks).
+- `pnpm --filter @checkout-surge/contracts exec vitest run --config vitest.config.ts test/contracts.test.ts` → 67 passed.
+- `pnpm --filter api exec node ../../scripts/run-with-test-env.mjs vitest run --config vitest.api.config.ts test/reserve-order-service.test.ts test/api.test.ts` → 102 passed.
+- `pnpm --filter @checkout-surge/contracts type-check` → pass.
+- `pnpm --filter api type-check` → pass.
+- `pnpm lint` → pass (327 files, no fixes).
+- `git diff --check` → pass (exit 0).
+- `git diff --cached --check` → pass (exit 0).
+- `pnpm test:composition` / `pnpm test:characterization` intentionally NOT run (prohibited by repo instructions unless requested). The pre-existing, unrelated `demo-run-finalization-service.test.ts` reset/finalization race failure documented above was not re-run and is out of scope.

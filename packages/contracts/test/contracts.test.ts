@@ -60,6 +60,8 @@ import {
   publicRuntimePolicySchema,
   publicVisitorIdHeaderName,
   queueStatusSchema,
+  reservationDecisionValues,
+  reservationRejectedResponseSchema,
   reservationStatusValues,
   runHistoryDetailParamsSchema,
   runHistoryDetailPath,
@@ -69,6 +71,7 @@ import {
   runHistoryListResponseSchema,
   runHistoryPath,
   securedReservationHoldSchema,
+  simulatedPurchaseStatusValues,
   startDemoRunPath,
   startDemoRunRequestSchema,
   stockReservationDecisionSchema,
@@ -860,9 +863,109 @@ describe("buy and dashboard contracts", () => {
         timestamp,
         reservation: null,
         order: null,
-        simulatedStatus: "sold_out",
+        simulatedStatus: null,
       }).outcome,
     ).toBe("quantity_invalid");
+  });
+
+  it("exposes the canonical decision and presentation vocabulary for run closures", () => {
+    expect(reservationDecisionValues).toContain("run_not_accepting_traffic");
+    expect(simulatedPurchaseStatusValues).toContain("sale_not_active");
+  });
+
+  it.each([
+    { outcome: "sold_out", simulatedStatus: "sold_out" },
+    { outcome: "run_not_accepting_traffic", simulatedStatus: "sale_not_active" },
+    { outcome: "inventory_not_initialized", simulatedStatus: null },
+    { outcome: "idempotency_conflict", simulatedStatus: null },
+    { outcome: "quantity_invalid", simulatedStatus: null },
+  ] as const)(
+    "parses the $outcome rejection with its exact reason and presentation",
+    ({ outcome, simulatedStatus }) => {
+      const payload = {
+        outcome,
+        reason: outcome,
+        correlationId,
+        timestamp,
+        reservation: null,
+        order: null,
+        simulatedStatus,
+      };
+      const parsed = reservationRejectedResponseSchema.parse(payload);
+      expect(parsed.outcome).toBe(outcome);
+      expect(parsed.reason).toBe(outcome);
+      expect(parsed.reservation).toBeNull();
+      expect(parsed.order).toBeNull();
+      expect(parsed.simulatedStatus).toBe(simulatedStatus);
+      expect(buyResponseSchema.parse(payload).outcome).toBe(outcome);
+    },
+  );
+
+  it("rejects invalid outcome, reason, and presentation cross-pairs", () => {
+    const base = {
+      correlationId,
+      timestamp,
+      reservation: null,
+      order: null,
+    } as const;
+
+    expect(() =>
+      reservationRejectedResponseSchema.parse({
+        ...base,
+        outcome: "idempotency_conflict",
+        reason: "idempotency_conflict",
+        simulatedStatus: "sold_out",
+      }),
+    ).toThrow();
+
+    expect(() =>
+      reservationRejectedResponseSchema.parse({
+        ...base,
+        outcome: "idempotency_conflict",
+        reason: "sold_out",
+        simulatedStatus: null,
+      }),
+    ).toThrow();
+
+    expect(() =>
+      reservationRejectedResponseSchema.parse({
+        ...base,
+        outcome: "run_not_accepting_traffic",
+        reason: "run_not_accepting_traffic",
+        simulatedStatus: "sold_out",
+      }),
+    ).toThrow();
+
+    expect(() =>
+      reservationRejectedResponseSchema.parse({
+        ...base,
+        outcome: "run_not_accepting_traffic",
+        reason: "run_not_accepting_traffic",
+        simulatedStatus: null,
+      }),
+    ).toThrow();
+
+    expect(() =>
+      reservationRejectedResponseSchema.parse({
+        ...base,
+        outcome: "sold_out",
+        reason: "sold_out",
+        simulatedStatus: null,
+      }),
+    ).toThrow();
+  });
+
+  it("requires an explicit null simulatedStatus rather than omitting the field", () => {
+    const { simulatedStatus: _omitted, ...withoutSimulatedStatus } = {
+      outcome: "idempotency_conflict",
+      reason: "idempotency_conflict",
+      correlationId,
+      timestamp,
+      reservation: null,
+      order: null,
+      simulatedStatus: null,
+    };
+    expect(() => reservationRejectedResponseSchema.parse(withoutSimulatedStatus)).toThrow();
   });
 
   it("validates stable Redis stock reservation decisions", () => {

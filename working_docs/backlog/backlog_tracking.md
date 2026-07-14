@@ -81,7 +81,7 @@ Replace `⬜` with `✅` when a task is complete. Optional `⏳` for work in pro
 
 ✅ [Task 38: Preserve the canonical error envelope and correlation ID through the web BFF and routine logs](./task_38.md)
 
-⬜ [Task 39: Fix rejected-buy classification: stop forcing sold-out, add the missing decision vocabulary](./task_39.md)
+✅ [Task 39: Fix rejected-buy classification: stop forcing sold-out, add the missing decision vocabulary](./task_39.md)
 
 ⬜ [Task 40: Give the API ownership of delivery-quality classification and reconcile k6 counters against durable evidence](./task_40.md)
 

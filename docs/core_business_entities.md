@@ -809,11 +809,14 @@ Simulated purchase status should be derived from reservation outcome plus order 
 | Simulated Status | Derived From | Meaning |
 | :-- | :-- | :-- |
 | `sold_out` | immediate reservation reject with reason `sold_out` | No stock could be secured. |
+| `sale_not_active` | immediate reservation reject with reason `run_not_accepting_traffic` | The run or sale is closed, mismatched, unknown, or otherwise ineligible for traffic. |
 | `reservation_secured` | reservation `secured` and order `queued` | Stock is held and background confirmation will continue. |
 | `processing` | order `processing` or queued-with-visible-delay | ERP confirmation is still in progress. |
 | `confirmed` | order `confirmed` | Purchase completed successfully. |
 | `failed` | order `failed` | Background confirmation failed terminally. |
 | `reservation_expired` | reservation `expired` | Hold lapsed before completion or required recovery released it. |
+
+Rejected decisions that do not describe a simulated customer lifecycle state keep `simulatedStatus` present but set it to `null`: `inventory_not_initialized` is an operational readiness failure, `idempotency_conflict` is a request conflict, and `quantity_invalid` is a request validation or decision failure. Consumers should derive neutral failure text from the precise rejection reason and must not fall back to “Sold out.”
 
 This keeps status language aligned with the portfolio story:
 

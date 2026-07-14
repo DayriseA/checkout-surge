@@ -1193,8 +1193,9 @@ describe("demo maintenance service", () => {
       now: new Date("2026-06-20T00:00:02.000Z"),
     });
     await expect(reservePromise).resolves.toMatchObject({
-      outcome: "inventory_not_initialized",
+      outcome: "run_not_accepting_traffic",
       reason: "run_not_accepting_traffic",
+      simulatedStatus: "sale_not_active",
     });
     expect(await db.select().from(reservations)).toHaveLength(0);
     expect(await db.select().from(orders)).toHaveLength(0);
