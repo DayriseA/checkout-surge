@@ -30,6 +30,7 @@ import {
   demoPresetContractSchema,
   demoRunSnapshotSchema,
   type ErrorPayloadCode,
+  emptyHttpTimingBreakdownSummary,
   type LoadMetricIngestRequest,
   loadMetricIngestRequestSchema,
   type MetricSample,
@@ -1194,7 +1195,7 @@ export class DemoRunService implements DemoRunController {
         finalizedAt: now,
         httpSummary: trafficSummary.httpSummary,
         trafficDeliverySummary: trafficSummary.trafficDeliverySummary,
-        httpTimingBreakdownSummary: {},
+        httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
         loadRunDiagnosticsSummary: {
           failureReason,
           previousTrafficStatus: run.trafficStatus,

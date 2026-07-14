@@ -13,7 +13,13 @@ export const loadOrchestratorAppDependencies = [contractsPackageName, loggerPack
 
 export { HttpLoadApiClient, MetricBatcher } from "./application/api-client.js";
 export { ExecutionConflictError, FileExecutionStore } from "./application/execution-store.js";
-export { K6RunAccumulator, parseK6JsonLine } from "./application/k6-output-parser.js";
+export {
+  K6RunAccumulator,
+  type K6SummaryMetrics,
+  type K6TrendSummary,
+  parseK6JsonLine,
+  parseK6SummaryMetrics,
+} from "./application/k6-output-parser.js";
 export { type K6Runner, SpawnK6Runner } from "./application/k6-runner.js";
 export { generateK6Script } from "./application/k6-script.js";
 export { TrafficExecutionService } from "./application/traffic-execution-service.js";

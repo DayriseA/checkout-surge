@@ -296,6 +296,8 @@ The worker-facing Mock ERP confirmation contract is `POST http://localhost:4100/
 | `pnpm format` | Format the whole workspace with Biome and organize imports |
 | `pnpm format:check` | Check Biome formatting and import organization without writing changes |
 | `pnpm test` | Run the default unit, API, and integration test suite |
+| `pnpm test:required` | Run the merge-required default suite and the pinned production-image k6 compatibility lane |
+| `pnpm test:k6-compat` | Build `load-orchestrator-runtime`, inspect both generated script modes with its k6 2.0.0 binary, and parse a real tiny summary export |
 | `pnpm test:composition` | Build and test the isolated deployed service topology; slow and opt-in |
 | `pnpm test:characterization` | Run focused browser recovery plus the slow, opt-in deployed-topology characterization |
 | `pnpm test:unit` | Run unit tests that do not require external infrastructure |
@@ -328,7 +330,7 @@ The default development suite can be run with:
 pnpm test
 ```
 
-`pnpm test` intentionally excludes deployed-topology composition coverage so routine development and agent verification remain fast. The opt-in `test:composition` command is slow by nature and requires a functioning Docker daemon. It creates a uniquely named Compose project, migrates and seeds isolated PostgreSQL and Redis volumes, starts the deployed API, worker, mock ERP, load orchestrator, web, and dashboard proxy topology, runs its characterization scenarios, and removes the project and volumes afterward. Its host ports default to the `53xxx`-`58xxx` range and can be overridden with the `COMPOSITION_*_PORT` environment variables when those ports are occupied.
+`pnpm test` intentionally excludes deployed-topology composition coverage so routine development and agent verification remain fast. It also keeps host-native orchestrator unit tests independent of a host k6 install. Merge automation uses `pnpm test:required`, whose dedicated `test:k6-compat` step builds the same `load-orchestrator-runtime` stage used in production and fails rather than skipping when k6 is unavailable or incompatible. The opt-in `test:composition` command is slow by nature and requires a functioning Docker daemon. It creates a uniquely named Compose project, migrates and seeds isolated PostgreSQL and Redis volumes, starts the deployed API, worker, mock ERP, load orchestrator, web, and dashboard proxy topology, runs its characterization scenarios, and removes the project and volumes afterward. Its host ports default to the `53xxx`-`58xxx` range and can be overridden with the `COMPOSITION_*_PORT` environment variables when those ports are occupied.
 
 Run the deployed topology only when its cross-service safety net is specifically needed, or when explicitly requested during agent-assisted work. The characterization command runs the focused browser recovery suite followed by that topology:
 

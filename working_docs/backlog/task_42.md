@@ -137,3 +137,23 @@ No API, database, Redis, worker, browser, or full load run is needed. Add focuse
 ## Scope and non-goals
 
 This task owns the load-orchestrator's terminal k6 summary ingestion, bounded point fallback, source/timing diagnostics, and a mandatory real-k6 compatibility lane. It does not change executor/VU sizing or `gracefulStop` (task 43), reservation/buy classification semantics (task 41), API-owned delivery thresholds and durable accounting (task 40), cancellation/readiness/system-diagnostic ownership (task 33), live dashboard metric names, reservation/worker behavior, or hosted benchmark tuning. Do not add DB/Redis clients to the orchestrator, start application services in the compatibility test, expose raw k6 output publicly, or treat the real-k6 smoke as a performance assertion.
+
+## Implementation record (2026-07-14)
+
+- **Status:** Implemented.
+- Added strict shared terminal metric-source, summary-warning, and six-phase HTTP timing schemas. The real-completion contract requires both diagnostics fields, while the generic stored-diagnostics schema keeps them optional for reset/startup-recovery compatibility. The execution journal narrowly recognizes old runner diagnostics, supplies conservative unavailable-source warnings, and migrates only the former empty or exact `{ p95LatencyMs: number | null }` timing shapes to six null phases; unknown extensions and timing shapes remain rejected.
+- Added flat/wrapped k6 summary parsing from arbitrary balanced JSON text, exact Surge custom counters, summary-first per-metric selection with authoritative-zero preservation, bounded point sums/counts, and a strict 256 KiB stdout tail. Missing, invalid, and other read failures remain distinct warnings.
+- k6 now runs with `--summary-export <run temp dir>/summary.json`. Completion drains stdout/live batches, reads the export, constructs one report, persists/retries that immutable object, and only then cleans the temp directory. Cancellation/process ownership and API-owned delivery classification are unchanged.
+- Added unit coverage for parser shapes and malformed surroundings, precedence and unavailable evidence, all timing phases and degraded averages, bounded memory, export warning classes, journal migration, runner read/cleanup ordering, and immutable retry reuse. API finalization coverage proves typed timing/source diagnostics persist into terminal summaries.
+- Added `pnpm test:k6-compat`, backed by the pinned `load-orchestrator-runtime` image, plus the merge command `pnpm test:required`. The lane fails without k6, asserts v2.0.0, inspects buyer-spike and steady-arrival scripts, runs a loopback request, and parses the real export. Host-native unit tests explicitly exclude this dedicated file and contain no conditional k6 skip.
+- Verification: see the review-cycle results below; the initial implementation passed contracts and orchestrator unit suites (73 and 94 tests), four targeted API persistence/finalization suites (116 tests), the updated finalization suite (20 tests), and contracts/orchestrator/API/worker type checks. The compatibility tests passed 3/3 in the existing pinned runtime image. Rebuilding that same image through the root command was attempted twice but Docker BuildKit could not dial containerd and timed out; no test was skipped or made conditional.
+
+### Review cycle 1
+
+- Added numeric/null p95-only journal migration tests plus rejection of broadened timing shapes, runner-level missing/invalid/read-failed lifecycle cases, strict real-completion contract rejection, actual JSON numeric-overflow parsing, and explicit entirely-unavailable timing coverage.
+- Verification: orchestrator unit suite 101/101; contracts unit suite 73/73; focused internal completion ingestion 1/1; four API persistence/finalization suites 116/116; contracts, orchestrator, API, and worker production type checks passed; targeted Biome checks and `git diff --check` passed. Root test TypeScript checking still reports only the repository's pre-existing unrelated test errors and no Task 42 errors. The k6 runtime code/lane did not change during review cycle 1, so the initial 3/3 pinned-image compatibility result remains applicable.
+
+### Review cycle 2
+
+- Clarified that only composition/characterization are opt-in, confirmed Tasks 41 and 42 complete in backlog tracking, and asserted the full ordered degraded-summary warning set at the runner boundary.
+- Verification: orchestrator unit suite 101/101; targeted Biome check and `git diff --check` passed.

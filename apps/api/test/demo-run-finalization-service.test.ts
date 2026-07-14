@@ -6,10 +6,10 @@ import type {
   AcceptedRunConfigSnapshot,
   AdminDemoResetResponse,
   BusinessOutcomeSummary,
-  LoadRunDiagnosticsSummary,
   TerminalInventorySnapshot,
   TrafficCompletionReport,
 } from "@checkout-surge/contracts";
+import { emptyHttpTimingBreakdownSummary } from "@checkout-surge/contracts";
 import {
   createDatabaseConnection,
   createRedisClient,
@@ -239,6 +239,17 @@ describe("demo run finalization service", () => {
       pendingPersistenceCount: 0,
     });
     expect(summaries[0]?.terminalInventorySnapshot).toEqual(durableTerminalInventorySnapshot);
+    expect(summaries[0]?.httpTimingBreakdownSummary).toEqual({
+      ...emptyHttpTimingBreakdownSummary,
+      waiting: { averageMs: 10, p95Ms: 20 },
+    });
+    expect(summaries[0]?.loadRunDiagnosticsSummary).toMatchObject({
+      terminalMetricSources: {
+        emittedRequests: "summary_export",
+        acceptedResponses: "point_stream",
+      },
+      summaryExportWarnings: ["k6_outcome_counter_point_stream_fallback_used"],
+    });
     expect(writeTerminalRun).toHaveBeenCalledOnce();
     expect(writeTerminalRun).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -835,7 +846,10 @@ async function seedDrainingRun(input: {
     trafficOutcomeSummary: {},
     trafficDeliverySummary: trafficCompletionReportFixture(input.trafficDeliveryStatus)
       .trafficDeliverySummary,
-    httpTimingBreakdownSummary: {},
+    httpTimingBreakdownSummary: {
+      ...emptyHttpTimingBreakdownSummary,
+      waiting: { averageMs: 10, p95Ms: 20 },
+    },
     loadRunDiagnosticsSummary: runnerDiagnosticsFixture(),
     apiRequestLifecycleSummary: {},
     trafficSummaryReceivedAt: trafficEndedAt,
@@ -850,7 +864,7 @@ async function seedDrainingRun(input: {
   });
 }
 
-function runnerDiagnosticsFixture(): LoadRunDiagnosticsSummary {
+function runnerDiagnosticsFixture(): TrafficCompletionReport["loadRunDiagnosticsSummary"] {
   return {
     startedAt: "2026-06-20T00:00:00.000Z",
     completedAt: "2026-06-20T00:00:05.000Z",
@@ -874,6 +888,16 @@ function runnerDiagnosticsFixture(): LoadRunDiagnosticsSummary {
     stderrRetainedLineLimit: 50,
     stderrLineTruncationLength: 500,
     stderrLineTruncatedCount: 0,
+    terminalMetricSources: {
+      emittedRequests: "summary_export",
+      completedRequests: "summary_export",
+      acceptedResponses: "point_stream",
+      soldOutResponses: "summary_export",
+      unexpectedResponses: "summary_export",
+      droppedIterations: "summary_export",
+      completedIterations: "summary_export",
+    },
+    summaryExportWarnings: ["k6_outcome_counter_point_stream_fallback_used"],
   };
 }
 
@@ -1107,7 +1131,7 @@ function trafficCompletionReportFixture(
       trafficDeliveryStatus,
       notes: trafficDeliveryStatus === "failed" ? ["Major request delivery shortfall."] : [],
     },
-    httpTimingBreakdownSummary: {},
+    httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
     loadRunDiagnosticsSummary: runnerDiagnosticsFixture(),
     apiRequestLifecycleSummary: {},
     completedAt: "2026-06-20T00:00:05.000Z",

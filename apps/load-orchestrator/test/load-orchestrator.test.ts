@@ -1,6 +1,5 @@
 import { type spawn, spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { accessSync, constants } from "node:fs";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -57,7 +56,6 @@ import { buildLoadOrchestratorServer } from "../src/server.js";
 
 const timestamp = "2026-06-20T12:00:00.000Z";
 const completionTimestamp = "2026-06-20T12:00:05.000Z";
-const runnableK6Binary = resolveRunnableK6Binary();
 const startRequest: TrafficExecutionStartRequest = {
   runId: "55555555-5555-4555-8555-555555555555",
   saleOfferId: "22222222-2222-4222-8222-222222222222",
@@ -135,6 +133,7 @@ describe("durable execution ownership", () => {
           acceptedAt: timestamp,
           completion: {
             ...report,
+            httpTimingBreakdownSummary: {},
             loadRunDiagnosticsSummary: { startedAt: timestamp, completedAt: completionTimestamp },
           },
         }),
@@ -146,6 +145,106 @@ describe("durable execution ownership", () => {
         stderrLines: [],
         nproc: null,
       });
+      expect(
+        (await new FileExecutionStore(directory).read())?.completion?.httpTimingBreakdownSummary,
+      ).toEqual({
+        blocked: null,
+        connecting: null,
+        tlsHandshaking: null,
+        sending: null,
+        waiting: null,
+        receiving: null,
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    42,
+    null,
+  ])("migrates the legacy runner p95-only timing shape (%s) without relabeling duration", async (legacyP95LatencyMs) => {
+    const directory = await mkdtemp(path.join(tmpdir(), "checkout-surge-legacy-journal-"));
+    try {
+      const report = new K6RunAccumulator({
+        runId: startRequest.runId,
+        correlationId: startRequest.correlationId,
+        plannedRequests: 400,
+        startedAt: new Date(timestamp),
+        executionPlan: generateK6Script(startRequest).executionPlan,
+      }).completionReport({ status: "failed", completedAt: new Date(completionTimestamp) });
+      const {
+        terminalMetricSources: _terminalMetricSources,
+        summaryExportWarnings: _summaryExportWarnings,
+        ...legacyDiagnostics
+      } = report.loadRunDiagnosticsSummary;
+      await writeFile(
+        path.join(directory, "execution.json"),
+        JSON.stringify({
+          request: startRequest,
+          state: "completion_pending",
+          acceptedAt: timestamp,
+          completion: {
+            ...report,
+            httpTimingBreakdownSummary: { p95LatencyMs: legacyP95LatencyMs },
+            loadRunDiagnosticsSummary: legacyDiagnostics,
+          },
+        }),
+      );
+
+      const migrated = (await new FileExecutionStore(directory).read())?.completion;
+      expect(migrated?.httpTimingBreakdownSummary).toEqual({
+        blocked: null,
+        connecting: null,
+        tlsHandshaking: null,
+        sending: null,
+        waiting: null,
+        receiving: null,
+      });
+      expect(migrated?.loadRunDiagnosticsSummary).toMatchObject({
+        terminalMetricSources: {
+          emittedRequests: null,
+          completedRequests: null,
+        },
+        summaryExportWarnings: [
+          "summary_export_missing",
+          "k6_outcome_counter_summary_export_unavailable",
+        ],
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects unknown legacy timing shapes instead of broadening journal migration", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "checkout-surge-legacy-journal-"));
+    try {
+      const report = new K6RunAccumulator({
+        runId: startRequest.runId,
+        correlationId: startRequest.correlationId,
+        plannedRequests: 400,
+        startedAt: new Date(timestamp),
+        executionPlan: generateK6Script(startRequest).executionPlan,
+      }).completionReport({ status: "failed", completedAt: new Date(completionTimestamp) });
+      const {
+        terminalMetricSources: _terminalMetricSources,
+        summaryExportWarnings: _summaryExportWarnings,
+        ...legacyDiagnostics
+      } = report.loadRunDiagnosticsSummary;
+      await writeFile(
+        path.join(directory, "execution.json"),
+        JSON.stringify({
+          request: startRequest,
+          state: "completion_pending",
+          acceptedAt: timestamp,
+          completion: {
+            ...report,
+            httpTimingBreakdownSummary: { p95LatencyMs: 42, extra: true },
+            loadRunDiagnosticsSummary: legacyDiagnostics,
+          },
+        }),
+      );
+      await expect(new FileExecutionStore(directory).read()).rejects.toThrow();
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
@@ -500,34 +599,6 @@ describe("load-orchestrator k6 mapping", () => {
     }
   });
 
-  const itWithK6 = runnableK6Binary ? it : it.skip;
-  itWithK6("is accepted by k6 inspect when a k6 binary is available", async () => {
-    if (!runnableK6Binary) {
-      throw new Error("Expected runnable k6 binary for this compatibility check.");
-    }
-
-    const script = generateK6Script(startRequest);
-    const workDir = await mkdtemp(path.join(tmpdir(), "checkout-surge-k6-inspect-"));
-    const scriptPath = path.join(workDir, "scenario.js");
-
-    try {
-      await writeFile(scriptPath, script.contents, "utf8");
-      const inspectResult = spawnSync(runnableK6Binary, ["inspect", scriptPath], {
-        encoding: "utf8",
-      });
-
-      if (inspectResult.status !== 0) {
-        throw new Error(
-          `Generated k6 script failed k6 inspect.\nstdout:\n${inspectResult.stdout}\nstderr:\n${inspectResult.stderr}`,
-        );
-      }
-
-      expect(inspectResult.status).toBe(0);
-    } finally {
-      await rm(workDir, { recursive: true, force: true });
-    }
-  });
-
   it("keeps terminal totals independent from windowed dashboard metrics", () => {
     const accumulator = new K6RunAccumulator({
       executionPlan: generateK6Script(startRequest).executionPlan,
@@ -586,7 +657,6 @@ describe("load-orchestrator k6 mapping", () => {
       acceptedResponses: 1,
       soldOutResponses: 1,
       unexpectedResponses: 0,
-      p95LatencyMs: 42,
     });
     expect(report.trafficDeliverySummary).toMatchObject({
       requestShortfall: 1,
@@ -666,7 +736,7 @@ describe("load-orchestrator k6 mapping", () => {
       acceptedResponses: 0,
       soldOutResponses: 2,
       unexpectedResponses: 0,
-      failureRate: 0,
+      failureRate: 1,
     });
     expect(report.apiRequestLifecycleSummary).toMatchObject({
       completedRequests: 2,
@@ -708,7 +778,7 @@ describe("load-orchestrator k6 mapping", () => {
       failedRequests: 1,
       soldOutResponses: 0,
       unexpectedResponses: 1,
-      failureRate: 1,
+      failureRate: 0,
     });
     expect(report.apiRequestLifecycleSummary).toMatchObject({
       completedRequests: 1,
@@ -793,6 +863,144 @@ describe("load-orchestrator k6 mapping", () => {
 });
 
 describe("SpawnK6Runner completion reporting", () => {
+  it("waits for the authoritative summary, reuses one report across retries, then cleans up", async () => {
+    const k6Process = createK6ProcessFixture();
+    const reports: TrafficCompletionReport[] = [];
+    let releaseSummary: () => void = () => undefined;
+    const summaryGate = new Promise<void>((resolve) => {
+      releaseSummary = resolve;
+    });
+    const runner = new SpawnK6Runner({
+      k6Binary: "k6",
+      logger: createSilentLogger("load-orchestrator"),
+      spawnProcess: k6Process.spawnProcess,
+      now: createClock([timestamp, completionTimestamp]),
+      readSummaryFile: async () => {
+        await summaryGate;
+        return JSON.stringify({
+          metrics: {
+            http_reqs: { count: 0 },
+            checkout_reservation_accepted: { count: 0 },
+            checkout_sold_out: { count: 0 },
+            checkout_unexpected_response: { count: 0 },
+            iterations: { count: 0 },
+            dropped_iterations: { count: 0 },
+            http_req_failed: { value: 0 },
+            http_req_duration: { avg: 0, "p(95)": 0 },
+          },
+        });
+      },
+      completionRetry: { maxAttempts: 2, initialBackoffMs: 0, sleep: async () => undefined },
+      apiClient: {
+        sendMetrics: async () => undefined,
+        sendCompletion: async (report) => {
+          reports.push(report);
+          if (reports.length === 1) throw new Error("transient completion failure");
+        },
+      },
+    });
+
+    await runner.start(startRequest);
+    const workDir = path.dirname(getSingleSpawnCall(k6Process).scriptPath);
+    k6Process.stdout.write(
+      `${JSON.stringify({ type: "Point", metric: "http_reqs", data: { value: 9, time: timestamp } })}\n`,
+    );
+    k6Process.child.emit("close", 0);
+    await waitForReadline();
+    expect(reports).toHaveLength(0);
+    expect(await pathMissing(workDir)).toBe(false);
+
+    releaseSummary();
+    await waitForCompletionReport(reports, 2);
+    await waitForCondition(() => pathMissing(workDir), "summary-owned temp directory cleanup");
+
+    expect(reports[0]).toBe(reports[1]);
+    expect(reports[1]?.httpSummary.emittedRequests).toBe(0);
+    expect(reports[1]?.loadRunDiagnosticsSummary).toMatchObject({
+      terminalMetricSources: {
+        emittedRequests: "summary_export",
+        completedRequests: "summary_export",
+      },
+      summaryExportWarnings: [],
+    });
+  });
+
+  it.each([
+    { name: "missing", warning: "summary_export_missing" as const, errorCode: "ENOENT" },
+    { name: "invalid", warning: "summary_export_invalid" as const, contents: "{}" },
+    {
+      name: "read failure",
+      warning: "summary_export_read_failed" as const,
+      errorCode: "EACCES",
+    },
+  ])("delivers point fallback once after a $name summary is resolved", async ({
+    warning,
+    errorCode,
+    contents,
+  }) => {
+    const k6Process = createK6ProcessFixture();
+    const reports: TrafficCompletionReport[] = [];
+    let releaseSummary: () => void = () => undefined;
+    let markSummaryReadStarted: () => void = () => undefined;
+    const summaryGate = new Promise<void>((resolve) => {
+      releaseSummary = resolve;
+    });
+    const summaryReadStarted = new Promise<void>((resolve) => {
+      markSummaryReadStarted = resolve;
+    });
+    const runner = new SpawnK6Runner({
+      k6Binary: "k6",
+      logger: createSilentLogger("load-orchestrator"),
+      spawnProcess: k6Process.spawnProcess,
+      now: createClock([timestamp, completionTimestamp]),
+      readSummaryFile: async () => {
+        markSummaryReadStarted();
+        await summaryGate;
+        if (errorCode) throw Object.assign(new Error("summary read failed"), { code: errorCode });
+        return contents ?? "{}";
+      },
+      apiClient: {
+        sendMetrics: async () => undefined,
+        sendCompletion: async (report) => {
+          reports.push(report);
+        },
+      },
+    });
+
+    await runner.start(startRequest);
+    const workDir = path.dirname(getSingleSpawnCall(k6Process).scriptPath);
+    writeK6JsonLines(k6Process.stdout, [
+      { type: "Point", metric: "http_reqs", data: { value: 2, time: timestamp } },
+      {
+        type: "Point",
+        metric: "checkout_reservation_accepted",
+        data: { value: 1, time: timestamp },
+      },
+    ]);
+    k6Process.child.emit("close", 0);
+    await summaryReadStarted;
+    expect(reports).toHaveLength(0);
+    expect(await pathMissing(workDir)).toBe(false);
+
+    releaseSummary();
+    const report = await waitForCompletionReport(reports, 1);
+    await waitForCondition(() => pathMissing(workDir), "degraded summary cleanup");
+    await waitForReadline();
+
+    expect(reports).toHaveLength(1);
+    expect(report.httpSummary).toMatchObject({ emittedRequests: 2, acceptedResponses: 1 });
+    expect(report.loadRunDiagnosticsSummary.terminalMetricSources).toMatchObject({
+      emittedRequests: "point_stream",
+      completedRequests: "point_stream",
+      acceptedResponses: "point_stream",
+    });
+    expect(report.loadRunDiagnosticsSummary.summaryExportWarnings).toEqual([
+      warning,
+      "k6_outcome_counter_point_stream_fallback_used",
+      "k6_outcome_counter_summary_export_unavailable",
+    ]);
+  });
+
   it("cancels preparation before spawn and retains the slot until preparation settles", async () => {
     let releaseDiagnostics: () => void = () => undefined;
     const diagnosticGate = new Promise<string | null>((resolve) => {
@@ -1297,7 +1505,15 @@ describe("SpawnK6Runner completion reporting", () => {
 
     expect(start).toEqual({ startedAt: new Date(timestamp), plannedRequests: 400 });
     expect(spawnCall.binary).toBe("k6");
-    expect(spawnCall.args).toEqual(["run", "--quiet", "--out", "json=-", spawnCall.scriptPath]);
+    expect(spawnCall.args).toEqual([
+      "run",
+      "--quiet",
+      "--summary-export",
+      path.join(workDir, "summary.json"),
+      "--out",
+      "json=-",
+      spawnCall.scriptPath,
+    ]);
     expect(spawnCall.options).toEqual({
       detached: false,
       shell: false,
@@ -1338,7 +1554,6 @@ describe("SpawnK6Runner completion reporting", () => {
         failedRequests: 0,
         acceptedResponses: 1,
         unexpectedResponses: 0,
-        p95LatencyMs: 42,
         failureRate: 0,
       },
       trafficDeliverySummary: {
@@ -2525,21 +2740,6 @@ function createK6ProcessFixture(): {
     stderr,
     spawnProcess: vi.fn(() => child) as unknown as typeof spawn,
   };
-}
-
-function resolveRunnableK6Binary(): string | null {
-  const candidate = process.env.K6_BINARY?.trim() || "k6";
-  if (candidate.includes("/") || candidate.includes("\\")) {
-    try {
-      accessSync(candidate, constants.X_OK);
-      return candidate;
-    } catch {
-      return null;
-    }
-  }
-
-  const result = spawnSync(candidate, ["version"], { stdio: "ignore" });
-  return result.status === 0 ? candidate : null;
 }
 
 function createClock(isoTimestamps: string[]): () => Date {

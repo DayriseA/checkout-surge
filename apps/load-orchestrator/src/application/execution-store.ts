@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import { mkdir, open, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
+  emptyHttpTimingBreakdownSummary,
+  loadRunDiagnosticsSummarySchema,
   type TrafficCompletionReport,
   type TrafficExecutionStartRequest,
   trafficCompletionReportSchema,
@@ -110,26 +112,26 @@ function migrateLegacyDiagnostics(value: unknown): unknown {
     return value;
   const report = completion as Record<string, unknown>;
   const diagnostics = report.loadRunDiagnosticsSummary;
-  if (!diagnostics || typeof diagnostics !== "object") return value;
+  if (!diagnostics || typeof diagnostics !== "object" || Array.isArray(diagnostics)) return value;
   const legacy = diagnostics as Record<string, unknown>;
-  const legacyKeys = Object.keys(legacy);
-  if (
-    legacyKeys.length !== 2 ||
-    !legacyKeys.every((key) => key === "startedAt" || key === "completedAt") ||
-    typeof legacy.startedAt !== "string" ||
-    typeof legacy.completedAt !== "string" ||
-    "executionPlan" in legacy
-  )
-    return value;
   const parsedRequest = trafficExecutionStartRequestSchema.safeParse(request);
   if (!parsedRequest.success) return value;
-  return {
-    ...journal,
-    completion: {
-      ...report,
-      loadRunDiagnosticsSummary: {
-        startedAt: legacy.startedAt,
-        completedAt: legacy.completedAt,
+
+  const timestampOnlyDiagnostics = parseTimestampOnlyDiagnostics(legacy);
+  const fullLegacyDiagnostics = loadRunDiagnosticsSummarySchema.safeParse(legacy);
+  if (
+    !timestampOnlyDiagnostics &&
+    (!fullLegacyDiagnostics.success ||
+      "terminalMetricSources" in legacy ||
+      "summaryExportWarnings" in legacy)
+  )
+    return value;
+
+  const migratedTiming = migrateLegacyTiming(report.httpTimingBreakdownSummary);
+  const migratedDiagnostics = timestampOnlyDiagnostics
+    ? {
+        startedAt: timestampOnlyDiagnostics.startedAt,
+        completedAt: timestampOnlyDiagnostics.completedAt,
         nproc: null,
         ulimitNofile: null,
         processMaxOpenFiles: null,
@@ -142,8 +144,66 @@ function migrateLegacyDiagnostics(value: unknown): unknown {
         stderrRetainedLineLimit: 50,
         stderrLineTruncationLength: 500,
         stderrLineTruncatedCount: 0,
-      },
+        ...legacyTerminalEvidenceDefaults(),
+      }
+    : {
+        ...fullLegacyDiagnostics.data,
+        ...legacyTerminalEvidenceDefaults(),
+      };
+  return {
+    ...journal,
+    completion: {
+      ...report,
+      ...(migratedTiming === undefined ? {} : { httpTimingBreakdownSummary: migratedTiming }),
+      loadRunDiagnosticsSummary: migratedDiagnostics,
     },
+  };
+}
+
+function parseTimestampOnlyDiagnostics(
+  diagnostics: Record<string, unknown>,
+): { startedAt: string; completedAt: string } | null {
+  const keys = Object.keys(diagnostics);
+  return keys.length === 2 &&
+    keys.every((key) => key === "startedAt" || key === "completedAt") &&
+    typeof diagnostics.startedAt === "string" &&
+    typeof diagnostics.completedAt === "string"
+    ? { startedAt: diagnostics.startedAt, completedAt: diagnostics.completedAt }
+    : null;
+}
+
+function migrateLegacyTiming(value: unknown): typeof emptyHttpTimingBreakdownSummary | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const timing = value as Record<string, unknown>;
+  const keys = Object.keys(timing);
+  if (keys.length === 0) return emptyHttpTimingBreakdownSummary;
+  if (
+    keys.length === 1 &&
+    keys[0] === "p95LatencyMs" &&
+    (timing.p95LatencyMs === null ||
+      (typeof timing.p95LatencyMs === "number" &&
+        Number.isFinite(timing.p95LatencyMs) &&
+        timing.p95LatencyMs >= 0))
+  )
+    return emptyHttpTimingBreakdownSummary;
+  return undefined;
+}
+
+function legacyTerminalEvidenceDefaults() {
+  return {
+    terminalMetricSources: {
+      emittedRequests: null,
+      completedRequests: null,
+      acceptedResponses: null,
+      soldOutResponses: null,
+      unexpectedResponses: null,
+      droppedIterations: null,
+      completedIterations: null,
+    },
+    summaryExportWarnings: [
+      "summary_export_missing" as const,
+      "k6_outcome_counter_summary_export_unavailable" as const,
+    ],
   };
 }
 

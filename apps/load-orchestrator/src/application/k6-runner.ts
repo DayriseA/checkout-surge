@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type {
@@ -15,7 +15,13 @@ import {
 } from "./execution-store.js";
 import { K6JsonLineFramer } from "./k6-json-line-framer.js";
 import { K6LiveMetricAggregator } from "./k6-live-metric-aggregator.js";
-import { BoundedStderrCollector, K6RunAccumulator, parseK6JsonLine } from "./k6-output-parser.js";
+import {
+  BoundedStderrCollector,
+  K6RunAccumulator,
+  type K6SummaryMetrics,
+  parseK6JsonLine,
+  parseK6SummaryMetrics,
+} from "./k6-output-parser.js";
 import { generateK6Script } from "./k6-script.js";
 import { collectLoadRunDiagnostics, type DiagnosticsDependencies } from "./load-run-diagnostics.js";
 
@@ -73,6 +79,8 @@ export class SpawnK6Runner implements K6Runner {
       shutdownKillWaitMs?: number;
       liveMetricWindowMs?: number;
       maxK6OutputLineLength?: number;
+      maxStdoutTailBytes?: number;
+      readSummaryFile?: (summaryPath: string) => Promise<string>;
       metricBatchSize?: number;
       maxBufferedMetricSamples?: number;
       diagnostics?: DiagnosticsDependencies;
@@ -274,13 +282,14 @@ export class SpawnK6Runner implements K6Runner {
     try {
       workDir = await mkdtemp(path.join(tmpdir(), "checkout-surge-k6-"));
       const scriptPath = path.join(workDir, "scenario.js");
+      const summaryPath = path.join(workDir, "summary.json");
       await writeFile(scriptPath, generated.contents, "utf8");
       if (this.cancellingRunId === input.runId) throw new CancellationRequestedError();
       if (this.closing)
         throw new Error("Traffic execution owner began shutting down during preparation.");
       const child = (this.options.spawnProcess ?? spawn)(
         this.options.k6Binary,
-        ["run", "--quiet", "--out", "json=-", scriptPath],
+        ["run", "--quiet", "--summary-export", summaryPath, "--out", "json=-", scriptPath],
         {
           detached: false,
           shell: false,
@@ -301,6 +310,7 @@ export class SpawnK6Runner implements K6Runner {
         executionPlan: generated.executionPlan,
         diagnostics,
         workDir,
+        summaryPath,
       });
       this.activeCleanup = completionSettled;
       try {
@@ -380,6 +390,7 @@ export class SpawnK6Runner implements K6Runner {
     executionPlan: ReturnType<typeof generateK6Script>["executionPlan"];
     diagnostics: Awaited<ReturnType<typeof collectLoadRunDiagnostics>>;
     workDir: string;
+    summaryPath: string;
   }): Promise<void> {
     const stderrCollector = new BoundedStderrCollector();
     const accumulator = new K6RunAccumulator({
@@ -419,6 +430,7 @@ export class SpawnK6Runner implements K6Runner {
         ? {}
         : { windowMs: this.options.liveMetricWindowMs },
     );
+    const stdoutTail = new BoundedStdoutTail(this.options.maxStdoutTailBytes);
     const stdout = input.child.stdout;
     const stderr = input.child.stderr;
     const stdoutDrain = stdout
@@ -427,6 +439,7 @@ export class SpawnK6Runner implements K6Runner {
           accumulator,
           liveMetrics,
           batcher,
+          stdoutTail,
           acceptPoint: () => this.cancellingRunId !== input.input.runId,
           ...(this.options.maxK6OutputLineLength === undefined
             ? {}
@@ -473,6 +486,8 @@ export class SpawnK6Runner implements K6Runner {
         liveMetrics,
         batcher,
         stdoutDrain,
+        stdoutTail,
+        summaryPath: input.summaryPath,
         workDir: input.workDir,
         ...completion,
       });
@@ -572,6 +587,8 @@ export class SpawnK6Runner implements K6Runner {
     liveMetrics: K6LiveMetricAggregator;
     batcher: MetricBatcher;
     stdoutDrain: Promise<void>;
+    stdoutTail: BoundedStdoutTail;
+    summaryPath: string;
     status: "succeeded" | "failed";
     exitCode?: number;
     errorMessage?: string;
@@ -588,11 +605,19 @@ export class SpawnK6Runner implements K6Runner {
       this.options.logger.warn({ err: error }, "Could not flush final k6 metric batch.");
     }
 
+    const summary = await readK6SummaryExport(
+      input.summaryPath,
+      input.stdoutTail.toString(),
+      this.options.readSummaryFile,
+    );
+
     const report = input.accumulator.completionReport({
       status: input.status,
       ...(input.exitCode === undefined ? {} : { exitCode: input.exitCode }),
       ...(input.errorMessage ? { errorMessage: input.errorMessage } : {}),
       completedAt: input.completedAt,
+      ...(summary.metrics ? { summaryMetrics: summary.metrics } : {}),
+      ...(summary.warning ? { summaryExportWarning: summary.warning } : {}),
     });
 
     let completionPersisted = !this.options.executionStore;
@@ -735,6 +760,7 @@ async function consumeK6Stdout(input: {
   accumulator: K6RunAccumulator;
   liveMetrics: K6LiveMetricAggregator;
   batcher: MetricBatcher;
+  stdoutTail: BoundedStdoutTail;
   maxLineLength?: number;
   acceptPoint: () => boolean;
 }): Promise<void> {
@@ -743,12 +769,70 @@ async function consumeK6Stdout(input: {
   );
   input.stdout.setEncoding("utf8");
   for await (const chunk of input.stdout) {
-    for (const line of framer.push(String(chunk))) {
+    const text = String(chunk);
+    input.stdoutTail.push(text);
+    for (const line of framer.push(text)) {
       if (input.acceptPoint()) await consumeK6Line(line, input);
     }
   }
   for (const line of framer.finish()) {
     if (input.acceptPoint()) await consumeK6Line(line, input);
+  }
+}
+
+export class BoundedStdoutTail {
+  private retained = Buffer.alloc(0);
+  private readonly maxBytes: number;
+
+  constructor(maxBytes = 256 * 1024) {
+    if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0)
+      throw new Error("k6 stdout tail byte limit must be a positive integer.");
+    this.maxBytes = maxBytes;
+  }
+
+  push(chunk: string | Buffer): void {
+    const next = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    if (next.byteLength >= this.maxBytes) {
+      this.retained = Buffer.from(next.subarray(next.byteLength - this.maxBytes));
+      return;
+    }
+    const combined = Buffer.concat([this.retained, next]);
+    this.retained =
+      combined.byteLength <= this.maxBytes
+        ? combined
+        : Buffer.from(combined.subarray(combined.byteLength - this.maxBytes));
+  }
+
+  toString(): string {
+    return this.retained.toString("utf8");
+  }
+
+  byteLength(): number {
+    return this.retained.byteLength;
+  }
+}
+
+export async function readK6SummaryExport(
+  summaryPath: string,
+  stdoutTail: string,
+  reader: (summaryPath: string) => Promise<string> = (filePath) => readFile(filePath, "utf8"),
+): Promise<{
+  metrics: K6SummaryMetrics | null;
+  warning?: "summary_export_missing" | "summary_export_invalid" | "summary_export_read_failed";
+}> {
+  try {
+    const exported = parseK6SummaryMetrics(await reader(summaryPath));
+    if (exported) return { metrics: exported };
+    return {
+      metrics: parseK6SummaryMetrics(stdoutTail),
+      warning: "summary_export_invalid",
+    };
+  } catch (error) {
+    const warning =
+      (error as NodeJS.ErrnoException).code === "ENOENT"
+        ? "summary_export_missing"
+        : "summary_export_read_failed";
+    return { metrics: parseK6SummaryMetrics(stdoutTail), warning };
   }
 }
 

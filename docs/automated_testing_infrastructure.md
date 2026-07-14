@@ -53,8 +53,10 @@ The goal is to make tests reliable across host-native development, local Dev Con
 - Focused browser-workflow tests exercise recovery behavior with controlled backend boundaries.
 - `pnpm test:composition` starts an isolated deployed API, worker, mock ERP, load orchestrator, web app, dashboard proxy, PostgreSQL, and Redis topology. It covers wiring, SSE reconnect, sold-out and duplicate behavior, worker/ERP/notification handoffs, finalization/history, and the representative 10,000-buyer scenario.
 - `pnpm test:characterization` runs the focused browser workflow followed by the same deployed topology.
+- `pnpm test:k6-compat` builds the production `load-orchestrator-runtime` image and runs a required, non-skipping compatibility smoke with its pinned k6 2.0.0 binary. It inspects both generated executor modes and parses a real loopback `--summary-export`; it is correctness coverage, not a benchmark.
+- `pnpm test:required` is the repository merge gate: the default automated suite followed by the container-backed k6 compatibility lane. There is no checked-in hosted CI workflow, so CI or merge automation must invoke this command rather than `pnpm test` alone.
 - Composition state uses a unique Compose project and disposable volumes and is removed by default. `COMPOSITION_KEEP_RUNTIME=true` retains a failed runtime for inspection.
-- These suites are intentionally excluded from `pnpm test` because they are slow and require a functioning Docker daemon. Repository agents must not run them unless explicitly requested.
+- The composition and characterization suites are intentionally excluded from `pnpm test` because they are slow and require a functioning Docker daemon. Repository agents must not run those two suites unless explicitly requested. The focused k6 compatibility lane remains mandatory through `pnpm test:required`, while host-native unit tests remain independent of a host k6 installation.
 - k6 characterization complements correctness tests; it does not replace focused boundary coverage.
 
 ---
@@ -64,6 +66,8 @@ The goal is to make tests reliable across host-native development, local Dev Con
 The repository must provide root scripts with stable names:
 
 - `pnpm test` runs the full automated test suite, including unit, API/service-boundary, and integration tests.
+- `pnpm test:required` runs `pnpm test` and the mandatory production-image k6 compatibility smoke.
+- `pnpm test:k6-compat` runs only that container-backed smoke and fails if the pinned binary or expected stable export fields are unavailable.
 - `pnpm test:unit` runs only unit tests and must not require Docker.
 - `pnpm test:integration` runs only tests that require PostgreSQL and/or Redis test services.
 - `pnpm test:api` runs only API/service-boundary tests.
@@ -215,10 +219,10 @@ CI can be added after the local testing foundation exists, but the local design 
 
 Expected future CI behavior:
 
-- run unit tests on every push and pull request,
+- run `pnpm test:required` on every merge-bound push and pull request,
 - run integration/API tests with service containers or compose-backed infrastructure,
 - fail fast on type-check, lint, and contract/schema test failures,
-- keep load tests and benchmarks separate from regular correctness CI.
+- keep full load tests and benchmarks separate from regular correctness CI; the tiny k6 compatibility smoke remains part of the correctness gate.
 
 ---
 

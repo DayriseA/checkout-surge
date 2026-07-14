@@ -87,7 +87,7 @@ Replace `⬜` with `✅` when a task is complete. Optional `⏳` for work in pro
 
 ✅ [Task 41: Restore buy outcome headers and tighten the k6 request script (discard bodies, quantity source, correlation header)](./task_41.md)
 
-⬜ [Task 42: Use k6 summary-export for terminal reports and make a real-k6 test lane mandatory](./task_42.md)
+✅ [Task 42: Use k6 summary-export for terminal reports and make a real-k6 test lane mandatory](./task_42.md)
 
 ⬜ [Task 43: Fix steady-arrival VU sizing defaults, cap derived VUs, and add `gracefulStop`](./task_43.md)
 

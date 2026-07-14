@@ -2,9 +2,7 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
-    include: ["test/**/*.test.ts"],
-    exclude: ["test/k6-compat.test.ts"],
+    include: ["test/k6-compat.test.ts"],
     environment: "node",
-    restoreMocks: true,
   },
 });

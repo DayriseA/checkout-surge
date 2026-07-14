@@ -8,6 +8,7 @@ import {
   adminGeneratedRunTeardownResponseSchema,
   adminMaintenanceCleanupRunsResponseSchema,
   type BusinessOutcomeSummary,
+  emptyHttpTimingBreakdownSummary,
   type TerminalInventorySnapshot,
   type TrafficConfig,
   type TrafficDeliverySummary,
@@ -790,7 +791,7 @@ function adminResetTrafficSummary(
   return {
     httpSummary: summary.httpSummary,
     trafficDeliverySummary: summary.trafficDeliverySummary,
-    httpTimingBreakdownSummary: {},
+    httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
     loadRunDiagnosticsSummary: {},
     apiRequestLifecycleSummary: {},
   };

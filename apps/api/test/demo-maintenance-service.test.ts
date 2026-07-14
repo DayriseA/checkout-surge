@@ -1,6 +1,9 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { AcceptedRunConfigSnapshot } from "@checkout-surge/contracts";
+import {
+  type AcceptedRunConfigSnapshot,
+  emptyHttpTimingBreakdownSummary,
+} from "@checkout-surge/contracts";
 import {
   completeGeneratedRunTeardown,
   createDatabaseConnection,
@@ -1963,7 +1966,10 @@ async function seedRun(
         trafficDeliveryStatus: "complete",
         notes: [],
       },
-      httpTimingBreakdownSummary: { p95: 42 },
+      httpTimingBreakdownSummary: {
+        ...emptyHttpTimingBreakdownSummary,
+        waiting: { averageMs: 30, p95Ms: 42 },
+      },
       loadRunDiagnosticsSummary: { source: "fixture" },
       apiRequestLifecycleSummary: { source: "fixture" },
       trafficSummaryReceivedAt: new Date("2026-06-20T00:00:05.000Z"),
@@ -2173,7 +2179,7 @@ async function seedCleanupDurableGraph(
     httpSummary: {},
     trafficOutcomeSummary: {},
     trafficDeliverySummary: {},
-    httpTimingBreakdownSummary: {},
+    httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
     loadRunDiagnosticsSummary: {},
     apiRequestLifecycleSummary: {},
     trafficSummaryReceivedAt: now,
@@ -2262,7 +2268,10 @@ async function seedTerminalSummary(
       trafficDeliveryStatus: input.status === "completed" ? "complete" : "failed",
       notes: [],
     },
-    httpTimingBreakdownSummary: { p95: 30 },
+    httpTimingBreakdownSummary: {
+      ...emptyHttpTimingBreakdownSummary,
+      waiting: { averageMs: 20, p95Ms: 30 },
+    },
     loadRunDiagnosticsSummary: { source: "existing-summary" },
     apiRequestLifecycleSummary: { source: "existing-summary" },
     businessOutcomeSummary: {

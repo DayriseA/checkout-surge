@@ -1,5 +1,6 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { emptyHttpTimingBreakdownSummary } from "@checkout-surge/contracts";
 import {
   createDatabaseConnection,
   demoPresets,
@@ -513,7 +514,7 @@ function summaryFixture(input: {
       trafficDeliveryStatus: input.trafficDeliveryStatus,
       notes: input.trafficDeliveryStatus === "failed" ? ["Major delivery shortfall."] : [],
     },
-    httpTimingBreakdownSummary: {},
+    httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
     loadRunDiagnosticsSummary: {},
     apiRequestLifecycleSummary: {},
     businessOutcomeSummary: {

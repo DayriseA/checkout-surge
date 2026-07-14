@@ -2,6 +2,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   type AcceptedRunConfigSnapshot,
+  emptyHttpTimingBreakdownSummary,
   type NotificationRecordJob,
   notificationRecordBullMqQueueName,
   type notificationRecordJobName,
@@ -1248,7 +1249,7 @@ function trafficCompletionReportFixture(): TrafficCompletionReport {
       trafficDeliveryStatus: "complete",
       notes: [],
     },
-    httpTimingBreakdownSummary: {},
+    httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
     loadRunDiagnosticsSummary: {
       startedAt: "2026-06-20T00:00:00.000Z",
       completedAt: "2026-06-21T00:00:03.000Z",
@@ -1272,6 +1273,16 @@ function trafficCompletionReportFixture(): TrafficCompletionReport {
       stderrRetainedLineLimit: 50,
       stderrLineTruncationLength: 500,
       stderrLineTruncatedCount: 0,
+      terminalMetricSources: {
+        emittedRequests: "summary_export",
+        completedRequests: "summary_export",
+        acceptedResponses: "summary_export",
+        soldOutResponses: "summary_export",
+        unexpectedResponses: "summary_export",
+        droppedIterations: "summary_export",
+        completedIterations: "summary_export",
+      },
+      summaryExportWarnings: [],
     },
     apiRequestLifecycleSummary: {},
     completedAt: "2026-06-21T00:00:03.000Z",

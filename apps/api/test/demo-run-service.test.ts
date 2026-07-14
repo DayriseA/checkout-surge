@@ -3,7 +3,6 @@ import { fileURLToPath } from "node:url";
 import type {
   AcceptedRunConfigSnapshot,
   BusinessOutcomeSummary,
-  LoadRunDiagnosticsSummary,
   PublicRuntimePolicy,
   TrafficCompletionReport,
   TrafficConfig,
@@ -11,6 +10,7 @@ import type {
 } from "@checkout-surge/contracts";
 import {
   controlServiceTokenHeaderName,
+  emptyHttpTimingBreakdownSummary,
   trafficExecutionStartPath,
 } from "@checkout-surge/contracts";
 import { signPublicVisitorCredential } from "@checkout-surge/contracts/public-visitor-credential";
@@ -1526,7 +1526,7 @@ describe("demo-run lifecycle start gating", () => {
               trafficDeliveryStatus: "failed",
               notes: [],
             },
-            httpTimingBreakdownSummary: {},
+            httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
             loadRunDiagnosticsSummary: { source: "existing-summary" },
             apiRequestLifecycleSummary: { source: "existing-summary" },
             businessOutcomeSummary: emptyBusinessOutcomeSummary(),
@@ -1607,7 +1607,7 @@ describe("demo-run lifecycle start gating", () => {
           trafficDeliveryStatus: "complete",
           notes: [],
         },
-        httpTimingBreakdownSummary: {},
+        httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
         loadRunDiagnosticsSummary: {
           ...runnerDiagnosticsFixture(),
           completedAt: "2026-06-20T00:00:12.000Z",
@@ -2687,7 +2687,7 @@ function trafficCompletionFixture(input: {
       trafficDeliveryStatus: "failed",
       notes: [],
     },
-    httpTimingBreakdownSummary: {},
+    httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
     loadRunDiagnosticsSummary: runnerDiagnosticsFixture(input.completedAt),
     apiRequestLifecycleSummary: {},
     completedAt: input.completedAt,
@@ -2697,7 +2697,7 @@ function trafficCompletionFixture(input: {
 
 function runnerDiagnosticsFixture(
   completedAt = "2026-06-20T00:00:05.000Z",
-): LoadRunDiagnosticsSummary {
+): TrafficCompletionReport["loadRunDiagnosticsSummary"] {
   return {
     startedAt: "2026-06-20T00:00:00.000Z",
     completedAt,
@@ -2721,6 +2721,16 @@ function runnerDiagnosticsFixture(
     stderrRetainedLineLimit: 50,
     stderrLineTruncationLength: 500,
     stderrLineTruncatedCount: 0,
+    terminalMetricSources: {
+      emittedRequests: "summary_export",
+      completedRequests: "summary_export",
+      acceptedResponses: "summary_export",
+      soldOutResponses: "summary_export",
+      unexpectedResponses: "summary_export",
+      droppedIterations: "summary_export",
+      completedIterations: "summary_export",
+    },
+    summaryExportWarnings: [],
   };
 }
 

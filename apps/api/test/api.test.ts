@@ -27,6 +27,7 @@ import {
   dashboardRecoveryResponseSchema,
   demoRunOperatorModeHeaderName,
   type ErpResilienceStatus,
+  emptyHttpTimingBreakdownSummary,
   erpResilienceStatusPath,
   erpResilienceStatusSchema,
   errorPayloadSchema,
@@ -1899,7 +1900,7 @@ describe("API gateway routes", () => {
         trafficDeliveryStatus: "complete",
         notes: [],
       },
-      httpTimingBreakdownSummary: {},
+      httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
       loadRunDiagnosticsSummary: runnerDiagnosticsFixture(),
       apiRequestLifecycleSummary: {},
       completedAt: "2026-06-20T00:00:10.000Z",
@@ -3922,6 +3923,16 @@ function runnerDiagnosticsFixture() {
     stderrRetainedLineLimit: 50,
     stderrLineTruncationLength: 500,
     stderrLineTruncatedCount: 0,
+    terminalMetricSources: {
+      emittedRequests: "summary_export" as const,
+      completedRequests: "summary_export" as const,
+      acceptedResponses: "summary_export" as const,
+      soldOutResponses: "summary_export" as const,
+      unexpectedResponses: "summary_export" as const,
+      droppedIterations: "summary_export" as const,
+      completedIterations: "summary_export" as const,
+    },
+    summaryExportWarnings: [],
   };
 }
 

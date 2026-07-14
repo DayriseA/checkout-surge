@@ -34,6 +34,7 @@ import {
   demoRunStatusValues,
   directSnapshotViolationCodes,
   type ErrorPayloadCode,
+  emptyHttpTimingBreakdownSummary,
   erpChaosResetPath,
   erpChaosStatusPath,
   erpConfirmationPath,
@@ -409,15 +410,52 @@ describe("run lifecycle contracts", () => {
         trafficDeliveryStatus: "complete",
         notes: [],
       },
-      httpTimingBreakdownSummary: {},
-      loadRunDiagnosticsSummary: runnerDiagnostics(),
+      httpTimingBreakdownSummary: {
+        ...emptyHttpTimingBreakdownSummary,
+        waiting: { averageMs: 10, p95Ms: 20 },
+      },
+      loadRunDiagnosticsSummary: {
+        ...runnerDiagnostics(),
+        terminalMetricSources: {
+          emittedRequests: "summary_export",
+          completedRequests: "summary_export",
+          acceptedResponses: "point_stream",
+          soldOutResponses: "summary_export",
+          unexpectedResponses: null,
+          droppedIterations: "summary_export",
+          completedIterations: "summary_export",
+        },
+        summaryExportWarnings: ["k6_outcome_counter_point_stream_fallback_used"],
+      },
       apiRequestLifecycleSummary: {},
       completedAt: timestamp,
       correlationId,
     });
 
     expect(report.status).toBe("succeeded");
+    expect(report.httpTimingBreakdownSummary.waiting?.p95Ms).toBe(20);
+    expect(report.loadRunDiagnosticsSummary.terminalMetricSources?.acceptedResponses).toBe(
+      "point_stream",
+    );
     expect(() => demoRunSnapshotSchema.parse({ ...report, status: "completed" })).toThrow();
+    expect(() =>
+      trafficCompletionReportSchema.parse({
+        ...report,
+        httpTimingBreakdownSummary: { p95LatencyMs: 20 },
+      }),
+    ).toThrow();
+    const {
+      terminalMetricSources: _terminalMetricSources,
+      summaryExportWarnings: _summaryExportWarnings,
+      ...legacyDiagnostics
+    } = report.loadRunDiagnosticsSummary;
+    expect(() => loadRunDiagnosticsSummarySchema.parse(legacyDiagnostics)).not.toThrow();
+    expect(() =>
+      trafficCompletionReportSchema.parse({
+        ...report,
+        loadRunDiagnosticsSummary: legacyDiagnostics,
+      }),
+    ).toThrow();
   });
 
   it("accepts unclassified completion evidence but requires status in stored history", () => {
@@ -1732,7 +1770,7 @@ describe("public runtime policy contract", () => {
           trafficDeliveryStatus: "complete",
           notes: [],
         },
-        httpTimingBreakdownSummary: {},
+        httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
         loadRunDiagnosticsSummary: runnerDiagnostics(),
         apiRequestLifecycleSummary: {},
         completedAt: timestamp,
@@ -1884,6 +1922,16 @@ function runnerDiagnostics() {
     stderrRetainedLineLimit: 50,
     stderrLineTruncationLength: 500,
     stderrLineTruncatedCount: 0,
+    terminalMetricSources: {
+      emittedRequests: "summary_export" as const,
+      completedRequests: "summary_export" as const,
+      acceptedResponses: "summary_export" as const,
+      soldOutResponses: "summary_export" as const,
+      unexpectedResponses: "summary_export" as const,
+      droppedIterations: "summary_export" as const,
+      completedIterations: "summary_export" as const,
+    },
+    summaryExportWarnings: [],
   };
 }
 

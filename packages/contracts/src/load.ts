@@ -310,6 +310,60 @@ export type LoadExecutionPlan = z.infer<typeof loadExecutionPlanSchema>;
 
 const nullablePositiveIntegerSchema = positiveIntegerSchema.nullable();
 const nullableNonnegativeIntegerSchema = nonnegativeIntegerSchema.nullable();
+
+export const terminalMetricSourceSchema = z.enum(["summary_export", "point_stream"]);
+export type TerminalMetricSource = z.infer<typeof terminalMetricSourceSchema>;
+
+export const terminalMetricSourcesSchema = z
+  .object({
+    emittedRequests: terminalMetricSourceSchema.nullable(),
+    completedRequests: terminalMetricSourceSchema.nullable(),
+    acceptedResponses: terminalMetricSourceSchema.nullable(),
+    soldOutResponses: terminalMetricSourceSchema.nullable(),
+    unexpectedResponses: terminalMetricSourceSchema.nullable(),
+    droppedIterations: terminalMetricSourceSchema.nullable(),
+    completedIterations: terminalMetricSourceSchema.nullable(),
+  })
+  .strict();
+export type TerminalMetricSources = z.infer<typeof terminalMetricSourcesSchema>;
+
+export const summaryExportWarningSchema = z.enum([
+  "summary_export_missing",
+  "summary_export_invalid",
+  "summary_export_read_failed",
+  "k6_outcome_counter_point_stream_fallback_used",
+  "k6_outcome_counter_summary_export_unavailable",
+]);
+export type SummaryExportWarning = z.infer<typeof summaryExportWarningSchema>;
+
+export const httpTimingPhaseSummarySchema = z
+  .object({
+    averageMs: nonnegativeNumberSchema.nullable(),
+    p95Ms: nonnegativeNumberSchema.nullable(),
+  })
+  .strict();
+export type HttpTimingPhaseSummary = z.infer<typeof httpTimingPhaseSummarySchema>;
+
+export const httpTimingBreakdownSummarySchema = z
+  .object({
+    blocked: httpTimingPhaseSummarySchema.nullable(),
+    connecting: httpTimingPhaseSummarySchema.nullable(),
+    tlsHandshaking: httpTimingPhaseSummarySchema.nullable(),
+    sending: httpTimingPhaseSummarySchema.nullable(),
+    waiting: httpTimingPhaseSummarySchema.nullable(),
+    receiving: httpTimingPhaseSummarySchema.nullable(),
+  })
+  .strict();
+export type HttpTimingBreakdownSummary = z.infer<typeof httpTimingBreakdownSummarySchema>;
+export const emptyHttpTimingBreakdownSummary: HttpTimingBreakdownSummary = {
+  blocked: null,
+  connecting: null,
+  tlsHandshaking: null,
+  sending: null,
+  waiting: null,
+  receiving: null,
+};
+
 export const loadRunDiagnosticsSummarySchema = z
   .object({
     startedAt: isoTimestampSchema,
@@ -373,6 +427,8 @@ export const loadRunDiagnosticsSummarySchema = z
     stderrRetainedLineLimit: z.literal(50),
     stderrLineTruncationLength: z.literal(500),
     stderrLineTruncatedCount: nonnegativeIntegerSchema,
+    terminalMetricSources: terminalMetricSourcesSchema.optional(),
+    summaryExportWarnings: z.array(summaryExportWarningSchema).optional(),
   })
   .strict()
   .superRefine((value, context) => {
@@ -396,6 +452,13 @@ export const loadRunDiagnosticsSummarySchema = z
   });
 export type LoadRunDiagnosticsSummary = z.infer<typeof loadRunDiagnosticsSummarySchema>;
 
+/** Strict diagnostics emitted by a real load-orchestrator completion. */
+export const realLoadRunDiagnosticsSummarySchema = loadRunDiagnosticsSummarySchema.safeExtend({
+  terminalMetricSources: terminalMetricSourcesSchema,
+  summaryExportWarnings: z.array(summaryExportWarningSchema),
+});
+export type RealLoadRunDiagnosticsSummary = z.infer<typeof realLoadRunDiagnosticsSummarySchema>;
+
 export const trafficCompletionReportSchema = z
   .object({
     runId: uuidSchema,
@@ -405,8 +468,8 @@ export const trafficCompletionReportSchema = z
     httpSummary: trafficHttpSummarySchema,
     trafficOutcomeSummary: jsonObjectSchema,
     trafficDeliverySummary: trafficCompletionDeliverySummarySchema,
-    httpTimingBreakdownSummary: jsonObjectSchema,
-    loadRunDiagnosticsSummary: loadRunDiagnosticsSummarySchema,
+    httpTimingBreakdownSummary: httpTimingBreakdownSummarySchema,
+    loadRunDiagnosticsSummary: realLoadRunDiagnosticsSummarySchema,
     apiRequestLifecycleSummary: jsonObjectSchema,
     completedAt: isoTimestampSchema,
     correlationId: correlationIdSchema,

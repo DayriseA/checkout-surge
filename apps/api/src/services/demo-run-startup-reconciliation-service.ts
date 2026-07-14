@@ -2,6 +2,7 @@ import {
   type AcceptedRunConfigSnapshot,
   acceptedRunConfigSnapshotSchema,
   type BusinessOutcomeSummary,
+  emptyHttpTimingBreakdownSummary,
   type TerminalInventorySnapshot,
   type TrafficConfig,
   type TrafficDeliverySummary,
@@ -96,7 +97,7 @@ export class DemoRunStartupReconciliationService {
         finalizedAt: now,
         httpSummary: trafficSummary.httpSummary,
         trafficDeliverySummary: trafficSummary.trafficDeliverySummary,
-        httpTimingBreakdownSummary: {},
+        httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
         loadRunDiagnosticsSummary: {
           interruption: apiRestartInterruptedRunReason,
           previousTrafficStatus: run.trafficStatus,

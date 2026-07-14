@@ -18,6 +18,8 @@
     "format": "biome check --write .",
     "format:check": "biome check .",
     "test": "pnpm test:unit && pnpm test:api && pnpm test:integration",
+    "test:required": "pnpm test && pnpm test:k6-compat",
+    "test:k6-compat": "docker compose build load-orchestrator && docker compose run --rm --no-deps load-orchestrator pnpm --filter load-orchestrator test:k6-compat",
     "test:unit": "node --test scripts/test-environment-safety.test.mjs && pnpm test:scripts && turbo run test:unit --filter @checkout-surge/contracts --filter @checkout-surge/db --filter @checkout-surge/logger --filter mock-erp --filter worker --filter web --filter load-orchestrator",
     "test:scripts": "pnpm --filter @checkout-surge/contracts build && node --test scripts/runtime-smoke-load.test.mjs scripts/runtime-reset-client.test.mjs",
     "test:integration": "turbo run test:integration --filter @checkout-surge/db --filter worker",
