@@ -92,13 +92,15 @@ Admin operators can use the full demo surface:
 - Save editable admin presets and the persisted `Custom` scratch preset.
 - Duplicate public presets into editable admin-only presets or copy a preset into `Custom`.
 - Start editable admin presets after the accepted configuration has been saved.
-- Reset demo state as a recovery/local-maintenance action: recover any starting, active, or draining run as failed, then clear reset-owned queues and live dashboard recovery state.
+- Reset demo state as a recovery/local-maintenance action: globally serialize run starts with reset, fence any starting, active, or draining run as failed, close admission and metric ingestion, confirm exact-run traffic termination, handle reset-owned queues, write immutable summaries, and clear only the affected live dashboard projection.
 - Use retained Mock ERP global chaos controls only as diagnostics/recovery controls outside the normal preset start workflow.
 - Bypass public run budgets.
 
 Admin authorization is not a substitute for safety limits. All dangerous controls must still enforce server-side caps so a typo, compromised browser session, or unexpected UI bug cannot request unbounded infrastructure work.
 
-Reset is a fenced terminal workflow, not an unordered cleanup script. It serializes reset calls, claims the terminal transition under the same PostgreSQL advisory admission lock used by accepted purchases, closes Redis eligibility, performs reset-owned queue/state cleanup, then rereads business truth and inserts the immutable summary transactionally. A closure failure prevents a successful reset response, and a claimed run missing its summary remains selectable by a later repair attempt.
+Reset is a fenced terminal workflow, not an unordered cleanup script. A session-scoped PostgreSQL advisory lock uses the same global key as run creation for the whole workflow, so a successor cannot start while cancellation or cleanup remains unresolved. For each recoverable run, the API claims the terminal transition under its run admission lock, closes Redis eligibility, installs the run-scoped traffic-metric fence, and calls the authenticated load-orchestrator abort endpoint with the exact run ID and canonical correlation ID. `no_current_run` is an idempotent success for that already-fenced candidate; a current-run mismatch is `409` and never signals the other run. Only confirmed termination permits reset-owned queue handling, a final business/inventory reread, immutable failed-summary insertion, and scoped live-projection clear. Admission, abort, queue, or summary failure leaves the claimed `failed/admin_reset` transition without a summary. Even after the session lock is released, run creation checks for that durable state under the same global advisory transaction and returns `409 demo_reset_incomplete`; a reset retry must write the missing summary before another traffic start can be delegated. Summary-backed historical resets and projection-only retries do not trigger this gate. Redis inspection or projection-clear failure still prevents reset success and retains safe retry state, but a post-summary clear retry does not duplicate history or re-abort a successor. Reset never flushes Redis, deletes historical summaries or inventory, or disconnects SSE clients.
+
+The operational `runtime:reset` client owns cross-service coordination, not the API route. It calls the protected API reset first and then attempts protected Mock ERP `POST /chaos/reset` even when the API failed, using one correlation ID and bodyless requests. Each complete response, including its body read, has a practical 30-second default deadline. Partial results are sanitized so the exact service token cannot appear in messages or response-correlation output, printed per service, and return a nonzero exit. Mock ERP alone owns restoration of its four global chaos defaults; the API reset does not mutate that process-local configuration. Existing one-second TPS buckets and in-flight ERP calls remain bounded limitations rather than reset rollback claims.
 
 ---
 
@@ -114,7 +116,7 @@ Expected cap categories:
 | Admin preset traffic | API-enforced traffic-mode-specific caps for saved/started preset snapshots. |
 | Load-orchestrator internals | Limits for retained low-level k6 templates or diagnostics that stay inside the load-orchestrator boundary rather than the public/admin preset contract. |
 | Mock ERP diagnostics | Maximum latency, minimum allowed TPS cap, maximum error rate, whether forced outage requires admin mode for retained global chaos controls. |
-| Demo reset/recovery | Public reset disabled; admin reset uses one recovery workflow that fails/finalizes any starting, active, or draining run before clearing reset-owned queues and live dashboard state. |
+| Demo reset/recovery | Public reset disabled; admin reset globally excludes new starts, fences the exact run, confirms load termination within the API's distinct 20-second abort-response deadline, handles reset-owned queues, writes immutable truth, and clears only that run's live projection. |
 | Realtime/read paths | Connection limits, request rate limits, maximum snapshot page sizes. |
 | Internal ingestion | Required service token, accepted caller identity, maximum metric/run-summary payload size. |
 
@@ -129,7 +131,7 @@ The local defaults and environment names are documented in `docs/local_developme
 | Admin session creation | No | No | Created on success | No | Exact trusted Origin, per-client/global login admission, and constant-time passphrase verification are required. |
 | Dashboard snapshot/status reads | Yes | No | Optional | No | Public portfolio visibility is intentional. |
 | Dashboard realtime connection | Yes | No | Optional | No | Payloads must not include secrets or unsafe control tokens. |
-| Demo reset/recovery | No | No | Yes | Yes behind proxy | Avoid anonymous state erasure and repeated expensive cleanup. Reset is recovery/local maintenance, not normal public demo preparation. |
+| Demo reset/recovery | No | No | Yes | Yes behind proxy | The protected API workflow uses exact-run confirmed traffic abort, blocks successor starts with `demo_reset_incomplete` until a missing summary is repaired, and keeps projection cleanup truthfully retryable; the separate operational client subsequently restores Mock ERP defaults and reports partial failure. |
 | Queue reset/inspection controls | Limited reads | No | Yes | Yes behind proxy | Reads may be public only if sanitized and cheap. |
 | Mock ERP chaos status | Yes | No | Optional | No | Read-only visibility helps explain failure modes. |
 | Mock ERP chaos update/reset | No | No | Yes | Yes behind proxy | Retained global diagnostic controls are admin-only; normal ERP behavior comes from the run snapshot. |

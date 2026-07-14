@@ -45,10 +45,12 @@ import {
   HttpTrafficExecutionGateway,
   hydratePublicRuntimePolicy,
   isSingleNonTerminalRunViolation,
+  RedisDashboardTrafficMetricStore,
   validateAcceptedRunSnapshot,
   validateActivePublicRuntimePolicyAtStartup,
   validatePublicRuntimePolicyUpdate,
 } from "../src/services/demo-run-service.js";
+import { PostgresDemoResetWorkflowFence } from "../src/services/postgres-demo-reset-workflow-fence.js";
 import { RedisPublicRunBudgetStore } from "../src/services/public-run-budget-store.js";
 import { PostgresTerminalDemoRunSummaryWriter } from "../src/services/terminal-demo-run-transition.js";
 import { TrafficCompletionEnrichmentService } from "../src/services/traffic-completion-enrichment-service.js";
@@ -521,6 +523,128 @@ describe("demo-run lifecycle start gating", () => {
       code: "demo_run_already_active",
       details: { status },
     });
+  });
+
+  it("holds a successor start during abort, rejects it after failure, and admits it after repair", async () => {
+    const primary = requireConnection(connection);
+    const redisClient = requireRedis(redis);
+    const resetConnection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 2 });
+    await seedExistingRun(primary, { runId: existingRunId("active"), status: "active" });
+    let releaseAbort!: () => void;
+    let abortEntered!: () => void;
+    const abortRelease = new Promise<void>((resolve) => {
+      releaseAbort = resolve;
+    });
+    const abortStarted = new Promise<void>((resolve) => {
+      abortEntered = resolve;
+    });
+    let abortAttempt = 0;
+    const queueCleanup = vi.fn(async () => ({ cleanedQueueCount: 0, cleanedJobCount: 0 }));
+    const resetService = new DemoMaintenanceService({
+      db: resetConnection.db,
+      redis: redisClient,
+      terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(resetConnection.db),
+      queueMaintenance: { cleanResetOwnedQueues: queueCleanup },
+      trafficAborter: {
+        abortCurrent: async () => {
+          abortAttempt += 1;
+          if (abortAttempt === 1) {
+            abortEntered();
+            await abortRelease;
+            throw new ApiHttpError({
+              statusCode: 502,
+              code: "load_orchestrator_abort_unconfirmed",
+              message: "Traffic termination could not be confirmed.",
+            });
+          }
+          return { outcome: "no_current_run" };
+        },
+      },
+      dashboardLiveStateReset: new RedisDashboardTrafficMetricStore(redisClient),
+      resetWorkflowFence: new PostgresDemoResetWorkflowFence(resetConnection.sql),
+      logger: createSilentLogger("api"),
+    });
+    const start = vi.fn(async (request: TrafficExecutionStartRequest) => ({
+      runId: request.runId,
+      status: "active" as const,
+      startedAt: "2026-07-13T00:00:01.000Z",
+      correlationId: request.correlationId,
+    }));
+    const startService = createStartService(primary, redisClient, {
+      trafficExecutionGateway: { start },
+    });
+
+    try {
+      const resetPromise = resetService.reset("reset-fence-race");
+      await abortStarted;
+      const startPromise = startService.startRun(
+        { presetSlug: "preview-1k", operatorMode: "admin" },
+        "successor-start",
+      );
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(start).not.toHaveBeenCalled();
+
+      const rejectedStart = expect(startPromise).rejects.toMatchObject({
+        code: "demo_reset_incomplete",
+        details: { runId: existingRunId("active") },
+      });
+      releaseAbort();
+      await expect(resetPromise).rejects.toMatchObject({
+        code: "load_orchestrator_abort_unconfirmed",
+      });
+      await rejectedStart;
+      expect(start).not.toHaveBeenCalled();
+      expect(queueCleanup).not.toHaveBeenCalled();
+
+      await expect(resetService.reset("reset-fence-repair")).resolves.toMatchObject({
+        failedRunCount: 1,
+      });
+      await expect(
+        startService.startRun(
+          { presetSlug: "preview-1k", operatorMode: "admin" },
+          "successor-after-repair",
+        ),
+      ).resolves.toMatchObject({ run: { status: "active" } });
+      expect(start).toHaveBeenCalledOnce();
+    } finally {
+      releaseAbort();
+      await resetConnection.close();
+    }
+  });
+
+  it("acknowledges and drops terminal or reset-fenced metric batches without SSE projection", async () => {
+    const db = requireConnection(connection).db;
+    const redisClient = requireRedis(redis);
+    const runId = existingRunId("active");
+    await seedExistingRun(requireConnection(connection), { runId, status: "active" });
+    const trafficMetricStore = new RedisDashboardTrafficMetricStore(redisClient);
+    const service = createStartService(requireConnection(connection), redisClient, {
+      trafficMetricStore,
+    });
+    const batch = {
+      runId,
+      correlationId: "metric-ingest",
+      samples: [
+        {
+          metricName: "traffic.latency" as const,
+          value: 12,
+          unit: "ms",
+          timestamp: "2026-07-13T00:00:00.000Z",
+        },
+      ],
+      observedAt: "2026-07-13T00:00:00.000Z",
+    };
+
+    await service.ingestMetrics(batch);
+    expect(await trafficMetricStore.readRecent(runId)).toHaveLength(1);
+
+    await trafficMetricStore.clearRun(runId);
+    await service.ingestMetrics(batch);
+    expect(await trafficMetricStore.readRecent(runId)).toEqual([]);
+
+    await db.update(demoRuns).set({ status: "failed" }).where(eq(demoRuns.id, runId));
+    await service.ingestMetrics(batch);
+    expect(await trafficMetricStore.readRecent(runId)).toEqual([]);
   });
 
   it("replays a durable starting intent with the same run identity and activates it", async () => {
@@ -1923,7 +2047,7 @@ describe("demo-run lifecycle start gating", () => {
 
   it("returns the reset run when a delayed orchestrator acknowledgement loses activation CAS", async () => {
     const startConnection = requireConnection(connection);
-    const resetConnection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
+    const resetConnection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 2 });
     let releaseTrafficStart: (() => void) | undefined;
     let trafficStartEntered: (() => void) | undefined;
     const trafficStartEnteredPromise = new Promise<void>((resolve) => {
@@ -1954,6 +2078,9 @@ describe("demo-run lifecycle start gating", () => {
       queueMaintenance: {
         cleanResetOwnedQueues: async () => ({ cleanedQueueCount: 0, cleanedJobCount: 0 }),
       },
+      trafficAborter: { abortCurrent: async () => ({ outcome: "no_current_run" }) },
+      dashboardLiveStateReset: new RedisDashboardTrafficMetricStore(requireRedis(redis)),
+      resetWorkflowFence: new PostgresDemoResetWorkflowFence(resetConnection.sql),
       logger: createSilentLogger("api"),
       now: () => new Date("2026-06-20T00:00:20.000Z"),
     });
@@ -2132,6 +2259,7 @@ function createStartService(
       typeof DemoRunService
     >[0]["completionEnrichmentService"];
     logger?: ConstructorParameters<typeof DemoRunService>[0]["logger"];
+    trafficMetricStore?: ConstructorParameters<typeof DemoRunService>[0]["trafficMetricStore"];
   } = {},
 ): DemoRunService {
   const ids = [
@@ -2180,7 +2308,7 @@ function createStartService(
       }),
       release: async () => undefined,
     },
-    trafficMetricStore: {} as never,
+    trafficMetricStore: overrides.trafficMetricStore ?? ({} as never),
     businessOutcomeReader,
     completionEnrichmentService,
     ...(overrides.finalizationService

@@ -1,26 +1,21 @@
 #!/usr/bin/env node
 
-const apiBaseUrl = (process.env.API_BASE_URL ?? "http://localhost:4000").replace(/\/+$/, "");
-const token = process.env.CONTROL_SERVICE_TOKEN?.trim();
+import { RuntimeResetAggregateError, resetRuntime } from "./runtime-reset-client.mjs";
 
-if (!token) {
-  console.error("CONTROL_SERVICE_TOKEN is required for runtime reset.");
-  process.exit(1);
+try {
+  const result = await resetRuntime();
+  printResult(result);
+} catch (error) {
+  if (error instanceof RuntimeResetAggregateError) printResult(error.result);
+  else console.error(error instanceof Error ? error.message : "Runtime reset failed.");
+  process.exitCode = 1;
 }
 
-const response = await fetch(`${apiBaseUrl}/admin/demo/reset`, {
-  method: "POST",
-  headers: {
-    accept: "application/json",
-    "x-control-service-token": token,
-  },
-});
-const payload = await response.json().catch(() => null);
-
-if (!response.ok) {
-  console.error(`Runtime reset failed with HTTP ${response.status}.`);
-  console.error(JSON.stringify(payload, null, 2));
-  process.exit(1);
+function printResult(result) {
+  console.log(`Runtime reset correlation: ${result.correlationId}`);
+  for (const service of result.services) {
+    const status = service.status ? ` (HTTP ${service.status})` : "";
+    const detail = service.message ? `: ${service.message}` : "";
+    console.log(`${service.service}: ${service.outcome}${status}${detail}`);
+  }
 }
-
-console.log(JSON.stringify(payload, null, 2));

@@ -256,7 +256,7 @@ function mapDemoRunError(error: unknown): unknown {
     return error;
   }
 
-  const conflictCodes = new Set(["demo_run_already_active"]);
+  const conflictCodes = new Set(["demo_run_already_active", "demo_reset_incomplete"]);
   const notFoundCodes = new Set(["preset_not_found", "public_runtime_policy_not_found"]);
   const forbiddenCodes = new Set(["public_visitor_forbidden"]);
 

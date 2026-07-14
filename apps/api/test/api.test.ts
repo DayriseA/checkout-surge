@@ -95,7 +95,10 @@ import {
   DashboardRecoveryService,
 } from "../src/services/dashboard-recovery-service.js";
 import type { DemoMaintenanceService } from "../src/services/demo-maintenance-service.js";
-import type { DemoRunController } from "../src/services/demo-run-service.js";
+import {
+  type DemoRunController,
+  DemoRunValidationError,
+} from "../src/services/demo-run-service.js";
 import type { ErpStatusService } from "../src/services/erp-status-service.js";
 import {
   type InventoryStatusReader,
@@ -1684,6 +1687,38 @@ describe("API gateway routes", () => {
       },
       expect.any(String),
     );
+  });
+
+  it("maps an incomplete durable admin reset to a canonical 409", async () => {
+    const startRun = vi.fn(async () => {
+      throw new DemoRunValidationError(
+        "demo_reset_incomplete",
+        "The prior demo reset must be repaired before another run can start.",
+        { runId: fixtureIds.run },
+      );
+    });
+    const server = await trackedServer({
+      persistence: new AcceptingPersistence(),
+      demoRunService: { ...demoRunControllerFixture(), startRun },
+    });
+    const response = await server.inject({
+      method: "POST",
+      url: startDemoRunPath,
+      headers: {
+        [controlServiceTokenHeaderName]: "test-control-token",
+        [demoRunOperatorModeHeaderName]: "admin",
+        [correlationIdHeaderName]: "corr-reset-incomplete",
+      },
+      payload: { presetSlug: "preview-1k" },
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toMatchObject({
+      code: "demo_reset_incomplete",
+      correlationId: "corr-reset-incomplete",
+      details: { runId: fixtureIds.run },
+    });
+    expect(startRun).toHaveBeenCalledOnce();
   });
 
   it("protects internal load metric ingestion with the control service token", async () => {

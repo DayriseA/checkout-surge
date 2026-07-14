@@ -4,6 +4,7 @@ import {
   createDatabaseConnection,
   createRedisClient,
   createRedisDashboardEventSubscriber,
+  createSqlClient,
   dbPackageName,
   getInventoryStatus,
   markReservationPendingPersistence,
@@ -54,6 +55,7 @@ import {
 import { InventoryStatusService } from "./services/inventory-status-service.js";
 import { PendingPersistenceReconciler } from "./services/pending-persistence-reconciler.js";
 import { PostgresBuyPersistence } from "./services/postgres-buy-persistence.js";
+import { PostgresDemoResetWorkflowFence } from "./services/postgres-demo-reset-workflow-fence.js";
 import { RedisPublicRunBudgetStore } from "./services/public-run-budget-store.js";
 import { QueueStatusService } from "./services/queue-status-service.js";
 import {
@@ -104,6 +106,7 @@ export async function startApiServer(): Promise<void> {
   const config = loadApiConfig(process.env);
   const logger = createServiceLogger({ service: "api" });
   const connection = createDatabaseConnection(config.databaseUrl, { max: config.postgresPoolMax });
+  const resetWorkflowSql = createSqlClient(config.databaseUrl, { max: 1 });
   const redis = createRedisClient(config.redisUrl, {
     lazyConnect: true,
     maxRetriesPerRequest: 3,
@@ -198,6 +201,10 @@ export async function startApiServer(): Promise<void> {
     logger,
   });
   const trafficMetricStore = new RedisDashboardTrafficMetricStore(redis);
+  const trafficExecutionGateway = new HttpTrafficExecutionGateway({
+    loadOrchestratorBaseUrl: config.loadOrchestratorBaseUrl,
+    controlServiceToken: config.controlServiceToken,
+  });
   const terminalRunWriter = new PostgresTerminalDemoRunSummaryWriter(connection.db);
   const demoMaintenanceService = new DemoMaintenanceService({
     db: connection.db,
@@ -205,6 +212,9 @@ export async function startApiServer(): Promise<void> {
     clearErpCircuitBreakerState: () => clearErpCircuitBreakerSnapshots(redis),
     queueMaintenance: demoQueueMaintenance,
     terminalRunWriter,
+    trafficAborter: trafficExecutionGateway,
+    dashboardLiveStateReset: trafficMetricStore,
+    resetWorkflowFence: new PostgresDemoResetWorkflowFence(resetWorkflowSql),
     logger,
   });
   const runHistoryService = new RunHistoryService({ db: connection.db });
@@ -245,10 +255,7 @@ export async function startApiServer(): Promise<void> {
   const demoRunService = new DemoRunService({
     db: connection.db,
     redis,
-    trafficExecutionGateway: new HttpTrafficExecutionGateway({
-      loadOrchestratorBaseUrl: config.loadOrchestratorBaseUrl,
-      controlServiceToken: config.controlServiceToken,
-    }),
+    trafficExecutionGateway,
     publicRunBudgetStore: new RedisPublicRunBudgetStore(redis),
     trafficMetricStore,
     businessOutcomeReader,
@@ -342,7 +349,9 @@ export async function startApiServer(): Promise<void> {
         closeOrderProcessQueueInspector: () => orderProcessQueueInspector.close(),
         closeDemoQueueMaintenance: () => demoQueueMaintenance.close(),
         disconnectRedis: () => redis.disconnect(),
-        closeDatabase: () => connection.close(),
+        closeDatabase: async () => {
+          await Promise.all([connection.close(), resetWorkflowSql.end({ timeout: 5 })]);
+        },
       });
     })();
     return closePromise;

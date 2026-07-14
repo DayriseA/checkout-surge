@@ -712,6 +712,7 @@ describe("Mock ERP HTTP service", () => {
         new Date("2026-06-22T00:00:00.000Z"),
         new Date("2026-06-22T00:00:01.000Z"),
         new Date("2026-06-22T00:00:02.000Z"),
+        new Date("2026-06-22T00:00:03.000Z"),
       ),
     );
     const server = buildTestServer({
@@ -726,6 +727,11 @@ describe("Mock ERP HTTP service", () => {
       payload: { latencyMs: 250, maxTps: 5, errorRate: 0.5, forcedOutage: true },
     });
     const reset = await server.inject({
+      method: "POST",
+      url: erpChaosResetPath,
+      headers: { [controlServiceTokenHeaderName]: controlServiceToken },
+    });
+    const repeatedReset = await server.inject({
       method: "POST",
       url: erpChaosResetPath,
       headers: { [controlServiceTokenHeaderName]: controlServiceToken },
@@ -747,6 +753,27 @@ describe("Mock ERP HTTP service", () => {
       errorRate: 0,
       forcedOutage: false,
       updatedAt: "2026-06-22T00:00:02.000Z",
+    });
+    expect(erpChaosStatusSchema.parse(repeatedReset.json())).toEqual({
+      latencyMs: 1,
+      maxTps: 100,
+      errorRate: 0,
+      forcedOutage: false,
+      updatedAt: "2026-06-22T00:00:03.000Z",
+    });
+  });
+
+  it.each([undefined, "wrong-token"])("rejects chaos reset with token %s", async (token) => {
+    const server = buildTestServer({ confirmationService: new ConfirmationService() });
+    const response = await server.inject({
+      method: "POST",
+      url: erpChaosResetPath,
+      ...(token ? { headers: { [controlServiceTokenHeaderName]: token } } : {}),
+    });
+    await server.close();
+    expect(response.statusCode).toBe(401);
+    expect(errorPayloadSchema.parse(response.json())).toMatchObject({
+      code: "control_token_required",
     });
   });
 

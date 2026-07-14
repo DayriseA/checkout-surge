@@ -17,6 +17,7 @@ describe("generated-run Redis cleanup", () => {
     expect(unlink).toHaveBeenCalledWith(
       `demo-run:${runId}:sale-eligibility`,
       `demo-run:${runId}:traffic-metrics`,
+      `demo-run:${runId}:traffic-metrics-reset-fence`,
     );
   });
 
@@ -44,6 +45,7 @@ describe("generated-run Redis cleanup", () => {
       3,
       `demo-run:${runId}:sale-eligibility`,
       `demo-run:${runId}:traffic-metrics`,
+      `demo-run:${runId}:traffic-metrics-reset-fence`,
     );
   });
 

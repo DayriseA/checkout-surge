@@ -20,6 +20,8 @@ import {
   type DemoRunSnapshot,
   type DeploymentHardCaps,
   type DuplicateDemoPresetRequest,
+  dashboardEventSchema,
+  dashboardEventsRedisChannel,
   demoPresetContractSchema,
   demoRunSnapshotSchema,
   type LoadMetricIngestRequest,
@@ -40,10 +42,14 @@ import {
   type TerminalInventorySnapshot,
   type TrafficCompletionReport,
   type TrafficDeliverySummary,
+  type TrafficExecutionAbortResponse,
   type TrafficExecutionStartRequest,
   type TrafficExecutionStartResponse,
   type TrafficHttpSummary,
   trafficCompletionReportSchema,
+  trafficExecutionAbortPath,
+  trafficExecutionAbortRequestSchema,
+  trafficExecutionAbortResponseSchema,
   trafficExecutionStartPath,
   trafficExecutionStartRequestSchema,
   trafficExecutionStartResponseSchema,
@@ -57,6 +63,7 @@ import {
   demoPresets,
   demoRunFinalizations,
   demoRunSaleContexts,
+  demoRunSummaries,
   demoRuns,
   getInventoryStatus,
   initializeInventory,
@@ -67,7 +74,7 @@ import {
   setRunSaleEligibility,
 } from "@checkout-surge/db";
 import { type CheckoutSurgeLogger, correlationIdHeaderName } from "@checkout-surge/logger";
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { ApiHttpError } from "../runtime/errors.js";
 import type { DashboardBusinessOutcomeReader } from "./dashboard-recovery-service.js";
 import type { DemoRunFinalizationController } from "./demo-run-finalization-service.js";
@@ -78,13 +85,21 @@ import type {
 import type { TerminalDemoRunWriter } from "./terminal-demo-run-writer.js";
 import type { TrafficCompletionEnrichmentController } from "./traffic-completion-enrichment-service.js";
 
-const demoRunStartLockKey = "checkout_surge_demo_run_start";
+export const demoRunStartLockKey = "checkout_surge_demo_run_start";
 const singleNonTerminalRunIndexName = "demo_runs_single_non_terminal_idx";
 const generatedRunSaleDurationMs = 24 * 60 * 60 * 1000;
 const recentMetricLimit = 50;
 
 export interface TrafficExecutionGateway {
   start(request: TrafficExecutionStartRequest): Promise<TrafficExecutionStartResponse>;
+}
+
+export interface TrafficAbortGateway {
+  abortCurrent(input: {
+    runId: string;
+    reason: string;
+    correlationId: string;
+  }): Promise<TrafficExecutionAbortResponse>;
 }
 
 export interface DashboardTrafficMetricReader {
@@ -116,12 +131,56 @@ export type StartDemoRunCommand = StartDemoRunRequest & {
 export class RedisDashboardTrafficMetricStore implements DashboardTrafficMetricReader {
   constructor(private readonly redis: CheckoutSurgeRedis) {}
 
-  async append(input: LoadMetricIngestRequest): Promise<void> {
-    const key = trafficMetricKey(input.runId);
-    const payloads = input.samples.map((sample) => JSON.stringify(sample));
-    await this.redis.rpush(key, ...payloads);
-    await this.redis.ltrim(key, -recentMetricLimit, -1);
-    await this.redis.expire(key, 24 * 60 * 60);
+  /**
+   * Atomically checks the reset fence, stores the recovery samples, and publishes
+   * their SSE events. This prevents an ingest racing clearRun from publishing or
+   * recreating a cleared projection after the reset fence wins.
+   */
+  async appendAndPublishIfLive(
+    input: LoadMetricIngestRequest,
+    events: Array<ReturnType<typeof dashboardEventSchema.parse>>,
+  ): Promise<boolean> {
+    const samplePayloads = input.samples.map((sample) => JSON.stringify(sample));
+    const eventPayloads = events.map((event) => JSON.stringify(dashboardEventSchema.parse(event)));
+    const result = await this.redis.eval(
+      `
+        if redis.call("EXISTS", KEYS[2]) == 1 then return 0 end
+        local sampleCount = tonumber(ARGV[1])
+        if sampleCount > 0 then
+          local samples = {}
+          for i = 1, sampleCount do samples[i] = ARGV[i + 1] end
+          redis.call("RPUSH", KEYS[1], unpack(samples))
+          redis.call("LTRIM", KEYS[1], -${recentMetricLimit}, -1)
+          redis.call("EXPIRE", KEYS[1], 86400)
+        end
+        for i = sampleCount + 2, #ARGV do redis.call("PUBLISH", KEYS[3], ARGV[i]) end
+        return 1
+      `,
+      3,
+      trafficMetricKey(input.runId),
+      trafficMetricFenceKey(input.runId),
+      dashboardEventsRedisChannel,
+      String(samplePayloads.length),
+      ...samplePayloads,
+      ...eventPayloads,
+    );
+    return result === 1;
+  }
+
+  async fenceRun(runId: string): Promise<void> {
+    await this.redis.set(trafficMetricFenceKey(runId), "reset", "EX", 24 * 60 * 60);
+  }
+
+  async clearRun(runId: string): Promise<void> {
+    await this.redis
+      .multi()
+      .set(trafficMetricFenceKey(runId), "reset", "EX", 24 * 60 * 60)
+      .del(trafficMetricKey(runId))
+      .exec();
+  }
+
+  async hasRunState(runId: string): Promise<boolean> {
+    return (await this.redis.exists(trafficMetricKey(runId))) === 1;
   }
 
   async readRecent(runId: string | null): Promise<MetricSample[]> {
@@ -136,12 +195,13 @@ export class RedisDashboardTrafficMetricStore implements DashboardTrafficMetricR
   }
 }
 
-export class HttpTrafficExecutionGateway implements TrafficExecutionGateway {
+export class HttpTrafficExecutionGateway implements TrafficExecutionGateway, TrafficAbortGateway {
   constructor(
     private readonly options: {
       loadOrchestratorBaseUrl: string;
       controlServiceToken: string;
       requestTimeoutMs?: number;
+      abortRequestTimeoutMs?: number;
       fetch?: typeof fetch;
     },
   ) {}
@@ -192,6 +252,101 @@ export class HttpTrafficExecutionGateway implements TrafficExecutionGateway {
     }
 
     return trafficExecutionStartResponseSchema.parse(payload);
+  }
+
+  async abortCurrent(input: {
+    runId: string;
+    reason: string;
+    correlationId: string;
+  }): Promise<TrafficExecutionAbortResponse> {
+    const request = trafficExecutionAbortRequestSchema.parse(input);
+    const controller = new AbortController();
+    const abortTimeoutMs = positiveTimeout(
+      this.options.abortRequestTimeoutMs ?? 20_000,
+      "abortRequestTimeoutMs",
+    );
+    let rejectTimeout: (reason: TrafficAbortTimeoutError) => void = () => undefined;
+    const timeoutFailure = new Promise<never>((_resolve, reject) => {
+      rejectTimeout = reject;
+    });
+    const timeout = setTimeout(() => {
+      controller.abort();
+      rejectTimeout(new TrafficAbortTimeoutError());
+    }, abortTimeoutMs);
+    const abortOperation = (async () => {
+      const response = await (this.options.fetch ?? fetch)(
+        `${this.options.loadOrchestratorBaseUrl.replace(/\/+$/, "")}${trafficExecutionAbortPath}`,
+        {
+          method: "POST",
+          headers: {
+            accept: "application/json",
+            "content-type": "application/json",
+            [correlationIdHeaderName]: request.correlationId ?? input.correlationId,
+            [controlServiceTokenHeaderName]: this.options.controlServiceToken,
+          },
+          body: JSON.stringify(request),
+          signal: controller.signal,
+        },
+      );
+      if (!response.ok) return { response };
+      try {
+        return {
+          response,
+          confirmation: trafficExecutionAbortResponseSchema.parse(await response.json()),
+        };
+      } catch {
+        throw new TrafficAbortInvalidResponseError();
+      }
+    })();
+    void abortOperation.catch(() => undefined);
+    let result: Awaited<typeof abortOperation>;
+    try {
+      result = await Promise.race([abortOperation, timeoutFailure]);
+    } catch (error) {
+      if (error instanceof TrafficAbortInvalidResponseError) {
+        throw new ApiHttpError({
+          statusCode: 502,
+          code: "load_orchestrator_abort_invalid_response",
+          message: "The load orchestrator returned an invalid abort confirmation.",
+        });
+      }
+      throw new ApiHttpError({
+        statusCode: 502,
+        code: "load_orchestrator_abort_unconfirmed",
+        message: "Traffic termination could not be confirmed.",
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    if (!result.response.ok) {
+      if (result.response.status === 409) {
+        throw new ApiHttpError({
+          statusCode: 409,
+          code: "load_orchestrator_run_mismatch",
+          message: "The load orchestrator is running a different demo run.",
+        });
+      }
+      throw new ApiHttpError({
+        statusCode: 502,
+        code: "load_orchestrator_abort_unconfirmed",
+        message: "Traffic termination could not be confirmed.",
+      });
+    }
+
+    const confirmation = result.confirmation;
+    if (
+      !confirmation ||
+      confirmation.requestedRunId !== input.runId ||
+      confirmation.correlationId !== input.correlationId
+    ) {
+      throw new ApiHttpError({
+        statusCode: 502,
+        code: "load_orchestrator_abort_invalid_response",
+        message: "The load orchestrator returned an invalid abort confirmation.",
+      });
+    }
+    return confirmation;
   }
 
   private async recoverAmbiguousStart(
@@ -596,10 +751,15 @@ export class DemoRunService implements DemoRunController {
 
   async ingestMetrics(input: LoadMetricIngestRequest): Promise<void> {
     const request = loadMetricIngestRequestSchema.parse(input);
-    await this.options.trafficMetricStore.append(request);
+    const [run] = await this.options.db
+      .select({ status: demoRuns.status })
+      .from(demoRuns)
+      .where(eq(demoRuns.id, request.runId))
+      .limit(1);
+    if (!run || !["starting", "active", "draining"].includes(run.status)) return;
 
-    for (const sample of request.samples) {
-      await publishDashboardEvent(this.options.redis, {
+    const events = request.samples.map((sample) =>
+      dashboardEventSchema.parse({
         type: "traffic.metric",
         eventId: this.generateId(),
         runId: request.runId,
@@ -608,8 +768,9 @@ export class DemoRunService implements DemoRunController {
         value: sample.value,
         unit: sample.unit,
         occurredAt: sample.timestamp,
-      });
-    }
+      }),
+    );
+    await this.options.trafficMetricStore.appendAndPublishIfLive(request, events);
   }
 
   async reconcileStartingRuns(): Promise<number> {
@@ -738,6 +899,27 @@ export class DemoRunService implements DemoRunController {
               runId: existingRun.id,
               status: existingRun.status,
             },
+          );
+        }
+
+        const [incompleteReset] = await tx
+          .select({ runId: demoRuns.id })
+          .from(demoRuns)
+          .leftJoin(demoRunSummaries, eq(demoRunSummaries.runId, demoRuns.id))
+          .where(
+            and(
+              eq(demoRuns.status, "failed"),
+              eq(demoRuns.failureReason, "admin_reset"),
+              isNull(demoRunSummaries.id),
+            ),
+          )
+          .limit(1);
+
+        if (incompleteReset) {
+          throw new DemoRunValidationError(
+            "demo_reset_incomplete",
+            "The prior demo reset must be repaired before another run can start.",
+            { runId: incompleteReset.runId },
           );
         }
 
@@ -1264,6 +1446,20 @@ function emptyBusinessOutcomeSummary(): BusinessOutcomeSummary {
 function trafficMetricKey(runId: string): string {
   return `demo-run:${runId}:traffic-metrics`;
 }
+
+function trafficMetricFenceKey(runId: string): string {
+  return `demo-run:${runId}:traffic-metrics-reset-fence`;
+}
+
+function positiveTimeout(value: number, name: string): number {
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(`${name} must be a finite positive number.`);
+  }
+  return value;
+}
+
+class TrafficAbortTimeoutError extends Error {}
+class TrafficAbortInvalidResponseError extends Error {}
 
 function toAdminPublicRuntimePolicyResponse(
   row: typeof publicRuntimePolicies.$inferSelect,

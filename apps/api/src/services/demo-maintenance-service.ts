@@ -36,6 +36,7 @@ import {
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { and, asc, desc, eq, inArray, isNull, lt, notInArray, or } from "drizzle-orm";
 import { ApiHttpError } from "../runtime/errors.js";
+import type { DemoResetWorkflowFence } from "./postgres-demo-reset-workflow-fence.js";
 import type {
   TerminalDemoRunSummaryInput,
   TerminalDemoRunWriter,
@@ -93,6 +94,20 @@ type FencedResetRun = {
   previousTrafficStatus?: typeof demoRuns.$inferSelect.trafficStatus;
 };
 
+export interface DemoRunTrafficAborter {
+  abortCurrent(input: {
+    runId: string;
+    reason: string;
+    correlationId: string;
+  }): Promise<{ outcome: "no_current_run" | "current_run_aborted" }>;
+}
+
+export interface DashboardLiveStateReset {
+  fenceRun(runId: string): Promise<void>;
+  clearRun(runId: string): Promise<void>;
+  hasRunState(runId: string): Promise<boolean>;
+}
+
 export class DemoMaintenanceService {
   private static resetTail: Promise<void> = Promise.resolve();
   private static resetPendingCount = 0;
@@ -112,6 +127,9 @@ export class DemoMaintenanceService {
       prepareGeneratedRunTeardown?: typeof prepareGeneratedRunTeardown;
       completeGeneratedRunTeardown?: typeof completeGeneratedRunTeardown;
       clearErpCircuitBreakerState?: () => Promise<void>;
+      trafficAborter?: DemoRunTrafficAborter;
+      dashboardLiveStateReset?: DashboardLiveStateReset;
+      resetWorkflowFence?: DemoResetWorkflowFence;
       now?: () => Date;
     },
   ) {}
@@ -119,9 +137,10 @@ export class DemoMaintenanceService {
   async reset(correlationId: string): Promise<AdminDemoResetResponse> {
     const arrivedDuringReset = DemoMaintenanceService.resetPendingCount > 0;
     DemoMaintenanceService.resetPendingCount += 1;
-    const operation = DemoMaintenanceService.resetTail.then(() =>
-      this.resetWithoutConcurrentReset(correlationId, arrivedDuringReset),
-    );
+    const operation = DemoMaintenanceService.resetTail.then(() => {
+      const reset = () => this.resetWithoutConcurrentReset(correlationId, arrivedDuringReset);
+      return this.options.resetWorkflowFence?.runExclusive(reset) ?? reset();
+    });
     DemoMaintenanceService.resetTail = operation.then(
       () => {
         DemoMaintenanceService.resetPendingCount -= 1;
@@ -160,6 +179,22 @@ export class DemoMaintenanceService {
           ),
         ),
       );
+
+    const projectionRetryRows = await this.options.db
+      .select({ runId: demoRuns.id })
+      .from(demoRuns)
+      .innerJoin(demoRunSummaries, eq(demoRunSummaries.runId, demoRuns.id))
+      .where(and(eq(demoRuns.status, "failed"), eq(demoRuns.failureReason, "admin_reset")));
+
+    if (resetCandidates.length > 0 && !this.options.trafficAborter) {
+      throw new Error("Admin reset traffic aborter is not configured.");
+    }
+    if (
+      (resetCandidates.length > 0 || projectionRetryRows.length > 0) &&
+      !this.options.dashboardLiveStateReset
+    ) {
+      throw new Error("Admin reset dashboard live-state reset is not configured.");
+    }
 
     const fencedRuns: FencedResetRun[] = [];
     for (const candidate of resetCandidates) {
@@ -224,6 +259,26 @@ export class DemoMaintenanceService {
       );
     }
 
+    for (const row of fencedRuns) {
+      try {
+        await this.options.dashboardLiveStateReset?.fenceRun(row.run.id);
+      } catch (error) {
+        this.options.logger.error(
+          { err: error, runId: row.run.id, correlationId },
+          "Could not fence dashboard metric ingestion during admin reset.",
+        );
+        throw new Error(
+          "Admin reset could not fence dashboard metric ingestion. Retry reset to resume the fenced transition.",
+        );
+      }
+
+      await this.options.trafficAborter?.abortCurrent({
+        runId: row.run.id,
+        reason: "admin_reset",
+        correlationId,
+      });
+    }
+
     const queueCleanup =
       fencedRuns.length > 0 || !arrivedDuringReset
         ? await this.options.queueMaintenance.cleanResetOwnedQueues()
@@ -278,6 +333,36 @@ export class DemoMaintenanceService {
     }
     const failedRunCount =
       await this.options.terminalRunWriter.writeAfterTerminalClaims(summaryInputs);
+
+    const projectionRunIds = new Set(fencedRuns.map((row) => row.run.id));
+    for (const row of projectionRetryRows) {
+      try {
+        if (await this.options.dashboardLiveStateReset?.hasRunState(row.runId)) {
+          projectionRunIds.add(row.runId);
+        }
+      } catch (error) {
+        this.options.logger.error(
+          { err: error, runId: row.runId, correlationId },
+          "Could not inspect dashboard live traffic metrics during admin reset retry.",
+        );
+        throw new Error(
+          "Admin reset could not verify dashboard projection cleanup. Retry reset to finish projection cleanup.",
+        );
+      }
+    }
+    for (const runId of projectionRunIds) {
+      try {
+        await this.options.dashboardLiveStateReset?.clearRun(runId);
+      } catch (error) {
+        this.options.logger.error(
+          { err: error, runId, correlationId },
+          "Could not clear dashboard live traffic metrics after admin reset summary.",
+        );
+        throw new Error(
+          "Admin reset terminalized the run but could not clear its dashboard projection. Retry reset to finish projection cleanup.",
+        );
+      }
+    }
     await this.options.clearErpCircuitBreakerState?.();
 
     return adminDemoResetResponseSchema.parse({

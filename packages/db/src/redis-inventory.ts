@@ -51,6 +51,7 @@ export async function deleteGeneratedRunRedisState(
   deletedKeyCount += await redis.unlink(
     runSaleEligibilityKey(runId),
     `demo-run:${runId}:traffic-metrics`,
+    `demo-run:${runId}:traffic-metrics-reset-fence`,
   );
   return { deletedKeyCount };
 }

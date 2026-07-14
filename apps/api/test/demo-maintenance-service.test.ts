@@ -34,10 +34,11 @@ import { resetTestDatabase } from "@checkout-surge/db/testing";
 import { type CheckoutSurgeLogger, createSilentLogger } from "@checkout-surge/logger";
 import { eq, inArray } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { ApiHttpError } from "../src/runtime/errors.js";
 import {
-  DemoMaintenanceService,
   DemoQueueMaintenanceConflict,
   type DemoQueueQuiescenceRelease,
+  DemoMaintenanceService as ProductionDemoMaintenanceService,
 } from "../src/services/demo-maintenance-service.js";
 import { PostgresBuyPersistence } from "../src/services/postgres-buy-persistence.js";
 import {
@@ -70,6 +71,23 @@ const ids = {
   activeOrder: "88888888-8888-4888-8888-888888888881",
   completedOrder: "88888888-8888-4888-8888-888888888882",
 } as const;
+
+class DemoMaintenanceService extends ProductionDemoMaintenanceService {
+  constructor(options: ConstructorParameters<typeof ProductionDemoMaintenanceService>[0]) {
+    super({
+      trafficAborter: {
+        abortCurrent: async () => ({ outcome: "no_current_run" }),
+      },
+      dashboardLiveStateReset: {
+        fenceRun: async () => undefined,
+        clearRun: async () => undefined,
+        hasRunState: async () => false,
+      },
+      resetWorkflowFence: { runExclusive: async (operation) => operation() },
+      ...options,
+    });
+  }
+}
 
 describe("demo maintenance service", () => {
   let connection: ReturnType<typeof createDatabaseConnection> | null = null;
@@ -508,7 +526,7 @@ describe("demo maintenance service", () => {
     await seedCatalogReferencedTerminalRun(db);
     const queueMaintenance = {
       cleanResetOwnedQueues: async () => ({ cleanedQueueCount: 0, cleanedJobCount: 0 }),
-      acquireGeneratedRunQuiescence: async (_runId) => ({
+      acquireGeneratedRunQuiescence: async (_runId: string) => ({
         release: restoreQueueLease,
       }),
       preflightGeneratedRun: async () => undefined,
@@ -635,12 +653,24 @@ describe("demo maintenance service", () => {
       }),
     };
     const clearErpCircuitBreakerState = vi.fn().mockResolvedValue(undefined);
+    const abortCurrent = vi.fn(async () => {
+      writerOperations.push("abort");
+      return { outcome: "current_run_aborted" as const };
+    });
+    const fenceRun = vi.fn(async () => {
+      writerOperations.push("metric-fence");
+    });
+    const clearRun = vi.fn(async () => {
+      writerOperations.push("metric-clear");
+    });
     const service = new DemoMaintenanceService({
       db,
       terminalRunWriter: { claimTerminalRun, writeAfterTerminalClaims },
       redis: redisClient,
       queueMaintenance,
       clearErpCircuitBreakerState,
+      trafficAborter: { abortCurrent },
+      dashboardLiveStateReset: { fenceRun, clearRun, hasRunState: async () => false },
       logger: createSilentLogger("api"),
       now: () => new Date("2026-06-20T00:00:10.000Z"),
     });
@@ -685,7 +715,27 @@ describe("demo maintenance service", () => {
     );
     expect(writeAfterTerminalClaims).toHaveBeenCalledOnce();
     expect(writeAfterTerminalClaims.mock.calls[0]?.[0]).toHaveLength(3);
-    expect(writerOperations).toEqual(["claim", "cleanup", "write"]);
+    expect(abortCurrent).toHaveBeenCalledTimes(3);
+    expect(abortCurrent).toHaveBeenCalledWith({
+      runId: ids.activeRun,
+      reason: "admin_reset",
+      correlationId: "corr-reset",
+    });
+    expect(clearRun).toHaveBeenCalledTimes(3);
+    expect(writerOperations).toEqual([
+      "claim",
+      "metric-fence",
+      "abort",
+      "metric-fence",
+      "abort",
+      "metric-fence",
+      "abort",
+      "cleanup",
+      "write",
+      "metric-clear",
+      "metric-clear",
+      "metric-clear",
+    ]);
     const inProgressRunIds = new Set<string>([ids.startingRun, ids.activeRun, ids.drainingRun]);
     expect(
       runs
@@ -874,6 +924,156 @@ describe("demo maintenance service", () => {
         }),
       ]),
     );
+  });
+
+  it("preserves a mismatched orchestrator run and does not clean, summarize, or clear", async () => {
+    const db = requireConnection(connection).db;
+    const redisClient = requireRedis(redis);
+    await seedBase(db);
+    await seedRun(db, redisClient, {
+      runId: ids.activeRun,
+      saleOfferId: ids.activeOffer,
+      status: "active",
+      trafficStatus: "active",
+      failureReason: null,
+      runInventoryStatus: "accepting",
+    });
+    const cleanResetOwnedQueues = vi.fn(async () => ({ cleanedQueueCount: 2, cleanedJobCount: 0 }));
+    const clearRun = vi.fn(async () => undefined);
+    const service = new DemoMaintenanceService({
+      db,
+      redis: redisClient,
+      terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db),
+      queueMaintenance: { cleanResetOwnedQueues },
+      trafficAborter: {
+        abortCurrent: async () => {
+          throw new ApiHttpError({
+            statusCode: 409,
+            code: "load_orchestrator_run_mismatch",
+            message: "A different run is active.",
+          });
+        },
+      },
+      dashboardLiveStateReset: {
+        fenceRun: async () => undefined,
+        clearRun,
+        hasRunState: async () => false,
+      },
+      logger: createSilentLogger("api"),
+    });
+
+    await expect(service.reset("corr-mismatch")).rejects.toMatchObject({
+      statusCode: 409,
+      code: "load_orchestrator_run_mismatch",
+    });
+    expect(cleanResetOwnedQueues).not.toHaveBeenCalled();
+    expect(clearRun).not.toHaveBeenCalled();
+    expect(await db.select().from(demoRunSummaries)).toHaveLength(0);
+  });
+
+  it("leaves an unconfirmed abort claimed and retryable without cleanup, summary, or clear", async () => {
+    const db = requireConnection(connection).db;
+    const redisClient = requireRedis(redis);
+    await seedBase(db);
+    await seedRun(db, redisClient, {
+      runId: ids.activeRun,
+      saleOfferId: ids.activeOffer,
+      status: "active",
+      trafficStatus: "active",
+      failureReason: null,
+      runInventoryStatus: "accepting",
+    });
+    const cleanResetOwnedQueues = vi.fn(async () => ({ cleanedQueueCount: 2, cleanedJobCount: 0 }));
+    const clearRun = vi.fn(async () => undefined);
+    const service = new DemoMaintenanceService({
+      db,
+      redis: redisClient,
+      terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db),
+      queueMaintenance: { cleanResetOwnedQueues },
+      trafficAborter: {
+        abortCurrent: async () => {
+          throw new ApiHttpError({
+            statusCode: 502,
+            code: "load_orchestrator_abort_unconfirmed",
+            message: "Traffic termination could not be confirmed.",
+          });
+        },
+      },
+      dashboardLiveStateReset: {
+        fenceRun: async () => undefined,
+        clearRun,
+        hasRunState: async () => false,
+      },
+      logger: createSilentLogger("api"),
+    });
+
+    await expect(service.reset("corr-abort-unconfirmed")).rejects.toMatchObject({
+      statusCode: 502,
+      code: "load_orchestrator_abort_unconfirmed",
+    });
+    expect(cleanResetOwnedQueues).not.toHaveBeenCalled();
+    expect(clearRun).not.toHaveBeenCalled();
+    expect(await db.select().from(demoRunSummaries)).toHaveLength(0);
+    expect(await db.select().from(demoRuns).where(eq(demoRuns.id, ids.activeRun))).toEqual([
+      expect.objectContaining({
+        status: "failed",
+        trafficStatus: "failed",
+        failureReason: "admin_reset",
+      }),
+    ]);
+  });
+
+  it("retries only dashboard projection cleanup after a post-summary Redis failure", async () => {
+    const db = requireConnection(connection).db;
+    const redisClient = requireRedis(redis);
+    await seedBase(db);
+    await seedRun(db, redisClient, {
+      runId: ids.activeRun,
+      saleOfferId: ids.activeOffer,
+      status: "active",
+      trafficStatus: "active",
+      failureReason: null,
+      runInventoryStatus: "accepting",
+    });
+    const abortCurrent = vi.fn(async () => ({ outcome: "no_current_run" as const }));
+    const cleanResetOwnedQueues = vi.fn(async () => ({ cleanedQueueCount: 2, cleanedJobCount: 0 }));
+    let failClear = true;
+    const logger = createSilentLogger("api");
+    const errorLog = vi.spyOn(logger, "error");
+    const clearRun = vi.fn(async () => {
+      if (failClear) throw new Error("Redis unavailable");
+    });
+    const service = new DemoMaintenanceService({
+      db,
+      redis: redisClient,
+      terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db),
+      queueMaintenance: { cleanResetOwnedQueues },
+      trafficAborter: { abortCurrent },
+      dashboardLiveStateReset: {
+        fenceRun: async () => undefined,
+        clearRun,
+        hasRunState: async () => true,
+      },
+      logger,
+    });
+
+    await expect(service.reset("corr-clear-failure")).rejects.toThrow(
+      "Retry reset to finish projection cleanup",
+    );
+    expect(await db.select().from(demoRunSummaries)).toHaveLength(1);
+    expect(errorLog).toHaveBeenCalledWith(
+      expect.objectContaining({ runId: ids.activeRun, correlationId: "corr-clear-failure" }),
+      expect.stringContaining("dashboard live traffic metrics"),
+    );
+    expect(abortCurrent).toHaveBeenCalledOnce();
+    expect(cleanResetOwnedQueues).toHaveBeenCalledOnce();
+
+    failClear = false;
+    await expect(service.reset("corr-clear-retry")).resolves.toMatchObject({ failedRunCount: 0 });
+    expect(clearRun).toHaveBeenCalledTimes(2);
+    expect(abortCurrent).toHaveBeenCalledOnce();
+    expect(cleanResetOwnedQueues).toHaveBeenCalledTimes(2);
+    expect(await db.select().from(demoRunSummaries)).toHaveLength(1);
   });
 
   it("leaves a fenced run resumable when admission closure fails", async () => {
