@@ -1,8 +1,14 @@
+import { correlationIdHeaderName } from "@checkout-surge/logger";
 import { adminPassphraseHeaderName } from "../control-paths";
 import type { AdminLoginAttemptLimiter } from "./admin-login-limiter";
 import { requireAdminOrigin } from "./admin-origin";
 import { createAdminSessionToken, verifyAdminPassphrase } from "./admin-session";
-import { adminSessionCookieName, jsonError } from "./backend-proxy";
+import {
+  adminSessionCookieName,
+  createProxyRequestContext,
+  jsonError,
+  type ProxyRequestContext,
+} from "./backend-proxy";
 
 export interface AdminLoginConfig {
   passphrase: string | null;
@@ -16,44 +22,58 @@ export interface AdminLoginDependencies {
   resolveClient(request: Request): string;
   config(): AdminLoginConfig | null;
   now(): Date;
-  requireOrigin(request: Request): Response | null;
+  requireOrigin(ctx: ProxyRequestContext): Response | null;
 }
 
 export function createAdminLoginHandler(dependencies: AdminLoginDependencies) {
   return async function handleAdminLogin(request: Request): Promise<Response> {
-    const originFailure = dependencies.requireOrigin(request);
+    const ctx = createProxyRequestContext(request);
+    const originFailure = dependencies.requireOrigin(ctx);
     if (originFailure) return originFailure;
 
     const candidate = request.headers.get(adminPassphraseHeaderName);
-    if (candidate === null) return invalidCredential();
+    if (candidate === null) return invalidCredential(ctx);
 
     let limiter: AdminLoginAttemptLimiter;
     try {
       limiter = dependencies.limiter();
     } catch {
-      return limiterUnavailable();
+      return limiterUnavailable(ctx);
     }
     const now = dependencies.now();
     const admission = await limiter.admit(dependencies.resolveClient(request), now.getTime());
-    if (admission.outcome === "unavailable") return limiterUnavailable();
+    if (admission.outcome === "unavailable") return limiterUnavailable(ctx);
     if (admission.outcome === "limited") {
-      return jsonError(429, "admin_login_rate_limited", "Admin login is temporarily unavailable.", {
-        "retry-after": String(admission.retryAfterSeconds),
-      });
+      return jsonError(
+        ctx,
+        429,
+        "admin_login_rate_limited",
+        "Admin login is temporarily unavailable.",
+        {
+          "retry-after": String(admission.retryAfterSeconds),
+        },
+      );
     }
 
     const config = dependencies.config();
     if (!config)
-      return jsonError(503, "admin_session_config_invalid", "Admin sessions are not configured.");
+      return jsonError(
+        ctx,
+        503,
+        "admin_session_config_invalid",
+        "Admin sessions are not configured.",
+      );
     if (!config.passphrase)
       return jsonError(
+        ctx,
         503,
         "admin_passphrase_not_configured",
         "Admin controls are not configured.",
       );
-    if (!verifyAdminPassphrase(candidate, config.passphrase)) return invalidCredential();
+    if (!verifyAdminPassphrase(candidate, config.passphrase)) return invalidCredential(ctx);
     if (!config.sessionSecret)
       return jsonError(
+        ctx,
         503,
         "admin_session_secret_not_configured",
         "Admin sessions are not configured.",
@@ -66,10 +86,10 @@ export function createAdminLoginHandler(dependencies: AdminLoginDependencies) {
       maxAgeSeconds: config.sessionMaxAgeSeconds,
     });
     const cookie = serializeSessionCookie(token, config.sessionMaxAgeSeconds, config.secureCookie);
-    return Response.json(
-      { authenticated: true },
-      { status: 200, headers: { "set-cookie": cookie } },
-    );
+    const headers = new Headers();
+    headers.set("set-cookie", cookie);
+    headers.set(correlationIdHeaderName, ctx.correlationId);
+    return Response.json({ authenticated: true }, { status: 200, headers });
   };
 }
 
@@ -83,12 +103,13 @@ export function serializeSessionCookie(
 
 export const defaultAdminLoginDependencies = { requireOrigin: requireAdminOrigin } as const;
 
-function invalidCredential(): Response {
-  return jsonError(401, "admin_passphrase_required", "A valid admin passphrase is required.");
+function invalidCredential(ctx: ProxyRequestContext): Response {
+  return jsonError(ctx, 401, "admin_passphrase_required", "A valid admin passphrase is required.");
 }
 
-function limiterUnavailable(): Response {
+function limiterUnavailable(ctx: ProxyRequestContext): Response {
   return jsonError(
+    ctx,
     503,
     "admin_login_limiter_unavailable",
     "Admin login is temporarily unavailable.",

@@ -6,14 +6,14 @@ import {
   type AdminPresetMutationResponse,
   type AdminPublicRuntimePolicyResponse,
   type AdminPublicRuntimePolicyUpdateRequest,
-  acceptedRunConfigSnapshotSchema,
-  archiveAdminPresetResponseSchema,
-  adminPresetListResponseSchema,
-  adminPresetListItemSchema,
-  adminPresetMutationResponseSchema,
-  adminPublicRuntimePolicyResponseSchema,
   type ArchiveAdminPresetRequest,
   type ArchiveAdminPresetResponse,
+  acceptedRunConfigSnapshotSchema,
+  adminPresetListItemSchema,
+  adminPresetListResponseSchema,
+  adminPresetMutationResponseSchema,
+  adminPublicRuntimePolicyResponseSchema,
+  archiveAdminPresetResponseSchema,
   type BusinessOutcomeSummary,
   type CopyDemoPresetToCustomRequest,
   calculatePlannedRequests,
@@ -29,6 +29,7 @@ import {
   dashboardEventsRedisChannel,
   demoPresetContractSchema,
   demoRunSnapshotSchema,
+  type ErrorPayloadCode,
   type LoadMetricIngestRequest,
   loadMetricIngestRequestSchema,
   type MetricSample,
@@ -390,7 +391,7 @@ export class HttpTrafficExecutionGateway implements TrafficExecutionGateway, Tra
 
 export class DemoRunValidationError extends Error {
   constructor(
-    readonly code: string,
+    readonly code: ErrorPayloadCode,
     message: string,
     readonly details?: Record<string, unknown>,
   ) {

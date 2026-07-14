@@ -77,9 +77,9 @@ Replace `⬜` with `✅` when a task is complete. Optional `⏳` for work in pro
 
 ✅ [Task 36: Fix stale-state preset duplication in the admin console (empty slug duplicates from previous value)](./task_36.md)
 
-⏳ [Task 37: Add a delete/archive path for admin-created presets](./task_37.md)
+✅ [Task 37: Add a delete/archive path for admin-created presets](./task_37.md)
 
-⬜ [Task 38: Preserve the canonical error envelope and correlation ID through the web BFF and routine logs](./task_38.md)
+✅ [Task 38: Preserve the canonical error envelope and correlation ID through the web BFF and routine logs](./task_38.md)
 
 ⬜ [Task 39: Fix rejected-buy classification: stop forcing sold-out, add the missing decision vocabulary](./task_39.md)
 

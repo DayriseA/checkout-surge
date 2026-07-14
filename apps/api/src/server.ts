@@ -1,5 +1,6 @@
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
-import { correlationIdHeaderName, normalizeCorrelationId } from "@checkout-surge/logger";
+import { normalizeCorrelationId } from "@checkout-surge/logger";
+import { installFastifyCorrelation } from "@checkout-surge/logger/fastify";
 import cors from "@fastify/cors";
 import { type FastifyReply, fastify } from "fastify";
 import { ZodError } from "zod";
@@ -28,12 +29,6 @@ import type { QueueStatusService } from "./services/queue-status-service.js";
 import type { ReserveOrderService } from "./services/reserve-order-service.js";
 import type { RunHistoryController } from "./services/run-history-service.js";
 
-declare module "fastify" {
-  interface FastifyRequest {
-    correlationId: string;
-  }
-}
-
 export interface BuildApiServerOptions {
   config: ApiConfig;
   logger: CheckoutSurgeLogger;
@@ -57,13 +52,10 @@ export async function buildApiServer(options: BuildApiServerOptions): Promise<Ap
     trustProxy: options.config.trustedProxyCidrs,
   }) as ApiFastifyInstance;
 
+  installFastifyCorrelation(app);
+
   await app.register(cors, {
     origin: options.config.webOrigins.length > 0 ? options.config.webOrigins : true,
-  });
-
-  app.addHook("onRequest", async (request, reply) => {
-    request.correlationId = normalizeCorrelationId(request.headers[correlationIdHeaderName]);
-    reply.header(correlationIdHeaderName, request.correlationId);
   });
 
   app.setErrorHandler((error, request, reply) => {
@@ -95,7 +87,7 @@ export async function buildApiServer(options: BuildApiServerOptions): Promise<Ap
       });
     }
 
-    request.log.error({ err: error, correlationId }, "Unhandled API error.");
+    request.log.error({ err: error }, "Unhandled API error.");
 
     return sendError(reply, 500, {
       code: "internal_error",

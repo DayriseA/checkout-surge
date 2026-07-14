@@ -1,5 +1,5 @@
 import { type ServiceName, serviceNameSchema } from "@checkout-surge/contracts";
-import pino, { type Logger, type LoggerOptions } from "pino";
+import pino, { type DestinationStream, type Logger, type LoggerOptions } from "pino";
 import { normalizeCorrelationId } from "./correlation.js";
 
 export type CheckoutSurgeLogger = Logger;
@@ -10,6 +10,11 @@ export interface CreateServiceLoggerOptions {
   correlationId?: string;
   base?: Record<string, unknown>;
   pinoOptions?: Omit<LoggerOptions, "base" | "level">;
+  /**
+   * Optional writable destination for log output. Tests pass an in-memory
+   * stream so real Pino serialization can be asserted without a transport.
+   */
+  destination?: DestinationStream;
 }
 
 export function createServiceLogger(options: CreateServiceLoggerOptions): CheckoutSurgeLogger {
@@ -18,7 +23,7 @@ export function createServiceLogger(options: CreateServiceLoggerOptions): Checko
     ? normalizeCorrelationId(options.correlationId)
     : undefined;
 
-  return pino({
+  const pinoOptions = {
     ...options.pinoOptions,
     level: options.level ?? process.env.LOG_LEVEL ?? "info",
     base: {
@@ -26,7 +31,9 @@ export function createServiceLogger(options: CreateServiceLoggerOptions): Checko
       ...options.base,
       ...(correlationId ? { correlationId } : {}),
     },
-  });
+  };
+
+  return options.destination ? pino(pinoOptions, options.destination) : pino(pinoOptions);
 }
 
 export function createSilentLogger(service: ServiceName): CheckoutSurgeLogger {

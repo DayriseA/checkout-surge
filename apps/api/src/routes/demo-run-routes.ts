@@ -23,9 +23,9 @@ import {
   trafficCompletionAcknowledgementSchema,
   trafficCompletionReportSchema,
 } from "@checkout-surge/contracts";
-import { correlationIdHeaderName, normalizeCorrelationId } from "@checkout-surge/logger";
+import { replaceFastifyCorrelation } from "@checkout-surge/logger/fastify";
 import type { FastifyReply, FastifyRequest } from "fastify";
-import { ApiHttpError } from "../runtime/errors.js";
+import { ApiHttpError, createErrorPayload } from "../runtime/errors.js";
 import type { ApiFastifyInstance } from "../runtime/fastify.js";
 import { type DemoRunController, DemoRunValidationError } from "../services/demo-run-service.js";
 
@@ -68,11 +68,11 @@ export function registerDemoRunRoutes(
     }
 
     const parsedRequest = adminPublicRuntimePolicyUpdateRequestSchema.parse(request.body);
-    const correlationId = normalizeCorrelationId(
+    const correlationId = replaceFastifyCorrelation(
+      request,
+      reply,
       parsedRequest.correlationId ?? request.correlationId,
     );
-    request.correlationId = correlationId;
-    reply.header(correlationIdHeaderName, correlationId);
 
     try {
       return reply
@@ -159,11 +159,11 @@ export function registerDemoRunRoutes(
     const unauthorized = requireControlServiceToken(request, reply, options.controlServiceToken);
     if (unauthorized) return unauthorized;
     const parsedRequest = startDemoRunRequestSchema.parse(request.body);
-    const correlationId = normalizeCorrelationId(
+    const correlationId = replaceFastifyCorrelation(
+      request,
+      reply,
       parsedRequest.correlationId ?? request.correlationId,
     );
-    request.correlationId = correlationId;
-    reply.header(correlationIdHeaderName, correlationId);
 
     try {
       return reply.status(202).send(
@@ -245,12 +245,13 @@ function requireControlServiceToken(
     return null;
   }
 
-  return reply.status(401).send({
-    code: "control_token_required",
-    message: "A valid control service token is required.",
-    correlationId: request.correlationId,
-    timestamp: new Date().toISOString(),
-  });
+  return reply.status(401).send(
+    createErrorPayload({
+      code: "control_token_required",
+      message: "A valid control service token is required.",
+      correlationId: request.correlationId,
+    }),
+  );
 }
 
 function applyInternalBodyCorrelation(
@@ -258,9 +259,7 @@ function applyInternalBodyCorrelation(
   reply: FastifyReply,
   correlationId: string,
 ): void {
-  const normalizedCorrelationId = normalizeCorrelationId(correlationId);
-  request.correlationId = normalizedCorrelationId;
-  reply.header(correlationIdHeaderName, normalizedCorrelationId);
+  replaceFastifyCorrelation(request, reply, correlationId);
 }
 
 function readSingleHeader(request: FastifyRequest, name: string): string | undefined {

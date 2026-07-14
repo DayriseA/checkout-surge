@@ -14,7 +14,7 @@ The goal is to preserve one canonical vocabulary across the implemented shared c
 | Event naming style | Use lowercase dot notation with domain-first names such as `reservation.secured` | Keeps emitted facts readable, stable, and consistent across logs, queues, and dashboard realtime payloads. |
 | Correlation identifier name | Use `correlationId` as the canonical cross-service trace field | This aligns with the logger package and gives one shared thread across API, worker, ERP, and dashboards. |
 | Timestamp format | Use ISO 8601 strings with an explicit timezone offset at service boundaries; services should emit UTC `Z` strings | This is explicit, portable, and easy to consume across logs, APIs, dashboard realtime payloads, and UI clients. |
-| Error payload baseline | Standardize on a small shared shape with `code`, `message`, optional `details`, `correlationId`, and `timestamp` | Gives enough structure for UI and diagnostics without overdesigning the first contract layer. |
+| Error payload baseline | Standardize on a strict shared shape with a closed machine-code vocabulary, `message`, optional `details`, `correlationId`, and `timestamp` | Gives clients a stable contract while rejecting typoed or drifting public error codes. |
 | Scope of this document | Define semantics and names; leave exact request/response payload schemas to the contract layer | Keeps this document focused on shared language rather than prematurely freezing every contract detail. |
 | Reservation lifecycle | `secured`, `rejected`, `released`, `expired` | Separates immediate success, immediate failure, explicit stock release, and time-based hold expiry with minimal ambiguity. |
 | Order lifecycle | `queued`, `processing`, `confirmed`, `failed` | Matches the asynchronous pipeline while keeping business state distinct from retry metadata. |
@@ -73,6 +73,9 @@ Avoid:
 - `correlationId` is the canonical trace field that must survive across service boundaries.
 - The first externally visible request should create or adopt the `correlationId`.
 - Logs, queue payloads, HTTP requests between internal services, and dashboard realtime events should propagate it.
+- HTTP services use `x-correlation-id` as the transport header. Each inbound boundary normalizes or generates one value, returns it in the response header, and binds it to the request-scoped logger so routine Fastify logs are searchable without repeating the field at every call site.
+- A route that promotes a validated body correlation ID must update the response header and request/reply loggers together. Per-request child bindings must not mutate the application logger or retain the previous request's correlation fields.
+- Browser-facing Next.js proxy routes create one request context, forward only its normalized correlation ID plus explicitly allow-listed server-owned headers, and preserve the validated backend response correlation ID when reconstructing the browser response.
 
 ### Timestamps
 
@@ -113,10 +116,12 @@ The baseline shared error shape is:
 
 Conventions:
 
-- `code` should be stable and machine-readable.
+- `code` must be one of the values exported by the shared `@checkout-surge/contracts` error-code schema; unknown or typoed codes are invalid rather than pass-through strings.
 - `message` should be concise and human-readable.
 - `details` should carry optional structured context, not a second free-form paragraph.
 - Errors returned to clients should avoid leaking infrastructure internals unless that information is intentionally part of the user-facing contract.
+- Browser-facing proxy failures use the same full envelope. A backend non-success response is preserved only after strict envelope validation; malformed, non-JSON, unknown-code, or correlation-inconsistent responses become a safe `502 invalid_backend_response` envelope owned by the proxy request.
+- The response `x-correlation-id` is the authoritative lookup key. It must agree with any `correlationId` in the response body; a canonical upstream error may recover a missing header from its validated body.
 - Protected generated-run teardown requires the control service token (`401` when absent or wrong) and a UUID run parameter (`400` when malformed). It uses `409` for a non-terminal run, ownership mismatch, active/changing attributed queue work, or `run_queue_maintenance_owned_by_other_run` when retained queue maintenance belongs to another run. Infrastructure or post-commit cleanup failures return the canonical `5xx` error envelope and retain durable retry coordinates; clients must repeat the same bodyless DELETE. A post-commit queue-convergence failure also keeps maintenance-owned physical queues paused, including across API restart, until that exact run retry removes the remaining jobs; each marker stores its owning run ID, and another run cannot adopt, resume, clear, or clean through it. Pre-existing operator pauses remain untouched. Successful cleanup and receipt retries return the canonical request `correlationId` and UTC cleanup timestamp; a later repeat returns `already_absent`. Multi-replica deployments must send this protected mutation to one maintenance authority because request serialization is process-local.
 - Protected admin reset uses one canonical correlation ID across the API-to-load-orchestrator abort. The abort request always includes the selected run ID and `admin_reset` reason. `no_current_run` is an idempotent success after the API run is durably fenced; a current-run mismatch remains a distinct `409`. The API applies a distinct 20-second default deadline to the complete abort response, including body parsing, so Task 33's bounded TERM-to-KILL escalation can complete. Transport failure, timeout, malformed success, server failure, or unconfirmed child termination becomes a stable API failure without forwarding upstream bodies or credentials. A claimed `failed/admin_reset` run without an immutable summary makes subsequent start admission return `409 demo_reset_incomplete` under the global start lock until reset repair completes; an admin-reset row with its summary does not block starts. Full reset success is returned only after the matching run is fenced, admission is closed, cancellation is confirmed, reset-owned queues are handled, the immutable terminal summary exists, and the run-scoped live metric projection is cleared.
 

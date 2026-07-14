@@ -1,7 +1,7 @@
-import { errorPayloadSchema } from "@checkout-surge/contracts";
+import { type ErrorPayloadCode, errorPayloadSchema } from "@checkout-surge/contracts";
 
 export function createMockErpErrorPayload(options: {
-  code: string;
+  code: ErrorPayloadCode;
   message: string;
   correlationId: string;
   details?: Record<string, unknown>;

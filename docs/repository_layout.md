@@ -31,7 +31,7 @@ checkout-surge/
 │   └── load-orchestrator/    # k6 wrapper — triggers runs, streams metrics to dashboard
 ├── packages/
 │   ├── contracts/            # Shared TypeScript types and Zod schemas
-│   ├── logger/               # Pino wrapper with correlation-ID convention
+│   ├── logger/               # Pino wrapper and Fastify request-correlation integration
 │   └── db/                   # Drizzle schema/migrations, PostgreSQL client, Redis adapters
 ├── infra/                    # Caddy single-origin proxy configuration
 ├── scripts/                  # Environment, runtime, maintenance, smoke, and composition tooling
@@ -108,8 +108,8 @@ checkout-surge/
 
 ### `packages/logger`
 
-- Thin Pino wrapper that stamps every log line with the service name and propagates `correlationId`.
-- Used by `apps/api`, `apps/worker`, `apps/mock-erp`, and `apps/load-orchestrator`.
+- Thin Pino wrapper that stamps every log line with the service name, normalizes `x-correlation-id`, and exposes the shared Fastify request-child-logger integration.
+- Used by `apps/api`, `apps/worker`, `apps/mock-erp`, `apps/load-orchestrator`, and the server-only web BFF correlation boundary.
 
 ### `packages/db`
 

@@ -75,7 +75,12 @@ import {
   setRunSaleEligibility,
 } from "@checkout-surge/db";
 import { resetTestDatabase } from "@checkout-surge/db/testing";
-import { correlationIdHeaderName, createSilentLogger } from "@checkout-surge/logger";
+import {
+  type CheckoutSurgeLogger,
+  correlationIdHeaderName,
+  createServiceLogger,
+  createSilentLogger,
+} from "@checkout-surge/logger";
 import { Queue, Worker } from "bullmq";
 import { eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -199,6 +204,7 @@ async function buildTestServer(options: {
   demoRunService?: DemoRunController;
   demoMaintenanceService?: DemoMaintenanceService;
   runHistoryService?: RunHistoryController;
+  logger?: CheckoutSurgeLogger;
   reportPersistenceFailure?: (report: ReservationPartialFailureReport) => void;
 }): Promise<ApiFastifyInstance> {
   const inventoryReader =
@@ -228,7 +234,7 @@ async function buildTestServer(options: {
         }
       : options.inventoryReader;
 
-  const logger = createSilentLogger("api");
+  const logger = options.logger ?? createSilentLogger("api");
   const queueStatusService = new QueueStatusService(
     options.queueInspector ?? { inspect: async () => queueStatusFixture() },
     logger,
@@ -3777,3 +3783,57 @@ function runnerDiagnosticsFixture() {
     stderrLineTruncatedCount: 0,
   };
 }
+
+describe("API correlation and canonical error boundary", () => {
+  it("binds the inbound id into the response header, canonical error body, and routine request logs", async () => {
+    const lines: string[] = [];
+    const logger = createServiceLogger({
+      service: "api",
+      level: "info",
+      destination: { write: (line) => void lines.push(line) },
+    });
+    const server = await buildTestServer({ persistence: new AcceptingPersistence(), logger });
+    server.route({
+      method: "GET",
+      url: "/test-correlation-echo",
+      handler: async (request) => {
+        request.log.info({ marker: "api-correlation-marker" }, "api-correlation-echo");
+        return { correlationId: request.correlationId };
+      },
+    });
+
+    try {
+      const echo = await server.inject({
+        method: "GET",
+        url: "/test-correlation-echo",
+        headers: { [correlationIdHeaderName]: "api-inbound-1" },
+      });
+      const bad = await server.inject({
+        method: "POST",
+        url: "/buy",
+        headers: { [correlationIdHeaderName]: "api-inbound-1" },
+        payload: { not: "valid" },
+      });
+      const second = await server.inject({
+        method: "GET",
+        url: "/test-correlation-echo",
+        headers: { [correlationIdHeaderName]: "api-inbound-2" },
+      });
+
+      expect(echo.headers[correlationIdHeaderName]).toBe("api-inbound-1");
+      expect(echo.json().correlationId).toBe("api-inbound-1");
+      expect(bad.statusCode).toBe(400);
+      expect(errorPayloadSchema.parse(bad.json()).correlationId).toBe("api-inbound-1");
+      expect(second.headers[correlationIdHeaderName]).toBe("api-inbound-2");
+
+      const echoRecords = lines
+        .map((line) => JSON.parse(line) as { msg?: string; correlationId?: string })
+        .filter((record) => record.msg === "api-correlation-echo");
+      expect(echoRecords).toHaveLength(2);
+      expect(echoRecords[0]?.correlationId).toBe("api-inbound-1");
+      expect(echoRecords[1]?.correlationId).toBe("api-inbound-2");
+    } finally {
+      await server.close();
+    }
+  });
+});

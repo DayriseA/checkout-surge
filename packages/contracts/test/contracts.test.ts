@@ -28,6 +28,8 @@ import {
   demoRunOperatorModeHeaderName,
   demoRunSnapshotSchema,
   demoRunStatusValues,
+  directSnapshotViolationCodes,
+  type ErrorPayloadCode,
   erpChaosResetPath,
   erpChaosStatusPath,
   erpConfirmationPath,
@@ -35,6 +37,8 @@ import {
   erpConfirmationResponseSchema,
   erpResilienceStatusPath,
   erpResilienceStatusSchema,
+  errorPayloadCodeSchema,
+  errorPayloadCodes,
   errorPayloadSchema,
   healthResponseSchema,
   internalLoadMetricIngestPath,
@@ -517,6 +521,84 @@ describe("shared error and health contracts", () => {
     });
 
     expect(response.checks[0]?.name).toBe("redis_url_configured");
+  });
+});
+
+describe("canonical error-code vocabulary", () => {
+  it("accepts every declared code through the enum schema", () => {
+    for (const code of errorPayloadCodes) {
+      expect(errorPayloadCodeSchema.safeParse(code).success, `code ${code}`).toBe(true);
+    }
+  });
+
+  it("contains no duplicate codes", () => {
+    const seen = new Set<string>();
+    for (const code of errorPayloadCodes) {
+      expect(seen.has(code), `duplicate code ${code}`).toBe(false);
+      seen.add(code);
+    }
+  });
+
+  it("rejects unknown, typo, and drifted codes", () => {
+    for (const code of ["notfound", "internal-error", "internal_error ", "preset_not_foundd", ""]) {
+      expect(errorPayloadCodeSchema.safeParse(code).success, `code "${code}"`).toBe(false);
+    }
+  });
+
+  it("keeps every public_custom_default code aligned with a direct snapshot violation code", () => {
+    const expectedPrefixed = directSnapshotViolationCodes.map(
+      (code) => `public_custom_default_${code}`,
+    );
+    const actualPrefixed = errorPayloadCodes.filter((code) =>
+      code.startsWith("public_custom_default_"),
+    );
+    expect(actualPrefixed.sort()).toEqual([...expectedPrefixed].sort());
+  });
+
+  it("requires the strict envelope with code, message, correlationId, and timestamp", () => {
+    const valid = {
+      code: "invalid_request",
+      message: "Invalid request.",
+      correlationId,
+      timestamp,
+    };
+    expect(() => errorPayloadSchema.parse(valid)).not.toThrow();
+    expect(() => errorPayloadSchema.parse({ ...valid, code: "notfound" })).toThrow();
+    expect(() =>
+      errorPayloadSchema.parse({ message: valid.message, correlationId, timestamp }),
+    ).toThrow();
+    expect(() =>
+      errorPayloadSchema.parse({ code: valid.code, correlationId, timestamp }),
+    ).toThrow();
+    expect(() =>
+      errorPayloadSchema.parse({ code: valid.code, message: valid.message, timestamp }),
+    ).toThrow();
+    expect(() =>
+      errorPayloadSchema.parse({ code: valid.code, message: valid.message, correlationId }),
+    ).toThrow();
+  });
+
+  it("accepts structured details and rejects extra top-level keys", () => {
+    expect(() =>
+      errorPayloadSchema.parse({
+        ...{ code: "invalid_request", message: "Invalid request.", correlationId, timestamp },
+        details: { issues: [{ path: "quantity" }] },
+      }),
+    ).not.toThrow();
+    expect(() =>
+      errorPayloadSchema.parse({
+        code: "invalid_request",
+        message: "Invalid request.",
+        correlationId,
+        timestamp,
+        extra: true,
+      }),
+    ).toThrow();
+  });
+
+  it("narrows the inferred code type to the declared vocabulary", () => {
+    const sample: ErrorPayloadCode = "internal_error";
+    expect(errorPayloadCodeSchema.parse(sample)).toBe("internal_error");
   });
 });
 

@@ -1,5 +1,7 @@
 import {
   controlServiceTokenHeaderName,
+  type ErrorPayloadCode,
+  errorPayloadSchema,
   healthResponseSchema,
   livenessResponseSchema,
   trafficExecutionAbortPath,
@@ -12,11 +14,14 @@ import {
 } from "@checkout-surge/contracts";
 import {
   type CheckoutSurgeLogger,
-  correlationIdHeaderName,
   createLivenessPayload,
   createReadinessResponse,
   normalizeCorrelationId,
 } from "@checkout-surge/logger";
+import {
+  installFastifyCorrelation,
+  replaceFastifyCorrelation,
+} from "@checkout-surge/logger/fastify";
 import { type FastifyReply, type FastifyRequest, fastify } from "fastify";
 import { ZodError } from "zod";
 import { ExecutionConflictError } from "./application/execution-store.js";
@@ -31,12 +36,6 @@ import {
 import type { LoadOrchestratorConfig } from "./runtime/config.js";
 import type { LoadOrchestratorReadiness } from "./runtime/readiness.js";
 
-declare module "fastify" {
-  interface FastifyRequest {
-    correlationId: string;
-  }
-}
-
 export interface BuildLoadOrchestratorServerOptions {
   config: LoadOrchestratorConfig;
   logger: CheckoutSurgeLogger;
@@ -48,10 +47,7 @@ export interface BuildLoadOrchestratorServerOptions {
 export function buildLoadOrchestratorServer(options: BuildLoadOrchestratorServerOptions) {
   const app = fastify({ loggerInstance: options.logger });
 
-  app.addHook("onRequest", async (request, reply) => {
-    request.correlationId = normalizeCorrelationId(request.headers[correlationIdHeaderName]);
-    reply.header(correlationIdHeaderName, request.correlationId);
-  });
+  installFastifyCorrelation(app);
 
   app.setErrorHandler((error, request, reply) => {
     const correlationId = request.correlationId ?? normalizeCorrelationId(undefined);
@@ -80,7 +76,7 @@ export function buildLoadOrchestratorServer(options: BuildLoadOrchestratorServer
         .status(503)
         .send(errorPayload("traffic_termination_unconfirmed", error.message, correlationId));
 
-    request.log.error({ err: error, correlationId }, "Unhandled load-orchestrator error.");
+    request.log.error({ err: error }, "Unhandled load-orchestrator error.");
     return reply
       .status(500)
       .send(
@@ -124,8 +120,7 @@ export function buildLoadOrchestratorServer(options: BuildLoadOrchestratorServer
     }
 
     const startRequest = trafficExecutionStartRequestSchema.parse(request.body);
-    request.correlationId = startRequest.correlationId;
-    reply.header(correlationIdHeaderName, startRequest.correlationId);
+    replaceFastifyCorrelation(request, reply, startRequest.correlationId);
     const response = trafficExecutionStartResponseSchema.parse(
       await options.trafficExecutionService.start(startRequest),
     );
@@ -140,9 +135,11 @@ export function buildLoadOrchestratorServer(options: BuildLoadOrchestratorServer
     );
     if (unauthorized) return unauthorized;
     const parsed = trafficExecutionAbortRequestSchema.parse(request.body ?? {});
-    const correlationId = parsed.correlationId ?? request.correlationId;
-    request.correlationId = correlationId;
-    reply.header(correlationIdHeaderName, correlationId);
+    const correlationId = replaceFastifyCorrelation(
+      request,
+      reply,
+      parsed.correlationId ?? request.correlationId,
+    );
     return reply
       .status(200)
       .send(
@@ -195,16 +192,16 @@ function requireControlServiceToken(
 }
 
 function errorPayload(
-  code: string,
+  code: ErrorPayloadCode,
   message: string,
   correlationId: string,
   details?: Record<string, unknown>,
 ) {
-  return {
+  return errorPayloadSchema.parse({
     code,
     message,
     correlationId,
     timestamp: new Date().toISOString(),
     ...(details ? { details } : {}),
-  };
+  });
 }

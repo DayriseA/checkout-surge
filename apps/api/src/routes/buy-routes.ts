@@ -5,7 +5,7 @@ import {
   loadRunIdHeaderName,
   uuidSchema,
 } from "@checkout-surge/contracts";
-import { correlationIdHeaderName, normalizeCorrelationId } from "@checkout-surge/logger";
+import { replaceFastifyCorrelation } from "@checkout-surge/logger/fastify";
 import { ApiHttpError } from "../runtime/errors.js";
 import type { ApiFastifyInstance } from "../runtime/fastify.js";
 import type { ReserveOrderService } from "../services/reserve-order-service.js";
@@ -21,11 +21,11 @@ export function registerBuyRoutes(app: ApiFastifyInstance, options: BuyRouteOpti
       parsedRequest,
       request.headers[loadRunIdHeaderName],
     );
-    const correlationId = normalizeCorrelationId(
+    const correlationId = replaceFastifyCorrelation(
+      request,
+      reply,
       attributedRequest.correlationId ?? request.correlationId,
     );
-    request.correlationId = correlationId;
-    reply.header(correlationIdHeaderName, correlationId);
 
     const response = buyResponseSchema.parse(
       await options.reserveOrderService.reserve({

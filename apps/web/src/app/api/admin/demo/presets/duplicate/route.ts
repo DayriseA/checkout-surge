@@ -3,19 +3,25 @@ import {
   adminPresetMutationResponseSchema,
   duplicateDemoPresetRequestSchema,
 } from "@checkout-surge/contracts";
-import { apiBaseUrl, readJsonRequest, validateJson } from "../../../../../lib/server/backend-proxy";
 import { authorizeAdminProxy } from "../../../../../lib/server/admin-proxy";
+import {
+  apiBaseUrl,
+  createProxyRequestContext,
+  readJsonRequest,
+  validateJson,
+} from "../../../../../lib/server/backend-proxy";
 
 export async function POST(request: Request): Promise<Response> {
-  const admin = authorizeAdminProxy(request);
+  const ctx = createProxyRequestContext(request);
+  const admin = authorizeAdminProxy(ctx);
   if (admin instanceof Response) return admin;
 
-  const body = await readJsonRequest(request);
+  const body = await readJsonRequest(ctx);
   if (body instanceof Response) {
     return body;
   }
 
-  const parsed = validateJson(body, duplicateDemoPresetRequestSchema);
+  const parsed = validateJson(ctx, body, duplicateDemoPresetRequestSchema);
   if (parsed instanceof Response) {
     return parsed;
   }

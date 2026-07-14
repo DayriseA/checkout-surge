@@ -3,19 +3,25 @@ import {
   startDemoRunRequestSchema,
   startDemoRunResponseSchema,
 } from "@checkout-surge/contracts";
-import { apiBaseUrl, readJsonRequest, validateJson } from "../../../../../lib/server/backend-proxy";
 import { authorizeAdminProxy } from "../../../../../lib/server/admin-proxy";
+import {
+  apiBaseUrl,
+  createProxyRequestContext,
+  readJsonRequest,
+  validateJson,
+} from "../../../../../lib/server/backend-proxy";
 
 export async function POST(request: Request): Promise<Response> {
-  const admin = authorizeAdminProxy(request, { operatorMode: "admin" });
+  const ctx = createProxyRequestContext(request);
+  const admin = authorizeAdminProxy(ctx, { operatorMode: "admin" });
   if (admin instanceof Response) return admin;
 
-  const body = await readJsonRequest(request);
+  const body = await readJsonRequest(ctx);
   if (body instanceof Response) {
     return body;
   }
 
-  const payload = validateJson(body, startDemoRunRequestSchema);
+  const payload = validateJson(ctx, body, startDemoRunRequestSchema);
   if (payload instanceof Response) {
     return payload;
   }

@@ -1,5 +1,6 @@
 import { dashboardRecoveryResponseSchema, errorPayloadSchema } from "@checkout-surge/contracts";
-import { createSilentLogger } from "@checkout-surge/logger";
+import { correlationIdHeaderName, createSilentLogger } from "@checkout-surge/logger";
+import { installFastifyCorrelation } from "@checkout-surge/logger/fastify";
 import { fastify } from "fastify";
 import { describe, expect, it, vi } from "vitest";
 import type {
@@ -11,13 +12,19 @@ import type { ApiFastifyInstance } from "../src/runtime/fastify.js";
 import type { DashboardRecoveryAdmissionController } from "../src/services/dashboard-recovery-admission.js";
 import type { DashboardRecoveryService } from "../src/services/dashboard-recovery-service.js";
 
+const correlationHeader = { [correlationIdHeaderName]: "route-correlation" };
+
 describe("dashboard route admission", () => {
   it.each([
     ["total_capacity", 503, "dashboard_sse_at_capacity"],
     ["source_capacity", 429, "dashboard_sse_source_limit_exceeded"],
   ] as const)("maps SSE %s without partial stream headers", async (outcome, status, code) => {
     const server = buildServer({ sseOutcome: outcome });
-    const response = await server.inject({ method: "GET", url: "/dashboard/events" });
+    const response = await server.inject({
+      method: "GET",
+      url: "/dashboard/events",
+      headers: correlationHeader,
+    });
     const payload = errorPayloadSchema.parse(response.json());
     expect(response.statusCode).toBe(status);
     expect(payload.code).toBe(code);
@@ -36,7 +43,11 @@ describe("dashboard route admission", () => {
   ] as const)("rejects recovery %s before service work", async (outcome, status, code) => {
     const getRecovery = vi.fn();
     const server = buildServer({ recoveryOutcome: outcome, getRecovery });
-    const response = await server.inject({ method: "GET", url: "/dashboard/recovery" });
+    const response = await server.inject({
+      method: "GET",
+      url: "/dashboard/recovery",
+      headers: correlationHeader,
+    });
     expect(response.statusCode).toBe(status);
     expect(errorPayloadSchema.parse(response.json()).code).toBe(code);
     expect(response.headers["retry-after"]).toBe("11");
@@ -51,11 +62,19 @@ describe("dashboard route admission", () => {
       .mockResolvedValueOnce(recoveryFixture())
       .mockRejectedValueOnce(new Error("projection failed"));
     const server = buildServer({ getRecovery, release });
-    const success = await server.inject({ method: "GET", url: "/dashboard/recovery" });
+    const success = await server.inject({
+      method: "GET",
+      url: "/dashboard/recovery",
+      headers: correlationHeader,
+    });
     expect(success.statusCode).toBe(200);
     dashboardRecoveryResponseSchema.parse(success.json());
     expect(release).toHaveBeenCalledTimes(1);
-    const failure = await server.inject({ method: "GET", url: "/dashboard/recovery" });
+    const failure = await server.inject({
+      method: "GET",
+      url: "/dashboard/recovery",
+      headers: correlationHeader,
+    });
     expect(failure.statusCode).toBe(500);
     expect(release).toHaveBeenCalledTimes(2);
     await server.close();
@@ -69,10 +88,17 @@ function buildServer(options: {
   release?: ReturnType<typeof vi.fn>;
 }) {
   const app = fastify({ loggerInstance: createSilentLogger("api") }) as ApiFastifyInstance;
-  app.addHook("onRequest", async (request) => {
-    request.correlationId = "route-correlation";
-  });
-  app.setErrorHandler((_error, _request, reply) => reply.status(500).send({ code: "test_error" }));
+  installFastifyCorrelation(app);
+  app.setErrorHandler((_error, request, reply) =>
+    reply.status(500).send(
+      errorPayloadSchema.parse({
+        code: "internal_error",
+        message: "Dashboard route test failure.",
+        correlationId: request.correlationId,
+        timestamp: new Date().toISOString(),
+      }),
+    ),
+  );
   const admission: DashboardRecoveryAdmissionController = {
     admit: async () =>
       options.recoveryOutcome

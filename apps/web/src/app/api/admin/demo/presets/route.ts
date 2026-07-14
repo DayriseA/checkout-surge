@@ -5,10 +5,16 @@ import {
   archiveAdminPresetResponseSchema,
 } from "@checkout-surge/contracts";
 import { authorizeAdminProxy } from "../../../../lib/server/admin-proxy";
-import { apiBaseUrl, readJsonRequest, validateJson } from "../../../../lib/server/backend-proxy";
+import {
+  apiBaseUrl,
+  createProxyRequestContext,
+  readJsonRequest,
+  validateJson,
+} from "../../../../lib/server/backend-proxy";
 
 export async function GET(request: Request): Promise<Response> {
-  const admin = authorizeAdminProxy(request);
+  const ctx = createProxyRequestContext(request);
+  const admin = authorizeAdminProxy(ctx);
   if (admin instanceof Response) return admin;
   return admin.proxyJson({
     url: `${apiBaseUrl()}${adminPresetListPath}`,
@@ -18,13 +24,14 @@ export async function GET(request: Request): Promise<Response> {
 }
 
 export async function DELETE(request: Request): Promise<Response> {
-  const admin = authorizeAdminProxy(request);
+  const ctx = createProxyRequestContext(request);
+  const admin = authorizeAdminProxy(ctx);
   if (admin instanceof Response) return admin;
 
-  const body = await readJsonRequest(request);
+  const body = await readJsonRequest(ctx);
   if (body instanceof Response) return body;
 
-  const parsed = validateJson(body, archiveAdminPresetRequestSchema);
+  const parsed = validateJson(ctx, body, archiveAdminPresetRequestSchema);
   if (parsed instanceof Response) return parsed;
 
   return admin.proxyJson({

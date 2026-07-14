@@ -116,6 +116,9 @@ importers:
       '@checkout-surge/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@checkout-surge/logger':
+        specifier: workspace:*
+        version: link:../../packages/logger
       ioredis:
         specifier: ^5.11.1
         version: 5.11.1
@@ -215,6 +218,9 @@ importers:
       '@checkout-surge/contracts':
         specifier: workspace:*
         version: link:../contracts
+      fastify:
+        specifier: ^5.8.5
+        version: 5.8.5
       pino:
         specifier: ^10.3.1
         version: 10.3.1

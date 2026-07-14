@@ -3,16 +3,19 @@ import {
   erpChaosStatusPath,
   erpChaosStatusSchema,
 } from "@checkout-surge/contracts";
+import { authorizeAdminProxy } from "../../../lib/server/admin-proxy";
 import {
+  createProxyRequestContext,
   mockErpBaseUrl,
   proxyJson,
   readJsonRequest,
   validateJson,
 } from "../../../lib/server/backend-proxy";
-import { authorizeAdminProxy } from "../../../lib/server/admin-proxy";
 
-export async function GET(): Promise<Response> {
+export async function GET(request: Request): Promise<Response> {
+  const ctx = createProxyRequestContext(request);
   return proxyJson({
+    ctx,
     url: `${mockErpBaseUrl()}${erpChaosStatusPath}`,
     method: "GET",
     schema: erpChaosStatusSchema,
@@ -20,15 +23,16 @@ export async function GET(): Promise<Response> {
 }
 
 export async function PUT(request: Request): Promise<Response> {
-  const admin = authorizeAdminProxy(request);
+  const ctx = createProxyRequestContext(request);
+  const admin = authorizeAdminProxy(ctx);
   if (admin instanceof Response) return admin;
 
-  const body = await readJsonRequest(request);
+  const body = await readJsonRequest(ctx);
   if (body instanceof Response) {
     return body;
   }
 
-  const config = validateJson(body, erpChaosConfigSchema);
+  const config = validateJson(ctx, body, erpChaosConfigSchema);
   if (config instanceof Response) {
     return config;
   }

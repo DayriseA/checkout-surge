@@ -1,13 +1,18 @@
-import { type ErrorPayload, errorPayloadSchema, type JsonObject } from "@checkout-surge/contracts";
+import {
+  type ErrorPayload,
+  type ErrorPayloadCode,
+  errorPayloadSchema,
+  type JsonObject,
+} from "@checkout-surge/contracts";
 
 export class ApiHttpError extends Error {
   readonly statusCode: number;
-  readonly code: string;
+  readonly code: ErrorPayloadCode;
   readonly details: JsonObject | undefined;
 
   constructor(options: {
     statusCode: number;
-    code: string;
+    code: ErrorPayloadCode;
     message: string;
     details?: JsonObject;
   }) {
@@ -20,7 +25,7 @@ export class ApiHttpError extends Error {
 }
 
 export function createErrorPayload(options: {
-  code: string;
+  code: ErrorPayloadCode;
   message: string;
   correlationId: string;
   details?: JsonObject;

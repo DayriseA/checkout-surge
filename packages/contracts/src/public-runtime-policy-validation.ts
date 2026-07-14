@@ -1,9 +1,10 @@
 import type { PublicRuntimePolicy } from "./demo.js";
+import type { ErrorPayloadCode } from "./error.js";
 import type { OperatorMode } from "./lifecycle.js";
 import type { AcceptedRunConfigSnapshot, TrafficConfig } from "./load.js";
 
 export interface PublicRuntimePolicyViolation {
-  code: string;
+  code: ErrorPayloadCode;
   message: string;
   details?: Record<string, unknown>;
   path: (string | number)[];
@@ -322,7 +323,7 @@ function collectDefaultSnapshotViolations(
   });
   for (const cause of causes) {
     violations.push({
-      code: `public_custom_default_${cause.code}`,
+      code: `public_custom_default_${cause.code}` as ErrorPayloadCode,
       message: "Public custom defaults must fit within the active public runtime policy.",
       ...(cause.details ? { details: cause.details } : {}),
       path: ["publicCustomDefaults", ...cause.path],
@@ -360,7 +361,7 @@ function addCapViolation(
   violations: PublicRuntimePolicyViolation[],
   value: number,
   cap: number,
-  code: string,
+  code: ErrorPayloadCode,
   path: (string | number)[],
 ): void {
   if (value > cap) {

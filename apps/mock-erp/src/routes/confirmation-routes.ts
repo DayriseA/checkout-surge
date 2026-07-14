@@ -3,6 +3,7 @@ import {
   erpConfirmationRequestSchema,
   erpConfirmationResponseSchema,
 } from "@checkout-surge/contracts";
+import { replaceFastifyCorrelation } from "@checkout-surge/logger/fastify";
 import type { ConfirmationService } from "../application/confirmation-service.js";
 import type { MockErpFastifyInstance } from "../runtime/fastify.js";
 
@@ -12,12 +13,10 @@ export function registerConfirmationRoutes(
 ): void {
   app.post(erpConfirmationPath, async (request, reply) => {
     const confirmationRequest = erpConfirmationRequestSchema.parse(request.body);
-    const correlationId = confirmationRequest.correlationId;
-    reply.header("x-correlation-id", correlationId);
+    replaceFastifyCorrelation(request, reply, confirmationRequest.correlationId);
 
     request.log.info(
       {
-        correlationId,
         orderId: confirmationRequest.orderId,
         publicOrderId: confirmationRequest.publicOrderId,
         runId: confirmationRequest.runId,
@@ -32,7 +31,6 @@ export function registerConfirmationRoutes(
 
     request.log.info(
       {
-        correlationId,
         orderId: confirmationRequest.orderId,
         confirmationStatus: response.status,
         httpStatus: statusCode,

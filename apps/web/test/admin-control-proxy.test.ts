@@ -12,10 +12,14 @@ import {
   runHistoryPath,
   startDemoRunPath,
 } from "@checkout-surge/contracts";
+import { correlationIdHeaderName } from "@checkout-surge/logger";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { POST as copyPresetToCustom } from "../src/app/api/admin/demo/presets/copy-to-custom/route.js";
 import { POST as duplicatePreset } from "../src/app/api/admin/demo/presets/duplicate/route.js";
-import { DELETE as archiveAdminPreset, GET as listAdminPresets } from "../src/app/api/admin/demo/presets/route.js";
+import {
+  DELETE as archiveAdminPreset,
+  GET as listAdminPresets,
+} from "../src/app/api/admin/demo/presets/route.js";
 import { POST as saveAdminPreset } from "../src/app/api/admin/demo/presets/save/route.js";
 import { POST as resetDemo } from "../src/app/api/admin/demo/reset/route.js";
 import { POST as cleanupRuns } from "../src/app/api/admin/demo/runs/cleanup/route.js";
@@ -104,7 +108,6 @@ describe("dashboard control proxy routes", () => {
       ).toBe(401);
     }
     expect(fetchMock).not.toHaveBeenCalled();
-
   });
 
   it("proxies dashboard recovery through the API boundary", async () => {
@@ -356,7 +359,7 @@ describe("dashboard control proxy routes", () => {
     process.env.MOCK_ERP_BASE_URL = "http://mock-erp.internal";
     const fetchMock = vi.fn(async () => jsonResponse(erpChaosStatusPayload()));
     vi.stubGlobal("fetch", fetchMock);
-    const response = await getErpChaos();
+    const response = await getErpChaos(new Request("http://dashboard.local/api/admin/erp-chaos"));
     expect(response.status).toBe(200);
     expect(fetchMock).toHaveBeenCalledOnce();
   });
@@ -1105,8 +1108,12 @@ async function adminSessionCookie(): Promise<string> {
 }
 
 function jsonResponse(payload: unknown, status = 200): Response {
-  return new Response(JSON.stringify(payload), {
-    status,
-    headers: { "content-type": "application/json" },
-  });
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (payload && typeof payload === "object" && "correlationId" in payload) {
+    const value = (payload as Record<string, unknown>).correlationId;
+    if (typeof value === "string") {
+      headers[correlationIdHeaderName] = value;
+    }
+  }
+  return new Response(JSON.stringify(payload), { status, headers });
 }

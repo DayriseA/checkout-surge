@@ -1,5 +1,6 @@
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
-import { correlationIdHeaderName, normalizeCorrelationId } from "@checkout-surge/logger";
+import { normalizeCorrelationId } from "@checkout-surge/logger";
+import { installFastifyCorrelation } from "@checkout-surge/logger/fastify";
 import { fastify } from "fastify";
 import { ZodError } from "zod";
 import type { ErpChaosConfigStore } from "./application/chaos-control-service.js";
@@ -9,12 +10,6 @@ import { registerChaosRoutes } from "./routes/chaos-routes.js";
 import { registerConfirmationRoutes } from "./routes/confirmation-routes.js";
 import { registerHealthRoutes } from "./routes/health-routes.js";
 import { createMockErpErrorPayload } from "./runtime/errors.js";
-
-declare module "fastify" {
-  interface FastifyRequest {
-    correlationId: string;
-  }
-}
 
 export interface BuildMockErpServerOptions {
   confirmationService: ConfirmationService;
@@ -27,10 +22,7 @@ export interface BuildMockErpServerOptions {
 export function buildMockErpServer(options: BuildMockErpServerOptions) {
   const app = fastify({ loggerInstance: options.logger });
 
-  app.addHook("onRequest", async (request, reply) => {
-    request.correlationId = normalizeCorrelationId(request.headers[correlationIdHeaderName]);
-    reply.header(correlationIdHeaderName, request.correlationId);
-  });
+  installFastifyCorrelation(app);
 
   app.setErrorHandler((error, request, reply) => {
     const correlationId = request.correlationId ?? normalizeCorrelationId(undefined);
@@ -56,7 +48,7 @@ export function buildMockErpServer(options: BuildMockErpServerOptions) {
       );
     }
 
-    request.log.error({ err: error, correlationId }, "Unhandled Mock ERP error.");
+    request.log.error({ err: error }, "Unhandled Mock ERP error.");
     return reply.status(500).send(
       createMockErpErrorPayload({
         code: "internal_error",

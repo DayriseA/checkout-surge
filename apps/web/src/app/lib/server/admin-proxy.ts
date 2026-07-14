@@ -4,7 +4,12 @@ import {
 } from "@checkout-surge/contracts";
 import { requireAdminOrigin } from "./admin-origin";
 import { isValidAdminSessionToken } from "./admin-session";
-import { adminSessionCookieName, jsonError, proxyJson } from "./backend-proxy";
+import {
+  adminSessionCookieName,
+  jsonError,
+  type ProxyRequestContext,
+  proxyJson,
+} from "./backend-proxy";
 import { webServerConfig } from "./config";
 
 interface ContractSchema<T> {
@@ -23,17 +28,17 @@ export interface AdminProxyCapability {
 }
 
 export function authorizeAdminProxy(
-  request: Request,
+  ctx: ProxyRequestContext,
   options: { operatorMode?: "admin" } = {},
 ): AdminProxyCapability | Response {
-  const originFailure = requireAdminOrigin(request);
+  const originFailure = requireAdminOrigin(ctx);
   if (originFailure) return originFailure;
 
   const config = webServerConfig();
   const secret = config.adminSessionSecret;
   const maxAgeSeconds = config.adminSessionMaxAgeSeconds;
 
-  const token = readCookie(request, adminSessionCookieName);
+  const token = readCookie(ctx.request, adminSessionCookieName);
   if (
     !token ||
     !isValidAdminSessionToken({
@@ -43,7 +48,7 @@ export function authorizeAdminProxy(
       maxAgeSeconds,
     })
   ) {
-    return jsonError(401, "admin_session_required", "A valid admin session is required.");
+    return jsonError(ctx, 401, "admin_session_required", "A valid admin session is required.");
   }
 
   const serviceToken = config.controlServiceToken;
@@ -59,7 +64,7 @@ export function authorizeAdminProxy(
       schema: ContractSchema<T>;
       body?: unknown;
     }): Promise<Response> {
-      return proxyJson({ ...proxyOptions, headers: privilegedHeaders });
+      return proxyJson({ ctx, ...proxyOptions, headers: privilegedHeaders });
     },
   });
 }

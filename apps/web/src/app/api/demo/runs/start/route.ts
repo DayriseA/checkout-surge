@@ -1,6 +1,6 @@
 import {
-  demoRunOperatorModeHeaderName,
   controlServiceTokenHeaderName,
+  demoRunOperatorModeHeaderName,
   publicVisitorIdHeaderName,
   startDemoRunPath,
   startDemoRunRequestSchema,
@@ -8,32 +8,35 @@ import {
 } from "@checkout-surge/contracts";
 import {
   apiBaseUrl,
+  createProxyRequestContext,
   proxyJson,
   readJsonRequest,
-  validateJson,
   requireControlServiceToken,
+  validateJson,
 } from "../../../../lib/server/backend-proxy";
 import { resolvePublicVisitorIdentity } from "../../../../lib/server/public-visitor";
 
 export async function POST(request: Request) {
-  const body = await readJsonRequest(request);
+  const ctx = createProxyRequestContext(request);
+  const body = await readJsonRequest(ctx);
   if (body instanceof Response) {
     return body;
   }
 
-  const payload = validateJson(body, startDemoRunRequestSchema);
+  const payload = validateJson(ctx, body, startDemoRunRequestSchema);
   if (payload instanceof Response) {
     return payload;
   }
 
-  const visitor = resolvePublicVisitorIdentity(request);
+  const visitor = resolvePublicVisitorIdentity(ctx);
   if (visitor instanceof Response) {
     return visitor;
   }
-  const controlToken = requireControlServiceToken();
+  const controlToken = requireControlServiceToken(ctx);
   if (controlToken instanceof Response) return controlToken;
 
   const response = await proxyJson({
+    ctx,
     url: `${apiBaseUrl()}${startDemoRunPath}`,
     method: "POST",
     schema: startDemoRunResponseSchema,
