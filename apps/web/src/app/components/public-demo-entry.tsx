@@ -11,6 +11,7 @@ import { useMemo, useState } from "react";
 import type { BackendRead, PublicDemoSurface } from "../lib/api";
 import { readProxyJson } from "../lib/client/proxy-json";
 import { demoRunStartProxyPath } from "../lib/control-paths";
+import { formatDashboardTime } from "../lib/dashboard-time";
 import { StatusPill } from "./status-pill";
 
 const panelClassName = "min-w-0 rounded-lg border border-border bg-surface p-4";
@@ -163,7 +164,7 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
               label="Traffic"
               value={surface.recovery.data.currentRun?.trafficStatus ?? "Not active"}
             />
-            <Fact label="Recovered" value={formatTime(surface.recovery.data.recoveredAt)} />
+            <Fact label="Recovered" value={formatDashboardTime(surface.recovery.data.recoveredAt)} />
           </dl>
         ) : (
           <Unavailable read={surface.recovery} />
@@ -428,15 +429,6 @@ function parseInteger(value: string, fallback: number): number {
 function parseNumber(value: string, fallback: number): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
-}
-
-function formatTime(value: string): string {
-  return new Intl.DateTimeFormat("en-US", {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    timeZoneName: "short",
-  }).format(new Date(value));
 }
 
 function Fact({ label, value }: { label: string; value: string }) {

@@ -9,6 +9,7 @@ import type {
   StartDemoRunResponse,
 } from "@checkout-surge/contracts";
 import type { BackendRead, DashboardBackendSnapshot } from "../lib/api";
+import { formatDashboardTime } from "../lib/dashboard-time";
 import { StatusPill } from "./status-pill";
 
 export type RealtimeConnectionStatus = "connecting" | "connected" | "disconnected" | "unsupported";
@@ -52,12 +53,7 @@ function formatTime(value: string | undefined | null): string {
     return "Not started";
   }
 
-  return new Intl.DateTimeFormat("en-US", {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    timeZoneName: "short",
-  }).format(new Date(value));
+  return formatDashboardTime(value);
 }
 
 function formatSeconds(value: number | null | undefined): string {

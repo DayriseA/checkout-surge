@@ -642,15 +642,6 @@ export function currentRunStatus(
     : "unavailable";
 }
 
-export function formatTime(value: string): string {
-  return new Intl.DateTimeFormat("en-US", {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    timeZoneName: "short",
-  }).format(new Date(value));
-}
-
 export function navigateToWatch() {
   if (typeof window !== "undefined") window.location.assign("/watch");
 }

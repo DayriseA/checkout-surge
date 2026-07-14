@@ -47,6 +47,7 @@ import {
   adminPublicRuntimePolicyProxyPath,
   dashboardRecoveryProxyPath,
 } from "../../lib/control-paths";
+import { formatDashboardTime } from "../../lib/dashboard-time";
 import {
   AdminErpDiagnosticsView,
   AdminPresetView,
@@ -55,7 +56,6 @@ import {
   Unavailable,
   buttonClassName,
   currentRunStatus,
-  formatTime,
   navigateToWatch,
   panelClassName,
 } from "./admin-feature-views";
@@ -125,7 +125,7 @@ export function AdminCurrentRunPanel({
           <Fact label="Run" value={recovery.data.currentRun?.presetName ?? "No active run"} />
           <Fact label="Status" value={recovery.data.currentRun?.status ?? "idle"} />
           <Fact label="Traffic" value={recovery.data.currentRun?.trafficStatus ?? "Not active"} />
-          <Fact label="Recovered" value={formatTime(recovery.data.recoveredAt)} />
+          <Fact label="Recovered" value={formatDashboardTime(recovery.data.recoveredAt)} />
         </dl>
       ) : (
         <Unavailable read={recovery} />

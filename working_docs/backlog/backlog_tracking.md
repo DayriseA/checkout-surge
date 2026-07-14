@@ -73,7 +73,7 @@ Replace `⬜` with `✅` when a task is complete. Optional `⏳` for work in pro
 
 ✅ [Task 34: Complete the admin reset workflow: traffic abort, ERP chaos reset, live dashboard clear, multi-service reset client](./task_34.md)
 
-⬜ [Task 35: Eliminate the React hydration error (#418) on fresh dashboard loads](./task_35.md)
+✅ [Task 35: Eliminate the React hydration error (#418) on fresh dashboard loads](./task_35.md)
 
 ⬜ [Task 36: Fix stale-state preset duplication in the admin console (empty slug duplicates from previous value)](./task_36.md)
 
