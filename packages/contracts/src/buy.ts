@@ -1,6 +1,10 @@
 import { z } from "zod";
 import { orderSummarySchema, reservationSummarySchema } from "./entities.js";
-import { simulatedPurchaseStatusSchema } from "./lifecycle.js";
+import {
+  reservationDecisionSchema,
+  reservationRejectReasonSchema,
+  simulatedPurchaseStatusSchema,
+} from "./lifecycle.js";
 import {
   correlationIdSchema,
   idempotencyKeySchema,
@@ -10,6 +14,14 @@ import {
 } from "./primitives.js";
 
 export const loadRunIdHeaderName = "x-load-run-id" as const;
+export const buyOutcomeHeaderName = "x-checkout-outcome" as const;
+export const buyRejectionReasonHeaderName = "x-checkout-rejection-reason" as const;
+
+export const buyOutcomeHeaderValueSchema = reservationDecisionSchema;
+export type BuyOutcomeHeaderValue = z.infer<typeof buyOutcomeHeaderValueSchema>;
+
+export const buyRejectionReasonHeaderValueSchema = reservationRejectReasonSchema;
+export type BuyRejectionReasonHeaderValue = z.infer<typeof buyRejectionReasonHeaderValueSchema>;
 
 export const buyRequestSchema = z
   .object({

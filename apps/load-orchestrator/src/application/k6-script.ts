@@ -1,8 +1,11 @@
 import {
+  buyOutcomeHeaderName,
+  buyRejectionReasonHeaderName,
   type LoadExecutionPlan,
   loadRunIdHeaderName,
   type TrafficExecutionStartRequest,
 } from "@checkout-surge/contracts";
+import { correlationIdHeaderName } from "@checkout-surge/logger";
 
 export interface GeneratedK6Script {
   contents: string;
@@ -61,7 +64,9 @@ export function generateK6Script(input: TrafficExecutionStartRequest): Generated
     apiBaseUrl: input.apiBaseUrl.replace(/\/+$/, ""),
     buyEndpointPath: input.buyEndpointPath,
     correlationId: input.correlationId,
-    quantity: input.configSnapshot.inventoryConfig.quantityPerCheckout,
+    quantity: traffic.quantityPerAttempt,
+    plannedRequests,
+    trafficMode: traffic.mode,
     duplicateEachBuyerAttempt:
       input.configSnapshot.trafficConfig.mode === "buyer-spike" &&
       input.configSnapshot.trafficConfig.duplicateEachBuyerAttempt,
@@ -80,15 +85,31 @@ const expectedCheckoutStatuses = http.expectedStatuses(202, 409);
 const acceptedResponses = new Counter("checkout_reservation_accepted");
 const soldOutResponses = new Counter("checkout_sold_out");
 const unexpectedResponses = new Counter("checkout_unexpected_response");
+const checkoutOutcomeHeaderName = "${buyOutcomeHeaderName}";
+const checkoutRejectionReasonHeaderName = "${buyRejectionReasonHeaderName}";
 
-export const options = ${JSON.stringify({ scenarios: { checkout: scenario } })};
+export const options = ${JSON.stringify({ discardResponseBodies: true, scenarios: { checkout: scenario } })};
+
+function readResponseHeader(response, headerName) {
+  for (const [key, value] of Object.entries(response.headers)) {
+    if (key.toLowerCase() === headerName) {
+      return value;
+    }
+  }
+  return null;
+}
 
 export default function () {
   const iteration = exec.scenario.iterationInTest;
+  if (config.trafficMode === "steady-arrival-rate" && iteration >= config.plannedRequests) {
+    return;
+  }
+
   const buyerId = config.duplicateEachBuyerAttempt ? __VU : iteration;
   const idempotencyKey = config.duplicateEachBuyerAttempt
     ? \`run:\${config.runId}:buyer:\${buyerId}\`
     : \`run:\${config.runId}:attempt:\${iteration}\`;
+  const correlationId = \`\${config.correlationId}:k6:\${iteration}\`;
   const response = http.post(
     \`\${config.apiBaseUrl}\${config.buyEndpointPath}\`,
     JSON.stringify({
@@ -96,36 +117,39 @@ export default function () {
       runId: config.runId,
       idempotencyKey,
       quantity: config.quantity,
-      correlationId: \`\${config.correlationId}:k6:\${iteration}\`,
+      correlationId,
     }),
     {
       responseCallback: expectedCheckoutStatuses,
       headers: {
         "content-type": "application/json",
         accept: "application/json",
+        "${correlationIdHeaderName}": correlationId,
         "${loadRunIdHeaderName}": config.runId,
       },
     },
   );
 
-  let outcome = null;
-  try {
-    outcome = response.json("outcome");
-  } catch (_) {
-    outcome = null;
-  }
+  const outcome = readResponseHeader(response, checkoutOutcomeHeaderName);
+  const rejectionReason = readResponseHeader(response, checkoutRejectionReasonHeaderName);
+  const isAccepted =
+    response.status === 202 &&
+    (outcome === "reservation_secured" ||
+      outcome === "idempotent_replay" ||
+      outcome === "reservation_pending_persistence");
+  const isSoldOut =
+    response.status === 409 && outcome === "sold_out" && rejectionReason === "sold_out";
 
-  if (response.status === 202) {
+  if (isAccepted) {
     acceptedResponses.add(1);
-  } else if (response.status === 409 && outcome === "sold_out") {
+  } else if (isSoldOut) {
     soldOutResponses.add(1);
   } else {
     unexpectedResponses.add(1);
   }
 
   check(response, {
-    "expected checkout response": (result) =>
-      result.status === 202 || (result.status === 409 && outcome === "sold_out"),
+    "expected checkout response": () => isAccepted || isSoldOut,
   });
 }
 `,

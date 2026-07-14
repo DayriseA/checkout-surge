@@ -17,6 +17,8 @@ import {
   adminPublicRuntimePolicyResponseSchema,
   archiveAdminPresetResponseSchema,
   type BusinessOutcomeSummary,
+  buyOutcomeHeaderName,
+  buyRejectionReasonHeaderName,
   buyResponseSchema,
   controlServiceTokenHeaderName,
   type DashboardEvent,
@@ -1989,6 +1991,8 @@ describe("API gateway routes", () => {
 
     expect(response.statusCode).toBe(400);
     expect(response.headers["x-correlation-id"]).toBeTruthy();
+    expect(response.headers[buyOutcomeHeaderName]).toBeUndefined();
+    expect(response.headers[buyRejectionReasonHeaderName]).toBeUndefined();
     expect(() => errorPayloadSchema.parse(response.json())).not.toThrow();
   });
 
@@ -2011,6 +2015,8 @@ describe("API gateway routes", () => {
 
     expect(response.statusCode).toBe(202);
     expect(response.headers["x-correlation-id"]).toBe("phase2-test-correlation");
+    expect(response.headers[buyOutcomeHeaderName]).toBe("reservation_secured");
+    expect(response.headers[buyRejectionReasonHeaderName]).toBeUndefined();
     expect(payload.correlationId).toBe("phase2-test-correlation");
     expect(payload.outcome).toBe("reservation_secured");
   });
@@ -2130,6 +2136,8 @@ describe("API gateway routes", () => {
     const payload = buyResponseSchema.parse(response.json());
 
     expect(response.statusCode).toBe(409);
+    expect(response.headers[buyOutcomeHeaderName]).toBe("run_not_accepting_traffic");
+    expect(response.headers[buyRejectionReasonHeaderName]).toBe("run_not_accepting_traffic");
     expect(payload).toMatchObject({
       outcome: "run_not_accepting_traffic",
       reason: "run_not_accepting_traffic",
@@ -2170,48 +2178,52 @@ describe("API gateway routes", () => {
       reason: "quantity_invalid",
       simulatedStatus: null,
     },
-  ] as const)(
-    "does no PostgreSQL work for the route-level Redis $decision rejection",
-    async ({ decision, status, reason, simulatedStatus }) => {
-      const persistSecuredReservation = vi.fn();
-      const getPersistedBuyByReservationId = vi.fn();
-      const enqueue = vi.fn();
-      const server = await trackedServer({
-        persistence: { persistSecuredReservation, getPersistedBuyByReservationId },
-        stockReservations: {
-          reserve: async () => ({ outcome: decision, reservation: null }),
-          markPendingPersistence: async () => undefined,
-          promoteAccepted: async () => undefined,
-        },
-        orderProcessJobPublisher: { enqueue },
-      });
+  ] as const)("does no PostgreSQL work for the route-level Redis $decision rejection", async ({
+    decision,
+    status,
+    reason,
+    simulatedStatus,
+  }) => {
+    const persistSecuredReservation = vi.fn();
+    const getPersistedBuyByReservationId = vi.fn();
+    const enqueue = vi.fn();
+    const server = await trackedServer({
+      persistence: { persistSecuredReservation, getPersistedBuyByReservationId },
+      stockReservations: {
+        reserve: async () => ({ outcome: decision, reservation: null }),
+        markPendingPersistence: async () => undefined,
+        promoteAccepted: async () => undefined,
+      },
+      orderProcessJobPublisher: { enqueue },
+    });
 
-      const response = await server.inject({
-        method: "POST",
-        url: "/buy",
-        payload: {
-          saleOfferId: fixtureIds.saleOffer,
-          idempotencyKey: `route-rejection-${decision}`,
-          quantity: 1,
-        },
-      });
+    const response = await server.inject({
+      method: "POST",
+      url: "/buy",
+      payload: {
+        saleOfferId: fixtureIds.saleOffer,
+        idempotencyKey: `route-rejection-${decision}`,
+        quantity: 1,
+      },
+    });
 
-      const payload = buyResponseSchema.parse(response.json());
-      expect(response.statusCode).toBe(status);
-      expect(payload).toEqual(
-        expect.objectContaining({
-          outcome: decision,
-          reason,
-          simulatedStatus,
-          reservation: null,
-          order: null,
-        }),
-      );
-      expect(persistSecuredReservation).not.toHaveBeenCalled();
-      expect(getPersistedBuyByReservationId).not.toHaveBeenCalled();
-      expect(enqueue).not.toHaveBeenCalled();
-    },
-  );
+    const payload = buyResponseSchema.parse(response.json());
+    expect(response.statusCode).toBe(status);
+    expect(response.headers[buyOutcomeHeaderName]).toBe(decision);
+    expect(response.headers[buyRejectionReasonHeaderName]).toBe(reason);
+    expect(payload).toEqual(
+      expect.objectContaining({
+        outcome: decision,
+        reason,
+        simulatedStatus,
+        reservation: null,
+        order: null,
+      }),
+    );
+    expect(persistSecuredReservation).not.toHaveBeenCalled();
+    expect(getPersistedBuyByReservationId).not.toHaveBeenCalled();
+    expect(enqueue).not.toHaveBeenCalled();
+  });
 
   it("does no PostgreSQL work when malformed Redis projection state raises an error", async () => {
     const persistSecuredReservation = vi.fn();
@@ -2238,8 +2250,79 @@ describe("API gateway routes", () => {
     });
 
     expect(response.statusCode).toBe(500);
+    expect(response.headers[buyOutcomeHeaderName]).toBeUndefined();
+    expect(response.headers[buyRejectionReasonHeaderName]).toBeUndefined();
     expect(persistSecuredReservation).not.toHaveBeenCalled();
     expect(getPersistedBuyByReservationId).not.toHaveBeenCalled();
+  });
+
+  it("keeps accepted replay headers normalized to the public secured response", async () => {
+    const persistence = new AcceptingPersistence();
+    let acceptedReservation:
+      | Parameters<StockReservationGateway["reserve"]>[0]["reservation"]
+      | undefined;
+    const server = await trackedServer({
+      persistence,
+      stockReservations: {
+        reserve: async (input) => {
+          if (!acceptedReservation) {
+            acceptedReservation = input.reservation;
+            return { outcome: "reservation_secured", reservation: input.reservation };
+          }
+          return { outcome: "idempotent_replay", reservation: acceptedReservation };
+        },
+        markPendingPersistence: async () => undefined,
+        promoteAccepted: async () => undefined,
+      },
+    });
+    const request = {
+      method: "POST" as const,
+      url: "/buy",
+      payload: {
+        saleOfferId: fixtureIds.saleOffer,
+        idempotencyKey: "header-replay",
+        quantity: 1,
+      },
+    };
+
+    const first = await server.inject(request);
+    const replay = await server.inject(request);
+
+    expect(buyResponseSchema.parse(first.json()).outcome).toBe("reservation_secured");
+    expect(buyResponseSchema.parse(replay.json()).outcome).toBe("reservation_secured");
+    expect(replay.statusCode).toBe(202);
+    expect(replay.headers[buyOutcomeHeaderName]).toBe("reservation_secured");
+    expect(replay.headers[buyRejectionReasonHeaderName]).toBeUndefined();
+  });
+
+  it("preserves pending-persistence retry and classification headers", async () => {
+    const server = await trackedServer({
+      persistence: {
+        persistSecuredReservation: async () => Promise.reject(new Error("database unavailable")),
+        getPersistedBuyByReservationId: async () => null,
+      },
+      stockReservations: new AcceptingStockReservations(),
+    });
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/buy",
+      headers: { [correlationIdHeaderName]: "pending-header-correlation" },
+      payload: {
+        saleOfferId: fixtureIds.saleOffer,
+        idempotencyKey: "pending-header",
+        quantity: 1,
+      },
+    });
+
+    expect(buyResponseSchema.parse(response.json()).outcome).toBe(
+      "reservation_pending_persistence",
+    );
+    expect(response.statusCode).toBe(202);
+    expect(response.headers[buyOutcomeHeaderName]).toBe("reservation_pending_persistence");
+    expect(response.headers[buyRejectionReasonHeaderName]).toBeUndefined();
+    expect(response.headers["retry-after"]).toBe("30");
+    expect(response.headers[correlationIdHeaderName]).toBe("pending-header-correlation");
   });
 
   it("rejects invalid quantity at the HTTP schema without Redis or PostgreSQL work", async () => {

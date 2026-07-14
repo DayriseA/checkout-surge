@@ -85,7 +85,7 @@ Replace `⬜` with `✅` when a task is complete. Optional `⏳` for work in pro
 
 ✅ [Task 40: Give the API ownership of delivery-quality classification and reconcile k6 counters against durable evidence](./task_40.md)
 
-⬜ [Task 41: Restore buy outcome headers and tighten the k6 request script (discard bodies, quantity source, correlation header)](./task_41.md)
+✅ [Task 41: Restore buy outcome headers and tighten the k6 request script (discard bodies, quantity source, correlation header)](./task_41.md)
 
 ⬜ [Task 42: Use k6 summary-export for terminal reports and make a real-k6 test lane mandatory](./task_42.md)
 

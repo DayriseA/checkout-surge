@@ -6,6 +6,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import {
+  buyOutcomeHeaderName,
+  buyRejectionReasonHeaderName,
   controlServiceTokenHeaderName,
   type HealthStatus,
   healthResponseSchema,
@@ -373,8 +375,26 @@ describe("load-orchestrator k6 mapping", () => {
       "const expectedCheckoutStatuses = http.expectedStatuses(202, 409);",
     );
     expect(script.contents).toContain("responseCallback: expectedCheckoutStatuses");
+    expect(script.contents).toContain('"discardResponseBodies":true');
+    expect(script.contents).toContain(
+      `const checkoutOutcomeHeaderName = "${buyOutcomeHeaderName}"`,
+    );
+    expect(script.contents).toContain(
+      `const checkoutRejectionReasonHeaderName = "${buyRejectionReasonHeaderName}"`,
+    );
+    expect(script.contents).toContain(`"${correlationIdHeaderName}": correlationId`);
+    expect(script.contents).not.toContain("response.json(");
+    expect(script.contents).toContain('outcome === "reservation_secured"');
+    expect(script.contents).toContain('outcome === "idempotent_replay"');
+    expect(script.contents).toContain('outcome === "reservation_pending_persistence"');
+    expect(script.contents).toContain(
+      'response.status === 409 && outcome === "sold_out" && rejectionReason === "sold_out"',
+    );
+    expect(script.contents).toContain("key.toLowerCase() === headerName");
     expect(script.contents).toContain("run:");
     expect(script.contents).toContain(":buyer:");
+    expect(script.contents).toContain("config.duplicateEachBuyerAttempt ? __VU : iteration");
+    expect(script.contents).toContain(`config.correlationId}:k6:\${iteration}`);
     expect(script.contents).toContain(`"${loadRunIdHeaderName}": config.runId`);
   });
 
@@ -399,11 +419,37 @@ describe("load-orchestrator k6 mapping", () => {
     expect(script.contents).toContain('"rate":20');
     expect(script.contents).toContain('"preAllocatedVUs":10');
     expect(script.contents).toContain('"maxVUs":50');
+    expect(script.contents).toContain(
+      'config.trafficMode === "steady-arrival-rate" && iteration >= config.plannedRequests',
+    );
+    expect(script.contents.indexOf("iteration >= config.plannedRequests")).toBeLessThan(
+      script.contents.indexOf("const buyerId"),
+    );
+    expect(script.contents.indexOf("iteration >= config.plannedRequests")).toBeLessThan(
+      script.contents.indexOf("http.post"),
+    );
     expect(script.executionPlan).toMatchObject({
       preAllocatedVus: 10,
       maxVus: 50,
       plannedEmittedAttempts: 200,
     });
+  });
+
+  it("sources buy quantity from traffic attempts rather than inventory checkout sizing", () => {
+    const script = generateK6Script({
+      ...startRequest,
+      configSnapshot: {
+        ...startRequest.configSnapshot,
+        trafficConfig: { ...startRequest.configSnapshot.trafficConfig, quantityPerAttempt: 3 },
+        inventoryConfig: {
+          ...startRequest.configSnapshot.inventoryConfig,
+          quantityPerCheckout: 7,
+        },
+      },
+    });
+
+    expect(script.contents).toContain('"quantity":3');
+    expect(script.contents).not.toContain('"quantity":7');
   });
 
   it("uses the same default steady VU values in the script and diagnostic plan", () => {
@@ -1257,7 +1303,9 @@ describe("SpawnK6Runner completion reporting", () => {
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],
     });
-    expect(script).toContain('export const options = {"scenarios":{"checkout":');
+    expect(script).toContain(
+      'export const options = {"discardResponseBodies":true,"scenarios":{"checkout":',
+    );
     expect(script).toContain(startRequest.runId);
     expect(apiClient.sendMetrics).toHaveBeenCalledTimes(1);
     expect(metricBatches).toEqual([

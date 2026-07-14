@@ -16,6 +16,10 @@ import {
   adminPublicRuntimePolicyUpdateRequestSchema,
   archiveAdminPresetRequestSchema,
   archiveAdminPresetResponseSchema,
+  buyOutcomeHeaderName,
+  buyOutcomeHeaderValueSchema,
+  buyRejectionReasonHeaderName,
+  buyRejectionReasonHeaderValueSchema,
   buyRequestSchema,
   buyResponseSchema,
   collectPublicRuntimePolicyViolations,
@@ -823,6 +827,27 @@ describe("buy and dashboard contracts", () => {
     expect(loadRunIdHeaderName).toBe("x-load-run-id");
   });
 
+  it("exposes canonical buy classification header names and values", () => {
+    expect(buyOutcomeHeaderName).toBe("x-checkout-outcome");
+    expect(buyRejectionReasonHeaderName).toBe("x-checkout-rejection-reason");
+
+    for (const outcome of reservationDecisionValues) {
+      expect(buyOutcomeHeaderValueSchema.parse(outcome)).toBe(outcome);
+    }
+    for (const reason of [
+      "sold_out",
+      "inventory_not_initialized",
+      "quantity_invalid",
+      "run_not_accepting_traffic",
+      "idempotency_conflict",
+    ] as const) {
+      expect(buyRejectionReasonHeaderValueSchema.parse(reason)).toBe(reason);
+    }
+
+    expect(() => buyOutcomeHeaderValueSchema.parse("unrelated_outcome")).toThrow();
+    expect(() => buyRejectionReasonHeaderValueSchema.parse("unrelated_reason")).toThrow();
+  });
+
   it("validates accepted and sold-out reservation outcomes", () => {
     const accepted = {
       outcome: "reservation_secured",
@@ -912,27 +937,27 @@ describe("buy and dashboard contracts", () => {
     { outcome: "inventory_not_initialized", simulatedStatus: null },
     { outcome: "idempotency_conflict", simulatedStatus: null },
     { outcome: "quantity_invalid", simulatedStatus: null },
-  ] as const)(
-    "parses the $outcome rejection with its exact reason and presentation",
-    ({ outcome, simulatedStatus }) => {
-      const payload = {
-        outcome,
-        reason: outcome,
-        correlationId,
-        timestamp,
-        reservation: null,
-        order: null,
-        simulatedStatus,
-      };
-      const parsed = reservationRejectedResponseSchema.parse(payload);
-      expect(parsed.outcome).toBe(outcome);
-      expect(parsed.reason).toBe(outcome);
-      expect(parsed.reservation).toBeNull();
-      expect(parsed.order).toBeNull();
-      expect(parsed.simulatedStatus).toBe(simulatedStatus);
-      expect(buyResponseSchema.parse(payload).outcome).toBe(outcome);
-    },
-  );
+  ] as const)("parses the $outcome rejection with its exact reason and presentation", ({
+    outcome,
+    simulatedStatus,
+  }) => {
+    const payload = {
+      outcome,
+      reason: outcome,
+      correlationId,
+      timestamp,
+      reservation: null,
+      order: null,
+      simulatedStatus,
+    };
+    const parsed = reservationRejectedResponseSchema.parse(payload);
+    expect(parsed.outcome).toBe(outcome);
+    expect(parsed.reason).toBe(outcome);
+    expect(parsed.reservation).toBeNull();
+    expect(parsed.order).toBeNull();
+    expect(parsed.simulatedStatus).toBe(simulatedStatus);
+    expect(buyResponseSchema.parse(payload).outcome).toBe(outcome);
+  });
 
   it("rejects invalid outcome, reason, and presentation cross-pairs", () => {
     const base = {

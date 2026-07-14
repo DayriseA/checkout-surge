@@ -1,5 +1,7 @@
 import {
   type BuyRequest,
+  buyOutcomeHeaderName,
+  buyRejectionReasonHeaderName,
   buyRequestSchema,
   buyResponseSchema,
   loadRunIdHeaderName,
@@ -35,6 +37,10 @@ export function registerBuyRoutes(app: ApiFastifyInstance, options: BuyRouteOpti
     );
 
     const statusCode = buyStatusCode(response.outcome);
+    reply.header(buyOutcomeHeaderName, response.outcome);
+    if ("reason" in response) {
+      reply.header(buyRejectionReasonHeaderName, response.reason);
+    }
     if (response.outcome === "reservation_pending_persistence") {
       reply.header("retry-after", response.retryAfterSeconds.toString());
     }
