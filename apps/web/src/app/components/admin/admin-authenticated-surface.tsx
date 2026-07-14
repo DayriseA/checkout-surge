@@ -315,11 +315,11 @@ export function AdminPresetController({
     await mutate(adminPresetSaveProxyPath, parsed.data, "Preset saved.");
   }
 
-  async function duplicate() {
+  async function duplicate(targetSlug: string) {
     if (!selectedPreset) return;
     const parsed = duplicateDemoPresetRequestSchema.safeParse({
       sourceSlug: selectedPreset.slug,
-      targetSlug: duplicateTargetSlug,
+      targetSlug,
       displayName: `${selectedPreset.display.name} Copy`,
     });
     if (!parsed.success) {
@@ -382,7 +382,7 @@ export function AdminPresetController({
       isPending={isPending}
       notice={notice}
       onCopyToCustom={() => void copyToCustom()}
-      onDuplicate={() => void duplicate()}
+      onDuplicate={(targetSlug) => void duplicate(targetSlug)}
       onDuplicateTargetSlugChange={setDuplicateTargetSlug}
       onSave={() => void save()}
       onSelect={(slug) => {

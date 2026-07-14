@@ -20,6 +20,8 @@ import type { BackendRead } from "../src/app/lib/api.js";
 import {
   adminDemoResetProxyPath,
   adminErpChaosProxyPath,
+  adminPresetDuplicateProxyPath,
+  adminPresetListProxyPath,
   adminPublicRuntimePolicyProxyPath,
   dashboardRecoveryProxyPath,
 } from "../src/app/lib/control-paths.js";
@@ -162,6 +164,72 @@ describe("admin feature controllers", () => {
     await waitFor(() =>
       expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("Server updated"),
     );
+  });
+
+  it("rejects a duplicate when the visible slug is cleared ahead of React's state commit", async () => {
+    const fetchMock = vi.fn((_input: RequestInfo | URL, _init?: RequestInit) => {
+      throw new Error("Unexpected duplicate fetch");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(
+      <AdminPresetController
+        initialPresets={presetListFixture("Custom")}
+        recovery={available(recoveryFixture(null))}
+      />,
+    );
+
+    const duplicateSlugInput = screen.getByLabelText("Duplicate slug") as HTMLInputElement;
+    expect(duplicateSlugInput.value).toBe("custom-copy");
+    duplicateSlugInput.value = "";
+
+    await user.click(screen.getByRole("button", { name: "Duplicate" }));
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(
+      await screen.findByText("Duplicate target slug is outside the shared contract."),
+    ).toBeTruthy();
+  });
+
+  it("submits the current duplicate slug exactly through the shared contract", async () => {
+    const clone = presetWithSlug("preview-clone", "Custom Copy");
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === adminPresetDuplicateProxyPath && init?.method === "POST") {
+        return jsonResponse({
+          preset: clone,
+          timestamp: "2026-06-20T00:00:12.000Z",
+        });
+      }
+      if (path === adminPresetListProxyPath) {
+        return jsonResponse({
+          presets: [presetFixture(), clone],
+          timestamp: "2026-06-20T00:00:12.000Z",
+        });
+      }
+      throw new Error(`Unexpected fetch: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(
+      <AdminPresetController
+        initialPresets={presetListFixture("Custom")}
+        recovery={available(recoveryFixture(null))}
+      />,
+    );
+
+    const duplicateSlugInput = screen.getByLabelText("Duplicate slug");
+    await user.clear(duplicateSlugInput);
+    await user.type(duplicateSlugInput, "preview-clone");
+    await user.click(screen.getByRole("button", { name: "Duplicate" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(adminPresetDuplicateProxyPath);
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+      sourceSlug: "custom",
+      targetSlug: "preview-clone",
+      displayName: "Custom Copy",
+    });
   });
 
   it("preserves an in-progress preset draft while refreshed props update start gating", async () => {
@@ -318,6 +386,15 @@ function presetFixture(): DemoPresetContract {
     },
     createdAt: "2026-06-20T00:00:00.000Z",
     updatedAt: "2026-06-20T00:00:00.000Z",
+  };
+}
+
+function presetWithSlug(slug: string, name: string): DemoPresetContract {
+  const base = presetFixture();
+  return {
+    ...base,
+    slug,
+    display: { ...base.display, name },
   };
 }
 

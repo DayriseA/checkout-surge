@@ -198,7 +198,7 @@ export function AdminPresetView({
   isPending: boolean;
   notice: string | null;
   onCopyToCustom: () => void;
-  onDuplicate: () => void;
+  onDuplicate: (targetSlug: string) => void;
   onDuplicateTargetSlugChange: (value: string) => void;
   onSave: () => void;
   onSelect: (slug: string) => void;
@@ -292,21 +292,30 @@ export function AdminPresetView({
                 Copy to Custom
               </button>
             </div>
-            <div className="grid grid-cols-[minmax(160px,1fr)_auto] gap-2 max-[560px]:grid-cols-1">
+            <form
+              className="grid grid-cols-[minmax(160px,1fr)_auto] gap-2 max-[560px]:grid-cols-1"
+              onSubmit={(event) => {
+                event.preventDefault();
+                const targetSlug = String(
+                  new FormData(event.currentTarget).get("duplicate-target-slug") ?? "",
+                );
+                onDuplicate(targetSlug);
+              }}
+            >
               <LabeledTextInput
                 label="Duplicate slug"
+                name="duplicate-target-slug"
                 onChange={onDuplicateTargetSlugChange}
                 value={duplicateTargetSlug}
               />
               <button
                 className={`${buttonClassName} self-end`}
                 disabled={isPending || selectedPreset.slug === "public-custom"}
-                onClick={onDuplicate}
-                type="button"
+                type="submit"
               >
                 Duplicate
               </button>
-            </div>
+            </form>
           </div>
         ) : (
           <p className="m-0 text-muted">No admin presets are available.</p>
@@ -609,12 +618,14 @@ function Notice({ children }: { children: React.ReactNode }) {
 
 function LabeledTextInput({
   label,
+  name,
   onChange,
   step,
   type = "text",
   value,
 }: {
   label: string;
+  name?: string | undefined;
   onChange: (next: string) => void;
   step?: string | undefined;
   type?: "number" | "password" | "text";
@@ -625,6 +636,7 @@ function LabeledTextInput({
       <span>{label}</span>
       <input
         className={inputClassName}
+        name={name}
         onChange={(event) => onChange(event.target.value)}
         step={step}
         type={type}
