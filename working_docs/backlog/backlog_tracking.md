@@ -83,7 +83,7 @@ Replace `⬜` with `✅` when a task is complete. Optional `⏳` for work in pro
 
 ✅ [Task 39: Fix rejected-buy classification: stop forcing sold-out, add the missing decision vocabulary](./task_39.md)
 
-⬜ [Task 40: Give the API ownership of delivery-quality classification and reconcile k6 counters against durable evidence](./task_40.md)
+✅ [Task 40: Give the API ownership of delivery-quality classification and reconcile k6 counters against durable evidence](./task_40.md)
 
 ⬜ [Task 41: Restore buy outcome headers and tighten the k6 request script (discard bodies, quantity source, correlation header)](./task_41.md)
 

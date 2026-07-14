@@ -15,7 +15,7 @@ import {
   simulatedNotifications,
 } from "@checkout-surge/db";
 import { resetTestDatabase } from "@checkout-surge/db/testing";
-import { inArray } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { RunHistoryService } from "../src/services/run-history-service.js";
 
@@ -104,6 +104,32 @@ describe("run history service", () => {
     expect(firstPage.summaries[0]).not.toHaveProperty("reservationToken");
     expect(firstPage.summaries[0]).not.toHaveProperty("idempotencyKey");
     expect(secondPage.summaries[0]?.runId).toBe(ids.olderRun);
+  });
+
+  it("normalizes contradictory legacy delivery rows when reading history", async () => {
+    const db = requireConnection(connection).db;
+    const service = createService(connection);
+    await seedHistory(db);
+    await db
+      .update(demoRunSummaries)
+      .set({
+        trafficDeliverySummary: {
+          plannedRequests: 100,
+          emittedRequests: 94,
+          droppedIterations: 0,
+          trafficDeliveryStatus: "complete",
+          notes: [],
+        },
+      })
+      .where(eq(demoRunSummaries.id, ids.newerSummary));
+
+    const history = await service.list({ page: 1, pageSize: 10 });
+    expect(history.summaries[0]?.trafficDeliverySummary).toMatchObject({
+      trafficDeliveryStatus: "failed",
+      requestShortfall: 6,
+      trafficMode: null,
+      completedIterations: null,
+    });
   });
 
   it("returns public-safe detail for a summary-backed terminal run", async () => {

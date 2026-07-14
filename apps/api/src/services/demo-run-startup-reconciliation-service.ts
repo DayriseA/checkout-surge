@@ -21,6 +21,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import type { PendingPersistenceReconciler } from "./pending-persistence-reconciler.js";
 import type { TerminalDemoRunWriter } from "./terminal-demo-run-writer.js";
 import type { TrafficCompletionEnrichmentController } from "./traffic-completion-enrichment-service.js";
+import { syntheticTrafficDeliverySummary } from "./traffic-delivery-plan.js";
 
 const apiRestartInterruptedRunReason = "api_restart_interrupted_run";
 
@@ -257,13 +258,9 @@ function interruptedTrafficSummary(config: AcceptedRunConfigSnapshot): {
       unexpectedResponses: 0,
       failureRate: 0,
     },
-    trafficDeliverySummary: {
-      plannedRequests,
-      emittedRequests: 0,
-      droppedIterations: plannedRequests,
-      trafficDeliveryStatus: "failed",
-      notes: ["API startup reconciliation failed the interrupted run before traffic completion."],
-    },
+    trafficDeliverySummary: syntheticTrafficDeliverySummary(config, [
+      "API startup reconciliation failed the interrupted run before traffic completion.",
+    ]),
   };
 }
 

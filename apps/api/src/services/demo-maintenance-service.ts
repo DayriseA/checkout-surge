@@ -12,7 +12,6 @@ import {
   type TrafficConfig,
   type TrafficDeliverySummary,
   type TrafficHttpSummary,
-  trafficDeliverySummarySchema,
   trafficHttpSummarySchema,
 } from "@checkout-surge/contracts";
 import {
@@ -41,6 +40,8 @@ import type {
   TerminalDemoRunSummaryInput,
   TerminalDemoRunWriter,
 } from "./terminal-demo-run-writer.js";
+import { normalizeTrafficDeliverySummary } from "./traffic-delivery-classifier.js";
+import { syntheticTrafficDeliverySummary } from "./traffic-delivery-plan.js";
 
 export interface QueueCleanupSummary {
   cleanedQueueCount: number;
@@ -773,7 +774,7 @@ function adminResetTrafficSummary(
   if (finalization) {
     return {
       httpSummary: trafficHttpSummarySchema.parse(finalization.httpSummary),
-      trafficDeliverySummary: trafficDeliverySummarySchema.parse(
+      trafficDeliverySummary: normalizeTrafficDeliverySummary(
         finalization.trafficDeliverySummary,
       ),
       httpTimingBreakdownSummary: finalization.httpTimingBreakdownSummary,
@@ -812,13 +813,9 @@ function failedBeforeTrafficCompletionSummary(config: AcceptedRunConfigSnapshot)
       unexpectedResponses: 0,
       failureRate: 0,
     },
-    trafficDeliverySummary: {
-      plannedRequests,
-      emittedRequests: 0,
-      droppedIterations: plannedRequests,
-      trafficDeliveryStatus: "failed",
-      notes: ["Admin reset failed the run before traffic completion."],
-    },
+    trafficDeliverySummary: syntheticTrafficDeliverySummary(config, [
+      "Admin reset failed the run before traffic completion.",
+    ]),
   };
 }
 

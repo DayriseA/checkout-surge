@@ -507,7 +507,16 @@ function runHistoryListResponseFixture(): RunHistoryListResponse {
         trafficDeliverySummary: {
           plannedRequests: 10,
           emittedRequests: 10,
+          trafficMode: null,
+          plannedBuyers: null,
+          scheduledRatePerSecond: null,
+          configuredDurationSeconds: null,
+          preAllocatedVUs: null,
+          maxVUs: null,
           droppedIterations: 0,
+          completedIterations: null,
+          unstartedIterations: null,
+          requestShortfall: 0,
           trafficDeliveryStatus: "complete",
           notes: [],
         },
@@ -1915,7 +1924,12 @@ describe("API gateway routes", () => {
       acknowledged: true,
       correlationId: fixtureCorrelationId,
     });
-    expect(recordTrafficCompletion).toHaveBeenCalledWith(report);
+    expect(recordTrafficCompletion).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ...report,
+        trafficDeliverySummary: expect.objectContaining(report.trafficDeliverySummary),
+      }),
+    );
   });
 
   it("returns a stable unavailable response when queue inspection fails", async () => {

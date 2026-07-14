@@ -203,13 +203,53 @@ export const trafficHttpSummarySchema = z
   .strict();
 export type TrafficHttpSummary = z.infer<typeof trafficHttpSummarySchema>;
 
+const trafficDeliveryEvidenceShape = {
+  plannedRequests: nonnegativeIntegerSchema,
+  emittedRequests: nonnegativeIntegerSchema,
+  trafficMode: z.enum(["buyer-spike", "steady-arrival-rate"]).nullable().optional(),
+  plannedBuyers: positiveIntegerSchema.nullable().optional(),
+  scheduledRatePerSecond: positiveIntegerSchema.nullable().optional(),
+  configuredDurationSeconds: positiveIntegerSchema.nullable().optional(),
+  preAllocatedVUs: positiveIntegerSchema.nullable().optional(),
+  maxVUs: positiveIntegerSchema.nullable().optional(),
+  droppedIterations: nonnegativeIntegerSchema,
+  completedIterations: nonnegativeIntegerSchema.nullable().optional(),
+  unstartedIterations: nonnegativeIntegerSchema.nullable().optional(),
+  requestShortfall: nonnegativeIntegerSchema.nullable().optional(),
+  notes: z.array(z.string().trim().min(1)).default([]),
+};
+
+/** Compatible raw evidence, including legacy rows whose producer supplied a status. */
+export const trafficDeliveryEvidenceSchema = z
+  .object({
+    ...trafficDeliveryEvidenceShape,
+    trafficDeliveryStatus: trafficDeliveryStatusSchema.optional(),
+  })
+  .strict();
+export type TrafficDeliveryEvidence = z.infer<typeof trafficDeliveryEvidenceSchema>;
+
+/** Real completion input. Quality is classified by the API, not the caller. */
+export const trafficCompletionDeliverySummarySchema = trafficDeliveryEvidenceSchema.extend({
+  plannedRequests: positiveIntegerSchema,
+});
+export type TrafficCompletionDeliverySummary = z.infer<
+  typeof trafficCompletionDeliverySummarySchema
+>;
+
+/** Authoritative persisted/history shape. The API-derived status is always present. */
 export const trafficDeliverySummarySchema = z
   .object({
-    plannedRequests: nonnegativeIntegerSchema,
-    emittedRequests: nonnegativeIntegerSchema,
-    droppedIterations: nonnegativeIntegerSchema,
+    ...trafficDeliveryEvidenceShape,
+    trafficMode: z.enum(["buyer-spike", "steady-arrival-rate"]).nullable().default(null),
+    plannedBuyers: positiveIntegerSchema.nullable().default(null),
+    scheduledRatePerSecond: positiveIntegerSchema.nullable().default(null),
+    configuredDurationSeconds: positiveIntegerSchema.nullable().default(null),
+    preAllocatedVUs: positiveIntegerSchema.nullable().default(null),
+    maxVUs: positiveIntegerSchema.nullable().default(null),
+    completedIterations: nonnegativeIntegerSchema.nullable().default(null),
+    unstartedIterations: nonnegativeIntegerSchema.nullable().default(null),
+    requestShortfall: nonnegativeIntegerSchema.nullable().default(null),
     trafficDeliveryStatus: trafficDeliveryStatusSchema,
-    notes: z.array(z.string().trim().min(1)).default([]),
   })
   .strict();
 export type TrafficDeliverySummary = z.infer<typeof trafficDeliverySummarySchema>;
@@ -364,7 +404,7 @@ export const trafficCompletionReportSchema = z
     errorMessage: z.string().trim().min(1).optional(),
     httpSummary: trafficHttpSummarySchema,
     trafficOutcomeSummary: jsonObjectSchema,
-    trafficDeliverySummary: trafficDeliverySummarySchema,
+    trafficDeliverySummary: trafficCompletionDeliverySummarySchema,
     httpTimingBreakdownSummary: jsonObjectSchema,
     loadRunDiagnosticsSummary: loadRunDiagnosticsSummarySchema,
     apiRequestLifecycleSummary: jsonObjectSchema,

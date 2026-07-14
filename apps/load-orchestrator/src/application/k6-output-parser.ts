@@ -81,6 +81,8 @@ export class K6RunAccumulator {
   private soldOutResponses = 0;
   private unexpectedResponses = 0;
   private droppedIterations = 0;
+  private completedIterations = 0;
+  private observedCompletedIterations = false;
   private readonly latencies: number[] = [];
 
   constructor(
@@ -127,6 +129,10 @@ export class K6RunAccumulator {
         return;
       case "dropped_iterations":
         this.droppedIterations += value;
+        return;
+      case "iterations":
+        this.completedIterations += value;
+        this.observedCompletedIterations = true;
         return;
       default:
         return;
@@ -200,30 +206,32 @@ export class K6RunAccumulator {
 
   private trafficDeliverySummary() {
     const planned = this.options.plannedRequests;
-    const deliveryRatio = planned > 0 ? this.emittedRequests / planned : 1;
+    const plan = this.options.executionPlan;
+    const completedIterations = this.observedCompletedIterations ? this.completedIterations : null;
     const notes: string[] = [];
 
-    if (this.unexpectedResponses > 0) {
-      notes.push("unexpected_checkout_responses_observed");
-    }
     if (this.droppedIterations > 0) {
       notes.push("k6_dropped_iterations_observed");
-    }
-
-    let trafficDeliveryStatus: "complete" | "warning" | "degraded" | "failed" = "complete";
-    if (this.unexpectedResponses > 0 || deliveryRatio < 0.8) {
-      trafficDeliveryStatus = "failed";
-    } else if (deliveryRatio < 0.95) {
-      trafficDeliveryStatus = "degraded";
-    } else if (deliveryRatio < 1 || this.droppedIterations > 0) {
-      trafficDeliveryStatus = "warning";
     }
 
     return {
       plannedRequests: planned,
       emittedRequests: this.emittedRequests,
+      trafficMode: plan.trafficMode,
+      plannedBuyers: plan.trafficMode === "buyer-spike" ? plan.buyerCount : null,
+      scheduledRatePerSecond:
+        plan.trafficMode === "steady-arrival-rate" ? plan.ratePerSecond : null,
+      configuredDurationSeconds:
+        plan.trafficMode === "steady-arrival-rate" ? plan.durationSeconds : null,
+      preAllocatedVUs: plan.trafficMode === "steady-arrival-rate" ? plan.preAllocatedVus : null,
+      maxVUs: plan.trafficMode === "steady-arrival-rate" ? plan.maxVus : null,
       droppedIterations: this.droppedIterations,
-      trafficDeliveryStatus,
+      completedIterations,
+      unstartedIterations:
+        completedIterations === null
+          ? null
+          : Math.max(0, planned - completedIterations - this.droppedIterations),
+      requestShortfall: Math.max(0, planned - this.emittedRequests),
       notes,
     };
   }

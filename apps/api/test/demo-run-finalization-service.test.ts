@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
@@ -474,6 +475,12 @@ describe("demo run finalization service", () => {
       queueMaintenance: {
         cleanResetOwnedQueues: async () => ({ cleanedQueueCount: 0, cleanedJobCount: 0 }),
       },
+      trafficAborter: { abortCurrent: async () => ({ outcome: "no_current_run" }) },
+      dashboardLiveStateReset: {
+        fenceRun: async () => undefined,
+        clearRun: async () => undefined,
+        hasRunState: async () => false,
+      },
       logger: createSilentLogger("api"),
       now: () => new Date("2026-06-20T00:00:11.000Z"),
     });
@@ -524,6 +531,27 @@ describe("demo run finalization service", () => {
     const service = createService(connection, redis);
 
     await seedDrainingRun({ db, redis: redisClient, trafficDeliveryStatus: "failed" });
+    await db.insert(reservations).values(reservationFixture(ids.reservation1));
+    await db.insert(orders).values(orderFixture(ids.order1, ids.reservation1, "processing"));
+
+    await expect(service.finalizeRun(ids.run, "corr-finalize-draining")).resolves.toMatchObject({
+      status: "draining",
+    });
+    await db
+      .update(orders)
+      .set({ status: "confirmed", confirmedAt: new Date("2026-06-20T00:00:09.000Z") })
+      .where(eq(orders.id, ids.order1));
+    await db.insert(simulatedNotifications).values({
+      id: ids.notification,
+      orderId: ids.order1,
+      saleOfferId: ids.saleOffer,
+      runId: ids.run,
+      correlationId: "corr-finalize-test",
+      channel: "email",
+      recipientPlaceholder: "buyer@example.invalid",
+      status: "recorded",
+      recordedAt: new Date("2026-06-20T00:00:09.000Z"),
+    });
 
     const finalized = await service.finalizeRun(ids.run, "corr-finalize-test");
     const [summary] = await db
@@ -536,6 +564,141 @@ describe("demo run finalization service", () => {
     expect(finalized?.failureReason).toBe("traffic_delivery_major_shortfall");
     expect(summary?.status).toBe("failed");
     expect(summary?.failureReason).toBe("traffic_delivery_major_shortfall");
+    expect(summary?.trafficDeliverySummary).toMatchObject({
+      requestShortfall: 5,
+      trafficDeliveryStatus: "failed",
+    });
+  });
+
+  it("gives unexpected responses precedence over delivery and traffic-process failures", async () => {
+    const db = requireConnection(connection).db;
+    const redisClient = requireRedis(redis);
+    const service = createService(connection, redis);
+    await seedDrainingRun({ db, redis: redisClient, trafficDeliveryStatus: "complete" });
+    await db
+      .update(demoRunFinalizations)
+      .set({
+        httpSummary: {
+          ...trafficCompletionReportFixture("complete").httpSummary,
+          unexpectedResponses: 1,
+          failedRequests: 1,
+        },
+        errorMessage: "k6 also reported a process error",
+      })
+      .where(eq(demoRunFinalizations.runId, ids.run));
+
+    await expect(service.finalizeRun(ids.run)).resolves.toMatchObject({
+      status: "failed",
+      failureReason: "traffic_outcome_unexpected_responses",
+    });
+  });
+
+  it("normalizes a fully evidenced duplicate buyer spike before PostgreSQL reconciliation", async () => {
+    const db = requireConnection(connection).db;
+    const redisClient = requireRedis(redis);
+    const service = createService(connection, redis);
+    const duplicateConfig = duplicateBuyerConfigSnapshot();
+    await seedDrainingRun({
+      db,
+      redis: redisClient,
+      trafficDeliveryStatus: "complete",
+      configSnapshot: duplicateConfig,
+    });
+    await setAcceptedDeliveryEvidence(db, {
+      acceptedResponses: 100,
+      plannedRequests: 400,
+      emittedRequests: 400,
+      completedIterations: 400,
+      unstartedIterations: 0,
+    });
+    await insertFailedReservationOrders(db, 50);
+
+    await expect(service.finalizeRun(ids.run)).resolves.toMatchObject({ status: "completed" });
+    const [summary] = await db
+      .select()
+      .from(demoRunSummaries)
+      .where(eq(demoRunSummaries.runId, ids.run));
+    expect(summary?.businessOutcomeSummary).toMatchObject({
+      acceptedReservations: 50,
+      failedOrders: 50,
+    });
+  });
+
+  it("does not halve duplicate responses when delivery is incomplete", async () => {
+    const db = requireConnection(connection).db;
+    const redisClient = requireRedis(redis);
+    const service = createService(connection, redis);
+    await seedDrainingRun({
+      db,
+      redis: redisClient,
+      trafficDeliveryStatus: "complete",
+      configSnapshot: duplicateBuyerConfigSnapshot(),
+    });
+    await setAcceptedDeliveryEvidence(db, {
+      acceptedResponses: 100,
+      plannedRequests: 400,
+      emittedRequests: 399,
+      completedIterations: 399,
+      unstartedIterations: 1,
+    });
+    await insertFailedReservationOrders(db, 50);
+
+    await expect(service.finalizeRun(ids.run)).resolves.toMatchObject({ status: "draining" });
+  });
+
+  it("times out with accepted-response accounting when durable PostgreSQL evidence is missing", async () => {
+    const db = requireConnection(connection).db;
+    const redisClient = requireRedis(redis);
+    await seedDrainingRun({ db, redis: redisClient, trafficDeliveryStatus: "complete" });
+    await setAcceptedDeliveryEvidence(db, { acceptedResponses: 25 });
+    await insertFailedReservationOrders(db, 20);
+
+    await expect(createService(connection, redis).finalizeRun(ids.run)).resolves.toMatchObject({
+      status: "draining",
+    });
+    await expect(
+      createService(connection, redis, {
+        now: () => new Date("2026-06-20T00:10:00.000Z"),
+      }).finalizeRun(ids.run),
+    ).resolves.toMatchObject({
+      status: "failed",
+      failureReason: "accepted_response_accounting_timeout",
+    });
+  });
+
+  it("preserves underreported durable rows and writes one structured diagnostic", async () => {
+    const db = requireConnection(connection).db;
+    const redisClient = requireRedis(redis);
+    const service = createService(connection, redis);
+    await seedDrainingRun({ db, redis: redisClient, trafficDeliveryStatus: "complete" });
+    await setAcceptedDeliveryEvidence(db, { acceptedResponses: 24 });
+    await insertFailedReservationOrders(db, 25);
+    const durableCountsBefore = await readDurableRowCounts(db);
+
+    await expect(service.finalizeRun(ids.run)).resolves.toMatchObject({ status: "completed" });
+    await expect(service.finalizeRun(ids.run)).resolves.toMatchObject({ status: "completed" });
+    const [summary] = await db
+      .select()
+      .from(demoRunSummaries)
+      .where(eq(demoRunSummaries.runId, ids.run));
+    expect(
+      (summary?.loadRunDiagnosticsSummary as { accountingWarnings?: unknown[] })
+        .accountingWarnings,
+    ).toEqual([
+      {
+        code: "traffic_outcome_counter_underreported",
+        rawAcceptedResponses: 24,
+        normalizedExpectedCount: 24,
+        reservationCount: 25,
+        orderCount: 25,
+        duplicateNormalizationApplied: false,
+      },
+    ]);
+    expect(await readDurableRowCounts(db)).toEqual(durableCountsBefore);
+    expect(durableCountsBefore).toEqual({ reservationCount: 25, orderCount: 25 });
+    expect((summary?.businessOutcomeSummary as BusinessOutcomeSummary).acceptedReservations).toBe(
+      25,
+    );
   });
 
   it("uses the current API drain timeout for an already-draining run", async () => {
@@ -823,6 +986,101 @@ function configSnapshotFixture(
   };
 }
 
+function duplicateBuyerConfigSnapshot(): AcceptedRunConfigSnapshot {
+  return {
+    ...configSnapshotFixture(),
+    trafficConfig: {
+      mode: "buyer-spike",
+      buyerCount: 200,
+      duplicateEachBuyerAttempt: true,
+      startDelaySeconds: 0,
+      maxDurationSeconds: 60,
+      quantityPerAttempt: 1,
+    },
+    inventoryConfig: {
+      ...configSnapshotFixture().inventoryConfig,
+      startingStock: 200,
+    },
+  };
+}
+
+async function setAcceptedDeliveryEvidence(
+  db: ReturnType<typeof createDatabaseConnection>["db"],
+  input: {
+    acceptedResponses: number;
+    plannedRequests?: number;
+    emittedRequests?: number;
+    completedIterations?: number;
+    unstartedIterations?: number;
+  },
+): Promise<void> {
+  const plannedRequests = input.plannedRequests ?? 10;
+  const emittedRequests = input.emittedRequests ?? plannedRequests;
+  await db
+    .update(demoRunFinalizations)
+    .set({
+      httpSummary: {
+        plannedRequests,
+        emittedRequests,
+        completedRequests: emittedRequests,
+        failedRequests: 0,
+        acceptedResponses: input.acceptedResponses,
+        soldOutResponses: 0,
+        unexpectedResponses: 0,
+        failureRate: 0,
+      },
+      trafficDeliverySummary: {
+        plannedRequests,
+        emittedRequests,
+        trafficMode: "buyer-spike",
+        plannedBuyers: plannedRequests === 400 ? 200 : 10,
+        scheduledRatePerSecond: null,
+        configuredDurationSeconds: null,
+        preAllocatedVUs: null,
+        maxVUs: null,
+        droppedIterations: 0,
+        completedIterations: input.completedIterations ?? emittedRequests,
+        unstartedIterations:
+          input.unstartedIterations ?? Math.max(0, plannedRequests - emittedRequests),
+        requestShortfall: Math.max(0, plannedRequests - emittedRequests),
+        trafficDeliveryStatus: "complete",
+        notes: [],
+      },
+    })
+    .where(eq(demoRunFinalizations.runId, ids.run));
+}
+
+async function insertFailedReservationOrders(
+  db: ReturnType<typeof createDatabaseConnection>["db"],
+  countToInsert: number,
+): Promise<void> {
+  const pairs = Array.from({ length: countToInsert }, () => ({
+    reservationId: randomUUID(),
+    orderId: randomUUID(),
+  }));
+  await db
+    .insert(reservations)
+    .values(pairs.map(({ reservationId }) => reservationFixture(reservationId)));
+  await db
+    .insert(orders)
+    .values(
+      pairs.map(({ reservationId, orderId }) => orderFixture(orderId, reservationId, "failed")),
+    );
+}
+
+async function readDurableRowCounts(
+  db: ReturnType<typeof createDatabaseConnection>["db"],
+): Promise<{ reservationCount: number; orderCount: number }> {
+  const [[reservationRow], [orderRow]] = await Promise.all([
+    db.select({ value: count() }).from(reservations).where(eq(reservations.runId, ids.run)),
+    db.select({ value: count() }).from(orders).where(eq(orders.runId, ids.run)),
+  ]);
+  return {
+    reservationCount: reservationRow?.value ?? 0,
+    orderCount: orderRow?.value ?? 0,
+  };
+}
+
 function trafficCompletionReportFixture(
   trafficDeliveryStatus: "complete" | "failed",
 ): TrafficCompletionReport {
@@ -835,7 +1093,7 @@ function trafficCompletionReportFixture(
       emittedRequests: trafficDeliveryStatus === "failed" ? 5 : 10,
       completedRequests: trafficDeliveryStatus === "failed" ? 5 : 10,
       failedRequests: 0,
-      acceptedResponses: 2,
+      acceptedResponses: 0,
       soldOutResponses: trafficDeliveryStatus === "failed" ? 3 : 8,
       unexpectedResponses: 0,
       p95LatencyMs: 25,

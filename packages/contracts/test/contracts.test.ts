@@ -76,8 +76,10 @@ import {
   startDemoRunRequestSchema,
   stockReservationDecisionSchema,
   trafficCompletionAcknowledgementSchema,
+  trafficCompletionDeliverySummarySchema,
   trafficCompletionReportSchema,
   trafficDeliveryStatusValues,
+  trafficDeliverySummarySchema,
   trafficExecutionAbortPath,
   trafficExecutionAbortRequestSchema,
   trafficExecutionAbortResponseSchema,
@@ -412,6 +414,37 @@ describe("run lifecycle contracts", () => {
 
     expect(report.status).toBe("succeeded");
     expect(() => demoRunSnapshotSchema.parse({ ...report, status: "completed" })).toThrow();
+  });
+
+  it("accepts unclassified completion evidence but requires status in stored history", () => {
+    const evidence = {
+      plannedRequests: 10,
+      emittedRequests: 9,
+      droppedIterations: 1,
+      notes: [],
+    };
+    expect(trafficCompletionDeliverySummarySchema.parse(evidence)).not.toHaveProperty(
+      "trafficDeliveryStatus",
+    );
+    expect(() => trafficDeliverySummarySchema.parse(evidence)).toThrow();
+    expect(
+      trafficDeliverySummarySchema.parse({ ...evidence, trafficDeliveryStatus: "warning" }),
+    ).toEqual({
+      ...evidence,
+      trafficMode: null,
+      plannedBuyers: null,
+      scheduledRatePerSecond: null,
+      configuredDurationSeconds: null,
+      preAllocatedVUs: null,
+      maxVUs: null,
+      completedIterations: null,
+      unstartedIterations: null,
+      requestShortfall: null,
+      trafficDeliveryStatus: "warning",
+    });
+    expect(() =>
+      trafficCompletionDeliverySummarySchema.parse({ ...evidence, plannedRequests: 0 }),
+    ).toThrow();
   });
 
   it("validates admin reset as a recovery result rather than a traffic lifecycle event", () => {

@@ -30,6 +30,7 @@ import {
   simulatedNotifications,
 } from "@checkout-surge/db";
 import { count, desc, eq, inArray } from "drizzle-orm";
+import { normalizeTrafficDeliverySummary } from "./traffic-delivery-classifier.js";
 
 const detailRecordLimit = 20;
 
@@ -245,7 +246,7 @@ function toRunHistorySummary(row: typeof demoRunSummaries.$inferSelect): RunHist
     ...(row.startedAt ? { startedAt: row.startedAt.toISOString() } : {}),
     endedAt: row.endedAt.toISOString(),
     httpSummary: row.httpSummary,
-    trafficDeliverySummary: row.trafficDeliverySummary,
+    trafficDeliverySummary: normalizeTrafficDeliverySummary(row.trafficDeliverySummary),
     businessOutcomeSummary: row.businessOutcomeSummary,
     ...(row.terminalInventorySnapshot
       ? { terminalInventorySnapshot: row.terminalInventorySnapshot }

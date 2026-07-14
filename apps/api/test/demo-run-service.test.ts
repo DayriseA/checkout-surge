@@ -1449,7 +1449,12 @@ describe("demo-run lifecycle start gating", () => {
     });
     expect(summaries[0]?.trafficDeliverySummary).toMatchObject({
       trafficDeliveryStatus: "failed",
-      droppedIterations: 10_000,
+      droppedIterations: 0,
+      completedIterations: 0,
+      unstartedIterations: 10_000,
+      requestShortfall: 10_000,
+      trafficMode: "buyer-spike",
+      plannedBuyers: 10_000,
     });
     expect(writeTerminalRun).toHaveBeenCalledOnce();
     expect(writeTerminalRun).toHaveBeenCalledWith(
@@ -1889,7 +1894,7 @@ describe("demo-run lifecycle start gating", () => {
         plannedRequests: 10,
         emittedRequests: 10,
         droppedIterations: 0,
-        trafficDeliveryStatus: "complete",
+        trafficDeliveryStatus: "failed",
         notes: [],
       },
     };
@@ -1910,6 +1915,10 @@ describe("demo-run lifecycle start gating", () => {
       .terminalInventorySnapshot;
 
     expect(committedFinalization?.completionEnrichmentStatus).toBe("completed");
+    expect(committedFinalization?.trafficDeliverySummary).toMatchObject({
+      trafficDeliveryStatus: "complete",
+      requestShortfall: 0,
+    });
     expect(committedFinalization?.loadRunDiagnosticsSummary).toEqual(
       report.loadRunDiagnosticsSummary,
     );

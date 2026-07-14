@@ -1,12 +1,15 @@
 import { randomUUID } from "node:crypto";
 import {
+  type AcceptedRunConfigSnapshot,
+  acceptedRunConfigSnapshotSchema,
   type BusinessOutcomeSummary,
   businessOutcomeSummarySchema,
   type DemoRunSnapshot,
   demoRunSnapshotSchema,
   type TerminalInventorySnapshot,
   terminalInventorySnapshotSchema,
-  trafficDeliverySummarySchema,
+  type TrafficDeliverySummary,
+  type TrafficHttpSummary,
   trafficHttpSummarySchema,
 } from "@checkout-surge/contracts";
 import {
@@ -23,8 +26,13 @@ import {
 } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { and, eq, inArray } from "drizzle-orm";
+import {
+  acceptedResponseAccountingWarning,
+  reconcileAcceptedResponses,
+} from "./accepted-response-accounting.js";
 import type { PendingPersistenceReconciler } from "./pending-persistence-reconciler.js";
 import type { TerminalDemoRunWriter } from "./terminal-demo-run-writer.js";
+import { normalizeTrafficDeliverySummary } from "./traffic-delivery-classifier.js";
 
 export interface DemoRunFinalizationController {
   finalizeRun(runId: string, correlationId?: string): Promise<DemoRunSnapshot | null>;
@@ -160,7 +168,7 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
       latestPendingRedisCount = Number.POSITIVE_INFINITY;
     }
     const latestRecoveryPressure = await readRecoveryPressure(this.options.db, row.run.id);
-    const latestBlockers = businessDrainBlockers(
+    const latestBusinessBlockers = businessDrainBlockers(
       latestBusinessOutcome,
       latestPendingRedisCount,
       latestRecoveryPressure.pendingCount,
@@ -168,6 +176,15 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
       latestRecoveryPressure.escalatedRetryingCount,
       latestRecoveryPressure.escalatedQueuedCount,
     );
+    const evidence = parseFinalizationEvidence(row.run, row.finalization);
+    const latestAccounting = reconcileAcceptedResponses({
+      ...evidence,
+      business: latestBusinessOutcome,
+    });
+    const latestBlockers = [
+      ...latestBusinessBlockers,
+      ...(latestAccounting.accounted ? [] : ["accepted_response_accounting"]),
+    ];
     if (latestBlockers.length > 0 && !timedOut) {
       this.options.logger.debug(
         { runId, blockers: latestBlockers },
@@ -176,25 +193,29 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
       return toDemoRunSnapshot(row.run);
     }
 
-    const latestTimedOut = latestBlockers.length > 0 && timedOut;
     const latestFailureReason = this.deriveFailureReason({
-      run: row.run,
-      finalization: row.finalization,
-      timedOut: latestTimedOut,
+      delivery: evidence.delivery,
+      http: evidence.http,
+      trafficFailed: row.run.trafficStatus === "failed" || Boolean(row.finalization.errorMessage),
+      businessTimedOut: latestBusinessBlockers.length > 0 && timedOut,
+      accountingTimedOut:
+        latestBusinessBlockers.length === 0 && !latestAccounting.accounted && timedOut,
       escalatedRecoveryCount: latestRecoveryPressure.escalatedCount,
     });
+    const accountingWarning = acceptedResponseAccountingWarning(latestAccounting);
+    const loadRunDiagnosticsSummary = accountingWarning
+      ? appendAccountingWarning(row.finalization.loadRunDiagnosticsSummary, accountingWarning)
+      : row.finalization.loadRunDiagnosticsSummary;
 
     const wroteSummary = await this.options.terminalRunWriter.write({
       run: row.run,
       terminalStatus: latestFailureReason ? "failed" : "completed",
       failureReason: latestFailureReason,
       finalizedAt: now,
-      httpSummary: trafficHttpSummarySchema.parse(row.finalization.httpSummary),
-      trafficDeliverySummary: trafficDeliverySummarySchema.parse(
-        row.finalization.trafficDeliverySummary,
-      ),
+      httpSummary: evidence.http,
+      trafficDeliverySummary: evidence.delivery,
       httpTimingBreakdownSummary: row.finalization.httpTimingBreakdownSummary,
-      loadRunDiagnosticsSummary: row.finalization.loadRunDiagnosticsSummary,
+      loadRunDiagnosticsSummary,
       apiRequestLifecycleSummary: row.finalization.apiRequestLifecycleSummary,
       businessOutcome: latestBusinessOutcome,
       terminalInventorySnapshot: decision.terminalInventorySnapshot,
@@ -232,7 +253,7 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
       pendingRedisCount = Number.POSITIVE_INFINITY;
     }
     const recoveryPressure = await readRecoveryPressure(this.options.db, input.run.id);
-    const blockers = businessDrainBlockers(
+    const businessBlockers = businessDrainBlockers(
       businessOutcome,
       pendingRedisCount,
       recoveryPressure.pendingCount,
@@ -240,6 +261,12 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
       recoveryPressure.escalatedRetryingCount,
       recoveryPressure.escalatedQueuedCount,
     );
+    const evidence = parseFinalizationEvidence(input.run, input.finalization);
+    const accounting = reconcileAcceptedResponses({ ...evidence, business: businessOutcome });
+    const blockers = [
+      ...businessBlockers,
+      ...(accounting.accounted ? [] : ["accepted_response_accounting"]),
+    ];
     const timedOut = input.now.getTime() >= timeoutAt.getTime();
 
     if (blockers.length > 0 && !timedOut) {
@@ -250,9 +277,12 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
       input.finalization.trafficOutcomeSummary,
     );
     const failureReason = this.deriveFailureReason({
-      run: input.run,
-      finalization: input.finalization,
-      timedOut: blockers.length > 0 && timedOut,
+      delivery: evidence.delivery,
+      http: evidence.http,
+      trafficFailed:
+        input.run.trafficStatus === "failed" || Boolean(input.finalization.errorMessage),
+      businessTimedOut: businessBlockers.length > 0 && timedOut,
+      accountingTimedOut: businessBlockers.length === 0 && !accounting.accounted && timedOut,
       escalatedRecoveryCount: recoveryPressure.escalatedCount,
     });
 
@@ -271,26 +301,30 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
   }
 
   private deriveFailureReason(input: {
-    run: typeof demoRuns.$inferSelect;
-    finalization: typeof demoRunFinalizations.$inferSelect;
-    timedOut: boolean;
+    delivery: TrafficDeliverySummary;
+    http: TrafficHttpSummary;
+    trafficFailed: boolean;
+    businessTimedOut: boolean;
+    accountingTimedOut: boolean;
     escalatedRecoveryCount?: number;
   }): string | null {
     if ((input.escalatedRecoveryCount ?? 0) > 0) {
       return "reconciliation_escalated";
     }
-    if (input.timedOut) {
+    if (input.businessTimedOut) {
       return "business_drain_timeout";
     }
-
-    const trafficDelivery = trafficDeliverySummarySchema.parse(
-      input.finalization.trafficDeliverySummary,
-    );
-    if (trafficDelivery.trafficDeliveryStatus === "failed") {
+    if (input.accountingTimedOut) {
+      return "accepted_response_accounting_timeout";
+    }
+    if (input.http.unexpectedResponses > 0) {
+      return "traffic_outcome_unexpected_responses";
+    }
+    if (input.delivery.trafficDeliveryStatus === "failed") {
       return "traffic_delivery_major_shortfall";
     }
 
-    if (input.run.trafficStatus === "failed" || input.finalization.errorMessage) {
+    if (input.trafficFailed) {
       return "traffic_failed";
     }
 
@@ -340,6 +374,31 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
   private generateId(): string {
     return this.options.generateId?.() ?? randomUUID();
   }
+}
+
+function parseFinalizationEvidence(
+  run: typeof demoRuns.$inferSelect,
+  finalization: typeof demoRunFinalizations.$inferSelect,
+): {
+  config: AcceptedRunConfigSnapshot;
+  delivery: TrafficDeliverySummary;
+  http: TrafficHttpSummary;
+} {
+  return {
+    config: acceptedRunConfigSnapshotSchema.parse(run.configSnapshot),
+    delivery: normalizeTrafficDeliverySummary(finalization.trafficDeliverySummary),
+    http: trafficHttpSummarySchema.parse(finalization.httpSummary),
+  };
+}
+
+function appendAccountingWarning(
+  diagnostics: Record<string, unknown>,
+  warning: Record<string, unknown>,
+): Record<string, unknown> {
+  const existingWarnings = Array.isArray(diagnostics.accountingWarnings)
+    ? diagnostics.accountingWarnings
+    : [];
+  return { ...diagnostics, accountingWarnings: [...existingWarnings, warning] };
 }
 
 function businessDrainBlockers(

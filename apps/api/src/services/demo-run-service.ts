@@ -90,6 +90,8 @@ import type {
 } from "./public-run-budget-store.js";
 import type { TerminalDemoRunWriter } from "./terminal-demo-run-writer.js";
 import type { TrafficCompletionEnrichmentController } from "./traffic-completion-enrichment-service.js";
+import { normalizeTrafficDeliverySummary } from "./traffic-delivery-classifier.js";
+import { syntheticTrafficDeliverySummary } from "./traffic-delivery-plan.js";
 
 export const demoRunStartLockKey = "checkout_surge_demo_run_start";
 const singleNonTerminalRunIndexName = "demo_runs_single_non_terminal_idx";
@@ -875,6 +877,9 @@ export class DemoRunService implements DemoRunController {
 
   async recordTrafficCompletion(input: TrafficCompletionReport): Promise<DemoRunSnapshot> {
     const report = trafficCompletionReportSchema.parse(input);
+    const normalizedTrafficDeliverySummary = normalizeTrafficDeliverySummary(
+      report.trafficDeliverySummary,
+    );
     const now = this.now();
     const [run] = await this.options.db
       .select()
@@ -902,7 +907,7 @@ export class DemoRunService implements DemoRunController {
           errorMessage: report.errorMessage ?? null,
           httpSummary: report.httpSummary,
           trafficOutcomeSummary: report.trafficOutcomeSummary,
-          trafficDeliverySummary: report.trafficDeliverySummary,
+          trafficDeliverySummary: normalizedTrafficDeliverySummary,
           httpTimingBreakdownSummary: report.httpTimingBreakdownSummary,
           loadRunDiagnosticsSummary: report.loadRunDiagnosticsSummary,
           apiRequestLifecycleSummary: report.apiRequestLifecycleSummary,
@@ -1530,13 +1535,9 @@ function failedBeforeTrafficStartSummary(
       unexpectedResponses: 0,
       failureRate: 0,
     },
-    trafficDeliverySummary: {
-      plannedRequests,
-      emittedRequests: 0,
-      droppedIterations: plannedRequests,
-      trafficDeliveryStatus: "failed",
-      notes: [`${failureReason}_before_traffic_start`],
-    },
+    trafficDeliverySummary: syntheticTrafficDeliverySummary(config, [
+      `${failureReason}_before_traffic_start`,
+    ]),
   };
 }
 

@@ -831,7 +831,10 @@ describe("demo maintenance service", () => {
       trafficDeliverySummary: {
         plannedRequests: 10,
         emittedRequests: 0,
-        droppedIterations: 10,
+        droppedIterations: 0,
+        completedIterations: 0,
+        unstartedIterations: 10,
+        requestShortfall: 10,
         trafficDeliveryStatus: "failed",
       },
     });

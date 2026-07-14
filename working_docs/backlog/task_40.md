@@ -184,3 +184,17 @@ Run the focused contract, load-orchestrator accumulator, API finalization, and r
 - Do not move quality classification into HTTP routes, DB adapters, the terminal writer, or the web UI.
 - Do not redesign all diagnostics JSON or all historical failure-reason storage beyond the vocabulary needed here.
 - Do not fail solely because k6 dropped/unstarted iteration diagnostics are nonzero when the observed request shortfall is zero.
+
+## Implementation record
+
+- **Status:** Implemented on 2026-07-14.
+- Contracts now distinguish compatible completion delivery evidence (legacy producer status accepted but optional) from authoritative stored/history delivery summaries (API status required), with nullable enriched plan and iteration fields and a positive-plan completion guard.
+- The load orchestrator now emits raw request, iteration, and exact execution-plan evidence without classifying traffic quality. Synthetic API terminal paths use config-derived enriched summaries with zero emitted/completed/dropped observations and planned unstarted/request-shortfall counts.
+- The API normalizes delivery on completion persistence and history/finalization reads using 1% warning and 5% degraded ceilings, a zero-plan guard, clamped shortfall, and overshoot-safe classification.
+- Finalization now gives unexpected responses their own terminal reason, waits for business drain, conditionally normalizes fully evidenced duplicate buyer spikes, reconciles k6 accepted responses against PostgreSQL secured reservations and non-duplicated order totals, times missing evidence out as `accepted_response_accounting_timeout`, and records coherent counter underreporting as a structured diagnostic without mutating durable rows.
+- PostgreSQL-backed tests cover exact duplicate normalization, the incomplete duplicate guard, missing-evidence draining/timeout, counter underreport preservation, unexpected-response precedence, legacy history normalization, and retry idempotency. Contract and load-orchestrator tests cover input/stored compatibility, classifier thresholds/zero-plan/overshoot, both traffic modes, and unavailable iteration evidence.
+- Documentation was updated in `docs/load_generation_metrics_streaming.md` and `docs/core_business_entities.md`.
+- Verification passed: `pnpm --filter @checkout-surge/contracts test:unit` (72 tests), focused load-orchestrator test file (71 passed, 1 skipped), `pnpm --filter api test:api` (353 tests, including PostgreSQL-backed finalization/history cases), package typechecks for contracts/load-orchestrator/API, and package lint for those three packages.
+- `pnpm type-check:test` was also attempted. It remains red on pre-existing test-workspace errors outside this task (including dashboard admission mocks, worker/logger tests, missing web `server-only` declarations, and unrelated API fixture typing); Task 40-specific type errors were resolved and each changed package typecheck passes.
+- Per repository instructions, `pnpm test:composition` and `pnpm test:characterization` were not run.
+- Review cycle 1 tightened the authoritative stored/history schema so every enriched field has a stable nullable output key while completion evidence remains optional, pinned diagnostic-only dropped/unstarted behavior and contradictory producer-shortfall normalization, and proved repeated finalization leaves PostgreSQL reservation/order row counts unchanged while writing exactly one underreport warning.
