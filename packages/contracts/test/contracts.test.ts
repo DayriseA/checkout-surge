@@ -22,6 +22,7 @@ import {
   buyRejectionReasonHeaderValueSchema,
   buyRequestSchema,
   buyResponseSchema,
+  collectAcceptedRunConfigSnapshotViolations,
   collectPublicRuntimePolicyViolations,
   controlServiceTokenHeaderName,
   dashboardEventSchema,
@@ -53,6 +54,7 @@ import {
   loadExecutionPlanSchema,
   loadRunDiagnosticsSummarySchema,
   loadRunIdHeaderName,
+  maximumAutomaticallyDerivedVUs,
   metricNameValues,
   orderProcessBullMqQueueName,
   orderProcessJobSchema,
@@ -68,6 +70,7 @@ import {
   reservationDecisionValues,
   reservationRejectedResponseSchema,
   reservationStatusValues,
+  resolveSteadyArrivalVus,
   runHistoryDetailParamsSchema,
   runHistoryDetailPath,
   runHistoryDetailPathTemplate,
@@ -384,6 +387,61 @@ describe("run lifecycle contracts", () => {
         configSnapshot: acceptedRunSnapshot(),
       }),
     ).not.toThrow();
+  });
+
+  it("keeps steady-arrival VU overrides all-or-nothing and validates their relationship", () => {
+    const request = {
+      runId,
+      saleOfferId,
+      apiBaseUrl: "http://api.local",
+      buyEndpointPath: "/buy",
+      correlationId,
+      configSnapshot: {
+        ...acceptedRunSnapshot(),
+        trafficConfig: {
+          mode: "steady-arrival-rate",
+          ratePerSecond: 10,
+          startDelaySeconds: 0,
+          durationSeconds: 2,
+          quantityPerAttempt: 1,
+          k6Vus: { preAllocatedVus: 10, maxVus: 10 },
+        },
+      },
+    };
+
+    expect(trafficExecutionStartRequestSchema.safeParse(request).success).toBe(true);
+    expect(
+      trafficExecutionStartRequestSchema.safeParse({
+        ...request,
+        configSnapshot: {
+          ...request.configSnapshot,
+          trafficConfig: {
+            ...request.configSnapshot.trafficConfig,
+            k6Vus: { preAllocatedVus: 10 },
+          },
+        },
+      }).success,
+    ).toBe(false);
+
+    const contradictory = trafficExecutionStartRequestSchema.safeParse({
+      ...request,
+      configSnapshot: {
+        ...request.configSnapshot,
+        trafficConfig: {
+          ...request.configSnapshot.trafficConfig,
+          k6Vus: { preAllocatedVus: 11, maxVus: 10 },
+        },
+      },
+    });
+    expect(contradictory.success).toBe(false);
+    if (!contradictory.success) {
+      expect(contradictory.error.issues).toContainEqual(
+        expect.objectContaining({
+          path: ["configSnapshot", "trafficConfig", "k6Vus", "maxVus"],
+          message: "maxVus must be greater than or equal to preAllocatedVus.",
+        }),
+      );
+    }
   });
 
   it("separates traffic completion from API-owned terminal demo-run state", () => {
@@ -1599,6 +1657,94 @@ describe("public runtime policy contract", () => {
     if (!parsed.success) {
       expect(parsed.error.issues[0]?.path).toEqual(path);
     }
+  });
+
+  it("resolves automatic steady-arrival VUs with one capped neutral rule", () => {
+    expect(maximumAutomaticallyDerivedVUs).toBe(10_000);
+    expect(resolveSteadyArrivalVus({ ratePerSecond: 4_999 })).toEqual({
+      preAllocatedVus: 4_999,
+      maxVus: 9_998,
+    });
+    expect(resolveSteadyArrivalVus({ ratePerSecond: 5_000 })).toEqual({
+      preAllocatedVus: 5_000,
+      maxVus: 10_000,
+    });
+    expect(resolveSteadyArrivalVus({ ratePerSecond: 5_001 })).toEqual({
+      preAllocatedVus: 5_001,
+      maxVus: 10_000,
+    });
+    expect(resolveSteadyArrivalVus({ ratePerSecond: 12_000 })).toEqual({
+      preAllocatedVus: 10_000,
+      maxVus: 10_000,
+    });
+    expect(
+      resolveSteadyArrivalVus({
+        ratePerSecond: 12_000,
+        k6Vus: { preAllocatedVus: 12_000, maxVus: 15_000 },
+      }),
+    ).toEqual({ preAllocatedVus: 12_000, maxVus: 15_000 });
+  });
+
+  it.each([
+    {
+      ratePerSecond: 51,
+      maxPreAllocatedVus: 50,
+      maxVus: 200,
+      expectedCode: "deployment_preallocated_vus_exceeded",
+      expectedDetails: { value: 51, cap: 50 },
+    },
+    {
+      ratePerSecond: 26,
+      maxPreAllocatedVus: 50,
+      maxVus: 50,
+      expectedCode: "deployment_max_vus_exceeded",
+      expectedDetails: { value: 52, cap: 50 },
+    },
+  ])("applies the $expectedCode deployment cap to automatically derived VUs", (fixture) => {
+    const policy = semanticRuntimePolicy();
+    policy.deploymentHardCaps.maxPreAllocatedVus = fixture.maxPreAllocatedVus;
+    policy.deploymentHardCaps.maxVus = fixture.maxVus;
+    const snapshot: AcceptedRunConfigSnapshot = {
+      ...acceptedRunSnapshot(),
+      trafficConfig: {
+        mode: "steady-arrival-rate",
+        ratePerSecond: fixture.ratePerSecond,
+        startDelaySeconds: 0,
+        durationSeconds: 1,
+        quantityPerAttempt: 1,
+      },
+    };
+
+    expect(collectPublicRuntimePolicyViolations(policy)).toEqual([]);
+    expect(
+      collectAcceptedRunConfigSnapshotViolations(snapshot, policy, {
+        operatorMode: "admin",
+        enforcePublicCustomLimits: false,
+      }),
+    ).toEqual([
+      expect.objectContaining({ code: fixture.expectedCode, details: fixture.expectedDetails }),
+    ]);
+  });
+
+  it("keeps automatic VUs outside public-custom VU caps while retaining deployment checks", () => {
+    const policy = semanticRuntimePolicy();
+    const snapshot: AcceptedRunConfigSnapshot = {
+      ...acceptedRunSnapshot(),
+      trafficConfig: {
+        mode: "steady-arrival-rate",
+        ratePerSecond: 20,
+        startDelaySeconds: 0,
+        durationSeconds: 1,
+        quantityPerAttempt: 1,
+      },
+    };
+
+    expect(
+      collectAcceptedRunConfigSnapshotViolations(snapshot, policy, {
+        operatorMode: "public",
+        enforcePublicCustomLimits: true,
+      }).filter((violation) => violation.code.includes("vus_exceeded")),
+    ).toEqual([]);
   });
 
   it.each([

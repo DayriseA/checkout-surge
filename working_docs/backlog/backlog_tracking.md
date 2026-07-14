@@ -89,7 +89,7 @@ Replace `⬜` with `✅` when a task is complete. Optional `⏳` for work in pro
 
 ✅ [Task 42: Use k6 summary-export for terminal reports and make a real-k6 test lane mandatory](./task_42.md)
 
-⬜ [Task 43: Fix steady-arrival VU sizing defaults, cap derived VUs, and add `gracefulStop`](./task_43.md)
+✅ [Task 43: Fix steady-arrival VU sizing defaults, cap derived VUs, and add `gracefulStop`](./task_43.md)
 
 ⬜ [Task 44: Bound the live observability cost profile: sold-out aggregate signal, batched metric publishes, cheaper outcome recomputation](./task_44.md)
 

@@ -31,6 +31,17 @@ export const buyerSpikeTrafficConfigSchema = z
   .strict();
 export type BuyerSpikeTrafficConfig = z.infer<typeof buyerSpikeTrafficConfigSchema>;
 
+const k6VusSchema = z
+  .object({
+    preAllocatedVus: positiveIntegerSchema,
+    maxVus: positiveIntegerSchema,
+  })
+  .strict()
+  .refine((value) => value.maxVus >= value.preAllocatedVus, {
+    path: ["maxVus"],
+    message: "maxVus must be greater than or equal to preAllocatedVus.",
+  });
+
 export const steadyArrivalTrafficConfigSchema = z
   .object({
     mode: z.literal("steady-arrival-rate"),
@@ -38,16 +49,34 @@ export const steadyArrivalTrafficConfigSchema = z
     startDelaySeconds: nonnegativeIntegerSchema.default(0),
     durationSeconds: positiveIntegerSchema,
     quantityPerAttempt: positiveIntegerSchema.default(1),
-    k6Vus: z
-      .object({
-        preAllocatedVus: positiveIntegerSchema,
-        maxVus: positiveIntegerSchema,
-      })
-      .strict()
-      .optional(),
+    k6Vus: k6VusSchema.optional(),
   })
   .strict();
 export type SteadyArrivalTrafficConfig = z.infer<typeof steadyArrivalTrafficConfigSchema>;
+
+export const maximumAutomaticallyDerivedVUs = 10_000;
+
+export interface ResolvedSteadyArrivalVus {
+  preAllocatedVus: number;
+  maxVus: number;
+}
+
+export function resolveSteadyArrivalVus(
+  trafficConfig: Pick<SteadyArrivalTrafficConfig, "ratePerSecond" | "k6Vus">,
+): ResolvedSteadyArrivalVus {
+  if (trafficConfig.k6Vus) {
+    return { ...trafficConfig.k6Vus };
+  }
+
+  const preAllocatedVus = Math.min(trafficConfig.ratePerSecond, maximumAutomaticallyDerivedVUs);
+  return {
+    preAllocatedVus,
+    maxVus: Math.max(
+      preAllocatedVus,
+      Math.min(trafficConfig.ratePerSecond * 2, maximumAutomaticallyDerivedVUs),
+    ),
+  };
+}
 
 export const trafficConfigSchema = z.discriminatedUnion("mode", [
   buyerSpikeTrafficConfigSchema,

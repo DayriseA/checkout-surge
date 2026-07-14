@@ -154,6 +154,50 @@ describe("demo-run service validation", () => {
     ).toThrow(DemoRunValidationError);
   });
 
+  it.each([
+    {
+      ratePerSecond: 5_001,
+      maxPreAllocatedVus: 5_000,
+      maxVus: 10_000,
+      expectedCode: "deployment_preallocated_vus_exceeded",
+      expectedDetails: { value: 5_001, cap: 5_000 },
+    },
+    {
+      ratePerSecond: 2_501,
+      maxPreAllocatedVus: 5_000,
+      maxVus: 5_000,
+      expectedCode: "deployment_max_vus_exceeded",
+      expectedDetails: { value: 5_002, cap: 5_000 },
+    },
+  ])("rejects automatically derived VUs with $expectedCode", (fixture) => {
+    const policy = publicRuntimePolicy();
+    policy.deploymentHardCaps.maxPreAllocatedVus = fixture.maxPreAllocatedVus;
+    policy.deploymentHardCaps.maxVus = fixture.maxVus;
+    const snapshot: AcceptedRunConfigSnapshot = {
+      ...surge10kSnapshot(),
+      trafficConfig: {
+        mode: "steady-arrival-rate",
+        ratePerSecond: fixture.ratePerSecond,
+        startDelaySeconds: 0,
+        durationSeconds: 1,
+        quantityPerAttempt: 1,
+      },
+    };
+
+    expect(() => validatePublicRuntimePolicyUpdate(policy)).not.toThrow();
+    expect(() =>
+      validateAcceptedRunSnapshot(snapshot, policy, {
+        operatorMode: "admin",
+        enforcePublicCustomLimits: false,
+      }),
+    ).toThrowError(
+      expect.objectContaining({
+        code: fixture.expectedCode,
+        details: fixture.expectedDetails,
+      }),
+    );
+  });
+
   it("rejects public runtime policy updates above deployment hard caps", () => {
     const policy = publicRuntimePolicy();
     policy.publicCustomLimits.maxTotalRequests = policy.deploymentHardCaps.maxTotalRequests + 1;

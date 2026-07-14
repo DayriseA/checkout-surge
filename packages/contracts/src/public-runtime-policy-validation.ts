@@ -1,7 +1,11 @@
 import type { PublicRuntimePolicy } from "./demo.js";
 import type { ErrorPayloadCode } from "./error.js";
 import type { OperatorMode } from "./lifecycle.js";
-import type { AcceptedRunConfigSnapshot, TrafficConfig } from "./load.js";
+import {
+  type AcceptedRunConfigSnapshot,
+  resolveSteadyArrivalVus,
+  type TrafficConfig,
+} from "./load.js";
 
 export interface PublicRuntimePolicyViolation {
   code: ErrorPayloadCode;
@@ -64,7 +68,8 @@ function collectDeploymentSnapshotViolations(
 ): void {
   const traffic = snapshot.trafficConfig;
   const caps = policy.deploymentHardCaps;
-  const k6Vus = traffic.mode === "steady-arrival-rate" ? traffic.k6Vus : undefined;
+  const resolvedK6Vus =
+    traffic.mode === "steady-arrival-rate" ? resolveSteadyArrivalVus(traffic) : undefined;
 
   addCapViolation(
     violations,
@@ -101,15 +106,15 @@ function collectDeploymentSnapshotViolations(
       "buyerCount",
     ]);
   }
-  if (k6Vus) {
+  if (resolvedK6Vus) {
     addCapViolation(
       violations,
-      k6Vus.preAllocatedVus,
+      resolvedK6Vus.preAllocatedVus,
       caps.maxPreAllocatedVus,
       "deployment_preallocated_vus_exceeded",
       ["trafficConfig", "k6Vus", "preAllocatedVus"],
     );
-    addCapViolation(violations, k6Vus.maxVus, caps.maxVus, "deployment_max_vus_exceeded", [
+    addCapViolation(violations, resolvedK6Vus.maxVus, caps.maxVus, "deployment_max_vus_exceeded", [
       "trafficConfig",
       "k6Vus",
       "maxVus",

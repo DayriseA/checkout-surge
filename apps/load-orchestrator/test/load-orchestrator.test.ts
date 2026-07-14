@@ -44,7 +44,7 @@ import {
   SpawnK6Runner,
   TrafficTerminationUnconfirmedError,
 } from "../src/application/k6-runner.js";
-import { generateK6Script } from "../src/application/k6-script.js";
+import { generateK6Script, k6ScenarioGracefulStop } from "../src/application/k6-script.js";
 import {
   collectLoadRunDiagnostics,
   runBoundedDiagnosticCommand,
@@ -95,6 +95,38 @@ const startRequest: TrafficExecutionStartRequest = {
     },
   },
 };
+
+function steadyStartRequest(
+  ratePerSecond: number,
+  durationSeconds: number,
+  k6Vus?: { preAllocatedVus: number; maxVus: number },
+): TrafficExecutionStartRequest {
+  return {
+    ...startRequest,
+    configSnapshot: {
+      ...startRequest.configSnapshot,
+      trafficConfig: {
+        mode: "steady-arrival-rate",
+        ratePerSecond,
+        startDelaySeconds: 2,
+        durationSeconds,
+        quantityPerAttempt: 1,
+        ...(k6Vus ? { k6Vus } : {}),
+      },
+    },
+  };
+}
+
+function generatedScenario(scriptContents: string): Record<string, unknown> {
+  const optionsLine = scriptContents
+    .split("\n")
+    .find((line) => line.startsWith("export const options = "));
+  if (!optionsLine) throw new Error("Generated script did not contain k6 options.");
+  const options = JSON.parse(optionsLine.slice("export const options = ".length, -1)) as {
+    scenarios: { checkout: Record<string, unknown> };
+  };
+  return options.scenarios.checkout;
+}
 
 describe("load-orchestrator configuration", () => {
   it.each([
@@ -457,6 +489,7 @@ describe("load-orchestrator k6 mapping", () => {
     const script = generateK6Script(startRequest);
 
     expect(script.plannedRequests).toBe(400);
+    expect(script.plannedRequests).toBe(script.executionPlan.plannedEmittedAttempts);
     expect(script.executionPlan).toEqual({
       trafficMode: "buyer-spike",
       buyerCount: 200,
@@ -495,6 +528,10 @@ describe("load-orchestrator k6 mapping", () => {
     expect(script.contents).toContain("config.duplicateEachBuyerAttempt ? __VU : iteration");
     expect(script.contents).toContain(`config.correlationId}:k6:\${iteration}`);
     expect(script.contents).toContain(`"${loadRunIdHeaderName}": config.runId`);
+    expect(generatedScenario(script.contents)).toMatchObject({
+      maxDuration: "5s",
+      gracefulStop: k6ScenarioGracefulStop,
+    });
   });
 
   it("generates a steady-arrival scenario with k6 VU controls", () => {
@@ -514,6 +551,7 @@ describe("load-orchestrator k6 mapping", () => {
     });
 
     expect(script.plannedRequests).toBe(200);
+    expect(script.plannedRequests).toBe(script.executionPlan.plannedEmittedAttempts);
     expect(script.contents).toContain('"executor":"constant-arrival-rate"');
     expect(script.contents).toContain('"rate":20');
     expect(script.contents).toContain('"preAllocatedVUs":10');
@@ -531,6 +569,64 @@ describe("load-orchestrator k6 mapping", () => {
       preAllocatedVus: 10,
       maxVus: 50,
       plannedEmittedAttempts: 200,
+    });
+    expect(generatedScenario(script.contents)).toMatchObject({
+      duration: "10s",
+      preAllocatedVUs: 10,
+      maxVUs: 50,
+      gracefulStop: k6ScenarioGracefulStop,
+    });
+  });
+
+  it.each([
+    { rate: 1, expectedPreAllocatedVus: 1, expectedMaxVus: 2 },
+    { rate: 1_000, expectedPreAllocatedVus: 1_000, expectedMaxVus: 2_000 },
+    { rate: 4_999, expectedPreAllocatedVus: 4_999, expectedMaxVus: 9_998 },
+    { rate: 5_000, expectedPreAllocatedVus: 5_000, expectedMaxVus: 10_000 },
+    { rate: 5_001, expectedPreAllocatedVus: 5_001, expectedMaxVus: 10_000 },
+    { rate: 10_000, expectedPreAllocatedVus: 10_000, expectedMaxVus: 10_000 },
+    { rate: 12_000, expectedPreAllocatedVus: 10_000, expectedMaxVus: 10_000 },
+  ])("resolves rate $rate into capped automatic VUs shared by scenario and diagnostics", ({
+    rate,
+    expectedPreAllocatedVus,
+    expectedMaxVus,
+  }) => {
+    const script = generateK6Script(steadyStartRequest(rate, 3));
+    const scenario = generatedScenario(script.contents);
+
+    expect(script.plannedRequests).toBe(rate * 3);
+    expect(script.executionPlan).toEqual({
+      trafficMode: "steady-arrival-rate",
+      ratePerSecond: rate,
+      durationSeconds: 3,
+      plannedEmittedAttempts: rate * 3,
+      startDelaySeconds: 2,
+      preAllocatedVus: expectedPreAllocatedVus,
+      maxVus: expectedMaxVus,
+    });
+    expect(scenario).toMatchObject({
+      rate,
+      duration: "3s",
+      startTime: "2s",
+      preAllocatedVUs: expectedPreAllocatedVus,
+      maxVUs: expectedMaxVus,
+      gracefulStop: "5s",
+    });
+  });
+
+  it("changes planned attempts with duration without changing automatic VU sizing", () => {
+    const short = generateK6Script(steadyStartRequest(1_000, 1));
+    const long = generateK6Script(steadyStartRequest(1_000, 30));
+
+    expect(short.executionPlan).toMatchObject({
+      plannedEmittedAttempts: 1_000,
+      preAllocatedVus: 1_000,
+      maxVus: 2_000,
+    });
+    expect(long.executionPlan).toMatchObject({
+      plannedEmittedAttempts: 30_000,
+      preAllocatedVus: 1_000,
+      maxVus: 2_000,
     });
   });
 
@@ -565,8 +661,8 @@ describe("load-orchestrator k6 mapping", () => {
         },
       },
     });
-    expect(script.executionPlan).toMatchObject({ preAllocatedVus: 11, maxVus: 42 });
-    expect(script.contents).toContain('"preAllocatedVUs":11');
+    expect(script.executionPlan).toMatchObject({ preAllocatedVus: 21, maxVus: 42 });
+    expect(script.contents).toContain('"preAllocatedVUs":21');
     expect(script.contents).toContain('"maxVUs":42');
   });
 
@@ -853,7 +949,7 @@ describe("load-orchestrator k6 mapping", () => {
       plannedBuyers: null,
       scheduledRatePerSecond: 9,
       configuredDurationSeconds: 7,
-      preAllocatedVUs: 5,
+      preAllocatedVUs: 9,
       maxVUs: 18,
       completedIterations: null,
       unstartedIterations: null,

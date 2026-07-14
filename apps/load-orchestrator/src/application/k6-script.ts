@@ -1,8 +1,11 @@
 import {
   buyOutcomeHeaderName,
   buyRejectionReasonHeaderName,
+  calculatePlannedRequests,
   type LoadExecutionPlan,
   loadRunIdHeaderName,
+  resolveSteadyArrivalVus,
+  type SteadyArrivalTrafficConfig,
   type TrafficExecutionStartRequest,
 } from "@checkout-surge/contracts";
 import { correlationIdHeaderName } from "@checkout-surge/logger";
@@ -13,12 +16,23 @@ export interface GeneratedK6Script {
   executionPlan: LoadExecutionPlan;
 }
 
+export const k6ScenarioGracefulStop = "5s";
+
+export function resolveSteadyArrivalExecutionPlan(
+  traffic: SteadyArrivalTrafficConfig,
+): Extract<LoadExecutionPlan, { trafficMode: "steady-arrival-rate" }> {
+  return {
+    trafficMode: traffic.mode,
+    ratePerSecond: traffic.ratePerSecond,
+    durationSeconds: traffic.durationSeconds,
+    plannedEmittedAttempts: calculatePlannedRequests(traffic),
+    startDelaySeconds: traffic.startDelaySeconds,
+    ...resolveSteadyArrivalVus(traffic),
+  };
+}
+
 export function generateK6Script(input: TrafficExecutionStartRequest): GeneratedK6Script {
   const traffic = input.configSnapshot.trafficConfig;
-  const plannedRequests =
-    traffic.mode === "buyer-spike"
-      ? traffic.buyerCount * (traffic.duplicateEachBuyerAttempt ? 2 : 1)
-      : traffic.ratePerSecond * traffic.durationSeconds;
   const executionPlan: LoadExecutionPlan =
     traffic.mode === "buyer-spike"
       ? {
@@ -26,20 +40,12 @@ export function generateK6Script(input: TrafficExecutionStartRequest): Generated
           buyerCount: traffic.buyerCount,
           duplicateEachBuyerAttempt: traffic.duplicateEachBuyerAttempt,
           iterationsPerVu: traffic.duplicateEachBuyerAttempt ? 2 : 1,
-          plannedEmittedAttempts: plannedRequests,
+          plannedEmittedAttempts: calculatePlannedRequests(traffic),
           startDelaySeconds: traffic.startDelaySeconds,
           maxDurationSeconds: traffic.maxDurationSeconds,
         }
-      : {
-          trafficMode: traffic.mode,
-          ratePerSecond: traffic.ratePerSecond,
-          durationSeconds: traffic.durationSeconds,
-          plannedEmittedAttempts: plannedRequests,
-          startDelaySeconds: traffic.startDelaySeconds,
-          preAllocatedVus:
-            traffic.k6Vus?.preAllocatedVus ?? Math.max(1, Math.ceil(traffic.ratePerSecond / 2)),
-          maxVus: traffic.k6Vus?.maxVus ?? Math.max(1, traffic.ratePerSecond * 2),
-        };
+      : resolveSteadyArrivalExecutionPlan(traffic);
+  const plannedRequests = executionPlan.plannedEmittedAttempts;
   const scenario =
     executionPlan.trafficMode === "buyer-spike"
       ? {
@@ -48,6 +54,7 @@ export function generateK6Script(input: TrafficExecutionStartRequest): Generated
           iterations: executionPlan.iterationsPerVu,
           startTime: `${executionPlan.startDelaySeconds}s`,
           maxDuration: `${executionPlan.maxDurationSeconds}s`,
+          gracefulStop: k6ScenarioGracefulStop,
         }
       : {
           executor: "constant-arrival-rate",
@@ -57,6 +64,7 @@ export function generateK6Script(input: TrafficExecutionStartRequest): Generated
           startTime: `${executionPlan.startDelaySeconds}s`,
           preAllocatedVUs: executionPlan.preAllocatedVus,
           maxVUs: executionPlan.maxVus,
+          gracefulStop: k6ScenarioGracefulStop,
         };
   const scriptConfig = {
     runId: input.runId,
