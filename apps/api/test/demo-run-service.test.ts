@@ -351,6 +351,215 @@ describe("demo-run preset management", () => {
       buyerCount: 10_000,
     });
   });
+
+  it("reports an operator duplicate as archivable, archives it, and keeps the row soft-archived", async () => {
+    const service = createPresetManagementService(requireConnection(connection));
+    const created = await service.duplicatePreset({
+      sourceSlug: "preview-1k",
+      targetSlug: "operator-duplicate",
+      displayName: "Operator Duplicate",
+    });
+
+    const beforeArchive = await service.listAdminPresets();
+    const archivable = beforeArchive.presets.find((preset) => preset.slug === "operator-duplicate");
+    expect(archivable?.canArchive).toBe(true);
+
+    const archived = await service.archiveAdminPreset({ slug: "operator-duplicate" });
+    expect(archived.slug).toBe("operator-duplicate");
+    expect(archived.archivedAt).toBe("2026-06-20T00:00:10.000Z");
+    expect(archived.timestamp).toBe("2026-06-20T00:00:10.000Z");
+
+    const afterArchive = await service.listAdminPresets();
+    expect(afterArchive.presets.map((preset) => preset.slug)).not.toContain("operator-duplicate");
+
+    // Archived presets disappear from normal active lookup, so they can no
+    // longer be saved, copied, duplicated, or started.
+    await expect(service.saveAdminPreset({ slug: "operator-duplicate", ...created.preset })).rejects
+      .toMatchObject({ code: "preset_not_found" });
+    await expect(
+      service.copyPresetToCustom({ sourceSlug: "operator-duplicate" }),
+    ).rejects.toMatchObject({ code: "preset_not_found" });
+    await expect(
+      service.duplicatePreset({ sourceSlug: "operator-duplicate", targetSlug: "another-copy" }),
+    ).rejects.toMatchObject({ code: "preset_not_found" });
+
+    // Admin start reaches the preset lookup after the runtime policy read; an
+    // archived slug is rejected as preset_not_found before any run is created.
+    await requireConnection(connection).db.insert(publicRuntimePolicies).values({
+      id: "active",
+      policy: publicRuntimePolicy(),
+      createdAt: new Date("2026-06-20T00:00:00.000Z"),
+      updatedAt: new Date("2026-06-20T00:00:00.000Z"),
+    });
+    await expect(
+      service.startRun(
+        { presetSlug: "operator-duplicate", operatorMode: "admin" },
+        "corr-archived-start",
+      ),
+    ).rejects.toMatchObject({ code: "preset_not_found" });
+
+    const [row] = await requireConnection(connection)
+      .db.select()
+      .from(demoPresets)
+      .where(eq(demoPresets.slug, "operator-duplicate"));
+    expect(row).toBeTruthy();
+    expect(row?.archivedAt).toEqual(new Date("2026-06-20T00:00:10.000Z"));
+  });
+
+  it("archives a duplicated preset that is referenced by a run while keeping the run intact", async () => {
+    const service = createPresetManagementService(requireConnection(connection));
+    const created = await service.duplicatePreset({
+      sourceSlug: "preview-1k",
+      targetSlug: "linked-duplicate",
+    });
+
+    await requireConnection(connection).db.insert(demoRuns).values({
+      id: "55555555-5555-4555-8555-555555555570",
+      presetId: created.preset.id,
+      presetName: "Linked Duplicate",
+      operatorMode: "admin",
+      status: "completed",
+      trafficStatus: "succeeded",
+      configSnapshot: surge10kSnapshot(),
+      startedAt: new Date("2026-06-20T00:00:00.000Z"),
+      trafficStartedAt: new Date("2026-06-20T00:00:01.000Z"),
+      trafficEndedAt: new Date("2026-06-20T00:00:05.000Z"),
+      finalizedAt: new Date("2026-06-20T00:00:06.000Z"),
+      createdAt: new Date("2026-06-20T00:00:00.000Z"),
+      updatedAt: new Date("2026-06-20T00:00:06.000Z"),
+    });
+
+    // Soft archive must succeed even though demo_runs.preset_id ON DELETE
+    // RESTRICT would block a hard delete.
+    const archived = await service.archiveAdminPreset({ slug: "linked-duplicate" });
+    expect(archived.slug).toBe("linked-duplicate");
+
+    const runs = await requireConnection(connection)
+      .db.select()
+      .from(demoRuns)
+      .where(eq(demoRuns.presetId, created.preset.id));
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.status).toBe("completed");
+  });
+
+  it("refuses to archive protected public, custom, and system admin presets", async () => {
+    const service = createPresetManagementService(requireConnection(connection));
+    await requireConnection(connection).db.insert(demoPresets).values({
+      id: "44444444-4444-4444-8444-444444444450",
+      slug: "system-admin-preset",
+      visibility: "admin",
+      isEditable: true,
+      isCustom: false,
+      isSystem: true,
+      display: { name: "System Admin", description: "Seeded", sortOrder: 90, outcomeFocus: [] },
+      ...surge10kSnapshot(),
+      createdAt: new Date("2026-06-20T00:00:00.000Z"),
+      updatedAt: new Date("2026-06-20T00:00:00.000Z"),
+    });
+
+    await expect(service.archiveAdminPreset({ slug: "preview-1k" })).rejects.toMatchObject({
+      code: "preset_not_archivable",
+      details: { slug: "preview-1k" },
+    });
+    await expect(service.archiveAdminPreset({ slug: "public-custom" })).rejects.toMatchObject({
+      code: "preset_not_archivable",
+    });
+    await expect(service.archiveAdminPreset({ slug: "custom" })).rejects.toMatchObject({
+      code: "preset_not_archivable",
+    });
+    await expect(service.archiveAdminPreset({ slug: "system-admin-preset" })).rejects.toMatchObject({
+      code: "preset_not_archivable",
+    });
+
+    const adminList = await service.listAdminPresets();
+    expect(
+      adminList.presets.find((preset) => preset.slug === "system-admin-preset")?.canArchive,
+    ).toBe(false);
+    expect(adminList.presets.find((preset) => preset.slug === "custom")?.canArchive).toBe(false);
+  });
+
+  it("reports preset_not_found for unknown and already-archived slugs", async () => {
+    const service = createPresetManagementService(requireConnection(connection));
+    await service.duplicatePreset({ sourceSlug: "preview-1k", targetSlug: "archive-once" });
+    await service.archiveAdminPreset({ slug: "archive-once" });
+
+    await expect(service.archiveAdminPreset({ slug: "never-seeded" })).rejects.toMatchObject({
+      code: "preset_not_found",
+      details: { slug: "never-seeded" },
+    });
+    await expect(service.archiveAdminPreset({ slug: "archive-once" })).rejects.toMatchObject({
+      code: "preset_not_found",
+    });
+  });
+
+  it("does not archive a preset that becomes system-protected after eligibility is read", async () => {
+    const activeConnection = requireConnection(connection);
+    const setupService = createPresetManagementService(activeConnection);
+    const created = await setupService.duplicatePreset({
+      sourceSlug: "preview-1k",
+      targetSlug: "concurrently-protected",
+    });
+    const racingDatabase = interceptNextSelectResult(activeConnection.db, async () => {
+      await activeConnection.db
+        .update(demoPresets)
+        .set({ isSystem: true })
+        .where(eq(demoPresets.id, created.preset.id));
+    });
+    const service = createPresetManagementService(activeConnection, undefined, racingDatabase);
+
+    await expect(
+      service.archiveAdminPreset({ slug: "concurrently-protected" }),
+    ).rejects.toMatchObject({
+      code: "preset_not_archivable",
+      details: { slug: "concurrently-protected" },
+    });
+
+    const [row] = await activeConnection.db
+      .select()
+      .from(demoPresets)
+      .where(eq(demoPresets.id, created.preset.id));
+    expect(row).toMatchObject({ isSystem: true, archivedAt: null });
+  });
+
+  it("reports preset_not_found when another archive wins after eligibility is read", async () => {
+    const activeConnection = requireConnection(connection);
+    const setupService = createPresetManagementService(activeConnection);
+    const created = await setupService.duplicatePreset({
+      sourceSlug: "preview-1k",
+      targetSlug: "concurrently-archived",
+    });
+    const concurrentlyArchivedAt = new Date("2026-06-20T00:00:09.000Z");
+    const racingDatabase = interceptNextSelectResult(activeConnection.db, async () => {
+      await activeConnection.db
+        .update(demoPresets)
+        .set({ archivedAt: concurrentlyArchivedAt })
+        .where(eq(demoPresets.id, created.preset.id));
+    });
+    const service = createPresetManagementService(activeConnection, undefined, racingDatabase);
+
+    await expect(
+      service.archiveAdminPreset({ slug: "concurrently-archived" }),
+    ).rejects.toMatchObject({
+      code: "preset_not_found",
+      details: { slug: "concurrently-archived" },
+    });
+
+    const [row] = await activeConnection.db
+      .select()
+      .from(demoPresets)
+      .where(eq(demoPresets.id, created.preset.id));
+    expect(row?.archivedAt).toEqual(concurrentlyArchivedAt);
+  });
+
+  it("still blocks reusing an archived slug as a duplicate target", async () => {
+    const service = createPresetManagementService(requireConnection(connection));
+    await service.duplicatePreset({ sourceSlug: "preview-1k", targetSlug: "reused-slug" });
+    await service.archiveAdminPreset({ slug: "reused-slug" });
+
+    await expect(
+      service.duplicatePreset({ sourceSlug: "preview-1k", targetSlug: "reused-slug" }),
+    ).rejects.toMatchObject({ code: "preset_slug_conflict", details: { slug: "reused-slug" } });
+  });
 });
 
 describe("demo-run public runtime policy management", () => {
@@ -2204,9 +2413,10 @@ function requireRedis(
 function createPresetManagementService(
   connection: ReturnType<typeof createDatabaseConnection>,
   deploymentHardCaps = publicRuntimePolicy().deploymentHardCaps,
+  database = connection.db,
 ): DemoRunService {
   return new DemoRunService({
-    db: connection.db,
+    db: database,
     terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(connection.db),
     redis: {} as never,
     trafficExecutionGateway: {
@@ -2239,6 +2449,57 @@ function createPresetManagementService(
     deploymentHardCaps,
     now: () => new Date("2026-06-20T00:00:10.000Z"),
     generateId: () => "66666666-6666-4666-8666-666666666666",
+  });
+}
+
+function interceptNextSelectResult(
+  database: ReturnType<typeof createDatabaseConnection>["db"],
+  afterSelect: () => Promise<void>,
+): ReturnType<typeof createDatabaseConnection>["db"] {
+  let shouldIntercept = true;
+
+  function wrapQueryBuilder<T extends object>(builder: T): T {
+    return new Proxy(builder, {
+      get(target, property) {
+        if (property === "then") {
+          return (
+            onFulfilled?: (value: unknown) => unknown,
+            onRejected?: (reason: unknown) => unknown,
+          ) =>
+            Promise.resolve(target).then(async (result) => {
+              if (shouldIntercept) {
+                shouldIntercept = false;
+                await afterSelect();
+              }
+              return result;
+            }).then(onFulfilled, onRejected);
+        }
+
+        const value = Reflect.get(target, property, target);
+        if (typeof value !== "function") return value;
+
+        return (...args: unknown[]) => {
+          const result = Reflect.apply(value, target, args) as unknown;
+          return typeof result === "object" && result !== null
+            ? wrapQueryBuilder(result)
+            : result;
+        };
+      },
+    });
+  }
+
+  return new Proxy(database, {
+    get(target, property) {
+      if (property === "select") {
+        return (...args: unknown[]) =>
+          wrapQueryBuilder(
+            Reflect.apply(target.select, target, args) as ReturnType<typeof target.select>,
+          );
+      }
+
+      const value = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
   });
 }
 

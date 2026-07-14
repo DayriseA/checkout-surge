@@ -9,9 +9,13 @@ import {
   adminGeneratedRunTeardownPath,
   adminGeneratedRunTeardownPathTemplate,
   adminGeneratedRunTeardownResponseSchema,
+  adminPresetListPath,
+  adminPresetListResponseSchema,
   adminPublicRuntimePolicyPath,
   adminPublicRuntimePolicyResponseSchema,
   adminPublicRuntimePolicyUpdateRequestSchema,
+  archiveAdminPresetRequestSchema,
+  archiveAdminPresetResponseSchema,
   buyRequestSchema,
   buyResponseSchema,
   collectPublicRuntimePolicyViolations,
@@ -1492,6 +1496,89 @@ describe("public runtime policy contract", () => {
         correlationId,
       }).httpSummary.acceptedResponses,
     ).toBe(200);
+  });
+});
+
+describe("admin preset archive contracts", () => {
+  it("keeps the preset list and archive operation on the shared admin path", () => {
+    expect(adminPresetListPath).toBe("/admin/demo/presets");
+  });
+
+  it("requires a trimmed non-empty archive slug and stays strict", () => {
+    expect(archiveAdminPresetRequestSchema.parse({ slug: "  preview-copy  " })).toEqual({
+      slug: "preview-copy",
+    });
+    expect(() => archiveAdminPresetRequestSchema.parse({ slug: "   " })).toThrow();
+    expect(() => archiveAdminPresetRequestSchema.parse({})).toThrow();
+    expect(() =>
+      archiveAdminPresetRequestSchema.parse({ slug: "preview-copy", extra: true }),
+    ).toThrow();
+  });
+
+  it("requires valid ISO timestamps in the archive response and stays strict", () => {
+    const response = archiveAdminPresetResponseSchema.parse({
+      slug: "preview-copy",
+      archivedAt: timestamp,
+      timestamp,
+    });
+    expect(response.slug).toBe("preview-copy");
+    expect(response.archivedAt).toBe(timestamp);
+    expect(() =>
+      archiveAdminPresetResponseSchema.parse({
+        slug: "preview-copy",
+        archivedAt: "not-a-timestamp",
+        timestamp,
+      }),
+    ).toThrow();
+    expect(() =>
+      archiveAdminPresetResponseSchema.parse({ slug: "preview-copy", archivedAt: timestamp }),
+    ).toThrow();
+    expect(() =>
+      archiveAdminPresetResponseSchema.parse({
+        slug: "preview-copy",
+        archivedAt: timestamp,
+        timestamp,
+        extra: true,
+      }),
+    ).toThrow();
+  });
+
+  it("requires the server-computed canArchive capability on admin list items", () => {
+    const preset = acceptedRunSnapshot();
+    const listablePreset = {
+      id: "33333333-3333-4333-8333-333333333331",
+      slug: "preview-copy",
+      visibility: "admin",
+      isEditable: true,
+      isCustom: false,
+      canArchive: true,
+      display: {
+        name: "Preview Copy",
+        description: "Operator duplicate.",
+        sortOrder: 50,
+        outcomeFocus: [],
+      },
+      ...preset,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    expect(
+      adminPresetListResponseSchema.parse({
+        presets: [listablePreset],
+        timestamp,
+      }).presets[0]?.canArchive,
+    ).toBe(true);
+
+    const { canArchive: _removed, ...withoutCapability } = listablePreset;
+    expect(() =>
+      adminPresetListResponseSchema.parse({ presets: [withoutCapability], timestamp }),
+    ).toThrow();
+    expect(() =>
+      adminPresetListResponseSchema.parse({
+        presets: [{ ...listablePreset, extra: true }],
+        timestamp,
+      }),
+    ).toThrow();
   });
 });
 

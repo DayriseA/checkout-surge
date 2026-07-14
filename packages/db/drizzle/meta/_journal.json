@@ -64,6 +64,13 @@
       "when": 1784332800000,
       "tag": "0008_demo_run_teardown_receipts",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1784419200000,
+      "tag": "0009_demo_preset_archive_lifecycle",
+      "breakpoints": true
     }
   ]
 }

@@ -411,7 +411,7 @@ describe("database migrations, seed data, and reset behavior", () => {
       await sql`
         DELETE FROM drizzle.__drizzle_migrations
         WHERE id IN (
-          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 2
+          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 3
         )
       `;
       await insertCatalogSaleOffer(sql, {
@@ -596,7 +596,7 @@ describe("database migrations, seed data, and reset behavior", () => {
       await sql`
         DELETE FROM drizzle.__drizzle_migrations
         WHERE id IN (
-          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 3
+          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 4
         )
       `;
       await sql`
@@ -706,7 +706,7 @@ describe("database migrations, seed data, and reset behavior", () => {
       await sql`
         DELETE FROM drizzle.__drizzle_migrations
         WHERE id IN (
-          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 5
+          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 6
         )
       `;
     });
@@ -759,6 +759,108 @@ describe("database migrations, seed data, and reset behavior", () => {
       maxAttempts: 4,
       initialBackoffMs: 500,
     });
+  });
+
+  it("backfills preset archive lifecycle columns during a migrate-only upgrade", async () => {
+    const canonicalPresetId = "44444444-4444-4444-8444-444444444460";
+    const operatorDuplicateId = "44444444-4444-4444-8444-444444444461";
+
+    // Rewind to before migration 0009: drop the new columns and index, remove
+    // the journal entry, then insert representative legacy rows before
+    // re-migrating so the backfill semantics are exercised, not just a fresh
+    // schema build.
+    await withDatabase(async (sql) => {
+      await sql`DROP INDEX IF EXISTS "demo_presets_archived_at_idx"`;
+      await sql`ALTER TABLE "demo_presets" DROP COLUMN IF EXISTS "archived_at"`;
+      await sql`ALTER TABLE "demo_presets" DROP COLUMN IF EXISTS "is_system"`;
+      await sql`
+        DELETE FROM drizzle.__drizzle_migrations
+        WHERE id IN (
+          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 1
+        )
+      `;
+      await sql`
+        INSERT INTO "demo_presets" (
+          "id", "slug", "visibility", "is_editable", "is_custom", "display",
+          "traffic_config", "inventory_config", "erp_config", "backpressure_config"
+        ) VALUES
+          (
+            ${canonicalPresetId},
+            'admin-smoke-steady',
+            'admin'::"demo_preset_visibility",
+            true,
+            false,
+            '{"name":"Admin Smoke Steady","description":"Legacy canonical","sortOrder":100,"outcomeFocus":[]}'::jsonb,
+            '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb
+          ),
+          (
+            ${operatorDuplicateId},
+            'operator-smoke-copy',
+            'admin'::"demo_preset_visibility",
+            true,
+            false,
+            '{"name":"Operator Smoke Copy","description":"Noncanonical duplicate","sortOrder":101,"outcomeFocus":[]}'::jsonb,
+            '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb
+          )
+        ON CONFLICT ("slug") DO NOTHING
+      `;
+    });
+
+    await runDatabaseMigrations({
+      databaseUrl: requireTestEnv("TEST_DATABASE_URL"),
+      migrationsFolder,
+    });
+
+    const [isSystemColumn] = await withDatabase(
+      (sql) =>
+        sql<{ is_nullable: string; column_default: string | null }[]>`
+          SELECT is_nullable, column_default
+          FROM information_schema.columns
+          WHERE table_schema = 'public'
+            AND table_name = 'demo_presets'
+            AND column_name = 'is_system'
+        `,
+    );
+    const [archivedAtColumn] = await withDatabase(
+      (sql) =>
+        sql<{ is_nullable: string; column_default: string | null }[]>`
+          SELECT is_nullable, column_default
+          FROM information_schema.columns
+          WHERE table_schema = 'public'
+            AND table_name = 'demo_presets'
+            AND column_name = 'archived_at'
+        `,
+    );
+    const [archiveIndex] = await withDatabase(
+      (sql) => sql<{ exists: boolean }[]>`
+        SELECT to_regclass('public.demo_presets_archived_at_idx') IS NOT NULL AS "exists"
+      `,
+    );
+    const presetRows = await withDatabase(
+      (sql) =>
+        sql<{ slug: string; is_system: boolean; archived_at: string | null }[]>`
+          SELECT slug, is_system, archived_at::text
+          FROM demo_presets
+          WHERE slug IN ('admin-smoke-steady', 'operator-smoke-copy')
+          ORDER BY slug
+        `,
+    );
+
+    expect(isSystemColumn?.is_nullable).toBe("NO");
+    expect(isSystemColumn?.column_default).toBe("false");
+    expect(archivedAtColumn?.is_nullable).toBe("YES");
+    expect(archivedAtColumn?.column_default).toBeNull();
+    expect(archiveIndex?.exists).toBe(true);
+    expect(presetRows).toEqual([
+      { slug: "admin-smoke-steady", is_system: true, archived_at: null },
+      { slug: "operator-smoke-copy", is_system: false, archived_at: null },
+    ]);
+
+    // Leave the database usable for subsequent tests.
+    await withDatabase(
+      (sql) =>
+        sql`DELETE FROM demo_presets WHERE id IN (${canonicalPresetId}, ${operatorDuplicateId})`,
+    );
   });
 
   it("isolates scoped ERP circuit snapshots, applies TTL, and clears scoped and legacy state", async () => {
@@ -950,6 +1052,86 @@ describe("database migrations, seed data, and reset behavior", () => {
       remainingStock: "1000",
       reservedStock: "0",
     });
+  });
+
+  it("reseeds an already-system mutable admin preset as a true no-op", async () => {
+    await runSeedScript();
+    // Operator edits the mutable admin preset and bumps updated_at. Uses the
+    // `custom` scratch preset so later breaker-backfill assertions on
+    // `admin-smoke-steady` are not affected by the preserved operator edit.
+    await withDatabase(
+      (sql) => sql`
+        UPDATE demo_presets
+        SET backpressure_config = jsonb_set(
+              backpressure_config, '{orderProcessConcurrency}', '2'::jsonb
+            ),
+            updated_at = updated_at + interval '1 second'
+        WHERE slug = 'custom'
+      `,
+    );
+    const [edited] = await withDatabase(
+      (sql) =>
+        sql<{ is_system: boolean; updated_at: string; backpressure_config: Record<string, unknown> }[]>`
+          SELECT is_system, updated_at::text, backpressure_config
+          FROM demo_presets WHERE slug = 'custom'
+        `,
+    );
+    expect(edited?.is_system).toBe(true);
+    expect(edited?.backpressure_config).toMatchObject({ orderProcessConcurrency: 2 });
+
+    // Reseed — the already-system row must be a no-op: no config overwrite and
+    // no updated_at bump.
+    await runSeedScript();
+
+    const [afterReseed] = await withDatabase(
+      (sql) =>
+        sql<{ is_system: boolean; updated_at: string; backpressure_config: Record<string, unknown> }[]>`
+          SELECT is_system, updated_at::text, backpressure_config
+          FROM demo_presets WHERE slug = 'custom'
+        `,
+    );
+    expect(afterReseed?.is_system).toBe(true);
+    expect(afterReseed?.updated_at).toEqual(edited?.updated_at);
+    expect(afterReseed?.backpressure_config).toEqual(edited?.backpressure_config);
+  });
+
+  it("repairs a falsely non-system mutable admin preset on reseed without overwriting configuration", async () => {
+    await runSeedScript();
+    // Deliberately corrupt is_system to false and operator-edit the config.
+    // Uses a value within the backpressure schema max so later breaker-backfill
+    // schema validation on admin-failure-path still passes.
+    await withDatabase(
+      (sql) => sql`
+        UPDATE demo_presets
+        SET is_system = false,
+            backpressure_config = jsonb_set(
+              backpressure_config, '{orderProcessConcurrency}', '3'::jsonb
+            )
+        WHERE slug = 'admin-failure-path'
+      `,
+    );
+    const [corrupted] = await withDatabase(
+      (sql) =>
+        sql<{ is_system: boolean; backpressure_config: Record<string, unknown> }[]>`
+          SELECT is_system, backpressure_config
+          FROM demo_presets WHERE slug = 'admin-failure-path'
+        `,
+    );
+    expect(corrupted?.is_system).toBe(false);
+    expect(corrupted?.backpressure_config).toMatchObject({ orderProcessConcurrency: 3 });
+
+    // Reseed — the marker is repaired to true, but the operator config is kept.
+    await runSeedScript();
+
+    const [afterReseed] = await withDatabase(
+      (sql) =>
+        sql<{ is_system: boolean; backpressure_config: Record<string, unknown> }[]>`
+          SELECT is_system, backpressure_config
+          FROM demo_presets WHERE slug = 'admin-failure-path'
+        `,
+    );
+    expect(afterReseed?.is_system).toBe(true);
+    expect(afterReseed?.backpressure_config).toMatchObject({ orderProcessConcurrency: 3 });
   });
 
   it("rejects invalid seed environment without changing the active runtime policy", async () => {

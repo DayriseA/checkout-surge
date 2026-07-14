@@ -15,6 +15,7 @@ import {
   adminPresetSavePath,
   adminPublicRuntimePolicyPath,
   adminPublicRuntimePolicyResponseSchema,
+  archiveAdminPresetResponseSchema,
   type BusinessOutcomeSummary,
   buyResponseSchema,
   controlServiceTokenHeaderName,
@@ -439,6 +440,11 @@ function demoRunControllerFixture(): DemoRunController {
     }),
     copyPresetToCustom: async () => ({
       preset: demoPresetFixture("custom"),
+      timestamp: "2026-06-20T00:00:10.000Z",
+    }),
+    archiveAdminPreset: async () => ({
+      slug: "preview-copy",
+      archivedAt: "2026-06-20T00:00:10.000Z",
       timestamp: "2026-06-20T00:00:10.000Z",
     }),
     getPublicRuntimePolicy: async () => ({
@@ -1646,6 +1652,75 @@ describe("API gateway routes", () => {
       targetSlug: "preview-copy",
     });
     expect(copyPresetToCustom).toHaveBeenCalledWith({ sourceSlug: "preview-1k" });
+  });
+
+  it("protects and delegates admin preset archival through the DELETE route", async () => {
+    const archiveAdminPreset = vi.fn(demoRunControllerFixture().archiveAdminPreset);
+    const server = await trackedServer({
+      persistence: new AcceptingPersistence(),
+      demoRunService: {
+        ...demoRunControllerFixture(),
+        archiveAdminPreset,
+      },
+    });
+    const headers = { [controlServiceTokenHeaderName]: "test-control-token" };
+
+    expect(
+      (
+        await server.inject({
+          method: "DELETE",
+          url: adminPresetListPath,
+          payload: { slug: "preview-copy" },
+        })
+      ).statusCode,
+    ).toBe(401);
+    expect(archiveAdminPreset).not.toHaveBeenCalled();
+
+    expect(
+      (
+        await server.inject({
+          method: "DELETE",
+          url: adminPresetListPath,
+          headers,
+          payload: {},
+        })
+      ).statusCode,
+    ).toBe(400);
+    expect(archiveAdminPreset).not.toHaveBeenCalled();
+
+    const valid = await server.inject({
+      method: "DELETE",
+      url: adminPresetListPath,
+      headers,
+      payload: { slug: "preview-copy" },
+    });
+    expect(valid.statusCode).toBe(200);
+    expect(() => archiveAdminPresetResponseSchema.parse(valid.json())).not.toThrow();
+    expect(archiveAdminPreset).toHaveBeenCalledWith({ slug: "preview-copy" });
+  });
+
+  it.each([
+    ["preset_not_archivable", 409],
+    ["preset_not_found", 404],
+  ])("maps archive error %s to %i through the DELETE route", async (code, statusCode) => {
+    const archiveAdminPreset = vi.fn(async () => {
+      throw new DemoRunValidationError(code, "Archive failed.", { slug: "preview-copy" });
+    });
+    const server = await trackedServer({
+      persistence: new AcceptingPersistence(),
+      demoRunService: {
+        ...demoRunControllerFixture(),
+        archiveAdminPreset,
+      },
+    });
+    const response = await server.inject({
+      method: "DELETE",
+      url: adminPresetListPath,
+      headers: { [controlServiceTokenHeaderName]: "test-control-token" },
+      payload: { slug: "preview-copy" },
+    });
+    expect(response.statusCode).toBe(statusCode);
+    expect(response.json()).toMatchObject({ code, details: { slug: "preview-copy" } });
   });
 
   it("rejects tokenless visitor assertions and forwards only authenticated proxy assertions", async () => {

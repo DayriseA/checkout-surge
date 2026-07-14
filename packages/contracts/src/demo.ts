@@ -70,6 +70,14 @@ export const demoPresetContractSchema = demoPresetSchema
   .strict();
 export type DemoPresetContract = z.infer<typeof demoPresetContractSchema>;
 
+// Admin-only preset list item. Extends the general preset contract with a
+// server-computed capability flag. `canArchive` is never trusted from clients;
+// it is derived from persisted provenance (system/public/custom) and lifecycle.
+export const adminPresetListItemSchema = demoPresetContractSchema
+  .extend({ canArchive: z.boolean() })
+  .strict();
+export type AdminPresetListItem = z.infer<typeof adminPresetListItemSchema>;
+
 export const publicPresetListResponseSchema = z
   .object({
     presets: z.array(demoPresetContractSchema),
@@ -470,11 +478,29 @@ export type SaveDemoPresetRequest = z.infer<typeof saveDemoPresetRequestSchema>;
 
 export const adminPresetListResponseSchema = z
   .object({
-    presets: z.array(demoPresetContractSchema),
+    presets: z.array(adminPresetListItemSchema),
     timestamp: isoTimestampSchema,
   })
   .strict();
 export type AdminPresetListResponse = z.infer<typeof adminPresetListResponseSchema>;
+
+// Soft-archive operation. Active lists never expose raw archive timestamps;
+// only this explicit archive response confirms the lifecycle result.
+export const archiveAdminPresetRequestSchema = z
+  .object({
+    slug: z.string().trim().min(1),
+  })
+  .strict();
+export type ArchiveAdminPresetRequest = z.infer<typeof archiveAdminPresetRequestSchema>;
+
+export const archiveAdminPresetResponseSchema = z
+  .object({
+    slug: z.string().trim().min(1),
+    archivedAt: isoTimestampSchema,
+    timestamp: isoTimestampSchema,
+  })
+  .strict();
+export type ArchiveAdminPresetResponse = z.infer<typeof archiveAdminPresetResponseSchema>;
 
 export const adminPresetMutationResponseSchema = z
   .object({

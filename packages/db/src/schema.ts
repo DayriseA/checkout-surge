@@ -191,6 +191,8 @@ export const demoPresets = pgTable(
     visibility: demoPresetVisibilityEnum("visibility").notNull(),
     isEditable: boolean("is_editable").default(false).notNull(),
     isCustom: boolean("is_custom").default(false).notNull(),
+    isSystem: boolean("is_system").default(false).notNull(),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
     display: jsonObject("display"),
     trafficConfig: jsonObject("traffic_config"),
     inventoryConfig: jsonObject("inventory_config"),
@@ -206,6 +208,7 @@ export const demoPresets = pgTable(
       sql`${table.visibility} <> 'public' OR ${table.isEditable} = false`,
     ),
     index("demo_presets_visibility_idx").on(table.visibility),
+    index("demo_presets_archived_at_idx").on(table.archivedAt),
   ],
 );
 

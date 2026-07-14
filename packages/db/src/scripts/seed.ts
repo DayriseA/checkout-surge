@@ -36,6 +36,7 @@ interface SeedPreset {
   visibility: DemoPresetVisibility;
   isEditable: boolean;
   isCustom: boolean;
+  isSystem: boolean;
   display: JsonRecord;
   trafficConfig: JsonRecord;
   inventoryConfig: JsonRecord;
@@ -114,6 +115,7 @@ try {
         visibility: preset.visibility,
         isEditable: preset.isEditable,
         isCustom: preset.isCustom,
+        isSystem: preset.isSystem,
         display: preset.display,
         trafficConfig: preset.trafficConfig,
         inventoryConfig: preset.inventoryConfig,
@@ -133,6 +135,7 @@ try {
               visibility: preset.visibility,
               isEditable: preset.isEditable,
               isCustom: preset.isCustom,
+              isSystem: preset.isSystem,
               display: preset.display,
               trafficConfig: preset.trafficConfig,
               inventoryConfig: preset.inventoryConfig,
@@ -144,9 +147,23 @@ try {
         continue;
       }
 
-      await tx.insert(demoPresets).values(values).onConflictDoNothing({
-        target: demoPresets.slug,
-      });
+      // Mutable seeded admin presets intentionally keep their operator-tuned
+      // configuration on reseed. Only the system provenance marker is repaired
+      // so a reserved canonical slug can never remain falsely non-system. The
+      // conditional update (setWhere) ensures an already-system row is a true
+      // no-op on reseed, so routine runtime:setup does not bump updated_at or
+      // make an unchanged operator-edited admin preset appear newly updated.
+      await tx
+        .insert(demoPresets)
+        .values(values)
+        .onConflictDoUpdate({
+          target: demoPresets.slug,
+          set: {
+            isSystem: preset.isSystem,
+            updatedAt: now,
+          },
+          setWhere: sql`${demoPresets.isSystem} = false`,
+        });
     }
 
     await tx
@@ -211,6 +228,7 @@ function buildSeedPresets(): SeedPreset[] {
       visibility: "public",
       isEditable: false,
       isCustom: false,
+      isSystem: true,
       display: {
         name: "Preview 1k",
         description: "One-second public preview with visible scarcity and fast drain.",
@@ -229,6 +247,7 @@ function buildSeedPresets(): SeedPreset[] {
       visibility: "public",
       isEditable: false,
       isCustom: false,
+      isSystem: true,
       display: {
         name: "Surge 5k",
         description: "Scarcity run for several thousand simultaneous synthetic buyers.",
@@ -247,6 +266,7 @@ function buildSeedPresets(): SeedPreset[] {
       visibility: "public",
       isEditable: false,
       isCustom: false,
+      isSystem: true,
       display: {
         name: "Surge 10k",
         description: "Public showcase target with approximately 10,000 one-second attempts.",
@@ -265,6 +285,7 @@ function buildSeedPresets(): SeedPreset[] {
       visibility: "public",
       isEditable: false,
       isCustom: false,
+      isSystem: true,
       display: {
         name: "Idempotency Check 200",
         description: "Duplicate-attempt run that should replay accepted reservation outcomes.",
@@ -287,6 +308,7 @@ function buildSeedPresets(): SeedPreset[] {
       visibility: "public",
       isEditable: false,
       isCustom: true,
+      isSystem: true,
       display: {
         name: "Public Custom",
         description: "Read-only base for bounded run-scoped public custom starts.",
@@ -305,6 +327,7 @@ function buildSeedPresets(): SeedPreset[] {
       visibility: "admin",
       isEditable: true,
       isCustom: false,
+      isSystem: true,
       display: {
         name: "Admin Smoke Steady",
         description: "Small steady-arrival run for local dashboard and worker checks.",
@@ -328,6 +351,7 @@ function buildSeedPresets(): SeedPreset[] {
       visibility: "admin",
       isEditable: true,
       isCustom: false,
+      isSystem: true,
       display: {
         name: "Admin Failure Path",
         description: "Run with controlled ERP errors for failed order and retry demonstrations.",
@@ -351,6 +375,7 @@ function buildSeedPresets(): SeedPreset[] {
       visibility: "admin",
       isEditable: true,
       isCustom: true,
+      isSystem: true,
       display: {
         name: "Custom",
         description: "Persisted admin scratch preset for operator experiments.",

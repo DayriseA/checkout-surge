@@ -5,6 +5,7 @@ import {
   adminPresetSavePath,
   adminPublicRuntimePolicyPath,
   adminPublicRuntimePolicyUpdateRequestSchema,
+  archiveAdminPresetRequestSchema,
   controlServiceTokenHeaderName,
   copyDemoPresetToCustomRequestSchema,
   demoRunOperatorModeHeaderName,
@@ -91,6 +92,22 @@ export function registerDemoRunRoutes(
     }
 
     return reply.status(200).send(await options.demoRunService.listAdminPresets());
+  });
+
+  app.delete(adminPresetListPath, async (request, reply) => {
+    const unauthorized = requireControlServiceToken(request, reply, options.controlServiceToken);
+    if (unauthorized) {
+      return unauthorized;
+    }
+
+    try {
+      const response = await options.demoRunService.archiveAdminPreset(
+        archiveAdminPresetRequestSchema.parse(request.body),
+      );
+      return reply.status(200).send(response);
+    } catch (error) {
+      throw mapDemoRunError(error);
+    }
   });
 
   app.post(adminPresetSavePath, async (request, reply) => {
@@ -256,7 +273,11 @@ function mapDemoRunError(error: unknown): unknown {
     return error;
   }
 
-  const conflictCodes = new Set(["demo_run_already_active", "demo_reset_incomplete"]);
+  const conflictCodes = new Set([
+    "demo_run_already_active",
+    "demo_reset_incomplete",
+    "preset_not_archivable",
+  ]);
   const notFoundCodes = new Set(["preset_not_found", "public_runtime_policy_not_found"]);
   const forbiddenCodes = new Set(["public_visitor_forbidden"]);
 

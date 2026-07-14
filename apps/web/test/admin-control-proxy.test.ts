@@ -15,7 +15,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { POST as copyPresetToCustom } from "../src/app/api/admin/demo/presets/copy-to-custom/route.js";
 import { POST as duplicatePreset } from "../src/app/api/admin/demo/presets/duplicate/route.js";
-import { GET as listAdminPresets } from "../src/app/api/admin/demo/presets/route.js";
+import { DELETE as archiveAdminPreset, GET as listAdminPresets } from "../src/app/api/admin/demo/presets/route.js";
 import { POST as saveAdminPreset } from "../src/app/api/admin/demo/presets/save/route.js";
 import { POST as resetDemo } from "../src/app/api/admin/demo/reset/route.js";
 import { POST as cleanupRuns } from "../src/app/api/admin/demo/runs/cleanup/route.js";
@@ -69,6 +69,7 @@ describe("dashboard control proxy routes", () => {
     });
     const privateRoutes: Array<[string, string, (request: Request) => Promise<Response>]> = [
       ["preset list", "GET", listAdminPresets],
+      ["preset archive", "DELETE", archiveAdminPreset],
       ["preset save", "POST", saveAdminPreset],
       ["preset duplicate", "POST", duplicatePreset],
       ["preset copy", "POST", copyPresetToCustom],
@@ -338,7 +339,7 @@ describe("dashboard control proxy routes", () => {
       "fetch",
       vi.fn(async () =>
         jsonResponse({
-          presets: [demoPresetPayload("custom")],
+          presets: [{ ...demoPresetPayload("custom"), canArchive: false }],
           timestamp: "2026-06-20T00:00:10.000Z",
         }),
       ),
@@ -742,7 +743,7 @@ describe("dashboard control proxy routes", () => {
       if (String(input).endsWith(adminPresetListPath)) {
         expect(init?.method).toBe("GET");
         return jsonResponse({
-          presets: [demoPresetPayload("custom")],
+          presets: [{ ...demoPresetPayload("custom"), canArchive: false }],
           timestamp: "2026-06-20T00:00:10.000Z",
         });
       }
@@ -813,6 +814,56 @@ describe("dashboard control proxy routes", () => {
     expect(String(fetchMock.mock.calls[3]?.[0])).toBe(
       `http://api.internal${adminPresetCopyToCustomPath}`,
     );
+  });
+
+  it("forwards admin preset archival as a validated DELETE on the preset list path", async () => {
+    process.env.CONTROL_SERVICE_TOKEN = "control-token";
+    process.env.API_BASE_URL = "http://api.internal";
+    const headers = await adminSessionHeaders({ "content-type": "application/json" });
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      expect(String(input)).toBe(`http://api.internal${adminPresetListPath}`);
+      expect(init?.method).toBe("DELETE");
+      expect((init?.headers as Record<string, string>)[controlServiceTokenHeaderName]).toBe(
+        "control-token",
+      );
+      expect(JSON.parse(String(init?.body))).toEqual({ slug: "operator-duplicate" });
+      return jsonResponse({
+        slug: "operator-duplicate",
+        archivedAt: "2026-06-20T00:00:10.000Z",
+        timestamp: "2026-06-20T00:00:10.000Z",
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const unauthorized = await archiveAdminPreset(
+      new Request("http://dashboard.local/api/admin/demo/presets", {
+        method: "DELETE",
+        headers: { origin: "http://dashboard.local" },
+        body: JSON.stringify({ slug: "operator-duplicate" }),
+      }),
+    );
+    const invalidBody = await archiveAdminPreset(
+      new Request("http://dashboard.local/api/admin/demo/presets", {
+        method: "DELETE",
+        headers,
+        body: JSON.stringify({ slug: "  " }),
+      }),
+    );
+    const authorized = await archiveAdminPreset(
+      new Request("http://dashboard.local/api/admin/demo/presets", {
+        method: "DELETE",
+        headers,
+        body: JSON.stringify({ slug: "operator-duplicate" }),
+      }),
+    );
+    const payload = await authorized.json();
+
+    expect(unauthorized.status).toBe(401);
+    expect(invalidBody.status).toBe(400);
+    expect(authorized.status).toBe(200);
+    expect(payload.slug).toBe("operator-duplicate");
+    expect(payload.archivedAt).toBe("2026-06-20T00:00:10.000Z");
+    expect(fetchMock).toHaveBeenCalledOnce();
   });
 });
 

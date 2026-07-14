@@ -8,7 +8,7 @@ This document records the implemented access-protection model for the deployed d
 
 - Keep the deployed demo publicly inspectable so visitors can see live system behavior without an account.
 - Prevent anonymous users, bots, or direct API callers from spamming expensive demo runs or repeatedly resetting demo state.
-- Allow a trusted operator to inspect, save, duplicate, and start presets, use recovery/reset tools, and bypass public run budgets within configured safety limits.
+- Allow a trusted operator to inspect, save, duplicate, and archive presets, start runs, use recovery/reset tools, and bypass public run budgets within configured safety limits.
 - Keep protection proportional to the project: explicit demo access control, not a full production identity platform.
 
 ## Non-Goals
@@ -26,7 +26,7 @@ This document records the implemented access-protection model for the deployed d
 | :-- | :-- | :-- |
 | Public viewer | Portfolio visitor | Read dashboard snapshots, observe realtime metrics on `/watch`, inspect run outcomes and history. |
 | Public limited operator | Portfolio visitor trying the demo | Trigger curated public presets or a bounded, non-persistent public custom run from `/`; starts are public-budget protected, capped, and blocked while another run is active or draining. |
-| Admin operator | Project owner or trusted reviewer | Use `/admin` to inspect all presets, run public presets, save editable admin presets, use the `Custom` scratch preset, duplicate/copy presets, reset or recover demo state, delete run history, and bypass public run budgets within configured caps. |
+| Admin operator | Project owner or trusted reviewer | Use `/admin` to inspect all presets, run public presets, save editable admin presets, use the `Custom` scratch preset, duplicate/copy presets, archive accidental operator-created preset copies, reset or recover demo state, delete run history, and bypass public run budgets within configured caps. |
 
 The public dashboard should remain useful without credentials. Credentials are required when an action can create meaningful infrastructure load, erase demo state, hide evidence, or degrade the simulated downstream system.
 
@@ -91,6 +91,7 @@ Admin operators can use the full demo surface:
 - Start any public or admin-only preset.
 - Save editable admin presets and the persisted `Custom` scratch preset.
 - Duplicate public presets into editable admin-only presets or copy a preset into `Custom`.
+- Archive accidental operator-created preset copies. Only editable, non-custom, non-system, active admin presets are archivable; public presets, `public-custom`, the persisted `Custom` preset, and seeded/system admin presets cannot be archived. Archival is a soft delete that removes the preset from active lists and lookups while retaining the row and historical `DemoRun` references. The archive action is protected by both the signed admin-session web proxy and the API control token, requires UI confirmation, and is independently guarded by the service predicate. Archived slugs remain reserved by the global unique index and cannot be reused.
 - Start editable admin presets after the accepted configuration has been saved.
 - Reset demo state as a recovery/local-maintenance action: globally serialize run starts with reset, fence any starting, active, or draining run as failed, close admission and metric ingestion, confirm exact-run traffic termination, handle reset-owned queues, write immutable summaries, and clear only the affected live dashboard projection.
 - Use retained Mock ERP global chaos controls only as diagnostics/recovery controls outside the normal preset start workflow.
@@ -136,7 +137,7 @@ The local defaults and environment names are documented in `docs/local_developme
 | Mock ERP chaos status | Yes | No | Optional | No | Read-only visibility helps explain failure modes. |
 | Mock ERP chaos update/reset | No | No | Yes | Yes behind proxy | Retained global diagnostic controls are admin-only; normal ERP behavior comes from the run snapshot. |
 | Public preset list/recovery reads | Yes | No | Optional | No | Safe read model for public dashboard; recovery reads must not expose secrets or internal service URLs. |
-| Admin preset reads/saves/duplicates | No | No | Yes | Yes behind proxy | Admins may inspect all presets and mutate only editable admin-only presets. Public presets are read-only and must be duplicated or copied to `Custom` before editing. |
+| Admin preset reads/saves/duplicates/archival | No | No | Yes | Yes behind proxy | Admins may inspect all presets and mutate only editable admin-only presets. Public presets are read-only and must be duplicated or copied to `Custom` before editing. Archival (soft delete) is limited to operator-created, non-system, non-custom, active admin presets; it requires UI confirmation and is enforced by the service, not just UI disabling. |
 | Run History summaries and public-safe details | Yes | No | Optional | No | Historical summaries and sanitized detail DTOs are public portfolio data. The public detail DTO excludes reservation tokens, idempotency keys, raw event payloads, private headers, and unsafe operational controls. |
 | Run History deletion | No | No | Yes | Yes behind proxy | Admins may delete one, selected, or all summaries; delete-all requires explicit confirmation. |
 | Start demo run | Safe public preset or bounded public custom only | Capped, public-budget protected | Yes for all presets and admin configurations within deployment hard caps | Yes behind proxy | Direct service calls must enforce auth, traffic caps, public runtime policy for public principals, visibility, and active-run conflicts. Preset editability belongs to preset mutation endpoints, not run starts. |
@@ -156,9 +157,9 @@ Current implementation note: Every run start first authenticates the control-ser
 
 Run History implementation note: Public visitors may read paginated historical run summaries at `/run-history` and public-safe details for individual runs. Authenticated admins can hard-delete individual summaries, selected visible summaries, or all summaries. The delete-all path requires the `DELETE_ALL_RUN_SUMMARIES` confirmation value in addition to the admin session and service-token proxy boundary. Demo reset does not delete historical summaries.
 
-Current preset/run implementation note: Public preset definitions are durable database rows seeded from checked-in defaults. Public presets are read-only, while admin-only presets are editable. `public-custom` is a read-only base preset used by the public UI for bounded run-scoped starts; submitted public custom values are validated by API policy and frozen into the run snapshot but never saved back to `public-custom` or `Custom`. The `Custom` preset remains a persisted admin-only scratch preset mutated only through preset management endpoints. A normal run start freezes the accepted configuration into `demo_runs.configSnapshot`, creates a generated run sale offer with isolated inventory, and uses API-enforced traffic caps for buyer count, emitted attempts, steady requests per second, duration, start delay, and optional admin steady-arrival VU controls.
+Current preset/run implementation note: Public preset definitions are durable database rows seeded from checked-in defaults. Public presets are read-only, while admin-only presets are editable. `public-custom` is a read-only base preset used by the public UI for bounded run-scoped starts; submitted public custom values are validated by API policy and frozen into the run snapshot but never saved back to `public-custom` or `Custom`. The `Custom` preset remains a persisted admin-only scratch preset mutated only through preset management endpoints. A normal run start freezes the accepted configuration into `demo_runs.configSnapshot`, creates a generated run sale offer with isolated inventory, and uses API-enforced traffic caps for buyer count, emitted attempts, steady requests per second, duration, start delay, and optional admin steady-arrival VU controls. Operator-created admin preset copies (non-system, editable, non-custom) may be soft-archived through the protected `DELETE /admin/demo/presets` route, proxied by the signed admin-session web path with the server-owned control token and gated by a UI confirmation dialog. The API service independently enforces archival eligibility; public, `public-custom`, `Custom`, and seeded/system admin presets are rejected as `preset_not_archivable`. Archival sets `archived_at`, excludes the preset from active lists and lookups, and retains the row so historical `DemoRun` references and the reserved slug remain intact.
 
-Current frontend route note: The public route `/` contains the visitor demo picker, bounded public custom controls, and the admin passphrase flow without navigating anonymous visitors into the dashboard shell. Public and admin starts navigate to `/watch` for current-run observation. Privileged preset editing, reset/recovery, and ERP diagnostics live behind the authenticated `/admin` surface; direct anonymous `/admin` requests render only the sign-in gate. The watch route is backed by current-run dashboard recovery and realtime events; completed arbitrary run detail remains a Run History concern.
+Current frontend route note: The public route `/` contains the visitor demo picker, bounded public custom controls, and the admin passphrase flow without navigating anonymous visitors into the dashboard shell. Public and admin starts navigate to `/watch` for current-run observation. Privileged preset editing, duplication, archival (with confirmation), reset/recovery, and ERP diagnostics live behind the authenticated `/admin` surface; direct anonymous `/admin` requests render only the sign-in gate. The watch route is backed by current-run dashboard recovery and realtime events; completed arbitrary run detail remains a Run History concern.
 
 ---
 
@@ -174,6 +175,7 @@ Security-focused test coverage should include:
 - Public run budget enforcement is covered by real Redis integration tests for visitor/global windows and release behavior.
 - Public run detail reads expose the public-safe DTO and do not include reservation tokens, idempotency keys, raw event payloads, or unsafe operational controls.
 - Admin preset saves and starts are capped by API environment-backed limits.
+- Admin preset archival is protected by the admin-session web proxy and the API control token, requires UI confirmation, rejects public, `public-custom`, `Custom`, and seeded/system admin presets at the service boundary, and excludes archived presets from active lists, lookups, and run starts.
 - Demo reset cannot run through a public path.
 - Run History delete routes reject unauthenticated requests and require delete-all confirmation.
 - Chaos updates reject unsafe values above configured caps.

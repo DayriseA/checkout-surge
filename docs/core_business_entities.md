@@ -405,6 +405,8 @@ Logical fields:
 - `visibility`
 - `isEditable`
 - `isCustom`
+- `isSystem`
+- `archivedAt` (nullable)
 - `display`
 - `trafficConfig`
 - `inventoryConfig`
@@ -417,6 +419,8 @@ Notes:
 
 - Public presets such as `preview-1k`, `surge-5k`, `surge-10k`, `idempotency-check-200`, and `public-custom` are durable but read-only.
 - Admin operators can save editable admin presets, duplicate public presets into admin copies, or copy a preset into `Custom`.
+- `isSystem` marks seeded/reserved canonical slugs so operator duplicates can be distinguished from system presets. Only operator-created (non-system), editable, non-custom, active admin presets are archivable; public presets, `public-custom`, the persisted `Custom` scratch preset, and all seeded/system admin presets are never archivable.
+- Archival is a soft delete: it sets `archivedAt` but keeps the row intact. Active preset lists and lookups exclude rows where `archivedAt` is not null, so an archived preset can no longer be saved, copied, duplicated, or started. The global unique slug index still reserves archived slugs, so they cannot be reused. `DemoRun.presetId` references (`ON DELETE RESTRICT`) remain valid because the preset row is retained, preserving historical run integrity.
 
 ### 12. DemoRun
 

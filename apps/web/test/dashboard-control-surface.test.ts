@@ -105,8 +105,8 @@ function publicPresetListFixture(): PublicPresetListResponse {
 function adminPresetListFixture(): AdminPresetListResponse {
   return {
     presets: [
-      demoPresetFixture("preview-1k", "public", false),
-      demoPresetFixture("custom", "admin", true),
+      { ...demoPresetFixture("preview-1k", "public", false), canArchive: false },
+      { ...demoPresetFixture("custom", "admin", true), canArchive: false },
     ],
     timestamp: "2026-06-20T00:00:10.000Z",
   };

@@ -1,8 +1,8 @@
 "use client";
 
 import type {
+  AdminPresetListItem,
   AdminPublicRuntimePolicyResponse,
-  DemoPresetContract,
   ErpChaosStatus,
 } from "@checkout-surge/contracts";
 import type { BackendRead } from "../../lib/api";
@@ -181,6 +181,7 @@ export function AdminPresetView({
   duplicateTargetSlug,
   isPending,
   notice,
+  onArchive,
   onCopyToCustom,
   onDuplicate,
   onDuplicateTargetSlugChange,
@@ -197,6 +198,7 @@ export function AdminPresetView({
   duplicateTargetSlug: string;
   isPending: boolean;
   notice: string | null;
+  onArchive: () => void;
   onCopyToCustom: () => void;
   onDuplicate: (targetSlug: string) => void;
   onDuplicateTargetSlugChange: (value: string) => void;
@@ -204,9 +206,9 @@ export function AdminPresetView({
   onSelect: (slug: string) => void;
   onStart: () => void;
   onUpdateDraft: (next: Partial<PresetDraft>) => void;
-  presets: DemoPresetContract[];
+  presets: AdminPresetListItem[];
   presetsRead: BackendRead<unknown>;
-  selectedPreset: DemoPresetContract | null;
+  selectedPreset: AdminPresetListItem | null;
   startBlocked: boolean;
 }) {
   return (
@@ -290,6 +292,14 @@ export function AdminPresetView({
                 type="button"
               >
                 Copy to Custom
+              </button>
+              <button
+                className={buttonClassName}
+                disabled={isPending || !selectedPreset.canArchive}
+                onClick={onArchive}
+                type="button"
+              >
+                Archive Preset
               </button>
             </div>
             <form

@@ -1,14 +1,19 @@
 import { randomUUID } from "node:crypto";
 import {
   type AcceptedRunConfigSnapshot,
+  type AdminPresetListItem,
   type AdminPresetListResponse,
   type AdminPresetMutationResponse,
   type AdminPublicRuntimePolicyResponse,
   type AdminPublicRuntimePolicyUpdateRequest,
   acceptedRunConfigSnapshotSchema,
+  archiveAdminPresetResponseSchema,
   adminPresetListResponseSchema,
+  adminPresetListItemSchema,
   adminPresetMutationResponseSchema,
   adminPublicRuntimePolicyResponseSchema,
+  type ArchiveAdminPresetRequest,
+  type ArchiveAdminPresetResponse,
   type BusinessOutcomeSummary,
   type CopyDemoPresetToCustomRequest,
   calculatePlannedRequests,
@@ -112,6 +117,7 @@ export interface DemoRunController {
   saveAdminPreset(request: SaveDemoPresetRequest): Promise<AdminPresetMutationResponse>;
   duplicatePreset(request: DuplicateDemoPresetRequest): Promise<AdminPresetMutationResponse>;
   copyPresetToCustom(request: CopyDemoPresetToCustomRequest): Promise<AdminPresetMutationResponse>;
+  archiveAdminPreset(request: ArchiveAdminPresetRequest): Promise<ArchiveAdminPresetResponse>;
   getPublicRuntimePolicy(): Promise<PublicRuntimePolicyResponse>;
   getAdminPublicRuntimePolicy(correlationId: string): Promise<AdminPublicRuntimePolicyResponse>;
   updateAdminPublicRuntimePolicy(
@@ -447,7 +453,7 @@ export class DemoRunService implements DemoRunController {
     const rows = await this.options.db
       .select()
       .from(demoPresets)
-      .where(eq(demoPresets.visibility, "public"))
+      .where(and(eq(demoPresets.visibility, "public"), isNull(demoPresets.archivedAt)))
       .orderBy(sql`(${demoPresets.display}->>'sortOrder')::int`);
 
     return publicPresetListResponseSchema.parse({
@@ -460,10 +466,11 @@ export class DemoRunService implements DemoRunController {
     const rows = await this.options.db
       .select()
       .from(demoPresets)
+      .where(isNull(demoPresets.archivedAt))
       .orderBy(sql`(${demoPresets.display}->>'sortOrder')::int`, demoPresets.slug);
 
     return adminPresetListResponseSchema.parse({
-      presets: rows.map(toDemoPresetContract),
+      presets: rows.map(toAdminPresetListItem),
       timestamp: this.now().toISOString(),
     });
   }
@@ -523,6 +530,7 @@ export class DemoRunService implements DemoRunController {
         visibility: "admin",
         isEditable: true,
         isCustom: false,
+        isSystem: false,
         display: {
           ...source.display,
           name: request.displayName ?? `${source.display.name} Copy`,
@@ -568,6 +576,67 @@ export class DemoRunService implements DemoRunController {
 
     return adminPresetMutationResponseSchema.parse({
       preset: toDemoPresetContract(requirePresetRow(updated, "custom")),
+      timestamp: now.toISOString(),
+    });
+  }
+
+  async archiveAdminPreset(
+    request: ArchiveAdminPresetRequest,
+  ): Promise<ArchiveAdminPresetResponse> {
+    const now = this.now();
+    const slug = request.slug;
+
+    const [row] = await this.options.db
+      .select()
+      .from(demoPresets)
+      .where(eq(demoPresets.slug, slug))
+      .limit(1);
+
+    if (!row || row.archivedAt !== null) {
+      throw new DemoRunValidationError("preset_not_found", "Demo preset was not found.", { slug });
+    }
+
+    if (!isPresetRowArchivable(row)) {
+      throw new DemoRunValidationError(
+        "preset_not_archivable",
+        "Only operator-created admin presets can be archived.",
+        { slug },
+      );
+    }
+
+    // Recheck every persisted eligibility dimension in the write itself. The
+    // loaded ID anchors the update to the row that passed the service guard,
+    // while the remaining conditions prevent a concurrent protection change
+    // (for example, a seed repair setting isSystem) from being overwritten.
+    const [updated] = await this.options.db
+      .update(demoPresets)
+      .set({ archivedAt: now, updatedAt: now })
+      .where(archivablePresetRowCondition(row.id))
+      .returning();
+
+    if (!updated?.archivedAt) {
+      const [current] = await this.options.db
+        .select()
+        .from(demoPresets)
+        .where(eq(demoPresets.id, row.id))
+        .limit(1);
+
+      if (!current || current.archivedAt !== null) {
+        throw new DemoRunValidationError("preset_not_found", "Demo preset was not found.", {
+          slug,
+        });
+      }
+
+      throw new DemoRunValidationError(
+        "preset_not_archivable",
+        "Only operator-created admin presets can be archived.",
+        { slug },
+      );
+    }
+
+    return archiveAdminPresetResponseSchema.parse({
+      slug: updated.slug,
+      archivedAt: updated.archivedAt.toISOString(),
       timestamp: now.toISOString(),
     });
   }
@@ -1035,7 +1104,7 @@ export class DemoRunService implements DemoRunController {
     const [preset] = await this.options.db
       .select()
       .from(demoPresets)
-      .where(eq(demoPresets.slug, slug))
+      .where(and(eq(demoPresets.slug, slug), isNull(demoPresets.archivedAt)))
       .limit(1);
 
     if (!preset) {
@@ -1272,6 +1341,47 @@ function toDemoPresetContract(preset: typeof demoPresets.$inferSelect): DemoPres
     backpressureConfig: preset.backpressureConfig,
     createdAt: preset.createdAt.toISOString(),
     updatedAt: preset.updatedAt.toISOString(),
+  });
+}
+
+/**
+ * Centralized archive eligibility predicate. Used both to compute the admin-list
+ * `canArchive` capability and to enforce archival, so the two cannot drift.
+ * Only an operator-created (non-system), editable, non-custom, active admin
+ * preset may be archived.
+ */
+function isPresetRowArchivable(row: typeof demoPresets.$inferSelect): boolean {
+  return (
+    row.visibility === archivablePresetProperties.visibility &&
+    row.isEditable === archivablePresetProperties.isEditable &&
+    row.isCustom === archivablePresetProperties.isCustom &&
+    row.isSystem === archivablePresetProperties.isSystem &&
+    row.archivedAt === null
+  );
+}
+
+const archivablePresetProperties = {
+  visibility: "admin",
+  isEditable: true,
+  isCustom: false,
+  isSystem: false,
+} as const;
+
+function archivablePresetRowCondition(presetId: string) {
+  return and(
+    eq(demoPresets.id, presetId),
+    eq(demoPresets.visibility, archivablePresetProperties.visibility),
+    eq(demoPresets.isEditable, archivablePresetProperties.isEditable),
+    eq(demoPresets.isCustom, archivablePresetProperties.isCustom),
+    eq(demoPresets.isSystem, archivablePresetProperties.isSystem),
+    isNull(demoPresets.archivedAt),
+  );
+}
+
+function toAdminPresetListItem(row: typeof demoPresets.$inferSelect): AdminPresetListItem {
+  return adminPresetListItemSchema.parse({
+    ...toDemoPresetContract(row),
+    canArchive: isPresetRowArchivable(row),
   });
 }
 

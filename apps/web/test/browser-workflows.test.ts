@@ -513,7 +513,7 @@ function publicPresetListFixture(): PublicPresetListResponse {
 
 function adminPresetListFixture(): AdminPresetListResponse {
   return {
-    presets: [demoPresetFixture("custom")],
+    presets: [{ ...demoPresetFixture("custom"), canArchive: false }],
     timestamp: "2026-06-20T00:00:10.000Z",
   };
 }

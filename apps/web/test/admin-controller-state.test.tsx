@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 
 import type {
+  AdminPresetListItem,
   AdminPresetListResponse,
   AdminPublicRuntimePolicyResponse,
   DashboardRecoveryResponse,
-  DemoPresetContract,
   ErpChaosStatus,
 } from "@checkout-surge/contracts";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
@@ -285,6 +285,181 @@ describe("admin feature controllers", () => {
     expect(fetchMock.mock.calls[0]?.[1]?.method).toBe("PUT");
     expect((screen.getByLabelText("Max buyers") as HTMLInputElement).value).toBe("4321");
   });
+
+  it("disables the archive control for protected presets", () => {
+    render(
+      <AdminPresetController
+        initialPresets={presetListFixture("Custom")}
+        recovery={available(recoveryFixture(null))}
+      />,
+    );
+    expect(
+      (screen.getByRole("button", { name: "Archive Preset" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+  });
+
+  it("performs no fetch when archive confirmation is cancelled", async () => {
+    const fetchMock = vi.fn((_input: RequestInfo | URL, _init?: RequestInit) => {
+      throw new Error("Unexpected archive fetch");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const user = userEvent.setup();
+    render(
+      <AdminPresetController
+        initialPresets={available<AdminPresetListResponse>({
+          presets: [archivablePresetFixture("operator-dup", "Operator Dup")],
+          timestamp: "2026-06-20T00:00:10.000Z",
+        })}
+        recovery={available(recoveryFixture(null))}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Archive Preset" }));
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(screen.queryByText("Preset archived.")).toBeNull();
+    confirmSpy.mockRestore();
+  });
+
+  it("archives the selected preset after confirmation, refreshes the list, and selects a remaining preset", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === adminPresetListProxyPath && init?.method === "DELETE") {
+        expect(JSON.parse(String(init.body))).toEqual({ slug: "operator-dup" });
+        return jsonResponse({
+          slug: "operator-dup",
+          archivedAt: "2026-06-20T00:00:12.000Z",
+          timestamp: "2026-06-20T00:00:12.000Z",
+        });
+      }
+      if (path === adminPresetListProxyPath) {
+        return jsonResponse({
+          presets: [presetFixture()],
+          timestamp: "2026-06-20T00:00:12.000Z",
+        });
+      }
+      throw new Error(`Unexpected fetch: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const user = userEvent.setup();
+    render(
+      <AdminPresetController
+        initialPresets={available<AdminPresetListResponse>({
+          presets: [
+            archivablePresetFixture("operator-dup", "Operator Dup"),
+            presetFixture(),
+          ],
+          timestamp: "2026-06-20T00:00:10.000Z",
+        })}
+        recovery={available(recoveryFixture(null))}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Archive Preset" }));
+
+    await waitFor(() => expect(screen.getByText("Preset archived.")).toBeTruthy());
+    expect(fetchMock.mock.calls.map(([input, init]) => [String(input), init?.method])).toEqual([
+      [adminPresetListProxyPath, "DELETE"],
+      [adminPresetListProxyPath, undefined],
+    ]);
+    expect(screen.queryByRole("button", { name: "Operator Dup" })).toBeNull();
+    expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("Custom");
+    expect((screen.getByLabelText("Duplicate slug") as HTMLInputElement).value).toBe(
+      "custom-copy",
+    );
+    confirmSpy.mockRestore();
+  });
+
+  it("clears the preset editor after archiving the last remaining preset", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === adminPresetListProxyPath && init?.method === "DELETE") {
+        return jsonResponse({
+          slug: "operator-dup",
+          archivedAt: "2026-06-20T00:00:12.000Z",
+          timestamp: "2026-06-20T00:00:12.000Z",
+        });
+      }
+      if (path === adminPresetListProxyPath) {
+        return jsonResponse({
+          presets: [],
+          timestamp: "2026-06-20T00:00:12.000Z",
+        });
+      }
+      throw new Error(`Unexpected fetch: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const user = userEvent.setup();
+    render(
+      <AdminPresetController
+        initialPresets={available<AdminPresetListResponse>({
+          presets: [archivablePresetFixture("operator-dup", "Operator Dup")],
+          timestamp: "2026-06-20T00:00:10.000Z",
+        })}
+        recovery={available(recoveryFixture(null))}
+      />,
+    );
+
+    expect((screen.getByLabelText("Duplicate slug") as HTMLInputElement).value).toBe(
+      "operator-dup-copy",
+    );
+    await user.click(screen.getByRole("button", { name: "Archive Preset" }));
+
+    await waitFor(() => expect(screen.getByText("Preset archived.")).toBeTruthy());
+    expect(screen.getByText("No admin presets are available.")).toBeTruthy();
+    expect(screen.queryByLabelText("Duplicate slug")).toBeNull();
+    confirmSpy.mockRestore();
+  });
+
+  it("keeps the archive control disabled while an archive is pending", async () => {
+    const pending = deferred<Response>();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === adminPresetListProxyPath && init?.method === "DELETE") {
+        expect(JSON.parse(String(init.body))).toEqual({ slug: "operator-dup" });
+        return pending.promise;
+      }
+      if (path === adminPresetListProxyPath) {
+        return jsonResponse({
+          presets: [presetFixture()],
+          timestamp: "2026-06-20T00:00:12.000Z",
+        });
+      }
+      throw new Error(`Unexpected fetch: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const user = userEvent.setup();
+    render(
+      <AdminPresetController
+        initialPresets={available<AdminPresetListResponse>({
+          presets: [archivablePresetFixture("operator-dup", "Operator Dup")],
+          timestamp: "2026-06-20T00:00:10.000Z",
+        })}
+        recovery={available(recoveryFixture(null))}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Archive Preset" }));
+    await waitFor(() =>
+      expect(
+        (screen.getByRole("button", { name: "Archive Preset" }) as HTMLButtonElement).disabled,
+      ).toBe(true),
+    );
+    expect(fetchMock).toHaveBeenCalledOnce();
+
+    pending.resolve(
+      jsonResponse({
+        slug: "operator-dup",
+        archivedAt: "2026-06-20T00:00:12.000Z",
+        timestamp: "2026-06-20T00:00:12.000Z",
+      }),
+    );
+    confirmSpy.mockRestore();
+  });
 });
 
 function surfaceProps(currentRun: DashboardRecoveryResponse["currentRun"]) {
@@ -350,13 +525,14 @@ function runFixture(): DashboardRecoveryResponse["currentRun"] {
   };
 }
 
-function presetFixture(): DemoPresetContract {
+function presetFixture(): AdminPresetListItem {
   return {
     id: "22222222-2222-4222-8222-222222222222",
     slug: "custom",
     visibility: "admin",
     isEditable: true,
     isCustom: true,
+    canArchive: false,
     display: { name: "Custom", description: "Fixture", sortOrder: 100, outcomeFocus: [] },
     trafficConfig: {
       mode: "buyer-spike",
@@ -389,11 +565,24 @@ function presetFixture(): DemoPresetContract {
   };
 }
 
-function presetWithSlug(slug: string, name: string): DemoPresetContract {
+function presetWithSlug(slug: string, name: string): AdminPresetListItem {
   const base = presetFixture();
   return {
     ...base,
     slug,
+    display: { ...base.display, name },
+  };
+}
+
+function archivablePresetFixture(slug: string, name: string): AdminPresetListItem {
+  const base = presetFixture();
+  return {
+    ...base,
+    slug,
+    visibility: "admin",
+    isEditable: true,
+    isCustom: false,
+    canArchive: true,
     display: { ...base.display, name },
   };
 }

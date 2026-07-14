@@ -3,12 +3,14 @@
 import {
   type AdminPresetListResponse,
   type AdminPublicRuntimePolicyResponse,
+  archiveAdminPresetResponseSchema,
   adminDemoResetResponseSchema,
   adminMaintenanceCleanupRunsResponseSchema,
   adminPresetListResponseSchema,
   adminPresetMutationResponseSchema,
   adminPublicRuntimePolicyResponseSchema,
   adminPublicRuntimePolicyUpdateRequestSchema,
+  archiveAdminPresetRequestSchema,
   copyDemoPresetToCustomRequestSchema,
   type DashboardRecoveryResponse,
   dashboardRecoveryResponseSchema,
@@ -341,6 +343,55 @@ export function AdminPresetController({
     await mutate(adminPresetCopyToCustomProxyPath, parsed.data, "Custom updated.");
   }
 
+  async function archive() {
+    if (!selectedPreset?.canArchive) return;
+    const parsed = archiveAdminPresetRequestSchema.safeParse({ slug: selectedPreset.slug });
+    if (!parsed.success) {
+      setNotice("Archive request is outside the shared contract.");
+      return;
+    }
+
+    const confirmed =
+      typeof window === "undefined"
+        ? false
+        : window.confirm(
+            `Archive the "${selectedPreset.display.name}" preset? It will leave the active list while historical runs are retained.`,
+          );
+    if (!confirmed) return;
+
+    await withPending(async () => {
+      // The archive response is intentionally not an active preset; keep this
+      // workflow explicit rather than reusing the generic mutate helper.
+      const archived = await readProxyJson(
+        adminPresetListProxyPath,
+        archiveAdminPresetResponseSchema,
+        {
+          method: "DELETE",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(parsed.data),
+        },
+      );
+      if (archived.status !== "available") {
+        setNotice(archived.reason);
+        return;
+      }
+
+      const refreshed = await readProxyJson(
+        adminPresetListProxyPath,
+        adminPresetListResponseSchema,
+      );
+      setPresetsRead(refreshed);
+      const remaining = refreshed.status === "available" ? refreshed.data.presets : [];
+      const next = remaining[0] ?? null;
+      setSelectedSlug(next?.slug ?? null);
+      draftSlugRef.current = next?.slug ?? null;
+      isDraftDirtyRef.current = false;
+      setDraft(next ? draftFromPreset(next) : null);
+      setDuplicateTargetSlug(next ? `${next.slug}-copy` : "");
+      setNotice("Preset archived.");
+    });
+  }
+
   async function mutate(path: string, body: unknown, successNotice: string) {
     await withPending(async () => {
       const mutation = await readProxyJson(path, adminPresetMutationResponseSchema, {
@@ -381,6 +432,7 @@ export function AdminPresetController({
       duplicateTargetSlug={duplicateTargetSlug}
       isPending={isPending}
       notice={notice}
+      onArchive={() => void archive()}
       onCopyToCustom={() => void copyToCustom()}
       onDuplicate={(targetSlug) => void duplicate(targetSlug)}
       onDuplicateTargetSlugChange={setDuplicateTargetSlug}
