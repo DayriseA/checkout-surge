@@ -10,7 +10,10 @@ import {
   type SecuredReservationHold,
   type StockReservationDecision,
 } from "@checkout-surge/contracts";
-import type { DashboardSnapshotPublicationSchedulerPort } from "./dashboard-snapshot-publication-scheduler.js";
+import type {
+  DashboardSnapshotPublicationSchedulerPort,
+  SoldOutObservationPort,
+} from "./dashboard-snapshot-publication-scheduler.js";
 import type { OrderProcessJobPublisher } from "./order-process-job-publisher.js";
 
 export const definitivePersistenceRejectionCode = "run_sale_offer_mismatch" as const;
@@ -174,6 +177,7 @@ export class ReserveOrderService {
     report: BusinessOutcomeUpdateFailureReport,
   ) => void;
   private readonly dashboardSnapshotPublications: DashboardSnapshotPublicationSchedulerPort;
+  private readonly soldOutObservations: SoldOutObservationPort;
 
   constructor(options: {
     persistence: BuyPersistence;
@@ -193,6 +197,7 @@ export class ReserveOrderService {
     scheduleBusinessOutcomeUpdate?: BusinessOutcomeUpdateScheduler;
     reportBusinessOutcomeUpdateFailure?: (report: BusinessOutcomeUpdateFailureReport) => void;
     dashboardSnapshotPublications?: DashboardSnapshotPublicationSchedulerPort;
+    soldOutObservations?: SoldOutObservationPort;
   }) {
     this.persistence = options.persistence;
     this.stockReservations = options.stockReservations;
@@ -223,6 +228,7 @@ export class ReserveOrderService {
       scheduleInventory: () => undefined,
       scheduleQueue: () => undefined,
     };
+    this.soldOutObservations = options.soldOutObservations ?? { observeSoldOut: () => undefined };
   }
 
   async reserve(input: {
@@ -239,8 +245,20 @@ export class ReserveOrderService {
       reservation,
     });
 
+    if (decision.outcome === "sold_out") {
+      try {
+        this.soldOutObservations.observeSoldOut({
+          saleOfferId: input.request.saleOfferId,
+          ...(input.request.runId ? { runId: input.request.runId } : {}),
+          correlationId: input.correlationId,
+        });
+      } catch {
+        // Sold-out observability is advisory and cannot alter the rejection.
+      }
+      return this.rejectedResponse(decision.outcome, input.correlationId, now);
+    }
+
     if (
-      decision.outcome === "sold_out" ||
       decision.outcome === "run_not_accepting_traffic" ||
       decision.outcome === "inventory_not_initialized" ||
       decision.outcome === "idempotency_conflict" ||
@@ -351,6 +369,7 @@ export class ReserveOrderService {
     outcome: "reservation_pending_persistence" | "idempotent_replay";
   }): Promise<BuyResponse> {
     let persisted: PersistedBuyAcceptance | null;
+    let durableStateChanged = false;
     try {
       persisted = await this.withPersistenceAdmissionLock(
         input.reservation,
@@ -390,6 +409,7 @@ export class ReserveOrderService {
           }
 
           await this.enqueuePersistedBuy(materialized, input.idempotencyKey, input.reservation);
+          durableStateChanged = true;
           return materialized;
         },
       );
@@ -405,7 +425,9 @@ export class ReserveOrderService {
     }
 
     await this.promoteWithoutHidingDurableSuccess(input.idempotencyKey, input.reservation);
-    this.scheduleBusinessOutcomeUpdateWithoutHidingDurableSuccess(input.reservation, input.now);
+    if (durableStateChanged) {
+      this.scheduleBusinessOutcomeUpdateWithoutHidingDurableSuccess(input.reservation, input.now);
+    }
     return this.acceptedResponse(persisted, input.correlationId);
   }
 

@@ -269,8 +269,18 @@ export async function getInventoryStatus(
       ),
       latestObservedAt: reservationOutcomeValues[1] ?? null,
     },
-    lastUpdatedAt: requireStateValue(state, "lastUpdatedAt"),
+    lastUpdatedAt: latestInventoryObservationAt(
+      requireStateValue(state, "lastUpdatedAt"),
+      reservationOutcomeValues[1] ?? null,
+    ),
   });
+}
+
+function latestInventoryObservationAt(stockUpdatedAt: string, soldOutObservedAt: string | null) {
+  if (!soldOutObservedAt) return stockUpdatedAt;
+  return Date.parse(soldOutObservedAt) > Date.parse(stockUpdatedAt)
+    ? soldOutObservedAt
+    : stockUpdatedAt;
 }
 
 const setRunSaleEligibilityScript = `

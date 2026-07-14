@@ -34,13 +34,14 @@ export interface ReusableErpConfirmationAttempt {
 
 export interface ErpAttemptPersistence {
   findSuccessfulAttempt(job: OrderProcessJob): Promise<ReusableErpConfirmationAttempt | null>;
-  recordAttempt(record: ErpAttemptRecord): Promise<void>;
+  // biome-ignore lint/suspicious/noConfusingVoidType: void keeps existing adapters/test doubles source-compatible while boolean reports freshness.
+  recordAttempt(record: ErpAttemptRecord): Promise<boolean | void>;
 }
 
 export class ErpConfirmationFailedError extends Error {
   override readonly name = "ErpConfirmationFailedError";
 
-  constructor(readonly response: ErpConfirmationResponse) {
+  constructor(readonly response: ErpConfirmationResponse, readonly attemptRecorded = true) {
     super(response.errorMessage ?? "The ERP rejected the confirmation request.");
   }
 }
@@ -64,7 +65,7 @@ export class ErpConfirmationRequestError extends Error {
 export class ErpConfirmationTimeoutError extends Error {
   override readonly name = "ErpConfirmationTimeoutError";
 
-  constructor(readonly timeoutMs: number) {
+  constructor(readonly timeoutMs: number, readonly attemptRecorded = true) {
     super(`The ERP confirmation request timed out after ${timeoutMs}ms.`);
   }
 }
@@ -191,17 +192,17 @@ export class HttpErpOrderConfirmation implements OrderConfirmation {
       if (parsed.status === "succeeded") {
         Object.defineProperty(record, "response", { value: parsed, enumerable: false });
       }
-      await this.recordAttempt(record);
+      const attemptRecorded = await this.recordAttempt(record);
 
       if (parsed.status !== "succeeded") {
-        throw new ErpConfirmationFailedError(parsed);
+        throw new ErpConfirmationFailedError(parsed, attemptRecorded);
       }
 
       return parsed;
     } catch (error) {
       if (isAbortError(error)) {
         const finishedAt = this.now();
-        await this.recordAttempt({
+        const attemptRecorded = await this.recordAttempt({
           job,
           delivery,
           status: "timed_out",
@@ -211,7 +212,7 @@ export class HttpErpOrderConfirmation implements OrderConfirmation {
           startedAt,
           finishedAt,
         });
-        throw new ErpConfirmationTimeoutError(requestTimeoutMs);
+        throw new ErpConfirmationTimeoutError(requestTimeoutMs, attemptRecorded);
       }
 
       if (
@@ -223,7 +224,7 @@ export class HttpErpOrderConfirmation implements OrderConfirmation {
 
       if (error instanceof ErpConfirmationInvalidResponseError) {
         const finishedAt = this.now();
-        await this.recordAttempt({
+        const attemptRecorded = await this.recordAttempt({
           job,
           delivery,
           status: "failed",
@@ -234,11 +235,12 @@ export class HttpErpOrderConfirmation implements OrderConfirmation {
           startedAt,
           finishedAt,
         });
+        Object.defineProperty(error, "attemptRecorded", { value: attemptRecorded });
         throw error;
       }
 
       const finishedAt = this.now();
-      await this.recordAttempt({
+      const attemptRecorded = await this.recordAttempt({
         job,
         delivery,
         status: "failed",
@@ -248,15 +250,17 @@ export class HttpErpOrderConfirmation implements OrderConfirmation {
         startedAt,
         finishedAt,
       });
-      throw new ErpConfirmationRequestError(error);
+      const requestError = new ErpConfirmationRequestError(error);
+      Object.defineProperty(requestError, "attemptRecorded", { value: attemptRecorded });
+      throw requestError;
     } finally {
       clearTimeout(timeout);
     }
   }
 
-  private async recordAttempt(record: ErpAttemptRecord): Promise<void> {
+  private async recordAttempt(record: ErpAttemptRecord): Promise<boolean> {
     try {
-      await this.attemptPersistence.recordAttempt(record);
+      return (await this.attemptPersistence.recordAttempt(record)) !== false;
     } catch (error) {
       if (record.status === "succeeded") {
         throw new ErpAcceptedConfirmationPersistenceError(error, record);

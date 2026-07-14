@@ -3,6 +3,7 @@ import type { DashboardEvent, InventoryStatus, QueueStatus } from "@checkout-sur
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 
 export const dashboardQueueRefreshIntervalMs = 2_000;
+export const soldOutPublicationWindowMs = 500;
 
 export interface DashboardSnapshotPublicationRequest {
   saleOfferId: string;
@@ -20,6 +21,10 @@ export interface DashboardSnapshotPublicationSchedulerPort {
   scheduleQueue(request: DashboardQueuePublicationRequest): void;
 }
 
+export interface SoldOutObservationPort {
+  observeSoldOut(request: DashboardSnapshotPublicationRequest): void;
+}
+
 type PendingPublication =
   | { kind: "inventory"; request: DashboardSnapshotPublicationRequest }
   | { kind: "queue"; request: DashboardQueuePublicationRequest };
@@ -28,11 +33,14 @@ export class DashboardSnapshotPublicationScheduler
   implements DashboardSnapshotPublicationSchedulerPort
 {
   private readonly pending = new Map<string, PendingPublication>();
+  private readonly pendingSoldOut = new Map<string, DashboardSnapshotPublicationRequest>();
   private scheduledDrain: NodeJS.Immediate | null = null;
   private delayedQueueRefresh: NodeJS.Timeout | null = null;
+  private soldOutTimer: NodeJS.Timeout | null = null;
   private drainInFlight: Promise<void> | null = null;
   private latestQueueRequest: DashboardQueuePublicationRequest | null = null;
   private accepting = true;
+  private abandoned = false;
 
   constructor(
     private readonly options: {
@@ -42,11 +50,13 @@ export class DashboardSnapshotPublicationScheduler
       logger: CheckoutSurgeLogger;
       maxPendingScopes?: number;
       queueRefreshIntervalMs?: number;
+      soldOutWindowMs?: number;
+      closeTimeoutMs?: number;
     },
   ) {}
 
   scheduleInventory(request: DashboardSnapshotPublicationRequest): void {
-    this.schedule(`inventory:${request.saleOfferId}`, { kind: "inventory", request });
+    this.schedule(inventoryScopeKey(request), { kind: "inventory", request });
   }
 
   scheduleQueue(request: DashboardQueuePublicationRequest): void {
@@ -56,7 +66,49 @@ export class DashboardSnapshotPublicationScheduler
     this.schedule("queue", { kind: "queue", request });
   }
 
+  observeSoldOut(request: DashboardSnapshotPublicationRequest): void {
+    if (!this.accepting) return;
+    const key = inventoryScopeKey(request);
+    const maxPendingScopes = this.options.maxPendingScopes ?? 64;
+    if (!this.pendingSoldOut.has(key) && this.pendingSoldOut.size >= maxPendingScopes) {
+      const oldest = this.pendingSoldOut.keys().next().value as string | undefined;
+      if (oldest) {
+        this.pendingSoldOut.delete(oldest);
+        this.options.logger.warn(
+          { maxPendingScopes, droppedScope: oldest },
+          "Sold-out dashboard observation scope limit reached; dropped the oldest scope.",
+        );
+      }
+    }
+    this.pendingSoldOut.set(key, request);
+    if (!this.soldOutTimer) {
+      this.soldOutTimer = setTimeout(() => {
+        this.soldOutTimer = null;
+        this.releaseSoldOutScopes();
+      }, this.options.soldOutWindowMs ?? soldOutPublicationWindowMs);
+      this.soldOutTimer.unref();
+    }
+  }
+
+  clearRun(runId: string): void {
+    for (const [key, request] of this.pendingSoldOut) {
+      if (request.runId === runId) this.pendingSoldOut.delete(key);
+    }
+    for (const [key, publication] of this.pending) {
+      if (publication.request.runId === runId) this.pending.delete(key);
+    }
+    if (this.latestQueueRequest?.runId === runId) {
+      this.latestQueueRequest = null;
+      this.cancelDelayedQueueRefresh();
+    }
+  }
+
   async flush(): Promise<void> {
+    if (this.soldOutTimer) {
+      clearTimeout(this.soldOutTimer);
+      this.soldOutTimer = null;
+    }
+    this.releaseSoldOutScopes();
     if (this.scheduledDrain) {
       clearImmediate(this.scheduledDrain);
       this.scheduledDrain = null;
@@ -73,11 +125,35 @@ export class DashboardSnapshotPublicationScheduler
   async close(): Promise<void> {
     this.accepting = false;
     this.cancelDelayedQueueRefresh();
-    await this.flush();
+    let timeout: NodeJS.Timeout | undefined;
+    await Promise.race([
+      this.flush(),
+      new Promise<void>((resolve) => {
+        timeout = setTimeout(() => {
+          this.abandoned = true;
+          this.pending.clear();
+          this.pendingSoldOut.clear();
+          resolve();
+        }, this.options.closeTimeoutMs ?? 5_000);
+        timeout.unref();
+      }),
+    ]).finally(() => {
+      if (timeout) clearTimeout(timeout);
+    });
+    this.pending.clear();
+    this.pendingSoldOut.clear();
   }
 
-  private schedule(key: string, publication: PendingPublication): void {
-    if (!this.accepting) return;
+  private releaseSoldOutScopes(): void {
+    const requests = [...this.pendingSoldOut.values()];
+    this.pendingSoldOut.clear();
+    for (const request of requests) {
+      this.schedule(inventoryScopeKey(request), { kind: "inventory", request }, true);
+    }
+  }
+
+  private schedule(key: string, publication: PendingPublication, duringClose = false): void {
+    if (!this.accepting && !duringClose) return;
 
     const maxPendingScopes = this.options.maxPendingScopes ?? 64;
     if (!this.pending.has(key) && this.pending.size >= maxPendingScopes) {
@@ -124,6 +200,7 @@ export class DashboardSnapshotPublicationScheduler
   private async publishBatch(batch: readonly PendingPublication[]): Promise<void> {
     // Deliberately sequential: there is at most one inspection/publication operation in flight.
     for (const publication of batch) {
+      if (this.abandoned) break;
       try {
         await this.publishSnapshot(publication);
       } catch (error) {
@@ -156,7 +233,7 @@ export class DashboardSnapshotPublicationScheduler
         ...(publication.request.runId ? { runId: publication.request.runId } : {}),
         correlationId: publication.request.correlationId,
         // Source time prevents a slow read from masquerading as a newer observation.
-        occurredAt: inventory.lastUpdatedAt,
+        occurredAt: latestInventoryObservationAt(inventory),
         inventory,
       });
       return;
@@ -202,4 +279,16 @@ export class DashboardSnapshotPublicationScheduler
     clearTimeout(this.delayedQueueRefresh);
     this.delayedQueueRefresh = null;
   }
+}
+
+function latestInventoryObservationAt(inventory: InventoryStatus): string {
+  const soldOutObservedAt = inventory.soldOutPressure.latestObservedAt;
+  if (!soldOutObservedAt) return inventory.lastUpdatedAt;
+  return Date.parse(soldOutObservedAt) > Date.parse(inventory.lastUpdatedAt)
+    ? soldOutObservedAt
+    : inventory.lastUpdatedAt;
+}
+
+function inventoryScopeKey(request: DashboardSnapshotPublicationRequest): string {
+  return `inventory:${request.runId ?? "none"}:${request.saleOfferId}`;
 }

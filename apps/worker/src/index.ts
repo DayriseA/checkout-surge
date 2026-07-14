@@ -1,5 +1,6 @@
 import { contractsPackageName } from "@checkout-surge/contracts";
 import {
+  BusinessOutcomePublicationScheduler,
   createDatabaseConnection,
   dbPackageName,
   publishBusinessOutcomeDashboardUpdate,
@@ -151,6 +152,21 @@ export async function startWorker(): Promise<void> {
   });
   const runConfigReader = new PostgresRunConfigReader(database.db);
   const erpAttemptPersistence = new PostgresErpAttemptPersistence(database.db);
+  const businessOutcomePublications = new BusinessOutcomePublicationScheduler({
+    publish: (input) => publishBusinessOutcomeDashboardUpdate(database.db, redis, input),
+    onError: (error, input) => {
+      logger.error(
+        { err: error, saleOfferId: input.saleOfferId, ...(input.runId ? { runId: input.runId } : {}) },
+        "Dashboard business outcome projection failed.",
+      );
+    },
+    onDrop: (input) => {
+      logger.warn(
+        { saleOfferId: input.saleOfferId, ...(input.runId ? { runId: input.runId } : {}) },
+        "Business outcome dashboard scope limit reached; dropped the oldest dirty scope.",
+      );
+    },
+  });
   const notificationRecordPublisher = createBullMqNotificationRecordPublisher({
     connection: {
       url: config.redisUrl,
@@ -301,7 +317,7 @@ export async function startWorker(): Promise<void> {
         );
       },
       publishBusinessOutcomeUpdate: async (job) => {
-        await publishBusinessOutcomeDashboardUpdate(database.db, redis, {
+        businessOutcomePublications.markDirty({
           saleOfferId: job.saleOfferId,
           ...(job.runId ? { runId: job.runId } : {}),
           correlationId: job.correlationId,
@@ -334,7 +350,7 @@ export async function startWorker(): Promise<void> {
       persistence: new PostgresNotificationRecordPersistence(database.db),
       logger,
       publishBusinessOutcomeUpdate: async (job) => {
-        await publishBusinessOutcomeDashboardUpdate(database.db, redis, {
+        businessOutcomePublications.markDirty({
           saleOfferId: job.saleOfferId,
           ...(job.runId ? { runId: job.runId } : {}),
           correlationId: job.correlationId,
@@ -376,6 +392,7 @@ export async function startWorker(): Promise<void> {
     orderRecoveryScanner,
     closeOrderProcessJobPublisher: orderProcessJobPublisher.close,
     closeNotificationRecordPublisher: notificationRecordPublisher.close,
+    closeBusinessOutcomePublicationScheduler: () => businessOutcomePublications.close(),
     closePostgres: database.close,
     closeRedis: async () => {
       await redis.quit();

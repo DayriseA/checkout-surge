@@ -4,6 +4,71 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { DashboardSnapshotPublicationScheduler } from "../src/services/dashboard-snapshot-publication-scheduler.js";
 
 describe("DashboardSnapshotPublicationScheduler", () => {
+  it("does no work on the sold-out loser path and coalesces a burst at 500 ms", async () => {
+    vi.useFakeTimers();
+    const readInventory = vi.fn().mockResolvedValue(
+      inventoryFixture({ soldOutCount: 100, soldOutObservedAt: "2026-07-13T12:00:03.000Z" }),
+    );
+    const publish = vi.fn().mockResolvedValue(undefined);
+    const scheduler = new DashboardSnapshotPublicationScheduler({
+      readInventory,
+      readQueue: vi.fn().mockResolvedValue(queueFixture()),
+      publish,
+      logger: createSilentLogger("api"),
+    });
+    for (let index = 0; index < 100; index += 1) scheduler.observeSoldOut(scope(`corr-${index}`));
+    expect(readInventory).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(499);
+    expect(readInventory).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    await scheduler.flush();
+    expect(readInventory).toHaveBeenCalledOnce();
+    expect(publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "inventory.updated",
+        occurredAt: "2026-07-13T12:00:03.000Z",
+        correlationId: "corr-99",
+      }),
+    );
+    await scheduler.close();
+  });
+
+  it("removes reset-run sold-out scopes before they can read or publish", async () => {
+    vi.useFakeTimers();
+    const readInventory = vi.fn().mockResolvedValue(inventoryFixture());
+    const scheduler = new DashboardSnapshotPublicationScheduler({
+      readInventory,
+      readQueue: vi.fn().mockResolvedValue(queueFixture()),
+      publish: vi.fn().mockResolvedValue(undefined),
+      logger: createSilentLogger("api"),
+    });
+    scheduler.observeSoldOut(scope("corr-reset"));
+    scheduler.clearRun(runId);
+    await vi.advanceTimersByTimeAsync(500);
+    await scheduler.flush();
+    expect(readInventory).not.toHaveBeenCalled();
+    await scheduler.close();
+  });
+
+  it("keeps sold-out run scopes isolated even when they share a sale offer", async () => {
+    vi.useFakeTimers();
+    const readInventory = vi.fn().mockResolvedValue(inventoryFixture());
+    const scheduler = new DashboardSnapshotPublicationScheduler({
+      readInventory,
+      readQueue: vi.fn().mockResolvedValue(queueFixture()),
+      publish: vi.fn().mockResolvedValue(undefined),
+      logger: createSilentLogger("api"),
+    });
+    scheduler.observeSoldOut(scope("corr-first"));
+    scheduler.observeSoldOut({
+      ...scope("corr-second"),
+      runId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    });
+    await vi.advanceTimersByTimeAsync(500);
+    await scheduler.flush();
+    expect(readInventory).toHaveBeenCalledTimes(2);
+    await scheduler.close();
+  });
   it("coalesces dirty scopes and publishes source-timestamped full snapshots", async () => {
     const publish = vi.fn().mockResolvedValue(undefined);
     const readInventory = vi.fn().mockResolvedValue(inventoryFixture());
@@ -67,6 +132,65 @@ describe("DashboardSnapshotPublicationScheduler", () => {
     expect(publish).toHaveBeenCalledTimes(2);
     expect(publish.mock.calls[1]?.[0]).toEqual(
       expect.objectContaining({ correlationId: "corr-during-flight" }),
+    );
+    await scheduler.close();
+  });
+
+  it("retains a sold-out observation during an in-flight sold-out publication", async () => {
+    vi.useFakeTimers();
+    let releaseFirst: (() => void) | undefined;
+    let inFlight = 0;
+    let maximumInFlight = 0;
+    const publish = vi
+      .fn()
+      .mockImplementationOnce(async () => {
+        inFlight += 1;
+        maximumInFlight = Math.max(maximumInFlight, inFlight);
+        await new Promise<void>((resolve) => (releaseFirst = resolve));
+        inFlight -= 1;
+      })
+      .mockImplementation(async () => {
+        inFlight += 1;
+        maximumInFlight = Math.max(maximumInFlight, inFlight);
+        inFlight -= 1;
+      });
+    const readInventory = vi
+      .fn()
+      .mockResolvedValueOnce(
+        inventoryFixture({ soldOutCount: 1, soldOutObservedAt: "2026-07-13T12:00:03.000Z" }),
+      )
+      .mockResolvedValueOnce(
+        inventoryFixture({ soldOutCount: 2, soldOutObservedAt: "2026-07-13T12:00:04.000Z" }),
+      );
+    const scheduler = new DashboardSnapshotPublicationScheduler({
+      readInventory,
+      readQueue: vi.fn().mockResolvedValue(queueFixture()),
+      publish,
+      logger: createSilentLogger("api"),
+    });
+
+    scheduler.observeSoldOut(scope("corr-first"));
+    await vi.advanceTimersByTimeAsync(500);
+    await vi.runOnlyPendingTimersAsync();
+    expect(publish).toHaveBeenCalledOnce();
+    scheduler.observeSoldOut(scope("corr-during-flight"));
+    await vi.advanceTimersByTimeAsync(500);
+    expect(publish).toHaveBeenCalledOnce();
+
+    releaseFirst?.();
+    await scheduler.flush();
+
+    expect(readInventory).toHaveBeenCalledTimes(2);
+    expect(publish).toHaveBeenCalledTimes(2);
+    expect(maximumInFlight).toBe(1);
+    expect(publish.mock.calls[1]?.[0]).toEqual(
+      expect.objectContaining({
+        correlationId: "corr-during-flight",
+        occurredAt: "2026-07-13T12:00:04.000Z",
+        inventory: expect.objectContaining({
+          soldOutPressure: expect.objectContaining({ rejectionCount: 2 }),
+        }),
+      }),
     );
     await scheduler.close();
   });
@@ -175,6 +299,87 @@ describe("DashboardSnapshotPublicationScheduler", () => {
 
     expect(publish).toHaveBeenCalledOnce();
   });
+
+  it("abandons later captured scopes when the close deadline expires", async () => {
+    vi.useFakeTimers();
+    let rejectFirst: (() => void) | undefined;
+    const publish = vi.fn(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectFirst = () => reject(new Error("late dashboard failure"));
+        }),
+    );
+    const scheduler = new DashboardSnapshotPublicationScheduler({
+      readInventory: vi.fn().mockResolvedValue(inventoryFixture()),
+      readQueue: vi.fn().mockResolvedValue(queueFixture()),
+      publish,
+      logger: createSilentLogger("api"),
+      closeTimeoutMs: 25,
+    });
+    scheduler.scheduleInventory(scope("corr-hung"));
+    scheduler.scheduleInventory({
+      ...scope("corr-later"),
+      saleOfferId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    });
+    const closing = scheduler.close();
+    await vi.advanceTimersByTimeAsync(25);
+    await expect(closing).resolves.toBeUndefined();
+    rejectFirst?.();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(publish).toHaveBeenCalledOnce();
+  });
+
+  it("flushes and awaits a pending sold-out observation on normal close", async () => {
+    vi.useFakeTimers();
+    let release: (() => void) | undefined;
+    const publish = vi.fn(() => new Promise<void>((resolve) => (release = resolve)));
+    const scheduler = new DashboardSnapshotPublicationScheduler({
+      readInventory: vi.fn().mockResolvedValue(inventoryFixture()),
+      readQueue: vi.fn().mockResolvedValue(queueFixture()),
+      publish,
+      logger: createSilentLogger("api"),
+    });
+    scheduler.observeSoldOut(scope("corr-close"));
+    let closed = false;
+    const closing = scheduler.close().then(() => {
+      closed = true;
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(publish).toHaveBeenCalledOnce();
+    expect(closed).toBe(false);
+    release?.();
+    await closing;
+    expect(closed).toBe(true);
+  });
+
+  it("logs and drops the oldest pending sold-out scope at the configured bound", async () => {
+    vi.useFakeTimers();
+    const logger = createSilentLogger("api");
+    const warn = vi.spyOn(logger, "warn");
+    const publish = vi.fn().mockResolvedValue(undefined);
+    const scheduler = new DashboardSnapshotPublicationScheduler({
+      readInventory: vi.fn().mockResolvedValue(inventoryFixture()),
+      readQueue: vi.fn().mockResolvedValue(queueFixture()),
+      publish,
+      logger,
+      maxPendingScopes: 1,
+    });
+    scheduler.observeSoldOut(scope("corr-oldest"));
+    scheduler.observeSoldOut({
+      ...scope("corr-newest"),
+      runId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    });
+    await scheduler.flush();
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({ maxPendingScopes: 1 }),
+      expect.stringContaining("dropped the oldest scope"),
+    );
+    expect(publish).toHaveBeenCalledOnce();
+    expect(publish).toHaveBeenCalledWith(expect.objectContaining({ correlationId: "corr-newest" }));
+    await scheduler.close();
+  });
 });
 
 afterEach(() => {
@@ -188,7 +393,9 @@ function scope(correlationId: string) {
   return { saleOfferId, runId, correlationId };
 }
 
-function inventoryFixture(): InventoryStatus {
+function inventoryFixture(
+  options: { soldOutCount?: number; soldOutObservedAt?: string | null } = {},
+): InventoryStatus {
   return {
     saleOfferId,
     allocatedStock: 10,
@@ -204,7 +411,10 @@ function inventoryFixture(): InventoryStatus {
       unit: "reservations_per_second",
       measuredAt: "2026-07-13T12:00:01.000Z",
     },
-    soldOutPressure: { rejectionCount: 0, latestObservedAt: null },
+    soldOutPressure: {
+      rejectionCount: options.soldOutCount ?? 0,
+      latestObservedAt: options.soldOutObservedAt ?? null,
+    },
     lastUpdatedAt: "2026-07-13T12:00:00.000Z",
   };
 }

@@ -39,10 +39,10 @@ export class PostgresErpAttemptPersistence implements ErpAttemptPersistence {
       : null;
   }
 
-  async recordAttempt(record: ErpAttemptRecord): Promise<void> {
+  async recordAttempt(record: ErpAttemptRecord): Promise<boolean> {
     const deliveryId = record.delivery.deliveryId ?? record.job.orderId;
     const idempotencyKey = successfulIdempotencyKey(record);
-    await this.db.transaction(async (tx) => {
+    return this.db.transaction(async (tx) => {
       if (idempotencyKey) {
         const [existingSuccess] = await tx
           .select()
@@ -53,7 +53,7 @@ export class PostgresErpAttemptPersistence implements ErpAttemptPersistence {
           if (!sameExternalSuccess(existingSuccess, record)) {
             throw new ErpAttemptContradictionError(record.job.orderId);
           }
-          return;
+          return false;
         }
       }
       const [existingAttempt] = await tx
@@ -71,7 +71,7 @@ export class PostgresErpAttemptPersistence implements ErpAttemptPersistence {
         if (!sameAttempt(existingAttempt, record)) {
           throw new ErpAttemptContradictionError(record.job.orderId);
         }
-        return;
+        return false;
       }
 
       const attemptValues = {
@@ -116,7 +116,7 @@ export class PostgresErpAttemptPersistence implements ErpAttemptPersistence {
           if (!sameAttempt(canonical, record)) {
             throw new ErpAttemptContradictionError(record.job.orderId);
           }
-          return;
+          return false;
         }
         if (idempotencyKey) {
           const [canonicalSuccess] = await tx
@@ -124,7 +124,7 @@ export class PostgresErpAttemptPersistence implements ErpAttemptPersistence {
             .from(erpAttempts)
             .where(eq(erpAttempts.idempotencyKey, idempotencyKey))
             .limit(1);
-          if (canonicalSuccess && sameExternalSuccess(canonicalSuccess, record)) return;
+          if (canonicalSuccess && sameExternalSuccess(canonicalSuccess, record)) return false;
         }
         throw new ErpAttemptContradictionError(record.job.orderId);
       }
@@ -151,6 +151,7 @@ export class PostgresErpAttemptPersistence implements ErpAttemptPersistence {
         source: "worker",
         occurredAt: record.finishedAt,
       });
+      return true;
     });
   }
 }

@@ -14,6 +14,7 @@ describe("API resource cleanup", () => {
     const closeDashboardPublicationScheduler = vi.fn(async () => {
       expect(serverClosed).toBe(true);
     });
+    const closeBusinessOutcomePublicationScheduler = vi.fn(async () => undefined);
     const closeDashboardEventSubscriber = vi.fn(async () => {
       expect(serverClosed).toBe(true);
     });
@@ -33,6 +34,7 @@ describe("API resource cleanup", () => {
     await closeApiResources({
       closeServer,
       closeDashboardPublicationScheduler,
+      closeBusinessOutcomePublicationScheduler,
       closeDashboardEventSubscriber,
       closeOrderProcessJobPublisher,
       closeOrderProcessQueueInspector,
@@ -43,6 +45,7 @@ describe("API resource cleanup", () => {
 
     expect(closeServer).toHaveBeenCalledOnce();
     expect(closeDashboardPublicationScheduler).toHaveBeenCalledOnce();
+    expect(closeBusinessOutcomePublicationScheduler).toHaveBeenCalledOnce();
     expect(closeDashboardEventSubscriber).toHaveBeenCalledOnce();
     expect(closeOrderProcessJobPublisher).toHaveBeenCalledOnce();
     expect(closeOrderProcessQueueInspector).toHaveBeenCalledOnce();
@@ -63,6 +66,7 @@ describe("API resource cleanup", () => {
     const closeServer = vi.fn().mockRejectedValue(serverError);
     const closeDashboardEventSubscriber = vi.fn().mockRejectedValue(subscriberError);
     const closeDashboardPublicationScheduler = vi.fn().mockRejectedValue(schedulerError);
+    const closeBusinessOutcomePublicationScheduler = vi.fn(async () => undefined);
     const closeOrderProcessJobPublisher = vi.fn().mockRejectedValue(publisherError);
     const closeOrderProcessQueueInspector = vi.fn().mockRejectedValue(inspectorError);
     const closeDemoQueueMaintenance = vi.fn().mockRejectedValue(maintenanceError);
@@ -76,6 +80,7 @@ describe("API resource cleanup", () => {
       await closeApiResources({
         closeServer,
         closeDashboardPublicationScheduler,
+        closeBusinessOutcomePublicationScheduler,
         closeDashboardEventSubscriber,
         closeOrderProcessJobPublisher,
         closeOrderProcessQueueInspector,

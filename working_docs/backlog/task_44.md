@@ -85,3 +85,39 @@ Individual losers are kept cheap, but there is no live sold-out aggregate during
 - Multi-instance tests at the chosen boundary prove either the documented per-instance upper bound or shared lease/claim behavior under two publishers, lease expiry, owner crash, duplicate claims, and restart. Assertions should use cumulative authoritative state rather than exactly-once event counts.
 - Contract/reducer tests cover the precise event shape, units, aggregation/window label, run/sale filtering, timestamp ordering, duplicate handling, and recovery replacement. Existing slow-SSE-client eviction and 20-sample UI retention must remain bounded.
 - Add an instrumentation assertion or benchmark harness around representative burst input so the acceptance criterion is measurable: per-loser database work remains zero; sold-out publishes are bounded by dirty scopes per 500 ms; metric network operations are bounded by configured batch/window limits; business projection SQL rebuilds are bounded by dirty scopes per projection window, not transition count.
+
+## Implementation record (2026-07-14)
+
+### Status
+
+Implemented. Live sold-out inventory signalling, traffic metric persistence/publication, and business-outcome recomputation now have explicit input, scope, time-window, and single-flight bounds while retaining Redis/PostgreSQL recovery and terminal authority.
+
+### Completed scope and decisions
+
+- Reused Task 27's full `inventory.updated` producer rather than adding a second event contract or poller. `ReserveOrderService` calls a narrow synchronous observer only for the fresh Redis `sold_out` result; it performs no I/O/await, catches observer failure, and does not run for other rejection, accepted, or replay outcomes. The shared scheduler coalesces by `(runId, saleOfferId)` for 500 ms, bounds pending scopes at 64, logs and drops the oldest pending scope on overflow, remains sequential/single-flight, retains dirty-during-read observations, flushes on close, and clears reset scopes.
+- Kept cumulative Redis semantics. `getInventoryStatus()` now makes `lastUpdatedAt` the newer of the stock-state timestamp and Lua-maintained sold-out observation timestamp. This changes no loser-path Redis operations and lets the existing browser watermark/replacement rules apply newer cumulative sold-out snapshots after stock stops changing; duplicates and out-of-order delivery cannot increment or regress the display.
+- Added an explicit `samples.max(100)` ingest contract matching Task 30's producer batch size. `RedisDashboardTrafficMetricStore` preserves sample/event fields and the stronger reset-fence atomicity, performs the fence check plus `RPUSH`/`LTRIM`/`EXPIRE` and all Pub/Sub publishes in one `EVAL`, serializes concurrent calls so only one Redis command is in flight per store, retains at most ten accepted/queued batches, and acknowledge-drops a newer overflow batch. Empty batches remain contract-invalid.
+- Added one reusable `BusinessOutcomePublicationScheduler` per API and worker process. Its pending map holds at most 64 `(runId, saleOfferId)` dirty scopes plus the current previously captured batch of at most 64 scopes; pending overflow logs and drops the oldest pending scope. It uses a 500 ms window, runs one full-replacement projection at a time, retains dirtiness observed during a read, and contains publish/read/reporting failures. Normal close flushes final work; if its five-second deadline expires, the current unabortable operation may settle later but no subsequent captured or pending scope starts before Redis/PostgreSQL close. Reset clears API-local pending scopes. Terminal paths retain no separate aggregate state: the short pending window is advisory and terminal recovery/finalization remains authoritative.
+- API acceptance, fresh pending-persistence materialization after successful enqueue, and fresh worker processing/retry/terminal/notification mutations now only mark the scheduler dirty. The reconciler marks before Redis promotion so a later promotion failure cannot lose the already-durable advisory signal; replay/reassertion and enqueue failure do not mark. PostgreSQL terminal transitions and ERP-attempt persistence report fresh versus replay/no-op results so detected no-ops do not dirty; existing test doubles returning `void` remain source-compatible and are treated as fresh. Business-outcome events remain full cumulative replacements, so duplicate process-local publications are safe.
+- Chose the permitted process-local bound because the reference deployment composes one API and one worker. With multiple replicas, the maximum projection rate scales by instance count and cumulative snapshots may be duplicated; there is no exactly-once promise or shared lease. A crash can lose pending advisory dirtiness, while dashboard recovery, Redis inventory counters, PostgreSQL, finalization, and terminal summaries remain authoritative.
+- Updated architecture, cross-service conventions, metric-streaming, and repository-layout documentation to match the implemented bounds, timestamps, lifecycle order, and multi-instance semantics.
+
+### Verification
+
+- Review cycle correction: pending-persistence reconciliation now dirties outcomes only for fresh materialization after enqueue (before promotion), scheduler deadlines abandon later captured scopes, scope overflow is observable, and freshness/close boundaries have direct regression coverage.
+- Final review cycle added direct sold-out dirty-during-publication coverage and business projection rejection/continuation coverage, and clarified that the 64-scope limit applies to the pending map alongside a separately bounded captured batch.
+- `node scripts/run-with-test-env.mjs pnpm --filter api exec vitest run --config vitest.api.config.ts test/pending-persistence-reconciler.test.ts test/reserve-order-service.test.ts test/dashboard-snapshot-publication-scheduler.test.ts test/api-resource-cleanup.test.ts test/dashboard-traffic-metric-store-unit.test.ts`: 5 files, 55 tests passed.
+- `pnpm --filter @checkout-surge/db test:unit`: 4 files, 31 tests passed.
+- `pnpm --filter @checkout-surge/contracts test:unit`: 2 files, 79 tests passed.
+- `pnpm --filter worker exec vitest run --config vitest.unit.config.ts test/unit/order-process-job-handler.test.ts test/unit/postgres-erp-attempt-persistence.test.ts`: 2 files, 25 tests passed.
+- `pnpm --filter @checkout-surge/contracts type-check`, `pnpm --filter @checkout-surge/db type-check`, `pnpm --filter api type-check`, and `pnpm --filter worker type-check`: passed.
+- `pnpm --filter @checkout-surge/db build`: passed before downstream app checks so the workspace package export reflected the new scheduler callback type.
+- `pnpm --filter @checkout-surge/contracts lint`, `pnpm --filter @checkout-surge/db lint`, `pnpm --filter api lint`, and `pnpm --filter worker lint`: passed with no warnings.
+- `git diff --check`: passed.
+- Final affected reruns: `node scripts/run-with-test-env.mjs pnpm --filter api exec vitest run --config vitest.api.config.ts test/dashboard-snapshot-publication-scheduler.test.ts` (1 file, 13 tests passed) and `pnpm --filter @checkout-surge/db exec vitest run --config vitest.unit.config.ts test/unit/business-outcome-publication-scheduler.test.ts` (1 file, 6 tests passed).
+
+### Skipped and caveats
+
+- Redis/PostgreSQL integration suites require the external test services and are not started by this task. Focused integration checks are run only if the configured services are already reachable.
+- `pnpm test:composition` and `pnpm test:characterization` were not run per repository instructions. No application was started.
+- The cumulative sold-out counter remains Redis-authoritative and is durably copied into PostgreSQL by existing completion/finalization flows; the 500 ms live hint itself remains intentionally lossy across process crash.

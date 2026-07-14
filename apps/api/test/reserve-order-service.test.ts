@@ -39,6 +39,7 @@ function buildService(options: {
   dashboardSnapshotPublications?: ConstructorParameters<
     typeof ReserveOrderService
   >[0]["dashboardSnapshotPublications"];
+  soldOutObservations?: ConstructorParameters<typeof ReserveOrderService>[0]["soldOutObservations"];
 }) {
   return new ReserveOrderService({
     persistence: options.persistence,
@@ -81,6 +82,7 @@ function buildService(options: {
     ...(options.dashboardSnapshotPublications
       ? { dashboardSnapshotPublications: options.dashboardSnapshotPublications }
       : {}),
+    ...(options.soldOutObservations ? { soldOutObservations: options.soldOutObservations } : {}),
   });
 }
 
@@ -121,9 +123,34 @@ function persistedBuy(hold: SecuredReservationHold): PersistedBuyAcceptance {
 }
 
 describe("ReserveOrderService queue handoff", () => {
+  it("observes only a fresh sold-out decision synchronously and isolates observer failure", async () => {
+    const observeSoldOut = vi.fn(() => {
+      throw new Error("observer unavailable");
+    });
+    const service = buildService({
+      persistence: {
+        persistSecuredReservation: vi.fn(),
+        getPersistedBuyByReservationId: vi.fn(),
+      },
+      stockReservations: acceptingGateway({
+        reserve: async () => ({ outcome: "sold_out", reservation: null }),
+      }),
+      soldOutObservations: { observeSoldOut },
+    });
+
+    await expect(service.reserve({ request, correlationId, now })).resolves.toMatchObject({
+      outcome: "sold_out",
+    });
+    expect(observeSoldOut).toHaveBeenCalledWith({
+      saleOfferId: request.saleOfferId,
+      runId: request.runId,
+      correlationId,
+    });
+  });
   it("schedules full snapshot publication only for a fresh hold and successful enqueue", async () => {
     const scheduleInventory = vi.fn();
     const scheduleQueue = vi.fn();
+    const observeSoldOut = vi.fn();
     const service = buildService({
       persistence: {
         persistSecuredReservation: async ({ reservation }) => persistedBuy(reservation),
@@ -131,6 +158,7 @@ describe("ReserveOrderService queue handoff", () => {
       },
       stockReservations: acceptingGateway(),
       dashboardSnapshotPublications: { scheduleInventory, scheduleQueue },
+      soldOutObservations: { observeSoldOut },
     });
 
     await expect(service.reserve({ request, correlationId, now })).resolves.toMatchObject({
@@ -145,6 +173,7 @@ describe("ReserveOrderService queue handoff", () => {
     });
     expect(scheduleQueue).toHaveBeenCalledOnce();
     expect(scheduleQueue).toHaveBeenCalledWith({ runId: request.runId, correlationId });
+    expect(observeSoldOut).not.toHaveBeenCalled();
   });
 
   it("contains snapshot scheduling failures without changing reservation correctness", async () => {
@@ -214,6 +243,7 @@ describe("ReserveOrderService queue handoff", () => {
       const scheduleInventory = vi.fn();
       const scheduleQueue = vi.fn();
       const enqueue = vi.fn();
+      const observeSoldOut = vi.fn();
       const service = buildService({
         persistence: { persistSecuredReservation, getPersistedBuyByReservationId },
         stockReservations: acceptingGateway({
@@ -221,6 +251,7 @@ describe("ReserveOrderService queue handoff", () => {
         }),
         dashboardSnapshotPublications: { scheduleInventory, scheduleQueue },
         orderProcessJobPublisher: { enqueue },
+        soldOutObservations: { observeSoldOut },
       });
 
       const response = await service.reserve({ request, correlationId, now });
@@ -239,6 +270,11 @@ describe("ReserveOrderService queue handoff", () => {
       expect(scheduleInventory).not.toHaveBeenCalled();
       expect(scheduleQueue).not.toHaveBeenCalled();
       expect(enqueue).not.toHaveBeenCalled();
+      if (decision === "sold_out") {
+        expect(observeSoldOut).toHaveBeenCalledOnce();
+      } else {
+        expect(observeSoldOut).not.toHaveBeenCalled();
+      }
     },
   );
 
@@ -362,6 +398,7 @@ describe("ReserveOrderService queue handoff", () => {
     const publishBusinessOutcomeUpdate = vi.fn();
     const scheduleInventory = vi.fn();
     const scheduleQueue = vi.fn();
+    const observeSoldOut = vi.fn();
     const service = buildService({
       persistence: {
         persistSecuredReservation: async () => {
@@ -374,13 +411,16 @@ describe("ReserveOrderService queue handoff", () => {
       }),
       publishBusinessOutcomeUpdate,
       dashboardSnapshotPublications: { scheduleInventory, scheduleQueue },
+      soldOutObservations: { observeSoldOut },
     });
 
     await service.reserve({ request, correlationId, now });
+    await flushScheduledDashboardUpdate();
 
     expect(publishBusinessOutcomeUpdate).not.toHaveBeenCalled();
     expect(scheduleInventory).not.toHaveBeenCalled();
     expect(scheduleQueue).toHaveBeenCalledOnce();
+    expect(observeSoldOut).not.toHaveBeenCalled();
   });
 
   it("does not hide durable acceptance when business outcome publication fails", async () => {
@@ -558,6 +598,7 @@ describe("ReserveOrderService queue handoff", () => {
     const promoteAccepted = vi.fn(async () => undefined);
     const enqueue = vi.fn(async () => undefined);
     const publishBusinessOutcomeUpdate = vi.fn(async () => undefined);
+    const observeSoldOut = vi.fn();
     const service = buildService({
       persistence: {
         persistSecuredReservation,
@@ -576,6 +617,7 @@ describe("ReserveOrderService queue handoff", () => {
       }),
       orderProcessJobPublisher: { enqueue },
       publishBusinessOutcomeUpdate,
+      soldOutObservations: { observeSoldOut },
     });
 
     const first = await service.reserve({ request, correlationId, now });
@@ -610,6 +652,7 @@ describe("ReserveOrderService queue handoff", () => {
       reservation: originalHold,
     });
     expect(publishBusinessOutcomeUpdate).toHaveBeenCalledOnce();
+    expect(observeSoldOut).not.toHaveBeenCalled();
   });
 
   it("uses a persistence-race recovery as durable replay without pending side effects", async () => {

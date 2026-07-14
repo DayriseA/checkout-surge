@@ -28,6 +28,14 @@ export interface PendingPersistenceReconciliationSummary {
   failed: number;
 }
 
+export interface BusinessOutcomeDirtyMarker {
+  markDirty(input: {
+    saleOfferId: string;
+    runId?: string;
+    correlationId?: string;
+  }): void;
+}
+
 /**
  * Re-drives the durable reservation -> deterministic queue -> Redis accepted
  * handoff. It deliberately does not call ReserveOrderService.reserve(), since
@@ -46,6 +54,7 @@ export class PendingPersistenceReconciler {
         DashboardSnapshotPublicationSchedulerPort,
         "scheduleQueue"
       >;
+      businessOutcomeUpdates?: BusinessOutcomeDirtyMarker;
       batchSize?: number;
       now?: () => Date;
     },
@@ -213,6 +222,7 @@ export class PendingPersistenceReconciler {
 
     await this.options.orderProcessJobPublisher.enqueue(toOrderProcessJob(persisted));
     this.scheduleQueueSnapshot(reservation);
+    if (materialized) this.markBusinessOutcomeDirty(reservation);
     // Marking the durable pending row before promotion keeps Redis discoverable
     // if the promotion fails; Redis is the final source of truth for pending
     // stock and will be retried by the next reconciliation pass.
@@ -234,6 +244,18 @@ export class PendingPersistenceReconciler {
   private scheduleQueueSnapshot(reservation: SecuredReservationHold): void {
     try {
       this.options.dashboardSnapshotPublications?.scheduleQueue({
+        ...(reservation.runId ? { runId: reservation.runId } : {}),
+        correlationId: reservation.correlationId,
+      });
+    } catch {
+      // Advisory dashboard scheduling cannot turn successful reconciliation into failure.
+    }
+  }
+
+  private markBusinessOutcomeDirty(reservation: SecuredReservationHold): void {
+    try {
+      this.options.businessOutcomeUpdates?.markDirty({
+        saleOfferId: reservation.saleOfferId,
         ...(reservation.runId ? { runId: reservation.runId } : {}),
         correlationId: reservation.correlationId,
       });

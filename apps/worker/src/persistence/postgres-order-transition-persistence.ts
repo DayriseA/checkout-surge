@@ -80,12 +80,12 @@ export class PostgresOrderTransitionPersistence implements OrderTransitionPersis
   transitionToConfirmed(
     job: OrderProcessJob,
     delivery: OrderProcessDeliveryMetadata,
-  ): Promise<void> {
+  ): Promise<boolean> {
     return this.db.transaction(async (tx) => {
       const order = await lockAndValidateOrder(tx, job);
 
       if (order.status === "confirmed") {
-        return;
+        return false;
       }
       if (order.status !== "processing") {
         throw new InvalidOrderTransitionError(order.id, order.status, "confirmed");
@@ -97,6 +97,7 @@ export class PostgresOrderTransitionPersistence implements OrderTransitionPersis
         .set({ status: "confirmed", confirmedAt: occurredAt, updatedAt: occurredAt })
         .where(eq(orders.id, order.id));
       await appendTransitionEvent(tx, order, "order.confirmed", occurredAt, delivery);
+      return true;
     });
   }
 
@@ -104,12 +105,12 @@ export class PostgresOrderTransitionPersistence implements OrderTransitionPersis
     job: OrderProcessJob,
     failure: OrderFailure,
     delivery: OrderProcessDeliveryMetadata,
-  ): Promise<void> {
+  ): Promise<boolean> {
     return this.db.transaction(async (tx) => {
       const order = await lockAndValidateOrder(tx, job);
 
       if (order.status === "failed") {
-        return;
+        return false;
       }
       if (order.status !== "processing") {
         throw new InvalidOrderTransitionError(order.id, order.status, "failed");
@@ -127,6 +128,7 @@ export class PostgresOrderTransitionPersistence implements OrderTransitionPersis
         })
         .where(eq(orders.id, order.id));
       await appendTransitionEvent(tx, order, "order.failed", occurredAt, delivery, failure);
+      return true;
     });
   }
 }

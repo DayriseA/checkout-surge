@@ -69,8 +69,8 @@ describe("Postgres ERP attempt persistence", () => {
     } as never;
     const persistence = new PostgresErpAttemptPersistence(db);
 
-    await persistence.recordAttempt(record);
-    await persistence.recordAttempt(record);
+    await expect(persistence.recordAttempt(record)).resolves.toBe(true);
+    await expect(persistence.recordAttempt(record)).resolves.toBe(false);
 
     expect(attemptInsert.values).toHaveBeenCalledWith(
       expect.objectContaining({

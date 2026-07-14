@@ -98,6 +98,7 @@ export const demoRunStartLockKey = "checkout_surge_demo_run_start";
 const singleNonTerminalRunIndexName = "demo_runs_single_non_terminal_idx";
 const generatedRunSaleDurationMs = 24 * 60 * 60 * 1000;
 const recentMetricLimit = 50;
+export const maximumPendingMetricBatches = 10;
 
 export interface TrafficExecutionGateway {
   start(request: TrafficExecutionStartRequest): Promise<TrafficExecutionStartResponse>;
@@ -139,6 +140,9 @@ export type StartDemoRunCommand = StartDemoRunRequest & {
 };
 
 export class RedisDashboardTrafficMetricStore implements DashboardTrafficMetricReader {
+  private operationTail: Promise<void> = Promise.resolve();
+  private pendingOperationCount = 0;
+
   constructor(private readonly redis: CheckoutSurgeRedis) {}
 
   /**
@@ -147,6 +151,24 @@ export class RedisDashboardTrafficMetricStore implements DashboardTrafficMetricR
    * recreating a cleared projection after the reset fence wins.
    */
   async appendAndPublishIfLive(
+    input: LoadMetricIngestRequest,
+    events: Array<ReturnType<typeof dashboardEventSchema.parse>>,
+  ): Promise<boolean> {
+    if (this.pendingOperationCount >= maximumPendingMetricBatches) return false;
+    this.pendingOperationCount += 1;
+    const operation = this.operationTail
+      .then(() => this.appendAndPublishAtomic(input, events))
+      .finally(() => {
+        this.pendingOperationCount -= 1;
+      });
+    this.operationTail = operation.then(
+      () => undefined,
+      () => undefined,
+    );
+    return operation;
+  }
+
+  private async appendAndPublishAtomic(
     input: LoadMetricIngestRequest,
     events: Array<ReturnType<typeof dashboardEventSchema.parse>>,
   ): Promise<boolean> {

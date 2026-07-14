@@ -31,12 +31,14 @@ export interface OrderTransitionPersistence {
   transitionToConfirmed(
     job: OrderProcessJob,
     delivery: OrderProcessDeliveryMetadata,
-  ): Promise<void>;
+  // biome-ignore lint/suspicious/noConfusingVoidType: void keeps existing adapters/test doubles source-compatible while boolean reports freshness.
+  ): Promise<boolean | void>;
   transitionToFailed(
     job: OrderProcessJob,
     failure: OrderFailure,
     delivery: OrderProcessDeliveryMetadata,
-  ): Promise<void>;
+  // biome-ignore lint/suspicious/noConfusingVoidType: void keeps existing adapters/test doubles source-compatible while boolean reports freshness.
+  ): Promise<boolean | void>;
 }
 
 export interface OrderConfirmation {
@@ -234,12 +236,14 @@ export function createOrderProcessJobHandler(dependencies: {
               ? "Order confirmation failure will be retried without marking the order failed."
               : "Temporary order confirmation failure will be retried.",
           );
-          await publishBusinessOutcomeUpdateWithoutFailingJob(
-            dependencies,
-            job,
-            "retrying",
-            logger,
-          );
+          if (freshErpAttemptWasRecorded(confirmationError)) {
+            await publishBusinessOutcomeUpdateWithoutFailingJob(
+              dependencies,
+              job,
+              "retrying",
+              logger,
+            );
+          }
           throw confirmationError;
         }
 
@@ -249,7 +253,10 @@ export function createOrderProcessJobHandler(dependencies: {
         );
 
         try {
-          await dependencies.persistence.transitionToFailed(job, failure, delivery);
+          const changed = await dependencies.persistence.transitionToFailed(job, failure, delivery);
+          if (changed !== false) {
+            await publishBusinessOutcomeUpdateWithoutFailingJob(dependencies, job, "failed", logger);
+          }
         } catch (persistenceError) {
           if (dependencies.recovery) {
             await handoffOrThrow(
@@ -274,12 +281,19 @@ export function createOrderProcessJobHandler(dependencies: {
           { ...logContext, err: confirmationError, failureCode: failure.code },
           "Order confirmation failed and the order transitioned to failed.",
         );
-        await publishBusinessOutcomeUpdateWithoutFailingJob(dependencies, job, "failed", logger);
         throw confirmationError;
       }
 
       try {
-        await dependencies.persistence.transitionToConfirmed(job, delivery);
+        const changed = await dependencies.persistence.transitionToConfirmed(job, delivery);
+        if (changed !== false) {
+          await publishBusinessOutcomeUpdateWithoutFailingJob(
+            dependencies,
+            job,
+            "confirmed",
+            logger,
+          );
+        }
       } catch (persistenceError) {
         if (dependencies.recovery) {
           await handoffOrThrow(
@@ -313,7 +327,6 @@ export function createOrderProcessJobHandler(dependencies: {
         new Date().toISOString(),
         logger,
       );
-      await publishBusinessOutcomeUpdateWithoutFailingJob(dependencies, job, "confirmed", logger);
       logger.info(logContext, "Order transitioned to confirmed.");
     },
   };
@@ -415,6 +428,15 @@ function isAcceptedConfirmationPersistenceError(error: unknown): error is {
 
 function isPersistenceLikeError(error: unknown): boolean {
   return error instanceof Error && error.name.includes("PersistenceError");
+}
+
+function freshErpAttemptWasRecorded(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "attemptRecorded" in error &&
+    (error as { attemptRecorded?: unknown }).attemptRecorded === true
+  );
 }
 
 function isOrderPoisonError(error: unknown): boolean {

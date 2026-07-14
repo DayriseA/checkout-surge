@@ -1,5 +1,6 @@
 import { contractsPackageName } from "@checkout-surge/contracts";
 import {
+  BusinessOutcomePublicationScheduler,
   clearErpCircuitBreakerSnapshots,
   createDatabaseConnection,
   createRedisClient,
@@ -192,12 +193,28 @@ export async function startApiServer(): Promise<void> {
     publish: (event) => publishDashboardEvent(redis, event),
     logger,
   });
+  const businessOutcomePublications = new BusinessOutcomePublicationScheduler({
+    publish: (input) => publishBusinessOutcomeDashboardUpdate(connection.db, redis, input),
+    onError: (error, input) => {
+      logger.error(
+        { err: error, saleOfferId: input.saleOfferId, ...(input.runId ? { runId: input.runId } : {}) },
+        "Dashboard business outcome projection failed.",
+      );
+    },
+    onDrop: (input) => {
+      logger.warn(
+        { saleOfferId: input.saleOfferId, ...(input.runId ? { runId: input.runId } : {}) },
+        "Business outcome dashboard scope limit reached; dropped the oldest dirty scope.",
+      );
+    },
+  });
   const pendingPersistenceReconciler = new PendingPersistenceReconciler({
     redis,
     persistence,
     stockReservations: stockReservationGateway,
     orderProcessJobPublisher,
     dashboardSnapshotPublications,
+    businessOutcomeUpdates: businessOutcomePublications,
     logger,
   });
   const trafficMetricStore = new RedisDashboardTrafficMetricStore(redis);
@@ -213,7 +230,15 @@ export async function startApiServer(): Promise<void> {
     queueMaintenance: demoQueueMaintenance,
     terminalRunWriter,
     trafficAborter: trafficExecutionGateway,
-    dashboardLiveStateReset: trafficMetricStore,
+    dashboardLiveStateReset: {
+      fenceRun: (runId) => trafficMetricStore.fenceRun(runId),
+      hasRunState: (runId) => trafficMetricStore.hasRunState(runId),
+      clearRun: async (runId) => {
+        dashboardSnapshotPublications.clearRun(runId);
+        businessOutcomePublications.clearRun(runId);
+        await trafficMetricStore.clearRun(runId);
+      },
+    },
     resetWorkflowFence: new PostgresDemoResetWorkflowFence(resetWorkflowSql),
     logger,
   });
@@ -276,6 +301,7 @@ export async function startApiServer(): Promise<void> {
     idempotencyTtlSeconds: config.idempotencyTtlSeconds,
     pendingPersistenceRetryAfterSeconds: config.pendingPersistenceRetryAfterSeconds,
     dashboardSnapshotPublications,
+    soldOutObservations: dashboardSnapshotPublications,
     reportPersistenceFailure: (report) => {
       logger.error(
         partialFailureLogContext(report),
@@ -312,9 +338,8 @@ export async function startApiServer(): Promise<void> {
         "Could not reverse a definitively rejected Redis reservation hold.",
       );
     },
-    publishBusinessOutcomeUpdate: async (input) => {
-      await publishBusinessOutcomeDashboardUpdate(connection.db, redis, input);
-    },
+    publishBusinessOutcomeUpdate: async (input) => businessOutcomePublications.markDirty(input),
+    scheduleBusinessOutcomeUpdate: (task) => task(),
     reportBusinessOutcomeUpdateFailure: (report) => {
       logger.error(
         businessOutcomeUpdateFailureLogContext(report),
@@ -338,6 +363,7 @@ export async function startApiServer(): Promise<void> {
           await server?.close();
         },
         closeDashboardPublicationScheduler: () => dashboardSnapshotPublications.close(),
+        closeBusinessOutcomePublicationScheduler: () => businessOutcomePublications.close(),
         closeDashboardEventSubscriber: async () => {
           try {
             await dashboardEventSubscriber.close();

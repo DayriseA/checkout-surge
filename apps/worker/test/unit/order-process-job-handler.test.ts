@@ -470,7 +470,9 @@ describe("order-process application workflow", () => {
   });
 
   it("leaves processing orders retryable after temporary confirmation failures with attempts remaining", async () => {
-    const confirmationError = new Error("ERP temporarily unavailable");
+    const confirmationError = Object.assign(new Error("ERP temporarily unavailable"), {
+      attemptRecorded: true,
+    });
     const persistence = createPersistence();
     const handler = createOrderProcessJobHandler({
       confirmation: { confirm: vi.fn().mockRejectedValue(confirmationError) },
@@ -488,7 +490,9 @@ describe("order-process application workflow", () => {
   });
 
   it("publishes a retrying business outcome update before retrying temporary confirmation failures", async () => {
-    const confirmationError = new Error("ERP temporarily unavailable");
+    const confirmationError = Object.assign(new Error("ERP temporarily unavailable"), {
+      attemptRecorded: true,
+    });
     const publishBusinessOutcomeUpdate = vi.fn().mockResolvedValue(undefined);
     const handler = createOrderProcessJobHandler({
       confirmation: { confirm: vi.fn().mockRejectedValue(confirmationError) },
@@ -519,6 +523,35 @@ describe("order-process application workflow", () => {
 
     expect(publishBusinessOutcomeUpdate).toHaveBeenCalledWith(job, "processing");
     expect(publishBusinessOutcomeUpdate).toHaveBeenCalledWith(job, "failed");
+  });
+
+  it("does not dirty business outcomes for detected retry and terminal persistence no-ops", async () => {
+    const retryError = Object.assign(new Error("replayed attempt"), { attemptRecorded: false });
+    const retryPublish = vi.fn().mockResolvedValue(undefined);
+    const retryHandler = createOrderProcessJobHandler({
+      confirmation: { confirm: vi.fn().mockRejectedValue(retryError) },
+      persistence: createPersistence({
+        transitionToProcessing: vi.fn().mockResolvedValue({ status: "processing", resumed: true }),
+      }),
+      logger: createSilentLogger("worker"),
+      shouldRetryWithoutFailingOrder: () => true,
+      publishBusinessOutcomeUpdate: retryPublish,
+    });
+    await expect(retryHandler.handle(job, { ...delivery, maxAttempts: 4 })).rejects.toBe(retryError);
+    expect(retryPublish).not.toHaveBeenCalled();
+
+    const terminalPublish = vi.fn().mockResolvedValue(undefined);
+    const terminalHandler = createOrderProcessJobHandler({
+      confirmation: { confirm: vi.fn().mockResolvedValue(undefined) },
+      persistence: createPersistence({
+        transitionToProcessing: vi.fn().mockResolvedValue({ status: "processing", resumed: true }),
+        transitionToConfirmed: vi.fn().mockResolvedValue(false),
+      }),
+      logger: createSilentLogger("worker"),
+      publishBusinessOutcomeUpdate: terminalPublish,
+    });
+    await terminalHandler.handle(job, delivery);
+    expect(terminalPublish).not.toHaveBeenCalled();
   });
 
   it("marks exhausted temporary confirmation failures as terminal order failures", async () => {

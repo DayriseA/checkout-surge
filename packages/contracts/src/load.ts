@@ -518,7 +518,7 @@ export const loadMetricIngestRequestSchema = z
   .object({
     runId: uuidSchema,
     correlationId: correlationIdSchema,
-    samples: z.array(metricSampleSchema).min(1),
+    samples: z.array(metricSampleSchema).min(1).max(100),
     raw: jsonObjectSchema.optional(),
     observedAt: isoTimestampSchema,
   })

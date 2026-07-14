@@ -52,6 +52,7 @@ import {
   inventoryStatusSchema,
   inventoryUpdatedEventPayloadSchema,
   loadExecutionPlanSchema,
+  loadMetricIngestRequestSchema,
   loadRunDiagnosticsSummarySchema,
   loadRunIdHeaderName,
   maximumAutomaticallyDerivedVUs,
@@ -1257,6 +1258,25 @@ describe("buy and dashboard contracts", () => {
 });
 
 describe("public runtime policy contract", () => {
+  it("bounds each live metric ingestion batch to the producer maximum", () => {
+    const sample = {
+      metricName: "traffic.latency" as const,
+      value: 10,
+      unit: "ms",
+      timestamp,
+    };
+    const input = {
+      runId: "55555555-5555-4555-8555-555555555551",
+      correlationId: "metric-bound",
+      samples: Array.from({ length: 100 }, () => sample),
+      observedAt: timestamp,
+    };
+    expect(loadMetricIngestRequestSchema.parse(input).samples).toHaveLength(100);
+    expect(() =>
+      loadMetricIngestRequestSchema.parse({ ...input, samples: [...input.samples, sample] }),
+    ).toThrow();
+  });
+
   it("defines demo-run and load-execution API boundaries", () => {
     expect(publicPresetListPath).toBe("/demo/presets/public");
     expect(publicRuntimePolicyPath).toBe("/demo/runtime-policy");

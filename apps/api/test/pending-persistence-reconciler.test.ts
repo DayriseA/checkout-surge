@@ -66,6 +66,7 @@ describe("PendingPersistenceReconciler", () => {
     const enqueue = vi.fn(async () => undefined);
     const promoteAccepted = vi.fn(async () => undefined);
     const scheduleQueue = vi.fn();
+    const markDirty = vi.fn();
     const reconciler = new PendingPersistenceReconciler({
       redis: pendingRedis() as never,
       persistence: {
@@ -75,6 +76,7 @@ describe("PendingPersistenceReconciler", () => {
       stockReservations: { promoteAccepted },
       orderProcessJobPublisher: { enqueue },
       dashboardSnapshotPublications: { scheduleQueue },
+      businessOutcomeUpdates: { markDirty },
       logger: createSilentLogger("api"),
     });
 
@@ -91,12 +93,18 @@ describe("PendingPersistenceReconciler", () => {
       runId: hold.runId,
       correlationId: hold.correlationId,
     });
+    expect(markDirty).toHaveBeenCalledWith({
+      saleOfferId: hold.saleOfferId,
+      runId: hold.runId,
+      correlationId: hold.correlationId,
+    });
   });
 
   it("reasserts queue and promotion for an already durable hold", async () => {
     const enqueue = vi.fn(async () => undefined);
     const promoteAccepted = vi.fn(async () => undefined);
     const markPendingPersistenceReconciled = vi.fn(async () => undefined);
+    const markDirty = vi.fn();
     const reconciler = new PendingPersistenceReconciler({
       redis: pendingRedis() as never,
       persistence: {
@@ -106,6 +114,7 @@ describe("PendingPersistenceReconciler", () => {
       },
       stockReservations: { promoteAccepted },
       orderProcessJobPublisher: { enqueue },
+      businessOutcomeUpdates: { markDirty },
       logger: createSilentLogger("api"),
     });
 
@@ -121,6 +130,7 @@ describe("PendingPersistenceReconciler", () => {
       reservation: hold,
     });
     expect(markPendingPersistenceReconciled).toHaveBeenCalledWith({ reservationId: hold.id });
+    expect(markDirty).not.toHaveBeenCalled();
   });
 
   it("does not materialize twice when the same pending record is redriven", async () => {
@@ -153,11 +163,12 @@ describe("PendingPersistenceReconciler", () => {
   it("leaves the marker discoverable when queue handoff fails", async () => {
     const queueError = new Error("queue unavailable");
     const scheduleQueue = vi.fn();
+    const markDirty = vi.fn();
     const reconciler = new PendingPersistenceReconciler({
       redis: pendingRedis() as never,
       persistence: {
-        persistSecuredReservation: vi.fn(),
-        getPersistedBuyByReservationId: vi.fn(async () => persisted()),
+        persistSecuredReservation: vi.fn(async () => persisted()),
+        getPersistedBuyByReservationId: vi.fn(async () => null),
       },
       stockReservations: { promoteAccepted: vi.fn() },
       orderProcessJobPublisher: {
@@ -166,6 +177,7 @@ describe("PendingPersistenceReconciler", () => {
         }),
       },
       dashboardSnapshotPublications: { scheduleQueue },
+      businessOutcomeUpdates: { markDirty },
       logger: createSilentLogger("api"),
     });
 
@@ -175,6 +187,7 @@ describe("PendingPersistenceReconciler", () => {
       reconciled: 0,
     });
     expect(scheduleQueue).not.toHaveBeenCalled();
+    expect(markDirty).not.toHaveBeenCalled();
   });
 
   it("contains queue snapshot scheduling failure after successful reconciliation", async () => {
@@ -205,11 +218,12 @@ describe("PendingPersistenceReconciler", () => {
 
   it("leaves the marker discoverable when accepted promotion fails", async () => {
     const promotionError = new Error("promotion unavailable");
+    const markDirty = vi.fn();
     const reconciler = new PendingPersistenceReconciler({
       redis: pendingRedis() as never,
       persistence: {
-        persistSecuredReservation: vi.fn(),
-        getPersistedBuyByReservationId: vi.fn(async () => persisted()),
+        persistSecuredReservation: vi.fn(async () => persisted()),
+        getPersistedBuyByReservationId: vi.fn(async () => null),
       },
       stockReservations: {
         promoteAccepted: vi.fn(async () => {
@@ -217,6 +231,7 @@ describe("PendingPersistenceReconciler", () => {
         }),
       },
       orderProcessJobPublisher: { enqueue: vi.fn(async () => undefined) },
+      businessOutcomeUpdates: { markDirty },
       logger: createSilentLogger("api"),
     });
 
@@ -225,6 +240,33 @@ describe("PendingPersistenceReconciler", () => {
       failed: 1,
       reconciled: 0,
     });
+    expect(markDirty).toHaveBeenCalledOnce();
+  });
+
+  it("contains business outcome dirty-marker failure after fresh enqueue", async () => {
+    const promoteAccepted = vi.fn(async () => undefined);
+    const reconciler = new PendingPersistenceReconciler({
+      redis: pendingRedis() as never,
+      persistence: {
+        persistSecuredReservation: vi.fn(async () => persisted()),
+        getPersistedBuyByReservationId: vi.fn(async () => null),
+      },
+      stockReservations: { promoteAccepted },
+      orderProcessJobPublisher: { enqueue: vi.fn(async () => undefined) },
+      businessOutcomeUpdates: {
+        markDirty: () => {
+          throw new Error("dashboard scheduler unavailable");
+        },
+      },
+      logger: createSilentLogger("api"),
+    });
+
+    await expect(reconciler.reconcileSaleOffer(hold.saleOfferId)).resolves.toMatchObject({
+      materialized: 1,
+      reconciled: 1,
+      failed: 0,
+    });
+    expect(promoteAccepted).toHaveBeenCalledOnce();
   });
 
   it("reverses only a narrowly classified definitive persistence rejection", async () => {
