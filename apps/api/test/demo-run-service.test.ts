@@ -239,6 +239,216 @@ describe("demo-run service validation", () => {
   });
 });
 
+describe("demo-run metric ingestion acceptance", () => {
+  type PublishAccepted = Parameters<RedisDashboardTrafficMetricStore["appendAndPublishIfLive"]>[1];
+  const metricRequest = {
+    runId: "55555555-5555-4555-8555-555555555551",
+    correlationId: "metric-correlation",
+    samples: [
+      {
+        metricName: "traffic.latency" as const,
+        value: 42,
+        unit: "ms",
+        timestamp: "2026-07-14T00:00:00.000Z",
+      },
+      {
+        metricName: "traffic.failure_rate" as const,
+        value: 0.1,
+        unit: "ratio",
+        timestamp: "2026-07-14T00:00:01.000Z",
+      },
+      {
+        metricName: "traffic.scheduled_request_rate" as const,
+        value: 100,
+        unit: "requests_per_second",
+        timestamp: "2026-07-14T00:00:02.000Z",
+      },
+    ],
+    observedAt: "2026-07-14T00:00:02.000Z",
+  };
+
+  it("retains before publication, preserves event identity, and does not warn on success", async () => {
+    const order: string[] = [];
+    const publishedPayloads: string[][] = [];
+    const warn = vi.fn();
+    const appendAndPublishIfLive = vi.fn(
+      async (_request: unknown, publishAccepted: PublishAccepted) => {
+        order.push("append");
+        await publishAccepted(async (payloads) => {
+          order.push("publish");
+          publishedPayloads.push(payloads);
+          return { outcome: "attempted", failures: [] };
+        });
+        return true;
+      },
+    );
+    const ids = [
+      "77777777-7777-4777-8777-777777777771",
+      "77777777-7777-4777-8777-777777777772",
+      "77777777-7777-4777-8777-777777777773",
+    ];
+    const service = createMetricIngestionService({
+      appendAndPublishIfLive,
+      warn,
+      generateId: () => {
+        order.push("event");
+        return ids.shift() ?? "missing";
+      },
+    });
+
+    await expect(service.ingestMetrics(metricRequest)).resolves.toBeUndefined();
+
+    expect(appendAndPublishIfLive).toHaveBeenCalledOnce();
+    expect(order).toEqual(["append", "event", "event", "event", "publish"]);
+    expect(publishedPayloads).toHaveLength(1);
+    expect(publishedPayloads[0]?.map((payload) => JSON.parse(payload))).toEqual([
+      expect.objectContaining({
+        eventId: "77777777-7777-4777-8777-777777777771",
+        runId: metricRequest.runId,
+        correlationId: metricRequest.correlationId,
+        metricName: "traffic.latency",
+        value: 42,
+        unit: "ms",
+        occurredAt: "2026-07-14T00:00:00.000Z",
+      }),
+      expect.objectContaining({ eventId: "77777777-7777-4777-8777-777777777772" }),
+      expect.objectContaining({ eventId: "77777777-7777-4777-8777-777777777773" }),
+    ]);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("contains mixed validation and transport failures and continues later samples", async () => {
+    const transportError = new Error("pubsub unavailable");
+    const publishedPayloads: string[][] = [];
+    const warn = vi.fn();
+    const appendAndPublishIfLive = vi.fn(
+      async (_request: unknown, publishAccepted: PublishAccepted) => {
+        await publishAccepted(async (payloads) => {
+          publishedPayloads.push(payloads);
+          throw transportError;
+        });
+        return true;
+      },
+    );
+    const ids = [
+      "77777777-7777-4777-8777-777777777771",
+      "invalid-event-id",
+      "77777777-7777-4777-8777-777777777773",
+    ];
+    const service = createMetricIngestionService({
+      appendAndPublishIfLive,
+      warn,
+      generateId: () => ids.shift() ?? "missing",
+    });
+
+    await expect(service.ingestMetrics(metricRequest)).resolves.toBeUndefined();
+
+    expect(publishedPayloads).toHaveLength(1);
+    expect(publishedPayloads[0]?.map((payload) => JSON.parse(payload).metricName)).toEqual([
+      "traffic.latency",
+      "traffic.scheduled_request_rate",
+    ]);
+    expect(warn).toHaveBeenCalledTimes(3);
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        err: transportError,
+        runId: metricRequest.runId,
+        correlationId: metricRequest.correlationId,
+        metricName: "traffic.scheduled_request_rate",
+      }),
+      "Could not publish traffic metric dashboard event.",
+    );
+  });
+
+  it("warns only for a failed sample publication and still attempts the later sample", async () => {
+    const samplePublicationError = new Error("sample publish failed");
+    const publishedPayloads: string[][] = [];
+    const warn = vi.fn();
+    const appendAndPublishIfLive = vi.fn(
+      async (_request: unknown, publishAccepted: PublishAccepted) => {
+        await publishAccepted(async (payloads) => {
+          publishedPayloads.push(payloads);
+          return {
+            outcome: "attempted",
+            failures: [{ index: 1, error: samplePublicationError }],
+          };
+        });
+        return true;
+      },
+    );
+    const ids = [
+      "77777777-7777-4777-8777-777777777771",
+      "77777777-7777-4777-8777-777777777772",
+      "77777777-7777-4777-8777-777777777773",
+    ];
+    const service = createMetricIngestionService({
+      appendAndPublishIfLive,
+      warn,
+      generateId: () => ids.shift() ?? "missing",
+    });
+
+    await expect(service.ingestMetrics(metricRequest)).resolves.toBeUndefined();
+
+    expect(publishedPayloads[0]?.map((payload) => JSON.parse(payload).metricName)).toEqual([
+      "traffic.latency",
+      "traffic.failure_rate",
+      "traffic.scheduled_request_rate",
+    ]);
+    expect(warn).toHaveBeenCalledOnce();
+    expect(warn).toHaveBeenCalledWith(
+      {
+        err: samplePublicationError,
+        runId: metricRequest.runId,
+        correlationId: metricRequest.correlationId,
+        metricName: "traffic.failure_rate",
+      },
+      "Could not publish traffic metric dashboard event.",
+    );
+  });
+
+  it("does not let a throwing warning logger redefine accepted retention", async () => {
+    const appendAndPublishIfLive = vi.fn(
+      async (_request: unknown, publishAccepted: PublishAccepted) => {
+        await publishAccepted(async () => ({
+          outcome: "attempted",
+          failures: [{ index: 0, error: new Error("sample publish failed") }],
+        }));
+        return true;
+      },
+    );
+    const warn = vi.fn(() => {
+      throw new Error("logger unavailable");
+    });
+    const service = createMetricIngestionService({
+      appendAndPublishIfLive,
+      warn,
+      generateId: () => "77777777-7777-4777-8777-777777777777",
+    });
+
+    await expect(service.ingestMetrics(metricRequest)).resolves.toBeUndefined();
+    expect(warn).toHaveBeenCalledOnce();
+  });
+
+  it("propagates retention failure without generating or publishing events", async () => {
+    const retentionError = new Error("retention unavailable");
+    const publishAccepted = vi.fn();
+    const generateId = vi.fn();
+    const appendAndPublishIfLive = vi.fn(async (_request: unknown, callback: PublishAccepted) => {
+      publishAccepted.mockImplementation(callback);
+      throw retentionError;
+    });
+    const service = createMetricIngestionService({
+      appendAndPublishIfLive,
+      warn: vi.fn(),
+      generateId,
+    });
+
+    await expect(service.ingestMetrics(metricRequest)).rejects.toBe(retentionError);
+    expect(generateId).not.toHaveBeenCalled();
+    expect(publishAccepted).not.toHaveBeenCalled();
+  });
+});
+
 describe("HTTP traffic execution gateway", () => {
   it("sends the validated start correlation ID in the load-orchestrator header", async () => {
     const fetchMock = vi.fn<typeof globalThis.fetch>().mockResolvedValue(
@@ -2502,6 +2712,39 @@ function createPresetManagementService(
     deploymentHardCaps,
     now: () => new Date("2026-06-20T00:00:10.000Z"),
     generateId: () => "66666666-6666-4666-8666-666666666666",
+  });
+}
+
+function createMetricIngestionService(options: {
+  appendAndPublishIfLive: RedisDashboardTrafficMetricStore["appendAndPublishIfLive"];
+  warn: ReturnType<typeof vi.fn>;
+  generateId: () => string;
+}): DemoRunService {
+  const database = {
+    select: () => ({
+      from: () => ({
+        where: () => ({ limit: async () => [{ status: "active" }] }),
+      }),
+    }),
+  };
+
+  return new DemoRunService({
+    db: database as never,
+    redis: {} as never,
+    trafficExecutionGateway: {} as never,
+    publicRunBudgetStore: {} as never,
+    trafficMetricStore: {
+      appendAndPublishIfLive: options.appendAndPublishIfLive,
+    } as RedisDashboardTrafficMetricStore,
+    businessOutcomeReader: {} as never,
+    completionEnrichmentService: {} as never,
+    terminalRunWriter: {} as never,
+    apiBaseUrl: "http://api.test",
+    buyEndpointPath: "/buy",
+    logger: { warn: options.warn } as never,
+    publicClientCookieSecret: publicCookieSecret,
+    deploymentHardCaps: publicRuntimePolicy().deploymentHardCaps,
+    generateId: options.generateId,
   });
 }
 

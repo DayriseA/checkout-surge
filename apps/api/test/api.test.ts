@@ -106,7 +106,9 @@ import {
 import type { DemoMaintenanceService } from "../src/services/demo-maintenance-service.js";
 import {
   type DemoRunController,
+  DemoRunService,
   DemoRunValidationError,
+  type RedisDashboardTrafficMetricStore,
 } from "../src/services/demo-run-service.js";
 import type { ErpStatusService } from "../src/services/erp-status-service.js";
 import {
@@ -1865,6 +1867,74 @@ describe("API gateway routes", () => {
     expect(accepted.headers[correlationIdHeaderName]).toBe(fixtureCorrelationId);
     expect(ingestMetrics).toHaveBeenCalledWith(
       expect.objectContaining({ correlationId: fixtureCorrelationId }),
+    );
+  });
+
+  it("returns 202 after the metric service contains post-retention publication failure", async () => {
+    const publicationError = new Error("pubsub unavailable");
+    const warn = vi.fn();
+    const metricStore = {
+      appendAndPublishIfLive: async (
+        _request: unknown,
+        publishAccepted: Parameters<RedisDashboardTrafficMetricStore["appendAndPublishIfLive"]>[1],
+      ) => {
+        await publishAccepted(async () => {
+          throw publicationError;
+        });
+        return true;
+      },
+    } as RedisDashboardTrafficMetricStore;
+    const demoRunService = new DemoRunService({
+      db: {
+        select: () => ({
+          from: () => ({
+            where: () => ({ limit: async () => [{ status: "active" }] }),
+          }),
+        }),
+      } as never,
+      redis: {} as never,
+      trafficExecutionGateway: {} as never,
+      publicRunBudgetStore: {} as never,
+      trafficMetricStore: metricStore,
+      businessOutcomeReader: {} as never,
+      terminalRunWriter: {} as never,
+      completionEnrichmentService: {} as never,
+      apiBaseUrl: "http://api.test",
+      buyEndpointPath: "/buy",
+      logger: { warn } as never,
+      publicClientCookieSecret: "test-public-cookie-secret",
+      deploymentHardCaps: publicRuntimePolicyFixture().deploymentHardCaps,
+      generateId: () => "77777777-7777-4777-8777-777777777777",
+    });
+    const server = await trackedServer({
+      persistence: new AcceptingPersistence(),
+      demoRunService,
+    });
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/internal/load/metrics",
+      headers: { [controlServiceTokenHeaderName]: "test-control-token" },
+      payload: {
+        runId: fixtureIds.run,
+        correlationId: fixtureCorrelationId,
+        samples: [
+          {
+            metricName: "traffic.latency",
+            value: 42,
+            unit: "ms",
+            timestamp: "2026-06-20T00:00:10.000Z",
+          },
+        ],
+        observedAt: "2026-06-20T00:00:10.000Z",
+      },
+    });
+
+    expect(response.statusCode).toBe(202);
+    expect(response.json()).toEqual({ accepted: true });
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({ err: publicationError, metricName: "traffic.latency" }),
+      "Could not publish traffic metric dashboard event.",
     );
   });
 

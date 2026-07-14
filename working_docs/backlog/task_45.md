@@ -66,3 +66,30 @@ The reference's fire-and-forget design is safe only because failure containment 
 - Do not make the route responsible for infrastructure, change the successful 202 response shape, add retries that can amplify a burst, or claim exactly-once/replay guarantees for Redis Pub/Sub.
 - Do not swallow validation or retention errors that occur before the accepted boundary. Conversely, do not let a logging or realtime adapter redefine an already accepted metric batch as failed.
 - Do not change demo-run finalization, completion summaries, stock/order correctness, or recovery authority. A dropped live event is acceptable operator-signal loss; retained recovery state and durable terminal summaries remain the repair/truth paths appropriate to their respective lifetimes.
+
+## Implementation record (2026-07-14)
+
+### Status
+
+Implemented. Metric retention remains the request acceptance boundary, while event construction and Redis Pub/Sub are advisory after accepted retention.
+
+### Completed scope and decisions
+
+- Split Task 44's combined Lua operation into a bounded two-phase protocol inside the same ten-batch, single-flight store queue. The first `EVAL` fence-checks and atomically appends/trims/expires recovery samples. The second `EVAL` fence-checks again and uses `redis.pcall` to attempt every valid event payload independently within one batched command. It returns a typed indexed failure result, preserving later-sample attempts, the reset guarantee, and the two-command bound without restoring per-sample network round trips.
+- `DemoRunService` now generates one event ID per attempted retained sample, validates and serializes samples individually, warns and continues after an event failure, warns only the indexed metric after an isolated Pub/Sub failure, and contains whole-command Pub/Sub rejection. Warnings use `Could not publish traffic metric dashboard event.` with `err`, `runId`, `correlationId`, and `metricName`; logger failure is also contained.
+- Request/schema, active-run, and retention failures remain pre-acceptance failures. A reset fence, terminal/missing run, or ten-batch overflow retains Task 44's acknowledge-and-drop behavior. No global `publishDashboardEvent()` semantics or route ownership changed.
+- Focused service, store, reset, and route coverage was added for ordering, identity preservation, validation continuation, indexed sample failure with a later successful attempt, warning shape, no warning for successful samples, throwing-logger containment, retention rejection, 202 after advisory failure, two-command/single-flight/queue bounds, continuation after rejected operations, and reset winning between retention and publication. Executed versus unavailable checks are recorded below.
+
+### Verification
+
+- `pnpm --filter api type-check`: passed.
+- `pnpm --filter api exec vitest run --config vitest.api.config.ts test/dashboard-traffic-metric-store-unit.test.ts`: 1 file, 5 tests passed.
+- `pnpm --filter api exec vitest run --config vitest.api.config.ts test/demo-run-service.test.ts -t "demo-run metric ingestion acceptance"`: 5 tests passed, 63 skipped by focus filter.
+- `pnpm --filter api exec vitest run --config vitest.api.config.ts test/api.test.ts -t "returns 202 after the metric service contains post-retention publication failure"`: 1 test passed, 76 skipped by focus filter.
+- `pnpm --filter api lint`: passed with no warnings.
+- `git diff --check`: passed.
+
+### Skipped and caveats
+
+- `node scripts/run-with-test-env.mjs pnpm --filter api exec vitest run --config vitest.api.config.ts test/dashboard-traffic-metric-store.test.ts` could not run because the configured Redis service at `127.0.0.1:6380` was unavailable (`ECONNREFUSED`); Docker was not started for this task.
+- `pnpm test:composition` and `pnpm test:characterization` are not run per repository instructions.

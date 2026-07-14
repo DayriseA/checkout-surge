@@ -100,6 +100,13 @@ const generatedRunSaleDurationMs = 24 * 60 * 60 * 1000;
 const recentMetricLimit = 50;
 export const maximumPendingMetricBatches = 10;
 
+export type TrafficMetricPublishResult =
+  | { outcome: "fenced" }
+  | {
+      outcome: "attempted";
+      failures: Array<{ index: number; error: Error }>;
+    };
+
 export interface TrafficExecutionGateway {
   start(request: TrafficExecutionStartRequest): Promise<TrafficExecutionStartResponse>;
 }
@@ -146,18 +153,26 @@ export class RedisDashboardTrafficMetricStore implements DashboardTrafficMetricR
   constructor(private readonly redis: CheckoutSurgeRedis) {}
 
   /**
-   * Atomically checks the reset fence, stores the recovery samples, and publishes
-   * their SSE events. This prevents an ingest racing clearRun from publishing or
-   * recreating a cleared projection after the reset fence wins.
+   * Serializes each accepted batch across retention and advisory publication. The
+   * second fence check prevents publication after a reset that wins between them.
    */
   async appendAndPublishIfLive(
     input: LoadMetricIngestRequest,
-    events: Array<ReturnType<typeof dashboardEventSchema.parse>>,
+    publishAccepted: (
+      publishIfLive: (eventPayloads: string[]) => Promise<TrafficMetricPublishResult>,
+    ) => Promise<void>,
   ): Promise<boolean> {
     if (this.pendingOperationCount >= maximumPendingMetricBatches) return false;
     this.pendingOperationCount += 1;
     const operation = this.operationTail
-      .then(() => this.appendAndPublishAtomic(input, events))
+      .then(async () => {
+        const retained = await this.appendIfLiveAtomic(input);
+        if (!retained) return false;
+        await publishAccepted((eventPayloads) =>
+          this.publishIfLiveAtomic(input.runId, eventPayloads),
+        );
+        return true;
+      })
       .finally(() => {
         this.pendingOperationCount -= 1;
       });
@@ -168,35 +183,49 @@ export class RedisDashboardTrafficMetricStore implements DashboardTrafficMetricR
     return operation;
   }
 
-  private async appendAndPublishAtomic(
-    input: LoadMetricIngestRequest,
-    events: Array<ReturnType<typeof dashboardEventSchema.parse>>,
-  ): Promise<boolean> {
+  private async appendIfLiveAtomic(input: LoadMetricIngestRequest): Promise<boolean> {
     const samplePayloads = input.samples.map((sample) => JSON.stringify(sample));
-    const eventPayloads = events.map((event) => JSON.stringify(dashboardEventSchema.parse(event)));
     const result = await this.redis.eval(
       `
         if redis.call("EXISTS", KEYS[2]) == 1 then return 0 end
-        local sampleCount = tonumber(ARGV[1])
-        if sampleCount > 0 then
-          local samples = {}
-          for i = 1, sampleCount do samples[i] = ARGV[i + 1] end
-          redis.call("RPUSH", KEYS[1], unpack(samples))
-          redis.call("LTRIM", KEYS[1], -${recentMetricLimit}, -1)
-          redis.call("EXPIRE", KEYS[1], 86400)
-        end
-        for i = sampleCount + 2, #ARGV do redis.call("PUBLISH", KEYS[3], ARGV[i]) end
+        redis.call("RPUSH", KEYS[1], unpack(ARGV))
+        redis.call("LTRIM", KEYS[1], -${recentMetricLimit}, -1)
+        redis.call("EXPIRE", KEYS[1], 86400)
         return 1
       `,
-      3,
+      2,
       trafficMetricKey(input.runId),
       trafficMetricFenceKey(input.runId),
-      dashboardEventsRedisChannel,
-      String(samplePayloads.length),
       ...samplePayloads,
-      ...eventPayloads,
     );
     return result === 1;
+  }
+
+  private async publishIfLiveAtomic(
+    runId: string,
+    eventPayloads: string[],
+  ): Promise<TrafficMetricPublishResult> {
+    if (eventPayloads.length === 0) return { outcome: "attempted", failures: [] };
+    const result = await this.redis.eval(
+      `
+        if redis.call("EXISTS", KEYS[1]) == 1 then return { "fenced" } end
+        local outcomes = { "attempted" }
+        for i = 1, #ARGV do
+          local publishResult = redis.pcall("PUBLISH", KEYS[2], ARGV[i])
+          if type(publishResult) == "table" and publishResult.err then
+            table.insert(outcomes, publishResult.err)
+          else
+            table.insert(outcomes, "")
+          end
+        end
+        return outcomes
+      `,
+      2,
+      trafficMetricFenceKey(runId),
+      dashboardEventsRedisChannel,
+      ...eventPayloads,
+    );
+    return parseTrafficMetricPublishResult(result, eventPayloads.length);
   }
 
   async fenceRun(runId: string): Promise<void> {
@@ -853,19 +882,61 @@ export class DemoRunService implements DemoRunController {
       .limit(1);
     if (!run || !["starting", "active", "draining"].includes(run.status)) return;
 
-    const events = request.samples.map((sample) =>
-      dashboardEventSchema.parse({
-        type: "traffic.metric",
-        eventId: this.generateId(),
-        runId: request.runId,
-        correlationId: request.correlationId,
-        metricName: sample.metricName,
-        value: sample.value,
-        unit: sample.unit,
-        occurredAt: sample.timestamp,
-      }),
-    );
-    await this.options.trafficMetricStore.appendAndPublishIfLive(request, events);
+    await this.options.trafficMetricStore.appendAndPublishIfLive(request, async (publishIfLive) => {
+      const publications: Array<{ metricName: MetricSample["metricName"]; payload: string }> = [];
+      for (const sample of request.samples) {
+        try {
+          const event = dashboardEventSchema.parse({
+            type: "traffic.metric",
+            eventId: this.generateId(),
+            runId: request.runId,
+            correlationId: request.correlationId,
+            metricName: sample.metricName,
+            value: sample.value,
+            unit: sample.unit,
+            occurredAt: sample.timestamp,
+          });
+          publications.push({ metricName: sample.metricName, payload: JSON.stringify(event) });
+        } catch (error) {
+          this.warnTrafficMetricPublicationFailure(error, request, sample.metricName);
+        }
+      }
+
+      try {
+        const result = await publishIfLive(publications.map(({ payload }) => payload));
+        if (result.outcome === "attempted") {
+          for (const failure of result.failures) {
+            const publication = publications[failure.index];
+            if (publication) {
+              this.warnTrafficMetricPublicationFailure(
+                failure.error,
+                request,
+                publication.metricName,
+              );
+            }
+          }
+        }
+      } catch (error) {
+        for (const publication of publications) {
+          this.warnTrafficMetricPublicationFailure(error, request, publication.metricName);
+        }
+      }
+    });
+  }
+
+  private warnTrafficMetricPublicationFailure(
+    error: unknown,
+    request: Pick<LoadMetricIngestRequest, "runId" | "correlationId">,
+    metricName: MetricSample["metricName"],
+  ): void {
+    try {
+      this.options.logger.warn(
+        { err: error, runId: request.runId, correlationId: request.correlationId, metricName },
+        "Could not publish traffic metric dashboard event.",
+      );
+    } catch {
+      // Reporting an advisory publication failure must not redefine accepted retention.
+    }
   }
 
   async reconcileStartingRuns(): Promise<number> {
@@ -1584,6 +1655,29 @@ function trafficMetricKey(runId: string): string {
 
 function trafficMetricFenceKey(runId: string): string {
   return `demo-run:${runId}:traffic-metrics-reset-fence`;
+}
+
+function parseTrafficMetricPublishResult(
+  value: unknown,
+  expectedOutcomeCount: number,
+): TrafficMetricPublishResult {
+  if (!Array.isArray(value) || value.length === 0 || typeof value[0] !== "string") {
+    throw new Error("Redis returned an invalid traffic metric publication result.");
+  }
+  if (value[0] === "fenced" && value.length === 1) return { outcome: "fenced" };
+  if (value[0] !== "attempted" || value.length !== expectedOutcomeCount + 1) {
+    throw new Error("Redis returned an invalid traffic metric publication result.");
+  }
+
+  const failures: Array<{ index: number; error: Error }> = [];
+  for (let index = 0; index < expectedOutcomeCount; index += 1) {
+    const outcome = value[index + 1];
+    if (typeof outcome !== "string") {
+      throw new Error("Redis returned an invalid traffic metric publication result.");
+    }
+    if (outcome.length > 0) failures.push({ index, error: new Error(outcome) });
+  }
+  return { outcome: "attempted", failures };
 }
 
 function positiveTimeout(value: number, name: string): number {

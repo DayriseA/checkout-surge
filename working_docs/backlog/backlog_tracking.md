@@ -93,7 +93,7 @@ Replace `⬜` with `✅` when a task is complete. Optional `⏳` for work in pro
 
 ✅ [Task 44: Bound the live observability cost profile: sold-out aggregate signal, batched metric publishes, cheaper outcome recomputation](./task_44.md)
 
-⬜ [Task 45: Isolate metric-ingestion failures from pub/sub fan-out](./task_45.md)
+✅ [Task 45: Isolate metric-ingestion failures from pub/sub fan-out](./task_45.md)
 
 ⬜ [Task 46: Tighten the dashboard recovery read model: drop the catalog-offer fallback, make the shape self-describing](./task_46.md)
 
