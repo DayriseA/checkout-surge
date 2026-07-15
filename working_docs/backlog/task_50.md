@@ -119,3 +119,12 @@ After implementation, verification should remain compose-focused:
 6. Run `docker compose -f docker-compose.yml -f .devcontainer/docker-compose.yml config` because the repository documents that merged topology as a supported static validation surface; verify the override does not weaken the two upper dependency maps.
 
 A focused automated regression may parse `docker compose config --format json` (when supported by the installed Compose version) and assert those mappings without starting containers. Do not require `docker compose up`, build images, start an app, wait for live health transitions, or mutate databases to complete this task. If runtime validation is performed voluntarily in a suitable environment, report it separately from the required static checks.
+
+## Implementation record
+
+- **Status:** Complete.
+- **Scope:** Changed the five existing upper-graph dependency conditions in root `docker-compose.yml` from `service_started` to `service_healthy`. Added a focused explanation of initial healthy creation gates and their limits to `docs/runtime_topology.md`.
+- **Decision / deviation:** Task 20 added a direct `web` dependency on Redis for the production Redis-backed admin-login limiter after this task was written. That `redis: service_healthy` edge is preserved, so the rendered `web.depends_on` keys are now exactly `api`, `load-orchestrator`, `mock-erp`, and `redis`, all healthy-gated. Removing or weakening the Redis edge would regress the current runtime requirement; the task's older three-key assertion is therefore superseded by the current topology.
+- **Verification:** Root and root-plus-Dev-Container Compose configurations rendered successfully with safe dummy secrets. Focused JSON assertions confirmed the exact upper dependency keys and `service_healthy` conditions, no `service_started` condition on either upper service, unchanged target healthchecks (including timing and no `start_period`), and unchanged service commands, restart policies, Caddy mount/ports, and profiles. A normalized before/after rendered-config comparison showed only the five requested condition changes. `git diff --check` passed.
+- **Skipped / not applicable:** No Compose-static test convention exists in the repository, so no new test infrastructure was added. TypeScript type checks, application lint, image builds, container startup, and runtime smoke suites are not relevant to this deployment-only YAML/documentation change. The prohibited slow composition and characterization suites were not run.
+- **Remaining issues:** None.

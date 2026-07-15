@@ -101,9 +101,9 @@ Replace `⬜` with `✅` when a task is complete. Optional `⏳` for work in pro
 
 ✅ [Task 48: Record a terminal marker on the final ERP attempt](./task_48.md)
 
-⬜ [Task 49: Replace fixed-second TPS buckets in the mock ERP with a sliding one-second window](./task_49.md)
+✅ [Task 49: Replace fixed-second TPS buckets in the mock ERP with a sliding one-second window](./task_49.md)
 
-⬜ [Task 50: Health-gate the upper compose graph (web and proxy must wait on healthy dependencies)](./task_50.md)
+✅ [Task 50: Health-gate the upper compose graph (web and proxy must wait on healthy dependencies)](./task_50.md)
 
 ⬜ [Task 51: Deepen the non-mutating smoke's SSE check to observe an actual frame](./task_51.md)
 

@@ -207,11 +207,11 @@ services:
       REDIS_URL: redis://redis:6379
     depends_on:
       api:
-        condition: service_started
+        condition: service_healthy
       mock-erp:
-        condition: service_started
+        condition: service_healthy
       load-orchestrator:
-        condition: service_started
+        condition: service_healthy
       redis:
         condition: service_healthy
     healthcheck:
@@ -238,9 +238,9 @@ services:
         ipv4_address: 172.30.0.2
     depends_on:
       api:
-        condition: service_started
+        condition: service_healthy
       web:
-        condition: service_started
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/"]
       interval: 5s

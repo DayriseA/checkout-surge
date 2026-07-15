@@ -169,6 +169,8 @@ It should verify:
 
 PostgreSQL and Redis may be verified through compose healthchecks and through dependent service readiness.
 
+For initial container creation, Compose waits for API, Mock ERP, load orchestrator, and Redis to be healthy before creating the web service, then waits for API and web to be healthy before creating the dashboard proxy. The direct API-to-proxy gate is retained because Caddy routes dashboard SSE traffic to API rather than through web. These gates prevent the browser origin from becoming reachable before its initial dependencies are ready; they do not make Compose stop, restart, or recreate already-running services when a dependency becomes unhealthy later. The web and proxy root healthchecks establish reachability, not continuous aggregate backend or SSE readiness.
+
 ---
 
 ## Containerized Load-Run Validation
