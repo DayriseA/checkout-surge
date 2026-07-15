@@ -5,8 +5,8 @@ import {
   uuidSchema,
 } from "@checkout-surge/contracts";
 import type { CheckoutSurgeRedis } from "./redis.js";
+import { inventoryEventHistoryLimit } from "./redis-inventory-policy.js";
 
-const inventoryEventHistoryLimit = 100;
 const inventoryNamespaceScanBatchSize = 100;
 export const reservationThroughputWindowSeconds = 60;
 export const pendingPersistenceIndexKey = "inventory:pending-persistence-index";

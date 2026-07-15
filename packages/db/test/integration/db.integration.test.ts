@@ -3497,7 +3497,7 @@ describe("database migrations, seed data, and reset behavior", () => {
     expect(await redis.hget(keys.reservationOutcomes, "api_sold_out_decision")).toBe("0");
   });
 
-  it("does not oversell under concurrent reservations and bounds event history", async () => {
+  it("does not oversell under concurrent reservations", async () => {
     const saleOfferId = "10000000-0000-4000-8000-000000000007";
     const keys = inventoryKeys(saleOfferId);
     const clients = Array.from(
@@ -3528,7 +3528,7 @@ describe("database migrations, seed data, and reset behavior", () => {
       expect(await redis.hlen(keys.reservations)).toBe(100);
       expect(await redis.zcard(keys.reservationExpirations)).toBe(100);
       expect(await redis.hget(keys.reservationOutcomes, "api_sold_out_decision")).toBe("150");
-      expect(await redis.llen(keys.events)).toBe(100);
+      expect(await redis.llen(keys.events)).toBe(101);
       expect(await redis.hlen(keys.reservationThroughput)).toBeLessThanOrEqual(120);
       expect(
         (await getInventoryStatus(redis, saleOfferId, new Date("2026-06-20T12:00:30.000Z")))
@@ -3540,6 +3540,75 @@ describe("database migrations, seed data, and reset behavior", () => {
       }
     }
   });
+
+  it("retains exactly the newest 500 inventory updates across reservations and reversal", async () => {
+    const saleOfferId = "10000000-0000-4000-8000-000000000059";
+    const keys = inventoryKeys(saleOfferId);
+    const allocatedStock = 501;
+    let latestInput = buildReservationInput({ saleOfferId, sequence: 2000 });
+    await initializeInventory(redis, {
+      saleOfferId,
+      allocatedStock,
+      source: "retention-test",
+      initializedAt: new Date("2026-06-20T11:59:00.000Z"),
+    });
+
+    for (let index = 0; index < allocatedStock; index += 1) {
+      latestInput = buildReservationInput({ saleOfferId, sequence: 2000 + index });
+      await expect(reserveInventoryStock(redis, latestInput)).resolves.toMatchObject({
+        outcome: "reservation_secured",
+      });
+    }
+
+    expect(await redis.llen(keys.events)).toBe(500);
+    expect(JSON.parse((await redis.lindex(keys.events, 0)) ?? "null")).toEqual({
+      eventName: "inventory.updated",
+      saleOfferId,
+      allocatedStock,
+      remainingStock: 499,
+      reservedStock: 2,
+      reservationCount: 1,
+      reservedQuantity: 1,
+      source: "reservation",
+      occurredAt: reservationSecuredAt,
+    });
+    expect(JSON.parse((await redis.lindex(keys.events, -1)) ?? "null")).toEqual({
+      eventName: "inventory.updated",
+      saleOfferId,
+      allocatedStock,
+      remainingStock: 0,
+      reservedStock: 501,
+      reservationCount: 1,
+      reservedQuantity: 1,
+      source: "reservation",
+      occurredAt: reservationSecuredAt,
+    });
+
+    const reversalOccurredAt = new Date("2026-06-20T12:05:00.000Z");
+    await expect(
+      reverseReservation(redis, {
+        idempotencyKey: latestInput.idempotencyKey,
+        reservation: latestInput.reservation,
+        occurredAt: reversalOccurredAt,
+      }),
+    ).resolves.toBe("reversed");
+
+    expect(await redis.llen(keys.events)).toBe(500);
+    expect(JSON.parse((await redis.lindex(keys.events, 0)) ?? "null")).toMatchObject({
+      remainingStock: 498,
+      reservedStock: 3,
+      source: "reservation",
+    });
+    expect(JSON.parse((await redis.lindex(keys.events, -1)) ?? "null")).toEqual({
+      eventName: "inventory.updated",
+      saleOfferId,
+      allocatedStock,
+      remainingStock: 1,
+      reservedStock: 500,
+      source: "reservation-reversal",
+      occurredAt: reversalOccurredAt.toISOString(),
+    });
+  }, 30_000);
 
   it("resets only business tables in the isolated test database", async () => {
     await resetTestDatabase({ migrationsFolder });

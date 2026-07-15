@@ -12,8 +12,8 @@ import {
   pendingPersistenceIndexKey,
   reservationThroughputWindowSeconds,
 } from "./redis-inventory.js";
+import { inventoryEventHistoryLimit } from "./redis-inventory-policy.js";
 
-const inventoryEventHistoryLimit = 100;
 const reserveInventoryCommandName = "checkoutSurgeReserveInventory";
 const reserveInventoryCommandConnections = new WeakSet<CheckoutSurgeRedis>();
 

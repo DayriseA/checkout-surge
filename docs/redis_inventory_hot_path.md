@@ -12,7 +12,7 @@ Inventory keys are scoped per sale offer:
 - `inventory:{saleOfferId}:pending-persistence` stores reservation IDs that have a Redis hold but still need durable PostgreSQL reconciliation.
 - `inventory:{saleOfferId}:pending-persistence-records` stores the self-sufficient hold and idempotency context needed to reconcile those IDs without scanning Redis keys.
 - `inventory:pending-persistence-index` is a global sorted index of namespaced pending reservation IDs used in bounded batches by API startup reconciliation.
-- `inventory:{saleOfferId}:events` stores recent hot-path inventory events.
+- `inventory:{saleOfferId}:events` stores the newest 500 hot-path inventory updates in chronological insertion order. It is a bounded diagnostic window, not a recovery source or supported public API.
 - `inventory:{saleOfferId}:reservation-throughput` stores an exact fixed 60-slot ring of per-second successful reservation-request counts.
 - `inventory:{saleOfferId}:reservation-outcomes` stores run-scoped aggregate reservation-outcome counters, initially the `api_sold_out_decision` count and its latest-observed time, for durable sold-out accounting at finalization.
 - `inventory:{saleOfferId}:idempotency:{idempotencyKey}` stores per-sale idempotency outcomes.
@@ -55,7 +55,9 @@ Before its first write, the operation validates the required stock counters, the
 
 Inventory status reads enforce the same allocation invariant: `remainingStock + reservedStock` must equal `allocatedStock`. Contradictory counters are reported as malformed state rather than returned to operators.
 
-Each successful `inventory.updated` event carries `reservationCount: 1`, `reservedQuantity`, remaining stock, reserved stock, and the event time. Initialization events intentionally omit the reservation-only fields. The event list remains capped at 100 and is suitable for bounded recent updates, but throughput does not depend on the list retaining every surge event.
+Each fresh successful reservation appends an `inventory.updated` event carrying `reservationCount: 1`, `reservedQuantity`, remaining stock, reserved stock, and the event time. Initialization and reservation-reversal events intentionally omit the reservation-only fields. All three writers use the same DB-owned retention policy: `RPUSH` followed by negative-index `LTRIM` keeps at most the newest 500 updates in chronological insertion order. Sold-out decisions and idempotent replays do not consume slots. Initialization clears the inventory namespace first, so a newly initialized offer starts with exactly its initialization event.
+
+This list is bounded operator/debug evidence, not a complete audit trail, recovery source, workflow input, or realtime delivery channel. It has no production reader and no TTL, so retained entries may remain indefinitely until explicit initialization, reset, or maintenance removes the inventory namespace. The 500-entry limit is an implementation policy rather than runtime configuration. Retention is per sale offer and measures successful updates rather than elapsed time; raising it increases this key's worst-case retained entries fivefold, while key lifecycle remains governed by those explicit operations. PostgreSQL reservation and order events remain the durable business record.
 
 The successful reservation-request throughput projection uses a 60-second ring with one slot per epoch second. A successful non-replay reservation increments one request regardless of its reserved quantity; idempotent replays do not increment it. Reads sum only slots in the inclusive interval from the measurement second minus 59 through the measurement second, then report the count, fixed 60-second window, `reservations_per_second` unit, rate as `count / 60`, and measurement time. The ring has at most 120 hash fields and is reset with the inventory namespace, so write and read cost do not grow with run volume.
 

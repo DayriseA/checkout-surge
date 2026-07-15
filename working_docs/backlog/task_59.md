@@ -42,3 +42,31 @@ Inventory/reservation event lists are capped at 100 entries, reducing operator/d
 ## Scope and non-goals
 
 This task owns the shared DB-package retention policy, the two Redis write/trim paths, the hot-path documentation statement, and focused DB integration coverage. It does not change inventory admission, counter arithmetic, idempotency TTL or replay semantics, hold expiry/pending-persistence behavior, sold-out aggregation, throughput windows, Redis key lifecycle, event schemas or privacy fields, PostgreSQL order-event retention, dashboard Pub/Sub/SSE delivery, dashboard recovery, run history, or API contracts. Do not add a general event-ledger reader/export endpoint, persist every surge event, introduce unbounded retention, or treat this lossy debug list as authoritative state.
+
+## Implementation record (2026-07-15)
+
+### Status
+
+Implemented; Redis-backed verification is pending an available configured Redis service.
+
+### Completed scope and decisions
+
+- Added one internal DB-package implementation-policy constant, `inventoryEventHistoryLimit = 500`, in `redis-inventory-policy.ts`. It is intentionally not re-exported through the package public entry point or exposed as runtime configuration.
+- Initialization, fresh successful reservation, and reservation reversal now all consume that same policy. Existing `RPUSH` plus negative-index `LTRIM`, reservation Lua atomicity, chronological insertion order, event shapes, and public-safe fields remain unchanged.
+- Updated the existing 100-success concurrency expectation to retain 101 events (initialization plus 100 successful reservations); the 150 sold-out decisions still consume no event slots.
+- Added deterministic focused coverage with 501 fresh successful reservations. It asserts exactly 500 retained entries and exact first/last parsed reservation events, accounting for the trimmed initialization event and oldest reservation update. The same test appends a reversal and proves the list remains at 500 with the reversal newest and the next reservation event oldest.
+- Existing focused assertions continue to prove initialization resets the namespace to one event, sold-out decisions do not append, and pending/accepted idempotent replays do not append.
+- Updated `docs/redis_inventory_hot_path.md` with the 500-entry per-offer diagnostic window, all three writers, non-reader/non-authoritative semantics, no TTL, fixed implementation policy, and lifecycle/memory caveats.
+
+### Verification
+
+- `pnpm --filter @checkout-surge/db test:unit`: 6 files, 37 tests passed.
+- `pnpm --filter @checkout-surge/db type-check`: passed, including the public package-boundary type check.
+- `pnpm --filter @checkout-surge/db lint`: passed; 53 files checked with no fixes.
+- `git diff --check`: passed.
+- Repository scans found no production `inventory:{saleOfferId}:events` reader and no remaining active 100-entry event assertion or hot-path documentation promise.
+
+### Skipped and blockers
+
+- Attempted `pnpm --filter @checkout-surge/db exec node ../../scripts/run-with-test-env.mjs vitest run --config vitest.integration.config.ts test/integration/db.integration.test.ts -t "retains exactly the newest 500 inventory updates across reservations and reversal"`. The configured Redis service at `127.0.0.1:6380` refused the connection (`ECONNREFUSED`); the suite failed in setup with all 66 tests skipped. No Docker services were started.
+- `pnpm test:composition` and `pnpm test:characterization` were not run per repository instructions.

@@ -121,7 +121,7 @@ Replace `⬜` with `✅` when a task is complete. Optional `⏳` for work in pro
 
 ✅ [Task 58: Reconcile the realtime event and k6 metric vocabulary with the shared domain model](./task_58.md)
 
-⬜ [Task 59: Raise recent-inventory-event retention to reference parity](./task_59.md)
+✅ [Task 59: Raise recent-inventory-event retention to reference parity](./task_59.md)
 
 ⬜ [Task 60: Separate public and operator surfaces in the web UI and add confirmation flows to destructive actions](./task_60.md)
 
