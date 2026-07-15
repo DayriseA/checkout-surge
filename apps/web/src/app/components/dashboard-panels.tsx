@@ -254,12 +254,20 @@ export function RecoveryStatusPanel({
   realtimeStatus,
   liveEventCount,
   isRefreshing = false,
+  isRetryScheduled = false,
+  retryAttempt = 0,
+  retryDelayMs = null,
+  hasSyncIssue = false,
   onRefresh,
 }: {
   recovery: BackendRead<DashboardRecoveryResponse>;
   realtimeStatus: RealtimeConnectionStatus;
   liveEventCount: number;
   isRefreshing?: boolean;
+  isRetryScheduled?: boolean;
+  retryAttempt?: number;
+  retryDelayMs?: number | null;
+  hasSyncIssue?: boolean;
   onRefresh?: () => void;
 }) {
   const data = recoveryData(recovery);
@@ -286,6 +294,18 @@ export function RecoveryStatusPanel({
           <StatusPill label={run?.status ?? "idle"} tone={run ? "pending" : "idle"} />
         </div>
       </div>
+      {hasSyncIssue ? (
+        <div className="mb-3 grid gap-1 rounded-lg border border-[#f7b4ad] bg-danger-soft p-3 leading-6 text-danger">
+          <strong>Live sync issue</strong>
+          <span>
+            {isRefreshing
+              ? "Refreshing authoritative snapshot now."
+              : isRetryScheduled && retryDelayMs !== null
+                ? `Retry scheduled in ${formatSeconds(retryDelayMs / 1000)} (attempt ${retryAttempt}).`
+                : "Authoritative recovery is unavailable."}
+          </span>
+        </div>
+      ) : null}
       {data ? (
         <dl className={stackedFactGridClassName}>
           <Fact label="Current run" value={run ? run.presetName : "No active run"} />

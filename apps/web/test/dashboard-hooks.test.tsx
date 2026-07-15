@@ -6,6 +6,7 @@ import {
   dashboardEventsPath,
 } from "@checkout-surge/contracts";
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
+import { StrictMode, type ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useDashboardEvents } from "../src/app/components/realtime/use-dashboard-events.js";
 import { useDashboardRecovery } from "../src/app/components/realtime/use-dashboard-recovery.js";
@@ -39,6 +40,7 @@ afterEach(() => {
   cleanup();
   InjectedEventSource.instances = [];
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 describe("useDashboardEvents", () => {
@@ -98,6 +100,151 @@ describe("useDashboardEvents", () => {
 });
 
 describe("useDashboardRecovery", () => {
+  it("keeps the initial retry at one second during Strict Mode effect replay", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(recoveryFixture()));
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = renderHook(
+      () =>
+        useDashboardRecovery({
+          status: "unavailable",
+          reason: "API starting",
+        }),
+      {
+        wrapper: ({ children }: { children: ReactNode }) => (
+          <StrictMode>{children}</StrictMode>
+        ),
+      },
+    );
+
+    expect(result.current.isRetryScheduled).toBe(true);
+    expect(result.current.retryAttempt).toBe(1);
+    expect(result.current.retryDelayMs).toBe(1_000);
+    await act(async () => vi.advanceTimersByTimeAsync(999));
+    expect(fetchMock).not.toHaveBeenCalled();
+    await act(async () => vi.advanceTimersByTimeAsync(1));
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("keeps an unavailable reason visible, schedules one retry, and resets after success", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ message: "API restarting" }), { status: 503 }))
+      .mockResolvedValueOnce(jsonResponse(recoveryFixture("2026-06-20T00:00:13.000Z")));
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = renderHook(() => useDashboardRecovery(available(recoveryFixture())));
+
+    await act(async () => result.current.refresh());
+    expect(result.current.recovery).toMatchObject({ status: "unavailable", reason: "API restarting" });
+    expect(result.current.hasSyncIssue).toBe(true);
+    expect(result.current.isRetryScheduled).toBe(true);
+    expect(result.current.retryAttempt).toBe(1);
+
+    await act(async () => vi.advanceTimersByTimeAsync(1_000));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(result.current.recovery.status).toBe("available");
+    expect(result.current.hasSyncIssue).toBe(false);
+    expect(result.current.isRetryScheduled).toBe(false);
+    expect(result.current.retryAttempt).toBe(0);
+  });
+
+  it("does not overlap duplicate triggers and defers discarded-event follow-up after failure", async () => {
+    vi.useFakeTimers();
+    const first = deferred<Response>();
+    const retry = deferred<Response>();
+    const fetchMock = vi.fn().mockImplementationOnce(() => first.promise).mockImplementationOnce(() => retry.promise).mockResolvedValueOnce(jsonResponse(recoveryFixture("2026-06-20T00:00:14.000Z")));
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = renderHook(() => useDashboardRecovery(available(recoveryFixture())));
+
+    act(() => {
+      void result.current.refresh();
+      void result.current.refresh();
+      result.current.applyEvent(eventFixture());
+    });
+    expect(fetchMock).toHaveBeenCalledOnce();
+    first.resolve(new Response(JSON.stringify({ message: "still down" }), { status: 503 }));
+    await act(async () => first.promise);
+    await act(async () => Promise.resolve());
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(result.current.isRetryScheduled).toBe(true);
+
+    await act(async () => vi.advanceTimersByTimeAsync(1_000));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    retry.resolve(jsonResponse(recoveryFixture("2026-06-20T00:00:13.000Z")));
+    await act(async () => retry.promise);
+    await act(async () => Promise.resolve());
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(result.current.isRefreshing).toBe(false);
+  });
+
+  it("cancels scheduled retry and suppresses completion updates after unmount", async () => {
+    vi.useFakeTimers();
+    const pending = deferred<Response>();
+    const fetchMock = vi.fn().mockImplementationOnce(() => pending.promise);
+    vi.stubGlobal("fetch", fetchMock);
+    const { result, unmount } = renderHook(() => useDashboardRecovery(available(recoveryFixture())));
+    act(() => void result.current.refresh());
+    unmount();
+    pending.resolve(new Response(JSON.stringify({ message: "down" }), { status: 503 }));
+    await act(async () => pending.promise);
+    await act(async () => vi.runAllTimersAsync());
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("keeps a locally scheduled retry authoritative across later prop status changes", async () => {
+    vi.useFakeTimers();
+    const recovered = recoveryFixture("2026-06-20T00:00:20.000Z");
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ message: "local recovery unavailable" }), { status: 503 }),
+      )
+      .mockResolvedValueOnce(jsonResponse(recovered));
+    vi.stubGlobal("fetch", fetchMock);
+    const initial = available(recoveryFixture());
+    const { result, rerender } = renderHook(
+      ({ recovery }) => useDashboardRecovery(recovery),
+      { initialProps: { recovery: initial as BackendRead<DashboardRecoveryResponse> } },
+    );
+
+    await act(async () => result.current.refresh());
+    expect(result.current.isRetryScheduled).toBe(true);
+    rerender({
+      recovery: {
+        status: "unavailable",
+        reason: "stale prop snapshot",
+        httpStatus: 502,
+      },
+    });
+    expect(result.current.recovery).toMatchObject({
+      status: "unavailable",
+      reason: "local recovery unavailable",
+    });
+
+    await act(async () => vi.advanceTimersByTimeAsync(1_000));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(result.current.recovery).toEqual(available(recovered));
+    expect(result.current.isRetryScheduled).toBe(false);
+  });
+
+  it("cancels an already scheduled retry on unmount", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ message: "API restarting" }), { status: 503 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const { result, unmount } = renderHook(() =>
+      useDashboardRecovery(available(recoveryFixture())),
+    );
+
+    await act(async () => result.current.refresh());
+    expect(result.current.isRetryScheduled).toBe(true);
+    unmount();
+    await act(async () => vi.advanceTimersByTimeAsync(1_000));
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
   it("serializes one follow-up when events and refresh requests arrive during recovery", async () => {
     const first = deferred<Response>();
     const fetchMock = vi
@@ -133,6 +280,7 @@ describe("useDashboardRecovery", () => {
     );
     const authoritativeRecovery = {
       ...recoveryFixture("2026-06-20T00:01:02.000Z"),
+      scope: { runId: newRun.runId, saleOfferId: newRun.saleOfferId },
       currentRun: newRun,
     };
     const fetchMock = vi

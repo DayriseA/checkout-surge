@@ -129,11 +129,11 @@ Replace `⬜` with `✅` when a task is complete. Optional `⏳` for work in pro
 
 ✅ [Task 62: Fix contradictory empty-state copy on out-of-range run-history pages](./task_62.md)
 
-⬜ [Task 63: Render public-safe error states for malformed run-history routes](./task_63.md)
+✅ [Task 63: Render public-safe error states for malformed run-history routes](./task_63.md)
 
-⬜ [Task 64: Route browser SSE through a web-owned proxy and remove the public direct-API override](./task_64.md)
+✅ [Task 64: Route browser SSE through a web-owned proxy and remove the public direct-API override](./task_64.md)
 
-⬜ [Task 65: Add active retry to recovery-read failures in the dashboard](./task_65.md)
+✅ [Task 65: Add active retry to recovery-read failures in the dashboard](./task_65.md)
 
 ⬜ [Task 66: Tighten the public run-history detail DTO](./task_66.md)
 

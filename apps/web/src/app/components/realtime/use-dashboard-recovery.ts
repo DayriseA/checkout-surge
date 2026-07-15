@@ -5,7 +5,7 @@ import {
   type DashboardRecoveryResponse,
   dashboardRecoveryResponseSchema,
 } from "@checkout-surge/contracts";
-import { useCallback, useEffect, useReducer, useRef } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import type { BackendRead } from "../../lib/api";
 import { readProxyJson } from "../../lib/client/proxy-json";
 import { dashboardRecoveryProxyPath } from "../../lib/control-paths";
@@ -14,6 +14,16 @@ import {
   dashboardStateReducer,
   shouldRequestAuthoritativeRecoveryAfterScopedEvent,
 } from "../../lib/dashboard-state";
+import {
+  createDashboardRecoveryRetryScheduler,
+  type DashboardRecoveryRetryState,
+} from "./dashboard-recovery-retry";
+
+const noScheduledRetry: DashboardRecoveryRetryState = {
+  attempt: 0,
+  delayMs: null,
+  scheduled: false,
+};
 
 export function useDashboardRecovery(initialRecovery: BackendRead<DashboardRecoveryResponse>) {
   const [state, dispatch] = useReducer(
@@ -21,40 +31,70 @@ export function useDashboardRecovery(initialRecovery: BackendRead<DashboardRecov
     initialRecovery,
     createDashboardState,
   );
-  const requestRef = useRef<Promise<void> | null>(null);
+  const requestRef = useRef<Promise<BackendRead<DashboardRecoveryResponse>> | null>(null);
   const eventDiscardedRef = useRef(false);
   const followUpRequestedRef = useRef(false);
-  const initialRecoveryIdentityRef = useRef(recoveryIdentity(initialRecovery));
+  const mountedRef = useRef(true);
+  const hasLocalRecoveryActivityRef = useRef(false);
+  const initialRecoveryIdentity = recoveryIdentity(initialRecovery);
+  const initialRecoveryIdentityRef = useRef(initialRecoveryIdentity);
+  const initialRecoveryRef = useRef(initialRecovery);
+  initialRecoveryRef.current = initialRecovery;
+  const refreshRef = useRef<() => Promise<void>>(async () => undefined);
+  const [retryState, setRetryState] = useState(noScheduledRetry);
+  const retrySchedulerRef = useRef<ReturnType<typeof createDashboardRecoveryRetryScheduler> | null>(null);
+  if (retrySchedulerRef.current === null) {
+    retrySchedulerRef.current = createDashboardRecoveryRetryScheduler({
+      onRetry: () => void refreshRef.current(),
+      onStateChange: (nextState) => {
+        if (mountedRef.current) setRetryState(nextState);
+      },
+    });
+  }
 
   const refresh = useCallback(async (): Promise<void> => {
+    if (!mountedRef.current) return;
     if (requestRef.current) {
       followUpRequestedRef.current = true;
       await requestRef.current;
       return;
     }
 
+    hasLocalRecoveryActivityRef.current = true;
+    retrySchedulerRef.current?.cancel();
     dispatch({ type: "refresh-started" });
-    const request = (async () => {
-      const recovery = await readProxyJson(
-        dashboardRecoveryProxyPath,
-        dashboardRecoveryResponseSchema,
-      );
-      dispatch({ type: "refresh-completed", recovery });
-    })();
+    let completedRecovery: BackendRead<DashboardRecoveryResponse> | null = null;
+    const request = readProxyJson(
+          dashboardRecoveryProxyPath,
+          dashboardRecoveryResponseSchema,
+        ).catch((error: unknown): BackendRead<DashboardRecoveryResponse> => ({
+          status: "unavailable",
+          reason: error instanceof Error ? error.message : "Dashboard recovery request failed.",
+        }));
     requestRef.current = request;
 
     try {
-      await request;
+      completedRecovery = await request;
+      if (!mountedRef.current) return;
+      dispatch({ type: "refresh-completed", recovery: completedRecovery });
+      if (completedRecovery.status === "available") {
+        retrySchedulerRef.current?.reset();
+      } else {
+        retrySchedulerRef.current?.schedule();
+      }
     } finally {
       requestRef.current = null;
-      const shouldFollowUp = eventDiscardedRef.current || followUpRequestedRef.current;
-      eventDiscardedRef.current = false;
-      followUpRequestedRef.current = false;
-      if (shouldFollowUp) {
-        await refresh();
+      if (mountedRef.current && completedRecovery?.status === "available") {
+        const shouldFollowUp = eventDiscardedRef.current || followUpRequestedRef.current;
+        eventDiscardedRef.current = false;
+        followUpRequestedRef.current = false;
+        if (shouldFollowUp) {
+          await refreshRef.current();
+        }
       }
     }
   }, []);
+  refreshRef.current = refresh;
 
   const applyEvent = useCallback(
     (event: DashboardEvent) => {
@@ -73,15 +113,35 @@ export function useDashboardRecovery(initialRecovery: BackendRead<DashboardRecov
   );
 
   useEffect(() => {
-    const nextIdentity = recoveryIdentity(initialRecovery);
-    if (initialRecoveryIdentityRef.current === nextIdentity) return;
-    initialRecoveryIdentityRef.current = nextIdentity;
-    dispatch({ type: "snapshot-received", recovery: initialRecovery });
-  }, [initialRecovery]);
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      retrySchedulerRef.current?.reset();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!hasLocalRecoveryActivityRef.current) {
+      const nextRecovery = initialRecoveryRef.current;
+      if (initialRecoveryIdentityRef.current !== initialRecoveryIdentity) {
+        initialRecoveryIdentityRef.current = initialRecoveryIdentity;
+        dispatch({ type: "snapshot-received", recovery: nextRecovery });
+      }
+      if (nextRecovery.status === "unavailable") {
+        retrySchedulerRef.current?.schedule();
+      } else {
+        retrySchedulerRef.current?.reset();
+      }
+    }
+  }, [initialRecoveryIdentity]);
 
   return {
     recovery: state.recovery,
     isRefreshing: state.isRefreshing,
+    isRetryScheduled: retryState.scheduled,
+    retryAttempt: retryState.attempt,
+    retryDelayMs: retryState.delayMs,
+    hasSyncIssue: state.recovery.status === "unavailable",
     liveEventCount: state.liveEventCount,
     recentOrderStates: state.recentOrderStates,
     recentOrderLagSamples: state.recentOrderLagSamples,
