@@ -499,6 +499,10 @@ function recoveryFixture(
   currentRun: DashboardRecoveryResponse["currentRun"],
 ): DashboardRecoveryResponse {
   return {
+    correlationId: "corr-web-recovery",
+    scope: currentRun
+      ? { runId: currentRun.runId, saleOfferId: currentRun.saleOfferId ?? null }
+      : null,
     currentRun,
     inventory: null,
     recentMetrics: [],

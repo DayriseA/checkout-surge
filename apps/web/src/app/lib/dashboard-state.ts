@@ -342,6 +342,11 @@ function recoveryForIncomingRun(
   return {
     ...recovery,
     data: {
+      correlationId: recovery.data.correlationId,
+      scope: {
+        runId: event.run.runId,
+        saleOfferId: event.run.saleOfferId ?? null,
+      },
       currentRun: event.run,
       inventory: null,
       recentMetrics: [],

@@ -68,7 +68,11 @@ describe("dashboard route admission", () => {
       headers: correlationHeader,
     });
     expect(success.statusCode).toBe(200);
-    dashboardRecoveryResponseSchema.parse(success.json());
+    expect(dashboardRecoveryResponseSchema.parse(success.json()).correlationId).toBe(
+      "route-correlation",
+    );
+    expect(success.headers[correlationIdHeaderName]).toBe("route-correlation");
+    expect(getRecovery).toHaveBeenCalledWith({ correlationId: "route-correlation" });
     expect(release).toHaveBeenCalledTimes(1);
     const failure = await server.inject({
       method: "GET",
@@ -125,6 +129,8 @@ function buildServer(options: {
 
 function recoveryFixture() {
   return {
+    correlationId: "route-correlation",
+    scope: null,
     recoveredAt: "2026-07-13T00:00:00.000Z",
     currentRun: null,
     inventory: null,

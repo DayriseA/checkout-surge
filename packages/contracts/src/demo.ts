@@ -200,6 +200,14 @@ export type CompletionOutcome = z.infer<typeof completionOutcomeSchema>;
 
 export const dashboardRecoveryResponseSchema = z
   .object({
+    correlationId: correlationIdSchema,
+    scope: z
+      .object({
+        runId: uuidSchema,
+        saleOfferId: uuidSchema.nullable(),
+      })
+      .strict()
+      .nullable(),
     currentRun: demoRunSnapshotSchema.nullable(),
     inventory: inventoryStatusSchema.nullable(),
     recentMetrics: z
@@ -221,7 +229,40 @@ export const dashboardRecoveryResponseSchema = z
     recentCompletionOutcomes: z.array(completionOutcomeSchema).default([]),
     recoveredAt: isoTimestampSchema,
   })
-  .strict();
+  .strict()
+  .superRefine((recovery, context) => {
+    if (recovery.currentRun === null && recovery.scope !== null) {
+      context.addIssue({
+        code: "custom",
+        path: ["scope"],
+        message: "Scope must be null when no current run is selected.",
+      });
+      return;
+    }
+    if (recovery.currentRun !== null && recovery.scope === null) {
+      context.addIssue({
+        code: "custom",
+        path: ["scope"],
+        message: "Scope must identify the selected current run.",
+      });
+      return;
+    }
+    if (recovery.currentRun === null || recovery.scope === null) return;
+    if (recovery.scope.runId !== recovery.currentRun.runId) {
+      context.addIssue({
+        code: "custom",
+        path: ["scope", "runId"],
+        message: "Scope run ID must match the selected current run.",
+      });
+    }
+    if (recovery.scope.saleOfferId !== (recovery.currentRun.saleOfferId ?? null)) {
+      context.addIssue({
+        code: "custom",
+        path: ["scope", "saleOfferId"],
+        message: "Scope sale offer ID must match the selected current run.",
+      });
+    }
+  });
 export type DashboardRecoveryResponse = z.infer<typeof dashboardRecoveryResponseSchema>;
 
 export const runHistorySummarySchema = demoRunSummaryShapeSchema

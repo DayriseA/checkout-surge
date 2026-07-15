@@ -335,7 +335,7 @@ describe("Phase 6 dashboard behavior", () => {
     expect(afterQueue.data.queue?.depth).toBe(2);
   });
 
-  it("resets idle catalog projections before installing a newly started run", () => {
+  it("resets idle recovered projections before installing a newly started run", () => {
     const recovery = availableRecovery(populatedRecovery(null));
     const event = runEventFixture("run.started", {
       ...runFixture(),
@@ -350,6 +350,11 @@ describe("Phase 6 dashboard behavior", () => {
 
     expect(nextState.recovery).toEqual(
       availableRecovery({
+        correlationId: "corr-web-recovery",
+        scope: {
+          runId: event.run.runId,
+          saleOfferId: event.run.saleOfferId ?? null,
+        },
         currentRun: event.run,
         inventory: null,
         recentMetrics: [],
@@ -754,6 +759,9 @@ function populatedRecovery(
 ): DashboardRecoveryResponse {
   return {
     ...recoveryFixture(),
+    scope: currentRun
+      ? { runId: currentRun.runId, saleOfferId: currentRun.saleOfferId ?? null }
+      : null,
     currentRun,
     inventory: inventoryFixture(currentRun?.saleOfferId),
     recentMetrics: [
@@ -972,6 +980,8 @@ function erpFixture(): NonNullable<DashboardRecoveryResponse["erp"]> {
 
 function recoveryFixture(): DashboardRecoveryResponse {
   return {
+    correlationId: "corr-web-recovery",
+    scope: null,
     currentRun: null,
     inventory: null,
     recentMetrics: [],

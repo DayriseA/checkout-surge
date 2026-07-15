@@ -480,7 +480,12 @@ function readinessFixture(): HealthResponse {
 function dashboardRecoveryFixture(
   overrides: Partial<DashboardRecoveryResponse> = {},
 ): DashboardRecoveryResponse {
+  const currentRun = overrides.currentRun ?? null;
   return {
+    correlationId: "corr-web-recovery",
+    scope: currentRun
+      ? { runId: currentRun.runId, saleOfferId: currentRun.saleOfferId ?? null }
+      : null,
     currentRun: null,
     inventory: null,
     recentMetrics: [],

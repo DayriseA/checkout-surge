@@ -97,6 +97,8 @@ describe("dashboard backend API reads", () => {
         }
 
         return jsonResponse({
+          correlationId: "corr-recovery",
+          scope: null,
           currentRun: null,
           inventory: null,
           recentMetrics: [],

@@ -53,7 +53,7 @@ export function registerDashboardRoutes(
     }
     try {
       const response = dashboardRecoveryResponseSchema.parse(
-        await options.dashboardRecoveryService.getRecovery(),
+        await options.dashboardRecoveryService.getRecovery({ correlationId: request.correlationId }),
       );
       return reply.status(200).send(response);
     } finally {

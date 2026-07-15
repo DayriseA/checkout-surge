@@ -327,7 +327,7 @@ async function buildTestServer(options: {
 function staticRecoveryContextReader(saleOfferId: string): DashboardRecoveryContextReader {
   return {
     readContext: async () => ({
-      currentRun: null,
+      currentRun: demoRunSnapshotFixture(),
       saleOfferId,
     }),
   };
@@ -916,7 +916,9 @@ describe("API gateway routes", () => {
     const payload = dashboardRecoveryResponseSchema.parse(response.json());
 
     expect(response.statusCode).toBe(200);
-    expect(payload.currentRun).toBeNull();
+    expect(payload.currentRun?.runId).toBe(fixtureIds.run);
+    expect(payload.scope).toEqual({ runId: fixtureIds.run, saleOfferId: fixtureIds.saleOffer });
+    expect(payload.correlationId).toBe(response.headers[correlationIdHeaderName]);
     expect(payload.inventory?.remainingStock).toBe(7);
     expect(payload.queue?.depth).toBe(10);
     expect(payload.erp?.status).toBe("healthy");

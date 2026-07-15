@@ -1207,6 +1207,8 @@ describe("buy and dashboard contracts", () => {
 
   it("validates dashboard recovery projections for the operator view", () => {
     const recovery = dashboardRecoveryResponseSchema.parse({
+      correlationId,
+      scope: null,
       currentRun: null,
       inventory: null,
       recentMetrics: [],
@@ -1254,6 +1256,55 @@ describe("buy and dashboard contracts", () => {
     expect(recovery.businessOutcome?.retryingOrders).toBe(2);
     expect(recovery.consistencyLag?.p95LagMs).toBe(350);
     expect(recovery.recentCompletionOutcomes[0]?.displayStatus).toBe("notification_recorded");
+  });
+
+  it("rejects dashboard recovery metadata that disagrees with the selected run", () => {
+    const currentRun = {
+      runId: "11111111-1111-4111-8111-111111111111",
+      presetId: "22222222-2222-4222-8222-222222222222",
+      presetName: "Preview 1k",
+      operatorMode: "public" as const,
+      status: "active" as const,
+      trafficStatus: "active" as const,
+      saleOfferId: "33333333-3333-4333-8333-333333333333",
+      configSnapshot: acceptedRunSnapshot(),
+    };
+    const baseRecovery = {
+      correlationId,
+      currentRun,
+      inventory: null,
+      recentMetrics: [],
+      queue: null,
+      erp: null,
+      businessOutcome: null,
+      consistencyLag: null,
+      recentCompletionOutcomes: [],
+      recoveredAt: timestamp,
+    };
+
+    expect(() =>
+      dashboardRecoveryResponseSchema.parse({
+        ...baseRecovery,
+        scope: {
+          runId: "44444444-4444-4444-8444-444444444444",
+          saleOfferId: currentRun.saleOfferId,
+        },
+      }),
+    ).toThrow();
+    expect(() => dashboardRecoveryResponseSchema.parse({ ...baseRecovery, scope: null })).toThrow();
+    expect(() =>
+      dashboardRecoveryResponseSchema.parse({
+        ...baseRecovery,
+        currentRun: null,
+        scope: { runId: currentRun.runId, saleOfferId: currentRun.saleOfferId },
+      }),
+    ).toThrow();
+    expect(() =>
+      dashboardRecoveryResponseSchema.parse({
+        ...baseRecovery,
+        scope: { runId: currentRun.runId, saleOfferId: null },
+      }),
+    ).toThrow();
   });
 });
 

@@ -244,6 +244,8 @@ function runFixture(
 
 function recoveryFixture(recoveredAt = "2026-06-20T00:00:10.000Z"): DashboardRecoveryResponse {
   return {
+    correlationId: "corr-web-recovery",
+    scope: null,
     currentRun: null,
     inventory: null,
     recentMetrics: [],

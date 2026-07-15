@@ -60,6 +60,8 @@ describe("PublicDemoEntry hydration", () => {
 
 function publicSurfaceFixture(): PublicDemoSurface {
   const recovery: DashboardRecoveryResponse = {
+    correlationId: "corr-web-recovery",
+    scope: null,
     currentRun: null,
     inventory: null,
     recentMetrics: [],

@@ -14,10 +14,9 @@ import {
   readBusinessOutcomeSummary,
   readConsistencyLagSummary,
   readRecentCompletionOutcomes,
-  saleOffers,
 } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
-import { and, desc, eq, gte, inArray, lte } from "drizzle-orm";
+import { desc, inArray, sql } from "drizzle-orm";
 import type { DashboardTrafficMetricReader } from "./demo-run-service.js";
 import type { ErpStatusService } from "./erp-status-service.js";
 import type { InventoryStatusService } from "./inventory-status-service.js";
@@ -29,7 +28,7 @@ export interface DashboardRecoveryContext {
 }
 
 export interface DashboardRecoveryContextReader {
-  readContext(now: Date): Promise<DashboardRecoveryContext>;
+  readContext(): Promise<DashboardRecoveryContext>;
 }
 
 export interface DashboardBusinessOutcomeReader {
@@ -50,12 +49,16 @@ export interface DashboardCompletionOutcomeReader {
 export class PostgresDashboardRecoveryContextReader implements DashboardRecoveryContextReader {
   constructor(private readonly db: CheckoutSurgeDatabase) {}
 
-  async readContext(now: Date): Promise<DashboardRecoveryContext> {
+  async readContext(): Promise<DashboardRecoveryContext> {
     const [currentRunRow] = await this.db
       .select()
       .from(demoRuns)
       .where(inArray(demoRuns.status, ["starting", "active", "draining"]))
-      .orderBy(desc(demoRuns.updatedAt))
+      .orderBy(
+        desc(sql`coalesce(${demoRuns.startedAt}, ${demoRuns.createdAt})`),
+        desc(demoRuns.createdAt),
+        desc(demoRuns.id),
+      )
       .limit(1);
 
     if (currentRunRow) {
@@ -67,23 +70,9 @@ export class PostgresDashboardRecoveryContextReader implements DashboardRecovery
       };
     }
 
-    const [catalogOffer] = await this.db
-      .select({ id: saleOffers.id })
-      .from(saleOffers)
-      .where(
-        and(
-          eq(saleOffers.purpose, "catalog"),
-          eq(saleOffers.isActive, true),
-          lte(saleOffers.saleStartsAt, now),
-          gte(saleOffers.saleEndsAt, now),
-        ),
-      )
-      .orderBy(desc(saleOffers.updatedAt))
-      .limit(1);
-
     return {
       currentRun: null,
-      saleOfferId: catalogOffer?.id ?? null,
+      saleOfferId: null,
     };
   }
 }
@@ -131,19 +120,22 @@ export class DashboardRecoveryService {
     },
   ) {}
 
-  async getRecovery(): Promise<DashboardRecoveryResponse> {
+  async getRecovery(input: { correlationId: string }): Promise<DashboardRecoveryResponse> {
     const now = this.options.now?.() ?? new Date();
     const contextResult = await readSafely("dashboard_run_context", () =>
-      this.options.contextReader.readContext(now),
+      this.options.contextReader.readContext(),
     );
     const context = contextResult.ok
       ? contextResult.value
       : { currentRun: null, saleOfferId: null };
-    const scope = context.saleOfferId
-      ? {
-          saleOfferId: context.saleOfferId,
-          ...(context.currentRun ? { runId: context.currentRun.runId } : {}),
-        }
+    const scope = context.currentRun
+      ? Object.freeze({
+          runId: context.currentRun.runId,
+          saleOfferId: context.currentRun.saleOfferId ?? null,
+        })
+      : null;
+    const saleScope = scope?.saleOfferId
+      ? Object.freeze({ runId: scope.runId, saleOfferId: scope.saleOfferId })
       : null;
 
     const [
@@ -155,31 +147,33 @@ export class DashboardRecoveryService {
       trafficMetricResult,
       completionOutcomeResult,
     ] = await Promise.all([
-      scope
+      saleScope
         ? readSafely("dashboard_inventory", () =>
-            this.options.inventoryStatusService.getStatus(scope.saleOfferId),
+            this.options.inventoryStatusService.getStatus(saleScope.saleOfferId),
           )
         : Promise.resolve({ ok: true as const, value: null }),
       readSafely("dashboard_queue", () => this.options.queueStatusService.getStatus()),
       readSafely("dashboard_erp", () => this.options.erpStatusService.getStatus()),
-      scope
+      saleScope
         ? readSafely("dashboard_business_outcome", () =>
-            this.options.businessOutcomeReader.read(scope),
+            this.options.businessOutcomeReader.read(saleScope),
           )
         : Promise.resolve({ ok: true as const, value: null }),
-      scope
+      saleScope
         ? readSafely("dashboard_consistency_lag", () =>
-            this.options.consistencyLagReader.read(scope, now),
+            this.options.consistencyLagReader.read(saleScope, now),
           )
         : Promise.resolve({ ok: true as const, value: null }),
-      readSafely("dashboard_traffic_metrics", () =>
-        this.options.trafficMetricReader
-          ? this.options.trafficMetricReader.readRecent(context.currentRun?.runId ?? null)
-          : Promise.resolve([] satisfies MetricSample[]),
-      ),
       scope
+        ? readSafely("dashboard_traffic_metrics", () =>
+            this.options.trafficMetricReader
+              ? this.options.trafficMetricReader.readRecent(scope.runId)
+              : Promise.resolve([] satisfies MetricSample[]),
+          )
+        : Promise.resolve({ ok: true as const, value: [] satisfies MetricSample[] }),
+      saleScope
         ? readSafely("dashboard_completion_outcomes", () =>
-            this.options.completionOutcomeReader.read(scope, now),
+            this.options.completionOutcomeReader.read(saleScope, now),
           )
         : Promise.resolve({ ok: true as const, value: [] }),
     ]);
@@ -203,6 +197,8 @@ export class DashboardRecoveryService {
     }
 
     return dashboardRecoveryResponseSchema.parse({
+      correlationId: input.correlationId,
+      scope,
       currentRun: context.currentRun,
       inventory: inventoryResult.ok ? inventoryResult.value : null,
       recentMetrics: trafficMetricResult.ok ? trafficMetricResult.value : [],

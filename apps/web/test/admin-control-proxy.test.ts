@@ -122,7 +122,11 @@ describe("dashboard control proxy routes", () => {
         expect(credential).not.toBe("caller-assertion");
         expect(credential).toMatch(/^[0-9a-f-]{36}\.\d+\.[0-9a-f]{64}$/);
         forwardedCredentials.push(String(credential));
-        return jsonResponse(dashboardRecoveryPayload());
+        return jsonResponse(
+          dashboardRecoveryPayload(
+            (init?.headers as Record<string, string>)[correlationIdHeaderName] ?? "corr-recovery",
+          ),
+        );
       }),
     );
 
@@ -886,8 +890,10 @@ function erpChaosStatusPayload() {
   };
 }
 
-function dashboardRecoveryPayload() {
+function dashboardRecoveryPayload(correlationId = "corr-recovery") {
   return {
+    correlationId,
+    scope: null,
     currentRun: null,
     inventory: null,
     recentMetrics: [],
@@ -895,6 +901,7 @@ function dashboardRecoveryPayload() {
     erp: null,
     businessOutcome: null,
     consistencyLag: null,
+    recentCompletionOutcomes: [],
     recoveredAt: "2026-06-20T00:00:10.000Z",
   };
 }
