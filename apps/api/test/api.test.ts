@@ -2729,6 +2729,7 @@ describe("API buy persistence", () => {
         promoteAccepted: (input) =>
           promoteReservationIdempotencyToAccepted(redis, input).then(() => undefined),
       },
+      idempotencyTtlSeconds: 1800,
       orderProcessJobPublisher: {
         enqueue: async (job) => {
           jobs.push(job);

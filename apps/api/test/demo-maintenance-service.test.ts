@@ -2043,6 +2043,7 @@ async function seedActiveRunBusinessState(
   });
   await promoteReservationIdempotencyToAccepted(redis, {
     idempotencyKey: "active-idempotency",
+    idempotencyTtlSeconds: 1800,
     reservation,
   });
   await db.insert(reservations).values({

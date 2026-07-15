@@ -283,6 +283,9 @@ describe("ReserveOrderService queue handoff", () => {
     const enqueue = vi.fn(async () => {
       callOrder.push("enqueue");
     });
+    const promoteAccepted = vi.fn(async () => {
+      callOrder.push("promote");
+    });
     const service = buildService({
       persistence: {
         persistSecuredReservation: async ({ reservation }) => {
@@ -292,9 +295,7 @@ describe("ReserveOrderService queue handoff", () => {
         getPersistedBuyByReservationId: async () => null,
       },
       stockReservations: acceptingGateway({
-        promoteAccepted: async () => {
-          callOrder.push("promote");
-        },
+        promoteAccepted,
       }),
       orderProcessJobPublisher: { enqueue },
     });
@@ -303,6 +304,14 @@ describe("ReserveOrderService queue handoff", () => {
 
     expect(response.outcome).toBe("reservation_secured");
     expect(callOrder).toEqual(["persist", "enqueue", "promote"]);
+    if (response.outcome !== "reservation_secured") {
+      throw new Error("Expected a secured reservation response.");
+    }
+    expect(promoteAccepted).toHaveBeenCalledWith({
+      idempotencyKey: request.idempotencyKey,
+      idempotencyTtlSeconds: 1800,
+      reservation: response.reservation,
+    });
     expect(enqueue).toHaveBeenCalledWith({
       orderId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
       publicOrderId: "ord_partial_failure",
@@ -649,6 +658,7 @@ describe("ReserveOrderService queue handoff", () => {
     expect(enqueue).toHaveBeenCalledOnce();
     expect(promoteAccepted).toHaveBeenCalledWith({
       idempotencyKey: request.idempotencyKey,
+      idempotencyTtlSeconds: 1800,
       reservation: originalHold,
     });
     expect(publishBusinessOutcomeUpdate).toHaveBeenCalledOnce();
@@ -718,14 +728,22 @@ describe("ReserveOrderService queue handoff", () => {
       securedAt: now.toISOString(),
       expiresAt: new Date(now.getTime() + 900_000).toISOString(),
     };
-    const enqueue = vi.fn();
-    const promoteAccepted = vi.fn();
+    const callOrder: string[] = [];
+    const enqueue = vi.fn(() => {
+      callOrder.push("enqueue");
+    });
+    const promoteAccepted = vi.fn(() => {
+      callOrder.push("promote");
+    });
     const service = buildService({
       persistence: {
         persistSecuredReservation: async () => {
           throw new Error("Historical replay must not persist again.");
         },
-        getPersistedBuyByReservationId: async () => persistedBuy(hold),
+        getPersistedBuyByReservationId: async () => {
+          callOrder.push("read durable");
+          return persistedBuy(hold);
+        },
       },
       stockReservations: acceptingGateway({
         reserve: async () => ({ outcome: "idempotent_replay", reservation: hold }),
@@ -759,9 +777,12 @@ describe("ReserveOrderService queue handoff", () => {
     expect(response.order.correlationId).toBe("original-workflow-correlation");
     expect(response.order.status).toBe("queued");
     expect(enqueue).toHaveBeenCalledOnce();
-    expect(enqueue.mock.invocationCallOrder[0]).toBeLessThan(
-      promoteAccepted.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
-    );
+    expect(callOrder).toEqual(["read durable", "enqueue", "promote"]);
+    expect(promoteAccepted).toHaveBeenCalledWith({
+      idempotencyKey: request.idempotencyKey,
+      idempotencyTtlSeconds: 1800,
+      reservation: hold,
+    });
   });
 });
 

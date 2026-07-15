@@ -87,6 +87,7 @@ export interface StockReservationGateway {
   }): Promise<void>;
   promoteAccepted(input: {
     idempotencyKey: string;
+    idempotencyTtlSeconds: number;
     reservation: SecuredReservationHold;
   }): Promise<void>;
   reverse?(input: {
@@ -551,7 +552,11 @@ export class ReserveOrderService {
     reservation: SecuredReservationHold,
   ): Promise<void> {
     try {
-      await this.stockReservations.promoteAccepted({ idempotencyKey, reservation });
+      await this.stockReservations.promoteAccepted({
+        idempotencyKey,
+        idempotencyTtlSeconds: this.idempotencyTtlSeconds,
+        reservation,
+      });
     } catch (error) {
       safelyReportPartialFailure(
         this.reportPromotionFailure,

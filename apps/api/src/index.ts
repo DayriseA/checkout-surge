@@ -216,6 +216,7 @@ export async function startApiServer(): Promise<void> {
     persistence,
     stockReservations: stockReservationGateway,
     orderProcessJobPublisher,
+    idempotencyTtlSeconds: config.idempotencyTtlSeconds,
     dashboardSnapshotPublications,
     businessOutcomeUpdates: businessOutcomePublications,
     logger,

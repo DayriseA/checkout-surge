@@ -90,10 +90,29 @@ if indexType ~= "none" and indexType ~= "zset" then
 end
 local idempotencyJson = redis.call("GET", KEYS[1])
 if not idempotencyJson then
-  return "missing"
-end
-if redis.call("PTTL", KEYS[1]) <= 0 then
-  return redis.error_reply("Inventory idempotency record must have a positive TTL")
+  local reservation = {
+    id = ARGV[1],
+    quantity = tonumber(ARGV[2]),
+    saleOfferId = ARGV[3],
+    reservationToken = ARGV[4],
+    correlationId = ARGV[5],
+    status = "secured",
+    securedAt = ARGV[7],
+    expiresAt = ARGV[8]
+  }
+  if ARGV[6] ~= "" then
+    reservation.runId = ARGV[6]
+  end
+  local acceptedRecord = {
+    status = "accepted",
+    quantity = tonumber(ARGV[2]),
+    reservation = reservation
+  }
+  redis.call("SET", KEYS[1], cjson.encode(acceptedRecord), "EX", ARGV[9])
+  redis.call("ZREM", KEYS[2], ARGV[1])
+  redis.call("HDEL", KEYS[3], ARGV[1])
+  redis.call("ZREM", KEYS[4], ARGV[3] .. ":" .. ARGV[1])
+  return "promoted"
 end
 local record = cjson.decode(idempotencyJson)
 if record.quantity ~= tonumber(ARGV[2])
@@ -107,6 +126,7 @@ if record.quantity ~= tonumber(ARGV[2])
   return "mismatch"
 end
 if record.status == "accepted" then
+  redis.call("SET", KEYS[1], cjson.encode(record), "EX", ARGV[9])
   redis.call("ZREM", KEYS[2], ARGV[1])
   redis.call("HDEL", KEYS[3], ARGV[1])
   redis.call("ZREM", KEYS[4], ARGV[3] .. ":" .. ARGV[1])
@@ -116,7 +136,7 @@ if record.status ~= "pending_persistence" then
   return "invalid_status"
 end
 record.status = "accepted"
-redis.call("SET", KEYS[1], cjson.encode(record), "KEEPTTL")
+redis.call("SET", KEYS[1], cjson.encode(record), "EX", ARGV[9])
 redis.call("ZREM", KEYS[2], ARGV[1])
 redis.call("HDEL", KEYS[3], ARGV[1])
 redis.call("ZREM", KEYS[4], ARGV[3] .. ":" .. ARGV[1])
@@ -559,10 +579,16 @@ export async function markReservationPendingPersistence(
 
 export async function promoteReservationIdempotencyToAccepted(
   redis: CheckoutSurgeRedis,
-  input: { idempotencyKey: string; reservation: SecuredReservationHold },
+  input: {
+    idempotencyKey: string;
+    idempotencyTtlSeconds: number;
+    reservation: SecuredReservationHold;
+  },
 ): Promise<AcceptedPromotionResult> {
   const idempotencyKey = idempotencyKeySchema.parse(input.idempotencyKey);
   const reservation = securedReservationHoldSchema.parse(input.reservation);
+  const idempotencyTtlSeconds = positiveIntegerSchema.parse(input.idempotencyTtlSeconds);
+  assertValidHoldWindow(reservation);
   const keys = inventoryKeys(reservation.saleOfferId);
   const result = await redis.eval(
     promoteAcceptedScript,
@@ -579,6 +605,7 @@ export async function promoteReservationIdempotencyToAccepted(
     reservation.runId ?? "",
     reservation.securedAt,
     reservation.expiresAt,
+    idempotencyTtlSeconds.toString(),
   );
 
   if (result !== "promoted" && result !== "already_accepted") {

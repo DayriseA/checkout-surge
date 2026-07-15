@@ -74,6 +74,7 @@ describe("PendingPersistenceReconciler", () => {
         getPersistedBuyByReservationId: vi.fn(async () => null),
       },
       stockReservations: { promoteAccepted },
+      idempotencyTtlSeconds: 1800,
       orderProcessJobPublisher: { enqueue },
       dashboardSnapshotPublications: { scheduleQueue },
       businessOutcomeUpdates: { markDirty },
@@ -113,6 +114,7 @@ describe("PendingPersistenceReconciler", () => {
         markPendingPersistenceReconciled,
       },
       stockReservations: { promoteAccepted },
+      idempotencyTtlSeconds: 1800,
       orderProcessJobPublisher: { enqueue },
       businessOutcomeUpdates: { markDirty },
       logger: createSilentLogger("api"),
@@ -127,6 +129,7 @@ describe("PendingPersistenceReconciler", () => {
     expect(enqueue).toHaveBeenCalledOnce();
     expect(promoteAccepted).toHaveBeenCalledWith({
       idempotencyKey: "reconciler-key",
+      idempotencyTtlSeconds: 1800,
       reservation: hold,
     });
     expect(markPendingPersistenceReconciled).toHaveBeenCalledWith({ reservationId: hold.id });
@@ -147,6 +150,7 @@ describe("PendingPersistenceReconciler", () => {
         getPersistedBuyByReservationId: vi.fn(async () => durable),
       },
       stockReservations: { promoteAccepted: vi.fn(async () => undefined) },
+      idempotencyTtlSeconds: 1800,
       orderProcessJobPublisher: { enqueue: vi.fn(async () => undefined) },
       logger: createSilentLogger("api"),
     });
@@ -171,6 +175,7 @@ describe("PendingPersistenceReconciler", () => {
         getPersistedBuyByReservationId: vi.fn(async () => null),
       },
       stockReservations: { promoteAccepted: vi.fn() },
+      idempotencyTtlSeconds: 1800,
       orderProcessJobPublisher: {
         enqueue: vi.fn(async () => {
           throw queueError;
@@ -199,6 +204,7 @@ describe("PendingPersistenceReconciler", () => {
         getPersistedBuyByReservationId: vi.fn(async () => persisted()),
       },
       stockReservations: { promoteAccepted },
+      idempotencyTtlSeconds: 1800,
       orderProcessJobPublisher: { enqueue: vi.fn(async () => undefined) },
       dashboardSnapshotPublications: {
         scheduleQueue: () => {
@@ -230,6 +236,7 @@ describe("PendingPersistenceReconciler", () => {
           throw promotionError;
         }),
       },
+      idempotencyTtlSeconds: 1800,
       orderProcessJobPublisher: { enqueue: vi.fn(async () => undefined) },
       businessOutcomeUpdates: { markDirty },
       logger: createSilentLogger("api"),
@@ -252,6 +259,7 @@ describe("PendingPersistenceReconciler", () => {
         getPersistedBuyByReservationId: vi.fn(async () => null),
       },
       stockReservations: { promoteAccepted },
+      idempotencyTtlSeconds: 1800,
       orderProcessJobPublisher: { enqueue: vi.fn(async () => undefined) },
       businessOutcomeUpdates: {
         markDirty: () => {
@@ -282,6 +290,7 @@ describe("PendingPersistenceReconciler", () => {
         getPersistedBuyByReservationId: vi.fn(async () => null),
       },
       stockReservations: { promoteAccepted: vi.fn(), reverse },
+      idempotencyTtlSeconds: 1800,
       orderProcessJobPublisher: { enqueue: vi.fn() },
       logger: createSilentLogger("api"),
     });
@@ -306,6 +315,7 @@ describe("PendingPersistenceReconciler", () => {
         getPersistedBuyByReservationId: vi.fn(async () => null),
       },
       stockReservations: { promoteAccepted: vi.fn() },
+      idempotencyTtlSeconds: 1800,
       orderProcessJobPublisher: { enqueue: vi.fn() },
       logger: createSilentLogger("api"),
     });
@@ -320,6 +330,7 @@ describe("PendingPersistenceReconciler", () => {
           getPersistedBuyByReservationId: vi.fn(async () => null),
         },
         stockReservations: { promoteAccepted: vi.fn() },
+        idempotencyTtlSeconds: 1800,
         orderProcessJobPublisher: { enqueue: vi.fn() },
         logger: createSilentLogger("api"),
       }).reconcileSaleOffer(hold.saleOfferId, { runId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd" }),
@@ -380,6 +391,7 @@ describe("PendingPersistenceReconciler", () => {
         getPersistedBuyByReservationId: vi.fn(async () => null),
       },
       stockReservations: { promoteAccepted: vi.fn(async () => undefined) },
+      idempotencyTtlSeconds: 1800,
       orderProcessJobPublisher: { enqueue: vi.fn(async () => undefined) },
       logger: createSilentLogger("api"),
     });

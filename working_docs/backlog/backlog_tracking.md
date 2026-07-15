@@ -115,7 +115,7 @@ Replace `⬜` with `✅` when a task is complete. Optional `⏳` for work in pro
 
 ✅ [Task 55: Restore Drizzle snapshot metadata and clean up hand-authored trigger SQL](./task_55.md)
 
-⬜ [Task 56: Fix accepted-idempotency TTL lifecycle: promotion must tolerate expiry and refresh the replay window](./task_56.md)
+✅ [Task 56: Fix accepted-idempotency TTL lifecycle: promotion must tolerate expiry and refresh the replay window](./task_56.md)
 
 ⬜ [Task 57: Type the persisted JSON columns against shared contracts](./task_57.md)
 

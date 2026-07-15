@@ -49,6 +49,7 @@ export class PendingPersistenceReconciler {
       stockReservations: Pick<StockReservationGateway, "promoteAccepted"> &
         Partial<Pick<StockReservationGateway, "reverse">>;
       orderProcessJobPublisher: OrderProcessJobPublisher;
+      idempotencyTtlSeconds: number;
       logger: CheckoutSurgeLogger;
       dashboardSnapshotPublications?: Pick<
         DashboardSnapshotPublicationSchedulerPort,
@@ -227,7 +228,11 @@ export class PendingPersistenceReconciler {
     // if the promotion fails; Redis is the final source of truth for pending
     // stock and will be retried by the next reconciliation pass.
     await this.markPendingReconciled(reservation.id, persistence);
-    await this.options.stockReservations.promoteAccepted({ idempotencyKey, reservation });
+    await this.options.stockReservations.promoteAccepted({
+      idempotencyKey,
+      idempotencyTtlSeconds: this.options.idempotencyTtlSeconds,
+      reservation,
+    });
     return { status: "reconciled", materialized };
   }
 

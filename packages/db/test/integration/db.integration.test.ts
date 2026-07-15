@@ -12,7 +12,7 @@ import {
   publicRuntimePolicySchema,
 } from "@checkout-surge/contracts";
 import { Redis } from "ioredis";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   clearErpCircuitBreakerSnapshots,
   createDatabaseConnection,
@@ -26,6 +26,7 @@ import {
   inventoryKeys,
   isRunSaleEligible,
   markReservationPendingPersistence,
+  pendingPersistenceIndexKey,
   promoteReservationIdempotencyToAccepted,
   publishDashboardEvent,
   reserveInventoryStock,
@@ -2918,16 +2919,32 @@ describe("database migrations, seed data, and reset behavior", () => {
     expect(await redis.llen(keys.events)).toBe(2);
 
     const idempotencyKey = keys.idempotency(firstInput.idempotencyKey);
-    const ttlBeforePromotion = await redis.ttl(idempotencyKey);
     await markReservationPendingPersistence(redis, firstInput);
     await markReservationPendingPersistence(redis, firstInput);
     expect(await redis.zscore(keys.pendingPersistence, firstInput.reservation.id)).toBe(
       new Date(firstInput.reservation.securedAt).getTime().toString(),
     );
-    await promoteReservationIdempotencyToAccepted(redis, firstInput);
+    await redis.expire(idempotencyKey, 15);
+    await expect(
+      promoteReservationIdempotencyToAccepted(redis, {
+        ...firstInput,
+        idempotencyTtlSeconds: 120,
+      }),
+    ).resolves.toBe("promoted");
     const ttlAfterPromotion = await redis.ttl(idempotencyKey);
-    expect(ttlAfterPromotion).toBeGreaterThan(ttlBeforePromotion - 5);
-    expect(ttlAfterPromotion).toBeLessThanOrEqual(ttlBeforePromotion);
+    expect(ttlAfterPromotion).toBeGreaterThanOrEqual(119);
+    expect(ttlAfterPromotion).toBeLessThanOrEqual(120);
+
+    await redis.expire(idempotencyKey, 10);
+    await expect(
+      promoteReservationIdempotencyToAccepted(redis, {
+        ...firstInput,
+        idempotencyTtlSeconds: 120,
+      }),
+    ).resolves.toBe("already_accepted");
+    const ttlAfterRepeatedPromotion = await redis.ttl(idempotencyKey);
+    expect(ttlAfterRepeatedPromotion).toBeGreaterThanOrEqual(119);
+    expect(ttlAfterRepeatedPromotion).toBeLessThanOrEqual(120);
 
     const acceptedReplay = await reserveInventoryStock(redis, firstInput);
     expect(acceptedReplay).toEqual({
@@ -2938,6 +2955,185 @@ describe("database migrations, seed data, and reset behavior", () => {
     expect(await redis.hlen(keys.reservations)).toBe(1);
     expect(await redis.llen(keys.events)).toBe(2);
     expect(await redis.zcard(keys.pendingPersistence)).toBe(0);
+  });
+
+  it("recreates an accepted replay after idempotency expiry without changing inventory", async () => {
+    const saleOfferId = "10000000-0000-4000-8000-000000000017";
+    const keys = inventoryKeys(saleOfferId);
+    const input = buildReservationInput({
+      saleOfferId,
+      sequence: 17,
+      idempotencyKey: "expired-before-promotion",
+    });
+    await initializeInventory(redis, { saleOfferId, allocatedStock: 2 });
+    await reserveInventoryStock(redis, input);
+    await markReservationPendingPersistence(redis, input);
+    const stateBefore = await redis.hgetall(keys.state);
+    const reservationCountBefore = await redis.hlen(keys.reservations);
+    const eventCountBefore = await redis.llen(keys.events);
+    await redis.del(keys.idempotency(input.idempotencyKey));
+
+    await expect(
+      promoteReservationIdempotencyToAccepted(redis, {
+        ...input,
+        idempotencyTtlSeconds: 240,
+      }),
+    ).resolves.toBe("promoted");
+
+    const acceptedRecord = JSON.parse(
+      (await redis.get(keys.idempotency(input.idempotencyKey))) ?? "null",
+    );
+    expect(acceptedRecord).toEqual({
+      status: "accepted",
+      quantity: input.reservation.quantity,
+      reservation: input.reservation,
+    });
+    expect(await redis.ttl(keys.idempotency(input.idempotencyKey))).toBeGreaterThanOrEqual(239);
+    expect(await redis.zscore(keys.pendingPersistence, input.reservation.id)).toBeNull();
+    expect(await redis.hget(keys.pendingPersistenceRecords, input.reservation.id)).toBeNull();
+    expect(
+      await redis.zscore(pendingPersistenceIndexKey, `${saleOfferId}:${input.reservation.id}`),
+    ).toBeNull();
+    await expect(reserveInventoryStock(redis, input)).resolves.toEqual({
+      outcome: "idempotent_replay",
+      reservation: input.reservation,
+    });
+    expect(await redis.hgetall(keys.state)).toEqual(stateBefore);
+    expect(await redis.hlen(keys.reservations)).toBe(reservationCountBefore);
+    expect(await redis.llen(keys.events)).toBe(eventCountBefore);
+  });
+
+  it("repairs matching persistent idempotency records and preserves persistent mismatches", async () => {
+    const saleOfferId = "10000000-0000-4000-8000-000000000020";
+    const keys = inventoryKeys(saleOfferId);
+    const input = buildReservationInput({
+      saleOfferId,
+      sequence: 20,
+      idempotencyKey: "persistent-before-promotion",
+    });
+    await initializeInventory(redis, { saleOfferId, allocatedStock: 1 });
+    await reserveInventoryStock(redis, input);
+    const idempotencyKey = keys.idempotency(input.idempotencyKey);
+    await redis.persist(idempotencyKey);
+    expect(await redis.ttl(idempotencyKey)).toBe(-1);
+
+    await expect(
+      promoteReservationIdempotencyToAccepted(redis, {
+        ...input,
+        idempotencyTtlSeconds: 90,
+      }),
+    ).resolves.toBe("promoted");
+    expect(await redis.ttl(idempotencyKey)).toBeGreaterThanOrEqual(89);
+
+    await redis.persist(idempotencyKey);
+    const acceptedJson = await redis.get(idempotencyKey);
+    const mismatched = {
+      ...input,
+      reservation: {
+        ...input.reservation,
+        reservationToken: "conflicting-persistent-token",
+      },
+      idempotencyTtlSeconds: 180,
+    };
+    await expect(
+      promoteReservationIdempotencyToAccepted(redis, mismatched),
+    ).rejects.toThrow("mismatch");
+    expect(await redis.get(idempotencyKey)).toBe(acceptedJson);
+    expect(await redis.ttl(idempotencyKey)).toBe(-1);
+
+    await expect(
+      promoteReservationIdempotencyToAccepted(redis, {
+        ...input,
+        idempotencyTtlSeconds: 180,
+      }),
+    ).resolves.toBe("already_accepted");
+    expect(await redis.ttl(idempotencyKey)).toBeGreaterThanOrEqual(179);
+  });
+
+  it("rejects a conflicting replacement record without mutation or pending cleanup", async () => {
+    const saleOfferId = "10000000-0000-4000-8000-000000000018";
+    const keys = inventoryKeys(saleOfferId);
+    const original = buildReservationInput({
+      saleOfferId,
+      sequence: 18,
+      idempotencyKey: "replacement-before-promotion",
+    });
+    const replacement = buildReservationInput({
+      saleOfferId,
+      sequence: 118,
+      idempotencyKey: original.idempotencyKey,
+    });
+    await initializeInventory(redis, { saleOfferId, allocatedStock: 2 });
+    await reserveInventoryStock(redis, original);
+    await markReservationPendingPersistence(redis, original);
+    await redis.del(keys.idempotency(original.idempotencyKey));
+    await reserveInventoryStock(redis, replacement);
+    const replacementJson = await redis.get(keys.idempotency(original.idempotencyKey));
+    const replacementTtl = await redis.ttl(keys.idempotency(original.idempotencyKey));
+
+    await expect(
+      promoteReservationIdempotencyToAccepted(redis, {
+        ...original,
+        idempotencyTtlSeconds: 3600,
+      }),
+    ).rejects.toThrow("mismatch");
+
+    expect(await redis.get(keys.idempotency(original.idempotencyKey))).toBe(replacementJson);
+    const ttlAfterRejectedPromotion = await redis.ttl(
+      keys.idempotency(original.idempotencyKey),
+    );
+    expect(ttlAfterRejectedPromotion).toBeGreaterThanOrEqual(replacementTtl - 2);
+    expect(ttlAfterRejectedPromotion).toBeLessThanOrEqual(replacementTtl);
+    expect(await redis.zcard(keys.pendingPersistence)).toBe(2);
+    expect(await redis.hlen(keys.pendingPersistenceRecords)).toBe(2);
+    expect(await redis.zscore(keys.pendingPersistence, original.reservation.id)).not.toBeNull();
+    expect(
+      await redis.hget(keys.pendingPersistenceRecords, original.reservation.id),
+    ).not.toBeNull();
+    expect(
+      await redis.zscore(pendingPersistenceIndexKey, `${saleOfferId}:${original.reservation.id}`),
+    ).not.toBeNull();
+    expect(await redis.zscore(keys.pendingPersistence, replacement.reservation.id)).not.toBeNull();
+    expect(
+      await redis.hget(keys.pendingPersistenceRecords, replacement.reservation.id),
+    ).not.toBeNull();
+    expect(
+      await redis.zscore(
+        pendingPersistenceIndexKey,
+        `${saleOfferId}:${replacement.reservation.id}`,
+      ),
+    ).not.toBeNull();
+  });
+
+  it("validates promotion TTL and hold window before Redis execution", async () => {
+    const saleOfferId = "10000000-0000-4000-8000-000000000019";
+    const keys = inventoryKeys(saleOfferId);
+    const input = buildReservationInput({ saleOfferId, sequence: 19 });
+    await initializeInventory(redis, { saleOfferId, allocatedStock: 1 });
+    await reserveInventoryStock(redis, input);
+    const recordBefore = await redis.get(keys.idempotency(input.idempotencyKey));
+    const evalSpy = vi.spyOn(redis, "eval");
+    try {
+      for (const idempotencyTtlSeconds of [0, -1, 1.5]) {
+        await expect(
+          promoteReservationIdempotencyToAccepted(redis, { ...input, idempotencyTtlSeconds }),
+        ).rejects.toThrow();
+      }
+      await expect(
+        promoteReservationIdempotencyToAccepted(redis, {
+          ...input,
+          reservation: {
+            ...input.reservation,
+            expiresAt: input.reservation.securedAt,
+          },
+        }),
+      ).rejects.toThrow("Reservation expiresAt must be later than securedAt.");
+      expect(evalSpy).not.toHaveBeenCalled();
+    } finally {
+      evalSpy.mockRestore();
+    }
+    expect(await redis.get(keys.idempotency(input.idempotencyKey))).toBe(recordBefore);
+    expect(await redis.zscore(keys.pendingPersistence, input.reservation.id)).not.toBeNull();
   });
 
   it("reverses a pending hold atomically and is idempotent on repetition", async () => {
