@@ -1,6 +1,10 @@
 // @vitest-environment jsdom
 
-import type { DashboardEvent, DashboardRecoveryResponse } from "@checkout-surge/contracts";
+import {
+  type DashboardEvent,
+  type DashboardRecoveryResponse,
+  dashboardEventsPath,
+} from "@checkout-surge/contracts";
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useDashboardEvents } from "../src/app/components/realtime/use-dashboard-events.js";
@@ -48,12 +52,12 @@ describe("useDashboardEvents", () => {
           eventSourceConstructor: InjectedEventSource,
           onEvent,
           onOpen,
-          url: "/events",
         }),
       { initialProps: { onEvent: firstCallback } },
     );
     const source = InjectedEventSource.instances[0];
     expect(source).toBeDefined();
+    expect(source?.url).toBe(dashboardEventsPath);
     expect(result.current).toBe("connecting");
 
     act(() => source?.emit("message", new MessageEvent("message", { data: "{" })));
@@ -80,6 +84,10 @@ describe("useDashboardEvents", () => {
     expect(secondCallback).toHaveBeenCalledWith(eventFixture());
     act(() => source?.emit("error", new Event("error")));
     expect(result.current).toBe("disconnected");
+    act(() => source?.emit("open", new Event("open")));
+    expect(result.current).toBe("connected");
+    expect(onOpen).toHaveBeenCalledTimes(2);
+    expect(InjectedEventSource.instances).toHaveLength(1);
 
     unmount();
     expect(source?.close).toHaveBeenCalledOnce();

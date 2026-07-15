@@ -3,14 +3,16 @@
 }
 
 :8080 {
-	encode gzip
+	@dashboard_events path /dashboard/events
 
 	# Browser EventSource uses this same-origin path; only the SSE stream bypasses Next.js.
-	handle /dashboard/events {
+	handle @dashboard_events {
+		# Caddy auto-flushes text/event-stream while retaining upstream cancellation.
 		reverse_proxy localhost:4000
 	}
 
 	handle {
+		encode gzip
 		reverse_proxy localhost:3000
 	}
 }

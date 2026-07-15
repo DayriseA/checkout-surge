@@ -150,7 +150,7 @@ The containerized runtime should override internal service-to-service URLs in co
 
 Browser-facing dashboard traffic should not depend on `NEXT_PUBLIC_*` backend service URLs. The browser uses the public dashboard origin. `apps/web` uses server-side `API_BASE_URL` and `MOCK_ERP_BASE_URL`; `apps/api` uses server-side `LOAD_ORCHESTRATOR_BASE_URL` for accepted traffic execution.
 
-The browser EventSource endpoint defaults to same-origin `/dashboard/events`, which Caddy routes directly to `apps/api`. `NEXT_PUBLIC_DASHBOARD_EVENTS_URL` is reserved for intentional direct-web debug sessions that bypass the dashboard proxy; when set, it must be the full browser-reachable SSE endpoint, not a general API base URL.
+The browser EventSource endpoint is invariant at same-origin `/dashboard/events`. Caddy routes that exact path directly to `apps/api` in the reference topology. When `apps/web` is used directly without Caddy, its Next.js streaming route proxies the same path to the server-only `API_BASE_URL`; browser-readable backend overrides are neither required nor supported.
 
 ---
 

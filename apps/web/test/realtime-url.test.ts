@@ -9,7 +9,7 @@ describe("dashboard realtime URL", () => {
     process.env = { ...originalEnv };
   });
 
-  it("uses the same-origin dashboard events path by default", () => {
+  it("uses the same-origin dashboard events path", () => {
     delete process.env.NEXT_PUBLIC_API_BASE_URL;
     delete process.env.NEXT_PUBLIC_DASHBOARD_EVENTS_URL;
 
@@ -23,14 +23,8 @@ describe("dashboard realtime URL", () => {
     expect(dashboardEventsUrl()).toBe(dashboardEventsPath);
   });
 
-  it("uses an explicit browser events endpoint override for direct API debug sessions", () => {
+  it("cannot be changed by a public dashboard events override", () => {
     process.env.NEXT_PUBLIC_DASHBOARD_EVENTS_URL = " http://localhost:4000/dashboard/events ";
-
-    expect(dashboardEventsUrl()).toBe("http://localhost:4000/dashboard/events");
-  });
-
-  it("falls back to the same-origin path when the debug override is blank", () => {
-    process.env.NEXT_PUBLIC_DASHBOARD_EVENTS_URL = "   ";
 
     expect(dashboardEventsUrl()).toBe(dashboardEventsPath);
   });

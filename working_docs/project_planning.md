@@ -902,7 +902,7 @@ Subtasks:
 - ✅ Update `.env.example`, `apps/web/.env.example`, Compose environment, Caddy notes, and runtime docs so browser-facing dashboard traffic and internal server-side service URLs are not conflated.
 - ✅ Add or update tests for the SSE URL helper and host-native/proxy behavior.
 
-Completion summary: Task 10.5.3 now makes the browser realtime stream same-origin by default. The web `dashboardEventsUrl()` helper returns the shared `/dashboard/events` path unless an explicit `NEXT_PUBLIC_DASHBOARD_EVENTS_URL` endpoint override is set for direct-web debugging, and tests prove the legacy `NEXT_PUBLIC_API_BASE_URL` value no longer controls browser SSE. Compose no longer publishes `NEXT_PUBLIC_API_BASE_URL` to the web service, the environment examples document the debug-only stream endpoint override, Turbo passes that optional public variable through for debug builds, Caddyfiles call out the same-origin SSE route, and runtime docs separate browser dashboard traffic from server-side service URLs.
+Completion summary: Task 10.5.3 made the browser realtime stream same-origin by default and removed the legacy public API base from browser SSE selection. Task 64 subsequently made the shared `/dashboard/events` path invariant, removed the remaining public direct-API override, added the direct-Next streaming fallback, and retained Caddy's exact-path API fast path.
 
 ### ✅ Task 10.5.4 - Correct stale command, dependency, and reference-doc drift
 
