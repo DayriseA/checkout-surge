@@ -1,3 +1,4 @@
+import { runHistoryDetailParamsSchema } from "@checkout-surge/contracts";
 import Link from "next/link";
 import { RunHistoryDetail } from "../../components/run-history-detail";
 import { StatusPill } from "../../components/status-pill";
@@ -14,7 +15,14 @@ interface RunHistoryDetailPageProps {
 export default async function RunHistoryDetailPage({ params }: RunHistoryDetailPageProps) {
   const resolvedParams = await params;
   const runId = resolvedParams?.runId ?? "";
-  const detail = await getRunHistoryDetail(runId);
+  const parsedParams = runHistoryDetailParamsSchema.safeParse({ runId });
+  const detail = parsedParams.success
+    ? await getRunHistoryDetail(parsedParams.data.runId)
+    : {
+        status: "unavailable" as const,
+        httpStatus: 404,
+        reason: "No terminal summary exists for this run.",
+      };
 
   return (
     <>

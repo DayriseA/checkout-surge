@@ -17,3 +17,12 @@
 - **Locations:** `/run-history/[id]` detail page (malformed-parameter path)
 
 `/run-history/not-a-real-run` renders `Detail unavailable` followed by raw Zod/shared-contract validation output including internal field paths. A mistyped or shared bad URL exposes implementation details on a public page. Fix the malformed-parameter branch to reuse the not-found presentation.
+
+## Working record
+
+- **Status:** Implemented; focused verification completed.
+- **Scope:** The web run-history detail route now validates its dynamic parameter with the shared `runHistoryDetailParamsSchema` before invoking the API read helper. Malformed parameters render the existing public-safe not-found state and do not trigger a backend request.
+- **Decision:** Validation remains at the narrow web route boundary. Valid UUIDs retain the existing API-read path, including genuine backend-unavailable behavior; API routes, shared contracts, and error envelopes were not changed.
+- **Verification:** `pnpm --filter web exec node ../../scripts/run-with-test-env.mjs vitest run --config vitest.config.ts test/run-history.test.ts` passed (1 file, 6 tests); `pnpm --filter web type-check` passed; `pnpm --filter web lint` passed (83 files checked, no fixes).
+- **Documentation:** No public documentation change is needed because the feature contract is unchanged; this removes leaked implementation detail from an error presentation.
+- **Remaining issues:** None identified within Task 63 scope.

@@ -1,11 +1,20 @@
 import type { RunHistoryDetailResponse, RunHistoryListResponse } from "@checkout-surge/contracts";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { RunHistoryDetail } from "../src/app/components/run-history-detail.js";
 import { RunHistoryList } from "../src/app/components/run-history-list.js";
+import RunHistoryDetailPage from "../src/app/run-history/[runId]/page.js";
+
+const getRunHistoryDetail = vi.hoisted(() => vi.fn());
+
+vi.mock("../src/app/lib/api.js", () => ({ getRunHistoryDetail }));
 
 describe("run history surface", () => {
+  beforeEach(() => {
+    getRunHistoryDetail.mockReset();
+  });
+
   it("renders traffic delivery, business outcomes, and terminal inventory snapshots", () => {
     const markup = renderToStaticMarkup(
       createElement(RunHistoryList, { history: runHistoryFixture() }),
@@ -77,6 +86,39 @@ describe("run history surface", () => {
     expect(markup).not.toContain("idempotencyKey");
     expect(markup).not.toContain("payload");
     expect(markup).not.toContain("x-control-service-token");
+  });
+
+  it("renders malformed detail routes as public-safe not-found states without an API read", async () => {
+    const page = await RunHistoryDetailPage({
+      params: Promise.resolve({ runId: "not-a-real-run" }),
+    });
+    const markup = renderToStaticMarkup(page);
+
+    expect(markup).toContain("Run not found");
+    expect(markup).toContain("No terminal summary exists for this run.");
+    expect(markup).toContain("not found");
+    expect(markup).not.toContain("Detail unavailable");
+    expect(markup).not.toContain("Invalid UUID");
+    expect(markup).not.toContain("validation");
+    expect(markup).not.toContain("runId&quot;");
+    expect(getRunHistoryDetail).not.toHaveBeenCalled();
+  });
+
+  it("preserves backend-unavailable detail rendering for valid run IDs", async () => {
+    const runId = "55555555-5555-4555-8555-555555555555";
+    getRunHistoryDetail.mockResolvedValue({
+      status: "unavailable",
+      reason: "backend offline",
+    });
+
+    const page = await RunHistoryDetailPage({ params: Promise.resolve({ runId }) });
+    const markup = renderToStaticMarkup(page);
+
+    expect(markup).toContain("Detail unavailable");
+    expect(markup).toContain("backend offline");
+    expect(markup).not.toContain("Run not found");
+    expect(getRunHistoryDetail).toHaveBeenCalledOnce();
+    expect(getRunHistoryDetail).toHaveBeenCalledWith(runId);
   });
 });
 
