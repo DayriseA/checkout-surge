@@ -105,7 +105,7 @@ Replace `⬜` with `✅` when a task is complete. Optional `⏳` for work in pro
 
 ✅ [Task 50: Health-gate the upper compose graph (web and proxy must wait on healthy dependencies)](./task_50.md)
 
-⬜ [Task 51: Deepen the non-mutating smoke's SSE check to observe an actual frame](./task_51.md)
+✅ [Task 51: Deepen the non-mutating smoke's SSE check to observe an actual frame](./task_51.md)
 
 ⬜ [Task 52: Add the public order-status lookup endpoint](./task_52.md)
 

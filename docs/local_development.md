@@ -119,6 +119,8 @@ pnpm health:check
 pnpm runtime:smoke
 ```
 
+The non-mutating runtime smoke keeps the SSE connection open until a complete heartbeat or dashboard event frame crosses the same-origin proxy; response headers alone are not sufficient. On an otherwise idle runtime, expect this step to complete after the first heartbeat, normally about 15 seconds after connection, within its 25-second request-plus-frame deadline.
+
 Run the mutating dashboard-to-load-run smoke check when you want to prove the full control and asynchronous business path. It proves readiness, subscribes to SSE before start, verifies run-correlated realtime and reserved inventory, waits for a completed immutable summary with confirmed orders, notifications, and no asynchronous blockers, then uses the protected targeted teardown API for the exact run:
 
 ```bash
@@ -277,7 +279,7 @@ The worker-facing Mock ERP confirmation contract is `POST http://localhost:4100/
 | `pnpm runtime:down` | Stop the full local reference runtime |
 | `pnpm runtime:setup` | Run migrations and seed demo baseline data, durable presets, and Redis inventory inside the compose network |
 | `pnpm runtime:reset` | Reset the running demo through the API and Mock ERP admin reset endpoints for recovery/local maintenance |
-| `pnpm runtime:smoke` | Check compose service health, Compose-network service readiness, dashboard proxy reachability, a same-origin dashboard read, SSE reachability through `/dashboard/events`, and k6 execution inside the load-orchestrator container |
+| `pnpm runtime:smoke` | Check compose service health, Compose-network service readiness, dashboard proxy reachability, a same-origin dashboard read, delivery of a complete SSE heartbeat or event frame through `/dashboard/events`, and k6 execution inside the load-orchestrator container |
 | `pnpm runtime:smoke:load` | Prove readiness, correlated SSE, inventory activity, terminal business completion, and exact-run API teardown for a small dashboard-triggered run |
 | `pnpm maintenance:cleanup-runs` | Authoritatively delete old terminal generated demo runs and durable subtrees from PostgreSQL, then attempt best-effort post-commit teardown of inventory, sale-eligibility, traffic-metrics, and traffic-metric reset-fence Redis state with a structured warning on failure; catalog-backed runs, active runs, and the latest 15 runs remain preserved by default; pass `-- --keep-latest <count>` to override |
 | `pnpm dev` | Build shared packages, then run all app `dev` tasks through Turbo |

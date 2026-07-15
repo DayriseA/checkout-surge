@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
+import { checkDashboardSseStream } from "./runtime-smoke-sse.mjs";
 
 const requiredServices = [
   "postgres",
@@ -105,26 +106,7 @@ async function checkDashboardRecovery() {
 
 async function checkDashboardSse() {
   const baseUrl = envUrl("WEB_BASE_URL", "http://localhost:8080");
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 5000);
-
-  try {
-    const response = await fetch(`${baseUrl}/dashboard/events`, {
-      cache: "no-store",
-      headers: { accept: "text/event-stream" },
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
-    const contentType = response.headers.get("content-type") ?? "";
-    if (!contentType.includes("text/event-stream")) {
-      throw new Error(`Unexpected content-type: ${contentType || "missing"}.`);
-    }
-  } finally {
-    clearTimeout(timeout);
-    controller.abort();
-  }
+  await checkDashboardSseStream(`${baseUrl}/dashboard/events`);
 }
 
 function runCommand(command, args, options = {}) {
