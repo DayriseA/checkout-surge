@@ -12,6 +12,7 @@ import { registerDemoRunRoutes } from "./routes/demo-run-routes.js";
 import { registerErpRoutes } from "./routes/erp-routes.js";
 import { registerHealthRoutes } from "./routes/health-routes.js";
 import { registerInventoryRoutes } from "./routes/inventory-routes.js";
+import { registerOrderStatusRoutes } from "./routes/order-status-routes.js";
 import { registerQueueRoutes } from "./routes/queue-routes.js";
 import { registerRunHistoryRoutes } from "./routes/run-history-routes.js";
 import type { ApiConfig } from "./runtime/config.js";
@@ -25,6 +26,7 @@ import type { DemoMaintenanceService } from "./services/demo-maintenance-service
 import type { DemoRunController } from "./services/demo-run-service.js";
 import type { ErpStatusService } from "./services/erp-status-service.js";
 import type { InventoryStatusService } from "./services/inventory-status-service.js";
+import type { OrderStatusController } from "./services/order-status-service.js";
 import type { QueueStatusService } from "./services/queue-status-service.js";
 import type { ReserveOrderService } from "./services/reserve-order-service.js";
 import type { RunHistoryController } from "./services/run-history-service.js";
@@ -38,6 +40,7 @@ export interface BuildApiServerOptions {
   dashboardRecoveryAdmission: DashboardRecoveryAdmissionController;
   erpStatusService: ErpStatusService;
   inventoryStatusService: InventoryStatusService;
+  orderStatusService: OrderStatusController;
   queueStatusService: QueueStatusService;
   reserveOrderService: ReserveOrderService;
   demoRunService: DemoRunController;
@@ -103,6 +106,7 @@ export async function buildApiServer(options: BuildApiServerOptions): Promise<Ap
   registerErpRoutes(app, { erpStatusService: options.erpStatusService });
   registerBuyRoutes(app, { reserveOrderService: options.reserveOrderService });
   registerInventoryRoutes(app, { inventoryStatusService: options.inventoryStatusService });
+  registerOrderStatusRoutes(app, { orderStatusService: options.orderStatusService });
   registerQueueRoutes(app, { queueStatusService: options.queueStatusService });
   registerDemoRunRoutes(app, {
     demoRunService: options.demoRunService,

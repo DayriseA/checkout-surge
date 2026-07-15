@@ -36,8 +36,10 @@ import {
   livenessResponseSchema,
   loadRunIdHeaderName,
   type OrderProcessJob,
+  type OrderStatusResponse,
   orderProcessBullMqQueueName,
   orderProcessJobName,
+  orderStatusResponseSchema,
   publicPresetListPath,
   publicPresetListResponseSchema,
   publicRuntimePolicyPath,
@@ -116,6 +118,10 @@ import {
   InventoryStatusService,
 } from "../src/services/inventory-status-service.js";
 import type { OrderProcessJobPublisher } from "../src/services/order-process-job-publisher.js";
+import {
+  type OrderStatusController,
+  OrderStatusService,
+} from "../src/services/order-status-service.js";
 import { PendingPersistenceReconciler } from "../src/services/pending-persistence-reconciler.js";
 import { PostgresBuyPersistence } from "../src/services/postgres-buy-persistence.js";
 import {
@@ -194,6 +200,42 @@ function queueStatusFixture(): QueueStatus {
   };
 }
 
+function orderStatusFixture(correlationId: string): OrderStatusResponse {
+  return {
+    correlationId,
+    publicOrderId: "ord_status_test",
+    saleOfferId: fixtureIds.saleOffer,
+    reservation: {
+      id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      status: "secured",
+      expiresAt: "2026-06-20T00:15:00.000Z",
+    },
+    order: {
+      status: "queued",
+      queuedAt: "2026-06-20T00:00:00.000Z",
+      processingAt: null,
+      confirmedAt: null,
+      failedAt: null,
+      failureCode: null,
+      failureMessage: null,
+    },
+    customerStatus: "reservation_secured",
+    consistencyLagMs: null,
+    timeline: [
+      {
+        eventName: "reservation.secured",
+        label: "Reservation secured",
+        occurredAt: "2026-06-20T00:00:00.000Z",
+      },
+      {
+        eventName: "order.queued",
+        label: "Order queued",
+        occurredAt: "2026-06-20T00:00:00.000Z",
+      },
+    ],
+  };
+}
+
 async function buildTestServer(options: {
   persistence: BuyPersistence;
   stockReservations?: StockReservationGateway;
@@ -201,6 +243,7 @@ async function buildTestServer(options: {
   readiness?: "ok" | "unavailable";
   generateId?: () => string;
   orderProcessJobPublisher?: OrderProcessJobPublisher;
+  orderStatusService?: OrderStatusController;
   queueInspector?: OrderProcessQueueInspector;
   erpStatusService?: ErpStatusService;
   dashboardRecoveryService?: DashboardRecoveryService;
@@ -282,6 +325,7 @@ async function buildTestServer(options: {
     },
     erpStatusService,
     inventoryStatusService,
+    orderStatusService: options.orderStatusService ?? { getStatus: async () => null },
     queueStatusService,
     reserveOrderService: new ReserveOrderService({
       persistence: options.persistence,
@@ -870,6 +914,7 @@ describe("API gateway routes", () => {
     readiness?: "ok" | "unavailable";
     generateId?: () => string;
     orderProcessJobPublisher?: OrderProcessJobPublisher;
+    orderStatusService?: OrderStatusController;
     queueInspector?: OrderProcessQueueInspector;
     erpStatusService?: ErpStatusService;
     demoRunService?: DemoRunController;
@@ -907,6 +952,84 @@ describe("API gateway routes", () => {
     expect(payload.checks).toContainEqual({
       name: "database_reachable",
       status: "unavailable",
+    });
+  });
+
+  it("returns an injected order status with the current request correlation ID", async () => {
+    const getStatus = vi.fn<OrderStatusController["getStatus"]>(async (input) =>
+      orderStatusFixture(input.correlationId),
+    );
+    const server = await trackedServer({
+      persistence: new AcceptingPersistence(),
+      orderStatusService: { getStatus },
+    });
+
+    const response = await server.inject({
+      method: "GET",
+      url: "/orders/ord_status_test/status",
+      headers: { [correlationIdHeaderName]: "status-lookup-correlation" },
+    });
+    const payload = orderStatusResponseSchema.parse(response.json());
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers[correlationIdHeaderName]).toBe("status-lookup-correlation");
+    expect(payload.correlationId).toBe("status-lookup-correlation");
+    expect(getStatus).toHaveBeenCalledWith({
+      publicOrderId: "ord_status_test",
+      correlationId: "status-lookup-correlation",
+    });
+  });
+
+  it("maps missing, invalid, and failing order-status reads through the canonical error boundary", async () => {
+    const missingServer = await trackedServer({
+      persistence: new AcceptingPersistence(),
+      orderStatusService: { getStatus: async () => null },
+    });
+    const missing = await missingServer.inject({
+      method: "GET",
+      url: "/orders/ord_missing/status",
+      headers: { [correlationIdHeaderName]: "status-missing-correlation" },
+    });
+    const missingPayload = errorPayloadSchema.parse(missing.json());
+
+    expect(missing.statusCode).toBe(404);
+    expect(missingPayload).toMatchObject({
+      code: "order_not_found",
+      message: "Order status was not found",
+      details: { publicOrderId: "ord_missing" },
+      correlationId: "status-missing-correlation",
+    });
+    expect(missing.headers[correlationIdHeaderName]).toBe("status-missing-correlation");
+
+    const invalid = await missingServer.inject({
+      method: "GET",
+      url: "/orders/%20/status",
+      headers: { [correlationIdHeaderName]: "status-invalid-correlation" },
+    });
+    expect(invalid.statusCode).toBe(400);
+    expect(errorPayloadSchema.parse(invalid.json())).toMatchObject({
+      code: "invalid_request",
+      correlationId: "status-invalid-correlation",
+    });
+
+    const failingServer = await trackedServer({
+      persistence: new AcceptingPersistence(),
+      orderStatusService: {
+        getStatus: async () => {
+          throw new Error("database unavailable");
+        },
+      },
+    });
+    const failed = await failingServer.inject({
+      method: "GET",
+      url: "/orders/ord_status_test/status",
+      headers: { [correlationIdHeaderName]: "status-failure-correlation" },
+    });
+
+    expect(failed.statusCode).toBe(500);
+    expect(errorPayloadSchema.parse(failed.json())).toMatchObject({
+      code: "internal_error",
+      correlationId: "status-failure-correlation",
     });
   });
 
@@ -3730,6 +3853,7 @@ describe("API buy persistence", () => {
     const server = await buildTestServer({
       persistence: new PostgresBuyPersistence(connection.db),
       stockReservations: createRedisStockReservations(redis),
+      orderStatusService: new OrderStatusService(connection.db),
     });
 
     try {
@@ -3759,6 +3883,27 @@ describe("API buy persistence", () => {
       }
       expect(replayPayload.reservation.id).toBe(firstPayload.reservation.id);
       expect(replayPayload.order.id).toBe(firstPayload.order.id);
+      const statusResponse = await server.inject({
+        method: "GET",
+        url: `/orders/${firstPayload.order.publicOrderId}/status`,
+        headers: { [correlationIdHeaderName]: "queued-status-correlation" },
+      });
+      const status = orderStatusResponseSchema.parse(statusResponse.json());
+      expect(statusResponse.statusCode).toBe(200);
+      expect(statusResponse.headers[correlationIdHeaderName]).toBe("queued-status-correlation");
+      expect(status).toMatchObject({
+        correlationId: "queued-status-correlation",
+        publicOrderId: firstPayload.order.publicOrderId,
+        saleOfferId: fixtureIds.saleOffer,
+        reservation: { id: firstPayload.reservation.id, status: "secured" },
+        order: { status: "queued" },
+        customerStatus: "reservation_secured",
+        consistencyLagMs: null,
+      });
+      expect(status.timeline.map((event) => event.eventName)).toEqual([
+        "reservation.secured",
+        "order.queued",
+      ]);
       expect(reservationRows).toHaveLength(1);
       expect(orderRows).toHaveLength(1);
       expect(eventRows).toHaveLength(2);
@@ -3778,6 +3923,7 @@ describe("API buy persistence", () => {
       persistence: new PostgresBuyPersistence(connection.db),
       stockReservations: createRedisStockReservations(redis),
       orderProcessJobPublisher: { enqueue },
+      orderStatusService: new OrderStatusService(connection.db),
       generateId: randomUUID,
     });
 
@@ -3789,8 +3935,6 @@ describe("API buy persistence", () => {
           retryCorrelationId: "confirmed-retry-correlation",
           terminal: {
             status: "confirmed" as const,
-            processingAt: new Date("2026-07-12T12:01:00.000Z"),
-            confirmedAt: new Date("2026-07-12T12:02:00.000Z"),
           },
         },
         {
@@ -3799,8 +3943,6 @@ describe("API buy persistence", () => {
           retryCorrelationId: "failed-retry-correlation",
           terminal: {
             status: "failed" as const,
-            processingAt: new Date("2026-07-12T12:03:00.000Z"),
-            failedAt: new Date("2026-07-12T12:04:00.000Z"),
             failureCode: "erp_rejected",
             failureMessage: "Payment declined",
           },
@@ -3827,10 +3969,87 @@ describe("API buy persistence", () => {
           throw new Error("Expected initial durable acceptance.");
         }
 
+        const queuedAt = new Date(first.order.queuedAt);
+        const processingAt = new Date(queuedAt.getTime() + 60_000);
+        const terminalAt = new Date(queuedAt.getTime() + 120_000);
         await connection.db
           .update(orders)
-          .set(testCase.terminal)
+          .set({
+            ...testCase.terminal,
+            processingAt,
+            ...(testCase.terminal.status === "confirmed"
+              ? { confirmedAt: terminalAt }
+              : { failedAt: terminalAt }),
+          })
           .where(eq(orders.id, first.order.id));
+        await connection.db.insert(orderEvents).values([
+          {
+            orderId: first.order.id,
+            reservationId: first.reservation.id,
+            saleOfferId: first.order.saleOfferId,
+            correlationId: first.order.correlationId,
+            eventName: "order.processing",
+            source: "worker",
+            occurredAt: processingAt,
+          },
+          {
+            orderId: first.order.id,
+            reservationId: first.reservation.id,
+            saleOfferId: first.order.saleOfferId,
+            correlationId: first.order.correlationId,
+            eventName:
+              testCase.terminal.status === "confirmed" ? "order.confirmed" : "order.failed",
+            source: "worker",
+            occurredAt: terminalAt,
+          },
+        ]);
+
+        const statusCorrelationId = `${testCase.terminal.status}-status-correlation`;
+        const statusResponse = await server.inject({
+          method: "GET",
+          url: `/orders/${first.order.publicOrderId}/status`,
+          headers: { [correlationIdHeaderName]: statusCorrelationId },
+        });
+        const liveStatus = orderStatusResponseSchema.parse(statusResponse.json());
+
+        expect(statusResponse.statusCode).toBe(200);
+        expect(statusResponse.headers[correlationIdHeaderName]).toBe(statusCorrelationId);
+        expect(liveStatus.correlationId).toBe(statusCorrelationId);
+        expect(liveStatus.order.status).toBe(testCase.terminal.status);
+        expect(liveStatus.customerStatus).toBe(testCase.terminal.status);
+        expect(liveStatus.order.processingAt).toBe(processingAt.toISOString());
+        expect(liveStatus.timeline).toEqual([
+          {
+            eventName: "reservation.secured",
+            label: "Reservation secured",
+            occurredAt: queuedAt.toISOString(),
+          },
+          {
+            eventName: "order.queued",
+            label: "Order queued",
+            occurredAt: queuedAt.toISOString(),
+          },
+          {
+            eventName: "order.processing",
+            label: "order.processing",
+            occurredAt: processingAt.toISOString(),
+          },
+          {
+            eventName:
+              testCase.terminal.status === "confirmed" ? "order.confirmed" : "order.failed",
+            label: testCase.terminal.status === "confirmed" ? "order.confirmed" : "order.failed",
+            occurredAt: terminalAt.toISOString(),
+          },
+        ]);
+        if (testCase.terminal.status === "confirmed") {
+          expect(liveStatus.order.confirmedAt).toBe(terminalAt.toISOString());
+          expect(liveStatus.consistencyLagMs).toBe(120_000);
+        } else {
+          expect(liveStatus.order.failedAt).toBe(terminalAt.toISOString());
+          expect(liveStatus.order.failureCode).toBe(testCase.terminal.failureCode);
+          expect(liveStatus.order.failureMessage).toBe(testCase.terminal.failureMessage);
+          expect(liveStatus.consistencyLagMs).toBeNull();
+        }
 
         const replayResponse = await server.inject({
           method: "POST",
@@ -3860,13 +4079,14 @@ describe("API buy persistence", () => {
       expect(durableOrders.map((order) => order.status).sort()).toEqual(["confirmed", "failed"]);
       expect(reservationRows).toHaveLength(2);
       expect(durableOrders).toHaveLength(2);
-      expect(eventRows).toHaveLength(4);
-      expect(eventRows.map((event) => event.eventName).sort()).toEqual([
-        "order.queued",
-        "order.queued",
-        "reservation.secured",
-        "reservation.secured",
-      ]);
+      expect(eventRows).toHaveLength(8);
+      expect(eventRows.filter((event) => event.eventName === "reservation.secured")).toHaveLength(
+        2,
+      );
+      expect(eventRows.filter((event) => event.eventName === "order.queued")).toHaveLength(2);
+      expect(eventRows.filter((event) => event.eventName === "order.processing")).toHaveLength(2);
+      expect(eventRows.filter((event) => event.eventName === "order.confirmed")).toHaveLength(1);
+      expect(eventRows.filter((event) => event.eventName === "order.failed")).toHaveLength(1);
       expect(await getInventoryStatus(redis, fixtureIds.saleOffer)).toMatchObject({
         remainingStock: 3,
         reservedStock: 2,

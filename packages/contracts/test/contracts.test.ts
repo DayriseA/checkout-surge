@@ -60,6 +60,9 @@ import {
   orderProcessBullMqQueueName,
   orderProcessJobSchema,
   orderProcessQueueName,
+  orderStatusParamsSchema,
+  orderStatusRequestSchema,
+  orderStatusResponseSchema,
   orderStatusValues,
   type PublicRuntimePolicy,
   publicPresetListPath,
@@ -635,6 +638,99 @@ describe("queue contracts", () => {
   });
 });
 
+describe("public order-status contracts", () => {
+  const response = {
+    correlationId,
+    publicOrderId: "ord_public_1",
+    saleOfferId,
+    reservation: {
+      id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      status: "secured" as const,
+      expiresAt: "2026-06-20T12:15:00.000Z",
+    },
+    order: {
+      status: "queued" as const,
+      queuedAt: timestamp,
+      processingAt: null,
+      confirmedAt: null,
+      failedAt: null,
+      failureCode: null,
+      failureMessage: null,
+    },
+    customerStatus: "reservation_secured" as const,
+    consistencyLagMs: null,
+    timeline: [
+      {
+        eventName: "future.event.name",
+        label: "future.event.name",
+        occurredAt: timestamp,
+      },
+    ],
+  };
+
+  it("strictly validates lookup params and the service request", () => {
+    expect(orderStatusParamsSchema.parse({ publicOrderId: " ord_public_1 " })).toEqual({
+      publicOrderId: "ord_public_1",
+    });
+    expect(
+      orderStatusRequestSchema.parse({ publicOrderId: "ord_public_1", correlationId }),
+    ).toEqual({ publicOrderId: "ord_public_1", correlationId });
+    expect(() => orderStatusParamsSchema.parse({ publicOrderId: "" })).toThrow();
+    expect(() =>
+      orderStatusRequestSchema.parse({ publicOrderId: "ord_public_1", leaked: true }),
+    ).toThrow();
+  });
+
+  it.each([
+    ["queued", "reservation_secured", null],
+    ["processing", "processing", null],
+    ["confirmed", "confirmed", 120_000],
+    ["failed", "failed", null],
+  ] as const)("accepts the %s read model", (status, customerStatus, consistencyLagMs) => {
+    const parsed = orderStatusResponseSchema.parse({
+      ...response,
+      order: {
+        ...response.order,
+        status,
+        processingAt: status === "queued" ? null : "2026-06-20T12:01:00.000Z",
+        confirmedAt: status === "confirmed" ? "2026-06-20T12:02:00.000Z" : null,
+        failedAt: status === "failed" ? "2026-06-20T12:02:00.000Z" : null,
+        failureCode: status === "failed" ? "erp_rejected" : null,
+        failureMessage: status === "failed" ? "ERP rejected the order" : null,
+      },
+      customerStatus,
+      consistencyLagMs,
+    });
+
+    expect(parsed.customerStatus).toBe(customerStatus);
+  });
+
+  it("rejects malformed, unknown, negative, and leaked response data", () => {
+    expect(() =>
+      orderStatusResponseSchema.parse({ ...response, saleOfferId: "not-a-uuid" }),
+    ).toThrow();
+    expect(() =>
+      orderStatusResponseSchema.parse({
+        ...response,
+        order: { ...response.order, queuedAt: "not-a-timestamp" },
+      }),
+    ).toThrow();
+    expect(() =>
+      orderStatusResponseSchema.parse({ ...response, customerStatus: "reservation_expired" }),
+    ).toThrow();
+    expect(() =>
+      orderStatusResponseSchema.parse({
+        ...response,
+        order: { ...response.order, status: "paid" },
+      }),
+    ).toThrow();
+    expect(() => orderStatusResponseSchema.parse({ ...response, consistencyLagMs: -1 })).toThrow();
+    expect(() =>
+      orderStatusResponseSchema.parse({ ...response, internalOrderId: runId }),
+    ).toThrow();
+  });
+});
+
 describe("shared error and health contracts", () => {
   it("validates the canonical error payload", () => {
     expect(() =>
@@ -673,6 +769,10 @@ describe("canonical error-code vocabulary", () => {
     for (const code of errorPayloadCodes) {
       expect(errorPayloadCodeSchema.safeParse(code).success, `code ${code}`).toBe(true);
     }
+  });
+
+  it("includes the public order lookup not-found code", () => {
+    expect(errorPayloadCodeSchema.parse("order_not_found")).toBe("order_not_found");
   });
 
   it("contains no duplicate codes", () => {

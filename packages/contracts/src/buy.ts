@@ -1,8 +1,10 @@
 import { z } from "zod";
 import { orderSummarySchema, reservationSummarySchema } from "./entities.js";
 import {
+  orderStatusSchema,
   reservationDecisionSchema,
   reservationRejectReasonSchema,
+  reservationStatusSchema,
   simulatedPurchaseStatusSchema,
 } from "./lifecycle.js";
 import {
@@ -33,6 +35,62 @@ export const buyRequestSchema = z
   })
   .strict();
 export type BuyRequest = z.infer<typeof buyRequestSchema>;
+
+export const orderStatusParamsSchema = z
+  .object({
+    publicOrderId: z.string().trim().min(1),
+  })
+  .strict();
+export type OrderStatusParams = z.infer<typeof orderStatusParamsSchema>;
+
+export const orderStatusRequestSchema = orderStatusParamsSchema
+  .extend({ correlationId: correlationIdSchema.optional() })
+  .strict();
+export type OrderStatusRequest = z.infer<typeof orderStatusRequestSchema>;
+
+export const orderTimelineEntrySchema = z
+  .object({
+    eventName: z.string().trim().min(1),
+    label: z.string().trim().min(1),
+    occurredAt: isoTimestampSchema,
+  })
+  .strict();
+export type OrderTimelineEntry = z.infer<typeof orderTimelineEntrySchema>;
+
+export const orderStatusResponseSchema = z
+  .object({
+    correlationId: correlationIdSchema,
+    publicOrderId: z.string().trim().min(1),
+    saleOfferId: uuidSchema,
+    reservation: z
+      .object({
+        id: uuidSchema,
+        status: reservationStatusSchema,
+        expiresAt: isoTimestampSchema,
+      })
+      .strict(),
+    order: z
+      .object({
+        status: orderStatusSchema,
+        queuedAt: isoTimestampSchema,
+        processingAt: isoTimestampSchema.nullable(),
+        confirmedAt: isoTimestampSchema.nullable(),
+        failedAt: isoTimestampSchema.nullable(),
+        failureCode: z.string().trim().min(1).nullable(),
+        failureMessage: z.string().trim().min(1).nullable(),
+      })
+      .strict(),
+    customerStatus: simulatedPurchaseStatusSchema.extract([
+      "reservation_secured",
+      "processing",
+      "confirmed",
+      "failed",
+    ]),
+    consistencyLagMs: z.number().min(0).nullable(),
+    timeline: z.array(orderTimelineEntrySchema),
+  })
+  .strict();
+export type OrderStatusResponse = z.infer<typeof orderStatusResponseSchema>;
 
 export const acceptedReservationSummarySchema = reservationSummarySchema.extend({
   status: z.literal("secured"),

@@ -78,6 +78,8 @@ Every run-scoped purchase attempt follows the same two-phase flow.
 
 This split is the core architectural bet: callers are never blocked by slow downstream confirmation, and the buy path remains fast regardless of what is happening in the queue.
 
+`POST /buy` remains an acceptance surface: an idempotent replay returns the original secured reservation and queued order even after durable processing advances. Public callers read current durable progress through `GET /orders/:publicOrderId/status`. That PostgreSQL-backed projection returns the current reservation and order states, nullable lifecycle and failure fields, confirmation lag only for confirmed orders, and a chronological lifecycle timeline. Its correlation ID always belongs to the lookup request; persisted correlation IDs, the internal order UUID, and event payload/source data are not exposed.
+
 ---
 
 ## The Four Signals

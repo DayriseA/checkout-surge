@@ -89,6 +89,8 @@ Idempotency is scoped by `saleOfferId + idempotencyKey`.
 
 Request retries for accepted or pending reservations with the same sale offer, key, and quantity replay the stored Redis hold only while the inventory scope and run state remain eligible. Accepted holds return the existing durable acceptance projection, always shaped as reservation `secured` plus order `queued` even if the live order has since advanced. Pending holds first check for a durable buy and otherwise retry durable persistence from the original hold; they return `reservation_pending_persistence` again only while the durable write is still unavailable. After closure, only the autonomous reconciler may converge an existing pending hold, and it does not admit a new purchase.
 
+Current downstream progress is intentionally separate from Redis idempotency replay. `GET /orders/:publicOrderId/status` reads the live PostgreSQL order, reservation, and event timeline and can therefore report `processing`, `confirmed`, or `failed` without changing `/buy` semantics or consulting Redis.
+
 Retries with the same sale offer and key but a different quantity are rejected with `idempotency_conflict`.
 
 Sold-out responses are intentionally not stored per request, so a repeated sold-out attempt is evaluated as a fresh sold-out stock check. Late retries after the idempotency TTL are also treated as new attempts. In practice, a late retry will either reserve remaining stock or receive a normal sold-out response.

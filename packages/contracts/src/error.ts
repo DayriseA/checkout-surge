@@ -58,6 +58,7 @@ export const errorPayloadCodes = [
   "internal_error",
   "invalid_request",
   "operator_mode_required",
+  "order_not_found",
   "run_attribution_mismatch",
   "run_history_detail_not_found",
   "inventory_not_initialized",

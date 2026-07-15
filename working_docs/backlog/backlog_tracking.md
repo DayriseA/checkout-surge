@@ -107,7 +107,7 @@ Replace `⬜` with `✅` when a task is complete. Optional `⏳` for work in pro
 
 ✅ [Task 51: Deepen the non-mutating smoke's SSE check to observe an actual frame](./task_51.md)
 
-⬜ [Task 52: Add the public order-status lookup endpoint](./task_52.md)
+✅ [Task 52: Add the public order-status lookup endpoint](./task_52.md)
 
 ⬜ [Task 53: Add database lifecycle/timestamp CHECK constraints and attribution-agreement guards](./task_53.md)
 

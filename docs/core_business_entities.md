@@ -242,6 +242,8 @@ Notes:
 
 - These statuses intentionally match the lifecycle defined in `docs/cross_service_conventions.md`.
 - Retry metadata is not a separate order status; it belongs in ERP-attempt history and derived UI messaging.
+- `GET /orders/:publicOrderId/status` is the public mutable read model for these durable states. It exposes the public order ID, sale offer, reservation status/expiry, nullable lifecycle and failure fields, confirmed-order consistency lag, and the persisted event timeline while omitting the internal order UUID, reservation tokens, event payloads, and run attribution.
+- `POST /buy` and its idempotent replays remain acceptance-shaped (`secured` reservation and `queued` order); consumers must not use a replay as a current-status lookup.
 
 ### 6. ErpAttempt
 

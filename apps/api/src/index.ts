@@ -54,6 +54,7 @@ import {
   RedisErpCircuitBreakerStateReader,
 } from "./services/erp-status-service.js";
 import { InventoryStatusService } from "./services/inventory-status-service.js";
+import { OrderStatusService } from "./services/order-status-service.js";
 import { PendingPersistenceReconciler } from "./services/pending-persistence-reconciler.js";
 import { PostgresBuyPersistence } from "./services/postgres-buy-persistence.js";
 import { PostgresDemoResetWorkflowFence } from "./services/postgres-demo-reset-workflow-fence.js";
@@ -96,6 +97,7 @@ export {
 } from "./services/erp-status-service.js";
 export { InventoryStatusService } from "./services/inventory-status-service.js";
 export type { OrderProcessJobPublisher } from "./services/order-process-job-publisher.js";
+export { OrderStatusService } from "./services/order-status-service.js";
 export { PendingPersistenceReconciler } from "./services/pending-persistence-reconciler.js";
 export { PostgresBuyPersistence } from "./services/postgres-buy-persistence.js";
 export { QueueStatusService } from "./services/queue-status-service.js";
@@ -187,6 +189,7 @@ export async function startApiServer(): Promise<void> {
   const inventoryStatusService = new InventoryStatusService({
     getStatus: (saleOfferId) => getInventoryStatus(redis, saleOfferId),
   });
+  const orderStatusService = new OrderStatusService(connection.db);
   const dashboardSnapshotPublications = new DashboardSnapshotPublicationScheduler({
     readInventory: (saleOfferId) => inventoryStatusService.getStatus(saleOfferId),
     readQueue: () => queueStatusService.getStatus(),
@@ -427,6 +430,7 @@ export async function startApiServer(): Promise<void> {
       dashboardRecoveryAdmission,
       erpStatusService,
       inventoryStatusService,
+      orderStatusService,
       queueStatusService,
       reserveOrderService,
       demoRunService,
