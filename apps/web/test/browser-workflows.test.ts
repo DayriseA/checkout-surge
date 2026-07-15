@@ -655,8 +655,7 @@ function demoRunFixture(overrides: Partial<DemoRunSnapshot> = {}): DemoRunSnapsh
 
 function runCompletedEventFixture(): DashboardEvent {
   return {
-    eventId: "88888888-8888-4888-8888-888888888888",
-    type: "run.completed",
+    type: "load.run.updated",
     runId: "55555555-5555-4555-8555-555555555555",
     correlationId: "corr-run-completed",
     occurredAt: "2026-06-20T00:00:11.000Z",

@@ -286,14 +286,12 @@ describe.skipIf(!databaseUrl)("business outcome dashboard projection", () => {
         runId,
         correlationId: "corr-dashboard-business-outcome",
         occurredAt: now,
-        eventId: "88888888-8888-4888-8888-888888888888",
       });
 
       await expect(
         withTimeout(receivedEvent, 1_000, "Timed out waiting for business outcome event."),
       ).resolves.toMatchObject({
-        type: "business.outcome.updated",
-        eventId: "88888888-8888-4888-8888-888888888888",
+        type: "business.outcome.snapshot",
         saleOfferId,
         runId,
         correlationId: "corr-dashboard-business-outcome",

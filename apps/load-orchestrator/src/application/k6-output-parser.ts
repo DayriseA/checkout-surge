@@ -117,8 +117,8 @@ const timingMetricFields = {
 const counterMetricFields = {
   http_reqs: "httpRequests",
   checkout_reservation_accepted: "acceptedResponses",
-  checkout_sold_out: "soldOutResponses",
-  checkout_unexpected_response: "unexpectedResponses",
+  checkout_sold_out_rejections: "soldOutResponses",
+  checkout_unexpected_responses: "unexpectedResponses",
   dropped_iterations: "droppedIterations",
   iterations: "completedIterations",
 } as const satisfies Record<string, keyof K6SummaryMetrics>;
@@ -173,11 +173,11 @@ export class K6RunAccumulator {
     );
     const soldOutResponses = this.selectCount(
       input.summaryMetrics?.soldOutResponses,
-      "checkout_sold_out",
+      "checkout_sold_out_rejections",
     );
     const unexpectedResponses = this.selectCount(
       input.summaryMetrics?.unexpectedResponses,
-      "checkout_unexpected_response",
+      "checkout_unexpected_responses",
     );
     const droppedIterations = this.selectCount(
       input.summaryMetrics?.droppedIterations,

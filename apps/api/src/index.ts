@@ -21,6 +21,7 @@ import { createBullMqOrderProcessJobPublisher } from "./queue/bullmq-order-proce
 import { createBullMqOrderProcessQueueInspector } from "./queue/bullmq-order-process-queue-inspector.js";
 import { PostgresRunRetryPolicyResolver } from "./queue/postgres-run-retry-policy-resolver.js";
 import { DashboardEventFanout } from "./realtime/dashboard-event-fanout.js";
+import { invalidDashboardEventMetadata } from "./realtime/invalid-dashboard-event-metadata.js";
 import { closeApiResources } from "./runtime/api-resource-cleanup.js";
 import { loadApiConfig } from "./runtime/config.js";
 import type { ApiFastifyInstance } from "./runtime/fastify.js";
@@ -172,7 +173,7 @@ export async function startApiServer(): Promise<void> {
       },
       onInvalidMessage: (error, message) => {
         logger.warn(
-          { err: error, messageLength: message.length },
+          invalidDashboardEventMetadata(message, error),
           "Ignored invalid dashboard realtime event from Redis Pub/Sub.",
         );
       },

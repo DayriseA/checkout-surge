@@ -21,11 +21,11 @@ const correlationId = "corr-smoke";
 
 function dashboardEvent(overrides = {}) {
   return {
-    type: "traffic.metric",
-    eventId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    type: "dashboard.metric.observed",
     runId,
     correlationId,
     occurredAt: "2026-07-13T00:00:00.000Z",
+    observedAt: "2026-07-13T00:00:00.000Z",
     metricName: "traffic.latency",
     value: 12,
     unit: "ms",

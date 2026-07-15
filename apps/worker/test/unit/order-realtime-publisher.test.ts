@@ -5,7 +5,7 @@ import { createBoundedOrderRealtimePublisher } from "../../src/realtime/order-re
 const processing = statusEvent("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "order.processing", "queued", "processing");
 const confirmed = statusEvent("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "order.confirmed", "processing", "confirmed");
 const lag: OrderConsistencyLagDashboardEvent = {
-  type: "order.consistency_lag.observed",
+  type: "dashboard.metric.observed",
   eventId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
   confirmedTransitionEventId: confirmed.eventId,
   correlationId: confirmed.correlationId,
@@ -103,6 +103,7 @@ function statusEvent(
     eventName,
     previousStatus,
     status,
+    customerStatus: status,
     attemptNumber: 1,
     attemptsMade: 0,
   };

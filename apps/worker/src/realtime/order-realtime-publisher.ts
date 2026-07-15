@@ -6,7 +6,7 @@ import {
 } from "@checkout-surge/contracts";
 
 type OrderRealtimeEvent = OrderStatusDashboardEvent | OrderConsistencyLagDashboardEvent;
-type EventType = OrderRealtimeEvent["type"];
+type EventType = "order.status.updated" | "order.consistency_lag";
 
 export interface OrderRealtimePublisherCounters {
   queueDepth: number;
@@ -43,7 +43,7 @@ export function createBoundedOrderRealtimePublisher(options: {
   let highWaterMark = 0;
   let draining: Promise<void> | null = null;
   let closed = false;
-  const counter = () => ({ "order.status.updated": 0, "order.consistency_lag.observed": 0 });
+  const counter = () => ({ "order.status.updated": 0, "order.consistency_lag": 0 });
   const counters: OrderRealtimePublisherCounters = {
     queueDepth: 0,
     highWaterMark: 0,
@@ -86,9 +86,9 @@ export function createBoundedOrderRealtimePublisher(options: {
           counters.maxInFlight = 1;
           observe();
           await options.publish(event);
-          counters.published[event.type] += 1;
+          counters.published[eventType(event)] += 1;
         } catch (error) {
-          counters.failed[event.type] += 1;
+          counters.failed[eventType(event)] += 1;
           try { options.onPublishError?.(error, event, cloneCounters(counters)); } catch { /* best effort */ }
         } finally {
           counters.inFlight = 0;
@@ -121,7 +121,7 @@ export function createBoundedOrderRealtimePublisher(options: {
             ? "queue_overflow"
             : null;
       if (dropReason) {
-        for (const event of parsed) counters.dropped[event.type] += 1;
+        for (const event of parsed) counters.dropped[eventType(event)] += 1;
         try { options.onDrop?.(parsed, dropReason, cloneCounters(counters)); } catch { /* best effort */ }
         observe();
         return;
@@ -129,7 +129,7 @@ export function createBoundedOrderRealtimePublisher(options: {
       queue.push(parsed);
       queueDepth += parsed.length;
       highWaterMark = Math.max(highWaterMark, queueDepth);
-      for (const event of parsed) counters.enqueued[event.type] += 1;
+      for (const event of parsed) counters.enqueued[eventType(event)] += 1;
       observe();
       startDrain();
     },
@@ -145,13 +145,20 @@ export function createBoundedOrderRealtimePublisher(options: {
 }
 
 function isOrderRealtimeEvent(event: DashboardEvent): event is OrderRealtimeEvent {
-  return event.type === "order.status.updated" || event.type === "order.consistency_lag.observed";
+  return event.type === "order.status.updated" ||
+    (event.type === "dashboard.metric.observed" && event.metricName === "order.consistency_lag");
 }
 
+function eventType(event: OrderRealtimeEvent): EventType;
+function eventType(event: unknown): EventType | "unknown";
 function eventType(event: unknown): EventType | "unknown" {
   if (typeof event === "object" && event !== null && "type" in event) {
     const type = (event as { type?: unknown }).type;
-    if (type === "order.status.updated" || type === "order.consistency_lag.observed") return type;
+    if (type === "order.status.updated") return type;
+    if (type === "dashboard.metric.observed" && "metricName" in event &&
+      (event as { metricName?: unknown }).metricName === "order.consistency_lag") {
+      return "order.consistency_lag";
+    }
   }
   return "unknown";
 }

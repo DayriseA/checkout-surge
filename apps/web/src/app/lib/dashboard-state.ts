@@ -36,8 +36,8 @@ export interface DashboardEventWatermarks {
   inventory: string | null;
   queue: string | null;
   businessOutcome: string | null;
-  trafficBaseline: string | null;
-  trafficByMetricName: Record<string, string>;
+  metricBaseline: string | null;
+  metricByName: Record<string, string>;
 }
 
 export type DashboardStateAction =
@@ -130,73 +130,131 @@ function applyDashboardEventWithWatermarks(
       eventWatermarks: eventWatermarksForRecovery(incomingRecovery),
     };
   }
-  if (event.type === "order.status.updated" || event.type === "order.consistency_lag.observed") {
+  if (event.type === "order.status.updated" || isOrderLagMetric(event)) {
     return { recovery, eventWatermarks };
   }
 
   const projection = dashboardEventProjection(event);
   const watermark = projectionWatermark(eventWatermarks, projection);
-  if (watermark !== null && !isAfter(event.occurredAt, watermark)) {
+  const projectionObservedAt = dashboardEventObservedAt(event);
+  if (watermark !== null && !isAfter(projectionObservedAt, watermark)) {
     return { recovery, eventWatermarks };
   }
 
   let nextRecovery: BackendRead<DashboardRecoveryResponse>;
 
   switch (event.type) {
-    case "run.started":
-    case "run.updated":
-    case "run.completed":
-    case "run.failed":
+    case "load.run.updated":
       nextRecovery = {
         ...recovery,
         data: { ...current, currentRun: event.run },
       };
       break;
-    case "inventory.updated":
-      if (isOlderThan(event.inventory.lastUpdatedAt, current.inventory?.lastUpdatedAt)) {
-        return { recovery, eventWatermarks };
+    case "dashboard.metric.observed":
+      {
+        const metricApplication = applyMetricObservation(recovery, event);
+        if (!metricApplication.applied) return { recovery, eventWatermarks };
+        nextRecovery = metricApplication.recovery;
       }
-      nextRecovery = { ...recovery, data: { ...current, inventory: event.inventory } };
       break;
-    case "queue.updated":
-      if (isOlderThan(event.queue.updatedAt, current.queue?.updatedAt)) {
-        return { recovery, eventWatermarks };
-      }
-      nextRecovery = { ...recovery, data: { ...current, queue: event.queue } };
-      break;
-    case "traffic.metric":
-      nextRecovery = {
-        ...recovery,
-        data: {
-          ...current,
-          recentMetrics: [
-            ...current.recentMetrics.slice(-19),
-            {
-              metricName: event.metricName,
-              value: event.value,
-              unit: event.unit,
-              timestamp: event.occurredAt,
-            },
-          ],
-        },
-      };
-      break;
-    case "business.outcome.updated":
+    case "business.outcome.snapshot":
       nextRecovery = {
         ...recovery,
         data: { ...current, businessOutcome: event.outcome, consistencyLag: event.consistencyLag },
       };
       break;
+    case "business.event.recorded":
+      return { recovery, eventWatermarks };
   }
 
   return {
     recovery: nextRecovery,
-    eventWatermarks: advanceProjectionWatermark(eventWatermarks, projection, event.occurredAt),
+    eventWatermarks: advanceProjectionWatermark(eventWatermarks, projection, projectionObservedAt),
   };
+}
+
+function dashboardEventObservedAt(event: DashboardEvent): string {
+  return event.type === "dashboard.metric.observed" ? event.observedAt : event.occurredAt;
 }
 
 function isOlderThan(candidate: string, current: string | undefined): boolean {
   return current !== undefined && Date.parse(candidate) < Date.parse(current);
+}
+
+function applyMetricObservation(
+  recovery: Extract<BackendRead<DashboardRecoveryResponse>, { status: "available" }>,
+  event: Extract<DashboardEvent, { type: "dashboard.metric.observed" }>,
+): { applied: boolean; recovery: BackendRead<DashboardRecoveryResponse> } {
+  const current = recovery.data;
+  if (event.metricName === "inventory.remaining") {
+    if (!current.inventory || current.inventory.saleOfferId !== event.saleOfferId) {
+      return { applied: false, recovery };
+    }
+    if (isOlderThan(event.observedAt, current.inventory.lastUpdatedAt)) {
+      return { applied: false, recovery };
+    }
+    return {
+      applied: true,
+      recovery: {
+        ...recovery,
+        data: {
+          ...current,
+          inventory: { ...current.inventory, remainingStock: event.value, lastUpdatedAt: event.observedAt },
+        },
+      },
+    };
+  }
+  if (event.metricName === "inventory.sold_out_rejection") {
+    if (!current.inventory || current.inventory.saleOfferId !== event.saleOfferId) {
+      return { applied: false, recovery };
+    }
+    if (isOlderThan(event.observedAt, current.inventory.lastUpdatedAt)) {
+      return { applied: false, recovery };
+    }
+    return {
+      applied: true,
+      recovery: {
+        ...recovery,
+        data: {
+          ...current,
+          inventory: {
+            ...current.inventory,
+            soldOutPressure: { rejectionCount: event.value, latestObservedAt: event.observedAt },
+            lastUpdatedAt: event.observedAt,
+          },
+        },
+      },
+    };
+  }
+  if (event.metricName === "queue.depth") {
+    if (!current.queue || current.queue.name !== event.queueName) {
+      return { applied: false, recovery };
+    }
+    if (isOlderThan(event.observedAt, current.queue.updatedAt)) {
+      return { applied: false, recovery };
+    }
+    return {
+      applied: true,
+      recovery: {
+        ...recovery,
+        data: { ...current, queue: { ...current.queue, depth: event.value, updatedAt: event.observedAt } },
+      },
+    };
+  }
+  if (event.metricName === "order.consistency_lag") return { applied: false, recovery };
+  return {
+    applied: true,
+    recovery: {
+      ...recovery,
+      data: {
+        ...current,
+        recentMetrics: [
+          ...current.recentMetrics.slice(-19),
+          { metricName: event.metricName, value: event.value, unit: event.unit, timestamp: event.observedAt },
+        ],
+      },
+    },
+  };
 }
 
 function isAfter(candidate: string, current: string): boolean {
@@ -208,25 +266,18 @@ type DashboardEventProjection =
   | "inventory"
   | "queue"
   | "businessOutcome"
-  | { trafficMetricName: string };
+  | { metricName: string };
 
 function dashboardEventProjection(event: DashboardEvent): DashboardEventProjection {
   switch (event.type) {
-    case "run.started":
-    case "run.updated":
-    case "run.completed":
-    case "run.failed":
+    case "load.run.updated":
       return "runLifecycle";
-    case "inventory.updated":
-      return "inventory";
-    case "queue.updated":
-      return "queue";
-    case "business.outcome.updated":
+    case "business.outcome.snapshot":
       return "businessOutcome";
-    case "traffic.metric":
-      return { trafficMetricName: event.metricName };
+    case "dashboard.metric.observed":
+      return { metricName: event.metricName };
     case "order.status.updated":
-    case "order.consistency_lag.observed":
+    case "business.event.recorded":
       return "businessOutcome";
   }
 }
@@ -235,9 +286,8 @@ function projectionWatermark(
   watermarks: DashboardEventWatermarks,
   projection: DashboardEventProjection,
 ): string | null {
-  return typeof projection === "string"
-    ? watermarks[projection]
-    : (watermarks.trafficByMetricName[projection.trafficMetricName] ?? watermarks.trafficBaseline);
+  if (typeof projection === "string") return watermarks[projection];
+  return watermarks.metricByName[projection.metricName] ?? watermarks.metricBaseline;
 }
 
 function advanceProjectionWatermark(
@@ -250,9 +300,11 @@ function advanceProjectionWatermark(
   }
   return {
     ...watermarks,
-    trafficByMetricName: {
-      ...watermarks.trafficByMetricName,
-      [projection.trafficMetricName]: occurredAt,
+    ...(projection.metricName.startsWith("inventory.") ? { inventory: occurredAt } : {}),
+    ...(projection.metricName === "queue.depth" ? { queue: occurredAt } : {}),
+    metricByName: {
+      ...watermarks.metricByName,
+      [projection.metricName]: occurredAt,
     },
   };
 }
@@ -266,13 +318,13 @@ function eventWatermarksForRecovery(
     inventory: baseline,
     queue: baseline,
     businessOutcome: baseline,
-    trafficBaseline: baseline,
-    trafficByMetricName: {},
+    metricBaseline: baseline,
+    metricByName: {},
   };
 }
 
 export function shouldRequestAuthoritativeRecoveryAfterEvent(event: DashboardEvent): boolean {
-  return event.type === "run.completed" || event.type === "run.failed";
+  return event.type === "load.run.updated" && ["completed", "failed"].includes(event.run.status);
 }
 
 export function shouldRequestAuthoritativeRecoveryAfterScopedEvent(
@@ -310,8 +362,8 @@ function dashboardEventRunId(event: DashboardEvent): string | null {
 function canEstablishNewRunScope(
   recovery: DashboardRecoveryResponse,
   event: DashboardEvent,
-): event is RunDashboardEvent & { type: "run.started" | "run.updated" } {
-  if (event.type !== "run.started" && event.type !== "run.updated") return false;
+): event is RunDashboardEvent {
+  if (event.type !== "load.run.updated") return false;
   if (!["starting", "active", "draining"].includes(event.run.status)) return false;
 
   const currentStartedAt = recovery.currentRun?.startedAt;
@@ -347,21 +399,16 @@ function recoveredSaleOfferId(recovery: DashboardRecoveryResponse): string | nul
 
 function dashboardEventSaleOfferId(event: DashboardEvent): string | null {
   switch (event.type) {
-    case "run.started":
-    case "run.updated":
-    case "run.completed":
-    case "run.failed":
+    case "load.run.updated":
       return event.run.saleOfferId ?? null;
-    case "inventory.updated":
-      return event.inventory.saleOfferId;
-    case "business.outcome.updated":
+    case "business.outcome.snapshot":
       return event.saleOfferId;
     case "order.status.updated":
-    case "order.consistency_lag.observed":
       return event.saleOfferId;
-    case "traffic.metric":
-    case "queue.updated":
-      return null;
+    case "dashboard.metric.observed":
+      return "saleOfferId" in event ? event.saleOfferId : null;
+    case "business.event.recorded":
+      return event.saleOfferId ?? null;
   }
 }
 
@@ -407,11 +454,11 @@ function recoveredOrderStatusOccurredAt(
 }
 
 function applyOrderRealtimeEvent(state: DashboardState, event: DashboardEvent): DashboardState {
-  if (event.type !== "order.status.updated" && event.type !== "order.consistency_lag.observed") return state;
+  if (event.type !== "order.status.updated" && !isOrderLagMetric(event)) return state;
   if (state.recovery.status !== "available" || classifyDashboardEventScope(state.recovery.data, event) !== "current") return state;
   if (state.seenOrderEventIds.includes(event.eventId)) return state;
   const seenOrderEventIds = [...state.seenOrderEventIds.slice(-99), event.eventId];
-  if (event.type === "order.consistency_lag.observed") {
+  if (isOrderLagMetric(event)) {
     const sample = { eventId: event.eventId, orderId: event.orderId, publicOrderId: event.publicOrderId, valueMs: event.value, observedAt: event.observedAt };
     return {
       ...state,
@@ -453,12 +500,18 @@ function lifecycleRank(status: RecentOrderState["status"]): number {
 }
 
 function isRunDashboardEvent(event: DashboardEvent): event is RunDashboardEvent {
-  return event.type.startsWith("run.");
+  return event.type === "load.run.updated";
+}
+
+function isOrderLagMetric(
+  event: DashboardEvent,
+): event is Extract<DashboardEvent, { type: "dashboard.metric.observed" }> & { metricName: "order.consistency_lag" } {
+  return event.type === "dashboard.metric.observed" && event.metricName === "order.consistency_lag";
 }
 
 function recoveryForIncomingRun(
   recovery: Extract<BackendRead<DashboardRecoveryResponse>, { status: "available" }>,
-  event: RunDashboardEvent & { type: "run.started" | "run.updated" },
+  event: RunDashboardEvent,
 ): BackendRead<DashboardRecoveryResponse> {
   return {
     ...recovery,

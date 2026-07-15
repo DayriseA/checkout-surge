@@ -25,7 +25,9 @@ describe("DashboardSnapshotPublicationScheduler", () => {
     expect(readInventory).toHaveBeenCalledOnce();
     expect(publish).toHaveBeenCalledWith(
       expect.objectContaining({
-        type: "inventory.updated",
+        type: "dashboard.metric.observed",
+        metricName: "inventory.sold_out_rejection",
+        value: 100,
         occurredAt: "2026-07-13T12:00:03.000Z",
         correlationId: "corr-99",
       }),
@@ -69,7 +71,7 @@ describe("DashboardSnapshotPublicationScheduler", () => {
     expect(readInventory).toHaveBeenCalledTimes(2);
     await scheduler.close();
   });
-  it("coalesces dirty scopes and publishes source-timestamped full snapshots", async () => {
+  it("coalesces dirty scopes and publishes source-timestamped scalar observations", async () => {
     const publish = vi.fn().mockResolvedValue(undefined);
     const readInventory = vi.fn().mockResolvedValue(inventoryFixture());
     const readQueue = vi.fn().mockResolvedValue(queueFixture());
@@ -88,24 +90,25 @@ describe("DashboardSnapshotPublicationScheduler", () => {
 
     expect(readInventory).toHaveBeenCalledOnce();
     expect(readQueue).toHaveBeenCalledOnce();
-    expect(publish).toHaveBeenCalledTimes(2);
+    expect(publish).toHaveBeenCalledTimes(3);
     expect(publish).toHaveBeenCalledWith(
       expect.objectContaining({
-        type: "inventory.updated",
+        type: "dashboard.metric.observed",
+        metricName: "inventory.remaining",
         runId,
         correlationId: "corr-latest",
         occurredAt: inventoryFixture().lastUpdatedAt,
-        inventory: inventoryFixture(),
       }),
     );
     await scheduler.close();
     expect(publish).toHaveBeenCalledWith(
       expect.objectContaining({
-        type: "queue.updated",
+        type: "dashboard.metric.observed",
+        metricName: "queue.depth",
         runId,
         correlationId: "corr-latest",
         occurredAt: queueFixture().updatedAt,
-        queue: queueFixture(),
+        value: queueFixture().depth,
       }),
     );
   });
@@ -129,8 +132,8 @@ describe("DashboardSnapshotPublicationScheduler", () => {
     releaseFirst?.();
     await scheduler.flush();
 
-    expect(publish).toHaveBeenCalledTimes(2);
-    expect(publish.mock.calls[1]?.[0]).toEqual(
+    expect(publish).toHaveBeenCalledTimes(4);
+    expect(publish.mock.calls[2]?.[0]).toEqual(
       expect.objectContaining({ correlationId: "corr-during-flight" }),
     );
     await scheduler.close();
@@ -181,15 +184,14 @@ describe("DashboardSnapshotPublicationScheduler", () => {
     await scheduler.flush();
 
     expect(readInventory).toHaveBeenCalledTimes(2);
-    expect(publish).toHaveBeenCalledTimes(2);
+    expect(publish).toHaveBeenCalledTimes(4);
     expect(maximumInFlight).toBe(1);
-    expect(publish.mock.calls[1]?.[0]).toEqual(
+    expect(publish.mock.calls[3]?.[0]).toEqual(
       expect.objectContaining({
         correlationId: "corr-during-flight",
         occurredAt: "2026-07-13T12:00:04.000Z",
-        inventory: expect.objectContaining({
-          soldOutPressure: expect.objectContaining({ rejectionCount: 2 }),
-        }),
+        metricName: "inventory.sold_out_rejection",
+        value: 2,
       }),
     );
     await scheduler.close();
@@ -218,11 +220,9 @@ describe("DashboardSnapshotPublicationScheduler", () => {
     expect(readQueue).toHaveBeenCalledTimes(3);
     expect(publish.mock.calls[2]?.[0]).toEqual(
       expect.objectContaining({
-        type: "queue.updated",
-        queue: expect.objectContaining({
-          depth: 0,
-          counts: expect.objectContaining({ active: 0 }),
-        }),
+        type: "dashboard.metric.observed",
+        metricName: "queue.depth",
+        value: 0,
       }),
     );
 
@@ -333,7 +333,10 @@ describe("DashboardSnapshotPublicationScheduler", () => {
   it("flushes and awaits a pending sold-out observation on normal close", async () => {
     vi.useFakeTimers();
     let release: (() => void) | undefined;
-    const publish = vi.fn(() => new Promise<void>((resolve) => (release = resolve)));
+    const publish = vi
+      .fn()
+      .mockImplementationOnce(() => new Promise<void>((resolve) => (release = resolve)))
+      .mockResolvedValue(undefined);
     const scheduler = new DashboardSnapshotPublicationScheduler({
       readInventory: vi.fn().mockResolvedValue(inventoryFixture()),
       readQueue: vi.fn().mockResolvedValue(queueFixture()),
@@ -352,6 +355,7 @@ describe("DashboardSnapshotPublicationScheduler", () => {
     release?.();
     await closing;
     expect(closed).toBe(true);
+    expect(publish).toHaveBeenCalledTimes(2);
   });
 
   it("logs and drops the oldest pending sold-out scope at the configured bound", async () => {
@@ -376,7 +380,7 @@ describe("DashboardSnapshotPublicationScheduler", () => {
       expect.objectContaining({ maxPendingScopes: 1 }),
       expect.stringContaining("dropped the oldest scope"),
     );
-    expect(publish).toHaveBeenCalledOnce();
+    expect(publish).toHaveBeenCalledTimes(2);
     expect(publish).toHaveBeenCalledWith(expect.objectContaining({ correlationId: "corr-newest" }));
     await scheduler.close();
   });

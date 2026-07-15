@@ -171,15 +171,15 @@ function batch(correlationId: string) {
 }
 
 function events(correlationId: string) {
-  return batch(correlationId).samples.map((sample, index) => ({
-    type: "traffic.metric" as const,
-    eventId: `77777777-7777-4777-8777-${String(index).padStart(12, "0")}`,
+  return batch(correlationId).samples.map((sample) => ({
+    type: "dashboard.metric.observed" as const,
     runId,
     correlationId,
     metricName: sample.metricName,
     value: sample.value,
     unit: sample.unit,
     occurredAt: sample.timestamp,
+    observedAt: sample.timestamp,
   }));
 }
 

@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import {
   type AcceptedRunConfigSnapshot,
   acceptedRunConfigSnapshotSchema,
@@ -59,7 +58,6 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
       terminalRunWriter: Pick<TerminalDemoRunWriter, "write">;
       drainTimeoutSeconds: number;
       now?: () => Date;
-      generateId?: () => string;
     },
   ) {}
 
@@ -352,8 +350,7 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
   ): Promise<void> {
     try {
       await publishDashboardEvent(this.options.redis, {
-        type: run.status === "completed" ? "run.completed" : "run.failed",
-        eventId: this.generateId(),
+        type: "load.run.updated",
         runId: run.runId,
         ...(correlationId ? { correlationId } : {}),
         run,
@@ -371,9 +368,6 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
     return this.options.now?.() ?? new Date();
   }
 
-  private generateId(): string {
-    return this.options.generateId?.() ?? randomUUID();
-  }
 }
 
 function parseFinalizationEvidence(

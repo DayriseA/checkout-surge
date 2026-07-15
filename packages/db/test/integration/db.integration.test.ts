@@ -83,13 +83,13 @@ const expectedHandAuthoredTriggers = [
   "sim_notifications_enforce_run_sale_attribution",
 ].sort();
 const dashboardEvent: DashboardEvent = {
-  type: "traffic.metric",
-  eventId: "77777777-7777-4777-8777-777777777777",
+  type: "dashboard.metric.observed",
   runId: "55555555-5555-4555-8555-555555555555",
   metricName: "traffic.latency",
   value: 42,
   unit: "ms",
   occurredAt: "2026-06-20T12:00:00.000Z",
+  observedAt: "2026-06-20T12:00:00.000Z",
 };
 
 type TestSql = ReturnType<typeof createDatabaseConnection>["sql"];

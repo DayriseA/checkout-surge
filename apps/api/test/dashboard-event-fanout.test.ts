@@ -6,13 +6,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { DashboardEventFanout } from "../src/realtime/dashboard-event-fanout.js";
 
 const dashboardEvent: DashboardEvent = {
-  type: "traffic.metric",
-  eventId: "77777777-7777-4777-8777-777777777777",
+  type: "dashboard.metric.observed",
   runId: "55555555-5555-4555-8555-555555555555",
   metricName: "traffic.latency",
   value: 42,
   unit: "ms",
   occurredAt: "2026-06-20T12:00:00.000Z",
+  observedAt: "2026-06-20T12:00:00.000Z",
 };
 
 class FakeRequest extends EventEmitter {}
@@ -82,8 +82,7 @@ describe("dashboard event fan-out", () => {
     });
     expect(response.chunks[0]).toBe("retry: 1234\n: connected\n\n");
     expect(response.chunks.some((chunk) => chunk.startsWith(": heartbeat "))).toBe(true);
-    expect(response.chunks.join("")).toContain('"type":"traffic.metric"');
-    expect(response.chunks.join("")).toContain('"eventId":"77777777-7777-4777-8777-777777777777"');
+    expect(response.chunks.join("")).toContain('"type":"dashboard.metric.observed"');
     expect(fanout.clientCount()).toBe(1);
 
     request.emit("close");

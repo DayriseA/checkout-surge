@@ -56,8 +56,8 @@ describe("parseK6SummaryMetrics", () => {
         metrics: {
           http_reqs: { count: 12 },
           checkout_reservation_accepted: { count: 0 },
-          checkout_sold_out: { count: 10 },
-          checkout_unexpected_response: { count: 2 },
+          checkout_sold_out_rejections: { count: 10 },
+          checkout_unexpected_responses: { count: 2 },
           iterations: { count: 11.6 },
           dropped_iterations: { count: 1 },
           http_req_failed: { value: 0.25 },
@@ -99,8 +99,8 @@ describe("parseK6SummaryMetrics", () => {
         metrics: {
           http_reqs: { values: { count: 4 } },
           checkout_reservation_accepted: { count: "4", values: { count: 3 } },
-          checkout_sold_out: { count: -1 },
-          checkout_unexpected_response: { count: null },
+          checkout_sold_out_rejections: { count: -1 },
+          checkout_unexpected_responses: { count: null },
           http_req_failed: { values: { rate: 0 } },
           http_req_duration: { values: { avg: 0, "p(95)": null } },
         },

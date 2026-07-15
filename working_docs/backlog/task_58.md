@@ -65,3 +65,42 @@ Adopt the reference vocabulary, but retain projection snapshots only where expli
 - In scope: shared realtime schemas/types, all in-repository producers and consumers required for an atomic vocabulary cutover, canonical k6 counter emission/ingestion, compatibility policy, and boundary tests.
 - Coordinate rather than duplicate task 27's actual inventory/queue publication and task 47's durable per-order publisher/order-lag design. This task establishes their public vocabulary and compatibility requirements.
 - Do not change durable order/reservation lifecycle semantics, Redis channel/path, SSE into a replay log, recovery authority, k6 traffic scenarios, completion-report field names, dashboard presentation, or add a new broker/outbox. Do not import Forge schemas wholesale or broaden identifiers to loose strings.
+
+## Implementation record (2026-07-15)
+
+### Status
+
+Implemented.
+
+### Completed scope and decisions
+
+- Replaced the projection-first wire categories with `load.run.updated`, literal-specific `dashboard.metric.observed`, `order.status.updated`, and typed `business.event.recorded`. Retained the aggregate projection under the deliberately explicit `business.outcome.snapshot` Surge extension; it remains a cumulative full replacement and is never treated as a delta or domain event.
+- Added strict schemas for all seven metrics. Traffic rate uses nonnegative `requests_per_second`, latency uses nonnegative `ms`, failure rate is a `ratio` in `[0,1]`, queue depth is a nonnegative integer in `jobs` with a queue dimension, inventory observations are nonnegative integer `items` or cumulative `rejections` with sale-offer scope, and consistency lag retains its deterministic event ID plus durable confirmation link and exact order/scope/timestamp fields.
+- Removed event IDs from replaceable run, scalar metric, and aggregate snapshot observations. Durable order transitions, linked consistency-lag points, and durable business events retain stable UUID identity. The twelve shared durable business names are contract-valid, but no producer was invented without a consumer.
+- Migrated API run/traffic/inventory/queue/aggregate publishers and worker order/lag publishers. Inventory scheduling performs one coherent read and emits remaining plus cumulative sold-out observations; queue emits depth. Full inventory/queue state and all missed realtime hints remain repairable only through authoritative `/dashboard/recovery`.
+- Migrated the browser reducer to canonical categories, payload-derived run lifecycle, source-observation watermarks, scalar-only metric application, current-run/sale-offer filtering, stable order-event deduplication, and monotonic order lifecycle rules. Terminal run status still requests final recovery; a scalar observation does not fabricate a missing full projection.
+- Metric watermarks are keyed generically by metric name and use `observedAt`; missing, mismatched, or source-stale inventory/queue scalars leave both state and watermarks unchanged. Independent inventory-literal watermarks allow coherent same-time remaining/sold-out observations without cross-literal regression.
+- Kept Redis channel `dashboard-events`, SSE path, invalid-message isolation, and data-only advisory fanout unchanged.
+- Invalid Redis messages report only bounded category, metric/business name, run, and correlation metadata with the stable `redis_subscriber_parse` stage; malformed JSON remains isolated and raw messages are never logged.
+- Chose canonical-only rollout. Publishers and consumers must deploy together, old browser assets must reload, and active k6 processes must restart. No legacy event or counter aliases are read, so aggregate messages cannot double-apply and old/new counters cannot double count.
+- Renamed generated and ingested k6 counters atomically to `checkout_sold_out_rejections` and `checkout_unexpected_responses`; completion-report field names and traffic scenarios remain unchanged.
+- Updated architecture, cross-service realtime conventions, and load-generation metric documentation with the final vocabulary, replacement/scalar semantics, identity policy, recovery authority, and restart requirement.
+
+### Verification
+
+- `pnpm --filter @checkout-surge/contracts test:unit`: 2 files, 88 tests passed, including all metric and business-event literals.
+- `node scripts/run-with-test-env.mjs pnpm --filter api exec vitest run --config vitest.api.config.ts test/dashboard-snapshot-publication-scheduler.test.ts test/dashboard-event-fanout.test.ts test/dashboard-traffic-metric-store-unit.test.ts`: 3 files, 33 tests passed.
+- `node scripts/run-with-test-env.mjs pnpm --filter api exec vitest run --config vitest.api.config.ts test/demo-run-service.test.ts -t "demo-run metric ingestion acceptance"`: 1 file, 5 passed and 63 skipped by filter.
+- `node scripts/run-with-test-env.mjs pnpm --filter api exec vitest run --config vitest.api.config.ts test/api.test.ts -t "fans contract dashboard events"`: 1 passed and 78 skipped by filter.
+- `pnpm --filter worker exec vitest run --config vitest.unit.config.ts test/unit/order-process-job-handler.test.ts test/unit/order-realtime-publisher.test.ts`: 2 files, 37 tests passed.
+- `pnpm --filter web exec vitest run --config vitest.config.ts test/dashboard-phase6.test.ts test/dashboard-hooks.test.tsx`: 2 files, 37 tests passed after review corrections.
+- `pnpm --filter load-orchestrator exec vitest run --config vitest.unit.config.ts test/k6-summary.test.ts test/load-orchestrator.test.ts`: 2 files, 97 tests passed.
+- `node --test scripts/runtime-smoke-load.test.mjs`: 13 tests passed.
+- Review correction rerun: focused API scheduler, fanout, invalid-message metadata, and metric-ingestion tests passed (4 files, 35 passed and 63 filtered); `pnpm --filter @checkout-surge/db test:unit` passed (6 files, 37 tests).
+- Contracts, DB, API, worker, web, and load-orchestrator type checks passed. Contracts, DB, API, worker, web, and load-orchestrator lints passed without warnings. `git diff --check` passed.
+
+### Skipped and blockers
+
+- Focused API demo-run/finalization tests that require PostgreSQL were attempted; configured PostgreSQL at `127.0.0.1:56432` refused the connection. No Docker services were started. The non-DB metric-ingestion subset passed separately.
+- Redis/PostgreSQL integration fixtures were migrated but not executed because external services were unavailable.
+- `pnpm test:composition` and `pnpm test:characterization` were not run per repository instructions.

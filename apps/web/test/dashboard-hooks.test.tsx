@@ -171,13 +171,14 @@ describe("useDashboardRecovery", () => {
 
 function eventFixture(): DashboardEvent {
   return {
-    type: "traffic.metric",
-    eventId: "55555555-5555-4555-8555-555555555555",
+    type: "dashboard.metric.observed",
     correlationId: "corr-live",
     occurredAt: "2026-06-20T00:00:11.000Z",
+    observedAt: "2026-06-20T00:00:11.000Z",
     metricName: "queue.depth",
     value: 3,
     unit: "jobs",
+    queueName: "orders:process",
   };
 }
 
@@ -185,8 +186,7 @@ function runEventFixture(
   run: NonNullable<DashboardRecoveryResponse["currentRun"]>,
 ): DashboardEvent {
   return {
-    type: "run.updated",
-    eventId: "66666666-6666-4666-8666-666666666666",
+    type: "load.run.updated",
     runId: run.runId,
     correlationId: "corr-run-live",
     occurredAt: "2026-06-20T00:01:01.000Z",

@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import {
   type BusinessOutcomeDashboardEvent,
   type BusinessOutcomeSummary,
@@ -29,7 +28,6 @@ export interface BusinessOutcomeProjectionScope {
 export interface PublishBusinessOutcomeDashboardUpdateInput extends BusinessOutcomeProjectionScope {
   correlationId?: string;
   occurredAt?: Date;
-  eventId?: string;
 }
 
 export async function readBusinessOutcomeSummary(
@@ -226,8 +224,7 @@ export async function publishBusinessOutcomeDashboardUpdate(
     readConsistencyLagSummary(db, input, occurredAt),
   ]);
   const event: BusinessOutcomeDashboardEvent = {
-    type: "business.outcome.updated",
-    eventId: input.eventId ?? randomUUID(),
+    type: "business.outcome.snapshot",
     saleOfferId: input.saleOfferId,
     ...(input.runId ? { runId: input.runId } : {}),
     ...(input.correlationId ? { correlationId: input.correlationId } : {}),

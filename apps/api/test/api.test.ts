@@ -1100,8 +1100,7 @@ describe("API gateway routes", () => {
     const response = await fetch(`http://127.0.0.1:${address.port}${dashboardEventsPath}`);
     const reader = response.body?.getReader();
     const event: DashboardEvent = {
-      type: "business.outcome.updated",
-      eventId: "99999999-9999-4999-8999-999999999999",
+      type: "business.outcome.snapshot",
       saleOfferId: fixtureIds.saleOffer,
       correlationId: "corr-dashboard-event",
       occurredAt: "2026-06-20T00:00:11.000Z",
@@ -1134,10 +1133,9 @@ describe("API gateway routes", () => {
 
       await readStreamUntil(reader, ": connected");
       dashboardEventFanout.publish(event);
-      const frame = await readStreamUntil(reader, "business.outcome.updated");
+      const frame = await readStreamUntil(reader, "business.outcome.snapshot");
 
-      expect(frame).toContain('"type":"business.outcome.updated"');
-      expect(frame).toContain('"eventId":"99999999-9999-4999-8999-999999999999"');
+      expect(frame).toContain('"type":"business.outcome.snapshot"');
       expect(frame).toContain('"acceptedReservations":2');
       expect(frame).toContain('"p95LagMs":180');
     } finally {

@@ -48,6 +48,7 @@ function orderStatusEventFixture(
     eventName,
     previousStatus,
     status,
+    customerStatus: status,
     attemptNumber: 1,
     attemptsMade: 0,
     ...overrides,
@@ -57,7 +58,7 @@ function orderStatusEventFixture(
 function lagEventFixture(eventId: string, observedAt: string, value: number): OrderConsistencyLagDashboardEvent {
   const observed = new Date(observedAt);
   return {
-    type: "order.consistency_lag.observed",
+    type: "dashboard.metric.observed",
     eventId,
     confirmedTransitionEventId: uuidFor(9_999),
     runId: runFixture().runId,
@@ -105,7 +106,7 @@ describe("Phase 6 dashboard behavior", () => {
     if (recovery.status !== "available") throw new Error("Expected available recovery fixture.");
     const status = orderStatusEventFixture("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "order.confirmed", "processing", "confirmed");
     const lag = {
-      type: "order.consistency_lag.observed",
+      type: "dashboard.metric.observed",
       eventId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
       confirmedTransitionEventId: status.eventId,
       runId: runFixture().runId,
@@ -426,7 +427,7 @@ describe("Phase 6 dashboard behavior", () => {
         value: 99,
       }),
     );
-    const nextRun = applyDashboardEvent(recovery, runEventFixture("run.updated", previousRun));
+    const nextRun = applyDashboardEvent(recovery, runEventFixture("active", previousRun));
 
     expect(nextBusiness.status).toBe("available");
     expect(nextMetric.status).toBe("available");
@@ -520,6 +521,32 @@ describe("Phase 6 dashboard behavior", () => {
     expect(nextQueue.data.queue).toEqual(recoveryData.queue);
   });
 
+  it("applies independent inventory observations that share one coherent source timestamp", () => {
+    const inventory = inventoryFixture(runFixture().saleOfferId, 12);
+    const recovery = availableRecovery({ ...recoveryFixture(), currentRun: runFixture(), inventory });
+    const observedAt = "2026-06-20T00:00:11.000Z";
+    const remaining = inventoryEventFixture(inventory.saleOfferId, 8, observedAt);
+    const soldOut = {
+      type: "dashboard.metric.observed",
+      metricName: "inventory.sold_out_rejection",
+      value: 4,
+      unit: "rejections",
+      aggregation: "cumulative",
+      saleOfferId: inventory.saleOfferId,
+      runId: runFixture().runId,
+      correlationId: "corr-web-live",
+      occurredAt: observedAt,
+      observedAt,
+    } as const satisfies DashboardEvent;
+    const state = reduceDashboardEvents(createDashboardState(recovery), [remaining, soldOut]);
+
+    if (state.recovery.status !== "available") throw new Error("Expected available recovery.");
+    expect(state.recovery.data.inventory).toMatchObject({
+      remainingStock: 8,
+      soldOutPressure: { rejectionCount: 4, latestObservedAt: observedAt },
+    });
+  });
+
   it("does not let a delayed snapshot read regress a newer source snapshot", () => {
     const recovery = availableRecovery({
       ...recoveryFixture(),
@@ -532,7 +559,7 @@ describe("Phase 6 dashboard behavior", () => {
       99,
       "2026-06-20T00:00:13.000Z",
     );
-    delayedInventory.inventory.lastUpdatedAt = "2026-06-20T00:00:11.000Z";
+    delayedInventory.observedAt = "2026-06-20T00:00:11.000Z";
     const delayedQueue = queueEventFixture(99, "2026-06-20T00:00:11.000Z");
     delayedQueue.occurredAt = "2026-06-20T00:00:13.000Z";
 
@@ -548,7 +575,7 @@ describe("Phase 6 dashboard behavior", () => {
 
   it("resets idle recovered projections before installing a newly started run", () => {
     const recovery = availableRecovery(populatedRecovery(null));
-    const event = runEventFixture("run.started", {
+    const event = runEventFixture("active", {
       ...runFixture(),
       startedAt: "2026-06-20T00:00:11.000Z",
     });
@@ -588,7 +615,7 @@ describe("Phase 6 dashboard behavior", () => {
       startedAt: "2026-06-20T00:01:00.000Z",
     };
     const recovery = availableRecovery(populatedRecovery(currentRun));
-    const event = runEventFixture("run.updated", incomingRun);
+    const event = runEventFixture("active", incomingRun);
 
     const next = applyDashboardEvent(recovery, event);
 
@@ -612,7 +639,7 @@ describe("Phase 6 dashboard behavior", () => {
     const recoveryData = populatedRecovery(run);
     const recovery = availableRecovery(recoveryData);
 
-    const next = applyDashboardEvent(recovery, runEventFixture("run.updated", run));
+    const next = applyDashboardEvent(recovery, runEventFixture("active", run));
 
     expect(next.status).toBe("available");
     if (next.status !== "available") throw new Error("Expected same-run recovery to be available.");
@@ -620,7 +647,7 @@ describe("Phase 6 dashboard behavior", () => {
     expect(
       shouldRequestAuthoritativeRecoveryAfterScopedEvent(
         recovery,
-        runEventFixture("run.updated", run),
+        runEventFixture("active", run),
       ),
     ).toBe(false);
   });
@@ -629,7 +656,7 @@ describe("Phase 6 dashboard behavior", () => {
     const run = runFixture();
     const recovery = availableRecovery(populatedRecovery(run));
     const inconsistentEvent = {
-      ...runEventFixture("run.updated", run),
+      ...runEventFixture("active", run),
       runId: previousRunFixture().runId,
     };
 
@@ -647,7 +674,7 @@ describe("Phase 6 dashboard behavior", () => {
       startedAt: "2026-06-20T00:01:00.000Z",
     };
     const inconsistentEvent = {
-      ...runEventFixture("run.updated", incomingRun),
+      ...runEventFixture("active", incomingRun),
       runId: "77777777-7777-4777-8777-777777777777",
     };
 
@@ -664,7 +691,7 @@ describe("Phase 6 dashboard behavior", () => {
       startedAt: "2026-06-19T23:59:00.000Z",
     };
     const delayedEvent = {
-      ...runEventFixture("run.updated", oldRun),
+      ...runEventFixture("active", oldRun),
       occurredAt: "2026-06-20T00:00:12.000Z",
     };
 
@@ -673,11 +700,11 @@ describe("Phase 6 dashboard behavior", () => {
   });
 
   it("uses authoritative recovery after terminal run events", () => {
-    expect(shouldRequestAuthoritativeRecoveryAfterEvent(runEventFixture("run.completed"))).toBe(
+    expect(shouldRequestAuthoritativeRecoveryAfterEvent(runEventFixture("completed"))).toBe(
       true,
     );
-    expect(shouldRequestAuthoritativeRecoveryAfterEvent(runEventFixture("run.failed"))).toBe(true);
-    expect(shouldRequestAuthoritativeRecoveryAfterEvent(runEventFixture("run.updated"))).toBe(
+    expect(shouldRequestAuthoritativeRecoveryAfterEvent(runEventFixture("failed"))).toBe(true);
+    expect(shouldRequestAuthoritativeRecoveryAfterEvent(runEventFixture("active"))).toBe(
       false,
     );
   });
@@ -685,13 +712,13 @@ describe("Phase 6 dashboard behavior", () => {
   it("does not regress any finalized projection when live events arrive out of order", () => {
     const recovery = availableRecovery({ ...recoveryFixture(), currentRun: runFixture() });
     const newerInventory = inventoryEventFixture(runFixture().saleOfferId, 8, timestamp(20));
-    newerInventory.inventory.lastUpdatedAt = timestamp(20);
+    newerInventory.observedAt = timestamp(20);
     const olderInventory = inventoryEventFixture(runFixture().saleOfferId, 9, timestamp(15));
-    olderInventory.inventory.lastUpdatedAt = timestamp(15);
+    olderInventory.observedAt = timestamp(15);
 
     const state = reduceDashboardEvents(createDashboardState(recovery), [
-      runEventAt("run.completed", timestamp(20), runFixture()),
-      runEventAt("run.updated", timestamp(15), runFixture()),
+      runEventAt("completed", timestamp(20), runFixture()),
+      runEventAt("active", timestamp(15), runFixture()),
       newerInventory,
       olderInventory,
       queueEventFixture(2, timestamp(20)),
@@ -704,8 +731,8 @@ describe("Phase 6 dashboard behavior", () => {
 
     if (state.recovery.status !== "available") throw new Error("Expected available recovery.");
     expect(state.recovery.data.currentRun?.status).toBe("completed");
-    expect(state.recovery.data.inventory?.remainingStock).toBe(8);
-    expect(state.recovery.data.queue?.depth).toBe(2);
+    expect(state.recovery.data.inventory).toBeNull();
+    expect(state.recovery.data.queue).toBeNull();
     expect(state.recovery.data.businessOutcome?.acceptedReservations).toBe(20);
     expect(state.recovery.data.recentMetrics.at(-1)?.value).toBe(20);
   });
@@ -717,7 +744,7 @@ describe("Phase 6 dashboard behavior", () => {
         metricName: "traffic.scheduled_request_rate",
         occurredAt: timestamp(20),
         value: 50,
-        unit: "requests",
+        unit: "requests_per_second",
       }),
       trafficMetricEventFixture({
         metricName: "traffic.latency",
@@ -754,9 +781,9 @@ describe("Phase 6 dashboard behavior", () => {
       inventory: { ...inventoryFixture(), lastUpdatedAt: timestamp(18) },
     });
     const sourceOlder = inventoryEventFixture(runFixture().saleOfferId, 99, timestamp(30));
-    sourceOlder.inventory.lastUpdatedAt = timestamp(17);
+    sourceOlder.observedAt = timestamp(17);
     const sourceNewer = inventoryEventFixture(runFixture().saleOfferId, 7, timestamp(20));
-    sourceNewer.inventory.lastUpdatedAt = timestamp(19);
+    sourceNewer.observedAt = timestamp(19);
     let state = dashboardStateReducer(createDashboardState(recovery), {
       type: "event-received",
       event: trafficMetricEventFixture({ occurredAt: timestamp(30), value: 30 }),
@@ -776,8 +803,34 @@ describe("Phase 6 dashboard behavior", () => {
     if (state.recovery.status !== "available") throw new Error("Expected available recovery.");
     expect(state.recovery.data.recentMetrics.at(-1)?.value).toBe(20);
     expect(state.recovery.data.inventory?.remainingStock).toBe(7);
-    expect(state.eventWatermarks.trafficByMetricName["queue.depth"]).toBe(timestamp(20));
+    expect(state.eventWatermarks.metricByName["traffic.latency"]).toBe(timestamp(20));
+    expect(state.eventWatermarks.inventory).toBe(timestamp(19));
+  });
+
+  it("does not advance metric watermarks for missing or source-stale scalar projections", () => {
+    const baseline = availableRecovery({
+      ...recoveryFixture(),
+      currentRun: runFixture(),
+      inventory: { ...inventoryFixture(), lastUpdatedAt: timestamp(18) },
+      queue: null,
+    });
+    let state = reduceDashboardEvents(createDashboardState(baseline), [
+      queueEventFixture(3, timestamp(20)),
+      inventoryEventFixture(runFixture().saleOfferId, 99, timestamp(17)),
+    ]);
+
+    expect(state.eventWatermarks.queue).toBe(timestamp(10));
+    expect(state.eventWatermarks.inventory).toBe(timestamp(10));
+    expect(state.eventWatermarks.metricByName["queue.depth"]).toBeUndefined();
+    expect(state.eventWatermarks.metricByName["inventory.remaining"]).toBeUndefined();
+
+    state = reduceDashboardEvents(state, [
+      inventoryEventFixture(runFixture().saleOfferId, 7, timestamp(20)),
+      inventorySoldOutEventFixture(runFixture().saleOfferId, 4, timestamp(19)),
+    ]);
     expect(state.eventWatermarks.inventory).toBe(timestamp(20));
+    expect(state.eventWatermarks.metricByName["inventory.remaining"]).toBe(timestamp(20));
+    expect(state.eventWatermarks.metricByName["inventory.sold_out_rejection"]).toBeUndefined();
   });
 
   it("rebases watermarks when authoritative recovery completes", () => {
@@ -810,36 +863,36 @@ describe("Phase 6 dashboard behavior", () => {
       startedAt: timestamp(40),
     };
     state = reduceDashboardEvents(state, [
-      runEventAt("run.updated", timestamp(40), incomingRun),
+      runEventAt("active", timestamp(40), incomingRun),
       queueEventFixture(3, timestamp(41)),
     ]);
 
     if (state.recovery.status !== "available") throw new Error("Expected available recovery.");
     expect(state.recovery.data.currentRun?.runId).toBe(incomingRun.runId);
-    expect(state.recovery.data.queue?.depth).toBe(3);
-    expect(state.eventWatermarks.queue).toBe(timestamp(41));
+    expect(state.recovery.data.queue).toBeNull();
+    expect(state.eventWatermarks.queue).toBe(timestamp(40));
   });
 
   it("retains independent projection watermarks across same-run lifecycle updates", () => {
     const recovery = availableRecovery({ ...recoveryFixture(), currentRun: runFixture() });
     const state = reduceDashboardEvents(createDashboardState(recovery), [
       queueEventFixture(2, timestamp(30)),
-      runEventAt("run.completed", timestamp(40), runFixture()),
+      runEventAt("completed", timestamp(40), runFixture()),
       queueEventFixture(9, timestamp(25)),
     ]);
 
     if (state.recovery.status !== "available") throw new Error("Expected available recovery.");
-    expect(state.recovery.data.queue?.depth).toBe(2);
-    expect(state.eventWatermarks.queue).toBe(timestamp(30));
+    expect(state.recovery.data.queue).toBeNull();
+    expect(state.eventWatermarks.queue).toBe(timestamp(10));
     expect(state.eventWatermarks.runLifecycle).toBe(timestamp(40));
   });
 
   it("applies independent projections older than a same-run lifecycle event", () => {
     const recovery = availableRecovery({ ...recoveryFixture(), currentRun: runFixture() });
     const inventory = inventoryEventFixture(runFixture().saleOfferId, 8, timestamp(20));
-    inventory.inventory.lastUpdatedAt = timestamp(20);
+    inventory.observedAt = timestamp(20);
     const state = reduceDashboardEvents(createDashboardState(recovery), [
-      runEventAt("run.completed", timestamp(40), runFixture()),
+      runEventAt("completed", timestamp(40), runFixture()),
       inventory,
       businessOutcomeEventFixture({ occurredAt: timestamp(25), acceptedReservations: 25 }),
     ]);
@@ -847,9 +900,9 @@ describe("Phase 6 dashboard behavior", () => {
     if (state.recovery.status !== "available") throw new Error("Expected available recovery.");
     expect(state.recovery.data.recoveredAt).toBe(timestamp(10));
     expect(state.recovery.data.currentRun?.status).toBe("completed");
-    expect(state.recovery.data.inventory?.remainingStock).toBe(8);
+    expect(state.recovery.data.inventory).toBeNull();
     expect(state.recovery.data.businessOutcome?.acceptedReservations).toBe(25);
-    expect(state.eventWatermarks.inventory).toBe(timestamp(20));
+    expect(state.eventWatermarks.inventory).toBe(timestamp(10));
     expect(state.eventWatermarks.businessOutcome).toBe(timestamp(25));
     expect(state.eventWatermarks.runLifecycle).toBe(timestamp(40));
   });
@@ -871,14 +924,13 @@ function timestamp(seconds: number): string {
 }
 
 function runEventAt(
-  type: "run.started" | "run.updated" | "run.completed" | "run.failed",
+  status: "starting" | "active" | "draining" | "completed" | "failed",
   occurredAt: string,
   run: ReturnType<typeof runFixture>,
 ): RunDashboardEvent {
-  const event = runEventFixture(type, run);
+  const event = runEventFixture(status, run);
   return {
     ...event,
-    run: type === "run.started" || type === "run.updated" ? { ...event.run, ...run } : event.run,
     occurredAt,
   };
 }
@@ -944,22 +996,21 @@ function previousRunFixture(): ReturnType<typeof runFixture> {
 }
 
 function runEventFixture(
-  type: "run.started" | "run.updated" | "run.completed" | "run.failed",
+  status: "starting" | "active" | "draining" | "completed" | "failed",
   run: ReturnType<typeof runFixture> = runFixture(),
 ): RunDashboardEvent {
   return {
-    type,
-    eventId: "44444444-4444-4444-8444-444444444444",
+    type: "load.run.updated",
     runId: run.runId,
     correlationId: "corr-web-live",
     run: {
       ...run,
-      status: type === "run.completed" ? "completed" : type === "run.failed" ? "failed" : "active",
-      trafficStatus: type === "run.completed" || type === "run.failed" ? "succeeded" : "active",
-      ...(type === "run.completed" || type === "run.failed"
+      status,
+      trafficStatus: status === "completed" || status === "failed" ? "succeeded" : "active",
+      ...(status === "completed" || status === "failed"
         ? { finalizedAt: "2026-06-20T00:00:12.000Z" }
         : {}),
-      ...(type === "run.failed" ? { failureReason: "traffic_failed" } : {}),
+      ...(status === "failed" ? { failureReason: "traffic_failed" } : {}),
     },
     occurredAt: "2026-06-20T00:00:12.000Z",
   };
@@ -1016,10 +1067,9 @@ function businessOutcomeEventFixture(
     occurredAt?: string;
     acceptedReservations?: number;
   } = {},
-): Extract<DashboardEvent, { type: "business.outcome.updated" }> {
+): Extract<DashboardEvent, { type: "business.outcome.snapshot" }> {
   return {
-    type: "business.outcome.updated",
-    eventId: "44444444-4444-4444-8444-444444444444",
+    type: "business.outcome.snapshot",
     saleOfferId: options.saleOfferId ?? "33333333-3333-4333-8333-333333333333",
     ...(options.runId ? { runId: options.runId } : {}),
     correlationId: "corr-web-live",
@@ -1052,46 +1102,73 @@ function trafficMetricEventFixture(
     runId?: string;
     occurredAt?: string;
     value?: number;
-    metricName?: Extract<DashboardEvent, { type: "traffic.metric" }>["metricName"];
-    unit?: Extract<DashboardEvent, { type: "traffic.metric" }>["unit"];
+    metricName?: "traffic.scheduled_request_rate" | "traffic.latency" | "traffic.failure_rate";
+    unit?: "requests_per_second" | "ms" | "ratio";
   } = {},
-): Extract<DashboardEvent, { type: "traffic.metric" }> {
+): Extract<DashboardEvent, { type: "dashboard.metric.observed" }> {
   return {
-    type: "traffic.metric",
-    eventId: "55555555-5555-4555-8555-555555555555",
-    ...(options.runId ? { runId: options.runId } : {}),
+    type: "dashboard.metric.observed",
+    runId: options.runId ?? runFixture().runId,
     correlationId: "corr-web-live",
-    metricName: options.metricName ?? "queue.depth",
+    metricName: options.metricName ?? "traffic.latency",
     value: options.value ?? 3,
-    unit: options.unit ?? "jobs",
+    unit: options.unit ?? "ms",
     occurredAt: options.occurredAt ?? "2026-06-20T00:00:11.000Z",
-  };
+    observedAt: options.occurredAt ?? "2026-06-20T00:00:11.000Z",
+  } as Extract<DashboardEvent, { type: "dashboard.metric.observed" }>;
 }
 
 function inventoryEventFixture(
   saleOfferId: string,
   remainingStock: number,
   occurredAt: string,
-): Extract<DashboardEvent, { type: "inventory.updated" }> {
+): Extract<DashboardEvent, { type: "dashboard.metric.observed" }> & { metricName: "inventory.remaining" } {
   return {
-    type: "inventory.updated",
-    eventId: "66666666-6666-4666-8666-666666666666",
+    type: "dashboard.metric.observed",
     correlationId: "corr-web-live",
     occurredAt,
-    inventory: inventoryFixture(saleOfferId, remainingStock),
+    observedAt: occurredAt,
+    metricName: "inventory.remaining",
+    value: remainingStock,
+    unit: "items",
+    saleOfferId,
+  };
+}
+
+function inventorySoldOutEventFixture(
+  saleOfferId: string,
+  rejectionCount: number,
+  occurredAt: string,
+): Extract<DashboardEvent, { type: "dashboard.metric.observed" }> & {
+  metricName: "inventory.sold_out_rejection";
+} {
+  return {
+    type: "dashboard.metric.observed",
+    correlationId: "corr-web-live",
+    occurredAt,
+    observedAt: occurredAt,
+    metricName: "inventory.sold_out_rejection",
+    value: rejectionCount,
+    unit: "rejections",
+    aggregation: "cumulative",
+    saleOfferId,
+    runId: runFixture().runId,
   };
 }
 
 function queueEventFixture(
   depth: number,
   occurredAt: string,
-): Extract<DashboardEvent, { type: "queue.updated" }> {
+): Extract<DashboardEvent, { type: "dashboard.metric.observed" }> & { metricName: "queue.depth" } {
   return {
-    type: "queue.updated",
-    eventId: "77777777-7777-4777-8777-777777777777",
+    type: "dashboard.metric.observed",
     correlationId: "corr-web-live",
     occurredAt,
-    queue: queueFixture(depth, occurredAt),
+    observedAt: occurredAt,
+    metricName: "queue.depth",
+    value: depth,
+    unit: "jobs",
+    queueName: "orders:process",
   };
 }
 

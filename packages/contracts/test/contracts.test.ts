@@ -57,6 +57,7 @@ import {
   loadRunIdHeaderName,
   maximumAutomaticallyDerivedVUs,
   metricNameValues,
+  orderEventNameValues,
   orderProcessBullMqQueueName,
   orderProcessJobSchema,
   orderProcessQueueName,
@@ -1268,22 +1269,101 @@ describe("buy and dashboard contracts", () => {
     expect(dashboardRecoveryPath).toBe("/dashboard/recovery");
     expect(dashboardEventsRedisChannel).toBe("dashboard-events");
 
-    const event = dashboardEventSchema.parse({
-      type: "traffic.metric",
-      eventId: "77777777-7777-4777-8777-777777777777",
+    const metrics = [
+      { metricName: "traffic.scheduled_request_rate", value: 42, unit: "requests_per_second", runId },
+      { metricName: "traffic.latency", value: 42, unit: "ms", runId },
+      { metricName: "traffic.failure_rate", value: 0.2, unit: "ratio", runId },
+      { metricName: "queue.depth", value: 4, unit: "jobs", queueName: "orders:process" },
+      { metricName: "inventory.remaining", value: 4, unit: "items", saleOfferId },
+      { metricName: "inventory.sold_out_rejection", value: 9, unit: "rejections", aggregation: "cumulative", saleOfferId },
+    ];
+    for (const metric of metrics) {
+      expect(dashboardEventSchema.parse({
+        type: "dashboard.metric.observed",
+        correlationId,
+        occurredAt: timestamp,
+        observedAt: timestamp,
+        ...metric,
+      }).type).toBe("dashboard.metric.observed");
+    }
+
+    const run = {
       runId,
+      presetId: "22222222-2222-4222-8222-222222222222",
+      presetName: "Preview 1k",
+      operatorMode: "public" as const,
+      status: "active" as const,
+      trafficStatus: "active" as const,
+      saleOfferId,
+      configSnapshot: acceptedRunSnapshot(),
+    };
+    expect(dashboardEventSchema.parse({
+      type: "load.run.updated",
+      runId,
+      correlationId,
+      occurredAt: timestamp,
+      run,
+    }).type).toBe("load.run.updated");
+
+    expect(dashboardEventSchema.safeParse({
+      type: "dashboard.metric.observed",
+      metricName: "traffic.failure_rate",
+      value: 2,
+      unit: "ratio",
+      runId,
+      occurredAt: timestamp,
+      observedAt: timestamp,
+    }).success).toBe(false);
+    const invalidMetricPayloads = [
+      { metricName: "traffic.scheduled_request_rate", value: -1, unit: "requests_per_second", runId },
+      { metricName: "traffic.latency", value: -1, unit: "ms", runId },
+      { metricName: "traffic.failure_rate", value: 0.2, unit: "percent", runId },
+      { metricName: "queue.depth", value: 1.5, unit: "jobs", queueName: "orders:process" },
+      { metricName: "queue.depth", value: 1, unit: "jobs" },
+      { metricName: "inventory.remaining", value: -1, unit: "items", saleOfferId },
+      { metricName: "inventory.remaining", value: 1, unit: "items" },
+      { metricName: "inventory.sold_out_rejection", value: 1, unit: "rejections", aggregation: "delta", saleOfferId },
+    ];
+    for (const metric of invalidMetricPayloads) {
+      expect(dashboardEventSchema.safeParse({
+        type: "dashboard.metric.observed",
+        occurredAt: timestamp,
+        observedAt: timestamp,
+        ...metric,
+      }).success).toBe(false);
+    }
+    expect(dashboardEventSchema.safeParse({
+      type: "dashboard.metric.observed",
       metricName: "traffic.latency",
       value: 42,
-      unit: "ms",
+      unit: "seconds",
+      runId,
       occurredAt: timestamp,
-    });
+      observedAt: timestamp,
+    }).success).toBe(false);
 
-    expect(event.type).toBe("traffic.metric");
+    for (const eventName of orderEventNameValues) {
+      expect(dashboardEventSchema.parse({
+        type: "business.event.recorded",
+        eventId: "77777777-7777-4777-8777-777777777777",
+        eventName,
+        correlationId,
+        occurredAt: timestamp,
+      }).type).toBe("business.event.recorded");
+    }
+    expect(dashboardEventSchema.safeParse({
+      type: "business.event.recorded",
+      eventId: "77777777-7777-4777-8777-777777777777",
+      eventName: "unknown.event",
+      correlationId,
+      occurredAt: timestamp,
+    }).success).toBe(false);
+    expect(dashboardEventSchema.safeParse({ type: "unknown.category", occurredAt: timestamp }).success)
+      .toBe(false);
 
     expect(
       dashboardEventSchema.parse({
-        type: "business.outcome.updated",
-        eventId: "88888888-8888-4888-8888-888888888888",
+        type: "business.outcome.snapshot",
         runId,
         saleOfferId,
         correlationId,
@@ -1309,7 +1389,7 @@ describe("buy and dashboard contracts", () => {
           measuredAt: timestamp,
         },
       }).type,
-    ).toBe("business.outcome.updated");
+    ).toBe("business.outcome.snapshot");
   });
 
   it("strictly validates linked per-order transition and consistency-lag events", () => {
@@ -1326,14 +1406,14 @@ describe("buy and dashboard contracts", () => {
       attemptsMade: 1,
     } as const;
     const statuses = [
-      { ...statusBase, eventName: "order.processing", previousStatus: "queued", status: "processing" },
-      { ...statusBase, eventName: "order.confirmed", previousStatus: "processing", status: "confirmed" },
-      { ...statusBase, eventName: "order.failed", previousStatus: "processing", status: "failed" },
+      { ...statusBase, eventName: "order.processing", previousStatus: "queued", status: "processing", customerStatus: "processing" },
+      { ...statusBase, eventName: "order.confirmed", previousStatus: "processing", status: "confirmed", customerStatus: "confirmed" },
+      { ...statusBase, eventName: "order.failed", previousStatus: "processing", status: "failed", customerStatus: "failed" },
     ] as const;
     for (const status of statuses) expect(dashboardEventSchema.parse(status).type).toBe("order.status.updated");
     const confirmedStatus = statuses[1];
     const lag = {
-      type: "order.consistency_lag.observed",
+      type: "dashboard.metric.observed",
       eventId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
       confirmedTransitionEventId: confirmedStatus.eventId,
       runId,
@@ -1350,7 +1430,7 @@ describe("buy and dashboard contracts", () => {
       confirmedAt: timestamp,
     } as const;
 
-    expect(dashboardEventSchema.parse(lag).type).toBe("order.consistency_lag.observed");
+    expect(dashboardEventSchema.parse(lag).type).toBe("dashboard.metric.observed");
     expect(dashboardEventSchema.parse({ ...lag, startedAt: "2026-06-20T12:00:00.001Z", value: 0 }).value).toBe(0);
     expect(dashboardEventSchema.parse({
       ...lag,

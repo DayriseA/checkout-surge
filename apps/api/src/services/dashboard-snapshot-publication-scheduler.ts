@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import type { DashboardEvent, InventoryStatus, QueueStatus } from "@checkout-surge/contracts";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 
@@ -227,14 +226,26 @@ export class DashboardSnapshotPublicationScheduler
   private async publishSnapshot(publication: PendingPublication): Promise<void> {
     if (publication.kind === "inventory") {
       const inventory = await this.options.readInventory(publication.request.saleOfferId);
-      await this.options.publish({
-        type: "inventory.updated",
-        eventId: randomUUID(),
+      const common = {
+        type: "dashboard.metric.observed" as const,
         ...(publication.request.runId ? { runId: publication.request.runId } : {}),
         correlationId: publication.request.correlationId,
-        // Source time prevents a slow read from masquerading as a newer observation.
         occurredAt: latestInventoryObservationAt(inventory),
-        inventory,
+        observedAt: latestInventoryObservationAt(inventory),
+        saleOfferId: inventory.saleOfferId,
+      };
+      await this.options.publish({
+        ...common,
+        metricName: "inventory.remaining",
+        value: inventory.remainingStock,
+        unit: "items",
+      });
+      await this.options.publish({
+        ...common,
+        metricName: "inventory.sold_out_rejection",
+        value: inventory.soldOutPressure.rejectionCount,
+        unit: "rejections",
+        aggregation: "cumulative",
       });
       return;
     }
@@ -242,12 +253,15 @@ export class DashboardSnapshotPublicationScheduler
     const queue = await this.options.readQueue();
     try {
       await this.options.publish({
-        type: "queue.updated",
-        eventId: randomUUID(),
+        type: "dashboard.metric.observed",
         ...(publication.request.runId ? { runId: publication.request.runId } : {}),
         correlationId: publication.request.correlationId,
         occurredAt: queue.updatedAt,
-        queue,
+        observedAt: queue.updatedAt,
+        metricName: "queue.depth",
+        value: queue.depth,
+        unit: "jobs",
+        queueName: queue.name,
       });
     } finally {
       if (queue.depth > 0 || queue.counts.active > 0) {

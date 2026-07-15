@@ -690,6 +690,10 @@ describe("load-orchestrator k6 mapping", () => {
       expect(script.contents).toContain("http.expectedStatuses(202, 409)");
       expect(script.contents).toContain("exec.scenario.iterationInTest");
       expect(script.contents).toContain('new Counter("checkout_reservation_accepted")');
+      expect(script.contents).toContain('new Counter("checkout_sold_out_rejections")');
+      expect(script.contents).toContain('new Counter("checkout_unexpected_responses")');
+      expect(script.contents).not.toMatch(/checkout_sold_out["']/);
+      expect(script.contents).not.toMatch(/checkout_unexpected_response["']/);
     } finally {
       await rm(workDir, { recursive: true, force: true });
     }
@@ -722,7 +726,7 @@ describe("load-orchestrator k6 mapping", () => {
       }),
       JSON.stringify({
         type: "Point",
-        metric: "checkout_sold_out",
+        metric: "checkout_sold_out_rejections",
         data: { value: 1, time: timestamp },
       }),
     ];
@@ -811,10 +815,10 @@ describe("load-orchestrator k6 mapping", () => {
     [
       { type: "Point", metric: "http_reqs", data: { value: 1, time: timestamp } },
       { type: "Point", metric: "http_req_failed", data: { value: 1, time: timestamp } },
-      { type: "Point", metric: "checkout_sold_out", data: { value: 1, time: timestamp } },
+      { type: "Point", metric: "checkout_sold_out_rejections", data: { value: 1, time: timestamp } },
       { type: "Point", metric: "http_reqs", data: { value: 1, time: timestamp } },
       { type: "Point", metric: "http_req_failed", data: { value: 1, time: timestamp } },
-      { type: "Point", metric: "checkout_sold_out", data: { value: 1, time: timestamp } },
+      { type: "Point", metric: "checkout_sold_out_rejections", data: { value: 1, time: timestamp } },
     ].forEach((point) => {
       accumulator.observe(point);
     });
@@ -855,7 +859,7 @@ describe("load-orchestrator k6 mapping", () => {
       { type: "Point", metric: "http_req_failed", data: { value: 0, time: timestamp } },
       {
         type: "Point",
-        metric: "checkout_unexpected_response",
+        metric: "checkout_unexpected_responses",
         data: { value: 1, time: timestamp },
       },
     ].forEach((point) => {
@@ -977,8 +981,8 @@ describe("SpawnK6Runner completion reporting", () => {
           metrics: {
             http_reqs: { count: 0 },
             checkout_reservation_accepted: { count: 0 },
-            checkout_sold_out: { count: 0 },
-            checkout_unexpected_response: { count: 0 },
+            checkout_sold_out_rejections: { count: 0 },
+            checkout_unexpected_responses: { count: 0 },
             iterations: { count: 0 },
             dropped_iterations: { count: 0 },
             http_req_failed: { value: 0 },
@@ -1740,7 +1744,7 @@ describe("SpawnK6Runner completion reporting", () => {
       { type: "Point", metric: "http_req_failed", data: { value: 1, time: timestamp } },
       {
         type: "Point",
-        metric: "checkout_unexpected_response",
+        metric: "checkout_unexpected_responses",
         data: { value: 1, time: timestamp },
       },
       { type: "Point", metric: "dropped_iterations", data: { value: 1, time: timestamp } },

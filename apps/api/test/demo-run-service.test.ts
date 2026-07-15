@@ -268,7 +268,7 @@ describe("demo-run metric ingestion acceptance", () => {
     observedAt: "2026-07-14T00:00:02.000Z",
   };
 
-  it("retains before publication, preserves event identity, and does not warn on success", async () => {
+  it("retains before canonical publication and does not warn on success", async () => {
     const order: string[] = [];
     const publishedPayloads: string[][] = [];
     const warn = vi.fn();
@@ -283,37 +283,29 @@ describe("demo-run metric ingestion acceptance", () => {
         return true;
       },
     );
-    const ids = [
-      "77777777-7777-4777-8777-777777777771",
-      "77777777-7777-4777-8777-777777777772",
-      "77777777-7777-4777-8777-777777777773",
-    ];
     const service = createMetricIngestionService({
       appendAndPublishIfLive,
       warn,
-      generateId: () => {
-        order.push("event");
-        return ids.shift() ?? "missing";
-      },
     });
 
     await expect(service.ingestMetrics(metricRequest)).resolves.toBeUndefined();
 
     expect(appendAndPublishIfLive).toHaveBeenCalledOnce();
-    expect(order).toEqual(["append", "event", "event", "event", "publish"]);
+    expect(order).toEqual(["append", "publish"]);
     expect(publishedPayloads).toHaveLength(1);
     expect(publishedPayloads[0]?.map((payload) => JSON.parse(payload))).toEqual([
       expect.objectContaining({
-        eventId: "77777777-7777-4777-8777-777777777771",
+        type: "dashboard.metric.observed",
         runId: metricRequest.runId,
         correlationId: metricRequest.correlationId,
         metricName: "traffic.latency",
         value: 42,
         unit: "ms",
         occurredAt: "2026-07-14T00:00:00.000Z",
+        observedAt: "2026-07-14T00:00:00.000Z",
       }),
-      expect.objectContaining({ eventId: "77777777-7777-4777-8777-777777777772" }),
-      expect.objectContaining({ eventId: "77777777-7777-4777-8777-777777777773" }),
+      expect.objectContaining({ metricName: "traffic.failure_rate" }),
+      expect.objectContaining({ metricName: "traffic.scheduled_request_rate" }),
     ]);
     expect(warn).not.toHaveBeenCalled();
   });
@@ -331,18 +323,17 @@ describe("demo-run metric ingestion acceptance", () => {
         return true;
       },
     );
-    const ids = [
-      "77777777-7777-4777-8777-777777777771",
-      "invalid-event-id",
-      "77777777-7777-4777-8777-777777777773",
-    ];
     const service = createMetricIngestionService({
       appendAndPublishIfLive,
       warn,
-      generateId: () => ids.shift() ?? "missing",
     });
 
-    await expect(service.ingestMetrics(metricRequest)).resolves.toBeUndefined();
+    await expect(service.ingestMetrics({
+      ...metricRequest,
+      samples: metricRequest.samples.map((sample) =>
+        sample.metricName === "traffic.failure_rate" ? { ...sample, value: 2 } : sample,
+      ),
+    })).resolves.toBeUndefined();
 
     expect(publishedPayloads).toHaveLength(1);
     expect(publishedPayloads[0]?.map((payload) => JSON.parse(payload).metricName)).toEqual([
@@ -377,15 +368,9 @@ describe("demo-run metric ingestion acceptance", () => {
         return true;
       },
     );
-    const ids = [
-      "77777777-7777-4777-8777-777777777771",
-      "77777777-7777-4777-8777-777777777772",
-      "77777777-7777-4777-8777-777777777773",
-    ];
     const service = createMetricIngestionService({
       appendAndPublishIfLive,
       warn,
-      generateId: () => ids.shift() ?? "missing",
     });
 
     await expect(service.ingestMetrics(metricRequest)).resolves.toBeUndefined();
@@ -423,17 +408,15 @@ describe("demo-run metric ingestion acceptance", () => {
     const service = createMetricIngestionService({
       appendAndPublishIfLive,
       warn,
-      generateId: () => "77777777-7777-4777-8777-777777777777",
     });
 
     await expect(service.ingestMetrics(metricRequest)).resolves.toBeUndefined();
     expect(warn).toHaveBeenCalledOnce();
   });
 
-  it("propagates retention failure without generating or publishing events", async () => {
+  it("propagates retention failure without publishing events", async () => {
     const retentionError = new Error("retention unavailable");
     const publishAccepted = vi.fn();
-    const generateId = vi.fn();
     const appendAndPublishIfLive = vi.fn(async (_request: unknown, callback: PublishAccepted) => {
       publishAccepted.mockImplementation(callback);
       throw retentionError;
@@ -441,11 +424,9 @@ describe("demo-run metric ingestion acceptance", () => {
     const service = createMetricIngestionService({
       appendAndPublishIfLive,
       warn: vi.fn(),
-      generateId,
     });
 
     await expect(service.ingestMetrics(metricRequest)).rejects.toBe(retentionError);
-    expect(generateId).not.toHaveBeenCalled();
     expect(publishAccepted).not.toHaveBeenCalled();
   });
 });
@@ -2717,7 +2698,6 @@ function createPresetManagementService(
 function createMetricIngestionService(options: {
   appendAndPublishIfLive: RedisDashboardTrafficMetricStore["appendAndPublishIfLive"];
   warn: ReturnType<typeof vi.fn>;
-  generateId: () => string;
 }): DemoRunService {
   const database = {
     select: () => ({
@@ -2743,7 +2723,6 @@ function createMetricIngestionService(options: {
     logger: { warn: options.warn } as never,
     publicClientCookieSecret: publicCookieSecret,
     deploymentHardCaps: publicRuntimePolicy().deploymentHardCaps,
-    generateId: options.generateId,
   });
 }
 

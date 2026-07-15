@@ -105,14 +105,14 @@ function metricBatch(runId: string, value: number) {
 
 function metricEvent(runId: string, value: number) {
   return {
-    type: "traffic.metric" as const,
-    eventId: "77777777-7777-4777-8777-777777777777",
+    type: "dashboard.metric.observed" as const,
     runId,
     correlationId: `metric-${value}`,
     metricName: "traffic.latency" as const,
     value,
     unit: "ms",
     occurredAt: "2026-07-13T00:00:00.000Z",
+    observedAt: "2026-07-13T00:00:00.000Z",
   };
 }
 

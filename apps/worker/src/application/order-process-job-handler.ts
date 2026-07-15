@@ -411,6 +411,7 @@ function enqueueRealtimeEvents(
     eventName,
     previousStatus: transition.previousStatus,
     status: transition.status,
+    customerStatus: transition.status,
     attemptNumber: delivery.attemptNumber,
     attemptsMade: delivery.attemptsMade,
   };
@@ -444,7 +445,7 @@ function enqueueRealtimeEvents(
     dependencies.realtimePublisher.enqueue([
       statusEvent,
       {
-        type: "order.consistency_lag.observed",
+        type: "dashboard.metric.observed",
         eventId: deriveLagEventId(transition.eventId),
         confirmedTransitionEventId: transition.eventId,
         ...(job.runId ? { runId: job.runId } : {}),

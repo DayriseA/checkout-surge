@@ -824,7 +824,7 @@ export class DemoRunService implements DemoRunController {
         throw error;
       }
 
-      await this.publishRunEvent("run.started", accepted.run, correlationId, now);
+      await this.publishRunEvent(accepted.run, correlationId, now);
 
       let trafficResponse: TrafficExecutionStartResponse;
       try {
@@ -850,7 +850,7 @@ export class DemoRunService implements DemoRunController {
         trafficResponse,
         now,
       );
-      await this.publishRunEvent("run.updated", runAfterTrafficStart, correlationId, now);
+      await this.publishRunEvent(runAfterTrafficStart, correlationId, now);
 
       return startDemoRunResponseSchema.parse({
         run: runAfterTrafficStart,
@@ -887,14 +887,14 @@ export class DemoRunService implements DemoRunController {
       for (const sample of request.samples) {
         try {
           const event = dashboardEventSchema.parse({
-            type: "traffic.metric",
-            eventId: this.generateId(),
+            type: "dashboard.metric.observed",
             runId: request.runId,
             correlationId: request.correlationId,
             metricName: sample.metricName,
             value: sample.value,
             unit: sample.unit,
             occurredAt: sample.timestamp,
+            observedAt: sample.timestamp,
           });
           publications.push({ metricName: sample.metricName, payload: JSON.stringify(event) });
         } catch (error) {
@@ -1033,7 +1033,7 @@ export class DemoRunService implements DemoRunController {
 
     const updatedRun = await this.readRunSnapshot(report.runId);
     if (completionClaim.inserted)
-      await this.publishRunEvent("run.updated", updatedRun, report.correlationId, now);
+      await this.publishRunEvent(updatedRun, report.correlationId, now);
     return (
       (await this.options.finalizationService?.finalizeRun(report.runId, report.correlationId)) ??
       updatedRun
@@ -1321,7 +1321,7 @@ export class DemoRunService implements DemoRunController {
           );
         });
       }
-      await this.publishRunEvent("run.failed", updatedRun, correlationId, now);
+      await this.publishRunEvent(updatedRun, correlationId, now);
     }
   }
 
@@ -1378,15 +1378,13 @@ export class DemoRunService implements DemoRunController {
   }
 
   private async publishRunEvent(
-    type: "run.started" | "run.updated" | "run.failed",
     run: DemoRunSnapshot,
     correlationId: string,
     occurredAt: Date,
   ): Promise<void> {
     try {
       await publishDashboardEvent(this.options.redis, {
-        type,
-        eventId: this.generateId(),
+        type: "load.run.updated",
         runId: run.runId,
         correlationId,
         run,

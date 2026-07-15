@@ -119,7 +119,7 @@ Replace `⬜` with `✅` when a task is complete. Optional `⏳` for work in pro
 
 ✅ [Task 57: Type the persisted JSON columns against shared contracts](./task_57.md)
 
-⬜ [Task 58: Reconcile the realtime event and k6 metric vocabulary with the shared domain model](./task_58.md)
+✅ [Task 58: Reconcile the realtime event and k6 metric vocabulary with the shared domain model](./task_58.md)
 
 ⬜ [Task 59: Raise recent-inventory-event retention to reference parity](./task_59.md)
 
