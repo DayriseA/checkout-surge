@@ -2,6 +2,7 @@ import { RunHistoryAdminControls } from "../components/run-history-admin-control
 import { RunHistoryList } from "../components/run-history-list";
 import { StatusPill } from "../components/status-pill";
 import { getRunHistoryPage } from "../lib/api";
+import { hasValidAdminPageSession } from "../lib/server/admin-page-session";
 
 export const dynamic = "force-dynamic";
 
@@ -17,6 +18,7 @@ export default async function RunHistoryPage({ searchParams }: RunHistoryPagePro
   const resolvedSearchParams = await searchParams;
   const page = parsePositiveInteger(resolvedSearchParams?.page, 1);
   const history = await getRunHistoryPage(page, pageSize);
+  const authenticated = await hasValidAdminPageSession();
   const summaryCount =
     history.status === "available" ? `${history.data.totalCount} summaries` : "unavailable";
 
@@ -34,7 +36,7 @@ export default async function RunHistoryPage({ searchParams }: RunHistoryPagePro
       {history.status === "available" ? (
         <>
           <RunHistoryList history={history.data} />
-          <RunHistoryAdminControls summaries={history.data.summaries} />
+          {authenticated ? <RunHistoryAdminControls summaries={history.data.summaries} /> : null}
         </>
       ) : (
         <section className="rounded-lg border border-border bg-surface p-4">

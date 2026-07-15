@@ -7,6 +7,7 @@ import {
 } from "../src/app/lib/server/admin-config";
 import { createAdminLoginHandler, serializeSessionCookie } from "../src/app/lib/server/admin-login";
 import { requireAdminOrigin } from "../src/app/lib/server/admin-origin";
+import { handleAdminLogout } from "../src/app/lib/server/admin-logout";
 import {
   initializeWebServerConfig,
   resetWebServerConfigForTests,
@@ -74,6 +75,35 @@ describe("admin session core", () => {
     ]) {
       expect(parseAllowedWebOrigins(value)).toBeNull();
     }
+  });
+});
+
+describe("admin sign-out", () => {
+  afterEach(() => resetWebServerConfigForTests());
+
+  it("requires the trusted origin and clears the existing HttpOnly cookie", async () => {
+    initializeWebServerConfig({
+      CONTROL_SERVICE_TOKEN: "control-token",
+      ADMIN_DASHBOARD_PASSPHRASE: "secret",
+      ADMIN_SESSION_SECRET: "signing-secret",
+      PUBLIC_CLIENT_COOKIE_SECRET: "visitor-cookie-secret",
+      WEB_ORIGIN: "https://dashboard.local",
+    });
+    const denied = await handleAdminLogout(
+      new Request("https://dashboard.local/api/admin/session", { method: "DELETE" }),
+    );
+    expect(denied.status).toBe(403);
+
+    const response = await handleAdminLogout(
+      new Request("https://dashboard.local/api/admin/session", {
+        method: "DELETE",
+        headers: { origin: "https://dashboard.local" },
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("set-cookie")).toBe(
+      "checkout_surge_admin_session=; Max-Age=0; Path=/; HttpOnly; SameSite=Strict; Secure",
+    );
   });
 });
 

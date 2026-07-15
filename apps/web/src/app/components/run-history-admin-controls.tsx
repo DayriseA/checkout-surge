@@ -4,112 +4,82 @@ import {
   adminDeleteRunHistoryResponseSchema,
   type RunHistorySummary,
 } from "@checkout-surge/contracts";
+import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
-import {
-  adminPassphraseHeaderName,
-  adminRunHistoryProxyPath,
-  adminSessionProxyPath,
-} from "../lib/control-paths";
+import { adminRunHistoryProxyPath } from "../lib/control-paths";
+import { ConfirmationDialog } from "./confirmation-dialog";
 
-interface RunHistoryAdminControlsProps {
-  summaries: RunHistorySummary[];
-}
+const deleteAllToken = "DELETE_ALL_RUN_SUMMARIES";
+type DeleteIntent = { kind: "selected"; runIds: string[] } | { kind: "all" };
 
-export function RunHistoryAdminControls({ summaries }: RunHistoryAdminControlsProps) {
-  const [adminPassphrase, setAdminPassphrase] = useState("");
-  const [deleteAllConfirmation, setDeleteAllConfirmation] = useState("");
+export function RunHistoryAdminControls({ summaries }: { summaries: RunHistorySummary[] }) {
+  const router = useRouter();
   const [selectedRunIds, setSelectedRunIds] = useState<Set<string>>(new Set());
+  const [intent, setIntent] = useState<DeleteIntent | null>(null);
+  const [deleteAllConfirmation, setDeleteAllConfirmation] = useState("");
+  const [error, setError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const visibleRunIds = useMemo(() => summaries.map((summary) => summary.runId), [summaries]);
 
-  function toggleRunId(runId: string) {
-    setSelectedRunIds((current) => {
-      const next = new Set(current);
-      if (next.has(runId)) {
-        next.delete(runId);
-      } else {
-        next.add(runId);
-      }
-      return next;
-    });
+  function closeDialog() {
+    if (isSubmitting) return;
+    setIntent(null);
+    setDeleteAllConfirmation("");
+    setError(null);
   }
 
-  async function signInAdmin() {
+  async function confirmDelete() {
+    if (!intent || isSubmitting) return;
+    const body =
+      intent.kind === "all"
+        ? { deleteAllConfirmation }
+        : { runIds: intent.runIds, visibleFilter: { runIds: visibleRunIds } };
     setIsSubmitting(true);
-    setStatusMessage(null);
-
+    setError(null);
     try {
-      const response = await fetch(adminSessionProxyPath, {
-        method: "POST",
-        cache: "no-store",
-        headers: {
-          [adminPassphraseHeaderName]: adminPassphrase,
-        },
-      });
-      const payload = await response.json().catch(() => null);
-
-      if (!response.ok) {
-        setStatusMessage(errorMessageFromPayload(payload, "Admin sign-in failed."));
+      let response: Response;
+      try {
+        response = await fetch(adminRunHistoryProxyPath, {
+          method: "DELETE",
+          cache: "no-store",
+          headers: { accept: "application/json", "content-type": "application/json" },
+          body: JSON.stringify(body),
+        });
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : "Run History deletion failed.");
         return;
       }
-
-      setAdminPassphrase("");
-      setStatusMessage("Admin session established.");
-    } finally {
-      setIsSubmitting(false);
-    }
-  }
-
-  async function deleteSelected() {
-    const runIds = Array.from(selectedRunIds);
-    if (runIds.length === 0) {
-      setStatusMessage("Select at least one visible summary.");
-      return;
-    }
-
-    await submitDelete({ runIds, visibleFilter: { runIds: visibleRunIds } });
-  }
-
-  async function deleteAll() {
-    await submitDelete({ deleteAllConfirmation });
-  }
-
-  async function submitDelete(body: unknown) {
-    setIsSubmitting(true);
-    setStatusMessage(null);
-
-    try {
-      const response = await fetch(adminRunHistoryProxyPath, {
-        method: "DELETE",
-        cache: "no-store",
-        headers: {
-          accept: "application/json",
-          "content-type": "application/json",
-        },
-        body: JSON.stringify(body),
-      });
       const payload = await response.json().catch(() => null);
-
-      if (!response.ok) {
-        setStatusMessage(errorMessageFromPayload(payload, "Run History deletion failed."));
+      if (response.status === 401) {
+        setIntent(null);
+        setSelectedRunIds(new Set());
+        setDeleteAllConfirmation("");
+        setError(null);
+        setStatusMessage(null);
+        router.refresh();
         return;
       }
-
+      if (!response.ok) {
+        setError(errorMessageFromPayload(payload, "Run History deletion failed."));
+        return;
+      }
       const parsed = adminDeleteRunHistoryResponseSchema.safeParse(payload);
       if (!parsed.success) {
-        setStatusMessage("Deletion response did not match the shared contract.");
+        setError("Deletion response did not match the shared contract.");
         return;
       }
-
       setStatusMessage(`Deleted ${parsed.data.deletedSummaryCount} run summaries.`);
       setSelectedRunIds(new Set());
-      window.location.reload();
+      setIntent(null);
+      setDeleteAllConfirmation("");
+      router.refresh();
     } finally {
       setIsSubmitting(false);
     }
   }
 
+  const selectedCount = selectedRunIds.size;
   return (
     <section className="mt-4 rounded-lg border border-border bg-surface p-4">
       <div className="mb-4">
@@ -117,93 +87,85 @@ export function RunHistoryAdminControls({ summaries }: RunHistoryAdminControlsPr
         <h2 className="m-0 mt-1 text-base font-bold leading-tight text-ink">Protected deletion</h2>
       </div>
       <div className="grid gap-3">
-        <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-3 max-[700px]:grid-cols-1">
-          <label className="grid gap-1 text-sm font-semibold text-muted-strong">
-            <span>Admin passphrase</span>
+        {summaries.map((summary) => (
+          <label
+            className="flex min-w-0 items-center gap-2 text-sm font-semibold text-muted-strong"
+            key={summary.runId}
+          >
             <input
-              className="min-h-10 min-w-0 rounded-lg border border-border bg-bg px-3 py-2 text-ink"
-              onChange={(event) => setAdminPassphrase(event.target.value)}
-              type="password"
-              value={adminPassphrase}
+              aria-label={`Select run ${summary.runId}`}
+              checked={selectedRunIds.has(summary.runId)}
+              onChange={() =>
+                setSelectedRunIds((current) => {
+                  const next = new Set(current);
+                  next.has(summary.runId) ? next.delete(summary.runId) : next.add(summary.runId);
+                  return next;
+                })
+              }
+              type="checkbox"
             />
+            <span className="min-w-0 [overflow-wrap:anywhere]">
+              {summary.presetName} · {summary.runId}
+            </span>
           </label>
+        ))}
+        <div className="flex flex-wrap gap-2 border-t border-border pt-3">
+          <button
+            className="min-h-10 rounded-lg border border-danger bg-danger-soft px-3.5 py-2.5 font-semibold text-danger disabled:opacity-60"
+            disabled={selectedCount === 0}
+            onClick={() => {
+              setError(null);
+              setIntent({ kind: "selected", runIds: Array.from(selectedRunIds) });
+            }}
+            type="button"
+          >
+            Delete Selected ({selectedCount})
+          </button>
+          <button
+            className="min-h-10 rounded-lg border border-danger bg-danger-soft px-3.5 py-2.5 font-semibold text-danger"
+            onClick={() => {
+              setError(null);
+              setIntent({ kind: "all" });
+            }}
+            type="button"
+          >
+            Delete All Run Summaries
+          </button>
+        </div>
+        {statusMessage ? <p className="m-0 text-sm font-semibold text-muted-strong">{statusMessage}</p> : null}
+      </div>
+      <ConfirmationDialog
+        confirmDisabled={intent?.kind === "all" && deleteAllConfirmation !== deleteAllToken}
+        confirmLabel={intent?.kind === "all" ? "Delete all summaries" : "Delete selected summaries"}
+        description={
+          intent?.kind === "all"
+            ? "Permanently delete every run summary. This cannot be undone."
+            : `Permanently delete ${intent?.runIds.length ?? 0} selected run summaries. This cannot be undone.`
+        }
+        error={error}
+        onCancel={closeDialog}
+        onConfirm={() => void confirmDelete()}
+        open={intent !== null}
+        pending={isSubmitting}
+        title={intent?.kind === "all" ? "Delete all run summaries?" : "Delete selected run summaries?"}
+      >
+        {intent?.kind === "all" ? (
           <label className="grid gap-1 text-sm font-semibold text-muted-strong">
-            <span>Delete-all confirmation</span>
+            <span>Type {deleteAllToken} to confirm</span>
             <input
-              className="min-h-10 min-w-0 rounded-lg border border-border bg-bg px-3 py-2 text-ink"
+              className="min-h-10 rounded-lg border border-border bg-bg px-3 py-2 text-ink"
               onChange={(event) => setDeleteAllConfirmation(event.target.value)}
               value={deleteAllConfirmation}
             />
           </label>
-        </div>
-        {summaries.length > 0 ? (
-          <div className="grid gap-2 border-t border-border pt-3">
-            {summaries.map((summary) => (
-              <label
-                className="flex min-w-0 items-center gap-2 text-sm font-semibold text-muted-strong"
-                key={summary.runId}
-              >
-                <input
-                  checked={selectedRunIds.has(summary.runId)}
-                  onChange={() => toggleRunId(summary.runId)}
-                  type="checkbox"
-                />
-                <span className="min-w-0 [overflow-wrap:anywhere]">
-                  {summary.presetName} · {summary.runId}
-                </span>
-              </label>
-            ))}
-          </div>
         ) : null}
-        <div className="flex flex-wrap gap-2 border-t border-border pt-3">
-          <button
-            className="min-h-10 rounded-lg border border-border bg-surface px-3.5 py-2.5 font-semibold text-muted-strong disabled:cursor-not-allowed disabled:opacity-60"
-            disabled={isSubmitting}
-            onClick={() => {
-              void signInAdmin();
-            }}
-            type="button"
-          >
-            Sign In
-          </button>
-          <button
-            className="min-h-10 rounded-lg border border-border bg-surface px-3.5 py-2.5 font-semibold text-muted-strong disabled:cursor-not-allowed disabled:opacity-60"
-            disabled={isSubmitting || summaries.length === 0}
-            onClick={() => {
-              void deleteSelected();
-            }}
-            type="button"
-          >
-            Delete Selected
-          </button>
-          <button
-            className="min-h-10 rounded-lg border border-danger bg-danger-soft px-3.5 py-2.5 font-semibold text-danger disabled:cursor-not-allowed disabled:opacity-60"
-            disabled={isSubmitting}
-            onClick={() => {
-              void deleteAll();
-            }}
-            type="button"
-          >
-            Delete All
-          </button>
-        </div>
-        {statusMessage ? (
-          <p className="m-0 text-sm font-semibold text-muted-strong">{statusMessage}</p>
-        ) : null}
-      </div>
+      </ConfirmationDialog>
     </section>
   );
 }
 
 function errorMessageFromPayload(payload: unknown, fallback: string): string {
-  if (
-    typeof payload === "object" &&
-    payload !== null &&
-    "message" in payload &&
-    typeof payload.message === "string"
-  ) {
-    return payload.message;
-  }
-
-  return fallback;
+  return typeof payload === "object" && payload !== null && "message" in payload && typeof payload.message === "string"
+    ? payload.message
+    : fallback;
 }

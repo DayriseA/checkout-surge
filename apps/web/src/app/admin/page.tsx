@@ -1,6 +1,5 @@
 import { AdminAuthenticatedSurface } from "../components/admin/admin-authenticated-surface";
 import { AdminSignIn } from "../components/admin/admin-sign-in";
-import { StatusPill } from "../components/status-pill";
 import { hasValidAdminPageSession } from "../lib/server/admin-page-session";
 import {
   readAdminErpChaos,
@@ -13,14 +12,13 @@ export const dynamic = "force-dynamic";
 
 export default async function AdminPage() {
   const authenticated = await hasValidAdminPageSession();
-  const reads = authenticated
-    ? await Promise.all([
-        readAdminErpChaos(),
-        readAdminPresets(),
-        readAdminRecovery(),
-        readAdminRuntimePolicy(),
-      ])
-    : null;
+  if (!authenticated) return <AdminSignIn />;
+  const reads = await Promise.all([
+    readAdminErpChaos(),
+    readAdminPresets(),
+    readAdminRecovery(),
+    readAdminRuntimePolicy(),
+  ]);
   return (
     <>
       <header className="mb-4 grid grid-cols-[1fr_auto] items-end gap-4 max-[900px]:grid-cols-1 max-[900px]:items-start">
@@ -30,21 +28,13 @@ export default async function AdminPage() {
             Protected operator controls and service state for supervised demo runs.
           </p>
         </div>
-        <StatusPill
-          label={authenticated ? "authenticated" : "access required"}
-          tone={authenticated ? "ok" : "pending"}
-        />
       </header>
-      {reads ? (
-        <AdminAuthenticatedSurface
-          initialErpChaos={reads[0]}
-          initialPresets={reads[1]}
-          initialRecovery={reads[2]}
-          initialRuntimePolicy={reads[3]}
-        />
-      ) : (
-        <AdminSignIn />
-      )}
+      <AdminAuthenticatedSurface
+        initialErpChaos={reads[0]}
+        initialPresets={reads[1]}
+        initialRecovery={reads[2]}
+        initialRuntimePolicy={reads[3]}
+      />
     </>
   );
 }

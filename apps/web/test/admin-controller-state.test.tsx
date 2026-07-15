@@ -20,18 +20,70 @@ import type { BackendRead } from "../src/app/lib/api.js";
 import {
   adminDemoResetProxyPath,
   adminErpChaosProxyPath,
+  adminErpChaosResetProxyPath,
+  adminMaintenanceCleanupRunsProxyPath,
   adminPresetDuplicateProxyPath,
   adminPresetListProxyPath,
   adminPublicRuntimePolicyProxyPath,
   dashboardRecoveryProxyPath,
 } from "../src/app/lib/control-paths.js";
 
+const navigation = vi.hoisted(() => ({ refresh: vi.fn() }));
+vi.mock("next/navigation", () => ({ useRouter: () => navigation }));
+
 afterEach(() => {
   cleanup();
+  navigation.refresh.mockReset();
   vi.unstubAllGlobals();
 });
 
 describe("admin feature controllers", () => {
+  it("confirms generated-run cleanup before sending its exact request", async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      jsonResponse({
+        deletedRunCount: 2,
+        deletedSaleOfferCount: 2,
+        preservedLatestCount: 15,
+        preservedActiveRunCount: 0,
+        cutoffBefore: "2026-06-13T00:00:00.000Z",
+        cleanedAt: "2026-06-20T00:00:00.000Z",
+        correlationId: "corr-cleanup",
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<AdminAuthenticatedSurface {...surfaceProps(null)} />);
+
+    await user.click(screen.getByRole("button", { name: "Cleanup Runs" }));
+    expect(fetchMock).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(fetchMock).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Cleanup Runs" }));
+    await user.click(screen.getByRole("button", { name: "Cleanup generated runs" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(adminMaintenanceCleanupRunsProxyPath);
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+      keepLatest: 15,
+      olderThanDays: 7,
+    });
+  });
+
+  it("confirms shared ERP reset before sending the reset request", async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      jsonResponse(erpFixture()),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<AdminErpDiagnosticsController initialErpChaos={available(erpFixture())} />);
+
+    await user.click(screen.getByRole("button", { name: "Reset ERP Controls" }));
+    expect(fetchMock).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Reset ERP controls" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(adminErpChaosResetProxyPath);
+    expect(fetchMock.mock.calls[0]?.[1]?.method).toBe("POST");
+  });
+
   it("keeps unrelated controls enabled while an ERP mutation is pending", async () => {
     const pending = deferred<Response>();
     vi.stubGlobal(
@@ -113,6 +165,7 @@ describe("admin feature controllers", () => {
       (screen.getByRole("button", { name: "Start Admin Run" }) as HTMLButtonElement).disabled,
     ).toBe(true);
     await user.click(screen.getByRole("button", { name: "Reset Demo" }));
+    await user.click(screen.getByRole("button", { name: "Reset demo" }));
     await waitFor(() =>
       expect(
         (screen.getByRole("button", { name: "Start Admin Run" }) as HTMLButtonElement).disabled,
@@ -137,6 +190,7 @@ describe("admin feature controllers", () => {
     render(<AdminAuthenticatedSurface {...surfaceProps(runFixture())} />);
 
     await user.click(screen.getByRole("button", { name: "Reset Demo" }));
+    await user.click(screen.getByRole("button", { name: "Reset demo" }));
     await waitFor(() =>
       expect(
         (screen.getByRole("button", { name: "Start Admin Run" }) as HTMLButtonElement).disabled,
@@ -303,7 +357,6 @@ describe("admin feature controllers", () => {
       throw new Error("Unexpected archive fetch");
     });
     vi.stubGlobal("fetch", fetchMock);
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
     const user = userEvent.setup();
     render(
       <AdminPresetController
@@ -316,10 +369,70 @@ describe("admin feature controllers", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "Archive Preset" }));
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
 
     expect(fetchMock).not.toHaveBeenCalled();
     expect(screen.queryByText("Preset archived.")).toBeNull();
-    confirmSpy.mockRestore();
+  });
+
+  it("closes an archive confirmation and refreshes server auth state on 401", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse({ message: "Session expired" }, 401)),
+    );
+    const user = userEvent.setup();
+    render(
+      <AdminPresetController
+        initialPresets={available<AdminPresetListResponse>({
+          presets: [archivablePresetFixture("operator-dup", "Operator Dup")],
+          timestamp: "2026-06-20T00:00:10.000Z",
+        })}
+        recovery={available(recoveryFixture(null))}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Archive Preset" }));
+    await user.click(screen.getByRole("button", { name: "Archive preset" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(navigation.refresh).toHaveBeenCalledOnce();
+  });
+
+  it("keeps archive failures visible and allows retry in the same dialog", async () => {
+    let deleteAttempts = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        if (init?.method === "DELETE" && deleteAttempts++ === 0) {
+          return jsonResponse({ message: "Archive temporarily unavailable" }, 503);
+        }
+        if (init?.method === "DELETE") {
+          return jsonResponse({
+            slug: "operator-dup",
+            archivedAt: "2026-06-20T00:00:12.000Z",
+            timestamp: "2026-06-20T00:00:12.000Z",
+          });
+        }
+        return jsonResponse({ presets: [], timestamp: "2026-06-20T00:00:12.000Z" });
+      }),
+    );
+    const user = userEvent.setup();
+    render(
+      <AdminPresetController
+        initialPresets={available<AdminPresetListResponse>({
+          presets: [archivablePresetFixture("operator-dup", "Operator Dup")],
+          timestamp: "2026-06-20T00:00:10.000Z",
+        })}
+        recovery={available(recoveryFixture(null))}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Archive Preset" }));
+    await user.click(screen.getByRole("button", { name: "Archive preset" }));
+    expect(await screen.findByRole("alert")).toHaveProperty(
+      "textContent",
+      "Archive temporarily unavailable",
+    );
+    await user.click(screen.getByRole("button", { name: "Archive preset" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(deleteAttempts).toBe(2);
   });
 
   it("archives the selected preset after confirmation, refreshes the list, and selects a remaining preset", async () => {
@@ -342,7 +455,6 @@ describe("admin feature controllers", () => {
       throw new Error(`Unexpected fetch: ${path}`);
     });
     vi.stubGlobal("fetch", fetchMock);
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
     const user = userEvent.setup();
     render(
       <AdminPresetController
@@ -358,6 +470,7 @@ describe("admin feature controllers", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "Archive Preset" }));
+    await user.click(screen.getByRole("button", { name: "Archive preset" }));
 
     await waitFor(() => expect(screen.getByText("Preset archived.")).toBeTruthy());
     expect(fetchMock.mock.calls.map(([input, init]) => [String(input), init?.method])).toEqual([
@@ -369,7 +482,6 @@ describe("admin feature controllers", () => {
     expect((screen.getByLabelText("Duplicate slug") as HTMLInputElement).value).toBe(
       "custom-copy",
     );
-    confirmSpy.mockRestore();
   });
 
   it("clears the preset editor after archiving the last remaining preset", async () => {
@@ -391,7 +503,6 @@ describe("admin feature controllers", () => {
       throw new Error(`Unexpected fetch: ${path}`);
     });
     vi.stubGlobal("fetch", fetchMock);
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
     const user = userEvent.setup();
     render(
       <AdminPresetController
@@ -407,11 +518,11 @@ describe("admin feature controllers", () => {
       "operator-dup-copy",
     );
     await user.click(screen.getByRole("button", { name: "Archive Preset" }));
+    await user.click(screen.getByRole("button", { name: "Archive preset" }));
 
     await waitFor(() => expect(screen.getByText("Preset archived.")).toBeTruthy());
     expect(screen.getByText("No admin presets are available.")).toBeTruthy();
     expect(screen.queryByLabelText("Duplicate slug")).toBeNull();
-    confirmSpy.mockRestore();
   });
 
   it("keeps the archive control disabled while an archive is pending", async () => {
@@ -431,7 +542,6 @@ describe("admin feature controllers", () => {
       throw new Error(`Unexpected fetch: ${path}`);
     });
     vi.stubGlobal("fetch", fetchMock);
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
     const user = userEvent.setup();
     render(
       <AdminPresetController
@@ -444,9 +554,10 @@ describe("admin feature controllers", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "Archive Preset" }));
+    await user.click(screen.getByRole("button", { name: "Archive preset" }));
     await waitFor(() =>
       expect(
-        (screen.getByRole("button", { name: "Archive Preset" }) as HTMLButtonElement).disabled,
+        (screen.getByRole("button", { name: "Working…" }) as HTMLButtonElement).disabled,
       ).toBe(true),
     );
     expect(fetchMock).toHaveBeenCalledOnce();
@@ -458,7 +569,6 @@ describe("admin feature controllers", () => {
         timestamp: "2026-06-20T00:00:12.000Z",
       }),
     );
-    confirmSpy.mockRestore();
   });
 });
 

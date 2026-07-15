@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { AdminSignOut } from "./components/admin-nav";
+import { hasValidAdminPageSession } from "./lib/server/admin-page-session";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -7,15 +9,17 @@ export const metadata: Metadata = {
   description: "Operational dashboard for Checkout-Surge.",
 };
 
-const navItems = [
+const publicNavItems = [
   { href: "/", label: "Demo" },
   { href: "/watch", label: "Watch" },
-  { href: "/admin", label: "Admin" },
   { href: "/run-history", label: "Run history" },
   { href: "/about", label: "About" },
 ] as const;
 
-export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+export const dynamic = "force-dynamic";
+
+export default async function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+  const authenticated = await hasValidAdminPageSession();
   return (
     <html lang="en">
       <body className="min-h-screen bg-page font-sans text-foreground">
@@ -30,7 +34,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
                 className="flex flex-wrap justify-end gap-1 max-[900px]:justify-start"
                 aria-label="Dashboard routes"
               >
-                {navItems.map((item) => (
+                {publicNavItems.map((item) => (
                   <Link
                     className="rounded-lg px-2.5 py-2 text-sm font-semibold text-muted-strong hover:bg-surface-muted hover:text-ink"
                     href={item.href}
@@ -39,6 +43,17 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
                     {item.label}
                   </Link>
                 ))}
+                {authenticated ? (
+                  <>
+                    <Link
+                      className="rounded-lg px-2.5 py-2 text-sm font-semibold text-muted-strong hover:bg-surface-muted hover:text-ink"
+                      href="/admin"
+                    >
+                      Admin
+                    </Link>
+                    <AdminSignOut />
+                  </>
+                ) : null}
               </nav>
             </div>
           </header>

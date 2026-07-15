@@ -123,7 +123,7 @@ Replace `⬜` with `✅` when a task is complete. Optional `⏳` for work in pro
 
 ✅ [Task 59: Raise recent-inventory-event retention to reference parity](./task_59.md)
 
-⬜ [Task 60: Separate public and operator surfaces in the web UI and add confirmation flows to destructive actions](./task_60.md)
+✅ [Task 60: Separate public and operator surfaces in the web UI and add confirmation flows to destructive actions](./task_60.md)
 
 ⬜ [Task 61: Reflect authenticated admin state consistently across admin surfaces](./task_61.md)
 

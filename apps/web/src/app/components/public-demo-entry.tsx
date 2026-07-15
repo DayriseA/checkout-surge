@@ -49,7 +49,10 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
 
   const recovery = surface.recovery;
   const isBlocked = isRunStartBlocked(recovery);
-  const presets = surface.presets.status === "available" ? surface.presets.data.presets : [];
+  const presets =
+    surface.presets.status === "available"
+      ? surface.presets.data.presets.filter((preset) => preset.visibility === "public")
+      : [];
   const curatedPresets = presets.filter((preset) => preset.slug !== "public-custom");
   const customPreset = presets.find((preset) => preset.slug === "public-custom") ?? null;
   const runtimePolicy =
@@ -115,7 +118,7 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
             tone={isBlocked ? "pending" : "ok"}
           />
         </div>
-        {surface.presets.status === "available" ? (
+        {surface.presets.status === "available" && curatedPresets.length > 0 ? (
           <div className="grid grid-cols-2 gap-3 max-[700px]:grid-cols-1">
             {curatedPresets.map((preset) => (
               <article className="min-w-0 rounded-lg border border-border p-3" key={preset.slug}>
@@ -141,8 +144,10 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
               </article>
             ))}
           </div>
-        ) : (
+        ) : surface.presets.status === "unavailable" ? (
           <Unavailable read={surface.presets} />
+        ) : (
+          <p className="m-0 text-muted">No curated public presets are currently available.</p>
         )}
       </section>
 
@@ -289,21 +294,6 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
                 step="0.01"
                 value={customDraft.erpErrorRate}
               />
-              {runtimePolicy.publicCustomLimits.allowForcedOutage ? (
-                <label className="flex min-h-10 items-center gap-2 text-sm font-semibold text-muted-strong">
-                  <input
-                    checked={customDraft.forcedOutage}
-                    onChange={(event) =>
-                      setCustomDraft((draft) => ({
-                        ...draft,
-                        forcedOutage: event.target.checked,
-                      }))
-                    }
-                    type="checkbox"
-                  />
-                  Forced outage
-                </label>
-              ) : null}
             </div>
             <button
               className={primaryButtonClassName}
@@ -366,7 +356,7 @@ function buildCustomConfigOverride(
       latencyMs: parseInteger(draft.erpLatencyMs, 0),
       maxTps: parseInteger(draft.erpMaxTps, 1),
       errorRate: parseNumber(draft.erpErrorRate, 0),
-      forcedOutage: draft.forcedOutage,
+      forcedOutage: false,
     },
   };
 }
@@ -388,7 +378,7 @@ function draftFromSnapshot(snapshot: AcceptedRunConfigSnapshot): CustomDraft {
     erpLatencyMs: String(snapshot.erpConfig.latencyMs),
     erpMaxTps: String(snapshot.erpConfig.maxTps),
     erpErrorRate: String(snapshot.erpConfig.errorRate),
-    forcedOutage: snapshot.erpConfig.forcedOutage,
+    forcedOutage: false,
   };
 }
 

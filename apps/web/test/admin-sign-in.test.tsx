@@ -4,6 +4,7 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AdminSignIn } from "../src/app/components/admin/admin-sign-in.js";
+import { AdminSignOut } from "../src/app/components/admin-nav.js";
 import { adminPassphraseHeaderName, adminSessionProxyPath } from "../src/app/lib/control-paths.js";
 
 const navigation = vi.hoisted(() => ({ refresh: vi.fn() }));
@@ -58,6 +59,23 @@ describe("AdminSignIn", () => {
     expect(navigation.refresh).not.toHaveBeenCalled();
     const error = screen.getByText("Admin sign-in failed.");
     expect(error.textContent).not.toContain("secret-value");
+  });
+});
+
+describe("AdminSignOut", () => {
+  it("clears the server session and refreshes server-rendered navigation", async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      jsonResponse({ authenticated: false }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<AdminSignOut />);
+    await user.click(screen.getByRole("button", { name: "Sign out" }));
+    await waitFor(() => expect(navigation.refresh).toHaveBeenCalledOnce());
+    expect(fetchMock.mock.calls[0]).toEqual([
+      adminSessionProxyPath,
+      { method: "DELETE", cache: "no-store" },
+    ]);
   });
 });
 

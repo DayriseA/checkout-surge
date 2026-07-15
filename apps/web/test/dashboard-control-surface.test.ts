@@ -9,11 +9,13 @@ import type {
 } from "@checkout-surge/contracts";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { AdminAuthenticatedSurface } from "../src/app/components/admin/admin-authenticated-surface.js";
 import { AdminSignInView } from "../src/app/components/admin/admin-sign-in.js";
 import { PublicDemoEntry } from "../src/app/components/public-demo-entry.js";
 import type { BackendRead, PublicDemoSurface } from "../src/app/lib/api.js";
+
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 
 describe("dashboard control surface", () => {
   it("renders the public visitor entry with curated and bounded custom starts", () => {
@@ -23,9 +25,74 @@ describe("dashboard control surface", () => {
 
     expect(markup).toContain("Curated surge presets");
     expect(markup).toContain("Preview 1k");
+    expect(markup).not.toContain("Forced outage");
     expect(markup).toContain("Public custom");
     expect(markup).toContain("Start Public Custom");
     expect(markup).toContain("ERP max TPS");
+  });
+
+  it("follows response visibility and never exposes forced outage on public custom", () => {
+    const surface = publicSurfaceFixture(null);
+    if (surface.presets.status !== "available" || surface.runtimePolicy.status !== "available") {
+      throw new Error("Expected available fixture reads.");
+    }
+    surface.presets.data.presets = [
+      demoPresetFixture("custom", "admin", true),
+      demoPresetFixture("public-custom", "public", true),
+      demoPresetFixture("preview-1k", "public", false),
+    ];
+    surface.runtimePolicy.data.policy.publicCustomLimits.allowForcedOutage = true;
+    surface.runtimePolicy.data.policy.publicCustomDefaults.erpConfig.forcedOutage = true;
+    const markup = renderToStaticMarkup(createElement(PublicDemoEntry, { surface }));
+    expect(markup).toContain("Preview 1k");
+    expect(markup).not.toContain(">Custom<");
+    expect(markup).not.toContain("Forced outage");
+  });
+
+  it("renders an explicit empty state when no curated public presets are available", () => {
+    const surface = publicSurfaceFixture(null);
+    if (surface.presets.status !== "available") throw new Error("Expected available presets.");
+    surface.presets.data.presets = [];
+    const markup = renderToStaticMarkup(createElement(PublicDemoEntry, { surface }));
+    expect(markup).toContain("No curated public presets are currently available.");
+  });
+
+  it("renders reordered and newly-added public presets from response data", () => {
+    const surface = publicSurfaceFixture(null);
+    if (surface.presets.status !== "available") throw new Error("Expected available presets.");
+    const added = {
+      ...demoPresetFixture("preview-1k", "public", false),
+      id: "99999999-9999-4999-8999-999999999999",
+      slug: "new-public-surge",
+      display: { ...demoPresetFixture("preview-1k", "public", false).display, name: "New Public Surge" },
+    };
+    surface.presets.data.presets = [
+      demoPresetFixture("public-custom", "public", true),
+      added,
+      demoPresetFixture("preview-1k", "public", false),
+    ];
+    const markup = renderToStaticMarkup(createElement(PublicDemoEntry, { surface }));
+    expect(markup.indexOf("New Public Surge")).toBeLessThan(markup.indexOf("Preview 1k"));
+  });
+
+  it("handles only-public-custom, missing custom, and unavailable preset reads", () => {
+    const onlyCustom = publicSurfaceFixture(null);
+    if (onlyCustom.presets.status !== "available") throw new Error("Expected available presets.");
+    onlyCustom.presets.data.presets = [demoPresetFixture("public-custom", "public", true)];
+    const onlyCustomMarkup = renderToStaticMarkup(createElement(PublicDemoEntry, { surface: onlyCustom }));
+    expect(onlyCustomMarkup).toContain("No curated public presets are currently available.");
+    expect(onlyCustomMarkup).toContain("Start Public Custom");
+
+    const noCustom = publicSurfaceFixture(null);
+    if (noCustom.presets.status !== "available") throw new Error("Expected available presets.");
+    noCustom.presets.data.presets = [demoPresetFixture("preview-1k", "public", false)];
+    const noCustomMarkup = renderToStaticMarkup(createElement(PublicDemoEntry, { surface: noCustom }));
+    expect(noCustomMarkup).not.toContain("Start Public Custom");
+
+    const unavailable = publicSurfaceFixture(null);
+    unavailable.presets = { status: "unavailable", reason: "Preset service offline" };
+    const unavailableMarkup = renderToStaticMarkup(createElement(PublicDemoEntry, { surface: unavailable }));
+    expect(unavailableMarkup).toContain("Preset service offline");
   });
 
   it("disables public starts while a run is active", () => {

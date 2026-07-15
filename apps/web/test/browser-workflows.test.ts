@@ -143,7 +143,12 @@ describe("public browser starts", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
 
-    render(createElement(PublicDemoEntry, { surface: publicDemoSurfaceFixture() }));
+    const surface = publicDemoSurfaceFixture();
+    if (surface.runtimePolicy.status !== "available") throw new Error("Expected runtime policy.");
+    surface.runtimePolicy.data.policy.publicCustomLimits.allowForcedOutage = true;
+    surface.runtimePolicy.data.policy.publicCustomDefaults.erpConfig.forcedOutage = true;
+    render(createElement(PublicDemoEntry, { surface }));
+    expect(screen.queryByLabelText("Forced outage")).toBeNull();
 
     await replaceInputValue("Buyers", "321", user);
     await replaceInputValue("Starting stock", "44", user);
@@ -301,8 +306,12 @@ describe("watch browser recovery", () => {
 describe("run history browser cleanup", () => {
   it("submits selected and delete-all destructive requests from visible controls", async () => {
     const user = userEvent.setup();
-    const fetchMock = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) =>
-      jsonResponse({ message: "session required" }, 401),
+    const fetchMock = vi.fn(async () =>
+      jsonResponse({
+        deletedSummaryCount: 1,
+        deletedAt: "2026-06-20T00:00:10.000Z",
+        correlationId: "corr-delete-history",
+      }),
     );
     vi.stubGlobal("fetch", fetchMock);
 
@@ -310,7 +319,9 @@ describe("run history browser cleanup", () => {
     render(createElement(RunHistoryAdminControls, { summaries: history.summaries }));
 
     await user.click(screen.getByLabelText(new RegExp(history.summaries[0]?.runId ?? "")));
-    await user.click(screen.getByRole("button", { name: "Delete Selected" }));
+    await user.click(screen.getByRole("button", { name: /Delete Selected/ }));
+    expect(fetchMock).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Delete selected summaries" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     expect(String(requireFetchCall(fetchMock, 0)[0])).toBe(adminRunHistoryProxyPath);
@@ -322,8 +333,9 @@ describe("run history browser cleanup", () => {
       },
     });
 
-    await replaceInputValue("Delete-all confirmation", "DELETE_ALL_RUN_SUMMARIES", user);
-    await user.click(screen.getByRole("button", { name: "Delete All" }));
+    await user.click(screen.getByRole("button", { name: "Delete All Run Summaries" }));
+    await replaceInputValue(/Type DELETE_ALL_RUN_SUMMARIES/, "DELETE_ALL_RUN_SUMMARIES", user);
+    await user.click(screen.getByRole("button", { name: "Delete all summaries" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect(jsonRequestBody(requireFetchCall(fetchMock, 1)[1])).toEqual({
@@ -353,7 +365,7 @@ describe("web page smoke coverage", () => {
     cleanup();
 
     render(await AdminPage());
-    expect(screen.getByRole("heading", { name: "Admin console" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Protected operator surface" })).toBeTruthy();
     cleanup();
 
     render(
@@ -379,7 +391,7 @@ describe("web page smoke coverage", () => {
 });
 
 async function replaceInputValue(
-  label: string,
+  label: string | RegExp,
   value: string,
   user: ReturnType<typeof userEvent.setup>,
 ) {

@@ -13,7 +13,6 @@ import {
   ConsistencyLagPanel,
   ErpHealthPanel,
   InventoryDrainPanel,
-  LoadRunControlsPanel,
   QueuePressurePanel,
   RecentOrderTransitionsPanel,
   RequestSurgePanel,
@@ -238,59 +237,6 @@ describe("Phase 6 dashboard behavior", () => {
       state.recentOrderLagSamples.findIndex((sample) => sample.eventId === olderArrival.eventId),
     );
   });
-  it("renders enabled run controls when Phase 7 start handling is available", () => {
-    const markup = renderToStaticMarkup(
-      createElement(LoadRunControlsPanel, {
-        recovery: availableRecovery(recoveryFixture()),
-        onStartPreset: async () => ({
-          status: "available" as const,
-          data: {
-            run: runFixture(),
-            recovery: { establishedAt: "2026-06-20T00:00:10.000Z" },
-            correlationId: "corr-web-start",
-            timestamp: "2026-06-20T00:00:10.000Z",
-          },
-          httpStatus: 202,
-        }),
-      }),
-    );
-
-    expect(markup).toContain("ready");
-    expect(markup).toContain("Ready to start bounded public traffic.");
-    expect(markup).not.toContain('disabled=""');
-    expect(markup).toContain("preview-1k");
-    expect(markup).toContain("public-custom");
-  });
-
-  it("renders current-run start gating when recovery reports an active run", () => {
-    const markup = renderToStaticMarkup(
-      createElement(LoadRunControlsPanel, {
-        recovery: availableRecovery({
-          ...recoveryFixture(),
-          currentRun: {
-            runId: "11111111-1111-4111-8111-111111111111",
-            presetId: "22222222-2222-4222-8222-222222222222",
-            presetName: "Surge 5k",
-            operatorMode: "public",
-            status: "active",
-            trafficStatus: "active",
-            configSnapshot: {
-              trafficConfig: {},
-              inventoryConfig: {},
-              erpConfig: {},
-              backpressureConfig: {},
-            },
-            saleOfferId: "33333333-3333-4333-8333-333333333333",
-            startedAt: "2026-06-20T00:00:00.000Z",
-          },
-        } as DashboardRecoveryResponse),
-      }),
-    );
-
-    expect(markup).toContain("active");
-    expect(markup).toContain("A run is already starting, active, or draining.");
-  });
-
   it("renders consistency-lag and run outcome projections for operator review", () => {
     const recovery = availableRecovery(recoveryFixture());
     const lagMarkup = renderToStaticMarkup(createElement(ConsistencyLagPanel, { recovery }));

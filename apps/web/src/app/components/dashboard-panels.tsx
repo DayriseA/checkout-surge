@@ -6,7 +6,6 @@ import type {
   HealthStatus,
   InventoryStatus,
   QueueStatus,
-  StartDemoRunResponse,
 } from "@checkout-surge/contracts";
 import type { BackendRead, DashboardBackendSnapshot } from "../lib/api";
 import { formatDashboardTime } from "../lib/dashboard-time";
@@ -298,76 +297,6 @@ export function RecoveryStatusPanel({
       ) : (
         <UnavailableState read={recovery} />
       )}
-    </section>
-  );
-}
-
-const publicPresetControls = [
-  "preview-1k",
-  "surge-5k",
-  "surge-10k",
-  "idempotency-check-200",
-  "public-custom",
-] as const;
-
-export function LoadRunControlsPanel({
-  recovery,
-  onStartPreset,
-  startingPresetSlug = null,
-  statusMessage = null,
-}: {
-  recovery: BackendRead<DashboardRecoveryResponse>;
-  onStartPreset?: (presetSlug: string) => Promise<BackendRead<StartDemoRunResponse>>;
-  startingPresetSlug?: string | null;
-  statusMessage?: string | null;
-}) {
-  const data = recoveryData(recovery);
-  const currentRun = data?.currentRun ?? null;
-  const isBlockedByCurrentRun =
-    currentRun?.status === "starting" ||
-    currentRun?.status === "active" ||
-    currentRun?.status === "draining";
-  const isStarting = startingPresetSlug !== null;
-  const statusLabel = isBlockedByCurrentRun ? currentRun.status : isStarting ? "starting" : "ready";
-  const disabledReason =
-    recovery.status !== "available"
-      ? "Recovery is unavailable, so start gating cannot be verified."
-      : isBlockedByCurrentRun
-        ? "A run is already starting, active, or draining."
-        : onStartPreset
-          ? "Ready to start bounded public traffic."
-          : "Start action unavailable.";
-  const disableStarts =
-    recovery.status !== "available" || isBlockedByCurrentRun || isStarting || !onStartPreset;
-
-  return (
-    <section className={panelNarrowClassName}>
-      <div className={panelHeaderClassName}>
-        <div>
-          <p className={eyebrowClassName}>Run controls</p>
-          <h2 className={panelTitleClassName}>Preset traffic</h2>
-        </div>
-        <StatusPill label={statusLabel} tone={isBlockedByCurrentRun ? "pending" : "idle"} />
-      </div>
-      <div className="grid gap-2.5">
-        {publicPresetControls.map((presetSlug) => (
-          <button
-            className={controlButtonClassName}
-            key={presetSlug}
-            onClick={() => {
-              void onStartPreset?.(presetSlug);
-            }}
-            type="button"
-            disabled={disableStarts}
-          >
-            {startingPresetSlug === presetSlug ? "Starting" : presetSlug}
-          </button>
-        ))}
-      </div>
-      <EmptyState>{disabledReason}</EmptyState>
-      {statusMessage ? (
-        <p className="m-0 text-sm font-semibold text-muted-strong">{statusMessage}</p>
-      ) : null}
     </section>
   );
 }

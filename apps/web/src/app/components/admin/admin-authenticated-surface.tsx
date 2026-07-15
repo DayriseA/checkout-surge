@@ -24,6 +24,7 @@ import {
   startDemoRunResponseSchema,
 } from "@checkout-surge/contracts";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import type { BackendRead } from "../../lib/api";
 import {
   configFromDraft,
@@ -62,6 +63,7 @@ import {
   panelClassName,
 } from "./admin-feature-views";
 import { StatusPill } from "../status-pill";
+import { ConfirmationDialog } from "../confirmation-dialog";
 
 export interface AdminAuthenticatedSurfaceProps {
   initialErpChaos: BackendRead<ErpChaosStatus>;
@@ -238,6 +240,7 @@ export function AdminPresetController({
   initialPresets: BackendRead<AdminPresetListResponse>;
   recovery: BackendRead<DashboardRecoveryResponse>;
 }) {
+  const router = useRouter();
   const initialPreset =
     initialPresets.status === "available" ? initialPresets.data.presets[0] : null;
   const [presetsRead, setPresetsRead] = useState(initialPresets);
@@ -250,6 +253,8 @@ export function AdminPresetController({
   );
   const [isPending, setIsPending] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [archiveOpen, setArchiveOpen] = useState(false);
+  const [archiveError, setArchiveError] = useState<string | null>(null);
   const draftSlugRef = useRef(initialPreset?.slug ?? null);
   const isDraftDirtyRef = useRef(false);
   const presets = presetsRead.status === "available" ? presetsRead.data.presets : [];
@@ -351,14 +356,6 @@ export function AdminPresetController({
       return;
     }
 
-    const confirmed =
-      typeof window === "undefined"
-        ? false
-        : window.confirm(
-            `Archive the "${selectedPreset.display.name}" preset? It will leave the active list while historical runs are retained.`,
-          );
-    if (!confirmed) return;
-
     await withPending(async () => {
       // The archive response is intentionally not an active preset; keep this
       // workflow explicit rather than reusing the generic mutate helper.
@@ -372,7 +369,12 @@ export function AdminPresetController({
         },
       );
       if (archived.status !== "available") {
-        setNotice(archived.reason);
+        if (archived.httpStatus === 401) {
+          setArchiveOpen(false);
+          router.refresh();
+          return;
+        }
+        setArchiveError(archived.reason);
         return;
       }
 
@@ -389,6 +391,8 @@ export function AdminPresetController({
       setDraft(next ? draftFromPreset(next) : null);
       setDuplicateTargetSlug(next ? `${next.slug}-copy` : "");
       setNotice("Preset archived.");
+      setArchiveOpen(false);
+      setArchiveError(null);
     });
   }
 
@@ -427,12 +431,16 @@ export function AdminPresetController({
   }
 
   return (
+    <>
     <AdminPresetView
       draft={draft}
       duplicateTargetSlug={duplicateTargetSlug}
       isPending={isPending}
       notice={notice}
-      onArchive={() => void archive()}
+      onArchive={() => {
+        setArchiveError(null);
+        setArchiveOpen(true);
+      }}
       onCopyToCustom={() => void copyToCustom()}
       onDuplicate={(targetSlug) => void duplicate(targetSlug)}
       onDuplicateTargetSlugChange={setDuplicateTargetSlug}
@@ -451,6 +459,17 @@ export function AdminPresetController({
       selectedPreset={selectedPreset}
       startBlocked={isRunStartBlocked(recovery)}
     />
+    <ConfirmationDialog
+      confirmLabel="Archive preset"
+      description={`Archive the "${selectedPreset?.display.name ?? "selected"}" preset. It will leave the active list while historical runs are retained.`}
+      error={archiveError}
+      onCancel={() => setArchiveOpen(false)}
+      onConfirm={() => void archive()}
+      open={archiveOpen}
+      pending={isPending}
+      title="Archive this preset?"
+    />
+    </>
   );
 }
 
@@ -459,14 +478,50 @@ export function AdminMaintenancePanel({
 }: {
   onResetComplete: () => Promise<void>;
 }) {
+  const router = useRouter();
   const [isPending, setIsPending] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [intent, setIntent] = useState<"reset" | "cleanup" | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  async function run(operation: () => Promise<string>) {
+  async function run() {
+    if (!intent) return;
     setIsPending(true);
-    setNotice(null);
+    setError(null);
     try {
-      setNotice(await operation());
+      const result =
+        intent === "reset"
+          ? await readProxyJson(adminDemoResetProxyPath, adminDemoResetResponseSchema, {
+              method: "POST",
+            })
+          : await readProxyJson(
+              adminMaintenanceCleanupRunsProxyPath,
+              adminMaintenanceCleanupRunsResponseSchema,
+              {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ keepLatest: 15, olderThanDays: 7 }),
+              },
+            );
+      if (result.status === "unavailable") {
+        if (result.httpStatus === 401) {
+          setIntent(null);
+          router.refresh();
+        } else {
+          setError(result.reason);
+          if (intent === "reset") await onResetComplete();
+        }
+        return;
+      }
+      if (intent === "reset" && "failedRunCount" in result.data) {
+        setNotice(
+          `Reset complete: ${result.data.failedRunCount} runs failed, ${result.data.cleanedJobCount} jobs cleaned.`,
+        );
+        await onResetComplete();
+      } else if ("deletedRunCount" in result.data) {
+        setNotice(`Cleanup complete: ${result.data.deletedRunCount} generated runs removed.`);
+      }
+      setIntent(null);
     } finally {
       setIsPending(false);
     }
@@ -484,21 +539,7 @@ export function AdminMaintenancePanel({
         <button
           className={buttonClassName}
           disabled={isPending}
-          onClick={() =>
-            void run(async () => {
-              const result = await readProxyJson(
-                adminDemoResetProxyPath,
-                adminDemoResetResponseSchema,
-                { method: "POST" },
-              );
-              const resultNotice =
-                result.status === "available"
-                  ? `Reset complete: ${result.data.failedRunCount} runs failed, ${result.data.cleanedJobCount} jobs cleaned.`
-                  : result.reason;
-              await onResetComplete();
-              return resultNotice;
-            })
-          }
+          onClick={() => setIntent("reset")}
           type="button"
         >
           Reset Demo
@@ -506,28 +547,27 @@ export function AdminMaintenancePanel({
         <button
           className={buttonClassName}
           disabled={isPending}
-          onClick={() =>
-            void run(async () => {
-              const result = await readProxyJson(
-                adminMaintenanceCleanupRunsProxyPath,
-                adminMaintenanceCleanupRunsResponseSchema,
-                {
-                  method: "POST",
-                  headers: { "content-type": "application/json" },
-                  body: JSON.stringify({ keepLatest: 15, olderThanDays: 7 }),
-                },
-              );
-              return result.status === "available"
-                ? `Cleanup complete: ${result.data.deletedRunCount} generated runs removed.`
-                : result.reason;
-            })
-          }
+          onClick={() => setIntent("cleanup")}
           type="button"
         >
           Cleanup Runs
         </button>
       </div>
       {notice ? <p className="m-0 mt-4 text-sm font-semibold text-muted-strong">{notice}</p> : null}
+      <ConfirmationDialog
+        confirmLabel={intent === "reset" ? "Reset demo" : "Cleanup generated runs"}
+        description={
+          intent === "reset"
+            ? "Fail active demo work, clear queued jobs, and reset shared demo state. This disrupts current visitors."
+            : "Permanently remove generated runs older than 7 days while keeping the latest 15."
+        }
+        error={error}
+        onCancel={() => setIntent(null)}
+        onConfirm={() => void run()}
+        open={intent !== null}
+        pending={isPending}
+        title={intent === "reset" ? "Reset the shared demo?" : "Cleanup generated runs?"}
+      />
     </section>
   );
 }
@@ -537,10 +577,13 @@ export function AdminErpDiagnosticsController({
 }: {
   initialErpChaos: BackendRead<ErpChaosStatus>;
 }) {
+  const router = useRouter();
   const [erpChaos, setErpChaos] = useState(initialErpChaos);
   const [draft, setDraft] = useState(() => erpDraftFromRead(initialErpChaos));
   const [isPending, setIsPending] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [resetOpen, setResetOpen] = useState(false);
+  const [resetError, setResetError] = useState<string | null>(null);
   const isDraftDirtyRef = useRef(false);
 
   useEffect(() => {
@@ -553,6 +596,15 @@ export function AdminErpDiagnosticsController({
     setNotice(null);
     try {
       const result = await readProxyJson(path, erpChaosStatusSchema, init);
+      if (result.status === "unavailable" && result.httpStatus === 401) {
+        setResetOpen(false);
+        router.refresh();
+        return;
+      }
+      if (path === adminErpChaosResetProxyPath && result.status === "unavailable") {
+        setResetError(result.reason);
+        return;
+      }
       setErpChaos(result);
       if (result.status === "available") {
         setDraft(erpDraftFromRead(result));
@@ -565,6 +617,7 @@ export function AdminErpDiagnosticsController({
             : "ERP diagnostics updated."
           : result.reason,
       );
+      if (path === adminErpChaosResetProxyPath) setResetOpen(false);
     } finally {
       setIsPending(false);
     }
@@ -590,6 +643,7 @@ export function AdminErpDiagnosticsController({
   }
 
   return (
+    <>
     <AdminErpDiagnosticsView
       errorRate={draft.errorRate}
       erpChaos={erpChaos}
@@ -603,8 +657,22 @@ export function AdminErpDiagnosticsController({
       onForcedOutageChange={(forcedOutage) => updateErpDraft({ forcedOutage })}
       onLatencyMsChange={(latencyMs) => updateErpDraft({ latencyMs })}
       onMaxTpsChange={(maxTps) => updateErpDraft({ maxTps })}
-      onReset={() => void submit(adminErpChaosResetProxyPath, { method: "POST" })}
+      onReset={() => {
+        setResetError(null);
+        setResetOpen(true);
+      }}
     />
+    <ConfirmationDialog
+      confirmLabel="Reset ERP controls"
+      description="Reset the shared ERP latency, throughput, error-rate, and outage controls to their defaults."
+      error={resetError}
+      onCancel={() => setResetOpen(false)}
+      onConfirm={() => void submit(adminErpChaosResetProxyPath, { method: "POST" })}
+      open={resetOpen}
+      pending={isPending}
+      title="Reset ERP controls?"
+    />
+    </>
   );
 
   function updateErpDraft(next: Partial<ErpDraft>) {
