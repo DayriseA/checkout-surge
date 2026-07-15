@@ -74,11 +74,13 @@ describe.skipIf(!databaseUrl)("business outcome dashboard projection", () => {
       slug: "business-outcome-preset",
       visibility: "admin",
       isEditable: true,
-      display: { name: "Business Outcome Preset", description: "Projection test" },
-      trafficConfig: {},
-      inventoryConfig: {},
-      erpConfig: {},
-      backpressureConfig: {},
+      display: {
+        name: "Business Outcome Preset",
+        description: "Projection test",
+        sortOrder: 1,
+        outcomeFocus: ["business_outcome"],
+      },
+      ...configSnapshotFixture(),
     });
     await connection.db.insert(demoRuns).values({
       id: runId,
@@ -87,12 +89,7 @@ describe.skipIf(!databaseUrl)("business outcome dashboard projection", () => {
       operatorMode: "admin",
       status: "active",
       trafficStatus: "active",
-      configSnapshot: {
-        trafficConfig: {},
-        inventoryConfig: {},
-        erpConfig: {},
-        backpressureConfig: {},
-      },
+      configSnapshot: configSnapshotFixture(),
       saleOfferId,
       startedAt: now,
     });
@@ -318,6 +315,41 @@ describe.skipIf(!databaseUrl)("business outcome dashboard projection", () => {
     }
   });
 });
+
+function configSnapshotFixture() {
+  return {
+    trafficConfig: {
+      mode: "buyer-spike" as const,
+      buyerCount: 10,
+      duplicateEachBuyerAttempt: false,
+      startDelaySeconds: 0,
+      maxDurationSeconds: 10,
+      quantityPerAttempt: 1,
+    },
+    inventoryConfig: {
+      startingStock: 10,
+      quantityPerCheckout: 1,
+      reservationHoldMinutes: 15,
+    },
+    erpConfig: {
+      latencyMs: 10,
+      maxTps: 10,
+      errorRate: 0,
+      forcedOutage: false,
+      requestTimeoutMs: 1_000,
+    },
+    backpressureConfig: {
+      queueName: "orders:process" as const,
+      physicalQueueName: "orders-process" as const,
+      orderProcessConcurrency: 1,
+      retryPolicy: { maxAttempts: 4, initialBackoffMs: 500 },
+      drainTimeoutSeconds: 300,
+      pendingPersistenceRetryAfterSeconds: 30,
+      circuitBreakerFailureThreshold: 5,
+      circuitBreakerResetTimeoutMs: 10_000,
+    },
+  };
+}
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
   let timeout: NodeJS.Timeout | null = null;

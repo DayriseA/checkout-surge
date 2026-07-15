@@ -9,7 +9,10 @@ import type {
   TerminalInventorySnapshot,
   TrafficCompletionReport,
 } from "@checkout-surge/contracts";
-import { emptyHttpTimingBreakdownSummary } from "@checkout-surge/contracts";
+import {
+  emptyHttpTimingBreakdownSummary,
+  trafficDeliverySummarySchema,
+} from "@checkout-surge/contracts";
 import {
   createDatabaseConnection,
   createRedisClient,
@@ -846,8 +849,9 @@ async function seedDrainingRun(input: {
     exitCode: 0,
     httpSummary: trafficCompletionReportFixture(input.trafficDeliveryStatus).httpSummary,
     trafficOutcomeSummary: {},
-    trafficDeliverySummary: trafficCompletionReportFixture(input.trafficDeliveryStatus)
-      .trafficDeliverySummary,
+    trafficDeliverySummary: trafficDeliverySummarySchema.parse(
+      trafficCompletionReportFixture(input.trafficDeliveryStatus).trafficDeliverySummary,
+    ),
     httpTimingBreakdownSummary: {
       ...emptyHttpTimingBreakdownSummary,
       waiting: { averageMs: 10, p95Ms: 20 },

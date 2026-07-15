@@ -1,3 +1,16 @@
+import type {
+  AcceptedRunConfigSnapshot,
+  BackpressureConfig,
+  BusinessOutcomeSummary,
+  DemoPresetDisplay,
+  ErpRunConfig,
+  InventoryConfig,
+  PublicRuntimePolicy as PublicRuntimePolicyContract,
+  TerminalInventorySnapshot,
+  TrafficConfig,
+  TrafficDeliverySummary,
+  TrafficHttpSummary,
+} from "@checkout-surge/contracts";
 import { relations, sql } from "drizzle-orm";
 
 // Preservation warning: Drizzle snapshots cannot represent the hand-authored
@@ -142,7 +155,7 @@ export const demoRunReservationOutcomeSourceEnum = pgEnum(
 
 const createdAt = () => timestamp("created_at", { withTimezone: true }).defaultNow().notNull();
 const updatedAt = () => timestamp("updated_at", { withTimezone: true }).defaultNow().notNull();
-const jsonObject = (name: string) => jsonb(name).$type<JsonRecord>().notNull();
+const jsonObject = <T>(name: string) => jsonb(name).$type<T>().notNull();
 
 export const products = pgTable(
   "products",
@@ -197,11 +210,11 @@ export const demoPresets = pgTable(
     isCustom: boolean("is_custom").default(false).notNull(),
     isSystem: boolean("is_system").default(false).notNull(),
     archivedAt: timestamp("archived_at", { withTimezone: true }),
-    display: jsonObject("display"),
-    trafficConfig: jsonObject("traffic_config"),
-    inventoryConfig: jsonObject("inventory_config"),
-    erpConfig: jsonObject("erp_config"),
-    backpressureConfig: jsonObject("backpressure_config"),
+    display: jsonObject<DemoPresetDisplay>("display"),
+    trafficConfig: jsonObject<TrafficConfig>("traffic_config"),
+    inventoryConfig: jsonObject<InventoryConfig>("inventory_config"),
+    erpConfig: jsonObject<ErpRunConfig>("erp_config"),
+    backpressureConfig: jsonObject<BackpressureConfig>("backpressure_config"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -227,7 +240,7 @@ export const demoRuns = pgTable(
     operatorMode: demoRunOperatorModeEnum("operator_mode").notNull(),
     status: demoRunStatusEnum("status").default("starting").notNull(),
     trafficStatus: demoRunTrafficStatusEnum("traffic_status").default("not_started").notNull(),
-    configSnapshot: jsonObject("config_snapshot"),
+    configSnapshot: jsonObject<AcceptedRunConfigSnapshot>("config_snapshot"),
     saleOfferId: uuid("sale_offer_id").references(() => saleOffers.id, { onDelete: "restrict" }),
     startedAt: timestamp("started_at", { withTimezone: true }),
     trafficStartedAt: timestamp("traffic_started_at", { withTimezone: true }),
@@ -620,12 +633,12 @@ export const demoRunFinalizations = pgTable(
       .references(() => demoRuns.id, { onDelete: "cascade" }),
     exitCode: integer("exit_code"),
     errorMessage: text("error_message"),
-    httpSummary: jsonObject("http_summary"),
-    trafficOutcomeSummary: jsonObject("traffic_outcome_summary"),
-    trafficDeliverySummary: jsonObject("traffic_delivery_summary"),
-    httpTimingBreakdownSummary: jsonObject("http_timing_breakdown_summary"),
-    loadRunDiagnosticsSummary: jsonObject("load_run_diagnostics_summary"),
-    apiRequestLifecycleSummary: jsonObject("api_request_lifecycle_summary"),
+    httpSummary: jsonObject<TrafficHttpSummary>("http_summary"),
+    trafficOutcomeSummary: jsonObject<JsonRecord>("traffic_outcome_summary"),
+    trafficDeliverySummary: jsonObject<TrafficDeliverySummary>("traffic_delivery_summary"),
+    httpTimingBreakdownSummary: jsonObject<JsonRecord>("http_timing_breakdown_summary"),
+    loadRunDiagnosticsSummary: jsonObject<JsonRecord>("load_run_diagnostics_summary"),
+    apiRequestLifecycleSummary: jsonObject<JsonRecord>("api_request_lifecycle_summary"),
     completionEnrichmentStatus: trafficCompletionEnrichmentStatusEnum(
       "completion_enrichment_status",
     )
@@ -653,13 +666,15 @@ export const demoRunSummaries = pgTable(
     failureReason: text("failure_reason"),
     startedAt: timestamp("started_at", { withTimezone: true }),
     endedAt: timestamp("ended_at", { withTimezone: true }).notNull(),
-    httpSummary: jsonObject("http_summary"),
-    trafficDeliverySummary: jsonObject("traffic_delivery_summary"),
-    httpTimingBreakdownSummary: jsonObject("http_timing_breakdown_summary"),
-    loadRunDiagnosticsSummary: jsonObject("load_run_diagnostics_summary"),
-    apiRequestLifecycleSummary: jsonObject("api_request_lifecycle_summary"),
-    businessOutcomeSummary: jsonObject("business_outcome_summary"),
-    terminalInventorySnapshot: jsonb("terminal_inventory_snapshot").$type<JsonRecord>(),
+    httpSummary: jsonObject<TrafficHttpSummary>("http_summary"),
+    trafficDeliverySummary: jsonObject<TrafficDeliverySummary>("traffic_delivery_summary"),
+    httpTimingBreakdownSummary: jsonObject<JsonRecord>("http_timing_breakdown_summary"),
+    loadRunDiagnosticsSummary: jsonObject<JsonRecord>("load_run_diagnostics_summary"),
+    apiRequestLifecycleSummary: jsonObject<JsonRecord>("api_request_lifecycle_summary"),
+    businessOutcomeSummary: jsonObject<BusinessOutcomeSummary>("business_outcome_summary"),
+    terminalInventorySnapshot: jsonb(
+      "terminal_inventory_snapshot",
+    ).$type<TerminalInventorySnapshot>(),
     capturedAt: timestamp("captured_at", { withTimezone: true }).notNull(),
     createdAt: createdAt(),
   },
@@ -687,7 +702,7 @@ export const publicRuntimePolicies = pgTable(
   "public_runtime_policies",
   {
     id: text("id").default("active").primaryKey(),
-    policy: jsonObject("policy"),
+    policy: jsonObject<PublicRuntimePolicyContract>("policy"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

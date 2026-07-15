@@ -1,4 +1,12 @@
-import { type PublicRuntimePolicy, publicRuntimePolicySchema } from "@checkout-surge/contracts";
+import {
+  type BackpressureConfig,
+  type DemoPresetDisplay,
+  type ErpRunConfig,
+  type InventoryConfig,
+  type PublicRuntimePolicy,
+  publicRuntimePolicySchema,
+  type TrafficConfig,
+} from "@checkout-surge/contracts";
 import { eq, sql } from "drizzle-orm";
 import { createDatabaseConnection } from "../client.js";
 import { createRedisClient } from "../redis.js";
@@ -6,7 +14,6 @@ import { initializeInventory } from "../redis-inventory.js";
 import {
   type DemoPresetVisibility,
   demoPresets,
-  type JsonRecord,
   products,
   publicRuntimePolicies,
   saleOffers,
@@ -37,11 +44,11 @@ interface SeedPreset {
   isEditable: boolean;
   isCustom: boolean;
   isSystem: boolean;
-  display: JsonRecord;
-  trafficConfig: JsonRecord;
-  inventoryConfig: JsonRecord;
-  erpConfig: JsonRecord;
-  backpressureConfig: JsonRecord;
+  display: DemoPresetDisplay;
+  trafficConfig: TrafficConfig;
+  inventoryConfig: InventoryConfig;
+  erpConfig: ErpRunConfig;
+  backpressureConfig: BackpressureConfig;
   overwriteOnConflict: boolean;
 }
 
@@ -170,7 +177,7 @@ try {
       .insert(publicRuntimePolicies)
       .values({
         id: "active",
-        policy: seededPublicRuntimePolicy as unknown as JsonRecord,
+        policy: seededPublicRuntimePolicy,
         createdAt: now,
         updatedAt: now,
       })
@@ -401,7 +408,7 @@ function buyerSpikeTraffic(options: {
   duplicateEachBuyerAttempt?: boolean;
   startDelaySeconds?: number;
   maxDurationSeconds: number;
-}): JsonRecord {
+}): TrafficConfig {
   return {
     mode: "buyer-spike",
     buyerCount: options.buyerCount,
@@ -418,7 +425,7 @@ function steadyArrivalTraffic(options: {
   preAllocatedVus: number;
   maxVus: number;
   startDelaySeconds?: number;
-}): JsonRecord {
+}): TrafficConfig {
   return {
     mode: "steady-arrival-rate",
     ratePerSecond: options.ratePerSecond,
@@ -432,7 +439,7 @@ function steadyArrivalTraffic(options: {
   };
 }
 
-function inventoryConfig(options: { startingStock: number }): JsonRecord {
+function inventoryConfig(options: { startingStock: number }): InventoryConfig {
   return {
     startingStock: options.startingStock,
     quantityPerCheckout: 1,
@@ -445,7 +452,7 @@ function erpConfig(options: {
   maxTps: number;
   errorRate: number;
   forcedOutage?: boolean;
-}): JsonRecord {
+}): ErpRunConfig {
   return {
     latencyMs: options.latencyMs,
     maxTps: options.maxTps,
@@ -455,7 +462,7 @@ function erpConfig(options: {
   };
 }
 
-function backpressureConfig(options: { orderProcessConcurrency: number }): JsonRecord {
+function backpressureConfig(options: { orderProcessConcurrency: number }): BackpressureConfig {
   return {
     queueName: "orders:process",
     physicalQueueName: "orders-process",

@@ -117,7 +117,7 @@ Replace `⬜` with `✅` when a task is complete. Optional `⏳` for work in pro
 
 ✅ [Task 56: Fix accepted-idempotency TTL lifecycle: promotion must tolerate expiry and refresh the replay window](./task_56.md)
 
-⬜ [Task 57: Type the persisted JSON columns against shared contracts](./task_57.md)
+✅ [Task 57: Type the persisted JSON columns against shared contracts](./task_57.md)
 
 ⬜ [Task 58: Reconcile the realtime event and k6 metric vocabulary with the shared domain model](./task_58.md)
 

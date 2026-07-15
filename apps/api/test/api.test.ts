@@ -3430,11 +3430,13 @@ describe("API buy persistence", () => {
       slug: "generated-pending-test",
       visibility: "admin",
       isEditable: true,
-      display: { name: "Generated Pending Test", description: "Run attribution test" },
-      trafficConfig: {},
-      inventoryConfig: {},
-      erpConfig: {},
-      backpressureConfig: {},
+      display: {
+        name: "Generated Pending Test",
+        description: "Run attribution test",
+        sortOrder: 1,
+        outcomeFocus: ["pending_persistence"],
+      },
+      ...acceptedRunConfigSnapshotFixture(),
     });
     await connection.db.insert(demoRuns).values({
       id: fixtureIds.run,
@@ -3443,12 +3445,7 @@ describe("API buy persistence", () => {
       operatorMode: "admin",
       status: "active",
       trafficStatus: "active",
-      configSnapshot: {
-        trafficConfig: {},
-        inventoryConfig: {},
-        erpConfig: {},
-        backpressureConfig: {},
-      },
+      configSnapshot: acceptedRunConfigSnapshotFixture(),
       saleOfferId: generatedSaleOfferId,
       startedAt: new Date("2026-01-01T00:00:00.000Z"),
     });
@@ -3565,11 +3562,13 @@ describe("API buy persistence", () => {
       slug: "generated-stale-closure-test",
       visibility: "admin",
       isEditable: true,
-      display: { name: "Generated Stale Closure Test", description: "Run closure test" },
-      trafficConfig: {},
-      inventoryConfig: {},
-      erpConfig: {},
-      backpressureConfig: {},
+      display: {
+        name: "Generated Stale Closure Test",
+        description: "Run closure test",
+        sortOrder: 1,
+        outcomeFocus: ["lifecycle_closure"],
+      },
+      ...acceptedRunConfigSnapshotFixture(),
     });
     await connection.db.insert(demoRuns).values({
       id: fixtureIds.run,
@@ -3578,12 +3577,7 @@ describe("API buy persistence", () => {
       operatorMode: "admin",
       status: "active",
       trafficStatus: "active",
-      configSnapshot: {
-        trafficConfig: {},
-        inventoryConfig: {},
-        erpConfig: {},
-        backpressureConfig: {},
-      },
+      configSnapshot: acceptedRunConfigSnapshotFixture(),
       saleOfferId: generatedSaleOfferId,
       startedAt: new Date("2026-01-01T00:00:00.000Z"),
     });

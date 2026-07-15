@@ -10,6 +10,7 @@ import {
   orderProcessBullMqQueueName,
   orderProcessJobName,
   type TrafficCompletionReport,
+  trafficDeliverySummarySchema,
 } from "@checkout-surge/contracts";
 import {
   createDatabaseConnection,
@@ -1216,7 +1217,7 @@ async function seedTrafficCompleteRunArtifacts(
     exitCode: 0,
     httpSummary: report.httpSummary,
     trafficOutcomeSummary: report.trafficOutcomeSummary,
-    trafficDeliverySummary: report.trafficDeliverySummary,
+    trafficDeliverySummary: trafficDeliverySummarySchema.parse(report.trafficDeliverySummary),
     httpTimingBreakdownSummary: report.httpTimingBreakdownSummary,
     loadRunDiagnosticsSummary: report.loadRunDiagnosticsSummary,
     apiRequestLifecycleSummary: report.apiRequestLifecycleSummary,

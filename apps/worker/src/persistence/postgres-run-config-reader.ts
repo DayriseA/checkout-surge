@@ -16,6 +16,27 @@ export class PostgresRunConfigReader implements RunConfigReader {
       .where(eq(demoRuns.id, runId))
       .limit(1);
 
-    return row ? acceptedRunConfigSnapshotSchema.parse(row.configSnapshot) : null;
+    if (!row) {
+      return null;
+    }
+
+    const parsed = acceptedRunConfigSnapshotSchema.safeParse(row.configSnapshot);
+    if (!parsed.success) {
+      throw new PersistedRunConfigCorruptionError(runId, parsed.error);
+    }
+
+    return parsed.data;
+  }
+}
+
+export class PersistedRunConfigCorruptionError extends Error {
+  readonly code = "persisted_run_config_invalid";
+
+  constructor(
+    readonly runId: string,
+    cause: unknown,
+  ) {
+    super(`Persisted configuration for demo run "${runId}" is invalid.`, { cause });
+    this.name = "PersistedRunConfigCorruptionError";
   }
 }

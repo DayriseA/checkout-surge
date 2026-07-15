@@ -1,6 +1,9 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { emptyHttpTimingBreakdownSummary } from "@checkout-surge/contracts";
+import {
+  emptyHttpTimingBreakdownSummary,
+  trafficDeliverySummarySchema,
+} from "@checkout-surge/contracts";
 import {
   createDatabaseConnection,
   demoPresets,
@@ -114,13 +117,13 @@ describe("run history service", () => {
     await db
       .update(demoRunSummaries)
       .set({
-        trafficDeliverySummary: {
+        trafficDeliverySummary: trafficDeliverySummarySchema.parse({
           plannedRequests: 100,
           emittedRequests: 94,
           droppedIterations: 0,
           trafficDeliveryStatus: "complete",
           notes: [],
-        },
+        }),
       })
       .where(eq(demoRunSummaries.id, ids.newerSummary));
 
@@ -520,13 +523,13 @@ function summaryFixture(input: {
       p95LatencyMs: 42,
       failureRate: 0,
     },
-    trafficDeliverySummary: {
+    trafficDeliverySummary: trafficDeliverySummarySchema.parse({
       plannedRequests: 10,
       emittedRequests: input.emittedRequests,
       droppedIterations: 10 - input.emittedRequests,
       trafficDeliveryStatus: input.trafficDeliveryStatus,
       notes: input.trafficDeliveryStatus === "failed" ? ["Major delivery shortfall."] : [],
-    },
+    }),
     httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
     loadRunDiagnosticsSummary: {},
     apiRequestLifecycleSummary: {},

@@ -11,6 +11,7 @@ import type {
 import {
   controlServiceTokenHeaderName,
   emptyHttpTimingBreakdownSummary,
+  trafficDeliverySummarySchema,
   trafficExecutionStartPath,
 } from "@checkout-surge/contracts";
 import { signPublicVisitorCredential } from "@checkout-surge/contracts/public-visitor-credential";
@@ -34,7 +35,7 @@ import {
 } from "@checkout-surge/db";
 import { resetTestDatabase } from "@checkout-surge/db/testing";
 import { correlationIdHeaderName, createSilentLogger } from "@checkout-surge/logger";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiHttpError } from "../src/runtime/errors.js";
 import { DemoMaintenanceService } from "../src/services/demo-maintenance-service.js";
@@ -929,12 +930,10 @@ describe("demo-run public runtime policy management", () => {
       /policy "active" is missing/,
     );
 
-    await db.insert(publicRuntimePolicies).values({
-      id: "active",
-      policy: { malformed: true },
-      createdAt: new Date("2026-06-20T00:00:00.000Z"),
-      updatedAt: new Date("2026-06-20T00:00:00.000Z"),
-    });
+    await db.execute(
+      sql`INSERT INTO ${publicRuntimePolicies} (id, policy)
+          VALUES ('active', ${JSON.stringify({ malformed: true })}::jsonb)`,
+    );
     await expect(validateActivePublicRuntimePolicyAtStartup(db, caps)).rejects.toThrow(
       /publicRunBudget|publicCustomDefaults/,
     );
@@ -1773,13 +1772,13 @@ describe("demo-run lifecycle start gating", () => {
               unexpectedResponses: 0,
               failureRate: 0,
             },
-            trafficDeliverySummary: {
+            trafficDeliverySummary: trafficDeliverySummarySchema.parse({
               plannedRequests: 10_000,
               emittedRequests: 0,
               droppedIterations: 10_000,
               trafficDeliveryStatus: "failed",
               notes: [],
-            },
+            }),
             httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
             loadRunDiagnosticsSummary: { source: "existing-summary" },
             apiRequestLifecycleSummary: { source: "existing-summary" },

@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import {
   type AcceptedRunConfigSnapshot,
   emptyHttpTimingBreakdownSummary,
+  trafficDeliverySummarySchema,
 } from "@checkout-surge/contracts";
 import {
   completeGeneratedRunTeardown,
@@ -1959,13 +1960,13 @@ async function seedRun(
         failureRate: 0,
       },
       trafficOutcomeSummary: {},
-      trafficDeliverySummary: {
+      trafficDeliverySummary: trafficDeliverySummarySchema.parse({
         plannedRequests: 10,
         emittedRequests: 10,
         droppedIterations: 0,
         trafficDeliveryStatus: "complete",
         notes: [],
-      },
+      }),
       httpTimingBreakdownSummary: {
         ...emptyHttpTimingBreakdownSummary,
         waiting: { averageMs: 30, p95Ms: 42 },
@@ -2179,9 +2180,24 @@ async function seedCleanupDurableGraph(
   await db.insert(demoRunFinalizations).values({
     runId: ids.completedRun,
     exitCode: 0,
-    httpSummary: {},
+    httpSummary: {
+      plannedRequests: 0,
+      emittedRequests: 0,
+      completedRequests: 0,
+      failedRequests: 0,
+      acceptedResponses: 0,
+      soldOutResponses: 0,
+      unexpectedResponses: 0,
+      failureRate: 0,
+    },
     trafficOutcomeSummary: {},
-    trafficDeliverySummary: {},
+    trafficDeliverySummary: trafficDeliverySummarySchema.parse({
+      plannedRequests: 0,
+      emittedRequests: 0,
+      droppedIterations: 0,
+      trafficDeliveryStatus: "complete",
+      notes: [],
+    }),
     httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
     loadRunDiagnosticsSummary: {},
     apiRequestLifecycleSummary: {},
@@ -2264,13 +2280,13 @@ async function seedTerminalSummary(
       unexpectedResponses: 0,
       failureRate: 0,
     },
-    trafficDeliverySummary: {
+    trafficDeliverySummary: trafficDeliverySummarySchema.parse({
       plannedRequests: 10,
       emittedRequests: 10,
       droppedIterations: 0,
       trafficDeliveryStatus: input.status === "completed" ? "complete" : "failed",
       notes: [],
-    },
+    }),
     httpTimingBreakdownSummary: {
       ...emptyHttpTimingBreakdownSummary,
       waiting: { averageMs: 20, p95Ms: 30 },

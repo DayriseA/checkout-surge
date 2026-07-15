@@ -427,6 +427,7 @@ Logical fields:
 Notes:
 
 - Public presets such as `preview-1k`, `surge-5k`, `surge-10k`, `idempotency-check-200`, and `public-custom` are durable but read-only.
+- The Drizzle declarations type preset display/config JSON directly from shared contracts. This is a compile-time write/select boundary; PostgreSQL still stores `jsonb`, so API response construction and other legacy-row readers retain runtime schema validation.
 - Admin operators can save editable admin presets, duplicate public presets into admin copies, or copy a preset into `Custom`.
 - `isSystem` marks seeded/reserved canonical slugs so operator duplicates can be distinguished from system presets. Only operator-created (non-system), editable, non-custom, active admin presets are archivable; public presets, `public-custom`, the persisted `Custom` scratch preset, and all seeded/system admin presets are never archivable.
 - Archival is a soft delete: it sets `archivedAt` but keeps the row intact. Active preset lists and lookups exclude rows where `archivedAt` is not null, so an archived preset can no longer be saved, copied, duplicated, or started. The global unique slug index still reserves archived slugs, so they cannot be reused. `DemoRun.presetId` references (`ON DELETE RESTRICT`) remain valid because the preset row is retained, preserving historical run integrity.
@@ -672,6 +673,7 @@ Logical fields:
 Notes:
 
 - Run summaries are separate from live dashboard recovery state.
+- Persisted run snapshots, HTTP and delivery summaries, business outcomes, terminal inventory, and the runtime-policy payload use their shared contract types in the Drizzle schema. Finalization diagnostics whose contracts intentionally remain open objects stay generic, and event-polymorphic order-event payloads are outside this boundary. These TypeScript annotations do not validate existing rows or raw SQL writes; DB-adjacent readers reject malformed legacy data with identifiable errors.
 - `terminalInventorySnapshot` carries the Redis-derived terminal observation produced by the applicable terminal workflow, so completed runs stay auditable after live Redis state is reset. Normal post-traffic finalization reuses the exact durable snapshot persisted during traffic-completion enrichment; admin reset, startup reconciliation, and early-failure workflows may capture their own terminal observations.
 - Run History displays traffic delivery quality from `trafficDeliverySummary.trafficDeliveryStatus` next to the terminal run status, rather than encoding warning/degraded delivery as separate demo-run lifecycle states.
 - A terminal run should have one summary-backed history record whether it ended through normal finalization, admin recovery, traffic-start failure, or initialization failure.

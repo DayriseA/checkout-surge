@@ -23,7 +23,8 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "type-check": "tsc -p tsconfig.json --noEmit",
+    "type-check": "tsc -p tsconfig.json --noEmit && pnpm type-check:boundary",
+    "type-check:boundary": "tsc -p tsconfig.boundary.json --noEmit",
     "lint": "biome lint .",
     "db:migrate": "node ../../scripts/run-with-env.mjs tsx src/scripts/migrate.ts",
     "seed": "node ../../scripts/run-with-env.mjs tsx src/scripts/seed.ts",
