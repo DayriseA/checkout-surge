@@ -87,6 +87,7 @@ checkout-surge/
 - Owns the simulated legacy ERP HTTP surface.
 - Applies run-scoped ERP behavior supplied by accepted jobs; `LATENCY_MS`, `MAX_TPS`, `ERROR_RATE`, and `FORCED_OUTAGE` remain environment-backed catalog/fallback diagnostics.
 - Owns runtime admin chaos controls for latency, TPS cap, error rate, and forced outage.
+- Enforces each TPS scope with an in-process rolling one-second limiter; horizontally replicated instances do not share limiter history.
 - Uses `packages/db` for the durable first-write-wins ERP confirmation-result ledger.
 - Has no knowledge of the queue or any other internal service.
 

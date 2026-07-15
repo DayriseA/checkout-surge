@@ -22,6 +22,7 @@ import {
   ConfirmationIdempotencyConflictError,
   ConfirmationService,
 } from "../../src/application/confirmation-service.js";
+import { SlidingWindowTpsLimiter } from "../../src/application/tps-limiter.js";
 import { loadMockErpConfig } from "../../src/runtime/config.js";
 import { buildMockErpServer } from "../../src/server.js";
 
@@ -115,6 +116,27 @@ describe("Mock ERP configuration", () => {
       loadMockErpConfig({ CONTROL_SERVICE_TOKEN: controlServiceToken, FORCED_OUTAGE: "yes" }),
     ).toThrow("FORCED_OUTAGE must be true or false");
   });
+
+  it.each(["0", "-1", "1.5", "not-a-number", "NaN", "Infinity", "-Infinity", "1e309"])(
+    "rejects MAX_TPS=%s",
+    (value) => {
+      expect(() =>
+        loadMockErpConfig({ CONTROL_SERVICE_TOKEN: controlServiceToken, MAX_TPS: value }),
+      ).toThrow("MAX_TPS must be a positive integer");
+    },
+  );
+
+  it.each(["0", "-1", "1.5", "not-a-number", "NaN", "Infinity", "-Infinity", "1e309"])(
+    "rejects ADMIN_MIN_MAX_TPS=%s",
+    (value) => {
+      expect(() =>
+        loadMockErpConfig({
+          CONTROL_SERVICE_TOKEN: controlServiceToken,
+          ADMIN_MIN_MAX_TPS: value,
+        }),
+      ).toThrow("ADMIN_MIN_MAX_TPS must be a positive integer");
+    },
+  );
 });
 
 describe("confirmation service", () => {
@@ -274,7 +296,11 @@ describe("chaos control service", () => {
       { latencyMs: 125, maxTps: 100, errorRate: 0, forcedOutage: false },
       testSafetyCaps,
     );
-    const provider = new ChaosConfirmationDecisionProvider({ configStore: store, sleep });
+    const provider = new ChaosConfirmationDecisionProvider({
+      configStore: store,
+      tpsLimiter: new SlidingWindowTpsLimiter(),
+      sleep,
+    });
 
     await expect(provider.decide(confirmationRequest)).resolves.toEqual({ status: "succeeded" });
     expect(sleep).toHaveBeenCalledWith(125);
@@ -286,7 +312,11 @@ describe("chaos control service", () => {
       { latencyMs: 125, maxTps: 100, errorRate: 0, forcedOutage: true },
       testSafetyCaps,
     );
-    const provider = new ChaosConfirmationDecisionProvider({ configStore: store, sleep });
+    const provider = new ChaosConfirmationDecisionProvider({
+      configStore: store,
+      tpsLimiter: new SlidingWindowTpsLimiter(),
+      sleep,
+    });
 
     await expect(
       provider.decide({
@@ -304,7 +334,7 @@ describe("chaos control service", () => {
     );
     const provider = new ChaosConfirmationDecisionProvider({
       configStore: store,
-      now: () => new Date("2026-06-22T00:00:00.500Z"),
+      tpsLimiter: new SlidingWindowTpsLimiter({ nowMs: () => 500 }),
     });
 
     await expect(provider.decide(confirmationRequest)).resolves.toEqual({ status: "succeeded" });
@@ -319,7 +349,7 @@ describe("chaos control service", () => {
     const store = new ErpChaosConfigStore(defaultChaosConfig, testSafetyCaps);
     const provider = new ChaosConfirmationDecisionProvider({
       configStore: store,
-      now: () => new Date("2026-06-22T00:00:00.500Z"),
+      tpsLimiter: new SlidingWindowTpsLimiter({ nowMs: () => 500 }),
     });
     const runScopedConfig = { latencyMs: 0, maxTps: 1, errorRate: 0, forcedOutage: false };
     const firstRunRequest = {
@@ -357,7 +387,7 @@ describe("chaos control service", () => {
     );
     const provider = new ChaosConfirmationDecisionProvider({
       configStore: store,
-      now: () => new Date("2026-06-22T00:00:00.500Z"),
+      tpsLimiter: new SlidingWindowTpsLimiter({ nowMs: () => 500 }),
     });
     const globalRequest = {
       ...confirmationRequest,
@@ -382,7 +412,7 @@ describe("chaos control service", () => {
     const store = new ErpChaosConfigStore(defaultChaosConfig, testSafetyCaps);
     const provider = new ChaosConfirmationDecisionProvider({
       configStore: store,
-      now: () => new Date("2026-06-22T00:00:00.500Z"),
+      tpsLimiter: new SlidingWindowTpsLimiter({ nowMs: () => 500 }),
       random: () => 1,
     });
     const firstConfigRequest = {
@@ -426,6 +456,7 @@ describe("chaos control service", () => {
     await expect(
       new ChaosConfirmationDecisionProvider({
         configStore: errorStore,
+        tpsLimiter: new SlidingWindowTpsLimiter(),
         random: () => 0,
       }).decide(confirmationRequest),
     ).resolves.toMatchObject({
@@ -434,7 +465,10 @@ describe("chaos control service", () => {
       errorCode: "erp_injected_error",
     });
     await expect(
-      new ChaosConfirmationDecisionProvider({ configStore: outageStore }).decide(
+      new ChaosConfirmationDecisionProvider({
+        configStore: outageStore,
+        tpsLimiter: new SlidingWindowTpsLimiter(),
+      }).decide(
         confirmationRequest,
       ),
     ).resolves.toMatchObject({
@@ -843,7 +877,11 @@ function buildChaosServer(options: {
     confirmationService: new ConfirmationService({
       decisionProvider: new ChaosConfirmationDecisionProvider({
         configStore: options.chaosConfigStore,
-        ...(options.providerNow ? { now: options.providerNow } : {}),
+        tpsLimiter: new SlidingWindowTpsLimiter({
+          ...(options.providerNow
+            ? { nowMs: () => options.providerNow?.().getTime() ?? 0 }
+            : {}),
+        }),
         ...(options.random ? { random: options.random } : {}),
         ...(options.sleep ? { sleep: options.sleep } : {}),
       }),

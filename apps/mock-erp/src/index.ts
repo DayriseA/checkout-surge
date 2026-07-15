@@ -7,6 +7,7 @@ import {
 } from "./application/chaos-control-service.js";
 import { ConfirmationService } from "./application/confirmation-service.js";
 import { PostgresConfirmationLedger } from "./application/postgres-confirmation-ledger.js";
+import { SlidingWindowTpsLimiter } from "./application/tps-limiter.js";
 import { loadMockErpConfig } from "./runtime/config.js";
 import { buildMockErpServer } from "./server.js";
 
@@ -32,6 +33,11 @@ export {
   InMemoryConfirmationLedger,
 } from "./application/confirmation-service.js";
 export { PostgresConfirmationLedger } from "./application/postgres-confirmation-ledger.js";
+export {
+  SlidingWindowTpsLimiter,
+  type SlidingWindowTpsLimiterOptions,
+  type TpsLimiter,
+} from "./application/tps-limiter.js";
 export { loadMockErpConfig, type MockErpConfig } from "./runtime/config.js";
 export { buildMockErpServer } from "./server.js";
 
@@ -46,7 +52,10 @@ export async function startMockErp(): Promise<void> {
   const server = buildMockErpServer({
     confirmationService: new ConfirmationService({
       ledger: new PostgresConfirmationLedger(database.db),
-      decisionProvider: new ChaosConfirmationDecisionProvider({ configStore: chaosConfigStore }),
+      decisionProvider: new ChaosConfirmationDecisionProvider({
+        configStore: chaosConfigStore,
+        tpsLimiter: new SlidingWindowTpsLimiter(),
+      }),
     }),
     chaosConfigStore,
     controlServiceToken: config.controlServiceToken,

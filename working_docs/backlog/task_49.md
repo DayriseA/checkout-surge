@@ -75,3 +75,12 @@ Add unit coverage at the limiter/provider boundary in `apps/mock-erp/test/unit/`
 - Configuration boundaries: explicitly reject `MAX_TPS` and `ADMIN_MIN_MAX_TPS` values of `0`, negative, fractional, nonnumeric, and non-finite forms, while preserving defaults and valid positive integers.
 
 Run the mock-ERP unit suite, type-check, and lint after implementation. Preserve the scope and non-goals above even if broader production rate-limiting concerns are discovered.
+
+## Implementation record
+
+- **Status:** Completed on 2026-07-15.
+- **Scope delivered:** Extracted a synchronous `TpsLimiter` boundary and monotonic-clock `SlidingWindowTpsLimiter`; wired the concrete limiter in the mock-ERP composition root; preserved existing TPS scope serialization and dependency failure vocabulary; reordered outage, admission, latency, and injected-error handling as specified.
+- **State behavior:** The limiter retains accepted timestamps only, expires arrivals at age `>= 1_000ms`, uses indexed queues with periodic compaction, prunes inactive scopes during acquisitions, and preserves per-scope history across live cap updates and resets. It remains intentionally process-local and restart-ephemeral.
+- **Verification:** `pnpm --filter mock-erp lint`, `pnpm --filter mock-erp type-check`, and `pnpm --filter mock-erp test:unit` pass. The unit suite contains 62 passing tests, including focused rolling-window, scope, dynamic-cap, pruning, failure-order, concurrency, and TPS environment-boundary coverage. Per repository guidance, `test:composition` and `test:characterization` were not run.
+- **Documentation:** Updated `docs/admin_access_protection.md`, `docs/local_development.md`, `docs/runtime_topology.md`, and `docs/repository_layout.md` to replace fixed-bucket claims with the process-local rolling-window behavior and reset limitations.
+- **Remaining issues:** None identified within Task 49 scope.

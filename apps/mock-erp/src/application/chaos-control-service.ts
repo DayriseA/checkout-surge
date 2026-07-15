@@ -6,6 +6,7 @@ import {
   erpChaosStatusSchema,
 } from "@checkout-surge/contracts";
 import type { ConfirmationDecision, ConfirmationDecisionProvider } from "./confirmation-service.js";
+import type { TpsLimiter } from "./tps-limiter.js";
 
 export interface ErpChaosSafetyCaps {
   maxLatencyMs: number;
@@ -97,31 +98,25 @@ export class ErpChaosConfigStore {
 
 export interface ChaosConfirmationDecisionProviderOptions {
   configStore: ErpChaosConfigStore;
-  now?: () => Date;
+  tpsLimiter: TpsLimiter;
   random?: () => number;
   sleep?: (durationMs: number) => Promise<void>;
   resolveConfig?: (request: ErpConfirmationRequest, fallback: ErpChaosConfig) => ErpChaosConfig;
 }
 
-interface TpsWindow {
-  windowStartedAtMs: number;
-  requestsInWindow: number;
-}
-
 export class ChaosConfirmationDecisionProvider implements ConfirmationDecisionProvider {
   private readonly configStore: ErpChaosConfigStore;
-  private readonly now: () => Date;
+  private readonly tpsLimiter: TpsLimiter;
   private readonly random: () => number;
   private readonly sleep: (durationMs: number) => Promise<void>;
   private readonly resolveConfig: (
     request: ErpConfirmationRequest,
     fallback: ErpChaosConfig,
   ) => ErpChaosConfig;
-  private readonly tpsWindows = new Map<string, TpsWindow>();
 
   constructor(options: ChaosConfirmationDecisionProviderOptions) {
     this.configStore = options.configStore;
-    this.now = options.now ?? (() => new Date());
+    this.tpsLimiter = options.tpsLimiter;
     this.random = options.random ?? Math.random;
     this.sleep = options.sleep ?? defaultSleep;
     this.resolveConfig =
@@ -132,10 +127,6 @@ export class ChaosConfirmationDecisionProvider implements ConfirmationDecisionPr
     const fallbackConfig = this.configStore.getConfig();
     const config = erpChaosConfigSchema.parse(this.resolveConfig(request, fallbackConfig));
 
-    if (config.latencyMs > 0) {
-      await this.sleep(config.latencyMs);
-    }
-
     if (config.forcedOutage) {
       return dependencyFailure(
         503,
@@ -145,12 +136,16 @@ export class ChaosConfirmationDecisionProvider implements ConfirmationDecisionPr
     }
 
     const tpsScopeKey = this.resolveTpsScopeKey(request, config, fallbackConfig);
-    if (!this.acceptWithinTpsLimit(tpsScopeKey, config.maxTps)) {
+    if (!this.tpsLimiter.acquire(tpsScopeKey, config.maxTps)) {
       return dependencyFailure(
         429,
         "erp_capacity_exceeded",
         "The ERP cannot accept more confirmations right now.",
       );
+    }
+
+    if (config.latencyMs > 0) {
+      await this.sleep(config.latencyMs);
     }
 
     if (config.errorRate > 0 && this.random() < config.errorRate) {
@@ -162,23 +157,6 @@ export class ChaosConfirmationDecisionProvider implements ConfirmationDecisionPr
     }
 
     return { status: "succeeded" };
-  }
-
-  private acceptWithinTpsLimit(scopeKey: string, maxTps: number): boolean {
-    const currentWindowStartedAtMs = Math.floor(this.now().getTime() / 1000) * 1000;
-    const window = this.tpsWindows.get(scopeKey) ?? {
-      windowStartedAtMs: Number.NEGATIVE_INFINITY,
-      requestsInWindow: 0,
-    };
-
-    if (currentWindowStartedAtMs !== window.windowStartedAtMs) {
-      window.windowStartedAtMs = currentWindowStartedAtMs;
-      window.requestsInWindow = 0;
-    }
-
-    window.requestsInWindow += 1;
-    this.tpsWindows.set(scopeKey, window);
-    return window.requestsInWindow <= maxTps;
   }
 
   private resolveTpsScopeKey(
