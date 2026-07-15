@@ -411,7 +411,7 @@ describe("database migrations, seed data, and reset behavior", () => {
       await sql`
         DELETE FROM drizzle.__drizzle_migrations
         WHERE id IN (
-          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 3
+          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 4
         )
       `;
       await insertCatalogSaleOffer(sql, {
@@ -596,7 +596,7 @@ describe("database migrations, seed data, and reset behavior", () => {
       await sql`
         DELETE FROM drizzle.__drizzle_migrations
         WHERE id IN (
-          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 4
+          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 5
         )
       `;
       await sql`
@@ -706,7 +706,7 @@ describe("database migrations, seed data, and reset behavior", () => {
       await sql`
         DELETE FROM drizzle.__drizzle_migrations
         WHERE id IN (
-          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 6
+          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 7
         )
       `;
     });
@@ -766,7 +766,7 @@ describe("database migrations, seed data, and reset behavior", () => {
     const operatorDuplicateId = "44444444-4444-4444-8444-444444444461";
 
     // Rewind to before migration 0009: drop the new columns and index, remove
-    // the journal entry, then insert representative legacy rows before
+    // the 0009 and later journal entries, then insert representative legacy rows before
     // re-migrating so the backfill semantics are exercised, not just a fresh
     // schema build.
     await withDatabase(async (sql) => {
@@ -776,7 +776,7 @@ describe("database migrations, seed data, and reset behavior", () => {
       await sql`
         DELETE FROM drizzle.__drizzle_migrations
         WHERE id IN (
-          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 1
+          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 2
         )
       `;
       await sql`
@@ -861,6 +861,112 @@ describe("database migrations, seed data, and reset behavior", () => {
       (sql) =>
         sql`DELETE FROM demo_presets WHERE id IN (${canonicalPresetId}, ${operatorDuplicateId})`,
     );
+  });
+
+  it("backfills conservative ERP attempt terminal markers and enforces the final column contract", async () => {
+    const confirmedIds = buildOrderReservationIds(901);
+    const failedIds = buildOrderReservationIds(902);
+    const processingIds = buildOrderReservationIds(903);
+    const correlationId = "corr-erp-terminal-migration";
+
+    await withDatabase(async (sql) => {
+      await sql`ALTER TABLE "erp_attempts" DROP COLUMN IF EXISTS "terminal"`;
+      await sql`
+        DELETE FROM drizzle.__drizzle_migrations
+        WHERE id IN (
+          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 1
+        )
+      `;
+      await insertCatalogSaleOffer(sql, confirmedIds);
+      for (const { ids, status } of [
+        { ids: confirmedIds, status: "confirmed" as const },
+        { ids: failedIds, status: "failed" as const },
+        { ids: processingIds, status: "processing" as const },
+      ]) {
+        await insertReservation(sql, {
+          reservationId: ids.reservationId,
+          saleOfferId: confirmedIds.saleOfferId,
+          correlationId,
+        });
+        await insertOrder(sql, {
+          orderId: ids.orderId,
+          saleOfferId: confirmedIds.saleOfferId,
+          reservationId: ids.reservationId,
+          correlationId,
+          status,
+          processingAt: orderQueuedAt,
+        });
+      }
+      await sql`
+        INSERT INTO "erp_attempts" (
+          "order_id", "delivery_id", "correlation_id", "attempt_number", "status",
+          "latency_ms", "started_at", "finished_at", "created_at"
+        ) VALUES
+          (${confirmedIds.orderId}, 'confirmed-failure', ${correlationId}, 1, 'failed', 10, '2026-06-20T12:00:01Z', '2026-06-20T12:00:01Z', '2026-06-20T12:00:01Z'),
+          (${confirmedIds.orderId}, 'confirmed-success', ${correlationId}, 2, 'succeeded', 10, '2026-06-20T12:00:02Z', '2026-06-20T12:00:02Z', '2026-06-20T12:00:02Z'),
+          (${failedIds.orderId}, 'failed-earlier', ${correlationId}, 1, 'failed', 10, '2026-06-20T12:00:01Z', '2026-06-20T12:00:01Z', '2026-06-20T12:00:01Z'),
+          (${failedIds.orderId}, 'failed-latest', ${correlationId}, 2, 'timed_out', 10, '2026-06-20T12:00:02Z', '2026-06-20T12:00:02Z', '2026-06-20T12:00:02Z'),
+          (${processingIds.orderId}, 'processing-ambiguous', ${correlationId}, 1, 'failed', 10, '2026-06-20T12:00:01Z', '2026-06-20T12:00:01Z', '2026-06-20T12:00:01Z')
+      `;
+    });
+
+    await runDatabaseMigrations({
+      databaseUrl: requireTestEnv("TEST_DATABASE_URL"),
+      migrationsFolder,
+    });
+
+    await withDatabase(async (sql) => {
+      const rows = await sql<{ delivery_id: string; terminal: boolean }[]>`
+        SELECT "delivery_id", "terminal"
+        FROM "erp_attempts"
+        WHERE "correlation_id" = ${correlationId}
+        ORDER BY "delivery_id"
+      `;
+      expect(rows).toEqual([
+        { delivery_id: "confirmed-failure", terminal: false },
+        { delivery_id: "confirmed-success", terminal: true },
+        { delivery_id: "failed-earlier", terminal: false },
+        { delivery_id: "failed-latest", terminal: true },
+        { delivery_id: "processing-ambiguous", terminal: false },
+      ]);
+
+      const [column] = await sql<{ is_nullable: string; column_default: string | null }[]>`
+        SELECT is_nullable, column_default
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'erp_attempts'
+          AND column_name = 'terminal'
+      `;
+      expect(column).toEqual({ is_nullable: "NO", column_default: "false" });
+
+      await sql`
+        INSERT INTO "erp_attempts" (
+          "order_id", "delivery_id", "correlation_id", "attempt_number", "status",
+          "latency_ms", "started_at", "finished_at"
+        ) VALUES (
+          ${processingIds.orderId}, 'default-terminal', ${correlationId}, 2, 'failed',
+          10, '2026-06-20T12:00:03Z', '2026-06-20T12:00:03Z'
+        )
+      `;
+      const [defaulted] = await sql<{ terminal: boolean }[]>`
+        SELECT terminal FROM erp_attempts WHERE delivery_id = 'default-terminal'
+      `;
+      expect(defaulted?.terminal).toBe(false);
+      await expect(sql`
+        INSERT INTO "erp_attempts" (
+          "order_id", "delivery_id", "correlation_id", "attempt_number", "status", "terminal",
+          "latency_ms", "started_at", "finished_at"
+        ) VALUES (
+          ${processingIds.orderId}, 'null-terminal', ${correlationId}, 3, 'failed', NULL,
+          10, '2026-06-20T12:00:04Z', '2026-06-20T12:00:04Z'
+        )
+      `).rejects.toThrow();
+
+      await sql`DELETE FROM orders WHERE id IN (${confirmedIds.orderId}, ${failedIds.orderId}, ${processingIds.orderId})`;
+      await sql`DELETE FROM reservations WHERE id IN (${confirmedIds.reservationId}, ${failedIds.reservationId}, ${processingIds.reservationId})`;
+      await sql`DELETE FROM sale_offers WHERE id = ${confirmedIds.saleOfferId}`;
+      await sql`DELETE FROM products WHERE id = ${confirmedIds.productId}`;
+    });
   });
 
   it("isolates scoped ERP circuit snapshots, applies TTL, and clears scoped and legacy state", async () => {

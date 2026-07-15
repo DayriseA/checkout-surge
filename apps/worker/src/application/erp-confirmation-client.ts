@@ -6,9 +6,10 @@ import {
   type OrderProcessJob,
 } from "@checkout-surge/contracts";
 import { correlationIdHeaderName } from "@checkout-surge/logger";
-import type {
-  OrderConfirmation,
-  OrderProcessDeliveryMetadata,
+import {
+  hasRemainingAttempts,
+  type OrderConfirmation,
+  type OrderProcessDeliveryMetadata,
 } from "./order-process-job-handler.js";
 import { type RunConfigReader, toErpRequestConfig } from "./run-config.js";
 
@@ -16,6 +17,7 @@ export interface ErpAttemptRecord {
   job: OrderProcessJob;
   delivery: OrderProcessDeliveryMetadata;
   status: "succeeded" | "failed" | "timed_out";
+  terminal: boolean;
   httpStatus?: number;
   errorCode?: string;
   errorMessage?: string;
@@ -206,6 +208,7 @@ export class HttpErpOrderConfirmation implements OrderConfirmation {
           job,
           delivery,
           status: "timed_out",
+          terminal: !hasRemainingAttempts(delivery),
           errorCode: "erp_request_timeout",
           errorMessage: `The ERP confirmation request timed out after ${requestTimeoutMs}ms.`,
           latencyMs: elapsedMs(startedAt, finishedAt),
@@ -228,6 +231,7 @@ export class HttpErpOrderConfirmation implements OrderConfirmation {
           job,
           delivery,
           status: "failed",
+          terminal: !hasRemainingAttempts(delivery),
           httpStatus: error.httpStatus,
           errorCode: "erp_invalid_response",
           errorMessage: error.message,
@@ -244,6 +248,7 @@ export class HttpErpOrderConfirmation implements OrderConfirmation {
         job,
         delivery,
         status: "failed",
+        terminal: !hasRemainingAttempts(delivery),
         errorCode: "erp_request_failed",
         errorMessage: error instanceof Error ? error.message : "The ERP request failed.",
         latencyMs: elapsedMs(startedAt, finishedAt),
@@ -321,11 +326,16 @@ function toAttemptRecord(options: {
   finishedAt: Date;
 }): ErpAttemptRecord {
   const status = options.response.status === "succeeded" ? "succeeded" : "failed";
+  const terminal =
+    status === "succeeded" ||
+    !isTemporaryErpConfirmationError(new ErpConfirmationFailedError(options.response)) ||
+    !hasRemainingAttempts(options.delivery);
 
   return {
     job: options.job,
     delivery: options.delivery,
     status,
+    terminal,
     httpStatus: options.response.httpStatus ?? options.fallbackHttpStatus,
     ...(options.response.errorCode ? { errorCode: options.response.errorCode } : {}),
     ...(options.response.errorMessage ? { errorMessage: options.response.errorMessage } : {}),

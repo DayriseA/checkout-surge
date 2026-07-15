@@ -374,6 +374,7 @@ describe("PostgreSQL worker order transitions", () => {
       job,
       delivery: { attemptNumber: 3, attemptsMade: 2 },
       status: "failed",
+      terminal: true,
       httpStatus: 503,
       errorCode: "erp_unavailable",
       errorMessage: "The ERP is temporarily unavailable.",
@@ -398,6 +399,7 @@ describe("PostgreSQL worker order transitions", () => {
       correlationId: job.correlationId,
       attemptNumber: 3,
       status: "failed",
+      terminal: true,
       httpStatus: 503,
       errorCode: "erp_unavailable",
       errorMessage: "The ERP is temporarily unavailable.",
@@ -414,6 +416,7 @@ describe("PostgreSQL worker order transitions", () => {
       occurredAt: finishedAt,
       payload: {
         erpAttemptStatus: "failed",
+        terminal: true,
         attemptNumber: 3,
         attemptsMade: 2,
         httpStatus: 503,
@@ -422,6 +425,91 @@ describe("PostgreSQL worker order transitions", () => {
         latencyMs: 75,
       },
     });
+  });
+
+  it.each([
+    { status: "succeeded" as const, terminal: true },
+    { status: "failed" as const, terminal: false },
+    { status: "failed" as const, terminal: true },
+    { status: "timed_out" as const, terminal: false },
+    { status: "timed_out" as const, terminal: true },
+  ])("keeps $status terminal=$terminal attempt rows and events in parity", async ({ status, terminal }) => {
+    const persistence = new PostgresErpAttemptPersistence(connection.db);
+    await persistence.recordAttempt({
+      job,
+      delivery: { attemptNumber: 1, attemptsMade: 0, deliveryId: `${status}-${terminal}` },
+      status,
+      terminal,
+      latencyMs: 10,
+      startedAt: new Date("2026-06-21T00:00:01.000Z"),
+      finishedAt: new Date("2026-06-21T00:00:01.010Z"),
+    });
+
+    const [attempt] = await connection.db
+      .select()
+      .from(erpAttempts)
+      .where(eq(erpAttempts.orderId, ids.order));
+    const [event] = await connection.db
+      .select()
+      .from(orderEvents)
+      .where(
+        and(
+          eq(orderEvents.orderId, ids.order),
+          eq(
+            orderEvents.eventName,
+            status === "succeeded" ? "erp.attempt.succeeded" : "erp.attempt.failed",
+          ),
+        ),
+      );
+    expect(attempt).toMatchObject({ status, terminal });
+    expect(event?.payload).toMatchObject({ erpAttemptStatus: status, terminal });
+  });
+
+  it("rolls back the ERP attempt when its matching event cannot be inserted", async () => {
+    await connection.sql.unsafe(`
+      CREATE FUNCTION reject_erp_attempt_event() RETURNS trigger AS $$
+      BEGIN
+        IF NEW.event_name = 'erp.attempt.failed' THEN
+          RAISE EXCEPTION 'ERP attempt event rejected';
+        END IF;
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql;
+      CREATE TRIGGER reject_erp_attempt_event_trigger
+      BEFORE INSERT ON order_events
+      FOR EACH ROW EXECUTE FUNCTION reject_erp_attempt_event();
+    `);
+    const persistence = new PostgresErpAttemptPersistence(connection.db);
+
+    try {
+      await expect(
+        persistence.recordAttempt({
+          job,
+          delivery: { attemptNumber: 1, attemptsMade: 0, maxAttempts: 2 },
+          status: "failed",
+          terminal: false,
+          httpStatus: 503,
+          latencyMs: 10,
+          startedAt: new Date("2026-06-21T00:00:01.000Z"),
+          finishedAt: new Date("2026-06-21T00:00:01.010Z"),
+        }),
+      ).rejects.toThrow();
+      const attempts = await connection.db
+        .select()
+        .from(erpAttempts)
+        .where(eq(erpAttempts.orderId, ids.order));
+      const attemptEvents = await connection.db
+        .select()
+        .from(orderEvents)
+        .where(and(eq(orderEvents.orderId, ids.order), eq(orderEvents.eventName, "erp.attempt.failed")));
+      expect(attempts).toHaveLength(0);
+      expect(attemptEvents).toHaveLength(0);
+    } finally {
+      await connection.sql.unsafe(`
+        DROP TRIGGER IF EXISTS reject_erp_attempt_event_trigger ON order_events;
+        DROP FUNCTION IF EXISTS reject_erp_attempt_event();
+      `);
+    }
   });
 
   it("reuses a successful ERP attempt after confirmed-state persistence fails", async () => {
@@ -732,6 +820,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
       correlationId: job.correlationId,
       attemptNumber: 1,
       status: "succeeded",
+      terminal: true,
       httpStatus: 200,
       latencyMs: 20,
       startedAt: new Date("2026-06-21T00:00:01.000Z"),
@@ -739,6 +828,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
     });
     expect(attemptEvent?.payload).toMatchObject({
       erpAttemptStatus: "succeeded",
+      terminal: true,
       attemptNumber: 1,
       attemptsMade: 0,
       httpStatus: 200,
@@ -813,6 +903,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
       {
         attemptNumber: 1,
         status: "failed",
+        terminal: false,
         httpStatus: 503,
         errorCode: "erp_unavailable",
         latencyMs: 10,
@@ -820,6 +911,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
       {
         attemptNumber: 2,
         status: "succeeded",
+        terminal: true,
         httpStatus: 200,
         latencyMs: 20,
       },
@@ -932,20 +1024,21 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
     expect(attempt).toMatchObject({
       attemptNumber: 1,
       status: "failed",
+      terminal: true,
       httpStatus: 503,
       errorCode: "erp_unavailable",
       latencyMs: 15,
     });
     expect(order).toMatchObject({
       status: "failed",
-      failureCode: "order_confirmation_failed",
+      failureCode: "erp_retries_exhausted",
       failureMessage: "The ERP is temporarily unavailable.",
     });
     expect(failedEvent?.payload).toMatchObject({
       orderStatus: "failed",
       attemptNumber: 1,
       attemptsMade: 0,
-      failureCode: "order_confirmation_failed",
+      failureCode: "erp_retries_exhausted",
     });
   });
 

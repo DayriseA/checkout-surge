@@ -326,6 +326,7 @@ export const runHistoryErpAttemptSchema = z
     correlationId: correlationIdSchema,
     attemptNumber: positiveIntegerSchema,
     status: erpAttemptStatusSchema,
+    terminal: z.boolean(),
     httpStatus: z.number().int().min(100).max(599).optional(),
     errorCode: z.string().trim().min(1).optional(),
     latencyMs: nonnegativeIntegerSchema,

@@ -170,6 +170,7 @@ describe("run history service", () => {
             attemptId: ids.erpAttempt,
             publicOrderId: "ord_history_1",
             status: "succeeded",
+            terminal: true,
             httpStatus: 200,
           },
         ],
@@ -201,6 +202,17 @@ describe("run history service", () => {
     expect(serialized).not.toContain("private-recipient-placeholder");
     expect(serialized).not.toContain("x-control-service-token");
     expect(serialized).not.toContain("payload");
+
+    await db
+      .update(erpAttempts)
+      .set({ status: "failed", terminal: false, httpStatus: 503 })
+      .where(eq(erpAttempts.id, ids.erpAttempt));
+    const nonterminalDetail = await service.detail(ids.newerRun);
+    expect(nonterminalDetail?.erpAttempts.records[0]).toMatchObject({
+      status: "failed",
+      terminal: false,
+      httpStatus: 503,
+    });
   });
 
   it("returns null for missing or non-summary-backed runs", async () => {
@@ -395,6 +407,7 @@ async function seedRunDetailRecords(
     runId: ids.newerRun,
     attemptNumber: 1,
     status: "succeeded",
+    terminal: true,
     httpStatus: 200,
     errorMessage: "private-upstream-response",
     latencyMs: 42,

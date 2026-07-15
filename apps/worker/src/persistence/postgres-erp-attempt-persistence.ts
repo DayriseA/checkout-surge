@@ -81,6 +81,7 @@ export class PostgresErpAttemptPersistence implements ErpAttemptPersistence {
         ...(record.job.runId ? { runId: record.job.runId } : {}),
         attemptNumber: record.delivery.attemptNumber,
         status: record.status,
+        terminal: record.terminal,
         ...(record.httpStatus ? { httpStatus: record.httpStatus } : {}),
         ...(record.errorCode ? { errorCode: record.errorCode } : {}),
         ...(record.errorMessage ? { errorMessage: record.errorMessage } : {}),
@@ -138,6 +139,7 @@ export class PostgresErpAttemptPersistence implements ErpAttemptPersistence {
         eventName: record.status === "succeeded" ? "erp.attempt.succeeded" : "erp.attempt.failed",
         payload: {
           erpAttemptStatus: record.status,
+          terminal: record.terminal,
           attemptNumber: record.delivery.attemptNumber,
           attemptsMade: record.delivery.attemptsMade,
           latencyMs: record.latencyMs,
@@ -169,6 +171,7 @@ function sameAttempt(existing: typeof erpAttempts.$inferSelect, record: ErpAttem
   return (
     (existing.deliveryId ?? record.job.orderId) === deliveryId &&
     existing.status === record.status &&
+    existing.terminal === record.terminal &&
     existing.httpStatus === (record.httpStatus ?? null) &&
     existing.errorCode === (record.errorCode ?? null) &&
     existing.errorMessage === (record.errorMessage ?? null) &&
@@ -190,6 +193,7 @@ function sameExternalSuccess(
 ): boolean {
   return (
     existing.status === "succeeded" &&
+    existing.terminal === record.terminal &&
     existing.httpStatus === (record.httpStatus ?? null) &&
     existing.confirmationId === (record.response?.confirmationId ?? null) &&
     jsonDeepEqual(existing.response, record.response ?? null)

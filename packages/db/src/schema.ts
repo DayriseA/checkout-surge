@@ -345,6 +345,7 @@ export const erpAttempts = pgTable(
     runId: uuid("run_id").references(() => demoRuns.id, { onDelete: "restrict" }),
     attemptNumber: integer("attempt_number").notNull(),
     status: erpAttemptStatusEnum("status").notNull(),
+    terminal: boolean("terminal").default(false).notNull(),
     httpStatus: integer("http_status"),
     errorCode: text("error_code"),
     errorMessage: text("error_message"),

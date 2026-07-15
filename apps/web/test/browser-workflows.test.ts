@@ -792,6 +792,7 @@ function runHistoryDetailFixture(): RunHistoryDetailResponse {
           correlationId: "corr-history-detail",
           attemptNumber: 1,
           status: "succeeded",
+          terminal: true,
           httpStatus: 200,
           latencyMs: 42,
           startedAt: "2026-06-20T00:00:04.000Z",

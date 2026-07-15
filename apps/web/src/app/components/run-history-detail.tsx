@@ -147,6 +147,7 @@ export function RunHistoryDetail({ detail }: RunHistoryDetailProps) {
             title: `${attempt.publicOrderId} attempt ${attempt.attemptNumber}`,
             facts: [
               ["Status", attempt.status],
+              ["Terminal", attempt.terminal ? "yes" : "no"],
               ["HTTP", attempt.httpStatus ? String(attempt.httpStatus) : "n/a"],
               ["Error", attempt.errorCode ?? "none"],
               ["Latency", `${formatNumber(attempt.latencyMs)}ms`],

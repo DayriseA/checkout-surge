@@ -15,6 +15,7 @@ const record = {
   job,
   delivery: { attemptNumber: 1, attemptsMade: 0 },
   status: "succeeded" as const,
+  terminal: true,
   httpStatus: 200,
   latencyMs: 4,
   startedAt: new Date("2026-06-22T00:00:00.000Z"),
@@ -47,6 +48,7 @@ describe("Postgres ERP attempt persistence", () => {
     let selectCalls = 0;
     const existing = {
       status: "succeeded",
+      terminal: true,
       httpStatus: 200,
       errorCode: null,
       errorMessage: null,
@@ -76,8 +78,39 @@ describe("Postgres ERP attempt persistence", () => {
       expect.objectContaining({
         idempotencyKey: "erp-confirmation:11111111-1111-4111-8111-111111111111",
         response: record.response,
+        terminal: true,
       }),
     );
     expect(eventInsert.values).toHaveBeenCalledOnce();
+    expect(eventInsert.values).toHaveBeenCalledWith(
+      expect.objectContaining({ payload: expect.objectContaining({ terminal: true }) }),
+    );
+  });
+
+  it("rejects a replay whose terminal classification contradicts the durable attempt", async () => {
+    const tx = {
+      select: vi.fn(() =>
+        chain([
+          {
+            status: "succeeded",
+            terminal: true,
+            httpStatus: 200,
+            errorCode: null,
+            errorMessage: null,
+            confirmationId: record.response.confirmationId,
+            idempotencyKey: `erp-confirmation:${job.orderId}`,
+            response: record.response,
+          },
+        ]),
+      ),
+    };
+    const db = {
+      transaction: vi.fn(async (callback: (tx: typeof tx) => Promise<void>) => callback(tx)),
+    } as never;
+    const persistence = new PostgresErpAttemptPersistence(db);
+
+    await expect(persistence.recordAttempt({ ...record, terminal: false })).rejects.toThrow(
+      "contradictory ERP attempt",
+    );
   });
 });

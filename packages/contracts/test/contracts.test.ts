@@ -76,6 +76,7 @@ import {
   runHistoryDetailPath,
   runHistoryDetailPathTemplate,
   runHistoryDetailResponseSchema,
+  runHistoryErpAttemptSchema,
   runHistoryListQuerySchema,
   runHistoryListResponseSchema,
   runHistoryPath,
@@ -1606,6 +1607,7 @@ describe("public runtime policy contract", () => {
             correlationId,
             attemptNumber: 1,
             status: "succeeded",
+            terminal: true,
             httpStatus: 200,
             latencyMs: 25,
             startedAt: timestamp,
@@ -1647,6 +1649,23 @@ describe("public runtime policy contract", () => {
       },
       timestamp,
     });
+    const attempt = detail.erpAttempts.records[0];
+    if (!attempt) throw new Error("Expected a parsed ERP attempt.");
+    expect(attempt.terminal).toBe(true);
+    expect(() =>
+      runHistoryErpAttemptSchema.parse({
+        ...attempt,
+        terminal: false,
+      }),
+    ).not.toThrow();
+    const { terminal: _terminal, ...attemptWithoutTerminal } = attempt;
+    expect(() => runHistoryErpAttemptSchema.parse(attemptWithoutTerminal)).toThrow();
+    expect(() =>
+      runHistoryErpAttemptSchema.parse({
+        ...attempt,
+        terminal: "yes",
+      }),
+    ).toThrow();
 
     expect(detail.summary.runId).toBe(runId);
     expect(detail.orders.records[0]).not.toHaveProperty("reservationToken");

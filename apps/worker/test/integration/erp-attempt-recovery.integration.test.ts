@@ -10,7 +10,7 @@ import {
 } from "@checkout-surge/db";
 import { resetTestDatabase } from "@checkout-surge/db/testing";
 import { eq } from "drizzle-orm";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import {
   ErpAttemptContradictionError,
   PostgresErpAttemptPersistence,
@@ -50,13 +50,11 @@ run("PostgreSQL ERP attempt delivery identity", () => {
     return persistence;
   };
 
-  beforeAll(async () => {
+  beforeEach(async () => {
     await resetTestDatabase({
       databaseUrl: requireDatabaseUrl(),
       migrationsFolder: "../../packages/db/drizzle",
     });
-  });
-  beforeEach(async () => {
     await requireConnection().db.insert(products).values({
       id: ids.product,
       sku: "ERP-ATTEMPT-TEST",
@@ -106,6 +104,7 @@ run("PostgreSQL ERP attempt delivery identity", () => {
       job,
       delivery: { attemptNumber: 1, attemptsMade: 0, deliveryId: "original-job" },
       status: "failed",
+      terminal: false,
       httpStatus: 503,
       errorCode: "ERP_UNAVAILABLE",
       errorMessage: "offline",
@@ -128,6 +127,7 @@ run("PostgreSQL ERP attempt delivery identity", () => {
         deliveryId: "recovery-dddddddd-dddd-4ddd-8ddd-dddddddddddd-1",
       },
       status: "succeeded" as const,
+      terminal: true,
       httpStatus: 200,
       latencyMs: 1,
       startedAt,
@@ -164,6 +164,7 @@ run("PostgreSQL ERP attempt delivery identity", () => {
       job,
       delivery: { attemptNumber: 1, attemptsMade: 0, deliveryId: "recovery-contradiction" },
       status: "succeeded" as const,
+      terminal: true,
       httpStatus: 200,
       latencyMs: 1,
       startedAt,

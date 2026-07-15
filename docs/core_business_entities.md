@@ -262,6 +262,7 @@ Recommended fields:
 - `runId`
 - `attemptNumber`
 - `status`
+- `terminal`
 - `httpStatus` optional
 - `errorCode` optional
 - `errorMessage` optional
@@ -283,6 +284,7 @@ Notes:
 
 - `attemptNumber` is monotonic within an order delivery; `(orderId, deliveryId, attemptNumber)` is unique so a recovery delivery can start its own attempt sequence without contradicting the original delivery.
 - A nullable unique successful `idempotencyKey` forms the worker-local stable success boundary.
+- `terminal` records the worker's disposition at call time: success and non-retryable rejection are terminal, while a temporary failure is nonterminal only when the delivery has a known remaining attempt. An absent maximum is conservatively terminal. The marker is mirrored into the attempt event payload and exposed in typed run history; it does not prohibit later manual or recovery replay.
 - The attempt record should be durable even when the final order eventually succeeds, because the retry history is part of the portfolio story.
 
 ### 7. ErpConfirmationResult

@@ -2120,6 +2120,7 @@ async function seedCleanupDurableGraph(
     runId: ids.completedRun,
     attemptNumber: 1,
     status: "succeeded",
+    terminal: true,
     httpStatus: 200,
     latencyMs: 5,
     startedAt: now,

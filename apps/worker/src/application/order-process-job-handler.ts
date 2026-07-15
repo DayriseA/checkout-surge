@@ -554,7 +554,7 @@ async function publishBusinessOutcomeUpdateWithoutFailingJob(
   }
 }
 
-function hasRemainingAttempts(delivery: OrderProcessDeliveryMetadata): boolean {
+export function hasRemainingAttempts(delivery: OrderProcessDeliveryMetadata): boolean {
   return delivery.maxAttempts !== undefined && delivery.attemptNumber < delivery.maxAttempts;
 }
 

@@ -175,6 +175,7 @@ describe.skipIf(!databaseUrl)("business outcome dashboard projection", () => {
       correlationId: "corr-processing",
       attemptNumber: 1,
       status: "failed",
+      terminal: false,
       errorCode: "temporary_erp_failure",
       errorMessage: "ERP temporarily failed.",
       latencyMs: 25,

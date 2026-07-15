@@ -59,6 +59,7 @@ describe("PostgresErpAttemptStatusReader", () => {
           correlationId: "corr-erp-status-reader",
           attemptNumber,
           status,
+          terminal: status === "succeeded",
           httpStatus: status === "succeeded" ? 200 : 503,
           latencyMs: 25,
           startedAt,

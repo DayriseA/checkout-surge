@@ -118,6 +118,7 @@ export class RunHistoryService implements RunHistoryController {
           correlationId: erpAttempts.correlationId,
           attemptNumber: erpAttempts.attemptNumber,
           status: erpAttempts.status,
+          terminal: erpAttempts.terminal,
           httpStatus: erpAttempts.httpStatus,
           errorCode: erpAttempts.errorCode,
           latencyMs: erpAttempts.latencyMs,
@@ -296,6 +297,7 @@ function toRunHistoryErpAttempt(row: {
   correlationId: string;
   attemptNumber: number;
   status: (typeof erpAttempts.$inferSelect)["status"];
+  terminal: boolean;
   httpStatus: number | null;
   errorCode: string | null;
   latencyMs: number;
@@ -309,6 +311,7 @@ function toRunHistoryErpAttempt(row: {
     correlationId: row.correlationId,
     attemptNumber: row.attemptNumber,
     status: row.status,
+    terminal: row.terminal,
     ...(row.httpStatus ? { httpStatus: row.httpStatus } : {}),
     ...(row.errorCode ? { errorCode: row.errorCode } : {}),
     latencyMs: row.latencyMs,

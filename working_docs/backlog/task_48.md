@@ -83,3 +83,51 @@ The event timeline contract currently omits payload. Do not broaden `runHistoryE
 - This task owns finality classification for actual ERP calls, its durable attempt-row/event representation, the typed run-history projection, migration/backfill policy, and tests at those boundaries.
 - Preserve current retry counts, error retryability vocabulary, circuit-breaker behavior, order transition semantics, successful-attempt reuse, correlation/run identity, and transaction boundaries except for carrying the marker.
 - Do not create attempt rows for circuit-open deferrals or persistence failures, change BullMQ retry policy, infer customer order status from the marker, expose arbitrary event JSON, add speculative indexes, redesign recovery for split attempt/order transactions, or broaden the ERP health endpoint without an explicit API requirement.
+
+## Implementation record
+
+- **Status (2026-07-15):** Implemented and verified; focused unit, contract, web, PostgreSQL/Redis integration, type-check, and lint verification passed.
+- Exported the worker's conservative `hasRemainingAttempts()` predicate and reused it when classifying every actual ERP call. Success is always terminal; retryable responses, timeouts, invalid responses, and transport failures are nonterminal only with a known remaining attempt; non-retryable ERP responses and unknown/exhausted maximums are terminal.
+- Added required `terminal` data to `ErpAttemptRecord`, explicit PostgreSQL attempt writes, matching transactional event payloads, and both delivery-identity and successful-idempotency replay comparisons. Circuit-open and attempt-persistence failures remain outside attempt history.
+- Added `erp_attempts.terminal` through forward migration `0010_erp_attempt_terminal_marker`. The staged backfill marks all successes true, marks only the latest overall failed/timed-out attempt of a currently failed order true, and defaults every ambiguous legacy row (including earlier failures before a later success) to false before applying `DEFAULT false NOT NULL`. No index was added.
+- Added required terminality to the strict run-history attempt contract, API projection, fixtures, and web history presentation. The ERP health contract/mapper remains unchanged.
+- Updated migration rewind depths for the new journal entry and added representative migration/backfill/default/non-null coverage, worker classification and retry-agreement coverage, attempt row/event parity, contradiction, transaction rollback, contract validation, API projection, health-reader fixture, and web rendering coverage.
+- Updated `docs/architecture.md` and `docs/core_business_entities.md` with the persisted disposition semantics and public run-history behavior.
+
+### Verification
+
+- `pnpm --filter @checkout-surge/db build && pnpm --filter @checkout-surge/contracts build && pnpm --filter worker type-check` — passed.
+- `pnpm --filter @checkout-surge/db type-check`, `pnpm --filter @checkout-surge/contracts type-check`, `pnpm --filter worker type-check`, `pnpm --filter api type-check`, and `pnpm --filter web type-check` — passed.
+- `pnpm --filter worker exec vitest run --config vitest.unit.config.ts test/unit/erp-confirmation-client.test.ts test/unit/order-process-job-handler.test.ts test/unit/postgres-erp-attempt-persistence.test.ts` — passed, 50 tests.
+- `pnpm --filter @checkout-surge/contracts test:unit` — passed, 81 tests.
+- `pnpm --filter web exec vitest run --config vitest.config.ts test/run-history.test.ts test/browser-workflows.test.ts` — passed, 9 tests.
+- `pnpm --filter @checkout-surge/contracts lint && pnpm --filter worker lint && pnpm --filter @checkout-surge/db lint && pnpm --filter api lint && pnpm --filter web lint` — passed with no findings.
+- From `apps/api`, `node ../../scripts/run-with-test-env.mjs pnpm exec vitest run --config vitest.api.config.ts test/run-history-service.test.ts test/erp-attempt-status-reader.test.ts` — passed, 2 files and 8 tests.
+- From `packages/db`, `node ../../scripts/run-with-test-env.mjs pnpm exec vitest run --config vitest.integration.config.ts test/integration/db.integration.test.ts` — passed in isolation, 1 file and 51 tests.
+- From `apps/worker`, `node ../../scripts/run-with-test-env.mjs pnpm exec vitest run --config vitest.integration.config.ts test/integration/order-processing-workflow.test.ts test/integration/erp-attempt-recovery.integration.test.ts` — passed after correction cycle 2, 2 files and 23 tests.
+- `git diff --check` — passed.
+- Per repository instructions, `pnpm test:composition` and `pnpm test:characterization` were not run.
+
+### Final self-review
+
+- Scope stayed within actual ERP-call terminal classification, durable attempt/event representation, migration/backfill, typed run history, fixtures, tests, and directly impacted documentation.
+- Application, persistence, shared database/contract, API service, and web component ownership boundaries remain intact; no route or composition-root behavior changed.
+- The existing ERP retryability vocabulary and order transition semantics remain authoritative and agree with the shared known/unknown maximum predicate.
+- No circuit-open or persistence-failure rows, arbitrary event JSON exposure, health API expansion, retry redesign, or terminal-specific index was introduced.
+
+### Review correction cycle 1
+
+- Made migration `0010` safe under the repository's journal rewind/reapply convention by changing its staged column addition to `ADD COLUMN IF NOT EXISTS`. The success/latest-failure backfill, conservative false fill, default, and non-null enforcement still run on every application and converge either a new or retained column to the target schema.
+- Corrected the entity documentation so `terminal` belongs to `ErpAttempt`, not `Reservation`.
+- Added a direct handler test proving a temporary failure with absent `maxAttempts` transitions the order to failed with `erp_retries_exhausted`, preserves the original message, and propagates the original error instead of retrying as if the budget were unlimited.
+- `pnpm --filter worker exec vitest run --config vitest.unit.config.ts test/unit/order-process-job-handler.test.ts` — passed, 34 tests.
+- `pnpm --filter worker lint` — passed with no findings.
+- `pnpm --filter worker type-check` — passed.
+- `test "$(sed -n '1p' packages/db/drizzle/0010_erp_attempt_terminal_marker.sql)" = 'ALTER TABLE "erp_attempts" ADD COLUMN IF NOT EXISTS "terminal" boolean;' && rg -n 'ORDER BY id DESC LIMIT (4|5|7|2)' packages/db/test/integration/db.integration.test.ts && git diff --check` — passed; confirmed the replay-safe column statement, all four affected rewind depths, and a whitespace-clean diff.
+
+### Review correction cycle 2
+
+- The first infrastructure-backed worker run exposed two test defects: the new second ERP replay test reinserted shared fixtures because database reset ran only in `beforeAll`, and the exhausted-retry workflow assertion expected the generic failure code even though the established handler correctly persists `erp_retries_exhausted`.
+- Moved the ERP replay database reset into `beforeEach` so every test owns a clean fixture graph, and aligned both exhausted-retry row/event assertions with the handler's conservative terminal failure code. No production behavior changed.
+- From `apps/worker`, `node ../../scripts/run-with-test-env.mjs pnpm exec vitest run --config vitest.integration.config.ts test/integration/order-processing-workflow.test.ts test/integration/erp-attempt-recovery.integration.test.ts` — passed, 2 files and 23 tests.
+- `pnpm --filter worker lint` — passed with no findings.

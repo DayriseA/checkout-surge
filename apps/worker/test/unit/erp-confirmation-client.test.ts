@@ -27,7 +27,7 @@ const job = {
   quantity: 1,
   queuedAt: "2026-06-22T00:00:00.000Z",
 };
-const delivery: OrderProcessDeliveryMetadata = { attemptNumber: 2, attemptsMade: 1 };
+const delivery: OrderProcessDeliveryMetadata = { attemptNumber: 2, attemptsMade: 1, maxAttempts: 3 };
 
 describe("HTTP ERP order confirmation", () => {
   it("posts a contract-valid confirmation request and records a successful attempt", async () => {
@@ -78,6 +78,7 @@ describe("HTTP ERP order confirmation", () => {
       job,
       delivery,
       status: "succeeded",
+      terminal: true,
       httpStatus: 200,
       latencyMs: 35,
       startedAt: new Date("2026-06-22T00:00:00.000Z"),
@@ -449,6 +450,72 @@ describe("HTTP ERP order confirmation", () => {
     expect(isTemporaryErpDependencyError(new ErpAttemptPersistenceError(new Error("db")))).toBe(
       false,
     );
+  });
+
+  it.each([
+    { label: "remaining", delivery: { attemptNumber: 1, attemptsMade: 0, maxAttempts: 2 }, temporaryTerminal: false },
+    { label: "exhausted", delivery: { attemptNumber: 2, attemptsMade: 1, maxAttempts: 2 }, temporaryTerminal: true },
+    { label: "unknown maximum", delivery: { attemptNumber: 1, attemptsMade: 0 }, temporaryTerminal: true },
+  ] as const)("records exact terminality with $label delivery metadata", async ({ delivery: caseDelivery, temporaryTerminal }) => {
+    const cases: Array<{
+      name: string;
+      fetch: typeof globalThis.fetch;
+      expectedTerminal: boolean;
+    }> = [
+      {
+        name: "success",
+        fetch: vi.fn<typeof globalThis.fetch>().mockResolvedValue(
+          jsonResponse({ status: "succeeded", confirmationId: "erp_confirmation_matrix", httpStatus: 200, latencyMs: 1, timestamp: "2026-06-22T00:00:00.001Z" }, 200),
+        ),
+        expectedTerminal: true,
+      },
+      {
+        name: "retryable response",
+        fetch: vi.fn<typeof globalThis.fetch>().mockResolvedValue(
+          jsonResponse({ status: "failed", httpStatus: 503, errorCode: "erp_unavailable", errorMessage: "Unavailable", latencyMs: 1, timestamp: "2026-06-22T00:00:00.001Z" }, 503),
+        ),
+        expectedTerminal: temporaryTerminal,
+      },
+      {
+        name: "non-retryable response",
+        fetch: vi.fn<typeof globalThis.fetch>().mockResolvedValue(
+          jsonResponse({ status: "failed", httpStatus: 400, errorCode: "erp_bad_request", errorMessage: "Bad request", latencyMs: 1, timestamp: "2026-06-22T00:00:00.001Z" }, 400),
+        ),
+        expectedTerminal: true,
+      },
+      {
+        name: "timeout",
+        fetch: vi.fn<typeof globalThis.fetch>().mockRejectedValue(Object.assign(new Error("aborted"), { name: "AbortError" })),
+        expectedTerminal: temporaryTerminal,
+      },
+      {
+        name: "invalid response",
+        fetch: vi.fn<typeof globalThis.fetch>().mockResolvedValue(jsonResponse({ invalid: true }, 502)),
+        expectedTerminal: temporaryTerminal,
+      },
+      {
+        name: "transport failure",
+        fetch: vi.fn<typeof globalThis.fetch>().mockRejectedValue(new Error("ECONNRESET")),
+        expectedTerminal: temporaryTerminal,
+      },
+    ];
+
+    for (const scenario of cases) {
+      const attemptPersistence = createAttemptPersistence();
+      const confirmation = new HttpErpOrderConfirmation({
+        baseUrl: "http://mock-erp:4100",
+        requestTimeoutMs: 1000,
+        attemptPersistence,
+        fetch: scenario.fetch,
+        now: sequenceClock(new Date("2026-06-22T00:00:00.000Z"), new Date("2026-06-22T00:00:00.001Z")),
+      });
+
+      await confirmation.confirm(job, caseDelivery).catch(() => undefined);
+
+      expect(attemptPersistence.recordAttempt, scenario.name).toHaveBeenCalledWith(
+        expect.objectContaining({ terminal: scenario.expectedTerminal }),
+      );
+    }
   });
 });
 

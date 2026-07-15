@@ -50,6 +50,8 @@ describe("run history surface", () => {
     expect(markup).toContain("Order outcomes");
     expect(markup).toContain("ord_history_1");
     expect(markup).toContain("ERP attempts");
+    expect(markup).toContain("Terminal");
+    expect(markup).toContain("yes");
     expect(markup).toContain("Event timeline");
     expect(markup).not.toContain("reservationToken");
     expect(markup).not.toContain("idempotencyKey");
@@ -210,6 +212,7 @@ function runHistoryDetailFixture(): RunHistoryDetailResponse {
           correlationId: "corr-history-detail",
           attemptNumber: 1,
           status: "succeeded",
+          terminal: true,
           httpStatus: 200,
           latencyMs: 42,
           startedAt: "2026-06-20T00:00:04.000Z",
