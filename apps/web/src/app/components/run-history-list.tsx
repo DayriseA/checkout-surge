@@ -8,6 +8,10 @@ interface RunHistoryListProps {
 
 export function RunHistoryList({ history }: RunHistoryListProps) {
   if (history.summaries.length === 0) {
+    if (history.totalCount > 0) {
+      return <OutOfRangePageState history={history} />;
+    }
+
     return (
       <section className="rounded-lg border border-border bg-surface p-4">
         <p className="m-0 text-xs font-bold uppercase text-muted">Completed runs</p>
@@ -28,6 +32,27 @@ export function RunHistoryList({ history }: RunHistoryListProps) {
       </div>
       <PaginationControls history={history} />
     </div>
+  );
+}
+
+function OutOfRangePageState({ history }: { history: RunHistoryListResponse }) {
+  return (
+    <section className="rounded-lg border border-border bg-surface p-4">
+      <p className="m-0 text-xs font-bold uppercase text-muted">Completed runs</p>
+      <h2 className="m-0 mt-1 text-base font-bold leading-tight text-ink">
+        Page {history.page} has no summaries
+      </h2>
+      <p className="m-0 mt-3 max-w-[66ch] text-sm leading-6 text-muted">
+        {formatNumber(history.totalCount)} summaries exist, but this page is outside the available
+        range.
+      </p>
+      <Link
+        className="mt-3 inline-flex min-h-10 items-center rounded-lg border border-border px-3.5 py-2.5 text-sm font-semibold text-muted-strong"
+        href="/run-history"
+      >
+        View latest summaries
+      </Link>
+    </section>
   );
 }
 

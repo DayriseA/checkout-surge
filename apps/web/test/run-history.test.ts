@@ -40,6 +40,26 @@ describe("run history surface", () => {
     expect(markup).toContain("Terminal summaries appear here");
   });
 
+  it("distinguishes an out-of-range page from globally empty history", () => {
+    const markup = renderToStaticMarkup(
+      createElement(RunHistoryList, {
+        history: {
+          summaries: [],
+          page: 2,
+          pageSize: 10,
+          totalCount: 7,
+          timestamp: "2026-06-20T00:00:10.000Z",
+        },
+      }),
+    );
+
+    expect(markup).toContain("Page 2 has no summaries");
+    expect(markup).toContain("7 summaries exist");
+    expect(markup).toContain('href="/run-history"');
+    expect(markup).toContain("View latest summaries");
+    expect(markup).not.toContain("No history yet");
+  });
+
   it("renders public-safe detail without private operational fields", () => {
     const markup = renderToStaticMarkup(
       createElement(RunHistoryDetail, { detail: runHistoryDetailFixture() }),

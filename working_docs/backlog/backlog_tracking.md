@@ -125,9 +125,9 @@ Replace `⬜` with `✅` when a task is complete. Optional `⏳` for work in pro
 
 ✅ [Task 60: Separate public and operator surfaces in the web UI and add confirmation flows to destructive actions](./task_60.md)
 
-⬜ [Task 61: Reflect authenticated admin state consistently across admin surfaces](./task_61.md)
+✅ [Task 61: Reflect authenticated admin state consistently across admin surfaces](./task_61.md)
 
-⬜ [Task 62: Fix contradictory empty-state copy on out-of-range run-history pages](./task_62.md)
+✅ [Task 62: Fix contradictory empty-state copy on out-of-range run-history pages](./task_62.md)
 
 ⬜ [Task 63: Render public-safe error states for malformed run-history routes](./task_63.md)
 
