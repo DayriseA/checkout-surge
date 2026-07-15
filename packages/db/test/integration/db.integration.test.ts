@@ -370,6 +370,13 @@ async function expectConstraintViolation(promise: Promise<unknown>, constraintNa
   expect(error).toMatchObject({ code: "23514", constraint_name: constraintName });
 }
 
+async function removeRunHistoryChronologicalIndexes(sql: TestSql): Promise<void> {
+  await sql`DROP INDEX IF EXISTS "orders_run_id_queued_at_created_at_idx"`;
+  await sql`DROP INDEX IF EXISTS "erp_attempts_run_id_finished_at_created_at_idx"`;
+  await sql`DROP INDEX IF EXISTS "simulated_notifications_run_id_recorded_at_created_at_idx"`;
+  await sql`DROP INDEX IF EXISTS "order_events_run_id_occurred_at_created_at_idx"`;
+}
+
 describe("database migrations, seed data, and reset behavior", () => {
   let redis: Redis;
 
@@ -449,6 +456,133 @@ describe("database migrations, seed data, and reset behavior", () => {
     ]);
   });
 
+  it("installs run-history indexes with the filter and chronological keys in query order", async () => {
+    const indexColumns = await withDatabase(
+      (sql) =>
+        sql<
+          {
+            index_name: string;
+            table_name: string;
+            column_name: string;
+            key_position: number;
+            direction: "ASC" | "DESC";
+          }[]
+        >`
+        SELECT
+          index_relation.relname AS index_name,
+          table_relation.relname AS table_name,
+          attribute.attname AS column_name,
+          key.ordinality::int AS key_position,
+          CASE WHEN (index_metadata.indoption[key.ordinality - 1] & 1) = 1
+            THEN 'DESC'
+            ELSE 'ASC'
+          END AS direction
+        FROM pg_index index_metadata
+        JOIN pg_class index_relation ON index_relation.oid = index_metadata.indexrelid
+        JOIN pg_class table_relation ON table_relation.oid = index_metadata.indrelid
+        CROSS JOIN LATERAL unnest(index_metadata.indkey)
+          WITH ORDINALITY AS key(attribute_number, ordinality)
+        JOIN pg_attribute attribute
+          ON attribute.attrelid = table_relation.oid
+          AND attribute.attnum = key.attribute_number
+        WHERE index_relation.relname IN (
+          'orders_run_id_queued_at_created_at_idx',
+          'erp_attempts_run_id_finished_at_created_at_idx',
+          'simulated_notifications_run_id_recorded_at_created_at_idx',
+          'order_events_run_id_occurred_at_created_at_idx'
+        )
+        ORDER BY index_relation.relname, key.ordinality
+      `,
+    );
+
+    expect(indexColumns).toEqual([
+      {
+        index_name: "erp_attempts_run_id_finished_at_created_at_idx",
+        table_name: "erp_attempts",
+        column_name: "run_id",
+        key_position: 1,
+        direction: "ASC",
+      },
+      {
+        index_name: "erp_attempts_run_id_finished_at_created_at_idx",
+        table_name: "erp_attempts",
+        column_name: "finished_at",
+        key_position: 2,
+        direction: "DESC",
+      },
+      {
+        index_name: "erp_attempts_run_id_finished_at_created_at_idx",
+        table_name: "erp_attempts",
+        column_name: "created_at",
+        key_position: 3,
+        direction: "DESC",
+      },
+      {
+        index_name: "order_events_run_id_occurred_at_created_at_idx",
+        table_name: "order_events",
+        column_name: "run_id",
+        key_position: 1,
+        direction: "ASC",
+      },
+      {
+        index_name: "order_events_run_id_occurred_at_created_at_idx",
+        table_name: "order_events",
+        column_name: "occurred_at",
+        key_position: 2,
+        direction: "DESC",
+      },
+      {
+        index_name: "order_events_run_id_occurred_at_created_at_idx",
+        table_name: "order_events",
+        column_name: "created_at",
+        key_position: 3,
+        direction: "DESC",
+      },
+      {
+        index_name: "orders_run_id_queued_at_created_at_idx",
+        table_name: "orders",
+        column_name: "run_id",
+        key_position: 1,
+        direction: "ASC",
+      },
+      {
+        index_name: "orders_run_id_queued_at_created_at_idx",
+        table_name: "orders",
+        column_name: "queued_at",
+        key_position: 2,
+        direction: "DESC",
+      },
+      {
+        index_name: "orders_run_id_queued_at_created_at_idx",
+        table_name: "orders",
+        column_name: "created_at",
+        key_position: 3,
+        direction: "DESC",
+      },
+      {
+        index_name: "simulated_notifications_run_id_recorded_at_created_at_idx",
+        table_name: "simulated_notifications",
+        column_name: "run_id",
+        key_position: 1,
+        direction: "ASC",
+      },
+      {
+        index_name: "simulated_notifications_run_id_recorded_at_created_at_idx",
+        table_name: "simulated_notifications",
+        column_name: "recorded_at",
+        key_position: 2,
+        direction: "DESC",
+      },
+      {
+        index_name: "simulated_notifications_run_id_recorded_at_created_at_idx",
+        table_name: "simulated_notifications",
+        column_name: "created_at",
+        key_position: 3,
+        direction: "DESC",
+      },
+    ]);
+  });
+
   it("aborts ownership migration when legacy run and context offers contradict", async () => {
     const presetId = "38000000-0000-4000-8000-000000000001";
     const runId = "38000000-0000-4000-8000-000000000002";
@@ -456,13 +590,14 @@ describe("database migrations, seed data, and reset behavior", () => {
     const contextSaleOfferId = "38000000-0000-4000-8000-000000000004";
 
     await withDatabase(async (sql) => {
+      await removeRunHistoryChronologicalIndexes(sql);
       await removeLifecycleAndChildAttributionGuards(sql);
       await removeRunSaleContextOwnershipConstraint(sql);
       await sql`DROP TABLE demo_run_teardown_receipts`;
       await sql`
         DELETE FROM drizzle.__drizzle_migrations
         WHERE id IN (
-          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 5
+          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 6
         )
       `;
       await insertCatalogSaleOffer(sql, {
@@ -640,6 +775,7 @@ describe("database migrations, seed data, and reset behavior", () => {
     const legacyRunId = "55555555-5555-4555-8555-555555555559";
     await runSeedScript();
     await withDatabase(async (sql) => {
+      await removeRunHistoryChronologicalIndexes(sql);
       await removeLifecycleAndChildAttributionGuards(sql);
       await removeRunSaleContextOwnershipConstraint(sql);
       await sql`DROP TABLE demo_run_teardown_receipts`;
@@ -648,7 +784,7 @@ describe("database migrations, seed data, and reset behavior", () => {
       await sql`
         DELETE FROM drizzle.__drizzle_migrations
         WHERE id IN (
-          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 6
+          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 7
         )
       `;
       await sql`
@@ -702,6 +838,7 @@ describe("database migrations, seed data, and reset behavior", () => {
   it("backfills legacy breaker and retry configuration during a migrate-only upgrade", async () => {
     await runSeedScript();
     await withDatabase(async (sql) => {
+      await removeRunHistoryChronologicalIndexes(sql);
       await removeRunSaleContextOwnershipConstraint(sql);
       await sql`DROP TABLE demo_run_teardown_receipts`;
       await sql`
@@ -759,7 +896,7 @@ describe("database migrations, seed data, and reset behavior", () => {
       await sql`
         DELETE FROM drizzle.__drizzle_migrations
         WHERE id IN (
-          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 8
+          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 9
         )
       `;
     });
@@ -823,6 +960,7 @@ describe("database migrations, seed data, and reset behavior", () => {
     // re-migrating so the backfill semantics are exercised, not just a fresh
     // schema build.
     await withDatabase(async (sql) => {
+      await removeRunHistoryChronologicalIndexes(sql);
       await removeLifecycleAndChildAttributionGuards(sql);
       await sql`DROP INDEX IF EXISTS "demo_presets_archived_at_idx"`;
       await sql`ALTER TABLE "demo_presets" DROP COLUMN IF EXISTS "archived_at"`;
@@ -830,7 +968,7 @@ describe("database migrations, seed data, and reset behavior", () => {
       await sql`
         DELETE FROM drizzle.__drizzle_migrations
         WHERE id IN (
-          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 3
+          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 4
         )
       `;
       await sql`
@@ -924,12 +1062,13 @@ describe("database migrations, seed data, and reset behavior", () => {
     const correlationId = "corr-erp-terminal-migration";
 
     await withDatabase(async (sql) => {
+      await removeRunHistoryChronologicalIndexes(sql);
       await removeLifecycleAndChildAttributionGuards(sql);
       await sql`ALTER TABLE "erp_attempts" DROP COLUMN IF EXISTS "terminal"`;
       await sql`
         DELETE FROM drizzle.__drizzle_migrations
         WHERE id IN (
-          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 2
+          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 3
         )
       `;
       await insertCatalogSaleOffer(sql, confirmedIds);
@@ -1490,10 +1629,13 @@ describe("database migrations, seed data, and reset behavior", () => {
     const ids = buildOrderReservationIds(920);
 
     await withDatabase(async (sql) => {
+      await removeRunHistoryChronologicalIndexes(sql);
       await removeLifecycleAndChildAttributionGuards(sql);
       await sql`
         DELETE FROM drizzle.__drizzle_migrations
-        WHERE id = (SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 1)
+        WHERE id IN (
+          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 2
+        )
       `;
       await insertCatalogSaleOffer(sql, ids);
       await insertReservation(sql, {
@@ -1534,10 +1676,13 @@ describe("database migrations, seed data, and reset behavior", () => {
     const ids = buildOrderReservationIds(930);
 
     await withDatabase(async (sql) => {
+      await removeRunHistoryChronologicalIndexes(sql);
       await removeLifecycleAndChildAttributionGuards(sql);
       await sql`
         DELETE FROM drizzle.__drizzle_migrations
-        WHERE id = (SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 1)
+        WHERE id IN (
+          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 2
+        )
       `;
       await insertCatalogSaleOffer(sql, ids);
       await insertReservation(sql, {

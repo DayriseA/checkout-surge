@@ -69,6 +69,8 @@ Every run-scoped purchase attempt follows the same two-phase flow.
 
 PostgreSQL is the final integrity boundary for these durable lifecycle writes. Reservation and order terminal states require their corresponding transition timestamps, in-progress and terminal orders require `processing_at`, order terminal timestamps cannot precede `queued_at`, and ERP attempts cannot finish before they start. ERP attempts and linked order events must agree with their referenced parent attribution; reservation-only events agree directly with their reservation, while fully unlinked events remain supported. Parent attribution changes are rejected when they would invalidate existing children. Deployment migration `0011_lifecycle_and_child_attribution_guards` audits historical contradictions under write-conflicting locks and fails with a named `23514` diagnostic rather than synthesizing lifecycle or attribution data.
 
+Run-history detail reads use bounded newest-first queries backed by composite B-tree indexes whose leading `run_id` key is followed by the two descending timestamps used by each orders, ERP-attempts, notification, or event query. Migration `0012_run_history_chronological_indexes` creates these indexes with ordinary transactional `CREATE INDEX`; operators should account for the stronger table locks, build duration, and disk headroom when rolling it out to a populated database.
+
 **Phase 2 — Slow path (worker, seconds to minutes)**
 
 9. The worker picks up the queued job, resolves the frozen retry policy, acquires a Redis run-scoped concurrency lease, applies the run-scoped circuit breaker and ERP behavior, and advances the order through `queued → processing → confirmed` (or `failed`).

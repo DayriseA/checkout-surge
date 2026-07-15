@@ -152,7 +152,7 @@ describe.skipIf(!databaseUrl)("deterministic test database reset", () => {
         (sql) =>
           sql<{ count: number }[]>`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`,
       );
-      expect(journal?.count).toBe(12);
+      expect(journal?.count).toBe(13);
     }
   });
 

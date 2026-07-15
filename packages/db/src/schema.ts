@@ -352,6 +352,11 @@ export const orders = pgTable(
     ),
     index("orders_sale_offer_id_idx").on(table.saleOfferId),
     index("orders_run_id_idx").on(table.runId),
+    index("orders_run_id_queued_at_created_at_idx").on(
+      table.runId,
+      table.queuedAt.desc(),
+      table.createdAt.desc(),
+    ),
     index("orders_correlation_id_idx").on(table.correlationId),
     index("orders_status_idx").on(table.status),
   ],
@@ -397,6 +402,11 @@ export const erpAttempts = pgTable(
     check("erp_attempts_finished_after_started", sql`${table.finishedAt} >= ${table.startedAt}`),
     index("erp_attempts_order_id_idx").on(table.orderId),
     index("erp_attempts_run_id_idx").on(table.runId),
+    index("erp_attempts_run_id_finished_at_created_at_idx").on(
+      table.runId,
+      table.finishedAt.desc(),
+      table.createdAt.desc(),
+    ),
   ],
 );
 
@@ -501,6 +511,11 @@ export const orderEvents = pgTable(
     index("order_events_reservation_id_idx").on(table.reservationId),
     index("order_events_sale_offer_id_idx").on(table.saleOfferId),
     index("order_events_run_id_idx").on(table.runId),
+    index("order_events_run_id_occurred_at_created_at_idx").on(
+      table.runId,
+      table.occurredAt.desc(),
+      table.createdAt.desc(),
+    ),
     index("order_events_event_name_idx").on(table.eventName),
     index("order_events_occurred_at_idx").on(table.occurredAt),
   ],
@@ -563,6 +578,11 @@ export const simulatedNotifications = pgTable(
     index("simulated_notifications_order_id_idx").on(table.orderId),
     index("simulated_notifications_sale_offer_id_idx").on(table.saleOfferId),
     index("simulated_notifications_run_id_idx").on(table.runId),
+    index("simulated_notifications_run_id_recorded_at_created_at_idx").on(
+      table.runId,
+      table.recordedAt.desc(),
+      table.createdAt.desc(),
+    ),
   ],
 );
 

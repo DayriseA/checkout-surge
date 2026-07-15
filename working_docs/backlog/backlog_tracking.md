@@ -111,7 +111,7 @@ Replace `⬜` with `✅` when a task is complete. Optional `⏳` for work in pro
 
 ✅ [Task 53: Add database lifecycle/timestamp CHECK constraints and attribution-agreement guards](./task_53.md)
 
-⬜ [Task 54: Add composite indexes matching run-scoped filters plus chronological sort](./task_54.md)
+✅ [Task 54: Add composite indexes matching run-scoped filters plus chronological sort](./task_54.md)
 
 ⬜ [Task 55: Restore Drizzle snapshot metadata and clean up hand-authored trigger SQL](./task_55.md)
 

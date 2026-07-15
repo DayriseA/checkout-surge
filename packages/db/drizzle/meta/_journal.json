@@ -85,6 +85,13 @@
       "when": 1784592000000,
       "tag": "0011_lifecycle_and_child_attribution_guards",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1784678400000,
+      "tag": "0012_run_history_chronological_indexes",
+      "breakpoints": true
     }
   ]
 }
