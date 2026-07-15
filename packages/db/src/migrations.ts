@@ -1,4 +1,4 @@
-import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { readMigrationFiles } from "drizzle-orm/migrator";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { createDatabaseConnection } from "./client.js";
@@ -14,6 +14,12 @@ export interface ExpectedDatabaseMigration {
   hash: string;
 }
 
+const packageMigrationsFolder = fileURLToPath(new URL("../drizzle", import.meta.url));
+
+export function resolveMigrationsFolder(migrationsFolder?: string): string {
+  return migrationsFolder ?? packageMigrationsFolder;
+}
+
 export function readExpectedDatabaseMigrations(
   migrationsFolder: string,
 ): ExpectedDatabaseMigration[] {
@@ -24,7 +30,7 @@ export function readExpectedDatabaseMigrations(
 }
 
 export async function runDatabaseMigrations(options: RunMigrationsOptions): Promise<void> {
-  const migrationsFolder = options.migrationsFolder ?? path.resolve(process.cwd(), "drizzle");
+  const migrationsFolder = resolveMigrationsFolder(options.migrationsFolder);
   const connection = createDatabaseConnection(options.databaseUrl, { max: 1 });
 
   try {

@@ -1,4 +1,6 @@
 import { execFile } from "node:child_process";
+import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -32,6 +34,7 @@ import {
   setRunSaleEligibility,
 } from "../../src/index.js";
 import { runDatabaseMigrations } from "../../src/migrations.js";
+import { validateDedicatedTestDatabaseUrl } from "../../src/test-environment-safety.js";
 import { resetTestDatabase } from "../../src/testing.js";
 
 const execFileAsync = promisify(execFile);
@@ -43,6 +46,41 @@ const reservationExpiresAt = "2026-06-20T12:15:00.000Z";
 const orderQueuedAt = "2026-06-20T12:00:01.000Z";
 const saleStartsAt = "2026-06-20T00:00:00.000Z";
 const saleEndsAt = "2026-06-21T00:00:00.000Z";
+const expectedHandAuthoredFunctions = [
+  "enforce_demo_run_sale_context_offer_purpose",
+  "enforce_erp_attempt_order_attribution",
+  "enforce_order_backing_secured_reservation",
+  "enforce_order_event_parent_attribution",
+  "enforce_run_owned_sale_offer_attribution",
+  "preserve_order_backing_secured_reservation",
+  "preserve_order_child_attribution",
+  "preserve_reservation_only_event_attribution",
+  "set_updated_at",
+].sort();
+const expectedHandAuthoredTriggers = [
+  "demo_presets_set_updated_at",
+  "demo_run_finalizations_set_updated_at",
+  "demo_run_sale_contexts_enforce_offer_purpose",
+  "demo_run_sale_contexts_set_updated_at",
+  "demo_runs_set_updated_at",
+  "erp_attempts_enforce_order_attribution",
+  "order_events_enforce_parent_attribution",
+  "order_events_enforce_run_owned_sale_offer_attribution",
+  "orders_enforce_backing_secured_reservation",
+  "orders_enforce_run_owned_sale_offer_attribution",
+  "orders_preserve_child_attribution",
+  "orders_set_updated_at",
+  "products_set_updated_at",
+  "public_runtime_policies_set_updated_at",
+  "reservation_pending_persistence_set_updated_at",
+  "reservations_enforce_run_owned_sale_offer_attribution",
+  "reservations_preserve_event_attribution",
+  "reservations_preserve_order_backing_secured_reservation",
+  "reservations_set_updated_at",
+  "rpp_enforce_run_sale_attribution",
+  "sale_offers_set_updated_at",
+  "sim_notifications_enforce_run_sale_attribution",
+].sort();
 const dashboardEvent: DashboardEvent = {
   type: "traffic.metric",
   eventId: "77777777-7777-4777-8777-777777777777",
@@ -121,6 +159,43 @@ async function withDatabase<T>(
   } finally {
     await connection.close();
   }
+}
+
+async function rebuildAsEmptyPublicSchema(): Promise<void> {
+  await withDatabase(async (sql) => {
+    await sql.unsafe("DROP SCHEMA IF EXISTS public CASCADE");
+    await sql.unsafe("DROP SCHEMA IF EXISTS drizzle CASCADE");
+    await sql.unsafe("CREATE SCHEMA public");
+  });
+}
+
+async function createPreTaskMigrationFolder(): Promise<string> {
+  const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "checkout-surge-pre-task-migrations-"));
+  const temporaryMigrations = path.join(temporaryRoot, "drizzle");
+  await cp(migrationsFolder, temporaryMigrations, { recursive: true });
+
+  const currentTriggerMigration = await readFile(
+    path.join(temporaryMigrations, "0013_install_timestamp_and_ownership_triggers.sql"),
+    "utf8",
+  );
+  const historicalEmbeddedTriggerSql = currentTriggerMigration.replace(
+    /DROP TRIGGER IF EXISTS[^\n]+;\n--> statement-breakpoint\n/g,
+    "",
+  );
+  const initialMigrationPath = path.join(temporaryMigrations, "0000_initial_schema.sql");
+  await writeFile(
+    initialMigrationPath,
+    `${await readFile(initialMigrationPath, "utf8")}\n${historicalEmbeddedTriggerSql}`,
+  );
+
+  const journalPath = path.join(temporaryMigrations, "meta", "_journal.json");
+  const journal = JSON.parse(await readFile(journalPath, "utf8")) as {
+    entries: unknown[];
+  };
+  journal.entries = journal.entries.slice(0, 2);
+  await writeFile(journalPath, `${JSON.stringify(journal, null, 2)}\n`);
+
+  return temporaryMigrations;
 }
 
 async function removeRunSaleContextOwnershipConstraint(sql: TestSql): Promise<void> {
@@ -410,16 +485,18 @@ describe("database migrations, seed data, and reset behavior", () => {
         sql<{ tgname: string }[]>`
         SELECT tgname
         FROM pg_trigger
-        WHERE tgname IN (
-          'demo_run_sale_contexts_enforce_offer_purpose',
-          'erp_attempts_enforce_order_attribution',
-          'order_events_enforce_parent_attribution',
-          'orders_enforce_backing_secured_reservation',
-          'orders_preserve_child_attribution',
-          'reservations_preserve_event_attribution',
-          'reservations_preserve_order_backing_secured_reservation',
-          'reservations_enforce_run_owned_sale_offer_attribution'
-        )
+        WHERE NOT tgisinternal
+      `,
+    );
+    const functionRows = await withDatabase(
+      (sql) =>
+        sql<{ proname: string }[]>`
+        SELECT proname
+        FROM pg_proc
+        INNER JOIN pg_namespace ON pg_namespace.oid = pg_proc.pronamespace
+        WHERE pg_namespace.nspname = 'public'
+          AND prokind = 'f'
+          AND pg_get_function_result(pg_proc.oid) = 'trigger'
       `,
     );
     const ownershipConstraintRows = await withDatabase(
@@ -438,22 +515,65 @@ describe("database migrations, seed data, and reset behavior", () => {
       "reservations",
       "sale_offers",
     ]);
-    expect(triggerRows.map((row) => row.tgname).sort()).toEqual([
-      "demo_run_sale_contexts_enforce_offer_purpose",
-      "erp_attempts_enforce_order_attribution",
-      "order_events_enforce_parent_attribution",
-      "orders_enforce_backing_secured_reservation",
-      "orders_preserve_child_attribution",
-      "reservations_enforce_run_owned_sale_offer_attribution",
-      "reservations_preserve_event_attribution",
-      "reservations_preserve_order_backing_secured_reservation",
-    ]);
+    expect(triggerRows.map((row) => row.tgname).sort()).toEqual(expectedHandAuthoredTriggers);
+    expect(functionRows.map((row) => row.proname).sort()).toEqual(expectedHandAuthoredFunctions);
     expect(ownershipConstraintRows).toEqual([
       {
         conname: "demo_run_sale_contexts_run_sale_offer_demo_runs_fk",
         confdeltype: "c",
       },
     ]);
+  });
+
+  it("applies the full journal to an empty dedicated test database and reruns as a no-op", async () => {
+    const databaseUrl = requireTestEnv("TEST_DATABASE_URL");
+    const { databaseName } = validateDedicatedTestDatabaseUrl(databaseUrl);
+
+    try {
+      await rebuildAsEmptyPublicSchema();
+      await runDatabaseMigrations({ databaseUrl, expectedDatabaseName: databaseName });
+      const [firstCount] = await withDatabase(
+        (sql) => sql<{ count: number }[]>`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`,
+      );
+      await runDatabaseMigrations({ databaseUrl, expectedDatabaseName: databaseName });
+      const [secondCount] = await withDatabase(
+        (sql) => sql<{ count: number }[]>`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`,
+      );
+
+      expect(firstCount?.count).toBe(14);
+      expect(secondCount).toEqual(firstCount);
+    } finally {
+      await resetTestDatabase();
+    }
+  });
+
+  it("upgrades the pre-task 0000/0001 state with embedded triggers without duplicates", async () => {
+    const databaseUrl = requireTestEnv("TEST_DATABASE_URL");
+    const { databaseName } = validateDedicatedTestDatabaseUrl(databaseUrl);
+    const preTaskMigrations = await createPreTaskMigrationFolder();
+
+    try {
+      await rebuildAsEmptyPublicSchema();
+      await runDatabaseMigrations({
+        databaseUrl,
+        expectedDatabaseName: databaseName,
+        migrationsFolder: preTaskMigrations,
+      });
+      await runDatabaseMigrations({ databaseUrl, expectedDatabaseName: databaseName });
+      await runDatabaseMigrations({ databaseUrl, expectedDatabaseName: databaseName });
+
+      const [result] = await withDatabase(
+        (sql) => sql<{ migrations: number; triggers: number }[]>`
+          SELECT
+            (SELECT count(*)::int FROM drizzle.__drizzle_migrations) AS migrations,
+            (SELECT count(*)::int FROM pg_trigger WHERE NOT tgisinternal) AS triggers
+        `,
+      );
+      expect(result).toEqual({ migrations: 14, triggers: expectedHandAuthoredTriggers.length });
+    } finally {
+      await rm(path.dirname(preTaskMigrations), { recursive: true, force: true });
+      await resetTestDatabase();
+    }
   });
 
   it("installs run-history indexes with the filter and chronological keys in query order", async () => {
@@ -597,7 +717,7 @@ describe("database migrations, seed data, and reset behavior", () => {
       await sql`
         DELETE FROM drizzle.__drizzle_migrations
         WHERE id IN (
-          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 6
+          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 7
         )
       `;
       await insertCatalogSaleOffer(sql, {
@@ -784,7 +904,7 @@ describe("database migrations, seed data, and reset behavior", () => {
       await sql`
         DELETE FROM drizzle.__drizzle_migrations
         WHERE id IN (
-          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 7
+          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 8
         )
       `;
       await sql`
@@ -896,7 +1016,7 @@ describe("database migrations, seed data, and reset behavior", () => {
       await sql`
         DELETE FROM drizzle.__drizzle_migrations
         WHERE id IN (
-          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 9
+          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 10
         )
       `;
     });
@@ -968,7 +1088,7 @@ describe("database migrations, seed data, and reset behavior", () => {
       await sql`
         DELETE FROM drizzle.__drizzle_migrations
         WHERE id IN (
-          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 4
+          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 5
         )
       `;
       await sql`
@@ -1068,7 +1188,7 @@ describe("database migrations, seed data, and reset behavior", () => {
       await sql`
         DELETE FROM drizzle.__drizzle_migrations
         WHERE id IN (
-          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 3
+          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 4
         )
       `;
       await insertCatalogSaleOffer(sql, confirmedIds);
@@ -1634,7 +1754,7 @@ describe("database migrations, seed data, and reset behavior", () => {
       await sql`
         DELETE FROM drizzle.__drizzle_migrations
         WHERE id IN (
-          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 2
+          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 3
         )
       `;
       await insertCatalogSaleOffer(sql, ids);
@@ -1681,7 +1801,7 @@ describe("database migrations, seed data, and reset behavior", () => {
       await sql`
         DELETE FROM drizzle.__drizzle_migrations
         WHERE id IN (
-          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 2
+          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 3
         )
       `;
       await insertCatalogSaleOffer(sql, ids);

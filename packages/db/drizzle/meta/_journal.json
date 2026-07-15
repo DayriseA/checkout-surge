@@ -92,6 +92,13 @@
       "when": 1784678400000,
       "tag": "0012_run_history_chronological_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1784764800000,
+      "tag": "0013_install_timestamp_and_ownership_triggers",
+      "breakpoints": true
     }
   ]
 }

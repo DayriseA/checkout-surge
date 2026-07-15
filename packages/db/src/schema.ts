@@ -1,4 +1,8 @@
 import { relations, sql } from "drizzle-orm";
+
+// Preservation warning: Drizzle snapshots cannot represent the hand-authored
+// PostgreSQL functions/triggers and other custom SQL in drizzle/*.sql. Do not
+// remove or replace those journaled migrations based on schema generation alone.
 import {
   boolean,
   check,

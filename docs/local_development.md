@@ -356,6 +356,10 @@ When authoring a new migration, rehearse the real incremental `drizzle-kit` upgr
 pnpm test:db:migrate
 ```
 
+The checked-in `packages/db/drizzle` directory is part of the database package artifact and is resolved relative to that package in both TypeScript and compiled execution. Keep each journal entry, SQL file, and linked `meta/*_snapshot.json` together. Drizzle snapshots describe the TypeScript schema only: the hand-authored functions, triggers, expression indexes, data backfills, and audit blocks in SQL migrations remain authoritative even when `drizzle-kit generate` reports no schema change.
+
+Run at most one `runtime-setup` or migration job at a time for each database; serialize migration execution. A failed job can be retried after it exits, and already-applied entries remain no-ops. The pinned PostgreSQL migrator applies all pending entries in one transaction, but it does not provide an explicit deployment/advisory lock for competing migration processes.
+
 If `pnpm test:db:migrate` fails during the `@checkout-surge/db` TypeScript build with missing or mismatched `@checkout-surge/contracts` exports/types, rebuild the shared contract declarations first. The db package compiles against `packages/contracts/dist`, and the direct db migration script does not build workspace dependencies for you:
 
 ```bash

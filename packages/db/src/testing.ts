@@ -4,7 +4,11 @@ import os from "node:os";
 import path from "node:path";
 import postgres from "postgres";
 import { createDatabaseConnection, type SqlClient } from "./client.js";
-import { readExpectedDatabaseMigrations, runDatabaseMigrations } from "./migrations.js";
+import {
+  readExpectedDatabaseMigrations,
+  resolveMigrationsFolder,
+  runDatabaseMigrations,
+} from "./migrations.js";
 import {
   assertTestEnvironment,
   validateDedicatedTestDatabaseUrl,
@@ -34,7 +38,7 @@ export async function resetTestDatabase(options: ResetTestDatabaseOptions = {}):
   assertTestEnvironment("reset test database state");
   const databaseUrl = requireTestDatabaseUrl(options.databaseUrl ?? process.env.TEST_DATABASE_URL);
   const { databaseName } = validateDedicatedTestDatabaseUrl(databaseUrl);
-  const migrationsFolder = options.migrationsFolder ?? path.resolve(process.cwd(), "drizzle");
+  const migrationsFolder = resolveMigrationsFolder(options.migrationsFolder);
   const lock = await acquireTestInfrastructureLock({ databaseUrl });
 
   try {

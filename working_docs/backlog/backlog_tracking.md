@@ -113,7 +113,7 @@ Replace `⬜` with `✅` when a task is complete. Optional `⏳` for work in pro
 
 ✅ [Task 54: Add composite indexes matching run-scoped filters plus chronological sort](./task_54.md)
 
-⬜ [Task 55: Restore Drizzle snapshot metadata and clean up hand-authored trigger SQL](./task_55.md)
+✅ [Task 55: Restore Drizzle snapshot metadata and clean up hand-authored trigger SQL](./task_55.md)
 
 ⬜ [Task 56: Fix accepted-idempotency TTL lifecycle: promotion must tolerate expiry and refresh the replay window](./task_56.md)
 
