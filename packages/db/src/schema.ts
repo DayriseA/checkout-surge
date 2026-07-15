@@ -291,6 +291,14 @@ export const reservations = pgTable(
   (table) => [
     uniqueIndex("reservations_reservation_token_unique").on(table.reservationToken),
     check("reservations_quantity_positive", sql`${table.quantity} > 0`),
+    check(
+      "reservations_released_requires_released_at",
+      sql`${table.status} <> 'released' OR ${table.releasedAt} IS NOT NULL`,
+    ),
+    check(
+      "reservations_expired_requires_expired_at",
+      sql`${table.status} <> 'expired' OR ${table.expiredAt} IS NOT NULL`,
+    ),
     index("reservations_sale_offer_id_idx").on(table.saleOfferId),
     index("reservations_run_id_idx").on(table.runId),
     index("reservations_correlation_id_idx").on(table.correlationId),
@@ -326,6 +334,22 @@ export const orders = pgTable(
     uniqueIndex("orders_public_order_id_unique").on(table.publicOrderId),
     uniqueIndex("orders_reservation_id_unique").on(table.reservationId),
     check("orders_quantity_positive", sql`${table.quantity} > 0`),
+    check(
+      "orders_confirmed_requires_confirmed_at",
+      sql`${table.status} <> 'confirmed' OR ${table.confirmedAt} IS NOT NULL`,
+    ),
+    check(
+      "orders_failed_requires_failed_at",
+      sql`${table.status} <> 'failed' OR ${table.failedAt} IS NOT NULL`,
+    ),
+    check(
+      "orders_in_progress_requires_processing_at",
+      sql`${table.status} NOT IN ('processing', 'confirmed', 'failed') OR ${table.processingAt} IS NOT NULL`,
+    ),
+    check(
+      "orders_terminal_timestamps_after_queued_at",
+      sql`(${table.confirmedAt} IS NULL OR ${table.confirmedAt} >= ${table.queuedAt}) AND (${table.failedAt} IS NULL OR ${table.failedAt} >= ${table.queuedAt})`,
+    ),
     index("orders_sale_offer_id_idx").on(table.saleOfferId),
     index("orders_run_id_idx").on(table.runId),
     index("orders_correlation_id_idx").on(table.correlationId),
@@ -370,6 +394,7 @@ export const erpAttempts = pgTable(
       "erp_attempts_http_status_valid",
       sql`${table.httpStatus} IS NULL OR (${table.httpStatus} >= 100 AND ${table.httpStatus} <= 599)`,
     ),
+    check("erp_attempts_finished_after_started", sql`${table.finishedAt} >= ${table.startedAt}`),
     index("erp_attempts_order_id_idx").on(table.orderId),
     index("erp_attempts_run_id_idx").on(table.runId),
   ],

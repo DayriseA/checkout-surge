@@ -201,6 +201,7 @@ Important boundary:
 
 - Immediate unsuccessful attempts such as sold-out responses are not represented as durable reservations in the current model.
 - Rejected attempts remain response facts, metrics, and optional event/log payloads unless a later requirement creates a business reason to persist them.
+- PostgreSQL requires `releasedAt` when status is `released` and `expiredAt` when status is `expired`. These are intentionally one-way guarantees: timestamps may be present in other states, and the database does not infer or rewrite historical transition times.
 
 ### 5. Order
 
@@ -242,6 +243,7 @@ Notes:
 
 - These statuses intentionally match the lifecycle defined in `docs/cross_service_conventions.md`.
 - Retry metadata is not a separate order status; it belongs in ERP-attempt history and derived UI messaging.
+- PostgreSQL requires `processingAt` for `processing`, `confirmed`, and `failed` orders, the matching terminal timestamp for `confirmed` and `failed`, and any non-null terminal timestamp to be at or after `queuedAt`. Equality is valid. These checks remain one-way implications rather than an exact-state encoding: earlier states may carry later timestamps, both terminal timestamps may coexist, and terminal timestamps are not ordered against `processingAt`.
 - `GET /orders/:publicOrderId/status` is the public mutable read model for these durable states. It exposes the public order ID, sale offer, reservation status/expiry, nullable lifecycle and failure fields, confirmed-order consistency lag, and the persisted event timeline while omitting the internal order UUID, reservation tokens, event payloads, and run attribution.
 - `POST /buy` and its idempotent replays remain acceptance-shaped (`secured` reservation and `queued` order); consumers must not use a replay as a current-status lookup.
 
@@ -288,6 +290,7 @@ Notes:
 - A nullable unique successful `idempotencyKey` forms the worker-local stable success boundary.
 - `terminal` records the worker's disposition at call time: success and non-retryable rejection are terminal, while a temporary failure is nonterminal only when the delivery has a known remaining attempt. An absent maximum is conservatively terminal. The marker is mirrored into the attempt event payload and exposed in typed run history; it does not prohibit later manual or recovery replay.
 - The attempt record should be durable even when the final order eventually succeeds, because the retry history is part of the portfolio story.
+- PostgreSQL requires `finishedAt >= startedAt`. It also compares the duplicated nullable `runId` and non-null `correlationId` with the referenced order on every insert and relevant update.
 
 ### 7. ErpConfirmationResult
 
@@ -391,6 +394,8 @@ Notes:
 - Run-scoped order events include `runId` so Run History can read a complete event timeline directly by run, including events that are not reachable through an already-persisted order or reservation row.
 - `payload` should remain structured JSON, not free-form log text.
 - `OrderEvent` is a business history mechanism, not a replacement for service logs.
+- When `orderId` is present, PostgreSQL requires the event's `reservationId`, `saleOfferId`, nullable `runId`, and `correlationId` to match that order. Order attribution takes precedence and includes the order's backing reservation identity.
+- When only `reservationId` is present, the event's offer, nullable run, and correlation attribution must match that reservation. Fully unlinked events remain allowed, and both nullable foreign keys retain `ON DELETE SET NULL` behavior.
 
 ### 11. DemoPreset
 
@@ -495,6 +500,7 @@ Enforcement note:
   - `enforce_run_owned_sale_offer_attribution` rejects a run-attributed row (`Reservation`, `Order`, `ReservationPendingPersistence`, `OrderEvent`, `SimulatedNotification`) whose `runId` does not match the run that owns its generated `saleOfferId`.
 - A similar composite foreign key on each run-attributed business table would not fully cover its rule: those tables allow `runId = NULL`, and PostgreSQL `MATCH SIMPLE` skips the foreign-key check when any referencing column is `NULL`. The attribution trigger closes that nullable gap where a generated offer is written with a missing run, and also rejects a catalog offer paired with any run. The context table itself has two non-null ownership columns, so its composite foreign key has no corresponding `MATCH SIMPLE` gap. Trigger lookups are single-row probes on indexed/unique columns against a tiny per-run table, so the per-write cost is negligible.
 - These triggers and functions live in a hand-authored SQL migration and are invisible to `schema.ts` and `drizzle-kit` introspection. They must be preserved whenever migrations are regenerated, reset, or squashed, otherwise the enforcement is silently lost.
+- Lifecycle and child/parent attribution guards are installed by append-only migration `0011_lifecycle_and_child_attribution_guards`. The migration takes write-conflicting locks across the affected tables, audits historical lifecycle and attribution contradictions, and aborts with SQLSTATE `23514` plus a stable constraint name instead of inventing timestamps or choosing an attribution source. Operators must reconcile the named contradiction explicitly and retry. Lifecycle checks are added `NOT VALID` and then validated in the same guarded migration; child-write guards are installed before parent-preservation guards. Child writes lock their referenced order or reservation, while parent updates inspect existing children under the parent row lock, so concurrent writes cannot create a disagreement between the two directions.
 
 ### 14. ReservationPendingPersistence
 

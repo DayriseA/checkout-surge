@@ -109,7 +109,7 @@ Replace `⬜` with `✅` when a task is complete. Optional `⏳` for work in pro
 
 ✅ [Task 52: Add the public order-status lookup endpoint](./task_52.md)
 
-⬜ [Task 53: Add database lifecycle/timestamp CHECK constraints and attribution-agreement guards](./task_53.md)
+✅ [Task 53: Add database lifecycle/timestamp CHECK constraints and attribution-agreement guards](./task_53.md)
 
 ⬜ [Task 54: Add composite indexes matching run-scoped filters plus chronological sort](./task_54.md)
 

@@ -78,6 +78,13 @@
       "when": 1784505600000,
       "tag": "0010_erp_attempt_terminal_marker",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1784592000000,
+      "tag": "0011_lifecycle_and_child_attribution_guards",
+      "breakpoints": true
     }
   ]
 }

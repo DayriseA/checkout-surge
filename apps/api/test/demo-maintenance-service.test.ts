@@ -2109,6 +2109,7 @@ async function seedCleanupDurableGraph(
     quantity: 1,
     status: "confirmed",
     queuedAt: now,
+    processingAt: now,
     confirmedAt: now,
     createdAt: now,
     updatedAt: now,

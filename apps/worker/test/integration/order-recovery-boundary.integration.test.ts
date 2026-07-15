@@ -87,6 +87,7 @@ run("PostgreSQL durable order recovery boundary", () => {
       quantity: 1,
       status: "processing",
       queuedAt: now,
+      processingAt: now,
     });
   });
   afterAll(() => connection?.close());
