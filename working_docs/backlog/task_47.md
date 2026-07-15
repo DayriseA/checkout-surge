@@ -138,3 +138,39 @@ The point's order, correlation, run, and sale-offer fields must be first-class v
 - Task 44 owns the general surge-safe batching/coalescing mechanism and removal of per-mutation aggregate-query amplification. Reuse that boundary rather than introducing a second unbounded queue.
 - Keep durable `orderEvents`, order-state transitions, retry policy, ERP confirmation behavior, notification semantics, and authoritative recovery/finalization as the source of truth. Realtime publication is advisory and cannot fail a durable transition.
 - Do not add real notifications, payments, a durable analytics warehouse, a new message broker, exactly-once delivery claims, or a broad dashboard rewrite. Do not change the consistency-lag start definition silently; point and aggregate formulas must agree.
+
+## Implementation record (2026-07-15)
+
+### Status
+
+Implemented.
+
+### Completed scope and decisions
+
+- Added strict shared `order.status.updated` and `order.consistency_lag.observed` variants. Status identity is the durable `order_events.id`; the lag point has a deterministic UUID and a required `confirmedTransitionEventId` link. Contracts reject extra fields, inconsistent lifecycle names/statuses, invalid timestamps, non-finite/negative lag, and wrong metric/unit values.
+- Persistence now returns discriminated fresh/no-op results. Fresh results contain the inserted event ID, previous/resulting status, exact committed transition timestamp, and canonical queued time; confirmation also returns the identical `confirmedAt`. Resumed processing and terminal replay return `changed: false` without fabricated event metadata.
+- The handler synchronously enqueues only committed fresh transitions. Confirmation enqueues the confirmed status and lag point as one group, uses persisted queued/confirmed times, reports both raw and clamped values for negative clock deltas, and passes the same `confirmedAt` to notification publication. Realtime failures remain swallowed and do not change ERP, retry, persistence, notification, or BullMQ outcomes.
+- Added a worker-owned publisher with a 1,024-event queue, 64-event drain batch, one publish in flight, whole-group drop-on-overflow, strict validation, rejection continuation, orderly close before Redis, and exposed per-type counters plus depth/high-water state. It does not coalesce distinct events or invoke aggregate readers; Task 44's scheduler remains responsible for `business.outcome.updated`.
+- The publisher also whole-group drops any enqueue larger than the configured batch maximum, so neither atomicity nor the batch bound can be bypassed. Runtime stats include largest batch and current/maximum in-flight publication; invalid/drop/failure logs include raw event identity and queue/counter context.
+- The browser event-time orders recovery-derived and live per-order states with stable order-ID ties before retaining the newest 20; it also retains 20 observation-time-ordered individual lag points and 100 deduplication IDs. It applies run/sale/recovery scope, rejects lifecycle regression, keeps distinct orders independent, visibly presents five recent reconciled/realtime statuses, labels the latest point as an individual value rather than p95, and replaces state from durable recent completion outcomes on recovery.
+- Recovery-derived order state now uses the durable timestamp for the displayed status (`queuedAt`, `processingAt`, `confirmedAt`, or `failedAt`) rather than `latestEventAt`, which may describe a later notification. Because the recovery contract permits a missing `processingAt`, that state alone conservatively falls back to `queuedAt`; terminal records without their exact status timestamp are omitted from the advisory transition panel rather than assigned a misleading time. Bounding and ordering therefore use actual order-transition time.
+- Updated architecture, realtime conventions, and repository ownership documentation.
+
+### Verification
+
+The full worker/web unit-suite results below were recorded before the two focused review cycles. Review corrections were verified with the explicitly listed focused reruns, type checks, lints, and `git diff --check`; the full suites were not rerun after cycle 2.
+
+- `pnpm --filter @checkout-surge/contracts test:unit`: 2 files, 81 tests passed.
+- `pnpm --filter worker exec vitest run --config vitest.unit.config.ts test/unit/order-process-job-handler.test.ts test/unit/order-realtime-publisher.test.ts`: 2 files, 33 tests passed after review corrections.
+- `pnpm --filter worker test:unit`: 14 files, 78 tests passed.
+- `pnpm --filter web test:unit`: 17 files, 163 tests passed.
+- `pnpm --filter web exec vitest run --config vitest.config.ts test/dashboard-phase6.test.ts`: 1 file, 30 tests passed after review corrections.
+- Final cycle-2 focused reruns: contract `test/contracts.test.ts` (1 file, 77 tests), worker `test/unit/order-process-job-handler.test.ts` (1 file, 32 tests), and web `test/dashboard-phase6.test.ts` (1 file, 31 tests) passed.
+- Final takeover correction: `pnpm --filter web exec vitest run --config vitest.config.ts test/dashboard-phase6.test.ts` passed (1 file, 32 tests), including conflicting confirmation/notification timestamps and newest-20 transition-time bounding.
+- Final takeover checks: `pnpm --filter web type-check` and `pnpm --filter web lint` passed; `git diff --check` passed.
+- Contract, worker, and web type checks and lints passed; `git diff --check` passed.
+
+### Skipped and caveats
+
+- PostgreSQL/Redis integration suites require externally configured services; no Docker services were started. The persistence integration assertions were updated for the new discriminated result shape but are skipped when services are unavailable.
+- `pnpm test:composition` and `pnpm test:characterization` were not run per repository instructions.

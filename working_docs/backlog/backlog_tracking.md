@@ -97,7 +97,7 @@ Replace `⬜` with `✅` when a task is complete. Optional `⏳` for work in pro
 
 ✅ [Task 46: Tighten the dashboard recovery read model: drop the catalog-offer fallback, make the shape self-describing](./task_46.md)
 
-⬜ [Task 47: Emit per-order realtime transitions and per-confirmed-order consistency-lag metrics](./task_47.md)
+✅ [Task 47: Emit per-order realtime transitions and per-confirmed-order consistency-lag metrics](./task_47.md)
 
 ⬜ [Task 48: Record a terminal marker on the final ERP attempt](./task_48.md)
 

@@ -100,6 +100,12 @@ import {
 } from "../src/index.js";
 
 const timestamp = "2026-06-20T12:00:00.000Z";
+
+function omit<T extends object, K extends keyof T>(value: T, key: K): Omit<T, K> {
+  const result: Partial<T> = { ...value };
+  delete result[key];
+  return result as Omit<T, K>;
+}
 const correlationId = "corr-test-1";
 const saleOfferId = "22222222-2222-4222-8222-222222222222";
 const runId = "55555555-5555-4555-8555-555555555555";
@@ -1203,6 +1209,80 @@ describe("buy and dashboard contracts", () => {
         },
       }).type,
     ).toBe("business.outcome.updated");
+  });
+
+  it("strictly validates linked per-order transition and consistency-lag events", () => {
+    const statusBase = {
+      type: "order.status.updated",
+      eventId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      runId,
+      correlationId,
+      occurredAt: timestamp,
+      orderId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      publicOrderId: "ord-live",
+      saleOfferId,
+      attemptNumber: 2,
+      attemptsMade: 1,
+    } as const;
+    const statuses = [
+      { ...statusBase, eventName: "order.processing", previousStatus: "queued", status: "processing" },
+      { ...statusBase, eventName: "order.confirmed", previousStatus: "processing", status: "confirmed" },
+      { ...statusBase, eventName: "order.failed", previousStatus: "processing", status: "failed" },
+    ] as const;
+    for (const status of statuses) expect(dashboardEventSchema.parse(status).type).toBe("order.status.updated");
+    const confirmedStatus = statuses[1];
+    const lag = {
+      type: "order.consistency_lag.observed",
+      eventId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      confirmedTransitionEventId: confirmedStatus.eventId,
+      runId,
+      correlationId,
+      occurredAt: timestamp,
+      metricName: "order.consistency_lag",
+      value: 125,
+      unit: "ms",
+      observedAt: timestamp,
+      orderId: confirmedStatus.orderId,
+      publicOrderId: confirmedStatus.publicOrderId,
+      saleOfferId,
+      startedAt: "2026-06-20T11:59:59.875Z",
+      confirmedAt: timestamp,
+    } as const;
+
+    expect(dashboardEventSchema.parse(lag).type).toBe("order.consistency_lag.observed");
+    expect(dashboardEventSchema.parse({ ...lag, startedAt: "2026-06-20T12:00:00.001Z", value: 0 }).value).toBe(0);
+    expect(dashboardEventSchema.parse({
+      ...lag,
+      occurredAt: "2026-07-01T00:00:00.000Z",
+      observedAt: "2026-07-01T00:00:00.000Z",
+      confirmedAt: "2026-07-01T00:00:00.000Z",
+      startedAt: "2026-06-01T00:00:00.000Z",
+      value: 2_592_000_000,
+    }).value).toBe(2_592_000_000);
+
+    const invalidEvents = [
+      omit(statuses[0], "orderId"),
+      omit(statuses[0], "publicOrderId"),
+      omit(statuses[0], "saleOfferId"),
+      omit(statuses[0], "correlationId"),
+      { ...statuses[0], eventName: "erp.attempt.failed" },
+      { ...statuses[0], eventName: "order.failed" },
+      { ...statuses[0], status: "queued" },
+      { ...statuses[0], occurredAt: "not-a-timestamp" },
+      { ...statuses[0], extra: true },
+      { ...lag, metricName: "traffic.latency" },
+      { ...lag, unit: "seconds" },
+      { ...lag, value: -1 },
+      { ...lag, value: Number.POSITIVE_INFINITY },
+      { ...lag, value: 124 },
+      { ...lag, startedAt: "not-a-timestamp" },
+      { ...lag, confirmedTransitionEventId: lag.eventId },
+      omit(lag, "orderId"),
+      omit(lag, "publicOrderId"),
+      omit(lag, "saleOfferId"),
+      omit(lag, "correlationId"),
+    ];
+    for (const invalid of invalidEvents) expect(dashboardEventSchema.safeParse(invalid).success).toBe(false);
   });
 
   it("validates dashboard recovery projections for the operator view", () => {

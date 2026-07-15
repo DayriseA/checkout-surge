@@ -4,6 +4,7 @@ import {
   createDatabaseConnection,
   dbPackageName,
   publishBusinessOutcomeDashboardUpdate,
+  publishDashboardEvent,
   setErpCircuitBreakerSnapshot,
 } from "@checkout-surge/db";
 import { createServiceLogger, loggerPackageName } from "@checkout-surge/logger";
@@ -39,6 +40,7 @@ import { createBullMqNotificationRecordPublisher } from "./queue/bullmq-notifica
 import { createBullMqOrderProcessConsumer } from "./queue/bullmq-order-process-consumer.js";
 import { createBullMqOrderProcessJobPublisher } from "./queue/bullmq-order-process-job-publisher.js";
 import { RedisOrderProcessAdmission } from "./queue/redis-order-process-admission.js";
+import { createBoundedOrderRealtimePublisher } from "./realtime/order-realtime-publisher.js";
 import { loadWorkerConfig } from "./runtime/config.js";
 import { createWorkerReadiness } from "./runtime/readiness.js";
 import { createWorkerRuntime } from "./runtime/worker-runtime.js";
@@ -140,6 +142,11 @@ export type { OrderProcessConsumer } from "./queue/order-process-consumer.js";
 export { loadWorkerConfig, type WorkerConfig } from "./runtime/config.js";
 export { createWorkerReadiness } from "./runtime/readiness.js";
 export { createWorkerRuntime } from "./runtime/worker-runtime.js";
+export {
+  createBoundedOrderRealtimePublisher,
+  type BoundedOrderRealtimePublisher,
+  type OrderRealtimePublisherCounters,
+} from "./realtime/order-realtime-publisher.js";
 export { buildWorkerHealthServer } from "./server.js";
 
 export async function startWorker(): Promise<void> {
@@ -166,6 +173,12 @@ export async function startWorker(): Promise<void> {
         "Business outcome dashboard scope limit reached; dropped the oldest dirty scope.",
       );
     },
+  });
+  const orderRealtimePublisher = createBoundedOrderRealtimePublisher({
+    publish: (event) => publishDashboardEvent(redis, event),
+    onInvalid: (error, event, stats) => logger.error({ err: error, event, realtime: stats }, "Invalid order realtime event was dropped."),
+    onDrop: (events, reason, stats) => logger.warn({ reason, events, realtime: stats }, "Order realtime advisory event group was dropped."),
+    onPublishError: (error, event, stats) => logger.error({ err: error, ...event, realtime: stats }, "Order realtime Redis publication failed."),
   });
   const notificationRecordPublisher = createBullMqNotificationRecordPublisher({
     connection: {
@@ -300,6 +313,10 @@ export async function startWorker(): Promise<void> {
       }),
       persistence: new PostgresOrderTransitionPersistence(database.db),
       logger,
+      realtimePublisher: orderRealtimePublisher,
+      reportConsistencyLagClockAnomaly: (report) => {
+        logger.warn(report, "Order consistency-lag clock anomaly observed.");
+      },
       recovery: createOrderRecoveryHandoff(orderRecoveryPersistence),
       isTemporaryConfirmationFailure,
       shouldRetryWithoutFailingOrder,
@@ -393,6 +410,7 @@ export async function startWorker(): Promise<void> {
     closeOrderProcessJobPublisher: orderProcessJobPublisher.close,
     closeNotificationRecordPublisher: notificationRecordPublisher.close,
     closeBusinessOutcomePublicationScheduler: () => businessOutcomePublications.close(),
+    closeOrderRealtimePublisher: () => orderRealtimePublisher.close(),
     closePostgres: database.close,
     closeRedis: async () => {
       await redis.quit();

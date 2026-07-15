@@ -79,6 +79,7 @@ checkout-surge/
 - Runs autonomous scanners for committed-but-undispatched queued orders, durable ERP-result recovery, and missing simulated-notification jobs.
 - Persists poison order-job audit records and recovery/escalation state through `packages/db` adapters.
 - Publishes transport-neutral dashboard realtime events through Redis Pub/Sub without importing or hosting the browser-facing SSE runtime.
+- Owns a bounded single-flight per-order realtime publisher for committed processing/confirmed/failed transitions and per-confirmation lag points; aggregate business-outcome snapshots remain on the separate coalescing scheduler.
 - Consumes `packages/contracts`, `packages/logger`, `packages/db`.
 
 ### `apps/mock-erp`

@@ -310,10 +310,17 @@ describe("BullMQ order-processing boundary", () => {
       persistence: {
         transitionToProcessing: async () => {
           if (!databaseRestored) throw new Error("database unavailable");
-          return { status: "processing", resumed: false };
+          return {
+            changed: true,
+            eventId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            previousStatus: "queued",
+            status: "processing",
+            occurredAt: new Date(job.queuedAt),
+            queuedAt: new Date(job.queuedAt),
+          };
         },
-        transitionToConfirmed: vi.fn().mockResolvedValue(undefined),
-        transitionToFailed: vi.fn().mockResolvedValue(undefined),
+        transitionToConfirmed: vi.fn().mockResolvedValue({ changed: false, status: "confirmed" }),
+        transitionToFailed: vi.fn().mockResolvedValue({ changed: false, status: "failed" }),
       },
       logger: createSilentLogger("worker"),
       recovery: { handoff: recoveryRecords },

@@ -1,6 +1,8 @@
 import type {
   DashboardEvent,
   DashboardRecoveryResponse,
+  OrderConsistencyLagDashboardEvent,
+  OrderStatusDashboardEvent,
   RunDashboardEvent,
 } from "@checkout-surge/contracts";
 import { createElement } from "react";
@@ -13,6 +15,7 @@ import {
   InventoryDrainPanel,
   LoadRunControlsPanel,
   QueuePressurePanel,
+  RecentOrderTransitionsPanel,
   RequestSurgePanel,
   RunOutcomesPanel,
 } from "../src/app/components/dashboard-panels.js";
@@ -25,7 +28,215 @@ import {
   shouldRequestAuthoritativeRecoveryAfterScopedEvent,
 } from "../src/app/lib/dashboard-state.js";
 
+function orderStatusEventFixture(
+  eventId: string,
+  eventName: "order.processing" | "order.confirmed" | "order.failed",
+  previousStatus: "queued" | "processing",
+  status: "processing" | "confirmed" | "failed",
+  overrides: Partial<OrderStatusDashboardEvent> = {},
+): OrderStatusDashboardEvent {
+  const run = runFixture();
+  return {
+    type: "order.status.updated",
+    eventId,
+    runId: run.runId,
+    correlationId: "corr-order-live",
+    occurredAt: "2026-06-20T00:00:20.000Z",
+    orderId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+    publicOrderId: "ord-live",
+    saleOfferId: run.saleOfferId ?? "33333333-3333-4333-8333-333333333333",
+    eventName,
+    previousStatus,
+    status,
+    attemptNumber: 1,
+    attemptsMade: 0,
+    ...overrides,
+  };
+}
+
+function lagEventFixture(eventId: string, observedAt: string, value: number): OrderConsistencyLagDashboardEvent {
+  const observed = new Date(observedAt);
+  return {
+    type: "order.consistency_lag.observed",
+    eventId,
+    confirmedTransitionEventId: uuidFor(9_999),
+    runId: runFixture().runId,
+    correlationId: "corr-order-live",
+    occurredAt: observedAt,
+    metricName: "order.consistency_lag",
+    value,
+    unit: "ms",
+    observedAt,
+    orderId: uuidFor(8_888),
+    publicOrderId: "ord-live-lag",
+    saleOfferId: runFixture().saleOfferId ?? uuidFor(8_887),
+    startedAt: new Date(observed.getTime() - value).toISOString(),
+    confirmedAt: observedAt,
+  };
+}
+
+function uuidFor(value: number): string {
+  return `${value.toString(16).padStart(8, "0")}-0000-4000-8000-000000000000`;
+}
+
 describe("Phase 6 dashboard behavior", () => {
+  it("deduplicates and bounds scoped per-order events without allowing terminal regression", () => {
+    const recovery = availableRecovery({ ...recoveryFixture(), currentRun: runFixture() });
+    if (recovery.status !== "available") throw new Error("Expected available recovery fixture.");
+    const confirmed = orderStatusEventFixture("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "order.confirmed", "processing", "confirmed");
+    const processing = orderStatusEventFixture("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "order.processing", "queued", "processing");
+    let state = createDashboardState(recovery);
+    state = dashboardStateReducer(state, { type: "event-received", event: confirmed, discard: false });
+    state = dashboardStateReducer(state, { type: "event-received", event: confirmed, discard: false });
+    state = dashboardStateReducer(state, { type: "event-received", event: processing, discard: false });
+
+    expect(state.recentOrderStates.find((order) => order.orderId === confirmed.orderId)?.status).toBe("confirmed");
+    expect(state.seenOrderEventIds).toEqual([confirmed.eventId, processing.eventId]);
+
+    const refreshed = dashboardStateReducer(state, { type: "refresh-completed", recovery });
+    expect(refreshed.seenOrderEventIds).toEqual([]);
+    expect(refreshed.recentOrderLagSamples).toEqual([]);
+    expect(refreshed.recentOrderStates).toEqual(expect.arrayContaining(recovery.data.recentCompletionOutcomes.map((outcome) => expect.objectContaining({ orderId: outcome.orderId, status: outcome.orderStatus }))));
+    expect(refreshed.recovery.status === "available" ? refreshed.recovery.data.consistencyLag : null).toEqual(recovery.data.consistencyLag);
+  });
+
+  it("retains a latest individual lag sample separately from aggregate p95", () => {
+    const recovery = availableRecovery({ ...recoveryFixture(), currentRun: runFixture() });
+    if (recovery.status !== "available") throw new Error("Expected available recovery fixture.");
+    const status = orderStatusEventFixture("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "order.confirmed", "processing", "confirmed");
+    const lag = {
+      type: "order.consistency_lag.observed",
+      eventId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      confirmedTransitionEventId: status.eventId,
+      runId: runFixture().runId,
+      correlationId: status.correlationId,
+      occurredAt: status.occurredAt,
+      metricName: "order.consistency_lag",
+      value: 123,
+      unit: "ms",
+      observedAt: status.occurredAt,
+      orderId: status.orderId,
+      publicOrderId: status.publicOrderId,
+      saleOfferId: status.saleOfferId,
+      startedAt: "2026-06-20T00:00:19.877Z",
+      confirmedAt: status.occurredAt,
+    } as const satisfies DashboardEvent;
+    const state = dashboardStateReducer(createDashboardState(recovery), { type: "event-received", event: lag, discard: false });
+    const markup = renderToStaticMarkup(createElement(ConsistencyLagPanel, { recovery, latestOrderLag: state.recentOrderLagSamples[0] ?? null }));
+
+    expect(markup).toContain("Latest individual order");
+    expect(markup).toContain("123ms");
+    expect(markup).toContain("p95 confirmed");
+    expect(renderToStaticMarkup(createElement(RecentOrderTransitionsPanel, { orders: state.recentOrderStates }))).toContain("Reconciled workflow state with realtime updates");
+  });
+
+  it("uses exact recovered status timestamps and retains the newest 20 actual transitions", () => {
+    const baseOutcome = recoveryFixture().recentCompletionOutcomes[0];
+    if (!baseOutcome) throw new Error("Expected a completion outcome fixture.");
+    const outcomes = Array.from({ length: 21 }, (_, offset) => {
+      const sequence = 21 - offset;
+      return {
+        ...baseOutcome,
+        orderId: uuidFor(5_000 + sequence),
+        publicOrderId: `ord-recovered-${sequence}`,
+        confirmedAt: `2026-06-20T00:00:${sequence.toString().padStart(2, "0")}.000Z`,
+        notificationRecordedAt: `2026-06-20T00:01:${(21 - sequence).toString().padStart(2, "0")}.000Z`,
+        latestEventAt: `2026-06-20T00:01:${(21 - sequence).toString().padStart(2, "0")}.000Z`,
+      };
+    });
+    const recovery = availableRecovery({
+      ...recoveryFixture(),
+      currentRun: runFixture(),
+      recoveredAt: "2026-06-20T00:00:00.000Z",
+      recentCompletionOutcomes: outcomes,
+    });
+    const state = createDashboardState(recovery);
+
+    expect(state.recentOrderStates).toHaveLength(20);
+    expect(state.recentOrderStates.at(-1)).toMatchObject({
+      orderId: outcomes[0]?.orderId,
+      occurredAt: outcomes[0]?.confirmedAt,
+    });
+    expect(state.recentOrderStates.some((order) => order.orderId === outcomes.at(-1)?.orderId)).toBe(false);
+    expect(state.recentOrderStates.every((order) => order.occurredAt.startsWith("2026-06-20T00:00:"))).toBe(true);
+    expect(state.recentOrderStates.map((order) => order.occurredAt)).toEqual([...state.recentOrderStates.map((order) => order.occurredAt)].sort());
+  });
+
+  it("reconciles each recovery lifecycle state from its status-specific durable timestamp", () => {
+    const baseOutcome = recoveryFixture().recentCompletionOutcomes[0];
+    if (!baseOutcome) throw new Error("Expected a completion outcome fixture.");
+    const outcomes: DashboardRecoveryResponse["recentCompletionOutcomes"] = [
+      { ...baseOutcome, orderId: uuidFor(7_001), orderStatus: "queued", queuedAt: "2026-06-20T00:00:01.000Z", latestEventAt: "2026-06-20T00:01:01.000Z" },
+      { ...baseOutcome, orderId: uuidFor(7_002), orderStatus: "processing", processingAt: "2026-06-20T00:00:02.000Z", latestEventAt: "2026-06-20T00:01:02.000Z" },
+      { ...baseOutcome, orderId: uuidFor(7_003), orderStatus: "confirmed", confirmedAt: "2026-06-20T00:00:03.000Z", latestEventAt: "2026-06-20T00:01:03.000Z" },
+      { ...baseOutcome, orderId: uuidFor(7_004), orderStatus: "failed", failedAt: "2026-06-20T00:00:04.000Z", latestEventAt: "2026-06-20T00:01:04.000Z" },
+    ];
+
+    const states = createDashboardState(availableRecovery({
+      ...recoveryFixture(),
+      recentCompletionOutcomes: outcomes,
+    })).recentOrderStates;
+
+    expect(Object.fromEntries(states.map((state) => [state.status, state.occurredAt]))).toEqual({
+      queued: "2026-06-20T00:00:01.000Z",
+      processing: "2026-06-20T00:00:02.000Z",
+      confirmed: "2026-06-20T00:00:03.000Z",
+      failed: "2026-06-20T00:00:04.000Z",
+    });
+  });
+
+  it("rejects foreign run, sale, and pre-recovery per-order events while retaining distinct out-of-order orders", () => {
+    const recovery = availableRecovery({ ...recoveryFixture(), currentRun: runFixture() });
+    if (recovery.status !== "available") throw new Error("Expected available recovery fixture.");
+    let state = createDashboardState(recovery);
+    const rejected = [
+      orderStatusEventFixture(uuidFor(1), "order.processing", "queued", "processing", { runId: uuidFor(91) }),
+      orderStatusEventFixture(uuidFor(2), "order.processing", "queued", "processing", { saleOfferId: uuidFor(92) }),
+      orderStatusEventFixture(uuidFor(3), "order.processing", "queued", "processing", { occurredAt: "2026-06-19T00:00:00.000Z" }),
+    ];
+    for (const event of rejected) state = dashboardStateReducer(state, { type: "event-received", event, discard: false });
+    expect(state.seenOrderEventIds).toEqual([]);
+
+    const newer = orderStatusEventFixture(uuidFor(4), "order.processing", "queued", "processing", { orderId: uuidFor(41), occurredAt: "2026-06-20T00:00:30.000Z" });
+    const olderDistinct = orderStatusEventFixture(uuidFor(5), "order.processing", "queued", "processing", { orderId: uuidFor(42), occurredAt: "2026-06-20T00:00:20.000Z" });
+    state = dashboardStateReducer(state, { type: "event-received", event: newer, discard: false });
+    state = dashboardStateReducer(state, { type: "event-received", event: olderDistinct, discard: false });
+    expect(state.recentOrderStates.filter((order) => [newer.orderId, olderDistinct.orderId].includes(order.orderId))).toHaveLength(2);
+  });
+
+  it("prevents both terminal states from regressing and enforces order/dedup bounds", () => {
+    const recovery = availableRecovery({ ...recoveryFixture(), currentRun: runFixture() });
+    let state = createDashboardState(recovery);
+    for (let index = 1; index <= 105; index += 1) {
+      const terminal = index % 2 === 0 ? "confirmed" : "failed";
+      const event = orderStatusEventFixture(uuidFor(index), `order.${terminal}`, "processing", terminal, { orderId: uuidFor(1_000 + index), publicOrderId: `ord-${index}` });
+      state = dashboardStateReducer(state, { type: "event-received", event, discard: false });
+      state = dashboardStateReducer(state, { type: "event-received", event, discard: false });
+      state = dashboardStateReducer(state, { type: "event-received", event: orderStatusEventFixture(uuidFor(2_000 + index), "order.processing", "queued", "processing", { orderId: event.orderId }), discard: false });
+    }
+    expect(state.recentOrderStates).toHaveLength(20);
+    expect(state.recentOrderStates.every((order) => order.status === "confirmed" || order.status === "failed")).toBe(true);
+    expect(state.seenOrderEventIds).toHaveLength(100);
+  });
+
+  it("orders bounded lag samples by observed time with deterministic ties", () => {
+    const recovery = availableRecovery({ ...recoveryFixture(), currentRun: runFixture() });
+    let state = createDashboardState(recovery);
+    for (let index = 0; index < 25; index += 1) {
+      const observedAt = new Date(Date.UTC(2026, 5, 20, 0, 1, index)).toISOString();
+      const event = lagEventFixture(uuidFor(3_000 + index), observedAt, index);
+      state = dashboardStateReducer(state, { type: "event-received", event, discard: false });
+    }
+    const olderArrival = lagEventFixture(uuidFor(4_000), "2026-06-20T00:01:10.000Z", 70);
+    const latest = lagEventFixture(uuidFor(4_001), "2026-06-20T00:02:00.000Z", 120);
+    state = dashboardStateReducer(state, { type: "event-received", event: latest, discard: false });
+    state = dashboardStateReducer(state, { type: "event-received", event: olderArrival, discard: false });
+    expect(state.recentOrderLagSamples).toHaveLength(20);
+    expect(state.recentOrderLagSamples.at(-1)?.eventId).toBe(latest.eventId);
+    expect(state.recentOrderLagSamples.findIndex((sample) => sample.eventId === uuidFor(3_010))).toBeLessThan(
+      state.recentOrderLagSamples.findIndex((sample) => sample.eventId === olderArrival.eventId),
+    );
+  });
   it("renders enabled run controls when Phase 7 start handling is available", () => {
     const markup = renderToStaticMarkup(
       createElement(LoadRunControlsPanel, {

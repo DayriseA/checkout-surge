@@ -9,6 +9,7 @@ import {
   ErpHealthPanel,
   InventoryDrainPanel,
   QueuePressurePanel,
+  RecentOrderTransitionsPanel,
   RecoveryStatusPanel,
   RequestSurgePanel,
   RunOutcomesPanel,
@@ -21,7 +22,7 @@ export interface OperatorDashboardProps {
 }
 
 export function OperatorDashboard({ snapshot }: OperatorDashboardProps) {
-  const { recovery, isRefreshing, liveEventCount, refresh, applyEvent } = useDashboardRecovery(
+  const { recovery, isRefreshing, liveEventCount, recentOrderStates, recentOrderLagSamples, refresh, applyEvent } = useDashboardRecovery(
     snapshot.recovery,
   );
   const handleOpen = useCallback(() => {
@@ -46,7 +47,8 @@ export function OperatorDashboard({ snapshot }: OperatorDashboardProps) {
       <InventoryDrainPanel recovery={recovery} />
       <QueuePressurePanel recovery={recovery} />
       <ErpHealthPanel recovery={recovery} />
-      <ConsistencyLagPanel recovery={recovery} />
+      <ConsistencyLagPanel recovery={recovery} latestOrderLag={recentOrderLagSamples.at(-1) ?? null} />
+      <RecentOrderTransitionsPanel orders={recentOrderStates} />
       <RunOutcomesPanel recovery={recovery} />
       <CompletionOutcomesPanel recovery={recovery} />
     </div>

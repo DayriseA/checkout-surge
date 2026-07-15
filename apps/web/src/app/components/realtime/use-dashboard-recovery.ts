@@ -83,6 +83,8 @@ export function useDashboardRecovery(initialRecovery: BackendRead<DashboardRecov
     recovery: state.recovery,
     isRefreshing: state.isRefreshing,
     liveEventCount: state.liveEventCount,
+    recentOrderStates: state.recentOrderStates,
+    recentOrderLagSamples: state.recentOrderLagSamples,
     refresh,
     applyEvent,
   };

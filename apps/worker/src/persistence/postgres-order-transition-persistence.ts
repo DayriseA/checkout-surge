@@ -8,9 +8,11 @@ import {
 import { eq } from "drizzle-orm";
 import type {
   OrderFailure,
+  ConfirmedTransitionResult,
+  FailedTransitionResult,
   OrderProcessDeliveryMetadata,
   OrderTransitionPersistence,
-  OrderTransitionResult,
+  ProcessingTransitionResult,
 } from "../application/order-process-job-handler.js";
 
 type DurableOrder = typeof orders.$inferSelect;
@@ -54,16 +56,16 @@ export class PostgresOrderTransitionPersistence implements OrderTransitionPersis
   transitionToProcessing(
     job: OrderProcessJob,
     delivery: OrderProcessDeliveryMetadata,
-  ): Promise<OrderTransitionResult> {
+  ): Promise<ProcessingTransitionResult> {
     return this.db.transaction(async (tx) => {
       const order = await lockAndValidateOrder(tx, job);
 
       if (order.status === "confirmed" || order.status === "failed") {
-        return { status: order.status, resumed: false };
+        return { changed: false, status: order.status };
       }
 
       if (order.status === "processing") {
-        return { status: "processing", resumed: true };
+        return { changed: false, status: "processing" };
       }
 
       const occurredAt = this.now();
@@ -71,21 +73,21 @@ export class PostgresOrderTransitionPersistence implements OrderTransitionPersis
         .update(orders)
         .set({ status: "processing", processingAt: occurredAt, updatedAt: occurredAt })
         .where(eq(orders.id, order.id));
-      await appendTransitionEvent(tx, order, "order.processing", occurredAt, delivery);
+      const eventId = await appendTransitionEvent(tx, order, "order.processing", occurredAt, delivery);
 
-      return { status: "processing", resumed: false };
+      return { changed: true, eventId, previousStatus: "queued", status: "processing", occurredAt, queuedAt: order.queuedAt };
     });
   }
 
   transitionToConfirmed(
     job: OrderProcessJob,
     delivery: OrderProcessDeliveryMetadata,
-  ): Promise<boolean> {
+  ): Promise<ConfirmedTransitionResult> {
     return this.db.transaction(async (tx) => {
       const order = await lockAndValidateOrder(tx, job);
 
       if (order.status === "confirmed") {
-        return false;
+        return { changed: false, status: "confirmed" };
       }
       if (order.status !== "processing") {
         throw new InvalidOrderTransitionError(order.id, order.status, "confirmed");
@@ -96,8 +98,8 @@ export class PostgresOrderTransitionPersistence implements OrderTransitionPersis
         .update(orders)
         .set({ status: "confirmed", confirmedAt: occurredAt, updatedAt: occurredAt })
         .where(eq(orders.id, order.id));
-      await appendTransitionEvent(tx, order, "order.confirmed", occurredAt, delivery);
-      return true;
+      const eventId = await appendTransitionEvent(tx, order, "order.confirmed", occurredAt, delivery);
+      return { changed: true, eventId, previousStatus: "processing", status: "confirmed", occurredAt, confirmedAt: occurredAt, queuedAt: order.queuedAt };
     });
   }
 
@@ -105,12 +107,12 @@ export class PostgresOrderTransitionPersistence implements OrderTransitionPersis
     job: OrderProcessJob,
     failure: OrderFailure,
     delivery: OrderProcessDeliveryMetadata,
-  ): Promise<boolean> {
+  ): Promise<FailedTransitionResult> {
     return this.db.transaction(async (tx) => {
       const order = await lockAndValidateOrder(tx, job);
 
       if (order.status === "failed") {
-        return false;
+        return { changed: false, status: "failed" };
       }
       if (order.status !== "processing") {
         throw new InvalidOrderTransitionError(order.id, order.status, "failed");
@@ -127,8 +129,8 @@ export class PostgresOrderTransitionPersistence implements OrderTransitionPersis
           updatedAt: occurredAt,
         })
         .where(eq(orders.id, order.id));
-      await appendTransitionEvent(tx, order, "order.failed", occurredAt, delivery, failure);
-      return true;
+      const eventId = await appendTransitionEvent(tx, order, "order.failed", occurredAt, delivery, failure);
+      return { changed: true, eventId, previousStatus: "processing", status: "failed", occurredAt, queuedAt: order.queuedAt };
     });
   }
 }
@@ -178,8 +180,8 @@ async function appendTransitionEvent(
   occurredAt: Date,
   delivery: OrderProcessDeliveryMetadata,
   failure?: OrderFailure,
-): Promise<void> {
-  await tx.insert(orderEvents).values({
+): Promise<string> {
+  const [inserted] = await tx.insert(orderEvents).values({
     orderId: order.id,
     reservationId: order.reservationId,
     saleOfferId: order.saleOfferId,
@@ -194,5 +196,7 @@ async function appendTransitionEvent(
     },
     source: "worker",
     occurredAt,
-  });
+  }).returning({ id: orderEvents.id });
+  if (!inserted) throw new Error("Order transition event insert returned no durable identity.");
+  return inserted.id;
 }

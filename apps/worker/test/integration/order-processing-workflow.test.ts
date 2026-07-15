@@ -129,13 +129,16 @@ describe("PostgreSQL worker order transitions", () => {
       return time;
     });
 
-    await expect(
-      persistence.transitionToProcessing(job, { attemptNumber: 2, attemptsMade: 1 }),
-    ).resolves.toEqual({ status: "processing", resumed: false });
-    await persistence.transitionToConfirmed(job, { attemptNumber: 2, attemptsMade: 1 });
+    const processingTransition = await persistence.transitionToProcessing(job, { attemptNumber: 2, attemptsMade: 1 });
+    expect(processingTransition).toMatchObject({ changed: true, status: "processing", occurredAt: new Date("2026-06-21T00:00:01.000Z") });
+    const confirmedTransition = await persistence.transitionToConfirmed(job, { attemptNumber: 2, attemptsMade: 1 });
+    expect(confirmedTransition).toMatchObject({ changed: true, status: "confirmed", confirmedAt: new Date("2026-06-21T00:00:02.000Z") });
 
     const [order] = await connection.db.select().from(orders).where(eq(orders.id, ids.order));
     const events = await readOrderEvents(connection, ids.order);
+    if (!processingTransition.changed || !confirmedTransition.changed) {
+      throw new Error("Expected fresh durable transitions.");
+    }
 
     expect(order).toMatchObject({
       status: "confirmed",
@@ -173,6 +176,12 @@ describe("PostgreSQL worker order transitions", () => {
         payload: { orderStatus: "confirmed", attemptNumber: 2, attemptsMade: 1 },
       },
     ]);
+    expect(processingTransition.eventId).toBe(events[2]?.id);
+    expect(processingTransition.occurredAt).toEqual(events[2]?.occurredAt);
+    expect(processingTransition.occurredAt).toEqual(order?.processingAt);
+    expect(confirmedTransition.eventId).toBe(events[3]?.id);
+    expect(confirmedTransition.occurredAt).toEqual(events[3]?.occurredAt);
+    expect(confirmedTransition.confirmedAt).toEqual(order?.confirmedAt);
   });
 
   it("rolls back the status when matching event insertion fails", async () => {
@@ -222,24 +231,21 @@ describe("PostgreSQL worker order transitions", () => {
       persistence.transitionToProcessing(job, delivery),
       persistence.transitionToProcessing(job, delivery),
     ]);
-    await Promise.all([
+    const confirmationResults = await Promise.all([
       persistence.transitionToConfirmed(job, delivery),
       persistence.transitionToConfirmed(job, delivery),
     ]);
     const events = await readOrderEvents(connection, ids.order);
 
-    expect(processingResults).toEqual(
-      expect.arrayContaining([
-        { status: "processing", resumed: false },
-        { status: "processing", resumed: true },
-      ]),
-    );
+    expect(processingResults.map((result) => result.changed).sort()).toEqual([false, true]);
+    expect(processingResults.find((result) => !result.changed)).toEqual({ changed: false, status: "processing" });
+    expect(confirmationResults.map((result) => result.changed).sort()).toEqual([false, true]);
     expect(events.filter((event) => event.eventName === "order.processing")).toHaveLength(1);
     expect(events.filter((event) => event.eventName === "order.confirmed")).toHaveLength(1);
 
     await expect(persistence.transitionToProcessing(job, delivery)).resolves.toEqual({
+      changed: false,
       status: "confirmed",
-      resumed: false,
     });
     expect(await readOrderEvents(connection, ids.order)).toHaveLength(4);
   });
@@ -323,12 +329,12 @@ describe("PostgreSQL worker order transitions", () => {
     const delivery = { attemptNumber: 4, attemptsMade: 3 };
 
     await persistence.transitionToProcessing(job, delivery);
-    await persistence.transitionToFailed(
+    const failedTransition = await persistence.transitionToFailed(
       job,
       { code: "order_confirmation_failed", message: "placeholder confirmation failed" },
       delivery,
     );
-    await persistence.transitionToFailed(
+    const replay = await persistence.transitionToFailed(
       job,
       { code: "different", message: "must not overwrite" },
       { attemptNumber: 5, attemptsMade: 4 },
@@ -345,6 +351,11 @@ describe("PostgreSQL worker order transitions", () => {
       failureMessage: "placeholder confirmation failed",
     });
     expect(failedEvents).toHaveLength(1);
+    expect(replay).toEqual({ changed: false, status: "failed" });
+    if (!failedTransition.changed) throw new Error("Expected a fresh failed transition.");
+    expect(failedTransition.eventId).toBe(failedEvents[0]?.id);
+    expect(failedTransition.occurredAt).toEqual(failedEvents[0]?.occurredAt);
+    expect(failedTransition.occurredAt).toEqual(order?.failedAt);
     expect(failedEvents[0]?.payload).toEqual({
       orderStatus: "failed",
       attemptNumber: 4,
@@ -436,7 +447,7 @@ describe("PostgreSQL worker order transitions", () => {
           throw confirmedPersistenceError;
         }
 
-        await innerPersistence.transitionToConfirmed(...args);
+        return innerPersistence.transitionToConfirmed(...args);
       },
     );
     const persistence: OrderTransitionPersistence = {

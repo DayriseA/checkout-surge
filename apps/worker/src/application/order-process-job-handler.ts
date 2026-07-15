@@ -1,4 +1,9 @@
-import type { OrderProcessJob } from "@checkout-surge/contracts";
+import type {
+  OrderConsistencyLagDashboardEvent,
+  OrderProcessJob,
+  OrderStatusDashboardEvent,
+} from "@checkout-surge/contracts";
+import { createHash } from "node:crypto";
 import { type CheckoutSurgeLogger, childLoggerWithCorrelationId } from "@checkout-surge/logger";
 
 export interface OrderProcessDeliveryMetadata {
@@ -14,9 +19,41 @@ export interface OrderProcessJobHandler {
   handle(job: OrderProcessJob, delivery: OrderProcessDeliveryMetadata): Promise<void>;
 }
 
-export type OrderTransitionResult =
-  | { status: "processing"; resumed: boolean }
-  | { status: "confirmed" | "failed"; resumed: false };
+export type ProcessingTransitionResult =
+  | { changed: false; status: "processing" | "confirmed" | "failed" }
+  | {
+      changed: true;
+      eventId: string;
+      previousStatus: "queued";
+      status: "processing";
+      occurredAt: Date;
+      queuedAt: Date;
+    };
+export type FailedTransitionResult =
+  | { changed: false; status: "failed" }
+  | {
+      changed: true;
+      eventId: string;
+      previousStatus: "processing";
+      status: "failed";
+      occurredAt: Date;
+      queuedAt: Date;
+    };
+export type ConfirmedTransitionResult =
+  | { changed: false; status: "confirmed" }
+  | {
+      changed: true;
+      eventId: string;
+      previousStatus: "processing";
+      status: "confirmed";
+      occurredAt: Date;
+      queuedAt: Date;
+      confirmedAt: Date;
+    };
+export type FreshOrderTransition = Extract<
+  ProcessingTransitionResult | FailedTransitionResult | ConfirmedTransitionResult,
+  { changed: true }
+>;
 
 export interface OrderFailure {
   code: string;
@@ -27,18 +64,20 @@ export interface OrderTransitionPersistence {
   transitionToProcessing(
     job: OrderProcessJob,
     delivery: OrderProcessDeliveryMetadata,
-  ): Promise<OrderTransitionResult>;
+  ): Promise<ProcessingTransitionResult>;
   transitionToConfirmed(
     job: OrderProcessJob,
     delivery: OrderProcessDeliveryMetadata,
-  // biome-ignore lint/suspicious/noConfusingVoidType: void keeps existing adapters/test doubles source-compatible while boolean reports freshness.
-  ): Promise<boolean | void>;
+  ): Promise<ConfirmedTransitionResult>;
   transitionToFailed(
     job: OrderProcessJob,
     failure: OrderFailure,
     delivery: OrderProcessDeliveryMetadata,
-  // biome-ignore lint/suspicious/noConfusingVoidType: void keeps existing adapters/test doubles source-compatible while boolean reports freshness.
-  ): Promise<boolean | void>;
+  ): Promise<FailedTransitionResult>;
+}
+
+export interface OrderRealtimePublisher {
+  enqueue(events: readonly [OrderStatusDashboardEvent] | readonly [OrderStatusDashboardEvent, OrderConsistencyLagDashboardEvent]): void;
 }
 
 export interface OrderConfirmation {
@@ -139,6 +178,18 @@ export function createOrderProcessJobHandler(dependencies: {
     correlationId: string;
   }) => void;
   recovery?: OrderRecoveryHandoff;
+  realtimePublisher?: OrderRealtimePublisher;
+  reportConsistencyLagClockAnomaly?: (report: {
+    orderId: string;
+    publicOrderId: string;
+    saleOfferId: string;
+    runId?: string;
+    correlationId: string;
+    startedAt: string;
+    confirmedAt: string;
+    rawLagMs: number;
+    clampedLagMs: number;
+  }) => void;
 }): OrderProcessJobHandler {
   return {
     handle: async (job, delivery) => {
@@ -151,7 +202,7 @@ export function createOrderProcessJobHandler(dependencies: {
         attemptNumber: delivery.attemptNumber,
         attemptsMade: delivery.attemptsMade,
       };
-      let transition: OrderTransitionResult;
+      let transition: ProcessingTransitionResult;
       try {
         transition = await dependencies.persistence.transitionToProcessing(job, delivery);
       } catch (error) {
@@ -183,7 +234,8 @@ export function createOrderProcessJobHandler(dependencies: {
         return;
       }
 
-      if (!transition.resumed) {
+      if (transition.changed) {
+        enqueueRealtimeEvents(dependencies, job, delivery, transition, logger);
         await publishBusinessOutcomeUpdateWithoutFailingJob(
           dependencies,
           job,
@@ -193,8 +245,8 @@ export function createOrderProcessJobHandler(dependencies: {
       }
 
       logger.info(
-        { ...logContext, resumed: transition.resumed },
-        transition.resumed
+        { ...logContext, resumed: !transition.changed },
+        !transition.changed
           ? "Resuming order confirmation from processing state."
           : "Order transitioned to processing.",
       );
@@ -253,8 +305,9 @@ export function createOrderProcessJobHandler(dependencies: {
         );
 
         try {
-          const changed = await dependencies.persistence.transitionToFailed(job, failure, delivery);
-          if (changed !== false) {
+          const failedTransition = await dependencies.persistence.transitionToFailed(job, failure, delivery);
+          if (failedTransition.changed) {
+            enqueueRealtimeEvents(dependencies, job, delivery, failedTransition, logger);
             await publishBusinessOutcomeUpdateWithoutFailingJob(dependencies, job, "failed", logger);
           }
         } catch (persistenceError) {
@@ -284,9 +337,11 @@ export function createOrderProcessJobHandler(dependencies: {
         throw confirmationError;
       }
 
+      let confirmedTransition: ConfirmedTransitionResult;
       try {
-        const changed = await dependencies.persistence.transitionToConfirmed(job, delivery);
-        if (changed !== false) {
+        confirmedTransition = await dependencies.persistence.transitionToConfirmed(job, delivery);
+        if (confirmedTransition.changed) {
+          enqueueRealtimeEvents(dependencies, job, delivery, confirmedTransition, logger);
           await publishBusinessOutcomeUpdateWithoutFailingJob(
             dependencies,
             job,
@@ -321,15 +376,101 @@ export function createOrderProcessJobHandler(dependencies: {
           );
         }
       }
-      await publishNotificationRecordJobWithoutFailingOrder(
-        dependencies,
-        job,
-        new Date().toISOString(),
-        logger,
-      );
+      if (confirmedTransition.changed && confirmedTransition.status === "confirmed") {
+        await publishNotificationRecordJobWithoutFailingOrder(
+          dependencies,
+          job,
+          confirmedTransition.confirmedAt.toISOString(),
+          logger,
+        );
+      }
       logger.info(logContext, "Order transitioned to confirmed.");
     },
   };
+}
+
+function enqueueRealtimeEvents(
+  dependencies: Pick<Parameters<typeof createOrderProcessJobHandler>[0], "realtimePublisher" | "reportConsistencyLagClockAnomaly">,
+  job: OrderProcessJob,
+  delivery: OrderProcessDeliveryMetadata,
+  transition: FreshOrderTransition,
+  logger: CheckoutSurgeLogger,
+): void {
+  if (!dependencies.realtimePublisher) return;
+  const occurredAt = transition.occurredAt.toISOString();
+  const eventName = `order.${transition.status}` as OrderStatusDashboardEvent["eventName"];
+  const statusEvent: OrderStatusDashboardEvent = {
+    type: "order.status.updated",
+    eventId: transition.eventId,
+    ...(job.runId ? { runId: job.runId } : {}),
+    correlationId: job.correlationId,
+    occurredAt,
+    orderId: job.orderId,
+    publicOrderId: job.publicOrderId,
+    saleOfferId: job.saleOfferId,
+    eventName,
+    previousStatus: transition.previousStatus,
+    status: transition.status,
+    attemptNumber: delivery.attemptNumber,
+    attemptsMade: delivery.attemptsMade,
+  };
+  try {
+    if (transition.status !== "confirmed") {
+      dependencies.realtimePublisher.enqueue([statusEvent]);
+      return;
+    }
+    const startedAt = transition.queuedAt.toISOString();
+    const confirmedAt = transition.confirmedAt.toISOString();
+    const rawLagMs = transition.confirmedAt.getTime() - transition.queuedAt.getTime();
+    if (rawLagMs < 0) {
+      const report = {
+        orderId: job.orderId,
+        publicOrderId: job.publicOrderId,
+        saleOfferId: job.saleOfferId,
+        ...(job.runId ? { runId: job.runId } : {}),
+        correlationId: job.correlationId,
+        startedAt,
+        confirmedAt,
+        rawLagMs,
+        clampedLagMs: 0,
+      };
+      try {
+        dependencies.reportConsistencyLagClockAnomaly?.(report);
+      } catch {
+        // Reporting must not affect the durable transition.
+      }
+      logger.warn(report, "Confirmed order consistency lag clock anomaly was clamped to zero.");
+    }
+    dependencies.realtimePublisher.enqueue([
+      statusEvent,
+      {
+        type: "order.consistency_lag.observed",
+        eventId: deriveLagEventId(transition.eventId),
+        confirmedTransitionEventId: transition.eventId,
+        ...(job.runId ? { runId: job.runId } : {}),
+        correlationId: job.correlationId,
+        occurredAt: confirmedAt,
+        metricName: "order.consistency_lag",
+        value: Math.max(0, rawLagMs),
+        unit: "ms",
+        observedAt: confirmedAt,
+        orderId: job.orderId,
+        publicOrderId: job.publicOrderId,
+        saleOfferId: job.saleOfferId,
+        startedAt,
+        confirmedAt,
+      },
+    ]);
+  } catch (error) {
+    logger.error({ err: error, orderId: job.orderId, eventId: transition.eventId }, "Order realtime enqueue failed.");
+  }
+}
+
+function deriveLagEventId(transitionEventId: string): string {
+  const hex = createHash("sha256").update(`order.consistency_lag:${transitionEventId}`).digest("hex").slice(0, 32).split("");
+  hex[12] = "5";
+  hex[16] = ((Number.parseInt(hex[16] ?? "0", 16) & 3) | 8).toString(16);
+  return `${hex.slice(0, 8).join("")}-${hex.slice(8, 12).join("")}-${hex.slice(12, 16).join("")}-${hex.slice(16, 20).join("")}-${hex.slice(20).join("")}`;
 }
 
 async function publishNotificationRecordJobWithoutFailingOrder(

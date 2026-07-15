@@ -10,6 +10,25 @@ export interface DashboardState {
   liveEventCount: number;
   isRefreshing: boolean;
   eventWatermarks: DashboardEventWatermarks;
+  recentOrderStates: RecentOrderState[];
+  recentOrderLagSamples: RecentOrderLagSample[];
+  seenOrderEventIds: string[];
+}
+
+export interface RecentOrderState {
+  orderId: string;
+  publicOrderId: string;
+  status: "queued" | "processing" | "confirmed" | "failed";
+  occurredAt: string;
+  correlationId: string;
+}
+
+export interface RecentOrderLagSample {
+  eventId: string;
+  orderId: string;
+  publicOrderId: string;
+  valueMs: number;
+  observedAt: string;
 }
 
 export interface DashboardEventWatermarks {
@@ -35,6 +54,7 @@ export function createDashboardState(
     liveEventCount: 0,
     isRefreshing: false,
     eventWatermarks: eventWatermarksForRecovery(recovery),
+    ...orderAdvisoryStateForRecovery(recovery),
   };
 }
 
@@ -53,6 +73,7 @@ export function dashboardStateReducer(
         recovery: action.recovery,
         isRefreshing: false,
         eventWatermarks: eventWatermarksForRecovery(action.recovery),
+        ...orderAdvisoryStateForRecovery(action.recovery),
       };
     case "event-received":
       return action.discard || state.isRefreshing
@@ -65,6 +86,10 @@ export function applyDashboardEventToState(
   state: DashboardState,
   event: DashboardEvent,
 ): DashboardState {
+  const orderState = applyOrderRealtimeEvent(state, event);
+  if (orderState !== state) {
+    return { ...orderState, liveEventCount: state.liveEventCount + 1 };
+  }
   const application = applyDashboardEventWithWatermarks(
     state.recovery,
     state.eventWatermarks,
@@ -104,6 +129,9 @@ function applyDashboardEventWithWatermarks(
       recovery: incomingRecovery,
       eventWatermarks: eventWatermarksForRecovery(incomingRecovery),
     };
+  }
+  if (event.type === "order.status.updated" || event.type === "order.consistency_lag.observed") {
+    return { recovery, eventWatermarks };
   }
 
   const projection = dashboardEventProjection(event);
@@ -197,6 +225,9 @@ function dashboardEventProjection(event: DashboardEvent): DashboardEventProjecti
       return "businessOutcome";
     case "traffic.metric":
       return { trafficMetricName: event.metricName };
+    case "order.status.updated":
+    case "order.consistency_lag.observed":
+      return "businessOutcome";
   }
 }
 
@@ -325,10 +356,100 @@ function dashboardEventSaleOfferId(event: DashboardEvent): string | null {
       return event.inventory.saleOfferId;
     case "business.outcome.updated":
       return event.saleOfferId;
+    case "order.status.updated":
+    case "order.consistency_lag.observed":
+      return event.saleOfferId;
     case "traffic.metric":
     case "queue.updated":
       return null;
   }
+}
+
+function orderAdvisoryStateForRecovery(
+  recovery: BackendRead<DashboardRecoveryResponse>,
+): Pick<DashboardState, "recentOrderStates" | "recentOrderLagSamples" | "seenOrderEventIds"> {
+  return {
+    recentOrderStates:
+      recovery.status === "available"
+        ? newestOrderStates(recovery.data.recentCompletionOutcomes.flatMap((outcome) => {
+            const occurredAt = recoveredOrderStatusOccurredAt(outcome);
+            return occurredAt
+              ? [{
+                  orderId: outcome.orderId,
+                  publicOrderId: outcome.publicOrderId,
+                  status: outcome.orderStatus,
+                  occurredAt,
+                  correlationId: outcome.correlationId,
+                }]
+              : [];
+          }))
+        : [],
+    recentOrderLagSamples: [],
+    seenOrderEventIds: [],
+  };
+}
+
+function recoveredOrderStatusOccurredAt(
+  outcome: DashboardRecoveryResponse["recentCompletionOutcomes"][number],
+): string | null {
+  switch (outcome.orderStatus) {
+    case "queued":
+      return outcome.queuedAt;
+    case "processing":
+      // processingAt is optional in the recovery contract. queuedAt is a conservative fallback:
+      // it cannot make an incomplete processing record appear newer than its actual transition.
+      return outcome.processingAt ?? outcome.queuedAt;
+    case "confirmed":
+      return outcome.confirmedAt ?? null;
+    case "failed":
+      return outcome.failedAt ?? null;
+  }
+}
+
+function applyOrderRealtimeEvent(state: DashboardState, event: DashboardEvent): DashboardState {
+  if (event.type !== "order.status.updated" && event.type !== "order.consistency_lag.observed") return state;
+  if (state.recovery.status !== "available" || classifyDashboardEventScope(state.recovery.data, event) !== "current") return state;
+  if (state.seenOrderEventIds.includes(event.eventId)) return state;
+  const seenOrderEventIds = [...state.seenOrderEventIds.slice(-99), event.eventId];
+  if (event.type === "order.consistency_lag.observed") {
+    const sample = { eventId: event.eventId, orderId: event.orderId, publicOrderId: event.publicOrderId, valueMs: event.value, observedAt: event.observedAt };
+    return {
+      ...state,
+      seenOrderEventIds,
+      recentOrderLagSamples: [...state.recentOrderLagSamples, sample]
+        .sort((left, right) => Date.parse(left.observedAt) - Date.parse(right.observedAt) || left.eventId.localeCompare(right.eventId))
+        .slice(-20),
+    };
+  }
+  const existing = state.recentOrderStates.find((order) => order.orderId === event.orderId);
+  if (existing && lifecycleRank(event.status) <= lifecycleRank(existing.status)) {
+    return { ...state, seenOrderEventIds };
+  }
+  const next = {
+    orderId: event.orderId,
+    publicOrderId: event.publicOrderId,
+    status: event.status,
+    occurredAt: event.occurredAt,
+    correlationId: event.correlationId,
+  };
+  return {
+    ...state,
+    seenOrderEventIds,
+    recentOrderStates: newestOrderStates([
+      ...state.recentOrderStates.filter((order) => order.orderId !== event.orderId),
+      next,
+    ]),
+  };
+}
+
+function newestOrderStates(states: RecentOrderState[]): RecentOrderState[] {
+  return [...states]
+    .sort((left, right) => Date.parse(left.occurredAt) - Date.parse(right.occurredAt) || left.orderId.localeCompare(right.orderId))
+    .slice(-20);
+}
+
+function lifecycleRank(status: RecentOrderState["status"]): number {
+  return status === "queued" ? 0 : status === "processing" ? 1 : 2;
 }
 
 function isRunDashboardEvent(event: DashboardEvent): event is RunDashboardEvent {
