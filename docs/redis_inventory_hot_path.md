@@ -33,6 +33,8 @@ Traffic-completion enrichment closes run admission before reading inventory and 
 
 Payment authorization, customer cancel, payment timeout release, and automatic hold-expiry reconciliation are intentionally out of scope for this demo. A production implementation would add a payment/reconciliation worker that releases or expires holds atomically in Redis, persists reservation lifecycle events such as `reservation.released` or `reservation.expired`, and reconciles terminal Redis snapshots against the durable order/reservation ledger.
 
+The scope classification and reconsideration trigger are tracked in [Scope and Caveats](scope_and_caveats.md#intentional-non-goals); this section remains authoritative for inventory ownership and the required reconciliation shape.
+
 ## Atomic Reservation Behavior
 
 Generated-run buy requests first pass the atomic Redis inventory projection. The reservation command verifies that the supplied `runId` owns the generated `saleOfferId`, inventory `runSaleStatus` is `accepting`, and the synchronized JSON eligibility key safely decodes to an object with the same run, offer, and accepting state. Catalog requests must omit `runId` and do not use a run eligibility key. Missing, expired, wrong-type, malformed, primitive, closed, or mismatched generated-run projections all return the same ineligible decision before idempotency replay, stock mutation, or PostgreSQL access. Lifecycle compare-and-set transitions close the projection when traffic begins draining or the run becomes terminal.

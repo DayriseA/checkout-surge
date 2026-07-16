@@ -29,3 +29,32 @@
 
   Verification is a focused documentation review, not a runtime change: search `docs/` and README for `non-goal`, `out of scope`, `deferred`, `future`, `limitation`, `not yet`, and `not implemented`; classify every relevant hit or explicitly leave it as ordinary local explanation; check every registry link and heading anchor; confirm each live caveat against current implementation/docs and remove resolved donor history; verify every active row has an owner, evidence, last-reviewed value, and expiry trigger; and run the repository's Markdown/link check if one exists. No application code, contracts, migrations, runtime behavior, or tests are in scope. Do not turn intentional exclusions into roadmap commitments, centralize generic architecture boundaries that are already unambiguous, rewrite historical delivery notes wholesale, or claim hosted/10k validation that has not been performed.
 - **Locations:** `docs/`
+
+## Current status
+
+Completed on 2026-07-16. The documentation-only scope is implemented; no application code, contracts, migrations, runtime behavior, or tests were changed.
+
+## Completed scope and decisions
+
+- Added `docs/scope_and_caveats.md` as the owner of classification, live-caveat status, owner/source, and review metadata, with the required three sections and exact `active` / `partially mitigated` / `resolved` vocabulary.
+- Classified production commerce identity/security, payment and hold-release workflows, and hosted/distributed operational packaging as intentional non-goals. Classified local/10k evidence as an active environment caveat and the separately installed host-native k6 executable as partially mitigated by the pinned reference image.
+- Kept payment/reconciliation implementation excluded while separately recording its eventual design as unfrozen; this avoids turning a current non-goal into a delivery promise.
+- Renamed the owning core-business section to `## Decisions Deferred to Later Tasks`, preserved its constraints, and added the required reciprocal links from README, access protection, Redis inventory, core entities, runtime validation, and host-native setup.
+- Verified API finalization, terminal summary, Run History service/routes, and web Run History surfaces in the current tree; deliberately did not restore the resolved Phase 10 caveat.
+- Reviewed the requested README/docs search hits. The README hosting boundary, access non-goals, Redis exclusion, load-orchestrator single-process boundary, and core deferrals are centrally classified. Pending-persistence “not yet” wording, testing/CI extension notes, queue/dev-container extensibility, public-default wording, and reset's short-lived in-flight limitations remain ordinary local explanations because they describe precise state or local design constraints rather than registry-worthy product caveats.
+
+## Verification
+
+- `git diff --check` — passed.
+- Focused Node-based relative Markdown path and GitHub-style heading-anchor validation across the seven changed/linked documents — passed. No repository-native Markdown/link checker exists.
+- `rg -n -i 'non-goal|out of scope|deferred|future|limitation|not yet|not implemented' README.md docs` — reviewed and classified as recorded above.
+- `pnpm lint` — passed (393 files).
+- `pnpm format:check` — failed on 78 pre-existing, unrelated TypeScript formatting/import diagnostics; none referenced the Markdown changes.
+- `pnpm type-check` — all 11 package build/type-check tasks passed; the final `type-check:test` command failed on existing Drizzle `PgEnum` generic incompatibilities in `packages/db/test/unit/vocabulary-parity.test.ts`.
+- `pnpm test` — with isolated test infrastructure, all unit suites and all 420 API tests passed. Integration stopped on one unrelated worker assertion in `apps/worker/test/integration/bullmq-order-process-consumer.test.ts` (`expected "ZodError", received "Error"`); the isolated file reproduced the same single failure with its other 11 tests passing. An earlier concurrent unit attempt had one logger timeout, and that exact file passed both in isolation and in the subsequent full runs.
+- `pnpm test:infra:up` / `pnpm test:infra:down` — passed; dedicated PostgreSQL/Redis containers and volumes were removed after verification.
+- `pnpm test:composition` and `pnpm test:characterization` — not run, as explicitly prohibited for this task.
+
+## Blockers and follow-up
+
+No Task 76 documentation blocker remains. Repository-wide formatting, test-source type checking, and the isolated worker integration assertion remain unrelated follow-up for their owning code areas.

@@ -166,6 +166,7 @@ The deployed-topology characterization is intentionally opt-in because it is slo
 
 ## Documentation
 
+- [Scope and caveats](docs/scope_and_caveats.md) - intentional non-goals, live caveats, and deferred decisions with review metadata
 - [Architecture](docs/architecture.md) - system design, flow boundaries, and failure-mode handling
 - [Runtime topology](docs/runtime_topology.md) and [repository layout](docs/repository_layout.md) - process, container, and package ownership
 - [Core business entities](docs/core_business_entities.md) and [cross-service conventions](docs/cross_service_conventions.md) - domain model and shared vocabulary

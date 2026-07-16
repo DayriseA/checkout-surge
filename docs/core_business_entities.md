@@ -859,16 +859,16 @@ Admin operators should be able to distinguish:
 
 ---
 
-## Deliberate Extension Points
+## Decisions Deferred to Later Tasks
 
-The implemented schema, Redis keys, and public contracts are now concrete. The current domain deliberately leaves these broader capabilities outside the implemented track:
+The implemented schema, Redis keys, and public contracts are now concrete. The current domain deliberately leaves these broader design choices unfrozen because their capabilities remain outside the implemented track:
 
-- dead-letter queue design,
+- physical dead-letter queue topology,
 - account modeling,
 - payment authorization, cancellation, and automatic reservation expiry/release,
 - external notification-provider integration.
 
-Future work in those areas must preserve the existing reservation/order distinction, durable recovery boundaries, and hosted retention policy.
+Any implementation in those areas must preserve the existing reservation/order distinction, durable recovery boundaries, and hosted retention policy. Their classification and decision triggers are tracked in [Scope and Caveats](scope_and_caveats.md#deferred-decisions); this section remains authoritative for the domain constraints.
 
 ---
 
