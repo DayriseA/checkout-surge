@@ -1,5 +1,9 @@
+import { runSaleEligibilityTtlSeconds } from "@checkout-surge/db";
 import { describe, expect, it } from "vitest";
-import { loadApiConfig as loadProductionApiConfig } from "../src/runtime/config.js";
+import {
+  loadApiConfig as loadProductionApiConfig,
+  runSaleEligibilitySafetyMarginSeconds,
+} from "../src/runtime/config.js";
 
 const loadApiConfig = (environment: Record<string, string | undefined>) =>
   loadProductionApiConfig({ ...environment, NODE_ENV: "test" });
@@ -95,18 +99,20 @@ describe("API runtime configuration", () => {
     expect(overridden.demoRunDrainTimeoutSeconds).toBe(17);
   });
 
-  it.each(["12oops", "1.5", "-1", "0"])(
-    "rejects malformed or non-positive deployment cap values (%s)",
-    (value) => {
-      expect(() =>
-        loadApiConfig({
-          ...baseEnv,
-          CONTROL_SERVICE_TOKEN: "deployment-token",
-          DEMO_MAX_BUYERS: value,
-        }),
-      ).toThrow(/DEMO_MAX_BUYERS/);
-    },
-  );
+  it.each([
+    "12oops",
+    "1.5",
+    "-1",
+    "0",
+  ])("rejects malformed or non-positive deployment cap values (%s)", (value) => {
+    expect(() =>
+      loadApiConfig({
+        ...baseEnv,
+        CONTROL_SERVICE_TOKEN: "deployment-token",
+        DEMO_MAX_BUYERS: value,
+      }),
+    ).toThrow(/DEMO_MAX_BUYERS/);
+  });
 
   it("rejects deployment preallocated VUs above max VUs", () => {
     expect(() =>
@@ -117,6 +123,54 @@ describe("API runtime configuration", () => {
         DEMO_MAX_VUS: "10",
       }),
     ).toThrow(/DEMO_MAX_PRE_ALLOCATED_VUS.*must not exceed.*DEMO_MAX_VUS/);
+  });
+
+  it("preserves a full safety margin inside the run-sale eligibility TTL", () => {
+    const maximumLifecycleSeconds =
+      runSaleEligibilityTtlSeconds - runSaleEligibilitySafetyMarginSeconds;
+    const fixedWindowSeconds = 0 + 1 + 30 + 5;
+    const environment = {
+      ...baseEnv,
+      CONTROL_SERVICE_TOKEN: "deployment-token",
+      DEMO_MAX_TRAFFIC_START_DELAY_SECONDS: "0",
+      DEMO_RUN_DRAIN_TIMEOUT_SECONDS: "1",
+      PENDING_PERSISTENCE_RETRY_AFTER_SECONDS: "30",
+      DEMO_RUN_FINALIZATION_POLL_INTERVAL_SECONDS: "5",
+    };
+
+    expect(() =>
+      loadApiConfig({
+        ...environment,
+        DEMO_MAX_TRAFFIC_DURATION_SECONDS: String(maximumLifecycleSeconds - fixedWindowSeconds - 1),
+      }),
+    ).not.toThrow();
+    expect(() =>
+      loadApiConfig({
+        ...environment,
+        DEMO_MAX_TRAFFIC_DURATION_SECONDS: String(maximumLifecycleSeconds - fixedWindowSeconds),
+      }),
+    ).toThrow(/run-sale eligibility TTL retains its .* safety margin/);
+  });
+
+  it("rejects lifecycle values outside safe integer arithmetic", () => {
+    expect(() =>
+      loadApiConfig({
+        ...baseEnv,
+        CONTROL_SERVICE_TOKEN: "deployment-token",
+        DEMO_MAX_TRAFFIC_DURATION_SECONDS: String(Number.MAX_SAFE_INTEGER + 1),
+      }),
+    ).toThrow(/DEMO_MAX_TRAFFIC_DURATION_SECONDS must be a positive integer/);
+  });
+
+  it("rejects lifecycle-window addition outside safe integer arithmetic", () => {
+    expect(() =>
+      loadApiConfig({
+        ...baseEnv,
+        CONTROL_SERVICE_TOKEN: "deployment-token",
+        DEMO_MAX_TRAFFIC_DURATION_SECONDS: String(Number.MAX_SAFE_INTEGER),
+        DEMO_RUN_DRAIN_TIMEOUT_SECONDS: String(Number.MAX_SAFE_INTEGER),
+      }),
+    ).toThrow(/lifecycle duration configuration exceeds safe integer arithmetic/);
   });
 
   it.each([

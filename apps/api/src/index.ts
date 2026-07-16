@@ -201,7 +201,11 @@ export async function startApiServer(): Promise<void> {
     publish: (input) => publishBusinessOutcomeDashboardUpdate(connection.db, redis, input),
     onError: (error, input) => {
       logger.error(
-        { err: error, saleOfferId: input.saleOfferId, ...(input.runId ? { runId: input.runId } : {}) },
+        {
+          err: error,
+          saleOfferId: input.saleOfferId,
+          ...(input.runId ? { runId: input.runId } : {}),
+        },
         "Dashboard business outcome projection failed.",
       );
     },
@@ -280,7 +284,6 @@ export async function startApiServer(): Promise<void> {
     logger,
     pendingPersistenceReconciler,
     completionEnrichmentService: trafficCompletionEnrichmentService,
-    terminalRunWriter,
   });
   const demoRunService = new DemoRunService({
     db: connection.db,
@@ -399,10 +402,7 @@ export async function startApiServer(): Promise<void> {
         "Global pending Redis reservation reconciliation will retry on the next lifecycle pass.",
       );
     }
-    if (
-      startupReconciliation.interruptedRunCount > 0 ||
-      startupReconciliation.recoverableDrainingRunCount > 0
-    ) {
+    if (startupReconciliation.discoveredRunCount > 0) {
       logger.info(startupReconciliation, "API startup demo-run reconciliation completed.");
     }
 

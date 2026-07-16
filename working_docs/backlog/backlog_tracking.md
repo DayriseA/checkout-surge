@@ -141,9 +141,9 @@ Replace `⬜` with `✅` when a task is complete. Optional `⏳` for work in pro
 
 ✅ [Task 68: Fix and gate the test-source type-check command](./task_68.md)
 
-⬜ [Task 69: Adapt the design docs and README to implementation reality and correct overstated status/access claims](./task_69.md)
+✅ [Task 69: Adapt the design docs and README to implementation reality and correct overstated status/access claims](./task_69.md)
 
-⬜ [Task 70: Harden startup reconciliation with per-run failure isolation and an eligibility self-expiry backstop](./task_70.md)
+✅ [Task 70: Harden startup reconciliation with per-run failure isolation and an eligibility self-expiry backstop](./task_70.md)
 
 ⬜ [Task 71: Single-source the vocabulary: derive DB enums from contract enums and add transition helpers](./task_71.md)
 

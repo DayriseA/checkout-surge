@@ -11,6 +11,7 @@ import {
   inventoryKeys,
   pendingPersistenceIndexKey,
   reservationThroughputWindowSeconds,
+  runSaleEligibilityKey,
 } from "./redis-inventory.js";
 import { inventoryEventHistoryLimit } from "./redis-inventory-policy.js";
 
@@ -311,6 +312,18 @@ elseif inventoryScope == "generated_run" then
     or runSaleStatus ~= "accepting" then
     return cjson.encode({ outcome = "run_not_accepting_traffic", reservation = cjson.null })
   end
+  if redis.call("TYPE", KEYS[11]).ok ~= "string" then
+    return cjson.encode({ outcome = "run_not_accepting_traffic", reservation = cjson.null })
+  end
+  local eligibilityJson = redis.call("GET", KEYS[11])
+  local decoded, eligibility = pcall(cjson.decode, eligibilityJson)
+  if not decoded
+    or type(eligibility) ~= "table"
+    or eligibility.runId ~= inventoryRunId
+    or eligibility.saleOfferId ~= reservation.saleOfferId
+    or eligibility.status ~= "accepting" then
+    return cjson.encode({ outcome = "run_not_accepting_traffic", reservation = cjson.null })
+  end
 else
   return redis.error_reply("Inventory scope must be catalog or generated_run")
 end
@@ -510,6 +523,7 @@ export async function reserveInventoryStock(
     keys.pendingPersistenceRecords,
     keys.idempotency(idempotencyKey),
     pendingPersistenceIndexKey,
+    runSaleEligibilityKey(reservation.runId ?? "none"),
     reservation.quantity.toString(),
     JSON.stringify(reservation),
     new Date(reservation.expiresAt).getTime().toString(),
@@ -534,7 +548,7 @@ function ensureReserveInventoryCommand(
 ): RedisWithReserveInventoryCommand {
   if (!reserveInventoryCommandConnections.has(redis)) {
     redis.defineCommand(reserveInventoryCommandName, {
-      numberOfKeys: 10,
+      numberOfKeys: 11,
       lua: reserveInventoryScript,
     });
     reserveInventoryCommandConnections.add(redis);

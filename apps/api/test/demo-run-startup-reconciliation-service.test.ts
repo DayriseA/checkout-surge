@@ -1,6 +1,6 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { AcceptedRunConfigSnapshot } from "@checkout-surge/contracts";
+import type { AcceptedRunConfigSnapshot, OrderProcessJob } from "@checkout-surge/contracts";
 import {
   createDatabaseConnection,
   createRedisClient,
@@ -10,15 +10,22 @@ import {
   demoRuns,
   initializeInventory,
   isRunSaleEligible,
+  orderEvents,
+  orders,
   products,
+  promoteReservationIdempotencyToAccepted,
+  reservations,
+  reserveInventoryStock,
   saleOffers,
+  setRunSaleEligibility,
 } from "@checkout-surge/db";
 import { resetTestDatabase } from "@checkout-surge/db/testing";
 import { createSilentLogger } from "@checkout-surge/logger";
 import { eq, inArray } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { DemoRunStartupReconciliationService } from "../src/services/demo-run-startup-reconciliation-service.js";
-import { PostgresTerminalDemoRunSummaryWriter } from "../src/services/terminal-demo-run-transition.js";
+import { PendingPersistenceReconciler } from "../src/services/pending-persistence-reconciler.js";
+import { PostgresBuyPersistence } from "../src/services/postgres-buy-persistence.js";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const dbPackageRoot = path.resolve(packageRoot, "../../packages/db");
@@ -72,15 +79,14 @@ describe("demo run startup reconciliation service", () => {
       reversed: 0,
       failed: 0,
     }));
-    const postgresTerminalRunWriter = new PostgresTerminalDemoRunSummaryWriter(db);
-    const writeTerminalRun = vi.fn(postgresTerminalRunWriter.write.bind(postgresTerminalRunWriter));
     const service = new DemoRunStartupReconciliationService({
       db,
-      terminalRunWriter: { write: writeTerminalRun },
       redis: redisClient,
       logger: createSilentLogger("api"),
       pendingPersistenceReconciler: { reconcileSaleOffer },
-      now: () => new Date("2026-06-20T00:00:10.000Z"),
+      completionEnrichmentService: {
+        completePendingEnrichment: vi.fn(async () => "already_completed" as const),
+      },
     });
 
     await seedRunFixtures(db, redisClient, "active");
@@ -96,12 +102,14 @@ describe("demo run startup reconciliation service", () => {
       .where(inArray(demoRunSummaries.runId, [ids.startingRun, ids.activeRun, ids.drainingRun]));
 
     expect(summary).toEqual({
-      interruptedRunCount: 0,
+      discoveredRunCount: 0,
+      succeededRunCount: 0,
+      failedRunCount: 0,
       closedSaleOfferCount: 0,
-      summaryCreatedCount: 0,
-      recoverableDrainingRunCount: 0,
+      completionEnrichedRunCount: 0,
+      pendingPersistenceEffectCount: 0,
+      failures: [],
     });
-    expect(writeTerminalRun).not.toHaveBeenCalled();
     expect(reconcileSaleOffer).not.toHaveBeenCalled();
     expect(runs.find((run) => run.id === ids.activeRun)).toMatchObject({
       status: "active",
@@ -122,10 +130,20 @@ describe("demo run startup reconciliation service", () => {
     const redisClient = requireRedis(redis);
     const service = new DemoRunStartupReconciliationService({
       db,
-      terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db),
       redis: redisClient,
       logger: createSilentLogger("api"),
-      now: () => new Date("2026-06-20T00:00:10.000Z"),
+      pendingPersistenceReconciler: {
+        reconcileSaleOffer: vi.fn(async () => ({
+          found: 0,
+          materialized: 0,
+          reconciled: 0,
+          reversed: 0,
+          failed: 0,
+        })),
+      },
+      completionEnrichmentService: {
+        completePendingEnrichment: vi.fn(async () => "already_completed" as const),
+      },
     });
 
     await seedRunFixtures(db, redisClient, "starting");
@@ -135,10 +153,10 @@ describe("demo run startup reconciliation service", () => {
     const summaries = await db
       .select()
       .from(demoRunSummaries)
-      .where(eq(demoRunSummaries.failureReason, "api_restart_interrupted_run"));
+      .where(eq(demoRunSummaries.runId, ids.startingRun));
 
-    expect(second.interruptedRunCount).toBe(0);
-    expect(second.summaryCreatedCount).toBe(0);
+    expect(second.discoveredRunCount).toBe(0);
+    expect(second.succeededRunCount).toBe(0);
     expect(summaries).toHaveLength(0);
   });
 
@@ -160,30 +178,197 @@ describe("demo run startup reconciliation service", () => {
         failed: 0,
       };
     });
-    const writeTerminalRun = vi.fn(async () => true);
     const service = new DemoRunStartupReconciliationService({
       db,
-      terminalRunWriter: { write: writeTerminalRun },
       redis: redisClient,
       logger: createSilentLogger("api"),
       pendingPersistenceReconciler: { reconcileSaleOffer },
       completionEnrichmentService: { completePendingEnrichment },
-      now: () => new Date("2026-06-20T00:00:10.000Z"),
     });
     await seedRunFixtures(db, redisClient, "draining");
 
     await expect(service.reconcile()).resolves.toEqual({
-      interruptedRunCount: 0,
-      closedSaleOfferCount: 1,
-      summaryCreatedCount: 0,
-      recoverableDrainingRunCount: 1,
+      discoveredRunCount: 1,
+      succeededRunCount: 1,
+      failedRunCount: 0,
+      closedSaleOfferCount: 0,
+      completionEnrichedRunCount: 1,
+      pendingPersistenceEffectCount: 0,
+      failures: [],
     });
-    expect(writeTerminalRun).not.toHaveBeenCalled();
     expect(reconcileSaleOffer).toHaveBeenCalledWith(ids.drainingOffer, {
       runId: ids.drainingRun,
     });
     expect(completePendingEnrichment).toHaveBeenCalledWith(ids.drainingRun);
     expect(lifecycleOrder).toEqual(["enrichment", "pending-persistence"]);
+  });
+
+  it("isolates per-run stage failures and reports only real effects", async () => {
+    const db = requireConnection(connection).db;
+    const redisClient = requireRedis(redis);
+    await seedRunFixtures(db, redisClient, "draining");
+    const [seeded] = await db.select().from(demoRuns).where(eq(demoRuns.id, ids.drainingRun));
+    if (!seeded) throw new Error("Expected draining fixture.");
+
+    const candidates = [
+      { ...seeded, id: "60000000-0000-4000-8000-000000000001", saleOfferId: null },
+      { ...seeded, id: "60000000-0000-4000-8000-000000000002" },
+      { ...seeded, id: "60000000-0000-4000-8000-000000000003" },
+      { ...seeded, id: "60000000-0000-4000-8000-000000000004" },
+      { ...seeded, id: "60000000-0000-4000-8000-000000000005" },
+    ];
+    const closeRunSaleEligibility = vi.fn(async ({ runId }: { runId: string }) => {
+      if (runId.endsWith("2")) throw new Error("Redis unavailable");
+      return true;
+    });
+    const completePendingEnrichment = vi.fn(async (runId: string) => {
+      if (runId.endsWith("3")) throw new Error("projection read failed");
+      return "completed" as const;
+    });
+    const reconcileSaleOffer = vi.fn(async (_saleOfferId: string, input: { runId?: string }) => ({
+      found: 1,
+      materialized: input.runId?.endsWith("5") ? 1 : 0,
+      reconciled: input.runId?.endsWith("4") ? 0 : 1,
+      reversed: 0,
+      failed: input.runId?.endsWith("4") ? 1 : 0,
+    }));
+    const service = new DemoRunStartupReconciliationService({
+      db,
+      redis: redisClient,
+      logger: createSilentLogger("api"),
+      listDrainingRuns: async () => candidates,
+      closeRunSaleEligibility,
+      completionEnrichmentService: { completePendingEnrichment },
+      pendingPersistenceReconciler: { reconcileSaleOffer },
+    });
+
+    await expect(service.reconcile()).resolves.toEqual({
+      discoveredRunCount: 5,
+      succeededRunCount: 1,
+      failedRunCount: 4,
+      closedSaleOfferCount: 3,
+      completionEnrichedRunCount: 3,
+      pendingPersistenceEffectCount: 3,
+      failures: [
+        {
+          runId: candidates[0]?.id,
+          saleOfferId: null,
+          stages: ["missing_sale_offer"],
+        },
+        {
+          runId: candidates[1]?.id,
+          saleOfferId: ids.drainingOffer,
+          stages: ["eligibility_close"],
+        },
+        {
+          runId: candidates[2]?.id,
+          saleOfferId: ids.drainingOffer,
+          stages: ["completion_enrichment"],
+        },
+        {
+          runId: candidates[3]?.id,
+          saleOfferId: ids.drainingOffer,
+          stages: ["pending_reconciliation"],
+        },
+      ],
+    });
+    expect(closeRunSaleEligibility).toHaveBeenCalledTimes(4);
+    expect(completePendingEnrichment).toHaveBeenCalledTimes(4);
+    expect(reconcileSaleOffer).toHaveBeenCalledTimes(4);
+  });
+
+  it("converges a real draining-run pending hold before returning and remains idempotent", async () => {
+    const db = requireConnection(connection).db;
+    const redisClient = requireRedis(redis);
+    await seedRunFixtures(db, redisClient, "draining");
+    await setRunSaleEligibility(redisClient, {
+      runId: ids.drainingRun,
+      saleOfferId: ids.drainingOffer,
+      status: "accepting",
+    });
+    const decision = await reserveInventoryStock(redisClient, {
+      idempotencyKey: "startup-recovery-real-hold",
+      idempotencyTtlSeconds: 1800,
+      reservation: {
+        id: "70000000-0000-4000-8000-000000000001",
+        saleOfferId: ids.drainingOffer,
+        runId: ids.drainingRun,
+        correlationId: "startup-recovery-real-hold",
+        quantity: 1,
+        status: "secured",
+        reservationToken: "startup-recovery-token",
+        securedAt: "2026-06-20T00:00:05.000Z",
+        expiresAt: "2026-06-20T00:15:05.000Z",
+      },
+    });
+    expect(decision.outcome).toBe("reservation_secured");
+
+    const jobs: OrderProcessJob[] = [];
+    const pendingPersistenceReconciler = new PendingPersistenceReconciler({
+      redis: redisClient,
+      persistence: new PostgresBuyPersistence(db),
+      stockReservations: {
+        promoteAccepted: (input) =>
+          promoteReservationIdempotencyToAccepted(redisClient, input).then(() => undefined),
+      },
+      orderProcessJobPublisher: {
+        enqueue: async (job) => {
+          jobs.push(job);
+        },
+      },
+      idempotencyTtlSeconds: 1800,
+      logger: createSilentLogger("api"),
+    });
+    const service = new DemoRunStartupReconciliationService({
+      db,
+      redis: redisClient,
+      logger: createSilentLogger("api"),
+      pendingPersistenceReconciler,
+      completionEnrichmentService: {
+        completePendingEnrichment: async () => "already_completed",
+      },
+    });
+
+    const first = await service.reconcile();
+    const second = await service.reconcile();
+    const [run] = await db.select().from(demoRuns).where(eq(demoRuns.id, ids.drainingRun));
+    const durableReservations = await db
+      .select()
+      .from(reservations)
+      .where(eq(reservations.runId, ids.drainingRun));
+    const durableOrders = await db.select().from(orders).where(eq(orders.runId, ids.drainingRun));
+    const durableEvents = await db
+      .select()
+      .from(orderEvents)
+      .where(eq(orderEvents.reservationId, decision.reservation?.id ?? ""));
+    const summaries = await db
+      .select()
+      .from(demoRunSummaries)
+      .where(eq(demoRunSummaries.runId, ids.drainingRun));
+
+    expect(first).toMatchObject({
+      discoveredRunCount: 1,
+      succeededRunCount: 1,
+      failedRunCount: 0,
+      closedSaleOfferCount: 1,
+      pendingPersistenceEffectCount: 1,
+    });
+    expect(second).toMatchObject({
+      discoveredRunCount: 1,
+      succeededRunCount: 1,
+      failedRunCount: 0,
+      closedSaleOfferCount: 0,
+      pendingPersistenceEffectCount: 0,
+    });
+    expect(run?.status).toBe("draining");
+    expect(durableReservations).toHaveLength(1);
+    expect(durableOrders).toHaveLength(1);
+    expect(durableEvents.map((event) => event.eventName).sort()).toEqual([
+      "order.queued",
+      "reservation.secured",
+    ]);
+    expect(summaries).toHaveLength(0);
+    expect(jobs).toHaveLength(1);
   });
 });
 

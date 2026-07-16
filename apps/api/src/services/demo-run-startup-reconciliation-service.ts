@@ -1,288 +1,196 @@
 import {
-  type AcceptedRunConfigSnapshot,
-  acceptedRunConfigSnapshotSchema,
-  type BusinessOutcomeSummary,
-  emptyHttpTimingBreakdownSummary,
-  type TerminalInventorySnapshot,
-  type TrafficConfig,
-  type TrafficDeliverySummary,
-  type TrafficHttpSummary,
-} from "@checkout-surge/contracts";
-import {
   type CheckoutSurgeDatabase,
   type CheckoutSurgeRedis,
-  demoRunReservationOutcomes,
   demoRuns,
-  getInventoryStatus,
-  readBusinessOutcomeSummary,
   setRunSaleEligibility,
 } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
-import { and, eq, inArray } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import type { PendingPersistenceReconciler } from "./pending-persistence-reconciler.js";
-import type { TerminalDemoRunWriter } from "./terminal-demo-run-writer.js";
 import type { TrafficCompletionEnrichmentController } from "./traffic-completion-enrichment-service.js";
-import { syntheticTrafficDeliverySummary } from "./traffic-delivery-plan.js";
 
-const apiRestartInterruptedRunReason = "api_restart_interrupted_run";
+type DemoRunRow = typeof demoRuns.$inferSelect;
 
-export interface DemoRunStartupReconciliationSummary {
-  interruptedRunCount: number;
-  closedSaleOfferCount: number;
-  summaryCreatedCount: number;
-  recoverableDrainingRunCount: number;
+export type DemoRunStartupReconciliationFailureStage =
+  | "missing_sale_offer"
+  | "eligibility_close"
+  | "completion_enrichment"
+  | "pending_reconciliation"
+  | "recovery_workflow";
+
+export interface DemoRunStartupReconciliationFailure {
+  runId: string;
+  saleOfferId: string | null;
+  stages: DemoRunStartupReconciliationFailureStage[];
 }
 
+export interface DemoRunStartupReconciliationSummary {
+  discoveredRunCount: number;
+  succeededRunCount: number;
+  failedRunCount: number;
+  closedSaleOfferCount: number;
+  completionEnrichedRunCount: number;
+  pendingPersistenceEffectCount: number;
+  failures: DemoRunStartupReconciliationFailure[];
+}
+
+interface PerRunRecoveryResult {
+  closedSaleOfferCount: number;
+  completionEnrichedRunCount: number;
+  pendingPersistenceEffectCount: number;
+  failureStages: DemoRunStartupReconciliationFailureStage[];
+}
+
+/**
+ * Repairs API-owned projections for draining runs before the first finalizer
+ * tick. Starting and active execution remain owned by the traffic orchestrator
+ * and its durable completion journal.
+ */
 export class DemoRunStartupReconciliationService {
   constructor(
     private readonly options: {
       db: CheckoutSurgeDatabase;
       redis: CheckoutSurgeRedis;
       logger: CheckoutSurgeLogger;
-      pendingPersistenceReconciler?: Pick<PendingPersistenceReconciler, "reconcileSaleOffer">;
-      completionEnrichmentService?: Pick<
+      pendingPersistenceReconciler: Pick<PendingPersistenceReconciler, "reconcileSaleOffer">;
+      completionEnrichmentService: Pick<
         TrafficCompletionEnrichmentController,
         "completePendingEnrichment"
       >;
-      terminalRunWriter: Pick<TerminalDemoRunWriter, "write">;
-      now?: () => Date;
+      listDrainingRuns?: () => Promise<DemoRunRow[]>;
+      closeRunSaleEligibility?: (input: { runId: string; saleOfferId: string }) => Promise<boolean>;
     },
   ) {}
 
   async reconcile(): Promise<DemoRunStartupReconciliationSummary> {
-    const now = this.now();
-    const runs = await this.options.db
-      .select()
-      .from(demoRuns)
-      // Starting/active traffic is owned by the orchestrator's durable execution
-      // journal. API restart must not terminalize it while k6 may still run.
-      .where(inArray(demoRuns.status, ["draining"]));
-    const interruptedRuns = runs.filter(
-      (run) => run.status === "starting" || run.status === "active",
-    );
-    const recoverableDrainingRuns = runs.filter((run) => run.status === "draining");
-    const recoverableDrainingRunCount = recoverableDrainingRuns.length;
-    let closedSaleOfferCount = 0;
-    let summaryCreatedCount = 0;
+    // A list failure is startup-wide. Once discovery succeeds, every candidate
+    // gets an independent recovery attempt.
+    const runs = await this.listDrainingRuns();
+    const summary: DemoRunStartupReconciliationSummary = {
+      discoveredRunCount: runs.length,
+      succeededRunCount: 0,
+      failedRunCount: 0,
+      closedSaleOfferCount: 0,
+      completionEnrichedRunCount: 0,
+      pendingPersistenceEffectCount: 0,
+      failures: [],
+    };
 
-    for (const run of interruptedRuns) {
-      if (run.saleOfferId) {
-        try {
-          await setRunSaleEligibility(this.options.redis, {
-            runId: run.id,
-            saleOfferId: run.saleOfferId,
-            status: "closed",
-          });
-          closedSaleOfferCount += 1;
-        } catch (error) {
-          this.options.logger.warn(
-            { err: error, runId: run.id, saleOfferId: run.saleOfferId },
-            "Could not close run sale eligibility during API startup reconciliation.",
-          );
-        }
-      }
-
-      const configSnapshot = acceptedRunConfigSnapshotSchema.parse(run.configSnapshot);
-      const businessOutcome = await this.readBusinessOutcome(run);
-      const terminalInventorySnapshot = await this.captureTerminalInventorySnapshot({
-        run,
-        businessOutcome,
-        capturedAt: now,
-      });
-      const trafficSummary = interruptedTrafficSummary(configSnapshot);
-      const wroteSummary = await this.options.terminalRunWriter.write({
-        run,
-        terminalStatus: "failed",
-        failureReason: apiRestartInterruptedRunReason,
-        finalizedAt: now,
-        httpSummary: trafficSummary.httpSummary,
-        trafficDeliverySummary: trafficSummary.trafficDeliverySummary,
-        httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
-        loadRunDiagnosticsSummary: {
-          interruption: apiRestartInterruptedRunReason,
-          previousTrafficStatus: run.trafficStatus,
-        },
-        apiRequestLifecycleSummary: {
-          failureReason: apiRestartInterruptedRunReason,
-          previousStatus: run.status,
-          previousTrafficStatus: run.trafficStatus,
-          reconciledAt: now.toISOString(),
-        },
-        businessOutcome,
-        terminalInventorySnapshot,
-        allowedCurrentStatuses: ["starting", "active"],
-        terminalTrafficStatus: "failed",
-      });
-
-      if (wroteSummary) {
-        summaryCreatedCount += 1;
-      }
-    }
-
-    for (const run of recoverableDrainingRuns) {
-      if (!run.saleOfferId) {
-        continue;
-      }
-
+    for (const run of runs) {
+      let result: PerRunRecoveryResult;
       try {
-        await setRunSaleEligibility(this.options.redis, {
+        result = await this.recoverRun(run);
+      } catch (error) {
+        this.logStageFailure(run, "recovery_workflow", error);
+        result = {
+          closedSaleOfferCount: 0,
+          completionEnrichedRunCount: 0,
+          pendingPersistenceEffectCount: 0,
+          failureStages: ["recovery_workflow"],
+        };
+      }
+      summary.closedSaleOfferCount += result.closedSaleOfferCount;
+      summary.completionEnrichedRunCount += result.completionEnrichedRunCount;
+      summary.pendingPersistenceEffectCount += result.pendingPersistenceEffectCount;
+
+      if (result.failureStages.length === 0) {
+        summary.succeededRunCount += 1;
+      } else {
+        summary.failedRunCount += 1;
+        summary.failures.push({
           runId: run.id,
           saleOfferId: run.saleOfferId,
-          status: "closed",
+          stages: result.failureStages,
         });
-        closedSaleOfferCount += 1;
-      } catch (error) {
-        this.options.logger.warn(
-          { err: error, runId: run.id, saleOfferId: run.saleOfferId },
-          "Could not repair run sale eligibility during API startup reconciliation.",
-        );
-      }
-
-      if (this.options.completionEnrichmentService) {
-        try {
-          await this.options.completionEnrichmentService.completePendingEnrichment(run.id);
-        } catch (error) {
-          this.options.logger.warn(
-            { err: error, runId: run.id, saleOfferId: run.saleOfferId },
-            "Traffic-completion enrichment remains pending after API startup repair.",
-          );
-        }
-      }
-
-      if (this.options.pendingPersistenceReconciler) {
-        try {
-          await this.options.pendingPersistenceReconciler.reconcileSaleOffer(run.saleOfferId, {
-            runId: run.id,
-          });
-        } catch (error) {
-          this.options.logger.warn(
-            { err: error, runId: run.id, saleOfferId: run.saleOfferId },
-            "Pending Redis reservation reconciliation failed during API startup.",
-          );
-        }
       }
     }
 
-    return {
-      interruptedRunCount: interruptedRuns.length,
-      closedSaleOfferCount,
-      summaryCreatedCount,
-      recoverableDrainingRunCount,
-    };
+    return summary;
   }
 
-  private async readBusinessOutcome(
-    run: typeof demoRuns.$inferSelect,
-  ): Promise<BusinessOutcomeSummary> {
+  private async recoverRun(run: DemoRunRow): Promise<PerRunRecoveryResult> {
     if (!run.saleOfferId) {
-      return emptyBusinessOutcomeSummary();
+      this.logStageFailure(run, "missing_sale_offer", new Error("Draining run has no sale offer."));
+      return {
+        closedSaleOfferCount: 0,
+        completionEnrichedRunCount: 0,
+        pendingPersistenceEffectCount: 0,
+        failureStages: ["missing_sale_offer"],
+      };
     }
 
-    return readBusinessOutcomeSummary(this.options.db, {
-      saleOfferId: run.saleOfferId,
-      runId: run.id,
-    });
-  }
+    const result: PerRunRecoveryResult = {
+      closedSaleOfferCount: 0,
+      completionEnrichedRunCount: 0,
+      pendingPersistenceEffectCount: 0,
+      failureStages: [],
+    };
 
-  private async captureTerminalInventorySnapshot(input: {
-    run: typeof demoRuns.$inferSelect;
-    businessOutcome: BusinessOutcomeSummary;
-    capturedAt: Date;
-  }): Promise<TerminalInventorySnapshot | null> {
-    if (!input.run.saleOfferId) {
-      return null;
+    try {
+      if (await this.closeRunSaleEligibility(run.id, run.saleOfferId)) {
+        result.closedSaleOfferCount = 1;
+      }
+    } catch (error) {
+      result.failureStages.push("eligibility_close");
+      this.logStageFailure(run, "eligibility_close", error);
     }
 
     try {
-      const inventory = await getInventoryStatus(
-        this.options.redis,
-        input.run.saleOfferId,
-        input.capturedAt,
+      const enrichment = await this.options.completionEnrichmentService.completePendingEnrichment(
+        run.id,
       );
-      return {
-        saleOfferId: input.run.saleOfferId,
-        startingStock: inventory.allocatedStock,
-        remainingStock: inventory.remainingStock,
-        reservedStock: inventory.reservedStock,
-        acceptedReservations: input.businessOutcome.acceptedReservations,
-        soldOutRejections: await this.readSoldOutRejections(input.run.id, inventory),
-        pendingPersistenceCount: inventory.pendingPersistenceCount,
-        capturedAt: input.capturedAt.toISOString(),
-        source: "redis",
-      };
+      if (enrichment === "not_found") {
+        throw new Error("Draining run completion enrichment was not found.");
+      }
+      if (enrichment === "completed") {
+        result.completionEnrichedRunCount = 1;
+      }
     } catch (error) {
-      this.options.logger.warn(
-        { err: error, runId: input.run.id, saleOfferId: input.run.saleOfferId },
-        "Could not capture terminal inventory snapshot during API startup reconciliation.",
-      );
-      return null;
+      result.failureStages.push("completion_enrichment");
+      this.logStageFailure(run, "completion_enrichment", error);
     }
+
+    try {
+      const reconciliation = await this.options.pendingPersistenceReconciler.reconcileSaleOffer(
+        run.saleOfferId,
+        { runId: run.id },
+      );
+      result.pendingPersistenceEffectCount = reconciliation.reconciled + reconciliation.reversed;
+      if (reconciliation.failed > 0) {
+        throw new Error(
+          `Pending persistence reconciliation left ${reconciliation.failed} item(s) retryable.`,
+        );
+      }
+    } catch (error) {
+      result.failureStages.push("pending_reconciliation");
+      this.logStageFailure(run, "pending_reconciliation", error);
+    }
+
+    return result;
   }
 
-  private async readSoldOutRejections(
-    runId: string,
-    inventory: Awaited<ReturnType<typeof getInventoryStatus>>,
-  ): Promise<number> {
-    const [row] = await this.options.db
-      .select({ count: demoRunReservationOutcomes.count })
-      .from(demoRunReservationOutcomes)
-      .where(
-        and(
-          eq(demoRunReservationOutcomes.runId, runId),
-          eq(demoRunReservationOutcomes.outcome, "api_sold_out_decision"),
-        ),
-      )
-      .limit(1);
-
-    return row?.count ?? inventory.soldOutPressure.rejectionCount;
+  private async listDrainingRuns(): Promise<DemoRunRow[]> {
+    if (this.options.listDrainingRuns) {
+      return this.options.listDrainingRuns();
+    }
+    return this.options.db.select().from(demoRuns).where(eq(demoRuns.status, "draining"));
   }
 
-  private now(): Date {
-    return this.options.now?.() ?? new Date();
-  }
-}
-
-function interruptedTrafficSummary(config: AcceptedRunConfigSnapshot): {
-  httpSummary: TrafficHttpSummary;
-  trafficDeliverySummary: TrafficDeliverySummary;
-} {
-  const plannedRequests = plannedTrafficRequests(config.trafficConfig);
-
-  return {
-    httpSummary: {
-      plannedRequests,
-      emittedRequests: 0,
-      completedRequests: 0,
-      failedRequests: 0,
-      acceptedResponses: 0,
-      soldOutResponses: 0,
-      unexpectedResponses: 0,
-      failureRate: 0,
-    },
-    trafficDeliverySummary: syntheticTrafficDeliverySummary(config, [
-      "API startup reconciliation failed the interrupted run before traffic completion.",
-    ]),
-  };
-}
-
-function plannedTrafficRequests(config: TrafficConfig): number {
-  if (config.mode === "buyer-spike") {
-    return config.buyerCount * (config.duplicateEachBuyerAttempt ? 2 : 1);
+  private async closeRunSaleEligibility(runId: string, saleOfferId: string): Promise<boolean> {
+    if (this.options.closeRunSaleEligibility) {
+      return this.options.closeRunSaleEligibility({ runId, saleOfferId });
+    }
+    return setRunSaleEligibility(this.options.redis, { runId, saleOfferId, status: "closed" });
   }
 
-  return config.ratePerSecond * config.durationSeconds;
-}
-
-function emptyBusinessOutcomeSummary(): BusinessOutcomeSummary {
-  return {
-    acceptedReservations: 0,
-    soldOutRejections: 0,
-    queuedOrders: 0,
-    processingOrders: 0,
-    retryingOrders: 0,
-    confirmedOrders: 0,
-    failedOrders: 0,
-    pendingPersistenceCount: 0,
-    notificationsRecorded: 0,
-  };
+  private logStageFailure(
+    run: DemoRunRow,
+    stage: DemoRunStartupReconciliationFailureStage,
+    error: unknown,
+  ): void {
+    this.options.logger.warn(
+      { err: error, runId: run.id, saleOfferId: run.saleOfferId, stage },
+      "Demo-run startup recovery stage failed and remains retryable.",
+    );
+  }
 }

@@ -6,9 +6,9 @@ import {
   type DemoRunSnapshot,
   demoRunSnapshotSchema,
   type TerminalInventorySnapshot,
-  terminalInventorySnapshotSchema,
   type TrafficDeliverySummary,
   type TrafficHttpSummary,
+  terminalInventorySnapshotSchema,
   trafficHttpSummarySchema,
 } from "@checkout-surge/contracts";
 import {
@@ -113,12 +113,24 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
       return toDemoRunSnapshot(row.run);
     }
 
+    let pendingReconciliationFailed = false;
     if (this.options.pendingPersistenceReconciler) {
       try {
-        await this.options.pendingPersistenceReconciler.reconcileSaleOffer(row.run.saleOfferId, {
-          runId: row.run.id,
-        });
+        const reconciliation = await this.options.pendingPersistenceReconciler.reconcileSaleOffer(
+          row.run.saleOfferId,
+          {
+            runId: row.run.id,
+          },
+        );
+        if (reconciliation.failed > 0) {
+          pendingReconciliationFailed = true;
+          this.options.logger.warn(
+            { runId, saleOfferId: row.run.saleOfferId, failed: reconciliation.failed },
+            "Run remains draining while pending Redis reservations remain retryable.",
+          );
+        }
       } catch (error) {
+        pendingReconciliationFailed = true;
         this.options.logger.warn(
           { err: error, runId, saleOfferId: row.run.saleOfferId },
           "Pending Redis reservation reconciliation failed during run finalization.",
@@ -126,10 +138,17 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
       }
     }
 
+    const reconciliationTimedOut =
+      pendingReconciliationFailed && now.getTime() >= this.drainTimeoutAt(row.run).getTime();
+    if (pendingReconciliationFailed && !reconciliationTimedOut) {
+      return toDemoRunSnapshot(row.run);
+    }
+
     const decision = await this.decideFinalization({
       run: row.run,
       finalization: row.finalization,
       now,
+      pendingReconciliationFailed,
     });
 
     if (!decision.ready) {
@@ -182,6 +201,7 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
     const latestBlockers = [
       ...latestBusinessBlockers,
       ...(latestAccounting.accounted ? [] : ["accepted_response_accounting"]),
+      ...(pendingReconciliationFailed ? ["pending_persistence_reconciliation"] : []),
     ];
     if (latestBlockers.length > 0 && !timedOut) {
       this.options.logger.debug(
@@ -199,6 +219,7 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
       accountingTimedOut:
         latestBusinessBlockers.length === 0 && !latestAccounting.accounted && timedOut,
       escalatedRecoveryCount: latestRecoveryPressure.escalatedCount,
+      reconciliationTimedOut,
     });
     const accountingWarning = acceptedResponseAccountingWarning(latestAccounting);
     const loadRunDiagnosticsSummary = accountingWarning
@@ -232,6 +253,7 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
     run: typeof demoRuns.$inferSelect;
     finalization: typeof demoRunFinalizations.$inferSelect;
     now: Date;
+    pendingReconciliationFailed: boolean;
   }): Promise<FinalizationDecision> {
     const timeoutAt = this.drainTimeoutAt(input.run);
     const businessOutcome = await readBusinessOutcomeSummary(this.options.db, {
@@ -264,6 +286,7 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
     const blockers = [
       ...businessBlockers,
       ...(accounting.accounted ? [] : ["accepted_response_accounting"]),
+      ...(input.pendingReconciliationFailed ? ["pending_persistence_reconciliation"] : []),
     ];
     const timedOut = input.now.getTime() >= timeoutAt.getTime();
 
@@ -282,6 +305,7 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
       businessTimedOut: businessBlockers.length > 0 && timedOut,
       accountingTimedOut: businessBlockers.length === 0 && !accounting.accounted && timedOut,
       escalatedRecoveryCount: recoveryPressure.escalatedCount,
+      reconciliationTimedOut: input.pendingReconciliationFailed && timedOut,
     });
 
     return {
@@ -305,9 +329,13 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
     businessTimedOut: boolean;
     accountingTimedOut: boolean;
     escalatedRecoveryCount?: number;
+    reconciliationTimedOut?: boolean;
   }): string | null {
     if ((input.escalatedRecoveryCount ?? 0) > 0) {
       return "reconciliation_escalated";
+    }
+    if (input.reconciliationTimedOut) {
+      return "pending_persistence_reconciliation_timeout";
     }
     if (input.businessTimedOut) {
       return "business_drain_timeout";
@@ -367,7 +395,6 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
   private now(): Date {
     return this.options.now?.() ?? new Date();
   }
-
 }
 
 function parseFinalizationEvidence(

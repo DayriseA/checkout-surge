@@ -539,7 +539,7 @@ Notes:
 - `reservationId` is reserved by the Redis success path even when the durable `reservations` row does not yet exist.
 - Pending visibility is created atomically with the Redis stock decision and removed atomically with accepted-idempotency promotion after durable persistence.
 - Eligible request retries can converge the hold while admission remains open. During draining and API startup, an autonomous reconciler reads the Redis companion record/index without reopening admission, restores or finds the durable buy, reasserts the deterministic order job, marks this row reconciled, and promotes Redis.
-- Definitive run/sale attribution rejection reverses the Redis hold; other failures remain discoverable. A run with unreconciled pending persistence remains explainably draining until reconciliation or the documented drain-timeout policy resolves it.
+- Definitive run/sale attribution rejection reverses the Redis hold; other failures remain discoverable. A thrown or partially failed reconciliation attempt leaves the run draining without writing a summary before the drain timeout. At or after the timeout, the same failure may terminalize only as `failed` with `pending_persistence_reconciliation_timeout`; it can never produce a completed summary. Guarded terminal writing and immutable-summary uniqueness retain their normal race and retry behavior.
 
 ### 15. SimulatedNotification
 
@@ -674,7 +674,7 @@ Notes:
 
 - Run summaries are separate from live dashboard recovery state.
 - Persisted run snapshots, HTTP and delivery summaries, business outcomes, terminal inventory, and the runtime-policy payload use their shared contract types in the Drizzle schema. Finalization diagnostics whose contracts intentionally remain open objects stay generic, and event-polymorphic order-event payloads are outside this boundary. These TypeScript annotations do not validate existing rows or raw SQL writes; DB-adjacent readers reject malformed legacy data with identifiable errors.
-- `terminalInventorySnapshot` carries the Redis-derived terminal observation produced by the applicable terminal workflow, so completed runs stay auditable after live Redis state is reset. Normal post-traffic finalization reuses the exact durable snapshot persisted during traffic-completion enrichment; admin reset, startup reconciliation, and early-failure workflows may capture their own terminal observations.
+- `terminalInventorySnapshot` carries the Redis-derived terminal observation produced by the applicable terminal workflow, so completed runs stay auditable after live Redis state is reset. Normal post-traffic finalization reuses the exact durable snapshot persisted during traffic-completion enrichment; admin reset and early-failure workflows may capture their own terminal observations. Startup repair does not synthesize a terminal projection for orchestrator-owned or draining work.
 - Run History displays traffic delivery quality from `trafficDeliverySummary.trafficDeliveryStatus` next to the terminal run status, rather than encoding warning/degraded delivery as separate demo-run lifecycle states.
 - A terminal run should have one summary-backed history record whether it ended through normal finalization, admin recovery, traffic-start failure, or initialization failure.
 

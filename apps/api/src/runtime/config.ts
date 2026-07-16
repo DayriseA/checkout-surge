@@ -1,11 +1,11 @@
-import {
-  type DeploymentHardCaps,
-  deploymentHardCapsSchema,
-} from "@checkout-surge/contracts";
+import { type DeploymentHardCaps, deploymentHardCapsSchema } from "@checkout-surge/contracts";
 import {
   isValidPublicVisitorCredentialSecret,
   publicVisitorCredentialMinimumSecretBytes,
 } from "@checkout-surge/contracts/public-visitor-credential";
+import { runSaleEligibilityTtlSeconds } from "@checkout-surge/db";
+
+export const runSaleEligibilitySafetyMarginSeconds = 24 * 60 * 60;
 
 export interface ApiConfig {
   host: string;
@@ -179,12 +179,37 @@ export function loadApiConfig(env: NodeJS.ProcessEnv): ApiConfig {
   if (config.deploymentHardCaps.maxPreAllocatedVus > config.deploymentHardCaps.maxVus) {
     throw new Error("DEMO_MAX_PRE_ALLOCATED_VUS must not exceed DEMO_MAX_VUS.");
   }
+  validateRunSaleEligibilityLifetime(config);
   if (config.dashboardRecoveryPerSourceMaxRequests > config.dashboardRecoveryGlobalMaxRequests) {
     throw new Error(
       "DASHBOARD_RECOVERY_PER_SOURCE_MAX_REQUESTS must not exceed DASHBOARD_RECOVERY_GLOBAL_MAX_REQUESTS.",
     );
   }
   return config;
+}
+
+function validateRunSaleEligibilityLifetime(config: ApiConfig): void {
+  const configuredLifecycleSeconds = [
+    config.deploymentHardCaps.maxTrafficStartDelaySeconds,
+    config.deploymentHardCaps.maxTrafficDurationSeconds,
+    config.demoRunDrainTimeoutSeconds,
+    config.pendingPersistenceRetryAfterSeconds,
+    config.demoRunFinalizationPollIntervalSeconds,
+  ].reduce((total, value) => {
+    const next = total + value;
+    if (!Number.isSafeInteger(next)) {
+      throw new Error("Demo-run lifecycle duration configuration exceeds safe integer arithmetic.");
+    }
+    return next;
+  }, 0);
+  const maximumLifecycleSeconds =
+    runSaleEligibilityTtlSeconds - runSaleEligibilitySafetyMarginSeconds;
+
+  if (configuredLifecycleSeconds >= maximumLifecycleSeconds) {
+    throw new Error(
+      `DEMO_MAX_TRAFFIC_START_DELAY_SECONDS + DEMO_MAX_TRAFFIC_DURATION_SECONDS + DEMO_RUN_DRAIN_TIMEOUT_SECONDS + PENDING_PERSISTENCE_RETRY_AFTER_SECONDS + DEMO_RUN_FINALIZATION_POLL_INTERVAL_SECONDS must total less than ${maximumLifecycleSeconds} seconds so the ${runSaleEligibilityTtlSeconds}-second run-sale eligibility TTL retains its ${runSaleEligibilitySafetyMarginSeconds}-second safety margin.`,
+    );
+  }
 }
 
 function requireStrongSecret(env: NodeJS.ProcessEnv, name: string): string {
@@ -226,14 +251,18 @@ function parsePositiveInteger(value: string | undefined, name: string, fallback:
 
   const parsed = Number(raw);
 
-  if (!Number.isInteger(parsed) || parsed <= 0) {
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
     throw new Error(`${name} must be a positive integer.`);
   }
 
   return parsed;
 }
 
-function parseNonnegativeInteger(value: string | undefined, name: string, fallback: number): number {
+function parseNonnegativeInteger(
+  value: string | undefined,
+  name: string,
+  fallback: number,
+): number {
   const raw = value?.trim();
 
   if (!raw) {
@@ -242,7 +271,7 @@ function parseNonnegativeInteger(value: string | undefined, name: string, fallba
 
   const parsed = Number(raw);
 
-  if (!Number.isInteger(parsed) || parsed < 0) {
+  if (!Number.isSafeInteger(parsed) || parsed < 0) {
     throw new Error(`${name} must be a nonnegative integer.`);
   }
 

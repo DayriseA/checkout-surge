@@ -2,6 +2,7 @@ import {
   type InventoryStatus,
   inventoryStatusSchema,
   inventoryUpdatedEventPayloadSchema,
+  positiveIntegerSchema,
   uuidSchema,
 } from "@checkout-surge/contracts";
 import type { CheckoutSurgeRedis } from "./redis.js";
@@ -10,6 +11,12 @@ import { inventoryEventHistoryLimit } from "./redis-inventory-policy.js";
 const inventoryNamespaceScanBatchSize = 100;
 export const reservationThroughputWindowSeconds = 60;
 export const pendingPersistenceIndexKey = "inventory:pending-persistence-index";
+/**
+ * Defense-in-depth authorization lifetime for generated-run traffic. Seven days
+ * is comfortably beyond the reference runtime's traffic, drain, and retry
+ * windows while still failing closed after a missed lifecycle transition.
+ */
+export const runSaleEligibilityTtlSeconds = positiveIntegerSchema.parse(7 * 24 * 60 * 60);
 
 export interface InventoryKeys {
   prefix: string;
@@ -59,7 +66,7 @@ export async function deleteGeneratedRunRedisState(
 export async function setRunSaleEligibility(
   redis: CheckoutSurgeRedis,
   eligibility: RunSaleEligibility,
-): Promise<void> {
+): Promise<boolean> {
   const runId = uuidSchema.parse(eligibility.runId);
   const saleOfferId = uuidSchema.parse(eligibility.saleOfferId);
   const keys = inventoryKeys(saleOfferId);
@@ -72,14 +79,16 @@ export async function setRunSaleEligibility(
     saleOfferId,
     eligibility.status,
     JSON.stringify({ ...eligibility, runId, saleOfferId }),
+    runSaleEligibilityTtlSeconds.toString(),
   );
 
   if (result === "inventory_not_initialized") {
     throw new InventoryNotInitializedError(saleOfferId);
   }
-  if (result !== "updated") {
+  if (result !== "updated" && result !== "unchanged") {
     throw new Error(`Could not update run sale eligibility: ${String(result)}.`);
   }
+  return result === "updated";
 }
 
 export async function isRunSaleEligible(
@@ -184,6 +193,8 @@ export async function initializeInventory(
     initialization.set(
       runSaleEligibilityKey(run.runId),
       JSON.stringify({ runId: run.runId, saleOfferId: input.saleOfferId, status: run.status }),
+      "EX",
+      runSaleEligibilityTtlSeconds,
     );
   }
 
@@ -303,9 +314,19 @@ end
 if ARGV[3] ~= "accepting" and ARGV[3] ~= "closed" then
   return redis.error_reply("Run sale status must be accepting or closed")
 end
+if ARGV[3] == "closed" and redis.call("HGET", KEYS[1], "runSaleStatus") == "closed" then
+  local existingEligibility = redis.call("GET", KEYS[2])
+  if not existingEligibility or existingEligibility == ARGV[4] then
+    return "unchanged"
+  end
+end
 
 redis.call("HSET", KEYS[1], "runSaleStatus", ARGV[3])
-redis.call("SET", KEYS[2], ARGV[4])
+if ARGV[3] == "accepting" then
+  redis.call("SET", KEYS[2], ARGV[4], "EX", ARGV[5])
+elseif redis.call("EXISTS", KEYS[2]) == 1 then
+  redis.call("SET", KEYS[2], ARGV[4], "KEEPTTL")
+end
 return "updated"
 `;
 

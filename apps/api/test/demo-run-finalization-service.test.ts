@@ -478,6 +478,55 @@ describe("demo run finalization service", () => {
     expect(reconcileSaleOffer).toHaveBeenCalledWith(ids.saleOffer, { runId: ids.run });
   });
 
+  it.each([
+    "reported",
+    "thrown",
+  ] as const)("keeps a %s pending reconciliation failure draining before timeout and fails at timeout", async (failureMode) => {
+    const db = requireConnection(connection).db;
+    const redisClient = requireRedis(redis);
+    await seedDrainingRun({ db, redis: redisClient, trafficDeliveryStatus: "complete" });
+    const reconcileSaleOffer = vi.fn(async () => {
+      if (failureMode === "thrown") throw new Error("Redis reconciliation unavailable");
+      return {
+        found: 1,
+        materialized: 0,
+        reconciled: 0,
+        reversed: 0,
+        failed: 1,
+      };
+    });
+    const beforeTimeout = createService(connection, redis, {
+      pendingPersistenceReconciler: { reconcileSaleOffer },
+    });
+
+    await expect(
+      beforeTimeout.finalizeRun(ids.run, "corr-finalize-retryable"),
+    ).resolves.toMatchObject({ status: "draining" });
+    await expect(
+      db.select().from(demoRunSummaries).where(eq(demoRunSummaries.runId, ids.run)),
+    ).resolves.toHaveLength(0);
+
+    const atTimeout = createService(connection, redis, {
+      pendingPersistenceReconciler: { reconcileSaleOffer },
+      now: () => new Date("2026-06-20T00:10:00.000Z"),
+    });
+    await expect(
+      atTimeout.finalizeRun(ids.run, "corr-finalize-retryable-timeout"),
+    ).resolves.toMatchObject({
+      status: "failed",
+      failureReason: "pending_persistence_reconciliation_timeout",
+    });
+    const summaries = await db
+      .select()
+      .from(demoRunSummaries)
+      .where(eq(demoRunSummaries.runId, ids.run));
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0]).toMatchObject({
+      status: "failed",
+      failureReason: "pending_persistence_reconciliation_timeout",
+    });
+  });
+
   it("keeps run and summary terminal state consistent when reset races with finalization", async () => {
     const db = requireConnection(connection).db;
     const redisClient = requireRedis(redis);
@@ -698,8 +747,7 @@ describe("demo run finalization service", () => {
       .from(demoRunSummaries)
       .where(eq(demoRunSummaries.runId, ids.run));
     expect(
-      (summary?.loadRunDiagnosticsSummary as { accountingWarnings?: unknown[] })
-        .accountingWarnings,
+      (summary?.loadRunDiagnosticsSummary as { accountingWarnings?: unknown[] }).accountingWarnings,
     ).toEqual([
       {
         code: "traffic_outcome_counter_underreported",

@@ -31,6 +31,8 @@ import {
   publishDashboardEvent,
   reserveInventoryStock,
   reverseReservation,
+  runSaleEligibilityKey,
+  runSaleEligibilityTtlSeconds,
   setErpCircuitBreakerSnapshot,
   setRunSaleEligibility,
 } from "../../src/index.js";
@@ -171,7 +173,9 @@ async function rebuildAsEmptyPublicSchema(): Promise<void> {
 }
 
 async function createPreTaskMigrationFolder(): Promise<string> {
-  const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "checkout-surge-pre-task-migrations-"));
+  const temporaryRoot = await mkdtemp(
+    path.join(os.tmpdir(), "checkout-surge-pre-task-migrations-"),
+  );
   const temporaryMigrations = path.join(temporaryRoot, "drizzle");
   await cp(migrationsFolder, temporaryMigrations, { recursive: true });
 
@@ -534,11 +538,13 @@ describe("database migrations, seed data, and reset behavior", () => {
       await rebuildAsEmptyPublicSchema();
       await runDatabaseMigrations({ databaseUrl, expectedDatabaseName: databaseName });
       const [firstCount] = await withDatabase(
-        (sql) => sql<{ count: number }[]>`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`,
+        (sql) =>
+          sql<{ count: number }[]>`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`,
       );
       await runDatabaseMigrations({ databaseUrl, expectedDatabaseName: databaseName });
       const [secondCount] = await withDatabase(
-        (sql) => sql<{ count: number }[]>`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`,
+        (sql) =>
+          sql<{ count: number }[]>`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`,
       );
 
       expect(firstCount?.count).toBe(14);
@@ -3035,9 +3041,9 @@ describe("database migrations, seed data, and reset behavior", () => {
       },
       idempotencyTtlSeconds: 180,
     };
-    await expect(
-      promoteReservationIdempotencyToAccepted(redis, mismatched),
-    ).rejects.toThrow("mismatch");
+    await expect(promoteReservationIdempotencyToAccepted(redis, mismatched)).rejects.toThrow(
+      "mismatch",
+    );
     expect(await redis.get(idempotencyKey)).toBe(acceptedJson);
     expect(await redis.ttl(idempotencyKey)).toBe(-1);
 
@@ -3079,9 +3085,7 @@ describe("database migrations, seed data, and reset behavior", () => {
     ).rejects.toThrow("mismatch");
 
     expect(await redis.get(keys.idempotency(original.idempotencyKey))).toBe(replacementJson);
-    const ttlAfterRejectedPromotion = await redis.ttl(
-      keys.idempotency(original.idempotencyKey),
-    );
+    const ttlAfterRejectedPromotion = await redis.ttl(keys.idempotency(original.idempotencyKey));
     expect(ttlAfterRejectedPromotion).toBeGreaterThanOrEqual(replacementTtl - 2);
     expect(ttlAfterRejectedPromotion).toBeLessThanOrEqual(replacementTtl);
     expect(await redis.zcard(keys.pendingPersistence)).toBe(2);
@@ -3235,8 +3239,12 @@ describe("database migrations, seed data, and reset behavior", () => {
       allocatedStock: 5,
       run: { runId, status: "closed" },
     });
+    const eligibilityKey = runSaleEligibilityKey(runId);
+    expect(await redis.ttl(eligibilityKey)).toBeGreaterThan(0);
+    expect(await redis.ttl(eligibilityKey)).toBeLessThanOrEqual(runSaleEligibilityTtlSeconds);
     await expect(isRunSaleEligible(redis, { runId, saleOfferId })).resolves.toBe(false);
     await setRunSaleEligibility(redis, { runId, saleOfferId, status: "accepting" });
+    expect(await redis.ttl(eligibilityKey)).toBe(runSaleEligibilityTtlSeconds);
     await expect(isRunSaleEligible(redis, { runId, saleOfferId })).resolves.toBe(true);
     await expect(
       isRunSaleEligible(redis, {
@@ -3244,9 +3252,123 @@ describe("database migrations, seed data, and reset behavior", () => {
         saleOfferId: "20000000-0000-4000-8000-000000000003",
       }),
     ).resolves.toBe(false);
+    await redis.expire(eligibilityKey, 60);
+    await setRunSaleEligibility(redis, { runId, saleOfferId, status: "accepting" });
+    expect(await redis.ttl(eligibilityKey)).toBe(runSaleEligibilityTtlSeconds);
+    await redis.expire(eligibilityKey, 60);
     await setRunSaleEligibility(redis, { runId, saleOfferId, status: "closed" });
     await expect(isRunSaleEligible(redis, { runId, saleOfferId })).resolves.toBe(false);
+    expect(await redis.ttl(eligibilityKey)).toBeGreaterThan(0);
+    expect(await redis.ttl(eligibilityKey)).toBeLessThanOrEqual(60);
     expect(await redis.hget(inventoryKeys(saleOfferId).state, "runSaleStatus")).toBe("closed");
+
+    await redis.del(eligibilityKey);
+    await setRunSaleEligibility(redis, { runId, saleOfferId, status: "closed" });
+    expect(await redis.exists(eligibilityKey)).toBe(0);
+  });
+
+  it("fails closed in the atomic reservation path when generated-run eligibility expires", async () => {
+    const runId = "20000000-0000-4000-8000-000000000006";
+    const saleOfferId = "20000000-0000-4000-8000-000000000007";
+    await initializeInventory(redis, {
+      saleOfferId,
+      allocatedStock: 2,
+      run: { runId, status: "accepting" },
+    });
+    const eligibilityKey = runSaleEligibilityKey(runId);
+    expect(await redis.ttl(eligibilityKey)).toBeGreaterThan(0);
+
+    await redis.expire(eligibilityKey, 0);
+    expect(await redis.exists(eligibilityKey)).toBe(0);
+    expect(await redis.hget(inventoryKeys(saleOfferId).state, "runSaleStatus")).toBe("accepting");
+    await expect(
+      reserveInventoryStock(redis, buildReservationInput({ saleOfferId, sequence: 20, runId })),
+    ).resolves.toEqual({ outcome: "run_not_accepting_traffic", reservation: null });
+    await expect(getInventoryStatus(redis, saleOfferId)).resolves.toMatchObject({
+      remainingStock: 2,
+      reservedStock: 0,
+      pendingPersistenceCount: 0,
+    });
+  });
+
+  it.each([
+    ["malformed", "{not-json"],
+    ["primitive", "false"],
+    [
+      "mismatched",
+      JSON.stringify({
+        runId: "20000000-0000-4000-8000-000000000099",
+        saleOfferId: "20000000-0000-4000-8000-000000000032",
+        status: "accepting",
+      }),
+    ],
+    [
+      "closed",
+      JSON.stringify({
+        runId: "20000000-0000-4000-8000-000000000031",
+        saleOfferId: "20000000-0000-4000-8000-000000000032",
+        status: "closed",
+      }),
+    ],
+  ])("fails closed without mutation for %s generated-run eligibility before idempotency replay", async (_label, corruptedEligibility) => {
+    const runId = "20000000-0000-4000-8000-000000000031";
+    const saleOfferId = "20000000-0000-4000-8000-000000000032";
+    const keys = inventoryKeys(saleOfferId);
+    const eligibilityKey = runSaleEligibilityKey(runId);
+    const replay = buildReservationInput({
+      saleOfferId,
+      sequence: 31,
+      idempotencyKey: "corrupt-eligibility-replay",
+      runId,
+    });
+    const fresh = buildReservationInput({
+      saleOfferId,
+      sequence: 32,
+      idempotencyKey: "corrupt-eligibility-fresh",
+      runId,
+    });
+    await initializeInventory(redis, {
+      saleOfferId,
+      allocatedStock: 3,
+      run: { runId, status: "accepting" },
+    });
+    await expect(reserveInventoryStock(redis, replay)).resolves.toMatchObject({
+      outcome: "reservation_secured",
+    });
+    const before = {
+      state: await redis.hgetall(keys.state),
+      reservations: await redis.hgetall(keys.reservations),
+      expirations: await redis.zrange(keys.reservationExpirations, 0, -1, "WITHSCORES"),
+      pending: await redis.zrange(keys.pendingPersistence, 0, -1, "WITHSCORES"),
+      pendingRecords: await redis.hgetall(keys.pendingPersistenceRecords),
+      events: await redis.lrange(keys.events, 0, -1),
+      replayIdempotency: await redis.get(keys.idempotency(replay.idempotencyKey)),
+    };
+    await redis.set(eligibilityKey, corruptedEligibility, "KEEPTTL");
+
+    await expect(reserveInventoryStock(redis, replay)).resolves.toEqual({
+      outcome: "run_not_accepting_traffic",
+      reservation: null,
+    });
+    await expect(reserveInventoryStock(redis, fresh)).resolves.toEqual({
+      outcome: "run_not_accepting_traffic",
+      reservation: null,
+    });
+    expect(await redis.get(eligibilityKey)).toBe(corruptedEligibility);
+    expect(await redis.ttl(eligibilityKey)).toBeGreaterThan(0);
+    expect(await redis.ttl(keys.state)).toBe(-1);
+    expect(await redis.hgetall(keys.state)).toEqual(before.state);
+    expect(await redis.hgetall(keys.reservations)).toEqual(before.reservations);
+    expect(await redis.zrange(keys.reservationExpirations, 0, -1, "WITHSCORES")).toEqual(
+      before.expirations,
+    );
+    expect(await redis.zrange(keys.pendingPersistence, 0, -1, "WITHSCORES")).toEqual(
+      before.pending,
+    );
+    expect(await redis.hgetall(keys.pendingPersistenceRecords)).toEqual(before.pendingRecords);
+    expect(await redis.lrange(keys.events, 0, -1)).toEqual(before.events);
+    expect(await redis.get(keys.idempotency(replay.idempotencyKey))).toBe(before.replayIdempotency);
+    expect(await redis.exists(keys.idempotency(fresh.idempotencyKey))).toBe(0);
   });
 
   it("rejects omitted and mismatched run IDs and catalog requests with a run ID", async () => {
