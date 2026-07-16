@@ -610,8 +610,9 @@ describe("demo-run preset management", () => {
 
     // Archived presets disappear from normal active lookup, so they can no
     // longer be saved, copied, duplicated, or started.
-    await expect(service.saveAdminPreset({ slug: "operator-duplicate", ...created.preset })).rejects
-      .toMatchObject({ code: "preset_not_found" });
+    await expect(service.saveAdminPreset(created.preset)).rejects.toMatchObject({
+      code: "preset_not_found",
+    });
     await expect(
       service.copyPresetToCustom({ sourceSlug: "operator-duplicate" }),
     ).rejects.toMatchObject({ code: "preset_not_found" });

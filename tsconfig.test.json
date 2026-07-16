@@ -12,8 +12,11 @@
     "vitest.coverage.config.ts",
     "vitest*.config.ts",
     "packages/**/*.test.ts",
+    "packages/**/*.test.tsx",
     "packages/**/vitest*.config.ts",
     "apps/**/*.test.ts",
-    "apps/**/vitest*.config.ts"
+    "apps/**/*.test.tsx",
+    "apps/**/vitest*.config.ts",
+    "test-types/**/*.d.ts"
   ]
 }

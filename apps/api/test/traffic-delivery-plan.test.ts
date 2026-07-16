@@ -2,7 +2,7 @@ import type { AcceptedRunConfigSnapshot } from "@checkout-surge/contracts";
 import { describe, expect, it } from "vitest";
 import { syntheticTrafficDeliverySummary } from "../src/services/traffic-delivery-plan.js";
 
-const baseSnapshot: AcceptedRunConfigSnapshot = {
+const baseSnapshot = {
   trafficConfig: {
     mode: "steady-arrival-rate",
     ratePerSecond: 5_001,
@@ -28,7 +28,7 @@ const baseSnapshot: AcceptedRunConfigSnapshot = {
     circuitBreakerFailureThreshold: 1,
     circuitBreakerResetTimeoutMs: 1,
   },
-};
+} satisfies AcceptedRunConfigSnapshot;
 
 describe("synthetic traffic delivery plan", () => {
   it("uses the shared capped automatic steady-arrival VU resolution", () => {

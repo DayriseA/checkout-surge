@@ -1433,15 +1433,23 @@ describe("buy and dashboard contracts", () => {
     } as const;
 
     expect(dashboardEventSchema.parse(lag).type).toBe("dashboard.metric.observed");
-    expect(dashboardEventSchema.parse({ ...lag, startedAt: "2026-06-20T12:00:00.001Z", value: 0 }).value).toBe(0);
-    expect(dashboardEventSchema.parse({
+    const zeroLag = dashboardEventSchema.parse({
+      ...lag,
+      startedAt: "2026-06-20T12:00:00.001Z",
+      value: 0,
+    });
+    if (zeroLag.type !== "dashboard.metric.observed") throw new Error("Expected metric event.");
+    expect(zeroLag.value).toBe(0);
+    const maximumLag = dashboardEventSchema.parse({
       ...lag,
       occurredAt: "2026-07-01T00:00:00.000Z",
       observedAt: "2026-07-01T00:00:00.000Z",
       confirmedAt: "2026-07-01T00:00:00.000Z",
       startedAt: "2026-06-01T00:00:00.000Z",
       value: 2_592_000_000,
-    }).value).toBe(2_592_000_000);
+    });
+    if (maximumLag.type !== "dashboard.metric.observed") throw new Error("Expected metric event.");
+    expect(maximumLag.value).toBe(2_592_000_000);
 
     const invalidEvents = [
       omit(statuses[0], "orderId"),

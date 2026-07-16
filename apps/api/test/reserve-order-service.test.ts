@@ -357,7 +357,7 @@ describe("ReserveOrderService queue handoff", () => {
   });
 
   it("does not await a slow business outcome refresh before returning accepted reservations", async () => {
-    let resolveRefresh: () => void = () => undefined;
+    let resolveRefresh!: () => void;
     const publishBusinessOutcomeUpdate = vi.fn(
       () =>
         new Promise<void>((resolve) => {
@@ -384,7 +384,7 @@ describe("ReserveOrderService queue handoff", () => {
 
     await flushScheduledDashboardUpdate();
     const settledBeforeRefreshCompleted = responseSettled;
-    resolveRefresh?.();
+    resolveRefresh();
     const response = await responsePromise;
 
     expect(response.outcome).toBe("reservation_secured");
@@ -729,10 +729,10 @@ describe("ReserveOrderService queue handoff", () => {
       expiresAt: new Date(now.getTime() + 900_000).toISOString(),
     };
     const callOrder: string[] = [];
-    const enqueue = vi.fn(() => {
+    const enqueue = vi.fn(async () => {
       callOrder.push("enqueue");
     });
-    const promoteAccepted = vi.fn(() => {
+    const promoteAccepted = vi.fn(async () => {
       callOrder.push("promote");
     });
     const service = buildService({

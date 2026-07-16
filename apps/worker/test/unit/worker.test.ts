@@ -1,10 +1,13 @@
 import { healthResponseSchema, livenessResponseSchema } from "@checkout-surge/contracts";
 import { createSilentLogger } from "@checkout-surge/logger";
 import { describe, expect, it, vi } from "vitest";
-import { loadWorkerConfig } from "../../src/runtime/config.js";
+import { loadWorkerConfig as loadProductionWorkerConfig } from "../../src/runtime/config.js";
 import { createWorkerReadiness } from "../../src/runtime/readiness.js";
 import { createWorkerRuntime } from "../../src/runtime/worker-runtime.js";
 import { buildWorkerHealthServer } from "../../src/server.js";
+
+const loadWorkerConfig = (environment: Record<string, string | undefined>) =>
+  loadProductionWorkerConfig({ ...environment, NODE_ENV: "test" });
 
 describe("worker configuration", () => {
   it("loads bounded worker defaults", () => {

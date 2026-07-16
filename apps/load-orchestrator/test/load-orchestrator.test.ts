@@ -134,14 +134,17 @@ describe("load-orchestrator configuration", () => {
     "  ",
     "change-me-shared-control-token",
   ])("rejects unsafe control tokens (%s)", (token) => {
-    expect(() => loadLoadOrchestratorConfig({ CONTROL_SERVICE_TOKEN: token })).toThrow(
-      /CONTROL_SERVICE_TOKEN/,
-    );
+    expect(() =>
+      loadLoadOrchestratorConfig({ NODE_ENV: "test", CONTROL_SERVICE_TOKEN: token }),
+    ).toThrow(/CONTROL_SERVICE_TOKEN/);
   });
 
   it("accepts a deployment-specific control token", () => {
     expect(
-      loadLoadOrchestratorConfig({ CONTROL_SERVICE_TOKEN: "deployment-token" }).controlServiceToken,
+      loadLoadOrchestratorConfig({
+        NODE_ENV: "test",
+        CONTROL_SERVICE_TOKEN: "deployment-token",
+      }).controlServiceToken,
     ).toBe("deployment-token");
   });
 });

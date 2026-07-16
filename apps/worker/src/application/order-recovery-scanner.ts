@@ -1,5 +1,6 @@
 import type { OrderProcessJob } from "@checkout-surge/contracts";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
+import type { OrderJobPublisher } from "./order-job-publisher.js";
 import type { OrderRecoveryHandoff, RecoverableOrderHandoff } from "./order-process-job-handler.js";
 
 export type { RecoverableOrderHandoff } from "./order-process-job-handler.js";
@@ -51,9 +52,7 @@ export interface DeadLetterRecord {
   observedAt: Date;
 }
 
-export interface RecoveryJobPublisher {
-  enqueue(job: OrderProcessJob, options?: { jobId?: string; attempts?: number }): Promise<void>;
-}
+export interface RecoveryJobPublisher extends OrderJobPublisher {}
 
 export interface FailedOrderJobReader {
   findFailedOrderJobs(limit: number): Promise<

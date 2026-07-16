@@ -196,7 +196,7 @@ describe("BullMQ order-processing boundary", () => {
     consumer.start();
     await queue.add(
       "wrong-name" as typeof orderProcessJobName,
-      { invalid: true } as OrderProcessJob,
+      { ...job, orderId: "invalid" },
       {
         attempts: 2,
         jobId: "poison-dlq-job",

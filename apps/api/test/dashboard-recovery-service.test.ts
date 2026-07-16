@@ -8,6 +8,7 @@ import {
   saleOffers,
 } from "@checkout-surge/db";
 import { resetTestDatabase } from "@checkout-surge/db/testing";
+import type { SQL } from "drizzle-orm";
 import { PgDialect } from "drizzle-orm/pg-core";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
@@ -79,8 +80,8 @@ describe("PostgresDashboardRecoveryContextReader", () => {
 
     const context = await new PostgresDashboardRecoveryContextReader(database.db).readContext();
     const dialect = new PgDialect();
-    const orderingSql = database.orderBy.mock.calls[0]?.map((expression) =>
-      dialect.sqlToQuery(expression).sql,
+    const orderingSql = database.orderBy.mock.calls[0]?.map(
+      (expression) => dialect.sqlToQuery(expression).sql,
     );
 
     expect(context.currentRun?.runId).toBe(newerEffectiveStart.id);
@@ -185,7 +186,7 @@ describe("DashboardRecoveryService", () => {
 
 function controlledDatabase(rows: unknown[]) {
   const limit = vi.fn(async () => rows);
-  const orderBy = vi.fn((..._expressions: unknown[]) => ({ limit }));
+  const orderBy = vi.fn((..._expressions: SQL[]) => ({ limit }));
   const where = vi.fn(() => ({ orderBy }));
   const from = vi.fn(() => ({ where }));
   const select = vi.fn(() => ({ from }));

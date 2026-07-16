@@ -12,7 +12,7 @@ import type { DashboardRecoveryAdmissionController } from "../services/dashboard
 import type { DashboardRecoveryService } from "../services/dashboard-recovery-service.js";
 
 export interface RegisterDashboardRoutesOptions {
-  dashboardEventFanout: DashboardEventFanout;
+  dashboardEventFanout: Pick<DashboardEventFanout, "connect">;
   dashboardRecoveryService: DashboardRecoveryService;
   dashboardRecoveryAdmission: DashboardRecoveryAdmissionController;
   sourceResolver: DashboardSourceResolver;
@@ -53,7 +53,9 @@ export function registerDashboardRoutes(
     }
     try {
       const response = dashboardRecoveryResponseSchema.parse(
-        await options.dashboardRecoveryService.getRecovery({ correlationId: request.correlationId }),
+        await options.dashboardRecoveryService.getRecovery({
+          correlationId: request.correlationId,
+        }),
       );
       return reply.status(200).send(response);
     } finally {

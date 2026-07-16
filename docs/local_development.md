@@ -291,8 +291,8 @@ The worker-facing Mock ERP confirmation contract is `POST http://localhost:4100/
 | `pnpm health:check` | Poll service readiness and dashboard reachability, then print a setup health summary |
 | `pnpm build` | Build all packages and apps through Turbo |
 | `pnpm build:shared` | Build shared packages consumed by host-native app dev commands |
-| `pnpm type-check` | Run TypeScript checks through Turbo |
-| `pnpm type-check:test` | Run test TypeScript checks through Turbo |
+| `pnpm type-check` | Run fail-fast production TypeScript checks through Turbo, then strict root test-source compilation |
+| `pnpm type-check:test` | Run the focused strict compiler check for test sources and Vitest configs |
 | `pnpm lint` | Lint the whole workspace with Biome |
 | `pnpm lint:fix` | Apply Biome's safe lint fixes across the workspace |
 | `pnpm format` | Format the whole workspace with Biome and organize imports |

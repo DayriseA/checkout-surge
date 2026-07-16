@@ -1,5 +1,5 @@
 import { errorPayloadSchema } from "@checkout-surge/contracts";
-import { fastify } from "fastify";
+import { type FastifyError, type FastifyReply, type FastifyRequest, fastify } from "fastify";
 import { afterEach, describe, expect, it } from "vitest";
 import { installFastifyCorrelation, replaceFastifyCorrelation } from "../src/fastify.js";
 import { correlationIdHeaderName, createServiceLogger } from "../src/index.js";
@@ -36,12 +36,12 @@ describe("Fastify correlation installer", () => {
     server.route({
       method: "GET",
       url: "/echo",
-      handler: async (request) => {
+      handler: async (request: FastifyRequest) => {
         request.log.info({ marker: "echo-marker" }, "echo");
         return { correlationId: request.correlationId };
       },
     });
-    server.setErrorHandler((_error, request, reply) =>
+    server.setErrorHandler((_error: FastifyError, request: FastifyRequest, reply: FastifyReply) =>
       reply.status(500).send(
         errorPayloadSchema.parse({
           code: "internal_error",
@@ -89,7 +89,7 @@ describe("Fastify correlation installer", () => {
     server.route({
       method: "GET",
       url: "/echo",
-      handler: async (request) => {
+      handler: async (request: FastifyRequest) => {
         request.log.info({ marker: "echo-marker" }, "echo");
         return { correlationId: request.correlationId };
       },
@@ -123,7 +123,7 @@ describe("Fastify correlation installer", () => {
     server.route({
       method: "POST",
       url: "/promote",
-      handler: async (request, reply) => {
+      handler: async (request: FastifyRequest, reply: FastifyReply) => {
         const promoted = replaceFastifyCorrelation(request, reply, "body-promoted-id");
         request.log.info({ marker: "promoted-marker" }, "promoted");
         return { correlationId: promoted };
@@ -163,7 +163,7 @@ describe("Fastify correlation installer", () => {
     server.route({
       method: "GET",
       url: "/echo",
-      handler: async (request) => ({ correlationId: request.correlationId }),
+      handler: async (request: FastifyRequest) => ({ correlationId: request.correlationId }),
     });
 
     const missing = await server.inject({ method: "GET", url: "/echo" });

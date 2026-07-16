@@ -116,9 +116,14 @@ describe("order-process application workflow", () => {
 
   it("emits zero for equal timestamps with a stable unique metric identity", async () => {
     const equal = { ...confirmedTransition, occurredAt: new Date(job.queuedAt), confirmedAt: new Date(job.queuedAt) };
-    const eventGroups: unknown[][][] = [];
+    type PublishedEvent = {
+      eventId: string;
+      confirmedTransitionEventId?: string;
+      value?: number;
+    };
+    const eventGroups: Array<readonly PublishedEvent[]> = [];
     for (let index = 0; index < 2; index += 1) {
-      const enqueue = vi.fn((events) => eventGroups.push(events));
+      const enqueue = vi.fn((events: readonly PublishedEvent[]) => eventGroups.push(events));
       await createOrderProcessJobHandler({
         confirmation: { confirm: vi.fn().mockResolvedValue(undefined) },
         persistence: createPersistence({ transitionToConfirmed: vi.fn().mockResolvedValue(equal) }),
@@ -126,8 +131,9 @@ describe("order-process application workflow", () => {
         realtimePublisher: { enqueue },
       }).handle(job, delivery);
     }
-    const firstPair = eventGroups[1] as Array<{ eventId: string; confirmedTransitionEventId?: string; value?: number }>;
-    const secondPair = eventGroups[3] as Array<{ eventId: string; confirmedTransitionEventId?: string; value?: number }>;
+    const firstPair = eventGroups[1];
+    const secondPair = eventGroups[3];
+    if (!firstPair || !secondPair) throw new Error("Expected two realtime event pairs.");
     expect(firstPair[1]).toMatchObject({ value: 0, confirmedTransitionEventId: equal.eventId });
     expect(firstPair[1]?.eventId).not.toBe(equal.eventId);
     expect(secondPair[1]?.eventId).toBe(firstPair[1]?.eventId);
@@ -163,7 +169,7 @@ describe("order-process application workflow", () => {
       .mockResolvedValueOnce(processingTransition)
       .mockResolvedValueOnce({ changed: false, status: "confirmed" });
     const transitionToConfirmed = vi.fn().mockResolvedValue(confirmedTransition);
-    const enqueue = vi.fn((events: unknown[]) => {
+    const enqueue = vi.fn((events: readonly unknown[]) => {
       if (events.length === 2) throw new Error("publication boundary unavailable");
     });
     const handler = createOrderProcessJobHandler({

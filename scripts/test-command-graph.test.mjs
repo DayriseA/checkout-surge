@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import path from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
+import ts from "typescript";
 
 const root = new URL("../", import.meta.url);
+const rootPath = fileURLToPath(root);
 const readText = (path) => readFileSync(new URL(path, root), "utf8");
 const readManifest = (path) => JSON.parse(readText(path));
 
@@ -50,6 +54,54 @@ test("root tier commands use unfiltered Turbo discovery", () => {
     scripts["test:infra:up"],
     /docker compose -f docker-compose\.test\.yml up -d --wait postgres-test redis-test$/,
   );
+});
+
+test("root type-check gates production and included test sources", () => {
+  const scripts = readManifest("package.json").scripts;
+  assert.equal(scripts["type-check"], "turbo run type-check && pnpm type-check:test");
+  assert.equal(scripts["type-check:test"], "tsc -p tsconfig.test.json --noEmit");
+
+  const testProject = readManifest("tsconfig.test.json");
+  for (const pattern of [
+    "apps/**/*.test.ts",
+    "apps/**/*.test.tsx",
+    "packages/**/*.test.ts",
+    "packages/**/*.test.tsx",
+    "apps/**/vitest*.config.ts",
+    "packages/**/vitest*.config.ts",
+  ]) {
+    assert.ok(testProject.include.includes(pattern), `${pattern} must remain in the test project`);
+  }
+
+  const configPath = path.join(rootPath, "tsconfig.test.json");
+  const config = ts.readConfigFile(configPath, ts.sys.readFile);
+  assert.equal(config.error, undefined);
+  const parsed = ts.parseJsonConfigFileContent(
+    config.config,
+    ts.sys,
+    rootPath,
+    undefined,
+    configPath,
+  );
+  assert.deepEqual(parsed.errors, []);
+  const resolvedRoots = new Set(
+    parsed.fileNames.map((fileName) => path.relative(rootPath, fileName).replaceAll(path.sep, "/")),
+  );
+  const resolvedTests = [...resolvedRoots].filter((fileName) => /\.test\.tsx?$/.test(fileName));
+  assert.ok(resolvedTests.length > 0);
+  for (const requiredRoot of [
+    "apps/api/test/reserve-order-service.test.ts",
+    "apps/web/test/admin-controller-state.test.tsx",
+    "vitest.coverage.config.ts",
+    "apps/api/vitest.api.config.ts",
+    "packages/contracts/vitest.config.ts",
+  ]) {
+    assert.ok(
+      resolvedRoots.has(requiredRoot),
+      `${requiredRoot} must be compiled by the test project`,
+    );
+  }
+  assert.equal(readManifest("turbo.json").tasks["type-check:test"], undefined);
 });
 
 test("package scripts declare only genuine owners and retain local configs and wrappers", () => {

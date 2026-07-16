@@ -27,12 +27,15 @@ describe("bounded order realtime publisher", () => {
     const blocked = new Promise<void>((resolve) => { release = resolve; });
     let inFlight = 0;
     let maxInFlight = 0;
-    const publish = vi.fn(async () => {
-      inFlight += 1;
-      maxInFlight = Math.max(maxInFlight, inFlight);
-      await blocked;
-      inFlight -= 1;
-    });
+    const publish = vi.fn(
+      async (event: OrderStatusDashboardEvent | OrderConsistencyLagDashboardEvent) => {
+        void event;
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        await blocked;
+        inFlight -= 1;
+      },
+    );
     const onDrop = vi.fn();
     const publisher = createBoundedOrderRealtimePublisher({ publish, maxQueuedEvents: 2, maxBatchEvents: 2, onDrop });
 

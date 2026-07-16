@@ -330,7 +330,7 @@ describe("BullMQ generated-run maintenance", () => {
     expect(later.paused).toBe(false);
     expect(later.maintenancePauseOwner).toBeNull();
 
-    later.pauseError = undefined;
+    delete later.pauseError;
     const successfulRetry = await maintenance.acquireGeneratedRunQuiescence?.(runId);
     await successfulRetry?.release(restoreOwnedPauses);
     expect(retained.paused).toBe(false);
@@ -356,7 +356,7 @@ describe("BullMQ generated-run maintenance", () => {
     expect(owned.resumeCalls).toBe(1);
     expect(prePaused.resumeCalls).toBe(0);
 
-    owned.resumeError = undefined;
+    delete owned.resumeError;
     const retryLease = await maintenance.acquireGeneratedRunQuiescence?.(runId);
     await retryLease?.release(restoreOwnedPauses);
     expect(owned.paused).toBe(false);
@@ -380,7 +380,7 @@ describe("BullMQ generated-run maintenance", () => {
     expect(first.resumeCalls).toBe(1);
     expect(second.paused).toBe(false);
     expect(second.resumeCalls).toBe(1);
-    second.pauseError = undefined;
+    delete second.pauseError;
     const retryLease = await maintenance.acquireGeneratedRunQuiescence?.(runId);
     await retryLease?.release(restoreOwnedPauses);
     expect(first.paused).toBe(false);

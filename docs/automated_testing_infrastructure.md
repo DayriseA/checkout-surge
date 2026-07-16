@@ -65,6 +65,8 @@ The goal is to make tests reliable across host-native development, local Dev Con
 
 The repository must provide root scripts with stable names:
 
+- `pnpm type-check` is the authoritative static TypeScript gate. It runs production package/app checks through Turbo, then runs the root test-source compiler only if production checks pass; either failure returns a non-zero status.
+- `pnpm type-check:test` is the focused, Docker-free strict compiler check for root/package/app Vitest configs and test sources through `tsconfig.test.json`.
 - `pnpm test` runs the full automated test suite, including unit, API/service-boundary, and integration tests.
 - `pnpm test:required` runs `pnpm test` and the mandatory production-image k6 compatibility smoke.
 - `pnpm test:k6-compat` runs only that container-backed smoke and fails if the pinned binary or expected stable export fields are unavailable.
@@ -227,7 +229,7 @@ Expected future CI behavior:
 
 - run `pnpm test:required` on every merge-bound push and pull request,
 - run integration/API tests with service containers or compose-backed infrastructure,
-- fail fast on type-check, lint, and contract/schema test failures,
+- fail fast on the root production-plus-test-source type-check, lint, and contract/schema test failures,
 - keep full load tests and benchmarks separate from regular correctness CI; the tiny k6 compatibility smoke remains part of the correctness gate.
 
 ---

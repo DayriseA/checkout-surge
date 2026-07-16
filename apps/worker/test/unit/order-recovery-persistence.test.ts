@@ -38,6 +38,7 @@ describe("Postgres order recovery persistence", () => {
       sourceDisposition: "recovery-11111111-1111-4111-8111-111111111111-2:1",
     };
     const limit = vi.fn().mockResolvedValue([existing]);
+    const insert = vi.fn();
     const db = {
       select: vi.fn().mockReturnValue({
         from: vi.fn().mockReturnThis(),
@@ -48,7 +49,7 @@ describe("Postgres order recovery persistence", () => {
         set: vi.fn().mockReturnThis(),
         where: vi.fn().mockResolvedValue(undefined),
       }),
-      insert: vi.fn(),
+      insert,
     } as never;
     const persistence = new PostgresOrderRecoveryPersistence(db);
 
@@ -69,6 +70,6 @@ describe("Postgres order recovery persistence", () => {
       sourceDisposition: "original-job:4",
     });
 
-    expect(db.insert).not.toHaveBeenCalled();
+    expect(insert).not.toHaveBeenCalled();
   });
 });

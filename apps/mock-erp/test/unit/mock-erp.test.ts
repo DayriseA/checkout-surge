@@ -23,7 +23,7 @@ import {
   ConfirmationService,
 } from "../../src/application/confirmation-service.js";
 import { SlidingWindowTpsLimiter } from "../../src/application/tps-limiter.js";
-import { loadMockErpConfig } from "../../src/runtime/config.js";
+import { loadMockErpConfig as loadProductionMockErpConfig } from "../../src/runtime/config.js";
 import { buildMockErpServer } from "../../src/server.js";
 
 const confirmationRequest: ErpConfirmationRequest = {
@@ -49,6 +49,8 @@ const testSafetyCaps = {
   allowForcedOutage: true,
 };
 const controlServiceToken = "test-control-token";
+const loadMockErpConfig = (environment: Record<string, string | undefined>) =>
+  loadProductionMockErpConfig({ ...environment, NODE_ENV: "test" });
 
 describe("Mock ERP configuration", () => {
   it("loads host-native defaults and explicit overrides", () => {

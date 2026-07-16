@@ -177,7 +177,7 @@ describe("run history service", () => {
     const detail = await service.detail(ids.newerRun);
 
     expect(selectSpy).toHaveBeenCalledTimes(6);
-    expect(selectSpy.mock.calls.filter((call) => call.length === 0)).toHaveLength(2);
+    expect(selectSpy.mock.calls.filter((call) => call.at(0) === undefined)).toHaveLength(2);
 
     expect(detail).toMatchObject({
       summary: {

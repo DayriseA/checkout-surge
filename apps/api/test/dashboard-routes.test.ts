@@ -3,10 +3,7 @@ import { correlationIdHeaderName, createSilentLogger } from "@checkout-surge/log
 import { installFastifyCorrelation } from "@checkout-surge/logger/fastify";
 import { fastify } from "fastify";
 import { describe, expect, it, vi } from "vitest";
-import type {
-  DashboardEventFanout,
-  DashboardSseAdmission,
-} from "../src/realtime/dashboard-event-fanout.js";
+import type { DashboardSseAdmission } from "../src/realtime/dashboard-event-fanout.js";
 import { registerDashboardRoutes } from "../src/routes/dashboard-routes.js";
 import type { ApiFastifyInstance } from "../src/runtime/fastify.js";
 import type { DashboardRecoveryAdmissionController } from "../src/services/dashboard-recovery-admission.js";
@@ -88,8 +85,8 @@ describe("dashboard route admission", () => {
 function buildServer(options: {
   sseOutcome?: DashboardSseAdmission;
   recoveryOutcome?: "rate_limited" | "at_capacity" | "unavailable";
-  getRecovery?: ReturnType<typeof vi.fn>;
-  release?: ReturnType<typeof vi.fn>;
+  getRecovery?: DashboardRecoveryService["getRecovery"];
+  release?: () => void;
 }) {
   const app = fastify({ loggerInstance: createSilentLogger("api") }) as ApiFastifyInstance;
   installFastifyCorrelation(app);
@@ -112,7 +109,7 @@ function buildServer(options: {
   registerDashboardRoutes(app, {
     dashboardEventFanout: {
       connect: () => options.sseOutcome ?? "connected",
-    } as DashboardEventFanout,
+    },
     dashboardRecoveryService: {
       getRecovery: options.getRecovery ?? vi.fn().mockResolvedValue(recoveryFixture()),
     } as unknown as DashboardRecoveryService,

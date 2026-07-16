@@ -163,6 +163,7 @@ function requireTestDatabaseUrl(): string {
 
 function baseConfig() {
   return loadApiConfig({
+    NODE_ENV: "test",
     DATABASE_URL: process.env.TEST_DATABASE_URL ?? "postgresql://postgres:postgres@localhost/test",
     REDIS_URL: process.env.TEST_REDIS_URL ?? "redis://localhost:6380",
     CONTROL_SERVICE_TOKEN: "test-control-token",
@@ -1757,7 +1758,7 @@ describe("API gateway routes", () => {
     ["run_queue_job_active", "corr-active-job"],
     ["run_queue_maintenance_owned_by_other_run", "corr-foreign-maintenance"],
     ["run_queue_not_quiescent", "corr-changing-job"],
-  ])("maps targeted teardown conflict %s to 409", async (code, correlationId) => {
+  ] as const)("maps targeted teardown conflict %s to 409", async (code, correlationId) => {
     const runId = randomUUID();
     const server = await trackedServer({
       persistence: new AcceptingPersistence(),
@@ -1930,7 +1931,7 @@ describe("API gateway routes", () => {
   it.each([
     ["preset_not_archivable", 409],
     ["preset_not_found", 404],
-  ])("maps archive error %s to %i through the DELETE route", async (code, statusCode) => {
+  ] as const)("maps archive error %s to %i through the DELETE route", async (code, statusCode) => {
     const archiveAdminPreset = vi.fn(async () => {
       throw new DemoRunValidationError(code, "Archive failed.", { slug: "preview-copy" });
     });
@@ -2634,7 +2635,9 @@ describe("API gateway routes", () => {
   });
 
   it("requires Redis configuration for production composition", () => {
-    expect(() => loadApiConfig({ DATABASE_URL: "postgresql://localhost/test" })).toThrow(
+    expect(() =>
+      loadApiConfig({ NODE_ENV: "test", DATABASE_URL: "postgresql://localhost/test" }),
+    ).toThrow(
       "REDIS_URL is required.",
     );
   });
@@ -2785,6 +2788,7 @@ describe("API buy persistence", () => {
     if (!connection || !redis) {
       throw new Error("Test infrastructure was not initialized.");
     }
+    const initializedRedis = redis;
     const idempotencyKey = "reconciler-full-convergence";
     const decision = await reserveInventoryStock(redis, {
       idempotencyKey,
@@ -2809,7 +2813,7 @@ describe("API buy persistence", () => {
       persistence: new PostgresBuyPersistence(connection.db),
       stockReservations: {
         promoteAccepted: (input) =>
-          promoteReservationIdempotencyToAccepted(redis, input).then(() => undefined),
+          promoteReservationIdempotencyToAccepted(initializedRedis, input).then(() => undefined),
       },
       idempotencyTtlSeconds: 1800,
       orderProcessJobPublisher: {

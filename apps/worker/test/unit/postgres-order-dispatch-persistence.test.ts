@@ -15,6 +15,8 @@ describe("Postgres order dispatch persistence", () => {
         queuedAt: new Date("2026-06-21T00:00:00.000Z"),
       },
     ];
+    const row = rows[0];
+    if (!row) throw new Error("Expected a queued order fixture.");
     const limit = vi.fn().mockResolvedValue(rows);
     const orderBy = vi.fn().mockReturnValue({ limit });
     const where = vi.fn().mockReturnValue({ orderBy });
@@ -27,13 +29,13 @@ describe("Postgres order dispatch persistence", () => {
       persistence.findQueuedOrdersForDispatch({ queuedBefore, limit: 10 }),
     ).resolves.toEqual([
       {
-        orderId: rows[0].id,
-        publicOrderId: rows[0].publicOrderId,
-        reservationId: rows[0].reservationId,
-        saleOfferId: rows[0].saleOfferId,
-        correlationId: rows[0].correlationId,
-        quantity: rows[0].quantity,
-        queuedAt: rows[0].queuedAt.toISOString(),
+        orderId: row.id,
+        publicOrderId: row.publicOrderId,
+        reservationId: row.reservationId,
+        saleOfferId: row.saleOfferId,
+        correlationId: row.correlationId,
+        quantity: row.quantity,
+        queuedAt: row.queuedAt.toISOString(),
       },
     ]);
 

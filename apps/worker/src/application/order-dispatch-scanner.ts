@@ -1,5 +1,6 @@
 import type { OrderProcessJob } from "@checkout-surge/contracts";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
+import type { OrderJobPublisher } from "./order-job-publisher.js";
 
 export interface OrderDispatchPersistence {
   findQueuedOrdersForDispatch(input: {
@@ -8,9 +9,7 @@ export interface OrderDispatchPersistence {
   }): Promise<OrderProcessJob[]>;
 }
 
-export interface OrderDispatchPublisher {
-  enqueue(job: OrderProcessJob): Promise<void>;
-}
+export interface OrderDispatchPublisher extends OrderJobPublisher {}
 
 export interface OrderDispatchScanResult {
   candidates: number;

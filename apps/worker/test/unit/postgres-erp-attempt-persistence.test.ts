@@ -37,6 +37,14 @@ function chain<T>(value: T) {
   };
 }
 
+function databaseWithTransaction<T>(transaction: T) {
+  const runTransaction = async <R>(callback: (tx: T) => Promise<R>): Promise<R> =>
+    callback(transaction);
+  return {
+    transaction: vi.fn(runTransaction),
+  } as never;
+}
+
 describe("Postgres ERP attempt persistence", () => {
   it("writes the local response and idempotency key, then replays the same attempt", async () => {
     const attemptInsert = {
@@ -66,9 +74,7 @@ describe("Postgres ERP attempt persistence", () => {
       select: vi.fn(() => chain(selectCalls++ < 2 ? [] : [existing])),
       insert: vi.fn().mockReturnValueOnce(attemptInsert).mockReturnValueOnce(eventInsert),
     };
-    const db = {
-      transaction: vi.fn(async (callback: (tx: typeof tx) => Promise<void>) => callback(tx)),
-    } as never;
+    const db = databaseWithTransaction(tx);
     const persistence = new PostgresErpAttemptPersistence(db);
 
     await expect(persistence.recordAttempt(record)).resolves.toBe(true);
@@ -104,9 +110,7 @@ describe("Postgres ERP attempt persistence", () => {
         ]),
       ),
     };
-    const db = {
-      transaction: vi.fn(async (callback: (tx: typeof tx) => Promise<void>) => callback(tx)),
-    } as never;
+    const db = databaseWithTransaction(tx);
     const persistence = new PostgresErpAttemptPersistence(db);
 
     await expect(persistence.recordAttempt({ ...record, terminal: false })).rejects.toThrow(

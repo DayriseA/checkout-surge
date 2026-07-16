@@ -1244,7 +1244,6 @@ function createFinalizationService(
     terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(connection.db),
     drainTimeoutSeconds: 300,
     now: () => new Date("2026-06-21T00:00:10.000Z"),
-    generateId: () => "77777777-7777-4777-8777-777777777777",
   });
 }
 

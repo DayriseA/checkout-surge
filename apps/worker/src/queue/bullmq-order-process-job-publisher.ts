@@ -6,7 +6,10 @@ import {
 } from "@checkout-surge/contracts";
 import { type ConnectionOptions, Queue } from "bullmq";
 import type { OrderDispatchPublisher } from "../application/order-dispatch-scanner.js";
-import type { FailedOrderJobReader } from "../application/order-recovery-scanner.js";
+import type {
+  FailedOrderJobReader,
+  RecoveryJobPublisher,
+} from "../application/order-recovery-scanner.js";
 import type { RunConfigReader } from "../application/run-config.js";
 import {
   deadLetterFailureMarker,
@@ -15,6 +18,7 @@ import {
 
 export interface WorkerOrderProcessJobPublisher
   extends OrderDispatchPublisher,
+    RecoveryJobPublisher,
     FailedOrderJobReader {
   close(): Promise<void>;
 }

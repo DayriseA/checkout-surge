@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { loadApiConfig } from "../src/runtime/config.js";
+import { loadApiConfig as loadProductionApiConfig } from "../src/runtime/config.js";
+
+const loadApiConfig = (environment: Record<string, string | undefined>) =>
+  loadProductionApiConfig({ ...environment, NODE_ENV: "test" });
 
 const baseEnv = {
   DATABASE_URL: "postgresql://localhost/test",

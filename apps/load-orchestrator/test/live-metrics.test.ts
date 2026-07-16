@@ -243,7 +243,7 @@ function point(metricName: string, value: number, time: string): K6Point {
   return { type: "Point", metric: metricName, data: { value, time } };
 }
 
-function metric(metricName: string, value: number, unit: string): MetricSample {
+function metric(metricName: MetricSample["metricName"], value: number, unit: string): MetricSample {
   return { metricName, value, unit, timestamp: windowStart };
 }
 

@@ -135,11 +135,11 @@ Replace `⬜` with `✅` when a task is complete. Optional `⏳` for work in pro
 
 ✅ [Task 65: Add active retry to recovery-read failures in the dashboard](./task_65.md)
 
-⬜ [Task 66: Tighten the public run-history detail DTO](./task_66.md)
+✅ [Task 66: Tighten the public run-history detail DTO](./task_66.md)
 
-⬜ [Task 67: Make the root test lanes honest: include all unit suites in watch, cover high-risk suites in coverage, enforce a floor](./task_67.md)
+✅ [Task 67: Make the root test lanes honest: include all unit suites in watch, cover high-risk suites in coverage, enforce a floor](./task_67.md)
 
-⬜ [Task 68: Fix and gate the test-source type-check command](./task_68.md)
+✅ [Task 68: Fix and gate the test-source type-check command](./task_68.md)
 
 ⬜ [Task 69: Adapt the design docs and README to implementation reality and correct overstated status/access claims](./task_69.md)
 

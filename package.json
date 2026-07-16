@@ -11,7 +11,7 @@
   "scripts": {
     "build": "turbo run build",
     "build:shared": "turbo run build --filter @checkout-surge/contracts --filter @checkout-surge/db --filter @checkout-surge/logger",
-    "type-check": "turbo run type-check",
+    "type-check": "turbo run type-check && pnpm type-check:test",
     "type-check:test": "tsc -p tsconfig.test.json --noEmit",
     "lint": "biome lint .",
     "lint:fix": "biome check --write .",
