@@ -3267,6 +3267,12 @@ describe("API buy persistence", () => {
 
       expect(secured).toHaveLength(stock);
       expect(soldOut).toHaveLength(requestCount - stock);
+      for (const [index, payload] of payloads.entries()) {
+        if (payload.outcome !== "reservation_secured") {
+          expect(responses[index]?.statusCode).toBe(409);
+          expect(payload.outcome).toBe("sold_out");
+        }
+      }
       expect(new Set(secured.map((payload) => payload.reservation?.id)).size).toBe(stock);
       expect(new Set(secured.map((payload) => payload.order?.id)).size).toBe(stock);
       expect(reservationRows).toHaveLength(stock);

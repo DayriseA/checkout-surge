@@ -3520,6 +3520,78 @@ describe("database migrations, seed data, and reset behavior", () => {
     expect(await redis.llen(keys.events)).toBe(3);
   });
 
+  it("collapses a concurrent shared-idempotency burst to one pending hold", async () => {
+    const saleOfferId = "10000000-0000-4000-8000-000000000074";
+    const idempotencyKey = "concurrent-shared-idempotency-key";
+    const keys = inventoryKeys(saleOfferId);
+    const candidates = Array.from({ length: 20 }, (_, index) =>
+      buildReservationInput({
+        saleOfferId,
+        sequence: 7400 + index,
+        idempotencyKey,
+      }),
+    );
+    await initializeInventory(redis, { saleOfferId, allocatedStock: 10 });
+
+    const decisions = await Promise.all(
+      candidates.map((candidate) => reserveInventoryStock(redis, candidate)),
+    );
+    const secured = decisions.filter((decision) => decision.outcome === "reservation_secured");
+    const pending = decisions.filter(
+      (decision) => decision.outcome === "reservation_pending_persistence",
+    );
+    const winner = secured[0]?.reservation;
+
+    expect(secured).toHaveLength(1);
+    if (!winner) {
+      throw new Error("Expected the shared-idempotency burst to select one winning hold.");
+    }
+    expect(pending).toHaveLength(candidates.length - 1);
+    expect(pending.every((decision) => decision.reservation?.id === winner.id)).toBe(true);
+    expect(pending.map((decision) => decision.reservation)).toEqual(
+      Array.from({ length: candidates.length - 1 }, () => winner),
+    );
+    expect(await redis.hgetall(keys.state)).toMatchObject({
+      remainingStock: "9",
+      reservedStock: "1",
+    });
+    expect(
+      (await getInventoryStatus(redis, saleOfferId, new Date("2026-06-20T12:00:30.000Z")))
+        .reservationThroughput.successfulReservationCount,
+    ).toBe(1);
+    expect(await redis.hlen(keys.reservations)).toBe(1);
+    expect(await redis.zcard(keys.reservationExpirations)).toBe(1);
+    expect(await redis.zcard(keys.pendingPersistence)).toBe(1);
+    expect(await redis.hlen(keys.pendingPersistenceRecords)).toBe(1);
+    expect(await redis.zcard(pendingPersistenceIndexKey)).toBe(1);
+    expect(await redis.keys(`${keys.prefix}:idempotency:*`)).toEqual([
+      keys.idempotency(idempotencyKey),
+    ]);
+    expect(JSON.parse((await redis.get(keys.idempotency(idempotencyKey))) ?? "null")).toEqual({
+      status: "pending_persistence",
+      quantity: winner.quantity,
+      reservation: winner,
+    });
+    expect(
+      JSON.parse((await redis.hget(keys.pendingPersistenceRecords, winner.id)) ?? "null"),
+    ).toMatchObject({
+      id: winner.id,
+      idempotencyKey,
+      quantity: winner.quantity,
+      reservationToken: winner.reservationToken,
+    });
+    expect(await redis.zscore(keys.reservationExpirations, winner.id)).toBe(
+      new Date(winner.expiresAt).getTime().toString(),
+    );
+    expect(await redis.zscore(keys.pendingPersistence, winner.id)).toBe(
+      new Date(winner.securedAt).getTime().toString(),
+    );
+    expect(
+      await redis.zscore(pendingPersistenceIndexKey, `${saleOfferId}:${winner.id}`),
+    ).toBe(new Date(winner.securedAt).getTime().toString());
+    expect(await redis.llen(keys.events)).toBe(2);
+  });
+
   it("keeps stale accepted and pending holds reserved with inclusive expiry visibility", async () => {
     const acceptedOfferId = "10000000-0000-4000-8000-000000000012";
     const pendingOfferId = "10000000-0000-4000-8000-000000000013";

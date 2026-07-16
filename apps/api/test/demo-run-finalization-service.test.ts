@@ -10,6 +10,7 @@ import type {
   TrafficCompletionReport,
 } from "@checkout-surge/contracts";
 import {
+  dashboardEventsRedisChannel,
   emptyHttpTimingBreakdownSummary,
   trafficDeliverySummarySchema,
 } from "@checkout-surge/contracts";
@@ -478,6 +479,51 @@ describe("demo run finalization service", () => {
     expect(reconcileSaleOffer).toHaveBeenCalledWith(ids.saleOffer, { runId: ids.run });
   });
 
+  it("materializes pending persistence before capturing terminal business counts", async () => {
+    const db = requireConnection(connection).db;
+    const redisClient = requireRedis(redis);
+    await seedDrainingRun({ db, redis: redisClient, trafficDeliveryStatus: "complete" });
+    await setAcceptedDeliveryEvidence(db, { acceptedResponses: 1 });
+    await db
+      .update(demoRunFinalizations)
+      .set({
+        trafficOutcomeSummary: { terminalInventorySnapshot: durableTerminalInventorySnapshot },
+      })
+      .where(eq(demoRunFinalizations.runId, ids.run));
+    await db.insert(reservationPendingPersistence).values(pendingPersistenceFixture());
+    const reconcileSaleOffer = vi.fn(async () => {
+      await db.insert(reservations).values(reservationFixture(ids.reservation1));
+      await db.insert(orders).values(orderFixture(ids.order1, ids.reservation1, "failed"));
+      await db
+        .update(reservationPendingPersistence)
+        .set({
+          status: "reconciled",
+          updatedAt: new Date("2026-06-20T00:00:09.000Z"),
+        })
+        .where(eq(reservationPendingPersistence.reservationId, ids.reservation1));
+      return { found: 1, materialized: 1, reconciled: 1, reversed: 0, failed: 0 };
+    });
+    const service = createService(connection, redis, {
+      pendingPersistenceReconciler: { reconcileSaleOffer },
+    });
+
+    await expect(service.finalizeRun(ids.run, "corr-finalize-materialize")).resolves.toMatchObject({
+      status: "completed",
+    });
+    const [summary] = await db
+      .select()
+      .from(demoRunSummaries)
+      .where(eq(demoRunSummaries.runId, ids.run));
+
+    expect(reconcileSaleOffer).toHaveBeenCalledOnce();
+    expect(summary?.businessOutcomeSummary as BusinessOutcomeSummary).toMatchObject({
+      acceptedReservations: 1,
+      failedOrders: 1,
+      pendingPersistenceCount: 0,
+    });
+    expect(summary?.terminalInventorySnapshot).toEqual(durableTerminalInventorySnapshot);
+  });
+
   it.each([
     "reported",
     "thrown",
@@ -587,6 +633,107 @@ describe("demo run finalization service", () => {
     } finally {
       await lockConnection.close();
       await resetConnection.close();
+    }
+  });
+
+  it("lets only one competing finalizer own terminal summary side effects", async () => {
+    const db = requireConnection(connection).db;
+    const redisClient = requireRedis(redis);
+    const lockConnection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
+    const competingConnection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
+    const observerConnection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
+    const subscriberRedis = createRedisClient(requireTestRedisUrl(), {
+      lazyConnect: true,
+      maxRetriesPerRequest: 3,
+    });
+    const barrierChannel = "task-74-terminal-event-barrier";
+    const barrierSentinel = "finalizer-publishes-complete";
+    const terminalEvents: unknown[] = [];
+    const observedBarriers: string[] = [];
+    const writeResults: boolean[] = [];
+    const firstWriter = new PostgresTerminalDemoRunSummaryWriter(db);
+    const secondWriter = new PostgresTerminalDemoRunSummaryWriter(competingConnection.db);
+    const firstService = createService(connection, redis, {
+      terminalRunWriter: {
+        write: async (input) => {
+          const wrote = await firstWriter.write(input);
+          writeResults.push(wrote);
+          return wrote;
+        },
+      },
+    });
+    const secondService = createService(competingConnection, redis, {
+      terminalRunWriter: {
+        write: async (input) => {
+          const wrote = await secondWriter.write(input);
+          writeResults.push(wrote);
+          return wrote;
+        },
+      },
+    });
+    let firstFinalization: Promise<unknown> | null = null;
+    let secondFinalization: Promise<unknown> | null = null;
+    let subscribed = false;
+    const handleSubscriberMessage = (channel: string, message: string) => {
+      if (channel === dashboardEventsRedisChannel) {
+        terminalEvents.push(JSON.parse(message));
+      }
+      if (channel === barrierChannel && message === barrierSentinel) {
+        observedBarriers.push(message);
+      }
+    };
+    subscriberRedis.on("message", handleSubscriberMessage);
+
+    try {
+      await seedDrainingRun({ db, redis: redisClient, trafficDeliveryStatus: "complete" });
+      await subscriberRedis.subscribe(dashboardEventsRedisChannel, barrierChannel);
+      subscribed = true;
+      await lockConnection.db.transaction(async (tx) => {
+        await tx.execute(
+          sql`select pg_advisory_xact_lock(hashtext(${terminalDemoRunTransitionLockKey(ids.run)}))`,
+        );
+
+        firstFinalization = firstService.finalizeRun(ids.run, "corr-finalize-first");
+        secondFinalization = secondService.finalizeRun(ids.run, "corr-finalize-second");
+        await waitForWaitingAdvisoryLock(observerConnection.sql, 2);
+      });
+
+      await Promise.all([
+        requireStartedPromise(firstFinalization, "first finalization"),
+        requireStartedPromise(secondFinalization, "second finalization"),
+      ]);
+      await redisClient.publish(barrierChannel, barrierSentinel);
+      await waitForObservedCount(observedBarriers, 1);
+      const summaries = await db
+        .select()
+        .from(demoRunSummaries)
+        .where(eq(demoRunSummaries.runId, ids.run));
+
+      expect(summaries).toHaveLength(1);
+      expect(writeResults.sort()).toEqual([false, true]);
+      expect(terminalEvents).toHaveLength(1);
+      expect(terminalEvents[0]).toMatchObject({
+        type: "load.run.updated",
+        runId: ids.run,
+        run: { status: "completed" },
+      });
+    } finally {
+      subscriberRedis.off("message", handleSubscriberMessage);
+      try {
+        if (subscribed) {
+          await subscriberRedis.unsubscribe(dashboardEventsRedisChannel, barrierChannel);
+        }
+      } finally {
+        try {
+          subscriberRedis.disconnect();
+        } finally {
+          await Promise.all([
+            lockConnection.close(),
+            competingConnection.close(),
+            observerConnection.close(),
+          ]);
+        }
+      }
     }
   });
 
@@ -1194,25 +1341,37 @@ function trafficCompletionReportFixture(
 
 async function waitForWaitingAdvisoryLock(
   sqlClient: ReturnType<typeof createDatabaseConnection>["sql"],
+  minimumWaitingCount = 1,
 ): Promise<void> {
   const deadline = Date.now() + 5_000;
 
   while (Date.now() < deadline) {
     const rows = await sqlClient`
-      select exists (
-        select 1
-        from pg_locks
-        where locktype = 'advisory'
-          and granted = false
-      ) as waiting
+      select count(*)::integer as waiting_count
+      from pg_locks
+      where locktype = 'advisory'
+        and granted = false
     `;
-    if (rows[0]?.waiting) {
+    if ((rows[0]?.waiting_count ?? 0) >= minimumWaitingCount) {
       return;
     }
     await delay(20);
   }
 
   throw new Error("Timed out waiting for a blocked terminal run advisory lock.");
+}
+
+async function waitForObservedCount(values: unknown[], expectedCount: number): Promise<void> {
+  const deadline = Date.now() + 5_000;
+
+  while (Date.now() < deadline) {
+    if (values.length >= expectedCount) {
+      return;
+    }
+    await delay(20);
+  }
+
+  throw new Error(`Timed out waiting for ${expectedCount} observed dashboard event(s).`);
 }
 
 function requireStartedPromise<T>(promise: Promise<T> | null, label: string): Promise<T> {

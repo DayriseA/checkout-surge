@@ -151,7 +151,7 @@ Replace `⬜` with `✅` when a task is complete. Optional `⏳` for work in pro
 
 ✅ [Task 73: Adopt donor SSE gateway mechanics (heartbeat, retry directive, proxy-buffering header, bounded queues)](./task_73.md)
 
-⬜ [Task 74: Port donor hard-property and interleaving test cases](./task_74.md)
+✅ [Task 74: Port donor hard-property and interleaving test cases](./task_74.md)
 
 ⬜ [Task 75: Harden runtime images: non-root users, per-service packaging, smaller production images](./task_75.md)
 
