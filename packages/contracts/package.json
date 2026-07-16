@@ -25,7 +25,9 @@
     "type-check": "tsc -p tsconfig.json --noEmit",
     "lint": "biome lint .",
     "test": "pnpm test:unit",
-    "test:unit": "vitest run --config vitest.config.ts"
+    "test:unit": "vitest run --config vitest.config.ts",
+    "test:unit:watch": "vitest --watch --config vitest.config.ts",
+    "test:coverage:unit": "vitest run --config vitest.config.ts --coverage"
   },
   "dependencies": {
     "zod": "^4.4.3"

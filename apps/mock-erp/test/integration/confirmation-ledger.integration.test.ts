@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { ErpConfirmationRequest, ErpConfirmationResponse } from "@checkout-surge/contracts";
 import { createDatabaseConnection } from "@checkout-surge/db";
+import { resetTestDatabase } from "@checkout-surge/db/testing";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   ConfirmationIdempotencyConflictError,
@@ -37,6 +38,10 @@ run("PostgreSQL ERP confirmation ledger", () => {
   };
 
   beforeAll(async () => {
+    await resetTestDatabase({
+      databaseUrl: databaseUrl ?? "",
+      migrationsFolder: "../../packages/db/drizzle",
+    });
     await requireConnection()
       .sql`delete from erp_confirmation_results where idempotency_key like ${`${keyPrefix}:%`}`;
   });

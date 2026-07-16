@@ -9,6 +9,7 @@
     "types": ["node", "vitest/globals"]
   },
   "include": [
+    "vitest.coverage.config.ts",
     "vitest*.config.ts",
     "packages/**/*.test.ts",
     "packages/**/vitest*.config.ts",

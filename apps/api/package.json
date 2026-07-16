@@ -9,7 +9,8 @@
     "lint": "biome lint .",
     "dev": "node ../../scripts/run-with-env.mjs tsx watch src/index.ts",
     "test": "pnpm test:api",
-    "test:api": "node ../../scripts/run-with-test-env.mjs vitest run --config vitest.api.config.ts"
+    "test:api": "node ../../scripts/run-with-test-env.mjs vitest run --config vitest.api.config.ts",
+    "test:coverage:api": "node ../../scripts/run-with-test-env.mjs vitest run --config vitest.api.config.ts --coverage"
   },
   "dependencies": {
     "@checkout-surge/contracts": "workspace:*",

@@ -10,7 +10,7 @@ import {
 } from "@checkout-surge/db";
 import { resetTestDatabase } from "@checkout-surge/db/testing";
 import { eq } from "drizzle-orm";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { PostgresOrderRecoveryPersistence } from "../../src/persistence/postgres-order-recovery-persistence.js";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
@@ -46,13 +46,11 @@ run("PostgreSQL durable order recovery boundary", () => {
     return persistence;
   };
 
-  beforeAll(async () => {
+  beforeEach(async () => {
     await resetTestDatabase({
       databaseUrl: databaseUrl ?? "",
       migrationsFolder: "../../packages/db/drizzle",
     });
-  });
-  beforeEach(async () => {
     const db = requireConnection().db;
     await db.insert(products).values({
       id: ids.product,

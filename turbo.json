@@ -34,10 +34,32 @@
     },
     "test:integration": {
       "dependsOn": ["^build"],
+      "cache": false,
       "outputs": []
     },
     "test:api": {
       "dependsOn": ["^build"],
+      "cache": false,
+      "outputs": []
+    },
+    "test:unit:watch": {
+      "dependsOn": ["^build"],
+      "cache": false,
+      "persistent": true
+    },
+    "test:coverage:unit": {
+      "dependsOn": ["^build"],
+      "cache": false,
+      "outputs": []
+    },
+    "test:coverage:api": {
+      "dependsOn": ["^build"],
+      "cache": false,
+      "outputs": []
+    },
+    "test:coverage:integration": {
+      "dependsOn": ["^build"],
+      "cache": false,
       "outputs": []
     },
     "dev": {

@@ -28,9 +28,12 @@
     "lint": "biome lint .",
     "db:migrate": "node ../../scripts/run-with-env.mjs tsx src/scripts/migrate.ts",
     "seed": "node ../../scripts/run-with-env.mjs tsx src/scripts/seed.ts",
-    "test": "pnpm test:integration",
+    "test": "pnpm test:unit && pnpm test:integration",
     "test:unit": "vitest run --config vitest.unit.config.ts",
+    "test:unit:watch": "vitest --watch --config vitest.unit.config.ts",
     "test:integration": "node ../../scripts/run-with-test-env.mjs vitest run --config vitest.integration.config.ts",
+    "test:coverage:unit": "vitest run --config vitest.unit.config.ts --coverage",
+    "test:coverage:integration": "node ../../scripts/run-with-test-env.mjs vitest run --config vitest.integration.config.ts --coverage",
     "test:db:migrate": "node ../../scripts/run-with-test-env.mjs tsx src/scripts/test-db-migrate.ts"
   },
   "dependencies": {

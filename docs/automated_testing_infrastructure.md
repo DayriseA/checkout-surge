@@ -72,7 +72,9 @@ The repository must provide root scripts with stable names:
 - `pnpm test:integration` runs only tests that require PostgreSQL and/or Redis test services.
 - `pnpm test:api` runs only API/service-boundary tests.
 - `pnpm test:watch` runs the fast unit test loop for active development.
-- `pnpm test:infra:up` starts the dedicated test PostgreSQL and Redis services.
+- `pnpm test:coverage` is the bounded full coverage gate. It discovers all seven unit owners, the API/service owner, and the DB, mock ERP, and worker integration owners through package-local Turbo scripts. Start clean dedicated PostgreSQL and Redis services with `pnpm test:infra:up` before running it and always stop them with `pnpm test:infra:down` afterward.
+- `pnpm test:coverage:unit` is the explicitly fast, infrastructure-free unit-only coverage command.
+- `pnpm test:infra:up` starts the dedicated test PostgreSQL and Redis services and waits for their declared healthchecks before returning.
 - `pnpm test:infra:down` stops dedicated test services.
 - `pnpm test:infra:reset` resets only the dedicated test database and Redis instance.
 - `pnpm test:db:migrate` rehearses the real incremental `drizzle-kit` migration path (the one deployment uses) against the db package's isolated test database, creating it on demand. Useful when authoring a new migration; not required before running tests, which provision and migrate their databases automatically.
@@ -80,6 +82,10 @@ The repository must provide root scripts with stable names:
 - `pnpm test:characterization` runs focused browser recovery coverage and then the deployed-topology characterization.
 
 Package and app-level scripts should use the same names where applicable so Turbo can orchestrate them predictably.
+
+Tier membership lives in package manifests. Root unit, API, integration, watch, and coverage commands use unfiltered Turbo discovery; absence of a package-local tier script means non-membership. Watch is persistent and includes unit owners only. API, integration, watch, and coverage tasks are not cached.
+
+Coverage uses V8 and the shared policy in `vitest.coverage.config.ts`. Every lane explicitly includes all production `src/**/*.ts` and `src/**/*.tsx` files and excludes only source declaration files, so unexecuted production modules count against the initial 10% statements, branches, functions, and lines floor and named high-risk paths remain visible. The floors are evaluated independently for each package/tier lane, not against a globally merged repository report. Every lane writes text output and `coverage-summary.json` to its unique `coverage/<owner>-<tier>` directory, including reports from failed test runs where Vitest permits. A future CI caller should provision and clean up test infrastructure around the same root command and retain those directories; this repository does not currently claim a hosted CI coverage gate.
 
 ---
 
