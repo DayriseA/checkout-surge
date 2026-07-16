@@ -153,7 +153,7 @@ Replace `⬜` with `✅` when a task is complete. Optional `⏳` for work in pro
 
 ✅ [Task 74: Port donor hard-property and interleaving test cases](./task_74.md)
 
-⬜ [Task 75: Harden runtime images: non-root users, per-service packaging, smaller production images](./task_75.md)
+✅ [Task 75: Harden runtime images: non-root users, per-service packaging, smaller production images](./task_75.md)
 
 ⬜ [Task 76: Centralize declared non-goals and live caveats in one auditable scoping page](./task_76.md)
 

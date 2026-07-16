@@ -40,7 +40,9 @@ services:
 
   api:
     build:
-      target: workspace
+      context: .
+      dockerfile: Dockerfile
+      target: development-workspace
     command: pnpm --filter api dev
     working_dir: /workspaces/checkout-surge
     environment:
@@ -49,7 +51,9 @@ services:
 
   worker:
     build:
-      target: workspace
+      context: .
+      dockerfile: Dockerfile
+      target: development-workspace
     command: pnpm --filter worker dev
     working_dir: /workspaces/checkout-surge
     environment:
@@ -58,7 +62,9 @@ services:
 
   mock-erp:
     build:
-      target: workspace
+      context: .
+      dockerfile: Dockerfile
+      target: development-workspace
     command: pnpm --filter mock-erp dev
     working_dir: /workspaces/checkout-surge
     environment:
@@ -66,6 +72,10 @@ services:
     volumes: *workspace-volumes
 
   load-orchestrator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development-workspace
     command: pnpm --filter load-orchestrator dev
     working_dir: /workspaces/checkout-surge
     environment:
@@ -74,7 +84,9 @@ services:
 
   web:
     build:
-      target: workspace
+      context: .
+      dockerfile: Dockerfile
+      target: development-workspace
     command: pnpm --filter web dev
     working_dir: /workspaces/checkout-surge
     environment:

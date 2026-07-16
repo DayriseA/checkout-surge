@@ -41,7 +41,8 @@ checkout-surge/
 ├── docker-compose.yml        # Full local reference runtime
 ├── docker-compose.dev.yml    # Loopback-only debug/infra port overrides
 ├── docker-compose.test.yml   # Isolated PostgreSQL and Redis test infrastructure
-├── Dockerfile                # Multi-target application/runtime images
+├── Dockerfile                # Development workspace and operational-tooling image
+├── docker/                   # Validated shared production Dockerfile for Node services
 ├── pnpm-workspace.yaml        # Workspace membership for apps/* and packages/*
 ├── turbo.json                 # Cross-package build/test/dev task graph
 ├── AGENTS.md

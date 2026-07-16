@@ -1,16 +1,15 @@
-FROM node:22-bookworm-slim AS node-base
+ARG NODE_VERSION=22-bookworm-slim
 
-WORKDIR /workspace
+FROM node:${NODE_VERSION} AS build
+
+WORKDIR /build
 
 ENV PNPM_HOME=/pnpm
 ENV PATH="${PNPM_HOME}:${PATH}"
 
 RUN corepack enable && corepack prepare pnpm@10.33.2 --activate
 
-FROM node-base AS development-workspace
-
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json tsconfig.json tsconfig.base.json tsconfig.test.json ./
-COPY biome.json ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json tsconfig.base.json ./
 COPY apps/api/package.json apps/api/package.json
 COPY apps/load-orchestrator/package.json apps/load-orchestrator/package.json
 COPY apps/mock-erp/package.json apps/mock-erp/package.json
@@ -26,12 +25,18 @@ RUN --mount=type=cache,id=checkout-surge-pnpm-store,target=/pnpm/store \
 COPY . .
 
 RUN --mount=type=cache,id=checkout-surge-pnpm-store,target=/pnpm/store \
-  pnpm install --frozen-lockfile --offline --store-dir=/pnpm/store && pnpm build
+  pnpm install --frozen-lockfile --offline --store-dir=/pnpm/store && \
+  pnpm --filter="@checkout-surge/db..." build && \
+  pnpm --filter="@checkout-surge/db" deploy --legacy --prod /deploy
 
-FROM development-workspace AS runtime-tools
+FROM node:${NODE_VERSION} AS runtime
+
+WORKDIR /app
 
 ENV NODE_ENV=production
 
+COPY --from=build --chown=node:node /deploy/ ./
+
 USER node
 
-CMD ["node", "--version"]
+CMD ["sh", "-c", "node dist/scripts/migrate.js && node dist/scripts/seed.js"]

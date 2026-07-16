@@ -40,8 +40,10 @@ services:
   api:
     build:
       context: .
-      dockerfile: Dockerfile
-      target: api-runtime
+      dockerfile: docker/Dockerfile.node-service
+      target: runtime
+      args:
+        SERVICE_NAME: api
     restart: on-failure
     environment:
       <<: *app-env
@@ -99,8 +101,10 @@ services:
   worker:
     build:
       context: .
-      dockerfile: Dockerfile
-      target: worker-runtime
+      dockerfile: docker/Dockerfile.node-service
+      target: runtime
+      args:
+        SERVICE_NAME: worker
     environment:
       <<: *app-env
       HEALTH_PORT: 4300
@@ -135,8 +139,10 @@ services:
   mock-erp:
     build:
       context: .
-      dockerfile: Dockerfile
-      target: mock-erp-runtime
+      dockerfile: docker/Dockerfile.node-service
+      target: runtime
+      args:
+        SERVICE_NAME: mock-erp
     environment:
       <<: *app-env
       CONTROL_SERVICE_TOKEN: ${CONTROL_SERVICE_TOKEN}
@@ -163,8 +169,8 @@ services:
   load-orchestrator:
     build:
       context: .
-      dockerfile: Dockerfile
-      target: load-orchestrator-runtime
+      dockerfile: apps/load-orchestrator/Dockerfile
+      target: runtime
     environment:
       <<: *app-env
       CONTROL_SERVICE_TOKEN: ${CONTROL_SERVICE_TOKEN}
@@ -191,8 +197,8 @@ services:
   web:
     build:
       context: .
-      dockerfile: Dockerfile
-      target: web-runtime
+      dockerfile: apps/web/Dockerfile
+      target: runtime
     environment:
       <<: *app-env
       CONTROL_SERVICE_TOKEN: ${CONTROL_SERVICE_TOKEN}
@@ -253,8 +259,8 @@ services:
     profiles: ["setup"]
     build:
       context: .
-      dockerfile: Dockerfile
-      target: runtime-setup
+      dockerfile: packages/db/Dockerfile
+      target: runtime
     environment:
       <<: *app-env
       # Mirrored from API deployment config only for first-seed policy validation/storage.
@@ -286,6 +292,34 @@ services:
       redis:
         condition: service_healthy
 
+  runtime-tools:
+    profiles: ["tools"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime-tools
+    working_dir: /workspace
+    environment:
+      NODE_ENV: production
+      API_BASE_URL: http://api:4000
+      WORKER_HEALTH_BASE_URL: http://worker:4300
+      MOCK_ERP_BASE_URL: http://mock-erp:4100
+      LOAD_ORCHESTRATOR_BASE_URL: http://load-orchestrator:4200
+      WEB_BASE_URL: http://dashboard-proxy:8080
+      CONTROL_SERVICE_TOKEN: ${CONTROL_SERVICE_TOKEN}
+      PUBLIC_CLIENT_COOKIE_SECRET: ${PUBLIC_CLIENT_COOKIE_SECRET}
+      DEMO_RUN_DRAIN_TIMEOUT_SECONDS: ${DEMO_RUN_DRAIN_TIMEOUT_SECONDS:-300}
+      DEMO_RUN_FINALIZATION_POLL_INTERVAL_SECONDS: ${DEMO_RUN_FINALIZATION_POLL_INTERVAL_SECONDS:-5}
+
+  k6-compat:
+    profiles: ["test-tools"]
+    build:
+      context: .
+      dockerfile: apps/load-orchestrator/Dockerfile
+      target: k6-compat
+    environment:
+      K6_BINARY: /usr/local/bin/k6
+
 volumes:
   checkout-surge-postgres-data:
   checkout-surge-redis-data:
@@ -297,3 +331,4 @@ networks:
     ipam:
       config:
         - subnet: 172.30.0.0/24
+          ip_range: 172.30.0.128/25

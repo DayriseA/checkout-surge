@@ -25,6 +25,8 @@ The goal is to make the architecture-realistic topology easy to run locally with
 | Runtime setup | Runtime startup should not hide database mutations | `runtime:up` starts containers; an explicit setup command runs migrations and demo seed data. |
 | Demo readiness | The `health:check` command includes dashboard reachability | The full local demo is not ready if the dashboard is unreachable, even when backend services are healthy. |
 | Hosted deployment boundary | Hosted deployment assets must coexist with the local topology | Production images or platform configs should be added separately or via separate Dockerfile targets, not by replacing local Dev Container/Codespaces behavior. |
+| Production image boundary | Each application and DB setup service has an independently buildable Node 22 Bookworm-slim production artifact and runs as the image's non-root `node` user | Runtime images contain only the selected deploy/standalone closure; build tools and unrelated workspace output stay in builder images. |
+| Operational tooling boundary | Repository operational scripts use a profile-gated `runtime-tools` service when API is running and host-local Node otherwise | Production API packaging does not carry repository scripts or development dependencies, and normal `runtime:up` does not start tooling. |
 
 ---
 

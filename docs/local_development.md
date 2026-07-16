@@ -334,7 +334,7 @@ The default development suite can be run with:
 pnpm test
 ```
 
-`pnpm test` intentionally excludes deployed-topology composition coverage so routine development and agent verification remain fast. It also keeps host-native orchestrator unit tests independent of a host k6 install. Merge automation uses `pnpm test:required`, whose dedicated `test:k6-compat` step builds the same `load-orchestrator-runtime` stage used in production and fails rather than skipping when k6 is unavailable or incompatible. The opt-in `test:composition` command is slow by nature and requires a functioning Docker daemon. It creates a uniquely named Compose project, migrates and seeds isolated PostgreSQL and Redis volumes, starts the deployed API, worker, mock ERP, load orchestrator, web, and dashboard proxy topology, runs its characterization scenarios, and removes the project and volumes afterward. Its host ports default to the `53xxx`-`58xxx` range and can be overridden with the `COMPOSITION_*_PORT` environment variables when those ports are occupied.
+`pnpm test` intentionally excludes deployed-topology composition coverage so routine development and agent verification remain fast. It also keeps host-native orchestrator unit tests independent of a host k6 install. Merge automation uses `pnpm test:required`, whose dedicated `test:k6-compat` step builds a non-production test target with the same pinned k6 artifact as the production load image and fails rather than skipping when k6 is unavailable or incompatible. The final load image contains no pnpm, test dependencies, or test source. The opt-in `test:composition` command is slow by nature and requires a functioning Docker daemon. It creates a uniquely named Compose project, migrates and seeds isolated PostgreSQL and Redis volumes, starts the deployed API, worker, mock ERP, load orchestrator, web, and dashboard proxy topology, runs its characterization scenarios, and removes the project and volumes afterward. Its host ports default to the `53xxx`-`58xxx` range and can be overridden with the `COMPOSITION_*_PORT` environment variables when those ports are occupied.
 
 Run the deployed topology only when its cross-service safety net is specifically needed, or when explicitly requested during agent-assisted work. The characterization command runs the focused browser recovery suite followed by that topology:
 
@@ -387,6 +387,16 @@ pnpm test:infra:down
 Integration and API tests are mapped to `TEST_DATABASE_URL` and `TEST_REDIS_URL` by `scripts/run-with-test-env.mjs`.
 
 Web DOM component tests run in the unit-test lane with jsdom and React Testing Library. They do not require Docker, a browser, PostgreSQL, or Redis.
+
+## Production and operational container boundaries
+
+The root Compose application services build independent production images. API, worker, Mock ERP, and load orchestrator execute `node dist/index.js`; web executes the generated Next standalone server; DB setup executes the compiled migration and seed CLIs. These images use Node 22 Bookworm slim, run as the base image's `node` user (UID/GID 1000), and contain neither the full workspace nor development dependencies. The load image owns the pinned k6 2.0.0 binary and pre-owns its journal mount point so a fresh named volume is writable without root.
+
+The Dev Container merge explicitly replaces all five application builds with the root `development-workspace` target before pairing them with `pnpm ... dev` commands. The universal editor image, Docker-in-Docker lifecycle, named dependency volumes, and opt-in application startup remain unchanged.
+
+When API is running, `runtime:reset`, `runtime:smoke:load`, `health:check`, and `maintenance:cleanup-runs` invoke the profile-gated `runtime-tools` service on the Compose network. If API is not running they retain their host-local Node fallback. `runtime:up` never starts `runtime-tools` or the profile-gated k6 compatibility service.
+
+The tooling service receives only its internal API, worker, Mock ERP, load-orchestrator, and dashboard URLs; the control and public-cookie credentials used by operational requests; and the drain/finalization timing overrides consumed by the load smoke. It does not receive PostgreSQL, Redis, admin-session, passphrase, origin, or unrelated application configuration.
 
 ## Configuration Reference
 

@@ -1,55 +1,76 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const [script, ...args] = process.argv.slice(2);
+export function runInCompose({
+  script,
+  args = [],
+  cwd = process.cwd(),
+  env = process.env,
+  spawn = spawnSync,
+  writeError = (message) => console.error(message),
+}) {
+  if (!script) {
+    writeError("Usage: run-in-compose.mjs <script> [args...]");
+    return 1;
+  }
 
-if (!script) {
-  console.error("Usage: run-in-compose.mjs <script> [args...]");
-  process.exit(1);
-}
+  const forwardedArgs = args[0] === "--" ? args.slice(1) : args;
 
-const composeCheck = spawnSync("docker", ["compose", "ps", "--status", "running", "-q", "api"], {
-  cwd: process.cwd(),
-  env: process.env,
-  encoding: "utf8",
-  stdio: ["ignore", "pipe", "ignore"],
-});
-
-if (composeCheck.status !== 0 || !composeCheck.stdout.trim()) {
-  const local = spawnSync(process.execPath, [script, ...args], {
-    cwd: process.cwd(),
-    env: process.env,
-    stdio: "inherit",
+  const composeCheck = spawn("docker", ["compose", "ps", "--status", "running", "-q", "api"], {
+    cwd,
+    env,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
   });
-  process.exit(local.status ?? 1);
+
+  if (composeCheck.status !== 0 || !composeCheck.stdout?.trim()) {
+    const local = spawn(process.execPath, [script, ...forwardedArgs], {
+      cwd,
+      env,
+      stdio: "inherit",
+    });
+    if (local.error) {
+      writeError(`Failed to run ${script} locally: ${local.error.message}`);
+      return 1;
+    }
+    return local.status ?? 1;
+  }
+
+  const tooling = spawn(
+    "docker",
+    [
+      "compose",
+      "--profile",
+      "tools",
+      "run",
+      "--rm",
+      "--build",
+      "--no-deps",
+      "runtime-tools",
+      "node",
+      script,
+      ...forwardedArgs,
+    ],
+    { cwd, env, stdio: "inherit" },
+  );
+
+  if (tooling.error) {
+    writeError(
+      `Failed to run ${script} in the Compose tooling container: ${tooling.error.message}`,
+    );
+    return 1;
+  }
+
+  return tooling.status ?? 1;
 }
 
-const result = spawnSync(
-  "docker",
-  [
-    "compose",
-    "exec",
-    "-T",
-    "-e",
-    "WORKER_HEALTH_BASE_URL=http://worker:4300",
-    "-e",
-    "MOCK_ERP_BASE_URL=http://mock-erp:4100",
-    "-e",
-    "LOAD_ORCHESTRATOR_BASE_URL=http://load-orchestrator:4200",
-    "-e",
-    "WEB_BASE_URL=http://dashboard-proxy:8080",
-    "api",
-    "node",
-    script,
-    ...args,
-  ],
-  { cwd: process.cwd(), env: process.env, stdio: "inherit" },
-);
+const isEntrypoint =
+  process.argv[1] !== undefined && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 
-if (result.error) {
-  console.error(`Failed to run ${script} in the Compose API container: ${result.error.message}`);
-  process.exit(1);
+if (isEntrypoint) {
+  const [script, ...args] = process.argv.slice(2);
+  process.exitCode = runInCompose({ script, args });
 }
-
-process.exit(result.status ?? 1);
