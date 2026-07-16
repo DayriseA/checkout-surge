@@ -31,7 +31,7 @@ The checked-in secret values are intentionally blank. Before `pnpm runtime:up`, 
 - `PUBLIC_CLIENT_COOKIE_SECRET`
 - `ADMIN_EDGE_ATTESTATION_SECRET`
 
-The reference Compose services run with `NODE_ENV=production`; they reject blank, weak, or known-placeholder trust secrets. `PUBLIC_CLIENT_COOKIE_SECRET` must be at least 16 bytes and is shared only by the web issuer and API verifier. `ADMIN_EDGE_ATTESTATION_SECRET` authenticates Caddy's normalized client identity to the web service and is also required by the production-mode local reference runtime.
+The reference Compose services run with `NODE_ENV=production`; they reject missing/blank and known-placeholder required values. `PUBLIC_CLIENT_COOKIE_SECRET` alone has a general minimum-length rule: at least 16 UTF-8 bytes. It is shared only by the web issuer and API verifier and must differ from `ADMIN_SESSION_SECRET`. `ADMIN_EDGE_ATTESTATION_SECRET` authenticates Caddy's normalized client identity to the web service and is also required by the production-mode local reference runtime. Private, deployment-specific values remain the operator recommendation for every listed secret, but the code does not apply one blanket strength or minimum-length rule to all of them.
 
 ## Runtime Modes
 
@@ -119,9 +119,9 @@ pnpm health:check
 pnpm runtime:smoke
 ```
 
-The non-mutating runtime smoke keeps the SSE connection open until a complete heartbeat or dashboard event frame crosses the same-origin proxy; response headers alone are not sufficient. On an otherwise idle runtime, expect this step to complete after the first heartbeat, normally about 15 seconds after connection, within its 25-second request-plus-frame deadline.
+The runtime smoke does not mutate durable business or run state. Its same-origin recovery read does increment short-lived Redis fixed-window recovery-admission counters and may issue a visitor cookie in the response. It also keeps the SSE connection open until a complete heartbeat or dashboard event frame crosses the same-origin proxy; response headers alone are not sufficient. On an otherwise idle runtime, expect this step to complete after the first heartbeat, normally about 15 seconds after connection, within its 25-second request-plus-frame deadline.
 
-Run the mutating dashboard-to-load-run smoke check when you want to prove the full control and asynchronous business path. It proves readiness, subscribes to SSE before start, verifies run-correlated realtime and reserved inventory, waits for a completed immutable summary with confirmed orders, notifications, and no asynchronous blockers, then uses the protected targeted teardown API for the exact run:
+Run the mutating dashboard-to-load-run smoke check when you want to prove the full control and asynchronous business path. Before creating its own run, it calls only the protected API demo-reset endpoint; that can terminalize an existing recoverable run and clear that run's live projection, but it does not invoke the operational `runtime:reset` client's separate Mock ERP chaos reset. The smoke then subscribes to SSE, starts a public run, verifies run-correlated realtime and reserved inventory, and waits for a completed immutable summary with confirmed orders, notifications, and no asynchronous blockers. The accepted start retains one visitor/global public run-budget reservation until its fixed window expires; exact-run teardown does not release accepted-start budget. Finally, the protected targeted teardown API removes the smoke run's durable graph, run-scoped Redis state, and attributed jobs:
 
 ```bash
 pnpm runtime:smoke:load
@@ -276,12 +276,13 @@ The worker-facing Mock ERP confirmation contract is `POST http://localhost:4100/
 | `pnpm infra:down` | Stop development PostgreSQL and Redis |
 | `pnpm runtime:up` | Build and start the full local reference runtime |
 | `pnpm runtime:up:debug` | Build and start the full runtime with loopback-only direct service ports for host-native debugging |
-| `pnpm runtime:down` | Stop the full local reference runtime |
+| `pnpm runtime:down` | Stop the full local reference runtime while preserving named-volume PostgreSQL, Redis, and load-orchestrator journal state |
 | `pnpm runtime:setup` | Run migrations and seed demo baseline data, durable presets, and Redis inventory inside the compose network |
+| `pnpm runtime:wipe` | Stop the runtime and delete its named volumes, orphan containers, PostgreSQL/Redis data, and load-orchestrator journal state |
 | `pnpm runtime:reset` | Reset the running demo through the API and Mock ERP admin reset endpoints for recovery/local maintenance |
-| `pnpm runtime:smoke` | Check compose service health, Compose-network service readiness, dashboard proxy reachability, a same-origin dashboard read, delivery of a complete SSE heartbeat or event frame through `/dashboard/events`, and k6 execution inside the load-orchestrator container |
-| `pnpm runtime:smoke:load` | Prove readiness, correlated SSE, inventory activity, terminal business completion, and exact-run API teardown for a small dashboard-triggered run |
-| `pnpm maintenance:cleanup-runs` | Authoritatively delete old terminal generated demo runs and durable subtrees from PostgreSQL, then attempt best-effort post-commit teardown of inventory, sale-eligibility, traffic-metrics, and traffic-metric reset-fence Redis state with a structured warning on failure; catalog-backed runs, active runs, and the latest 15 runs remain preserved by default; pass `-- --keep-latest <count>` to override |
+| `pnpm runtime:smoke` | Check compose/service readiness, recovery, SSE, and in-container k6 without mutating durable business/run state; the recovery read consumes short-lived admission capacity and may issue a visitor cookie |
+| `pnpm runtime:smoke:load` | API-reset any recoverable current run, consume a fixed-window public start-budget reservation, prove the smoke run's realtime/business path, and perform exact-run teardown; it does not reset Mock ERP chaos |
+| `pnpm maintenance:cleanup-runs` | Authoritatively delete terminal generated demo runs whose `demo_runs.created_at` is at least seven days old by default, preserving active runs, catalog-backed runs, and the latest 15 runs across the full population; then attempt best-effort related Redis teardown. Override with `-- --older-than-days <days>` and/or `-- --keep-latest <count>` |
 | `pnpm dev` | Build shared packages, then run all app `dev` tasks through Turbo |
 | `pnpm dev:dashboard` | Build shared packages, then start the Next.js operator dashboard |
 | `pnpm dev:api` | Build and start the API gateway |
@@ -306,7 +307,8 @@ The worker-facing Mock ERP confirmation contract is `POST http://localhost:4100/
 | `pnpm test:integration` | Run integration tests against isolated test PostgreSQL/Redis |
 | `pnpm test:api` | Run API/service-boundary tests against isolated test PostgreSQL/Redis |
 | `pnpm test:watch` | Start Vitest watch mode using the root unit-test config |
-| `pnpm test:coverage` | Run the root unit-test lane with coverage |
+| `pnpm test:coverage` | Run all discovered unit, API, and integration coverage lanes with bounded Turbo concurrency; isolated test PostgreSQL and Redis must already be running |
+| `pnpm test:coverage:unit` | Run only the infrastructure-free unit coverage lanes |
 | `pnpm test:infra:up` | Start isolated test PostgreSQL and Redis from `docker-compose.test.yml` |
 | `pnpm test:infra:down` | Stop isolated test services and remove their volumes |
 | `pnpm test:infra:reset` | Reset isolated test PostgreSQL and Redis services |

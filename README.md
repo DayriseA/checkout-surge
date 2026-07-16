@@ -2,9 +2,9 @@
 
 Checkout-Surge is a realistic limited-inventory checkout simulation for surge traffic. The implemented Node.js track uses Redis atomic reservations, BullMQ workers, durable PostgreSQL records, and observable backpressure to show how a checkout system can absorb request bursts without overselling or overwhelming a slow downstream business system. The same pressure pattern appears in ticket launches, product drops, presales, and other scarcity-driven purchase flows. The mock ERP gives the downstream dependency a concrete back-office shape, but the boundary applies equally to payment, risk, warehouse, fulfillment, tax, accounting, supplier APIs, or other fragile business systems.
 
-The current implementation covers the complete local simulation and the reliability/security hardening delivered through backlog task 20: the inventory hot path, durable asynchronous handoffs and recovery scanners, run-scoped worker admission/retry/circuit-breaker policy, realtime dashboard recovery with bounded public reads, durable k6 execution and completion delivery, simulated notifications, API-owned benchmark finalization, immutable Run History list/detail reads, public runtime policy management, protected admin controls, demo reset/cleanup tools, admin preset management, and the containerized local reference runtime. Hosted deployment readiness and the optional Go comparison track remain later roadmap work.
+The Node.js system and its containerized reference runtime are implemented and locally demoable. The implemented path includes the inventory hot path, durable asynchronous handoffs and recovery scanners, run-scoped worker admission/retry/circuit-breaker policy, realtime dashboard recovery with bounded public reads, durable k6 execution and completion delivery, simulated notifications, API-owned run finalization, immutable public aggregate and protected admin row-level Run History reads, public runtime policy management, protected admin controls, demo reset/cleanup tools, admin preset management, and the Compose runtime. This local status is not evidence of hosted or production readiness, a reproducible hosted benchmark, horizontal scaling, or operational hardening. Hosted deployment work and the optional Go comparison track remain future work.
 
-The buyers, mock ERP downstream dependency, and post-confirmation notifications are simulated because this is a systems demonstration, not a commerce business. The architecture proof is real: the project must measure whether the services protect inventory consistency, keep the API responsive, and make delayed downstream processing visible.
+The buyers, mock ERP downstream dependency, and post-confirmation notifications are simulated because this is a systems demonstration, not a commerce business. The local runtime and verification paths are designed to make inventory consistency, API responsiveness, downstream pressure, and delayed processing observable; benchmark claims require separate reproducible evidence from the environment in which they are measured.
 
 ---
 
@@ -67,9 +67,9 @@ For the deeper design rationale and failure modes, see [docs/architecture.md](do
 - Frozen per-run retry, concurrency, and circuit-breaker behavior around downstream calls
 - Real-time live spectator view with bounded SSE admission and rate-limited recovery reads
 - k6-based load orchestration with a durable execution journal, retried completion delivery, and API-owned business-boundary finalization
-- Public Run History summaries and sanitized detail views for terminal runs
+- Public Run History summaries and aggregate-only detail views for terminal runs, with bounded row detail reserved for admins
 - Simulated post-confirmation notification recording
-- Signed public visitor identity and non-burning public run-budget reservations
+- Signed anonymous public budget principals and non-burning public run-budget reservations
 - Public demonstration presets plus rate-limited, CSRF-protected admin preset, runtime policy, reset, recovery, and cleanup controls
 
 ## Prerequisites
@@ -86,15 +86,15 @@ Create a local environment file:
 cp .env.example .env
 ```
 
-Before starting the reference runtime, populate these blank entries in `.env` with private, distinct values: `CONTROL_SERVICE_TOKEN`, `ADMIN_DASHBOARD_PASSPHRASE`, `ADMIN_SESSION_SECRET`, `PUBLIC_CLIENT_COOKIE_SECRET`, and `ADMIN_EDGE_ATTESTATION_SECRET`. The Compose services run in production mode and intentionally reject missing, weak, or placeholder trust secrets.
+Before starting the reference runtime, populate these blank entries in `.env` with private values: `CONTROL_SERVICE_TOKEN`, `ADMIN_DASHBOARD_PASSPHRASE`, `ADMIN_SESSION_SECRET`, `PUBLIC_CLIENT_COOKIE_SECRET`, and `ADMIN_EDGE_ATTESTATION_SECRET`. Use distinct values, especially for the two signing secrets. The production-mode Compose services reject missing/blank and known-placeholder required values; `PUBLIC_CLIENT_COOKIE_SECRET` must contain at least 16 UTF-8 bytes and must differ from `ADMIN_SESSION_SECRET`.
 
-Start the full containerized reference runtime:
+Build and start the full containerized reference runtime. This starts or recreates containers but does not run migrations or seed data, and it preserves existing named-volume state:
 
 ```bash
 pnpm runtime:up
 ```
 
-Run migrations and seed the demo product, baseline sale offer, durable presets, PostgreSQL records, and Redis inventory inside the Compose network:
+Run migrations and seed the demo product, baseline sale offer, durable presets, PostgreSQL records, and Redis inventory inside the Compose network. This mutates PostgreSQL and Redis; reruns preserve an existing active public runtime policy and its admin edits:
 
 ```bash
 pnpm runtime:setup
@@ -106,14 +106,14 @@ Open the dashboard through the single-origin proxy:
 http://localhost:8080
 ```
 
-Verify the runtime:
+Verify service readiness, dashboard reachability, Compose health, the in-container k6 binary, a same-origin recovery read, and delivery of an SSE frame. These checks do not mutate durable business or run state; the recovery read does consume short-lived admission capacity and may issue a visitor cookie:
 
 ```bash
 pnpm health:check
 pnpm runtime:smoke
 ```
 
-Run a small dashboard-triggered load smoke check:
+Run a small dashboard-triggered load smoke check. It first calls the API reset workflow, which may terminalize an existing recoverable run and clear that run's live projection without resetting Mock ERP chaos. It then starts and completes a public smoke run, consuming a visitor/global start-budget reservation until its fixed window expires, and deletes the smoke run's durable graph, run-scoped Redis state, and attributed queue jobs through protected teardown:
 
 ```bash
 pnpm runtime:smoke:load
@@ -121,15 +121,22 @@ pnpm runtime:smoke:load
 
 For focused host-native development, use the infra-only and `dev:*` commands documented in [docs/local_development.md](docs/local_development.md). Host-native load runs require a local `k6` binary.
 
-Stop the full runtime:
+Run API/web/load flows from the dashboard or call the owning services directly while developing. The public start path also uses the private control-service channel plus the server-issued visitor credential; public mode is not trusted from a browser-supplied header or body.
+
+While the API and Mock ERP are still running, optional local recovery and maintenance commands are available. `runtime:reset` terminalizes a recoverable current run as failed, writes its immutable summary, clears only its live traffic projection, and restores Mock ERP chaos defaults; it does not delete history or flush Redis. `maintenance:cleanup-runs` defaults to deleting eligible terminal generated runs created at least seven days ago, while preserving active runs, catalog-backed runs, and the latest 15 runs across the full run population, then attempts best-effort related Redis cleanup:
+
+```bash
+pnpm runtime:reset
+pnpm maintenance:cleanup-runs
+```
+
+Stop the full runtime while preserving the PostgreSQL, Redis, and load-orchestrator named volumes:
 
 ```bash
 pnpm runtime:down
 ```
 
-Run API/web/load flows from the dashboard or call the owning services directly while developing. The public start path also uses the private control-service channel plus the server-issued visitor credential; public mode is not trusted from a browser-supplied header or body.
-
-Run the test suite with isolated PostgreSQL and Redis:
+Run the test suite with isolated PostgreSQL and Redis. The tests mutate only dedicated test databases and Redis logical databases; the final command stops the test services and deletes their named volumes:
 
 ```bash
 pnpm test:infra:up
@@ -137,11 +144,10 @@ pnpm test
 pnpm test:infra:down
 ```
 
-Admin reset and generated-run cleanup are implemented for local recovery/maintenance:
+To delete all local runtime volumes and their PostgreSQL, Redis, and load-orchestrator journal state, use the explicitly destructive wipe command:
 
 ```bash
-pnpm runtime:reset
-pnpm maintenance:cleanup-runs
+pnpm runtime:wipe
 ```
 
 For local ports, environment variables, health endpoints, and command references, see [docs/local_development.md](docs/local_development.md).

@@ -2,7 +2,7 @@
 
 This document records the implemented testing foundation for Checkout-Surge. It is a repository-wide working agreement, not a feature of one service.
 
-The goal is to make tests reliable across host-native development, local Dev Containers, GitHub Codespaces, and later CI. Tests must never depend on normal development data or leave shared infrastructure in an unknown state.
+The checked-in commands support host-native development, local Dev Containers, and GitHub Codespaces. There is no hosted CI workflow in this repository. Tests must never depend on normal development data or leave shared infrastructure in an unknown state.
 
 ---
 
@@ -63,7 +63,7 @@ The goal is to make tests reliable across host-native development, local Dev Con
 
 ## Root Command Contract
 
-The repository must provide root scripts with stable names:
+The repository provides these root scripts:
 
 - `pnpm type-check` is the authoritative static TypeScript gate. It runs production package/app checks through Turbo, then runs the root test-source compiler only if production checks pass; either failure returns a non-zero status.
 - `pnpm type-check:test` is the focused, Docker-free strict compiler check for root/package/app Vitest configs and test sources through `tsconfig.test.json`.
@@ -77,8 +77,8 @@ The repository must provide root scripts with stable names:
 - `pnpm test:coverage` is the bounded full coverage gate. It discovers all seven unit owners, the API/service owner, and the DB, mock ERP, and worker integration owners through package-local Turbo scripts. Start clean dedicated PostgreSQL and Redis services with `pnpm test:infra:up` before running it and always stop them with `pnpm test:infra:down` afterward.
 - `pnpm test:coverage:unit` is the explicitly fast, infrastructure-free unit-only coverage command.
 - `pnpm test:infra:up` starts the dedicated test PostgreSQL and Redis services and waits for their declared healthchecks before returning.
-- `pnpm test:infra:down` stops dedicated test services.
-- `pnpm test:infra:reset` resets only the dedicated test database and Redis instance.
+- `pnpm test:infra:down` stops dedicated test services and deletes their named volumes.
+- `pnpm test:infra:reset` deletes and recreates only the dedicated test PostgreSQL/Redis services and volumes, then waits for readiness.
 - `pnpm test:db:migrate` rehearses the real incremental `drizzle-kit` migration path (the one deployment uses) against the db package's isolated test database, creating it on demand. Useful when authoring a new migration; not required before running tests, which provision and migrate their databases automatically.
 - `pnpm test:composition` runs the slow isolated deployed-topology characterization.
 - `pnpm test:characterization` runs focused browser recovery coverage and then the deployed-topology characterization.
@@ -93,7 +93,7 @@ Coverage uses V8 and the shared policy in `vitest.coverage.config.ts`. Every lan
 
 ## Test Infrastructure
 
-The test infrastructure should be separate from the normal development infrastructure.
+The test infrastructure is separate from the normal development infrastructure.
 
 Current `docker-compose.test.yml` shape:
 
@@ -107,7 +107,7 @@ Current `docker-compose.test.yml` shape:
   - host port `6380`
   - no shared data with the development Redis service
 
-The test services may use disposable container storage or dedicated test volumes. If volumes are used, reset scripts must make state deterministic before tests run.
+Both test services use dedicated named volumes. `pnpm test:infra:down` removes those volumes; `pnpm test:infra:reset` first removes them, recreates both services, and waits for PostgreSQL and Redis readiness.
 
 Tests must never call broad destructive operations against `DATABASE_URL` or `REDIS_URL`. Destructive setup belongs only to `TEST_DATABASE_URL` and `TEST_REDIS_URL`, or to an explicitly loaded test environment.
 
@@ -221,9 +221,9 @@ For the API gateway, `buildApiServer()` should follow this pattern by accepting 
 
 ---
 
-## CI Readiness
+## Future CI Integration
 
-CI can be added after the local testing foundation exists, but the local design should not block it.
+No hosted CI workflow is checked in. A future CI system can call the existing local command contract without changing the test taxonomy.
 
 Expected future CI behavior:
 

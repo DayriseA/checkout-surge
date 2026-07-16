@@ -15,7 +15,7 @@ This is the current repository structure and ownership map.
 | Mock ERP placement | Separate `apps/mock-erp` | Must be a real HTTP service across a real network boundary for circuit breakers and backpressure patterns to be meaningful. |
 | Load orchestrator placement | Separate `apps/load-orchestrator` | Realistic load simulation is a first-class deliverable. Dashboard integration requires a wrapper service to trigger runs and stream metrics. |
 | Shared packages | `contracts`, `logger`, `db` | All three are blockers for parallel service work. See rationale per package below. |
-| Docs home | `docs/` alongside `working_docs/` | Current architecture docs, ADRs, and benchmark results need a stable home separate from in-progress planning notes. |
+| Docs home | `docs/` alongside `working_docs/` | Current architecture and operator/developer references need a stable home separate from in-progress planning notes and backlog records. |
 
 ---
 
@@ -35,15 +35,18 @@ checkout-surge/
 │   └── db/                   # Drizzle schema/migrations, PostgreSQL client, Redis adapters
 ├── infra/                    # Caddy single-origin proxy configuration
 ├── scripts/                  # Environment, runtime, maintenance, smoke, and composition tooling
-├── docs/                     # Architecture, reference, and decision docs; ADRs; benchmark results; portfolio write-ups (this folder)
+├── docs/                     # Current architecture, access, runtime, testing, and developer references
 ├── working_docs/             # Project vision, delivery constraints, planning, and agent working docs
+├── .devcontainer/            # Dev Container/Codespaces definition and lifecycle helpers
 ├── docker-compose.yml        # Full local reference runtime
 ├── docker-compose.dev.yml    # Loopback-only debug/infra port overrides
 ├── docker-compose.test.yml   # Isolated PostgreSQL and Redis test infrastructure
 ├── Dockerfile                # Multi-target application/runtime images
+├── pnpm-workspace.yaml        # Workspace membership for apps/* and packages/*
+├── turbo.json                 # Cross-package build/test/dev task graph
 ├── AGENTS.md
 ├── README.md
-└── package.json              # pnpm workspace root + turbo.json
+└── package.json              # Root command surface and workspace tool dependencies
 ```
 
 ---
@@ -134,11 +137,13 @@ checkout-surge/
 | Project planning and task tracking (`project_planning.md`) |
 | Agent quality checklists (`quality_checklists.md`) |
 
-`docs/` holds current architecture and reference documentation for the implemented system:
+`docs/` holds the checked-in architecture and reference documentation for the implemented system:
 
 | `docs/` |
 | :-- |
 | Architecture overview and failure modes (`architecture.md`) |
 | Local development guide (`local_development.md`) |
-| Domain model, conventions, runtime topology, and per-area decision records (like this file) |
-| ADRs, benchmark results, and portfolio-facing write-ups |
+| Domain model and cross-service conventions (`core_business_entities.md`, `cross_service_conventions.md`) |
+| Runtime topology, testing infrastructure, load/metrics, inventory hot path, and admin access references |
+
+There are currently no separate ADR, hosted benchmark-result, or portfolio-write-up directories under `docs/`. Add and label those artifact types only when concrete files and reproducible evidence exist; they are not part of the current repository layout.
