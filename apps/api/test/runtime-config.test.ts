@@ -49,6 +49,8 @@ describe("API runtime configuration", () => {
     const defaults = loadApiConfig({ ...baseEnv, CONTROL_SERVICE_TOKEN: "deployment-token" });
     expect(defaults.dashboardMaxSseClients).toBe(80);
     expect(defaults.dashboardMaxSseClientsPerSource).toBe(6);
+    expect(defaults.dashboardSseMaxBufferedFrames).toBe(32);
+    expect(defaults.dashboardSseMaxBufferedBytes).toBe(256 * 1024);
     expect(defaults.dashboardRecoveryMaxConcurrent).toBe(3);
     expect(defaults.dashboardRecoveryWindowSeconds).toBe(60);
 
@@ -56,9 +58,13 @@ describe("API runtime configuration", () => {
       ...baseEnv,
       CONTROL_SERVICE_TOKEN: "deployment-token",
       DASHBOARD_MAX_SSE_CLIENTS: "20",
+      DASHBOARD_SSE_MAX_BUFFERED_FRAMES: "7",
+      DASHBOARD_SSE_MAX_BUFFERED_BYTES: "4096",
       DASHBOARD_RECOVERY_GLOBAL_MAX_REQUESTS: "30",
     });
     expect(overridden.dashboardMaxSseClients).toBe(20);
+    expect(overridden.dashboardSseMaxBufferedFrames).toBe(7);
+    expect(overridden.dashboardSseMaxBufferedBytes).toBe(4096);
     expect(overridden.dashboardRecoveryGlobalMaxRequests).toBe(30);
   });
 
@@ -187,6 +193,24 @@ describe("API runtime configuration", () => {
       }),
     ).toThrow(/DASHBOARD_RECOVERY_MAX_CONCURRENT/);
   });
+
+  it.each(["0", "-1", "1.5", "invalid"])(
+    "rejects non-positive or invalid dashboard SSE queue limits (%s)",
+    (value) => {
+      for (const name of [
+        "DASHBOARD_SSE_MAX_BUFFERED_FRAMES",
+        "DASHBOARD_SSE_MAX_BUFFERED_BYTES",
+      ]) {
+        expect(() =>
+          loadApiConfig({
+            ...baseEnv,
+            CONTROL_SERVICE_TOKEN: "deployment-token",
+            [name]: value,
+          }),
+        ).toThrow(new RegExp(name));
+      }
+    },
+  );
 
   it("rejects per-source limits larger than their total or global limit", () => {
     expect(() =>

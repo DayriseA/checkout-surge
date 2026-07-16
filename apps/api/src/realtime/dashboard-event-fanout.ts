@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { Buffer } from "node:buffer";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { type DashboardEvent, dashboardEventSchema } from "@checkout-surge/contracts";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
@@ -6,6 +7,8 @@ import { correlationIdHeaderName } from "@checkout-surge/logger";
 
 export const defaultDashboardSseHeartbeatMs = 15_000;
 export const defaultDashboardSseRetryMs = 3_000;
+export const defaultDashboardSseMaxBufferedFrames = 32;
+export const defaultDashboardSseMaxBufferedBytes = 256 * 1024;
 
 export interface DashboardEventFanoutOptions {
   logger: CheckoutSurgeLogger;
@@ -14,6 +17,8 @@ export interface DashboardEventFanoutOptions {
   generateConnectionId?: () => string;
   maxClients?: number;
   maxClientsPerSource?: number;
+  maxBufferedFrames?: number;
+  maxBufferedBytes?: number;
 }
 
 export interface DashboardSseConnectionInput {
@@ -31,7 +36,11 @@ interface DashboardSseClient {
   request: IncomingMessage;
   response: ServerResponse;
   close: () => void;
+  drain: () => void;
   sourceKey: string;
+  backpressured: boolean;
+  bufferedFrames: string[];
+  bufferedBytes: number;
 }
 
 export class DashboardEventFanout {
@@ -44,6 +53,8 @@ export class DashboardEventFanout {
   private readonly sourceCounts = new Map<string, number>();
   private readonly maxClients: number;
   private readonly maxClientsPerSource: number;
+  private readonly maxBufferedFrames: number;
+  private readonly maxBufferedBytes: number;
 
   constructor(options: DashboardEventFanoutOptions) {
     this.logger = options.logger;
@@ -52,6 +63,14 @@ export class DashboardEventFanout {
     this.generateConnectionId = options.generateConnectionId ?? randomUUID;
     this.maxClients = options.maxClients ?? 80;
     this.maxClientsPerSource = options.maxClientsPerSource ?? 6;
+    this.maxBufferedFrames = requirePositiveSafeInteger(
+      options.maxBufferedFrames ?? defaultDashboardSseMaxBufferedFrames,
+      "maxBufferedFrames",
+    );
+    this.maxBufferedBytes = requirePositiveSafeInteger(
+      options.maxBufferedBytes ?? defaultDashboardSseMaxBufferedBytes,
+      "maxBufferedBytes",
+    );
   }
 
   connect(input: DashboardSseConnectionInput): DashboardSseAdmission {
@@ -72,12 +91,17 @@ export class DashboardEventFanout {
     }
     let client!: DashboardSseClient;
     const close = () => this.closeClient(client, "client_closed");
+    const drain = () => this.flushClient(client);
     client = {
       id: this.generateConnectionId(),
       request: input.request,
       response: input.response,
       close,
+      drain,
       sourceKey: input.sourceKey,
+      backpressured: false,
+      bufferedFrames: [],
+      bufferedBytes: 0,
     };
 
     // Reserve both capacities before invoking callbacks or performing I/O. This
@@ -107,11 +131,10 @@ export class DashboardEventFanout {
     }
     input.request.once("close", client.close);
     input.response.once("close", client.close);
+    input.response.on("drain", client.drain);
     this.ensureHeartbeat();
 
-    if (!this.writeFrame(client, `retry: ${this.retryMs}\n: connected\n\n`)) {
-      this.closeClient(client, "initial_backpressure");
-    }
+    this.sendFrame(client, `retry: ${this.retryMs}\n: connected\n\n`, "initial_write_failed");
     this.logger.debug(
       { outcome: "accepted", activeDashboardConnections: this.clients.size },
       "Dashboard SSE admitted.",
@@ -123,9 +146,7 @@ export class DashboardEventFanout {
     const payload = formatDashboardEventFrame(event);
 
     for (const client of [...this.clients.values()]) {
-      if (!this.writeFrame(client, payload)) {
-        this.closeClient(client, "event_backpressure");
-      }
+      this.sendFrame(client, payload, "event_write_failed");
     }
   }
 
@@ -149,9 +170,7 @@ export class DashboardEventFanout {
       const frame = `: heartbeat ${new Date().toISOString()}\n\n`;
 
       for (const client of [...this.clients.values()]) {
-        if (!this.writeFrame(client, frame)) {
-          this.closeClient(client, "heartbeat_backpressure");
-        }
+        this.sendFrame(client, frame, "heartbeat_write_failed");
       }
     }, this.heartbeatMs);
     this.heartbeatTimer.unref?.();
@@ -166,15 +185,60 @@ export class DashboardEventFanout {
     this.heartbeatTimer = null;
   }
 
-  private writeFrame(client: DashboardSseClient, frame: string): boolean {
+  private sendFrame(client: DashboardSseClient, frame: string, failureReason: string): void {
+    if (this.clients.get(client.id) !== client) {
+      return;
+    }
+
+    if (client.backpressured) {
+      this.enqueueFrame(client, frame);
+      return;
+    }
+
     try {
-      return client.response.write(frame);
+      if (!client.response.write(frame)) {
+        // Node accepted this frame before reporting that its writable buffer is full.
+        client.backpressured = true;
+      }
     } catch (error) {
       this.logger.warn(
         { err: error, dashboardConnectionId: client.id },
         "Dashboard SSE write failed.",
       );
-      return false;
+      this.closeClient(client, failureReason);
+    }
+  }
+
+  private enqueueFrame(client: DashboardSseClient, frame: string): void {
+    const frameBytes = Buffer.byteLength(frame, "utf8");
+    if (
+      client.bufferedFrames.length >= this.maxBufferedFrames ||
+      frameBytes > this.maxBufferedBytes - client.bufferedBytes
+    ) {
+      this.closeClient(client, "buffer_overflow");
+      return;
+    }
+
+    client.bufferedFrames.push(frame);
+    client.bufferedBytes += frameBytes;
+  }
+
+  private flushClient(client: DashboardSseClient): void {
+    if (this.clients.get(client.id) !== client || !client.backpressured) {
+      return;
+    }
+
+    client.backpressured = false;
+    while (client.bufferedFrames.length > 0) {
+      const frame = client.bufferedFrames.shift();
+      if (frame === undefined) {
+        return;
+      }
+      client.bufferedBytes -= Buffer.byteLength(frame, "utf8");
+      this.sendFrame(client, frame, "drain_write_failed");
+      if (client.backpressured || this.clients.get(client.id) !== client) {
+        return;
+      }
     }
   }
 
@@ -188,6 +252,10 @@ export class DashboardEventFanout {
 
     client.request.off("close", client.close);
     client.response.off("close", client.close);
+    client.response.off("drain", client.drain);
+    client.bufferedFrames.length = 0;
+    client.bufferedBytes = 0;
+    client.backpressured = false;
 
     if (!client.response.destroyed && !client.response.writableEnded) {
       client.response.end();
@@ -203,4 +271,11 @@ export class DashboardEventFanout {
 
 export function formatDashboardEventFrame(event: DashboardEvent): string {
   return `data: ${JSON.stringify(dashboardEventSchema.parse(event))}\n\n`;
+}
+
+function requirePositiveSafeInteger(value: number, name: string): number {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`${name} must be a positive integer.`);
+  }
+  return value;
 }

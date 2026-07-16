@@ -149,7 +149,7 @@ Replace `⬜` with `✅` when a task is complete. Optional `⏳` for work in pro
 
 ✅ [Task 72: Govern machine-readable error codes in the shared contract](./task_72.md)
 
-⬜ [Task 73: Adopt donor SSE gateway mechanics (heartbeat, retry directive, proxy-buffering header, bounded queues)](./task_73.md)
+✅ [Task 73: Adopt donor SSE gateway mechanics (heartbeat, retry directive, proxy-buffering header, bounded queues)](./task_73.md)
 
 ⬜ [Task 74: Port donor hard-property and interleaving test cases](./task_74.md)
 

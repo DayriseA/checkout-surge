@@ -153,6 +153,8 @@ export async function startApiServer(): Promise<void> {
     logger,
     maxClients: config.dashboardMaxSseClients,
     maxClientsPerSource: config.dashboardMaxSseClientsPerSource,
+    maxBufferedFrames: config.dashboardSseMaxBufferedFrames,
+    maxBufferedBytes: config.dashboardSseMaxBufferedBytes,
   });
   const dashboardRecoveryAdmission = new DashboardRecoveryAdmissionService({
     store: new RedisDashboardRecoveryBudgetStore(redis),

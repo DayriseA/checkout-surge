@@ -29,6 +29,8 @@ export interface ApiConfig {
   demoRunFinalizationPollIntervalSeconds: number;
   dashboardMaxSseClients: number;
   dashboardMaxSseClientsPerSource: number;
+  dashboardSseMaxBufferedFrames: number;
+  dashboardSseMaxBufferedBytes: number;
   dashboardSseRetryAfterSeconds: number;
   dashboardRecoveryMaxConcurrent: number;
   dashboardRecoveryGlobalMaxRequests: number;
@@ -134,6 +136,16 @@ export function loadApiConfig(env: NodeJS.ProcessEnv): ApiConfig {
       env.DASHBOARD_MAX_SSE_CLIENTS_PER_SOURCE,
       "DASHBOARD_MAX_SSE_CLIENTS_PER_SOURCE",
       6,
+    ),
+    dashboardSseMaxBufferedFrames: parsePositiveInteger(
+      env.DASHBOARD_SSE_MAX_BUFFERED_FRAMES,
+      "DASHBOARD_SSE_MAX_BUFFERED_FRAMES",
+      32,
+    ),
+    dashboardSseMaxBufferedBytes: parsePositiveInteger(
+      env.DASHBOARD_SSE_MAX_BUFFERED_BYTES,
+      "DASHBOARD_SSE_MAX_BUFFERED_BYTES",
+      256 * 1024,
     ),
     dashboardSseRetryAfterSeconds: parsePositiveInteger(
       env.DASHBOARD_SSE_RETRY_AFTER_SECONDS,

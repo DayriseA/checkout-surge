@@ -1113,6 +1113,7 @@ describe("API gateway routes", () => {
       expect(response.status).toBe(200);
       expect(response.headers.get("content-type")).toContain("text/event-stream");
       expect(response.headers.get("cache-control")).toContain("no-cache");
+      expect(response.headers.get("x-accel-buffering")).toBe("no");
       expect(initialFrame).toContain("retry: 1234");
       expect(initialFrame).toContain(": connected");
       expect(dashboardEventFanout.clientCount()).toBe(1);
