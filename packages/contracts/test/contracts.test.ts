@@ -768,9 +768,17 @@ describe("shared error and health contracts", () => {
 });
 
 describe("canonical error-code vocabulary", () => {
-  it("accepts every declared code through the enum schema", () => {
+  it("accepts every declared code through the full canonical envelope", () => {
     for (const code of errorPayloadCodes) {
-      expect(errorPayloadCodeSchema.safeParse(code).success, `code ${code}`).toBe(true);
+      expect(
+        errorPayloadSchema.safeParse({
+          code,
+          message: "Canonical error.",
+          correlationId,
+          timestamp,
+        }).success,
+        `code ${code}`,
+      ).toBe(true);
     }
   });
 
@@ -778,16 +786,23 @@ describe("canonical error-code vocabulary", () => {
     expect(errorPayloadCodeSchema.parse("order_not_found")).toBe("order_not_found");
   });
 
-  it("contains no duplicate codes", () => {
+  it("keeps the exact schema-driving list duplicate-free and lowercase snake-case", () => {
     const seen = new Set<string>();
     for (const code of errorPayloadCodes) {
       expect(seen.has(code), `duplicate code ${code}`).toBe(false);
+      expect(code, `format for code ${code}`).toMatch(/^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/);
       seen.add(code);
     }
   });
 
-  it("rejects unknown, typo, and drifted codes", () => {
-    for (const code of ["notfound", "internal-error", "internal_error ", "preset_not_foundd", ""]) {
+  it("rejects typoed, wrong-case, wrong-separator, blank, and unknown future codes", () => {
+    for (const code of [
+      "preset_not_foundd",
+      "Internal_Error",
+      "internal-error",
+      "",
+      "future_quantum_checkout_failure",
+    ]) {
       expect(errorPayloadCodeSchema.safeParse(code).success, `code "${code}"`).toBe(false);
     }
   });

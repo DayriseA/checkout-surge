@@ -123,6 +123,8 @@ The baseline shared error shape is:
 Conventions:
 
 - `code` must be one of the values exported by the shared `@checkout-surge/contracts` error-code schema; unknown or typoed codes are invalid rather than pass-through strings.
+- The exported tuple is the sole schema-driving vocabulary for canonical HTTP errors across the API, Mock ERP, load orchestrator, and web BFF. Persistence failure reasons, worker diagnostics, validation-library issue codes, and other non-HTTP discriminators are separate vocabularies and must not be added merely because they also use a field named `code`.
+- Adding a canonical HTTP error code is an intentional shared-contract change: add it once to the exported tuple, keep its lowercase snake-case spelling stable, type the producer with the exported code union, and update contract coverage. Services must not restore an open string schema or introduce a catch-all code to avoid that review.
 - `message` should be concise and human-readable.
 - `details` should carry optional structured context, not a second free-form paragraph.
 - Errors returned to clients should avoid leaking infrastructure internals unless that information is intentionally part of the user-facing contract.
