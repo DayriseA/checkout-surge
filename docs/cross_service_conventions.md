@@ -144,6 +144,8 @@ The canonical reservation lifecycle is:
 
 `rejected` is the canonical immediate unable-to-reserve state. More specific reasons such as sold out or duplicate submission can be carried separately as reason codes when needed.
 
+The shared contract transition policy permits only `secured -> released | expired`; all other reservation states are terminal. Its event-name helper maps any initial or destination status to `reservation.<status>` and does not validate a `(from, to)` transition pair.
+
 ---
 
 ## Order Lifecycle
@@ -156,6 +158,8 @@ The canonical order lifecycle is:
 - `failed`
 
 Retrying remains a derived processing condition rather than a first-class order state. Retry counts, retry delays, and ERP-attempt history can be represented separately without changing the canonical lifecycle vocabulary.
+
+The shared contract transition policy permits `queued -> processing | failed` and `processing -> confirmed | failed`; `confirmed` and `failed` are terminal. Its event-name helper maps any initial or destination status to `order.<status>` and does not validate a `(from, to)` transition pair.
 
 ---
 

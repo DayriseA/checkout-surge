@@ -145,7 +145,7 @@ Replace `⬜` with `✅` when a task is complete. Optional `⏳` for work in pro
 
 ✅ [Task 70: Harden startup reconciliation with per-run failure isolation and an eligibility self-expiry backstop](./task_70.md)
 
-⬜ [Task 71: Single-source the vocabulary: derive DB enums from contract enums and add transition helpers](./task_71.md)
+✅ [Task 71: Single-source the vocabulary: derive DB enums from contract enums and add transition helpers](./task_71.md)
 
 ⬜ [Task 72: Govern machine-readable error codes in the shared contract](./task_72.md)
 

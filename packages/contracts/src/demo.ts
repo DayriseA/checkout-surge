@@ -34,7 +34,11 @@ import {
   uuidSchema,
 } from "./primitives.js";
 import { collectPublicRuntimePolicyViolations } from "./public-runtime-policy-validation.js";
-import { queueStatusSchema } from "./queue.js";
+import {
+  queueStatusSchema,
+  simulatedNotificationChannelSchema,
+  simulatedNotificationStatusSchema,
+} from "./queue.js";
 
 export const publicPresetListPath = "/demo/presets/public" as const;
 export const publicRuntimePolicyPath = "/demo/runtime-policy" as const;
@@ -346,8 +350,8 @@ export const runHistoryNotificationSchema = z
     notificationId: uuidSchema,
     orderId: uuidSchema,
     publicOrderId: z.string().trim().min(1),
-    channel: z.enum(["email", "sms"]),
-    status: z.literal("recorded"),
+    channel: simulatedNotificationChannelSchema,
+    status: simulatedNotificationStatusSchema,
     recordedAt: isoTimestampSchema,
   })
   .strict();

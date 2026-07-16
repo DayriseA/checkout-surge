@@ -2,14 +2,48 @@ import type {
   AcceptedRunConfigSnapshot,
   BackpressureConfig,
   BusinessOutcomeSummary,
+  DemoPresetVisibility as ContractDemoPresetVisibility,
+  DemoRunReservationOutcomeName as ContractDemoRunReservationOutcomeName,
+  DemoRunReservationOutcomeSource as ContractDemoRunReservationOutcomeSource,
+  DemoRunStatus as ContractDemoRunStatus,
+  ErpAttemptStatus as ContractErpAttemptStatus,
+  OrderEventName as ContractOrderEventName,
+  OrderStatus as ContractOrderStatus,
+  RecoveryJobStatus as ContractRecoveryJobStatus,
+  ReservationPendingPersistenceStatus as ContractReservationPendingPersistenceStatus,
+  ReservationStatus as ContractReservationStatus,
+  SaleOfferPurpose as ContractSaleOfferPurpose,
+  SimulatedNotificationChannel as ContractSimulatedNotificationChannel,
+  SimulatedNotificationStatus as ContractSimulatedNotificationStatus,
+  TrafficCompletionEnrichmentStatus as ContractTrafficCompletionEnrichmentStatus,
   DemoPresetDisplay,
   ErpRunConfig,
   InventoryConfig,
+  OperatorMode,
   PublicRuntimePolicy as PublicRuntimePolicyContract,
   TerminalInventorySnapshot,
   TrafficConfig,
   TrafficDeliverySummary,
+  TrafficExecutionStatus,
   TrafficHttpSummary,
+} from "@checkout-surge/contracts";
+import {
+  demoPresetVisibilityValues,
+  demoRunReservationOutcomeSourceValues,
+  demoRunReservationOutcomeValues,
+  demoRunStatusValues,
+  erpAttemptStatusValues,
+  operatorModeValues,
+  orderEventNameValues,
+  orderStatusValues,
+  recoveryJobStatusValues,
+  reservationPendingPersistenceStatusValues,
+  reservationStatusValues,
+  saleOfferPurposeValues,
+  simulatedNotificationChannelValues,
+  simulatedNotificationStatusValues,
+  trafficCompletionEnrichmentStatusValues,
+  trafficExecutionStatusValues,
 } from "@checkout-surge/contracts";
 import { relations, sql } from "drizzle-orm";
 
@@ -34,120 +68,92 @@ import {
 export type JsonRecord = Record<string, unknown>;
 export type JsonValue = JsonRecord | JsonValue[] | string | number | boolean | null;
 
-export const saleOfferPurposeValues = ["catalog", "generated_run"] as const;
-export type SaleOfferPurpose = (typeof saleOfferPurposeValues)[number];
+export {
+  demoPresetVisibilityValues,
+  demoRunReservationOutcomeSourceValues,
+  demoRunReservationOutcomeValues,
+  demoRunStatusValues,
+  erpAttemptStatusValues,
+  orderEventNameValues,
+  orderStatusValues,
+  recoveryJobStatusValues,
+  reservationPendingPersistenceStatusValues,
+  reservationStatusValues,
+  saleOfferPurposeValues,
+  simulatedNotificationChannelValues,
+  simulatedNotificationStatusValues,
+  trafficCompletionEnrichmentStatusValues,
+};
+
+export type SaleOfferPurpose = ContractSaleOfferPurpose;
 export const saleOfferPurposeEnum = pgEnum("sale_offer_purpose", saleOfferPurposeValues);
 
-export const reservationStatusValues = ["secured", "rejected", "released", "expired"] as const;
-export type ReservationStatus = (typeof reservationStatusValues)[number];
+export type ReservationStatus = ContractReservationStatus;
 export const reservationStatusEnum = pgEnum("reservation_status", reservationStatusValues);
 
-export const orderStatusValues = ["queued", "processing", "confirmed", "failed"] as const;
-export type OrderStatus = (typeof orderStatusValues)[number];
+export type OrderStatus = ContractOrderStatus;
 export const orderStatusEnum = pgEnum("order_status", orderStatusValues);
 
-export const erpAttemptStatusValues = ["succeeded", "failed", "timed_out"] as const;
-export type ErpAttemptStatus = (typeof erpAttemptStatusValues)[number];
+export type ErpAttemptStatus = ContractErpAttemptStatus;
 export const erpAttemptStatusEnum = pgEnum("erp_attempt_status", erpAttemptStatusValues);
 
-export const recoveryJobStatusValues = ["pending", "enqueued", "escalated", "resolved"] as const;
-export type RecoveryJobStatus = (typeof recoveryJobStatusValues)[number];
+export type RecoveryJobStatus = ContractRecoveryJobStatus;
 export const recoveryJobStatusEnum = pgEnum("recovery_job_status", recoveryJobStatusValues);
 
-export const orderEventNameValues = [
-  "reservation.secured",
-  "reservation.rejected",
-  "reservation.released",
-  "reservation.expired",
-  "order.queued",
-  "order.processing",
-  "order.confirmed",
-  "order.failed",
-  "notification.recorded",
-  "inventory.updated",
-  "erp.attempt.failed",
-  "erp.attempt.succeeded",
-] as const;
-export type OrderEventName = (typeof orderEventNameValues)[number];
+export type OrderEventName = ContractOrderEventName;
 export const orderEventNameEnum = pgEnum("order_event_name", orderEventNameValues);
 
-export const demoPresetVisibilityValues = ["public", "admin"] as const;
-export type DemoPresetVisibility = (typeof demoPresetVisibilityValues)[number];
+export type DemoPresetVisibility = ContractDemoPresetVisibility;
 export const demoPresetVisibilityEnum = pgEnum(
   "demo_preset_visibility",
   demoPresetVisibilityValues,
 );
 
-export const demoRunOperatorModeValues = ["public", "admin"] as const;
-export type DemoRunOperatorMode = (typeof demoRunOperatorModeValues)[number];
+export const demoRunOperatorModeValues = operatorModeValues;
+export type DemoRunOperatorMode = OperatorMode;
 export const demoRunOperatorModeEnum = pgEnum("demo_run_operator_mode", demoRunOperatorModeValues);
 
-export const demoRunStatusValues = [
-  "starting",
-  "active",
-  "draining",
-  "completed",
-  "failed",
-] as const;
-export type DemoRunStatus = (typeof demoRunStatusValues)[number];
+export type DemoRunStatus = ContractDemoRunStatus;
 export const demoRunStatusEnum = pgEnum("demo_run_status", demoRunStatusValues);
 
-export const demoRunTrafficStatusValues = [
-  "not_started",
-  "starting",
-  "active",
-  "succeeded",
-  "failed",
-] as const;
-export type DemoRunTrafficStatus = (typeof demoRunTrafficStatusValues)[number];
+export const demoRunTrafficStatusValues = trafficExecutionStatusValues;
+export type DemoRunTrafficStatus = TrafficExecutionStatus;
 export const demoRunTrafficStatusEnum = pgEnum(
   "demo_run_traffic_status",
   demoRunTrafficStatusValues,
 );
 
-export const trafficCompletionEnrichmentStatusValues = ["pending", "completed"] as const;
-export type TrafficCompletionEnrichmentStatus =
-  (typeof trafficCompletionEnrichmentStatusValues)[number];
+export type TrafficCompletionEnrichmentStatus = ContractTrafficCompletionEnrichmentStatus;
 export const trafficCompletionEnrichmentStatusEnum = pgEnum(
   "traffic_completion_enrichment_status",
   trafficCompletionEnrichmentStatusValues,
 );
 
-export const reservationPendingPersistenceStatusValues = [
-  "pending_reconciliation",
-  "reconciled",
-] as const;
-export type ReservationPendingPersistenceStatus =
-  (typeof reservationPendingPersistenceStatusValues)[number];
+export type ReservationPendingPersistenceStatus = ContractReservationPendingPersistenceStatus;
 export const reservationPendingPersistenceStatusEnum = pgEnum(
   "reservation_pending_persistence_status",
   reservationPendingPersistenceStatusValues,
 );
 
-export const simulatedNotificationChannelValues = ["email", "sms"] as const;
-export type SimulatedNotificationChannel = (typeof simulatedNotificationChannelValues)[number];
+export type SimulatedNotificationChannel = ContractSimulatedNotificationChannel;
 export const simulatedNotificationChannelEnum = pgEnum(
   "simulated_notification_channel",
   simulatedNotificationChannelValues,
 );
 
-export const simulatedNotificationStatusValues = ["recorded"] as const;
-export type SimulatedNotificationStatus = (typeof simulatedNotificationStatusValues)[number];
+export type SimulatedNotificationStatus = ContractSimulatedNotificationStatus;
 export const simulatedNotificationStatusEnum = pgEnum(
   "simulated_notification_status",
   simulatedNotificationStatusValues,
 );
 
-export const demoRunReservationOutcomeValues = ["api_sold_out_decision"] as const;
-export type DemoRunReservationOutcomeName = (typeof demoRunReservationOutcomeValues)[number];
+export type DemoRunReservationOutcomeName = ContractDemoRunReservationOutcomeName;
 export const demoRunReservationOutcomeEnum = pgEnum(
   "demo_run_reservation_outcome",
   demoRunReservationOutcomeValues,
 );
 
-export const demoRunReservationOutcomeSourceValues = ["redis", "postgres", "api"] as const;
-export type DemoRunReservationOutcomeSource =
-  (typeof demoRunReservationOutcomeSourceValues)[number];
+export type DemoRunReservationOutcomeSource = ContractDemoRunReservationOutcomeSource;
 export const demoRunReservationOutcomeSourceEnum = pgEnum(
   "demo_run_reservation_outcome_source",
   demoRunReservationOutcomeSourceValues,

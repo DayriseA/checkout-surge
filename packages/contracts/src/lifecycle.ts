@@ -40,6 +40,10 @@ export const erpAttemptStatusValues = ["succeeded", "failed", "timed_out"] as co
 export const erpAttemptStatusSchema = z.enum(erpAttemptStatusValues);
 export type ErpAttemptStatus = z.infer<typeof erpAttemptStatusSchema>;
 
+export const recoveryJobStatusValues = ["pending", "enqueued", "escalated", "resolved"] as const;
+export const recoveryJobStatusSchema = z.enum(recoveryJobStatusValues);
+export type RecoveryJobStatus = z.infer<typeof recoveryJobStatusSchema>;
+
 export const orderEventNameValues = [
   "reservation.secured",
   "reservation.rejected",
@@ -56,6 +60,25 @@ export const orderEventNameValues = [
 ] as const;
 export const orderEventNameSchema = z.enum(orderEventNameValues);
 export type OrderEventName = z.infer<typeof orderEventNameSchema>;
+
+export const reservationPendingPersistenceStatusValues = [
+  "pending_reconciliation",
+  "reconciled",
+] as const;
+export const reservationPendingPersistenceStatusSchema = z.enum(
+  reservationPendingPersistenceStatusValues,
+);
+export type ReservationPendingPersistenceStatus = z.infer<
+  typeof reservationPendingPersistenceStatusSchema
+>;
+
+export const demoRunReservationOutcomeValues = ["api_sold_out_decision"] as const;
+export const demoRunReservationOutcomeSchema = z.enum(demoRunReservationOutcomeValues);
+export type DemoRunReservationOutcomeName = z.infer<typeof demoRunReservationOutcomeSchema>;
+
+export const demoRunReservationOutcomeSourceValues = ["redis", "postgres", "api"] as const;
+export const demoRunReservationOutcomeSourceSchema = z.enum(demoRunReservationOutcomeSourceValues);
+export type DemoRunReservationOutcomeSource = z.infer<typeof demoRunReservationOutcomeSourceSchema>;
 
 export const simulatedPurchaseStatusValues = [
   "sold_out",
@@ -97,6 +120,14 @@ export const trafficExecutionStatusValues = [
 export const trafficExecutionStatusSchema = z.enum(trafficExecutionStatusValues);
 export type TrafficExecutionStatus = z.infer<typeof trafficExecutionStatusSchema>;
 
+export const trafficCompletionEnrichmentStatusValues = ["pending", "completed"] as const;
+export const trafficCompletionEnrichmentStatusSchema = z.enum(
+  trafficCompletionEnrichmentStatusValues,
+);
+export type TrafficCompletionEnrichmentStatus = z.infer<
+  typeof trafficCompletionEnrichmentStatusSchema
+>;
+
 export const trafficDeliveryStatusValues = ["complete", "warning", "degraded", "failed"] as const;
 export const trafficDeliveryStatusSchema = z.enum(trafficDeliveryStatusValues);
 export type TrafficDeliveryStatus = z.infer<typeof trafficDeliveryStatusSchema>;
@@ -116,3 +147,33 @@ export type MetricName = z.infer<typeof metricNameSchema>;
 export const queueNameValues = [orderProcessQueueName] as const;
 export const queueNameSchema = z.enum(queueNameValues);
 export type QueueName = z.infer<typeof queueNameSchema>;
+
+export const RESERVATION_TRANSITIONS = {
+  secured: ["released", "expired"],
+  rejected: [],
+  released: [],
+  expired: [],
+} as const satisfies Record<ReservationStatus, readonly ReservationStatus[]>;
+
+export const ORDER_TRANSITIONS = {
+  queued: ["processing", "failed"],
+  processing: ["confirmed", "failed"],
+  confirmed: [],
+  failed: [],
+} as const satisfies Record<OrderStatus, readonly OrderStatus[]>;
+
+export function canTransitionReservation(from: ReservationStatus, to: ReservationStatus): boolean {
+  return (RESERVATION_TRANSITIONS[from] as readonly ReservationStatus[]).includes(to);
+}
+
+export function canTransitionOrder(from: OrderStatus, to: OrderStatus): boolean {
+  return (ORDER_TRANSITIONS[from] as readonly OrderStatus[]).includes(to);
+}
+
+export function eventNameForReservationTransition(status: ReservationStatus): OrderEventName {
+  return `reservation.${status}`;
+}
+
+export function eventNameForOrderTransition(status: OrderStatus): OrderEventName {
+  return `order.${status}`;
+}
