@@ -288,7 +288,7 @@ Notes:
 
 - `attemptNumber` is monotonic within an order delivery; `(orderId, deliveryId, attemptNumber)` is unique so a recovery delivery can start its own attempt sequence without contradicting the original delivery.
 - A nullable unique successful `idempotencyKey` forms the worker-local stable success boundary.
-- `terminal` records the worker's disposition at call time: success and non-retryable rejection are terminal, while a temporary failure is nonterminal only when the delivery has a known remaining attempt. An absent maximum is conservatively terminal. The marker is mirrored into the attempt event payload and exposed in typed run history; it does not prohibit later manual or recovery replay.
+- `terminal` records the worker's disposition at call time: success and non-retryable rejection are terminal, while a temporary failure is nonterminal only when the delivery has a known remaining attempt. An absent maximum is conservatively terminal. The marker is mirrored into the attempt event payload and exposed only in protected admin run-history rows; anonymous detail exposes closed status counts and nullable aggregate latency metrics. It does not prohibit later manual or recovery replay.
 - The attempt record should be durable even when the final order eventually succeeds, because the retry history is part of the portfolio story.
 - PostgreSQL requires `finishedAt >= startedAt`. It also compares the duplicated nullable `runId` and non-null `correlationId` with the referenced order on every insert and relevant update.
 
@@ -391,7 +391,7 @@ Expected event names include:
 
 Notes:
 
-- Run-scoped order events include `runId` so Run History can read a complete event timeline directly by run, including events that are not reachable through an already-persisted order or reservation row.
+- Run-scoped order events include `runId` so protected admin Run History can read a bounded event timeline directly by run, including events that are not reachable through an already-persisted order or reservation row. Anonymous detail exposes only the aggregate event count.
 - `payload` should remain structured JSON, not free-form log text.
 - `OrderEvent` is a business history mechanism, not a replacement for service logs.
 - When `orderId` is present, PostgreSQL requires the event's `reservationId`, `saleOfferId`, nullable `runId`, and `correlationId` to match that order. Order attribution takes precedence and includes the order's backing reservation identity.

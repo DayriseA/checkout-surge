@@ -50,6 +50,7 @@ import WatchPage from "../src/app/watch/page.js";
 
 vi.mock("../src/app/lib/api.js", () => ({
   getDashboardBackendSnapshot: vi.fn(),
+  getAdminRunHistoryDetail: vi.fn(),
   getPublicDemoSurface: vi.fn(),
   getRunHistoryDetail: vi.fn(),
   getRunHistoryPage: vi.fn(),
@@ -756,17 +757,21 @@ function runHistorySummaryFixture(
 
 function runHistoryDetailFixture(): RunHistoryDetailResponse {
   const summary = runHistorySummaryFixture();
+  const { id: _id, terminalInventorySnapshot, ...publicSummary } = summary;
+  const sanitizedInventory = terminalInventorySnapshot
+    ? (({ saleOfferId: _saleOfferId, source: _inventorySource, ...inventory }) => inventory)(terminalInventorySnapshot)
+    : undefined;
+  const { notes: _deliveryNotes, ...publicDeliverySummary } =
+    publicSummary.trafficDeliverySummary;
 
   return {
-    summary,
+    summary: { ...publicSummary, trafficDeliverySummary: publicDeliverySummary, ...(sanitizedInventory ? { terminalInventorySnapshot: sanitizedInventory } : {}) },
     run: {
       runId: summary.runId,
-      presetId: "33333333-3333-4333-8333-333333333333",
       presetName: summary.presetName,
       operatorMode: "public",
       status: "completed",
       trafficStatus: "succeeded",
-      saleOfferId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
       configSnapshot: configSnapshotFixture(),
       startedAt: "2026-06-20T00:00:00.000Z",
       trafficStartedAt: "2026-06-20T00:00:01.000Z",
@@ -775,74 +780,16 @@ function runHistoryDetailFixture(): RunHistoryDetailResponse {
     },
     orders: {
       totalCount: 1,
-      limit: 20,
-      truncated: false,
-      records: [
-        {
-          orderId: "99999999-9999-4999-8999-999999999991",
-          publicOrderId: "ord_history_1",
-          saleOfferId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-          correlationId: "corr-history-detail",
-          quantity: 1,
-          status: "confirmed",
-          queuedAt: "2026-06-20T00:00:02.000Z",
-          processingAt: "2026-06-20T00:00:03.000Z",
-          confirmedAt: "2026-06-20T00:00:07.000Z",
-        },
-      ],
+      byStatus: { queued: 0, processing: 0, confirmed: 1, failed: 0 },
     },
     erpAttempts: {
       totalCount: 1,
-      limit: 20,
-      truncated: false,
-      records: [
-        {
-          attemptId: "99999999-9999-4999-8999-999999999992",
-          orderId: "99999999-9999-4999-8999-999999999991",
-          publicOrderId: "ord_history_1",
-          correlationId: "corr-history-detail",
-          attemptNumber: 1,
-          status: "succeeded",
-          terminal: true,
-          httpStatus: 200,
-          latencyMs: 42,
-          startedAt: "2026-06-20T00:00:04.000Z",
-          finishedAt: "2026-06-20T00:00:05.000Z",
-        },
-      ],
+      byStatus: { succeeded: 1, failed: 0, timedOut: 0 },
+      averageLatencyMs: 42,
+      p95LatencyMs: 42,
     },
-    notifications: {
-      totalCount: 1,
-      limit: 20,
-      truncated: false,
-      records: [
-        {
-          notificationId: "99999999-9999-4999-8999-999999999993",
-          orderId: "99999999-9999-4999-8999-999999999991",
-          publicOrderId: "ord_history_1",
-          channel: "email",
-          status: "recorded",
-          recordedAt: "2026-06-20T00:00:08.000Z",
-        },
-      ],
-    },
-    eventTimeline: {
-      totalCount: 1,
-      limit: 20,
-      truncated: false,
-      records: [
-        {
-          eventId: "99999999-9999-4999-8999-999999999994",
-          eventName: "order.confirmed",
-          source: "worker",
-          saleOfferId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-          correlationId: "corr-history-detail",
-          orderId: "99999999-9999-4999-8999-999999999991",
-          publicOrderId: "ord_history_1",
-          occurredAt: "2026-06-20T00:00:07.000Z",
-        },
-      ],
-    },
+    notifications: { totalCount: 1 },
+    events: { totalCount: 1 },
     timestamp: "2026-06-20T00:00:10.000Z",
   };
 }

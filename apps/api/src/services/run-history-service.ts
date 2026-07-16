@@ -1,10 +1,17 @@
 import {
   type AdminDeleteRunHistoryRequest,
   type AdminDeleteRunHistoryResponse,
+  type AdminRunHistoryDetailResponse,
   adminDeleteRunHistoryResponseSchema,
+  adminRunHistoryDetailResponseSchema,
   type DemoRunSnapshot,
   demoRunSnapshotSchema,
-  type RunHistoryDetailResponse,
+  type PublicRunHistoryDetailResponse,
+  type PublicRunHistoryRun,
+  type PublicRunHistorySummary,
+  publicRunHistoryDetailResponseSchema,
+  publicRunHistoryRunSchema,
+  publicRunHistorySummarySchema,
   type RunHistoryErpAttempt,
   type RunHistoryEventTimelineEntry,
   type RunHistoryListQuery,
@@ -12,7 +19,6 @@ import {
   type RunHistoryNotification,
   type RunHistoryOrderOutcome,
   type RunHistorySummary,
-  runHistoryDetailResponseSchema,
   runHistoryErpAttemptSchema,
   runHistoryEventTimelineEntrySchema,
   runHistoryListResponseSchema,
@@ -29,14 +35,15 @@ import {
   orders,
   simulatedNotifications,
 } from "@checkout-surge/db";
-import { count, desc, eq, inArray } from "drizzle-orm";
+import { count, desc, eq, inArray, sql } from "drizzle-orm";
 import { normalizeTrafficDeliverySummary } from "./traffic-delivery-classifier.js";
 
 const detailRecordLimit = 20;
 
 export interface RunHistoryController {
   list(input: RunHistoryListQuery): Promise<RunHistoryListResponse>;
-  detail(runId: string): Promise<RunHistoryDetailResponse | null>;
+  detail(runId: string): Promise<PublicRunHistoryDetailResponse | null>;
+  adminDetail(runId: string): Promise<AdminRunHistoryDetailResponse | null>;
   delete(
     input: AdminDeleteRunHistoryRequest,
     correlationId: string,
@@ -72,26 +79,76 @@ export class RunHistoryService implements RunHistoryController {
     });
   }
 
-  async detail(runId: string): Promise<RunHistoryDetailResponse | null> {
-    const [summaryRow] = await this.options.db
-      .select()
-      .from(demoRunSummaries)
-      .where(eq(demoRunSummaries.runId, runId))
-      .limit(1);
+  async detail(runId: string): Promise<PublicRunHistoryDetailResponse | null> {
+    const source = await this.readDetailSource(runId);
+    if (!source) return null;
 
-    if (!summaryRow) {
-      return null;
-    }
+    const [orderCounts, attemptCounts, notificationCounts, eventCounts] = await Promise.all([
+      this.options.db
+        .select({
+          totalCount: sql<number>`count(*)::int`,
+          queued: sql<number>`(count(*) filter (where ${orders.status} = 'queued'))::int`,
+          processing: sql<number>`(count(*) filter (where ${orders.status} = 'processing'))::int`,
+          confirmed: sql<number>`(count(*) filter (where ${orders.status} = 'confirmed'))::int`,
+          failed: sql<number>`(count(*) filter (where ${orders.status} = 'failed'))::int`,
+        })
+        .from(orders)
+        .where(eq(orders.runId, runId)),
+      this.options.db
+        .select({
+          totalCount: sql<number>`count(*)::int`,
+          succeeded: sql<number>`(count(*) filter (where ${erpAttempts.status} = 'succeeded'))::int`,
+          failed: sql<number>`(count(*) filter (where ${erpAttempts.status} = 'failed'))::int`,
+          timedOut: sql<number>`(count(*) filter (where ${erpAttempts.status} = 'timed_out'))::int`,
+          averageLatencyMs: sql<number | null>`avg(${erpAttempts.latencyMs})::double precision`,
+          p95LatencyMs: sql<
+            number | null
+          >`percentile_cont(0.95) within group (order by ${erpAttempts.latencyMs})::double precision`,
+        })
+        .from(erpAttempts)
+        .where(eq(erpAttempts.runId, runId)),
+      this.options.db
+        .select({ totalCount: count() })
+        .from(simulatedNotifications)
+        .where(eq(simulatedNotifications.runId, runId)),
+      this.options.db
+        .select({ totalCount: count() })
+        .from(orderEvents)
+        .where(eq(orderEvents.runId, runId)),
+    ]);
+    const order = orderCounts[0];
+    const attempt = attemptCounts[0];
+    return publicRunHistoryDetailResponseSchema.parse({
+      summary: toPublicRunHistorySummary(source.summaryRow),
+      run: toPublicRunHistoryRun(source.runRow),
+      orders: {
+        totalCount: order?.totalCount ?? 0,
+        byStatus: {
+          queued: order?.queued ?? 0,
+          processing: order?.processing ?? 0,
+          confirmed: order?.confirmed ?? 0,
+          failed: order?.failed ?? 0,
+        },
+      },
+      erpAttempts: {
+        totalCount: attempt?.totalCount ?? 0,
+        byStatus: {
+          succeeded: attempt?.succeeded ?? 0,
+          failed: attempt?.failed ?? 0,
+          timedOut: attempt?.timedOut ?? 0,
+        },
+        averageLatencyMs: attempt?.averageLatencyMs ?? null,
+        p95LatencyMs: attempt?.p95LatencyMs ?? null,
+      },
+      notifications: { totalCount: notificationCounts[0]?.totalCount ?? 0 },
+      events: { totalCount: eventCounts[0]?.totalCount ?? 0 },
+      timestamp: this.now().toISOString(),
+    });
+  }
 
-    const [runRow] = await this.options.db
-      .select()
-      .from(demoRuns)
-      .where(eq(demoRuns.id, runId))
-      .limit(1);
-
-    if (!runRow) {
-      return null;
-    }
+  async adminDetail(runId: string): Promise<AdminRunHistoryDetailResponse | null> {
+    const source = await this.readDetailSource(runId);
+    if (!source) return null;
 
     const [
       orderRows,
@@ -182,9 +239,9 @@ export class RunHistoryService implements RunHistoryController {
     const notificationTotalCount = notificationTotalRows[0]?.totalCount ?? 0;
     const eventTotalCount = eventTotalRows[0]?.totalCount ?? 0;
 
-    return runHistoryDetailResponseSchema.parse({
-      summary: toRunHistorySummary(summaryRow),
-      run: toDemoRunSnapshot(runRow),
+    return adminRunHistoryDetailResponseSchema.parse({
+      summary: toRunHistorySummary(source.summaryRow),
+      run: toDemoRunSnapshot(source.runRow),
       orders: {
         records: orderRows.map(toRunHistoryOrderOutcome),
         totalCount: orderTotalCount,
@@ -213,6 +270,21 @@ export class RunHistoryService implements RunHistoryController {
     });
   }
 
+  private async readDetailSource(runId: string) {
+    const [summaryRow] = await this.options.db
+      .select()
+      .from(demoRunSummaries)
+      .where(eq(demoRunSummaries.runId, runId))
+      .limit(1);
+    if (!summaryRow) return null;
+    const [runRow] = await this.options.db
+      .select()
+      .from(demoRuns)
+      .where(eq(demoRuns.id, runId))
+      .limit(1);
+    return runRow ? { summaryRow, runRow } : null;
+  }
+
   async delete(
     input: AdminDeleteRunHistoryRequest,
     correlationId: string,
@@ -235,6 +307,54 @@ export class RunHistoryService implements RunHistoryController {
   private now(): Date {
     return this.options.now?.() ?? new Date();
   }
+}
+
+function toPublicRunHistorySummary(
+  row: typeof demoRunSummaries.$inferSelect,
+): PublicRunHistorySummary {
+  const inventory = row.terminalInventorySnapshot;
+  const { notes: _notes, ...publicDeliverySummary } = normalizeTrafficDeliverySummary(
+    row.trafficDeliverySummary,
+  );
+  return publicRunHistorySummarySchema.parse({
+    runId: row.runId,
+    presetName: row.presetName,
+    status: row.status,
+    ...(row.startedAt ? { startedAt: row.startedAt.toISOString() } : {}),
+    endedAt: row.endedAt.toISOString(),
+    httpSummary: row.httpSummary,
+    trafficDeliverySummary: publicDeliverySummary,
+    businessOutcomeSummary: row.businessOutcomeSummary,
+    ...(inventory
+      ? {
+          terminalInventorySnapshot: {
+            startingStock: inventory.startingStock,
+            remainingStock: inventory.remainingStock,
+            reservedStock: inventory.reservedStock,
+            acceptedReservations: inventory.acceptedReservations,
+            soldOutRejections: inventory.soldOutRejections,
+            pendingPersistenceCount: inventory.pendingPersistenceCount,
+            capturedAt: inventory.capturedAt,
+          },
+        }
+      : {}),
+    capturedAt: row.capturedAt.toISOString(),
+  });
+}
+
+function toPublicRunHistoryRun(row: typeof demoRuns.$inferSelect): PublicRunHistoryRun {
+  return publicRunHistoryRunSchema.parse({
+    runId: row.id,
+    presetName: row.presetName,
+    operatorMode: row.operatorMode,
+    status: row.status,
+    trafficStatus: row.trafficStatus,
+    configSnapshot: row.configSnapshot,
+    ...(row.startedAt ? { startedAt: row.startedAt.toISOString() } : {}),
+    ...(row.trafficStartedAt ? { trafficStartedAt: row.trafficStartedAt.toISOString() } : {}),
+    ...(row.trafficEndedAt ? { trafficEndedAt: row.trafficEndedAt.toISOString() } : {}),
+    ...(row.finalizedAt ? { finalizedAt: row.finalizedAt.toISOString() } : {}),
+  });
 }
 
 function toRunHistorySummary(row: typeof demoRunSummaries.$inferSelect): RunHistorySummary {

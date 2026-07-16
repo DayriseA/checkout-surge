@@ -20,7 +20,7 @@ import {
 } from "@checkout-surge/db";
 import { resetTestDatabase } from "@checkout-surge/db/testing";
 import { eq, inArray } from "drizzle-orm";
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { RunHistoryService } from "../src/services/run-history-service.js";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -136,13 +136,48 @@ describe("run history service", () => {
     });
   });
 
-  it("returns public-safe detail for a summary-backed terminal run", async () => {
+  it("returns aggregate public detail and row-oriented admin detail", async () => {
     const db = requireConnection(connection).db;
     const service = createService(connection);
     await seedHistory(db);
     await seedRunDetailRecords(db);
+    await db.insert(erpAttempts).values([
+      {
+        id: "88888888-8888-4888-8888-888888888881",
+        orderId: ids.order,
+        deliveryId: "history-delivery-1",
+        correlationId: "corr-history-detail",
+        runId: ids.newerRun,
+        attemptNumber: 2,
+        status: "failed",
+        terminal: false,
+        latencyMs: 10,
+        startedAt: new Date("2026-06-20T00:00:02.000Z"),
+        finishedAt: new Date("2026-06-20T00:00:03.000Z"),
+        createdAt: new Date("2026-06-20T00:00:03.000Z"),
+      },
+      {
+        id: "88888888-8888-4888-8888-888888888882",
+        orderId: ids.order,
+        deliveryId: "history-delivery-1",
+        correlationId: "corr-history-detail",
+        runId: ids.newerRun,
+        attemptNumber: 3,
+        status: "timed_out",
+        terminal: true,
+        latencyMs: 100,
+        startedAt: new Date("2026-06-20T00:00:02.000Z"),
+        finishedAt: new Date("2026-06-20T00:00:03.000Z"),
+        createdAt: new Date("2026-06-20T00:00:03.000Z"),
+      },
+    ]);
+
+    const selectSpy = vi.spyOn(db, "select");
 
     const detail = await service.detail(ids.newerRun);
+
+    expect(selectSpy).toHaveBeenCalledTimes(6);
+    expect(selectSpy.mock.calls.filter((call) => call.length === 0)).toHaveLength(2);
 
     expect(detail).toMatchObject({
       summary: {
@@ -153,51 +188,26 @@ describe("run history service", () => {
         runId: ids.newerRun,
         status: "failed",
         trafficStatus: "failed",
-        saleOfferId: ids.saleOffer,
       },
       orders: {
         totalCount: 1,
-        truncated: false,
-        records: [
-          {
-            orderId: ids.order,
-            publicOrderId: "ord_history_1",
-            status: "confirmed",
-          },
-        ],
+        byStatus: { queued: 0, processing: 0, confirmed: 1, failed: 0 },
       },
       erpAttempts: {
-        totalCount: 1,
-        records: [
-          {
-            attemptId: ids.erpAttempt,
-            publicOrderId: "ord_history_1",
-            status: "succeeded",
-            terminal: true,
-            httpStatus: 200,
-          },
-        ],
+        totalCount: 3,
+        byStatus: { succeeded: 1, failed: 1, timedOut: 1 },
       },
-      notifications: {
-        totalCount: 1,
-        records: [
-          {
-            notificationId: ids.notification,
-            publicOrderId: "ord_history_1",
-            channel: "email",
-          },
-        ],
-      },
-      eventTimeline: {
-        totalCount: 2,
-      },
+      notifications: { totalCount: 1 },
+      events: { totalCount: 2 },
     });
-    expect(detail?.eventTimeline.records.map((event) => event.eventName)).toEqual([
-      "order.confirmed",
-      "order.queued",
-    ]);
+    expect(detail?.erpAttempts.averageLatencyMs).toBeCloseTo(50.666_666, 5);
+    expect(detail?.erpAttempts.p95LatencyMs).toBeCloseTo(94.2, 3);
 
     const serialized = JSON.stringify(detail);
+    expect(serialized).not.toContain("private-delivery-diagnostic-marker");
+    expect(serialized).not.toContain(ids.saleOffer);
+    expect(serialized).not.toContain("corr-history-detail");
+    expect(serialized).not.toContain(ids.order);
     expect(serialized).not.toContain("reservation-token-private");
     expect(serialized).not.toContain("idempotency-key-private");
     expect(serialized).not.toContain("raw-private-header");
@@ -210,12 +220,63 @@ describe("run history service", () => {
       .update(erpAttempts)
       .set({ status: "failed", terminal: false, httpStatus: 503 })
       .where(eq(erpAttempts.id, ids.erpAttempt));
-    const nonterminalDetail = await service.detail(ids.newerRun);
-    expect(nonterminalDetail?.erpAttempts.records[0]).toMatchObject({
+    const changedDetail = await service.detail(ids.newerRun);
+    expect(changedDetail?.erpAttempts).toMatchObject({
+      byStatus: { succeeded: 0, failed: 2, timedOut: 1 },
+    });
+
+    const adminDetail = await service.adminDetail(ids.newerRun);
+    expect(adminDetail?.summary.trafficDeliverySummary.notes).toContain(
+      "private-delivery-diagnostic-marker",
+    );
+    expect(adminDetail?.orders.records[0]).toMatchObject({
+      orderId: ids.order,
+      publicOrderId: "ord_history_1",
+    });
+    expect(adminDetail?.orders).toMatchObject({ totalCount: 1, limit: 20, truncated: false });
+    expect(adminDetail?.erpAttempts.records[0]).toMatchObject({
+      attemptId: ids.erpAttempt,
       status: "failed",
       terminal: false,
       httpStatus: 503,
     });
+    expect(adminDetail?.eventTimeline.records.map((event) => event.eventName)).toEqual([
+      "order.confirmed",
+      "order.queued",
+    ]);
+  });
+
+  it("caps protected admin rows at 20 with accurate truncation metadata", async () => {
+    const db = requireConnection(connection).db;
+    const service = createService(connection);
+    await seedHistory(db);
+    await seedAdminOrders(db, 21);
+
+    const detail = await service.adminDetail(ids.newerRun);
+
+    expect(detail?.orders).toMatchObject({ totalCount: 21, limit: 20, truncated: true });
+    expect(detail?.orders.records).toHaveLength(20);
+  });
+
+  it("returns explicit zero buckets and null ERP latency for empty live sets", async () => {
+    const db = requireConnection(connection).db;
+    const service = createService(connection);
+    await seedHistory(db);
+
+    const detail = await service.detail(ids.newerRun);
+
+    expect(detail?.orders).toEqual({
+      totalCount: 0,
+      byStatus: { queued: 0, processing: 0, confirmed: 0, failed: 0 },
+    });
+    expect(detail?.erpAttempts).toEqual({
+      totalCount: 0,
+      byStatus: { succeeded: 0, failed: 0, timedOut: 0 },
+      averageLatencyMs: null,
+      p95LatencyMs: null,
+    });
+    expect(detail?.notifications.totalCount).toBe(0);
+    expect(detail?.events.totalCount).toBe(0);
   });
 
   it("returns null for missing or non-summary-backed runs", async () => {
@@ -234,6 +295,7 @@ describe("run history service", () => {
 
     await expect(service.detail(ids.noSummaryRun)).resolves.toBeNull();
     await expect(service.detail("ffffffff-ffff-4fff-8fff-ffffffffffff")).resolves.toBeNull();
+    await expect(service.adminDetail(ids.noSummaryRun)).resolves.toBeNull();
   });
 
   it("deletes selected summaries without deleting demo runs", async () => {
@@ -467,6 +529,45 @@ async function seedRunDetailRecords(
   ]);
 }
 
+async function seedAdminOrders(
+  db: ReturnType<typeof createDatabaseConnection>["db"],
+  count: number,
+): Promise<void> {
+  const indexes = Array.from({ length: count }, (_, index) => index + 1);
+  await db.insert(reservations).values(
+    indexes.map((index) => ({
+      id: `10000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+      saleOfferId: ids.saleOffer,
+      correlationId: `corr-admin-history-${index}`,
+      runId: ids.newerRun,
+      quantity: 1,
+      status: "secured" as const,
+      reservationToken: `admin-history-token-${index}`,
+      expiresAt: new Date("2026-06-20T00:15:02.000Z"),
+      securedAt: new Date("2026-06-20T00:00:02.000Z"),
+      createdAt: new Date("2026-06-20T00:00:02.000Z"),
+      updatedAt: new Date("2026-06-20T00:00:02.000Z"),
+    })),
+  );
+  await db.insert(orders).values(
+    indexes.map((index) => ({
+      id: `20000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+      publicOrderId: `ord_admin_history_${index}`,
+      saleOfferId: ids.saleOffer,
+      reservationId: `10000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+      correlationId: `corr-admin-history-${index}`,
+      runId: ids.newerRun,
+      quantity: 1,
+      status: "confirmed" as const,
+      queuedAt: new Date(`2026-06-20T00:00:${String(index).padStart(2, "0")}.000Z`),
+      processingAt: new Date(`2026-06-20T00:00:${String(index).padStart(2, "0")}.000Z`),
+      confirmedAt: new Date(`2026-06-20T00:00:${String(index).padStart(2, "0")}.000Z`),
+      createdAt: new Date(`2026-06-20T00:00:${String(index).padStart(2, "0")}.000Z`),
+      updatedAt: new Date(`2026-06-20T00:00:${String(index).padStart(2, "0")}.000Z`),
+    })),
+  );
+}
+
 function runFixture(input: {
   id: string;
   presetName: string;
@@ -528,7 +629,7 @@ function summaryFixture(input: {
       emittedRequests: input.emittedRequests,
       droppedIterations: 10 - input.emittedRequests,
       trafficDeliveryStatus: input.trafficDeliveryStatus,
-      notes: input.trafficDeliveryStatus === "failed" ? ["Major delivery shortfall."] : [],
+      notes: input.trafficDeliveryStatus === "failed" ? ["private-delivery-diagnostic-marker"] : [],
     }),
     httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
     loadRunDiagnosticsSummary: {},

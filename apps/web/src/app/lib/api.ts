@@ -1,4 +1,8 @@
 import {
+  type AdminRunHistoryDetailResponse,
+  adminRunHistoryDetailPath,
+  adminRunHistoryDetailResponseSchema,
+  controlServiceTokenHeaderName,
   type DashboardRecoveryResponse,
   dashboardRecoveryPath,
   dashboardRecoveryResponseSchema,
@@ -23,7 +27,6 @@ import {
   runHistoryPath,
 } from "@checkout-surge/contracts";
 import { webServerConfig } from "./server/config";
-
 
 interface ContractSchema<T> {
   safeParse(
@@ -68,13 +71,17 @@ function errorReason(error: unknown): string {
   return error instanceof Error ? error.message : "Unknown API read failure";
 }
 
-async function readJson<T>(url: string, schema: ContractSchema<T>): Promise<BackendRead<T>> {
+async function readJson<T>(
+  url: string,
+  schema: ContractSchema<T>,
+  headers: Record<string, string> = {},
+): Promise<BackendRead<T>> {
   let response: Response;
 
   try {
     response = await fetch(url, {
       cache: "no-store",
-      headers: { accept: "application/json" },
+      headers: { accept: "application/json", ...headers },
     });
   } catch (error) {
     return {
@@ -155,4 +162,14 @@ export async function getRunHistoryDetail(
   runId: string,
 ): Promise<BackendRead<RunHistoryDetailResponse>> {
   return readJson(`${apiBaseUrl()}${runHistoryDetailPath(runId)}`, runHistoryDetailResponseSchema);
+}
+
+export async function getAdminRunHistoryDetail(
+  runId: string,
+): Promise<BackendRead<AdminRunHistoryDetailResponse>> {
+  return readJson(
+    `${apiBaseUrl()}${adminRunHistoryDetailPath(runId)}`,
+    adminRunHistoryDetailResponseSchema,
+    { [controlServiceTokenHeaderName]: webServerConfig().controlServiceToken },
+  );
 }

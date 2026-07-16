@@ -4,6 +4,9 @@ import {
   acceptedRunConfigSnapshotSchema,
   adminDeleteRunHistoryRequestSchema,
   adminDeleteRunHistoryResponseSchema,
+  adminRunHistoryDetailPath,
+  adminRunHistoryDetailPathTemplate,
+  adminRunHistoryDetailResponseSchema,
   adminDemoResetResponseSchema,
   adminGeneratedRunTeardownParamsSchema,
   adminGeneratedRunTeardownPath,
@@ -80,7 +83,6 @@ import {
   runHistoryDetailPath,
   runHistoryDetailPathTemplate,
   runHistoryDetailResponseSchema,
-  runHistoryErpAttemptSchema,
   runHistoryListQuerySchema,
   runHistoryListResponseSchema,
   runHistoryPath,
@@ -1710,16 +1712,24 @@ describe("public runtime policy contract", () => {
       }),
     ).toMatchObject({ outcome: "deleted", saleOfferId });
 
+    const { id: _summaryId, failureReason: _failureReason, terminalInventorySnapshot, ...publicSummary } = summary;
+    const sanitizedInventory = terminalInventorySnapshot
+      ? (({ saleOfferId: _inventorySaleOfferId, source: _inventorySource, ...inventory }) => inventory)(terminalInventorySnapshot)
+      : undefined;
+    const { notes: _deliveryNotes, ...publicDeliverySummary } =
+      publicSummary.trafficDeliverySummary;
     const detail = runHistoryDetailResponseSchema.parse({
-      summary,
+      summary: {
+        ...publicSummary,
+        trafficDeliverySummary: publicDeliverySummary,
+        ...(sanitizedInventory ? { terminalInventorySnapshot: sanitizedInventory } : {}),
+      },
       run: {
         runId,
-        presetId: "33333333-3333-4333-8333-333333333333",
         presetName: "Preview 1k",
         operatorMode: "public",
         status: "completed",
         trafficStatus: "succeeded",
-        saleOfferId,
         configSnapshot: {
           trafficConfig: {
             mode: "buyer-spike",
@@ -1759,114 +1769,103 @@ describe("public runtime policy contract", () => {
       },
       orders: {
         totalCount: 1,
-        limit: 20,
-        truncated: false,
-        records: [
-          {
-            orderId: "99999999-9999-4999-8999-999999999991",
-            publicOrderId: "ord_history_1",
-            saleOfferId,
-            correlationId,
-            quantity: 1,
-            status: "confirmed",
-            queuedAt: timestamp,
-            processingAt: timestamp,
-            confirmedAt: timestamp,
-          },
-        ],
+        byStatus: { queued: 0, processing: 0, confirmed: 1, failed: 0 },
       },
       erpAttempts: {
         totalCount: 1,
-        limit: 20,
-        truncated: false,
-        records: [
-          {
-            attemptId: "99999999-9999-4999-8999-999999999992",
-            orderId: "99999999-9999-4999-8999-999999999991",
-            publicOrderId: "ord_history_1",
-            correlationId,
-            attemptNumber: 1,
-            status: "succeeded",
-            terminal: true,
-            httpStatus: 200,
-            latencyMs: 25,
-            startedAt: timestamp,
-            finishedAt: timestamp,
-          },
-        ],
+        byStatus: { succeeded: 1, failed: 0, timedOut: 0 },
+        averageLatencyMs: 25,
+        p95LatencyMs: 25,
       },
-      notifications: {
-        totalCount: 1,
-        limit: 20,
-        truncated: false,
-        records: [
-          {
-            notificationId: "99999999-9999-4999-8999-999999999993",
-            orderId: "99999999-9999-4999-8999-999999999991",
-            publicOrderId: "ord_history_1",
-            channel: "email",
-            status: "recorded",
-            recordedAt: timestamp,
-          },
-        ],
-      },
-      eventTimeline: {
-        totalCount: 1,
-        limit: 20,
-        truncated: false,
-        records: [
-          {
-            eventId: "99999999-9999-4999-8999-999999999994",
-            eventName: "order.confirmed",
-            source: "worker",
-            saleOfferId,
-            correlationId,
-            orderId: "99999999-9999-4999-8999-999999999991",
-            publicOrderId: "ord_history_1",
-            occurredAt: timestamp,
-          },
-        ],
-      },
+      notifications: { totalCount: 1 },
+      events: { totalCount: 1 },
       timestamp,
     });
-    const attempt = detail.erpAttempts.records[0];
-    if (!attempt) throw new Error("Expected a parsed ERP attempt.");
-    expect(attempt.terminal).toBe(true);
+    expect(detail.summary.runId).toBe(runId);
+    expect(detail.erpAttempts.averageLatencyMs).toBe(25);
+    expect(adminRunHistoryDetailPathTemplate).toBe("/admin/demo/runs/history/:runId");
+    expect(adminRunHistoryDetailPath(runId)).toBe(`/admin/demo/runs/history/${runId}`);
     expect(() =>
-      runHistoryErpAttemptSchema.parse({
-        ...attempt,
-        terminal: false,
+      adminRunHistoryDetailResponseSchema.parse({
+        summary,
+        run: { ...detail.run, presetId: "33333333-3333-4333-8333-333333333333", saleOfferId },
+        orders: {
+          totalCount: 1,
+          limit: 20,
+          truncated: false,
+          records: [{ orderId: "99999999-9999-4999-8999-999999999991", publicOrderId: "ord_history_1", saleOfferId, correlationId, quantity: 1, status: "confirmed", queuedAt: timestamp, processingAt: timestamp, confirmedAt: timestamp }],
+        },
+        erpAttempts: {
+          totalCount: 1,
+          limit: 20,
+          truncated: false,
+          records: [{ attemptId: "99999999-9999-4999-8999-999999999992", orderId: "99999999-9999-4999-8999-999999999991", publicOrderId: "ord_history_1", correlationId, attemptNumber: 1, status: "succeeded", terminal: true, httpStatus: 200, latencyMs: 25, startedAt: timestamp, finishedAt: timestamp }],
+        },
+        notifications: {
+          totalCount: 1,
+          limit: 20,
+          truncated: false,
+          records: [{ notificationId: "99999999-9999-4999-8999-999999999993", orderId: "99999999-9999-4999-8999-999999999991", publicOrderId: "ord_history_1", channel: "email", status: "recorded", recordedAt: timestamp }],
+        },
+        eventTimeline: {
+          totalCount: 1,
+          limit: 20,
+          truncated: false,
+          records: [{ eventId: "99999999-9999-4999-8999-999999999994", eventName: "order.confirmed", source: "worker", saleOfferId, correlationId, orderId: "99999999-9999-4999-8999-999999999991", publicOrderId: "ord_history_1", occurredAt: timestamp }],
+        },
+        timestamp,
       }),
     ).not.toThrow();
-    const { terminal: _terminal, ...attemptWithoutTerminal } = attempt;
-    expect(() => runHistoryErpAttemptSchema.parse(attemptWithoutTerminal)).toThrow();
-    expect(() =>
-      runHistoryErpAttemptSchema.parse({
-        ...attempt,
-        terminal: "yes",
-      }),
-    ).toThrow();
-
-    expect(detail.summary.runId).toBe(runId);
-    expect(detail.orders.records[0]).not.toHaveProperty("reservationToken");
-    expect(detail.orders.records[0]).not.toHaveProperty("idempotencyKey");
-    expect(detail.eventTimeline.records[0]).not.toHaveProperty("payload");
     expect(() =>
       runHistoryDetailResponseSchema.parse({
         ...detail,
-        orders: {
-          ...detail.orders,
-          records: [{ ...detail.orders.records[0], reservationToken: "private-token" }],
-        },
+        orders: { ...detail.orders, records: [] },
       }),
     ).toThrow();
+    for (const legacyCollection of ["orders", "erpAttempts", "notifications", "eventTimeline"]) {
+      expect(() =>
+        runHistoryDetailResponseSchema.parse({
+          ...detail,
+          [legacyCollection]: { totalCount: 0, limit: 20, truncated: false, records: [] },
+        }),
+      ).toThrow();
+    }
+    for (const [aggregate, deniedField] of [
+      ["orders", "orderId"],
+      ["orders", "publicOrderId"],
+      ["orders", "saleOfferId"],
+      ["orders", "correlationId"],
+      ["erpAttempts", "attemptId"],
+      ["notifications", "notificationId"],
+      ["events", "eventId"],
+      ["events", "source"],
+    ] as const) {
+      expect(() =>
+        runHistoryDetailResponseSchema.parse({
+          ...detail,
+          [aggregate]: { ...detail[aggregate], [deniedField]: "private-marker" },
+        }),
+      ).toThrow();
+    }
     expect(() =>
       runHistoryDetailResponseSchema.parse({
         ...detail,
-        eventTimeline: {
-          ...detail.eventTimeline,
-          records: [{ ...detail.eventTimeline.records[0], payload: { private: true } }],
-        },
+        summary: { ...detail.summary, trafficDeliverySummary: { ...detail.summary.trafficDeliverySummary, notes: ["private-delivery-diagnostic-marker"] } },
+      }),
+    ).toThrow();
+    expect(
+      runHistoryDetailResponseSchema.parse({
+        ...detail,
+        orders: { totalCount: 0, byStatus: { queued: 0, processing: 0, confirmed: 0, failed: 0 } },
+        erpAttempts: { totalCount: 0, byStatus: { succeeded: 0, failed: 0, timedOut: 0 }, averageLatencyMs: null, p95LatencyMs: null },
+        notifications: { totalCount: 0 },
+        events: { totalCount: 0 },
+      }).erpAttempts.p95LatencyMs,
+    ).toBeNull();
+    expect(() =>
+      runHistoryDetailResponseSchema.parse({
+        ...detail,
+        run: { ...detail.run, saleOfferId },
       }),
     ).toThrow();
 

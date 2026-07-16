@@ -1,8 +1,11 @@
 import {
   adminDeleteRunHistoryRequestSchema,
+  adminRunHistoryDetailPathTemplate,
+  adminRunHistoryDetailResponseSchema,
   controlServiceTokenHeaderName,
   runHistoryDetailParamsSchema,
   runHistoryDetailPathTemplate,
+  runHistoryDetailResponseSchema,
   runHistoryListQuerySchema,
   runHistoryPath,
 } from "@checkout-surge/contracts";
@@ -27,6 +30,7 @@ export function registerRunHistoryRoutes(
   });
 
   app.get(runHistoryDetailPathTemplate, async (request, reply) => {
+    reply.header("cache-control", "no-store");
     const { runId } = runHistoryDetailParamsSchema.parse(request.params ?? {});
     const detail = await options.runHistoryService.detail(runId);
 
@@ -39,7 +43,40 @@ export function registerRunHistoryRoutes(
       });
     }
 
-    return reply.status(200).send(detail);
+    const response = runHistoryDetailResponseSchema.safeParse(detail);
+    if (!response.success) {
+      throw new ApiHttpError({
+        statusCode: 500,
+        code: "internal_error",
+        message: "Run history detail response was invalid.",
+      });
+    }
+    return reply.status(200).send(response.data);
+  });
+
+  app.get(adminRunHistoryDetailPathTemplate, async (request, reply) => {
+    reply.header("cache-control", "no-store");
+    const unauthorized = requireControlServiceToken(request, reply, options.controlServiceToken);
+    if (unauthorized) return unauthorized;
+    const { runId } = runHistoryDetailParamsSchema.parse(request.params ?? {});
+    const detail = await options.runHistoryService.adminDetail(runId);
+    if (!detail) {
+      throw new ApiHttpError({
+        statusCode: 404,
+        code: "run_history_detail_not_found",
+        message: "Run history detail was not found.",
+        details: { runId },
+      });
+    }
+    const response = adminRunHistoryDetailResponseSchema.safeParse(detail);
+    if (!response.success) {
+      throw new ApiHttpError({
+        statusCode: 500,
+        code: "internal_error",
+        message: "Run history detail response was invalid.",
+      });
+    }
+    return reply.status(200).send(response.data);
   });
 
   app.delete(runHistoryPath, async (request, reply) => {

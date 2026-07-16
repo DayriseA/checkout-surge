@@ -1,18 +1,30 @@
-import type { RunHistoryDetailResponse, RunHistoryListResponse } from "@checkout-surge/contracts";
+import type {
+  AdminRunHistoryDetailResponse,
+  RunHistoryDetailResponse,
+  RunHistoryListResponse,
+} from "@checkout-surge/contracts";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { RunHistoryDetail } from "../src/app/components/run-history-detail.js";
+import {
+  AdminRunHistoryDetail,
+  PublicRunHistoryDetail,
+} from "../src/app/components/run-history-detail.js";
 import { RunHistoryList } from "../src/app/components/run-history-list.js";
 import RunHistoryDetailPage from "../src/app/run-history/[runId]/page.js";
 
 const getRunHistoryDetail = vi.hoisted(() => vi.fn());
+const getAdminRunHistoryDetail = vi.hoisted(() => vi.fn());
+const hasValidAdminPageSession = vi.hoisted(() => vi.fn());
 
-vi.mock("../src/app/lib/api.js", () => ({ getRunHistoryDetail }));
+vi.mock("../src/app/lib/api.js", () => ({ getRunHistoryDetail, getAdminRunHistoryDetail }));
+vi.mock("../src/app/lib/server/admin-page-session.js", () => ({ hasValidAdminPageSession }));
 
 describe("run history surface", () => {
   beforeEach(() => {
     getRunHistoryDetail.mockReset();
+    getAdminRunHistoryDetail.mockReset();
+    hasValidAdminPageSession.mockResolvedValue(false);
   });
 
   it("renders traffic delivery, business outcomes, and terminal inventory snapshots", () => {
@@ -71,21 +83,31 @@ describe("run history surface", () => {
 
   it("renders public-safe detail without private operational fields", () => {
     const markup = renderToStaticMarkup(
-      createElement(RunHistoryDetail, { detail: runHistoryDetailFixture() }),
+      createElement(PublicRunHistoryDetail, { detail: runHistoryDetailFixture() }),
     );
 
     expect(markup).toContain("Terminal detail");
     expect(markup).toContain("Accepted configuration");
-    expect(markup).toContain("Order outcomes");
-    expect(markup).toContain("ord_history_1");
-    expect(markup).toContain("ERP attempts");
-    expect(markup).toContain("Terminal");
-    expect(markup).toContain("yes");
-    expect(markup).toContain("Event timeline");
+    expect(markup).toContain("Order aggregates");
+    expect(markup).toContain("ERP aggregates");
+    expect(markup).toContain("Public activity totals");
+    expect(markup).not.toContain("ord_history_1");
+    expect(markup).not.toContain("corr-history-detail");
+    expect(markup).not.toContain("worker");
     expect(markup).not.toContain("reservationToken");
     expect(markup).not.toContain("idempotencyKey");
     expect(markup).not.toContain("payload");
     expect(markup).not.toContain("x-control-service-token");
+  });
+
+  it("retains row detail in the admin representation", () => {
+    const markup = renderToStaticMarkup(
+      createElement(AdminRunHistoryDetail, { detail: adminRunHistoryDetailFixture() }),
+    );
+    expect(markup).toContain("Order outcomes");
+    expect(markup).toContain("ord_history_1");
+    expect(markup).toContain("Event timeline");
+    expect(markup).toContain("worker");
   });
 
   it("renders malformed detail routes as public-safe not-found states without an API read", async () => {
@@ -119,6 +141,23 @@ describe("run history surface", () => {
     expect(markup).not.toContain("Run not found");
     expect(getRunHistoryDetail).toHaveBeenCalledOnce();
     expect(getRunHistoryDetail).toHaveBeenCalledWith(runId);
+  });
+
+  it("selects admin detail only from the validated page session", async () => {
+    const runId = "55555555-5555-4555-8555-555555555555";
+    hasValidAdminPageSession.mockResolvedValue(true);
+    getAdminRunHistoryDetail.mockResolvedValue({
+      status: "available",
+      data: adminRunHistoryDetailFixture(),
+      httpStatus: 200,
+    });
+
+    const page = await RunHistoryDetailPage({ params: Promise.resolve({ runId }) });
+    const markup = renderToStaticMarkup(page);
+
+    expect(markup).toContain("ord_history_1");
+    expect(getAdminRunHistoryDetail).toHaveBeenCalledWith(runId);
+    expect(getRunHistoryDetail).not.toHaveBeenCalled();
   });
 });
 
@@ -192,6 +231,36 @@ function runHistoryFixture(): RunHistoryListResponse {
 }
 
 function runHistoryDetailFixture(): RunHistoryDetailResponse {
+  const admin = adminRunHistoryDetailFixture();
+  const { id: _id, terminalInventorySnapshot, ...summary } = admin.summary;
+  const { presetId: _presetId, saleOfferId: _saleOfferId, ...run } = admin.run;
+  const sanitizedInventory = terminalInventorySnapshot
+    ? (({ saleOfferId: _inventorySaleOfferId, source: _inventorySource, ...inventory }) => inventory)(
+        terminalInventorySnapshot,
+      )
+    : undefined;
+  const { notes: _deliveryNotes, ...publicDeliverySummary } = summary.trafficDeliverySummary;
+  return {
+    summary: {
+      ...summary,
+      trafficDeliverySummary: publicDeliverySummary,
+      ...(sanitizedInventory ? { terminalInventorySnapshot: sanitizedInventory } : {}),
+    },
+    run,
+    orders: { totalCount: 1, byStatus: { queued: 0, processing: 0, confirmed: 1, failed: 0 } },
+    erpAttempts: {
+      totalCount: 1,
+      byStatus: { succeeded: 1, failed: 0, timedOut: 0 },
+      averageLatencyMs: 42,
+      p95LatencyMs: 42,
+    },
+    notifications: { totalCount: 1 },
+    events: { totalCount: 1 },
+    timestamp: admin.timestamp,
+  };
+}
+
+function adminRunHistoryDetailFixture(): AdminRunHistoryDetailResponse {
   const summary = runHistoryFixture().summaries[0];
   if (!summary) {
     throw new Error("Expected run history summary fixture.");

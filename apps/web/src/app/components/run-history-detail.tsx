@@ -1,11 +1,14 @@
-import type { RunHistoryDetailResponse } from "@checkout-surge/contracts";
+import type {
+  AdminRunHistoryDetailResponse,
+  PublicRunHistoryDetailResponse,
+} from "@checkout-surge/contracts";
 import { StatusPill } from "./status-pill";
 
 interface RunHistoryDetailProps {
-  detail: RunHistoryDetailResponse;
+  detail: AdminRunHistoryDetailResponse;
 }
 
-export function RunHistoryDetail({ detail }: RunHistoryDetailProps) {
+export function AdminRunHistoryDetail({ detail }: RunHistoryDetailProps) {
   const { run, summary } = detail;
   const config = run.configSnapshot;
 
@@ -282,7 +285,7 @@ function EmptyCollection({ label }: { label: string }) {
 }
 
 function trafficConfigFacts(
-  config: RunHistoryDetailResponse["run"]["configSnapshot"]["trafficConfig"],
+  config: AdminRunHistoryDetailResponse["run"]["configSnapshot"]["trafficConfig"],
 ): Array<[string, string]> {
   if (config.mode === "buyer-spike") {
     return [
@@ -301,6 +304,82 @@ function trafficConfigFacts(
     ["Quantity", formatNumber(config.quantityPerAttempt)],
     ["Max VUs", config.k6Vus ? formatNumber(config.k6Vus.maxVus) : "n/a"],
   ];
+}
+
+export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDetailResponse }) {
+  const { run, summary } = detail;
+  return (
+    <div className="grid gap-4">
+      <section className="rounded-lg border border-border bg-surface p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="m-0 text-xs font-bold uppercase text-muted">Terminal detail</p>
+            <h2 className="m-0 mt-1 text-2xl font-bold leading-tight text-ink">
+              {summary.presetName}
+            </h2>
+            <p className="m-0 mt-2 text-sm font-semibold text-muted-strong">{summary.runId}</p>
+          </div>
+          <StatusPill
+            label={summary.status}
+            tone={summary.status === "completed" ? "ok" : "blocked"}
+          />
+        </div>
+        <div className="mt-4 grid grid-cols-3 gap-4 max-[900px]:grid-cols-1">
+          <FactList
+            title="Lifecycle"
+            facts={[
+              ["Started", formatDate(summary.startedAt)],
+              ["Traffic started", formatDate(run.trafficStartedAt)],
+              ["Traffic ended", formatDate(run.trafficEndedAt)],
+              ["Finalized", formatDate(run.finalizedAt)],
+              ["Captured", formatDate(summary.capturedAt)],
+            ]}
+          />
+          <FactList
+            title="Order aggregates"
+            facts={[
+              ["Total", formatNumber(detail.orders.totalCount)],
+              ["Queued", formatNumber(detail.orders.byStatus.queued)],
+              ["Processing", formatNumber(detail.orders.byStatus.processing)],
+              ["Confirmed", formatNumber(detail.orders.byStatus.confirmed)],
+              ["Failed", formatNumber(detail.orders.byStatus.failed)],
+            ]}
+          />
+          <FactList
+            title="ERP aggregates"
+            facts={[
+              ["Attempts", formatNumber(detail.erpAttempts.totalCount)],
+              ["Succeeded", formatNumber(detail.erpAttempts.byStatus.succeeded)],
+              ["Failed", formatNumber(detail.erpAttempts.byStatus.failed)],
+              ["Timed out", formatNumber(detail.erpAttempts.byStatus.timedOut)],
+              ["Average latency", nullableMetricMs(detail.erpAttempts.averageLatencyMs)],
+              ["p95 latency", nullableMetricMs(detail.erpAttempts.p95LatencyMs)],
+            ]}
+          />
+        </div>
+      </section>
+      <section className="rounded-lg border border-border bg-surface p-4">
+        <h2 className="m-0 text-base font-bold leading-tight text-ink">Public activity totals</h2>
+        <div className="mt-3 grid grid-cols-2 gap-4 max-[700px]:grid-cols-1">
+          <FactList
+            title="Notifications"
+            facts={[["Recorded", formatNumber(detail.notifications.totalCount)]]}
+          />
+          <FactList title="Events" facts={[["Recorded", formatNumber(detail.events.totalCount)]]} />
+        </div>
+      </section>
+      <section className="rounded-lg border border-border bg-surface p-4">
+        <h2 className="m-0 text-base font-bold leading-tight text-ink">Accepted configuration</h2>
+        <div className="mt-3">
+          <FactList facts={trafficConfigFacts(run.configSnapshot.trafficConfig)} title="Traffic" />
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function nullableMetricMs(value: number | null): string {
+  return value === null ? "n/a" : `${formatNumber(value)}ms`;
 }
 
 function formatNumber(value: number): string {

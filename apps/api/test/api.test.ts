@@ -5,6 +5,9 @@ import { fileURLToPath } from "node:url";
 import {
   type AcceptedOrderSummary,
   type AcceptedReservationSummary,
+  type AdminRunHistoryDetailResponse,
+  adminRunHistoryDetailPath,
+  adminRunHistoryDetailResponseSchema,
   adminDeleteRunHistoryResponseSchema,
   adminDemoResetPath,
   adminGeneratedRunTeardownPath,
@@ -591,7 +594,7 @@ function runHistoryListResponseFixture(): RunHistoryListResponse {
   };
 }
 
-function runHistoryDetailResponseFixture(): RunHistoryDetailResponse {
+function adminRunHistoryDetailResponseFixture(): AdminRunHistoryDetailResponse {
   const summary = runHistoryListResponseFixture().summaries[0];
   if (!summary) {
     throw new Error("Expected run history summary fixture.");
@@ -680,6 +683,19 @@ function runHistoryDetailResponseFixture(): RunHistoryDetailResponse {
   };
 }
 
+function collectKeys(value: unknown, keys = new Set<string>()): Set<string> {
+  if (Array.isArray(value)) {
+    for (const item of value) collectKeys(item, keys);
+    return keys;
+  }
+  if (!value || typeof value !== "object") return keys;
+  for (const [key, nested] of Object.entries(value)) {
+    keys.add(key);
+    collectKeys(nested, keys);
+  }
+  return keys;
+}
+
 function runHistoryControllerFixture(): RunHistoryController {
   return {
     list: async (input) => ({
@@ -687,12 +703,32 @@ function runHistoryControllerFixture(): RunHistoryController {
       page: input.page,
       pageSize: input.pageSize,
     }),
-    detail: async (runId) => (runId === fixtureIds.run ? runHistoryDetailResponseFixture() : null),
+    detail: async (runId) => (runId === fixtureIds.run ? publicRunHistoryDetailResponseFixture() : null),
+    adminDetail: async (runId) => (runId === fixtureIds.run ? adminRunHistoryDetailResponseFixture() : null),
     delete: async (_input, correlationId) => ({
       deletedSummaryCount: 1,
       deletedAt: "2026-06-20T00:00:10.000Z",
       correlationId,
     }),
+  };
+}
+
+function publicRunHistoryDetailResponseFixture(): RunHistoryDetailResponse {
+  const admin = adminRunHistoryDetailResponseFixture();
+  const { id: _id, failureReason: _failureReason, terminalInventorySnapshot, ...summary } = admin.summary;
+  const { presetId: _presetId, saleOfferId: _saleOfferId, failureReason: _runFailure, ...run } = admin.run;
+  const sanitizedInventory = terminalInventorySnapshot
+    ? (({ saleOfferId: _inventorySaleOfferId, source: _inventorySource, ...inventory }) => inventory)(terminalInventorySnapshot)
+    : undefined;
+  const { notes: _deliveryNotes, ...publicDeliverySummary } = summary.trafficDeliverySummary;
+  return {
+    summary: { ...summary, trafficDeliverySummary: publicDeliverySummary, ...(sanitizedInventory ? { terminalInventorySnapshot: sanitizedInventory } : {}) },
+    run,
+    orders: { totalCount: 1, byStatus: { queued: 0, processing: 0, confirmed: 1, failed: 0 } },
+    erpAttempts: { totalCount: 1, byStatus: { succeeded: 1, failed: 0, timedOut: 0 }, averageLatencyMs: 42, p95LatencyMs: 42 },
+    notifications: { totalCount: 1 },
+    events: { totalCount: 1 },
+    timestamp: admin.timestamp,
   };
 }
 
@@ -1343,17 +1379,65 @@ describe("API gateway routes", () => {
 
     expect(response.statusCode).toBe(200);
     expect(payload.summary.runId).toBe(fixtureIds.run);
-    expect(payload.orders.records[0]?.publicOrderId).toBe("ord_history_1");
-    expect(payload.orders.records[0]).not.toHaveProperty("reservationToken");
-    expect(payload.orders.records[0]).not.toHaveProperty("idempotencyKey");
-    expect(payload.eventTimeline.records[0]).not.toHaveProperty("payload");
+    expect(response.headers["cache-control"]).toBe("no-store");
+    expect(payload.orders.byStatus.confirmed).toBe(1);
+    expect(JSON.stringify(payload)).not.toContain(fixtureIds.saleOffer);
+    expect(JSON.stringify(payload)).not.toContain(fixtureCorrelationId);
+    const publicKeys = collectKeys(payload);
+    for (const forbiddenKey of ["records", "limit", "truncated", "orderId", "attemptId", "notificationId", "eventId", "saleOfferId", "correlationId", "publicOrderId", "source", "notes"]) {
+      expect(publicKeys.has(forbiddenKey), forbiddenKey).toBe(false);
+    }
     expect(missing.statusCode).toBe(404);
+    expect(missing.headers["cache-control"]).toBe("no-store");
     expect(missingPayload).toMatchObject({
       code: "run_history_detail_not_found",
       details: { runId: "ffffffff-ffff-4fff-8fff-ffffffffffff" },
     });
     expect(detail).toHaveBeenCalledWith(fixtureIds.run);
     expect(detail).toHaveBeenCalledWith("ffffffff-ffff-4fff-8fff-ffffffffffff");
+
+    const adminDetail = vi.fn(runHistoryControllerFixture().adminDetail);
+    const adminServer = await trackedServer({
+      persistence: new AcceptingPersistence(),
+      runHistoryService: { ...runHistoryControllerFixture(), adminDetail },
+    });
+    const unauthorized = await adminServer.inject({ method: "GET", url: adminRunHistoryDetailPath(fixtureIds.run) });
+    expect(unauthorized.statusCode).toBe(401);
+    expect(unauthorized.headers["cache-control"]).toBe("no-store");
+    expect(adminDetail).not.toHaveBeenCalled();
+    const authorized = await adminServer.inject({ method: "GET", url: adminRunHistoryDetailPath(fixtureIds.run), headers: { [controlServiceTokenHeaderName]: "test-control-token" } });
+    const adminPayload = adminRunHistoryDetailResponseSchema.parse(authorized.json());
+    expect(authorized.statusCode).toBe(200);
+    expect(authorized.headers["cache-control"]).toBe("no-store");
+    expect(adminPayload.orders.records[0]?.orderId).toBe("99999999-9999-4999-8999-999999999991");
+    const adminMissing = await adminServer.inject({
+      method: "GET",
+      url: adminRunHistoryDetailPath("ffffffff-ffff-4fff-8fff-ffffffffffff"),
+      headers: { [controlServiceTokenHeaderName]: "test-control-token" },
+    });
+    expect(adminMissing.statusCode).toBe(404);
+    expect(adminMissing.headers["cache-control"]).toBe("no-store");
+  });
+
+  it("rejects malformed public and admin detail controller responses", async () => {
+    const publicFixture = publicRunHistoryDetailResponseFixture();
+    const adminFixture = adminRunHistoryDetailResponseFixture();
+    const server = await trackedServer({
+      persistence: new AcceptingPersistence(),
+      runHistoryService: {
+        ...runHistoryControllerFixture(),
+        detail: async () => ({ ...publicFixture, orders: { ...publicFixture.orders, records: [{ orderId: "private" }] } }) as never,
+        adminDetail: async () => ({ ...adminFixture, privateDiagnostics: "private" }) as never,
+      },
+    });
+    const publicResponse = await server.inject({ method: "GET", url: runHistoryDetailPath(fixtureIds.run) });
+    const adminResponse = await server.inject({ method: "GET", url: adminRunHistoryDetailPath(fixtureIds.run), headers: { [controlServiceTokenHeaderName]: "test-control-token" } });
+    expect(publicResponse.statusCode).toBe(500);
+    expect(adminResponse.statusCode).toBe(500);
+    expect(publicResponse.body).not.toContain("private");
+    expect(adminResponse.body).not.toContain("privateDiagnostics");
+    expect(publicResponse.headers["cache-control"]).toBe("no-store");
+    expect(adminResponse.headers["cache-control"]).toBe("no-store");
   });
 
   it("protects run history deletion and requires delete-all confirmation", async () => {

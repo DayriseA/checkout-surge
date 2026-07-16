@@ -1,8 +1,9 @@
 import { runHistoryDetailParamsSchema } from "@checkout-surge/contracts";
 import Link from "next/link";
-import { RunHistoryDetail } from "../../components/run-history-detail";
+import { AdminRunHistoryDetail, PublicRunHistoryDetail } from "../../components/run-history-detail";
 import { StatusPill } from "../../components/status-pill";
-import { getRunHistoryDetail } from "../../lib/api";
+import { getAdminRunHistoryDetail, getRunHistoryDetail } from "../../lib/api";
+import { hasValidAdminPageSession } from "../../lib/server/admin-page-session";
 
 export const dynamic = "force-dynamic";
 
@@ -16,13 +17,20 @@ export default async function RunHistoryDetailPage({ params }: RunHistoryDetailP
   const resolvedParams = await params;
   const runId = resolvedParams?.runId ?? "";
   const parsedParams = runHistoryDetailParamsSchema.safeParse({ runId });
-  const detail = parsedParams.success
-    ? await getRunHistoryDetail(parsedParams.data.runId)
-    : {
-        status: "unavailable" as const,
-        httpStatus: 404,
-        reason: "No terminal summary exists for this run.",
-      };
+  const isAdmin = await hasValidAdminPageSession();
+  const adminDetail =
+    parsedParams.success && isAdmin
+      ? await getAdminRunHistoryDetail(parsedParams.data.runId)
+      : null;
+  const publicDetail =
+    parsedParams.success && !isAdmin ? await getRunHistoryDetail(parsedParams.data.runId) : null;
+  const detail = adminDetail ??
+    publicDetail ?? {
+      status: "unavailable" as const,
+      httpStatus: 404,
+      reason: "No terminal summary exists for this run.",
+    };
+  const unavailableReason = detail.status === "unavailable" ? detail.reason : "Detail unavailable.";
 
   return (
     <>
@@ -42,8 +50,10 @@ export default async function RunHistoryDetailPage({ params }: RunHistoryDetailP
           tone={detail.status === "available" ? "ok" : "blocked"}
         />
       </header>
-      {detail.status === "available" ? (
-        <RunHistoryDetail detail={detail.data} />
+      {adminDetail?.status === "available" ? (
+        <AdminRunHistoryDetail detail={adminDetail.data} />
+      ) : publicDetail?.status === "available" ? (
+        <PublicRunHistoryDetail detail={publicDetail.data} />
       ) : (
         <section className="rounded-lg border border-border bg-surface p-4">
           <p className="m-0 text-xs font-bold uppercase text-muted">Run history detail</p>
@@ -51,7 +61,9 @@ export default async function RunHistoryDetailPage({ params }: RunHistoryDetailP
             {detail.httpStatus === 404 ? "Run not found" : "Detail unavailable"}
           </h2>
           <p className="m-0 mt-3 max-w-[66ch] text-sm font-semibold leading-6 text-danger">
-            {detail.httpStatus === 404 ? "No terminal summary exists for this run." : detail.reason}
+            {detail.httpStatus === 404
+              ? "No terminal summary exists for this run."
+              : unavailableReason}
           </p>
         </section>
       )}

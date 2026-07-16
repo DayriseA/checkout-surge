@@ -244,7 +244,7 @@ describe("dashboard backend API reads", () => {
       throw new Error("Expected available detail.");
     }
     expect(detail.data.summary.runId).toBe(runId);
-    expect(detail.data.orders.records[0]?.publicOrderId).toBe("ord_history_1");
+    expect(detail.data.orders.byStatus.confirmed).toBe(1);
   });
 });
 
@@ -256,7 +256,7 @@ function jsonResponse(payload: unknown): Response {
 }
 
 function runHistoryDetailFixture() {
-  return {
+  const admin = {
     summary: {
       id: "77777777-7777-4777-8777-777777777777",
       runId: "55555555-5555-4555-8555-555555555555",
@@ -373,5 +373,31 @@ function runHistoryDetailFixture() {
     notifications: { totalCount: 0, limit: 20, truncated: false, records: [] },
     eventTimeline: { totalCount: 0, limit: 20, truncated: false, records: [] },
     timestamp: "2026-06-20T00:00:10.000Z",
+  };
+  const { id: _id, terminalInventorySnapshot, ...summary } = admin.summary;
+  const { presetId: _presetId, saleOfferId: _saleOfferId, ...run } = admin.run;
+  const sanitizedInventory = terminalInventorySnapshot
+    ? (({ saleOfferId: _inventorySaleOfferId, source: _inventorySource, ...inventory }) => inventory)(
+        terminalInventorySnapshot,
+      )
+    : undefined;
+  const { notes: _deliveryNotes, ...publicDeliverySummary } = summary.trafficDeliverySummary;
+  return {
+    summary: {
+      ...summary,
+      trafficDeliverySummary: publicDeliverySummary,
+      ...(sanitizedInventory ? { terminalInventorySnapshot: sanitizedInventory } : {}),
+    },
+    run,
+    orders: { totalCount: 1, byStatus: { queued: 0, processing: 0, confirmed: 1, failed: 0 } },
+    erpAttempts: {
+      totalCount: 0,
+      byStatus: { succeeded: 0, failed: 0, timedOut: 0 },
+      averageLatencyMs: null,
+      p95LatencyMs: null,
+    },
+    notifications: { totalCount: 0 },
+    events: { totalCount: 0 },
+    timestamp: admin.timestamp,
   };
 }

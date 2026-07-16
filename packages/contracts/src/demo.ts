@@ -41,6 +41,7 @@ export const publicRuntimePolicyPath = "/demo/runtime-policy" as const;
 export const startDemoRunPath = "/demo/runs/start" as const;
 export const runHistoryPath = "/demo/runs/history" as const;
 export const runHistoryDetailPathTemplate = "/demo/runs/history/:runId" as const;
+export const adminRunHistoryDetailPathTemplate = "/admin/demo/runs/history/:runId" as const;
 export const adminDemoResetPath = "/admin/demo/reset" as const;
 export const adminMaintenanceCleanupRunsPath = "/admin/demo/runs/cleanup" as const;
 export const adminGeneratedRunTeardownPathTemplate = "/admin/demo/runs/:runId" as const;
@@ -54,6 +55,10 @@ export const publicVisitorIdHeaderName = "x-public-visitor-id" as const;
 
 export function runHistoryDetailPath(runId: string): string {
   return `${runHistoryPath}/${encodeURIComponent(runId)}`;
+}
+
+export function adminRunHistoryDetailPath(runId: string): string {
+  return `/admin/demo/runs/history/${encodeURIComponent(runId)}`;
 }
 
 export function adminGeneratedRunTeardownPath(runId: string): string {
@@ -370,7 +375,7 @@ const runHistoryCollectionMetadataSchema = z
   })
   .strict();
 
-export const runHistoryDetailResponseSchema = z
+export const adminRunHistoryDetailResponseSchema = z
   .object({
     summary: runHistorySummarySchema,
     run: demoRunSnapshotSchema,
@@ -397,7 +402,85 @@ export const runHistoryDetailResponseSchema = z
     timestamp: isoTimestampSchema,
   })
   .strict();
-export type RunHistoryDetailResponse = z.infer<typeof runHistoryDetailResponseSchema>;
+export type AdminRunHistoryDetailResponse = z.infer<typeof adminRunHistoryDetailResponseSchema>;
+
+const publicTerminalInventorySnapshotSchema = terminalInventorySnapshotSchema
+  .omit({ saleOfferId: true, source: true })
+  .strict();
+
+export const publicRunHistorySummarySchema = z
+  .object({
+    runId: uuidSchema,
+    presetName: z.string().trim().min(1),
+    status: demoRunStatusSchema,
+    startedAt: isoTimestampSchema.optional(),
+    endedAt: isoTimestampSchema,
+    httpSummary: trafficHttpSummarySchema,
+    trafficDeliverySummary: trafficDeliverySummarySchema.omit({ notes: true }).strict(),
+    businessOutcomeSummary: businessOutcomeSummarySchema,
+    terminalInventorySnapshot: publicTerminalInventorySnapshotSchema.optional(),
+    capturedAt: isoTimestampSchema,
+  })
+  .strict();
+export type PublicRunHistorySummary = z.infer<typeof publicRunHistorySummarySchema>;
+
+export const publicRunHistoryRunSchema = z
+  .object({
+    runId: uuidSchema,
+    presetName: z.string().trim().min(1),
+    operatorMode: operatorModeSchema,
+    status: demoRunStatusSchema,
+    trafficStatus: trafficExecutionStatusSchema,
+    configSnapshot: acceptedRunConfigSnapshotSchema,
+    startedAt: isoTimestampSchema.optional(),
+    trafficStartedAt: isoTimestampSchema.optional(),
+    trafficEndedAt: isoTimestampSchema.optional(),
+    finalizedAt: isoTimestampSchema.optional(),
+  })
+  .strict();
+export type PublicRunHistoryRun = z.infer<typeof publicRunHistoryRunSchema>;
+
+const orderStatusCountsSchema = z
+  .object({
+    queued: nonnegativeIntegerSchema,
+    processing: nonnegativeIntegerSchema,
+    confirmed: nonnegativeIntegerSchema,
+    failed: nonnegativeIntegerSchema,
+  })
+  .strict();
+const erpAttemptStatusCountsSchema = z
+  .object({
+    succeeded: nonnegativeIntegerSchema,
+    failed: nonnegativeIntegerSchema,
+    timedOut: nonnegativeIntegerSchema,
+  })
+  .strict();
+
+export const publicRunHistoryDetailResponseSchema = z
+  .object({
+    summary: publicRunHistorySummarySchema,
+    run: publicRunHistoryRunSchema,
+    orders: z
+      .object({ totalCount: nonnegativeIntegerSchema, byStatus: orderStatusCountsSchema })
+      .strict(),
+    erpAttempts: z
+      .object({
+        totalCount: nonnegativeIntegerSchema,
+        byStatus: erpAttemptStatusCountsSchema,
+        averageLatencyMs: nonnegativeNumberSchema.nullable(),
+        p95LatencyMs: nonnegativeNumberSchema.nullable(),
+      })
+      .strict(),
+    notifications: z.object({ totalCount: nonnegativeIntegerSchema }).strict(),
+    events: z.object({ totalCount: nonnegativeIntegerSchema }).strict(),
+    timestamp: isoTimestampSchema,
+  })
+  .strict();
+export type PublicRunHistoryDetailResponse = z.infer<typeof publicRunHistoryDetailResponseSchema>;
+
+// Compatibility aliases deliberately point at the narrowed anonymous DTO.
+export const runHistoryDetailResponseSchema = publicRunHistoryDetailResponseSchema;
+export type RunHistoryDetailResponse = PublicRunHistoryDetailResponse;
 
 export const publicRunBudgetSchema = z
   .object({

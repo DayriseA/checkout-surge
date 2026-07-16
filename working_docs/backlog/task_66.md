@@ -52,3 +52,30 @@ The public detail response includes row-level collections for orders, ERP attemp
 
 - In scope: shared public/admin history-detail contracts and paths, service projections/queries, API authorization split, web proxy/page/render split, fixtures/tests, and removal of anonymous row exposure.
 - Out of scope: changing run-history list visibility or pagination, redesigning terminal-summary capture, deleting/redacting persisted records, changing correlation propagation in headers/logging, altering admin deletion, adding cache infrastructure, documenting the API (task 69), or broad UI redesign. Do not copy Forge diagnostics or reservation tables into Surge merely for parity.
+
+## Implementation record
+
+- **Status:** Implemented on `dev`; review-pass 3 escalation correction is complete, and the work is ready for final independent review. No commit has been created yet.
+- **Completed scope:** Split strict public/admin contracts and paths; narrowed the compatibility alias to the public DTO; added SQL-backed public order/ERP/notification/event aggregates; retained bounded rows only in admin detail; protected the admin API route before service invocation; added a session-protected Next.js admin proxy and server-session-selected public/admin rendering; preserved anonymous URL, list/delete behavior, UUID validation, 404 errors, correlation headers, and `no-store` reads.
+- **Decisions:** The public summary and run are purpose-built projections. Public traffic delivery omits free-form `notes`; public terminal inventory omits `saleOfferId` and `source`; the run projection omits `presetId`, `saleOfferId`, and free-form failure reason. Live aggregate tables are labeled and queried consistently at request time rather than mixed with terminal snapshot counts. Closed order/ERP status objects always return every bucket. ERP average and PostgreSQL `percentile_cont(0.95)` p95 are nullable for empty sets. Fastify validates both success representations at the route boundary, and public/admin detail responses use explicit `Cache-Control: no-store` through the API and web proxy.
+- **Verification:** Initial implementation checks passed as recorded previously. Review-pass corrections added focused evidence for private delivery-note removal, exact public query shape, multi-value ERP percentile/status math, greater-than-20 admin truncation, strict public/admin route response validation, recursive anonymous denylist checks, protected admin 404/auth-before-service behavior, and API/web `no-store` headers. The exact new check outcomes are recorded after the review-pass verification run below. `test:composition` and `test:characterization` remain intentionally skipped because the task instructions prohibit them.
+- **Remaining review:** The minimum access-boundary corrections are now documented narrowly in `docs/architecture.md`, `docs/admin_access_protection.md`, and `docs/core_business_entities.md`. Task 69 remains responsible only for the broader documentation audit/rewrite. No implementation blocker remains.
+
+### Review-pass verification
+
+- `pnpm --filter @checkout-surge/contracts type-check` and `pnpm --filter @checkout-surge/contracts build`: passed.
+- `pnpm --filter api type-check` and `pnpm --filter web type-check`: passed; API type-check was repeated after generic route response-error handling was added and passed.
+- Focused contract command for the run-history contract case: 1 passed, 83 skipped.
+- Focused web command for `run-history.test.ts`, `run-history-admin-proxy.test.ts`, and `api-read-fallback.test.ts`: 15 passed.
+- `run-history-service.test.ts`: final run 9 passed, covering exact public select-call shape, private-note removal, three-point ERP aggregate/p95 math, empty metrics, and 21-row admin truncation. An initial review-pass run failed only because the expected repeating average was rounded beyond the assertion tolerance; the expectation was corrected and the file rerun successfully.
+- Focused API run-history route case: 1 passed, 79 skipped. The separately selected malformed public/admin controller-response case: final run 1 passed, 79 skipped. Intermediate runs exposed that generic Zod handling reflected rejected key names; route validation now returns a generic `500 internal_error`, and the final test proves denied keys/values are not emitted.
+- Contracts, API, and web package lint: passed. Bounded Biome checks for changed implementation/focused test files: passed; API lint and route formatting were repeated after the final response-validation change and passed.
+- Repository test PostgreSQL/Redis infrastructure was started only for the service tests and removed with volumes after each run. `test:composition` and `test:characterization` were not run, as required.
+
+### Review-pass 3 escalation correction
+
+- Removed an accidental `Cache-Control: no-store` assertion from the unrelated injected order-status correlation-ID test. The order-status route does not set that header, and production behavior was not changed.
+- Retained the intended anonymous public Run History detail success assertion for `Cache-Control: no-store` without modification.
+- `pnpm --filter api test:api test/api.test.ts -t "returns an injected order status with the current request correlation ID"`: passed (1 passed, 79 skipped).
+- An initial invocation with an extra `--` did not forward the filters to Vitest, began unrelated API files, and was terminated. Its infrastructure-dependent failures are not verification results for this correction.
+- No broader checks or Run History route test were rerun because the correction did not touch the intended Run History assertion or production behavior.
