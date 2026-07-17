@@ -165,4 +165,4 @@ Replace `⬜` with `✅` when a task is complete. Optional `⏳` for work in pro
 
 ✅ [Task 80: Scope the infra-only shutdown command to the infra services](./task_80.md)
 
-⬜ [Task 81: Compute the smoke's budget-cleanup window at consumption time](./task_81.md)
+✅ [Task 81: Compute the smoke's budget-cleanup window at consumption time](./task_81.md)
