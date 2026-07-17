@@ -159,7 +159,7 @@ Replace `⬜` with `✅` when a task is complete. Optional `⏳` for work in pro
 
 ✅ [Task 77: Bind internal traffic ingestion to the accepted run](./task_77.md)
 
-⬜ [Task 78: Enforce lifecycle coherence in boundary DTOs with discriminated unions](./task_78.md)
+✅ [Task 78: Enforce lifecycle coherence in boundary DTOs with discriminated unions](./task_78.md)
 
 ⬜ [Task 79: Bound process-local run state (mock-ERP ledger, run semaphores)](./task_79.md)
 

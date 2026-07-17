@@ -23,7 +23,7 @@ const record = {
   response: {
     status: "succeeded" as const,
     confirmationId: "erp-confirmation",
-    httpStatus: 200,
+    httpStatus: 200 as const,
     latencyMs: 4,
     timestamp: "2026-06-22T00:00:00.004Z",
   },

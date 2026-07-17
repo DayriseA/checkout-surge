@@ -363,6 +363,7 @@ function runFixture(
     trafficStatus: "active",
     saleOfferId: "44444444-4444-4444-8444-444444444444",
     startedAt,
+    trafficStartedAt: startedAt,
     configSnapshot: {
       trafficConfig: {
         mode: "buyer-spike",

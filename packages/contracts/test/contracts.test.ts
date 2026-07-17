@@ -27,6 +27,7 @@ import {
   buyResponseSchema,
   collectAcceptedRunConfigSnapshotViolations,
   collectPublicRuntimePolicyViolations,
+  completionOutcomeSchema,
   controlServiceTokenHeaderName,
   dashboardEventSchema,
   dashboardEventsPath,
@@ -536,6 +537,197 @@ describe("run lifecycle contracts", () => {
     ).toThrow();
   });
 
+  it("binds demo-run lifecycle states to their legal timestamp shapes", () => {
+    const baseRun = {
+      runId,
+      presetId: "22222222-2222-4222-8222-222222222222",
+      presetName: "Preview 1k",
+      operatorMode: "public",
+      saleOfferId,
+      configSnapshot: acceptedRunSnapshot(),
+      startedAt: timestamp,
+    };
+    const trafficStartedAt = "2026-06-20T12:00:01.000Z";
+    const trafficEndedAt = "2026-06-20T12:00:02.000Z";
+    const finalizedAt = "2026-06-20T12:00:03.000Z";
+    const legalSnapshots = [
+      { ...baseRun, status: "starting", trafficStatus: "starting" },
+      { ...baseRun, status: "active", trafficStatus: "active", trafficStartedAt },
+      {
+        ...baseRun,
+        status: "draining",
+        trafficStatus: "succeeded",
+        trafficStartedAt,
+        trafficEndedAt,
+      },
+      {
+        ...baseRun,
+        status: "completed",
+        trafficStatus: "succeeded",
+        trafficStartedAt,
+        trafficEndedAt,
+        finalizedAt,
+      },
+      {
+        ...baseRun,
+        status: "failed",
+        trafficStatus: "failed",
+        finalizedAt,
+        failureReason: "traffic_start_failed",
+      },
+      {
+        ...baseRun,
+        status: "failed",
+        trafficStatus: "failed",
+        trafficStartedAt,
+        finalizedAt,
+        failureReason: "admin_reset",
+      },
+      {
+        ...baseRun,
+        status: "failed",
+        trafficStatus: "succeeded",
+        trafficStartedAt,
+        trafficEndedAt,
+        finalizedAt,
+        failureReason: "business_drain_timeout",
+      },
+    ];
+
+    for (const snapshot of legalSnapshots) {
+      expect(demoRunSnapshotSchema.safeParse(snapshot).success).toBe(true);
+    }
+
+    const incoherentSnapshots = [
+      { ...baseRun, status: "starting", trafficStatus: "starting", trafficStartedAt },
+      { ...baseRun, status: "active", trafficStatus: "active" },
+      {
+        ...baseRun,
+        status: "draining",
+        trafficStatus: "succeeded",
+        trafficStartedAt,
+      },
+      {
+        ...baseRun,
+        status: "completed",
+        trafficStatus: "succeeded",
+        trafficStartedAt,
+        trafficEndedAt,
+      },
+      {
+        ...baseRun,
+        status: "completed",
+        trafficStatus: "succeeded",
+        trafficStartedAt,
+        trafficEndedAt,
+        finalizedAt,
+        failureReason: "not_legal_on_success",
+      },
+      {
+        ...baseRun,
+        status: "failed",
+        trafficStatus: "failed",
+        trafficEndedAt,
+        finalizedAt,
+        failureReason: "missing_traffic_start",
+      },
+      {
+        ...baseRun,
+        status: "failed",
+        trafficStatus: "succeeded",
+        finalizedAt,
+        failureReason: "missing_traffic_timestamps",
+      },
+    ];
+
+    for (const snapshot of incoherentSnapshots) {
+      expect(demoRunSnapshotSchema.safeParse(snapshot).success).toBe(false);
+    }
+  });
+
+  it("binds completion outcomes to status-specific timestamps", () => {
+    const baseOutcome = {
+      orderId: "11111111-1111-4111-8111-111111111111",
+      publicOrderId: "ord_completion",
+      saleOfferId,
+      runId,
+      correlationId,
+      queuedAt: timestamp,
+      latestEventAt: timestamp,
+    };
+    const processingAt = "2026-06-20T12:00:01.000Z";
+    const terminalAt = "2026-06-20T12:00:02.000Z";
+    const legalOutcomes = [
+      { ...baseOutcome, orderStatus: "queued", displayStatus: "delayed" },
+      {
+        ...baseOutcome,
+        orderStatus: "processing",
+        displayStatus: "retrying",
+        processingAt,
+        latestErpAttemptStatus: "timed_out",
+      },
+      {
+        ...baseOutcome,
+        orderStatus: "confirmed",
+        displayStatus: "notification_recorded",
+        processingAt,
+        confirmedAt: terminalAt,
+        notificationRecordedAt: terminalAt,
+        latestErpAttemptStatus: "succeeded",
+      },
+      {
+        ...baseOutcome,
+        orderStatus: "failed",
+        displayStatus: "failed",
+        processingAt,
+        failedAt: terminalAt,
+        latestErpAttemptStatus: "failed",
+      },
+    ];
+
+    for (const outcome of legalOutcomes) {
+      expect(completionOutcomeSchema.safeParse(outcome).success).toBe(true);
+    }
+
+    const incoherentOutcomes = [
+      { ...baseOutcome, orderStatus: "queued", displayStatus: "queued", processingAt },
+      { ...baseOutcome, orderStatus: "processing", displayStatus: "processing" },
+      {
+        ...baseOutcome,
+        orderStatus: "processing",
+        displayStatus: "retrying",
+        processingAt,
+        failedAt: terminalAt,
+      },
+      {
+        ...baseOutcome,
+        orderStatus: "confirmed",
+        displayStatus: "confirmed",
+        processingAt,
+        confirmedAt: terminalAt,
+        notificationRecordedAt: terminalAt,
+      },
+      {
+        ...baseOutcome,
+        orderStatus: "confirmed",
+        displayStatus: "notification_recorded",
+        processingAt,
+        confirmedAt: terminalAt,
+      },
+      {
+        ...baseOutcome,
+        orderStatus: "failed",
+        displayStatus: "confirmed",
+        processingAt,
+        failedAt: terminalAt,
+      },
+    ];
+
+    for (const outcome of incoherentOutcomes) {
+      expect(completionOutcomeSchema.safeParse(outcome).success).toBe(false);
+    }
+  });
+
   it("accepts unclassified completion evidence but requires status in stored history", () => {
     const evidence = {
       plannedRequests: 10,
@@ -927,6 +1119,42 @@ describe("ERP contracts", () => {
         timestamp,
       }),
     ).toThrow();
+
+    const incoherentResponses = [
+      {
+        status: "succeeded",
+        httpStatus: 200,
+        latencyMs: 15,
+        timestamp,
+      },
+      {
+        status: "succeeded",
+        confirmationId: "erp_confirmation_test",
+        httpStatus: 200,
+        errorCode: "unexpected_error",
+        latencyMs: 15,
+        timestamp,
+      },
+      {
+        status: "failed",
+        confirmationId: "erp_confirmation_test",
+        httpStatus: 503,
+        errorCode: "erp_unavailable",
+        errorMessage: "The ERP is temporarily unavailable.",
+        latencyMs: 25,
+        timestamp,
+      },
+      {
+        status: "failed",
+        httpStatus: 503,
+        errorCode: "erp_unavailable",
+        latencyMs: 25,
+        timestamp,
+      },
+    ];
+    for (const response of incoherentResponses) {
+      expect(erpConfirmationResponseSchema.safeParse(response).success).toBe(false);
+    }
   });
 
   it("defines chaos control paths and service-token header", () => {
@@ -1319,6 +1547,8 @@ describe("buy and dashboard contracts", () => {
       trafficStatus: "active" as const,
       saleOfferId,
       configSnapshot: acceptedRunSnapshot(),
+      startedAt: timestamp,
+      trafficStartedAt: timestamp,
     };
     expect(dashboardEventSchema.parse({
       type: "load.run.updated",

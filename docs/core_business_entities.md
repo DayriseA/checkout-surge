@@ -318,6 +318,7 @@ Notes:
 
 - The unique idempotency key is authoritative across Mock ERP processes; an in-process single-flight map is only a fast coalescing path.
 - Failed/transient decisions are not cached, so a later delivery can retry.
+- The worker-facing confirmation response is a strict status-discriminated contract. A successful response carries a non-empty `confirmationId` and HTTP status `200`, with no error metadata. A failed response carries a `4xx` or `5xx` HTTP status plus non-empty error code and message, with no confirmation ID.
 
 ### 8. OrderRecoveryJob
 
@@ -468,6 +469,7 @@ Notes:
 - A hand-authored PostgreSQL partial unique index permits at most one `starting`, `active`, or `draining` run even when concurrent callers bypass the API's fast overlap check.
 - Lifecycle changes use expected-status compare-and-set transitions. Traffic-start acknowledgement can move only `starting -> active`; a late acknowledgement reads the authoritative winner and cannot resurrect a draining or terminal run.
 - A `starting` row is a durable traffic intent. The API poller replays its exact ID and immutable snapshot against the load orchestrator's journal after ambiguous start outcomes or API restart.
+- Boundary snapshots encode the lifecycle as a strict status-discriminated union. `starting` has no traffic timestamps; `active` requires `trafficStartedAt`; `draining` requires both traffic timestamps; and `completed` additionally requires `finalizedAt` while forbidding a failure reason. A failed snapshot always requires `finalizedAt` and `failureReason`, but legally may have no traffic timestamps when startup failed, only `trafficStartedAt` when an active run was reset, or both traffic timestamps after completion evidence. Failed API finalization may retain either succeeded or failed terminal traffic status because business draining can fail after traffic itself succeeded.
 
 ### 13. DemoRunSaleContext
 
@@ -815,6 +817,8 @@ The canonical persistence states remain small:
 - order: `queued`, `processing`, `confirmed`, `failed`
 
 The operator dashboard and run summaries should expose these states in both aggregate and drill-down form.
+
+The recent completion-outcome DTO is also status-discriminated. Every outcome has `queuedAt`; processing and terminal outcomes require `processingAt`; confirmed and failed outcomes require only their matching terminal timestamp and forbid the opposite one. Notification display state and `notificationRecordedAt` occur together only on confirmed outcomes. This keeps the dashboard projection aligned with the durable producer rather than accepting timestamps from a later or contradictory lifecycle state.
 
 ### Simulated Purchase Status Model
 

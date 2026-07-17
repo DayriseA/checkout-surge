@@ -29,6 +29,7 @@ import {
   dashboardEventsPath,
   dashboardRecoveryResponseSchema,
   demoRunOperatorModeHeaderName,
+  demoRunSnapshotSchema,
   type ErpResilienceStatus,
   emptyHttpTimingBreakdownSummary,
   erpResilienceStatusPath,
@@ -603,13 +604,14 @@ function adminRunHistoryDetailResponseFixture(): AdminRunHistoryDetailResponse {
 
   return {
     summary,
-    run: {
+    run: demoRunSnapshotSchema.parse({
       ...demoRunSnapshotFixture(),
       status: "completed",
       trafficStatus: "succeeded",
+      trafficStartedAt: "2026-06-20T00:00:00.000Z",
       trafficEndedAt: "2026-06-20T00:00:10.000Z",
       finalizedAt: "2026-06-20T00:00:10.000Z",
-    },
+    }),
     orders: {
       totalCount: 1,
       limit: 20,

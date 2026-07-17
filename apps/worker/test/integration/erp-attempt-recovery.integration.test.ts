@@ -115,7 +115,7 @@ run("PostgreSQL ERP attempt delivery identity", () => {
     const response = {
       status: "succeeded" as const,
       confirmationId: "recovery-confirmation",
-      httpStatus: 200,
+      httpStatus: 200 as const,
       latencyMs: 1,
       timestamp: "2026-06-22T00:00:02.000Z",
     };
@@ -172,7 +172,7 @@ run("PostgreSQL ERP attempt delivery identity", () => {
       response: {
         status: "succeeded" as const,
         confirmationId: "one",
-        httpStatus: 200,
+        httpStatus: 200 as const,
         latencyMs: 1,
         timestamp: "2026-06-22T00:00:02.000Z",
       },

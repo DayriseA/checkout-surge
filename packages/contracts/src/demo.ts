@@ -114,23 +114,96 @@ export const startDemoRunRequestSchema = z
   .strict();
 export type StartDemoRunRequest = z.infer<typeof startDemoRunRequestSchema>;
 
-export const demoRunSnapshotSchema = z
+const demoRunSnapshotBaseShape = {
+  runId: uuidSchema,
+  presetId: uuidSchema,
+  presetName: z.string().trim().min(1),
+  operatorMode: operatorModeSchema,
+  saleOfferId: uuidSchema.optional(),
+  configSnapshot: acceptedRunConfigSnapshotSchema,
+  startedAt: isoTimestampSchema,
+};
+
+const nonterminalDemoRunSnapshotShape = {
+  finalizedAt: z.never().optional(),
+  failureReason: z.never().optional(),
+};
+
+const failedDemoRunSnapshotSchema = z
   .object({
-    runId: uuidSchema,
-    presetId: uuidSchema,
-    presetName: z.string().trim().min(1),
-    operatorMode: operatorModeSchema,
-    status: demoRunStatusSchema,
-    trafficStatus: trafficExecutionStatusSchema,
-    saleOfferId: uuidSchema.optional(),
-    configSnapshot: acceptedRunConfigSnapshotSchema,
-    startedAt: isoTimestampSchema.optional(),
+    ...demoRunSnapshotBaseShape,
+    status: z.literal("failed"),
+    trafficStatus: z.enum(["succeeded", "failed"]),
     trafficStartedAt: isoTimestampSchema.optional(),
     trafficEndedAt: isoTimestampSchema.optional(),
-    finalizedAt: isoTimestampSchema.optional(),
-    failureReason: z.string().trim().min(1).optional(),
+    finalizedAt: isoTimestampSchema,
+    failureReason: z.string().trim().min(1),
   })
-  .strict();
+  .strict()
+  .superRefine((run, context) => {
+    if (run.trafficEndedAt !== undefined && run.trafficStartedAt === undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["trafficStartedAt"],
+        message: "A traffic start timestamp is required when traffic has ended.",
+      });
+    }
+    if (
+      run.trafficStatus === "succeeded" &&
+      (run.trafficStartedAt === undefined || run.trafficEndedAt === undefined)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["trafficStatus"],
+        message: "Succeeded traffic requires both traffic lifecycle timestamps.",
+      });
+    }
+  });
+
+export const demoRunSnapshotSchema = z.discriminatedUnion("status", [
+  z
+    .object({
+      ...demoRunSnapshotBaseShape,
+      ...nonterminalDemoRunSnapshotShape,
+      status: z.literal("starting"),
+      trafficStatus: z.literal("starting"),
+      trafficStartedAt: z.never().optional(),
+      trafficEndedAt: z.never().optional(),
+    })
+    .strict(),
+  z
+    .object({
+      ...demoRunSnapshotBaseShape,
+      ...nonterminalDemoRunSnapshotShape,
+      status: z.literal("active"),
+      trafficStatus: z.enum(["starting", "active"]),
+      trafficStartedAt: isoTimestampSchema,
+      trafficEndedAt: z.never().optional(),
+    })
+    .strict(),
+  z
+    .object({
+      ...demoRunSnapshotBaseShape,
+      ...nonterminalDemoRunSnapshotShape,
+      status: z.literal("draining"),
+      trafficStatus: z.enum(["succeeded", "failed"]),
+      trafficStartedAt: isoTimestampSchema,
+      trafficEndedAt: isoTimestampSchema,
+    })
+    .strict(),
+  z
+    .object({
+      ...demoRunSnapshotBaseShape,
+      status: z.literal("completed"),
+      trafficStatus: z.literal("succeeded"),
+      trafficStartedAt: isoTimestampSchema,
+      trafficEndedAt: isoTimestampSchema,
+      finalizedAt: isoTimestampSchema,
+      failureReason: z.never().optional(),
+    })
+    .strict(),
+  failedDemoRunSnapshotSchema,
+]);
 export type DemoRunSnapshot = z.infer<typeof demoRunSnapshotSchema>;
 
 export const startDemoRunResponseSchema = z
@@ -183,28 +256,78 @@ export const completionOutcomeStatusValues = [
 export const completionOutcomeStatusSchema = z.enum(completionOutcomeStatusValues);
 export type CompletionOutcomeStatus = z.infer<typeof completionOutcomeStatusSchema>;
 
-const completionOutcomeOrderStatusSchema = z.enum(["queued", "processing", "confirmed", "failed"]);
 const completionOutcomeErpAttemptStatusSchema = z.enum(["succeeded", "failed", "timed_out"]);
 
-export const completionOutcomeSchema = z
-  .object({
-    orderId: uuidSchema,
-    publicOrderId: z.string().trim().min(1),
-    saleOfferId: uuidSchema,
-    runId: uuidSchema.optional(),
-    correlationId: correlationIdSchema,
-    orderStatus: completionOutcomeOrderStatusSchema,
-    displayStatus: completionOutcomeStatusSchema,
-    queuedAt: isoTimestampSchema,
-    processingAt: isoTimestampSchema.optional(),
-    confirmedAt: isoTimestampSchema.optional(),
-    failedAt: isoTimestampSchema.optional(),
-    notificationRecordedAt: isoTimestampSchema.optional(),
-    latestErpAttemptStatus: completionOutcomeErpAttemptStatusSchema.optional(),
-    latestErpErrorCode: z.string().trim().min(1).optional(),
-    latestEventAt: isoTimestampSchema,
-  })
-  .strict();
+const completionOutcomeBaseShape = {
+  orderId: uuidSchema,
+  publicOrderId: z.string().trim().min(1),
+  saleOfferId: uuidSchema,
+  runId: uuidSchema.optional(),
+  correlationId: correlationIdSchema,
+  queuedAt: isoTimestampSchema,
+  latestErpAttemptStatus: completionOutcomeErpAttemptStatusSchema.optional(),
+  latestErpErrorCode: z.string().trim().min(1).optional(),
+  latestEventAt: isoTimestampSchema,
+};
+
+export const completionOutcomeSchema = z.discriminatedUnion("orderStatus", [
+  z
+    .object({
+      ...completionOutcomeBaseShape,
+      orderStatus: z.literal("queued"),
+      displayStatus: z.enum(["queued", "delayed"]),
+      processingAt: z.never().optional(),
+      confirmedAt: z.never().optional(),
+      failedAt: z.never().optional(),
+      notificationRecordedAt: z.never().optional(),
+    })
+    .strict(),
+  z
+    .object({
+      ...completionOutcomeBaseShape,
+      orderStatus: z.literal("processing"),
+      displayStatus: z.enum(["processing", "delayed", "retrying"]),
+      processingAt: isoTimestampSchema,
+      confirmedAt: z.never().optional(),
+      failedAt: z.never().optional(),
+      notificationRecordedAt: z.never().optional(),
+    })
+    .strict(),
+  z
+    .object({
+      ...completionOutcomeBaseShape,
+      orderStatus: z.literal("confirmed"),
+      displayStatus: z.enum(["confirmed", "notification_recorded"]),
+      processingAt: isoTimestampSchema,
+      confirmedAt: isoTimestampSchema,
+      failedAt: z.never().optional(),
+      notificationRecordedAt: isoTimestampSchema.optional(),
+    })
+    .strict()
+    .superRefine((outcome, context) => {
+      if (
+        (outcome.displayStatus === "notification_recorded") !==
+        (outcome.notificationRecordedAt !== undefined)
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["notificationRecordedAt"],
+          message: "Notification status and timestamp must be present together.",
+        });
+      }
+    }),
+  z
+    .object({
+      ...completionOutcomeBaseShape,
+      orderStatus: z.literal("failed"),
+      displayStatus: z.literal("failed"),
+      processingAt: isoTimestampSchema,
+      confirmedAt: z.never().optional(),
+      failedAt: isoTimestampSchema,
+      notificationRecordedAt: z.never().optional(),
+    })
+    .strict(),
+]);
 export type CompletionOutcome = z.infer<typeof completionOutcomeSchema>;
 
 export const dashboardRecoveryResponseSchema = z

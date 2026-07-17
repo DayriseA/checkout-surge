@@ -1,11 +1,12 @@
-import type {
-  AdminPresetListResponse,
-  AdminPublicRuntimePolicyResponse,
-  DashboardRecoveryResponse,
-  DemoPresetContract,
-  ErpChaosStatus,
-  PublicPresetListResponse,
-  PublicRuntimePolicyResponse,
+import {
+  type AdminPresetListResponse,
+  type AdminPublicRuntimePolicyResponse,
+  type DashboardRecoveryResponse,
+  demoRunSnapshotSchema,
+  type DemoPresetContract,
+  type ErpChaosStatus,
+  type PublicPresetListResponse,
+  type PublicRuntimePolicyResponse,
 } from "@checkout-surge/contracts";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -249,7 +250,7 @@ function recoveryFixture(
 }
 
 function runFixture(status: "active" | "draining"): DashboardRecoveryResponse["currentRun"] {
-  return {
+  return demoRunSnapshotSchema.parse({
     runId: "11111111-1111-4111-8111-111111111111",
     presetId: "22222222-2222-4222-8222-222222222222",
     presetName: "Preview 1k",
@@ -259,7 +260,11 @@ function runFixture(status: "active" | "draining"): DashboardRecoveryResponse["c
     configSnapshot: configSnapshotFixture(),
     saleOfferId: "33333333-3333-4333-8333-333333333333",
     startedAt: "2026-06-20T00:00:00.000Z",
-  };
+    trafficStartedAt: "2026-06-20T00:00:00.000Z",
+    ...(status === "draining"
+      ? { trafficEndedAt: "2026-06-20T00:00:10.000Z" }
+      : {}),
+  });
 }
 
 function erpChaosFixture(): ErpChaosStatus {

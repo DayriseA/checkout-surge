@@ -1,9 +1,10 @@
-import type {
-  DashboardEvent,
-  DashboardRecoveryResponse,
-  OrderConsistencyLagDashboardEvent,
-  OrderStatusDashboardEvent,
-  RunDashboardEvent,
+import {
+  type DashboardEvent,
+  type DashboardRecoveryResponse,
+  demoRunSnapshotSchema,
+  type OrderConsistencyLagDashboardEvent,
+  type OrderStatusDashboardEvent,
+  type RunDashboardEvent,
 } from "@checkout-surge/contracts";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -133,6 +134,9 @@ describe("Phase 6 dashboard behavior", () => {
   it("uses exact recovered status timestamps and retains the newest 20 actual transitions", () => {
     const baseOutcome = recoveryFixture().recentCompletionOutcomes[0];
     if (!baseOutcome) throw new Error("Expected a completion outcome fixture.");
+    if (baseOutcome.orderStatus !== "confirmed") {
+      throw new Error("Expected a confirmed completion outcome fixture.");
+    }
     const outcomes = Array.from({ length: 21 }, (_, offset) => {
       const sequence = 21 - offset;
       return {
@@ -165,11 +169,50 @@ describe("Phase 6 dashboard behavior", () => {
   it("reconciles each recovery lifecycle state from its status-specific durable timestamp", () => {
     const baseOutcome = recoveryFixture().recentCompletionOutcomes[0];
     if (!baseOutcome) throw new Error("Expected a completion outcome fixture.");
+    const commonOutcome = {
+      publicOrderId: baseOutcome.publicOrderId,
+      saleOfferId: baseOutcome.saleOfferId,
+      ...(baseOutcome.runId ? { runId: baseOutcome.runId } : {}),
+      correlationId: baseOutcome.correlationId,
+    };
     const outcomes: DashboardRecoveryResponse["recentCompletionOutcomes"] = [
-      { ...baseOutcome, orderId: uuidFor(7_001), orderStatus: "queued", queuedAt: "2026-06-20T00:00:01.000Z", latestEventAt: "2026-06-20T00:01:01.000Z" },
-      { ...baseOutcome, orderId: uuidFor(7_002), orderStatus: "processing", processingAt: "2026-06-20T00:00:02.000Z", latestEventAt: "2026-06-20T00:01:02.000Z" },
-      { ...baseOutcome, orderId: uuidFor(7_003), orderStatus: "confirmed", confirmedAt: "2026-06-20T00:00:03.000Z", latestEventAt: "2026-06-20T00:01:03.000Z" },
-      { ...baseOutcome, orderId: uuidFor(7_004), orderStatus: "failed", failedAt: "2026-06-20T00:00:04.000Z", latestEventAt: "2026-06-20T00:01:04.000Z" },
+      {
+        ...commonOutcome,
+        orderId: uuidFor(7_001),
+        orderStatus: "queued",
+        displayStatus: "queued",
+        queuedAt: "2026-06-20T00:00:01.000Z",
+        latestEventAt: "2026-06-20T00:01:01.000Z",
+      },
+      {
+        ...commonOutcome,
+        orderId: uuidFor(7_002),
+        orderStatus: "processing",
+        displayStatus: "processing",
+        queuedAt: "2026-06-20T00:00:01.000Z",
+        processingAt: "2026-06-20T00:00:02.000Z",
+        latestEventAt: "2026-06-20T00:01:02.000Z",
+      },
+      {
+        ...commonOutcome,
+        orderId: uuidFor(7_003),
+        orderStatus: "confirmed",
+        displayStatus: "confirmed",
+        queuedAt: "2026-06-20T00:00:01.000Z",
+        processingAt: "2026-06-20T00:00:02.000Z",
+        confirmedAt: "2026-06-20T00:00:03.000Z",
+        latestEventAt: "2026-06-20T00:01:03.000Z",
+      },
+      {
+        ...commonOutcome,
+        orderId: uuidFor(7_004),
+        orderStatus: "failed",
+        displayStatus: "failed",
+        queuedAt: "2026-06-20T00:00:01.000Z",
+        processingAt: "2026-06-20T00:00:02.000Z",
+        failedAt: "2026-06-20T00:00:04.000Z",
+        latestEventAt: "2026-06-20T00:01:04.000Z",
+      },
     ];
 
     const states = createDashboardState(availableRecovery({
@@ -929,6 +972,7 @@ function runFixture() {
     },
     saleOfferId: "33333333-3333-4333-8333-333333333333",
     startedAt: "2026-06-20T00:00:00.000Z",
+    trafficStartedAt: "2026-06-20T00:00:00.000Z",
   };
 }
 
@@ -945,19 +989,37 @@ function runEventFixture(
   status: "starting" | "active" | "draining" | "completed" | "failed",
   run: ReturnType<typeof runFixture> = runFixture(),
 ): RunDashboardEvent {
+  const { trafficStartedAt, ...baseRun } = run;
+  const trafficEndedAt = "2026-06-20T00:00:11.000Z";
+  const finalizedAt = "2026-06-20T00:00:12.000Z";
+  const lifecycle =
+    status === "starting"
+      ? { status, trafficStatus: "starting" as const }
+      : status === "active"
+        ? { status, trafficStatus: "active" as const, trafficStartedAt }
+        : status === "draining"
+          ? { status, trafficStatus: "succeeded" as const, trafficStartedAt, trafficEndedAt }
+          : status === "completed"
+            ? {
+                status,
+                trafficStatus: "succeeded" as const,
+                trafficStartedAt,
+                trafficEndedAt,
+                finalizedAt,
+              }
+            : {
+                status,
+                trafficStatus: "succeeded" as const,
+                trafficStartedAt,
+                trafficEndedAt,
+                finalizedAt,
+                failureReason: "traffic_failed",
+              };
   return {
     type: "load.run.updated",
     runId: run.runId,
     correlationId: "corr-web-live",
-    run: {
-      ...run,
-      status,
-      trafficStatus: status === "completed" || status === "failed" ? "succeeded" : "active",
-      ...(status === "completed" || status === "failed"
-        ? { finalizedAt: "2026-06-20T00:00:12.000Z" }
-        : {}),
-      ...(status === "failed" ? { failureReason: "traffic_failed" } : {}),
-    },
+    run: demoRunSnapshotSchema.parse({ ...baseRun, ...lifecycle }),
     occurredAt: "2026-06-20T00:00:12.000Z",
   };
 }

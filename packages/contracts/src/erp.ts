@@ -45,17 +45,33 @@ export const erpConfirmationResponseStatusValues = ["succeeded", "failed"] as co
 export const erpConfirmationResponseStatusSchema = z.enum(erpConfirmationResponseStatusValues);
 export type ErpConfirmationResponseStatus = z.infer<typeof erpConfirmationResponseStatusSchema>;
 
-export const erpConfirmationResponseSchema = z
-  .object({
-    status: erpConfirmationResponseStatusSchema,
-    confirmationId: z.string().trim().min(1).optional(),
-    httpStatus: z.number().int().min(100).max(599).optional(),
-    errorCode: z.string().trim().min(1).optional(),
-    errorMessage: z.string().trim().min(1).optional(),
-    latencyMs: nonnegativeNumberSchema,
-    timestamp: isoTimestampSchema,
-  })
-  .strict();
+const erpConfirmationResponseBaseShape = {
+  latencyMs: nonnegativeNumberSchema,
+  timestamp: isoTimestampSchema,
+};
+
+export const erpConfirmationResponseSchema = z.discriminatedUnion("status", [
+  z
+    .object({
+      ...erpConfirmationResponseBaseShape,
+      status: z.literal("succeeded"),
+      confirmationId: z.string().trim().min(1),
+      httpStatus: z.literal(200),
+      errorCode: z.never().optional(),
+      errorMessage: z.never().optional(),
+    })
+    .strict(),
+  z
+    .object({
+      ...erpConfirmationResponseBaseShape,
+      status: z.literal("failed"),
+      confirmationId: z.never().optional(),
+      httpStatus: z.number().int().min(400).max(599),
+      errorCode: z.string().trim().min(1),
+      errorMessage: z.string().trim().min(1),
+    })
+    .strict(),
+]);
 export type ErpConfirmationResponse = z.infer<typeof erpConfirmationResponseSchema>;
 
 export const erpChaosStatusSchema = erpChaosConfigSchema

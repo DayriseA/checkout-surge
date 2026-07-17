@@ -1,22 +1,23 @@
 // @vitest-environment jsdom
 
-import type {
-  AcceptedRunConfigSnapshot,
-  AdminPresetListResponse,
-  AdminPublicRuntimePolicyResponse,
-  DashboardEvent,
-  DashboardRecoveryResponse,
-  DemoPresetContract,
-  DemoRunSnapshot,
-  ErpChaosStatus,
-  HealthResponse,
-  LivenessResponse,
-  PublicPresetListResponse,
-  PublicRuntimePolicy,
-  PublicRuntimePolicyResponse,
-  RunHistoryDetailResponse,
-  RunHistoryListResponse,
-  RunHistorySummary,
+import {
+  type AcceptedRunConfigSnapshot,
+  type AdminPresetListResponse,
+  type AdminPublicRuntimePolicyResponse,
+  type DashboardEvent,
+  type DashboardRecoveryResponse,
+  type DemoPresetContract,
+  type DemoRunSnapshot,
+  demoRunSnapshotSchema,
+  type ErpChaosStatus,
+  type HealthResponse,
+  type LivenessResponse,
+  type PublicPresetListResponse,
+  type PublicRuntimePolicy,
+  type PublicRuntimePolicyResponse,
+  type RunHistoryDetailResponse,
+  type RunHistoryListResponse,
+  type RunHistorySummary,
 } from "@checkout-surge/contracts";
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -651,19 +652,33 @@ function configSnapshotFixture(): AcceptedRunConfigSnapshot {
 }
 
 function demoRunFixture(overrides: Partial<DemoRunSnapshot> = {}): DemoRunSnapshot {
-  return {
+  const status = overrides.status ?? "active";
+  return demoRunSnapshotSchema.parse({
     runId: "55555555-5555-4555-8555-555555555555",
     presetId: "33333333-3333-4333-8333-333333333331",
     presetName: "Preview 1k",
     operatorMode: "public",
-    status: "active",
-    trafficStatus: "active",
+    status,
+    trafficStatus:
+      status === "starting"
+        ? "starting"
+        : status === "active"
+          ? "active"
+          : "succeeded",
     saleOfferId: "22222222-2222-4222-8222-222222222222",
     configSnapshot: configSnapshotFixture(),
     startedAt: "2026-06-20T00:00:10.000Z",
-    trafficStartedAt: "2026-06-20T00:00:10.000Z",
+    ...(status === "starting" ? {} : { trafficStartedAt: "2026-06-20T00:00:10.000Z" }),
+    ...(status === "draining" ? { trafficEndedAt: "2026-06-20T00:00:11.000Z" } : {}),
+    ...(status === "completed" || status === "failed"
+      ? {
+          trafficEndedAt: "2026-06-20T00:00:11.000Z",
+          finalizedAt: "2026-06-20T00:00:12.000Z",
+        }
+      : {}),
+    ...(status === "failed" ? { failureReason: "traffic_failed" } : {}),
     ...overrides,
-  };
+  });
 }
 
 function runCompletedEventFixture(): DashboardEvent {

@@ -443,13 +443,11 @@ function recoveredOrderStatusOccurredAt(
     case "queued":
       return outcome.queuedAt;
     case "processing":
-      // processingAt is optional in the recovery contract. queuedAt is a conservative fallback:
-      // it cannot make an incomplete processing record appear newer than its actual transition.
-      return outcome.processingAt ?? outcome.queuedAt;
+      return outcome.processingAt;
     case "confirmed":
-      return outcome.confirmedAt ?? null;
+      return outcome.confirmedAt;
     case "failed":
-      return outcome.failedAt ?? null;
+      return outcome.failedAt;
   }
 }
 

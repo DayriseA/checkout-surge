@@ -636,6 +636,7 @@ function runFixture(): DashboardRecoveryResponse["currentRun"] {
     configSnapshot: presetFixture(),
     saleOfferId: "33333333-3333-4333-8333-333333333333",
     startedAt: "2026-06-20T00:00:00.000Z",
+    trafficStartedAt: "2026-06-20T00:00:00.000Z",
   };
 }
 
