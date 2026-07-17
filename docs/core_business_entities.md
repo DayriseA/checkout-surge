@@ -317,6 +317,7 @@ Implemented fields:
 Notes:
 
 - The unique idempotency key is authoritative across Mock ERP processes; an in-process single-flight map is only a fast coalescing path.
+- A generated run's successful results remain replayable for the full lifetime of its orders. Targeted teardown and broad retention remove those results by external `orderId` in the same transaction as the terminal generated-run graph, before deleting the orders; unrelated run and catalog results are preserved.
 - Failed/transient decisions are not cached, so a later delivery can retry.
 - The worker-facing confirmation response is a strict status-discriminated contract. A successful response carries a non-empty `confirmationId` and HTTP status `200`, with no error metadata. A failed response carries a `4xx` or `5xx` HTTP status plus non-empty error code and message, with no confirmation ID.
 

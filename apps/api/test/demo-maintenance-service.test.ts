@@ -19,6 +19,7 @@ import {
   demoRuns,
   demoRunTeardownReceipts,
   erpAttempts,
+  erpConfirmationResults,
   initializeInventory,
   inventoryKeys,
   isRunSaleEligible,
@@ -70,6 +71,8 @@ const ids = {
   completedOffer: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb4",
   failedOffer: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb5",
   catalogOffer: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb6",
+  catalogReservation: "77777777-7777-4777-8777-777777777773",
+  catalogOrder: "88888888-8888-4888-8888-888888888883",
   activeReservation: "77777777-7777-4777-8777-777777777771",
   completedReservation: "77777777-7777-4777-8777-777777777772",
   activeOrder: "88888888-8888-4888-8888-888888888881",
@@ -124,7 +127,30 @@ describe("demo maintenance service", () => {
       failureReason: null,
       runInventoryStatus: "closed",
     });
+    await seedRun(db, redisClient, {
+      runId: ids.activeRun,
+      saleOfferId: ids.activeOffer,
+      status: "active",
+      trafficStatus: "active",
+      failureReason: null,
+      runInventoryStatus: "accepting",
+    });
+    await seedActiveRunBusinessState(db, redisClient);
+    await seedCatalogReferencedTerminalRun(db);
+    await seedCatalogOrder(db);
     await seedCleanupDurableGraph(db);
+    await seedConfirmationResult(db, {
+      orderId: ids.completedOrder,
+      idempotencyKey: "cleanup-target-confirmation",
+    });
+    await seedConfirmationResult(db, {
+      orderId: ids.activeOrder,
+      idempotencyKey: "cleanup-other-run-confirmation",
+    });
+    await seedConfirmationResult(db, {
+      orderId: ids.catalogOrder,
+      idempotencyKey: "cleanup-catalog-confirmation",
+    });
     await redisClient.set(`demo-run:${ids.completedRun}:traffic-metrics`, "metric");
     const preflightGeneratedRun = vi.fn(async () => undefined);
     const cleanGeneratedRun = vi.fn(async () => ({ deletedJobCount: 2 }));
@@ -166,6 +192,14 @@ describe("demo maintenance service", () => {
       0,
     );
     expect(await db.select().from(demoRunTeardownReceipts)).toHaveLength(1);
+    const retainedConfirmationResults = await db.select().from(erpConfirmationResults);
+    expect(retainedConfirmationResults).toHaveLength(2);
+    expect(retainedConfirmationResults).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ idempotencyKey: "cleanup-other-run-confirmation" }),
+        expect.objectContaining({ idempotencyKey: "cleanup-catalog-confirmation" }),
+      ]),
+    );
     expect(releaseDispositions).toEqual(["restore_owned_pauses"]);
     expect(await readRunScopedGraphCounts(db, ids.completedRun)).toEqual({
       erpAttempts: 0,
@@ -278,6 +312,10 @@ describe("demo maintenance service", () => {
       runInventoryStatus: "closed",
     });
     await seedCleanupDurableGraph(db);
+    await seedConfirmationResult(db, {
+      orderId: ids.completedOrder,
+      idempotencyKey: "cleanup-rollback-confirmation",
+    });
     await dbConnection.sql`
       CREATE TABLE task_32_order_delete_blocker (
         order_id uuid PRIMARY KEY REFERENCES orders(id) ON DELETE RESTRICT
@@ -298,6 +336,12 @@ describe("demo maintenance service", () => {
       ).toHaveLength(1);
       expect(
         await db.select().from(saleOffers).where(eq(saleOffers.id, ids.completedOffer)),
+      ).toHaveLength(1);
+      expect(
+        await db
+          .select()
+          .from(erpConfirmationResults)
+          .where(eq(erpConfirmationResults.idempotencyKey, "cleanup-rollback-confirmation")),
       ).toHaveLength(1);
       expect(await readRunScopedGraphCounts(db, ids.completedRun)).toEqual({
         erpAttempts: 1,
@@ -1480,6 +1524,10 @@ describe("demo maintenance service", () => {
       runInventoryStatus: "closed",
     });
     await seedCleanupDurableGraph(db);
+    await seedConfirmationResult(db, {
+      orderId: ids.completedOrder,
+      idempotencyKey: "cleanup-retention-confirmation",
+    });
     const completedInventoryKeys = inventoryKeys(ids.completedOffer);
     const dynamicInventoryKey = completedInventoryKeys.idempotency("cleanup-dynamic-key");
     await redisClient.set(dynamicInventoryKey, "stored");
@@ -1526,6 +1574,12 @@ describe("demo maintenance service", () => {
     expect(await redisClient.get(`demo-run:${ids.completedRun}:sale-eligibility`)).toBeNull();
     expect(await redisClient.exists(retainedInventoryKeys.state)).toBe(1);
     expect(await redisClient.get(`demo-run:${ids.failedRun}:sale-eligibility`)).not.toBeNull();
+    expect(
+      await db
+        .select()
+        .from(erpConfirmationResults)
+        .where(eq(erpConfirmationResults.idempotencyKey, "cleanup-retention-confirmation")),
+    ).toHaveLength(0);
     expect(await readRunScopedGraphCounts(db, ids.completedRun)).toEqual({
       erpAttempts: 0,
       finalizations: 0,
@@ -2018,6 +2072,61 @@ async function seedCatalogReferencedTerminalRun(
     saleOfferId: ids.catalogOffer,
     status: "completed",
     failureReason: null,
+  });
+}
+
+async function seedCatalogOrder(
+  db: ReturnType<typeof createDatabaseConnection>["db"],
+): Promise<void> {
+  const now = new Date("2026-06-20T00:00:04.000Z");
+  await db.insert(reservations).values({
+    id: ids.catalogReservation,
+    saleOfferId: ids.catalogOffer,
+    correlationId: "corr-catalog-order",
+    quantity: 1,
+    status: "secured",
+    reservationToken: "catalog-token",
+    securedAt: now,
+    expiresAt: new Date("2026-06-20T00:15:04.000Z"),
+    createdAt: now,
+    updatedAt: now,
+  });
+  await db.insert(orders).values({
+    id: ids.catalogOrder,
+    publicOrderId: "catalog-order",
+    saleOfferId: ids.catalogOffer,
+    reservationId: ids.catalogReservation,
+    correlationId: "corr-catalog-order",
+    quantity: 1,
+    status: "confirmed",
+    queuedAt: now,
+    processingAt: now,
+    confirmedAt: now,
+    createdAt: now,
+    updatedAt: now,
+  });
+}
+
+async function seedConfirmationResult(
+  db: ReturnType<typeof createDatabaseConnection>["db"],
+  input: { orderId: string; idempotencyKey: string },
+): Promise<void> {
+  const processedAt = new Date("2026-06-20T00:00:04.000Z");
+  await db.insert(erpConfirmationResults).values({
+    idempotencyKey: input.idempotencyKey,
+    orderId: input.orderId,
+    requestFingerprint: { orderId: input.orderId },
+    response: {
+      status: "succeeded",
+      confirmationId: `confirmation-${input.orderId}`,
+      httpStatus: 200,
+      latencyMs: 5,
+      timestamp: processedAt.toISOString(),
+    },
+    confirmationId: `confirmation-${input.orderId}`,
+    httpStatus: 200,
+    processedAt,
+    createdAt: processedAt,
   });
 }
 

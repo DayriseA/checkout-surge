@@ -1,5 +1,5 @@
 import { uuidSchema } from "@checkout-surge/contracts";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import type { CheckoutSurgeDatabase } from "./client.js";
 import {
   demoRunFinalizations,
@@ -9,6 +9,7 @@ import {
   demoRuns,
   demoRunTeardownReceipts,
   erpAttempts,
+  erpConfirmationResults,
   orderEvents,
   orders,
   reservationPendingPersistence,
@@ -173,6 +174,15 @@ async function deleteGeneratedRunRows(
   const { runId, saleOfferId } = identity;
   await tx.delete(simulatedNotifications).where(eq(simulatedNotifications.runId, runId));
   await tx.delete(erpAttempts).where(eq(erpAttempts.runId, runId));
+  await tx.delete(erpConfirmationResults).where(
+    inArray(
+      erpConfirmationResults.orderId,
+      tx
+        .select({ orderId: sql<string>`${orders.id}::text` })
+        .from(orders)
+        .where(eq(orders.runId, runId)),
+    ),
+  );
   await tx.delete(orderEvents).where(eq(orderEvents.runId, runId));
   await tx.delete(orders).where(eq(orders.runId, runId));
   await tx.delete(reservations).where(eq(reservations.runId, runId));
