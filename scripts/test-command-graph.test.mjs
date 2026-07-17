@@ -56,6 +56,18 @@ test("root tier commands use unfiltered Turbo discovery", () => {
   );
 });
 
+test("infra shutdown is scoped to development PostgreSQL and Redis", () => {
+  const scripts = readManifest("package.json").scripts;
+  const developmentComposeCommand =
+    "node scripts/run-with-env.mjs docker compose -f docker-compose.yml -f docker-compose.dev.yml";
+
+  assert.equal(scripts["infra:up"], `${developmentComposeCommand} up -d postgres redis`);
+  assert.equal(scripts["infra:down"], `${developmentComposeCommand} down postgres redis`);
+  assert.doesNotMatch(scripts["infra:down"], /--volumes|(?:^|\s)-v(?:$|\s)/);
+  assert.equal(scripts["runtime:down"], "node scripts/run-with-env.mjs docker compose down");
+  assert.notEqual(scripts["infra:down"], scripts["runtime:down"]);
+});
+
 test("root type-check gates production and included test sources", () => {
   const scripts = readManifest("package.json").scripts;
   assert.equal(scripts["type-check"], "turbo run type-check && pnpm type-check:test");

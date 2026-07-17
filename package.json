@@ -34,7 +34,7 @@
     "test:infra:reset": "node scripts/reset-test-infra.mjs",
     "test:db:migrate": "pnpm --filter @checkout-surge/db test:db:migrate",
     "infra:up": "node scripts/run-with-env.mjs docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres redis",
-    "infra:down": "node scripts/run-with-env.mjs docker compose down",
+    "infra:down": "node scripts/run-with-env.mjs docker compose -f docker-compose.yml -f docker-compose.dev.yml down postgres redis",
     "runtime:up": "node scripts/run-with-env.mjs docker compose up -d --build",
     "runtime:up:debug": "node scripts/run-with-env.mjs docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build",
     "runtime:down": "node scripts/run-with-env.mjs docker compose down",
