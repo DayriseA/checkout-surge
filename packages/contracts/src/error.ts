@@ -90,6 +90,9 @@ export const errorPayloadCodes = [
   "public_visitor_run_budget_exceeded",
   "run_not_found",
   "run_sale_offer_missing",
+  "traffic_completion_report_mismatch",
+  "traffic_completion_run_not_eligible",
+  "traffic_metric_run_not_eligible",
 
   // Direct deployment / public snapshot policy violations
   ...directSnapshotViolationCodes,

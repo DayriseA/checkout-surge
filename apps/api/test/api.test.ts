@@ -2080,6 +2080,49 @@ describe("API gateway routes", () => {
     );
   });
 
+  it.each([
+    ["run_not_found", 404],
+    ["traffic_metric_run_not_eligible", 409],
+  ] as const)("maps metric admission %s with body correlation", async (code, statusCode) => {
+    const server = await trackedServer({
+      persistence: new AcceptingPersistence(),
+      demoRunService: {
+        ...demoRunControllerFixture(),
+        ingestMetrics: async () => {
+          throw new DemoRunValidationError(code, "Metric ingestion rejected.", {
+            runId: fixtureIds.run,
+          });
+        },
+      },
+    });
+    const response = await server.inject({
+      method: "POST",
+      url: "/internal/load/metrics",
+      headers: { [controlServiceTokenHeaderName]: "test-control-token" },
+      payload: {
+        runId: fixtureIds.run,
+        correlationId: fixtureCorrelationId,
+        samples: [
+          {
+            metricName: "traffic.latency",
+            value: 42,
+            unit: "ms",
+            timestamp: "2026-06-20T00:00:10.000Z",
+          },
+        ],
+        observedAt: "2026-06-20T00:00:10.000Z",
+      },
+    });
+
+    expect(response.statusCode).toBe(statusCode);
+    expect(response.headers[correlationIdHeaderName]).toBe(fixtureCorrelationId);
+    expect(response.json()).toMatchObject({
+      code,
+      correlationId: fixtureCorrelationId,
+      details: { runId: fixtureIds.run },
+    });
+  });
+
   it("returns 202 after the metric service contains post-retention publication failure", async () => {
     const publicationError = new Error("pubsub unavailable");
     const warn = vi.fn();
@@ -2087,15 +2130,31 @@ describe("API gateway routes", () => {
       appendAndPublishIfLive: async (
         _request: unknown,
         publishAccepted: Parameters<RedisDashboardTrafficMetricStore["appendAndPublishIfLive"]>[1],
-      ) => {
-        await publishAccepted(async () => {
-          throw publicationError;
-        });
-        return true;
-      },
+        withAdmission: NonNullable<
+          Parameters<RedisDashboardTrafficMetricStore["appendAndPublishIfLive"]>[2]
+        >,
+      ) =>
+        withAdmission(async () => {
+          await publishAccepted(async () => {
+            throw publicationError;
+          });
+          return "accepted" as const;
+        }),
     } as RedisDashboardTrafficMetricStore;
     const demoRunService = new DemoRunService({
       db: {
+        transaction: async (operation: (tx: unknown) => Promise<unknown>) =>
+          operation({
+            select: () => ({
+              from: () => ({
+                where: () => ({
+                  limit: () => ({
+                    for: async () => [{ status: "active", trafficStatus: "active" }],
+                  }),
+                }),
+              }),
+            }),
+          }),
         select: () => ({
           from: () => ({
             where: () => ({ limit: async () => [{ status: "active" }] }),
@@ -2176,8 +2235,13 @@ describe("API gateway routes", () => {
       trafficDeliverySummary: {
         plannedRequests: 2,
         emittedRequests: 2,
+        trafficMode: "buyer-spike",
+        plannedBuyers: 2,
+        scheduledRatePerSecond: null,
+        configuredDurationSeconds: null,
+        preAllocatedVUs: null,
+        maxVUs: null,
         droppedIterations: 0,
-        trafficDeliveryStatus: "complete",
         notes: [],
       },
       httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
@@ -2213,6 +2277,39 @@ describe("API gateway routes", () => {
         trafficDeliverySummary: expect.objectContaining(report.trafficDeliverySummary),
       }),
     );
+  });
+
+  it("maps a conflicting completion to a canonical correlated 409", async () => {
+    const server = await trackedServer({
+      persistence: new AcceptingPersistence(),
+      demoRunService: {
+        ...demoRunControllerFixture(),
+        recordTrafficCompletion: async () => {
+          throw new DemoRunValidationError(
+            "traffic_completion_report_mismatch",
+            "Traffic completion does not match the accepted demo run.",
+            { runId: fixtureIds.run, field: "loadRunDiagnosticsSummary.executionPlan" },
+          );
+        },
+      },
+    });
+    const response = await server.inject({
+      method: "POST",
+      url: "/internal/load/completion",
+      headers: { [controlServiceTokenHeaderName]: "test-control-token" },
+      payload: internalCompletionReportFixture(),
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.headers[correlationIdHeaderName]).toBe(fixtureCorrelationId);
+    expect(response.json()).toMatchObject({
+      code: "traffic_completion_report_mismatch",
+      correlationId: fixtureCorrelationId,
+      details: {
+        runId: fixtureIds.run,
+        field: "loadRunDiagnosticsSummary.executionPlan",
+      },
+    });
   });
 
   it("returns a stable unavailable response when queue inspection fails", async () => {
@@ -4280,6 +4377,42 @@ describe("API buy persistence", () => {
   });
 });
 
+function internalCompletionReportFixture() {
+  return {
+    runId: fixtureIds.run,
+    status: "succeeded",
+    exitCode: 0,
+    httpSummary: {
+      plannedRequests: 2,
+      emittedRequests: 2,
+      completedRequests: 2,
+      failedRequests: 0,
+      acceptedResponses: 1,
+      soldOutResponses: 1,
+      unexpectedResponses: 0,
+      failureRate: 0,
+    },
+    trafficOutcomeSummary: {},
+    trafficDeliverySummary: {
+      plannedRequests: 2,
+      emittedRequests: 2,
+      trafficMode: "buyer-spike",
+      plannedBuyers: 2,
+      scheduledRatePerSecond: null,
+      configuredDurationSeconds: null,
+      preAllocatedVUs: null,
+      maxVUs: null,
+      droppedIterations: 0,
+      notes: [],
+    },
+    httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
+    loadRunDiagnosticsSummary: runnerDiagnosticsFixture(),
+    apiRequestLifecycleSummary: {},
+    completedAt: "2026-06-20T00:00:10.000Z",
+    correlationId: fixtureCorrelationId,
+  };
+}
+
 function runnerDiagnosticsFixture() {
   return {
     startedAt: "2026-06-20T00:00:00.000Z",
@@ -4291,10 +4424,10 @@ function runnerDiagnosticsFixture() {
     k6Version: null,
     executionPlan: {
       trafficMode: "buyer-spike",
-      buyerCount: 1,
+      buyerCount: 2,
       duplicateEachBuyerAttempt: false,
       iterationsPerVu: 1,
-      plannedEmittedAttempts: 1,
+      plannedEmittedAttempts: 2,
       startDelaySeconds: 0,
       maxDurationSeconds: 1,
     },

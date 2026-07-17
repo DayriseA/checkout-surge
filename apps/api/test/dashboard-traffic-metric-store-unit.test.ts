@@ -53,10 +53,10 @@ describe("RedisDashboardTrafficMetricStore command bound", () => {
     );
     await expect(
       store.appendAndPublishIfLive(batch("overflow"), publish(events("overflow"))),
-    ).resolves.toBe(false);
+    ).resolves.toBe("at_capacity");
     release?.();
     await expect(Promise.all(accepted)).resolves.toEqual(
-      Array.from({ length: maximumPendingMetricBatches }, () => true),
+      Array.from({ length: maximumPendingMetricBatches }, () => "accepted"),
     );
     expect(evalCommand).toHaveBeenCalledTimes(maximumPendingMetricBatches * 2);
   });
@@ -89,7 +89,7 @@ describe("RedisDashboardTrafficMetricStore command bound", () => {
     ).rejects.toBe(publicationFailure);
     await expect(
       store.appendAndPublishIfLive(batch("later-success"), publish(events("later-success"))),
-    ).resolves.toBe(true);
+    ).resolves.toBe("accepted");
 
     expect(publishAfterRetentionFailure).not.toHaveBeenCalled();
     expect(publishFailure).toHaveBeenCalledOnce();
@@ -112,7 +112,9 @@ describe("RedisDashboardTrafficMetricStore command bound", () => {
 
     expect(publicationResult).toEqual({
       outcome: "attempted",
-      failures: [{ index: 1, error: expect.objectContaining({ message: "ERR forced publish failure" }) }],
+      failures: [
+        { index: 1, error: expect.objectContaining({ message: "ERR forced publish failure" }) },
+      ],
     });
     expect(evalCommand.mock.calls[1]).toHaveLength(7);
     expect(evalCommand.mock.calls[1]?.[0]).toContain('redis.pcall("PUBLISH"');
@@ -145,7 +147,7 @@ describe("RedisDashboardTrafficMetricStore command bound", () => {
         await store.clearRun(runId);
         publicationResult = await publishIfLive(serializedEvents("reset-between-phases"));
       }),
-    ).resolves.toBe(true);
+    ).resolves.toBe("accepted");
 
     expect(publicationResult).toEqual({ outcome: "fenced" });
     expect(transaction.exec).toHaveBeenCalledOnce();

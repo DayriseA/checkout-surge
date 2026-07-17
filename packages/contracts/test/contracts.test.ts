@@ -36,6 +36,7 @@ import {
   demoRunOperatorModeHeaderName,
   demoRunSnapshotSchema,
   demoRunStatusValues,
+  deriveLoadExecutionPlan,
   directSnapshotViolationCodes,
   type ErrorPayloadCode,
   emptyHttpTimingBreakdownSummary,
@@ -478,8 +479,13 @@ describe("run lifecycle contracts", () => {
       trafficDeliverySummary: {
         plannedRequests: 10,
         emittedRequests: 10,
+        trafficMode: "buyer-spike",
+        plannedBuyers: 10,
+        scheduledRatePerSecond: null,
+        configuredDurationSeconds: null,
+        preAllocatedVUs: null,
+        maxVUs: null,
         droppedIterations: 0,
-        trafficDeliveryStatus: "complete",
         notes: [],
       },
       httpTimingBreakdownSummary: {
@@ -534,6 +540,12 @@ describe("run lifecycle contracts", () => {
     const evidence = {
       plannedRequests: 10,
       emittedRequests: 9,
+      trafficMode: "buyer-spike" as const,
+      plannedBuyers: 10,
+      scheduledRatePerSecond: null,
+      configuredDurationSeconds: null,
+      preAllocatedVUs: null,
+      maxVUs: null,
       droppedIterations: 1,
       notes: [],
     };
@@ -545,12 +557,6 @@ describe("run lifecycle contracts", () => {
       trafficDeliverySummarySchema.parse({ ...evidence, trafficDeliveryStatus: "warning" }),
     ).toEqual({
       ...evidence,
-      trafficMode: null,
-      plannedBuyers: null,
-      scheduledRatePerSecond: null,
-      configuredDurationSeconds: null,
-      preAllocatedVUs: null,
-      maxVUs: null,
       completedIterations: null,
       unstartedIterations: null,
       requestShortfall: null,
@@ -2284,17 +2290,72 @@ describe("public runtime policy contract", () => {
         trafficDeliverySummary: {
           plannedRequests: 400,
           emittedRequests: 400,
+          trafficMode: "buyer-spike",
+          plannedBuyers: 200,
+          scheduledRatePerSecond: null,
+          configuredDurationSeconds: null,
+          preAllocatedVUs: null,
+          maxVUs: null,
           droppedIterations: 0,
-          trafficDeliveryStatus: "complete",
           notes: [],
         },
         httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
-        loadRunDiagnosticsSummary: runnerDiagnostics(),
+        loadRunDiagnosticsSummary: {
+          ...runnerDiagnostics(),
+          executionPlan: {
+            trafficMode: "buyer-spike",
+            buyerCount: 200,
+            duplicateEachBuyerAttempt: true,
+            iterationsPerVu: 2,
+            plannedEmittedAttempts: 400,
+            startDelaySeconds: 0,
+            maxDurationSeconds: 5,
+          },
+        },
         apiRequestLifecycleSummary: {},
         completedAt: timestamp,
         correlationId,
       }).httpSummary.acceptedResponses,
     ).toBe(200);
+  });
+
+  it("derives canonical buyer-spike and steady-arrival execution identities", () => {
+    expect(
+      deriveLoadExecutionPlan({
+        mode: "buyer-spike",
+        buyerCount: 7,
+        duplicateEachBuyerAttempt: true,
+        startDelaySeconds: 2,
+        maxDurationSeconds: 9,
+        quantityPerAttempt: 1,
+      }),
+    ).toEqual({
+      trafficMode: "buyer-spike",
+      buyerCount: 7,
+      duplicateEachBuyerAttempt: true,
+      iterationsPerVu: 2,
+      plannedEmittedAttempts: 14,
+      startDelaySeconds: 2,
+      maxDurationSeconds: 9,
+    });
+    expect(
+      deriveLoadExecutionPlan({
+        mode: "steady-arrival-rate",
+        ratePerSecond: 12,
+        startDelaySeconds: 3,
+        durationSeconds: 4,
+        quantityPerAttempt: 1,
+        k6Vus: { preAllocatedVus: 5, maxVus: 8 },
+      }),
+    ).toEqual({
+      trafficMode: "steady-arrival-rate",
+      ratePerSecond: 12,
+      durationSeconds: 4,
+      plannedEmittedAttempts: 48,
+      startDelaySeconds: 3,
+      preAllocatedVus: 5,
+      maxVus: 8,
+    });
   });
 });
 

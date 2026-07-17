@@ -1043,9 +1043,10 @@ async function seedDrainingRun(input: {
     exitCode: 0,
     httpSummary: trafficCompletionReportFixture(input.trafficDeliveryStatus).httpSummary,
     trafficOutcomeSummary: {},
-    trafficDeliverySummary: trafficDeliverySummarySchema.parse(
-      trafficCompletionReportFixture(input.trafficDeliveryStatus).trafficDeliverySummary,
-    ),
+    trafficDeliverySummary: trafficDeliverySummarySchema.parse({
+      ...trafficCompletionReportFixture(input.trafficDeliveryStatus).trafficDeliverySummary,
+      trafficDeliveryStatus: input.trafficDeliveryStatus,
+    }),
     httpTimingBreakdownSummary: {
       ...emptyHttpTimingBreakdownSummary,
       waiting: { averageMs: 10, p95Ms: 20 },
@@ -1327,8 +1328,13 @@ function trafficCompletionReportFixture(
     trafficDeliverySummary: {
       plannedRequests: 10,
       emittedRequests: trafficDeliveryStatus === "failed" ? 5 : 10,
+      trafficMode: "buyer-spike",
+      plannedBuyers: 10,
+      scheduledRatePerSecond: null,
+      configuredDurationSeconds: null,
+      preAllocatedVUs: null,
+      maxVUs: null,
       droppedIterations: trafficDeliveryStatus === "failed" ? 5 : 0,
-      trafficDeliveryStatus,
       notes: trafficDeliveryStatus === "failed" ? ["Major request delivery shortfall."] : [],
     },
     httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,

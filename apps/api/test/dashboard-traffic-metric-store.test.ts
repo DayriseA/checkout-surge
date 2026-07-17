@@ -41,7 +41,7 @@ describe("Redis dashboard traffic metric reset", () => {
     expect(await store.readRecent(runB)).toHaveLength(1);
     await expect(
       store.appendAndPublishIfLive(metricBatch(runA, 30), publish(metricEvent(runA, 30))),
-    ).resolves.toBe(false);
+    ).resolves.toBe("fenced");
     expect(await store.readRecent(runA)).toEqual([]);
     await new Promise((resolve) => setImmediate(resolve));
     expect(messages).toEqual([]);
@@ -54,11 +54,11 @@ describe("Redis dashboard traffic metric reset", () => {
       store.appendAndPublishIfLive(metricBatch(runA, 10), publish(metricEvent(runA, 10))),
       store.clearRun(runA),
     ]);
-    expect([true, false]).toContain(results[0]);
+    expect(["accepted", "fenced"]).toContain(results[0]);
     expect(await store.readRecent(runA)).toEqual([]);
     await expect(
       store.appendAndPublishIfLive(metricBatch(runA, 40), publish(metricEvent(runA, 40))),
-    ).resolves.toBe(false);
+    ).resolves.toBe("fenced");
   });
 
   it("suppresses publication when reset wins between retention and publication", async () => {
@@ -76,7 +76,7 @@ describe("Redis dashboard traffic metric reset", () => {
         await store.clearRun(runA);
         publicationResult = await publishIfLive([JSON.stringify(metricEvent(runA, 50))]);
       }),
-    ).resolves.toBe(true);
+    ).resolves.toBe("accepted");
 
     await new Promise((resolve) => setImmediate(resolve));
     expect(publicationResult).toEqual({ outcome: "fenced" });

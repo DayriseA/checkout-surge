@@ -90,6 +90,10 @@ import type {
   PublicRunBudgetStore,
 } from "./public-run-budget-store.js";
 import type { TerminalDemoRunWriter } from "./terminal-demo-run-writer.js";
+import {
+  findTrafficCompletionBindingMismatch,
+  findTrafficCompletionRedeliveryMismatch,
+} from "./traffic-completion-binding.js";
 import type { TrafficCompletionEnrichmentController } from "./traffic-completion-enrichment-service.js";
 import { normalizeTrafficDeliverySummary } from "./traffic-delivery-classifier.js";
 import { syntheticTrafficDeliverySummary } from "./traffic-delivery-plan.js";
@@ -99,6 +103,8 @@ const singleNonTerminalRunIndexName = "demo_runs_single_non_terminal_idx";
 const generatedRunSaleDurationMs = 24 * 60 * 60 * 1000;
 const recentMetricLimit = 50;
 export const maximumPendingMetricBatches = 10;
+export type TrafficMetricIngestOutcome = "accepted" | "at_capacity" | "fenced";
+export type TrafficMetricAdmissionWrapper = <T>(operation: () => Promise<T>) => Promise<T>;
 
 export type TrafficMetricPublishResult =
   | { outcome: "fenced" }
@@ -153,7 +159,8 @@ export class RedisDashboardTrafficMetricStore implements DashboardTrafficMetricR
   constructor(private readonly redis: CheckoutSurgeRedis) {}
 
   /**
-   * Serializes each accepted batch across retention and advisory publication. The
+   * Reserves bounded process capacity before invoking the admission wrapper, then
+   * serializes each accepted batch across retention and advisory publication. The
    * second fence check prevents publication after a reset that wins between them.
    */
   async appendAndPublishIfLive(
@@ -161,18 +168,21 @@ export class RedisDashboardTrafficMetricStore implements DashboardTrafficMetricR
     publishAccepted: (
       publishIfLive: (eventPayloads: string[]) => Promise<TrafficMetricPublishResult>,
     ) => Promise<void>,
-  ): Promise<boolean> {
-    if (this.pendingOperationCount >= maximumPendingMetricBatches) return false;
+    withAdmission: TrafficMetricAdmissionWrapper = async (operation) => operation(),
+  ): Promise<TrafficMetricIngestOutcome> {
+    if (this.pendingOperationCount >= maximumPendingMetricBatches) return "at_capacity";
     this.pendingOperationCount += 1;
     const operation = this.operationTail
-      .then(async () => {
-        const retained = await this.appendIfLiveAtomic(input);
-        if (!retained) return false;
-        await publishAccepted((eventPayloads) =>
-          this.publishIfLiveAtomic(input.runId, eventPayloads),
-        );
-        return true;
-      })
+      .then(() =>
+        withAdmission(async () => {
+          const retained = await this.appendIfLiveAtomic(input);
+          if (!retained) return "fenced" as const;
+          await publishAccepted((eventPayloads) =>
+            this.publishIfLiveAtomic(input.runId, eventPayloads),
+          );
+          return "accepted" as const;
+        }),
+      )
       .finally(() => {
         this.pendingOperationCount -= 1;
       });
@@ -875,53 +885,86 @@ export class DemoRunService implements DemoRunController {
 
   async ingestMetrics(input: LoadMetricIngestRequest): Promise<void> {
     const request = loadMetricIngestRequestSchema.parse(input);
-    const [run] = await this.options.db
-      .select({ status: demoRuns.status })
-      .from(demoRuns)
-      .where(eq(demoRuns.id, request.runId))
-      .limit(1);
-    if (!run || !["starting", "active", "draining"].includes(run.status)) return;
-
-    await this.options.trafficMetricStore.appendAndPublishIfLive(request, async (publishIfLive) => {
-      const publications: Array<{ metricName: MetricSample["metricName"]; payload: string }> = [];
-      for (const sample of request.samples) {
-        try {
-          const event = dashboardEventSchema.parse({
-            type: "dashboard.metric.observed",
-            runId: request.runId,
-            correlationId: request.correlationId,
-            metricName: sample.metricName,
-            value: sample.value,
-            unit: sample.unit,
-            occurredAt: sample.timestamp,
-            observedAt: sample.timestamp,
-          });
-          publications.push({ metricName: sample.metricName, payload: JSON.stringify(event) });
-        } catch (error) {
-          this.warnTrafficMetricPublicationFailure(error, request, sample.metricName);
-        }
-      }
-
-      try {
-        const result = await publishIfLive(publications.map(({ payload }) => payload));
-        if (result.outcome === "attempted") {
-          for (const failure of result.failures) {
-            const publication = publications[failure.index];
-            if (publication) {
-              this.warnTrafficMetricPublicationFailure(
-                failure.error,
-                request,
-                publication.metricName,
-              );
-            }
+    await this.options.trafficMetricStore.appendAndPublishIfLive(
+      request,
+      async (publishIfLive) => {
+        const publications: Array<{
+          metricName: MetricSample["metricName"];
+          payload: string;
+        }> = [];
+        for (const sample of request.samples) {
+          try {
+            const event = dashboardEventSchema.parse({
+              type: "dashboard.metric.observed",
+              runId: request.runId,
+              correlationId: request.correlationId,
+              metricName: sample.metricName,
+              value: sample.value,
+              unit: sample.unit,
+              occurredAt: sample.timestamp,
+              observedAt: sample.timestamp,
+            });
+            publications.push({ metricName: sample.metricName, payload: JSON.stringify(event) });
+          } catch (error) {
+            this.warnTrafficMetricPublicationFailure(error, request, sample.metricName);
           }
         }
-      } catch (error) {
-        for (const publication of publications) {
-          this.warnTrafficMetricPublicationFailure(error, request, publication.metricName);
+
+        try {
+          const result = await publishIfLive(publications.map(({ payload }) => payload));
+          if (result.outcome === "attempted") {
+            for (const failure of result.failures) {
+              const publication = publications[failure.index];
+              if (publication) {
+                this.warnTrafficMetricPublicationFailure(
+                  failure.error,
+                  request,
+                  publication.metricName,
+                );
+              }
+            }
+          }
+        } catch (error) {
+          for (const publication of publications) {
+            this.warnTrafficMetricPublicationFailure(error, request, publication.metricName);
+          }
         }
-      }
-    });
+      },
+      async (retainAndPublish) =>
+        this.options.db.transaction(async (tx) => {
+          const [run] = await tx
+            .select({ status: demoRuns.status, trafficStatus: demoRuns.trafficStatus })
+            .from(demoRuns)
+            .where(eq(demoRuns.id, request.runId))
+            .limit(1)
+            .for("update");
+          if (!run) {
+            throw new DemoRunValidationError("run_not_found", "Demo run was not found.", {
+              runId: request.runId,
+            });
+          }
+          if (
+            !(["starting", "active"] as string[]).includes(run.status) ||
+            !(["starting", "active"] as string[]).includes(run.trafficStatus)
+          ) {
+            throw new DemoRunValidationError(
+              "traffic_metric_run_not_eligible",
+              "Demo run is not eligible for traffic metric ingestion.",
+              { runId: request.runId, status: run.status, trafficStatus: run.trafficStatus },
+            );
+          }
+
+          const outcome = await retainAndPublish();
+          if (outcome === "fenced") {
+            throw new DemoRunValidationError(
+              "traffic_metric_run_not_eligible",
+              "Demo run traffic metrics have been fenced.",
+              { runId: request.runId, status: run.status, trafficStatus: run.trafficStatus },
+            );
+          }
+          return outcome;
+        }),
+    );
   }
 
   private warnTrafficMetricPublicationFailure(
@@ -975,24 +1018,61 @@ export class DemoRunService implements DemoRunController {
       report.trafficDeliverySummary,
     );
     const now = this.now();
-    const [run] = await this.options.db
-      .select()
-      .from(demoRuns)
-      .where(eq(demoRuns.id, report.runId))
-      .limit(1);
-
-    if (!run) {
-      throw new DemoRunValidationError("run_not_found", "Demo run was not found.", {
-        runId: report.runId,
-      });
-    }
-    if (!run.saleOfferId) {
-      throw new DemoRunValidationError("run_sale_offer_missing", "Demo run has no sale offer.", {
-        runId: report.runId,
-      });
-    }
-
     const completionClaim = await this.options.db.transaction(async (tx) => {
+      const [run] = await tx
+        .select()
+        .from(demoRuns)
+        .where(eq(demoRuns.id, report.runId))
+        .limit(1)
+        .for("update");
+      if (!run) {
+        throw new DemoRunValidationError("run_not_found", "Demo run was not found.", {
+          runId: report.runId,
+        });
+      }
+      if (!run.saleOfferId) {
+        throw new DemoRunValidationError("run_sale_offer_missing", "Demo run has no sale offer.", {
+          runId: report.runId,
+        });
+      }
+
+      const bindingMismatch = findTrafficCompletionBindingMismatch(
+        {
+          runId: run.id,
+          configSnapshot: run.configSnapshot,
+          acceptedAt: run.startedAt ?? run.createdAt,
+          trafficStartedAt: run.trafficStartedAt,
+        },
+        report,
+      );
+      if (bindingMismatch) throwCompletionMismatch(run.id, bindingMismatch);
+      const [existing] = await tx
+        .select()
+        .from(demoRunFinalizations)
+        .where(eq(demoRunFinalizations.runId, report.runId))
+        .limit(1)
+        .for("update");
+      if (existing) {
+        const redeliveryMismatch = findTrafficCompletionRedeliveryMismatch(
+          run,
+          existing,
+          report,
+          normalizedTrafficDeliverySummary,
+        );
+        if (redeliveryMismatch) throwCompletionMismatch(run.id, redeliveryMismatch);
+        return { inserted: false };
+      }
+      if (
+        !(["starting", "active"] as string[]).includes(run.status) ||
+        !(["starting", "active"] as string[]).includes(run.trafficStatus)
+      ) {
+        throw new DemoRunValidationError(
+          "traffic_completion_run_not_eligible",
+          "Demo run is not eligible for traffic completion ingestion.",
+          { runId: report.runId, status: run.status, trafficStatus: run.trafficStatus },
+        );
+      }
+
       const [inserted] = await tx
         .insert(demoRunFinalizations)
         .values({
@@ -1010,30 +1090,39 @@ export class DemoRunService implements DemoRunController {
           createdAt: now,
           updatedAt: now,
         })
-        .onConflictDoNothing({ target: demoRunFinalizations.runId })
         .returning({ runId: demoRunFinalizations.runId });
-      if (inserted) {
-        await tx
-          .update(demoRuns)
-          .set({
-            status: "draining",
-            trafficStatus: report.status,
-            trafficEndedAt: new Date(report.completedAt),
-            updatedAt: now,
-          })
-          .where(
-            and(eq(demoRuns.id, report.runId), inArray(demoRuns.status, ["starting", "active"])),
-          )
-          .returning({ id: demoRuns.id });
+      const [claimedRun] = await tx
+        .update(demoRuns)
+        .set({
+          status: "draining",
+          trafficStatus: report.status,
+          trafficStartedAt:
+            run.trafficStartedAt ?? new Date(report.loadRunDiagnosticsSummary.startedAt),
+          trafficEndedAt: new Date(report.completedAt),
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(demoRuns.id, report.runId),
+            inArray(demoRuns.status, ["starting", "active"]),
+            inArray(demoRuns.trafficStatus, ["starting", "active"]),
+          ),
+        )
+        .returning({ id: demoRuns.id });
+      if (!inserted || !claimedRun) {
+        throw new DemoRunValidationError(
+          "traffic_completion_run_not_eligible",
+          "Demo run completion could not claim the active traffic lifecycle.",
+          { runId: report.runId },
+        );
       }
-      return { inserted: Boolean(inserted) };
+      return { inserted: true };
     });
 
     await this.options.completionEnrichmentService.completePendingEnrichment(report.runId);
 
     const updatedRun = await this.readRunSnapshot(report.runId);
-    if (completionClaim.inserted)
-      await this.publishRunEvent(updatedRun, report.correlationId, now);
+    if (completionClaim.inserted) await this.publishRunEvent(updatedRun, report.correlationId, now);
     return (
       (await this.options.finalizationService?.finalizeRun(report.runId, report.correlationId)) ??
       updatedRun
@@ -1423,6 +1512,22 @@ export function toDemoRunSnapshot(run: typeof demoRuns.$inferSelect): DemoRunSna
     ...(run.finalizedAt ? { finalizedAt: run.finalizedAt.toISOString() } : {}),
     ...(run.failureReason ? { failureReason: run.failureReason } : {}),
   });
+}
+
+function throwCompletionMismatch(
+  runId: string,
+  mismatch: { field: string; expected?: unknown; actual?: unknown },
+): never {
+  throw new DemoRunValidationError(
+    "traffic_completion_report_mismatch",
+    "Traffic completion does not match the accepted demo run.",
+    {
+      runId,
+      field: mismatch.field,
+      ...(Object.hasOwn(mismatch, "expected") ? { expected: mismatch.expected } : {}),
+      ...(Object.hasOwn(mismatch, "actual") ? { actual: mismatch.actual } : {}),
+    },
+  );
 }
 
 function toDemoPresetContract(preset: typeof demoPresets.$inferSelect): DemoPresetContract {

@@ -343,11 +343,12 @@ describe("durable execution ownership", () => {
     try {
       const store = new FileExecutionStore(directory);
       const { execution: accepted } = await store.accept(startRequest, new Date(timestamp));
+      const executionPlan = generateK6Script(startRequest).executionPlan;
       const accumulator = new K6RunAccumulator({
-        executionPlan: generateK6Script(startRequest).executionPlan,
+        executionPlan,
         runId: startRequest.runId,
         correlationId: startRequest.correlationId,
-        plannedRequests: 1,
+        plannedRequests: executionPlan.plannedEmittedAttempts,
         startedAt: new Date(timestamp),
       });
       const report = accumulator.completionReport({
@@ -818,10 +819,18 @@ describe("load-orchestrator k6 mapping", () => {
     [
       { type: "Point", metric: "http_reqs", data: { value: 1, time: timestamp } },
       { type: "Point", metric: "http_req_failed", data: { value: 1, time: timestamp } },
-      { type: "Point", metric: "checkout_sold_out_rejections", data: { value: 1, time: timestamp } },
+      {
+        type: "Point",
+        metric: "checkout_sold_out_rejections",
+        data: { value: 1, time: timestamp },
+      },
       { type: "Point", metric: "http_reqs", data: { value: 1, time: timestamp } },
       { type: "Point", metric: "http_req_failed", data: { value: 1, time: timestamp } },
-      { type: "Point", metric: "checkout_sold_out_rejections", data: { value: 1, time: timestamp } },
+      {
+        type: "Point",
+        metric: "checkout_sold_out_rejections",
+        data: { value: 1, time: timestamp },
+      },
     ].forEach((point) => {
       accumulator.observe(point);
     });
@@ -2312,11 +2321,12 @@ describe("load-orchestrator API client", () => {
           ),
       ),
     });
+    const executionPlan = generateK6Script(startRequest).executionPlan;
     const report = new K6RunAccumulator({
-      executionPlan: generateK6Script(startRequest).executionPlan,
+      executionPlan,
       runId: startRequest.runId,
       correlationId: startRequest.correlationId,
-      plannedRequests: 1,
+      plannedRequests: executionPlan.plannedEmittedAttempts,
       startedAt: new Date(timestamp),
     }).completionReport({ status: "succeeded", completedAt: new Date(completionTimestamp) });
     await expect(client.sendCompletion(report)).rejects.toThrow("did not match");
@@ -2371,11 +2381,12 @@ describe("load-orchestrator API client", () => {
       apiBaseUrl: "http://api.test",
       controlServiceToken: "test-token",
     });
+    const executionPlan = generateK6Script(startRequest).executionPlan;
     const completionReport = new K6RunAccumulator({
-      executionPlan: generateK6Script(startRequest).executionPlan,
+      executionPlan,
       runId: startRequest.runId,
       correlationId: startRequest.correlationId,
-      plannedRequests: 1,
+      plannedRequests: executionPlan.plannedEmittedAttempts,
       startedAt: new Date(timestamp),
     }).completionReport({
       status: "succeeded",

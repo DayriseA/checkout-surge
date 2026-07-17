@@ -46,6 +46,7 @@ import {
   HttpTrafficExecutionGateway,
   hydratePublicRuntimePolicy,
   isSingleNonTerminalRunViolation,
+  maximumPendingMetricBatches,
   RedisDashboardTrafficMetricStore,
   validateAcceptedRunSnapshot,
   validateActivePublicRuntimePolicyAtStartup,
@@ -54,6 +55,7 @@ import {
 import { PostgresDemoResetWorkflowFence } from "../src/services/postgres-demo-reset-workflow-fence.js";
 import { RedisPublicRunBudgetStore } from "../src/services/public-run-budget-store.js";
 import { PostgresTerminalDemoRunSummaryWriter } from "../src/services/terminal-demo-run-transition.js";
+import { findTrafficCompletionBindingMismatch } from "../src/services/traffic-completion-binding.js";
 import { TrafficCompletionEnrichmentService } from "../src/services/traffic-completion-enrichment-service.js";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -215,6 +217,163 @@ describe("demo-run service validation", () => {
     );
   });
 
+  it("binds buyer-spike completion plan, counts, and runner start to the accepted run", () => {
+    const report = trafficCompletionFixture({
+      runId: "55555555-5555-4555-8555-555555555551",
+      status: "succeeded",
+      exitCode: 0,
+      completedAt: "2026-06-20T00:00:12.000Z",
+      plannedRequests: 10_000,
+      correlationId: "completion-binding",
+    });
+    const accepted = {
+      runId: report.runId,
+      configSnapshot: surge10kSnapshot(),
+      acceptedAt: new Date("2026-06-20T00:00:10.000Z"),
+      trafficStartedAt: new Date("2026-06-20T00:00:11.000Z"),
+    };
+
+    expect(findTrafficCompletionBindingMismatch(accepted, report)).toBeNull();
+    expect(
+      findTrafficCompletionBindingMismatch(accepted, {
+        ...report,
+        loadRunDiagnosticsSummary: {
+          ...report.loadRunDiagnosticsSummary,
+          executionPlan: {
+            trafficMode: "buyer-spike",
+            buyerCount: 9_999,
+            duplicateEachBuyerAttempt: false,
+            iterationsPerVu: 1,
+            plannedEmittedAttempts: 9_999,
+            startDelaySeconds: 0,
+            maxDurationSeconds: 2,
+          },
+        },
+        httpSummary: { ...report.httpSummary, plannedRequests: 9_999 },
+        trafficDeliverySummary: {
+          ...report.trafficDeliverySummary,
+          plannedRequests: 9_999,
+          plannedBuyers: 9_999,
+        },
+      }),
+    ).toMatchObject({ field: "loadRunDiagnosticsSummary.executionPlan" });
+    expect(
+      findTrafficCompletionBindingMismatch(
+        { ...accepted, trafficStartedAt: new Date("2026-06-20T00:00:10.000Z") },
+        report,
+      ),
+    ).toMatchObject({ field: "loadRunDiagnosticsSummary.startedAt" });
+  });
+
+  it("rejects a fast-completion runner start before the API accepted the run", () => {
+    const report = trafficCompletionFixture({
+      runId: "55555555-5555-4555-8555-555555555551",
+      status: "succeeded",
+      exitCode: 0,
+      completedAt: "2026-06-20T00:00:12.000Z",
+      plannedRequests: 10_000,
+      correlationId: "completion-before-acceptance",
+    });
+    const staleReport = {
+      ...report,
+      loadRunDiagnosticsSummary: {
+        ...report.loadRunDiagnosticsSummary,
+        startedAt: "2026-06-20T00:00:09.999Z",
+      },
+    };
+
+    expect(
+      findTrafficCompletionBindingMismatch(
+        {
+          runId: report.runId,
+          configSnapshot: surge10kSnapshot(),
+          acceptedAt: new Date("2026-06-20T00:00:10.000Z"),
+          trafficStartedAt: null,
+        },
+        staleReport,
+      ),
+    ).toEqual({
+      field: "loadRunDiagnosticsSummary.startedAt",
+      expected: { notBefore: "2026-06-20T00:00:10.000Z" },
+      actual: "2026-06-20T00:00:09.999Z",
+    });
+  });
+
+  it("binds steady-arrival mode, rate, duration, and VU identity", () => {
+    const base = trafficCompletionFixture({
+      runId: "55555555-5555-4555-8555-555555555552",
+      status: "succeeded",
+      exitCode: 0,
+      completedAt: "2026-06-20T00:00:12.000Z",
+      plannedRequests: 20,
+      correlationId: "steady-completion-binding",
+    });
+    const report: TrafficCompletionReport = {
+      ...base,
+      loadRunDiagnosticsSummary: {
+        ...base.loadRunDiagnosticsSummary,
+        executionPlan: {
+          trafficMode: "steady-arrival-rate",
+          ratePerSecond: 5,
+          durationSeconds: 4,
+          plannedEmittedAttempts: 20,
+          startDelaySeconds: 0,
+          preAllocatedVus: 3,
+          maxVus: 6,
+        },
+      },
+      trafficDeliverySummary: {
+        ...base.trafficDeliverySummary,
+        trafficMode: "steady-arrival-rate",
+        plannedBuyers: null,
+        scheduledRatePerSecond: 5,
+        configuredDurationSeconds: 4,
+        preAllocatedVUs: 3,
+        maxVUs: 6,
+      },
+    };
+    const configSnapshot: AcceptedRunConfigSnapshot = {
+      ...surge10kSnapshot(),
+      trafficConfig: {
+        mode: "steady-arrival-rate",
+        ratePerSecond: 5,
+        durationSeconds: 4,
+        startDelaySeconds: 0,
+        quantityPerAttempt: 1,
+        k6Vus: { preAllocatedVus: 3, maxVus: 6 },
+      },
+    };
+
+    expect(
+      findTrafficCompletionBindingMismatch(
+        {
+          runId: report.runId,
+          configSnapshot,
+          acceptedAt: new Date("2026-06-20T00:00:10.000Z"),
+          trafficStartedAt: null,
+        },
+        report,
+      ),
+    ).toBeNull();
+    expect(
+      findTrafficCompletionBindingMismatch(
+        {
+          runId: report.runId,
+          configSnapshot: {
+            ...configSnapshot,
+            trafficConfig: {
+              ...configSnapshot.trafficConfig,
+              k6Vus: { preAllocatedVus: 4, maxVus: 8 },
+            },
+          },
+          acceptedAt: new Date("2026-06-20T00:00:10.000Z"),
+          trafficStartedAt: null,
+        },
+        report,
+      ),
+    ).toMatchObject({ field: "loadRunDiagnosticsSummary.executionPlan" });
+  });
+
   it("rejects public custom defaults that exceed the updated public limits", () => {
     const policy = publicRuntimePolicy();
     policy.publicCustomLimits.maxBuyers = 100;
@@ -242,6 +401,9 @@ describe("demo-run service validation", () => {
 
 describe("demo-run metric ingestion acceptance", () => {
   type PublishAccepted = Parameters<RedisDashboardTrafficMetricStore["appendAndPublishIfLive"]>[1];
+  type WithAdmission = NonNullable<
+    Parameters<RedisDashboardTrafficMetricStore["appendAndPublishIfLive"]>[2]
+  >;
   const metricRequest = {
     runId: "55555555-5555-4555-8555-555555555551",
     correlationId: "metric-correlation",
@@ -273,15 +435,16 @@ describe("demo-run metric ingestion acceptance", () => {
     const publishedPayloads: string[][] = [];
     const warn = vi.fn();
     const appendAndPublishIfLive = vi.fn(
-      async (_request: unknown, publishAccepted: PublishAccepted) => {
-        order.push("append");
-        await publishAccepted(async (payloads) => {
-          order.push("publish");
-          publishedPayloads.push(payloads);
-          return { outcome: "attempted", failures: [] };
-        });
-        return true;
-      },
+      async (_request: unknown, publishAccepted: PublishAccepted, withAdmission: WithAdmission) =>
+        withAdmission(async () => {
+          order.push("append");
+          await publishAccepted(async (payloads) => {
+            order.push("publish");
+            publishedPayloads.push(payloads);
+            return { outcome: "attempted", failures: [] };
+          });
+          return "accepted" as const;
+        }),
     );
     const service = createMetricIngestionService({
       appendAndPublishIfLive,
@@ -315,25 +478,28 @@ describe("demo-run metric ingestion acceptance", () => {
     const publishedPayloads: string[][] = [];
     const warn = vi.fn();
     const appendAndPublishIfLive = vi.fn(
-      async (_request: unknown, publishAccepted: PublishAccepted) => {
-        await publishAccepted(async (payloads) => {
-          publishedPayloads.push(payloads);
-          throw transportError;
-        });
-        return true;
-      },
+      async (_request: unknown, publishAccepted: PublishAccepted, withAdmission: WithAdmission) =>
+        withAdmission(async () => {
+          await publishAccepted(async (payloads) => {
+            publishedPayloads.push(payloads);
+            throw transportError;
+          });
+          return "accepted" as const;
+        }),
     );
     const service = createMetricIngestionService({
       appendAndPublishIfLive,
       warn,
     });
 
-    await expect(service.ingestMetrics({
-      ...metricRequest,
-      samples: metricRequest.samples.map((sample) =>
-        sample.metricName === "traffic.failure_rate" ? { ...sample, value: 2 } : sample,
-      ),
-    })).resolves.toBeUndefined();
+    await expect(
+      service.ingestMetrics({
+        ...metricRequest,
+        samples: metricRequest.samples.map((sample) =>
+          sample.metricName === "traffic.failure_rate" ? { ...sample, value: 2 } : sample,
+        ),
+      }),
+    ).resolves.toBeUndefined();
 
     expect(publishedPayloads).toHaveLength(1);
     expect(publishedPayloads[0]?.map((payload) => JSON.parse(payload).metricName)).toEqual([
@@ -357,16 +523,17 @@ describe("demo-run metric ingestion acceptance", () => {
     const publishedPayloads: string[][] = [];
     const warn = vi.fn();
     const appendAndPublishIfLive = vi.fn(
-      async (_request: unknown, publishAccepted: PublishAccepted) => {
-        await publishAccepted(async (payloads) => {
-          publishedPayloads.push(payloads);
-          return {
-            outcome: "attempted",
-            failures: [{ index: 1, error: samplePublicationError }],
-          };
-        });
-        return true;
-      },
+      async (_request: unknown, publishAccepted: PublishAccepted, withAdmission: WithAdmission) =>
+        withAdmission(async () => {
+          await publishAccepted(async (payloads) => {
+            publishedPayloads.push(payloads);
+            return {
+              outcome: "attempted",
+              failures: [{ index: 1, error: samplePublicationError }],
+            };
+          });
+          return "accepted" as const;
+        }),
     );
     const service = createMetricIngestionService({
       appendAndPublishIfLive,
@@ -394,13 +561,14 @@ describe("demo-run metric ingestion acceptance", () => {
 
   it("does not let a throwing warning logger redefine accepted retention", async () => {
     const appendAndPublishIfLive = vi.fn(
-      async (_request: unknown, publishAccepted: PublishAccepted) => {
-        await publishAccepted(async () => ({
-          outcome: "attempted",
-          failures: [{ index: 0, error: new Error("sample publish failed") }],
-        }));
-        return true;
-      },
+      async (_request: unknown, publishAccepted: PublishAccepted, withAdmission: WithAdmission) =>
+        withAdmission(async () => {
+          await publishAccepted(async () => ({
+            outcome: "attempted",
+            failures: [{ index: 0, error: new Error("sample publish failed") }],
+          }));
+          return "accepted" as const;
+        }),
     );
     const warn = vi.fn(() => {
       throw new Error("logger unavailable");
@@ -417,10 +585,13 @@ describe("demo-run metric ingestion acceptance", () => {
   it("propagates retention failure without publishing events", async () => {
     const retentionError = new Error("retention unavailable");
     const publishAccepted = vi.fn();
-    const appendAndPublishIfLive = vi.fn(async (_request: unknown, callback: PublishAccepted) => {
-      publishAccepted.mockImplementation(callback);
-      throw retentionError;
-    });
+    const appendAndPublishIfLive = vi.fn(
+      async (_request: unknown, callback: PublishAccepted, withAdmission: WithAdmission) =>
+        withAdmission(async () => {
+          publishAccepted.mockImplementation(callback);
+          throw retentionError;
+        }),
+    );
     const service = createMetricIngestionService({
       appendAndPublishIfLive,
       warn: vi.fn(),
@@ -428,6 +599,120 @@ describe("demo-run metric ingestion acceptance", () => {
 
     await expect(service.ingestMetrics(metricRequest)).rejects.toBe(retentionError);
     expect(publishAccepted).not.toHaveBeenCalled();
+  });
+
+  it("rejects missing and wrong-lifecycle runs before executing admitted Redis work", async () => {
+    const redisOperation = vi.fn(async () => "accepted" as const);
+    const appendAndPublishIfLive = vi.fn(
+      async (_request: unknown, _callback: PublishAccepted, withAdmission: WithAdmission) =>
+        withAdmission(redisOperation),
+    );
+    const missing = createMetricIngestionService({
+      appendAndPublishIfLive,
+      warn: vi.fn(),
+      run: null,
+    });
+    const draining = createMetricIngestionService({
+      appendAndPublishIfLive,
+      warn: vi.fn(),
+      run: { status: "draining", trafficStatus: "succeeded" },
+    });
+
+    await expect(missing.ingestMetrics(metricRequest)).rejects.toMatchObject({
+      code: "run_not_found",
+      details: { runId: metricRequest.runId },
+    });
+    await expect(draining.ingestMetrics(metricRequest)).rejects.toMatchObject({
+      code: "traffic_metric_run_not_eligible",
+      details: {
+        runId: metricRequest.runId,
+        status: "draining",
+        trafficStatus: "succeeded",
+      },
+    });
+    expect(appendAndPublishIfLive).toHaveBeenCalledTimes(2);
+    expect(redisOperation).not.toHaveBeenCalled();
+  });
+
+  it("reserves bounded queue capacity before DB admission and holds admission around Redis", async () => {
+    let releaseFirstRetention: (() => void) | undefined;
+    let markFirstRetentionEntered: (() => void) | undefined;
+    const firstRetentionGate = new Promise<void>((resolve) => {
+      releaseFirstRetention = resolve;
+    });
+    const firstRetentionEntered = new Promise<void>((resolve) => {
+      markFirstRetentionEntered = resolve;
+    });
+    let transactionCount = 0;
+    let transactionOpen = false;
+    const redisObservedTransaction: boolean[] = [];
+    const evalCommand = vi.fn(async (script: string) => {
+      redisObservedTransaction.push(transactionOpen);
+      if (script.includes("RPUSH")) {
+        if (evalCommand.mock.calls.length === 1) {
+          markFirstRetentionEntered?.();
+          await firstRetentionGate;
+        }
+        return 1;
+      }
+      return ["attempted", "", "", ""];
+    });
+    const database: Record<string, unknown> = {
+      select: () => ({
+        from: () => ({
+          where: () => ({
+            limit: () => ({
+              for: async () => [{ status: "active", trafficStatus: "active" }],
+            }),
+          }),
+        }),
+      }),
+    };
+    database.transaction = async (operation: (tx: typeof database) => Promise<unknown>) => {
+      transactionCount += 1;
+      transactionOpen = true;
+      try {
+        return await operation(database);
+      } finally {
+        transactionOpen = false;
+      }
+    };
+    const trafficMetricStore = new RedisDashboardTrafficMetricStore({
+      eval: evalCommand,
+    } as never);
+    const service = new DemoRunService({
+      db: database as never,
+      redis: {} as never,
+      trafficExecutionGateway: {} as never,
+      publicRunBudgetStore: {} as never,
+      trafficMetricStore,
+      businessOutcomeReader: {} as never,
+      completionEnrichmentService: {} as never,
+      terminalRunWriter: {} as never,
+      apiBaseUrl: "http://api.test",
+      buyEndpointPath: "/buy",
+      logger: { warn: vi.fn() } as never,
+      publicClientCookieSecret: publicCookieSecret,
+      deploymentHardCaps: publicRuntimePolicy().deploymentHardCaps,
+    });
+
+    const admitted = Array.from({ length: maximumPendingMetricBatches }, (_, index) =>
+      service.ingestMetrics({ ...metricRequest, correlationId: `metric-admitted-${index}` }),
+    );
+    await firstRetentionEntered;
+    await expect(
+      service.ingestMetrics({ ...metricRequest, correlationId: "metric-overflow" }),
+    ).resolves.toBeUndefined();
+
+    expect(transactionCount).toBe(1);
+    releaseFirstRetention?.();
+    await expect(Promise.all(admitted)).resolves.toEqual(
+      Array.from({ length: maximumPendingMetricBatches }, () => undefined),
+    );
+    expect(transactionCount).toBe(maximumPendingMetricBatches);
+    expect(redisObservedTransaction).toEqual(
+      Array.from({ length: maximumPendingMetricBatches * 2 }, () => true),
+    );
   });
 });
 
@@ -1056,7 +1341,7 @@ describe("demo-run lifecycle start gating", () => {
     }
   });
 
-  it("acknowledges and drops terminal or reset-fenced metric batches without SSE projection", async () => {
+  it("rejects terminal or reset-fenced metric batches without SSE projection", async () => {
     const db = requireConnection(connection).db;
     const redisClient = requireRedis(redis);
     const runId = existingRunId("active");
@@ -1083,11 +1368,15 @@ describe("demo-run lifecycle start gating", () => {
     expect(await trafficMetricStore.readRecent(runId)).toHaveLength(1);
 
     await trafficMetricStore.clearRun(runId);
-    await service.ingestMetrics(batch);
+    await expect(service.ingestMetrics(batch)).rejects.toMatchObject({
+      code: "traffic_metric_run_not_eligible",
+    });
     expect(await trafficMetricStore.readRecent(runId)).toEqual([]);
 
     await db.update(demoRuns).set({ status: "failed" }).where(eq(demoRuns.id, runId));
-    await service.ingestMetrics(batch);
+    await expect(service.ingestMetrics(batch)).rejects.toMatchObject({
+      code: "traffic_metric_run_not_eligible",
+    });
     expect(await trafficMetricStore.readRecent(runId)).toEqual([]);
   });
 
@@ -1838,13 +2127,18 @@ describe("demo-run lifecycle start gating", () => {
         trafficDeliverySummary: {
           plannedRequests: 10_000,
           emittedRequests: 0,
+          trafficMode: "buyer-spike",
+          plannedBuyers: 10_000,
+          scheduledRatePerSecond: null,
+          configuredDurationSeconds: null,
+          preAllocatedVUs: null,
+          maxVUs: null,
           droppedIterations: 10_000,
-          trafficDeliveryStatus: "complete",
           notes: [],
         },
         httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
         loadRunDiagnosticsSummary: {
-          ...runnerDiagnosticsFixture(),
+          ...runnerDiagnosticsFixture("2026-06-20T00:00:12.000Z", 10_000),
           completedAt: "2026-06-20T00:00:12.000Z",
         },
         apiRequestLifecycleSummary: {},
@@ -1878,6 +2172,7 @@ describe("demo-run lifecycle start gating", () => {
       expect(run).toMatchObject({
         status: "draining",
         trafficStatus: "succeeded",
+        trafficStartedAt: new Date("2026-06-20T00:00:11.000Z"),
         trafficEndedAt: new Date("2026-06-20T00:00:12.000Z"),
       });
       expect(finalization).toMatchObject({
@@ -1895,7 +2190,7 @@ describe("demo-run lifecycle start gating", () => {
     }
   });
 
-  it("keeps the first conflicting completion authoritative while concurrent redelivery repairs finalization", async () => {
+  it("rejects a conflicting completion without using it to repair the first accepted report", async () => {
     let releaseFirstEnrichment: () => void = () => undefined;
     let firstEnrichmentEntered: () => void = () => undefined;
     const firstEnrichmentGate = new Promise<void>((resolve) => {
@@ -1920,7 +2215,7 @@ describe("demo-run lifecycle start gating", () => {
       finalizationService: { finalizeRun, finalizeReadyRuns: async () => 0 },
     });
     const started = await service.startRun(
-      { presetSlug: "preview-1k", operatorMode: "admin" },
+      completionStartCommand(111),
       "corr-completion-concurrency-start",
     );
     const firstReport = trafficCompletionFixture({
@@ -1977,9 +2272,14 @@ describe("demo-run lifecycle start gating", () => {
     });
     await requireRedis(redis).hset(inventory.reservationOutcomes, "api_sold_out_decision", "17");
     const duplicate = service.recordTrafficCompletion(conflictingReport);
-    await expect(duplicate).rejects.toThrow("finalization temporarily failed");
+    await expect(duplicate).rejects.toMatchObject({
+      code: "traffic_completion_report_mismatch",
+    });
     releaseFirstEnrichment();
-    await expect(first).resolves.toMatchObject({ status: "draining" });
+    await expect(first).rejects.toThrow("finalization temporarily failed");
+    await expect(service.recordTrafficCompletion(firstReport)).resolves.toMatchObject({
+      status: "draining",
+    });
 
     const [run] = await requireConnection(connection)
       .db.select()
@@ -2008,13 +2308,13 @@ describe("demo-run lifecycle start gating", () => {
     });
     expect(finalization?.trafficOutcomeSummary).toMatchObject({
       terminalInventorySnapshot: expect.objectContaining({
-        remainingStock: 900,
-        reservedStock: 100,
-        soldOutRejections: 17,
+        remainingStock: 1000,
+        reservedStock: 0,
+        soldOutRejections: 0,
       }),
       businessOutcomeAtTrafficCompletion: emptyBusinessOutcomeSummary(),
     });
-    expect(soldOutOutcome).toMatchObject({ count: 17, source: "redis" });
+    expect(soldOutOutcome).toMatchObject({ count: 0, source: "redis" });
 
     const authoritativeOutcome = structuredClone(finalization?.trafficOutcomeSummary);
     await requireRedis(redis).hset(inventory.state, {
@@ -2022,8 +2322,8 @@ describe("demo-run lifecycle start gating", () => {
       reservedStock: "999",
     });
     await requireRedis(redis).hset(inventory.reservationOutcomes, "api_sold_out_decision", "99");
-    await expect(service.recordTrafficCompletion(conflictingReport)).resolves.toMatchObject({
-      status: "draining",
+    await expect(service.recordTrafficCompletion(conflictingReport)).rejects.toMatchObject({
+      code: "traffic_completion_report_mismatch",
     });
     const [afterRedelivery] = await requireConnection(connection)
       .db.select()
@@ -2034,8 +2334,8 @@ describe("demo-run lifecycle start gating", () => {
       .from(demoRunReservationOutcomes)
       .where(eq(demoRunReservationOutcomes.runId, started.run.runId));
     expect(afterRedelivery?.trafficOutcomeSummary).toEqual(authoritativeOutcome);
-    expect(soldOutAfterRedelivery?.count).toBe(17);
-    expect(businessReads).toBe(2);
+    expect(soldOutAfterRedelivery?.count).toBe(0);
+    expect(businessReads).toBe(1);
   });
 
   it("re-drives real finalization after enrichment commits and Redis inventory is removed", async () => {
@@ -2105,7 +2405,7 @@ describe("demo-run lifecycle start gating", () => {
       finalizationService,
     });
     const started = await service.startRun(
-      { presetSlug: "preview-1k", operatorMode: "admin" },
+      completionStartCommand(10),
       "corr-post-enrichment-start",
     );
     startedRunId = started.run.runId;
@@ -2125,11 +2425,28 @@ describe("demo-run lifecycle start gating", () => {
         plannedRequests: 10,
         correlationId: "corr-post-enrichment",
       }),
+      httpSummary: {
+        ...trafficCompletionFixture({
+          runId: started.run.runId,
+          status: "succeeded",
+          exitCode: 0,
+          completedAt: "2026-06-20T00:00:12.000Z",
+          plannedRequests: 10,
+          correlationId: "corr-post-enrichment",
+        }).httpSummary,
+        emittedRequests: 10,
+        completedRequests: 10,
+      },
       trafficDeliverySummary: {
         plannedRequests: 10,
         emittedRequests: 10,
+        trafficMode: "buyer-spike",
+        plannedBuyers: 10,
+        scheduledRatePerSecond: null,
+        configuredDurationSeconds: null,
+        preAllocatedVUs: null,
+        maxVUs: null,
         droppedIterations: 0,
-        trafficDeliveryStatus: "failed",
         notes: [],
       },
     };
@@ -2243,7 +2560,7 @@ describe("demo-run lifecycle start gating", () => {
       finalizationService,
     });
     const started = await service.startRun(
-      { presetSlug: "preview-1k", operatorMode: "admin" },
+      completionStartCommand(10),
       "corr-pending-enrichment-start",
     );
     const report: TrafficCompletionReport = {
@@ -2255,11 +2572,28 @@ describe("demo-run lifecycle start gating", () => {
         plannedRequests: 10,
         correlationId: "corr-pending-enrichment",
       }),
+      httpSummary: {
+        ...trafficCompletionFixture({
+          runId: started.run.runId,
+          status: "succeeded",
+          exitCode: 0,
+          completedAt: "2026-06-20T00:00:12.000Z",
+          plannedRequests: 10,
+          correlationId: "corr-pending-enrichment",
+        }).httpSummary,
+        emittedRequests: 10,
+        completedRequests: 10,
+      },
       trafficDeliverySummary: {
         plannedRequests: 10,
         emittedRequests: 10,
+        trafficMode: "buyer-spike",
+        plannedBuyers: 10,
+        scheduledRatePerSecond: null,
+        configuredDurationSeconds: null,
+        preAllocatedVUs: null,
+        maxVUs: null,
         droppedIterations: 0,
-        trafficDeliveryStatus: "complete",
         notes: [],
       },
     };
@@ -2329,7 +2663,7 @@ describe("demo-run lifecycle start gating", () => {
       finalizationService: { finalizeRun, finalizeReadyRuns: async () => 0 },
     });
     const started = await service.startRun(
-      { presetSlug: "preview-1k", operatorMode: "admin" },
+      completionStartCommand(10),
       "corr-enrichment-repair-start",
     );
     const report = trafficCompletionFixture({
@@ -2388,7 +2722,7 @@ describe("demo-run lifecycle start gating", () => {
       finalizationService: { finalizeRun: async () => null, finalizeReadyRuns: async () => 0 },
     });
     const started = await service.startRun(
-      { presetSlug: "preview-1k", operatorMode: "admin" },
+      completionStartCommand(10),
       "corr-periodic-enrichment-start",
     );
     const report = trafficCompletionFixture({
@@ -2454,10 +2788,7 @@ describe("demo-run lifecycle start gating", () => {
       completionEnrichmentService,
       finalizationService,
     });
-    const started = await service.startRun(
-      { presetSlug: "preview-1k", operatorMode: "admin" },
-      "corr-no-snapshot-start",
-    );
+    const started = await service.startRun(completionStartCommand(10), "corr-no-snapshot-start");
     const report: TrafficCompletionReport = {
       ...trafficCompletionFixture({
         runId: started.run.runId,
@@ -2467,11 +2798,28 @@ describe("demo-run lifecycle start gating", () => {
         plannedRequests: 10,
         correlationId: "corr-no-snapshot",
       }),
+      httpSummary: {
+        ...trafficCompletionFixture({
+          runId: started.run.runId,
+          status: "succeeded",
+          exitCode: 0,
+          completedAt: "2026-06-20T00:00:12.000Z",
+          plannedRequests: 10,
+          correlationId: "corr-no-snapshot",
+        }).httpSummary,
+        emittedRequests: 10,
+        completedRequests: 10,
+      },
       trafficDeliverySummary: {
         plannedRequests: 10,
         emittedRequests: 10,
+        trafficMode: "buyer-spike",
+        plannedBuyers: 10,
+        scheduledRatePerSecond: null,
+        configuredDurationSeconds: null,
+        preAllocatedVUs: null,
+        maxVUs: null,
         droppedIterations: 0,
-        trafficDeliveryStatus: "complete",
         notes: [],
       },
     };
@@ -2699,14 +3047,23 @@ function createPresetManagementService(
 function createMetricIngestionService(options: {
   appendAndPublishIfLive: RedisDashboardTrafficMetricStore["appendAndPublishIfLive"];
   warn: ReturnType<typeof vi.fn>;
+  run?: { status: string; trafficStatus: string } | null;
 }): DemoRunService {
-  const database = {
+  const selectedRun =
+    options.run === undefined ? { status: "active", trafficStatus: "active" } : options.run;
+  const database: Record<string, unknown> = {
     select: () => ({
       from: () => ({
-        where: () => ({ limit: async () => [{ status: "active" }] }),
+        where: () => ({
+          limit: () => ({
+            for: async () => (selectedRun ? [selectedRun] : []),
+          }),
+        }),
       }),
     }),
   };
+  database.transaction = async (operation: (tx: typeof database) => Promise<unknown>) =>
+    operation(database);
 
   return new DemoRunService({
     db: database as never,
@@ -2921,6 +3278,23 @@ function emptyBusinessOutcomeSummary(): BusinessOutcomeSummary {
   };
 }
 
+function completionStartCommand(plannedRequests: number) {
+  return {
+    presetSlug: "preview-1k",
+    operatorMode: "admin" as const,
+    configOverride: {
+      trafficConfig: {
+        mode: "buyer-spike" as const,
+        buyerCount: plannedRequests,
+        duplicateEachBuyerAttempt: false,
+        startDelaySeconds: 0,
+        maxDurationSeconds: 2,
+        quantityPerAttempt: 1,
+      },
+    },
+  };
+}
+
 function trafficCompletionFixture(input: {
   runId: string;
   status: "succeeded" | "failed";
@@ -2949,12 +3323,17 @@ function trafficCompletionFixture(input: {
     trafficDeliverySummary: {
       plannedRequests: input.plannedRequests,
       emittedRequests: 0,
+      trafficMode: "buyer-spike",
+      plannedBuyers: input.plannedRequests,
+      scheduledRatePerSecond: null,
+      configuredDurationSeconds: null,
+      preAllocatedVUs: null,
+      maxVUs: null,
       droppedIterations: input.plannedRequests,
-      trafficDeliveryStatus: "failed",
       notes: [],
     },
     httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
-    loadRunDiagnosticsSummary: runnerDiagnosticsFixture(input.completedAt),
+    loadRunDiagnosticsSummary: runnerDiagnosticsFixture(input.completedAt, input.plannedRequests),
     apiRequestLifecycleSummary: {},
     completedAt: input.completedAt,
     correlationId: input.correlationId,
@@ -2962,10 +3341,11 @@ function trafficCompletionFixture(input: {
 }
 
 function runnerDiagnosticsFixture(
-  completedAt = "2026-06-20T00:00:05.000Z",
+  completedAt = "2026-06-20T00:00:12.000Z",
+  plannedRequests = 10_000,
 ): TrafficCompletionReport["loadRunDiagnosticsSummary"] {
   return {
-    startedAt: "2026-06-20T00:00:00.000Z",
+    startedAt: "2026-06-20T00:00:11.000Z",
     completedAt,
     nproc: null,
     ulimitNofile: null,
@@ -2974,12 +3354,12 @@ function runnerDiagnosticsFixture(
     k6Version: null,
     executionPlan: {
       trafficMode: "buyer-spike",
-      buyerCount: 1,
+      buyerCount: plannedRequests,
       duplicateEachBuyerAttempt: false,
       iterationsPerVu: 1,
-      plannedEmittedAttempts: 1,
+      plannedEmittedAttempts: plannedRequests,
       startDelaySeconds: 0,
-      maxDurationSeconds: 1,
+      maxDurationSeconds: 2,
     },
     stderrLines: [],
     stderrLineCountObserved: 0,

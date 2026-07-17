@@ -3,6 +3,7 @@ import type { ErrorPayloadCode } from "./error.js";
 import type { OperatorMode } from "./lifecycle.js";
 import {
   type AcceptedRunConfigSnapshot,
+  deriveLoadExecutionPlan,
   resolveSteadyArrivalVus,
   type TrafficConfig,
 } from "./load.js";
@@ -15,11 +16,7 @@ export interface PublicRuntimePolicyViolation {
 }
 
 export function calculatePlannedRequests(trafficConfig: TrafficConfig): number {
-  if (trafficConfig.mode === "buyer-spike") {
-    return trafficConfig.buyerCount * (trafficConfig.duplicateEachBuyerAttempt ? 2 : 1);
-  }
-
-  return trafficConfig.ratePerSecond * trafficConfig.durationSeconds;
+  return deriveLoadExecutionPlan(trafficConfig).plannedEmittedAttempts;
 }
 
 export function collectAcceptedRunConfigSnapshotViolations(

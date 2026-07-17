@@ -188,8 +188,12 @@ export function registerDemoRunRoutes(
 
     const parsedRequest = loadMetricIngestRequestSchema.parse(request.body);
     applyInternalBodyCorrelation(request, reply, parsedRequest.correlationId);
-    await options.demoRunService.ingestMetrics(parsedRequest);
-    return reply.status(202).send({ accepted: true });
+    try {
+      await options.demoRunService.ingestMetrics(parsedRequest);
+      return reply.status(202).send({ accepted: true });
+    } catch (error) {
+      throw mapDemoRunError(error);
+    }
   });
 
   app.post(internalTrafficCompletionPath, async (request, reply) => {
@@ -200,14 +204,18 @@ export function registerDemoRunRoutes(
 
     const parsedReport = trafficCompletionReportSchema.parse(request.body);
     applyInternalBodyCorrelation(request, reply, parsedReport.correlationId);
-    await options.demoRunService.recordTrafficCompletion(parsedReport);
-    return reply.status(202).send(
-      trafficCompletionAcknowledgementSchema.parse({
-        runId: parsedReport.runId,
-        acknowledged: true,
-        correlationId: parsedReport.correlationId,
-      }),
-    );
+    try {
+      await options.demoRunService.recordTrafficCompletion(parsedReport);
+      return reply.status(202).send(
+        trafficCompletionAcknowledgementSchema.parse({
+          runId: parsedReport.runId,
+          acknowledged: true,
+          correlationId: parsedReport.correlationId,
+        }),
+      );
+    } catch (error) {
+      throw mapDemoRunError(error);
+    }
   });
 }
 
@@ -276,8 +284,15 @@ function mapDemoRunError(error: unknown): unknown {
     "demo_run_already_active",
     "demo_reset_incomplete",
     "preset_not_archivable",
+    "traffic_completion_report_mismatch",
+    "traffic_completion_run_not_eligible",
+    "traffic_metric_run_not_eligible",
   ]);
-  const notFoundCodes = new Set(["preset_not_found", "public_runtime_policy_not_found"]);
+  const notFoundCodes = new Set([
+    "preset_not_found",
+    "public_runtime_policy_not_found",
+    "run_not_found",
+  ]);
   const forbiddenCodes = new Set(["public_visitor_forbidden"]);
 
   return new ApiHttpError({

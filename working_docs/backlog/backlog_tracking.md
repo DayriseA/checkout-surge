@@ -157,7 +157,7 @@ Replace `⬜` with `✅` when a task is complete. Optional `⏳` for work in pro
 
 ✅ [Task 76: Centralize declared non-goals and live caveats in one auditable scoping page](./task_76.md)
 
-⬜ [Task 77: Bind internal traffic ingestion to the accepted run](./task_77.md)
+✅ [Task 77: Bind internal traffic ingestion to the accepted run](./task_77.md)
 
 ⬜ [Task 78: Enforce lifecycle coherence in boundary DTOs with discriminated unions](./task_78.md)
 

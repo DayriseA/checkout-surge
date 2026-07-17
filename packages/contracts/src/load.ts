@@ -61,6 +61,35 @@ export interface ResolvedSteadyArrivalVus {
   maxVus: number;
 }
 
+/**
+ * Resolves the immutable executor identity represented by an accepted traffic
+ * configuration. Both the API admission boundary and load orchestrator use
+ * this helper so completion evidence cannot drift from script generation.
+ */
+export function deriveLoadExecutionPlan(traffic: TrafficConfig): LoadExecutionPlan {
+  if (traffic.mode === "buyer-spike") {
+    const iterationsPerVu = traffic.duplicateEachBuyerAttempt ? 2 : 1;
+    return {
+      trafficMode: traffic.mode,
+      buyerCount: traffic.buyerCount,
+      duplicateEachBuyerAttempt: traffic.duplicateEachBuyerAttempt,
+      iterationsPerVu,
+      plannedEmittedAttempts: traffic.buyerCount * iterationsPerVu,
+      startDelaySeconds: traffic.startDelaySeconds,
+      maxDurationSeconds: traffic.maxDurationSeconds,
+    };
+  }
+
+  return {
+    trafficMode: traffic.mode,
+    ratePerSecond: traffic.ratePerSecond,
+    durationSeconds: traffic.durationSeconds,
+    plannedEmittedAttempts: traffic.ratePerSecond * traffic.durationSeconds,
+    startDelaySeconds: traffic.startDelaySeconds,
+    ...resolveSteadyArrivalVus(traffic),
+  };
+}
+
 export function resolveSteadyArrivalVus(
   trafficConfig: Pick<SteadyArrivalTrafficConfig, "ratePerSecond" | "k6Vus">,
 ): ResolvedSteadyArrivalVus {
@@ -258,9 +287,17 @@ export const trafficDeliveryEvidenceSchema = z
 export type TrafficDeliveryEvidence = z.infer<typeof trafficDeliveryEvidenceSchema>;
 
 /** Real completion input. Quality is classified by the API, not the caller. */
-export const trafficCompletionDeliverySummarySchema = trafficDeliveryEvidenceSchema.extend({
-  plannedRequests: positiveIntegerSchema,
-});
+export const trafficCompletionDeliverySummarySchema = trafficDeliveryEvidenceSchema
+  .omit({ trafficDeliveryStatus: true })
+  .safeExtend({
+    plannedRequests: positiveIntegerSchema,
+    trafficMode: z.enum(["buyer-spike", "steady-arrival-rate"]),
+    plannedBuyers: positiveIntegerSchema.nullable(),
+    scheduledRatePerSecond: positiveIntegerSchema.nullable(),
+    configuredDurationSeconds: positiveIntegerSchema.nullable(),
+    preAllocatedVUs: positiveIntegerSchema.nullable(),
+    maxVUs: positiveIntegerSchema.nullable(),
+  });
 export type TrafficCompletionDeliverySummary = z.infer<
   typeof trafficCompletionDeliverySummarySchema
 >;
@@ -511,6 +548,61 @@ export const trafficCompletionReportSchema = z
         path: ["loadRunDiagnosticsSummary", "completedAt"],
         message: "must match completedAt",
       });
+
+    const plan = value.loadRunDiagnosticsSummary.executionPlan;
+    const delivery = value.trafficDeliverySummary;
+    const expectedDeliveryIdentity =
+      plan.trafficMode === "buyer-spike"
+        ? {
+            trafficMode: plan.trafficMode,
+            plannedBuyers: plan.buyerCount,
+            scheduledRatePerSecond: null,
+            configuredDurationSeconds: null,
+            preAllocatedVUs: null,
+            maxVUs: null,
+          }
+        : {
+            trafficMode: plan.trafficMode,
+            plannedBuyers: null,
+            scheduledRatePerSecond: plan.ratePerSecond,
+            configuredDurationSeconds: plan.durationSeconds,
+            preAllocatedVUs: plan.preAllocatedVus,
+            maxVUs: plan.maxVus,
+          };
+    const mismatches: Array<[string, unknown, unknown]> = [
+      [
+        "httpSummary.plannedRequests",
+        value.httpSummary.plannedRequests,
+        plan.plannedEmittedAttempts,
+      ],
+      [
+        "trafficDeliverySummary.plannedRequests",
+        delivery.plannedRequests,
+        plan.plannedEmittedAttempts,
+      ],
+      [
+        "trafficDeliverySummary.emittedRequests",
+        delivery.emittedRequests,
+        value.httpSummary.emittedRequests,
+      ],
+      ...Object.entries(expectedDeliveryIdentity).map(
+        ([field, expected]) =>
+          [
+            `trafficDeliverySummary.${field}`,
+            delivery[field as keyof typeof delivery],
+            expected,
+          ] as [string, unknown, unknown],
+      ),
+    ];
+    for (const [path, actual, expected] of mismatches) {
+      if (actual !== expected) {
+        context.addIssue({
+          code: "custom",
+          path: path.split("."),
+          message: "must match the reported execution plan",
+        });
+      }
+    }
   });
 export type TrafficCompletionReport = z.infer<typeof trafficCompletionReportSchema>;
 
