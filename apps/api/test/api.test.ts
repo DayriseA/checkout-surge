@@ -2959,7 +2959,6 @@ describe("API buy persistence", () => {
     const publisher = createBullMqOrderProcessJobPublisher(
       { url: redisUrl, maxRetriesPerRequest: 3 },
       undefined,
-      { resolve: vi.fn() },
     );
     const queue = new Queue<OrderProcessJob, void, typeof orderProcessJobName>(
       orderProcessBullMqQueueName,
@@ -3171,7 +3170,6 @@ describe("API buy persistence", () => {
     const publisher = createBullMqOrderProcessJobPublisher(
       { url: redisUrl, maxRetriesPerRequest: 3 },
       undefined,
-      { resolve: vi.fn() },
     );
     const queue = new Queue<OrderProcessJob, void, typeof orderProcessJobName>(
       orderProcessBullMqQueueName,

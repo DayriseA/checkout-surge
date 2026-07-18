@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import {
   type AcceptedOrderSummary,
   type AcceptedReservationSummary,
+  type BackpressureConfig,
   type BuyRequest,
   type BuyResponse,
   buyResponseSchema,
@@ -15,6 +16,7 @@ import type {
   SoldOutObservationPort,
 } from "./dashboard-snapshot-publication-scheduler.js";
 import type { OrderProcessJobPublisher } from "./order-process-job-publisher.js";
+import type { RunRetryPolicyResolver } from "./run-retry-policy-resolver.js";
 
 export const definitivePersistenceRejectionCode = "run_sale_offer_mismatch" as const;
 export const terminalPersistenceRejectionCode = "run_terminal" as const;
@@ -162,6 +164,7 @@ export class ReserveOrderService {
   private readonly persistence: BuyPersistence;
   private readonly stockReservations: StockReservationGateway;
   private readonly orderProcessJobPublisher: OrderProcessJobPublisher;
+  private readonly runRetryPolicyResolver: RunRetryPolicyResolver | undefined;
   private readonly reservationHoldMinutes: number;
   private readonly idempotencyTtlSeconds: number;
   private readonly pendingPersistenceRetryAfterSeconds: number;
@@ -184,6 +187,7 @@ export class ReserveOrderService {
     persistence: BuyPersistence;
     stockReservations: StockReservationGateway;
     orderProcessJobPublisher: OrderProcessJobPublisher;
+    runRetryPolicyResolver?: RunRetryPolicyResolver;
     reservationHoldMinutes: number;
     idempotencyTtlSeconds: number;
     pendingPersistenceRetryAfterSeconds: number;
@@ -203,6 +207,7 @@ export class ReserveOrderService {
     this.persistence = options.persistence;
     this.stockReservations = options.stockReservations;
     this.orderProcessJobPublisher = options.orderProcessJobPublisher;
+    this.runRetryPolicyResolver = options.runRetryPolicyResolver;
     this.reservationHoldMinutes = options.reservationHoldMinutes;
     this.idempotencyTtlSeconds = options.idempotencyTtlSeconds;
     this.pendingPersistenceRetryAfterSeconds = options.pendingPersistenceRetryAfterSeconds;
@@ -299,6 +304,7 @@ export class ReserveOrderService {
   }): Promise<BuyResponse> {
     let persisted: PersistedBuyAcceptance | null;
     try {
+      const retryPolicy = await this.resolveRunRetryPolicy(input.reservation);
       persisted = await this.withPersistenceAdmissionLock(
         input.reservation,
         async (persistence) => {
@@ -321,11 +327,15 @@ export class ReserveOrderService {
               input.reservation,
               persistence,
             );
-            await this.ensurePendingPersistence(input.idempotencyKey, input.reservation);
             return null;
           }
 
-          await this.enqueuePersistedBuy(persisted, input.idempotencyKey, input.reservation);
+          await this.enqueuePersistedBuy(
+            persisted,
+            input.idempotencyKey,
+            input.reservation,
+            retryPolicy,
+          );
           return persisted;
         },
       );
@@ -337,6 +347,7 @@ export class ReserveOrderService {
     }
 
     if (!persisted) {
+      await this.ensurePendingPersistence(input.idempotencyKey, input.reservation);
       return this.pendingResponse(input.reservation, input.correlationId, input.now);
     }
 
@@ -372,12 +383,18 @@ export class ReserveOrderService {
     let persisted: PersistedBuyAcceptance | null;
     let durableStateChanged = false;
     try {
+      const retryPolicy = await this.resolveRunRetryPolicy(input.reservation);
       persisted = await this.withPersistenceAdmissionLock(
         input.reservation,
         async (persistence) => {
           const existing = await persistence.getPersistedBuyByReservationId(input.reservation.id);
           if (existing) {
-            await this.enqueuePersistedBuy(existing, input.idempotencyKey, input.reservation);
+            await this.enqueuePersistedBuy(
+              existing,
+              input.idempotencyKey,
+              input.reservation,
+              retryPolicy,
+            );
             return existing;
           }
 
@@ -405,11 +422,15 @@ export class ReserveOrderService {
               input.reservation,
               persistence,
             );
-            await this.ensurePendingPersistence(input.idempotencyKey, input.reservation);
             return null;
           }
 
-          await this.enqueuePersistedBuy(materialized, input.idempotencyKey, input.reservation);
+          await this.enqueuePersistedBuy(
+            materialized,
+            input.idempotencyKey,
+            input.reservation,
+            retryPolicy,
+          );
           durableStateChanged = true;
           return materialized;
         },
@@ -422,6 +443,7 @@ export class ReserveOrderService {
     }
 
     if (!persisted) {
+      await this.ensurePendingPersistence(input.idempotencyKey, input.reservation);
       return this.pendingResponse(input.reservation, input.correlationId, input.now);
     }
 
@@ -492,12 +514,18 @@ export class ReserveOrderService {
     persisted: PersistedBuyAcceptance,
     idempotencyKey: string,
     reservation: SecuredReservationHold,
+    retryPolicy?: BackpressureConfig["retryPolicy"],
   ): Promise<void> {
     const enqueue = async (): Promise<void> => {
       try {
         // PostgreSQL and BullMQ are not atomic. Every durable replay re-asserts this
         // deterministic job before Redis can be promoted to an accepted response.
-        await this.orderProcessJobPublisher.enqueue(this.toOrderProcessJob(persisted));
+        const job = this.toOrderProcessJob(persisted);
+        if (retryPolicy) {
+          await this.orderProcessJobPublisher.enqueue(job, { retryPolicy });
+        } else {
+          await this.orderProcessJobPublisher.enqueue(job);
+        }
         this.scheduleQueueSnapshot(reservation);
       } catch (error) {
         safelyReportPartialFailure(this.reportOrderEnqueueFailure, {
@@ -509,6 +537,19 @@ export class ReserveOrderService {
     };
 
     await enqueue();
+  }
+
+  private async resolveRunRetryPolicy(
+    reservation: SecuredReservationHold,
+  ): Promise<BackpressureConfig["retryPolicy"] | undefined> {
+    if (!reservation.runId || !this.runRetryPolicyResolver) return undefined;
+    const retryPolicy = await this.runRetryPolicyResolver.resolve(reservation.runId);
+    if (!retryPolicy) {
+      throw new DefinitivePersistenceRejectionError(
+        `Accepted run snapshot was not found for order job run ${reservation.runId}.`,
+      );
+    }
+    return retryPolicy;
   }
 
   private scheduleInventorySnapshot(reservation: SecuredReservationHold): void {

@@ -2,12 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   assertBusinessCompletion,
+  assertScenarioAcceptance,
   assertSseEvidence,
   collectDashboardEvents,
   extractCompleteSseFrames,
   parseSseDataFrames,
   prepareExactRunCleanup,
   requireReadiness,
+  runtimeLoadSmokeScenarios,
   selectTerminalSummary,
   teardownWithRetry,
   throwSmokeFailures,
@@ -18,6 +20,43 @@ import {
 const runId = "55555555-5555-4555-8555-555555555554";
 const saleOfferId = "66666666-6666-4666-8666-666666666666";
 const correlationId = "corr-smoke";
+
+test("retains steady smoke and adds a bounded accepted buyer burst", () => {
+  const scenarios = runtimeLoadSmokeScenarios();
+  assert.equal(scenarios.length, 2);
+  assert.deepEqual(scenarios[0].configOverride.trafficConfig, {
+    mode: "steady-arrival-rate",
+    ratePerSecond: 2,
+    durationSeconds: 8,
+    startDelaySeconds: 0,
+    quantityPerAttempt: 1,
+    k6Vus: { preAllocatedVus: 1, maxVus: 4 },
+  });
+  assert.deepEqual(scenarios[1].configOverride.trafficConfig, {
+    mode: "buyer-spike",
+    buyerCount: 32,
+    duplicateEachBuyerAttempt: false,
+    startDelaySeconds: 0,
+    maxDurationSeconds: 5,
+    quantityPerAttempt: 1,
+  });
+  assert.equal(scenarios[1].configOverride.inventoryConfig.startingStock, 32);
+  assert.equal(scenarios[1].expectedAcceptedReservations, 32);
+  assert.doesNotThrow(() =>
+    assertScenarioAcceptance(
+      { businessOutcomeSummary: { acceptedReservations: 32 } },
+      scenarios[1],
+    ),
+  );
+  assert.throws(
+    () =>
+      assertScenarioAcceptance(
+        { businessOutcomeSummary: { acceptedReservations: 31 } },
+        scenarios[1],
+      ),
+    /accepted 31 reservations; expected 32/,
+  );
+});
 
 function dashboardEvent(overrides = {}) {
   return {

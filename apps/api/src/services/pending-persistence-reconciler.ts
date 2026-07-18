@@ -1,4 +1,5 @@
 import {
+  type BackpressureConfig,
   idempotencyKeySchema,
   type OrderProcessJob,
   type SecuredReservationHold,
@@ -18,7 +19,11 @@ import type {
   PersistedBuyAcceptance,
   StockReservationGateway,
 } from "./reserve-order-service.js";
-import { isDefinitivePersistenceRejection } from "./reserve-order-service.js";
+import {
+  DefinitivePersistenceRejectionError,
+  isDefinitivePersistenceRejection,
+} from "./reserve-order-service.js";
+import type { RunRetryPolicyResolver } from "./run-retry-policy-resolver.js";
 
 export interface PendingPersistenceReconciliationSummary {
   found: number;
@@ -29,11 +34,7 @@ export interface PendingPersistenceReconciliationSummary {
 }
 
 export interface BusinessOutcomeDirtyMarker {
-  markDirty(input: {
-    saleOfferId: string;
-    runId?: string;
-    correlationId?: string;
-  }): void;
+  markDirty(input: { saleOfferId: string; runId?: string; correlationId?: string }): void;
 }
 
 /**
@@ -49,6 +50,7 @@ export class PendingPersistenceReconciler {
       stockReservations: Pick<StockReservationGateway, "promoteAccepted"> &
         Partial<Pick<StockReservationGateway, "reverse">>;
       orderProcessJobPublisher: OrderProcessJobPublisher;
+      runRetryPolicyResolver?: RunRetryPolicyResolver;
       idempotencyTtlSeconds: number;
       logger: CheckoutSurgeLogger;
       dashboardSnapshotPublications?: Pick<
@@ -93,20 +95,36 @@ export class PendingPersistenceReconciler {
           securedAt: record.securedAt,
           expiresAt: record.expiresAt,
         };
-        const result = await this.withPersistenceAdmissionLock(reservation, (persistence) =>
-          this.reconcileRecord(
-            reservation,
-            idempotencyKeySchema.parse(record.idempotencyKey),
-            persistence,
-          ),
-        );
-        if (result.status === "reversed") {
-          summary.reversed += 1;
-        } else {
-          summary.reconciled += 1;
-          if (result.materialized) {
-            summary.materialized += 1;
+        const idempotencyKey = idempotencyKeySchema.parse(record.idempotencyKey);
+        let result: { materialized: boolean };
+        try {
+          const retryPolicy = await this.resolveRunRetryPolicy(reservation);
+          result = await this.withPersistenceAdmissionLock(reservation, (persistence) =>
+            this.reconcileRecord(reservation, persistence, retryPolicy),
+          );
+        } catch (error) {
+          if (isDefinitivePersistenceRejection(error) && this.options.stockReservations.reverse) {
+            await this.options.stockReservations.reverse({
+              idempotencyKey,
+              reservation,
+              occurredAt: this.now(),
+            });
+            await this.markPendingReconciled(reservation.id, this.options.persistence);
+            summary.reversed += 1;
+            continue;
           }
+          throw error;
+        }
+        this.scheduleQueueSnapshot(reservation);
+        if (result.materialized) this.markBusinessOutcomeDirty(reservation);
+        await this.options.stockReservations.promoteAccepted({
+          idempotencyKey,
+          idempotencyTtlSeconds: this.options.idempotencyTtlSeconds,
+          reservation,
+        });
+        summary.reconciled += 1;
+        if (result.materialized) {
+          summary.materialized += 1;
         }
       } catch (error) {
         summary.failed += 1;
@@ -192,9 +210,9 @@ export class PendingPersistenceReconciler {
 
   private async reconcileRecord(
     reservation: SecuredReservationHold,
-    idempotencyKey: string,
     persistence: BuyPersistenceOperations,
-  ): Promise<{ status: "reconciled" | "reversed"; materialized: boolean }> {
+    retryPolicy?: BackpressureConfig["retryPolicy"],
+  ): Promise<{ materialized: boolean }> {
     let persisted = await persistence.getPersistedBuyByReservationId(reservation.id);
     let materialized = false;
 
@@ -207,33 +225,22 @@ export class PendingPersistenceReconciler {
         // insert. Re-read before classifying the original write as a failure.
         persisted = await persistence.getPersistedBuyByReservationId(reservation.id);
         if (!persisted) {
-          if (isDefinitivePersistenceRejection(error) && this.options.stockReservations.reverse) {
-            await this.options.stockReservations.reverse({
-              idempotencyKey,
-              reservation,
-              occurredAt: this.now(),
-            });
-            await this.markPendingReconciled(reservation.id, persistence);
-            return { status: "reversed", materialized: false };
-          }
           throw error;
         }
       }
     }
 
-    await this.options.orderProcessJobPublisher.enqueue(toOrderProcessJob(persisted));
-    this.scheduleQueueSnapshot(reservation);
-    if (materialized) this.markBusinessOutcomeDirty(reservation);
+    const job = toOrderProcessJob(persisted);
+    if (retryPolicy) {
+      await this.options.orderProcessJobPublisher.enqueue(job, { retryPolicy });
+    } else {
+      await this.options.orderProcessJobPublisher.enqueue(job);
+    }
     // Marking the durable pending row before promotion keeps Redis discoverable
     // if the promotion fails; Redis is the final source of truth for pending
     // stock and will be retried by the next reconciliation pass.
     await this.markPendingReconciled(reservation.id, persistence);
-    await this.options.stockReservations.promoteAccepted({
-      idempotencyKey,
-      idempotencyTtlSeconds: this.options.idempotencyTtlSeconds,
-      reservation,
-    });
-    return { status: "reconciled", materialized };
+    return { materialized };
   }
 
   private async markPendingReconciled(
@@ -277,6 +284,19 @@ export class PendingPersistenceReconciler {
       return this.options.persistence.withRunAdmissionLock({ reservation, operation });
     }
     return operation(this.options.persistence);
+  }
+
+  private async resolveRunRetryPolicy(
+    reservation: SecuredReservationHold,
+  ): Promise<BackpressureConfig["retryPolicy"] | undefined> {
+    if (!reservation.runId || !this.options.runRetryPolicyResolver) return undefined;
+    const retryPolicy = await this.options.runRetryPolicyResolver.resolve(reservation.runId);
+    if (!retryPolicy) {
+      throw new DefinitivePersistenceRejectionError(
+        `Accepted run snapshot was not found for order job run ${reservation.runId}.`,
+      );
+    }
+    return retryPolicy;
   }
 
   private now(): Date {

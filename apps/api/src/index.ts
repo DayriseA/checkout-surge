@@ -128,7 +128,6 @@ export async function startApiServer(): Promise<void> {
       maxAttempts: config.orderProcessMaxAttempts,
       backoffBaseMs: config.orderProcessBackoffBaseMs,
     },
-    new PostgresRunRetryPolicyResolver(connection.db),
   );
   const orderProcessQueueInspector = createBullMqOrderProcessQueueInspector({
     url: config.redisUrl,
@@ -140,6 +139,7 @@ export async function startApiServer(): Promise<void> {
   });
 
   const persistence = new PostgresBuyPersistence(connection.db);
+  const runRetryPolicyResolver = new PostgresRunRetryPolicyResolver(connection.db);
   const stockReservationGateway = {
     reserve: (input: Parameters<typeof reserveInventoryStock>[1]) =>
       reserveInventoryStock(redis, input),
@@ -223,6 +223,7 @@ export async function startApiServer(): Promise<void> {
     persistence,
     stockReservations: stockReservationGateway,
     orderProcessJobPublisher,
+    runRetryPolicyResolver,
     idempotencyTtlSeconds: config.idempotencyTtlSeconds,
     dashboardSnapshotPublications,
     businessOutcomeUpdates: businessOutcomePublications,
@@ -306,6 +307,7 @@ export async function startApiServer(): Promise<void> {
   const reserveOrderService = new ReserveOrderService({
     persistence,
     orderProcessJobPublisher,
+    runRetryPolicyResolver,
     stockReservations: stockReservationGateway,
     reservationHoldMinutes: config.reservationHoldMinutes,
     idempotencyTtlSeconds: config.idempotencyTtlSeconds,

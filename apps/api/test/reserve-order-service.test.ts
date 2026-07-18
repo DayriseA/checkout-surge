@@ -24,6 +24,9 @@ function buildService(options: {
   persistence: BuyPersistence;
   stockReservations: StockReservationGateway;
   orderProcessJobPublisher?: OrderProcessJobPublisher;
+  runRetryPolicyResolver?: ConstructorParameters<
+    typeof ReserveOrderService
+  >[0]["runRetryPolicyResolver"];
   reportPersistenceFailure?: (report: ReservationPartialFailureReport) => void;
   reportPendingPersistenceRecordFailure?: (report: ReservationPartialFailureReport) => void;
   reportPendingPersistenceEnsureFailure?: (report: ReservationPartialFailureReport) => void;
@@ -47,6 +50,9 @@ function buildService(options: {
     orderProcessJobPublisher: options.orderProcessJobPublisher ?? {
       enqueue: async () => undefined,
     },
+    ...(options.runRetryPolicyResolver
+      ? { runRetryPolicyResolver: options.runRetryPolicyResolver }
+      : {}),
     reservationHoldMinutes: 15,
     idempotencyTtlSeconds: 1800,
     pendingPersistenceRetryAfterSeconds: 30,
@@ -322,6 +328,116 @@ describe("ReserveOrderService queue handoff", () => {
       quantity: request.quantity,
       queuedAt: now.toISOString(),
     });
+  });
+
+  it("resolves the frozen run policy before admission and carries it into enqueue", async () => {
+    const callOrder: string[] = [];
+    const retryPolicy = { maxAttempts: 6, initialBackoffMs: 125 };
+    const service = buildService({
+      persistence: {
+        withRunAdmissionLock: async ({ reservation, operation }) => {
+          callOrder.push("admission");
+          return operation({
+            persistSecuredReservation: async () => {
+              callOrder.push("persist");
+              return persistedBuy(reservation);
+            },
+            getPersistedBuyByReservationId: async () => null,
+          });
+        },
+        persistSecuredReservation: async () => {
+          throw new Error("Expected admission-scoped persistence.");
+        },
+        getPersistedBuyByReservationId: async () => null,
+      },
+      stockReservations: acceptingGateway({
+        promoteAccepted: async () => {
+          callOrder.push("promote");
+        },
+      }),
+      runRetryPolicyResolver: {
+        resolve: async () => {
+          callOrder.push("resolve policy");
+          return retryPolicy;
+        },
+      },
+      orderProcessJobPublisher: {
+        enqueue: async (_job, options) => {
+          callOrder.push("enqueue");
+          expect(options).toEqual({ retryPolicy });
+        },
+      },
+    });
+
+    await expect(service.reserve({ request, correlationId, now })).resolves.toMatchObject({
+      outcome: "reservation_secured",
+    });
+    expect(callOrder).toEqual(["resolve policy", "admission", "persist", "enqueue", "promote"]);
+  });
+
+  it.each([
+    "reservation_secured",
+    "reservation_pending_persistence",
+    "idempotent_replay",
+  ] as const)(
+    "reverses a %s hold when pre-admission policy resolution proves the run is missing",
+    async (outcome) => {
+      const persistSecuredReservation = vi.fn();
+      const getPersistedBuyByReservationId = vi.fn();
+      const withRunAdmissionLock = vi.fn();
+      const enqueue = vi.fn();
+      const promoteAccepted = vi.fn();
+      const reverse = vi.fn(async () => "reversed" as const);
+      const resolve = vi.fn(async () => null);
+      const service = buildService({
+        persistence: {
+          persistSecuredReservation,
+          getPersistedBuyByReservationId,
+          withRunAdmissionLock,
+        },
+        stockReservations: acceptingGateway({
+          reserve: async ({ reservation }) => ({ outcome, reservation }),
+          promoteAccepted,
+          reverse,
+        }),
+        runRetryPolicyResolver: { resolve },
+        orderProcessJobPublisher: { enqueue },
+      });
+
+      await expect(service.reserve({ request, correlationId, now })).rejects.toMatchObject({
+        code: "run_sale_offer_mismatch",
+      });
+      expect(resolve).toHaveBeenCalledWith(request.runId);
+      expect(reverse).toHaveBeenCalledOnce();
+      expect(withRunAdmissionLock).not.toHaveBeenCalled();
+      expect(persistSecuredReservation).not.toHaveBeenCalled();
+      expect(getPersistedBuyByReservationId).not.toHaveBeenCalled();
+      expect(enqueue).not.toHaveBeenCalled();
+      expect(promoteAccepted).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not reverse a hold when pre-admission policy resolution fails without proving absence", async () => {
+    const resolutionError = new Error("database unavailable");
+    const reverse = vi.fn(async () => "reversed" as const);
+    const withRunAdmissionLock = vi.fn();
+    const service = buildService({
+      persistence: {
+        persistSecuredReservation: vi.fn(),
+        getPersistedBuyByReservationId: vi.fn(),
+        withRunAdmissionLock,
+      },
+      stockReservations: acceptingGateway({ reverse }),
+      runRetryPolicyResolver: {
+        resolve: async () => {
+          throw resolutionError;
+        },
+      },
+    });
+
+    await expect(service.reserve({ request, correlationId, now })).rejects.toBe(resolutionError);
+    expect(reverse).not.toHaveBeenCalled();
+    expect(withRunAdmissionLock).not.toHaveBeenCalled();
   });
 
   it("schedules a best-effort business outcome update after durable reservation acceptance", async () => {
@@ -812,6 +928,47 @@ describe("ReserveOrderService partial failures", () => {
         correlationId,
       }),
     });
+  });
+
+  it("ensures the Redis pending marker only after admission is released", async () => {
+    const callOrder: string[] = [];
+    const admissionOperations = {
+      persistSecuredReservation: async () => {
+        callOrder.push("persist failure");
+        throw new Error("database unavailable");
+      },
+      getPersistedBuyByReservationId: async () => null,
+      recordPendingPersistence: async () => {
+        callOrder.push("record pending");
+      },
+    };
+    const service = buildService({
+      persistence: {
+        ...admissionOperations,
+        withRunAdmissionLock: async ({ operation }) => {
+          callOrder.push("admission start");
+          const result = await operation(admissionOperations);
+          callOrder.push("admission end");
+          return result;
+        },
+      },
+      stockReservations: acceptingGateway({
+        markPendingPersistence: async () => {
+          callOrder.push("ensure Redis pending");
+        },
+      }),
+    });
+
+    await expect(service.reserve({ request, correlationId, now })).resolves.toMatchObject({
+      outcome: "reservation_pending_persistence",
+    });
+    expect(callOrder).toEqual([
+      "admission start",
+      "persist failure",
+      "record pending",
+      "admission end",
+      "ensure Redis pending",
+    ]);
   });
 
   it("does not hide the pending response when pending-persistence recording fails", async () => {

@@ -181,7 +181,7 @@ export class PostgresBuyPersistence implements BuyPersistence {
     const reservedDb = createDatabase(reservedClient as SqlClient);
     let locked = false;
     try {
-      await reservedClient`select pg_advisory_lock(hashtext(${terminalDemoRunTransitionLockKey(runId)}))`;
+      await reservedClient`select pg_advisory_lock_shared(hashtext(${terminalDemoRunTransitionLockKey(runId)}))`;
       locked = true;
       const [run] = await reservedDb
         .select({ saleOfferId: demoRuns.saleOfferId, status: demoRuns.status })
@@ -196,12 +196,13 @@ export class PostgresBuyPersistence implements BuyPersistence {
       }
 
       // Each persistence operation commits on the reserved session while this
-      // session-level advisory lock remains held through BullMQ enqueue.
+      // shared session-level advisory lock remains held through BullMQ enqueue.
+      // The callback must not check out another connection from the base pool.
       return await input.operation(this.databaseOperations(reservedDb, reservedClient));
     } finally {
       try {
         if (locked) {
-          await reservedClient`select pg_advisory_unlock(hashtext(${terminalDemoRunTransitionLockKey(runId)}))`;
+          await reservedClient`select pg_advisory_unlock_shared(hashtext(${terminalDemoRunTransitionLockKey(runId)}))`;
         }
       } finally {
         reservedClient.release();

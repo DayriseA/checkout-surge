@@ -36,12 +36,6 @@ describe("run retry policy BullMQ storage", () => {
     const publisher = createBullMqOrderProcessJobPublisher(
       { url: url() },
       { maxAttempts: 99, backoffBaseMs: 9999 },
-      {
-        resolve: async (runId) =>
-          runId === runA
-            ? { maxAttempts: 6, initialBackoffMs: 750 }
-            : { maxAttempts: 3, initialBackoffMs: 0 },
-      },
     );
     const second = {
       ...base,
@@ -49,9 +43,15 @@ describe("run retry policy BullMQ storage", () => {
       publicOrderId: "ord_b",
       runId: runB,
     };
-    await publisher.enqueue(base);
-    await publisher.enqueue(second);
-    await publisher.enqueue(base);
+    await publisher.enqueue(base, {
+      retryPolicy: { maxAttempts: 6, initialBackoffMs: 750 },
+    });
+    await publisher.enqueue(second, {
+      retryPolicy: { maxAttempts: 3, initialBackoffMs: 0 },
+    });
+    await publisher.enqueue(base, {
+      retryPolicy: { maxAttempts: 6, initialBackoffMs: 750 },
+    });
     const firstStored = await queue.getJob(base.orderId);
     const secondStored = await queue.getJob(second.orderId);
     expect(firstStored?.opts).toMatchObject({

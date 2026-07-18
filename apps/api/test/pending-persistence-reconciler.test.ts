@@ -136,6 +136,146 @@ describe("PendingPersistenceReconciler", () => {
     expect(markDirty).not.toHaveBeenCalled();
   });
 
+  it("resolves policy before admission and promotes Redis after releasing admission", async () => {
+    const callOrder: string[] = [];
+    const retryPolicy = { maxAttempts: 7, initialBackoffMs: 250 };
+    const admissionOperations = {
+      persistSecuredReservation: vi.fn(),
+      getPersistedBuyByReservationId: vi.fn(async () => {
+        callOrder.push("read durable");
+        return persisted();
+      }),
+      markPendingPersistenceReconciled: vi.fn(async () => {
+        callOrder.push("mark reconciled");
+      }),
+    };
+    const reconciler = new PendingPersistenceReconciler({
+      redis: pendingRedis() as never,
+      persistence: {
+        ...admissionOperations,
+        withRunAdmissionLock: async ({ operation }) => {
+          callOrder.push("admission start");
+          const result = await operation(admissionOperations);
+          callOrder.push("admission end");
+          return result;
+        },
+      },
+      runRetryPolicyResolver: {
+        resolve: async () => {
+          callOrder.push("resolve policy");
+          return retryPolicy;
+        },
+      },
+      stockReservations: {
+        promoteAccepted: async () => {
+          callOrder.push("promote");
+        },
+      },
+      idempotencyTtlSeconds: 1800,
+      orderProcessJobPublisher: {
+        enqueue: async (_job, options) => {
+          callOrder.push("enqueue");
+          expect(options).toEqual({ retryPolicy });
+        },
+      },
+      logger: createSilentLogger("api"),
+    });
+
+    await expect(reconciler.reconcileSaleOffer(hold.saleOfferId)).resolves.toMatchObject({
+      reconciled: 1,
+      failed: 0,
+    });
+    expect(callOrder).toEqual([
+      "resolve policy",
+      "admission start",
+      "read durable",
+      "enqueue",
+      "mark reconciled",
+      "admission end",
+      "promote",
+    ]);
+  });
+
+  it("reverses and reconciles pending state when policy resolution proves the run is missing", async () => {
+    const callOrder: string[] = [];
+    const persistSecuredReservation = vi.fn();
+    const getPersistedBuyByReservationId = vi.fn();
+    const withRunAdmissionLock = vi.fn();
+    const enqueue = vi.fn();
+    const promoteAccepted = vi.fn();
+    const reverse = vi.fn(async () => {
+      callOrder.push("reverse");
+      return "reversed" as const;
+    });
+    const markPendingPersistenceReconciled = vi.fn(async () => {
+      callOrder.push("mark reconciled");
+    });
+    const reconciler = new PendingPersistenceReconciler({
+      redis: pendingRedis() as never,
+      persistence: {
+        persistSecuredReservation,
+        getPersistedBuyByReservationId,
+        markPendingPersistenceReconciled,
+        withRunAdmissionLock,
+      },
+      runRetryPolicyResolver: {
+        resolve: async () => {
+          callOrder.push("resolve missing policy");
+          return null;
+        },
+      },
+      stockReservations: { promoteAccepted, reverse },
+      idempotencyTtlSeconds: 1800,
+      orderProcessJobPublisher: { enqueue },
+      logger: createSilentLogger("api"),
+    });
+
+    await expect(reconciler.reconcileSaleOffer(hold.saleOfferId)).resolves.toMatchObject({
+      found: 1,
+      reversed: 1,
+      reconciled: 0,
+      failed: 0,
+    });
+    expect(callOrder).toEqual(["resolve missing policy", "reverse", "mark reconciled"]);
+    expect(withRunAdmissionLock).not.toHaveBeenCalled();
+    expect(persistSecuredReservation).not.toHaveBeenCalled();
+    expect(getPersistedBuyByReservationId).not.toHaveBeenCalled();
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(promoteAccepted).not.toHaveBeenCalled();
+  });
+
+  it("keeps a pending hold retryable when policy resolution fails without proving absence", async () => {
+    const resolutionError = new Error("malformed accepted snapshot");
+    const reverse = vi.fn(async () => "reversed" as const);
+    const withRunAdmissionLock = vi.fn();
+    const reconciler = new PendingPersistenceReconciler({
+      redis: pendingRedis() as never,
+      persistence: {
+        persistSecuredReservation: vi.fn(),
+        getPersistedBuyByReservationId: vi.fn(),
+        withRunAdmissionLock,
+      },
+      runRetryPolicyResolver: {
+        resolve: async () => {
+          throw resolutionError;
+        },
+      },
+      stockReservations: { promoteAccepted: vi.fn(), reverse },
+      idempotencyTtlSeconds: 1800,
+      orderProcessJobPublisher: { enqueue: vi.fn() },
+      logger: createSilentLogger("api"),
+    });
+
+    await expect(reconciler.reconcileSaleOffer(hold.saleOfferId)).resolves.toMatchObject({
+      found: 1,
+      reversed: 0,
+      reconciled: 0,
+      failed: 1,
+    });
+    expect(reverse).not.toHaveBeenCalled();
+    expect(withRunAdmissionLock).not.toHaveBeenCalled();
+  });
+
   it("does not materialize twice when the same pending record is redriven", async () => {
     let durable: ReturnType<typeof persisted> | null = null;
     const persistSecuredReservation = vi.fn(async () => {

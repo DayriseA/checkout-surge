@@ -18,9 +18,30 @@ export async function runRuntimeLoadSmoke(options = {}) {
   const apiBaseUrl = envUrl(env, "API_BASE_URL", "http://localhost:4000");
   const token = env.CONTROL_SERVICE_TOKEN?.trim();
   if (!token) throw new Error("CONTROL_SERVICE_TOKEN is required for runtime load smoke.");
-  const correlationId = `runtime-smoke-load-${randomUUID()}`;
-  const durationSeconds = 8;
-  const deadlineMs = derivedDeadlineMs(env, durationSeconds);
+  const rootCorrelationId = `runtime-smoke-load-${randomUUID()}`;
+
+  await requireReadiness(`${apiBaseUrl}/health/ready`, fetchImpl);
+  await resetDemo(apiBaseUrl, token, rootCorrelationId, fetchImpl);
+
+  const results = [];
+  for (const scenario of runtimeLoadSmokeScenarios()) {
+    results.push(
+      await runRuntimeLoadScenario({
+        scenario,
+        dashboardBaseUrl,
+        apiBaseUrl,
+        token,
+        correlationId: `${rootCorrelationId}:${scenario.name}`,
+        deadlineMs: derivedDeadlineMs(env, scenario.durationSeconds),
+        env,
+        fetchImpl,
+      }),
+    );
+  }
+  return { correlationId: rootCorrelationId, scenarios: results };
+}
+
+async function runRuntimeLoadScenario(input) {
   let runId;
   let saleOfferId;
   let primaryError;
@@ -28,8 +49,8 @@ export async function runRuntimeLoadSmoke(options = {}) {
   let cleanupAllowed = false;
   const sseAbort = new AbortController();
   const sseOutcomePromise = collectDashboardEvents(
-    `${dashboardBaseUrl}/dashboard/events`,
-    fetchImpl,
+    `${input.dashboardBaseUrl}/dashboard/events`,
+    input.fetchImpl,
     sseAbort.signal,
   ).then(
     (events) => ({ events }),
@@ -37,35 +58,34 @@ export async function runRuntimeLoadSmoke(options = {}) {
   );
 
   try {
-    await requireReadiness(`${apiBaseUrl}/health/ready`, fetchImpl);
-    await resetDemo(apiBaseUrl, token, correlationId, fetchImpl);
     const started = await startRun({
-      dashboardBaseUrl,
-      correlationId,
-      durationSeconds,
-      env,
-      fetchImpl,
+      dashboardBaseUrl: input.dashboardBaseUrl,
+      correlationId: input.correlationId,
+      scenario: input.scenario,
+      env: input.env,
+      fetchImpl: input.fetchImpl,
     });
     runId = uuidSchema.parse(started.run.runId);
     saleOfferId = uuidSchema.parse(started.run.saleOfferId);
-    if (started.correlationId !== correlationId) {
+    if (started.correlationId !== input.correlationId) {
       throw new Error(
-        `Run start correlation mismatch: expected ${correlationId}, received ${started.correlationId}.`,
+        `Run start correlation mismatch: expected ${input.correlationId}, received ${started.correlationId}.`,
       );
     }
     const terminal = await waitForTerminalSummary({
-      dashboardBaseUrl,
-      apiBaseUrl,
+      dashboardBaseUrl: input.dashboardBaseUrl,
+      apiBaseUrl: input.apiBaseUrl,
       runId,
-      deadlineMs,
-      fetchImpl,
+      deadlineMs: input.deadlineMs,
+      fetchImpl: input.fetchImpl,
     });
     cleanupAllowed = true;
     assertBusinessCompletion(terminal);
+    assertScenarioAcceptance(terminal, input.scenario);
     const inventory = await requestJson(
-      `${apiBaseUrl}/inventory/${saleOfferId}/status`,
+      `${input.apiBaseUrl}/inventory/${saleOfferId}/status`,
       { method: "GET", headers: { accept: "application/json" } },
-      fetchImpl,
+      input.fetchImpl,
     );
     if (!(inventory.reservedStock > 0))
       throw new Error("Live inventory did not show reservedStock > 0.");
@@ -73,9 +93,9 @@ export async function runRuntimeLoadSmoke(options = {}) {
     const sseOutcome = await sseOutcomePromise;
     if (sseOutcome.error) throw sseOutcome.error;
     const events = sseOutcome.events;
-    assertSseEvidence(events, runId, correlationId);
+    assertSseEvidence(events, runId, input.correlationId);
     console.log(
-      `Runtime load smoke business proof passed runId=${runId} correlationId=${correlationId}.`,
+      `Runtime load smoke ${input.scenario.name} proof passed runId=${runId} correlationId=${input.correlationId}.`,
     );
   } catch (error) {
     primaryError = error;
@@ -84,13 +104,13 @@ export async function runRuntimeLoadSmoke(options = {}) {
     if (runId) {
       try {
         await prepareExactRunCleanup({
-          dashboardBaseUrl,
-          apiBaseUrl,
-          token,
-          correlationId,
+          dashboardBaseUrl: input.dashboardBaseUrl,
+          apiBaseUrl: input.apiBaseUrl,
+          token: input.token,
+          correlationId: input.correlationId,
           runId,
-          deadlineMs,
-          fetchImpl,
+          deadlineMs: input.deadlineMs,
+          fetchImpl: input.fetchImpl,
         });
         cleanupAllowed = true;
       } catch (error) {
@@ -101,15 +121,15 @@ export async function runRuntimeLoadSmoke(options = {}) {
     if (runId && cleanupAllowed) {
       try {
         const cleanup = await teardownWithRetry({
-          apiBaseUrl,
-          token,
+          apiBaseUrl: input.apiBaseUrl,
+          token: input.token,
           runId,
           saleOfferId,
-          correlationId,
-          fetchImpl,
+          correlationId: input.correlationId,
+          fetchImpl: input.fetchImpl,
         });
         console.log(
-          `Runtime load smoke cleanup completed runId=${runId} correlationId=${cleanup.correlationId}.`,
+          `Runtime load smoke ${input.scenario.name} cleanup completed runId=${runId} correlationId=${cleanup.correlationId}.`,
         );
       } catch (error) {
         cleanupError = cleanupError
@@ -122,7 +142,76 @@ export async function runRuntimeLoadSmoke(options = {}) {
     }
   }
   throwSmokeFailures(primaryError, cleanupError);
-  return { runId, saleOfferId, correlationId };
+  return { name: input.scenario.name, runId, saleOfferId, correlationId: input.correlationId };
+}
+
+export function runtimeLoadSmokeScenarios() {
+  return [
+    {
+      name: "steady",
+      durationSeconds: 8,
+      configOverride: {
+        trafficConfig: {
+          mode: "steady-arrival-rate",
+          ratePerSecond: 2,
+          durationSeconds: 8,
+          startDelaySeconds: 0,
+          quantityPerAttempt: 1,
+          k6Vus: { preAllocatedVus: 1, maxVus: 4 },
+        },
+        inventoryConfig: {
+          startingStock: 32,
+          quantityPerCheckout: 1,
+          reservationHoldMinutes: 15,
+        },
+        erpConfig: {
+          latencyMs: 0,
+          maxTps: 100,
+          errorRate: 0,
+          forcedOutage: false,
+          requestTimeoutMs: 2000,
+        },
+      },
+    },
+    {
+      name: "accepted-burst",
+      durationSeconds: 5,
+      expectedAcceptedReservations: 32,
+      configOverride: {
+        trafficConfig: {
+          mode: "buyer-spike",
+          buyerCount: 32,
+          duplicateEachBuyerAttempt: false,
+          startDelaySeconds: 0,
+          maxDurationSeconds: 5,
+          quantityPerAttempt: 1,
+        },
+        inventoryConfig: {
+          startingStock: 32,
+          quantityPerCheckout: 1,
+          reservationHoldMinutes: 15,
+        },
+        erpConfig: {
+          latencyMs: 0,
+          maxTps: 100,
+          errorRate: 0,
+          forcedOutage: false,
+          requestTimeoutMs: 2000,
+        },
+      },
+    },
+  ];
+}
+
+export function assertScenarioAcceptance(summary, scenario) {
+  if (
+    scenario.expectedAcceptedReservations !== undefined &&
+    summary.businessOutcomeSummary.acceptedReservations !== scenario.expectedAcceptedReservations
+  ) {
+    throw new Error(
+      `Smoke ${scenario.name} accepted ${summary.businessOutcomeSummary.acceptedReservations} reservations; expected ${scenario.expectedAcceptedReservations}.`,
+    );
+  }
 }
 
 export function throwSmokeFailures(primaryError, cleanupError) {
@@ -290,7 +379,7 @@ async function resetDemo(baseUrl, token, correlationId, fetchImpl) {
   );
 }
 
-async function startRun({ dashboardBaseUrl, correlationId, durationSeconds, env, fetchImpl }) {
+async function startRun({ dashboardBaseUrl, correlationId, scenario, env, fetchImpl }) {
   const response = await requestJson(
     `${dashboardBaseUrl}/api/demo/runs/start`,
     {
@@ -303,28 +392,7 @@ async function startRun({ dashboardBaseUrl, correlationId, durationSeconds, env,
       body: JSON.stringify({
         presetSlug: "public-custom",
         correlationId,
-        configOverride: {
-          trafficConfig: {
-            mode: "steady-arrival-rate",
-            ratePerSecond: 2,
-            durationSeconds,
-            startDelaySeconds: 0,
-            quantityPerAttempt: 1,
-            k6Vus: { preAllocatedVus: 1, maxVus: 4 },
-          },
-          inventoryConfig: {
-            startingStock: 32,
-            quantityPerCheckout: 1,
-            reservationHoldMinutes: 15,
-          },
-          erpConfig: {
-            latencyMs: 0,
-            maxTps: 100,
-            errorRate: 0,
-            forcedOutage: false,
-            requestTimeoutMs: 2000,
-          },
-        },
+        configOverride: scenario.configOverride,
       }),
     },
     fetchImpl,
