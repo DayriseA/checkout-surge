@@ -77,12 +77,16 @@ test("Compose separates production, development, tooling, and k6-test images", (
   assert.deepEqual(readComposeEnvironmentKeys(runtimeTools), [
     "API_BASE_URL",
     "CONTROL_SERVICE_TOKEN",
+    "DASHBOARD_RECOVERY_WINDOW_SECONDS",
     "DEMO_RUN_DRAIN_TIMEOUT_SECONDS",
     "DEMO_RUN_FINALIZATION_POLL_INTERVAL_SECONDS",
+    "DIRECT_WEB_BASE_URL",
     "LOAD_ORCHESTRATOR_BASE_URL",
     "MOCK_ERP_BASE_URL",
     "NODE_ENV",
     "PUBLIC_CLIENT_COOKIE_SECRET",
+    "RUNTIME_RECOVERY_SOAK_PROBE_INTERVAL_MS",
+    "RUNTIME_RECOVERY_SOAK_SECONDS",
     "WEB_BASE_URL",
     "WORKER_HEALTH_BASE_URL",
   ]);
@@ -95,6 +99,18 @@ test("Compose separates production, development, tooling, and k6-test images", (
   const rootManifest = readJson("package.json");
   assert.match(rootManifest.scripts["test:k6-compat"], /k6-compat/);
   assert.doesNotMatch(rootManifest.scripts["test:k6-compat"], /load-orchestrator pnpm/);
+});
+
+test("Compose health probes use the cheap web-owned health route", () => {
+  const compose = readText("docker-compose.yml");
+  const web = readComposeServiceBlock(compose, "web");
+  const proxy = readComposeServiceBlock(compose, "dashboard-proxy");
+
+  assert.match(web, /127\.0\.0\.1:3000\/health/);
+  assert.doesNotMatch(web, /127\.0\.0\.1:3000\/'/);
+  assert.match(proxy, /127\.0\.0\.1:8080\/health/);
+  assert.doesNotMatch(proxy, /127\.0\.0\.1:8080\/["]+/);
+  assert.doesNotMatch(`${web}\n${proxy}`, /dashboard\/recovery/);
 });
 
 test("Dev Container provisions repo-scoped headless browser tooling", () => {

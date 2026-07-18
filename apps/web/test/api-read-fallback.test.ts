@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   getDashboardBackendSnapshot,
+  getPublicDemoSurface,
   getRunHistoryDetail,
   getRunHistoryPage,
 } from "../src/app/lib/api.js";
@@ -51,9 +52,9 @@ describe("dashboard backend API reads", () => {
       status: "unavailable",
       reason: "backend offline",
     });
-    expect(snapshot.recovery).toMatchObject({
+    expect(snapshot.recovery).toEqual({
       status: "unavailable",
-      reason: "backend offline",
+      reason: "Authoritative run state is loading.",
     });
     expect(snapshot.erpChaos).toMatchObject({
       status: "unavailable",
@@ -61,11 +62,13 @@ describe("dashboard backend API reads", () => {
     });
   });
 
-  it("returns the expanded dashboard recovery projection when backend reads succeed", async () => {
+  it("does not call dashboard recovery during the server-side watch bootstrap", async () => {
+    const requestedUrls: string[] = [];
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: string | URL | Request) => {
         const url = String(input);
+        requestedUrls.push(url);
 
         if (url.endsWith("/health/live")) {
           return jsonResponse({
@@ -131,19 +134,8 @@ describe("dashboard backend API reads", () => {
 
     const snapshot = await getDashboardBackendSnapshot();
 
-    expect(snapshot.recovery).toMatchObject({
-      status: "available",
-      data: {
-        businessOutcome: {
-          acceptedReservations: 3,
-          confirmedOrders: 1,
-        },
-        consistencyLag: {
-          p95LagMs: 225,
-          pendingConfirmationCount: 1,
-        },
-      },
-    });
+    expect(snapshot.recovery.status).toBe("unavailable");
+    expect(requestedUrls).not.toContain("http://api.internal/dashboard/recovery");
     expect(snapshot.erpChaos).toMatchObject({
       status: "available",
       data: {
@@ -227,6 +219,28 @@ describe("dashboard backend API reads", () => {
     expect(history.data.summaries[0]?.trafficDeliverySummary.trafficDeliveryStatus).toBe(
       "complete",
     );
+  });
+
+  it("bootstraps the public surface without a credentialless server recovery call", async () => {
+    const requestedUrls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request) => {
+        requestedUrls.push(String(input));
+        return jsonResponse({});
+      }),
+    );
+
+    const surface = await getPublicDemoSurface();
+
+    expect(surface.recovery).toEqual({
+      status: "unavailable",
+      reason: "Authoritative run state is loading.",
+    });
+    expect(requestedUrls).toEqual([
+      "http://api.internal/demo/presets/public",
+      "http://api.internal/demo/runtime-policy",
+    ]);
   });
 
   it("reads run history detail through the shared API contract", async () => {

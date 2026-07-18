@@ -105,6 +105,20 @@ describe("dashboard control surface", () => {
     expect(markup).toContain("disabled");
   });
 
+  it("labels unavailable recovery separately from an active run and retains manual retry", () => {
+    const surface = publicSurfaceFixture(null);
+    surface.recovery = {
+      status: "unavailable",
+      reason: "Authoritative run state is loading.",
+    };
+    const markup = renderToStaticMarkup(createElement(PublicDemoEntry, { surface }));
+
+    expect(markup).toContain("availability unavailable");
+    expect(markup).not.toContain("run in progress");
+    expect(markup).toContain("Retry recovery");
+    expect(markup).toContain("disabled");
+  });
+
   it("renders only the admin sign-in gate for anonymous admin access", () => {
     const markup = renderToStaticMarkup(
       createElement(AdminSignInView, {

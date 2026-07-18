@@ -22,7 +22,10 @@ vi.mock("../src/app/lib/server/admin-reads.js", () => ({
 vi.mock("../src/app/components/admin/admin-authenticated-surface.js", () => ({
   AdminAuthenticatedSurface: () => createElement("section", null, "Authenticated console data"),
 }));
-vi.mock("../src/app/lib/api.js", () => ({ getRunHistoryPage: historyRead }));
+vi.mock("../src/app/lib/api.js", () => ({
+  getRunHistoryPage: historyRead,
+  pendingDashboardRecovery: () => ({ status: "unavailable", reason: "loading" }),
+}));
 vi.mock("../src/app/components/run-history-list.js", () => ({
   RunHistoryList: () => createElement("section", null, "Public history list"),
 }));
@@ -75,7 +78,10 @@ describe("server-decided admin presentation", () => {
     expect(markup).toContain("Admin console");
     expect(markup).toContain("Authenticated console data");
     expect(markup).not.toContain("Admin passphrase");
-    for (const read of Object.values(adminReads)) expect(read).toHaveBeenCalledOnce();
+    expect(adminReads.erp).toHaveBeenCalledOnce();
+    expect(adminReads.presets).toHaveBeenCalledOnce();
+    expect(adminReads.policy).toHaveBeenCalledOnce();
+    expect(adminReads.recovery).not.toHaveBeenCalled();
   });
 
   it("keeps History public while including cleanup only in authenticated server HTML", async () => {

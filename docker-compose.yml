@@ -226,7 +226,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "node -e \"fetch('http://127.0.0.1:3000/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\"",
+          "node -e \"fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\"",
         ]
       interval: 5s
       timeout: 5s
@@ -250,7 +250,7 @@ services:
       web:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/"]
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/health"]
       interval: 5s
       timeout: 5s
       retries: 30
@@ -302,12 +302,16 @@ services:
     environment:
       NODE_ENV: production
       API_BASE_URL: http://api:4000
+      DIRECT_WEB_BASE_URL: http://web:3000
       WORKER_HEALTH_BASE_URL: http://worker:4300
       MOCK_ERP_BASE_URL: http://mock-erp:4100
       LOAD_ORCHESTRATOR_BASE_URL: http://load-orchestrator:4200
       WEB_BASE_URL: http://dashboard-proxy:8080
       CONTROL_SERVICE_TOKEN: ${CONTROL_SERVICE_TOKEN}
       PUBLIC_CLIENT_COOKIE_SECRET: ${PUBLIC_CLIENT_COOKIE_SECRET}
+      DASHBOARD_RECOVERY_WINDOW_SECONDS: ${DASHBOARD_RECOVERY_WINDOW_SECONDS:-}
+      RUNTIME_RECOVERY_SOAK_SECONDS: ${RUNTIME_RECOVERY_SOAK_SECONDS:-}
+      RUNTIME_RECOVERY_SOAK_PROBE_INTERVAL_MS: ${RUNTIME_RECOVERY_SOAK_PROBE_INTERVAL_MS:-}
       DEMO_RUN_DRAIN_TIMEOUT_SECONDS: ${DEMO_RUN_DRAIN_TIMEOUT_SECONDS:-300}
       DEMO_RUN_FINALIZATION_POLL_INTERVAL_SECONDS: ${DEMO_RUN_FINALIZATION_POLL_INTERVAL_SECONDS:-5}
 

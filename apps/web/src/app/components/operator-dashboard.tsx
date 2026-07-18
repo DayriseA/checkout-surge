@@ -22,9 +22,20 @@ export interface OperatorDashboardProps {
 }
 
 export function OperatorDashboard({ snapshot }: OperatorDashboardProps) {
-  const { recovery, isRefreshing, isRetryScheduled, retryAttempt, retryDelayMs, hasSyncIssue, liveEventCount, recentOrderStates, recentOrderLagSamples, refresh, applyEvent } = useDashboardRecovery(
-    snapshot.recovery,
-  );
+  const {
+    recovery,
+    isRefreshing,
+    isRetryScheduled,
+    retryAttempt,
+    retryDelayMs,
+    hasSyncIssue,
+    liveEventCount,
+    recentOrderStates,
+    recentOrderLagSamples,
+    refresh,
+    retryNow,
+    applyEvent,
+  } = useDashboardRecovery(snapshot.recovery);
   const handleOpen = useCallback(() => {
     void refresh();
   }, [refresh]);
@@ -44,7 +55,7 @@ export function OperatorDashboard({ snapshot }: OperatorDashboardProps) {
         realtimeStatus={realtimeStatus}
         liveEventCount={liveEventCount}
         onRefresh={() => {
-          void refresh();
+          void retryNow();
         }}
       />
       <RequestSurgePanel recovery={recovery} liveEventCount={liveEventCount} />

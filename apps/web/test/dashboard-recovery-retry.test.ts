@@ -10,24 +10,39 @@ describe("dashboard recovery retry scheduler", () => {
     scheduler = createDashboardRecoveryRetryScheduler({
       onRetry,
       onStateChange: (state) => observed.push(state),
-      policy: { initialDelayMs: 100, maximumDelayMs: 250, multiplier: 2 },
+      policy: { initialDelayMs: 100, maximumAttempts: 4, maximumDelayMs: 250, multiplier: 2 },
     });
 
-    expect(scheduler.schedule()).toEqual({ attempt: 1, delayMs: 100, scheduled: true });
-    expect(scheduler.schedule()).toEqual({ attempt: 1, delayMs: 100, scheduled: true });
+    expect(scheduler.schedule()).toEqual({ attempt: 1, delayMs: 100, exhausted: false, scheduled: true });
+    expect(scheduler.schedule()).toEqual({ attempt: 1, delayMs: 100, exhausted: false, scheduled: true });
     vi.advanceTimersByTime(100);
     expect(onRetry).toHaveBeenCalledOnce();
-    expect(scheduler.state()).toEqual({ attempt: 2, delayMs: 200, scheduled: true });
+    expect(scheduler.state()).toEqual({ attempt: 2, delayMs: 200, exhausted: false, scheduled: true });
     vi.advanceTimersByTime(200);
-    expect(scheduler.state()).toEqual({ attempt: 3, delayMs: 250, scheduled: true });
+    expect(scheduler.state()).toEqual({ attempt: 3, delayMs: 250, exhausted: false, scheduled: true });
     vi.advanceTimersByTime(250);
-    expect(scheduler.state()).toEqual({ attempt: 4, delayMs: 250, scheduled: true });
-    expect(observed).toContainEqual({ attempt: 1, delayMs: 100, scheduled: false });
+    expect(scheduler.state()).toEqual({ attempt: 4, delayMs: 250, exhausted: false, scheduled: true });
+    expect(observed).toContainEqual({ attempt: 1, delayMs: 100, exhausted: false, scheduled: false });
+
+    vi.advanceTimersByTime(250);
+    expect(scheduler.state()).toEqual({ attempt: 4, delayMs: 250, exhausted: true, scheduled: false });
 
     scheduler.reset();
-    expect(scheduler.state()).toEqual({ attempt: 0, delayMs: null, scheduled: false });
+    expect(scheduler.state()).toEqual({ attempt: 0, delayMs: null, exhausted: false, scheduled: false });
     vi.runAllTimers();
-    expect(onRetry).toHaveBeenCalledTimes(3);
+    expect(onRetry).toHaveBeenCalledTimes(4);
+    vi.useRealTimers();
+  });
+
+  it("respects a valid minimum Retry-After delay", () => {
+    vi.useFakeTimers();
+    const onRetry = vi.fn();
+    const scheduler = createDashboardRecoveryRetryScheduler({ onRetry });
+    expect(scheduler.schedule(10_000)).toMatchObject({ delayMs: 10_000, scheduled: true });
+    vi.advanceTimersByTime(9_999);
+    expect(onRetry).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(onRetry).toHaveBeenCalledOnce();
     vi.useRealTimers();
   });
 

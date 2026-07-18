@@ -12,6 +12,7 @@ import type { BackendRead, PublicDemoSurface } from "../lib/api";
 import { readProxyJson } from "../lib/client/proxy-json";
 import { demoRunStartProxyPath } from "../lib/control-paths";
 import { formatDashboardTime } from "../lib/dashboard-time";
+import { useDashboardRecovery } from "./realtime/use-dashboard-recovery";
 import { StatusPill } from "./status-pill";
 
 const panelClassName = "min-w-0 rounded-lg border border-border bg-surface p-4";
@@ -47,7 +48,15 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
       : fallbackDraft(),
   );
 
-  const recovery = surface.recovery;
+  const {
+    recovery,
+    isRefreshing,
+    isRetryScheduled,
+    retriesExhausted,
+    retryAttempt,
+    retryDelayMs,
+    retryNow,
+  } = useDashboardRecovery(surface.recovery);
   const isBlocked = isRunStartBlocked(recovery);
   const presets =
     surface.presets.status === "available"
@@ -68,7 +77,7 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
     isBlocked ||
     startingSlug !== null ||
     surface.presets.status !== "available" ||
-    surface.recovery.status !== "available";
+    recovery.status !== "available";
 
   async function startRun(presetSlug: string, configOverride?: DemoRunConfigOverride) {
     const parsed = startDemoRunRequestSchema.safeParse({
@@ -114,8 +123,10 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
             </h2>
           </div>
           <StatusPill
-            label={isBlocked ? "run in progress" : "ready"}
-            tone={isBlocked ? "pending" : "ok"}
+            label={publicAvailabilityStatus(recovery)}
+            tone={
+              recovery.status === "unavailable" ? "unavailable" : isBlocked ? "pending" : "ok"
+            }
           />
         </div>
         {surface.presets.status === "available" && curatedPresets.length > 0 ? (
@@ -159,21 +170,35 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
           </div>
           <StatusPill label={currentRunStatus(recovery)} tone={isBlocked ? "pending" : "idle"} />
         </div>
-        {surface.recovery.status === "available" ? (
+        {recovery.status === "available" ? (
           <dl className="m-0 grid gap-3">
-            <Fact
-              label="Run"
-              value={surface.recovery.data.currentRun?.presetName ?? "No active run"}
-            />
+            <Fact label="Run" value={recovery.data.currentRun?.presetName ?? "No active run"} />
             <Fact
               label="Traffic"
-              value={surface.recovery.data.currentRun?.trafficStatus ?? "Not active"}
+              value={recovery.data.currentRun?.trafficStatus ?? "Not active"}
             />
-            <Fact label="Recovered" value={formatDashboardTime(surface.recovery.data.recoveredAt)} />
+            <Fact label="Recovered" value={formatDashboardTime(recovery.data.recoveredAt)} />
           </dl>
         ) : (
-          <Unavailable read={surface.recovery} />
+          <Unavailable read={recovery} />
         )}
+        <button
+          className={`${buttonClassName} mt-4`}
+          disabled={isRefreshing}
+          onClick={() => void retryNow()}
+          type="button"
+        >
+          {isRefreshing ? "Checking recovery" : "Retry recovery"}
+        </button>
+        {isRetryScheduled && retryDelayMs !== null ? (
+          <p className="m-0 mt-2 text-sm text-muted">
+            Automatic retry {retryAttempt} in {Math.ceil(retryDelayMs / 1_000)} seconds.
+          </p>
+        ) : retriesExhausted ? (
+          <p className="m-0 mt-2 text-sm text-muted">
+            Automatic retries paused. Manual retry remains available.
+          </p>
+        ) : null}
         {statusMessage ? (
           <p className="m-0 mt-4 text-sm font-semibold text-muted-strong">{statusMessage}</p>
         ) : null}
@@ -405,6 +430,11 @@ function currentRunStatus(recovery: BackendRead<DashboardRecoveryResponse>): str
     : "unavailable";
 }
 
+function publicAvailabilityStatus(recovery: BackendRead<DashboardRecoveryResponse>): string {
+  if (recovery.status === "unavailable") return "availability unavailable";
+  return isRunStartBlocked(recovery) ? "run in progress" : "ready";
+}
+
 function navigateToWatch() {
   if (typeof window !== "undefined") {
     window.location.assign("/watch");
@@ -436,6 +466,7 @@ function Unavailable({ read }: { read: BackendRead<unknown> }) {
       <strong>Unavailable</strong>
       <span>{read.reason}</span>
       {read.httpStatus ? <span>HTTP {read.httpStatus}</span> : null}
+      {read.correlationId ? <span>Correlation {read.correlationId}</span> : null}
     </div>
   );
 }

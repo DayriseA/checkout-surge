@@ -4,6 +4,7 @@ import {
   type DashboardEvent,
   type DashboardRecoveryResponse,
   dashboardEventsPath,
+  errorPayloadSchema,
 } from "@checkout-surge/contracts";
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { StrictMode, type ReactNode } from "react";
@@ -130,7 +131,7 @@ describe("useDashboardRecovery", () => {
     vi.useFakeTimers();
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ message: "API restarting" }), { status: 503 }))
+      .mockResolvedValueOnce(errorResponse("API restarting", 503))
       .mockResolvedValueOnce(jsonResponse(recoveryFixture("2026-06-20T00:00:13.000Z")));
     vi.stubGlobal("fetch", fetchMock);
     const { result } = renderHook(() => useDashboardRecovery(available(recoveryFixture())));
@@ -149,6 +150,55 @@ describe("useDashboardRecovery", () => {
     expect(result.current.retryAttempt).toBe(0);
   });
 
+  it("honors Retry-After for 429 recovery and converges to idle without a reload", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(errorResponse("Recovery limited", 429, "10"))
+      .mockResolvedValueOnce(jsonResponse(recoveryFixture("2026-06-20T00:00:30.000Z")));
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = renderHook(() =>
+      useDashboardRecovery({ status: "unavailable", reason: "Authoritative state loading" }),
+    );
+
+    await act(async () => vi.advanceTimersByTimeAsync(1_000));
+    expect(result.current.recovery).toMatchObject({
+      status: "unavailable",
+      httpStatus: 429,
+      retryAfterMs: 10_000,
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(9_999));
+    expect(fetchMock).toHaveBeenCalledOnce();
+    await act(async () => vi.advanceTimersByTimeAsync(1));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(result.current.recovery).toEqual(available(recoveryFixture("2026-06-20T00:00:30.000Z")));
+  });
+
+  it("polls an active run at a bounded cadence and converges when it becomes terminal", async () => {
+    vi.useFakeTimers();
+    const run = runFixture(
+      "22222222-2222-4222-8222-222222222222",
+      "2026-06-20T00:00:00.000Z",
+    );
+    const activeRecovery = {
+      ...recoveryFixture(),
+      scope: { runId: run.runId, saleOfferId: run.saleOfferId ?? null },
+      currentRun: run,
+    };
+    const terminalRecovery = recoveryFixture("2026-06-20T00:00:40.000Z");
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(terminalRecovery));
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = renderHook(() => useDashboardRecovery(available(activeRecovery)));
+
+    await act(async () => vi.advanceTimersByTimeAsync(29_999));
+    expect(fetchMock).not.toHaveBeenCalled();
+    await act(async () => vi.advanceTimersByTimeAsync(1));
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(result.current.recovery).toEqual(available(terminalRecovery));
+    await act(async () => vi.advanceTimersByTimeAsync(60_000));
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
   it("does not overlap duplicate triggers and defers discarded-event follow-up after failure", async () => {
     vi.useFakeTimers();
     const first = deferred<Response>();
@@ -163,7 +213,7 @@ describe("useDashboardRecovery", () => {
       result.current.applyEvent(eventFixture());
     });
     expect(fetchMock).toHaveBeenCalledOnce();
-    first.resolve(new Response(JSON.stringify({ message: "still down" }), { status: 503 }));
+    first.resolve(errorResponse("still down", 503));
     await act(async () => first.promise);
     await act(async () => Promise.resolve());
     expect(fetchMock).toHaveBeenCalledOnce();
@@ -186,7 +236,7 @@ describe("useDashboardRecovery", () => {
     const { result, unmount } = renderHook(() => useDashboardRecovery(available(recoveryFixture())));
     act(() => void result.current.refresh());
     unmount();
-    pending.resolve(new Response(JSON.stringify({ message: "down" }), { status: 503 }));
+    pending.resolve(errorResponse("down", 503));
     await act(async () => pending.promise);
     await act(async () => vi.runAllTimersAsync());
     expect(fetchMock).toHaveBeenCalledOnce();
@@ -198,7 +248,7 @@ describe("useDashboardRecovery", () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(
-        new Response(JSON.stringify({ message: "local recovery unavailable" }), { status: 503 }),
+        errorResponse("local recovery unavailable", 503),
       )
       .mockResolvedValueOnce(jsonResponse(recovered));
     vi.stubGlobal("fetch", fetchMock);
@@ -231,7 +281,7 @@ describe("useDashboardRecovery", () => {
   it("cancels an already scheduled retry on unmount", async () => {
     vi.useFakeTimers();
     const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ message: "API restarting" }), { status: 503 }),
+      errorResponse("API restarting", 503),
     );
     vi.stubGlobal("fetch", fetchMock);
     const { result, unmount } = renderHook(() =>
@@ -432,4 +482,18 @@ function jsonResponse(payload: unknown): Response {
     status: 200,
     headers: { "content-type": "application/json" },
   });
+}
+
+function errorResponse(message: string, status: number, retryAfter?: string): Response {
+  return new Response(
+    JSON.stringify(
+      errorPayloadSchema.parse({
+        code: status === 429 ? "dashboard_recovery_rate_limited" : "backend_unavailable",
+        message,
+        correlationId: "hook-recovery-error",
+        timestamp: "2026-06-20T00:00:00.000Z",
+      }),
+    ),
+    { status, ...(retryAfter ? { headers: { "retry-after": retryAfter } } : {}) },
+  );
 }

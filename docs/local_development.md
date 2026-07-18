@@ -116,6 +116,7 @@ Check runtime readiness (the command uses Compose-network checks for a running r
 
 ```bash
 pnpm health:check
+pnpm runtime:soak:recovery
 pnpm runtime:smoke
 ```
 
@@ -287,6 +288,7 @@ The worker-facing Mock ERP confirmation contract is `POST http://localhost:4100/
 | `pnpm runtime:wipe` | Stop the runtime and delete its named volumes, orphan containers, PostgreSQL/Redis data, and load-orchestrator journal state |
 | `pnpm runtime:reset` | Reset the running demo through the API and Mock ERP admin reset endpoints for recovery/local maintenance |
 | `pnpm runtime:smoke` | Check compose/service readiness, recovery, SSE, and in-container k6 without mutating durable business/run state; the recovery read consumes short-lived admission capacity and may issue a visitor cookie |
+| `pnpm runtime:soak:recovery` | On an idle runtime, probe direct-web and proxy-to-web health for more than two recovery limiter windows, verify `/` remains reachable, then verify two independently signed BFF recovery identities receive authoritative idle state; deterministic component tests separately prove Start controls become enabled after hydration; intentionally opt-in and multi-minute |
 | `pnpm runtime:smoke:load` | API-reset any recoverable current run, then prove and exactly tear down both the steady and bounded 32-buyer accepted-burst realtime/business paths; each start consumes a fixed-window public run-budget reservation, and the smoke does not reset Mock ERP chaos |
 | `pnpm maintenance:cleanup-runs` | Authoritatively delete terminal generated demo runs whose `demo_runs.created_at` is at least seven days old by default, preserving active runs, catalog-backed runs, and the latest 15 runs across the full population; then attempt best-effort related Redis teardown. Override with `-- --older-than-days <days>` and/or `-- --keep-latest <count>` |
 | `pnpm dev` | Build shared packages, then run all app `dev` tasks through Turbo |
@@ -400,9 +402,9 @@ The root Compose application services build independent production images. API, 
 
 The Dev Container merge explicitly replaces all five application builds with the root `development-workspace` target before pairing them with `pnpm ... dev` commands. The universal editor image, Docker-in-Docker lifecycle, named dependency volumes, and opt-in application startup remain unchanged.
 
-When API is running, `runtime:reset`, `runtime:smoke:load`, `health:check`, and `maintenance:cleanup-runs` invoke the profile-gated `runtime-tools` service on the Compose network. If API is not running they retain their host-local Node fallback. `runtime:up` never starts `runtime-tools` or the profile-gated k6 compatibility service.
+When API is running, `runtime:reset`, `runtime:smoke:load`, `runtime:soak:recovery`, `health:check`, and `maintenance:cleanup-runs` invoke the profile-gated `runtime-tools` service on the Compose network. If API is not running they retain their host-local Node fallback. `runtime:up` never starts `runtime-tools` or the profile-gated k6 compatibility service.
 
-The tooling service receives only its internal API, worker, Mock ERP, load-orchestrator, and dashboard URLs; the control and public-cookie credentials used by operational requests; and the drain/finalization timing overrides consumed by the load smoke. It does not receive PostgreSQL, Redis, admin-session, passphrase, origin, or unrelated application configuration.
+The tooling service receives only its internal API, worker, Mock ERP, load-orchestrator, direct-web, and dashboard-proxy URLs; the control and public-cookie credentials used by operational requests; the drain/finalization timing overrides consumed by the load smoke; and the limiter-window and soak timing overrides consumed by the recovery soak. It does not receive PostgreSQL, Redis, admin-session, passphrase, origin, or unrelated application configuration.
 
 ## Configuration Reference
 
@@ -476,6 +478,8 @@ Most infrastructure URLs have local defaults, but every run/control service chan
 | `DASHBOARD_RECOVERY_MAX_CONCURRENT` | `3` | Per-process recovery builds, deliberately below the default PostgreSQL pool size of 10 |
 | `DASHBOARD_RECOVERY_GLOBAL_MAX_REQUESTS` / `DASHBOARD_RECOVERY_PER_SOURCE_MAX_REQUESTS` | `60` / `12` per 60 seconds | Redis-backed deployment-wide recovery budgets |
 | `DASHBOARD_RECOVERY_WINDOW_SECONDS` / `DASHBOARD_RECOVERY_RETRY_AFTER_SECONDS` | `60` / `10` | Fixed-window duration and rejection retry guidance |
+| `RUNTIME_RECOVERY_SOAK_SECONDS` | `2 * DASHBOARD_RECOVERY_WINDOW_SECONDS + 5` | Opt-in idle recovery soak duration; any explicit value must be strictly greater than two recovery limiter windows |
+| `RUNTIME_RECOVERY_SOAK_PROBE_INTERVAL_MS` | `5000` | Interval for the opt-in direct-web and proxy-to-web health soak |
 | `API_TRUSTED_PROXY_CIDRS` | loopback and Compose Caddy `172.30.0.2/32` | Exact Caddy proxy boundary used for Fastify client-IP derivation; replace with the deployed proxy address |
 | `PUBLIC_RUN_BUDGET_GLOBAL_MAX_STARTS` | `6` | `runtime-setup` first-seed public run-budget global cap |
 | `PUBLIC_CUSTOM_MAX_TOTAL_REQUESTS` | `10000` | `runtime-setup` first-seed public custom emitted-request cap |

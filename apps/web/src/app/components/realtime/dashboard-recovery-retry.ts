@@ -1,11 +1,13 @@
 export interface DashboardRecoveryRetryPolicy {
   initialDelayMs: number;
+  maximumAttempts: number;
   maximumDelayMs: number;
   multiplier: number;
 }
 
 export const dashboardRecoveryRetryPolicy: DashboardRecoveryRetryPolicy = {
   initialDelayMs: 1_000,
+  maximumAttempts: 6,
   maximumDelayMs: 30_000,
   multiplier: 2,
 };
@@ -13,6 +15,7 @@ export const dashboardRecoveryRetryPolicy: DashboardRecoveryRetryPolicy = {
 export interface DashboardRecoveryRetryState {
   attempt: number;
   delayMs: number | null;
+  exhausted: boolean;
   scheduled: boolean;
 }
 
@@ -27,7 +30,7 @@ interface DashboardRecoveryRetrySchedulerOptions {
 export interface DashboardRecoveryRetryScheduler {
   cancel(): void;
   reset(): void;
-  schedule(): DashboardRecoveryRetryState;
+  schedule(minimumDelayMs?: number | undefined): DashboardRecoveryRetryState;
   state(): DashboardRecoveryRetryState;
 }
 
@@ -45,6 +48,7 @@ export function createDashboardRecoveryRetryScheduler({
   const currentState = (): DashboardRecoveryRetryState => ({
     attempt,
     delayMs,
+    exhausted: attempt >= policy.maximumAttempts && timer === null,
     scheduled: timer !== null,
   });
   const publish = () => onStateChange?.(currentState());
@@ -64,12 +68,19 @@ export function createDashboardRecoveryRetryScheduler({
       delayMs = null;
       publish();
     },
-    schedule() {
+    schedule(minimumDelayMs = 0) {
       if (timer !== null) return currentState();
+      if (attempt >= policy.maximumAttempts) {
+        publish();
+        return currentState();
+      }
       attempt += 1;
-      delayMs = Math.min(
-        policy.maximumDelayMs,
-        policy.initialDelayMs * policy.multiplier ** (attempt - 1),
+      delayMs = Math.max(
+        minimumDelayMs,
+        Math.min(
+          policy.maximumDelayMs,
+          policy.initialDelayMs * policy.multiplier ** (attempt - 1),
+        ),
       );
       timer = setTimer(() => {
         timer = null;

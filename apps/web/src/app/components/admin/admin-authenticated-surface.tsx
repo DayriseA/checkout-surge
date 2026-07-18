@@ -13,7 +13,6 @@ import {
   archiveAdminPresetRequestSchema,
   copyDemoPresetToCustomRequestSchema,
   type DashboardRecoveryResponse,
-  dashboardRecoveryResponseSchema,
   duplicateDemoPresetRequestSchema,
   type ErpChaosConfig,
   type ErpChaosStatus,
@@ -48,7 +47,6 @@ import {
   adminPresetListProxyPath,
   adminPresetSaveProxyPath,
   adminPublicRuntimePolicyProxyPath,
-  dashboardRecoveryProxyPath,
 } from "../../lib/control-paths";
 import { formatDashboardTime } from "../../lib/dashboard-time";
 import {
@@ -64,6 +62,7 @@ import {
 } from "./admin-feature-views";
 import { StatusPill } from "../status-pill";
 import { ConfirmationDialog } from "../confirmation-dialog";
+import { useDashboardRecovery } from "../realtime/use-dashboard-recovery";
 
 export interface AdminAuthenticatedSurfaceProps {
   initialErpChaos: BackendRead<ErpChaosStatus>;
@@ -73,47 +72,46 @@ export interface AdminAuthenticatedSurfaceProps {
 }
 
 export function AdminAuthenticatedSurface(props: AdminAuthenticatedSurfaceProps) {
-  const [recovery, setRecovery] = useState(props.initialRecovery);
-  useEffect(() => {
-    setRecovery(props.initialRecovery);
-  }, [props.initialRecovery]);
-
-  async function refreshRecovery() {
-    const next = await readProxyJson(dashboardRecoveryProxyPath, dashboardRecoveryResponseSchema);
-    setRecovery(next);
-  }
+  const recoveryController = useDashboardRecovery(props.initialRecovery);
+  const recovery = recoveryController.recovery;
 
   return (
     <div className="grid grid-cols-12 gap-4">
-      <AdminCurrentRunPanel recovery={recovery} onRecoveryChange={setRecovery} />
+      <AdminCurrentRunPanel
+        isPending={recoveryController.isRefreshing}
+        isRetryScheduled={recoveryController.isRetryScheduled}
+        onRefresh={recoveryController.retryNow}
+        recovery={recovery}
+        retriesExhausted={recoveryController.retriesExhausted}
+        retryAttempt={recoveryController.retryAttempt}
+        retryDelayMs={recoveryController.retryDelayMs}
+      />
       <AdminRuntimePolicyController initialRuntimePolicy={props.initialRuntimePolicy} />
       <AdminPresetController initialPresets={props.initialPresets} recovery={recovery} />
-      <AdminMaintenancePanel onResetComplete={refreshRecovery} />
+      <AdminMaintenancePanel onResetComplete={recoveryController.retryNow} />
       <AdminErpDiagnosticsController initialErpChaos={props.initialErpChaos} />
     </div>
   );
 }
 
 export function AdminCurrentRunPanel({
-  onRecoveryChange,
+  isPending,
+  isRetryScheduled,
+  onRefresh,
   recovery,
+  retriesExhausted,
+  retryAttempt,
+  retryDelayMs,
 }: {
-  onRecoveryChange: (recovery: BackendRead<DashboardRecoveryResponse>) => void;
+  isPending: boolean;
+  isRetryScheduled: boolean;
+  onRefresh: () => Promise<void>;
   recovery: BackendRead<DashboardRecoveryResponse>;
+  retriesExhausted: boolean;
+  retryAttempt: number;
+  retryDelayMs: number | null;
 }) {
-  const [isPending, setIsPending] = useState(false);
   const startBlocked = isRunStartBlocked(recovery);
-
-  async function refresh() {
-    setIsPending(true);
-    try {
-      onRecoveryChange(
-        await readProxyJson(dashboardRecoveryProxyPath, dashboardRecoveryResponseSchema),
-      );
-    } finally {
-      setIsPending(false);
-    }
-  }
 
   return (
     <section className={`${panelClassName} col-span-4`}>
@@ -137,11 +135,20 @@ export function AdminCurrentRunPanel({
       <button
         className={`${buttonClassName} mt-4`}
         disabled={isPending}
-        onClick={() => void refresh()}
+        onClick={() => void onRefresh()}
         type="button"
       >
-        Refresh Recovery
+        {isPending ? "Checking Recovery" : "Retry Recovery"}
       </button>
+      {isRetryScheduled && retryDelayMs !== null ? (
+        <p className="m-0 mt-2 text-sm text-muted">
+          Automatic retry {retryAttempt} in {Math.ceil(retryDelayMs / 1_000)} seconds.
+        </p>
+      ) : retriesExhausted ? (
+        <p className="m-0 mt-2 text-sm text-muted">
+          Automatic retries paused. Manual retry remains available.
+        </p>
+      ) : null}
     </section>
   );
 }

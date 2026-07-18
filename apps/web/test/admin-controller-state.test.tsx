@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 
-import type {
-  AdminPresetListItem,
-  AdminPresetListResponse,
-  AdminPublicRuntimePolicyResponse,
-  DashboardRecoveryResponse,
-  ErpChaosStatus,
+import {
+  type AdminPresetListItem,
+  type AdminPresetListResponse,
+  type AdminPublicRuntimePolicyResponse,
+  type DashboardRecoveryResponse,
+  type ErpChaosStatus,
+  errorPayloadSchema,
 } from "@checkout-surge/contracts";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -180,7 +181,7 @@ describe("admin feature controllers", () => {
   it("reconciles recovery even when the reset response is unavailable", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       if (String(input) === adminDemoResetProxyPath) {
-        return jsonResponse({ message: "Reset outcome is uncertain." }, 503);
+        return canonicalErrorResponse("Reset outcome is uncertain.", 503);
       }
       if (String(input) === dashboardRecoveryProxyPath) return jsonResponse(recoveryFixture(null));
       throw new Error(`Unexpected fetch: ${String(input)}`);
@@ -402,7 +403,7 @@ describe("admin feature controllers", () => {
       "fetch",
       vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
         if (init?.method === "DELETE" && deleteAttempts++ === 0) {
-          return jsonResponse({ message: "Archive temporarily unavailable" }, 503);
+          return canonicalErrorResponse("Archive temporarily unavailable", 503);
         }
         if (init?.method === "DELETE") {
           return jsonResponse({
@@ -593,6 +594,18 @@ function presetListFixture(name: string): BackendRead<AdminPresetListResponse> {
 
 function available<T>(data: T): BackendRead<T> {
   return { status: "available", data, httpStatus: 200 };
+}
+
+function canonicalErrorResponse(message: string, status: number): Response {
+  return jsonResponse(
+    errorPayloadSchema.parse({
+      code: "backend_unavailable",
+      message,
+      correlationId: "admin-controller-error",
+      timestamp: "2026-06-20T00:00:00.000Z",
+    }),
+    status,
+  );
 }
 
 function erpFixture(): ErpChaosStatus {

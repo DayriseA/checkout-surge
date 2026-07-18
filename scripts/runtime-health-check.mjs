@@ -29,8 +29,8 @@ const checks = [
   },
   {
     name: "dashboard_proxy",
-    url: envUrl("WEB_BASE_URL", "http://localhost:8080"),
-    kind: "html",
+    url: joinUrl(envUrl("WEB_BASE_URL", "http://localhost:8080"), "/health"),
+    kind: "web_health",
   },
 ];
 
@@ -74,10 +74,6 @@ async function runHttpCheck(check) {
     };
   }
 
-  if (check.kind === "html") {
-    return { name: check.name, ok: true, detail: check.url };
-  }
-
   let body;
   try {
     body = await response.json();
@@ -94,6 +90,14 @@ async function runHttpCheck(check) {
       name: check.name,
       ok: false,
       detail: `status=${String(body.status)}`,
+    };
+  }
+
+  if (check.kind === "web_health" && (body.status !== "ok" || body.service !== "web")) {
+    return {
+      name: check.name,
+      ok: false,
+      detail: `service=${String(body.service)} status=${String(body.status)}`,
     };
   }
 

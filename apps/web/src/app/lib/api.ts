@@ -4,8 +4,6 @@ import {
   adminRunHistoryDetailResponseSchema,
   controlServiceTokenHeaderName,
   type DashboardRecoveryResponse,
-  dashboardRecoveryPath,
-  dashboardRecoveryResponseSchema,
   type ErpChaosStatus,
   erpChaosStatusPath,
   erpChaosStatusSchema,
@@ -26,25 +24,10 @@ import {
   runHistoryListResponseSchema,
   runHistoryPath,
 } from "@checkout-surge/contracts";
+import { type BackendRead, type ContractSchema, readBackendResponse } from "./backend-read";
 import { webServerConfig } from "./server/config";
 
-interface ContractSchema<T> {
-  safeParse(
-    input: unknown,
-  ): { success: true; data: T } | { success: false; error: { message: string } };
-}
-
-export type BackendRead<T> =
-  | {
-      status: "available";
-      data: T;
-      httpStatus: number;
-    }
-  | {
-      status: "unavailable";
-      reason: string;
-      httpStatus?: number;
-    };
+export type { BackendRead } from "./backend-read";
 
 export interface DashboardBackendSnapshot {
   liveness: BackendRead<LivenessResponse>;
@@ -90,57 +73,39 @@ async function readJson<T>(
     };
   }
 
-  let payload: unknown;
+  return readBackendResponse(response, schema, {
+    invalidError: "Backend returned an invalid error response.",
+    invalidSuccess: "Backend response did not match the expected contract.",
+  });
+}
 
-  try {
-    payload = await response.json();
-  } catch (error) {
-    return {
-      status: "unavailable",
-      httpStatus: response.status,
-      reason: `API returned non-JSON data: ${errorReason(error)}`,
-    };
-  }
-
-  const parsed = schema.safeParse(payload);
-
-  if (!parsed.success) {
-    return {
-      status: "unavailable",
-      httpStatus: response.status,
-      reason: `API response did not match the shared contract: ${parsed.error.message}`,
-    };
-  }
-
+export function pendingDashboardRecovery(): BackendRead<DashboardRecoveryResponse> {
   return {
-    status: "available",
-    data: parsed.data,
-    httpStatus: response.status,
+    status: "unavailable",
+    reason: "Authoritative run state is loading.",
   };
 }
 
 export async function getDashboardBackendSnapshot(): Promise<DashboardBackendSnapshot> {
   const apiBase = apiBaseUrl();
   const mockErpBase = mockErpBaseUrl();
-  const [liveness, readiness, recovery, erpChaos] = await Promise.all([
+  const [liveness, readiness, erpChaos] = await Promise.all([
     readJson(`${apiBase}/health/live`, livenessResponseSchema),
     readJson(`${apiBase}/health/ready`, healthResponseSchema),
-    readJson(`${apiBase}${dashboardRecoveryPath}`, dashboardRecoveryResponseSchema),
     readJson(`${mockErpBase}${erpChaosStatusPath}`, erpChaosStatusSchema),
   ]);
 
-  return { liveness, readiness, recovery, erpChaos };
+  return { liveness, readiness, recovery: pendingDashboardRecovery(), erpChaos };
 }
 
 export async function getPublicDemoSurface(): Promise<PublicDemoSurface> {
   const apiBase = apiBaseUrl();
-  const [presets, runtimePolicy, recovery] = await Promise.all([
+  const [presets, runtimePolicy] = await Promise.all([
     readJson(`${apiBase}${publicPresetListPath}`, publicPresetListResponseSchema),
     readJson(`${apiBase}${publicRuntimePolicyPath}`, publicRuntimePolicyResponseSchema),
-    readJson(`${apiBase}${dashboardRecoveryPath}`, dashboardRecoveryResponseSchema),
   ]);
 
-  return { presets, runtimePolicy, recovery };
+  return { presets, runtimePolicy, recovery: pendingDashboardRecovery() };
 }
 
 export async function getRunHistoryPage(

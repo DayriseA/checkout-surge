@@ -1,10 +1,10 @@
 import { AdminAuthenticatedSurface } from "../components/admin/admin-authenticated-surface";
 import { AdminSignIn } from "../components/admin/admin-sign-in";
+import { pendingDashboardRecovery } from "../lib/api";
 import { hasValidAdminPageSession } from "../lib/server/admin-page-session";
 import {
   readAdminErpChaos,
   readAdminPresets,
-  readAdminRecovery,
   readAdminRuntimePolicy,
 } from "../lib/server/admin-reads";
 
@@ -16,7 +16,6 @@ export default async function AdminPage() {
   const reads = await Promise.all([
     readAdminErpChaos(),
     readAdminPresets(),
-    readAdminRecovery(),
     readAdminRuntimePolicy(),
   ]);
   return (
@@ -32,8 +31,8 @@ export default async function AdminPage() {
       <AdminAuthenticatedSurface
         initialErpChaos={reads[0]}
         initialPresets={reads[1]}
-        initialRecovery={reads[2]}
-        initialRuntimePolicy={reads[3]}
+        initialRecovery={pendingDashboardRecovery()}
+        initialRuntimePolicy={reads[2]}
       />
     </>
   );

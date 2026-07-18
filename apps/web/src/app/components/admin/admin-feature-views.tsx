@@ -618,6 +618,7 @@ export function Unavailable({ read }: { read: BackendRead<unknown> }) {
       <strong>Unavailable</strong>
       <span>{read.reason}</span>
       {read.httpStatus ? <span>HTTP {read.httpStatus}</span> : null}
+      {read.correlationId ? <span>Correlation {read.correlationId}</span> : null}
     </div>
   );
 }

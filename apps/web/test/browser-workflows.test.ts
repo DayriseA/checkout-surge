@@ -9,6 +9,7 @@ import {
   type DemoPresetContract,
   type DemoRunSnapshot,
   demoRunSnapshotSchema,
+  errorPayloadSchema,
   type ErpChaosStatus,
   type HealthResponse,
   type LivenessResponse,
@@ -112,6 +113,7 @@ afterEach(() => {
   vi.clearAllMocks();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 
 describe("public browser starts", () => {
@@ -187,6 +189,56 @@ describe("public browser starts", () => {
         },
       },
     });
+  });
+});
+
+describe("public recovery convergence", () => {
+  it("enables Start controls after a 429 then idle recovery without remounting or extra requests", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify(
+            errorPayloadSchema.parse({
+              code: "dashboard_recovery_rate_limited",
+              message: "Recovery is temporarily limited.",
+              correlationId: "public-recovery-limited",
+              timestamp: "2026-06-20T00:00:00.000Z",
+            }),
+          ),
+          { status: 429, headers: { "retry-after": "10" } },
+        ),
+      )
+      .mockResolvedValueOnce(jsonResponse(dashboardRecoveryFixture()));
+    vi.stubGlobal("fetch", fetchMock);
+    const surface = publicDemoSurfaceFixture();
+    surface.recovery = {
+      status: "unavailable",
+      reason: "Authoritative run state is loading.",
+    };
+
+    render(createElement(PublicDemoEntry, { surface }));
+    const curatedStart = screen.getByRole("button", { name: "Start" }) as HTMLButtonElement;
+    const customStart = screen.getByRole("button", {
+      name: "Start Public Custom",
+    }) as HTMLButtonElement;
+    expect(curatedStart.disabled).toBe(true);
+    expect(customStart.disabled).toBe(true);
+
+    await act(async () => vi.advanceTimersByTimeAsync(1_000));
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(curatedStart.disabled).toBe(true);
+    expect(screen.getByText("Recovery is temporarily limited.")).toBeTruthy();
+
+    await act(async () => vi.advanceTimersByTimeAsync(10_000));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(curatedStart.disabled).toBe(false);
+    expect(customStart.disabled).toBe(false);
+    expect(screen.getByText("ready")).toBeTruthy();
+
+    await act(async () => vi.advanceTimersByTimeAsync(60_000));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });
 

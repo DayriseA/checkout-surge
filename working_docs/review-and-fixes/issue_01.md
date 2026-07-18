@@ -3,7 +3,7 @@
 ## Classification
 
 - Priority: P0
-- Status: Fix implemented and regression-tested; reference-runtime revalidation pending
+- Status: Fix implemented, regression-tested, and reference-runtime verified
 - Affected path: Public curated runs, accepted `/buy` requests, order publication, API readiness
 - Audit run: `598023fd-b68b-46c2-bf24-d13d0096a39f` (Preview 1k)
 
@@ -33,14 +33,16 @@ Verification completed:
 - Focused corrected service/reconciler/regression suites: 48 tests passed; the final bounded-pool regression passed independently.
 - Script suite: 57 tests passed, including 14 runtime-load-smoke tests.
 - API type-check, all 11 production Turbo type-check tasks, repository lint, targeted Biome checks, and `git diff --check` passed.
+- After the Dev Container rebuild, `pnpm runtime:up` built all five application images through Docker BuildKit, created the full eight-service reference topology, and brought every service to healthy state. `pnpm health:check` and `pnpm runtime:smoke` then passed all service, proxy, same-origin recovery, SSE, and k6 checks.
+- Live `pnpm runtime:smoke:load` passed both the steady proof and the 32-buyer accepted-burst proof. Each run reached a coherent terminal state and its exact-run cleanup completed successfully.
+- A live default Preview 1k run completed without any service restart in 16.362 seconds. It delivered all 1,000 planned buyer-spike requests with zero dropped or unstarted iterations: 250 reservations were accepted and confirmed, 750 attempts were rejected as sold out, all 250 notifications were recorded, and no queued, processing, retrying, or pending-persistence work remained.
+- Across 24 observations during Preview 1k, API readiness returned successfully with a worst observed latency of 496 ms and dashboard recovery returned successfully with a worst observed latency of 2.729 seconds, within its existing five-second request bound. All eight services remained healthy with zero restarts, and PostgreSQL retained no advisory locks after completion.
 
-Verification still pending:
+Known unrelated verification limitation:
 
-- `pnpm runtime:smoke:load` and a live default Preview 1k run have not been executed against the rebuilt reference runtime. Two `pnpm runtime:up` attempts failed before service creation because Docker BuildKit timed out connecting to `/var/run/docker/containerd/containerd.sock`. Lightweight PostgreSQL and Redis test containers remained available, so the production-shaped integration regression did run.
-- Consequently, live HTTP readiness and dashboard-recovery latency during the burst, and coherent terminal completion of Preview 1k without a restart, still require reference-runtime confirmation.
 - Root `pnpm type-check` completed all production package checks but its final repository test-source phase remains blocked by pre-existing Drizzle `PgEnum` generic incompatibilities in `packages/db/test/unit/vocabulary-parity.test.ts`; no Issue 01 file was implicated.
 
-This fix deliberately does not increase the pool size, tune curated preset timing, introduce a new queue architecture, or address unrelated request-cancellation/timeout work. Preset timing should be reconsidered only after the pending live Preview revalidation.
+This fix deliberately does not increase the pool size, tune curated preset timing, introduce a new queue architecture, or address unrelated request-cancellation/timeout work. The completed live Preview revalidation reached coherent terminal state without a restart and provides no evidence that preset timing must change as part of this issue.
 
 ## Original incident
 
@@ -109,8 +111,8 @@ The public curated presets create an immediate accepted-request burst larger tha
 - [x] Reservations and orders are durably committed before their BullMQ jobs become observable. Preserved by the admission-scoped persistence/enqueue workflow and its reset-boundary coverage.
 - [x] The configured, frozen run retry policy is still used for every job. Verified in publisher/service tests and against the jobs stored by the bounded-pool integration test.
 - [x] Redis holds progress to durable reservations/orders and then to final inventory outcomes; no advisory lock or pending-persistence record remains after a successful run. Verified by the bounded-pool integration test.
-- [ ] API readiness and dashboard recovery return within their bounded service-level time during the burst. A same-pool readiness query is bounded in the regression, and the updated smoke polls dashboard recovery, but live HTTP/runtime confirmation is still pending.
-- [ ] The default Preview 1k run reaches a coherent terminal state without restarting a service. The rebuilt reference runtime could not be started because of the Docker BuildKit/containerd timeout described above.
+- [x] API readiness and dashboard recovery return within their bounded service-level time during the burst. Across 24 live Preview 1k observations, the worst observed readiness latency was 496 ms and the worst observed dashboard-recovery latency was 2.729 seconds, within its existing five-second request bound.
+- [x] The default Preview 1k run reaches a coherent terminal state without restarting a service. The live reference run completed all 1,000 attempts in 16.362 seconds with the expected 250 accepted and 750 sold-out outcomes, 250 confirmed orders and notifications, zero asynchronous blockers, and zero container restarts.
 - [x] A regression test fails under the audited lock/pool dependency graph and passes with the corrected graph. The test's shared-admission barrier and hard deadlines encode the former exclusive-lock/nested-checkout failure modes; the corrected production-shaped graph passes.
 
 ## Scope guard
