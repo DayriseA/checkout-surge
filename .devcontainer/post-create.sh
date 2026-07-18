@@ -42,6 +42,24 @@ setup_codex_persistence() {
   fi
 }
 
+setup_repo_codex_playwright() {
+  local repo_codex_config=".codex/config.toml"
+
+  if [ -e "$repo_codex_config" ] || [ -L "$repo_codex_config" ]; then
+    return
+  fi
+
+  mkdir -p "$(dirname "$repo_codex_config")"
+  cat >"$repo_codex_config" <<'TOML'
+[mcp_servers.playwright]
+enabled = false
+command = "playwright-mcp"
+args = ["--config", ".playwright/mcp.config.json"]
+startup_timeout_sec = 30
+tool_timeout_sec = 120
+TOML
+}
+
 setup_claude_persistence() {
   if [ "${CODESPACES:-}" = "true" ]; then
     persist_home_config ".claude" "/workspaces/.claude"
@@ -121,12 +139,14 @@ install_apt_packages() {
 }
 
 setup_codex_persistence
+setup_repo_codex_playwright
 setup_claude_persistence
 setup_kilo_persistence
 install_apt_packages
 
 npm i -g @openai/codex
 npm i -g @anthropic-ai/claude-code
+bash .devcontainer/install-browser-tools.sh
 
 corepack enable
 corepack prepare pnpm@10.33.2 --activate

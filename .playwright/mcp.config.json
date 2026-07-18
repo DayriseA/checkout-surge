@@ -1,0 +1,12 @@
+{
+  "browser": {
+    "browserName": "chromium",
+    "isolated": true,
+    "launchOptions": {
+      "headless": true,
+      "chromiumSandbox": true
+    }
+  },
+  "capabilities": ["core", "vision", "devtools"],
+  "outputDir": ".cache/playwright-mcp"
+}

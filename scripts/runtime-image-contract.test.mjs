@@ -97,6 +97,46 @@ test("Compose separates production, development, tooling, and k6-test images", (
   assert.doesNotMatch(rootManifest.scripts["test:k6-compat"], /load-orchestrator pnpm/);
 });
 
+test("Dev Container provisions repo-scoped headless browser tooling", () => {
+  const postCreate = readText(".devcontainer/post-create.sh");
+  const browserInstaller = readText(".devcontainer/install-browser-tools.sh");
+  const gitIgnore = readText(".gitignore");
+  const playwrightCliConfig = readJson(".playwright/cli.config.json");
+  const playwrightMcpConfig = readJson(".playwright/mcp.config.json");
+  const rootManifest = readJson("package.json");
+
+  assert.match(postCreate, /bash \.devcontainer\/install-browser-tools\.sh/);
+  assert.match(browserInstaller, /@playwright\/cli@\$\{playwright_cli_version\}/);
+  assert.match(browserInstaller, /@playwright\/mcp@\$\{playwright_mcp_version\}/);
+  assert.match(browserInstaller, /playwright-cli install-browser --with-deps chromium/);
+  assert.match(browserInstaller, /playwright-mcp install-browser chromium/);
+  assert.match(browserInstaller, /playwright-cli -s="\$playwright_cli_smoke_session" open/);
+  assert.match(browserInstaller, /chromium\.launch\(\{ headless: true, chromiumSandbox: true \}\)/);
+  assert.doesNotMatch(JSON.stringify(rootManifest.devDependencies), /playwright/);
+
+  assert.match(gitIgnore, /^\.codex\/$/m);
+  assert.match(
+    postCreate,
+    /if \[ -e "\$repo_codex_config" \] \|\| \[ -L "\$repo_codex_config" \]; then\s+return/,
+  );
+  assert.match(postCreate, /\[mcp_servers\.playwright\]/);
+  assert.match(postCreate, /enabled = false/);
+  assert.match(postCreate, /command = "playwright-mcp"/);
+  assert.match(postCreate, /args = \["--config", "\.playwright\/mcp\.config\.json"\]/);
+  const expectedBrowserConfig = {
+    browserName: "chromium",
+    isolated: true,
+    launchOptions: {
+      headless: true,
+      chromiumSandbox: true,
+    },
+  };
+  assert.deepEqual(playwrightCliConfig.browser, expectedBrowserConfig);
+  assert.equal(playwrightCliConfig.outputMode, "file");
+  assert.deepEqual(playwrightMcpConfig.browser, expectedBrowserConfig);
+  assert.deepEqual(playwrightMcpConfig.capabilities, ["core", "vision", "devtools"]);
+});
+
 test("Next standalone tracing and DB migration packaging are explicit", () => {
   const nextConfig = readText("apps/web/next.config.mjs");
   assert.match(nextConfig, /output: "standalone"/);
