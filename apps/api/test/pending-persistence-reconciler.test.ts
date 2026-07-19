@@ -196,11 +196,26 @@ describe("PendingPersistenceReconciler", () => {
     ]);
   });
 
-  it("reverses and reconciles pending state when policy resolution proves the run is missing", async () => {
+  it("reverses only after terminal cleanup proves no durable buy exists", async () => {
     const callOrder: string[] = [];
     const persistSecuredReservation = vi.fn();
     const getPersistedBuyByReservationId = vi.fn();
-    const withRunAdmissionLock = vi.fn();
+    const withRunPendingPersistenceLock = vi.fn(async ({ operation }) => {
+      callOrder.push("cleanup start");
+      const result = await operation(
+        {
+          persistSecuredReservation,
+          getPersistedBuyByReservationId: async () => {
+            callOrder.push("read durable");
+            return null;
+          },
+          markPendingPersistenceReconciled,
+        },
+        "terminal",
+      );
+      callOrder.push("cleanup end");
+      return result;
+    });
     const enqueue = vi.fn();
     const promoteAccepted = vi.fn();
     const reverse = vi.fn(async () => {
@@ -216,7 +231,7 @@ describe("PendingPersistenceReconciler", () => {
         persistSecuredReservation,
         getPersistedBuyByReservationId,
         markPendingPersistenceReconciled,
-        withRunAdmissionLock,
+        withRunPendingPersistenceLock,
       },
       runRetryPolicyResolver: {
         resolve: async () => {
@@ -236,8 +251,15 @@ describe("PendingPersistenceReconciler", () => {
       reconciled: 0,
       failed: 0,
     });
-    expect(callOrder).toEqual(["resolve missing policy", "reverse", "mark reconciled"]);
-    expect(withRunAdmissionLock).not.toHaveBeenCalled();
+    expect(callOrder).toEqual([
+      "resolve missing policy",
+      "cleanup start",
+      "read durable",
+      "cleanup end",
+      "mark reconciled",
+      "reverse",
+    ]);
+    expect(withRunPendingPersistenceLock).toHaveBeenCalledOnce();
     expect(persistSecuredReservation).not.toHaveBeenCalled();
     expect(getPersistedBuyByReservationId).not.toHaveBeenCalled();
     expect(enqueue).not.toHaveBeenCalled();
@@ -273,7 +295,7 @@ describe("PendingPersistenceReconciler", () => {
       failed: 1,
     });
     expect(reverse).not.toHaveBeenCalled();
-    expect(withRunAdmissionLock).not.toHaveBeenCalled();
+    expect(withRunAdmissionLock).toHaveBeenCalledOnce();
   });
 
   it("does not materialize twice when the same pending record is redriven", async () => {
@@ -417,30 +439,42 @@ describe("PendingPersistenceReconciler", () => {
     expect(promoteAccepted).toHaveBeenCalledOnce();
   });
 
-  it("reverses only a narrowly classified definitive persistence rejection", async () => {
+  it("does not reverse when terminal cleanup finds a matching durable buy", async () => {
     const reverse = vi.fn(async () => "reversed" as const);
+    const enqueue = vi.fn(async () => undefined);
+    const promoteAccepted = vi.fn(async () => undefined);
     const reconciler = new PendingPersistenceReconciler({
       redis: pendingRedis() as never,
       persistence: {
-        persistSecuredReservation: vi.fn(async () => {
-          throw Object.assign(new Error("controlled rejection"), {
-            code: "run_sale_offer_mismatch",
-          });
-        }),
-        getPersistedBuyByReservationId: vi.fn(async () => null),
+        persistSecuredReservation: vi.fn(),
+        getPersistedBuyByReservationId: vi.fn(),
+        withRunPendingPersistenceLock: async ({ operation }) =>
+          operation(
+            {
+              persistSecuredReservation: vi.fn(),
+              getPersistedBuyByReservationId: vi.fn(async () => persisted()),
+            },
+            "terminal",
+          ),
       },
-      stockReservations: { promoteAccepted: vi.fn(), reverse },
+      runRetryPolicyResolver: {
+        resolve: async () => ({ maxAttempts: 4, initialBackoffMs: 500 }),
+      },
+      stockReservations: { promoteAccepted, reverse },
       idempotencyTtlSeconds: 1800,
-      orderProcessJobPublisher: { enqueue: vi.fn() },
+      orderProcessJobPublisher: { enqueue },
       logger: createSilentLogger("api"),
     });
 
     await expect(reconciler.reconcileSaleOffer(hold.saleOfferId)).resolves.toMatchObject({
       found: 1,
-      reversed: 1,
+      reconciled: 1,
+      reversed: 0,
       failed: 0,
     });
-    expect(reverse).toHaveBeenCalledOnce();
+    expect(reverse).not.toHaveBeenCalled();
+    expect(enqueue).toHaveBeenCalledOnce();
+    expect(promoteAccepted).toHaveBeenCalledOnce();
   });
 
   it("does nothing for an empty scan and filters records by run", async () => {

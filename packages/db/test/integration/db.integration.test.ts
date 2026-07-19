@@ -17,6 +17,7 @@ import {
   clearErpCircuitBreakerSnapshots,
   createDatabaseConnection,
   createRedisDashboardEventSubscriber,
+  deferPendingPersistenceRecord,
   erpCircuitBreakerSnapshotKey,
   getErpCircuitBreakerSnapshot,
   getErpCircuitBreakerSnapshotKey,
@@ -3140,6 +3141,30 @@ describe("database migrations, seed data, and reset behavior", () => {
     expect(await redis.zscore(keys.pendingPersistence, input.reservation.id)).not.toBeNull();
   });
 
+  it("atomically defers a retryable record in both pending indexes", async () => {
+    const saleOfferId = "10000000-0000-4000-8000-000000000029";
+    const keys = inventoryKeys(saleOfferId);
+    const input = buildReservationInput({ saleOfferId, sequence: 29 });
+    const deferredAt = new Date("2026-06-20T13:00:00.000Z");
+    await initializeInventory(redis, { saleOfferId, allocatedStock: 1 });
+    await reserveInventoryStock(redis, input);
+
+    await expect(
+      deferPendingPersistenceRecord(redis, {
+        saleOfferId,
+        reservationId: input.reservation.id,
+        now: deferredAt,
+      }),
+    ).resolves.toBe("deferred");
+    expect(await redis.zscore(keys.pendingPersistence, input.reservation.id)).toBe(
+      deferredAt.getTime().toString(),
+    );
+    expect(
+      await redis.zscore(pendingPersistenceIndexKey, `${saleOfferId}:${input.reservation.id}`),
+    ).toBe(deferredAt.getTime().toString());
+    expect(await redis.hget(keys.pendingPersistenceRecords, input.reservation.id)).not.toBeNull();
+  });
+
   it("reverses a pending hold atomically and is idempotent on repetition", async () => {
     const saleOfferId = "10000000-0000-4000-8000-000000000009";
     const keys = inventoryKeys(saleOfferId);
@@ -3586,9 +3611,9 @@ describe("database migrations, seed data, and reset behavior", () => {
     expect(await redis.zscore(keys.pendingPersistence, winner.id)).toBe(
       new Date(winner.securedAt).getTime().toString(),
     );
-    expect(
-      await redis.zscore(pendingPersistenceIndexKey, `${saleOfferId}:${winner.id}`),
-    ).toBe(new Date(winner.securedAt).getTime().toString());
+    expect(await redis.zscore(pendingPersistenceIndexKey, `${saleOfferId}:${winner.id}`)).toBe(
+      new Date(winner.securedAt).getTime().toString(),
+    );
     expect(await redis.llen(keys.events)).toBe(2);
   });
 

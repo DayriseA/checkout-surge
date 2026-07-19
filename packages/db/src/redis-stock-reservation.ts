@@ -712,7 +712,7 @@ export async function readPendingPersistenceRecords(
 
 export type ReservationReversalResult = "reversed" | "not_held";
 
-const deferPendingPersistenceIndexMemberScript = `
+const deferPendingPersistenceRecordScript = `
 local indexType = redis.call("TYPE", KEYS[1]).ok
 if indexType ~= "none" and indexType ~= "zset" then
   return redis.error_reply("Inventory pending-persistence index key must be a sorted set")
@@ -722,6 +722,7 @@ if pendingType ~= "none" and pendingType ~= "zset" then
   return redis.error_reply("Inventory pending-persistence key must be a sorted set")
 end
 if redis.call("ZSCORE", KEYS[2], ARGV[1]) then
+  redis.call("ZADD", KEYS[2], ARGV[2], ARGV[1])
   redis.call("ZADD", KEYS[1], ARGV[2], ARGV[3])
   return "deferred"
 end
@@ -729,13 +730,13 @@ redis.call("ZREM", KEYS[1], ARGV[3])
 return "removed"
 `;
 
-export async function deferPendingPersistenceIndexMember(
+export async function deferPendingPersistenceRecord(
   redis: CheckoutSurgeRedis,
   input: { saleOfferId: string; reservationId: string; now?: Date },
 ): Promise<"deferred" | "removed"> {
   const keys = inventoryKeys(input.saleOfferId);
   const result = await redis.eval(
-    deferPendingPersistenceIndexMemberScript,
+    deferPendingPersistenceRecordScript,
     2,
     pendingPersistenceIndexKey,
     keys.pendingPersistence,
@@ -744,7 +745,7 @@ export async function deferPendingPersistenceIndexMember(
     `${input.saleOfferId}:${input.reservationId}`,
   );
   if (result !== "deferred" && result !== "removed") {
-    throw new Error(`Could not defer pending persistence index member: ${String(result)}.`);
+    throw new Error(`Could not defer pending persistence record: ${String(result)}.`);
   }
   return result;
 }

@@ -45,7 +45,6 @@ type FinalizationDecision =
       terminalStatus: "completed" | "failed";
       failureReason: string | null;
       businessOutcome: BusinessOutcomeSummary;
-      terminalInventorySnapshot: TerminalInventorySnapshot | null;
     };
 
 export class DemoRunFinalizationService implements DemoRunFinalizationController {
@@ -55,7 +54,7 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
       redis: CheckoutSurgeRedis;
       logger: CheckoutSurgeLogger;
       pendingPersistenceReconciler?: Pick<PendingPersistenceReconciler, "reconcileSaleOffer">;
-      terminalRunWriter: Pick<TerminalDemoRunWriter, "write">;
+      terminalRunWriter: Pick<TerminalDemoRunWriter, "writePrepared">;
       drainTimeoutSeconds: number;
       now?: () => Date;
     },
@@ -104,8 +103,9 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
     if (row.run.status !== "draining" || !row.finalization || !row.run.saleOfferId) {
       return toDemoRunSnapshot(row.run);
     }
+    const finalization = row.finalization;
 
-    if (row.finalization.completionEnrichmentStatus === "pending") {
+    if (finalization.completionEnrichmentStatus === "pending") {
       this.options.logger.debug(
         { runId },
         "Demo run remains draining while traffic-completion enrichment is pending.",
@@ -146,7 +146,7 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
 
     const decision = await this.decideFinalization({
       run: row.run,
-      finalization: row.finalization,
+      finalization,
       now,
       pendingReconciliationFailed,
     });
@@ -163,83 +163,127 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
       return toDemoRunSnapshot(row.run);
     }
 
-    // A request that crossed the admission boundary before the run closed can
-    // finish while the first readiness query is in flight. Recompute all
-    // business blockers immediately before the terminal transition.
-    const latestBusinessOutcome = await readBusinessOutcomeSummary(this.options.db, {
-      saleOfferId: requireSaleOfferId(row.run),
-      runId: row.run.id,
-    });
     const timeoutAt = this.drainTimeoutAt(row.run);
     const timedOut = now.getTime() >= timeoutAt.getTime();
-    let latestPendingRedisCount = 0;
+    const evidence = parseFinalizationEvidence(row.run, finalization);
+    let pendingAtTrafficCompletion: boolean;
     try {
-      latestPendingRedisCount = (
-        await getInventoryStatus(this.options.redis, requireSaleOfferId(row.run), now)
-      ).pendingPersistenceCount;
+      pendingAtTrafficCompletion = hadPendingPersistenceAtTrafficCompletion(finalization);
     } catch (error) {
       this.options.logger.warn(
-        { err: error, runId, saleOfferId: requireSaleOfferId(row.run) },
-        "Could not recheck pending Redis reservations before terminal transition.",
-      );
-      latestPendingRedisCount = Number.POSITIVE_INFINITY;
-    }
-    const latestRecoveryPressure = await readRecoveryPressure(this.options.db, row.run.id);
-    const latestBusinessBlockers = businessDrainBlockers(
-      latestBusinessOutcome,
-      latestPendingRedisCount,
-      latestRecoveryPressure.pendingCount,
-      latestRecoveryPressure.escalatedProcessingCount,
-      latestRecoveryPressure.escalatedRetryingCount,
-      latestRecoveryPressure.escalatedQueuedCount,
-    );
-    const evidence = parseFinalizationEvidence(row.run, row.finalization);
-    const latestAccounting = reconcileAcceptedResponses({
-      ...evidence,
-      business: latestBusinessOutcome,
-    });
-    const latestBlockers = [
-      ...latestBusinessBlockers,
-      ...(latestAccounting.accounted ? [] : ["accepted_response_accounting"]),
-      ...(pendingReconciliationFailed ? ["pending_persistence_reconciliation"] : []),
-    ];
-    if (latestBlockers.length > 0 && !timedOut) {
-      this.options.logger.debug(
-        { runId, blockers: latestBlockers },
-        "Demo run remains draining after late business work was observed.",
+        { err: error, runId },
+        "Demo run remains draining because its traffic-completion inventory evidence is invalid.",
       );
       return toDemoRunSnapshot(row.run);
     }
+    const wroteSummary = await this.options.terminalRunWriter.writePrepared(
+      runId,
+      async (lockedDb) => {
+        // The writer has already acquired the exclusive run lock and opened its
+        // transaction. Every final PostgreSQL read must use this facade: using
+        // options.db here would both escape the fence and nest a pool checkout.
+        const latestBusinessOutcome = await readBusinessOutcomeSummary(lockedDb, {
+          saleOfferId: requireSaleOfferId(row.run),
+          runId: row.run.id,
+        });
+        let latestInventory: Awaited<ReturnType<typeof getInventoryStatus>>;
+        try {
+          latestInventory = await getInventoryStatus(
+            this.options.redis,
+            requireSaleOfferId(row.run),
+            now,
+          );
+        } catch (error) {
+          this.options.logger.warn(
+            { err: error, runId, saleOfferId: requireSaleOfferId(row.run) },
+            "Could not recheck pending Redis reservations inside the terminal run fence.",
+          );
+          return null;
+        }
+        if (latestInventory.pendingPersistenceCount > 0) {
+          this.options.logger.debug(
+            { runId, pendingPersistenceCount: latestInventory.pendingPersistenceCount, timedOut },
+            "Demo run remains draining until every pending Redis hold is classified.",
+          );
+          return null;
+        }
+        if (
+          latestInventory.soldOutPressure.rejectionCount !== latestBusinessOutcome.soldOutRejections
+        ) {
+          this.options.logger.warn(
+            {
+              runId,
+              redisSoldOutRejections: latestInventory.soldOutPressure.rejectionCount,
+              durableSoldOutRejections: latestBusinessOutcome.soldOutRejections,
+            },
+            "Demo run remains draining because Redis and durable sold-out evidence disagree.",
+          );
+          return null;
+        }
 
-    const latestFailureReason = this.deriveFailureReason({
-      delivery: evidence.delivery,
-      http: evidence.http,
-      trafficFailed: row.run.trafficStatus === "failed" || Boolean(row.finalization.errorMessage),
-      businessTimedOut: latestBusinessBlockers.length > 0 && timedOut,
-      accountingTimedOut:
-        latestBusinessBlockers.length === 0 && !latestAccounting.accounted && timedOut,
-      escalatedRecoveryCount: latestRecoveryPressure.escalatedCount,
-      reconciliationTimedOut,
-    });
-    const accountingWarning = acceptedResponseAccountingWarning(latestAccounting);
-    const loadRunDiagnosticsSummary = accountingWarning
-      ? appendAccountingWarning(row.finalization.loadRunDiagnosticsSummary, accountingWarning)
-      : row.finalization.loadRunDiagnosticsSummary;
+        const latestRecoveryPressure = await readRecoveryPressure(lockedDb, row.run.id);
+        const latestBusinessBlockers = businessDrainBlockers(
+          latestBusinessOutcome,
+          latestInventory.pendingPersistenceCount,
+          latestRecoveryPressure.pendingCount,
+          latestRecoveryPressure.escalatedProcessingCount,
+          latestRecoveryPressure.escalatedRetryingCount,
+          latestRecoveryPressure.escalatedQueuedCount,
+        );
+        const latestAccounting = reconcileAcceptedResponses({
+          ...evidence,
+          business: latestBusinessOutcome,
+        });
+        const latestBlockers = [
+          ...latestBusinessBlockers,
+          ...(latestAccounting.accounted ? [] : ["accepted_response_accounting"]),
+          ...(pendingReconciliationFailed ? ["pending_persistence_reconciliation"] : []),
+        ];
+        if (latestBlockers.length > 0 && !timedOut) {
+          this.options.logger.debug(
+            { runId, blockers: latestBlockers },
+            "Demo run remains draining after late business work was observed.",
+          );
+          return null;
+        }
 
-    const wroteSummary = await this.options.terminalRunWriter.write({
-      run: row.run,
-      terminalStatus: latestFailureReason ? "failed" : "completed",
-      failureReason: latestFailureReason,
-      finalizedAt: now,
-      httpSummary: evidence.http,
-      trafficDeliverySummary: evidence.delivery,
-      httpTimingBreakdownSummary: row.finalization.httpTimingBreakdownSummary,
-      loadRunDiagnosticsSummary,
-      apiRequestLifecycleSummary: row.finalization.apiRequestLifecycleSummary,
-      businessOutcome: latestBusinessOutcome,
-      terminalInventorySnapshot: decision.terminalInventorySnapshot,
-      allowedCurrentStatuses: ["draining"],
-    });
+        const latestFailureReason = this.deriveFailureReason({
+          delivery: evidence.delivery,
+          http: evidence.http,
+          trafficFailed: row.run.trafficStatus === "failed" || Boolean(finalization.errorMessage),
+          businessTimedOut: latestBusinessBlockers.length > 0 && timedOut,
+          accountingTimedOut:
+            latestBusinessBlockers.length === 0 && !latestAccounting.accounted && timedOut,
+          escalatedRecoveryCount: latestRecoveryPressure.escalatedCount,
+          reconciliationTimedOut:
+            reconciliationTimedOut || (timedOut && pendingAtTrafficCompletion),
+        });
+        const accountingWarning = acceptedResponseAccountingWarning(latestAccounting);
+        const loadRunDiagnosticsSummary = accountingWarning
+          ? appendAccountingWarning(finalization.loadRunDiagnosticsSummary, accountingWarning)
+          : finalization.loadRunDiagnosticsSummary;
+
+        return {
+          run: row.run,
+          terminalStatus: latestFailureReason ? "failed" : "completed",
+          failureReason: latestFailureReason,
+          finalizedAt: now,
+          httpSummary: evidence.http,
+          trafficDeliverySummary: evidence.delivery,
+          httpTimingBreakdownSummary: finalization.httpTimingBreakdownSummary,
+          loadRunDiagnosticsSummary,
+          apiRequestLifecycleSummary: finalization.apiRequestLifecycleSummary,
+          businessOutcome: latestBusinessOutcome,
+          terminalInventorySnapshot: toTerminalInventorySnapshot({
+            saleOfferId: requireSaleOfferId(row.run),
+            inventory: latestInventory,
+            businessOutcome: latestBusinessOutcome,
+            capturedAt: now,
+          }),
+          allowedCurrentStatuses: ["draining"],
+        };
+      },
+    );
     const updatedRun = await this.readRun(runId);
 
     if (wroteSummary) {
@@ -294,9 +338,6 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
       return { ready: false, blockers, timeoutAt };
     }
 
-    const terminalInventorySnapshot = extractTerminalInventorySnapshot(
-      input.finalization.trafficOutcomeSummary,
-    );
     const failureReason = this.deriveFailureReason({
       delivery: evidence.delivery,
       http: evidence.http,
@@ -313,7 +354,6 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
       terminalStatus: failureReason ? "failed" : "completed",
       failureReason,
       businessOutcome,
-      terminalInventorySnapshot,
     };
   }
 
@@ -412,6 +452,19 @@ function parseFinalizationEvidence(
   };
 }
 
+function hadPendingPersistenceAtTrafficCompletion(
+  finalization: typeof demoRunFinalizations.$inferSelect,
+): boolean {
+  if (!("terminalInventorySnapshot" in finalization.trafficOutcomeSummary)) {
+    return false;
+  }
+  return (
+    terminalInventorySnapshotSchema.parse(
+      finalization.trafficOutcomeSummary.terminalInventorySnapshot,
+    ).pendingPersistenceCount > 0
+  );
+}
+
 function appendAccountingWarning(
   diagnostics: Record<string, unknown>,
   warning: Record<string, unknown>,
@@ -502,20 +555,23 @@ async function readRecoveryPressure(
   };
 }
 
-function extractTerminalInventorySnapshot(
-  trafficOutcomeSummary: unknown,
-): TerminalInventorySnapshot | null {
-  if (
-    typeof trafficOutcomeSummary !== "object" ||
-    trafficOutcomeSummary === null ||
-    !Object.hasOwn(trafficOutcomeSummary, "terminalInventorySnapshot")
-  ) {
-    return null;
-  }
-
-  return terminalInventorySnapshotSchema.parse(
-    (trafficOutcomeSummary as Record<string, unknown>).terminalInventorySnapshot,
-  );
+function toTerminalInventorySnapshot(input: {
+  saleOfferId: string;
+  inventory: Awaited<ReturnType<typeof getInventoryStatus>>;
+  businessOutcome: BusinessOutcomeSummary;
+  capturedAt: Date;
+}): TerminalInventorySnapshot {
+  return {
+    saleOfferId: input.saleOfferId,
+    startingStock: input.inventory.allocatedStock,
+    remainingStock: input.inventory.remainingStock,
+    reservedStock: input.inventory.reservedStock,
+    acceptedReservations: input.businessOutcome.acceptedReservations,
+    soldOutRejections: input.inventory.soldOutPressure.rejectionCount,
+    pendingPersistenceCount: input.inventory.pendingPersistenceCount,
+    capturedAt: input.capturedAt.toISOString(),
+    source: "redis",
+  };
 }
 
 function requireSaleOfferId(run: typeof demoRuns.$inferSelect): string {

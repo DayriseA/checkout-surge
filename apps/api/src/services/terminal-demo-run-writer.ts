@@ -4,7 +4,12 @@ import type {
   TrafficDeliverySummary,
   TrafficHttpSummary,
 } from "@checkout-surge/contracts";
-import type { DemoRunStatus, DemoRunTrafficStatus, demoRuns } from "@checkout-surge/db";
+import type {
+  CheckoutSurgeDatabase,
+  DemoRunStatus,
+  DemoRunTrafficStatus,
+  demoRuns,
+} from "@checkout-surge/db";
 
 export type TerminalDemoRunStatus = "completed" | "failed";
 
@@ -37,6 +42,10 @@ export interface TerminalDemoRunSummaryInput {
 export interface TerminalDemoRunWriter {
   claimTerminalRun(input: TerminalDemoRunTransitionInput): Promise<boolean>;
   write(input: TerminalDemoRunSummaryInput): Promise<boolean>;
+  writePrepared(
+    runId: string,
+    prepare: (db: CheckoutSurgeDatabase) => Promise<TerminalDemoRunSummaryInput | null>,
+  ): Promise<boolean>;
   writeAfterTerminalClaim(input: TerminalDemoRunSummaryInput): Promise<boolean>;
   writeAfterTerminalClaims(inputs: TerminalDemoRunSummaryInput[]): Promise<number>;
 }

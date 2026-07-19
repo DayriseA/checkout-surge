@@ -19,6 +19,7 @@ import {
   type BuyPersistence,
   type BuyPersistenceOperations,
   DefinitivePersistenceRejectionError,
+  isPersistedBuyForReservation,
   type PersistedBuyAcceptance,
   TerminalRunPersistenceRejectionError,
 } from "./reserve-order-service.js";
@@ -210,6 +211,34 @@ export class PostgresBuyPersistence implements BuyPersistence {
     }
   }
 
+  async withRunPendingPersistenceLock<T>(input: {
+    reservation: SecuredReservationHold;
+    operation: (
+      persistence: BuyPersistenceOperations,
+      runDisposition: "admissible" | "terminal" | "invalid",
+    ) => Promise<T>;
+  }): Promise<T> {
+    const runId = input.reservation.runId;
+    if (!runId) {
+      return input.operation(this, "admissible");
+    }
+
+    return this.withSharedRunLock(runId, async (reservedDb, reservedClient) => {
+      const [run] = await reservedDb
+        .select({ saleOfferId: demoRuns.saleOfferId, status: demoRuns.status })
+        .from(demoRuns)
+        .where(eq(demoRuns.id, runId))
+        .limit(1);
+      const runDisposition =
+        !run || run.saleOfferId !== input.reservation.saleOfferId
+          ? "invalid"
+          : acceptingPersistenceRunStatuses.has(run.status)
+            ? "admissible"
+            : "terminal";
+      return input.operation(this.databaseOperations(reservedDb, reservedClient), runDisposition);
+    });
+  }
+
   async getPersistedBuyByReservationId(
     reservationId: string,
   ): Promise<PersistedBuyAcceptance | null> {
@@ -315,7 +344,7 @@ export class PostgresBuyPersistence implements BuyPersistence {
             database,
             input.reservation.id,
           );
-          if (!persisted || !isSameDurableBuy(persisted, input.reservation)) {
+          if (!persisted || !isPersistedBuyForReservation(persisted, input.reservation)) {
             throw error;
           }
 
@@ -329,6 +358,30 @@ export class PostgresBuyPersistence implements BuyPersistence {
       markPendingPersistenceReconciled: (input) =>
         runTransaction((tx) => this.markPendingPersistenceReconciledInTransaction(tx, input)),
     };
+  }
+
+  private async withSharedRunLock<T>(
+    runId: string,
+    operation: (database: CheckoutSurgeDatabase, client: ReservedClient) => Promise<T>,
+  ): Promise<T> {
+    const client = (this.db as DatabaseWithClient).$client;
+    const reservedClient = await client.reserve();
+    Object.defineProperty(reservedClient, "options", { value: client.options });
+    const reservedDb = createDatabase(reservedClient as SqlClient);
+    let locked = false;
+    try {
+      await reservedClient`select pg_advisory_lock_shared(hashtext(${terminalDemoRunTransitionLockKey(runId)}))`;
+      locked = true;
+      return await operation(reservedDb, reservedClient);
+    } finally {
+      try {
+        if (locked) {
+          await reservedClient`select pg_advisory_unlock_shared(hashtext(${terminalDemoRunTransitionLockKey(runId)}))`;
+        }
+      } finally {
+        reservedClient.release();
+      }
+    }
   }
 
   private async runReservedTransaction<T>(
@@ -413,24 +466,6 @@ function isRecoverableReservationConflict(error: unknown): boolean {
     candidate = postgresError.cause;
   }
   return false;
-}
-
-function isSameDurableBuy(
-  persisted: PersistedBuyAcceptance,
-  hold: SecuredReservationHold,
-): boolean {
-  const expectedRunId = hold.runId;
-  return (
-    persisted.reservation.id === hold.id &&
-    persisted.reservation.saleOfferId === hold.saleOfferId &&
-    persisted.reservation.reservationToken === hold.reservationToken &&
-    persisted.reservation.quantity === hold.quantity &&
-    persisted.reservation.runId === expectedRunId &&
-    persisted.order.reservationId === hold.id &&
-    persisted.order.saleOfferId === hold.saleOfferId &&
-    persisted.order.quantity === hold.quantity &&
-    persisted.order.runId === expectedRunId
-  );
 }
 
 function toReservationSummary(row: {

@@ -380,7 +380,7 @@ describe("ReserveOrderService queue handoff", () => {
     "reservation_pending_persistence",
     "idempotent_replay",
   ] as const)(
-    "reverses a %s hold when pre-admission policy resolution proves the run is missing",
+    "checks durable evidence before reversing a %s hold when policy resolution proves the run is missing",
     async (outcome) => {
       const persistSecuredReservation = vi.fn();
       const getPersistedBuyByReservationId = vi.fn();
@@ -411,11 +411,51 @@ describe("ReserveOrderService queue handoff", () => {
       expect(reverse).toHaveBeenCalledOnce();
       expect(withRunAdmissionLock).not.toHaveBeenCalled();
       expect(persistSecuredReservation).not.toHaveBeenCalled();
-      expect(getPersistedBuyByReservationId).not.toHaveBeenCalled();
+      expect(getPersistedBuyByReservationId).toHaveBeenCalledOnce();
       expect(enqueue).not.toHaveBeenCalled();
       expect(promoteAccepted).not.toHaveBeenCalled();
     },
   );
+
+  it("preserves and re-enqueues matching durable evidence after a terminal admission race", async () => {
+    let securedHold: SecuredReservationHold | null = null;
+    const reverse = vi.fn(async () => "reversed" as const);
+    const enqueue = vi.fn(async () => undefined);
+    const promoteAccepted = vi.fn(async () => undefined);
+    const service = buildService({
+      persistence: {
+        persistSecuredReservation: vi.fn(),
+        getPersistedBuyByReservationId: vi.fn(async () => {
+          if (!securedHold) throw new Error("Expected Redis hold before durable lookup.");
+          return persistedBuy(securedHold);
+        }),
+        withRunAdmissionLock: async () => {
+          throw Object.assign(new Error("terminal"), { code: "run_terminal" });
+        },
+      },
+      stockReservations: acceptingGateway({
+        reserve: async ({ reservation }) => {
+          securedHold = reservation;
+          return { outcome: "reservation_secured", reservation };
+        },
+        reverse,
+        promoteAccepted,
+      }),
+      runRetryPolicyResolver: {
+        resolve: async () => ({ maxAttempts: 4, initialBackoffMs: 500 }),
+      },
+      orderProcessJobPublisher: { enqueue },
+    });
+
+    await expect(service.reserve({ request, correlationId, now })).resolves.toMatchObject({
+      outcome: "reservation_secured",
+      reservation: { id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee" },
+      order: { id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd" },
+    });
+    expect(reverse).not.toHaveBeenCalled();
+    expect(enqueue).toHaveBeenCalledOnce();
+    expect(promoteAccepted).toHaveBeenCalledOnce();
+  });
 
   it("does not reverse a hold when pre-admission policy resolution fails without proving absence", async () => {
     const resolutionError = new Error("database unavailable");

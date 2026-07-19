@@ -75,6 +75,35 @@ export interface BuyPersistence extends BuyPersistenceOperations {
     reservation: SecuredReservationHold;
     operation: (persistence: BuyPersistenceOperations) => Promise<T>;
   }): Promise<T>;
+  withRunPendingPersistenceLock?<T>(input: {
+    reservation: SecuredReservationHold;
+    operation: (
+      persistence: BuyPersistenceOperations,
+      runDisposition: "admissible" | "terminal" | "invalid",
+    ) => Promise<T>;
+  }): Promise<T>;
+}
+
+export function isPersistedBuyForReservation(
+  persisted: PersistedBuyAcceptance,
+  reservation: SecuredReservationHold,
+): boolean {
+  return (
+    persisted.reservation.id === reservation.id &&
+    persisted.reservation.saleOfferId === reservation.saleOfferId &&
+    persisted.reservation.correlationId === reservation.correlationId &&
+    persisted.reservation.reservationToken === reservation.reservationToken &&
+    persisted.reservation.quantity === reservation.quantity &&
+    persisted.reservation.runId === reservation.runId &&
+    persisted.reservation.securedAt === reservation.securedAt &&
+    persisted.reservation.expiresAt === reservation.expiresAt &&
+    persisted.order.reservationId === reservation.id &&
+    persisted.order.saleOfferId === reservation.saleOfferId &&
+    persisted.order.correlationId === reservation.correlationId &&
+    persisted.order.quantity === reservation.quantity &&
+    persisted.order.runId === reservation.runId &&
+    persisted.order.queuedAt === reservation.securedAt
+  );
 }
 
 export interface StockReservationGateway {
@@ -303,8 +332,9 @@ export class ReserveOrderService {
     now: Date;
   }): Promise<BuyResponse> {
     let persisted: PersistedBuyAcceptance | null;
+    let retryPolicy: BackpressureConfig["retryPolicy"] | undefined;
     try {
-      const retryPolicy = await this.resolveRunRetryPolicy(input.reservation);
+      retryPolicy = await this.resolveRunRetryPolicy(input.reservation);
       persisted = await this.withPersistenceAdmissionLock(
         input.reservation,
         async (persistence) => {
@@ -340,10 +370,12 @@ export class ReserveOrderService {
         },
       );
     } catch (error) {
-      if (isDefinitivePersistenceRejection(error) && this.stockReservations.reverse) {
-        await this.compensateHold(input.idempotencyKey, input.reservation, error);
-      }
-      throw error;
+      persisted = await this.classifyDefinitiveRejection({
+        error,
+        idempotencyKey: input.idempotencyKey,
+        reservation: input.reservation,
+        ...(retryPolicy ? { retryPolicy } : {}),
+      });
     }
 
     if (!persisted) {
@@ -382,8 +414,9 @@ export class ReserveOrderService {
   }): Promise<BuyResponse> {
     let persisted: PersistedBuyAcceptance | null;
     let durableStateChanged = false;
+    let retryPolicy: BackpressureConfig["retryPolicy"] | undefined;
     try {
-      const retryPolicy = await this.resolveRunRetryPolicy(input.reservation);
+      retryPolicy = await this.resolveRunRetryPolicy(input.reservation);
       persisted = await this.withPersistenceAdmissionLock(
         input.reservation,
         async (persistence) => {
@@ -436,10 +469,12 @@ export class ReserveOrderService {
         },
       );
     } catch (error) {
-      if (isDefinitivePersistenceRejection(error) && this.stockReservations.reverse) {
-        await this.compensateHold(input.idempotencyKey, input.reservation, error);
-      }
-      throw error;
+      persisted = await this.classifyDefinitiveRejection({
+        error,
+        idempotencyKey: input.idempotencyKey,
+        reservation: input.reservation,
+        ...(retryPolicy ? { retryPolicy } : {}),
+      });
     }
 
     if (!persisted) {
@@ -537,6 +572,42 @@ export class ReserveOrderService {
     };
 
     await enqueue();
+  }
+
+  private async classifyDefinitiveRejection(input: {
+    error: unknown;
+    idempotencyKey: string;
+    reservation: SecuredReservationHold;
+    retryPolicy?: BackpressureConfig["retryPolicy"];
+  }): Promise<PersistedBuyAcceptance> {
+    if (!isDefinitivePersistenceRejection(input.error)) {
+      throw input.error;
+    }
+
+    const durable = await this.persistence.getPersistedBuyByReservationId(input.reservation.id);
+    if (durable) {
+      if (!isPersistedBuyForReservation(durable, input.reservation)) {
+        throw new Error(
+          "Durable reservation/order attribution does not match the rejected Redis hold.",
+          { cause: input.error },
+        );
+      }
+      if (input.reservation.runId && !input.retryPolicy) {
+        throw input.error;
+      }
+      await this.enqueuePersistedBuy(
+        durable,
+        input.idempotencyKey,
+        input.reservation,
+        input.retryPolicy,
+      );
+      return durable;
+    }
+
+    if (this.stockReservations.reverse) {
+      await this.compensateHold(input.idempotencyKey, input.reservation, input.error);
+    }
+    throw input.error;
   }
 
   private async resolveRunRetryPolicy(

@@ -101,6 +101,7 @@ export { InventoryStatusService } from "./services/inventory-status-service.js";
 export type { OrderProcessJobPublisher } from "./services/order-process-job-publisher.js";
 export { OrderStatusService } from "./services/order-status-service.js";
 export { PendingPersistenceReconciler } from "./services/pending-persistence-reconciler.js";
+export { PendingPersistenceRemediationService } from "./services/pending-persistence-remediation-service.js";
 export { PostgresBuyPersistence } from "./services/postgres-buy-persistence.js";
 export { QueueStatusService } from "./services/queue-status-service.js";
 export { ReserveOrderService } from "./services/reserve-order-service.js";
@@ -479,6 +480,7 @@ export async function startApiServer(): Promise<void> {
       });
       void (async () => {
         await trafficCompletionEnrichmentService.reconcilePendingEnrichments();
+        await pendingPersistenceReconciler.reconcileAll();
         await demoRunFinalizationService.finalizeReadyRuns();
       })().catch((error: unknown) => {
         logger.error({ err: error }, "Demo run completion lifecycle poll failed.");

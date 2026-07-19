@@ -45,6 +45,7 @@
     "runtime:soak:recovery": "node scripts/run-with-env.mjs node scripts/run-in-compose.mjs scripts/runtime-recovery-soak.mjs",
     "runtime:smoke:load": "node scripts/run-with-env.mjs node scripts/run-in-compose.mjs scripts/runtime-smoke-load.mjs",
     "maintenance:cleanup-runs": "node scripts/run-with-env.mjs node scripts/run-in-compose.mjs scripts/maintenance-cleanup-runs.mjs",
+    "maintenance:remediate-terminal-pending": "node scripts/run-with-env.mjs pnpm --filter api exec tsx src/scripts/remediate-terminal-pending-persistence.ts",
     "dev": "pnpm build:shared && turbo run dev --filter api --filter worker --filter mock-erp --filter load-orchestrator --filter web",
     "dev:dashboard": "pnpm build:shared && pnpm --filter web dev",
     "dev:api": "pnpm build:shared && pnpm --filter api dev",

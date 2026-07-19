@@ -24,22 +24,32 @@ import {
   demoRunSummaries,
   demoRuns,
   erpAttempts,
+  getInventoryStatus,
   initializeInventory,
+  inventoryKeys,
   orderRecoveryJobs,
   orders,
+  pendingPersistenceIndexKey,
   products,
+  promoteReservationIdempotencyToAccepted,
   reservationPendingPersistence,
   reservations,
+  reserveInventoryStock,
+  reverseReservation,
   saleOffers,
+  setRunSaleEligibility,
   simulatedNotifications,
 } from "@checkout-surge/db";
 import { resetTestDatabase } from "@checkout-surge/db/testing";
 import { createSilentLogger } from "@checkout-surge/logger";
 import { count, eq, sql } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { PostgresRunRetryPolicyResolver } from "../src/queue/postgres-run-retry-policy-resolver.js";
 import { DemoMaintenanceService } from "../src/services/demo-maintenance-service.js";
 import { DemoRunFinalizationService } from "../src/services/demo-run-finalization-service.js";
-import type { PendingPersistenceReconciler } from "../src/services/pending-persistence-reconciler.js";
+import { PendingPersistenceReconciler } from "../src/services/pending-persistence-reconciler.js";
+import { PendingPersistenceRemediationService } from "../src/services/pending-persistence-remediation-service.js";
+import { PostgresBuyPersistence } from "../src/services/postgres-buy-persistence.js";
 import {
   PostgresTerminalDemoRunSummaryWriter,
   terminalDemoRunTransitionLockKey,
@@ -175,9 +185,17 @@ describe("demo run finalization service", () => {
     const db = requireConnection(connection).db;
     const redisClient = requireRedis(redis);
     const postgresTerminalRunWriter = new PostgresTerminalDemoRunSummaryWriter(db);
-    const writeTerminalRun = vi.fn(postgresTerminalRunWriter.write.bind(postgresTerminalRunWriter));
+    const preparedInputs: unknown[] = [];
+    const writeTerminalRun = vi.fn(
+      async (...args: Parameters<typeof postgresTerminalRunWriter.writePrepared>) =>
+        postgresTerminalRunWriter.writePrepared(args[0], async (lockedDb) => {
+          const input = await args[1](lockedDb);
+          if (input) preparedInputs.push(input);
+          return input;
+        }),
+    );
     const service = createService(connection, redis, {
-      terminalRunWriter: { write: writeTerminalRun },
+      terminalRunWriter: { writePrepared: writeTerminalRun },
     });
 
     await seedDrainingRun({ db, redis: redisClient, trafficDeliveryStatus: "complete" });
@@ -199,6 +217,13 @@ describe("demo run finalization service", () => {
       capturedAt: new Date("2026-06-20T00:00:10.000Z"),
       createdAt: new Date("2026-06-20T00:00:10.000Z"),
     });
+    await redisClient.hset(
+      inventoryKeys(ids.saleOffer).reservationOutcomes,
+      "api_sold_out_decision",
+      "7",
+      "api_sold_out_decision_latest_observed_at",
+      "2026-06-20T00:00:09.000Z",
+    );
     await db
       .insert(reservations)
       .values([reservationFixture(ids.reservation1), reservationFixture(ids.reservation2)]);
@@ -243,7 +268,17 @@ describe("demo run finalization service", () => {
       notificationsRecorded: 1,
       pendingPersistenceCount: 0,
     });
-    expect(summaries[0]?.terminalInventorySnapshot).toEqual(durableTerminalInventorySnapshot);
+    expect(summaries[0]?.terminalInventorySnapshot).toEqual({
+      saleOfferId: ids.saleOffer,
+      startingStock: 10,
+      remainingStock: 10,
+      reservedStock: 0,
+      acceptedReservations: 2,
+      soldOutRejections: 7,
+      pendingPersistenceCount: 0,
+      capturedAt: "2026-06-20T00:00:10.000Z",
+      source: "redis",
+    });
     expect(summaries[0]?.httpTimingBreakdownSummary).toEqual({
       ...emptyHttpTimingBreakdownSummary,
       waiting: { averageMs: 10, p95Ms: 20 },
@@ -256,21 +291,25 @@ describe("demo run finalization service", () => {
       summaryExportWarnings: ["k6_outcome_counter_point_stream_fallback_used"],
     });
     expect(writeTerminalRun).toHaveBeenCalledOnce();
-    expect(writeTerminalRun).toHaveBeenCalledWith(
+    expect(preparedInputs).toContainEqual(
       expect.objectContaining({
         terminalStatus: "completed",
         businessOutcome: expect.objectContaining({
           acceptedReservations: 2,
           soldOutRejections: 7,
         }),
-        terminalInventorySnapshot: durableTerminalInventorySnapshot,
+        terminalInventorySnapshot: expect.objectContaining({
+          acceptedReservations: 2,
+          soldOutRejections: 7,
+          capturedAt: "2026-06-20T00:00:10.000Z",
+        }),
         allowedCurrentStatuses: ["draining"],
         finalizedAt: new Date("2026-06-20T00:00:10.000Z"),
       }),
     );
   });
 
-  it("finalizes legacy traffic outcomes without a durable inventory snapshot as null", async () => {
+  it("captures actual terminal inventory even when traffic evidence has no inventory snapshot", async () => {
     const db = requireConnection(connection).db;
     const redisClient = requireRedis(redis);
     const service = createService(connection, redis);
@@ -293,7 +332,13 @@ describe("demo run finalization service", () => {
       .from(demoRunFinalizations)
       .where(eq(demoRunFinalizations.runId, ids.run));
 
-    expect(summary?.terminalInventorySnapshot).toBeNull();
+    expect(summary?.terminalInventorySnapshot).toMatchObject({
+      startingStock: 10,
+      remainingStock: 10,
+      reservedStock: 0,
+      pendingPersistenceCount: 0,
+      capturedAt: "2026-06-20T00:00:10.000Z",
+    });
     expect(legacyFinalization?.completionEnrichmentStatus).toBe("completed");
   });
 
@@ -325,7 +370,7 @@ describe("demo run finalization service", () => {
     expect(reconcileSaleOffer).not.toHaveBeenCalled();
   });
 
-  it("rejects a present but invalid durable inventory snapshot", async () => {
+  it("fails closed on a present invalid traffic-completion inventory snapshot", async () => {
     const db = requireConnection(connection).db;
     const redisClient = requireRedis(redis);
     const service = createService(connection, redis);
@@ -343,7 +388,9 @@ describe("demo run finalization service", () => {
       })
       .where(eq(demoRunFinalizations.runId, ids.run));
 
-    await expect(service.finalizeRun(ids.run, "corr-finalize-invalid")).rejects.toThrow();
+    await expect(service.finalizeRun(ids.run, "corr-finalize-invalid")).resolves.toMatchObject({
+      status: "draining",
+    });
     const [run] = await db.select().from(demoRuns).where(eq(demoRuns.id, ids.run));
     const [summaryCount] = await db
       .select({ value: count() })
@@ -351,6 +398,39 @@ describe("demo run finalization service", () => {
       .where(eq(demoRunSummaries.runId, ids.run));
 
     expect(run?.status).toBe("draining");
+    expect(summaryCount?.value).toBe(0);
+  });
+
+  it("fails closed when fresh Redis and durable sold-out totals disagree", async () => {
+    const db = requireConnection(connection).db;
+    const redisClient = requireRedis(redis);
+    const service = createService(connection, redis);
+
+    await seedDrainingRun({ db, redis: redisClient, trafficDeliveryStatus: "complete" });
+    await db.insert(demoRunReservationOutcomes).values({
+      runId: ids.run,
+      outcome: "api_sold_out_decision",
+      count: 1,
+      latestObservedAt: new Date("2026-06-20T00:00:09.000Z"),
+      source: "redis",
+      capturedAt: new Date("2026-06-20T00:00:10.000Z"),
+      createdAt: new Date("2026-06-20T00:00:10.000Z"),
+    });
+    await redisClient.hset(
+      inventoryKeys(ids.saleOffer).reservationOutcomes,
+      "api_sold_out_decision",
+      "2",
+      "api_sold_out_decision_latest_observed_at",
+      "2026-06-20T00:00:09.000Z",
+    );
+
+    await expect(
+      service.finalizeRun(ids.run, "corr-finalize-sold-out-mismatch"),
+    ).resolves.toMatchObject({ status: "draining" });
+    const [summaryCount] = await db
+      .select({ value: count() })
+      .from(demoRunSummaries)
+      .where(eq(demoRunSummaries.runId, ids.run));
     expect(summaryCount?.value).toBe(0);
   });
 
@@ -521,7 +601,14 @@ describe("demo run finalization service", () => {
       failedOrders: 1,
       pendingPersistenceCount: 0,
     });
-    expect(summary?.terminalInventorySnapshot).toEqual(durableTerminalInventorySnapshot);
+    expect(summary?.terminalInventorySnapshot).toMatchObject({
+      startingStock: 10,
+      remainingStock: 10,
+      reservedStock: 0,
+      acceptedReservations: 1,
+      pendingPersistenceCount: 0,
+      capturedAt: "2026-06-20T00:00:10.000Z",
+    });
   });
 
   it.each([
@@ -571,6 +658,454 @@ describe("demo run finalization service", () => {
       status: "failed",
       failureReason: "pending_persistence_reconciliation_timeout",
     });
+  });
+
+  it("preserves the timeout reason when a restarted global pass clears the last pending page", async () => {
+    const db = requireConnection(connection).db;
+    const redisClient = requireRedis(redis);
+    const configSnapshot: AcceptedRunConfigSnapshot = {
+      ...configSnapshotFixture(),
+      trafficConfig: {
+        mode: "buyer-spike",
+        buyerCount: 125,
+        duplicateEachBuyerAttempt: false,
+        startDelaySeconds: 0,
+        maxDurationSeconds: 1,
+        quantityPerAttempt: 1,
+      },
+      inventoryConfig: {
+        ...configSnapshotFixture().inventoryConfig,
+        startingStock: 125,
+      },
+    };
+    await seedDrainingRun({
+      db,
+      redis: redisClient,
+      trafficDeliveryStatus: "complete",
+      configSnapshot,
+    });
+    await initializeInventory(redisClient, {
+      saleOfferId: ids.saleOffer,
+      allocatedStock: 125,
+      initializedAt: new Date("2026-06-20T00:00:00.000Z"),
+      run: { runId: ids.run, status: "accepting" },
+    });
+    for (let index = 0; index < 125; index += 1) {
+      await reserveInventoryStock(redisClient, {
+        idempotencyKey: `pending-page-${index}`,
+        idempotencyTtlSeconds: 1_800,
+        reservation: {
+          id: randomUUID(),
+          saleOfferId: ids.saleOffer,
+          runId: ids.run,
+          correlationId: `pending-page-${index}`,
+          quantity: 1,
+          status: "secured",
+          reservationToken: `pending-token-${index}`,
+          securedAt: "2026-06-20T00:00:02.000Z",
+          expiresAt: "2026-06-20T00:15:02.000Z",
+        },
+      });
+    }
+    await db
+      .update(demoRunFinalizations)
+      .set({
+        trafficOutcomeSummary: {
+          terminalInventorySnapshot: {
+            saleOfferId: ids.saleOffer,
+            startingStock: 125,
+            remainingStock: 0,
+            reservedStock: 125,
+            acceptedReservations: 0,
+            soldOutRejections: 0,
+            pendingPersistenceCount: 125,
+            capturedAt: "2026-06-20T00:00:03.000Z",
+            source: "redis",
+          },
+        },
+      })
+      .where(eq(demoRunFinalizations.runId, ids.run));
+    await setRunSaleEligibility(redisClient, {
+      runId: ids.run,
+      saleOfferId: ids.saleOffer,
+      status: "closed",
+    });
+    await setAcceptedDeliveryEvidence(db, {
+      acceptedResponses: 125,
+      plannedRequests: 125,
+      emittedRequests: 125,
+    });
+    const enqueuedOrderIds: string[] = [];
+    const createReconciler = () =>
+      new PendingPersistenceReconciler({
+        redis: redisClient,
+        persistence: new PostgresBuyPersistence(db),
+        stockReservations: {
+          promoteAccepted: (input) =>
+            promoteReservationIdempotencyToAccepted(redisClient, input).then(() => undefined),
+        },
+        orderProcessJobPublisher: {
+          enqueue: async (job) => {
+            enqueuedOrderIds.push(job.orderId);
+          },
+        },
+        runRetryPolicyResolver: new PostgresRunRetryPolicyResolver(db),
+        idempotencyTtlSeconds: 1_800,
+        batchSize: 100,
+        logger: createSilentLogger("api"),
+      });
+    const firstService = createService(connection, redis, {
+      pendingPersistenceReconciler: createReconciler(),
+      now: () => new Date("2026-06-20T00:10:00.000Z"),
+    });
+
+    await expect(firstService.finalizeRun(ids.run)).resolves.toMatchObject({ status: "draining" });
+    expect((await getPendingStructureCounts(redisClient)).pending).toBe(25);
+
+    const restartedGlobalReconciler = createReconciler();
+    await expect(restartedGlobalReconciler.reconcileAll()).resolves.toMatchObject({
+      found: 25,
+      reconciled: 25,
+      failed: 0,
+    });
+    const restartedFinalizer = createService(connection, redis, {
+      pendingPersistenceReconciler: createReconciler(),
+      now: () => new Date("2026-06-20T00:10:00.000Z"),
+    });
+    await expect(restartedFinalizer.finalizeRun(ids.run)).resolves.toMatchObject({
+      status: "failed",
+      failureReason: "pending_persistence_reconciliation_timeout",
+    });
+    expect(await getPendingStructureCounts(redisClient)).toEqual({
+      pending: 0,
+      records: 0,
+      global: 0,
+    });
+    expect(new Set(enqueuedOrderIds).size).toBe(125);
+    await expect(
+      createReconciler().reconcileSaleOffer(ids.saleOffer, { runId: ids.run }),
+    ).resolves.toMatchObject({
+      found: 0,
+      reconciled: 0,
+      reversed: 0,
+    });
+    const [summary] = await db
+      .select()
+      .from(demoRunSummaries)
+      .where(eq(demoRunSummaries.runId, ids.run));
+    expect(summary?.terminalInventorySnapshot).toMatchObject({
+      remainingStock: 0,
+      reservedStock: 125,
+      acceptedReservations: 125,
+      pendingPersistenceCount: 0,
+      capturedAt: "2026-06-20T00:10:00.000Z",
+    });
+  });
+
+  it("uses the recovery-only lock to reverse a terminal Redis-only hold", async () => {
+    const db = requireConnection(connection).db;
+    const redisClient = requireRedis(redis);
+    await seedDrainingRun({ db, redis: redisClient, trafficDeliveryStatus: "complete" });
+    await initializeInventory(redisClient, {
+      saleOfferId: ids.saleOffer,
+      allocatedStock: 10,
+      initializedAt: new Date("2026-06-20T00:00:00.000Z"),
+      run: { runId: ids.run, status: "accepting" },
+    });
+    await reserveInventoryStock(redisClient, {
+      idempotencyKey: "terminal-stale-hold",
+      idempotencyTtlSeconds: 1_800,
+      reservation: {
+        id: ids.reservation1,
+        saleOfferId: ids.saleOffer,
+        runId: ids.run,
+        correlationId: "terminal-stale-hold",
+        quantity: 1,
+        status: "secured",
+        reservationToken: "terminal-stale-token",
+        securedAt: "2026-06-20T00:00:02.000Z",
+        expiresAt: "2026-06-20T00:15:02.000Z",
+      },
+    });
+    await setRunSaleEligibility(redisClient, {
+      runId: ids.run,
+      saleOfferId: ids.saleOffer,
+      status: "closed",
+    });
+    await db
+      .update(demoRuns)
+      .set({
+        status: "failed",
+        failureReason: "legacy_terminal_state",
+        finalizedAt: new Date("2026-06-20T00:05:00.000Z"),
+      })
+      .where(eq(demoRuns.id, ids.run));
+    const enqueue = vi.fn();
+    const reconciler = new PendingPersistenceReconciler({
+      redis: redisClient,
+      persistence: new PostgresBuyPersistence(db),
+      stockReservations: {
+        promoteAccepted: (input) =>
+          promoteReservationIdempotencyToAccepted(redisClient, input).then(() => undefined),
+        reverse: (input) => reverseReservation(redisClient, input),
+      },
+      orderProcessJobPublisher: { enqueue },
+      runRetryPolicyResolver: new PostgresRunRetryPolicyResolver(db),
+      idempotencyTtlSeconds: 1_800,
+      logger: createSilentLogger("api"),
+    });
+
+    await expect(
+      reconciler.reconcileSaleOffer(ids.saleOffer, { runId: ids.run }),
+    ).resolves.toMatchObject({
+      found: 1,
+      reversed: 1,
+      reconciled: 0,
+      failed: 0,
+    });
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(await getPendingStructureCounts(redisClient)).toEqual({
+      pending: 0,
+      records: 0,
+      global: 0,
+    });
+    await expect(
+      reconciler.reconcileSaleOffer(ids.saleOffer, { runId: ids.run }),
+    ).resolves.toMatchObject({
+      found: 0,
+      reversed: 0,
+    });
+    await expect(getInventoryStatus(redisClient, ids.saleOffer)).resolves.toMatchObject({
+      remainingStock: 10,
+      reservedStock: 0,
+      pendingPersistenceCount: 0,
+    });
+  });
+
+  it("audits and converges mixed terminal pending state with real Redis and PostgreSQL", async () => {
+    const db = requireConnection(connection).db;
+    const redisClient = requireRedis(redis);
+    await seedDrainingRun({ db, redis: redisClient, trafficDeliveryStatus: "complete" });
+    await initializeInventory(redisClient, {
+      saleOfferId: ids.saleOffer,
+      allocatedStock: 10,
+      initializedAt: new Date("2026-06-20T00:00:00.000Z"),
+      run: { runId: ids.run, status: "accepting" },
+    });
+    const durableHold = {
+      id: ids.reservation1,
+      saleOfferId: ids.saleOffer,
+      runId: ids.run,
+      correlationId: "corr-finalize-test",
+      quantity: 1,
+      status: "secured" as const,
+      reservationToken: `token-${ids.reservation1}`,
+      securedAt: "2026-06-20T00:00:02.000Z",
+      expiresAt: "2026-06-20T00:15:02.000Z",
+    };
+    const redisOnlyHold = {
+      ...durableHold,
+      id: ids.reservation2,
+      correlationId: "corr-redis-only",
+      reservationToken: "redis-only-token",
+    };
+    await reserveInventoryStock(redisClient, {
+      idempotencyKey: "remediation-durable",
+      idempotencyTtlSeconds: 1_800,
+      reservation: durableHold,
+    });
+    await reserveInventoryStock(redisClient, {
+      idempotencyKey: "remediation-reverse",
+      idempotencyTtlSeconds: 1_800,
+      reservation: redisOnlyHold,
+    });
+    const persistence = new PostgresBuyPersistence(db);
+    const durable = await persistence.persistSecuredReservation({ reservation: durableHold });
+    await db
+      .update(demoRuns)
+      .set({
+        status: "failed",
+        failureReason: "legacy_terminal_state",
+        finalizedAt: new Date("2026-06-20T00:05:00.000Z"),
+      })
+      .where(eq(demoRuns.id, ids.run));
+    await setRunSaleEligibility(redisClient, {
+      runId: ids.run,
+      saleOfferId: ids.saleOffer,
+      status: "closed",
+    });
+
+    const enqueuedOrderIds: string[] = [];
+    const reconciler = new PendingPersistenceReconciler({
+      redis: redisClient,
+      persistence,
+      stockReservations: {
+        promoteAccepted: (input) =>
+          promoteReservationIdempotencyToAccepted(redisClient, input).then(() => undefined),
+        reverse: (input) => reverseReservation(redisClient, input),
+      },
+      orderProcessJobPublisher: {
+        enqueue: async (job) => {
+          enqueuedOrderIds.push(job.orderId);
+        },
+      },
+      runRetryPolicyResolver: new PostgresRunRetryPolicyResolver(db),
+      idempotencyTtlSeconds: 1_800,
+      logger: createSilentLogger("api"),
+    });
+    const remediation = new PendingPersistenceRemediationService({
+      db,
+      redis: redisClient,
+      persistence,
+      reconciler,
+    });
+    const target = { runId: ids.run, saleOfferId: ids.saleOffer };
+    const keys = inventoryKeys(ids.saleOffer);
+    const durableGlobalMember = `${ids.saleOffer}:${ids.reservation1}`;
+    const durableGlobalScore = await redisClient.zscore(
+      pendingPersistenceIndexKey,
+      durableGlobalMember,
+    );
+    expect(durableGlobalScore).not.toBeNull();
+
+    await redisClient.zrem(pendingPersistenceIndexKey, durableGlobalMember);
+    await expect(remediation.inspect(target)).resolves.toMatchObject({
+      safeToApply: false,
+      classifications: expect.arrayContaining([
+        expect.objectContaining({ reason: "global_index_member_missing" }),
+      ]),
+    });
+    await redisClient.zadd(
+      pendingPersistenceIndexKey,
+      Number(durableGlobalScore),
+      durableGlobalMember,
+    );
+
+    const unexpectedGlobalMember = `${ids.saleOffer}:unexpected`;
+    await redisClient.zadd(pendingPersistenceIndexKey, Date.now(), unexpectedGlobalMember);
+    await expect(remediation.inspect(target)).resolves.toMatchObject({
+      safeToApply: false,
+      classifications: expect.arrayContaining([
+        expect.objectContaining({ reason: "unexpected_global_index_member" }),
+      ]),
+    });
+    await redisClient.zrem(pendingPersistenceIndexKey, unexpectedGlobalMember);
+
+    const durableIdempotencyKey = keys.idempotency("remediation-durable");
+    const validIdempotency = await redisClient.get(durableIdempotencyKey);
+    const validIdempotencyTtl = await redisClient.pttl(durableIdempotencyKey);
+    expect(validIdempotency).not.toBeNull();
+    await redisClient.set(durableIdempotencyKey, "not-json", "PX", validIdempotencyTtl);
+    await expect(remediation.inspect(target)).resolves.toMatchObject({
+      safeToApply: false,
+      classifications: expect.arrayContaining([
+        expect.objectContaining({ reason: "idempotency_record_malformed" }),
+      ]),
+    });
+    const mismatchedIdempotency = JSON.parse(validIdempotency ?? "{}") as Record<string, unknown>;
+    mismatchedIdempotency.quantity = 99;
+    await redisClient.set(
+      durableIdempotencyKey,
+      JSON.stringify(mismatchedIdempotency),
+      "PX",
+      validIdempotencyTtl,
+    );
+    await expect(remediation.inspect(target)).resolves.toMatchObject({
+      safeToApply: false,
+      classifications: expect.arrayContaining([
+        expect.objectContaining({ reason: "idempotency_record_attribution_mismatch" }),
+      ]),
+    });
+    await redisClient.set(durableIdempotencyKey, validIdempotency ?? "", "PX", validIdempotencyTtl);
+
+    await expect(remediation.inspect(target)).resolves.toMatchObject({
+      safeToApply: true,
+      pendingCount: 2,
+      recordCount: 2,
+      targetGlobalMemberCount: 2,
+      classifications: expect.arrayContaining([
+        expect.objectContaining({ reservationId: ids.reservation1, disposition: "durable" }),
+        expect.objectContaining({ reservationId: ids.reservation2, disposition: "reverse" }),
+      ]),
+    });
+    await expect(remediation.apply(target)).resolves.toMatchObject({
+      finalPendingCount: 0,
+      finalRecordCount: 0,
+      remainingGlobalMembers: 0,
+    });
+    expect(enqueuedOrderIds).toEqual([durable.order.id]);
+    await expect(getInventoryStatus(redisClient, ids.saleOffer)).resolves.toMatchObject({
+      remainingStock: 9,
+      reservedStock: 1,
+      pendingPersistenceCount: 0,
+    });
+
+    await expect(remediation.apply(target)).resolves.toMatchObject({
+      finalPendingCount: 0,
+      finalRecordCount: 0,
+      remainingGlobalMembers: 0,
+    });
+    expect(enqueuedOrderIds).toEqual([durable.order.id]);
+    await expect(getInventoryStatus(redisClient, ids.saleOffer)).resolves.toMatchObject({
+      remainingStock: 9,
+      reservedStock: 1,
+    });
+  });
+
+  it("captures a pre-fence buy through the locked facade without a nested pool checkout", async () => {
+    const db = requireConnection(connection).db;
+    const redisClient = requireRedis(redis);
+    const persistenceConnection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
+    const observerConnection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
+    const service = createService(connection, redis);
+    let finalizationPromise: Promise<unknown> | null = null;
+
+    try {
+      await seedDrainingRun({ db, redis: redisClient, trafficDeliveryStatus: "complete" });
+      await persistenceConnection.db.transaction(async (tx) => {
+        await tx.execute(
+          sql`select pg_advisory_xact_lock_shared(hashtext(${terminalDemoRunTransitionLockKey(ids.run)}))`,
+        );
+
+        finalizationPromise = service.finalizeRun(ids.run, "corr-pre-fence-buy");
+        await waitForWaitingAdvisoryLock(observerConnection.sql);
+
+        await tx.insert(reservations).values(reservationFixture(ids.reservation1));
+        await tx.insert(orders).values(orderFixture(ids.order1, ids.reservation1, "confirmed"));
+        await tx.insert(simulatedNotifications).values({
+          id: ids.notification,
+          orderId: ids.order1,
+          saleOfferId: ids.saleOffer,
+          runId: ids.run,
+          correlationId: "corr-finalize-test",
+          channel: "email",
+          recipientPlaceholder: "buyer@example.invalid",
+          status: "recorded",
+          recordedAt: new Date("2026-06-20T00:00:08.000Z"),
+          createdAt: new Date("2026-06-20T00:00:08.000Z"),
+        });
+      });
+
+      await expect(
+        requireStartedPromise(finalizationPromise, "finalization"),
+      ).resolves.toMatchObject({
+        status: "completed",
+      });
+      const [summary] = await db
+        .select()
+        .from(demoRunSummaries)
+        .where(eq(demoRunSummaries.runId, ids.run))
+        .limit(1);
+      expect(summary?.businessOutcomeSummary).toMatchObject({
+        acceptedReservations: 1,
+        confirmedOrders: 1,
+        notificationsRecorded: 1,
+      });
+      expect(summary?.terminalInventorySnapshot).toMatchObject({ acceptedReservations: 1 });
+    } finally {
+      await persistenceConnection.close();
+      await observerConnection.close();
+    }
   });
 
   it("keeps run and summary terminal state consistent when reset races with finalization", async () => {
@@ -655,8 +1190,8 @@ describe("demo run finalization service", () => {
     const secondWriter = new PostgresTerminalDemoRunSummaryWriter(competingConnection.db);
     const firstService = createService(connection, redis, {
       terminalRunWriter: {
-        write: async (input) => {
-          const wrote = await firstWriter.write(input);
+        writePrepared: async (runId, prepare) => {
+          const wrote = await firstWriter.writePrepared(runId, prepare);
           writeResults.push(wrote);
           return wrote;
         },
@@ -664,8 +1199,8 @@ describe("demo run finalization service", () => {
     });
     const secondService = createService(competingConnection, redis, {
       terminalRunWriter: {
-        write: async (input) => {
-          const wrote = await secondWriter.write(input);
+        writePrepared: async (runId, prepare) => {
+          const wrote = await secondWriter.writePrepared(runId, prepare);
           writeResults.push(wrote);
           return wrote;
         },
@@ -969,6 +1504,17 @@ function createService(
     now: () => new Date("2026-06-20T00:00:10.000Z"),
     ...options,
   });
+}
+
+async function getPendingStructureCounts(
+  redis: ReturnType<typeof createRedisClient>,
+): Promise<{ pending: number; records: number; global: number }> {
+  const keys = inventoryKeys(ids.saleOffer);
+  return {
+    pending: await redis.zcard(keys.pendingPersistence),
+    records: await redis.hlen(keys.pendingPersistenceRecords),
+    global: await redis.zcard(pendingPersistenceIndexKey),
+  };
 }
 
 async function seedDrainingRun(input: {

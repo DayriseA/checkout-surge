@@ -6,7 +6,7 @@ import {
 } from "@checkout-surge/contracts";
 import {
   type CheckoutSurgeRedis,
-  deferPendingPersistenceIndexMember,
+  deferPendingPersistenceRecord,
   pendingPersistenceIndexKey,
   readPendingPersistenceRecords,
 } from "@checkout-surge/db";
@@ -21,7 +21,7 @@ import type {
 } from "./reserve-order-service.js";
 import {
   DefinitivePersistenceRejectionError,
-  isDefinitivePersistenceRejection,
+  isPersistedBuyForReservation,
 } from "./reserve-order-service.js";
 import type { RunRetryPolicyResolver } from "./run-retry-policy-resolver.js";
 
@@ -96,24 +96,26 @@ export class PendingPersistenceReconciler {
           expiresAt: record.expiresAt,
         };
         const idempotencyKey = idempotencyKeySchema.parse(record.idempotencyKey);
-        let result: { materialized: boolean };
-        try {
-          const retryPolicy = await this.resolveRunRetryPolicy(reservation);
-          result = await this.withPersistenceAdmissionLock(reservation, (persistence) =>
-            this.reconcileRecord(reservation, persistence, retryPolicy),
-          );
-        } catch (error) {
-          if (isDefinitivePersistenceRejection(error) && this.options.stockReservations.reverse) {
-            await this.options.stockReservations.reverse({
-              idempotencyKey,
-              reservation,
-              occurredAt: this.now(),
-            });
-            await this.markPendingReconciled(reservation.id, this.options.persistence);
-            summary.reversed += 1;
-            continue;
+        const retryPolicyResolution = await this.resolveRunRetryPolicy(reservation);
+        const result = await this.withPendingPersistenceLock(
+          reservation,
+          (persistence, runDisposition) =>
+            this.reconcileRecord(reservation, persistence, runDisposition, retryPolicyResolution),
+        );
+        if (result.disposition === "reverse") {
+          if (!this.options.stockReservations.reverse) {
+            throw new Error("Pending reservation reversal is not configured.");
           }
-          throw error;
+          // Mark first: a crash or Redis failure leaves the Redis record visible
+          // and repeatable, while the inverse order could lose the only retry cursor.
+          await this.markPendingReconciled(reservation.id, this.options.persistence);
+          await this.options.stockReservations.reverse({
+            idempotencyKey,
+            reservation,
+            occurredAt: this.now(),
+          });
+          summary.reversed += 1;
+          continue;
         }
         this.scheduleQueueSnapshot(reservation);
         if (result.materialized) this.markBusinessOutcomeDirty(reservation);
@@ -128,6 +130,23 @@ export class PendingPersistenceReconciler {
         }
       } catch (error) {
         summary.failed += 1;
+        try {
+          await deferPendingPersistenceRecord(this.options.redis, {
+            saleOfferId: record.saleOfferId,
+            reservationId: record.id,
+            now: this.now(),
+          });
+        } catch (deferError) {
+          this.options.logger.warn(
+            {
+              err: deferError,
+              saleOfferId: record.saleOfferId,
+              reservationId: record.id,
+              ...(record.runId ? { runId: record.runId } : {}),
+            },
+            "Could not defer a retryable pending Redis reservation.",
+          );
+        }
         this.options.logger.warn(
           {
             err: error,
@@ -191,7 +210,7 @@ export class PendingPersistenceReconciler {
         members
           .filter((member) => !validIds.has(member.slice(member.indexOf(":") + 1)))
           .map((member) =>
-            deferPendingPersistenceIndexMember(this.options.redis, {
+            deferPendingPersistenceRecord(this.options.redis, {
               saleOfferId,
               reservationId: member.slice(member.indexOf(":") + 1),
               now: this.now(),
@@ -211,12 +230,26 @@ export class PendingPersistenceReconciler {
   private async reconcileRecord(
     reservation: SecuredReservationHold,
     persistence: BuyPersistenceOperations,
-    retryPolicy?: BackpressureConfig["retryPolicy"],
-  ): Promise<{ materialized: boolean }> {
+    runDisposition: "admissible" | "terminal" | "invalid",
+    retryPolicyResolution: {
+      retryPolicy?: BackpressureConfig["retryPolicy"];
+      error?: unknown;
+    },
+  ): Promise<{ disposition: "durable"; materialized: boolean } | { disposition: "reverse" }> {
     let persisted = await persistence.getPersistedBuyByReservationId(reservation.id);
     let materialized = false;
 
+    if (persisted && !isPersistedBuyForReservation(persisted, reservation)) {
+      throw new Error("Durable reservation/order attribution does not match the Redis hold.");
+    }
+
     if (!persisted) {
+      if (runDisposition !== "admissible") {
+        return { disposition: "reverse" };
+      }
+      if (retryPolicyResolution.error) {
+        throw retryPolicyResolution.error;
+      }
       try {
         persisted = await persistence.persistSecuredReservation({ reservation });
         materialized = true;
@@ -227,12 +260,23 @@ export class PendingPersistenceReconciler {
         if (!persisted) {
           throw error;
         }
+        if (!isPersistedBuyForReservation(persisted, reservation)) {
+          throw new Error("Concurrent durable buy does not match the Redis hold.");
+        }
       }
     }
 
+    if (runDisposition === "invalid") {
+      throw new Error("Durable buy exists, but its run/sale ownership is no longer valid.");
+    }
+    if (retryPolicyResolution.error) {
+      throw retryPolicyResolution.error;
+    }
     const job = toOrderProcessJob(persisted);
-    if (retryPolicy) {
-      await this.options.orderProcessJobPublisher.enqueue(job, { retryPolicy });
+    if (retryPolicyResolution.retryPolicy) {
+      await this.options.orderProcessJobPublisher.enqueue(job, {
+        retryPolicy: retryPolicyResolution.retryPolicy,
+      });
     } else {
       await this.options.orderProcessJobPublisher.enqueue(job);
     }
@@ -240,7 +284,7 @@ export class PendingPersistenceReconciler {
     // if the promotion fails; Redis is the final source of truth for pending
     // stock and will be retried by the next reconciliation pass.
     await this.markPendingReconciled(reservation.id, persistence);
-    return { materialized };
+    return { disposition: "durable", materialized };
   }
 
   private async markPendingReconciled(
@@ -276,27 +320,42 @@ export class PendingPersistenceReconciler {
     }
   }
 
-  private async withPersistenceAdmissionLock<T>(
+  private async withPendingPersistenceLock<T>(
     reservation: SecuredReservationHold,
-    operation: (persistence: BuyPersistenceOperations) => Promise<T>,
+    operation: (
+      persistence: BuyPersistenceOperations,
+      runDisposition: "admissible" | "terminal" | "invalid",
+    ) => Promise<T>,
   ): Promise<T> {
-    if (reservation.runId && this.options.persistence.withRunAdmissionLock) {
-      return this.options.persistence.withRunAdmissionLock({ reservation, operation });
+    if (reservation.runId && this.options.persistence.withRunPendingPersistenceLock) {
+      return this.options.persistence.withRunPendingPersistenceLock({ reservation, operation });
     }
-    return operation(this.options.persistence);
+    if (reservation.runId && this.options.persistence.withRunAdmissionLock) {
+      return this.options.persistence.withRunAdmissionLock({
+        reservation,
+        operation: (persistence) => operation(persistence, "admissible"),
+      });
+    }
+    return operation(this.options.persistence, "admissible");
   }
 
   private async resolveRunRetryPolicy(
     reservation: SecuredReservationHold,
-  ): Promise<BackpressureConfig["retryPolicy"] | undefined> {
-    if (!reservation.runId || !this.options.runRetryPolicyResolver) return undefined;
-    const retryPolicy = await this.options.runRetryPolicyResolver.resolve(reservation.runId);
-    if (!retryPolicy) {
-      throw new DefinitivePersistenceRejectionError(
-        `Accepted run snapshot was not found for order job run ${reservation.runId}.`,
-      );
+  ): Promise<{ retryPolicy?: BackpressureConfig["retryPolicy"]; error?: unknown }> {
+    if (!reservation.runId || !this.options.runRetryPolicyResolver) return {};
+    try {
+      const retryPolicy = await this.options.runRetryPolicyResolver.resolve(reservation.runId);
+      if (!retryPolicy) {
+        return {
+          error: new DefinitivePersistenceRejectionError(
+            `Accepted run snapshot was not found for order job run ${reservation.runId}.`,
+          ),
+        };
+      }
+      return { retryPolicy };
+    } catch (error) {
+      return { error };
     }
-    return retryPolicy;
   }
 
   private now(): Date {

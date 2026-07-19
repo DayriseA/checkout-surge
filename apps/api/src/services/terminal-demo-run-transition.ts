@@ -27,43 +27,66 @@ export class PostgresTerminalDemoRunSummaryWriter implements TerminalDemoRunWrit
   }
 
   async write(input: TerminalDemoRunSummaryInput): Promise<boolean> {
-    return this.withTerminalRunLock(input.run.id, async (tx) => {
-      const [existingSummary] = await tx
-        .select()
-        .from(demoRunSummaries)
-        .where(eq(demoRunSummaries.runId, input.run.id))
-        .limit(1);
+    return this.withTerminalRunLock(input.run.id, (tx) => this.writeInsideLock(tx, input));
+  }
 
-      if (existingSummary) {
-        await this.claimTerminalRunInsideLock(tx, {
-          runId: input.run.id,
-          terminalStatus: existingSummary.status as TerminalDemoRunStatus,
-          failureReason: existingSummary.failureReason,
-          finalizedAt: existingSummary.endedAt,
-          allowedCurrentStatuses: input.allowedCurrentStatuses,
-          ...(input.terminalTrafficStatus
-            ? { terminalTrafficStatus: input.terminalTrafficStatus }
-            : {}),
-        });
+  async writePrepared(
+    runId: string,
+    prepare: (db: CheckoutSurgeDatabase) => Promise<TerminalDemoRunSummaryInput | null>,
+  ): Promise<boolean> {
+    return this.withTerminalRunLock(runId, async (tx) => {
+      // Preparation deliberately receives this transaction facade. The caller
+      // must not check out through its base pool while this exclusive lock is held.
+      const input = await prepare(tx as CheckoutSurgeDatabase);
+      if (!input) {
         return false;
       }
+      if (input.run.id !== runId) {
+        throw new Error(`Prepared terminal summary run ${input.run.id} does not match ${runId}.`);
+      }
+      return this.writeInsideLock(tx, input);
+    });
+  }
 
-      const claimedRun = await this.claimTerminalRunInsideLock(tx, {
+  private async writeInsideLock(
+    tx: TerminalDemoRunTransitionTransaction,
+    input: TerminalDemoRunSummaryInput,
+  ): Promise<boolean> {
+    const [existingSummary] = await tx
+      .select()
+      .from(demoRunSummaries)
+      .where(eq(demoRunSummaries.runId, input.run.id))
+      .limit(1);
+
+    if (existingSummary) {
+      await this.claimTerminalRunInsideLock(tx, {
         runId: input.run.id,
-        terminalStatus: input.terminalStatus,
-        failureReason: input.failureReason,
-        finalizedAt: input.finalizedAt,
+        terminalStatus: existingSummary.status as TerminalDemoRunStatus,
+        failureReason: existingSummary.failureReason,
+        finalizedAt: existingSummary.endedAt,
         allowedCurrentStatuses: input.allowedCurrentStatuses,
         ...(input.terminalTrafficStatus
           ? { terminalTrafficStatus: input.terminalTrafficStatus }
           : {}),
       });
-      if (!claimedRun) {
-        return false;
-      }
+      return false;
+    }
 
-      return this.insertTerminalSummaryInsideLock(tx, input);
+    const claimedRun = await this.claimTerminalRunInsideLock(tx, {
+      runId: input.run.id,
+      terminalStatus: input.terminalStatus,
+      failureReason: input.failureReason,
+      finalizedAt: input.finalizedAt,
+      allowedCurrentStatuses: input.allowedCurrentStatuses,
+      ...(input.terminalTrafficStatus
+        ? { terminalTrafficStatus: input.terminalTrafficStatus }
+        : {}),
     });
+    if (!claimedRun) {
+      return false;
+    }
+
+    return this.insertTerminalSummaryInsideLock(tx, input);
   }
 
   /**
