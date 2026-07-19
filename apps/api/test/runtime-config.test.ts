@@ -53,6 +53,8 @@ describe("API runtime configuration", () => {
     expect(defaults.dashboardSseMaxBufferedBytes).toBe(256 * 1024);
     expect(defaults.dashboardRecoveryMaxConcurrent).toBe(3);
     expect(defaults.dashboardRecoveryWindowSeconds).toBe(60);
+    expect(defaults.dashboardRecoveryTimeoutMs).toBe(5_000);
+    expect(defaults.readinessTimeoutMs).toBe(2_000);
 
     const overridden = loadApiConfig({
       ...baseEnv,
@@ -61,11 +63,15 @@ describe("API runtime configuration", () => {
       DASHBOARD_SSE_MAX_BUFFERED_FRAMES: "7",
       DASHBOARD_SSE_MAX_BUFFERED_BYTES: "4096",
       DASHBOARD_RECOVERY_GLOBAL_MAX_REQUESTS: "30",
+      DASHBOARD_RECOVERY_TIMEOUT_MS: "4500",
+      API_READINESS_TIMEOUT_MS: "1500",
     });
     expect(overridden.dashboardMaxSseClients).toBe(20);
     expect(overridden.dashboardSseMaxBufferedFrames).toBe(7);
     expect(overridden.dashboardSseMaxBufferedBytes).toBe(4096);
     expect(overridden.dashboardRecoveryGlobalMaxRequests).toBe(30);
+    expect(overridden.dashboardRecoveryTimeoutMs).toBe(4_500);
+    expect(overridden.readinessTimeoutMs).toBe(1_500);
   });
 
   it("loads documented deployment caps and drain defaults and maps every override", () => {
@@ -229,5 +235,15 @@ describe("API runtime configuration", () => {
         DASHBOARD_RECOVERY_PER_SOURCE_MAX_REQUESTS: "3",
       }),
     ).toThrow(/PER_SOURCE.*must not exceed.*GLOBAL/);
+  });
+
+  it("rejects a readiness deadline outside the Compose healthcheck budget", () => {
+    expect(() =>
+      loadApiConfig({
+        ...baseEnv,
+        CONTROL_SERVICE_TOKEN: "deployment-token",
+        API_READINESS_TIMEOUT_MS: "3000",
+      }),
+    ).toThrow(/API_READINESS_TIMEOUT_MS.*less than.*Compose API healthcheck timeout/);
   });
 });

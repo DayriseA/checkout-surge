@@ -22,6 +22,7 @@ import type { ApiFastifyInstance } from "./runtime/fastify.js";
 import type { ApiReadiness } from "./runtime/readiness.js";
 import type { DashboardRecoveryAdmissionController } from "./services/dashboard-recovery-admission.js";
 import type { DashboardRecoveryService } from "./services/dashboard-recovery-service.js";
+import { DashboardRecoveryWorkflow } from "./services/dashboard-recovery-workflow.js";
 import type { DemoMaintenanceService } from "./services/demo-maintenance-service.js";
 import type { DemoRunController } from "./services/demo-run-service.js";
 import type { ErpStatusService } from "./services/erp-status-service.js";
@@ -122,11 +123,14 @@ export async function buildApiServer(options: BuildApiServerOptions): Promise<Ap
   });
   registerDashboardRoutes(app, {
     dashboardEventFanout: options.dashboardEventFanout,
-    dashboardRecoveryService: options.dashboardRecoveryService,
-    dashboardRecoveryAdmission: options.dashboardRecoveryAdmission,
+    dashboardRecoveryWorkflow: new DashboardRecoveryWorkflow({
+      recovery: options.dashboardRecoveryService,
+      admission: options.dashboardRecoveryAdmission,
+    }),
     sourceResolver: createDashboardSourceResolver(options.config.publicClientCookieSecret),
     sseRetryAfterSeconds: options.config.dashboardSseRetryAfterSeconds,
     recoveryRetryAfterSeconds: options.config.dashboardRecoveryRetryAfterSeconds,
+    recoveryTimeoutMs: options.config.dashboardRecoveryTimeoutMs,
   });
 
   return app;

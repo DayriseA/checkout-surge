@@ -17,6 +17,7 @@ import {
 } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { desc, inArray, sql } from "drizzle-orm";
+import { abortReason, settleWithAbort } from "../runtime/operation-lifecycle.js";
 import type { DashboardTrafficMetricReader } from "./demo-run-service.js";
 import type { ErpStatusService } from "./erp-status-service.js";
 import type { InventoryStatusService } from "./inventory-status-service.js";
@@ -107,23 +108,45 @@ export class PostgresDashboardCompletionOutcomeReader implements DashboardComple
 export class DashboardRecoveryService {
   constructor(
     private readonly options: {
-      contextReader: DashboardRecoveryContextReader;
-      businessOutcomeReader: DashboardBusinessOutcomeReader;
-      consistencyLagReader: DashboardConsistencyLagReader;
-      completionOutcomeReader: DashboardCompletionOutcomeReader;
-      inventoryStatusService: InventoryStatusService;
-      queueStatusService: QueueStatusService;
-      erpStatusService: ErpStatusService;
+      contextReader?: DashboardRecoveryContextReader;
+      businessOutcomeReader?: DashboardBusinessOutcomeReader;
+      consistencyLagReader?: DashboardConsistencyLagReader;
+      completionOutcomeReader?: DashboardCompletionOutcomeReader;
+      inventoryStatusService?: InventoryStatusService;
+      queueStatusService?: QueueStatusService;
+      erpStatusService?: ErpStatusService;
       logger: CheckoutSurgeLogger;
       trafficMetricReader?: DashboardTrafficMetricReader;
       now?: () => Date;
+      openOperation?: DashboardRecoveryOperationFactory;
     },
   ) {}
 
-  async getRecovery(input: { correlationId: string }): Promise<DashboardRecoveryResponse> {
+  async getRecovery(input: {
+    correlationId: string;
+    signal?: AbortSignal;
+  }): Promise<DashboardRecoveryResponse> {
+    const signal = input.signal ?? new AbortController().signal;
+    if (signal.aborted) throw abortReason(signal);
+    const operation = this.options.openOperation
+      ? await this.options.openOperation(signal)
+      : { dependencies: this.fixedDependencies() };
+
+    try {
+      return await this.assembleRecovery(input.correlationId, signal, operation.dependencies);
+    } finally {
+      await operation.close?.();
+    }
+  }
+
+  private async assembleRecovery(
+    correlationId: string,
+    signal: AbortSignal,
+    dependencies: DashboardRecoveryDependencies,
+  ): Promise<DashboardRecoveryResponse> {
     const now = this.options.now?.() ?? new Date();
-    const contextResult = await readSafely("dashboard_run_context", () =>
-      this.options.contextReader.readContext(),
+    const contextResult = await readSafely("dashboard_run_context", signal, () =>
+      dependencies.contextReader.readContext(),
     );
     const context = contextResult.ok
       ? contextResult.value
@@ -148,32 +171,32 @@ export class DashboardRecoveryService {
       completionOutcomeResult,
     ] = await Promise.all([
       saleScope
-        ? readSafely("dashboard_inventory", () =>
-            this.options.inventoryStatusService.getStatus(saleScope.saleOfferId),
+        ? readSafely("dashboard_inventory", signal, () =>
+            dependencies.inventoryStatusService.getStatus(saleScope.saleOfferId),
           )
         : Promise.resolve({ ok: true as const, value: null }),
-      readSafely("dashboard_queue", () => this.options.queueStatusService.getStatus()),
-      readSafely("dashboard_erp", () => this.options.erpStatusService.getStatus()),
+      readSafely("dashboard_queue", signal, () => dependencies.queueStatusService.getStatus()),
+      readSafely("dashboard_erp", signal, () => dependencies.erpStatusService.getStatus()),
       saleScope
-        ? readSafely("dashboard_business_outcome", () =>
-            this.options.businessOutcomeReader.read(saleScope),
+        ? readSafely("dashboard_business_outcome", signal, () =>
+            dependencies.businessOutcomeReader.read(saleScope),
           )
         : Promise.resolve({ ok: true as const, value: null }),
       saleScope
-        ? readSafely("dashboard_consistency_lag", () =>
-            this.options.consistencyLagReader.read(saleScope, now),
+        ? readSafely("dashboard_consistency_lag", signal, () =>
+            dependencies.consistencyLagReader.read(saleScope, now),
           )
         : Promise.resolve({ ok: true as const, value: null }),
       scope
-        ? readSafely("dashboard_traffic_metrics", () =>
-            this.options.trafficMetricReader
-              ? this.options.trafficMetricReader.readRecent(scope.runId)
+        ? readSafely("dashboard_traffic_metrics", signal, () =>
+            dependencies.trafficMetricReader
+              ? dependencies.trafficMetricReader.readRecent(scope.runId)
               : Promise.resolve([] satisfies MetricSample[]),
           )
         : Promise.resolve({ ok: true as const, value: [] satisfies MetricSample[] }),
       saleScope
-        ? readSafely("dashboard_completion_outcomes", () =>
-            this.options.completionOutcomeReader.read(saleScope, now),
+        ? readSafely("dashboard_completion_outcomes", signal, () =>
+            dependencies.completionOutcomeReader.read(saleScope, now),
           )
         : Promise.resolve({ ok: true as const, value: [] }),
     ]);
@@ -197,7 +220,7 @@ export class DashboardRecoveryService {
     }
 
     return dashboardRecoveryResponseSchema.parse({
-      correlationId: input.correlationId,
+      correlationId,
       scope,
       currentRun: context.currentRun,
       inventory: inventoryResult.ok ? inventoryResult.value : null,
@@ -210,7 +233,56 @@ export class DashboardRecoveryService {
       recoveredAt: now.toISOString(),
     });
   }
+
+  private fixedDependencies(): DashboardRecoveryDependencies {
+    const required = {
+      contextReader: this.options.contextReader,
+      businessOutcomeReader: this.options.businessOutcomeReader,
+      consistencyLagReader: this.options.consistencyLagReader,
+      completionOutcomeReader: this.options.completionOutcomeReader,
+      inventoryStatusService: this.options.inventoryStatusService,
+      queueStatusService: this.options.queueStatusService,
+      erpStatusService: this.options.erpStatusService,
+    };
+
+    for (const [name, dependency] of Object.entries(required)) {
+      if (!dependency) throw new Error(`Dashboard recovery dependency ${name} is not configured.`);
+    }
+
+    return {
+      contextReader: required.contextReader as DashboardRecoveryContextReader,
+      businessOutcomeReader: required.businessOutcomeReader as DashboardBusinessOutcomeReader,
+      consistencyLagReader: required.consistencyLagReader as DashboardConsistencyLagReader,
+      completionOutcomeReader: required.completionOutcomeReader as DashboardCompletionOutcomeReader,
+      inventoryStatusService: required.inventoryStatusService as InventoryStatusService,
+      queueStatusService: required.queueStatusService as QueueStatusService,
+      erpStatusService: required.erpStatusService as ErpStatusService,
+      ...(this.options.trafficMetricReader
+        ? { trafficMetricReader: this.options.trafficMetricReader }
+        : {}),
+    };
+  }
 }
+
+export interface DashboardRecoveryDependencies {
+  contextReader: DashboardRecoveryContextReader;
+  businessOutcomeReader: DashboardBusinessOutcomeReader;
+  consistencyLagReader: DashboardConsistencyLagReader;
+  completionOutcomeReader: DashboardCompletionOutcomeReader;
+  inventoryStatusService: InventoryStatusService;
+  queueStatusService: QueueStatusService;
+  erpStatusService: ErpStatusService;
+  trafficMetricReader?: DashboardTrafficMetricReader;
+}
+
+export interface DashboardRecoveryOperation {
+  dependencies: DashboardRecoveryDependencies;
+  close?(): void | Promise<void>;
+}
+
+export type DashboardRecoveryOperationFactory = (
+  signal: AbortSignal,
+) => DashboardRecoveryOperation | Promise<DashboardRecoveryOperation>;
 
 function toDemoRunSnapshot(run: typeof demoRuns.$inferSelect): DemoRunSnapshot {
   return demoRunSnapshotSchema.parse({
@@ -232,11 +304,14 @@ function toDemoRunSnapshot(run: typeof demoRuns.$inferSelect): DemoRunSnapshot {
 
 async function readSafely<T>(
   projection: string,
+  signal: AbortSignal,
   read: () => Promise<T>,
 ): Promise<{ ok: true; value: T } | { ok: false; projection: string; error: unknown }> {
   try {
-    return { ok: true, value: await read() };
+    if (signal.aborted) throw abortReason(signal);
+    return { ok: true, value: await settleWithAbort(read(), signal) };
   } catch (error) {
+    if (signal.aborted) throw abortReason(signal);
     return { ok: false, projection, error };
   }
 }

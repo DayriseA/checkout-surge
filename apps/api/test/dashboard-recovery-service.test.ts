@@ -185,6 +185,35 @@ describe("DashboardRecoveryService", () => {
       "Dashboard recovery projection unavailable.",
     );
   });
+
+  it("settles a never-ending projection on abort and closes operation resources", async () => {
+    const close = vi.fn();
+    const controller = new AbortController();
+    const service = new DashboardRecoveryService({
+      openOperation: async () => ({
+        dependencies: {
+          contextReader: { readContext: async () => await new Promise<never>(() => undefined) },
+          businessOutcomeReader: { read: async () => null } as never,
+          consistencyLagReader: { read: async () => null } as never,
+          completionOutcomeReader: { read: async () => [] },
+          inventoryStatusService: { getStatus: async () => null } as never,
+          queueStatusService: { getStatus: async () => null } as never,
+          erpStatusService: { getStatus: async () => null } as never,
+        },
+        close,
+      }),
+      logger: { warn: vi.fn() } as never,
+    });
+    const recovery = service.getRecovery({
+      correlationId: "corr-abandoned",
+      signal: controller.signal,
+    });
+
+    controller.abort(new Error("client disconnected"));
+
+    await expect(recovery).rejects.toThrow("client disconnected");
+    expect(close).toHaveBeenCalledOnce();
+  });
 });
 
 function controlledDatabase(rows: unknown[]) {

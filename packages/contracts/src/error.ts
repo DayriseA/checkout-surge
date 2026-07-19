@@ -69,6 +69,7 @@ export const errorPayloadCodes = [
   "dashboard_recovery_at_capacity",
   "dashboard_recovery_limiter_unavailable",
   "dashboard_recovery_rate_limited",
+  "dashboard_recovery_timed_out",
   "dashboard_sse_at_capacity",
   "dashboard_sse_source_limit_exceeded",
 

@@ -1,5 +1,5 @@
 import { createSilentLogger } from "@checkout-surge/logger";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   DashboardRecoveryAdmissionService,
   type DashboardRecoveryBudgetStore,
@@ -43,12 +43,13 @@ describe("dashboard recovery admission", () => {
 
   it("uses bounded hashed fixed-window keys, TTL, and rolls windows deterministically", async () => {
     const calls: unknown[][] = [];
-    const store = new RedisDashboardRecoveryBudgetStore({
+    const store = new RedisDashboardRecoveryBudgetStore(() => ({
       eval: async (...args: unknown[]) => {
         calls.push(args);
         return "allowed";
       },
-    });
+      disconnect: () => undefined,
+    }));
     const sourceKey = "visitor:raw-sensitive-id";
     for (const now of [new Date(61_000), new Date(121_000)]) {
       await store.admit({ sourceKey, globalMax: 10, perSourceMax: 2, windowSeconds: 60, now });
@@ -62,14 +63,15 @@ describe("dashboard recovery admission", () => {
 
   it("uses one atomic eval so concurrent attempts cannot exceed the shared budget", async () => {
     let global = 0;
-    const store = new RedisDashboardRecoveryBudgetStore({
+    const store = new RedisDashboardRecoveryBudgetStore(() => ({
       eval: async (...args: unknown[]) => {
         const globalMax = Number(args.at(-3));
         if (global >= globalMax) return "global";
         global += 1;
         return "allowed";
       },
-    });
+      disconnect: () => undefined,
+    }));
     const attempts = await Promise.all(
       Array.from({ length: 4 }, (_, index) =>
         store.admit({
@@ -83,6 +85,28 @@ describe("dashboard recovery admission", () => {
     );
     expect(attempts.filter((outcome) => outcome === "allowed")).toHaveLength(2);
     expect(attempts.filter((outcome) => outcome === "global")).toHaveLength(2);
+  });
+
+  it("disconnects a never-settling limiter operation when admission is abandoned", async () => {
+    const disconnect = vi.fn();
+    const store = new RedisDashboardRecoveryBudgetStore(() => ({
+      eval: async () => await new Promise<never>(() => undefined),
+      disconnect,
+    }));
+    const controller = new AbortController();
+    const admission = store.admit({
+      sourceKey: "visitor:abandoned",
+      globalMax: 2,
+      perSourceMax: 2,
+      windowSeconds: 60,
+      now: new Date(0),
+      signal: controller.signal,
+    });
+
+    controller.abort(new Error("client disconnected"));
+
+    await expect(admission).rejects.toThrow("client disconnected");
+    expect(disconnect).toHaveBeenCalled();
   });
 });
 

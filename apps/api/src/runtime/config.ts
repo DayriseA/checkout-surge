@@ -6,6 +6,7 @@ import {
 import { runSaleEligibilityTtlSeconds } from "@checkout-surge/db";
 
 export const runSaleEligibilitySafetyMarginSeconds = 24 * 60 * 60;
+export const composeApiHealthcheckTimeoutMs = 3_000;
 
 export interface ApiConfig {
   host: string;
@@ -37,6 +38,8 @@ export interface ApiConfig {
   dashboardRecoveryPerSourceMaxRequests: number;
   dashboardRecoveryWindowSeconds: number;
   dashboardRecoveryRetryAfterSeconds: number;
+  dashboardRecoveryTimeoutMs: number;
+  readinessTimeoutMs: number;
   trustedProxyCidrs: string[];
 }
 
@@ -177,6 +180,16 @@ export function loadApiConfig(env: NodeJS.ProcessEnv): ApiConfig {
       "DASHBOARD_RECOVERY_RETRY_AFTER_SECONDS",
       10,
     ),
+    dashboardRecoveryTimeoutMs: parsePositiveInteger(
+      env.DASHBOARD_RECOVERY_TIMEOUT_MS,
+      "DASHBOARD_RECOVERY_TIMEOUT_MS",
+      5_000,
+    ),
+    readinessTimeoutMs: parsePositiveInteger(
+      env.API_READINESS_TIMEOUT_MS,
+      "API_READINESS_TIMEOUT_MS",
+      2_000,
+    ),
     trustedProxyCidrs:
       parseCsv(env.API_TRUSTED_PROXY_CIDRS).length > 0
         ? parseCsv(env.API_TRUSTED_PROXY_CIDRS)
@@ -195,6 +208,11 @@ export function loadApiConfig(env: NodeJS.ProcessEnv): ApiConfig {
   if (config.dashboardRecoveryPerSourceMaxRequests > config.dashboardRecoveryGlobalMaxRequests) {
     throw new Error(
       "DASHBOARD_RECOVERY_PER_SOURCE_MAX_REQUESTS must not exceed DASHBOARD_RECOVERY_GLOBAL_MAX_REQUESTS.",
+    );
+  }
+  if (config.readinessTimeoutMs >= composeApiHealthcheckTimeoutMs) {
+    throw new Error(
+      `API_READINESS_TIMEOUT_MS must be less than the ${composeApiHealthcheckTimeoutMs}ms Compose API healthcheck timeout.`,
     );
   }
   return config;

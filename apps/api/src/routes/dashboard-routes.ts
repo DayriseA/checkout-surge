@@ -8,16 +8,16 @@ import type { DashboardEventFanout } from "../realtime/dashboard-event-fanout.js
 import type { DashboardSourceResolver } from "../runtime/dashboard-source-identity.js";
 import { createErrorPayload } from "../runtime/errors.js";
 import type { ApiFastifyInstance } from "../runtime/fastify.js";
-import type { DashboardRecoveryAdmissionController } from "../services/dashboard-recovery-admission.js";
-import type { DashboardRecoveryService } from "../services/dashboard-recovery-service.js";
+import { createHttpOperationLifecycle } from "../runtime/operation-lifecycle.js";
+import type { DashboardRecoveryWorkflowController } from "../services/dashboard-recovery-workflow.js";
 
 export interface RegisterDashboardRoutesOptions {
   dashboardEventFanout: Pick<DashboardEventFanout, "connect">;
-  dashboardRecoveryService: DashboardRecoveryService;
-  dashboardRecoveryAdmission: DashboardRecoveryAdmissionController;
+  dashboardRecoveryWorkflow: DashboardRecoveryWorkflowController;
   sourceResolver: DashboardSourceResolver;
   sseRetryAfterSeconds: number;
   recoveryRetryAfterSeconds: number;
+  recoveryTimeoutMs: number;
 }
 
 export function registerDashboardRoutes(
@@ -31,35 +31,48 @@ export function registerDashboardRoutes(
       ip: request.ip,
       ...(visitorCredential ? { visitorCredential } : {}),
     });
-    const admission = await options.dashboardRecoveryAdmission.admit(sourceKey);
-    if (admission.outcome !== "admitted") {
-      const atCapacity = admission.outcome === "at_capacity";
+    const lifecycle = createHttpOperationLifecycle({
+      request: request.raw,
+      response: reply.raw,
+      timeoutMs: options.recoveryTimeoutMs,
+    });
+    try {
+      const result = await options.dashboardRecoveryWorkflow.recover({
+        sourceKey,
+        correlationId: request.correlationId,
+        signal: lifecycle.signal,
+      });
+      if (result.outcome === "recovered") {
+        const response = dashboardRecoveryResponseSchema.parse(result.response);
+        return reply.status(200).send(response);
+      }
+      if (result.outcome === "client_disconnected") return reply;
+
+      const atCapacity = result.outcome === "at_capacity";
+      const unavailable = result.outcome === "limiter_unavailable";
+      const timedOut = result.outcome === "timed_out";
       reply.header("retry-after", options.recoveryRetryAfterSeconds.toString());
-      return reply.status(atCapacity || admission.outcome === "unavailable" ? 503 : 429).send(
+      return reply.status(atCapacity || unavailable || timedOut ? 503 : 429).send(
         createErrorPayload({
           code: atCapacity
             ? "dashboard_recovery_at_capacity"
-            : admission.outcome === "unavailable"
+            : unavailable
               ? "dashboard_recovery_limiter_unavailable"
-              : "dashboard_recovery_rate_limited",
+              : timedOut
+                ? "dashboard_recovery_timed_out"
+                : "dashboard_recovery_rate_limited",
           message: atCapacity
             ? "Dashboard recovery is at capacity."
-            : admission.outcome === "unavailable"
+            : unavailable
               ? "Dashboard recovery admission is temporarily unavailable."
-              : "Dashboard recovery request rate exceeded.",
+              : timedOut
+                ? "Dashboard recovery exceeded its response deadline."
+                : "Dashboard recovery request rate exceeded.",
           correlationId: request.correlationId,
         }),
       );
-    }
-    try {
-      const response = dashboardRecoveryResponseSchema.parse(
-        await options.dashboardRecoveryService.getRecovery({
-          correlationId: request.correlationId,
-        }),
-      );
-      return reply.status(200).send(response);
     } finally {
-      admission.release();
+      lifecycle.dispose();
     }
   });
 

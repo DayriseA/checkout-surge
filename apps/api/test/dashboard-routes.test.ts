@@ -8,6 +8,8 @@ import { registerDashboardRoutes } from "../src/routes/dashboard-routes.js";
 import type { ApiFastifyInstance } from "../src/runtime/fastify.js";
 import type { DashboardRecoveryAdmissionController } from "../src/services/dashboard-recovery-admission.js";
 import type { DashboardRecoveryService } from "../src/services/dashboard-recovery-service.js";
+import type { DashboardRecoveryWorkflowResult } from "../src/services/dashboard-recovery-workflow.js";
+import { DashboardRecoveryWorkflow } from "../src/services/dashboard-recovery-workflow.js";
 
 const correlationHeader = { [correlationIdHeaderName]: "route-correlation" };
 
@@ -69,7 +71,10 @@ describe("dashboard route admission", () => {
       "route-correlation",
     );
     expect(success.headers[correlationIdHeaderName]).toBe("route-correlation");
-    expect(getRecovery).toHaveBeenCalledWith({ correlationId: "route-correlation" });
+    expect(getRecovery).toHaveBeenCalledWith({
+      correlationId: "route-correlation",
+      signal: expect.any(AbortSignal),
+    });
     expect(release).toHaveBeenCalledTimes(1);
     const failure = await server.inject({
       method: "GET",
@@ -80,6 +85,24 @@ describe("dashboard route admission", () => {
     expect(release).toHaveBeenCalledTimes(2);
     await server.close();
   });
+
+  it("returns the stable contract-valid timeout error", async () => {
+    const server = buildServer({ workflowOutcome: { outcome: "timed_out" } });
+
+    const response = await server.inject({
+      method: "GET",
+      url: "/dashboard/recovery",
+      headers: correlationHeader,
+    });
+
+    expect(response.statusCode).toBe(503);
+    expect(errorPayloadSchema.parse(response.json())).toMatchObject({
+      code: "dashboard_recovery_timed_out",
+      correlationId: "route-correlation",
+    });
+    expect(response.headers["retry-after"]).toBe("11");
+    await server.close();
+  });
 });
 
 function buildServer(options: {
@@ -87,6 +110,7 @@ function buildServer(options: {
   recoveryOutcome?: "rate_limited" | "at_capacity" | "unavailable";
   getRecovery?: DashboardRecoveryService["getRecovery"];
   release?: () => void;
+  workflowOutcome?: DashboardRecoveryWorkflowResult;
 }) {
   const app = fastify({ loggerInstance: createSilentLogger("api") }) as ApiFastifyInstance;
   installFastifyCorrelation(app);
@@ -110,16 +134,21 @@ function buildServer(options: {
     dashboardEventFanout: {
       connect: () => options.sseOutcome ?? "connected",
     },
-    dashboardRecoveryService: {
-      getRecovery: options.getRecovery ?? vi.fn().mockResolvedValue(recoveryFixture()),
-    } as unknown as DashboardRecoveryService,
-    dashboardRecoveryAdmission: admission,
+    dashboardRecoveryWorkflow: options.workflowOutcome
+      ? { recover: async () => options.workflowOutcome as DashboardRecoveryWorkflowResult }
+      : new DashboardRecoveryWorkflow({
+          recovery: {
+            getRecovery: options.getRecovery ?? vi.fn().mockResolvedValue(recoveryFixture()),
+          } as unknown as DashboardRecoveryService,
+          admission,
+        }),
     sourceResolver: {
       resolveSse: (ip) => ip,
       resolveRecovery: ({ ip }) => ip,
     },
     sseRetryAfterSeconds: 7,
     recoveryRetryAfterSeconds: 11,
+    recoveryTimeoutMs: 5_000,
   });
   return app;
 }

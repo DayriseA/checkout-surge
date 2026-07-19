@@ -2,6 +2,7 @@ import { contractsPackageName } from "@checkout-surge/contracts";
 import {
   BusinessOutcomePublicationScheduler,
   clearErpCircuitBreakerSnapshots,
+  createAbortableDatabaseConnection,
   createDatabaseConnection,
   createRedisClient,
   createRedisDashboardEventSubscriber,
@@ -25,7 +26,7 @@ import { invalidDashboardEventMetadata } from "./realtime/invalid-dashboard-even
 import { closeApiResources } from "./runtime/api-resource-cleanup.js";
 import { loadApiConfig } from "./runtime/config.js";
 import type { ApiFastifyInstance } from "./runtime/fastify.js";
-import { createInfrastructureReadinessCheck } from "./runtime/readiness.js";
+import { createBoundedInfrastructureReadinessCheck } from "./runtime/readiness.js";
 import { buildApiServer } from "./server.js";
 import {
   DashboardRecoveryAdmissionService,
@@ -157,7 +158,13 @@ export async function startApiServer(): Promise<void> {
     maxBufferedBytes: config.dashboardSseMaxBufferedBytes,
   });
   const dashboardRecoveryAdmission = new DashboardRecoveryAdmissionService({
-    store: new RedisDashboardRecoveryBudgetStore(redis),
+    store: new RedisDashboardRecoveryBudgetStore(() =>
+      createRedisClient(config.redisUrl, {
+        lazyConnect: true,
+        maxRetriesPerRequest: 0,
+        commandTimeout: config.dashboardRecoveryTimeoutMs,
+      }),
+    ),
     maxConcurrent: config.dashboardRecoveryMaxConcurrent,
     globalMax: config.dashboardRecoveryGlobalMaxRequests,
     perSourceMax: config.dashboardRecoveryPerSourceMaxRequests,
@@ -256,14 +263,70 @@ export async function startApiServer(): Promise<void> {
   });
   const runHistoryService = new RunHistoryService({ db: connection.db });
   const dashboardRecoveryService = new DashboardRecoveryService({
-    contextReader: new PostgresDashboardRecoveryContextReader(connection.db),
-    businessOutcomeReader: new PostgresDashboardBusinessOutcomeReader(connection.db),
-    consistencyLagReader: new PostgresDashboardConsistencyLagReader(connection.db),
-    completionOutcomeReader: new PostgresDashboardCompletionOutcomeReader(connection.db),
-    inventoryStatusService,
-    queueStatusService,
-    erpStatusService,
-    trafficMetricReader: trafficMetricStore,
+    openOperation: (signal) => {
+      const operationRedis = createRedisClient(config.redisUrl, {
+        lazyConnect: true,
+        maxRetriesPerRequest: 0,
+        commandTimeout: config.dashboardRecoveryTimeoutMs,
+      });
+      const operationQueueInspector = createBullMqOrderProcessQueueInspector({
+        url: config.redisUrl,
+        maxRetriesPerRequest: 0,
+        commandTimeout: config.dashboardRecoveryTimeoutMs,
+      });
+      const operationDatabase = createAbortableDatabaseConnection(config.databaseUrl, signal, {
+        max: 1,
+        connect_timeout: Math.ceil(config.dashboardRecoveryTimeoutMs / 1_000),
+      });
+      const operationQueueStatusService = new QueueStatusService(operationQueueInspector, logger);
+      const operationErpStatusService = new ErpStatusService({
+        circuitBreakerStateReader: new RedisErpCircuitBreakerStateReader(operationRedis),
+        attemptStatusReader: new PostgresErpAttemptStatusReader(operationDatabase.db),
+        queueStatusService: operationQueueStatusService,
+        logger,
+        activeRunReader: new PostgresActiveErpRunReader(operationDatabase.db),
+      });
+      let queueDisconnectPromise: Promise<void> | undefined;
+      const disconnect = () => {
+        operationRedis.disconnect();
+        queueDisconnectPromise ??= operationQueueInspector.disconnect().catch((error: unknown) => {
+          logger.warn({ err: error }, "Dashboard recovery queue disconnect failed.");
+        });
+      };
+      signal.addEventListener("abort", disconnect, { once: true });
+      if (signal.aborted) disconnect();
+
+      return {
+        dependencies: {
+          contextReader: new PostgresDashboardRecoveryContextReader(operationDatabase.db),
+          businessOutcomeReader: new PostgresDashboardBusinessOutcomeReader(operationDatabase.db),
+          consistencyLagReader: new PostgresDashboardConsistencyLagReader(operationDatabase.db),
+          completionOutcomeReader: new PostgresDashboardCompletionOutcomeReader(
+            operationDatabase.db,
+          ),
+          inventoryStatusService: new InventoryStatusService({
+            getStatus: (saleOfferId) => getInventoryStatus(operationRedis, saleOfferId),
+          }),
+          queueStatusService: operationQueueStatusService,
+          erpStatusService: operationErpStatusService,
+          trafficMetricReader: new RedisDashboardTrafficMetricStore(operationRedis),
+        },
+        close: async () => {
+          signal.removeEventListener("abort", disconnect);
+          disconnect();
+          const cleanup = await Promise.allSettled([
+            operationDatabase.close(),
+            queueDisconnectPromise,
+          ]);
+          const errors = cleanup.flatMap((result) =>
+            result.status === "rejected" ? [result.reason] : [],
+          );
+          if (errors.length > 0) {
+            throw new AggregateError(errors, "Dashboard recovery resource cleanup failed.");
+          }
+        },
+      };
+    },
     logger,
   });
   const businessOutcomeReader = new PostgresDashboardBusinessOutcomeReader(connection.db);
@@ -426,10 +489,68 @@ export async function startApiServer(): Promise<void> {
     server = await buildApiServer({
       config,
       logger,
-      readiness: createInfrastructureReadinessCheck(
-        connection.sql,
-        redis,
-        orderProcessQueueInspector,
+      readiness: createBoundedInfrastructureReadinessCheck(
+        [
+          {
+            name: "database_reachable",
+            check: async (signal) => {
+              const readinessDatabase = createAbortableDatabaseConnection(
+                config.databaseUrl,
+                signal,
+                {
+                  max: 1,
+                  connect_timeout: Math.ceil(config.readinessTimeoutMs / 1_000),
+                },
+              );
+              try {
+                await readinessDatabase.sql`SELECT 1`;
+              } finally {
+                await readinessDatabase.close();
+              }
+            },
+          },
+          {
+            name: "redis_reachable",
+            check: async (signal) => {
+              const readinessRedis = createRedisClient(config.redisUrl, {
+                lazyConnect: true,
+                maxRetriesPerRequest: 0,
+                commandTimeout: config.readinessTimeoutMs,
+              });
+              const disconnect = () => readinessRedis.disconnect();
+              signal.addEventListener("abort", disconnect, { once: true });
+              try {
+                await readinessRedis.ping();
+              } finally {
+                signal.removeEventListener("abort", disconnect);
+                disconnect();
+              }
+            },
+          },
+          {
+            name: "order_process_queue_reachable",
+            check: async (signal) => {
+              const readinessQueue = createBullMqOrderProcessQueueInspector({
+                url: config.redisUrl,
+                maxRetriesPerRequest: 0,
+                commandTimeout: config.readinessTimeoutMs,
+              });
+              let disconnectPromise: Promise<void> | undefined;
+              const disconnect = () => {
+                disconnectPromise ??= readinessQueue.disconnect();
+              };
+              signal.addEventListener("abort", disconnect, { once: true });
+              try {
+                await readinessQueue.checkConnectivity();
+              } finally {
+                signal.removeEventListener("abort", disconnect);
+                disconnect();
+                await disconnectPromise;
+              }
+            },
+          },
+        ],
+        config.readinessTimeoutMs,
       ),
       dashboardEventFanout,
       dashboardRecoveryService,

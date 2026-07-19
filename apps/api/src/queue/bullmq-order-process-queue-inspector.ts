@@ -26,12 +26,14 @@ export interface BullMqQueueInspectionClient {
     asc?: boolean,
   ): Promise<OrderProcessBullMqJob[]>;
   close(): Promise<void>;
+  disconnect?(): Promise<void>;
 }
 
 export interface BullMqOrderProcessQueueInspector
   extends OrderProcessQueueInspector,
     QueueConnectivityChecker {
   close(): Promise<void>;
+  disconnect(): Promise<void>;
 }
 
 const observedCountTypes = [
@@ -140,6 +142,7 @@ export function createOrderProcessQueueInspector(
       await queue.getJobCounts("waiting");
     },
     close: () => queue.close(),
+    disconnect: () => queue.disconnect?.() ?? queue.close(),
   };
 }
 

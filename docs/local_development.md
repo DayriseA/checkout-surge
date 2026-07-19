@@ -439,7 +439,8 @@ Most infrastructure URLs have local defaults, but every run/control service chan
 | `ORDER_PROCESS_MAX_ATTEMPTS` | `4` | API default/backfill for the frozen order-job retry budget |
 | `ORDER_PROCESS_BACKOFF_BASE_MS` | `500` | API default/backfill for frozen exponential retry backoff |
 | `API_LISTEN_BACKLOG` | `8192` | API listener accept backlog for one-second public spike validation |
-| `API_POSTGRES_POOL_MAX` | `10` | API PostgreSQL connection pool maximum |
+| `API_POSTGRES_POOL_MAX` | `10` | Long-lived API application/data-path PostgreSQL pool maximum; control-plane pools described below are separate |
+| `API_READINESS_TIMEOUT_MS` | `2000` | End-to-end API readiness deadline in milliseconds; must remain below the Compose healthcheck's 3-second timeout. Readiness is single-flight per API process and can open at most one separate, short-lived PostgreSQL connection. |
 | `WORKER_POSTGRES_POOL_MAX` | `10` | Worker PostgreSQL connection pool maximum |
 | `HEALTH_PORT` | `4300` | Worker health server |
 | `ERP_REQUEST_TIMEOUT_MS` | `2000` | Worker ERP client default; run snapshots can supply the active demonstration policy |
@@ -475,9 +476,10 @@ Most infrastructure URLs have local defaults, but every run/control service chan
 | `DASHBOARD_MAX_SSE_CLIENTS` / `DASHBOARD_MAX_SSE_CLIENTS_PER_SOURCE` | `80` / `6` | Per-API-process realtime connection caps; replicas multiply the deployment total |
 | `DASHBOARD_SSE_MAX_BUFFERED_FRAMES` / `DASHBOARD_SSE_MAX_BUFFERED_BYTES` | `32` / `262144` | Positive per-client limits for complete SSE frames queued after socket backpressure; crossing either limit disconnects only that client so native EventSource reconnect can recover |
 | `DASHBOARD_SSE_RETRY_AFTER_SECONDS` | `10` | Retry guidance for rejected realtime connections |
-| `DASHBOARD_RECOVERY_MAX_CONCURRENT` | `3` | Per-process recovery builds, deliberately below the default PostgreSQL pool size of 10 |
+| `DASHBOARD_RECOVERY_MAX_CONCURRENT` | `3` | Per-process recovery builds. Each admitted build owns a short-lived PostgreSQL pool capped at one connection, separately from `API_POSTGRES_POOL_MAX`. |
 | `DASHBOARD_RECOVERY_GLOBAL_MAX_REQUESTS` / `DASHBOARD_RECOVERY_PER_SOURCE_MAX_REQUESTS` | `60` / `12` per 60 seconds | Redis-backed deployment-wide recovery budgets |
 | `DASHBOARD_RECOVERY_WINDOW_SECONDS` / `DASHBOARD_RECOVERY_RETRY_AFTER_SECONDS` | `60` / `10` | Fixed-window duration and rejection retry guidance |
+| `DASHBOARD_RECOVERY_TIMEOUT_MS` | `5000` | End-to-end recovery deadline, including Redis admission and every PostgreSQL, Redis, and BullMQ projection read |
 | `RUNTIME_RECOVERY_SOAK_SECONDS` | `2 * DASHBOARD_RECOVERY_WINDOW_SECONDS + 5` | Opt-in idle recovery soak duration; any explicit value must be strictly greater than two recovery limiter windows |
 | `RUNTIME_RECOVERY_SOAK_PROBE_INTERVAL_MS` | `5000` | Interval for the opt-in direct-web and proxy-to-web health soak |
 | `API_TRUSTED_PROXY_CIDRS` | loopback and Compose Caddy `172.30.0.2/32` | Exact Caddy proxy boundary used for Fastify client-IP derivation; replace with the deployed proxy address |
@@ -498,6 +500,8 @@ Most infrastructure URLs have local defaults, but every run/control service chan
 | `LOAD_ORCHESTRATOR_STATE_DIR` | `.checkout-surge/load-orchestrator` host-native; named-volume path in Compose | Durable single-slot traffic execution journal |
 | `BUY_ENDPOINT_PATH` | `/buy` | Load orchestrator |
 | `LOG_LEVEL` | `info` | Shared logger |
+
+`API_POSTGRES_POOL_MAX` governs only the main long-lived application/data-path pool. The API also owns a separate long-lived reset-workflow client capped at one connection, up to three concurrent recovery pools capped at one connection each by the default `DASHBOARD_RECOVERY_MAX_CONCURRENT`, and one max-one readiness pool. Readiness is single-flight per API process: concurrent callers share the active operation, and a new operation starts only after it settles. The default configured client capacity is therefore at most 15 PostgreSQL connections per API process even under concurrent readiness callers: 10 main, one reset workflow, three recovery, and one coalesced readiness. Recovery and readiness pools are terminated when their operation completes or aborts.
 
 `DEMO_MAX_*`, `DEMO_RUN_DRAIN_TIMEOUT_SECONDS`, and the finalization poll interval belong to the API process and take effect after an API restart. The API also validates that maximum traffic start delay plus traffic duration, drain timeout, pending-persistence retry cadence, and finalization cadence leave a full 24-hour safety margin inside the fixed seven-day Redis run-sale eligibility TTL; an unsafe or arithmetically unrepresentable combination prevents startup with the contributing variable names. The seven `DEMO_MAX_*` values are additionally mirrored into `runtime-setup` so a first-seed `PUBLIC_*` policy is validated against the same deployment ceilings and stores a compatible contract field; this mirror is not a second runtime authority. Drain timeout is not mirrored because setup never owns finalization behavior. The API overlays current hard caps onto every persisted-policy read and validates the active PostgreSQL policy before listening; tightening a cap below an admin-tuned public limit prevents startup instead of clamping it. `PUBLIC_RUN_BUDGET_*` and `PUBLIC_CUSTOM_*` belong only to `runtime-setup` and are used when the active row is first created. Once bootstrapped, PostgreSQL/admin updates are authoritative; changing setup values does not overwrite an existing policy. Use the protected admin policy controls, or wipe the database for a new bootstrap.
 
