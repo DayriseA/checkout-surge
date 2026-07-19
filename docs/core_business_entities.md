@@ -702,6 +702,7 @@ Notes:
 
 - The singleton row uses the stable id `active`.
 - An explicit seed/setup validates the environment-backed mutable-policy baseline and inserts it only when the active singleton is absent. The seven API-owned deployment caps are mirrored into setup solely for this semantic validation and compatibility storage. Rerunning setup preserves admin-edited values; a fresh database is required to bootstrap from changed setup defaults.
+- The append-only compatibility migration for the repository's older seed shape adds only absent `maxPreAllocatedVus`, `maxVus`, `minErpMaxTps`, and `maxErpMaxTps` keys. It derives VU limits within persisted deployment caps and ensures the ERP maximum includes the persisted default (150 TPS in the historical fixture). Key presence is authoritative: existing values and explicit `null` are preserved, and the complete hydrated object must pass structural and semantic contract validation.
 - Admin-protected controls may update this row. API startup configuration owns deployment hard caps, overlays them at the persistence/application boundary, and rejects updates or startup when mutable policy values exceed current caps.
 - Public runtime policy changes do not mutate public preset definitions; they control public custom-run bounds and public budget behavior.
 

@@ -40,6 +40,7 @@ The checked-in commands support host-native development, local Dev Containers, a
 
 - Use real PostgreSQL and/or Redis through dedicated test services.
 - Validate migrations, seed data, Redis inventory operations, persistence behavior, and cross-package boundaries.
+- Migration integration coverage includes the historical public runtime-policy fixture, exact compatibility additions, preservation/idempotency, full shared-schema refinements, and fail-closed explicit-null behavior.
 - Must explicitly reset their state before or between suites.
 
 ### API / Service Tests

@@ -1171,6 +1171,21 @@ describe("demo-run public runtime policy management", () => {
     ).rejects.toThrow(/publicCustomLimits\.maxBuyers.*public_limit_buyers_exceeds_deployment_cap/);
   });
 
+  it("accepts the legacy-compatible hydrated policy at startup", async () => {
+    const policy = publicRuntimePolicy();
+    policy.publicCustomDefaults.erpConfig.maxTps = 150;
+    policy.publicCustomLimits.maxErpMaxTps = 150;
+    const db = requireConnection(connection).db;
+    await db
+      .update(publicRuntimePolicies)
+      .set({ policy })
+      .where(eq(publicRuntimePolicies.id, "active"));
+
+    await expect(
+      validateActivePublicRuntimePolicyAtStartup(db, policy.deploymentHardCaps),
+    ).resolves.toBeUndefined();
+  });
+
   it("changes effective hard caps between service boots without reseeding", async () => {
     const stored = publicRuntimePolicy();
     const first = createPresetManagementService(requireConnection(connection), {

@@ -1,4 +1,5 @@
 import { fileURLToPath } from "node:url";
+import { publicRuntimePolicySchema } from "@checkout-surge/contracts";
 import { readMigrationFiles } from "drizzle-orm/migrator";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { createDatabaseConnection } from "./client.js";
@@ -45,7 +46,44 @@ export async function runDatabaseMigrations(options: RunMigrationsOptions): Prom
       }
     }
     await migrate(connection.db, { migrationsFolder });
+    await validateMigratedActivePublicRuntimePolicy(connection.sql);
   } finally {
     await connection.close();
   }
+}
+
+async function validateMigratedActivePublicRuntimePolicy(
+  sql: ReturnType<typeof createDatabaseConnection>["sql"],
+): Promise<void> {
+  const [row] = await sql<{ policy: unknown }[]>`
+    SELECT policy
+    FROM public_runtime_policies
+    WHERE id = 'active'
+    LIMIT 1
+  `;
+  if (!row) {
+    return;
+  }
+
+  const parsed = publicRuntimePolicySchema.safeParse(row.policy);
+  if (parsed.success) {
+    return;
+  }
+
+  const diagnostics = parsed.error.issues.map((issue) => {
+    const path = issue.path.length > 0 ? issue.path.join(".") : "policy";
+    const violationCode =
+      "params" in issue &&
+      issue.params &&
+      typeof issue.params === "object" &&
+      "violationCode" in issue.params &&
+      typeof issue.params.violationCode === "string"
+        ? ` (${issue.params.violationCode})`
+        : "";
+    return `${path}${violationCode}: ${issue.message}`;
+  });
+
+  throw new Error(
+    `Active public runtime policy is invalid after database migration: ${diagnostics.join("; ")}`,
+  );
 }

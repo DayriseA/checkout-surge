@@ -75,7 +75,7 @@ describe("Drizzle migration metadata", () => {
   });
 
   it("records custom SQL entries as explicit snapshot-invisible state", async () => {
-    for (const index of [1, 3, 4, 5, 13]) {
+    for (const index of [1, 3, 4, 5, 13, 14]) {
       const previous = await readJson<Snapshot>(
         path.join(metadataFolder, `${(index - 1).toString().padStart(4, "0")}_snapshot.json`),
       );

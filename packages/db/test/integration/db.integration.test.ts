@@ -50,6 +50,65 @@ const reservationExpiresAt = "2026-06-20T12:15:00.000Z";
 const orderQueuedAt = "2026-06-20T12:00:01.000Z";
 const saleStartsAt = "2026-06-20T00:00:00.000Z";
 const saleEndsAt = "2026-06-21T00:00:00.000Z";
+// Exact active-policy JSON emitted by the a2f6192 seed with its default environment.
+const legacyPublicRuntimePolicy = {
+  isPublicRunBudgetEnforced: true,
+  publicRunBudget: {
+    windowSeconds: 300,
+    perVisitorMaxStarts: 2,
+    globalMaxStarts: 6,
+  },
+  publicCustomDefaults: {
+    trafficConfig: {
+      mode: "buyer-spike",
+      buyerCount: 500,
+      duplicateEachBuyerAttempt: false,
+      startDelaySeconds: 0,
+      maxDurationSeconds: 10,
+      quantityPerAttempt: 1,
+    },
+    inventoryConfig: {
+      startingStock: 100,
+      quantityPerCheckout: 1,
+      reservationHoldMinutes: 15,
+    },
+    erpConfig: {
+      latencyMs: 100,
+      maxTps: 150,
+      errorRate: 0,
+      forcedOutage: false,
+      requestTimeoutMs: 2000,
+    },
+    backpressureConfig: {
+      queueName: "orders:process",
+      physicalQueueName: "orders-process",
+      orderProcessConcurrency: 5,
+      drainTimeoutSeconds: 300,
+      pendingPersistenceRetryAfterSeconds: 30,
+    },
+  },
+  publicCustomLimits: {
+    maxTotalRequests: 10_000,
+    maxBuyers: 10_000,
+    maxRequestsPerSecond: 1000,
+    maxTrafficDurationSeconds: 120,
+    maxTrafficStartDelaySeconds: 10,
+    maxStartingStock: 10_000,
+    maxErpLatencyMs: 2000,
+    maxErpErrorRate: 0.25,
+    allowForcedOutage: false,
+    allowedTrafficModes: ["buyer-spike", "steady-arrival-rate"],
+  },
+  deploymentHardCaps: {
+    maxBuyers: 100_000,
+    maxTotalRequests: 100_000,
+    maxRequestsPerSecond: 10_000,
+    maxTrafficDurationSeconds: 300,
+    maxTrafficStartDelaySeconds: 30,
+    maxPreAllocatedVus: 10_000,
+    maxVus: 10_000,
+  },
+} as const;
 const expectedHandAuthoredFunctions = [
   "enforce_demo_run_sale_context_offer_purpose",
   "enforce_erp_attempt_order_attribution",
@@ -199,6 +258,37 @@ async function createPreTaskMigrationFolder(): Promise<string> {
     entries: unknown[];
   };
   journal.entries = journal.entries.slice(0, 2);
+  await writeFile(journalPath, `${JSON.stringify(journal, null, 2)}\n`);
+
+  return temporaryMigrations;
+}
+
+async function createHistoricalInitialMigrationFolder(): Promise<string> {
+  const temporaryRoot = await mkdtemp(
+    path.join(os.tmpdir(), "checkout-surge-historical-migrations-"),
+  );
+  const temporaryMigrations = path.join(temporaryRoot, "drizzle");
+  await cp(migrationsFolder, temporaryMigrations, { recursive: true });
+
+  const triggerMigration = await readFile(
+    path.join(temporaryMigrations, "0013_install_timestamp_and_ownership_triggers.sql"),
+    "utf8",
+  );
+  const historicalEmbeddedTriggerSql = triggerMigration.replace(
+    /DROP TRIGGER IF EXISTS[^\n]+;\n--> statement-breakpoint\n/g,
+    "",
+  );
+  const initialMigrationPath = path.join(temporaryMigrations, "0000_initial_schema.sql");
+  await writeFile(
+    initialMigrationPath,
+    `${await readFile(initialMigrationPath, "utf8")}\n${historicalEmbeddedTriggerSql}`,
+  );
+
+  const journalPath = path.join(temporaryMigrations, "meta", "_journal.json");
+  const journal = JSON.parse(await readFile(journalPath, "utf8")) as {
+    entries: unknown[];
+  };
+  journal.entries = journal.entries.slice(0, 1);
   await writeFile(journalPath, `${JSON.stringify(journal, null, 2)}\n`);
 
   return temporaryMigrations;
@@ -548,7 +638,7 @@ describe("database migrations, seed data, and reset behavior", () => {
           sql<{ count: number }[]>`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`,
       );
 
-      expect(firstCount?.count).toBe(14);
+      expect(firstCount?.count).toBe(15);
       expect(secondCount).toEqual(firstCount);
     } finally {
       await resetTestDatabase();
@@ -577,9 +667,186 @@ describe("database migrations, seed data, and reset behavior", () => {
             (SELECT count(*)::int FROM pg_trigger WHERE NOT tgisinternal) AS triggers
         `,
       );
-      expect(result).toEqual({ migrations: 14, triggers: expectedHandAuthoredTriggers.length });
+      expect(result).toEqual({ migrations: 15, triggers: expectedHandAuthoredTriggers.length });
     } finally {
       await rm(path.dirname(preTaskMigrations), { recursive: true, force: true });
+      await resetTestDatabase();
+    }
+  });
+
+  it("hydrates the actual historical public runtime policy and preserves it on reruns", async () => {
+    const databaseUrl = requireTestEnv("TEST_DATABASE_URL");
+    const { databaseName } = validateDedicatedTestDatabaseUrl(databaseUrl);
+    const historicalMigrations = await createHistoricalInitialMigrationFolder();
+
+    try {
+      await rebuildAsEmptyPublicSchema();
+      await runDatabaseMigrations({
+        databaseUrl,
+        expectedDatabaseName: databaseName,
+        migrationsFolder: historicalMigrations,
+      });
+      await withDatabase(
+        (sql) => sql`
+          INSERT INTO public_runtime_policies (id, policy)
+          VALUES ('active', ${JSON.stringify(legacyPublicRuntimePolicy)}::jsonb)
+        `,
+      );
+
+      await runDatabaseMigrations({ databaseUrl, expectedDatabaseName: databaseName });
+      const readPolicy = () =>
+        withDatabase(
+          (sql) => sql<{ policy: Record<string, unknown>; updated_at: string }[]>`
+            SELECT policy, updated_at::text
+            FROM public_runtime_policies
+            WHERE id = 'active'
+          `,
+        );
+      const [migrated] = await readPolicy();
+      const parsed = publicRuntimePolicySchema.parse(migrated?.policy);
+      const addedLimitKeys = Object.keys(parsed.publicCustomLimits)
+        .filter(
+          (key) => !Object.hasOwn(legacyPublicRuntimePolicy.publicCustomLimits, key),
+        )
+        .sort();
+
+      expect(addedLimitKeys).toEqual([
+        "maxErpMaxTps",
+        "maxPreAllocatedVus",
+        "maxVus",
+        "minErpMaxTps",
+      ]);
+      expect(parsed.publicCustomLimits).toMatchObject({
+        maxPreAllocatedVus: 1000,
+        maxVus: 1000,
+        minErpMaxTps: 1,
+        maxErpMaxTps: 150,
+      });
+      expect(parsed).toMatchObject(legacyPublicRuntimePolicy);
+
+      await runDatabaseMigrations({ databaseUrl, expectedDatabaseName: databaseName });
+      expect((await readPolicy())[0]).toEqual(migrated);
+
+      await runSeedScript();
+      expect((await readPolicy())[0]).toEqual(migrated);
+    } finally {
+      await rm(path.dirname(historicalMigrations), { recursive: true, force: true });
+      await resetTestDatabase();
+    }
+  });
+
+  it("leaves customized current policies unchanged and fails clearly without replacing null", async () => {
+    const databaseUrl = requireTestEnv("TEST_DATABASE_URL");
+    const { databaseName } = validateDedicatedTestDatabaseUrl(databaseUrl);
+
+    try {
+      await runSeedScript();
+      await withDatabase(async (sql) => {
+        await sql`
+          UPDATE public_runtime_policies
+          SET policy = jsonb_set(policy, '{publicRunBudget,windowSeconds}', '777'::jsonb)
+          WHERE id = 'active'
+        `;
+        await sql`
+          DELETE FROM drizzle.__drizzle_migrations
+          WHERE id = (SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 1)
+        `;
+      });
+      const [customized] = await withDatabase(
+        (sql) => sql<{ policy: unknown; updated_at: string }[]>`
+          SELECT policy, updated_at::text
+          FROM public_runtime_policies
+          WHERE id = 'active'
+        `,
+      );
+
+      await runDatabaseMigrations({ databaseUrl, expectedDatabaseName: databaseName });
+      const [afterMigration] = await withDatabase(
+        (sql) => sql<{ policy: unknown; updated_at: string }[]>`
+          SELECT policy, updated_at::text
+          FROM public_runtime_policies
+          WHERE id = 'active'
+        `,
+      );
+      expect(afterMigration).toEqual(customized);
+
+      const partiallyLegacyPolicy = structuredClone(customized?.policy) as {
+        publicCustomLimits: Record<string, unknown>;
+      };
+      delete partiallyLegacyPolicy.publicCustomLimits.maxPreAllocatedVus;
+      delete partiallyLegacyPolicy.publicCustomLimits.maxErpMaxTps;
+      partiallyLegacyPolicy.publicCustomLimits.maxVus = 600;
+      partiallyLegacyPolicy.publicCustomLimits.minErpMaxTps = 75;
+      await withDatabase(async (sql) => {
+        await sql`
+          UPDATE public_runtime_policies
+          SET policy = ${JSON.stringify(partiallyLegacyPolicy)}::jsonb
+          WHERE id = 'active'
+        `;
+        await sql`
+          DELETE FROM drizzle.__drizzle_migrations
+          WHERE id = (SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 1)
+        `;
+      });
+      await runDatabaseMigrations({ databaseUrl, expectedDatabaseName: databaseName });
+      const [partiallyHydrated] = await withDatabase(
+        (sql) => sql<{ policy: { publicCustomLimits: Record<string, unknown> } }[]>`
+          SELECT policy FROM public_runtime_policies WHERE id = 'active'
+        `,
+      );
+      expect(partiallyHydrated?.policy.publicCustomLimits).toMatchObject({
+        maxPreAllocatedVus: 600,
+        maxVus: 600,
+        minErpMaxTps: 75,
+        maxErpMaxTps: 100,
+      });
+
+      await withDatabase(
+        (sql) => sql`
+          UPDATE public_runtime_policies
+          SET policy = jsonb_set(
+            ${JSON.stringify(customized?.policy)}::jsonb,
+            '{publicCustomLimits,maxPreAllocatedVus}',
+            '1001'::jsonb
+          )
+          WHERE id = 'active'
+        `,
+      );
+      await expect(
+        runDatabaseMigrations({ databaseUrl, expectedDatabaseName: databaseName }),
+      ).rejects.toThrow(/publicCustomLimits\.maxPreAllocatedVus \(public_vus_limit_invalid\)/);
+
+      await withDatabase(async (sql) => {
+        await sql`
+          UPDATE public_runtime_policies
+          SET policy = jsonb_set(
+            ${JSON.stringify(customized?.policy)}::jsonb #- '{publicCustomLimits,maxPreAllocatedVus}',
+            '{publicCustomLimits,maxVus}',
+            'null'::jsonb
+          )
+          WHERE id = 'active'
+        `;
+        await sql`
+          DELETE FROM drizzle.__drizzle_migrations
+          WHERE id = (SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 1)
+        `;
+      });
+
+      await expect(
+        runDatabaseMigrations({ databaseUrl, expectedDatabaseName: databaseName }),
+      ).rejects.toThrow(
+        /publicCustomLimits\.maxVus: Invalid input: expected number, received null/,
+      );
+      const [invalidPolicy] = await withDatabase(
+        (sql) => sql<{ policy: { publicCustomLimits: Record<string, unknown> } }[]>`
+          SELECT policy FROM public_runtime_policies WHERE id = 'active'
+        `,
+      );
+      expect(invalidPolicy?.policy.publicCustomLimits).toMatchObject({
+        maxPreAllocatedVus: 1000,
+        maxVus: null,
+      });
+    } finally {
       await resetTestDatabase();
     }
   });
@@ -725,7 +992,7 @@ describe("database migrations, seed data, and reset behavior", () => {
       await sql`
         DELETE FROM drizzle.__drizzle_migrations
         WHERE id IN (
-          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 7
+          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 8
         )
       `;
       await insertCatalogSaleOffer(sql, {
@@ -912,7 +1179,7 @@ describe("database migrations, seed data, and reset behavior", () => {
       await sql`
         DELETE FROM drizzle.__drizzle_migrations
         WHERE id IN (
-          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 8
+          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 9
         )
       `;
       await sql`
@@ -1024,7 +1291,7 @@ describe("database migrations, seed data, and reset behavior", () => {
       await sql`
         DELETE FROM drizzle.__drizzle_migrations
         WHERE id IN (
-          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 10
+          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 11
         )
       `;
     });
@@ -1096,7 +1363,7 @@ describe("database migrations, seed data, and reset behavior", () => {
       await sql`
         DELETE FROM drizzle.__drizzle_migrations
         WHERE id IN (
-          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 5
+          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 6
         )
       `;
       await sql`
@@ -1196,7 +1463,7 @@ describe("database migrations, seed data, and reset behavior", () => {
       await sql`
         DELETE FROM drizzle.__drizzle_migrations
         WHERE id IN (
-          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 4
+          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 5
         )
       `;
       await insertCatalogSaleOffer(sql, confirmedIds);
@@ -1751,6 +2018,12 @@ describe("database migrations, seed data, and reset behavior", () => {
       publicCustomDefaults: { backpressureConfig: { orderProcessConcurrency: 5 } },
       publicRunBudget: { windowSeconds: 999 },
     });
+
+    // This test intentionally manufactures a policy shape that predates already-applied
+    // migrations. Restore a valid singleton so later migration-runner tests exercise their
+    // own bounded invalid fixtures rather than inheriting this one.
+    await withDatabase((sql) => sql`DELETE FROM public_runtime_policies WHERE id = 'active'`);
+    await runSeedScript();
   });
 
   it("fails closed on legacy lifecycle contradictions and succeeds after explicit remediation", async () => {
@@ -1762,7 +2035,7 @@ describe("database migrations, seed data, and reset behavior", () => {
       await sql`
         DELETE FROM drizzle.__drizzle_migrations
         WHERE id IN (
-          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 3
+          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 4
         )
       `;
       await insertCatalogSaleOffer(sql, ids);
@@ -1809,7 +2082,7 @@ describe("database migrations, seed data, and reset behavior", () => {
       await sql`
         DELETE FROM drizzle.__drizzle_migrations
         WHERE id IN (
-          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 3
+          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 4
         )
       `;
       await insertCatalogSaleOffer(sql, ids);
@@ -3556,6 +3829,9 @@ describe("database migrations, seed data, and reset behavior", () => {
         idempotencyKey,
       }),
     );
+    // This assertion owns the process-wide pending index cardinality; isolate it from
+    // pending holds intentionally retained by earlier inventory scenarios in this suite.
+    await redis.del(pendingPersistenceIndexKey);
     await initializeInventory(redis, { saleOfferId, allocatedStock: 10 });
 
     const decisions = await Promise.all(

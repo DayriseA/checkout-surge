@@ -82,7 +82,7 @@ pnpm runtime:setup
 
 `runtime:setup` uses `docker compose run` and auto-starts PostgreSQL and Redis as dependencies, so it can be run without a prior `runtime:up`. By itself it does not start the API, worker, mock ERP, load orchestrator, or dashboard services.
 
-Setup strictly validates the environment-backed public-policy bootstrap before database mutations and inserts it only when `active` is absent. Rerunning setup preserves the existing PostgreSQL policy, including admin edits. Change an established deployment through the protected admin policy controls, or wipe the database when a new bootstrap from environment values is intended.
+Setup strictly validates the environment-backed public-policy bootstrap before database mutations and inserts it only when `active` is absent. The migration step also upgrades the repository's legacy active-policy JSON by adding only the four public custom VU/ERP limit keys that older seeds omitted. Its VU values are bounded by the persisted deployment caps, and its ERP maximum accommodates the persisted custom default (including the historical 150 TPS default). Existing keys, including explicit JSON `null`, are never replaced; the complete result must pass the current shared policy schema or setup exits with field-level diagnostics. Rerunning setup preserves the existing PostgreSQL policy, including admin edits, and a valid current policy is a semantic no-op. Change an established deployment through the protected admin policy controls, or wipe the database when a new bootstrap from environment values is intended.
 
 For a clean wipe-and-rebuild (drops all data and re-seeds):
 
@@ -367,7 +367,7 @@ When authoring a new migration, rehearse the real incremental `drizzle-kit` upgr
 pnpm test:db:migrate
 ```
 
-The checked-in `packages/db/drizzle` directory is part of the database package artifact and is resolved relative to that package in both TypeScript and compiled execution. Keep each journal entry, SQL file, and linked `meta/*_snapshot.json` together. Drizzle snapshots describe the TypeScript schema only: the hand-authored functions, triggers, expression indexes, data backfills, and audit blocks in SQL migrations remain authoritative even when `drizzle-kit generate` reports no schema change.
+The checked-in `packages/db/drizzle` directory is part of the database package artifact and is resolved relative to that package in both TypeScript and compiled execution. Keep each journal entry, SQL file, and linked `meta/*_snapshot.json` together. Drizzle snapshots describe the TypeScript schema only: the hand-authored functions, triggers, expression indexes, data backfills, and audit blocks in SQL migrations remain authoritative even when `drizzle-kit generate` reports no schema change. After applying migrations, the project migration runner validates an existing active public runtime policy with the complete shared schema, including semantic refinements; malformed operator data is reported rather than repaired as if it were omitted legacy data.
 
 Run at most one `runtime-setup` or migration job at a time for each database; serialize migration execution. A failed job can be retried after it exits, and already-applied entries remain no-ops. The pinned PostgreSQL migrator applies all pending entries in one transaction, but it does not provide an explicit deployment/advisory lock for competing migration processes.
 
