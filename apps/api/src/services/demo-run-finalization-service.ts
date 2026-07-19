@@ -287,7 +287,7 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
     const updatedRun = await this.readRun(runId);
 
     if (wroteSummary) {
-      await this.publishTerminalRunEvent(updatedRun, correlationId, now);
+      await this.publishTerminalRunEvent(updatedRun, correlationId);
     }
 
     return updatedRun;
@@ -414,8 +414,13 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
   private async publishTerminalRunEvent(
     run: DemoRunSnapshot,
     correlationId: string | undefined,
-    occurredAt: Date,
   ): Promise<void> {
+    // The terminal writer has already committed its durable transaction and the
+    // committed run has been re-read. This clock value is the post-commit event
+    // occurrence/publication time; it is not a pre-commit or database commit
+    // timestamp. The durable transition identity/time travels inside the run
+    // snapshot as finalizedAt.
+    const occurredAt = this.now();
     try {
       await publishDashboardEvent(this.options.redis, {
         type: "load.run.updated",

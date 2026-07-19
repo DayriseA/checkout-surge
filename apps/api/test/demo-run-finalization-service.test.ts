@@ -6,6 +6,7 @@ import type {
   AcceptedRunConfigSnapshot,
   AdminDemoResetResponse,
   BusinessOutcomeSummary,
+  DashboardRecoveryResponse,
   TerminalInventorySnapshot,
   TrafficCompletionReport,
 } from "@checkout-surge/contracts";
@@ -45,6 +46,10 @@ import { createSilentLogger } from "@checkout-surge/logger";
 import { count, eq, sql } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { PostgresRunRetryPolicyResolver } from "../src/queue/postgres-run-retry-policy-resolver.js";
+import {
+  DashboardRecoveryService,
+  PostgresDashboardRecoveryContextReader,
+} from "../src/services/dashboard-recovery-service.js";
 import { DemoMaintenanceService } from "../src/services/demo-maintenance-service.js";
 import { DemoRunFinalizationService } from "../src/services/demo-run-finalization-service.js";
 import { PendingPersistenceReconciler } from "../src/services/pending-persistence-reconciler.js";
@@ -1268,6 +1273,112 @@ describe("demo run finalization service", () => {
             observerConnection.close(),
           ]);
         }
+      }
+    }
+  });
+
+  it("publishes the terminal event at a post-commit time after an overlapping stale recovery", async () => {
+    const db = requireConnection(connection).db;
+    const redisClient = requireRedis(redis);
+    const lockConnection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
+    const recoveryConnection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
+    const observerConnection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
+    const subscriberRedis = createRedisClient(requireTestRedisUrl(), {
+      lazyConnect: true,
+      maxRetriesPerRequest: 3,
+    });
+    const finalizationAttemptT0 = new Date("2026-06-20T00:00:10.000Z");
+    const recoveryStartT1 = new Date("2026-06-20T00:00:11.000Z");
+    const postCommitEventT2 = new Date("2026-06-20T00:00:12.000Z");
+    expect(recoveryStartT1.getTime()).toBeGreaterThan(finalizationAttemptT0.getTime());
+    expect(postCommitEventT2.getTime()).toBeGreaterThan(recoveryStartT1.getTime());
+    const finalizationClockCalls: Date[] = [];
+    const finalizationTimes = [finalizationAttemptT0, postCommitEventT2];
+    const service = createService(connection, redis, {
+      now: () => {
+        const next = finalizationTimes[finalizationClockCalls.length] ?? postCommitEventT2;
+        finalizationClockCalls.push(next);
+        return next;
+      },
+    });
+    const terminalEvents: Record<string, unknown>[] = [];
+    const handleSubscriberMessage = (channel: string, message: string) => {
+      if (channel === dashboardEventsRedisChannel) {
+        terminalEvents.push(JSON.parse(message) as Record<string, unknown>);
+      }
+    };
+    subscriberRedis.on("message", handleSubscriberMessage);
+    let finalizationPromise: Promise<unknown> | null = null;
+    let staleRecovery: DashboardRecoveryResponse | null = null;
+
+    try {
+      await seedDrainingRun({ db, redis: redisClient, trafficDeliveryStatus: "complete" });
+      await subscriberRedis.subscribe(dashboardEventsRedisChannel);
+      await lockConnection.db.transaction(async (tx) => {
+        await tx.execute(
+          sql`select pg_advisory_xact_lock(hashtext(${terminalDemoRunTransitionLockKey(ids.run)}))`,
+        );
+
+        // t0: the finalization attempt starts and blocks on the terminal lock.
+        finalizationPromise = service.finalizeRun(ids.run, "corr-finalize-overlap");
+        await waitForWaitingAdvisoryLock(observerConnection.sql);
+
+        // t1: recovery reads the still-draining projection before the commit.
+        const recoveryService = new DashboardRecoveryService({
+          contextReader: new PostgresDashboardRecoveryContextReader(recoveryConnection.db),
+          businessOutcomeReader: { read: async () => null } as never,
+          consistencyLagReader: { read: async () => null } as never,
+          completionOutcomeReader: { read: async () => [] },
+          inventoryStatusService: { getStatus: async () => null } as never,
+          queueStatusService: { getStatus: async () => null } as never,
+          erpStatusService: { getStatus: async () => null } as never,
+          logger: createSilentLogger("api"),
+          now: () => recoveryStartT1,
+        });
+        staleRecovery = await recoveryService.getRecovery({
+          correlationId: "corr-recovery-overlap",
+        });
+        // The terminal writer has not committed, so nothing may be published yet.
+        expect(terminalEvents).toHaveLength(0);
+      });
+
+      // The lock release lets the terminal writer commit before publication.
+      const finalized = await requireStartedPromise(finalizationPromise, "finalization");
+      await waitForObservedCount(terminalEvents, 1);
+      const summaries = await db
+        .select()
+        .from(demoRunSummaries)
+        .where(eq(demoRunSummaries.runId, ids.run));
+
+      expect(staleRecovery?.currentRun?.status).toBe("draining");
+      expect(staleRecovery?.recoveredAt).toBe(recoveryStartT1.toISOString());
+      expect(finalized).toMatchObject({ status: "completed" });
+      expect(summaries).toHaveLength(1);
+      expect(summaries[0]?.status).toBe("completed");
+      expect(summaries[0]?.endedAt).toEqual(finalizationAttemptT0);
+      // The attempt saw t0; the event publication saw a fresh post-commit t2.
+      expect(finalizationClockCalls).toEqual([finalizationAttemptT0, postCommitEventT2]);
+      expect(terminalEvents).toHaveLength(1);
+      expect(terminalEvents[0]).toMatchObject({
+        type: "load.run.updated",
+        runId: ids.run,
+        occurredAt: postCommitEventT2.toISOString(),
+        run: {
+          status: "completed",
+          finalizedAt: finalizationAttemptT0.toISOString(),
+        },
+      });
+    } finally {
+      subscriberRedis.off("message", handleSubscriberMessage);
+      try {
+        await subscriberRedis.unsubscribe(dashboardEventsRedisChannel);
+      } finally {
+        subscriberRedis.disconnect();
+        await Promise.all([
+          lockConnection.close(),
+          recoveryConnection.close(),
+          observerConnection.close(),
+        ]);
       }
     }
   });

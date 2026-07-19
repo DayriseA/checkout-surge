@@ -1,6 +1,7 @@
 import type {
   DashboardEvent,
   DashboardRecoveryResponse,
+  DemoRunSnapshot,
   RunDashboardEvent,
 } from "@checkout-surge/contracts";
 import type { BackendRead } from "./api";
@@ -134,6 +135,10 @@ function applyDashboardEventWithWatermarks(
     return { recovery, eventWatermarks };
   }
 
+  if (event.type === "load.run.updated") {
+    return applyRunLifecycleEvent(recovery, eventWatermarks, event);
+  }
+
   const projection = dashboardEventProjection(event);
   const watermark = projectionWatermark(eventWatermarks, projection);
   const projectionObservedAt = dashboardEventObservedAt(event);
@@ -144,12 +149,6 @@ function applyDashboardEventWithWatermarks(
   let nextRecovery: BackendRead<DashboardRecoveryResponse>;
 
   switch (event.type) {
-    case "load.run.updated":
-      nextRecovery = {
-        ...recovery,
-        data: { ...current, currentRun: event.run },
-      };
-      break;
     case "dashboard.metric.observed":
       {
         const metricApplication = applyMetricObservation(recovery, event);
@@ -171,6 +170,81 @@ function applyDashboardEventWithWatermarks(
     recovery: nextRecovery,
     eventWatermarks: advanceProjectionWatermark(eventWatermarks, projection, projectionObservedAt),
   };
+}
+
+function applyRunLifecycleEvent(
+  recovery: Extract<BackendRead<DashboardRecoveryResponse>, { status: "available" }>,
+  eventWatermarks: DashboardEventWatermarks,
+  event: RunDashboardEvent,
+): { recovery: BackendRead<DashboardRecoveryResponse>; eventWatermarks: DashboardEventWatermarks } {
+  const currentRun = recovery.data.currentRun;
+  // Lifecycle monotonicity is enforced by rank, not by the generic envelope
+  // timestamp: a later-delivered nonterminal event must never regress an
+  // already terminal run, and the two terminal states share one rank so
+  // delivery order cannot switch between them.
+  if (currentRun && runLifecycleRank(event.run.status) <= runLifecycleRank(currentRun.status)) {
+    return { recovery, eventWatermarks };
+  }
+  return {
+    recovery: {
+      ...recovery,
+      data: { ...recovery.data, currentRun: event.run },
+    },
+    eventWatermarks: advanceProjectionWatermark(
+      eventWatermarks,
+      "runLifecycle",
+      durableRunLifecycleTimestamp(event.run) ?? event.occurredAt,
+    ),
+  };
+}
+
+type DemoRunLifecycleStatus = DemoRunSnapshot["status"];
+
+function runLifecycleRank(status: DemoRunLifecycleStatus): number {
+  switch (status) {
+    case "starting":
+      return 0;
+    case "active":
+      return 1;
+    case "draining":
+      return 2;
+    case "completed":
+    case "failed":
+      return 3;
+  }
+}
+
+function isTerminalRunStatus(status: DemoRunLifecycleStatus): boolean {
+  return status === "completed" || status === "failed";
+}
+
+function durableRunLifecycleTimestamp(run: DemoRunSnapshot | null | undefined): string | null {
+  if (!run) return null;
+  switch (run.status) {
+    case "starting":
+      return run.startedAt;
+    case "active":
+      return run.trafficStartedAt;
+    case "draining":
+      return run.trafficEndedAt;
+    case "completed":
+    case "failed":
+      return run.finalizedAt;
+  }
+}
+
+function isMatchingTerminalRunSignal(
+  recovery: DashboardRecoveryResponse,
+  event: DashboardEvent,
+): event is RunDashboardEvent {
+  if (!isRunDashboardEvent(event)) return false;
+  if (event.runId !== undefined && event.runId !== event.run.runId) return false;
+  if (!isTerminalRunStatus(event.run.status)) return false;
+  const currentRun = recovery.currentRun;
+  if (!currentRun || isTerminalRunStatus(currentRun.status)) return false;
+  if (event.run.runId !== currentRun.runId) return false;
+  if ((event.run.saleOfferId ?? null) !== (currentRun.saleOfferId ?? null)) return false;
+  return runLifecycleRank(event.run.status) > runLifecycleRank(currentRun.status);
 }
 
 function dashboardEventObservedAt(event: DashboardEvent): string {
@@ -313,8 +387,16 @@ function eventWatermarksForRecovery(
   recovery: BackendRead<DashboardRecoveryResponse>,
 ): DashboardEventWatermarks {
   const baseline = recovery.status === "available" ? recovery.data.recoveredAt : null;
+  // The run-lifecycle watermark comes from the durable transition timestamp of
+  // the recovered run snapshot, not from the generic recovery-start time: a
+  // recovery can read a still-draining run after finalization work has already
+  // begun, so recoveredAt must not mask a later-committed terminal transition.
+  const runLifecycleBaseline =
+    recovery.status === "available"
+      ? (durableRunLifecycleTimestamp(recovery.data.currentRun) ?? baseline)
+      : null;
   return {
-    runLifecycle: baseline,
+    runLifecycle: runLifecycleBaseline,
     inventory: baseline,
     queue: baseline,
     businessOutcome: baseline,
@@ -334,7 +416,11 @@ export function shouldRequestAuthoritativeRecoveryAfterScopedEvent(
   if (recovery.status !== "available") return false;
   const eventScope = classifyDashboardEventScope(recovery.data, event);
   if (eventScope === "rejected") return false;
-  return eventScope === "new-run" || shouldRequestAuthoritativeRecoveryAfterEvent(event);
+  if (eventScope === "new-run") return true;
+  // Only a terminal signal that matches the recovered run and actually advances
+  // its lifecycle justifies authoritative recovery; duplicate terminal events
+  // for an already terminal (or idle) client must not start a recovery loop.
+  return isMatchingTerminalRunSignal(recovery.data, event);
 }
 
 function classifyDashboardEventScope(
@@ -344,6 +430,9 @@ function classifyDashboardEventScope(
   if (isRunDashboardEvent(event) && event.runId !== undefined && event.runId !== event.run.runId) {
     return "rejected";
   }
+  // A matching terminal lifecycle signal committed after a stale recovery read
+  // must not be masked by the generic recovery-start watermark.
+  if (isMatchingTerminalRunSignal(recovery, event)) return "current";
   if (Date.parse(event.occurredAt) < Date.parse(recovery.recoveredAt)) return "rejected";
 
   const currentRunId = recovery.currentRun?.runId ?? null;

@@ -873,7 +873,8 @@ describe("Phase 6 dashboard behavior", () => {
     if (state.recovery.status !== "available") throw new Error("Expected available recovery.");
     expect(state.recovery.data.queue).toBeNull();
     expect(state.eventWatermarks.queue).toBe(timestamp(10));
-    expect(state.eventWatermarks.runLifecycle).toBe(timestamp(40));
+    // The run-lifecycle watermark tracks the durable terminal transition time.
+    expect(state.eventWatermarks.runLifecycle).toBe("2026-06-20T00:00:12.000Z");
   });
 
   it("applies independent projections older than a same-run lifecycle event", () => {
@@ -893,7 +894,125 @@ describe("Phase 6 dashboard behavior", () => {
     expect(state.recovery.data.businessOutcome?.acceptedReservations).toBe(25);
     expect(state.eventWatermarks.inventory).toBe(timestamp(10));
     expect(state.eventWatermarks.businessOutcome).toBe(timestamp(25));
-    expect(state.eventWatermarks.runLifecycle).toBe(timestamp(40));
+    // The run-lifecycle watermark tracks the durable terminal transition time.
+    expect(state.eventWatermarks.runLifecycle).toBe("2026-06-20T00:00:12.000Z");
+  });
+});
+
+describe("terminal overlap convergence", () => {
+  const recoveryStartT1 = "2026-06-20T00:00:30.000Z";
+  const finalizationAttemptT0 = "2026-06-20T00:00:20.000Z";
+
+  function staleDrainingRecovery() {
+    const drainingRun = runEventFixture("draining", runFixture()).run;
+    return availableRecovery({
+      ...recoveryFixture(),
+      scope: { runId: drainingRun.runId, saleOfferId: drainingRun.saleOfferId ?? null },
+      currentRun: drainingRun,
+      recoveredAt: recoveryStartT1,
+    });
+  }
+
+  it.each(["completed", "failed"] as const)(
+    "requests one authoritative recovery for a matching %s event older than the recovery watermark",
+    (terminalStatus) => {
+      const recovery = staleDrainingRecovery();
+      // The terminal transition committed after the t1 recovery read, but its
+      // envelope kept the t0 finalization-attempt clock value (t0 < t1).
+      const terminalEvent = runEventAt(terminalStatus, finalizationAttemptT0, runFixture());
+      expect(Date.parse(terminalEvent.occurredAt)).toBeLessThan(Date.parse(recoveryStartT1));
+
+      expect(shouldRequestAuthoritativeRecoveryAfterScopedEvent(recovery, terminalEvent)).toBe(true);
+
+      const next = applyDashboardEvent(recovery, terminalEvent);
+      if (next.status !== "available") throw new Error("Expected available recovery.");
+      expect(next.data.currentRun?.status).toBe(terminalStatus);
+      expect(next.data.currentRun?.runId).toBe(runFixture().runId);
+    },
+  );
+
+  it("ignores a terminal event for another run without requesting recovery", () => {
+    const recovery = staleDrainingRecovery();
+    const foreignTerminal = runEventAt("completed", timestamp(50), previousRunFixture());
+
+    expect(shouldRequestAuthoritativeRecoveryAfterScopedEvent(recovery, foreignTerminal)).toBe(false);
+    expect(applyDashboardEvent(recovery, foreignTerminal)).toBe(recovery);
+  });
+
+  it("ignores a terminal event for the same run but another sale offer", () => {
+    const recovery = staleDrainingRecovery();
+    const foreignSaleTerminal = runEventAt("completed", timestamp(50), {
+      ...runFixture(),
+      saleOfferId: previousRunFixture().saleOfferId ?? "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    });
+
+    expect(foreignSaleTerminal.run.runId).toBe(runFixture().runId);
+    expect(shouldRequestAuthoritativeRecoveryAfterScopedEvent(recovery, foreignSaleTerminal)).toBe(false);
+    expect(applyDashboardEvent(recovery, foreignSaleTerminal)).toBe(recovery);
+  });
+
+  it("does not request recovery again for a duplicate terminal event once terminal", () => {
+    const recovery = staleDrainingRecovery();
+    const firstTerminal = runEventAt("completed", finalizationAttemptT0, runFixture());
+    const applied = applyDashboardEvent(recovery, firstTerminal);
+    if (applied.status !== "available") throw new Error("Expected available recovery.");
+
+    const duplicate = runEventAt("completed", timestamp(50), runFixture());
+    expect(shouldRequestAuthoritativeRecoveryAfterScopedEvent(applied, duplicate)).toBe(false);
+    expect(applyDashboardEvent(applied, duplicate)).toBe(applied);
+  });
+
+  it("does not switch between terminal states based on delivery order", () => {
+    const recovery = staleDrainingRecovery();
+    const completed = applyDashboardEvent(
+      recovery,
+      runEventAt("completed", finalizationAttemptT0, runFixture()),
+    );
+
+    const lateFailed = runEventAt("failed", timestamp(50), runFixture());
+    expect(shouldRequestAuthoritativeRecoveryAfterScopedEvent(completed, lateFailed)).toBe(false);
+    const next = applyDashboardEvent(completed, lateFailed);
+    if (next.status !== "available") throw new Error("Expected available recovery.");
+    expect(next.data.currentRun?.status).toBe("completed");
+  });
+
+  it("does not request recovery for a terminal event while idle", () => {
+    const recovery = availableRecovery(recoveryFixture());
+    const terminalEvent = runEventAt("completed", timestamp(50), runFixture());
+
+    expect(shouldRequestAuthoritativeRecoveryAfterScopedEvent(recovery, terminalEvent)).toBe(false);
+    expect(applyDashboardEvent(recovery, terminalEvent)).toBe(recovery);
+  });
+
+  it("rejects a terminal-to-draining regression even with a newer envelope timestamp", () => {
+    const completedRun = runEventFixture("completed", runFixture()).run;
+    const recovery = availableRecovery({
+      ...recoveryFixture(),
+      scope: { runId: completedRun.runId, saleOfferId: completedRun.saleOfferId ?? null },
+      currentRun: completedRun,
+      recoveredAt: recoveryStartT1,
+    });
+    const regressive = runEventAt("draining", timestamp(50), runFixture());
+
+    expect(shouldRequestAuthoritativeRecoveryAfterScopedEvent(recovery, regressive)).toBe(false);
+    const next = applyDashboardEvent(recovery, regressive);
+    expect(next).toBe(recovery);
+    if (next.status !== "available") throw new Error("Expected available recovery.");
+    expect(next.data.currentRun?.status).toBe("completed");
+  });
+
+  it("still rejects stale metric events older than the recovery watermark", () => {
+    const recovery = staleDrainingRecovery();
+    const staleMetric = trafficMetricEventFixture({
+      runId: runFixture().runId,
+      occurredAt: "2026-06-20T00:00:20.000Z",
+      value: 99,
+    });
+
+    expect(shouldRequestAuthoritativeRecoveryAfterScopedEvent(recovery, staleMetric)).toBe(false);
+    const next = applyDashboardEvent(recovery, staleMetric);
+    if (next.status !== "available") throw new Error("Expected available recovery.");
+    expect(next.data.recentMetrics).toEqual([]);
   });
 });
 

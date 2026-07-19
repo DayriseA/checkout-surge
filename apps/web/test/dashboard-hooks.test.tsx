@@ -4,6 +4,7 @@ import {
   type DashboardEvent,
   type DashboardRecoveryResponse,
   dashboardEventsPath,
+  demoRunSnapshotSchema,
   errorPayloadSchema,
 } from "@checkout-surge/contracts";
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
@@ -320,6 +321,62 @@ describe("useDashboardRecovery", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(result.current.isRefreshing).toBe(false);
     expect(result.current.liveEventCount).toBe(1);
+  });
+
+  it("converges with exactly one recovery when a matching terminal event predates the recovery watermark", async () => {
+    const baseRun = runFixture(
+      "11111111-1111-4111-8111-111111111111",
+      "2026-06-20T00:00:00.000Z",
+    );
+    const drainingRun = demoRunSnapshotSchema.parse({
+      runId: baseRun.runId,
+      presetId: baseRun.presetId,
+      presetName: baseRun.presetName,
+      operatorMode: baseRun.operatorMode,
+      status: "draining",
+      trafficStatus: "succeeded",
+      saleOfferId: baseRun.saleOfferId,
+      startedAt: baseRun.startedAt,
+      trafficStartedAt: "2026-06-20T00:00:00.000Z",
+      trafficEndedAt: "2026-06-20T00:00:11.000Z",
+      configSnapshot: baseRun.configSnapshot,
+    });
+    // Finalization captured t0 before the t1 recovery read; the terminal
+    // commit landed after that stale read.
+    const finalizationAttemptT0 = "2026-06-20T00:00:12.000Z";
+    const recoveryStartT1 = "2026-06-20T00:00:30.000Z";
+    const terminalEvent: DashboardEvent = {
+      type: "load.run.updated",
+      runId: drainingRun.runId,
+      correlationId: "corr-terminal-overlap",
+      occurredAt: finalizationAttemptT0,
+      run: demoRunSnapshotSchema.parse({
+        ...drainingRun,
+        status: "completed",
+        finalizedAt: finalizationAttemptT0,
+      }),
+    };
+    const staleRecovery = {
+      ...recoveryFixture(recoveryStartT1),
+      scope: { runId: drainingRun.runId, saleOfferId: drainingRun.saleOfferId ?? null },
+      currentRun: drainingRun,
+    };
+    const authoritativeIdle = recoveryFixture("2026-06-20T00:00:31.000Z");
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(authoritativeIdle));
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = renderHook(() => useDashboardRecovery(available(staleRecovery)));
+
+    act(() => result.current.applyEvent(terminalEvent));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(result.current.recovery).toEqual(available(authoritativeIdle)));
+    expect(result.current.isRefreshing).toBe(false);
+
+    // Convergence is stable: a duplicate terminal signal must not loop recovery.
+    act(() => result.current.applyEvent(terminalEvent));
+    await act(async () => Promise.resolve());
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(result.current.recovery).toEqual(available(authoritativeIdle));
   });
 
   it("clears old-run projections immediately and serializes recovery after a new-run event", async () => {
