@@ -3,10 +3,16 @@ import { fileURLToPath } from "node:url";
 import {
   type DemoRunSnapshot,
   demoRunSnapshotSchema,
+  type TrafficDeliverySummary,
+  type TrafficHttpSummary,
+  type TransportAttemptCounts,
 } from "@checkout-surge/contracts";
 import {
   type CheckoutSurgeDatabase,
   createDatabaseConnection,
+  demoPresets,
+  demoRunFinalizations,
+  demoRuns,
   products,
   saleOffers,
 } from "@checkout-surge/db";
@@ -17,6 +23,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   DashboardRecoveryService,
   PostgresDashboardRecoveryContextReader,
+  PostgresDashboardTransportAccountingReader,
 } from "../src/services/dashboard-recovery-service.js";
 
 const now = new Date("2026-07-14T12:00:00.000Z");
@@ -47,6 +54,19 @@ describe("PostgresDashboardRecoveryContextReader integration", () => {
       isActive: true,
       purpose: "catalog",
     });
+    await connection.db.insert(demoPresets).values({
+      id: "33333333-3333-4333-8333-333333333333",
+      slug: "recovery-transport-accounting",
+      visibility: "admin",
+      isEditable: true,
+      display: {
+        name: "Recovery transport accounting",
+        description: "Transport accounting projection fixture.",
+        sortOrder: 1,
+        outcomeFocus: [],
+      },
+      ...configSnapshot(),
+    });
   });
 
   afterAll(async () => {
@@ -56,9 +76,153 @@ describe("PostgresDashboardRecoveryContextReader integration", () => {
   it("does not turn an active in-window catalog offer into recovery scope", async () => {
     if (!connection) throw new Error("Test database connection was not initialized.");
 
-    await expect(new PostgresDashboardRecoveryContextReader(connection.db).readContext()).resolves.toEqual(
-      { currentRun: null, saleOfferId: null },
-    );
+    await expect(
+      new PostgresDashboardRecoveryContextReader(connection.db).readContext(),
+    ).resolves.toEqual({ currentRun: null, saleOfferId: null });
+  });
+
+  it("projects canonical transport accounting from persisted completion evidence", async () => {
+    if (!connection) throw new Error("Test database connection was not initialized.");
+    const db = connection.db;
+    await db.insert(demoRuns).values({
+      id: runId,
+      presetId: "33333333-3333-4333-8333-333333333333",
+      presetName: "Preview 1k",
+      operatorMode: "public",
+      status: "draining",
+      trafficStatus: "succeeded",
+      saleOfferId,
+      configSnapshot: configSnapshot(),
+      startedAt: now,
+      trafficStartedAt: now,
+      trafficEndedAt: now,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(demoRunFinalizations).values({
+      runId,
+      exitCode: 0,
+      httpSummary: {
+        plannedRequests: 1_000,
+        startedRequests: 1_000,
+        completedRequests: 750,
+        interruptedRequests: 250,
+        unstartedRequests: 0,
+        failedRequests: 0,
+        acceptedResponses: 250,
+        soldOutResponses: 500,
+        unexpectedResponses: 0,
+        failureRate: 0,
+      },
+      trafficOutcomeSummary: {},
+      trafficDeliverySummary: {
+        plannedRequests: 1_000,
+        startedRequests: 1_000,
+        completedRequests: 750,
+        interruptedRequests: 250,
+        unstartedRequests: 0,
+        trafficMode: "buyer-spike",
+        plannedBuyers: 1_000,
+        scheduledRatePerSecond: null,
+        configuredDurationSeconds: null,
+        preAllocatedVUs: null,
+        maxVUs: null,
+        droppedIterations: 0,
+        completedIterations: 750,
+        trafficDeliveryStatus: "complete",
+        notes: [],
+      },
+      httpTimingBreakdownSummary: {},
+      loadRunDiagnosticsSummary: {},
+      apiRequestLifecycleSummary: {},
+      trafficSummaryReceivedAt: now,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const reader = new PostgresDashboardTransportAccountingReader(db);
+
+    await expect(reader.read(runId)).resolves.toEqual({
+      plannedRequests: 1_000,
+      startedRequests: 1_000,
+      completedRequests: 750,
+      interruptedRequests: 250,
+      unstartedRequests: 0,
+    });
+    await expect(reader.read("99999999-9999-4999-8999-999999999999")).resolves.toBeNull();
+  });
+
+  it("normalizes legacy emitted-era finalization rows when projecting transport accounting", async () => {
+    if (!connection) throw new Error("Test database connection was not initialized.");
+    const db = connection.db;
+    const legacyRunId = "44444444-4444-4444-8444-444444444444";
+    await db.insert(demoRuns).values({
+      id: legacyRunId,
+      presetId: "33333333-3333-4333-8333-333333333333",
+      presetName: "Preview 1k",
+      operatorMode: "public",
+      status: "failed",
+      trafficStatus: "failed",
+      saleOfferId: null,
+      configSnapshot: configSnapshot(),
+      startedAt: now,
+      trafficStartedAt: now,
+      trafficEndedAt: now,
+      finalizedAt: now,
+      failureReason: "legacy_traffic_failure",
+      createdAt: now,
+      updatedAt: now,
+    });
+    const legacyDeliverySummary = {
+      plannedRequests: 1_000,
+      emittedRequests: 750,
+      trafficMode: "buyer-spike",
+      plannedBuyers: 1_000,
+      scheduledRatePerSecond: null,
+      configuredDurationSeconds: null,
+      preAllocatedVUs: null,
+      maxVUs: null,
+      droppedIterations: 0,
+      completedIterations: 750,
+      unstartedIterations: 250,
+      requestShortfall: 250,
+      notes: [],
+    } as unknown as TrafficDeliverySummary;
+    const legacyHttpSummary = {
+      plannedRequests: 1_000,
+      emittedRequests: 750,
+      completedRequests: 750,
+      failedRequests: 0,
+      acceptedResponses: 250,
+      soldOutResponses: 500,
+      unexpectedResponses: 0,
+      failureRate: 0,
+    } as unknown as TrafficHttpSummary;
+    await db.insert(demoRunFinalizations).values({
+      runId: legacyRunId,
+      exitCode: 1,
+      httpSummary: legacyHttpSummary,
+      trafficOutcomeSummary: {},
+      trafficDeliverySummary: legacyDeliverySummary,
+      httpTimingBreakdownSummary: {},
+      loadRunDiagnosticsSummary: {},
+      apiRequestLifecycleSummary: {},
+      trafficSummaryReceivedAt: now,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    // The old producer never recorded interrupted traffic: legacy rows map to
+    // started = old emitted, completed = old emitted, interrupted = 0.
+    await expect(
+      new PostgresDashboardTransportAccountingReader(db).read(legacyRunId),
+    ).resolves.toEqual({
+      plannedRequests: 1_000,
+      startedRequests: 750,
+      completedRequests: 750,
+      interruptedRequests: 0,
+      unstartedRequests: 250,
+    });
   });
 });
 
@@ -66,9 +230,9 @@ describe("PostgresDashboardRecoveryContextReader", () => {
   it("returns no scope after the recoverable-run query finds no row", async () => {
     const database = controlledDatabase([]);
 
-    await expect(new PostgresDashboardRecoveryContextReader(database.db).readContext()).resolves.toEqual(
-      { currentRun: null, saleOfferId: null },
-    );
+    await expect(
+      new PostgresDashboardRecoveryContextReader(database.db).readContext(),
+    ).resolves.toEqual({ currentRun: null, saleOfferId: null });
     expect(database.select).toHaveBeenCalledTimes(1);
   });
 
@@ -111,6 +275,7 @@ describe("DashboardRecoveryService", () => {
       consistencyLag: null,
       recentCompletionOutcomes: [],
       recentMetrics: [],
+      transportAccounting: null,
       recoveredAt: now.toISOString(),
     });
     expect(harness.inventory).not.toHaveBeenCalled();
@@ -118,6 +283,7 @@ describe("DashboardRecoveryService", () => {
     expect(harness.lag).not.toHaveBeenCalled();
     expect(harness.completion).not.toHaveBeenCalled();
     expect(harness.metrics).not.toHaveBeenCalled();
+    expect(harness.transportAccounting).not.toHaveBeenCalled();
     expect(harness.queue).toHaveBeenCalledOnce();
     expect(harness.erp).toHaveBeenCalledOnce();
   });
@@ -186,6 +352,51 @@ describe("DashboardRecoveryService", () => {
     );
   });
 
+  it("exposes canonical transport accounting once traffic completion evidence exists", async () => {
+    const counts = {
+      plannedRequests: 1_000,
+      startedRequests: 1_000,
+      completedRequests: 750,
+      interruptedRequests: 250,
+      unstartedRequests: 0,
+    };
+    const harness = serviceHarness({ currentRun: runSnapshot(), saleOfferId }, undefined, {
+      transportAccounting: counts,
+    });
+
+    const recovery = await harness.service.getRecovery({ correlationId: "corr-draining" });
+
+    expect(harness.transportAccounting).toHaveBeenCalledWith(runId);
+    expect(recovery.transportAccounting).toEqual(counts);
+  });
+
+  it("keeps transport accounting null while no completion evidence is available", async () => {
+    const harness = serviceHarness({ currentRun: runSnapshot(), saleOfferId }, undefined, {
+      transportAccounting: null,
+    });
+
+    const recovery = await harness.service.getRecovery({ correlationId: "corr-active" });
+
+    expect(harness.transportAccounting).toHaveBeenCalledWith(runId);
+    expect(recovery.transportAccounting).toBeNull();
+  });
+
+  it("degrades a transport accounting read failure to null without losing the scope", async () => {
+    const projectionError = new Error("transport accounting unavailable");
+    const harness = serviceHarness({ currentRun: runSnapshot(), saleOfferId }, undefined, {
+      transportAccountingError: projectionError,
+    });
+
+    const recovery = await harness.service.getRecovery({ correlationId: "corr-ta-failure" });
+
+    expect(recovery.scope).toEqual({ runId, saleOfferId });
+    expect(recovery.transportAccounting).toBeNull();
+    expect(harness.loggerWarn).toHaveBeenCalledWith(
+      { err: projectionError, projection: "dashboard_transport_accounting" },
+      "Dashboard recovery projection unavailable.",
+    );
+  });
+
   it("settles a never-ending projection on abort and closes operation resources", async () => {
     const close = vi.fn();
     const controller = new AbortController();
@@ -249,7 +460,11 @@ function databaseRun(overrides: Partial<Record<string, unknown>> = {}) {
 function serviceHarness(
   context: { currentRun: DemoRunSnapshot | null; saleOfferId: string | null } | null,
   contextError?: Error,
-  options: { lagError?: Error } = {},
+  options: {
+    lagError?: Error;
+    transportAccounting?: TransportAttemptCounts | null;
+    transportAccountingError?: Error;
+  } = {},
 ) {
   const inventory = vi.fn(async () => null);
   const business = vi.fn(async () => null);
@@ -258,6 +473,9 @@ function serviceHarness(
     : vi.fn(async () => null);
   const completion = vi.fn(async () => []);
   const metrics = vi.fn(async () => []);
+  const transportAccounting = options.transportAccountingError
+    ? vi.fn(async () => Promise.reject(options.transportAccountingError))
+    : vi.fn(async () => options.transportAccounting ?? null);
   const queue = vi.fn(async () => null);
   const erp = vi.fn(async () => null);
   const loggerWarn = vi.fn();
@@ -274,6 +492,7 @@ function serviceHarness(
     queueStatusService: { getStatus: queue } as never,
     erpStatusService: { getStatus: erp } as never,
     trafficMetricReader: { readRecent: metrics },
+    transportAccountingReader: { read: transportAccounting },
     logger: { warn: loggerWarn } as never,
     now: () => now,
   });
@@ -284,6 +503,7 @@ function serviceHarness(
     lag,
     completion,
     metrics,
+    transportAccounting,
     queue,
     erp,
     loggerWarn,

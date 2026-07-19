@@ -9,11 +9,12 @@ import {
   adminMaintenanceCleanupRunsResponseSchema,
   type BusinessOutcomeSummary,
   emptyHttpTimingBreakdownSummary,
+  normalizeLegacyApiRequestLifecycleSummaryJson,
+  normalizeLegacyLoadRunDiagnosticsSummaryJson,
   type TerminalInventorySnapshot,
   type TrafficConfig,
   type TrafficDeliverySummary,
   type TrafficHttpSummary,
-  trafficHttpSummarySchema,
 } from "@checkout-surge/contracts";
 import {
   type CheckoutSurgeDatabase,
@@ -41,7 +42,10 @@ import type {
   TerminalDemoRunSummaryInput,
   TerminalDemoRunWriter,
 } from "./terminal-demo-run-writer.js";
-import { normalizeTrafficDeliverySummary } from "./traffic-delivery-classifier.js";
+import {
+  normalizePersistedTrafficHttpSummary,
+  normalizeTrafficDeliverySummary,
+} from "./traffic-delivery-classifier.js";
 import { syntheticTrafficDeliverySummary } from "./traffic-delivery-plan.js";
 
 export interface QueueCleanupSummary {
@@ -774,13 +778,16 @@ function adminResetTrafficSummary(
 } {
   if (finalization) {
     return {
-      httpSummary: trafficHttpSummarySchema.parse(finalization.httpSummary),
-      trafficDeliverySummary: normalizeTrafficDeliverySummary(
-        finalization.trafficDeliverySummary,
-      ),
+      httpSummary: normalizePersistedTrafficHttpSummary(finalization.httpSummary),
+      trafficDeliverySummary: normalizeTrafficDeliverySummary(finalization.trafficDeliverySummary),
       httpTimingBreakdownSummary: finalization.httpTimingBreakdownSummary,
-      loadRunDiagnosticsSummary: finalization.loadRunDiagnosticsSummary,
-      apiRequestLifecycleSummary: finalization.apiRequestLifecycleSummary,
+      loadRunDiagnosticsSummary: normalizeLegacyLoadRunDiagnosticsSummaryJson(
+        finalization.loadRunDiagnosticsSummary,
+      ),
+      apiRequestLifecycleSummary: normalizeLegacyApiRequestLifecycleSummaryJson(
+        finalization.apiRequestLifecycleSummary,
+        finalization.httpSummary.plannedRequests,
+      ),
     };
   }
 
@@ -806,8 +813,10 @@ function failedBeforeTrafficCompletionSummary(config: AcceptedRunConfigSnapshot)
   return {
     httpSummary: {
       plannedRequests,
-      emittedRequests: 0,
+      startedRequests: 0,
       completedRequests: 0,
+      interruptedRequests: 0,
+      unstartedRequests: plannedRequests,
       failedRequests: 0,
       acceptedResponses: 0,
       soldOutResponses: 0,

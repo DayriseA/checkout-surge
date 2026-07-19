@@ -12,6 +12,10 @@ import {
   uuidSchema,
 } from "./primitives.js";
 import { orderProcessBullMqQueueName, orderProcessQueueName } from "./queue.js";
+import {
+  refineTransportAttemptCounts,
+  transportAttemptCountsShape,
+} from "./traffic-transport-counts.js";
 
 export const trafficExecutionStartPath = "/traffic/start" as const;
 export const trafficExecutionAbortPath = "/traffic/current/abort" as const;
@@ -248,9 +252,7 @@ export type TrafficCompletionAcknowledgement = z.infer<
 
 export const trafficHttpSummarySchema = z
   .object({
-    plannedRequests: nonnegativeIntegerSchema,
-    emittedRequests: nonnegativeIntegerSchema,
-    completedRequests: nonnegativeIntegerSchema,
+    ...transportAttemptCountsShape,
     failedRequests: nonnegativeIntegerSchema,
     acceptedResponses: nonnegativeIntegerSchema,
     soldOutResponses: nonnegativeIntegerSchema,
@@ -258,12 +260,12 @@ export const trafficHttpSummarySchema = z
     p95LatencyMs: nonnegativeNumberSchema.optional(),
     failureRate: percentageSchema,
   })
-  .strict();
+  .strict()
+  .superRefine(refineTransportAttemptCounts);
 export type TrafficHttpSummary = z.infer<typeof trafficHttpSummarySchema>;
 
 const trafficDeliveryEvidenceShape = {
-  plannedRequests: nonnegativeIntegerSchema,
-  emittedRequests: nonnegativeIntegerSchema,
+  ...transportAttemptCountsShape,
   trafficMode: z.enum(["buyer-spike", "steady-arrival-rate"]).nullable().optional(),
   plannedBuyers: positiveIntegerSchema.nullable().optional(),
   scheduledRatePerSecond: positiveIntegerSchema.nullable().optional(),
@@ -272,8 +274,6 @@ const trafficDeliveryEvidenceShape = {
   maxVUs: positiveIntegerSchema.nullable().optional(),
   droppedIterations: nonnegativeIntegerSchema,
   completedIterations: nonnegativeIntegerSchema.nullable().optional(),
-  unstartedIterations: nonnegativeIntegerSchema.nullable().optional(),
-  requestShortfall: nonnegativeIntegerSchema.nullable().optional(),
   notes: z.array(z.string().trim().min(1)).default([]),
 };
 
@@ -283,13 +283,14 @@ export const trafficDeliveryEvidenceSchema = z
     ...trafficDeliveryEvidenceShape,
     trafficDeliveryStatus: trafficDeliveryStatusSchema.optional(),
   })
-  .strict();
+  .strict()
+  .superRefine(refineTransportAttemptCounts);
 export type TrafficDeliveryEvidence = z.infer<typeof trafficDeliveryEvidenceSchema>;
 
 /** Real completion input. Quality is classified by the API, not the caller. */
-export const trafficCompletionDeliverySummarySchema = trafficDeliveryEvidenceSchema
-  .omit({ trafficDeliveryStatus: true })
-  .safeExtend({
+export const trafficCompletionDeliverySummarySchema = z
+  .object({
+    ...transportAttemptCountsShape,
     plannedRequests: positiveIntegerSchema,
     trafficMode: z.enum(["buyer-spike", "steady-arrival-rate"]),
     plannedBuyers: positiveIntegerSchema.nullable(),
@@ -297,27 +298,36 @@ export const trafficCompletionDeliverySummarySchema = trafficDeliveryEvidenceSch
     configuredDurationSeconds: positiveIntegerSchema.nullable(),
     preAllocatedVUs: positiveIntegerSchema.nullable(),
     maxVUs: positiveIntegerSchema.nullable(),
-  });
+    droppedIterations: nonnegativeIntegerSchema,
+    completedIterations: nonnegativeIntegerSchema.nullable().optional(),
+    notes: z.array(z.string().trim().min(1)).default([]),
+  })
+  .strict()
+  .superRefine(refineTransportAttemptCounts);
 export type TrafficCompletionDeliverySummary = z.infer<
   typeof trafficCompletionDeliverySummarySchema
 >;
 
+/** Field map of the authoritative persisted/history delivery summary. */
+export const trafficDeliverySummaryShape = {
+  ...transportAttemptCountsShape,
+  trafficMode: z.enum(["buyer-spike", "steady-arrival-rate"]).nullable().default(null),
+  plannedBuyers: positiveIntegerSchema.nullable().default(null),
+  scheduledRatePerSecond: positiveIntegerSchema.nullable().default(null),
+  configuredDurationSeconds: positiveIntegerSchema.nullable().default(null),
+  preAllocatedVUs: positiveIntegerSchema.nullable().default(null),
+  maxVUs: positiveIntegerSchema.nullable().default(null),
+  droppedIterations: nonnegativeIntegerSchema,
+  completedIterations: nonnegativeIntegerSchema.nullable().default(null),
+  notes: z.array(z.string().trim().min(1)).default([]),
+  trafficDeliveryStatus: trafficDeliveryStatusSchema,
+} as const;
+
 /** Authoritative persisted/history shape. The API-derived status is always present. */
 export const trafficDeliverySummarySchema = z
-  .object({
-    ...trafficDeliveryEvidenceShape,
-    trafficMode: z.enum(["buyer-spike", "steady-arrival-rate"]).nullable().default(null),
-    plannedBuyers: positiveIntegerSchema.nullable().default(null),
-    scheduledRatePerSecond: positiveIntegerSchema.nullable().default(null),
-    configuredDurationSeconds: positiveIntegerSchema.nullable().default(null),
-    preAllocatedVUs: positiveIntegerSchema.nullable().default(null),
-    maxVUs: positiveIntegerSchema.nullable().default(null),
-    completedIterations: nonnegativeIntegerSchema.nullable().default(null),
-    unstartedIterations: nonnegativeIntegerSchema.nullable().default(null),
-    requestShortfall: nonnegativeIntegerSchema.nullable().default(null),
-    trafficDeliveryStatus: trafficDeliveryStatusSchema,
-  })
-  .strict();
+  .object(trafficDeliverySummaryShape)
+  .strict()
+  .superRefine(refineTransportAttemptCounts);
 export type TrafficDeliverySummary = z.infer<typeof trafficDeliverySummarySchema>;
 
 export const loadExecutionPlanSchema = z
@@ -382,7 +392,7 @@ export type TerminalMetricSource = z.infer<typeof terminalMetricSourceSchema>;
 
 export const terminalMetricSourcesSchema = z
   .object({
-    emittedRequests: terminalMetricSourceSchema.nullable(),
+    startedRequests: terminalMetricSourceSchema.nullable(),
     completedRequests: terminalMetricSourceSchema.nullable(),
     acceptedResponses: terminalMetricSourceSchema.nullable(),
     soldOutResponses: terminalMetricSourceSchema.nullable(),
@@ -525,6 +535,26 @@ export const realLoadRunDiagnosticsSummarySchema = loadRunDiagnosticsSummarySche
 });
 export type RealLoadRunDiagnosticsSummary = z.infer<typeof realLoadRunDiagnosticsSummarySchema>;
 
+/** Strict request-lifecycle accounting emitted by a real traffic completion. */
+export const trafficCompletionApiRequestLifecycleSummarySchema = z
+  .object({
+    ...transportAttemptCountsShape,
+    failedRequests: nonnegativeIntegerSchema,
+  })
+  .strict()
+  .superRefine(refineTransportAttemptCounts);
+export type TrafficCompletionApiRequestLifecycleSummary = z.infer<
+  typeof trafficCompletionApiRequestLifecycleSummarySchema
+>;
+
+const transportAttemptCountFieldNames = [
+  "plannedRequests",
+  "startedRequests",
+  "completedRequests",
+  "interruptedRequests",
+  "unstartedRequests",
+] as const;
+
 export const trafficCompletionReportSchema = z
   .object({
     runId: uuidSchema,
@@ -536,7 +566,7 @@ export const trafficCompletionReportSchema = z
     trafficDeliverySummary: trafficCompletionDeliverySummarySchema,
     httpTimingBreakdownSummary: httpTimingBreakdownSummarySchema,
     loadRunDiagnosticsSummary: realLoadRunDiagnosticsSummarySchema,
-    apiRequestLifecycleSummary: jsonObjectSchema,
+    apiRequestLifecycleSummary: trafficCompletionApiRequestLifecycleSummarySchema,
     completedAt: isoTimestampSchema,
     correlationId: correlationIdSchema,
   })
@@ -569,7 +599,7 @@ export const trafficCompletionReportSchema = z
             preAllocatedVUs: plan.preAllocatedVus,
             maxVUs: plan.maxVus,
           };
-    const mismatches: Array<[string, unknown, unknown]> = [
+    const executionPlanMismatches: Array<[string, unknown, unknown]> = [
       [
         "httpSummary.plannedRequests",
         value.httpSummary.plannedRequests,
@@ -580,11 +610,6 @@ export const trafficCompletionReportSchema = z
         delivery.plannedRequests,
         plan.plannedEmittedAttempts,
       ],
-      [
-        "trafficDeliverySummary.emittedRequests",
-        delivery.emittedRequests,
-        value.httpSummary.emittedRequests,
-      ],
       ...Object.entries(expectedDeliveryIdentity).map(
         ([field, expected]) =>
           [
@@ -594,12 +619,29 @@ export const trafficCompletionReportSchema = z
           ] as [string, unknown, unknown],
       ),
     ];
-    for (const [path, actual, expected] of mismatches) {
+    for (const [path, actual, expected] of executionPlanMismatches) {
       if (actual !== expected) {
         context.addIssue({
           code: "custom",
           path: path.split("."),
           message: "must match the reported execution plan",
+        });
+      }
+    }
+
+    for (const field of transportAttemptCountFieldNames) {
+      if (delivery[field] !== value.httpSummary[field]) {
+        context.addIssue({
+          code: "custom",
+          path: ["trafficDeliverySummary", field],
+          message: `must match httpSummary.${field}`,
+        });
+      }
+      if (value.apiRequestLifecycleSummary[field] !== value.httpSummary[field]) {
+        context.addIssue({
+          code: "custom",
+          path: ["apiRequestLifecycleSummary", field],
+          message: `must match httpSummary.${field}`,
         });
       }
     }

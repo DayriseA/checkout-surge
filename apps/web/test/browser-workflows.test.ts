@@ -9,8 +9,8 @@ import {
   type DemoPresetContract,
   type DemoRunSnapshot,
   demoRunSnapshotSchema,
-  errorPayloadSchema,
   type ErpChaosStatus,
+  errorPayloadSchema,
   type HealthResponse,
   type LivenessResponse,
   type PublicPresetListResponse,
@@ -559,6 +559,7 @@ function dashboardRecoveryFixture(
     erp: null,
     businessOutcome: null,
     consistencyLag: null,
+    transportAccounting: null,
     recentCompletionOutcomes: [],
     recoveredAt: "2026-06-20T00:00:10.000Z",
     ...overrides,
@@ -712,11 +713,7 @@ function demoRunFixture(overrides: Partial<DemoRunSnapshot> = {}): DemoRunSnapsh
     operatorMode: "public",
     status,
     trafficStatus:
-      status === "starting"
-        ? "starting"
-        : status === "active"
-          ? "active"
-          : "succeeded",
+      status === "starting" ? "starting" : status === "active" ? "active" : "succeeded",
     saleOfferId: "22222222-2222-4222-8222-222222222222",
     configSnapshot: configSnapshotFixture(),
     startedAt: "2026-06-20T00:00:10.000Z",
@@ -771,8 +768,10 @@ function runHistorySummaryFixture(
     endedAt: "2026-06-20T00:00:10.000Z",
     httpSummary: {
       plannedRequests: 10,
-      emittedRequests: 10,
+      startedRequests: 10,
       completedRequests: 10,
+      interruptedRequests: 0,
+      unstartedRequests: 0,
       failedRequests: 0,
       acceptedResponses: 6,
       soldOutResponses: 4,
@@ -782,7 +781,10 @@ function runHistorySummaryFixture(
     },
     trafficDeliverySummary: {
       plannedRequests: 10,
-      emittedRequests: 10,
+      startedRequests: 10,
+      completedRequests: 10,
+      interruptedRequests: 0,
+      unstartedRequests: 0,
       trafficMode: null,
       plannedBuyers: null,
       scheduledRatePerSecond: null,
@@ -791,8 +793,6 @@ function runHistorySummaryFixture(
       maxVUs: null,
       droppedIterations: 0,
       completedIterations: null,
-      unstartedIterations: null,
-      requestShortfall: 0,
       trafficDeliveryStatus: "complete",
       notes: [],
     },
@@ -826,13 +826,18 @@ function runHistoryDetailFixture(): RunHistoryDetailResponse {
   const summary = runHistorySummaryFixture();
   const { id: _id, terminalInventorySnapshot, ...publicSummary } = summary;
   const sanitizedInventory = terminalInventorySnapshot
-    ? (({ saleOfferId: _saleOfferId, source: _inventorySource, ...inventory }) => inventory)(terminalInventorySnapshot)
+    ? (({ saleOfferId: _saleOfferId, source: _inventorySource, ...inventory }) => inventory)(
+        terminalInventorySnapshot,
+      )
     : undefined;
-  const { notes: _deliveryNotes, ...publicDeliverySummary } =
-    publicSummary.trafficDeliverySummary;
+  const { notes: _deliveryNotes, ...publicDeliverySummary } = publicSummary.trafficDeliverySummary;
 
   return {
-    summary: { ...publicSummary, trafficDeliverySummary: publicDeliverySummary, ...(sanitizedInventory ? { terminalInventorySnapshot: sanitizedInventory } : {}) },
+    summary: {
+      ...publicSummary,
+      trafficDeliverySummary: publicDeliverySummary,
+      ...(sanitizedInventory ? { terminalInventorySnapshot: sanitizedInventory } : {}),
+    },
     run: {
       runId: summary.runId,
       presetName: summary.presetName,

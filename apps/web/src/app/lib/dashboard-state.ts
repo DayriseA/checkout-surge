@@ -273,7 +273,11 @@ function applyMetricObservation(
         ...recovery,
         data: {
           ...current,
-          inventory: { ...current.inventory, remainingStock: event.value, lastUpdatedAt: event.observedAt },
+          inventory: {
+            ...current.inventory,
+            remainingStock: event.value,
+            lastUpdatedAt: event.observedAt,
+          },
         },
       },
     };
@@ -311,7 +315,10 @@ function applyMetricObservation(
       applied: true,
       recovery: {
         ...recovery,
-        data: { ...current, queue: { ...current.queue, depth: event.value, updatedAt: event.observedAt } },
+        data: {
+          ...current,
+          queue: { ...current.queue, depth: event.value, updatedAt: event.observedAt },
+        },
       },
     };
   }
@@ -324,7 +331,12 @@ function applyMetricObservation(
         ...current,
         recentMetrics: [
           ...current.recentMetrics.slice(-19),
-          { metricName: event.metricName, value: event.value, unit: event.unit, timestamp: event.observedAt },
+          {
+            metricName: event.metricName,
+            value: event.value,
+            unit: event.unit,
+            timestamp: event.observedAt,
+          },
         ],
       },
     },
@@ -507,18 +519,22 @@ function orderAdvisoryStateForRecovery(
   return {
     recentOrderStates:
       recovery.status === "available"
-        ? newestOrderStates(recovery.data.recentCompletionOutcomes.flatMap((outcome) => {
-            const occurredAt = recoveredOrderStatusOccurredAt(outcome);
-            return occurredAt
-              ? [{
-                  orderId: outcome.orderId,
-                  publicOrderId: outcome.publicOrderId,
-                  status: outcome.orderStatus,
-                  occurredAt,
-                  correlationId: outcome.correlationId,
-                }]
-              : [];
-          }))
+        ? newestOrderStates(
+            recovery.data.recentCompletionOutcomes.flatMap((outcome) => {
+              const occurredAt = recoveredOrderStatusOccurredAt(outcome);
+              return occurredAt
+                ? [
+                    {
+                      orderId: outcome.orderId,
+                      publicOrderId: outcome.publicOrderId,
+                      status: outcome.orderStatus,
+                      occurredAt,
+                      correlationId: outcome.correlationId,
+                    },
+                  ]
+                : [];
+            }),
+          )
         : [],
     recentOrderLagSamples: [],
     seenOrderEventIds: [],
@@ -542,16 +558,30 @@ function recoveredOrderStatusOccurredAt(
 
 function applyOrderRealtimeEvent(state: DashboardState, event: DashboardEvent): DashboardState {
   if (event.type !== "order.status.updated" && !isOrderLagMetric(event)) return state;
-  if (state.recovery.status !== "available" || classifyDashboardEventScope(state.recovery.data, event) !== "current") return state;
+  if (
+    state.recovery.status !== "available" ||
+    classifyDashboardEventScope(state.recovery.data, event) !== "current"
+  )
+    return state;
   if (state.seenOrderEventIds.includes(event.eventId)) return state;
   const seenOrderEventIds = [...state.seenOrderEventIds.slice(-99), event.eventId];
   if (isOrderLagMetric(event)) {
-    const sample = { eventId: event.eventId, orderId: event.orderId, publicOrderId: event.publicOrderId, valueMs: event.value, observedAt: event.observedAt };
+    const sample = {
+      eventId: event.eventId,
+      orderId: event.orderId,
+      publicOrderId: event.publicOrderId,
+      valueMs: event.value,
+      observedAt: event.observedAt,
+    };
     return {
       ...state,
       seenOrderEventIds,
       recentOrderLagSamples: [...state.recentOrderLagSamples, sample]
-        .sort((left, right) => Date.parse(left.observedAt) - Date.parse(right.observedAt) || left.eventId.localeCompare(right.eventId))
+        .sort(
+          (left, right) =>
+            Date.parse(left.observedAt) - Date.parse(right.observedAt) ||
+            left.eventId.localeCompare(right.eventId),
+        )
         .slice(-20),
     };
   }
@@ -578,7 +608,11 @@ function applyOrderRealtimeEvent(state: DashboardState, event: DashboardEvent): 
 
 function newestOrderStates(states: RecentOrderState[]): RecentOrderState[] {
   return [...states]
-    .sort((left, right) => Date.parse(left.occurredAt) - Date.parse(right.occurredAt) || left.orderId.localeCompare(right.orderId))
+    .sort(
+      (left, right) =>
+        Date.parse(left.occurredAt) - Date.parse(right.occurredAt) ||
+        left.orderId.localeCompare(right.orderId),
+    )
     .slice(-20);
 }
 
@@ -590,9 +624,12 @@ function isRunDashboardEvent(event: DashboardEvent): event is RunDashboardEvent 
   return event.type === "load.run.updated";
 }
 
-function isOrderLagMetric(
-  event: DashboardEvent,
-): event is Extract<DashboardEvent, { type: "dashboard.metric.observed" }> & { metricName: "order.consistency_lag" } {
+function isOrderLagMetric(event: DashboardEvent): event is Extract<
+  DashboardEvent,
+  { type: "dashboard.metric.observed" }
+> & {
+  metricName: "order.consistency_lag";
+} {
   return event.type === "dashboard.metric.observed" && event.metricName === "order.consistency_lag";
 }
 
@@ -615,6 +652,7 @@ function recoveryForIncomingRun(
       erp: null,
       businessOutcome: null,
       consistencyLag: null,
+      transportAccounting: null,
       recentCompletionOutcomes: [],
       recoveredAt: event.occurredAt,
     },

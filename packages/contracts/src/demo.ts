@@ -22,6 +22,7 @@ import {
   inventoryConfigSchema,
   trafficConfigSchema,
   trafficDeliverySummarySchema,
+  trafficDeliverySummaryShape,
   trafficHttpSummarySchema,
 } from "./load.js";
 import {
@@ -39,6 +40,10 @@ import {
   simulatedNotificationChannelSchema,
   simulatedNotificationStatusSchema,
 } from "./queue.js";
+import {
+  refineTransportAttemptCounts,
+  transportAttemptCountsSchema,
+} from "./traffic-transport-counts.js";
 
 export const publicPresetListPath = "/demo/presets/public" as const;
 export const publicRuntimePolicyPath = "/demo/runtime-policy" as const;
@@ -359,6 +364,13 @@ export const dashboardRecoveryResponseSchema = z
     businessOutcome: businessOutcomeSummarySchema.nullable(),
     consistencyLag: consistencyLagSummarySchema.nullable(),
     recentCompletionOutcomes: z.array(completionOutcomeSchema).default([]),
+    /**
+     * Terminal transport-attempt accounting for the selected current run,
+     * projected from the run's traffic-completion evidence. It is `null` while
+     * no completion evidence is available (for example while traffic is still
+     * starting or executing).
+     */
+    transportAccounting: transportAttemptCountsSchema.nullable().default(null),
     recoveredAt: isoTimestampSchema,
   })
   .strict()
@@ -535,6 +547,14 @@ const publicTerminalInventorySnapshotSchema = terminalInventorySnapshotSchema
   .omit({ saleOfferId: true, source: true })
   .strict();
 
+const { notes: _internalDeliveryNotes, ...publicTrafficDeliverySummaryShape } =
+  trafficDeliverySummaryShape;
+
+const publicTrafficDeliverySummarySchema = z
+  .object(publicTrafficDeliverySummaryShape)
+  .strict()
+  .superRefine(refineTransportAttemptCounts);
+
 export const publicRunHistorySummarySchema = z
   .object({
     runId: uuidSchema,
@@ -543,7 +563,7 @@ export const publicRunHistorySummarySchema = z
     startedAt: isoTimestampSchema.optional(),
     endedAt: isoTimestampSchema,
     httpSummary: trafficHttpSummarySchema,
-    trafficDeliverySummary: trafficDeliverySummarySchema.omit({ notes: true }).strict(),
+    trafficDeliverySummary: publicTrafficDeliverySummarySchema,
     businessOutcomeSummary: businessOutcomeSummarySchema,
     terminalInventorySnapshot: publicTerminalInventorySnapshotSchema.optional(),
     capturedAt: isoTimestampSchema,

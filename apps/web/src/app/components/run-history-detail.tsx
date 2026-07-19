@@ -1,6 +1,7 @@
 import type {
   AdminRunHistoryDetailResponse,
   PublicRunHistoryDetailResponse,
+  TrafficHttpSummary,
 } from "@checkout-surge/contracts";
 import { StatusPill } from "./status-pill";
 
@@ -51,18 +52,7 @@ export function AdminRunHistoryDetail({ detail }: RunHistoryDetailProps) {
             ]}
             title="Lifecycle"
           />
-          <FactList
-            facts={[
-              ["Planned", formatNumber(summary.httpSummary.plannedRequests)],
-              ["Emitted", formatNumber(summary.httpSummary.emittedRequests)],
-              ["Completed", formatNumber(summary.httpSummary.completedRequests)],
-              ["Accepted", formatNumber(summary.httpSummary.acceptedResponses)],
-              ["Sold out", formatNumber(summary.httpSummary.soldOutResponses)],
-              ["Unexpected", formatNumber(summary.httpSummary.unexpectedResponses)],
-              ["p95 latency", nullableMs(summary.httpSummary.p95LatencyMs)],
-            ]}
-            title="Traffic"
-          />
+          <FactList facts={trafficAccountingFacts(summary.httpSummary)} title="Traffic" />
           <FactList
             facts={[
               ["Reservations", formatNumber(summary.businessOutcomeSummary.acceptedReservations)],
@@ -324,7 +314,7 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
             tone={summary.status === "completed" ? "ok" : "blocked"}
           />
         </div>
-        <div className="mt-4 grid grid-cols-3 gap-4 max-[900px]:grid-cols-1">
+        <div className="mt-4 grid grid-cols-4 gap-4 max-[1100px]:grid-cols-2 max-[700px]:grid-cols-1">
           <FactList
             title="Lifecycle"
             facts={[
@@ -335,6 +325,7 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
               ["Captured", formatDate(summary.capturedAt)],
             ]}
           />
+          <FactList title="Traffic" facts={trafficAccountingFacts(summary.httpSummary)} />
           <FactList
             title="Order aggregates"
             facts={[
@@ -380,6 +371,20 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
 
 function nullableMetricMs(value: number | null): string {
   return value === null ? "n/a" : `${formatNumber(value)}ms`;
+}
+
+function trafficAccountingFacts(summary: TrafficHttpSummary): Array<[string, string]> {
+  return [
+    ["Planned", formatNumber(summary.plannedRequests)],
+    ["Started", formatNumber(summary.startedRequests)],
+    ["Responses completed", formatNumber(summary.completedRequests)],
+    ["Interrupted", formatNumber(summary.interruptedRequests)],
+    ["Unstarted", formatNumber(summary.unstartedRequests)],
+    ["Accepted", formatNumber(summary.acceptedResponses)],
+    ["Sold out", formatNumber(summary.soldOutResponses)],
+    ["Unexpected", formatNumber(summary.unexpectedResponses)],
+    ["p95 latency", nullableMs(summary.p95LatencyMs)],
+  ];
 }
 
 function formatNumber(value: number): string {

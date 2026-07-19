@@ -331,6 +331,7 @@ export function RequestSurgePanel({
 }) {
   const data = recoveryData(recovery);
   const inventory = data?.inventory ?? null;
+  const transportAccounting = data?.transportAccounting ?? null;
   const latestMetric = data?.recentMetrics.at(-1) ?? null;
   const requestRateMetric = data
     ? findLatestMetric(
@@ -409,6 +410,26 @@ export function RequestSurgePanel({
             Shared 1-second producer event-time window; latency is the window mean and failures are
             the fraction of valid HTTP failure observations.
           </p>
+          {transportAccounting ? (
+            <dl className={factGridClassName}>
+              <Fact label="Planned" value={formatNumber(transportAccounting.plannedRequests)} />
+              <Fact label="Started" value={formatNumber(transportAccounting.startedRequests)} />
+              <Fact
+                label="Responses completed"
+                value={formatNumber(transportAccounting.completedRequests)}
+              />
+              <Fact
+                label="Interrupted"
+                value={formatNumber(transportAccounting.interruptedRequests)}
+              />
+              <Fact label="Unstarted" value={formatNumber(transportAccounting.unstartedRequests)} />
+            </dl>
+          ) : (
+            <p className="mb-0 mt-3 text-xs leading-5 text-muted">
+              Terminal transport accounting appears here once traffic completion evidence is
+              recorded.
+            </p>
+          )}
         </>
       ) : (
         <UnavailableState read={recovery} />
@@ -605,12 +626,18 @@ export function ConsistencyLagPanel({
           <Fact label="Confirmed" value={formatNumber(lag.confirmedOrderCount)} />
           <Fact label="Measured" value={formatTime(lag.measuredAt)} />
           {latestOrderLag ? (
-            <Fact label="Latest individual order" value={`${formatMilliseconds(latestOrderLag.valueMs)} · ${latestOrderLag.publicOrderId}`} />
+            <Fact
+              label="Latest individual order"
+              value={`${formatMilliseconds(latestOrderLag.valueMs)} · ${latestOrderLag.publicOrderId}`}
+            />
           ) : null}
         </dl>
       ) : latestOrderLag ? (
         <dl className={factGridClassName}>
-          <Fact label="Latest individual order" value={`${formatMilliseconds(latestOrderLag.valueMs)} · ${latestOrderLag.publicOrderId}`} />
+          <Fact
+            label="Latest individual order"
+            value={`${formatMilliseconds(latestOrderLag.valueMs)} · ${latestOrderLag.publicOrderId}`}
+          />
           <Fact label="Observed" value={formatTime(latestOrderLag.observedAt)} />
         </dl>
       ) : (
@@ -661,9 +688,20 @@ export function RunOutcomesPanel({
 export function RecentOrderTransitionsPanel({
   orders,
 }: {
-  orders: Array<{ orderId: string; publicOrderId: string; status: "queued" | "processing" | "confirmed" | "failed"; occurredAt: string }>;
+  orders: Array<{
+    orderId: string;
+    publicOrderId: string;
+    status: "queued" | "processing" | "confirmed" | "failed";
+    occurredAt: string;
+  }>;
 }) {
-  const recent = [...orders].sort((left, right) => Date.parse(right.occurredAt) - Date.parse(left.occurredAt) || left.orderId.localeCompare(right.orderId)).slice(0, 5);
+  const recent = [...orders]
+    .sort(
+      (left, right) =>
+        Date.parse(right.occurredAt) - Date.parse(left.occurredAt) ||
+        left.orderId.localeCompare(right.orderId),
+    )
+    .slice(0, 5);
   return (
     <section className={panelFullClassName}>
       <div className={panelHeaderClassName}>
@@ -671,17 +709,34 @@ export function RecentOrderTransitionsPanel({
           <p className={eyebrowClassName}>Recent order transitions</p>
           <h2 className={panelTitleClassName}>Reconciled workflow state with realtime updates</h2>
         </div>
-        <StatusPill label={recent.length > 0 ? `${formatNumber(recent.length)} shown` : "no live state"} tone={recent.length > 0 ? "ok" : "idle"} />
+        <StatusPill
+          label={recent.length > 0 ? `${formatNumber(recent.length)} shown` : "no live state"}
+          tone={recent.length > 0 ? "ok" : "idle"}
+        />
       </div>
       {recent.length > 0 ? (
         <div className="grid gap-2">
           {recent.map((order) => (
-            <div className="flex items-center justify-between gap-3 border-b border-border py-2 last:border-b-0" key={order.orderId}>
+            <div
+              className="flex items-center justify-between gap-3 border-b border-border py-2 last:border-b-0"
+              key={order.orderId}
+            >
               <div>
                 <p className="font-semibold text-ink">{order.publicOrderId}</p>
                 <p className="text-xs text-muted">Observed {formatTime(order.occurredAt)}</p>
               </div>
-              <StatusPill label={order.status} tone={order.status === "failed" ? "degraded" : order.status === "processing" ? "pending" : order.status === "confirmed" ? "ok" : "idle"} />
+              <StatusPill
+                label={order.status}
+                tone={
+                  order.status === "failed"
+                    ? "degraded"
+                    : order.status === "processing"
+                      ? "pending"
+                      : order.status === "confirmed"
+                        ? "ok"
+                        : "idle"
+                }
+              />
             </div>
           ))}
         </div>

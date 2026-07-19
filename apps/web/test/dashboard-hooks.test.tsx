@@ -8,7 +8,7 @@ import {
   errorPayloadSchema,
 } from "@checkout-surge/contracts";
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
-import { StrictMode, type ReactNode } from "react";
+import { type ReactNode, StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useDashboardEvents } from "../src/app/components/realtime/use-dashboard-events.js";
 import { useDashboardRecovery } from "../src/app/components/realtime/use-dashboard-recovery.js";
@@ -113,9 +113,7 @@ describe("useDashboardRecovery", () => {
           reason: "API starting",
         }),
       {
-        wrapper: ({ children }: { children: ReactNode }) => (
-          <StrictMode>{children}</StrictMode>
-        ),
+        wrapper: ({ children }: { children: ReactNode }) => <StrictMode>{children}</StrictMode>,
       },
     );
 
@@ -138,7 +136,10 @@ describe("useDashboardRecovery", () => {
     const { result } = renderHook(() => useDashboardRecovery(available(recoveryFixture())));
 
     await act(async () => result.current.refresh());
-    expect(result.current.recovery).toMatchObject({ status: "unavailable", reason: "API restarting" });
+    expect(result.current.recovery).toMatchObject({
+      status: "unavailable",
+      reason: "API restarting",
+    });
     expect(result.current.hasSyncIssue).toBe(true);
     expect(result.current.isRetryScheduled).toBe(true);
     expect(result.current.retryAttempt).toBe(1);
@@ -177,10 +178,7 @@ describe("useDashboardRecovery", () => {
 
   it("polls an active run at a bounded cadence and converges when it becomes terminal", async () => {
     vi.useFakeTimers();
-    const run = runFixture(
-      "22222222-2222-4222-8222-222222222222",
-      "2026-06-20T00:00:00.000Z",
-    );
+    const run = runFixture("22222222-2222-4222-8222-222222222222", "2026-06-20T00:00:00.000Z");
     const activeRecovery = {
       ...recoveryFixture(),
       scope: { runId: run.runId, saleOfferId: run.saleOfferId ?? null },
@@ -204,7 +202,11 @@ describe("useDashboardRecovery", () => {
     vi.useFakeTimers();
     const first = deferred<Response>();
     const retry = deferred<Response>();
-    const fetchMock = vi.fn().mockImplementationOnce(() => first.promise).mockImplementationOnce(() => retry.promise).mockResolvedValueOnce(jsonResponse(recoveryFixture("2026-06-20T00:00:14.000Z")));
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => retry.promise)
+      .mockResolvedValueOnce(jsonResponse(recoveryFixture("2026-06-20T00:00:14.000Z")));
     vi.stubGlobal("fetch", fetchMock);
     const { result } = renderHook(() => useDashboardRecovery(available(recoveryFixture())));
 
@@ -234,7 +236,9 @@ describe("useDashboardRecovery", () => {
     const pending = deferred<Response>();
     const fetchMock = vi.fn().mockImplementationOnce(() => pending.promise);
     vi.stubGlobal("fetch", fetchMock);
-    const { result, unmount } = renderHook(() => useDashboardRecovery(available(recoveryFixture())));
+    const { result, unmount } = renderHook(() =>
+      useDashboardRecovery(available(recoveryFixture())),
+    );
     act(() => void result.current.refresh());
     unmount();
     pending.resolve(errorResponse("down", 503));
@@ -248,16 +252,13 @@ describe("useDashboardRecovery", () => {
     const recovered = recoveryFixture("2026-06-20T00:00:20.000Z");
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(
-        errorResponse("local recovery unavailable", 503),
-      )
+      .mockResolvedValueOnce(errorResponse("local recovery unavailable", 503))
       .mockResolvedValueOnce(jsonResponse(recovered));
     vi.stubGlobal("fetch", fetchMock);
     const initial = available(recoveryFixture());
-    const { result, rerender } = renderHook(
-      ({ recovery }) => useDashboardRecovery(recovery),
-      { initialProps: { recovery: initial as BackendRead<DashboardRecoveryResponse> } },
-    );
+    const { result, rerender } = renderHook(({ recovery }) => useDashboardRecovery(recovery), {
+      initialProps: { recovery: initial as BackendRead<DashboardRecoveryResponse> },
+    });
 
     await act(async () => result.current.refresh());
     expect(result.current.isRetryScheduled).toBe(true);
@@ -281,9 +282,7 @@ describe("useDashboardRecovery", () => {
 
   it("cancels an already scheduled retry on unmount", async () => {
     vi.useFakeTimers();
-    const fetchMock = vi.fn().mockResolvedValue(
-      errorResponse("API restarting", 503),
-    );
+    const fetchMock = vi.fn().mockResolvedValue(errorResponse("API restarting", 503));
     vi.stubGlobal("fetch", fetchMock);
     const { result, unmount } = renderHook(() =>
       useDashboardRecovery(available(recoveryFixture())),
@@ -324,10 +323,7 @@ describe("useDashboardRecovery", () => {
   });
 
   it("converges with exactly one recovery when a matching terminal event predates the recovery watermark", async () => {
-    const baseRun = runFixture(
-      "11111111-1111-4111-8111-111111111111",
-      "2026-06-20T00:00:00.000Z",
-    );
+    const baseRun = runFixture("11111111-1111-4111-8111-111111111111", "2026-06-20T00:00:00.000Z");
     const drainingRun = demoRunSnapshotSchema.parse({
       runId: baseRun.runId,
       presetId: baseRun.presetId,
@@ -381,10 +377,7 @@ describe("useDashboardRecovery", () => {
 
   it("clears old-run projections immediately and serializes recovery after a new-run event", async () => {
     const first = deferred<Response>();
-    const newRun = runFixture(
-      "22222222-2222-4222-8222-222222222222",
-      "2026-06-20T00:01:00.000Z",
-    );
+    const newRun = runFixture("22222222-2222-4222-8222-222222222222", "2026-06-20T00:01:00.000Z");
     const authoritativeRecovery = {
       ...recoveryFixture("2026-06-20T00:01:02.000Z"),
       scope: { runId: newRun.runId, saleOfferId: newRun.saleOfferId },
@@ -397,10 +390,7 @@ describe("useDashboardRecovery", () => {
     vi.stubGlobal("fetch", fetchMock);
     const oldRecovery = {
       ...recoveryFixture(),
-      currentRun: runFixture(
-        "11111111-1111-4111-8111-111111111111",
-        "2026-06-20T00:00:00.000Z",
-      ),
+      currentRun: runFixture("11111111-1111-4111-8111-111111111111", "2026-06-20T00:00:00.000Z"),
       recentMetrics: [
         {
           metricName: "queue.depth",
@@ -517,6 +507,7 @@ function recoveryFixture(recoveredAt = "2026-06-20T00:00:10.000Z"): DashboardRec
     erp: null,
     businessOutcome: null,
     consistencyLag: null,
+    transportAccounting: null,
     recentCompletionOutcomes: [],
     recoveredAt,
   };

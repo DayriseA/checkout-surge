@@ -12,7 +12,10 @@ export function syntheticTrafficDeliverySummary(
 
   return {
     plannedRequests,
-    emittedRequests: 0,
+    startedRequests: 0,
+    completedRequests: 0,
+    interruptedRequests: 0,
+    unstartedRequests: plannedRequests,
     trafficMode: traffic.mode,
     plannedBuyers: traffic.mode === "buyer-spike" ? traffic.buyerCount : null,
     scheduledRatePerSecond: traffic.mode === "steady-arrival-rate" ? traffic.ratePerSecond : null,
@@ -22,8 +25,6 @@ export function syntheticTrafficDeliverySummary(
     maxVUs: resolvedK6Vus?.maxVus ?? null,
     droppedIterations: 0,
     completedIterations: 0,
-    unstartedIterations: plannedRequests,
-    requestShortfall: plannedRequests,
     trafficDeliveryStatus: "failed",
     notes,
   };

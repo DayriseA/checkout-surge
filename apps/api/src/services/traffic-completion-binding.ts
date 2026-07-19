@@ -2,9 +2,15 @@ import { isDeepStrictEqual } from "node:util";
 import {
   acceptedRunConfigSnapshotSchema,
   deriveLoadExecutionPlan,
+  normalizeLegacyApiRequestLifecycleSummaryJson,
+  normalizeLegacyLoadRunDiagnosticsSummaryJson,
   type TrafficCompletionReport,
   type TrafficDeliverySummary,
 } from "@checkout-surge/contracts";
+import {
+  normalizePersistedTrafficHttpSummary,
+  normalizeTrafficDeliverySummary,
+} from "./traffic-delivery-classifier.js";
 
 export interface TrafficCompletionMismatch {
   field: string;
@@ -93,13 +99,17 @@ export function findTrafficCompletionRedeliveryMismatch(
     ["status", report.status, run.trafficStatus],
     ["exitCode", report.exitCode ?? null, existing.exitCode],
     ["errorMessage", report.errorMessage ?? null, existing.errorMessage],
-    ["httpSummary", report.httpSummary, existing.httpSummary],
+    ["httpSummary", report.httpSummary, normalizeExistingHttpSummary(existing.httpSummary)],
     [
       "trafficOutcomeSummary",
       report.trafficOutcomeSummary,
       withoutCompletionEnrichment(existing.trafficOutcomeSummary),
     ],
-    ["trafficDeliverySummary", normalizedTrafficDeliverySummary, existing.trafficDeliverySummary],
+    [
+      "trafficDeliverySummary",
+      normalizedTrafficDeliverySummary,
+      normalizeExistingDeliverySummary(existing.trafficDeliverySummary),
+    ],
     [
       "httpTimingBreakdownSummary",
       report.httpTimingBreakdownSummary,
@@ -108,12 +118,15 @@ export function findTrafficCompletionRedeliveryMismatch(
     [
       "loadRunDiagnosticsSummary",
       report.loadRunDiagnosticsSummary,
-      existing.loadRunDiagnosticsSummary,
+      normalizeLegacyLoadRunDiagnosticsSummaryJson(existing.loadRunDiagnosticsSummary),
     ],
     [
       "apiRequestLifecycleSummary",
       report.apiRequestLifecycleSummary,
-      existing.apiRequestLifecycleSummary,
+      normalizeLegacyApiRequestLifecycleSummaryJson(
+        existing.apiRequestLifecycleSummary,
+        report.httpSummary.plannedRequests,
+      ),
     ],
     ["completedAt", report.completedAt, run.trafficEndedAt?.toISOString()],
   ];
@@ -121,6 +134,27 @@ export function findTrafficCompletionRedeliveryMismatch(
     if (!isDeepStrictEqual(actual, expected)) return { field };
   }
   return null;
+}
+
+/**
+ * Persisted summaries written before canonical transport-attempt accounting
+ * are normalized at this read boundary so redelivery comparison stays
+ * semantic. Rows that cannot be normalized compare raw and simply mismatch.
+ */
+function normalizeExistingHttpSummary(value: unknown): unknown {
+  try {
+    return normalizePersistedTrafficHttpSummary(value);
+  } catch {
+    return value;
+  }
+}
+
+function normalizeExistingDeliverySummary(value: unknown): unknown {
+  try {
+    return normalizeTrafficDeliverySummary(value);
+  } catch {
+    return value;
+  }
 }
 
 function withoutCompletionEnrichment(value: Record<string, unknown>): Record<string, unknown> {

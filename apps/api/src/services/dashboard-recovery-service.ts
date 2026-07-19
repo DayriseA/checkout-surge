@@ -7,21 +7,25 @@ import {
   dashboardRecoveryResponseSchema,
   demoRunSnapshotSchema,
   type MetricSample,
+  type TransportAttemptCounts,
+  transportAttemptCountsSchema,
 } from "@checkout-surge/contracts";
 import {
   type CheckoutSurgeDatabase,
+  demoRunFinalizations,
   demoRuns,
   readBusinessOutcomeSummary,
   readConsistencyLagSummary,
   readRecentCompletionOutcomes,
 } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
-import { desc, inArray, sql } from "drizzle-orm";
+import { desc, eq, inArray, sql } from "drizzle-orm";
 import { abortReason, settleWithAbort } from "../runtime/operation-lifecycle.js";
 import type { DashboardTrafficMetricReader } from "./demo-run-service.js";
 import type { ErpStatusService } from "./erp-status-service.js";
 import type { InventoryStatusService } from "./inventory-status-service.js";
 import type { QueueStatusService } from "./queue-status-service.js";
+import { normalizeTrafficDeliverySummary } from "./traffic-delivery-classifier.js";
 
 export interface DashboardRecoveryContext {
   currentRun: DemoRunSnapshot | null;
@@ -45,6 +49,39 @@ export interface DashboardConsistencyLagReader {
 
 export interface DashboardCompletionOutcomeReader {
   read(scope: { saleOfferId: string; runId?: string }, now: Date): Promise<CompletionOutcome[]>;
+}
+
+/**
+ * Projects terminal transport-attempt accounting for the selected run from its
+ * traffic-completion evidence. Returns `null` while no completion evidence
+ * exists (the run is still starting or executing).
+ */
+export interface DashboardTransportAccountingReader {
+  read(runId: string): Promise<TransportAttemptCounts | null>;
+}
+
+export class PostgresDashboardTransportAccountingReader
+  implements DashboardTransportAccountingReader
+{
+  constructor(private readonly db: CheckoutSurgeDatabase) {}
+
+  async read(runId: string): Promise<TransportAttemptCounts | null> {
+    const [row] = await this.db
+      .select({ trafficDeliverySummary: demoRunFinalizations.trafficDeliverySummary })
+      .from(demoRunFinalizations)
+      .where(eq(demoRunFinalizations.runId, runId))
+      .limit(1);
+
+    if (!row) return null;
+    const delivery = normalizeTrafficDeliverySummary(row.trafficDeliverySummary);
+    return transportAttemptCountsSchema.parse({
+      plannedRequests: delivery.plannedRequests,
+      startedRequests: delivery.startedRequests,
+      completedRequests: delivery.completedRequests,
+      interruptedRequests: delivery.interruptedRequests,
+      unstartedRequests: delivery.unstartedRequests,
+    });
+  }
 }
 
 export class PostgresDashboardRecoveryContextReader implements DashboardRecoveryContextReader {
@@ -117,6 +154,7 @@ export class DashboardRecoveryService {
       erpStatusService?: ErpStatusService;
       logger: CheckoutSurgeLogger;
       trafficMetricReader?: DashboardTrafficMetricReader;
+      transportAccountingReader?: DashboardTransportAccountingReader;
       now?: () => Date;
       openOperation?: DashboardRecoveryOperationFactory;
     },
@@ -169,6 +207,7 @@ export class DashboardRecoveryService {
       consistencyLagResult,
       trafficMetricResult,
       completionOutcomeResult,
+      transportAccountingResult,
     ] = await Promise.all([
       saleScope
         ? readSafely("dashboard_inventory", signal, () =>
@@ -199,6 +238,13 @@ export class DashboardRecoveryService {
             dependencies.completionOutcomeReader.read(saleScope, now),
           )
         : Promise.resolve({ ok: true as const, value: [] }),
+      scope
+        ? readSafely("dashboard_transport_accounting", signal, () =>
+            dependencies.transportAccountingReader
+              ? dependencies.transportAccountingReader.read(scope.runId)
+              : Promise.resolve(null),
+          )
+        : Promise.resolve({ ok: true as const, value: null }),
     ]);
 
     for (const result of [
@@ -210,6 +256,7 @@ export class DashboardRecoveryService {
       consistencyLagResult,
       trafficMetricResult,
       completionOutcomeResult,
+      transportAccountingResult,
     ]) {
       if (!result.ok) {
         this.options.logger.warn(
@@ -230,6 +277,7 @@ export class DashboardRecoveryService {
       businessOutcome: businessOutcomeResult.ok ? businessOutcomeResult.value : null,
       consistencyLag: consistencyLagResult.ok ? consistencyLagResult.value : null,
       recentCompletionOutcomes: completionOutcomeResult.ok ? completionOutcomeResult.value : [],
+      transportAccounting: transportAccountingResult.ok ? transportAccountingResult.value : null,
       recoveredAt: now.toISOString(),
     });
   }
@@ -260,6 +308,9 @@ export class DashboardRecoveryService {
       ...(this.options.trafficMetricReader
         ? { trafficMetricReader: this.options.trafficMetricReader }
         : {}),
+      ...(this.options.transportAccountingReader
+        ? { transportAccountingReader: this.options.transportAccountingReader }
+        : {}),
     };
   }
 }
@@ -273,6 +324,7 @@ export interface DashboardRecoveryDependencies {
   queueStatusService: QueueStatusService;
   erpStatusService: ErpStatusService;
   trafficMetricReader?: DashboardTrafficMetricReader;
+  transportAccountingReader?: DashboardTransportAccountingReader;
 }
 
 export interface DashboardRecoveryOperation {

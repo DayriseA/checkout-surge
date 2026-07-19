@@ -2,6 +2,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   emptyHttpTimingBreakdownSummary,
+  type TrafficDeliverySummary,
   trafficDeliverySummarySchema,
 } from "@checkout-surge/contracts";
 import {
@@ -91,7 +92,8 @@ describe("run history service", () => {
       failureReason: "traffic_delivery_major_shortfall",
       httpSummary: {
         plannedRequests: 10,
-        emittedRequests: 5,
+        startedRequests: 5,
+        unstartedRequests: 5,
       },
       trafficDeliverySummary: {
         trafficDeliveryStatus: "failed",
@@ -110,30 +112,38 @@ describe("run history service", () => {
     expect(secondPage.summaries[0]?.runId).toBe(ids.olderRun);
   });
 
-  it("normalizes contradictory legacy delivery rows when reading history", async () => {
+  it("normalizes legacy emitted-era delivery rows when reading history", async () => {
     const db = requireConnection(connection).db;
     const service = createService(connection);
     await seedHistory(db);
+    const legacyDeliverySummary = {
+      plannedRequests: 100,
+      emittedRequests: 94,
+      droppedIterations: 0,
+      unstartedIterations: 6,
+      requestShortfall: 6,
+      trafficDeliveryStatus: "complete",
+      notes: [],
+    } as unknown as TrafficDeliverySummary;
     await db
       .update(demoRunSummaries)
-      .set({
-        trafficDeliverySummary: trafficDeliverySummarySchema.parse({
-          plannedRequests: 100,
-          emittedRequests: 94,
-          droppedIterations: 0,
-          trafficDeliveryStatus: "complete",
-          notes: [],
-        }),
-      })
+      .set({ trafficDeliverySummary: legacyDeliverySummary })
       .where(eq(demoRunSummaries.id, ids.newerSummary));
 
     const history = await service.list({ page: 1, pageSize: 10 });
     expect(history.summaries[0]?.trafficDeliverySummary).toMatchObject({
+      plannedRequests: 100,
+      startedRequests: 94,
+      completedRequests: 94,
+      interruptedRequests: 0,
+      unstartedRequests: 6,
       trafficDeliveryStatus: "failed",
-      requestShortfall: 6,
       trafficMode: null,
       completedIterations: null,
     });
+    expect(history.summaries[0]?.trafficDeliverySummary).not.toHaveProperty("emittedRequests");
+    expect(history.summaries[0]?.trafficDeliverySummary).not.toHaveProperty("unstartedIterations");
+    expect(history.summaries[0]?.trafficDeliverySummary).not.toHaveProperty("requestShortfall");
   });
 
   it("returns aggregate public detail and row-oriented admin detail", async () => {
@@ -411,7 +421,7 @@ async function seedHistory(db: ReturnType<typeof createDatabaseConnection>["db"]
       status: "completed",
       failureReason: null,
       capturedAt: new Date("2026-06-20T00:00:05.000Z"),
-      emittedRequests: 10,
+      startedRequests: 10,
       trafficDeliveryStatus: "complete",
     }),
     summaryFixture({
@@ -421,7 +431,7 @@ async function seedHistory(db: ReturnType<typeof createDatabaseConnection>["db"]
       status: "failed",
       failureReason: "traffic_delivery_major_shortfall",
       capturedAt: new Date("2026-06-20T00:00:09.000Z"),
-      emittedRequests: 5,
+      startedRequests: 5,
       trafficDeliveryStatus: "failed",
     }),
   ]);
@@ -602,7 +612,7 @@ function summaryFixture(input: {
   status: "completed" | "failed";
   failureReason: string | null;
   capturedAt: Date;
-  emittedRequests: number;
+  startedRequests: number;
   trafficDeliveryStatus: "complete" | "failed";
 }): typeof demoRunSummaries.$inferInsert {
   return {
@@ -615,8 +625,10 @@ function summaryFixture(input: {
     endedAt: input.capturedAt,
     httpSummary: {
       plannedRequests: 10,
-      emittedRequests: input.emittedRequests,
-      completedRequests: input.emittedRequests,
+      startedRequests: input.startedRequests,
+      completedRequests: input.startedRequests,
+      interruptedRequests: 0,
+      unstartedRequests: 10 - input.startedRequests,
       failedRequests: 0,
       acceptedResponses: 3,
       soldOutResponses: 2,
@@ -626,8 +638,11 @@ function summaryFixture(input: {
     },
     trafficDeliverySummary: trafficDeliverySummarySchema.parse({
       plannedRequests: 10,
-      emittedRequests: input.emittedRequests,
-      droppedIterations: 10 - input.emittedRequests,
+      startedRequests: input.startedRequests,
+      completedRequests: input.startedRequests,
+      interruptedRequests: 0,
+      unstartedRequests: 10 - input.startedRequests,
+      droppedIterations: 10 - input.startedRequests,
       trafficDeliveryStatus: input.trafficDeliveryStatus,
       notes: input.trafficDeliveryStatus === "failed" ? ["private-delivery-diagnostic-marker"] : [],
     }),

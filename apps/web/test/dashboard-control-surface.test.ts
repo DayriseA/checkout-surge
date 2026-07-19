@@ -2,8 +2,8 @@ import {
   type AdminPresetListResponse,
   type AdminPublicRuntimePolicyResponse,
   type DashboardRecoveryResponse,
-  demoRunSnapshotSchema,
   type DemoPresetContract,
+  demoRunSnapshotSchema,
   type ErpChaosStatus,
   type PublicPresetListResponse,
   type PublicRuntimePolicyResponse,
@@ -65,7 +65,10 @@ describe("dashboard control surface", () => {
       ...demoPresetFixture("preview-1k", "public", false),
       id: "99999999-9999-4999-8999-999999999999",
       slug: "new-public-surge",
-      display: { ...demoPresetFixture("preview-1k", "public", false).display, name: "New Public Surge" },
+      display: {
+        ...demoPresetFixture("preview-1k", "public", false).display,
+        name: "New Public Surge",
+      },
     };
     surface.presets.data.presets = [
       demoPresetFixture("public-custom", "public", true),
@@ -80,19 +83,25 @@ describe("dashboard control surface", () => {
     const onlyCustom = publicSurfaceFixture(null);
     if (onlyCustom.presets.status !== "available") throw new Error("Expected available presets.");
     onlyCustom.presets.data.presets = [demoPresetFixture("public-custom", "public", true)];
-    const onlyCustomMarkup = renderToStaticMarkup(createElement(PublicDemoEntry, { surface: onlyCustom }));
+    const onlyCustomMarkup = renderToStaticMarkup(
+      createElement(PublicDemoEntry, { surface: onlyCustom }),
+    );
     expect(onlyCustomMarkup).toContain("No curated public presets are currently available.");
     expect(onlyCustomMarkup).toContain("Start Public Custom");
 
     const noCustom = publicSurfaceFixture(null);
     if (noCustom.presets.status !== "available") throw new Error("Expected available presets.");
     noCustom.presets.data.presets = [demoPresetFixture("preview-1k", "public", false)];
-    const noCustomMarkup = renderToStaticMarkup(createElement(PublicDemoEntry, { surface: noCustom }));
+    const noCustomMarkup = renderToStaticMarkup(
+      createElement(PublicDemoEntry, { surface: noCustom }),
+    );
     expect(noCustomMarkup).not.toContain("Start Public Custom");
 
     const unavailable = publicSurfaceFixture(null);
     unavailable.presets = { status: "unavailable", reason: "Preset service offline" };
-    const unavailableMarkup = renderToStaticMarkup(createElement(PublicDemoEntry, { surface: unavailable }));
+    const unavailableMarkup = renderToStaticMarkup(
+      createElement(PublicDemoEntry, { surface: unavailable }),
+    );
     expect(unavailableMarkup).toContain("Preset service offline");
   });
 
@@ -258,6 +267,7 @@ function recoveryFixture(
     erp: null,
     businessOutcome: null,
     consistencyLag: null,
+    transportAccounting: null,
     recentCompletionOutcomes: [],
     recoveredAt: "2026-06-20T00:00:10.000Z",
   };
@@ -275,9 +285,7 @@ function runFixture(status: "active" | "draining"): DashboardRecoveryResponse["c
     saleOfferId: "33333333-3333-4333-8333-333333333333",
     startedAt: "2026-06-20T00:00:00.000Z",
     trafficStartedAt: "2026-06-20T00:00:00.000Z",
-    ...(status === "draining"
-      ? { trafficEndedAt: "2026-06-20T00:00:10.000Z" }
-      : {}),
+    ...(status === "draining" ? { trafficEndedAt: "2026-06-20T00:00:10.000Z" } : {}),
   });
 }
 

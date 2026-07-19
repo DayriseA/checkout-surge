@@ -36,7 +36,10 @@ import {
   simulatedNotifications,
 } from "@checkout-surge/db";
 import { count, desc, eq, inArray, sql } from "drizzle-orm";
-import { normalizeTrafficDeliverySummary } from "./traffic-delivery-classifier.js";
+import {
+  normalizePersistedTrafficHttpSummary,
+  normalizeTrafficDeliverySummary,
+} from "./traffic-delivery-classifier.js";
 
 const detailRecordLimit = 20;
 
@@ -322,7 +325,7 @@ function toPublicRunHistorySummary(
     status: row.status,
     ...(row.startedAt ? { startedAt: row.startedAt.toISOString() } : {}),
     endedAt: row.endedAt.toISOString(),
-    httpSummary: row.httpSummary,
+    httpSummary: normalizePersistedTrafficHttpSummary(row.httpSummary),
     trafficDeliverySummary: publicDeliverySummary,
     businessOutcomeSummary: row.businessOutcomeSummary,
     ...(inventory
@@ -366,7 +369,7 @@ function toRunHistorySummary(row: typeof demoRunSummaries.$inferSelect): RunHist
     ...(row.failureReason ? { failureReason: row.failureReason } : {}),
     ...(row.startedAt ? { startedAt: row.startedAt.toISOString() } : {}),
     endedAt: row.endedAt.toISOString(),
-    httpSummary: row.httpSummary,
+    httpSummary: normalizePersistedTrafficHttpSummary(row.httpSummary),
     trafficDeliverySummary: normalizeTrafficDeliverySummary(row.trafficDeliverySummary),
     businessOutcomeSummary: row.businessOutcomeSummary,
     ...(row.terminalInventorySnapshot

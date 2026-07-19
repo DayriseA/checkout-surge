@@ -34,10 +34,23 @@ describe("synthetic traffic delivery plan", () => {
   it("uses the shared capped automatic steady-arrival VU resolution", () => {
     expect(syntheticTrafficDeliverySummary(baseSnapshot, ["not started"])).toMatchObject({
       plannedRequests: 10_002,
+      startedRequests: 0,
+      completedRequests: 0,
+      interruptedRequests: 0,
+      unstartedRequests: 10_002,
       preAllocatedVUs: 5_001,
       maxVUs: 10_000,
-      unstartedIterations: 10_002,
       notes: ["not started"],
+    });
+  });
+
+  it("marks every planned attempt unstarted with a failed delivery status", () => {
+    expect(syntheticTrafficDeliverySummary(baseSnapshot, [])).toMatchObject({
+      startedRequests: 0,
+      completedRequests: 0,
+      interruptedRequests: 0,
+      unstartedRequests: 10_002,
+      trafficDeliveryStatus: "failed",
     });
   });
 

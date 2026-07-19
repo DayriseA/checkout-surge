@@ -6,8 +6,6 @@ import {
   type AcceptedOrderSummary,
   type AcceptedReservationSummary,
   type AdminRunHistoryDetailResponse,
-  adminRunHistoryDetailPath,
-  adminRunHistoryDetailResponseSchema,
   adminDeleteRunHistoryResponseSchema,
   adminDemoResetPath,
   adminGeneratedRunTeardownPath,
@@ -18,6 +16,8 @@ import {
   adminPresetSavePath,
   adminPublicRuntimePolicyPath,
   adminPublicRuntimePolicyResponseSchema,
+  adminRunHistoryDetailPath,
+  adminRunHistoryDetailResponseSchema,
   archiveAdminPresetResponseSchema,
   type BusinessOutcomeSummary,
   buyOutcomeHeaderName,
@@ -549,8 +549,10 @@ function runHistoryListResponseFixture(): RunHistoryListResponse {
         endedAt: "2026-06-20T00:00:10.000Z",
         httpSummary: {
           plannedRequests: 10,
-          emittedRequests: 10,
+          startedRequests: 10,
           completedRequests: 10,
+          interruptedRequests: 0,
+          unstartedRequests: 0,
           failedRequests: 0,
           acceptedResponses: 6,
           soldOutResponses: 4,
@@ -560,7 +562,10 @@ function runHistoryListResponseFixture(): RunHistoryListResponse {
         },
         trafficDeliverySummary: {
           plannedRequests: 10,
-          emittedRequests: 10,
+          startedRequests: 10,
+          completedRequests: 10,
+          interruptedRequests: 0,
+          unstartedRequests: 0,
           trafficMode: null,
           plannedBuyers: null,
           scheduledRatePerSecond: null,
@@ -569,8 +574,6 @@ function runHistoryListResponseFixture(): RunHistoryListResponse {
           maxVUs: null,
           droppedIterations: 0,
           completedIterations: null,
-          unstartedIterations: null,
-          requestShortfall: 0,
           trafficDeliveryStatus: "complete",
           notes: [],
         },
@@ -706,8 +709,10 @@ function runHistoryControllerFixture(): RunHistoryController {
       page: input.page,
       pageSize: input.pageSize,
     }),
-    detail: async (runId) => (runId === fixtureIds.run ? publicRunHistoryDetailResponseFixture() : null),
-    adminDetail: async (runId) => (runId === fixtureIds.run ? adminRunHistoryDetailResponseFixture() : null),
+    detail: async (runId) =>
+      runId === fixtureIds.run ? publicRunHistoryDetailResponseFixture() : null,
+    adminDetail: async (runId) =>
+      runId === fixtureIds.run ? adminRunHistoryDetailResponseFixture() : null,
     delete: async (_input, correlationId) => ({
       deletedSummaryCount: 1,
       deletedAt: "2026-06-20T00:00:10.000Z",
@@ -718,17 +723,37 @@ function runHistoryControllerFixture(): RunHistoryController {
 
 function publicRunHistoryDetailResponseFixture(): RunHistoryDetailResponse {
   const admin = adminRunHistoryDetailResponseFixture();
-  const { id: _id, failureReason: _failureReason, terminalInventorySnapshot, ...summary } = admin.summary;
-  const { presetId: _presetId, saleOfferId: _saleOfferId, failureReason: _runFailure, ...run } = admin.run;
+  const {
+    id: _id,
+    failureReason: _failureReason,
+    terminalInventorySnapshot,
+    ...summary
+  } = admin.summary;
+  const {
+    presetId: _presetId,
+    saleOfferId: _saleOfferId,
+    failureReason: _runFailure,
+    ...run
+  } = admin.run;
   const sanitizedInventory = terminalInventorySnapshot
-    ? (({ saleOfferId: _inventorySaleOfferId, source: _inventorySource, ...inventory }) => inventory)(terminalInventorySnapshot)
+    ? (({ saleOfferId: _inventorySaleOfferId, source: _inventorySource, ...inventory }) =>
+        inventory)(terminalInventorySnapshot)
     : undefined;
   const { notes: _deliveryNotes, ...publicDeliverySummary } = summary.trafficDeliverySummary;
   return {
-    summary: { ...summary, trafficDeliverySummary: publicDeliverySummary, ...(sanitizedInventory ? { terminalInventorySnapshot: sanitizedInventory } : {}) },
+    summary: {
+      ...summary,
+      trafficDeliverySummary: publicDeliverySummary,
+      ...(sanitizedInventory ? { terminalInventorySnapshot: sanitizedInventory } : {}),
+    },
     run,
     orders: { totalCount: 1, byStatus: { queued: 0, processing: 0, confirmed: 1, failed: 0 } },
-    erpAttempts: { totalCount: 1, byStatus: { succeeded: 1, failed: 0, timedOut: 0 }, averageLatencyMs: 42, p95LatencyMs: 42 },
+    erpAttempts: {
+      totalCount: 1,
+      byStatus: { succeeded: 1, failed: 0, timedOut: 0 },
+      averageLatencyMs: 42,
+      p95LatencyMs: 42,
+    },
     notifications: { totalCount: 1 },
     events: { totalCount: 1 },
     timestamp: admin.timestamp,
@@ -1388,7 +1413,20 @@ describe("API gateway routes", () => {
     expect(JSON.stringify(payload)).not.toContain(fixtureIds.saleOffer);
     expect(JSON.stringify(payload)).not.toContain(fixtureCorrelationId);
     const publicKeys = collectKeys(payload);
-    for (const forbiddenKey of ["records", "limit", "truncated", "orderId", "attemptId", "notificationId", "eventId", "saleOfferId", "correlationId", "publicOrderId", "source", "notes"]) {
+    for (const forbiddenKey of [
+      "records",
+      "limit",
+      "truncated",
+      "orderId",
+      "attemptId",
+      "notificationId",
+      "eventId",
+      "saleOfferId",
+      "correlationId",
+      "publicOrderId",
+      "source",
+      "notes",
+    ]) {
       expect(publicKeys.has(forbiddenKey), forbiddenKey).toBe(false);
     }
     expect(missing.statusCode).toBe(404);
@@ -1405,11 +1443,18 @@ describe("API gateway routes", () => {
       persistence: new AcceptingPersistence(),
       runHistoryService: { ...runHistoryControllerFixture(), adminDetail },
     });
-    const unauthorized = await adminServer.inject({ method: "GET", url: adminRunHistoryDetailPath(fixtureIds.run) });
+    const unauthorized = await adminServer.inject({
+      method: "GET",
+      url: adminRunHistoryDetailPath(fixtureIds.run),
+    });
     expect(unauthorized.statusCode).toBe(401);
     expect(unauthorized.headers["cache-control"]).toBe("no-store");
     expect(adminDetail).not.toHaveBeenCalled();
-    const authorized = await adminServer.inject({ method: "GET", url: adminRunHistoryDetailPath(fixtureIds.run), headers: { [controlServiceTokenHeaderName]: "test-control-token" } });
+    const authorized = await adminServer.inject({
+      method: "GET",
+      url: adminRunHistoryDetailPath(fixtureIds.run),
+      headers: { [controlServiceTokenHeaderName]: "test-control-token" },
+    });
     const adminPayload = adminRunHistoryDetailResponseSchema.parse(authorized.json());
     expect(authorized.statusCode).toBe(200);
     expect(authorized.headers["cache-control"]).toBe("no-store");
@@ -1430,12 +1475,23 @@ describe("API gateway routes", () => {
       persistence: new AcceptingPersistence(),
       runHistoryService: {
         ...runHistoryControllerFixture(),
-        detail: async () => ({ ...publicFixture, orders: { ...publicFixture.orders, records: [{ orderId: "private" }] } }) as never,
+        detail: async () =>
+          ({
+            ...publicFixture,
+            orders: { ...publicFixture.orders, records: [{ orderId: "private" }] },
+          }) as never,
         adminDetail: async () => ({ ...adminFixture, privateDiagnostics: "private" }) as never,
       },
     });
-    const publicResponse = await server.inject({ method: "GET", url: runHistoryDetailPath(fixtureIds.run) });
-    const adminResponse = await server.inject({ method: "GET", url: adminRunHistoryDetailPath(fixtureIds.run), headers: { [controlServiceTokenHeaderName]: "test-control-token" } });
+    const publicResponse = await server.inject({
+      method: "GET",
+      url: runHistoryDetailPath(fixtureIds.run),
+    });
+    const adminResponse = await server.inject({
+      method: "GET",
+      url: adminRunHistoryDetailPath(fixtureIds.run),
+      headers: { [controlServiceTokenHeaderName]: "test-control-token" },
+    });
     expect(publicResponse.statusCode).toBe(500);
     expect(adminResponse.statusCode).toBe(500);
     expect(publicResponse.body).not.toContain("private");
@@ -2224,8 +2280,10 @@ describe("API gateway routes", () => {
       exitCode: 0,
       httpSummary: {
         plannedRequests: 2,
-        emittedRequests: 2,
+        startedRequests: 2,
         completedRequests: 2,
+        interruptedRequests: 0,
+        unstartedRequests: 0,
         failedRequests: 0,
         acceptedResponses: 1,
         soldOutResponses: 1,
@@ -2236,7 +2294,10 @@ describe("API gateway routes", () => {
       trafficOutcomeSummary: {},
       trafficDeliverySummary: {
         plannedRequests: 2,
-        emittedRequests: 2,
+        startedRequests: 2,
+        completedRequests: 2,
+        interruptedRequests: 0,
+        unstartedRequests: 0,
         trafficMode: "buyer-spike",
         plannedBuyers: 2,
         scheduledRatePerSecond: null,
@@ -2248,7 +2309,14 @@ describe("API gateway routes", () => {
       },
       httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
       loadRunDiagnosticsSummary: runnerDiagnosticsFixture(),
-      apiRequestLifecycleSummary: {},
+      apiRequestLifecycleSummary: {
+        plannedRequests: 2,
+        startedRequests: 2,
+        completedRequests: 2,
+        interruptedRequests: 0,
+        unstartedRequests: 0,
+        failedRequests: 0,
+      },
       completedAt: "2026-06-20T00:00:10.000Z",
       correlationId: fixtureCorrelationId,
     };
@@ -2737,9 +2805,7 @@ describe("API gateway routes", () => {
   it("requires Redis configuration for production composition", () => {
     expect(() =>
       loadApiConfig({ NODE_ENV: "test", DATABASE_URL: "postgresql://localhost/test" }),
-    ).toThrow(
-      "REDIS_URL is required.",
-    );
+    ).toThrow("REDIS_URL is required.");
   });
 });
 
@@ -4384,8 +4450,10 @@ function internalCompletionReportFixture() {
     exitCode: 0,
     httpSummary: {
       plannedRequests: 2,
-      emittedRequests: 2,
+      startedRequests: 2,
       completedRequests: 2,
+      interruptedRequests: 0,
+      unstartedRequests: 0,
       failedRequests: 0,
       acceptedResponses: 1,
       soldOutResponses: 1,
@@ -4395,7 +4463,10 @@ function internalCompletionReportFixture() {
     trafficOutcomeSummary: {},
     trafficDeliverySummary: {
       plannedRequests: 2,
-      emittedRequests: 2,
+      startedRequests: 2,
+      completedRequests: 2,
+      interruptedRequests: 0,
+      unstartedRequests: 0,
       trafficMode: "buyer-spike",
       plannedBuyers: 2,
       scheduledRatePerSecond: null,
@@ -4407,7 +4478,14 @@ function internalCompletionReportFixture() {
     },
     httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
     loadRunDiagnosticsSummary: runnerDiagnosticsFixture(),
-    apiRequestLifecycleSummary: {},
+    apiRequestLifecycleSummary: {
+      plannedRequests: 2,
+      startedRequests: 2,
+      completedRequests: 2,
+      interruptedRequests: 0,
+      unstartedRequests: 0,
+      failedRequests: 0,
+    },
     completedAt: "2026-06-20T00:00:10.000Z",
     correlationId: fixtureCorrelationId,
   };
@@ -4438,7 +4516,7 @@ function runnerDiagnosticsFixture() {
     stderrLineTruncationLength: 500,
     stderrLineTruncatedCount: 0,
     terminalMetricSources: {
-      emittedRequests: "summary_export" as const,
+      startedRequests: "summary_export" as const,
       completedRequests: "summary_export" as const,
       acceptedResponses: "summary_export" as const,
       soldOutResponses: "summary_export" as const,

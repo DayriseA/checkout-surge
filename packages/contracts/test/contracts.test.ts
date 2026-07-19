@@ -4,9 +4,6 @@ import {
   acceptedRunConfigSnapshotSchema,
   adminDeleteRunHistoryRequestSchema,
   adminDeleteRunHistoryResponseSchema,
-  adminRunHistoryDetailPath,
-  adminRunHistoryDetailPathTemplate,
-  adminRunHistoryDetailResponseSchema,
   adminDemoResetResponseSchema,
   adminGeneratedRunTeardownParamsSchema,
   adminGeneratedRunTeardownPath,
@@ -17,6 +14,9 @@ import {
   adminPublicRuntimePolicyPath,
   adminPublicRuntimePolicyResponseSchema,
   adminPublicRuntimePolicyUpdateRequestSchema,
+  adminRunHistoryDetailPath,
+  adminRunHistoryDetailPathTemplate,
+  adminRunHistoryDetailResponseSchema,
   archiveAdminPresetRequestSchema,
   archiveAdminPresetResponseSchema,
   buyOutcomeHeaderName,
@@ -106,6 +106,8 @@ import {
   trafficExecutionStatusPath,
   trafficExecutionStatusResponseSchema,
   trafficExecutionStatusValues,
+  trafficHttpSummarySchema,
+  transportAttemptCountsSchema,
 } from "../src/index.js";
 
 const timestamp = "2026-06-20T12:00:00.000Z";
@@ -467,8 +469,10 @@ describe("run lifecycle contracts", () => {
       exitCode: 0,
       httpSummary: {
         plannedRequests: 10,
-        emittedRequests: 10,
+        startedRequests: 10,
         completedRequests: 10,
+        interruptedRequests: 0,
+        unstartedRequests: 0,
         failedRequests: 0,
         acceptedResponses: 2,
         soldOutResponses: 8,
@@ -479,7 +483,10 @@ describe("run lifecycle contracts", () => {
       trafficOutcomeSummary: {},
       trafficDeliverySummary: {
         plannedRequests: 10,
-        emittedRequests: 10,
+        startedRequests: 10,
+        completedRequests: 10,
+        interruptedRequests: 0,
+        unstartedRequests: 0,
         trafficMode: "buyer-spike",
         plannedBuyers: 10,
         scheduledRatePerSecond: null,
@@ -496,7 +503,7 @@ describe("run lifecycle contracts", () => {
       loadRunDiagnosticsSummary: {
         ...runnerDiagnostics(),
         terminalMetricSources: {
-          emittedRequests: "summary_export",
+          startedRequests: "summary_export",
           completedRequests: "summary_export",
           acceptedResponses: "point_stream",
           soldOutResponses: "summary_export",
@@ -506,7 +513,14 @@ describe("run lifecycle contracts", () => {
         },
         summaryExportWarnings: ["k6_outcome_counter_point_stream_fallback_used"],
       },
-      apiRequestLifecycleSummary: {},
+      apiRequestLifecycleSummary: {
+        plannedRequests: 10,
+        startedRequests: 10,
+        completedRequests: 10,
+        interruptedRequests: 0,
+        unstartedRequests: 0,
+        failedRequests: 0,
+      },
       completedAt: timestamp,
       correlationId,
     });
@@ -731,7 +745,10 @@ describe("run lifecycle contracts", () => {
   it("accepts unclassified completion evidence but requires status in stored history", () => {
     const evidence = {
       plannedRequests: 10,
-      emittedRequests: 9,
+      startedRequests: 9,
+      completedRequests: 9,
+      interruptedRequests: 0,
+      unstartedRequests: 1,
       trafficMode: "buyer-spike" as const,
       plannedBuyers: 10,
       scheduledRatePerSecond: null,
@@ -750,13 +767,208 @@ describe("run lifecycle contracts", () => {
     ).toEqual({
       ...evidence,
       completedIterations: null,
-      unstartedIterations: null,
-      requestShortfall: null,
       trafficDeliveryStatus: "warning",
     });
     expect(() =>
       trafficCompletionDeliverySummarySchema.parse({ ...evidence, plannedRequests: 0 }),
     ).toThrow();
+  });
+
+  it("rejects transport-attempt counts that break either reconciliation equation", () => {
+    const coherent = {
+      plannedRequests: 10,
+      startedRequests: 9,
+      completedRequests: 7,
+      interruptedRequests: 2,
+      unstartedRequests: 1,
+    };
+    expect(transportAttemptCountsSchema.safeParse(coherent).success).toBe(true);
+
+    const brokenPlan = transportAttemptCountsSchema.safeParse({
+      ...coherent,
+      unstartedRequests: 2,
+    });
+    expect(brokenPlan.success).toBe(false);
+    if (!brokenPlan.success) {
+      expect(brokenPlan.error.issues).toContainEqual(
+        expect.objectContaining({
+          path: ["unstartedRequests"],
+          message: "plannedRequests must equal startedRequests + unstartedRequests",
+        }),
+      );
+    }
+
+    const brokenStarted = transportAttemptCountsSchema.safeParse({
+      ...coherent,
+      interruptedRequests: 1,
+    });
+    expect(brokenStarted.success).toBe(false);
+    if (!brokenStarted.success) {
+      expect(brokenStarted.error.issues).toContainEqual(
+        expect.objectContaining({
+          path: ["interruptedRequests"],
+          message: "startedRequests must equal completedRequests + interruptedRequests",
+        }),
+      );
+    }
+
+    const httpSummary = {
+      ...coherent,
+      failedRequests: 0,
+      acceptedResponses: 2,
+      soldOutResponses: 5,
+      unexpectedResponses: 0,
+      failureRate: 0,
+    };
+    expect(trafficHttpSummarySchema.safeParse(httpSummary).success).toBe(true);
+    expect(
+      trafficHttpSummarySchema.safeParse({ ...httpSummary, completedRequests: 8 }).success,
+    ).toBe(false);
+    expect(
+      trafficHttpSummarySchema.safeParse({ ...httpSummary, startedRequests: 10 }).success,
+    ).toBe(false);
+  });
+
+  it("rejects a completion report whose HTTP and delivery count copies disagree", () => {
+    const report = trafficCompletionReportSchema.parse({
+      runId,
+      status: "succeeded",
+      exitCode: 0,
+      httpSummary: {
+        plannedRequests: 10,
+        startedRequests: 10,
+        completedRequests: 8,
+        interruptedRequests: 2,
+        unstartedRequests: 0,
+        failedRequests: 0,
+        acceptedResponses: 2,
+        soldOutResponses: 6,
+        unexpectedResponses: 0,
+        failureRate: 0,
+      },
+      trafficOutcomeSummary: {},
+      trafficDeliverySummary: {
+        plannedRequests: 10,
+        startedRequests: 10,
+        completedRequests: 8,
+        interruptedRequests: 2,
+        unstartedRequests: 0,
+        trafficMode: "buyer-spike",
+        plannedBuyers: 10,
+        scheduledRatePerSecond: null,
+        configuredDurationSeconds: null,
+        preAllocatedVUs: null,
+        maxVUs: null,
+        droppedIterations: 0,
+        notes: [],
+      },
+      httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
+      loadRunDiagnosticsSummary: runnerDiagnostics(),
+      apiRequestLifecycleSummary: {
+        plannedRequests: 10,
+        startedRequests: 10,
+        completedRequests: 8,
+        interruptedRequests: 2,
+        unstartedRequests: 0,
+        failedRequests: 0,
+      },
+      completedAt: timestamp,
+      correlationId,
+    });
+    expect(report.httpSummary.interruptedRequests).toBe(2);
+
+    for (const field of [
+      "startedRequests",
+      "completedRequests",
+      "interruptedRequests",
+      "unstartedRequests",
+    ] as const) {
+      const disagreement = trafficCompletionReportSchema.safeParse({
+        ...report,
+        trafficDeliverySummary: {
+          ...report.trafficDeliverySummary,
+          [field]: report.trafficDeliverySummary[field] + 1,
+        },
+      });
+      expect(disagreement.success).toBe(false);
+    }
+
+    for (const [field, value, message] of [
+      ["unstartedRequests", 1, "plannedRequests must equal startedRequests + unstartedRequests"],
+      [
+        "interruptedRequests",
+        1,
+        "startedRequests must equal completedRequests + interruptedRequests",
+      ],
+    ] as const) {
+      const brokenEquation = trafficCompletionReportSchema.safeParse({
+        ...report,
+        apiRequestLifecycleSummary: {
+          ...report.apiRequestLifecycleSummary,
+          [field]: value,
+        },
+      });
+      expect(brokenEquation.success).toBe(false);
+      if (!brokenEquation.success) {
+        expect(brokenEquation.error.issues).toContainEqual(
+          expect.objectContaining({ path: ["apiRequestLifecycleSummary", field], message }),
+        );
+      }
+    }
+
+    const coherentLifecycleDisagreement = trafficCompletionReportSchema.safeParse({
+      ...report,
+      apiRequestLifecycleSummary: {
+        plannedRequests: 10,
+        startedRequests: 9,
+        completedRequests: 7,
+        interruptedRequests: 2,
+        unstartedRequests: 1,
+        failedRequests: 0,
+      },
+    });
+    expect(coherentLifecycleDisagreement.success).toBe(false);
+    if (!coherentLifecycleDisagreement.success) {
+      expect(coherentLifecycleDisagreement.error.issues).toContainEqual(
+        expect.objectContaining({
+          path: ["apiRequestLifecycleSummary", "startedRequests"],
+          message: "must match httpSummary.startedRequests",
+        }),
+      );
+    }
+
+    for (const invalidLifecycle of [
+      {},
+      { ...report.apiRequestLifecycleSummary, extraDiagnostic: true },
+      {
+        plannedRequests: 10,
+        emittedRequests: 8,
+        completedRequests: 8,
+        failedRequests: 0,
+      },
+    ]) {
+      expect(
+        trafficCompletionReportSchema.safeParse({
+          ...report,
+          apiRequestLifecycleSummary: invalidLifecycle,
+        }).success,
+      ).toBe(false);
+    }
+
+    const legacyNames = trafficCompletionReportSchema.safeParse({
+      ...report,
+      httpSummary: {
+        plannedRequests: 10,
+        emittedRequests: 10,
+        completedRequests: 10,
+        failedRequests: 0,
+        acceptedResponses: 2,
+        soldOutResponses: 8,
+        unexpectedResponses: 0,
+        failureRate: 0,
+      },
+    });
+    expect(legacyNames.success).toBe(false);
   });
 
   it("validates admin reset as a recovery result rather than a traffic lifecycle event", () => {
@@ -1521,21 +1733,34 @@ describe("buy and dashboard contracts", () => {
     expect(dashboardEventsRedisChannel).toBe("dashboard-events");
 
     const metrics = [
-      { metricName: "traffic.scheduled_request_rate", value: 42, unit: "requests_per_second", runId },
+      {
+        metricName: "traffic.scheduled_request_rate",
+        value: 42,
+        unit: "requests_per_second",
+        runId,
+      },
       { metricName: "traffic.latency", value: 42, unit: "ms", runId },
       { metricName: "traffic.failure_rate", value: 0.2, unit: "ratio", runId },
       { metricName: "queue.depth", value: 4, unit: "jobs", queueName: "orders:process" },
       { metricName: "inventory.remaining", value: 4, unit: "items", saleOfferId },
-      { metricName: "inventory.sold_out_rejection", value: 9, unit: "rejections", aggregation: "cumulative", saleOfferId },
+      {
+        metricName: "inventory.sold_out_rejection",
+        value: 9,
+        unit: "rejections",
+        aggregation: "cumulative",
+        saleOfferId,
+      },
     ];
     for (const metric of metrics) {
-      expect(dashboardEventSchema.parse({
-        type: "dashboard.metric.observed",
-        correlationId,
-        occurredAt: timestamp,
-        observedAt: timestamp,
-        ...metric,
-      }).type).toBe("dashboard.metric.observed");
+      expect(
+        dashboardEventSchema.parse({
+          type: "dashboard.metric.observed",
+          correlationId,
+          occurredAt: timestamp,
+          observedAt: timestamp,
+          ...metric,
+        }).type,
+      ).toBe("dashboard.metric.observed");
     }
 
     const run = {
@@ -1550,69 +1775,93 @@ describe("buy and dashboard contracts", () => {
       startedAt: timestamp,
       trafficStartedAt: timestamp,
     };
-    expect(dashboardEventSchema.parse({
-      type: "load.run.updated",
-      runId,
-      correlationId,
-      occurredAt: timestamp,
-      run,
-    }).type).toBe("load.run.updated");
+    expect(
+      dashboardEventSchema.parse({
+        type: "load.run.updated",
+        runId,
+        correlationId,
+        occurredAt: timestamp,
+        run,
+      }).type,
+    ).toBe("load.run.updated");
 
-    expect(dashboardEventSchema.safeParse({
-      type: "dashboard.metric.observed",
-      metricName: "traffic.failure_rate",
-      value: 2,
-      unit: "ratio",
-      runId,
-      occurredAt: timestamp,
-      observedAt: timestamp,
-    }).success).toBe(false);
+    expect(
+      dashboardEventSchema.safeParse({
+        type: "dashboard.metric.observed",
+        metricName: "traffic.failure_rate",
+        value: 2,
+        unit: "ratio",
+        runId,
+        occurredAt: timestamp,
+        observedAt: timestamp,
+      }).success,
+    ).toBe(false);
     const invalidMetricPayloads = [
-      { metricName: "traffic.scheduled_request_rate", value: -1, unit: "requests_per_second", runId },
+      {
+        metricName: "traffic.scheduled_request_rate",
+        value: -1,
+        unit: "requests_per_second",
+        runId,
+      },
       { metricName: "traffic.latency", value: -1, unit: "ms", runId },
       { metricName: "traffic.failure_rate", value: 0.2, unit: "percent", runId },
       { metricName: "queue.depth", value: 1.5, unit: "jobs", queueName: "orders:process" },
       { metricName: "queue.depth", value: 1, unit: "jobs" },
       { metricName: "inventory.remaining", value: -1, unit: "items", saleOfferId },
       { metricName: "inventory.remaining", value: 1, unit: "items" },
-      { metricName: "inventory.sold_out_rejection", value: 1, unit: "rejections", aggregation: "delta", saleOfferId },
+      {
+        metricName: "inventory.sold_out_rejection",
+        value: 1,
+        unit: "rejections",
+        aggregation: "delta",
+        saleOfferId,
+      },
     ];
     for (const metric of invalidMetricPayloads) {
-      expect(dashboardEventSchema.safeParse({
+      expect(
+        dashboardEventSchema.safeParse({
+          type: "dashboard.metric.observed",
+          occurredAt: timestamp,
+          observedAt: timestamp,
+          ...metric,
+        }).success,
+      ).toBe(false);
+    }
+    expect(
+      dashboardEventSchema.safeParse({
         type: "dashboard.metric.observed",
+        metricName: "traffic.latency",
+        value: 42,
+        unit: "seconds",
+        runId,
         occurredAt: timestamp,
         observedAt: timestamp,
-        ...metric,
-      }).success).toBe(false);
-    }
-    expect(dashboardEventSchema.safeParse({
-      type: "dashboard.metric.observed",
-      metricName: "traffic.latency",
-      value: 42,
-      unit: "seconds",
-      runId,
-      occurredAt: timestamp,
-      observedAt: timestamp,
-    }).success).toBe(false);
+      }).success,
+    ).toBe(false);
 
     for (const eventName of orderEventNameValues) {
-      expect(dashboardEventSchema.parse({
+      expect(
+        dashboardEventSchema.parse({
+          type: "business.event.recorded",
+          eventId: "77777777-7777-4777-8777-777777777777",
+          eventName,
+          correlationId,
+          occurredAt: timestamp,
+        }).type,
+      ).toBe("business.event.recorded");
+    }
+    expect(
+      dashboardEventSchema.safeParse({
         type: "business.event.recorded",
         eventId: "77777777-7777-4777-8777-777777777777",
-        eventName,
+        eventName: "unknown.event",
         correlationId,
         occurredAt: timestamp,
-      }).type).toBe("business.event.recorded");
-    }
-    expect(dashboardEventSchema.safeParse({
-      type: "business.event.recorded",
-      eventId: "77777777-7777-4777-8777-777777777777",
-      eventName: "unknown.event",
-      correlationId,
-      occurredAt: timestamp,
-    }).success).toBe(false);
-    expect(dashboardEventSchema.safeParse({ type: "unknown.category", occurredAt: timestamp }).success)
-      .toBe(false);
+      }).success,
+    ).toBe(false);
+    expect(
+      dashboardEventSchema.safeParse({ type: "unknown.category", occurredAt: timestamp }).success,
+    ).toBe(false);
 
     expect(
       dashboardEventSchema.parse({
@@ -1659,11 +1908,30 @@ describe("buy and dashboard contracts", () => {
       attemptsMade: 1,
     } as const;
     const statuses = [
-      { ...statusBase, eventName: "order.processing", previousStatus: "queued", status: "processing", customerStatus: "processing" },
-      { ...statusBase, eventName: "order.confirmed", previousStatus: "processing", status: "confirmed", customerStatus: "confirmed" },
-      { ...statusBase, eventName: "order.failed", previousStatus: "processing", status: "failed", customerStatus: "failed" },
+      {
+        ...statusBase,
+        eventName: "order.processing",
+        previousStatus: "queued",
+        status: "processing",
+        customerStatus: "processing",
+      },
+      {
+        ...statusBase,
+        eventName: "order.confirmed",
+        previousStatus: "processing",
+        status: "confirmed",
+        customerStatus: "confirmed",
+      },
+      {
+        ...statusBase,
+        eventName: "order.failed",
+        previousStatus: "processing",
+        status: "failed",
+        customerStatus: "failed",
+      },
     ] as const;
-    for (const status of statuses) expect(dashboardEventSchema.parse(status).type).toBe("order.status.updated");
+    for (const status of statuses)
+      expect(dashboardEventSchema.parse(status).type).toBe("order.status.updated");
     const confirmedStatus = statuses[1];
     const lag = {
       type: "dashboard.metric.observed",
@@ -1724,7 +1992,8 @@ describe("buy and dashboard contracts", () => {
       omit(lag, "saleOfferId"),
       omit(lag, "correlationId"),
     ];
-    for (const invalid of invalidEvents) expect(dashboardEventSchema.safeParse(invalid).success).toBe(false);
+    for (const invalid of invalidEvents)
+      expect(dashboardEventSchema.safeParse(invalid).success).toBe(false);
   });
 
   it("validates dashboard recovery projections for the operator view", () => {
@@ -1884,8 +2153,10 @@ describe("public runtime policy contract", () => {
           endedAt: timestamp,
           httpSummary: {
             plannedRequests: 10,
-            emittedRequests: 10,
+            startedRequests: 10,
             completedRequests: 10,
+            interruptedRequests: 0,
+            unstartedRequests: 0,
             failedRequests: 0,
             acceptedResponses: 6,
             soldOutResponses: 4,
@@ -1895,7 +2166,10 @@ describe("public runtime policy contract", () => {
           },
           trafficDeliverySummary: {
             plannedRequests: 10,
-            emittedRequests: 10,
+            startedRequests: 10,
+            completedRequests: 10,
+            interruptedRequests: 0,
+            unstartedRequests: 0,
             droppedIterations: 0,
             trafficDeliveryStatus: "complete",
             notes: [],
@@ -1971,9 +2245,15 @@ describe("public runtime policy contract", () => {
       }),
     ).toMatchObject({ outcome: "deleted", saleOfferId });
 
-    const { id: _summaryId, failureReason: _failureReason, terminalInventorySnapshot, ...publicSummary } = summary;
+    const {
+      id: _summaryId,
+      failureReason: _failureReason,
+      terminalInventorySnapshot,
+      ...publicSummary
+    } = summary;
     const sanitizedInventory = terminalInventorySnapshot
-      ? (({ saleOfferId: _inventorySaleOfferId, source: _inventorySource, ...inventory }) => inventory)(terminalInventorySnapshot)
+      ? (({ saleOfferId: _inventorySaleOfferId, source: _inventorySource, ...inventory }) =>
+          inventory)(terminalInventorySnapshot)
       : undefined;
     const { notes: _deliveryNotes, ...publicDeliverySummary } =
       publicSummary.trafficDeliverySummary;
@@ -2052,25 +2332,71 @@ describe("public runtime policy contract", () => {
           totalCount: 1,
           limit: 20,
           truncated: false,
-          records: [{ orderId: "99999999-9999-4999-8999-999999999991", publicOrderId: "ord_history_1", saleOfferId, correlationId, quantity: 1, status: "confirmed", queuedAt: timestamp, processingAt: timestamp, confirmedAt: timestamp }],
+          records: [
+            {
+              orderId: "99999999-9999-4999-8999-999999999991",
+              publicOrderId: "ord_history_1",
+              saleOfferId,
+              correlationId,
+              quantity: 1,
+              status: "confirmed",
+              queuedAt: timestamp,
+              processingAt: timestamp,
+              confirmedAt: timestamp,
+            },
+          ],
         },
         erpAttempts: {
           totalCount: 1,
           limit: 20,
           truncated: false,
-          records: [{ attemptId: "99999999-9999-4999-8999-999999999992", orderId: "99999999-9999-4999-8999-999999999991", publicOrderId: "ord_history_1", correlationId, attemptNumber: 1, status: "succeeded", terminal: true, httpStatus: 200, latencyMs: 25, startedAt: timestamp, finishedAt: timestamp }],
+          records: [
+            {
+              attemptId: "99999999-9999-4999-8999-999999999992",
+              orderId: "99999999-9999-4999-8999-999999999991",
+              publicOrderId: "ord_history_1",
+              correlationId,
+              attemptNumber: 1,
+              status: "succeeded",
+              terminal: true,
+              httpStatus: 200,
+              latencyMs: 25,
+              startedAt: timestamp,
+              finishedAt: timestamp,
+            },
+          ],
         },
         notifications: {
           totalCount: 1,
           limit: 20,
           truncated: false,
-          records: [{ notificationId: "99999999-9999-4999-8999-999999999993", orderId: "99999999-9999-4999-8999-999999999991", publicOrderId: "ord_history_1", channel: "email", status: "recorded", recordedAt: timestamp }],
+          records: [
+            {
+              notificationId: "99999999-9999-4999-8999-999999999993",
+              orderId: "99999999-9999-4999-8999-999999999991",
+              publicOrderId: "ord_history_1",
+              channel: "email",
+              status: "recorded",
+              recordedAt: timestamp,
+            },
+          ],
         },
         eventTimeline: {
           totalCount: 1,
           limit: 20,
           truncated: false,
-          records: [{ eventId: "99999999-9999-4999-8999-999999999994", eventName: "order.confirmed", source: "worker", saleOfferId, correlationId, orderId: "99999999-9999-4999-8999-999999999991", publicOrderId: "ord_history_1", occurredAt: timestamp }],
+          records: [
+            {
+              eventId: "99999999-9999-4999-8999-999999999994",
+              eventName: "order.confirmed",
+              source: "worker",
+              saleOfferId,
+              correlationId,
+              orderId: "99999999-9999-4999-8999-999999999991",
+              publicOrderId: "ord_history_1",
+              occurredAt: timestamp,
+            },
+          ],
         },
         timestamp,
       }),
@@ -2109,14 +2435,25 @@ describe("public runtime policy contract", () => {
     expect(() =>
       runHistoryDetailResponseSchema.parse({
         ...detail,
-        summary: { ...detail.summary, trafficDeliverySummary: { ...detail.summary.trafficDeliverySummary, notes: ["private-delivery-diagnostic-marker"] } },
+        summary: {
+          ...detail.summary,
+          trafficDeliverySummary: {
+            ...detail.summary.trafficDeliverySummary,
+            notes: ["private-delivery-diagnostic-marker"],
+          },
+        },
       }),
     ).toThrow();
     expect(
       runHistoryDetailResponseSchema.parse({
         ...detail,
         orders: { totalCount: 0, byStatus: { queued: 0, processing: 0, confirmed: 0, failed: 0 } },
-        erpAttempts: { totalCount: 0, byStatus: { succeeded: 0, failed: 0, timedOut: 0 }, averageLatencyMs: null, p95LatencyMs: null },
+        erpAttempts: {
+          totalCount: 0,
+          byStatus: { succeeded: 0, failed: 0, timedOut: 0 },
+          averageLatencyMs: null,
+          p95LatencyMs: null,
+        },
         notifications: { totalCount: 0 },
         events: { totalCount: 0 },
       }).erpAttempts.p95LatencyMs,
@@ -2507,8 +2844,10 @@ describe("public runtime policy contract", () => {
         exitCode: 0,
         httpSummary: {
           plannedRequests: 400,
-          emittedRequests: 400,
+          startedRequests: 400,
           completedRequests: 400,
+          interruptedRequests: 0,
+          unstartedRequests: 0,
           failedRequests: 0,
           acceptedResponses: 200,
           soldOutResponses: 200,
@@ -2519,7 +2858,10 @@ describe("public runtime policy contract", () => {
         trafficOutcomeSummary: {},
         trafficDeliverySummary: {
           plannedRequests: 400,
-          emittedRequests: 400,
+          startedRequests: 400,
+          completedRequests: 400,
+          interruptedRequests: 0,
+          unstartedRequests: 0,
           trafficMode: "buyer-spike",
           plannedBuyers: 200,
           scheduledRatePerSecond: null,
@@ -2542,7 +2884,14 @@ describe("public runtime policy contract", () => {
             maxDurationSeconds: 5,
           },
         },
-        apiRequestLifecycleSummary: {},
+        apiRequestLifecycleSummary: {
+          plannedRequests: 400,
+          startedRequests: 400,
+          completedRequests: 400,
+          interruptedRequests: 0,
+          unstartedRequests: 0,
+          failedRequests: 0,
+        },
         completedAt: timestamp,
         correlationId,
       }).httpSummary.acceptedResponses,
@@ -2732,7 +3081,7 @@ function runnerDiagnostics() {
     stderrLineTruncationLength: 500,
     stderrLineTruncatedCount: 0,
     terminalMetricSources: {
-      emittedRequests: "summary_export" as const,
+      startedRequests: "summary_export" as const,
       completedRequests: "summary_export" as const,
       acceptedResponses: "summary_export" as const,
       soldOutResponses: "summary_export" as const,

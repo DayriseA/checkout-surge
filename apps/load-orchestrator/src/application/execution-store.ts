@@ -4,6 +4,10 @@ import path from "node:path";
 import {
   emptyHttpTimingBreakdownSummary,
   loadRunDiagnosticsSummarySchema,
+  normalizeLegacyApiRequestLifecycleSummaryJson,
+  normalizeLegacyLoadRunDiagnosticsSummaryJson,
+  normalizeLegacyTrafficDeliverySummaryJson,
+  normalizeLegacyTrafficHttpSummaryJson,
   type TrafficCompletionReport,
   type TrafficExecutionStartRequest,
   trafficCompletionReportSchema,
@@ -13,7 +17,7 @@ import { z } from "zod";
 import { generateK6Script } from "./k6-script.js";
 
 const durableExecutionSchema = z.preprocess(
-  migrateLegacyDiagnostics,
+  migrateLegacyExecutionJournal,
   z
     .object({
       request: trafficExecutionStartRequestSchema,
@@ -103,7 +107,14 @@ export class FileExecutionStore {
   }
 }
 
-function migrateLegacyDiagnostics(value: unknown): unknown {
+/**
+ * Legacy journal read-boundary migration. Old completions recorded the retired
+ * `emittedRequests`/`unstartedIterations`/`requestShortfall` transport names
+ * and older diagnostics shapes; rewrite them to canonical transport counts and
+ * terminal metric-source names before strict parsing. New completions are
+ * written canonically and pass through unchanged.
+ */
+function migrateLegacyExecutionJournal(value: unknown): unknown {
   if (!value || typeof value !== "object") return value;
   const journal = value as Record<string, unknown>;
   const request = journal.request;
@@ -111,11 +122,51 @@ function migrateLegacyDiagnostics(value: unknown): unknown {
   if (!request || typeof request !== "object" || !completion || typeof completion !== "object")
     return value;
   const report = completion as Record<string, unknown>;
-  const diagnostics = report.loadRunDiagnosticsSummary;
-  if (!diagnostics || typeof diagnostics !== "object" || Array.isArray(diagnostics)) return value;
+
+  const httpSummary = normalizeLegacyTrafficHttpSummaryJson(report.httpSummary);
+  const plannedRequests = readLegacyPlannedRequests(httpSummary);
+  const migratedCompletion: Record<string, unknown> = {
+    ...report,
+    httpSummary,
+    trafficDeliverySummary: normalizeLegacyTrafficDeliverySummaryJson(
+      report.trafficDeliverySummary,
+    ),
+    apiRequestLifecycleSummary: normalizeLegacyApiRequestLifecycleSummaryJson(
+      report.apiRequestLifecycleSummary,
+      plannedRequests,
+    ),
+  };
+
+  const diagnosticsMigration = migrateLegacyDiagnostics(request, report.loadRunDiagnosticsSummary);
+  if (diagnosticsMigration) {
+    migratedCompletion.loadRunDiagnosticsSummary = diagnosticsMigration.diagnostics;
+    const migratedTiming = migrateLegacyTiming(report.httpTimingBreakdownSummary);
+    if (migratedTiming !== undefined) {
+      migratedCompletion.httpTimingBreakdownSummary = migratedTiming;
+    }
+  } else {
+    migratedCompletion.loadRunDiagnosticsSummary = normalizeLegacyLoadRunDiagnosticsSummaryJson(
+      report.loadRunDiagnosticsSummary,
+    );
+  }
+
+  return { ...journal, completion: migratedCompletion };
+}
+
+function readLegacyPlannedRequests(httpSummary: unknown): number {
+  if (!httpSummary || typeof httpSummary !== "object" || Array.isArray(httpSummary)) return 0;
+  const planned = (httpSummary as Record<string, unknown>).plannedRequests;
+  return typeof planned === "number" && Number.isFinite(planned) && planned >= 0 ? planned : 0;
+}
+
+function migrateLegacyDiagnostics(
+  request: unknown,
+  diagnostics: unknown,
+): { diagnostics: Record<string, unknown> } | null {
+  if (!diagnostics || typeof diagnostics !== "object" || Array.isArray(diagnostics)) return null;
   const legacy = diagnostics as Record<string, unknown>;
   const parsedRequest = trafficExecutionStartRequestSchema.safeParse(request);
-  if (!parsedRequest.success) return value;
+  if (!parsedRequest.success) return null;
 
   const timestampOnlyDiagnostics = parseTimestampOnlyDiagnostics(legacy);
   const fullLegacyDiagnostics = loadRunDiagnosticsSummarySchema.safeParse(legacy);
@@ -125,9 +176,8 @@ function migrateLegacyDiagnostics(value: unknown): unknown {
       "terminalMetricSources" in legacy ||
       "summaryExportWarnings" in legacy)
   )
-    return value;
+    return null;
 
-  const migratedTiming = migrateLegacyTiming(report.httpTimingBreakdownSummary);
   const migratedDiagnostics = timestampOnlyDiagnostics
     ? {
         startedAt: timestampOnlyDiagnostics.startedAt,
@@ -150,14 +200,7 @@ function migrateLegacyDiagnostics(value: unknown): unknown {
         ...fullLegacyDiagnostics.data,
         ...legacyTerminalEvidenceDefaults(),
       };
-  return {
-    ...journal,
-    completion: {
-      ...report,
-      ...(migratedTiming === undefined ? {} : { httpTimingBreakdownSummary: migratedTiming }),
-      loadRunDiagnosticsSummary: migratedDiagnostics,
-    },
-  };
+  return { diagnostics: migratedDiagnostics };
 }
 
 function parseTimestampOnlyDiagnostics(
@@ -192,7 +235,7 @@ function migrateLegacyTiming(value: unknown): typeof emptyHttpTimingBreakdownSum
 function legacyTerminalEvidenceDefaults() {
   return {
     terminalMetricSources: {
-      emittedRequests: null,
+      startedRequests: null,
       completedRequests: null,
       acceptedResponses: null,
       soldOutResponses: null,

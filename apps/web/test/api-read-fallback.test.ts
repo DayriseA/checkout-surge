@@ -160,8 +160,10 @@ describe("dashboard backend API reads", () => {
             endedAt: "2026-06-20T00:00:10.000Z",
             httpSummary: {
               plannedRequests: 10,
-              emittedRequests: 10,
+              startedRequests: 10,
               completedRequests: 10,
+              interruptedRequests: 0,
+              unstartedRequests: 0,
               failedRequests: 0,
               acceptedResponses: 6,
               soldOutResponses: 4,
@@ -171,7 +173,10 @@ describe("dashboard backend API reads", () => {
             },
             trafficDeliverySummary: {
               plannedRequests: 10,
-              emittedRequests: 10,
+              startedRequests: 10,
+              completedRequests: 10,
+              interruptedRequests: 0,
+              unstartedRequests: 0,
               droppedIterations: 0,
               trafficDeliveryStatus: "complete",
               notes: [],
@@ -280,8 +285,10 @@ function runHistoryDetailFixture() {
       endedAt: "2026-06-20T00:00:10.000Z",
       httpSummary: {
         plannedRequests: 10,
-        emittedRequests: 10,
+        startedRequests: 10,
         completedRequests: 10,
+        interruptedRequests: 0,
+        unstartedRequests: 0,
         failedRequests: 0,
         acceptedResponses: 6,
         soldOutResponses: 4,
@@ -291,7 +298,10 @@ function runHistoryDetailFixture() {
       },
       trafficDeliverySummary: {
         plannedRequests: 10,
-        emittedRequests: 10,
+        startedRequests: 10,
+        completedRequests: 10,
+        interruptedRequests: 0,
+        unstartedRequests: 0,
         droppedIterations: 0,
         trafficDeliveryStatus: "complete",
         notes: [],
@@ -391,9 +401,8 @@ function runHistoryDetailFixture() {
   const { id: _id, terminalInventorySnapshot, ...summary } = admin.summary;
   const { presetId: _presetId, saleOfferId: _saleOfferId, ...run } = admin.run;
   const sanitizedInventory = terminalInventorySnapshot
-    ? (({ saleOfferId: _inventorySaleOfferId, source: _inventorySource, ...inventory }) => inventory)(
-        terminalInventorySnapshot,
-      )
+    ? (({ saleOfferId: _inventorySaleOfferId, source: _inventorySource, ...inventory }) =>
+        inventory)(terminalInventorySnapshot)
     : undefined;
   const { notes: _deliveryNotes, ...publicDeliverySummary } = summary.trafficDeliverySummary;
   return {

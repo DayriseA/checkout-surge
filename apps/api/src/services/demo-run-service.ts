@@ -1724,8 +1724,10 @@ function failedBeforeTrafficStartSummary(
   return {
     httpSummary: {
       plannedRequests,
-      emittedRequests: 0,
+      startedRequests: 0,
       completedRequests: 0,
+      interruptedRequests: 0,
+      unstartedRequests: plannedRequests,
       failedRequests: 0,
       acceptedResponses: 0,
       soldOutResponses: 0,

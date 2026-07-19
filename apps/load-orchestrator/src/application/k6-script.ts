@@ -74,6 +74,8 @@ import { Counter } from "k6/metrics";
 
 const config = ${JSON.stringify(scriptConfig)};
 const expectedCheckoutStatuses = http.expectedStatuses(202, 409);
+const attemptsStarted = new Counter("checkout_attempts_started");
+const responsesCompleted = new Counter("checkout_responses_completed");
 const acceptedResponses = new Counter("checkout_reservation_accepted");
 const soldOutResponses = new Counter("checkout_sold_out_rejections");
 const unexpectedResponses = new Counter("checkout_unexpected_responses");
@@ -102,6 +104,7 @@ export default function () {
     ? \`run:\${config.runId}:buyer:\${buyerId}\`
     : \`run:\${config.runId}:attempt:\${iteration}\`;
   const correlationId = \`\${config.correlationId}:k6:\${iteration}\`;
+  attemptsStarted.add(1);
   const response = http.post(
     \`\${config.apiBaseUrl}\${config.buyEndpointPath}\`,
     JSON.stringify({
@@ -121,6 +124,7 @@ export default function () {
       },
     },
   );
+  responsesCompleted.add(1);
 
   const outcome = readResponseHeader(response, checkoutOutcomeHeaderName);
   const rejectionReason = readResponseHeader(response, checkoutRejectionReasonHeaderName);

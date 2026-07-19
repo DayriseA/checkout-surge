@@ -1,11 +1,19 @@
 import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
+import type { Socket } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { TrafficExecutionStartRequest } from "@checkout-surge/contracts";
+import {
+  type TrafficExecutionStartRequest,
+  trafficCompletionReportSchema,
+} from "@checkout-surge/contracts";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { parseK6SummaryMetrics } from "../src/application/k6-output-parser.js";
+import {
+  K6RunAccumulator,
+  parseK6JsonLine,
+  parseK6SummaryMetrics,
+} from "../src/application/k6-output-parser.js";
 import { generateK6Script } from "../src/application/k6-script.js";
 
 const k6Binary = process.env.K6_BINARY?.trim() || "/usr/local/bin/k6";
@@ -94,13 +102,105 @@ export default function () { http.get("http://127.0.0.1:${address.port}/"); }
       },
     });
   });
+
+  it("reports an attempt still waiting at k6 termination as started and interrupted", {
+    timeout: 60_000,
+  }, async () => {
+    // The server accepts the request but deliberately never completes the
+    // response, so k6 must terminate the attempt at the scenario boundary.
+    const heldSockets = new Set<Socket>();
+    const server = createServer(() => {
+      // Never write a response; the socket is tracked and destroyed during cleanup.
+    });
+    server.on("connection", (socket) => {
+      heldSockets.add(socket);
+      socket.on("close", () => heldSockets.delete(socket));
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    const address = server.address();
+    if (!address || typeof address === "string") {
+      throw new Error("Expected a loopback TCP port.");
+    }
+
+    const request = createRequest(
+      {
+        mode: "buyer-spike",
+        buyerCount: 1,
+        duplicateEachBuyerAttempt: false,
+        startDelaySeconds: 0,
+        maxDurationSeconds: 1,
+        quantityPerAttempt: 1,
+      },
+      `http://127.0.0.1:${address.port}`,
+    );
+    const generated = generateK6Script(request);
+    const scriptPath = path.join(workDir, "hung-endpoint.js");
+    const summaryPath = path.join(workDir, "hung-endpoint.json");
+    await writeFile(scriptPath, generated.contents, "utf8");
+
+    try {
+      const execution = await runK6(
+        ["run", "--quiet", "--summary-export", summaryPath, "--out", "json=-", scriptPath],
+        { expectSuccessfulExit: false },
+      );
+
+      const accumulator = new K6RunAccumulator({
+        runId: request.runId,
+        correlationId: request.correlationId,
+        plannedRequests: generated.plannedRequests,
+        startedAt: new Date(),
+        executionPlan: generated.executionPlan,
+      });
+      for (const line of execution.stdout.split("\n")) {
+        const point = parseK6JsonLine(line);
+        if (point) accumulator.observe(point);
+      }
+      const summaryMetrics = parseK6SummaryMetrics(await readFile(summaryPath, "utf8"));
+      expect(summaryMetrics?.attemptsStarted).toBe(1);
+
+      const report = accumulator.completionReport({
+        status: execution.exitCode === 0 ? "succeeded" : "failed",
+        exitCode: execution.exitCode,
+        completedAt: new Date(),
+        ...(summaryMetrics ? { summaryMetrics } : {}),
+      });
+
+      expect(report.httpSummary).toMatchObject({
+        plannedRequests: 1,
+        startedRequests: 1,
+        completedRequests: 0,
+        interruptedRequests: 1,
+        unstartedRequests: 0,
+      });
+      expect(report.trafficDeliverySummary).toMatchObject({
+        plannedRequests: 1,
+        startedRequests: 1,
+        completedRequests: 0,
+        interruptedRequests: 1,
+        unstartedRequests: 0,
+      });
+      expect(() => trafficCompletionReportSchema.parse(report)).not.toThrow();
+    } finally {
+      for (const socket of heldSockets) socket.destroy();
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
+    }
+  });
 });
 
-async function runK6(args: string[]): Promise<{
+async function runK6(
+  args: string[],
+  options: { expectSuccessfulExit?: boolean } = {},
+): Promise<{
   exitCode: number;
   stdout: string;
   stderr: string;
 }> {
+  const expectSuccessfulExit = options.expectSuccessfulExit ?? true;
   return new Promise((resolve, reject) => {
     const child = spawn(k6Binary, args, { shell: false, stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
@@ -120,13 +220,15 @@ async function runK6(args: string[]): Promise<{
       );
     });
     child.once("close", (exitCode, signal) => {
-      if (exitCode === 0) resolve({ exitCode, stdout, stderr });
-      else
+      if (exitCode !== null && (exitCode === 0 || !expectSuccessfulExit)) {
+        resolve({ exitCode, stdout, stderr });
+      } else {
         reject(
           new Error(
             `k6 ${args[0] ?? "command"} failed with ${signal ?? exitCode}.\nstdout:\n${stdout}\nstderr:\n${stderr}`,
           ),
         );
+      }
     });
   });
 }
@@ -140,11 +242,12 @@ function createRequest(
     maxDurationSeconds: 1,
     quantityPerAttempt: 1,
   },
+  apiBaseUrl = "http://127.0.0.1:4000",
 ): TrafficExecutionStartRequest {
   return {
     runId: "55555555-5555-4555-8555-555555555555",
     saleOfferId: "22222222-2222-4222-8222-222222222222",
-    apiBaseUrl: "http://127.0.0.1:4000",
+    apiBaseUrl,
     buyEndpointPath: "/buy",
     correlationId: "corr-k6-compat",
     configSnapshot: {

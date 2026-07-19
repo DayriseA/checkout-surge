@@ -907,12 +907,14 @@ describe("demo-run preset management", () => {
 
     // Admin start reaches the preset lookup after the runtime policy read; an
     // archived slug is rejected as preset_not_found before any run is created.
-    await requireConnection(connection).db.insert(publicRuntimePolicies).values({
-      id: "active",
-      policy: publicRuntimePolicy(),
-      createdAt: new Date("2026-06-20T00:00:00.000Z"),
-      updatedAt: new Date("2026-06-20T00:00:00.000Z"),
-    });
+    await requireConnection(connection)
+      .db.insert(publicRuntimePolicies)
+      .values({
+        id: "active",
+        policy: publicRuntimePolicy(),
+        createdAt: new Date("2026-06-20T00:00:00.000Z"),
+        updatedAt: new Date("2026-06-20T00:00:00.000Z"),
+      });
     await expect(
       service.startRun(
         { presetSlug: "operator-duplicate", operatorMode: "admin" },
@@ -935,21 +937,23 @@ describe("demo-run preset management", () => {
       targetSlug: "linked-duplicate",
     });
 
-    await requireConnection(connection).db.insert(demoRuns).values({
-      id: "55555555-5555-4555-8555-555555555570",
-      presetId: created.preset.id,
-      presetName: "Linked Duplicate",
-      operatorMode: "admin",
-      status: "completed",
-      trafficStatus: "succeeded",
-      configSnapshot: surge10kSnapshot(),
-      startedAt: new Date("2026-06-20T00:00:00.000Z"),
-      trafficStartedAt: new Date("2026-06-20T00:00:01.000Z"),
-      trafficEndedAt: new Date("2026-06-20T00:00:05.000Z"),
-      finalizedAt: new Date("2026-06-20T00:00:06.000Z"),
-      createdAt: new Date("2026-06-20T00:00:00.000Z"),
-      updatedAt: new Date("2026-06-20T00:00:06.000Z"),
-    });
+    await requireConnection(connection)
+      .db.insert(demoRuns)
+      .values({
+        id: "55555555-5555-4555-8555-555555555570",
+        presetId: created.preset.id,
+        presetName: "Linked Duplicate",
+        operatorMode: "admin",
+        status: "completed",
+        trafficStatus: "succeeded",
+        configSnapshot: surge10kSnapshot(),
+        startedAt: new Date("2026-06-20T00:00:00.000Z"),
+        trafficStartedAt: new Date("2026-06-20T00:00:01.000Z"),
+        trafficEndedAt: new Date("2026-06-20T00:00:05.000Z"),
+        finalizedAt: new Date("2026-06-20T00:00:06.000Z"),
+        createdAt: new Date("2026-06-20T00:00:00.000Z"),
+        updatedAt: new Date("2026-06-20T00:00:06.000Z"),
+      });
 
     // Soft archive must succeed even though demo_runs.preset_id ON DELETE
     // RESTRICT would block a hard delete.
@@ -966,18 +970,20 @@ describe("demo-run preset management", () => {
 
   it("refuses to archive protected public, custom, and system admin presets", async () => {
     const service = createPresetManagementService(requireConnection(connection));
-    await requireConnection(connection).db.insert(demoPresets).values({
-      id: "44444444-4444-4444-8444-444444444450",
-      slug: "system-admin-preset",
-      visibility: "admin",
-      isEditable: true,
-      isCustom: false,
-      isSystem: true,
-      display: { name: "System Admin", description: "Seeded", sortOrder: 90, outcomeFocus: [] },
-      ...surge10kSnapshot(),
-      createdAt: new Date("2026-06-20T00:00:00.000Z"),
-      updatedAt: new Date("2026-06-20T00:00:00.000Z"),
-    });
+    await requireConnection(connection)
+      .db.insert(demoPresets)
+      .values({
+        id: "44444444-4444-4444-8444-444444444450",
+        slug: "system-admin-preset",
+        visibility: "admin",
+        isEditable: true,
+        isCustom: false,
+        isSystem: true,
+        display: { name: "System Admin", description: "Seeded", sortOrder: 90, outcomeFocus: [] },
+        ...surge10kSnapshot(),
+        createdAt: new Date("2026-06-20T00:00:00.000Z"),
+        updatedAt: new Date("2026-06-20T00:00:00.000Z"),
+      });
 
     await expect(service.archiveAdminPreset({ slug: "preview-1k" })).rejects.toMatchObject({
       code: "preset_not_archivable",
@@ -989,9 +995,11 @@ describe("demo-run preset management", () => {
     await expect(service.archiveAdminPreset({ slug: "custom" })).rejects.toMatchObject({
       code: "preset_not_archivable",
     });
-    await expect(service.archiveAdminPreset({ slug: "system-admin-preset" })).rejects.toMatchObject({
-      code: "preset_not_archivable",
-    });
+    await expect(service.archiveAdminPreset({ slug: "system-admin-preset" })).rejects.toMatchObject(
+      {
+        code: "preset_not_archivable",
+      },
+    );
 
     const adminList = await service.listAdminPresets();
     expect(
@@ -1984,14 +1992,19 @@ describe("demo-run lifecycle start gating", () => {
     });
     expect(summaries[0]?.httpSummary).toMatchObject({
       plannedRequests: 10_000,
-      emittedRequests: 0,
+      startedRequests: 0,
+      completedRequests: 0,
+      interruptedRequests: 0,
+      unstartedRequests: 10_000,
     });
     expect(summaries[0]?.trafficDeliverySummary).toMatchObject({
       trafficDeliveryStatus: "failed",
       droppedIterations: 0,
       completedIterations: 0,
-      unstartedIterations: 10_000,
-      requestShortfall: 10_000,
+      startedRequests: 0,
+      completedRequests: 0,
+      interruptedRequests: 0,
+      unstartedRequests: 10_000,
       trafficMode: "buyer-spike",
       plannedBuyers: 10_000,
     });
@@ -2050,8 +2063,10 @@ describe("demo-run lifecycle start gating", () => {
             endedAt: new Date("2026-06-20T00:00:12.000Z"),
             httpSummary: {
               plannedRequests: 10_000,
-              emittedRequests: 0,
+              startedRequests: 0,
               completedRequests: 0,
+              interruptedRequests: 0,
+              unstartedRequests: 10_000,
               failedRequests: 0,
               acceptedResponses: 0,
               soldOutResponses: 0,
@@ -2060,7 +2075,10 @@ describe("demo-run lifecycle start gating", () => {
             },
             trafficDeliverySummary: trafficDeliverySummarySchema.parse({
               plannedRequests: 10_000,
-              emittedRequests: 0,
+              startedRequests: 0,
+              completedRequests: 0,
+              interruptedRequests: 0,
+              unstartedRequests: 10_000,
               droppedIterations: 10_000,
               trafficDeliveryStatus: "failed",
               notes: [],
@@ -2130,8 +2148,10 @@ describe("demo-run lifecycle start gating", () => {
         status: "succeeded",
         httpSummary: {
           plannedRequests: 10_000,
-          emittedRequests: 0,
+          startedRequests: 0,
           completedRequests: 0,
+          interruptedRequests: 0,
+          unstartedRequests: 10_000,
           failedRequests: 0,
           acceptedResponses: 0,
           soldOutResponses: 0,
@@ -2141,7 +2161,10 @@ describe("demo-run lifecycle start gating", () => {
         trafficOutcomeSummary: {},
         trafficDeliverySummary: {
           plannedRequests: 10_000,
-          emittedRequests: 0,
+          startedRequests: 0,
+          completedRequests: 0,
+          interruptedRequests: 0,
+          unstartedRequests: 10_000,
           trafficMode: "buyer-spike",
           plannedBuyers: 10_000,
           scheduledRatePerSecond: null,
@@ -2156,7 +2179,14 @@ describe("demo-run lifecycle start gating", () => {
           ...runnerDiagnosticsFixture("2026-06-20T00:00:12.000Z", 10_000),
           completedAt: "2026-06-20T00:00:12.000Z",
         },
-        apiRequestLifecycleSummary: {},
+        apiRequestLifecycleSummary: {
+          plannedRequests: 10_000,
+          startedRequests: 0,
+          completedRequests: 0,
+          interruptedRequests: 0,
+          unstartedRequests: 10_000,
+          failedRequests: 0,
+        },
         completedAt: "2026-06-20T00:00:12.000Z",
         correlationId: "corr-fast-completion",
       });
@@ -2449,12 +2479,17 @@ describe("demo-run lifecycle start gating", () => {
           plannedRequests: 10,
           correlationId: "corr-post-enrichment",
         }).httpSummary,
-        emittedRequests: 10,
+        startedRequests: 10,
         completedRequests: 10,
+        interruptedRequests: 0,
+        unstartedRequests: 0,
       },
       trafficDeliverySummary: {
         plannedRequests: 10,
-        emittedRequests: 10,
+        startedRequests: 10,
+        completedRequests: 10,
+        interruptedRequests: 0,
+        unstartedRequests: 0,
         trafficMode: "buyer-spike",
         plannedBuyers: 10,
         scheduledRatePerSecond: null,
@@ -2484,7 +2519,8 @@ describe("demo-run lifecycle start gating", () => {
     expect(committedFinalization?.completionEnrichmentStatus).toBe("completed");
     expect(committedFinalization?.trafficDeliverySummary).toMatchObject({
       trafficDeliveryStatus: "complete",
-      requestShortfall: 0,
+      startedRequests: 10,
+      unstartedRequests: 0,
     });
     expect(committedFinalization?.loadRunDiagnosticsSummary).toEqual(
       report.loadRunDiagnosticsSummary,
@@ -2596,12 +2632,17 @@ describe("demo-run lifecycle start gating", () => {
           plannedRequests: 10,
           correlationId: "corr-pending-enrichment",
         }).httpSummary,
-        emittedRequests: 10,
+        startedRequests: 10,
         completedRequests: 10,
+        interruptedRequests: 0,
+        unstartedRequests: 0,
       },
       trafficDeliverySummary: {
         plannedRequests: 10,
-        emittedRequests: 10,
+        startedRequests: 10,
+        completedRequests: 10,
+        interruptedRequests: 0,
+        unstartedRequests: 0,
         trafficMode: "buyer-spike",
         plannedBuyers: 10,
         scheduledRatePerSecond: null,
@@ -2822,12 +2863,17 @@ describe("demo-run lifecycle start gating", () => {
           plannedRequests: 10,
           correlationId: "corr-no-snapshot",
         }).httpSummary,
-        emittedRequests: 10,
+        startedRequests: 10,
         completedRequests: 10,
+        interruptedRequests: 0,
+        unstartedRequests: 0,
       },
       trafficDeliverySummary: {
         plannedRequests: 10,
-        emittedRequests: 10,
+        startedRequests: 10,
+        completedRequests: 10,
+        interruptedRequests: 0,
+        unstartedRequests: 0,
         trafficMode: "buyer-spike",
         plannedBuyers: 10,
         scheduledRatePerSecond: null,
@@ -3113,13 +3159,15 @@ function interceptNextSelectResult(
             onFulfilled?: (value: unknown) => unknown,
             onRejected?: (reason: unknown) => unknown,
           ) =>
-            Promise.resolve(target).then(async (result) => {
-              if (shouldIntercept) {
-                shouldIntercept = false;
-                await afterSelect();
-              }
-              return result;
-            }).then(onFulfilled, onRejected);
+            Promise.resolve(target)
+              .then(async (result) => {
+                if (shouldIntercept) {
+                  shouldIntercept = false;
+                  await afterSelect();
+                }
+                return result;
+              })
+              .then(onFulfilled, onRejected);
         }
 
         const value = Reflect.get(target, property, target);
@@ -3127,9 +3175,7 @@ function interceptNextSelectResult(
 
         return (...args: unknown[]) => {
           const result = Reflect.apply(value, target, args) as unknown;
-          return typeof result === "object" && result !== null
-            ? wrapQueryBuilder(result)
-            : result;
+          return typeof result === "object" && result !== null ? wrapQueryBuilder(result) : result;
         };
       },
     });
@@ -3326,8 +3372,10 @@ function trafficCompletionFixture(input: {
     ...(input.errorMessage ? { errorMessage: input.errorMessage } : {}),
     httpSummary: {
       plannedRequests: input.plannedRequests,
-      emittedRequests: 0,
+      startedRequests: 0,
       completedRequests: 0,
+      interruptedRequests: 0,
+      unstartedRequests: input.plannedRequests,
       failedRequests: 0,
       acceptedResponses: 0,
       soldOutResponses: 0,
@@ -3337,7 +3385,10 @@ function trafficCompletionFixture(input: {
     trafficOutcomeSummary: {},
     trafficDeliverySummary: {
       plannedRequests: input.plannedRequests,
-      emittedRequests: 0,
+      startedRequests: 0,
+      completedRequests: 0,
+      interruptedRequests: 0,
+      unstartedRequests: input.plannedRequests,
       trafficMode: "buyer-spike",
       plannedBuyers: input.plannedRequests,
       scheduledRatePerSecond: null,
@@ -3349,7 +3400,14 @@ function trafficCompletionFixture(input: {
     },
     httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
     loadRunDiagnosticsSummary: runnerDiagnosticsFixture(input.completedAt, input.plannedRequests),
-    apiRequestLifecycleSummary: {},
+    apiRequestLifecycleSummary: {
+      plannedRequests: input.plannedRequests,
+      startedRequests: 0,
+      completedRequests: 0,
+      interruptedRequests: 0,
+      unstartedRequests: input.plannedRequests,
+      failedRequests: 0,
+    },
     completedAt: input.completedAt,
     correlationId: input.correlationId,
   };
@@ -3383,7 +3441,7 @@ function runnerDiagnosticsFixture(
     stderrLineTruncationLength: 500,
     stderrLineTruncatedCount: 0,
     terminalMetricSources: {
-      emittedRequests: "summary_export",
+      startedRequests: "summary_export",
       completedRequests: "summary_export",
       acceptedResponses: "summary_export",
       soldOutResponses: "summary_export",

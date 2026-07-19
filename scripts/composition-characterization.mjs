@@ -188,13 +188,12 @@ async function characterizeRepresentativeSurge() {
     "surge preset no longer plans 10,000 requests",
   );
   assert(
-    summary.httpSummary.emittedRequests + summary.trafficDeliverySummary.droppedIterations ===
-      10_000,
-    "surge emitted plus dropped request count did not match the 10,000 request plan",
+    summary.httpSummary.startedRequests === 10_000,
+    "surge started request count did not match the 10,000 request plan",
   );
   assert(
-    summary.httpSummary.completedRequests === summary.httpSummary.emittedRequests,
-    "surge did not account for every emitted request",
+    summary.httpSummary.completedRequests === summary.httpSummary.startedRequests,
+    "surge did not complete every started request",
   );
   assert(
     summary.httpSummary?.unexpectedResponses === 0,

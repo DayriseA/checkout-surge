@@ -460,10 +460,7 @@ describe("admin feature controllers", () => {
     render(
       <AdminPresetController
         initialPresets={available<AdminPresetListResponse>({
-          presets: [
-            archivablePresetFixture("operator-dup", "Operator Dup"),
-            presetFixture(),
-          ],
+          presets: [archivablePresetFixture("operator-dup", "Operator Dup"), presetFixture()],
           timestamp: "2026-06-20T00:00:10.000Z",
         })}
         recovery={available(recoveryFixture(null))}
@@ -480,9 +477,7 @@ describe("admin feature controllers", () => {
     ]);
     expect(screen.queryByRole("button", { name: "Operator Dup" })).toBeNull();
     expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("Custom");
-    expect((screen.getByLabelText("Duplicate slug") as HTMLInputElement).value).toBe(
-      "custom-copy",
-    );
+    expect((screen.getByLabelText("Duplicate slug") as HTMLInputElement).value).toBe("custom-copy");
   });
 
   it("clears the preset editor after archiving the last remaining preset", async () => {
@@ -557,9 +552,9 @@ describe("admin feature controllers", () => {
     await user.click(screen.getByRole("button", { name: "Archive Preset" }));
     await user.click(screen.getByRole("button", { name: "Archive preset" }));
     await waitFor(() =>
-      expect(
-        (screen.getByRole("button", { name: "Working…" }) as HTMLButtonElement).disabled,
-      ).toBe(true),
+      expect((screen.getByRole("button", { name: "Working…" }) as HTMLButtonElement).disabled).toBe(
+        true,
+      ),
     );
     expect(fetchMock).toHaveBeenCalledOnce();
 
@@ -633,6 +628,7 @@ function recoveryFixture(
     erp: null,
     businessOutcome: null,
     consistencyLag: null,
+    transportAccounting: null,
     recentCompletionOutcomes: [],
     recoveredAt: "2026-06-20T00:00:10.000Z",
   };

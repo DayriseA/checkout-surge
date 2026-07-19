@@ -55,7 +55,11 @@ function orderStatusEventFixture(
   };
 }
 
-function lagEventFixture(eventId: string, observedAt: string, value: number): OrderConsistencyLagDashboardEvent {
+function lagEventFixture(
+  eventId: string,
+  observedAt: string,
+  value: number,
+): OrderConsistencyLagDashboardEvent {
   const observed = new Date(observedAt);
   return {
     type: "dashboard.metric.observed",
@@ -84,27 +88,64 @@ describe("Phase 6 dashboard behavior", () => {
   it("deduplicates and bounds scoped per-order events without allowing terminal regression", () => {
     const recovery = availableRecovery({ ...recoveryFixture(), currentRun: runFixture() });
     if (recovery.status !== "available") throw new Error("Expected available recovery fixture.");
-    const confirmed = orderStatusEventFixture("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "order.confirmed", "processing", "confirmed");
-    const processing = orderStatusEventFixture("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "order.processing", "queued", "processing");
+    const confirmed = orderStatusEventFixture(
+      "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "order.confirmed",
+      "processing",
+      "confirmed",
+    );
+    const processing = orderStatusEventFixture(
+      "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      "order.processing",
+      "queued",
+      "processing",
+    );
     let state = createDashboardState(recovery);
-    state = dashboardStateReducer(state, { type: "event-received", event: confirmed, discard: false });
-    state = dashboardStateReducer(state, { type: "event-received", event: confirmed, discard: false });
-    state = dashboardStateReducer(state, { type: "event-received", event: processing, discard: false });
+    state = dashboardStateReducer(state, {
+      type: "event-received",
+      event: confirmed,
+      discard: false,
+    });
+    state = dashboardStateReducer(state, {
+      type: "event-received",
+      event: confirmed,
+      discard: false,
+    });
+    state = dashboardStateReducer(state, {
+      type: "event-received",
+      event: processing,
+      discard: false,
+    });
 
-    expect(state.recentOrderStates.find((order) => order.orderId === confirmed.orderId)?.status).toBe("confirmed");
+    expect(
+      state.recentOrderStates.find((order) => order.orderId === confirmed.orderId)?.status,
+    ).toBe("confirmed");
     expect(state.seenOrderEventIds).toEqual([confirmed.eventId, processing.eventId]);
 
     const refreshed = dashboardStateReducer(state, { type: "refresh-completed", recovery });
     expect(refreshed.seenOrderEventIds).toEqual([]);
     expect(refreshed.recentOrderLagSamples).toEqual([]);
-    expect(refreshed.recentOrderStates).toEqual(expect.arrayContaining(recovery.data.recentCompletionOutcomes.map((outcome) => expect.objectContaining({ orderId: outcome.orderId, status: outcome.orderStatus }))));
-    expect(refreshed.recovery.status === "available" ? refreshed.recovery.data.consistencyLag : null).toEqual(recovery.data.consistencyLag);
+    expect(refreshed.recentOrderStates).toEqual(
+      expect.arrayContaining(
+        recovery.data.recentCompletionOutcomes.map((outcome) =>
+          expect.objectContaining({ orderId: outcome.orderId, status: outcome.orderStatus }),
+        ),
+      ),
+    );
+    expect(
+      refreshed.recovery.status === "available" ? refreshed.recovery.data.consistencyLag : null,
+    ).toEqual(recovery.data.consistencyLag);
   });
 
   it("retains a latest individual lag sample separately from aggregate p95", () => {
     const recovery = availableRecovery({ ...recoveryFixture(), currentRun: runFixture() });
     if (recovery.status !== "available") throw new Error("Expected available recovery fixture.");
-    const status = orderStatusEventFixture("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "order.confirmed", "processing", "confirmed");
+    const status = orderStatusEventFixture(
+      "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "order.confirmed",
+      "processing",
+      "confirmed",
+    );
     const lag = {
       type: "dashboard.metric.observed",
       eventId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
@@ -122,13 +163,26 @@ describe("Phase 6 dashboard behavior", () => {
       startedAt: "2026-06-20T00:00:19.877Z",
       confirmedAt: status.occurredAt,
     } as const satisfies DashboardEvent;
-    const state = dashboardStateReducer(createDashboardState(recovery), { type: "event-received", event: lag, discard: false });
-    const markup = renderToStaticMarkup(createElement(ConsistencyLagPanel, { recovery, latestOrderLag: state.recentOrderLagSamples[0] ?? null }));
+    const state = dashboardStateReducer(createDashboardState(recovery), {
+      type: "event-received",
+      event: lag,
+      discard: false,
+    });
+    const markup = renderToStaticMarkup(
+      createElement(ConsistencyLagPanel, {
+        recovery,
+        latestOrderLag: state.recentOrderLagSamples[0] ?? null,
+      }),
+    );
 
     expect(markup).toContain("Latest individual order");
     expect(markup).toContain("123ms");
     expect(markup).toContain("p95 confirmed");
-    expect(renderToStaticMarkup(createElement(RecentOrderTransitionsPanel, { orders: state.recentOrderStates }))).toContain("Reconciled workflow state with realtime updates");
+    expect(
+      renderToStaticMarkup(
+        createElement(RecentOrderTransitionsPanel, { orders: state.recentOrderStates }),
+      ),
+    ).toContain("Reconciled workflow state with realtime updates");
   });
 
   it("uses exact recovered status timestamps and retains the newest 20 actual transitions", () => {
@@ -161,9 +215,15 @@ describe("Phase 6 dashboard behavior", () => {
       orderId: outcomes[0]?.orderId,
       occurredAt: outcomes[0]?.confirmedAt,
     });
-    expect(state.recentOrderStates.some((order) => order.orderId === outcomes.at(-1)?.orderId)).toBe(false);
-    expect(state.recentOrderStates.every((order) => order.occurredAt.startsWith("2026-06-20T00:00:"))).toBe(true);
-    expect(state.recentOrderStates.map((order) => order.occurredAt)).toEqual([...state.recentOrderStates.map((order) => order.occurredAt)].sort());
+    expect(
+      state.recentOrderStates.some((order) => order.orderId === outcomes.at(-1)?.orderId),
+    ).toBe(false);
+    expect(
+      state.recentOrderStates.every((order) => order.occurredAt.startsWith("2026-06-20T00:00:")),
+    ).toBe(true);
+    expect(state.recentOrderStates.map((order) => order.occurredAt)).toEqual(
+      [...state.recentOrderStates.map((order) => order.occurredAt)].sort(),
+    );
   });
 
   it("reconciles each recovery lifecycle state from its status-specific durable timestamp", () => {
@@ -215,10 +275,12 @@ describe("Phase 6 dashboard behavior", () => {
       },
     ];
 
-    const states = createDashboardState(availableRecovery({
-      ...recoveryFixture(),
-      recentCompletionOutcomes: outcomes,
-    })).recentOrderStates;
+    const states = createDashboardState(
+      availableRecovery({
+        ...recoveryFixture(),
+        recentCompletionOutcomes: outcomes,
+      }),
+    ).recentOrderStates;
 
     expect(Object.fromEntries(states.map((state) => [state.status, state.occurredAt]))).toEqual({
       queued: "2026-06-20T00:00:01.000Z",
@@ -233,18 +295,42 @@ describe("Phase 6 dashboard behavior", () => {
     if (recovery.status !== "available") throw new Error("Expected available recovery fixture.");
     let state = createDashboardState(recovery);
     const rejected = [
-      orderStatusEventFixture(uuidFor(1), "order.processing", "queued", "processing", { runId: uuidFor(91) }),
-      orderStatusEventFixture(uuidFor(2), "order.processing", "queued", "processing", { saleOfferId: uuidFor(92) }),
-      orderStatusEventFixture(uuidFor(3), "order.processing", "queued", "processing", { occurredAt: "2026-06-19T00:00:00.000Z" }),
+      orderStatusEventFixture(uuidFor(1), "order.processing", "queued", "processing", {
+        runId: uuidFor(91),
+      }),
+      orderStatusEventFixture(uuidFor(2), "order.processing", "queued", "processing", {
+        saleOfferId: uuidFor(92),
+      }),
+      orderStatusEventFixture(uuidFor(3), "order.processing", "queued", "processing", {
+        occurredAt: "2026-06-19T00:00:00.000Z",
+      }),
     ];
-    for (const event of rejected) state = dashboardStateReducer(state, { type: "event-received", event, discard: false });
+    for (const event of rejected)
+      state = dashboardStateReducer(state, { type: "event-received", event, discard: false });
     expect(state.seenOrderEventIds).toEqual([]);
 
-    const newer = orderStatusEventFixture(uuidFor(4), "order.processing", "queued", "processing", { orderId: uuidFor(41), occurredAt: "2026-06-20T00:00:30.000Z" });
-    const olderDistinct = orderStatusEventFixture(uuidFor(5), "order.processing", "queued", "processing", { orderId: uuidFor(42), occurredAt: "2026-06-20T00:00:20.000Z" });
+    const newer = orderStatusEventFixture(uuidFor(4), "order.processing", "queued", "processing", {
+      orderId: uuidFor(41),
+      occurredAt: "2026-06-20T00:00:30.000Z",
+    });
+    const olderDistinct = orderStatusEventFixture(
+      uuidFor(5),
+      "order.processing",
+      "queued",
+      "processing",
+      { orderId: uuidFor(42), occurredAt: "2026-06-20T00:00:20.000Z" },
+    );
     state = dashboardStateReducer(state, { type: "event-received", event: newer, discard: false });
-    state = dashboardStateReducer(state, { type: "event-received", event: olderDistinct, discard: false });
-    expect(state.recentOrderStates.filter((order) => [newer.orderId, olderDistinct.orderId].includes(order.orderId))).toHaveLength(2);
+    state = dashboardStateReducer(state, {
+      type: "event-received",
+      event: olderDistinct,
+      discard: false,
+    });
+    expect(
+      state.recentOrderStates.filter((order) =>
+        [newer.orderId, olderDistinct.orderId].includes(order.orderId),
+      ),
+    ).toHaveLength(2);
   });
 
   it("prevents both terminal states from regressing and enforces order/dedup bounds", () => {
@@ -252,13 +338,33 @@ describe("Phase 6 dashboard behavior", () => {
     let state = createDashboardState(recovery);
     for (let index = 1; index <= 105; index += 1) {
       const terminal = index % 2 === 0 ? "confirmed" : "failed";
-      const event = orderStatusEventFixture(uuidFor(index), `order.${terminal}`, "processing", terminal, { orderId: uuidFor(1_000 + index), publicOrderId: `ord-${index}` });
+      const event = orderStatusEventFixture(
+        uuidFor(index),
+        `order.${terminal}`,
+        "processing",
+        terminal,
+        { orderId: uuidFor(1_000 + index), publicOrderId: `ord-${index}` },
+      );
       state = dashboardStateReducer(state, { type: "event-received", event, discard: false });
       state = dashboardStateReducer(state, { type: "event-received", event, discard: false });
-      state = dashboardStateReducer(state, { type: "event-received", event: orderStatusEventFixture(uuidFor(2_000 + index), "order.processing", "queued", "processing", { orderId: event.orderId }), discard: false });
+      state = dashboardStateReducer(state, {
+        type: "event-received",
+        event: orderStatusEventFixture(
+          uuidFor(2_000 + index),
+          "order.processing",
+          "queued",
+          "processing",
+          { orderId: event.orderId },
+        ),
+        discard: false,
+      });
     }
     expect(state.recentOrderStates).toHaveLength(20);
-    expect(state.recentOrderStates.every((order) => order.status === "confirmed" || order.status === "failed")).toBe(true);
+    expect(
+      state.recentOrderStates.every(
+        (order) => order.status === "confirmed" || order.status === "failed",
+      ),
+    ).toBe(true);
     expect(state.seenOrderEventIds).toHaveLength(100);
   });
 
@@ -273,10 +379,16 @@ describe("Phase 6 dashboard behavior", () => {
     const olderArrival = lagEventFixture(uuidFor(4_000), "2026-06-20T00:01:10.000Z", 70);
     const latest = lagEventFixture(uuidFor(4_001), "2026-06-20T00:02:00.000Z", 120);
     state = dashboardStateReducer(state, { type: "event-received", event: latest, discard: false });
-    state = dashboardStateReducer(state, { type: "event-received", event: olderArrival, discard: false });
+    state = dashboardStateReducer(state, {
+      type: "event-received",
+      event: olderArrival,
+      discard: false,
+    });
     expect(state.recentOrderLagSamples).toHaveLength(20);
     expect(state.recentOrderLagSamples.at(-1)?.eventId).toBe(latest.eventId);
-    expect(state.recentOrderLagSamples.findIndex((sample) => sample.eventId === uuidFor(3_010))).toBeLessThan(
+    expect(
+      state.recentOrderLagSamples.findIndex((sample) => sample.eventId === uuidFor(3_010)),
+    ).toBeLessThan(
       state.recentOrderLagSamples.findIndex((sample) => sample.eventId === olderArrival.eventId),
     );
   });
@@ -326,6 +438,13 @@ describe("Phase 6 dashboard behavior", () => {
         },
       ],
       erp: erpFixture(),
+      transportAccounting: {
+        plannedRequests: 1_000,
+        startedRequests: 900,
+        completedRequests: 850,
+        interruptedRequests: 50,
+        unstartedRequests: 100,
+      },
     });
 
     const traffic = renderToStaticMarkup(
@@ -341,6 +460,16 @@ describe("Phase 6 dashboard behavior", () => {
     expect(traffic).toContain("Window HTTP failure rate");
     expect(traffic).toContain("25%");
     expect(traffic).toContain("Shared 1-second producer event-time window");
+    expect(traffic).toContain("Planned");
+    expect(traffic).toContain("1,000");
+    expect(traffic).toContain("Started");
+    expect(traffic).toContain("900");
+    expect(traffic).toContain("Responses completed");
+    expect(traffic).toContain("850");
+    expect(traffic).toContain("Interrupted");
+    expect(traffic).toContain("50");
+    expect(traffic).toContain("Unstarted");
+    expect(traffic).toContain("100");
     expect(inventory).toContain("Inventory updated");
     expect(queue).toContain("Queue inspected");
     expect(queue).toContain("API refreshes worker drain, retry, and failure state");
@@ -512,7 +641,11 @@ describe("Phase 6 dashboard behavior", () => {
 
   it("applies independent inventory observations that share one coherent source timestamp", () => {
     const inventory = inventoryFixture(runFixture().saleOfferId, 12);
-    const recovery = availableRecovery({ ...recoveryFixture(), currentRun: runFixture(), inventory });
+    const recovery = availableRecovery({
+      ...recoveryFixture(),
+      currentRun: runFixture(),
+      inventory,
+    });
     const observedAt = "2026-06-20T00:00:11.000Z";
     const remaining = inventoryEventFixture(inventory.saleOfferId, 8, observedAt);
     const soldOut = {
@@ -589,6 +722,7 @@ describe("Phase 6 dashboard behavior", () => {
         erp: null,
         businessOutcome: null,
         consistencyLag: null,
+        transportAccounting: null,
         recentCompletionOutcomes: [],
         recoveredAt: event.occurredAt,
       }),
@@ -618,6 +752,7 @@ describe("Phase 6 dashboard behavior", () => {
       erp: null,
       businessOutcome: null,
       consistencyLag: null,
+      transportAccounting: null,
       recentCompletionOutcomes: [],
     });
     expect(shouldRequestAuthoritativeRecoveryAfterScopedEvent(recovery, event)).toBe(true);
@@ -634,10 +769,7 @@ describe("Phase 6 dashboard behavior", () => {
     if (next.status !== "available") throw new Error("Expected same-run recovery to be available.");
     expect(scopeDerivedProjections(next.data)).toEqual(scopeDerivedProjections(recoveryData));
     expect(
-      shouldRequestAuthoritativeRecoveryAfterScopedEvent(
-        recovery,
-        runEventFixture("active", run),
-      ),
+      shouldRequestAuthoritativeRecoveryAfterScopedEvent(recovery, runEventFixture("active", run)),
     ).toBe(false);
   });
 
@@ -689,13 +821,9 @@ describe("Phase 6 dashboard behavior", () => {
   });
 
   it("uses authoritative recovery after terminal run events", () => {
-    expect(shouldRequestAuthoritativeRecoveryAfterEvent(runEventFixture("completed"))).toBe(
-      true,
-    );
+    expect(shouldRequestAuthoritativeRecoveryAfterEvent(runEventFixture("completed"))).toBe(true);
     expect(shouldRequestAuthoritativeRecoveryAfterEvent(runEventFixture("failed"))).toBe(true);
-    expect(shouldRequestAuthoritativeRecoveryAfterEvent(runEventFixture("active"))).toBe(
-      false,
-    );
+    expect(shouldRequestAuthoritativeRecoveryAfterEvent(runEventFixture("active"))).toBe(false);
   });
 
   it("does not regress any finalized projection when live events arrive out of order", () => {
@@ -913,29 +1041,31 @@ describe("terminal overlap convergence", () => {
     });
   }
 
-  it.each(["completed", "failed"] as const)(
-    "requests one authoritative recovery for a matching %s event older than the recovery watermark",
-    (terminalStatus) => {
-      const recovery = staleDrainingRecovery();
-      // The terminal transition committed after the t1 recovery read, but its
-      // envelope kept the t0 finalization-attempt clock value (t0 < t1).
-      const terminalEvent = runEventAt(terminalStatus, finalizationAttemptT0, runFixture());
-      expect(Date.parse(terminalEvent.occurredAt)).toBeLessThan(Date.parse(recoveryStartT1));
+  it.each([
+    "completed",
+    "failed",
+  ] as const)("requests one authoritative recovery for a matching %s event older than the recovery watermark", (terminalStatus) => {
+    const recovery = staleDrainingRecovery();
+    // The terminal transition committed after the t1 recovery read, but its
+    // envelope kept the t0 finalization-attempt clock value (t0 < t1).
+    const terminalEvent = runEventAt(terminalStatus, finalizationAttemptT0, runFixture());
+    expect(Date.parse(terminalEvent.occurredAt)).toBeLessThan(Date.parse(recoveryStartT1));
 
-      expect(shouldRequestAuthoritativeRecoveryAfterScopedEvent(recovery, terminalEvent)).toBe(true);
+    expect(shouldRequestAuthoritativeRecoveryAfterScopedEvent(recovery, terminalEvent)).toBe(true);
 
-      const next = applyDashboardEvent(recovery, terminalEvent);
-      if (next.status !== "available") throw new Error("Expected available recovery.");
-      expect(next.data.currentRun?.status).toBe(terminalStatus);
-      expect(next.data.currentRun?.runId).toBe(runFixture().runId);
-    },
-  );
+    const next = applyDashboardEvent(recovery, terminalEvent);
+    if (next.status !== "available") throw new Error("Expected available recovery.");
+    expect(next.data.currentRun?.status).toBe(terminalStatus);
+    expect(next.data.currentRun?.runId).toBe(runFixture().runId);
+  });
 
   it("ignores a terminal event for another run without requesting recovery", () => {
     const recovery = staleDrainingRecovery();
     const foreignTerminal = runEventAt("completed", timestamp(50), previousRunFixture());
 
-    expect(shouldRequestAuthoritativeRecoveryAfterScopedEvent(recovery, foreignTerminal)).toBe(false);
+    expect(shouldRequestAuthoritativeRecoveryAfterScopedEvent(recovery, foreignTerminal)).toBe(
+      false,
+    );
     expect(applyDashboardEvent(recovery, foreignTerminal)).toBe(recovery);
   });
 
@@ -947,7 +1077,9 @@ describe("terminal overlap convergence", () => {
     });
 
     expect(foreignSaleTerminal.run.runId).toBe(runFixture().runId);
-    expect(shouldRequestAuthoritativeRecoveryAfterScopedEvent(recovery, foreignSaleTerminal)).toBe(false);
+    expect(shouldRequestAuthoritativeRecoveryAfterScopedEvent(recovery, foreignSaleTerminal)).toBe(
+      false,
+    );
     expect(applyDashboardEvent(recovery, foreignSaleTerminal)).toBe(recovery);
   });
 
@@ -1174,6 +1306,7 @@ function scopeDerivedProjections(recovery: DashboardRecoveryResponse) {
     erp,
     businessOutcome,
     consistencyLag,
+    transportAccounting,
     recentCompletionOutcomes,
   } = recovery;
   return {
@@ -1183,6 +1316,7 @@ function scopeDerivedProjections(recovery: DashboardRecoveryResponse) {
     erp,
     businessOutcome,
     consistencyLag,
+    transportAccounting,
     recentCompletionOutcomes,
   };
 }
@@ -1249,7 +1383,9 @@ function inventoryEventFixture(
   saleOfferId: string,
   remainingStock: number,
   occurredAt: string,
-): Extract<DashboardEvent, { type: "dashboard.metric.observed" }> & { metricName: "inventory.remaining" } {
+): Extract<DashboardEvent, { type: "dashboard.metric.observed" }> & {
+  metricName: "inventory.remaining";
+} {
   return {
     type: "dashboard.metric.observed",
     correlationId: "corr-web-live",
@@ -1422,6 +1558,7 @@ function recoveryFixture(): DashboardRecoveryResponse {
       oldestPendingAgeSeconds: 8.5,
       measuredAt: "2026-06-20T00:00:10.000Z",
     },
+    transportAccounting: null,
     recentCompletionOutcomes: [
       {
         orderId: "11111111-1111-4111-8111-111111111111",

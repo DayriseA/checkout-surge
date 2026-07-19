@@ -446,7 +446,7 @@ export function assertBusinessCompletion(summary) {
   const failures = [];
   if (
     delivery.trafficDeliveryStatus === "failed" ||
-    delivery.emittedRequests <= 0 ||
+    delivery.startedRequests <= 0 ||
     delivery.droppedIterations > delivery.plannedRequests
   )
     failures.push("traffic delivery");

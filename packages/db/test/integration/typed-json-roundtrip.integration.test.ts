@@ -213,8 +213,10 @@ function configSnapshotFixture(): AcceptedRunConfigSnapshot {
 function httpSummaryFixture(): TrafficHttpSummary {
   return {
     plannedRequests: 10,
-    emittedRequests: 10,
+    startedRequests: 10,
     completedRequests: 10,
+    interruptedRequests: 0,
+    unstartedRequests: 0,
     failedRequests: 0,
     acceptedResponses: 7,
     soldOutResponses: 3,
@@ -227,7 +229,10 @@ function httpSummaryFixture(): TrafficHttpSummary {
 function trafficDeliverySummaryFixture(): TrafficDeliverySummary {
   return {
     plannedRequests: 10,
-    emittedRequests: 10,
+    startedRequests: 10,
+    completedRequests: 10,
+    interruptedRequests: 0,
+    unstartedRequests: 0,
     trafficMode: "buyer-spike",
     plannedBuyers: 10,
     scheduledRatePerSecond: null,
@@ -236,8 +241,6 @@ function trafficDeliverySummaryFixture(): TrafficDeliverySummary {
     maxVUs: null,
     droppedIterations: 0,
     completedIterations: 10,
-    unstartedIterations: 0,
-    requestShortfall: 0,
     notes: ["Typed JSON round-trip evidence."],
     trafficDeliveryStatus: "complete",
   };

@@ -35,6 +35,12 @@ describe("run history surface", () => {
     expect(markup).toContain("Preview 1k");
     expect(markup).toContain("55555555-5555-4555-8555-555555555555");
     expect(markup).toContain("traffic complete");
+    expect(markup).toContain("Planned");
+    expect(markup).toContain("Started");
+    expect(markup).toContain("Responses completed");
+    expect(markup).toContain("Interrupted");
+    expect(markup).toContain("Unstarted");
+    expect(markup).not.toContain("Emitted");
     expect(markup).toContain("Accepted reservations");
     expect(markup).toContain("Confirmed orders");
     expect(markup).toContain("Terminal inventory");
@@ -87,6 +93,20 @@ describe("run history surface", () => {
     );
 
     expect(markup).toContain("Terminal detail");
+    expect(markup).toContain("Responses completed");
+    expect(markup).toContain("Interrupted");
+    expect(markup).toContain("Unstarted");
+    expect(markup).toContain("p95 latency");
+    expect(markup).not.toContain("Emitted");
+    expect(markup).toMatch(/Planned<\/dt><dd[^>]*>10<\/dd>/);
+    expect(markup).toMatch(/Started<\/dt><dd[^>]*>9<\/dd>/);
+    expect(markup).toMatch(/Responses completed<\/dt><dd[^>]*>7<\/dd>/);
+    expect(markup).toMatch(/Interrupted<\/dt><dd[^>]*>2<\/dd>/);
+    expect(markup).toMatch(/Unstarted<\/dt><dd[^>]*>1<\/dd>/);
+    expect(markup).toMatch(/Accepted<\/dt><dd[^>]*>4<\/dd>/);
+    expect(markup).toMatch(/Sold out<\/dt><dd[^>]*>3<\/dd>/);
+    expect(markup).toMatch(/Unexpected<\/dt><dd[^>]*>0<\/dd>/);
+    expect(markup).toMatch(/p95 latency<\/dt><dd[^>]*>42ms<\/dd>/);
     expect(markup).toContain("Accepted configuration");
     expect(markup).toContain("Order aggregates");
     expect(markup).toContain("ERP aggregates");
@@ -108,6 +128,10 @@ describe("run history surface", () => {
     expect(markup).toContain("ord_history_1");
     expect(markup).toContain("Event timeline");
     expect(markup).toContain("worker");
+    expect(markup).toContain("Responses completed");
+    expect(markup).toContain("Interrupted");
+    expect(markup).toContain("Unstarted");
+    expect(markup).not.toContain("Emitted");
   });
 
   it("renders malformed detail routes as public-safe not-found states without an API read", async () => {
@@ -173,8 +197,10 @@ function runHistoryFixture(): RunHistoryListResponse {
         endedAt: "2026-06-20T00:00:10.000Z",
         httpSummary: {
           plannedRequests: 10,
-          emittedRequests: 10,
+          startedRequests: 10,
           completedRequests: 10,
+          interruptedRequests: 0,
+          unstartedRequests: 0,
           failedRequests: 0,
           acceptedResponses: 6,
           soldOutResponses: 4,
@@ -184,7 +210,10 @@ function runHistoryFixture(): RunHistoryListResponse {
         },
         trafficDeliverySummary: {
           plannedRequests: 10,
-          emittedRequests: 10,
+          startedRequests: 10,
+          completedRequests: 10,
+          interruptedRequests: 0,
+          unstartedRequests: 0,
           trafficMode: null,
           plannedBuyers: null,
           scheduledRatePerSecond: null,
@@ -193,8 +222,6 @@ function runHistoryFixture(): RunHistoryListResponse {
           maxVUs: null,
           droppedIterations: 0,
           completedIterations: null,
-          unstartedIterations: null,
-          requestShortfall: 0,
           trafficDeliveryStatus: "complete",
           notes: [],
         },
@@ -235,15 +262,33 @@ function runHistoryDetailFixture(): RunHistoryDetailResponse {
   const { id: _id, terminalInventorySnapshot, ...summary } = admin.summary;
   const { presetId: _presetId, saleOfferId: _saleOfferId, ...run } = admin.run;
   const sanitizedInventory = terminalInventorySnapshot
-    ? (({ saleOfferId: _inventorySaleOfferId, source: _inventorySource, ...inventory }) => inventory)(
-        terminalInventorySnapshot,
-      )
+    ? (({ saleOfferId: _inventorySaleOfferId, source: _inventorySource, ...inventory }) =>
+        inventory)(terminalInventorySnapshot)
     : undefined;
   const { notes: _deliveryNotes, ...publicDeliverySummary } = summary.trafficDeliverySummary;
+  const transportCounts = {
+    plannedRequests: 10,
+    startedRequests: 9,
+    completedRequests: 7,
+    interruptedRequests: 2,
+    unstartedRequests: 1,
+  };
   return {
     summary: {
       ...summary,
-      trafficDeliverySummary: publicDeliverySummary,
+      httpSummary: {
+        ...summary.httpSummary,
+        ...transportCounts,
+        acceptedResponses: 4,
+        soldOutResponses: 3,
+        unexpectedResponses: 0,
+      },
+      trafficDeliverySummary: {
+        ...publicDeliverySummary,
+        ...transportCounts,
+        completedIterations: 7,
+        trafficDeliveryStatus: "failed",
+      },
       ...(sanitizedInventory ? { terminalInventorySnapshot: sanitizedInventory } : {}),
     },
     run,

@@ -290,7 +290,7 @@ describe("demo run finalization service", () => {
     });
     expect(summaries[0]?.loadRunDiagnosticsSummary).toMatchObject({
       terminalMetricSources: {
-        emittedRequests: "summary_export",
+        startedRequests: "summary_export",
         acceptedResponses: "point_stream",
       },
       summaryExportWarnings: ["k6_outcome_counter_point_stream_fallback_used"],
@@ -320,9 +320,21 @@ describe("demo run finalization service", () => {
     const service = createService(connection, redis);
 
     await seedDrainingRun({ db, redis: redisClient, trafficDeliveryStatus: "complete" });
+    const diagnostics = runnerDiagnosticsFixture();
+    const { startedRequests, ...legacyTerminalMetricSources } = diagnostics.terminalMetricSources;
     await db
       .update(demoRunFinalizations)
-      .set({ trafficOutcomeSummary: { loadGeneratorOutcome: "legacy" } })
+      .set({
+        trafficOutcomeSummary: { loadGeneratorOutcome: "legacy" },
+        loadRunDiagnosticsSummary: {
+          ...diagnostics,
+          terminalMetricSources: {
+            emittedRequests: startedRequests,
+            ...legacyTerminalMetricSources,
+          },
+        },
+        apiRequestLifecycleSummary: { completedRequests: 10, failedRequests: 0 },
+      })
       .where(eq(demoRunFinalizations.runId, ids.run));
 
     await expect(service.finalizeRun(ids.run, "corr-finalize-legacy")).resolves.toMatchObject({
@@ -343,6 +355,20 @@ describe("demo run finalization service", () => {
       reservedStock: 0,
       pendingPersistenceCount: 0,
       capturedAt: "2026-06-20T00:00:10.000Z",
+    });
+    expect(summary?.loadRunDiagnosticsSummary).toMatchObject({
+      terminalMetricSources: { startedRequests: "summary_export" },
+    });
+    expect(summary?.loadRunDiagnosticsSummary.terminalMetricSources).not.toHaveProperty(
+      "emittedRequests",
+    );
+    expect(summary?.apiRequestLifecycleSummary).toMatchObject({
+      plannedRequests: 10,
+      startedRequests: 10,
+      completedRequests: 10,
+      interruptedRequests: 0,
+      unstartedRequests: 0,
+      failedRequests: 0,
     });
     expect(legacyFinalization?.completionEnrichmentStatus).toBe("completed");
   });
@@ -738,7 +764,7 @@ describe("demo run finalization service", () => {
     await setAcceptedDeliveryEvidence(db, {
       acceptedResponses: 125,
       plannedRequests: 125,
-      emittedRequests: 125,
+      startedRequests: 125,
     });
     const enqueuedOrderIds: string[] = [];
     const createReconciler = () =>
@@ -1423,7 +1449,8 @@ describe("demo run finalization service", () => {
     expect(summary?.status).toBe("failed");
     expect(summary?.failureReason).toBe("traffic_delivery_major_shortfall");
     expect(summary?.trafficDeliverySummary).toMatchObject({
-      requestShortfall: 5,
+      startedRequests: 5,
+      unstartedRequests: 5,
       trafficDeliveryStatus: "failed",
     });
   });
@@ -1465,9 +1492,9 @@ describe("demo run finalization service", () => {
     await setAcceptedDeliveryEvidence(db, {
       acceptedResponses: 100,
       plannedRequests: 400,
-      emittedRequests: 400,
+      startedRequests: 400,
       completedIterations: 400,
-      unstartedIterations: 0,
+      unstartedRequests: 0,
     });
     await insertFailedReservationOrders(db, 50);
 
@@ -1495,9 +1522,9 @@ describe("demo run finalization service", () => {
     await setAcceptedDeliveryEvidence(db, {
       acceptedResponses: 100,
       plannedRequests: 400,
-      emittedRequests: 399,
+      startedRequests: 399,
       completedIterations: 399,
-      unstartedIterations: 1,
+      unstartedRequests: 1,
     });
     await insertFailedReservationOrders(db, 50);
 
@@ -1747,7 +1774,7 @@ function runnerDiagnosticsFixture(): TrafficCompletionReport["loadRunDiagnostics
     stderrLineTruncationLength: 500,
     stderrLineTruncatedCount: 0,
     terminalMetricSources: {
-      emittedRequests: "summary_export",
+      startedRequests: "summary_export",
       completedRequests: "summary_export",
       acceptedResponses: "point_stream",
       soldOutResponses: "summary_export",
@@ -1891,20 +1918,22 @@ async function setAcceptedDeliveryEvidence(
   input: {
     acceptedResponses: number;
     plannedRequests?: number;
-    emittedRequests?: number;
+    startedRequests?: number;
     completedIterations?: number;
-    unstartedIterations?: number;
+    unstartedRequests?: number;
   },
 ): Promise<void> {
   const plannedRequests = input.plannedRequests ?? 10;
-  const emittedRequests = input.emittedRequests ?? plannedRequests;
+  const startedRequests = input.startedRequests ?? plannedRequests;
   await db
     .update(demoRunFinalizations)
     .set({
       httpSummary: {
         plannedRequests,
-        emittedRequests,
-        completedRequests: emittedRequests,
+        startedRequests,
+        completedRequests: startedRequests,
+        interruptedRequests: 0,
+        unstartedRequests: plannedRequests - startedRequests,
         failedRequests: 0,
         acceptedResponses: input.acceptedResponses,
         soldOutResponses: 0,
@@ -1913,7 +1942,10 @@ async function setAcceptedDeliveryEvidence(
       },
       trafficDeliverySummary: {
         plannedRequests,
-        emittedRequests,
+        startedRequests,
+        completedRequests: startedRequests,
+        interruptedRequests: 0,
+        unstartedRequests: input.unstartedRequests ?? plannedRequests - startedRequests,
         trafficMode: "buyer-spike",
         plannedBuyers: plannedRequests === 400 ? 200 : 10,
         scheduledRatePerSecond: null,
@@ -1921,10 +1953,7 @@ async function setAcceptedDeliveryEvidence(
         preAllocatedVUs: null,
         maxVUs: null,
         droppedIterations: 0,
-        completedIterations: input.completedIterations ?? emittedRequests,
-        unstartedIterations:
-          input.unstartedIterations ?? Math.max(0, plannedRequests - emittedRequests),
-        requestShortfall: Math.max(0, plannedRequests - emittedRequests),
+        completedIterations: input.completedIterations ?? startedRequests,
         trafficDeliveryStatus: "complete",
         notes: [],
       },
@@ -1972,8 +2001,10 @@ function trafficCompletionReportFixture(
     exitCode: 0,
     httpSummary: {
       plannedRequests: 10,
-      emittedRequests: trafficDeliveryStatus === "failed" ? 5 : 10,
+      startedRequests: trafficDeliveryStatus === "failed" ? 5 : 10,
       completedRequests: trafficDeliveryStatus === "failed" ? 5 : 10,
+      interruptedRequests: 0,
+      unstartedRequests: trafficDeliveryStatus === "failed" ? 5 : 0,
       failedRequests: 0,
       acceptedResponses: 0,
       soldOutResponses: trafficDeliveryStatus === "failed" ? 3 : 8,
@@ -1984,7 +2015,10 @@ function trafficCompletionReportFixture(
     trafficOutcomeSummary: {},
     trafficDeliverySummary: {
       plannedRequests: 10,
-      emittedRequests: trafficDeliveryStatus === "failed" ? 5 : 10,
+      startedRequests: trafficDeliveryStatus === "failed" ? 5 : 10,
+      completedRequests: trafficDeliveryStatus === "failed" ? 5 : 10,
+      interruptedRequests: 0,
+      unstartedRequests: trafficDeliveryStatus === "failed" ? 5 : 0,
       trafficMode: "buyer-spike",
       plannedBuyers: 10,
       scheduledRatePerSecond: null,
@@ -1996,7 +2030,14 @@ function trafficCompletionReportFixture(
     },
     httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
     loadRunDiagnosticsSummary: runnerDiagnosticsFixture(),
-    apiRequestLifecycleSummary: {},
+    apiRequestLifecycleSummary: {
+      plannedRequests: 10,
+      startedRequests: trafficDeliveryStatus === "failed" ? 5 : 10,
+      completedRequests: trafficDeliveryStatus === "failed" ? 5 : 10,
+      interruptedRequests: 0,
+      unstartedRequests: trafficDeliveryStatus === "failed" ? 5 : 0,
+      failedRequests: 0,
+    },
     completedAt: "2026-06-20T00:00:05.000Z",
     correlationId: "corr-finalize-test",
   };

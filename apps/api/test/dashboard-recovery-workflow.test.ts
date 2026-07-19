@@ -132,6 +132,7 @@ function recoveryFixture() {
     erp: null,
     businessOutcome: null,
     consistencyLag: null,
+    transportAccounting: null,
     recentMetrics: [],
     recentCompletionOutcomes: [],
   };

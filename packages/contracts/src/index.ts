@@ -13,3 +13,4 @@ export * from "./load.js";
 export * from "./primitives.js";
 export * from "./public-runtime-policy-validation.js";
 export * from "./queue.js";
+export * from "./traffic-transport-counts.js";

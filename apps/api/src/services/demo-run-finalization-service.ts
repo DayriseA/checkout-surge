@@ -5,11 +5,12 @@ import {
   businessOutcomeSummarySchema,
   type DemoRunSnapshot,
   demoRunSnapshotSchema,
+  normalizeLegacyApiRequestLifecycleSummaryJson,
+  normalizeLegacyLoadRunDiagnosticsSummaryJson,
   type TerminalInventorySnapshot,
   type TrafficDeliverySummary,
   type TrafficHttpSummary,
   terminalInventorySnapshotSchema,
-  trafficHttpSummarySchema,
 } from "@checkout-surge/contracts";
 import {
   type CheckoutSurgeDatabase,
@@ -31,7 +32,10 @@ import {
 } from "./accepted-response-accounting.js";
 import type { PendingPersistenceReconciler } from "./pending-persistence-reconciler.js";
 import type { TerminalDemoRunWriter } from "./terminal-demo-run-writer.js";
-import { normalizeTrafficDeliverySummary } from "./traffic-delivery-classifier.js";
+import {
+  normalizePersistedTrafficHttpSummary,
+  normalizeTrafficDeliverySummary,
+} from "./traffic-delivery-classifier.js";
 
 export interface DemoRunFinalizationController {
   finalizeRun(runId: string, correlationId?: string): Promise<DemoRunSnapshot | null>;
@@ -259,9 +263,12 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
             reconciliationTimedOut || (timedOut && pendingAtTrafficCompletion),
         });
         const accountingWarning = acceptedResponseAccountingWarning(latestAccounting);
+        const normalizedDiagnostics = normalizeLegacyLoadRunDiagnosticsSummaryJson(
+          finalization.loadRunDiagnosticsSummary,
+        );
         const loadRunDiagnosticsSummary = accountingWarning
-          ? appendAccountingWarning(finalization.loadRunDiagnosticsSummary, accountingWarning)
-          : finalization.loadRunDiagnosticsSummary;
+          ? appendAccountingWarning(normalizedDiagnostics, accountingWarning)
+          : normalizedDiagnostics;
 
         return {
           run: row.run,
@@ -272,7 +279,10 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
           trafficDeliverySummary: evidence.delivery,
           httpTimingBreakdownSummary: finalization.httpTimingBreakdownSummary,
           loadRunDiagnosticsSummary,
-          apiRequestLifecycleSummary: finalization.apiRequestLifecycleSummary,
+          apiRequestLifecycleSummary: normalizeLegacyApiRequestLifecycleSummaryJson(
+            finalization.apiRequestLifecycleSummary,
+            evidence.http.plannedRequests,
+          ),
           businessOutcome: latestBusinessOutcome,
           terminalInventorySnapshot: toTerminalInventorySnapshot({
             saleOfferId: requireSaleOfferId(row.run),
@@ -453,7 +463,7 @@ function parseFinalizationEvidence(
   return {
     config: acceptedRunConfigSnapshotSchema.parse(run.configSnapshot),
     delivery: normalizeTrafficDeliverySummary(finalization.trafficDeliverySummary),
-    http: trafficHttpSummarySchema.parse(finalization.httpSummary),
+    http: normalizePersistedTrafficHttpSummary(finalization.httpSummary),
   };
 }
 

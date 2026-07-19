@@ -64,8 +64,8 @@ function isCompleteDuplicateBuyerDelivery(
     delivery.trafficMode === "buyer-spike" &&
     delivery.plannedRequests === expectedAttempts &&
     delivery.completedIterations === expectedAttempts &&
-    delivery.requestShortfall === 0 &&
-    (delivery.unstartedIterations === null || delivery.unstartedIterations === 0)
+    delivery.startedRequests === expectedAttempts &&
+    delivery.unstartedRequests === 0
   );
 }
 

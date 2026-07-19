@@ -85,6 +85,8 @@ export interface K6TrendSummary {
 
 export interface K6SummaryMetrics {
   httpRequests?: number;
+  attemptsStarted?: number;
+  responsesCompleted?: number;
   acceptedResponses?: number;
   soldOutResponses?: number;
   unexpectedResponses?: number;
@@ -116,6 +118,8 @@ const timingMetricFields = {
 
 const counterMetricFields = {
   http_reqs: "httpRequests",
+  checkout_attempts_started: "attemptsStarted",
+  checkout_responses_completed: "responsesCompleted",
   checkout_reservation_accepted: "acceptedResponses",
   checkout_sold_out_rejections: "soldOutResponses",
   checkout_unexpected_responses: "unexpectedResponses",
@@ -166,7 +170,20 @@ export class K6RunAccumulator {
     summaryMetrics?: K6SummaryMetrics;
     summaryExportWarning?: SummaryExportWarning;
   }): TrafficCompletionReport {
-    const emittedRequests = this.selectCount(input.summaryMetrics?.httpRequests, "http_reqs");
+    const attemptsStarted = this.selectCount(
+      input.summaryMetrics?.attemptsStarted,
+      "checkout_attempts_started",
+    );
+    const responsesCompleted = this.selectCount(
+      input.summaryMetrics?.responsesCompleted,
+      "checkout_responses_completed",
+    );
+    // http_reqs proves that a response completed, but it is never evidence that
+    // no additional attempts started: interrupted attempts produce no http_reqs
+    // sample at shutdown.
+    const httpRequests = this.selectCount(input.summaryMetrics?.httpRequests, "http_reqs");
+    const completed = this.selectCompletedEvidence(responsesCompleted, httpRequests);
+    const started = this.selectStartedEvidence(attemptsStarted, completed);
     const acceptedResponses = this.selectCount(
       input.summaryMetrics?.acceptedResponses,
       "checkout_reservation_accepted",
@@ -189,20 +206,28 @@ export class K6RunAccumulator {
     );
     const pointFailureRate = this.pointAverage("http_req_failed");
     const failureRate = input.summaryMetrics?.httpFailureRate ?? pointFailureRate ?? 0;
-    const httpFailedRequests = Math.round(failureRate * emittedRequests.value);
+    const httpFailedRequests = Math.round(failureRate * completed.value);
     const failedRequests = Math.max(
       unexpectedResponses.value,
       httpFailedRequests - soldOutResponses.value,
       0,
     );
+    const interruptedRequests = started.value - completed.value;
+    const unstartedRequests = this.options.plannedRequests - started.value;
     const trafficDeliverySummary = this.trafficDeliverySummary({
-      emittedRequests,
+      transportCounts: {
+        plannedRequests: this.options.plannedRequests,
+        startedRequests: started.value,
+        completedRequests: completed.value,
+        interruptedRequests,
+        unstartedRequests,
+      },
       droppedIterations,
       completedIterations,
     });
     const terminalMetricSources: TerminalMetricSources = {
-      emittedRequests: emittedRequests.source,
-      completedRequests: emittedRequests.source,
+      startedRequests: started.source,
+      completedRequests: completed.source,
       acceptedResponses: acceptedResponses.source,
       soldOutResponses: soldOutResponses.source,
       unexpectedResponses: unexpectedResponses.source,
@@ -223,8 +248,10 @@ export class K6RunAccumulator {
       ...(input.errorMessage ? { errorMessage: input.errorMessage } : {}),
       httpSummary: {
         plannedRequests: this.options.plannedRequests,
-        emittedRequests: emittedRequests.value,
-        completedRequests: emittedRequests.value,
+        startedRequests: started.value,
+        completedRequests: completed.value,
+        interruptedRequests,
+        unstartedRequests,
         failedRequests,
         acceptedResponses: acceptedResponses.value,
         soldOutResponses: soldOutResponses.value,
@@ -262,12 +289,43 @@ export class K6RunAccumulator {
         summaryExportWarnings,
       } satisfies LoadRunDiagnosticsSummary,
       apiRequestLifecycleSummary: {
-        completedRequests: emittedRequests.value,
+        plannedRequests: this.options.plannedRequests,
+        startedRequests: started.value,
+        completedRequests: completed.value,
+        interruptedRequests,
+        unstartedRequests,
         failedRequests,
       },
       completedAt: input.completedAt.toISOString(),
       correlationId: this.options.correlationId,
     };
+  }
+
+  /**
+   * The explicit attempt-started counter is the primary started evidence. When
+   * it is unavailable, completed responses prove that those attempts started.
+   * Completion evidence can raise the started floor but never lower a larger
+   * explicit started count, so completedRequests can never exceed
+   * startedRequests.
+   */
+  private selectStartedEvidence(started: SelectedCount, completed: SelectedCount): SelectedCount {
+    if (started.source !== null && started.value >= completed.value) return started;
+    return completed;
+  }
+
+  /**
+   * Both metrics prove that an HTTP response completed. Keep the greatest
+   * available evidence, preferring the explicit post-return counter on ties.
+   */
+  private selectCompletedEvidence(
+    explicitCompleted: SelectedCount,
+    httpRequests: SelectedCount,
+  ): SelectedCount {
+    if (explicitCompleted.source === null) return httpRequests;
+    if (httpRequests.source === null || explicitCompleted.value >= httpRequests.value) {
+      return explicitCompleted;
+    }
+    return httpRequests;
   }
 
   private selectCount(summaryValue: number | undefined, metric: string) {
@@ -284,11 +342,16 @@ export class K6RunAccumulator {
   }
 
   private trafficDeliverySummary(input: {
-    emittedRequests: SelectedCount;
+    transportCounts: {
+      plannedRequests: number;
+      startedRequests: number;
+      completedRequests: number;
+      interruptedRequests: number;
+      unstartedRequests: number;
+    };
     droppedIterations: SelectedCount;
     completedIterations: SelectedCount;
   }) {
-    const planned = this.options.plannedRequests;
     const plan = this.options.executionPlan;
     const notes: string[] = [];
 
@@ -297,8 +360,7 @@ export class K6RunAccumulator {
     }
 
     return {
-      plannedRequests: planned,
-      emittedRequests: input.emittedRequests.value,
+      ...input.transportCounts,
       trafficMode: plan.trafficMode,
       plannedBuyers: plan.trafficMode === "buyer-spike" ? plan.buyerCount : null,
       scheduledRatePerSecond:
@@ -309,14 +371,6 @@ export class K6RunAccumulator {
       maxVUs: plan.trafficMode === "steady-arrival-rate" ? plan.maxVus : null,
       droppedIterations: input.droppedIterations.value,
       completedIterations: input.completedIterations.valueOrNull,
-      unstartedIterations:
-        input.completedIterations.valueOrNull === null
-          ? null
-          : Math.max(
-              0,
-              planned - input.completedIterations.valueOrNull - input.droppedIterations.value,
-            ),
-      requestShortfall: Math.max(0, planned - input.emittedRequests.value),
       notes,
     };
   }

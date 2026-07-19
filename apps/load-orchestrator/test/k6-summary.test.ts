@@ -55,6 +55,8 @@ describe("parseK6SummaryMetrics", () => {
       JSON.stringify({
         metrics: {
           http_reqs: { count: 12 },
+          checkout_attempts_started: { count: 14 },
+          checkout_responses_completed: { count: 12 },
           checkout_reservation_accepted: { count: 0 },
           checkout_sold_out_rejections: { count: 10 },
           checkout_unexpected_responses: { count: 2 },
@@ -75,6 +77,8 @@ describe("parseK6SummaryMetrics", () => {
 
     expect(parsed).toMatchObject({
       httpRequests: 12,
+      attemptsStarted: 14,
+      responsesCompleted: 12,
       acceptedResponses: 0,
       soldOutResponses: 10,
       unexpectedResponses: 2,
@@ -142,7 +146,7 @@ describe("parseK6SummaryMetrics", () => {
 describe("K6RunAccumulator summary precedence", () => {
   it("selects each metric independently and preserves authoritative zero", () => {
     const accumulator = createAccumulator();
-    accumulator.observe({ type: "Point", metric: "http_reqs", data: { value: 9 } });
+    accumulator.observe({ type: "Point", metric: "checkout_attempts_started", data: { value: 9 } });
     accumulator.observe({
       type: "Point",
       metric: "checkout_reservation_accepted",
@@ -155,7 +159,8 @@ describe("K6RunAccumulator summary precedence", () => {
       status: "succeeded",
       completedAt,
       summaryMetrics: {
-        httpRequests: 0,
+        attemptsStarted: 0,
+        responsesCompleted: 0,
         soldOutResponses: 2,
         requestDuration: { averageMs: 12, p95Ms: 18 },
         timingPhases: {
@@ -165,15 +170,17 @@ describe("K6RunAccumulator summary precedence", () => {
     });
 
     expect(report.httpSummary).toMatchObject({
-      emittedRequests: 0,
+      startedRequests: 0,
       completedRequests: 0,
+      interruptedRequests: 0,
+      unstartedRequests: 10,
       acceptedResponses: 7,
       soldOutResponses: 2,
       unexpectedResponses: 0,
       p95LatencyMs: 18,
     });
     expect(report.loadRunDiagnosticsSummary.terminalMetricSources).toEqual({
-      emittedRequests: "summary_export",
+      startedRequests: "summary_export",
       completedRequests: "summary_export",
       acceptedResponses: "point_stream",
       soldOutResponses: "summary_export",
@@ -203,6 +210,237 @@ describe("K6RunAccumulator summary precedence", () => {
     const report = accumulator.completionReport({ status: "succeeded", completedAt });
     expect(report.httpSummary).not.toHaveProperty("p95LatencyMs");
     expect(report.httpTimingBreakdownSummary).toEqual(emptyHttpTimingBreakdownSummary);
+  });
+});
+
+describe("K6RunAccumulator transport-attempt reconciliation", () => {
+  it("reports started attempts still in flight at shutdown as interrupted, never unstarted", () => {
+    const accumulator = createAccumulator({ buyerCount: 1_000 });
+    const report = accumulator.completionReport({
+      status: "failed",
+      completedAt,
+      summaryMetrics: {
+        attemptsStarted: 1_000,
+        responsesCompleted: 750,
+        httpRequests: 750,
+        acceptedResponses: 250,
+        soldOutResponses: 500,
+        unexpectedResponses: 0,
+        timingPhases: {},
+      },
+    });
+
+    expect(report.httpSummary).toMatchObject({
+      plannedRequests: 1_000,
+      startedRequests: 1_000,
+      completedRequests: 750,
+      interruptedRequests: 250,
+      unstartedRequests: 0,
+    });
+    expect(report.trafficDeliverySummary).toMatchObject({
+      plannedRequests: 1_000,
+      startedRequests: 1_000,
+      completedRequests: 750,
+      interruptedRequests: 250,
+      unstartedRequests: 0,
+    });
+    expect(report.loadRunDiagnosticsSummary.terminalMetricSources).toMatchObject({
+      startedRequests: "summary_export",
+      completedRequests: "summary_export",
+    });
+  });
+
+  it("reports attempts that never reached the started counter as unstarted", () => {
+    const accumulator = createAccumulator({ buyerCount: 1_000 });
+    const report = accumulator.completionReport({
+      status: "succeeded",
+      completedAt,
+      summaryMetrics: {
+        attemptsStarted: 750,
+        responsesCompleted: 750,
+        httpRequests: 750,
+        timingPhases: {},
+      },
+    });
+
+    expect(report.httpSummary).toMatchObject({
+      plannedRequests: 1_000,
+      startedRequests: 750,
+      completedRequests: 750,
+      interruptedRequests: 0,
+      unstartedRequests: 250,
+    });
+  });
+
+  it("reconciles a mixed run with both interrupted and unstarted attempts", () => {
+    const accumulator = createAccumulator({ buyerCount: 1_000 });
+    const report = accumulator.completionReport({
+      status: "failed",
+      completedAt,
+      summaryMetrics: {
+        attemptsStarted: 800,
+        responsesCompleted: 750,
+        httpRequests: 750,
+        timingPhases: {},
+      },
+    });
+
+    expect(report.httpSummary).toMatchObject({
+      plannedRequests: 1_000,
+      startedRequests: 800,
+      completedRequests: 750,
+      interruptedRequests: 50,
+      unstartedRequests: 200,
+    });
+  });
+
+  it("falls back to http_reqs for completion without erasing a larger explicit started count", () => {
+    const accumulator = createAccumulator({ buyerCount: 1_000 });
+    const report = accumulator.completionReport({
+      status: "failed",
+      completedAt,
+      summaryMetrics: {
+        attemptsStarted: 1_000,
+        httpRequests: 750,
+        timingPhases: {},
+      },
+    });
+
+    expect(report.httpSummary).toMatchObject({
+      startedRequests: 1_000,
+      completedRequests: 750,
+      interruptedRequests: 250,
+      unstartedRequests: 0,
+    });
+    expect(report.loadRunDiagnosticsSummary.terminalMetricSources).toMatchObject({
+      startedRequests: "summary_export",
+      completedRequests: "summary_export",
+    });
+  });
+
+  it.each([
+    ["zero", 0, 6, 6, 4],
+    ["lower", 4, 6, 6, 4],
+    ["higher", 8, 6, 8, 2],
+  ] as const)("uses the strongest completion evidence when the explicit count is %s", (_case, responsesCompleted, httpRequests, expectedCompleted, expectedInterrupted) => {
+    const accumulator = createAccumulator();
+    const report = accumulator.completionReport({
+      status: "failed",
+      completedAt,
+      summaryMetrics: {
+        attemptsStarted: 10,
+        responsesCompleted,
+        httpRequests,
+        timingPhases: {},
+      },
+    });
+
+    expect(report.httpSummary).toMatchObject({
+      plannedRequests: 10,
+      startedRequests: 10,
+      completedRequests: expectedCompleted,
+      interruptedRequests: expectedInterrupted,
+      unstartedRequests: 0,
+    });
+    expect(report.apiRequestLifecycleSummary).toMatchObject({
+      plannedRequests: 10,
+      startedRequests: 10,
+      completedRequests: expectedCompleted,
+      interruptedRequests: expectedInterrupted,
+      unstartedRequests: 0,
+    });
+  });
+
+  it("prefers the explicit completion counter on equal evidence", () => {
+    const accumulator = createAccumulator();
+    accumulator.observe({
+      type: "Point",
+      metric: "checkout_responses_completed",
+      data: { value: 7 },
+    });
+    const report = accumulator.completionReport({
+      status: "failed",
+      completedAt,
+      summaryMetrics: { attemptsStarted: 10, httpRequests: 7, timingPhases: {} },
+    });
+
+    expect(report.httpSummary).toMatchObject({
+      completedRequests: 7,
+      interruptedRequests: 3,
+      unstartedRequests: 0,
+    });
+    expect(report.loadRunDiagnosticsSummary.terminalMetricSources.completedRequests).toBe(
+      "point_stream",
+    );
+  });
+
+  it("reports the source of the larger mixed completion evidence", () => {
+    const accumulator = createAccumulator();
+    accumulator.observe({ type: "Point", metric: "http_reqs", data: { value: 7 } });
+    const report = accumulator.completionReport({
+      status: "failed",
+      completedAt,
+      summaryMetrics: {
+        attemptsStarted: 10,
+        responsesCompleted: 4,
+        timingPhases: {},
+      },
+    });
+
+    expect(report.httpSummary).toMatchObject({
+      completedRequests: 7,
+      interruptedRequests: 3,
+      unstartedRequests: 0,
+    });
+    expect(report.loadRunDiagnosticsSummary.terminalMetricSources.completedRequests).toBe(
+      "point_stream",
+    );
+  });
+
+  it("lets completed responses prove attempts started when the started counter is unavailable", () => {
+    const accumulator = createAccumulator({ buyerCount: 1_000 });
+    accumulator.observe({ type: "Point", metric: "http_reqs", data: { value: 750 } });
+
+    const report = accumulator.completionReport({ status: "failed", completedAt });
+
+    expect(report.httpSummary).toMatchObject({
+      startedRequests: 750,
+      completedRequests: 750,
+      interruptedRequests: 0,
+      unstartedRequests: 250,
+    });
+    expect(report.loadRunDiagnosticsSummary.terminalMetricSources).toMatchObject({
+      startedRequests: "point_stream",
+      completedRequests: "point_stream",
+    });
+  });
+
+  it("keeps HTTP failure and outcome counters measured against completed responses", () => {
+    const accumulator = createAccumulator({ buyerCount: 1_000 });
+    const report = accumulator.completionReport({
+      status: "failed",
+      completedAt,
+      summaryMetrics: {
+        attemptsStarted: 1_000,
+        responsesCompleted: 750,
+        httpRequests: 750,
+        acceptedResponses: 250,
+        soldOutResponses: 450,
+        unexpectedResponses: 50,
+        httpFailureRate: 0.2,
+        timingPhases: {},
+      },
+    });
+
+    // failureRate × completed responses = 150 HTTP failures; 450 are expected
+    // sold-out rejections, so no additional domain failures are inferred.
+    expect(report.httpSummary.failedRequests).toBe(50);
+    expect(report.httpSummary.failureRate).toBe(0.2);
+    expect(report.trafficOutcomeSummary).toEqual({
+      acceptedResponses: 250,
+      soldOutResponses: 450,
+      unexpectedResponses: 50,
+    });
   });
 });
 
@@ -239,8 +477,21 @@ describe("summary export fallback", () => {
   });
 });
 
-function createAccumulator(): K6RunAccumulator {
-  const generated = generateK6Script(request);
+function createAccumulator(options: { buyerCount?: number } = {}): K6RunAccumulator {
+  const effectiveRequest =
+    options.buyerCount === undefined
+      ? request
+      : {
+          ...request,
+          configSnapshot: {
+            ...request.configSnapshot,
+            trafficConfig: {
+              ...request.configSnapshot.trafficConfig,
+              buyerCount: options.buyerCount,
+            },
+          },
+        };
+  const generated = generateK6Script(effectiveRequest);
   return new K6RunAccumulator({
     runId: request.runId,
     correlationId: request.correlationId,

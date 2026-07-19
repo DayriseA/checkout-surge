@@ -130,10 +130,24 @@ describe("PostgreSQL worker order transitions", () => {
       return time;
     });
 
-    const processingTransition = await persistence.transitionToProcessing(job, { attemptNumber: 2, attemptsMade: 1 });
-    expect(processingTransition).toMatchObject({ changed: true, status: "processing", occurredAt: new Date("2026-06-21T00:00:01.000Z") });
-    const confirmedTransition = await persistence.transitionToConfirmed(job, { attemptNumber: 2, attemptsMade: 1 });
-    expect(confirmedTransition).toMatchObject({ changed: true, status: "confirmed", confirmedAt: new Date("2026-06-21T00:00:02.000Z") });
+    const processingTransition = await persistence.transitionToProcessing(job, {
+      attemptNumber: 2,
+      attemptsMade: 1,
+    });
+    expect(processingTransition).toMatchObject({
+      changed: true,
+      status: "processing",
+      occurredAt: new Date("2026-06-21T00:00:01.000Z"),
+    });
+    const confirmedTransition = await persistence.transitionToConfirmed(job, {
+      attemptNumber: 2,
+      attemptsMade: 1,
+    });
+    expect(confirmedTransition).toMatchObject({
+      changed: true,
+      status: "confirmed",
+      confirmedAt: new Date("2026-06-21T00:00:02.000Z"),
+    });
 
     const [order] = await connection.db.select().from(orders).where(eq(orders.id, ids.order));
     const events = await readOrderEvents(connection, ids.order);
@@ -239,7 +253,10 @@ describe("PostgreSQL worker order transitions", () => {
     const events = await readOrderEvents(connection, ids.order);
 
     expect(processingResults.map((result) => result.changed).sort()).toEqual([false, true]);
-    expect(processingResults.find((result) => !result.changed)).toEqual({ changed: false, status: "processing" });
+    expect(processingResults.find((result) => !result.changed)).toEqual({
+      changed: false,
+      status: "processing",
+    });
     expect(confirmationResults.map((result) => result.changed).sort()).toEqual([false, true]);
     expect(events.filter((event) => event.eventName === "order.processing")).toHaveLength(1);
     expect(events.filter((event) => event.eventName === "order.confirmed")).toHaveLength(1);
@@ -434,7 +451,10 @@ describe("PostgreSQL worker order transitions", () => {
     { status: "failed" as const, terminal: true },
     { status: "timed_out" as const, terminal: false },
     { status: "timed_out" as const, terminal: true },
-  ])("keeps $status terminal=$terminal attempt rows and events in parity", async ({ status, terminal }) => {
+  ])("keeps $status terminal=$terminal attempt rows and events in parity", async ({
+    status,
+    terminal,
+  }) => {
     const persistence = new PostgresErpAttemptPersistence(connection.db);
     await persistence.recordAttempt({
       job,
@@ -502,7 +522,9 @@ describe("PostgreSQL worker order transitions", () => {
       const attemptEvents = await connection.db
         .select()
         .from(orderEvents)
-        .where(and(eq(orderEvents.orderId, ids.order), eq(orderEvents.eventName, "erp.attempt.failed")));
+        .where(
+          and(eq(orderEvents.orderId, ids.order), eq(orderEvents.eventName, "erp.attempt.failed")),
+        );
       expect(attempts).toHaveLength(0);
       expect(attemptEvents).toHaveLength(0);
     } finally {
@@ -1339,8 +1361,10 @@ function trafficCompletionReportFixture(): TrafficCompletionReport {
     exitCode: 0,
     httpSummary: {
       plannedRequests: 1,
-      emittedRequests: 1,
+      startedRequests: 1,
       completedRequests: 1,
+      interruptedRequests: 0,
+      unstartedRequests: 0,
       failedRequests: 0,
       acceptedResponses: 1,
       soldOutResponses: 0,
@@ -1351,7 +1375,10 @@ function trafficCompletionReportFixture(): TrafficCompletionReport {
     trafficOutcomeSummary: {},
     trafficDeliverySummary: {
       plannedRequests: 1,
-      emittedRequests: 1,
+      startedRequests: 1,
+      completedRequests: 1,
+      interruptedRequests: 0,
+      unstartedRequests: 0,
       trafficMode: "buyer-spike",
       plannedBuyers: 1,
       scheduledRatePerSecond: null,
@@ -1386,7 +1413,7 @@ function trafficCompletionReportFixture(): TrafficCompletionReport {
       stderrLineTruncationLength: 500,
       stderrLineTruncatedCount: 0,
       terminalMetricSources: {
-        emittedRequests: "summary_export",
+        startedRequests: "summary_export",
         completedRequests: "summary_export",
         acceptedResponses: "summary_export",
         soldOutResponses: "summary_export",
@@ -1396,7 +1423,14 @@ function trafficCompletionReportFixture(): TrafficCompletionReport {
       },
       summaryExportWarnings: [],
     },
-    apiRequestLifecycleSummary: {},
+    apiRequestLifecycleSummary: {
+      plannedRequests: 1,
+      startedRequests: 1,
+      completedRequests: 1,
+      interruptedRequests: 0,
+      unstartedRequests: 0,
+      failedRequests: 0,
+    },
     completedAt: "2026-06-21T00:00:03.000Z",
     correlationId: job.correlationId,
   };
