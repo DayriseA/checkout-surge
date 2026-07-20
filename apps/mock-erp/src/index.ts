@@ -6,7 +6,11 @@ import {
   ErpChaosConfigStore,
 } from "./application/chaos-control-service.js";
 import { ConfirmationService } from "./application/confirmation-service.js";
-import { PostgresConfirmationLedger } from "./application/postgres-confirmation-ledger.js";
+import {
+  PostgresConfirmationLedger,
+  PostgresConfirmationLedgerReadinessProbe,
+} from "./application/postgres-confirmation-ledger.js";
+import { createMockErpReadiness } from "./application/readiness.js";
 import { SlidingWindowTpsLimiter } from "./application/tps-limiter.js";
 import { loadMockErpConfig } from "./runtime/config.js";
 import { buildMockErpServer } from "./server.js";
@@ -32,7 +36,16 @@ export {
   ConfirmationService,
   InMemoryConfirmationLedger,
 } from "./application/confirmation-service.js";
-export { PostgresConfirmationLedger } from "./application/postgres-confirmation-ledger.js";
+export {
+  PostgresConfirmationLedger,
+  PostgresConfirmationLedgerReadinessProbe,
+} from "./application/postgres-confirmation-ledger.js";
+export {
+  type ConfirmationLedgerReadinessProbe,
+  confirmationLedgerReadinessCheckName,
+  createMockErpReadiness,
+  type MockErpReadiness,
+} from "./application/readiness.js";
 export {
   SlidingWindowTpsLimiter,
   type SlidingWindowTpsLimiterOptions,
@@ -45,17 +58,22 @@ export async function startMockErp(): Promise<void> {
   const config = loadMockErpConfig(process.env);
   const logger = createServiceLogger({ service: "mock-erp" });
   const database = createDatabaseConnection(requireDatabaseUrl(process.env));
+  const confirmationLedger = new PostgresConfirmationLedger(database.db);
   const chaosConfigStore = new ErpChaosConfigStore(
     config.defaultChaosConfig,
     config.chaosSafetyCaps,
   );
   const server = buildMockErpServer({
     confirmationService: new ConfirmationService({
-      ledger: new PostgresConfirmationLedger(database.db),
+      ledger: confirmationLedger,
       decisionProvider: new ChaosConfirmationDecisionProvider({
         configStore: chaosConfigStore,
         tpsLimiter: new SlidingWindowTpsLimiter(),
       }),
+    }),
+    readiness: createMockErpReadiness({
+      ledgerProbe: new PostgresConfirmationLedgerReadinessProbe(database.sql),
+      timeoutMs: config.readinessTimeoutMs,
     }),
     chaosConfigStore,
     controlServiceToken: config.controlServiceToken,

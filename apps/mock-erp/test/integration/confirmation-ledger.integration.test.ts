@@ -7,7 +7,10 @@ import {
   ConfirmationIdempotencyConflictError,
   ConfirmationService,
 } from "../../src/application/confirmation-service.js";
-import { PostgresConfirmationLedger } from "../../src/application/postgres-confirmation-ledger.js";
+import {
+  PostgresConfirmationLedger,
+  PostgresConfirmationLedgerReadinessProbe,
+} from "../../src/application/postgres-confirmation-ledger.js";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 const run = databaseUrl ? describe : describe.skip;
@@ -64,6 +67,23 @@ run("PostgreSQL ERP confirmation ledger", () => {
       generateConfirmationId: () => "different",
     });
     await expect(restarted.confirm(request)).resolves.toEqual(response);
+  });
+
+  it("checks the confirmation-results relation without mutating it", async () => {
+    const before = await requireConnection().sql`
+      select count(*)::integer as count from erp_confirmation_results
+    `;
+
+    await expect(
+      new PostgresConfirmationLedgerReadinessProbe(requireConnection().sql).check(
+        new AbortController().signal,
+      ),
+    ).resolves.toBeUndefined();
+
+    const after = await requireConnection().sql`
+      select count(*)::integer as count from erp_confirmation_results
+    `;
+    expect(after).toEqual(before);
   });
 
   it("rejects an immutable request contradiction", async () => {

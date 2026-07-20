@@ -3,13 +3,19 @@ import {
   type ErpConfirmationResponse,
   erpConfirmationResponseSchema,
 } from "@checkout-surge/contracts";
-import { type CheckoutSurgeDatabase, erpConfirmationResults } from "@checkout-surge/db";
+import {
+  type CheckoutSurgeDatabase,
+  createAbortableDatabase,
+  erpConfirmationResults,
+  type SqlClient,
+} from "@checkout-surge/db";
 import { eq, sql } from "drizzle-orm";
 import {
   assertFingerprint,
   type ConfirmationLedger,
   confirmationFingerprint,
 } from "./confirmation-service.js";
+import type { ConfirmationLedgerReadinessProbe } from "./readiness.js";
 
 /** PostgreSQL-backed first-write-wins ERP ledger. */
 export class PostgresConfirmationLedger implements ConfirmationLedger {
@@ -106,5 +112,17 @@ export class PostgresConfirmationLedger implements ConfirmationLedger {
       assertFingerprint(canonical.requestFingerprint, request);
       return erpConfirmationResponseSchema.parse(canonical.response);
     });
+  }
+}
+
+/** Read-only readiness probe for the PostgreSQL relation that stores confirmation results. */
+export class PostgresConfirmationLedgerReadinessProbe implements ConfirmationLedgerReadinessProbe {
+  constructor(private readonly sqlClient: SqlClient) {}
+
+  async check(signal: AbortSignal): Promise<void> {
+    await createAbortableDatabase(this.sqlClient, signal)
+      .select({ id: erpConfirmationResults.id })
+      .from(erpConfirmationResults)
+      .limit(1);
   }
 }

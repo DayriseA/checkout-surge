@@ -113,6 +113,20 @@ test("Compose health probes use the cheap web-owned health route", () => {
   assert.doesNotMatch(`${web}\n${proxy}`, /dashboard\/recovery/);
 });
 
+test("Compose gates Mock ERP on PostgreSQL and runtime smoke verifies ledger readiness", () => {
+  const compose = readText("docker-compose.yml");
+  const mockErp = readComposeServiceBlock(compose, "mock-erp");
+  const worker = readComposeServiceBlock(compose, "worker");
+  const healthSmoke = readText("scripts/runtime-health-check.mjs");
+
+  assert.match(mockErp, /depends_on:\s+postgres:\s+condition: service_healthy/);
+  assert.match(worker, /mock-erp:\s+condition: service_healthy/);
+  assert.match(
+    healthSmoke,
+    /name: "mock_erp_readiness"[\s\S]*requiredChecks: \["confirmation_ledger_reachable"\]/,
+  );
+});
+
 test("Dev Container provisions repo-scoped headless browser tooling", () => {
   const postCreate = readText(".devcontainer/post-create.sh");
   const browserInstaller = readText(".devcontainer/install-browser-tools.sh");

@@ -1,10 +1,16 @@
 import { healthResponseSchema, livenessResponseSchema } from "@checkout-surge/contracts";
 import { createLivenessPayload, createReadinessResponse } from "@checkout-surge/logger";
+import type { MockErpReadiness } from "../application/readiness.js";
 import type { MockErpFastifyInstance } from "../runtime/fastify.js";
+
+export interface MockErpHealthRouteOptions {
+  readiness: MockErpReadiness;
+  startedAt?: Date;
+}
 
 export function registerHealthRoutes(
   app: MockErpFastifyInstance,
-  options: { startedAt?: Date },
+  options: MockErpHealthRouteOptions,
 ): void {
   app.get("/health/live", async () =>
     livenessResponseSchema.parse(
@@ -19,11 +25,11 @@ export function registerHealthRoutes(
     const response = healthResponseSchema.parse(
       createReadinessResponse({
         service: "mock-erp",
-        checks: [{ name: "confirmation_endpoint_ready", status: "ok" }],
+        checks: await options.readiness.checks(),
         ...(options.startedAt ? { startedAt: options.startedAt } : {}),
       }),
     );
 
-    return reply.status(200).send(response);
+    return reply.status(response.status === "unavailable" ? 503 : 200).send(response);
   });
 }

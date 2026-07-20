@@ -22,6 +22,11 @@ import {
   ConfirmationIdempotencyConflictError,
   ConfirmationService,
 } from "../../src/application/confirmation-service.js";
+import {
+  confirmationLedgerReadinessCheckName,
+  createMockErpReadiness,
+  type MockErpReadiness,
+} from "../../src/application/readiness.js";
 import { SlidingWindowTpsLimiter } from "../../src/application/tps-limiter.js";
 import { loadMockErpConfig as loadProductionMockErpConfig } from "../../src/runtime/config.js";
 import { buildMockErpServer } from "../../src/server.js";
@@ -58,6 +63,7 @@ describe("Mock ERP configuration", () => {
       host: "0.0.0.0",
       port: 4100,
       controlServiceToken,
+      readinessTimeoutMs: 2000,
       defaultChaosConfig,
       chaosSafetyCaps: testSafetyCaps,
     });
@@ -66,6 +72,7 @@ describe("Mock ERP configuration", () => {
         HOST: "127.0.0.1",
         PORT: "5100",
         CONTROL_SERVICE_TOKEN: controlServiceToken,
+        MOCK_ERP_READINESS_TIMEOUT_MS: "750",
         LATENCY_MS: "25",
         MAX_TPS: "3",
         ERROR_RATE: "0.5",
@@ -79,6 +86,7 @@ describe("Mock ERP configuration", () => {
       host: "127.0.0.1",
       port: 5100,
       controlServiceToken,
+      readinessTimeoutMs: 750,
       defaultChaosConfig: {
         latencyMs: 25,
         maxTps: 3,
@@ -110,6 +118,21 @@ describe("Mock ERP configuration", () => {
     ).toThrow("PORT must be a positive integer");
   });
 
+  it("rejects an invalid readiness timeout", () => {
+    expect(() =>
+      loadMockErpConfig({
+        CONTROL_SERVICE_TOKEN: controlServiceToken,
+        MOCK_ERP_READINESS_TIMEOUT_MS: "0",
+      }),
+    ).toThrow("MOCK_ERP_READINESS_TIMEOUT_MS must be a positive integer");
+    expect(() =>
+      loadMockErpConfig({
+        CONTROL_SERVICE_TOKEN: controlServiceToken,
+        MOCK_ERP_READINESS_TIMEOUT_MS: "3000",
+      }),
+    ).toThrow("MOCK_ERP_READINESS_TIMEOUT_MS must be less than");
+  });
+
   it("rejects invalid chaos environment values", () => {
     expect(() =>
       loadMockErpConfig({ CONTROL_SERVICE_TOKEN: controlServiceToken, ERROR_RATE: "2" }),
@@ -119,26 +142,38 @@ describe("Mock ERP configuration", () => {
     ).toThrow("FORCED_OUTAGE must be true or false");
   });
 
-  it.each(["0", "-1", "1.5", "not-a-number", "NaN", "Infinity", "-Infinity", "1e309"])(
-    "rejects MAX_TPS=%s",
-    (value) => {
-      expect(() =>
-        loadMockErpConfig({ CONTROL_SERVICE_TOKEN: controlServiceToken, MAX_TPS: value }),
-      ).toThrow("MAX_TPS must be a positive integer");
-    },
-  );
+  it.each([
+    "0",
+    "-1",
+    "1.5",
+    "not-a-number",
+    "NaN",
+    "Infinity",
+    "-Infinity",
+    "1e309",
+  ])("rejects MAX_TPS=%s", (value) => {
+    expect(() =>
+      loadMockErpConfig({ CONTROL_SERVICE_TOKEN: controlServiceToken, MAX_TPS: value }),
+    ).toThrow("MAX_TPS must be a positive integer");
+  });
 
-  it.each(["0", "-1", "1.5", "not-a-number", "NaN", "Infinity", "-Infinity", "1e309"])(
-    "rejects ADMIN_MIN_MAX_TPS=%s",
-    (value) => {
-      expect(() =>
-        loadMockErpConfig({
-          CONTROL_SERVICE_TOKEN: controlServiceToken,
-          ADMIN_MIN_MAX_TPS: value,
-        }),
-      ).toThrow("ADMIN_MIN_MAX_TPS must be a positive integer");
-    },
-  );
+  it.each([
+    "0",
+    "-1",
+    "1.5",
+    "not-a-number",
+    "NaN",
+    "Infinity",
+    "-Infinity",
+    "1e309",
+  ])("rejects ADMIN_MIN_MAX_TPS=%s", (value) => {
+    expect(() =>
+      loadMockErpConfig({
+        CONTROL_SERVICE_TOKEN: controlServiceToken,
+        ADMIN_MIN_MAX_TPS: value,
+      }),
+    ).toThrow("ADMIN_MIN_MAX_TPS must be a positive integer");
+  });
 });
 
 describe("confirmation service", () => {
@@ -470,9 +505,7 @@ describe("chaos control service", () => {
       new ChaosConfirmationDecisionProvider({
         configStore: outageStore,
         tpsLimiter: new SlidingWindowTpsLimiter(),
-      }).decide(
-        confirmationRequest,
-      ),
+      }).decide(confirmationRequest),
     ).resolves.toMatchObject({
       status: "failed",
       httpStatus: 503,
@@ -497,7 +530,89 @@ describe("Mock ERP HTTP service", () => {
     expect(ready.statusCode).toBe(200);
     expect(healthResponseSchema.parse(ready.json()).checks).toEqual([
       { name: "confirmation_endpoint_ready", status: "ok" },
+      { name: confirmationLedgerReadinessCheckName, status: "ok" },
     ]);
+  });
+
+  it("keeps liveness healthy, sanitizes ledger failures, and recovers on a later probe", async () => {
+    let available = false;
+    const readiness = createMockErpReadiness({
+      ledgerProbe: {
+        check: async () => {
+          if (!available) {
+            throw new Error("password=secret postgresql://admin:secret@database.internal/ledger");
+          }
+        },
+      },
+      timeoutMs: 100,
+    });
+    const server = buildTestServer({
+      confirmationService: new ConfirmationService(),
+      readiness,
+    });
+
+    const unavailable = await server.inject({ method: "GET", url: "/health/ready" });
+    const live = await server.inject({ method: "GET", url: "/health/live" });
+    available = true;
+    const recovered = await server.inject({ method: "GET", url: "/health/ready" });
+    await server.close();
+
+    expect(unavailable.statusCode).toBe(503);
+    expect(healthResponseSchema.parse(unavailable.json())).toMatchObject({
+      service: "mock-erp",
+      status: "unavailable",
+      checks: [
+        { name: "confirmation_endpoint_ready", status: "ok" },
+        {
+          name: confirmationLedgerReadinessCheckName,
+          status: "unavailable",
+          message: "Confirmation ledger is unavailable.",
+        },
+      ],
+    });
+    expect(unavailable.body).not.toContain("password=secret");
+    expect(unavailable.body).not.toContain("postgresql://");
+    expect(live.statusCode).toBe(200);
+    expect(livenessResponseSchema.parse(live.json()).status).toBe("ok");
+    expect(recovered.statusCode).toBe(200);
+    expect(healthResponseSchema.parse(recovered.json())).toMatchObject({
+      status: "ok",
+      checks: [
+        { name: "confirmation_endpoint_ready", status: "ok" },
+        { name: confirmationLedgerReadinessCheckName, status: "ok" },
+      ],
+    });
+  });
+
+  it("bounds a readiness probe that does not settle", async () => {
+    vi.useFakeTimers();
+    try {
+      let observedSignal: AbortSignal | undefined;
+      const readiness = createMockErpReadiness({
+        ledgerProbe: {
+          check: async (signal) => {
+            observedSignal = signal;
+            await new Promise<void>(() => undefined);
+          },
+        },
+        timeoutMs: 25,
+      });
+
+      const checksPromise = readiness.checks();
+      await vi.advanceTimersByTimeAsync(25);
+
+      await expect(checksPromise).resolves.toEqual([
+        { name: "confirmation_endpoint_ready", status: "ok" },
+        {
+          name: confirmationLedgerReadinessCheckName,
+          status: "unavailable",
+          message: "Confirmation ledger readiness check exceeded the 25ms deadline.",
+        },
+      ]);
+      expect(observedSignal?.aborted).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("confirms an order and propagates its correlation ID", async () => {
@@ -856,6 +971,7 @@ function sequenceClock(...dates: Date[]): () => Date {
 function buildTestServer(options: {
   confirmationService: ConfirmationService;
   chaosConfigStore?: ErpChaosConfigStore;
+  readiness?: MockErpReadiness;
   startedAt?: Date;
 }) {
   return buildMockErpServer({
@@ -864,6 +980,12 @@ function buildTestServer(options: {
       options.chaosConfigStore ?? new ErpChaosConfigStore(defaultChaosConfig, testSafetyCaps),
     controlServiceToken,
     logger: createSilentLogger("mock-erp"),
+    readiness:
+      options.readiness ??
+      createMockErpReadiness({
+        ledgerProbe: { check: async () => undefined },
+        timeoutMs: 100,
+      }),
     ...(options.startedAt ? { startedAt: options.startedAt } : {}),
   });
 }
@@ -880,9 +1002,7 @@ function buildChaosServer(options: {
       decisionProvider: new ChaosConfirmationDecisionProvider({
         configStore: options.chaosConfigStore,
         tpsLimiter: new SlidingWindowTpsLimiter({
-          ...(options.providerNow
-            ? { nowMs: () => options.providerNow?.().getTime() ?? 0 }
-            : {}),
+          ...(options.providerNow ? { nowMs: () => options.providerNow?.().getTime() ?? 0 } : {}),
         }),
         ...(options.random ? { random: options.random } : {}),
         ...(options.sleep ? { sleep: options.sleep } : {}),

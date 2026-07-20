@@ -6,6 +6,7 @@ import { ZodError } from "zod";
 import type { ErpChaosConfigStore } from "./application/chaos-control-service.js";
 import type { ConfirmationService } from "./application/confirmation-service.js";
 import { ConfirmationIdempotencyConflictError } from "./application/confirmation-service.js";
+import type { MockErpReadiness } from "./application/readiness.js";
 import { registerChaosRoutes } from "./routes/chaos-routes.js";
 import { registerConfirmationRoutes } from "./routes/confirmation-routes.js";
 import { registerHealthRoutes } from "./routes/health-routes.js";
@@ -16,6 +17,7 @@ export interface BuildMockErpServerOptions {
   chaosConfigStore: ErpChaosConfigStore;
   controlServiceToken: string;
   logger: CheckoutSurgeLogger;
+  readiness: MockErpReadiness;
   startedAt?: Date;
 }
 
@@ -59,6 +61,7 @@ export function buildMockErpServer(options: BuildMockErpServerOptions) {
   });
 
   registerHealthRoutes(app, {
+    readiness: options.readiness,
     ...(options.startedAt ? { startedAt: options.startedAt } : {}),
   });
   registerChaosRoutes(app, {

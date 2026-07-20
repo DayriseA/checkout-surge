@@ -20,6 +20,7 @@ const checks = [
     name: "mock_erp_readiness",
     url: joinUrl(envUrl("MOCK_ERP_BASE_URL", "http://localhost:4100"), "/health/ready"),
     kind: "readiness",
+    requiredChecks: ["confirmation_ledger_reachable"],
   },
   {
     name: "load_orchestrator_readiness",

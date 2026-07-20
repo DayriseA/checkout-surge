@@ -5,9 +5,12 @@ export interface MockErpConfig {
   host: string;
   port: number;
   controlServiceToken: string;
+  readinessTimeoutMs: number;
   defaultChaosConfig: ErpChaosConfig;
   chaosSafetyCaps: ErpChaosSafetyCaps;
 }
+
+export const composeMockErpHealthcheckTimeoutMs = 3_000;
 
 const unsafeControlServiceTokens = new Set([
   "change-me-shared-control-token",
@@ -15,10 +18,15 @@ const unsafeControlServiceTokens = new Set([
 ]);
 
 export function loadMockErpConfig(env: NodeJS.ProcessEnv): MockErpConfig {
-  return {
+  const config: MockErpConfig = {
     host: env.HOST?.trim() || "0.0.0.0",
     port: parsePositiveInteger(env.PORT, "PORT", 4100),
     controlServiceToken: requireEnv(env, "CONTROL_SERVICE_TOKEN"),
+    readinessTimeoutMs: parsePositiveInteger(
+      env.MOCK_ERP_READINESS_TIMEOUT_MS,
+      "MOCK_ERP_READINESS_TIMEOUT_MS",
+      2000,
+    ),
     defaultChaosConfig: erpChaosConfigSchema.parse({
       latencyMs: parseNonnegativeInteger(env.LATENCY_MS, "LATENCY_MS", 0),
       maxTps: parsePositiveInteger(env.MAX_TPS, "MAX_TPS", 100),
@@ -36,6 +44,14 @@ export function loadMockErpConfig(env: NodeJS.ProcessEnv): MockErpConfig {
       ),
     },
   };
+
+  if (config.readinessTimeoutMs >= composeMockErpHealthcheckTimeoutMs) {
+    throw new Error(
+      `MOCK_ERP_READINESS_TIMEOUT_MS must be less than the ${composeMockErpHealthcheckTimeoutMs}ms Compose Mock ERP healthcheck timeout.`,
+    );
+  }
+
+  return config;
 }
 
 function requireEnv(env: NodeJS.ProcessEnv, name: string): string {
