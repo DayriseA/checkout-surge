@@ -10,6 +10,8 @@ import type { BackendRead } from "../../lib/api";
 import { readProxyJson } from "../../lib/client/proxy-json";
 import { dashboardRecoveryProxyPath } from "../../lib/control-paths";
 import {
+  bufferDashboardEvent,
+  bufferedEventsRequireAuthoritativeRecovery,
   createDashboardState,
   dashboardStateReducer,
   shouldRequestAuthoritativeRecoveryAfterScopedEvent,
@@ -28,14 +30,18 @@ const noScheduledRetry: DashboardRecoveryRetryState = {
 
 const activeRunPollIntervalMs = 30_000;
 
-export function useDashboardRecovery(initialRecovery: BackendRead<DashboardRecoveryResponse>) {
+export function useDashboardRecovery(
+  initialRecovery: BackendRead<DashboardRecoveryResponse>,
+  options: { preserveAvailableRecoveryOnFailure?: boolean } = {},
+) {
   const [state, dispatch] = useReducer(
     dashboardStateReducer,
     initialRecovery,
     createDashboardState,
   );
   const requestRef = useRef<Promise<BackendRead<DashboardRecoveryResponse>> | null>(null);
-  const eventDiscardedRef = useRef(false);
+  const bufferedEventsRef = useRef<DashboardEvent[]>([]);
+  const cadenceRecoveryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
   const hasLocalRecoveryActivityRef = useRef(false);
   const initialRecoveryIdentity = recoveryIdentity(initialRecovery);
@@ -56,51 +62,84 @@ export function useDashboardRecovery(initialRecovery: BackendRead<DashboardRecov
     });
   }
 
-  const refresh = useCallback(async (): Promise<void> => {
-    if (!mountedRef.current) return;
-    if (requestRef.current) {
-      await requestRef.current;
-      return;
-    }
+  const cancelCadenceRecovery = useCallback(() => {
+    if (cadenceRecoveryTimerRef.current === null) return;
+    clearTimeout(cadenceRecoveryTimerRef.current);
+    cadenceRecoveryTimerRef.current = null;
+  }, []);
 
-    hasLocalRecoveryActivityRef.current = true;
-    retrySchedulerRef.current?.cancel();
-    dispatch({ type: "refresh-started" });
-    let completedRecovery: BackendRead<DashboardRecoveryResponse> | null = null;
-    const request = readProxyJson(dashboardRecoveryProxyPath, dashboardRecoveryResponseSchema).catch(
-      (error: unknown): BackendRead<DashboardRecoveryResponse> => ({
+  const performRecovery = useCallback(
+    async function runRecovery(allowTrailingRecovery: boolean): Promise<void> {
+      if (!mountedRef.current) return;
+      if (requestRef.current) {
+        await requestRef.current;
+        return;
+      }
+
+      hasLocalRecoveryActivityRef.current = true;
+      cancelCadenceRecovery();
+      retrySchedulerRef.current?.cancel();
+      dispatch({ type: "refresh-started" });
+      let completedRecovery: BackendRead<DashboardRecoveryResponse> | null = null;
+      const request = readProxyJson(
+        dashboardRecoveryProxyPath,
+        dashboardRecoveryResponseSchema,
+      ).catch(
+        (error: unknown): BackendRead<DashboardRecoveryResponse> => ({
           status: "unavailable",
           reason: error instanceof Error ? error.message : "Dashboard recovery request failed.",
-      }),
-    );
-    requestRef.current = request;
+        }),
+      );
+      requestRef.current = request;
 
-    try {
-      completedRecovery = await request;
-      if (!mountedRef.current) return;
-      dispatch({ type: "refresh-completed", recovery: completedRecovery });
-      if (completedRecovery.status === "available") {
-        retrySchedulerRef.current?.reset();
-      } else {
-        retrySchedulerRef.current?.schedule(completedRecovery.retryAfterMs);
-      }
-    } finally {
-      requestRef.current = null;
-      if (mountedRef.current && completedRecovery?.status === "available") {
-        const shouldFollowUp = eventDiscardedRef.current;
-        eventDiscardedRef.current = false;
-        if (shouldFollowUp) {
-          await refreshRef.current();
+      try {
+        completedRecovery = await request;
+        if (!mountedRef.current) return;
+        dispatch({
+          type: "refresh-completed",
+          recovery: completedRecovery,
+          preserveAvailableRecoveryOnFailure: options.preserveAvailableRecoveryOnFailure === true,
+        });
+        if (completedRecovery.status === "available") {
+          retrySchedulerRef.current?.reset();
+        } else {
+          retrySchedulerRef.current?.schedule(completedRecovery.retryAfterMs);
+        }
+      } finally {
+        const bufferedEvents = bufferedEventsRef.current;
+        bufferedEventsRef.current = [];
+        if (mountedRef.current && bufferedEvents.length > 0) {
+          dispatch({ type: "buffered-events-reconciled", events: bufferedEvents });
+        }
+        requestRef.current = null;
+        if (mountedRef.current && completedRecovery?.status === "available") {
+          const shouldFollowUp = bufferedEventsRequireAuthoritativeRecovery(
+            completedRecovery,
+            bufferedEvents,
+          );
+          if (shouldFollowUp && allowTrailingRecovery) {
+            await runRecovery(false);
+          } else if (shouldFollowUp && cadenceRecoveryTimerRef.current === null) {
+            cadenceRecoveryTimerRef.current = setTimeout(() => {
+              cadenceRecoveryTimerRef.current = null;
+              void refreshRef.current();
+            }, activeRunPollIntervalMs);
+          }
         }
       }
-    }
-  }, []);
+    },
+    [cancelCadenceRecovery, options.preserveAvailableRecoveryOnFailure],
+  );
+
+  const refresh = useCallback(() => performRecovery(true), [performRecovery]);
   refreshRef.current = refresh;
 
   const applyEvent = useCallback(
     (event: DashboardEvent) => {
       const discard = requestRef.current !== null;
-      if (discard) eventDiscardedRef.current = true;
+      if (discard) {
+        bufferedEventsRef.current = bufferDashboardEvent(bufferedEventsRef.current, event);
+      }
       const shouldRecover = shouldRequestAuthoritativeRecoveryAfterScopedEvent(
         state.recovery,
         event,
@@ -118,8 +157,9 @@ export function useDashboardRecovery(initialRecovery: BackendRead<DashboardRecov
     return () => {
       mountedRef.current = false;
       retrySchedulerRef.current?.reset();
+      cancelCadenceRecovery();
     };
-  }, []);
+  }, [cancelCadenceRecovery]);
 
   useEffect(() => {
     if (!hasLocalRecoveryActivityRef.current) {
@@ -165,7 +205,8 @@ export function useDashboardRecovery(initialRecovery: BackendRead<DashboardRecov
     retryAttempt: retryState.attempt,
     retryDelayMs: retryState.delayMs,
     retriesExhausted: retryState.exhausted,
-    hasSyncIssue: state.recovery.status === "unavailable",
+    syncIssue: state.syncIssue,
+    hasSyncIssue: state.syncIssue !== null,
     liveEventCount: state.liveEventCount,
     recentOrderStates: state.recentOrderStates,
     recentOrderLagSamples: state.recentOrderLagSamples,

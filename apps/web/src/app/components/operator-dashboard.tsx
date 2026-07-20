@@ -29,13 +29,14 @@ export function OperatorDashboard({ snapshot }: OperatorDashboardProps) {
     retryAttempt,
     retryDelayMs,
     hasSyncIssue,
+    syncIssue,
     liveEventCount,
     recentOrderStates,
     recentOrderLagSamples,
     refresh,
     retryNow,
     applyEvent,
-  } = useDashboardRecovery(snapshot.recovery);
+  } = useDashboardRecovery(snapshot.recovery, { preserveAvailableRecoveryOnFailure: true });
   const handleOpen = useCallback(() => {
     void refresh();
   }, [refresh]);
@@ -52,6 +53,7 @@ export function OperatorDashboard({ snapshot }: OperatorDashboardProps) {
         retryAttempt={retryAttempt}
         retryDelayMs={retryDelayMs}
         hasSyncIssue={hasSyncIssue}
+        syncIssue={syncIssue}
         realtimeStatus={realtimeStatus}
         liveEventCount={liveEventCount}
         onRefresh={() => {
@@ -62,7 +64,10 @@ export function OperatorDashboard({ snapshot }: OperatorDashboardProps) {
       <InventoryDrainPanel recovery={recovery} />
       <QueuePressurePanel recovery={recovery} />
       <ErpHealthPanel recovery={recovery} />
-      <ConsistencyLagPanel recovery={recovery} latestOrderLag={recentOrderLagSamples.at(-1) ?? null} />
+      <ConsistencyLagPanel
+        recovery={recovery}
+        latestOrderLag={recentOrderLagSamples.at(-1) ?? null}
+      />
       <RecentOrderTransitionsPanel orders={recentOrderStates} />
       <RunOutcomesPanel recovery={recovery} />
       <CompletionOutcomesPanel recovery={recovery} />

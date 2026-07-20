@@ -152,6 +152,27 @@ describe("useDashboardRecovery", () => {
     expect(result.current.retryAttempt).toBe(0);
   });
 
+  it("retains a Watch snapshot and exposes one separate sync issue after refresh failure", async () => {
+    vi.useFakeTimers();
+    const initialRecovery = available(recoveryFixture());
+    const fetchMock = vi.fn().mockResolvedValue(errorResponse("API restarting", 503));
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = renderHook(() =>
+      useDashboardRecovery(initialRecovery, { preserveAvailableRecoveryOnFailure: true }),
+    );
+
+    await act(async () => result.current.refresh());
+
+    expect(result.current.recovery).toEqual(initialRecovery);
+    expect(result.current.syncIssue).toMatchObject({
+      status: "unavailable",
+      reason: "API restarting",
+      httpStatus: 503,
+    });
+    expect(result.current.hasSyncIssue).toBe(true);
+    expect(result.current.isRetryScheduled).toBe(true);
+  });
+
   it("honors Retry-After for 429 recovery and converges to idle without a reload", async () => {
     vi.useFakeTimers();
     const fetchMock = vi
@@ -198,15 +219,14 @@ describe("useDashboardRecovery", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
-  it("does not overlap duplicate triggers and defers discarded-event follow-up after failure", async () => {
+  it("does not turn ordinary buffered events into a follow-up after a failed read retries", async () => {
     vi.useFakeTimers();
     const first = deferred<Response>();
     const retry = deferred<Response>();
     const fetchMock = vi
       .fn()
       .mockImplementationOnce(() => first.promise)
-      .mockImplementationOnce(() => retry.promise)
-      .mockResolvedValueOnce(jsonResponse(recoveryFixture("2026-06-20T00:00:14.000Z")));
+      .mockImplementationOnce(() => retry.promise);
     vi.stubGlobal("fetch", fetchMock);
     const { result } = renderHook(() => useDashboardRecovery(available(recoveryFixture())));
 
@@ -227,7 +247,7 @@ describe("useDashboardRecovery", () => {
     retry.resolve(jsonResponse(recoveryFixture("2026-06-20T00:00:13.000Z")));
     await act(async () => retry.promise);
     await act(async () => Promise.resolve());
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(result.current.isRefreshing).toBe(false);
   });
 
@@ -295,12 +315,9 @@ describe("useDashboardRecovery", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
-  it("serializes one follow-up when events and refresh requests arrive during recovery", async () => {
+  it("coalesces duplicate refreshes and reconciles ordinary events without a follow-up", async () => {
     const first = deferred<Response>();
-    const fetchMock = vi
-      .fn()
-      .mockImplementationOnce(() => first.promise)
-      .mockResolvedValueOnce(jsonResponse(recoveryFixture("2026-06-20T00:00:12.000Z")));
+    const fetchMock = vi.fn().mockImplementationOnce(() => first.promise);
     vi.stubGlobal("fetch", fetchMock);
     const initialRecovery = available(recoveryFixture());
     const { result } = renderHook(() => useDashboardRecovery(initialRecovery));
@@ -311,15 +328,111 @@ describe("useDashboardRecovery", () => {
     });
     await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
     act(() => {
-      result.current.applyEvent(eventFixture());
+      result.current.applyEvent(queueDepthEvent("2026-06-20T00:00:12.000Z", 7));
       void result.current.refresh();
       void result.current.refresh();
     });
-    first.resolve(jsonResponse(recoveryFixture("2026-06-20T00:00:11.000Z")));
+    first.resolve(
+      jsonResponse({
+        ...recoveryFixture("2026-06-20T00:00:11.000Z"),
+        queue: queueFixture("2026-06-20T00:00:11.000Z"),
+      }),
+    );
     await act(async () => firstRefresh);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(result.current.isRefreshing).toBe(false);
     expect(result.current.liveEventCount).toBe(1);
+    expect(result.current.recovery).toMatchObject({
+      status: "available",
+      data: { queue: { depth: 7, updatedAt: "2026-06-20T00:00:12.000Z" } },
+    });
+  });
+
+  it("bounds a mixed sustained stream and defers trailing-read convergence to 30 seconds", async () => {
+    vi.useFakeTimers();
+    const first = deferred<Response>();
+    const trailing = deferred<Response>();
+    const run = runFixture("11111111-1111-4111-8111-111111111111", "2026-06-20T00:00:00.000Z");
+    const drainingRun = demoRunSnapshotSchema.parse({
+      ...run,
+      status: "draining",
+      trafficStatus: "succeeded",
+      trafficEndedAt: "2026-06-20T00:00:11.000Z",
+    });
+    const terminalRun = demoRunSnapshotSchema.parse({
+      ...drainingRun,
+      status: "completed",
+      finalizedAt: "2026-06-20T00:00:12.000Z",
+    });
+    const initial = available({
+      ...recoveryFixture(),
+      scope: { runId: run.runId, saleOfferId: run.saleOfferId ?? null },
+      currentRun: run,
+    });
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => trailing.promise)
+      .mockResolvedValueOnce(
+        jsonResponse({
+          ...recoveryFixture("2026-06-20T00:01:31.000Z"),
+          scope: { runId: run.runId, saleOfferId: run.saleOfferId ?? null },
+          currentRun: terminalRun,
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = renderHook(() => useDashboardRecovery(initial));
+
+    act(() => void result.current.refresh());
+    expect(fetchMock).toHaveBeenCalledOnce();
+    act(() => {
+      applyMixedEventBurst(result.current.applyEvent, run, 0);
+      result.current.applyEvent(runEventFixture(terminalRun));
+    });
+    first.resolve(
+      jsonResponse({
+        ...recoveryFixture("2026-06-20T00:00:30.000Z"),
+        scope: { runId: run.runId, saleOfferId: run.saleOfferId ?? null },
+        currentRun: drainingRun,
+        queue: queueFixture("2026-06-20T00:00:30.000Z"),
+      }),
+    );
+    await act(async () => first.promise);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    act(() => {
+      applyMixedEventBurst(result.current.applyEvent, run, 100);
+      result.current.applyEvent(runEventFixture(terminalRun));
+    });
+    trailing.resolve(
+      jsonResponse({
+        ...recoveryFixture("2026-06-20T00:00:31.000Z"),
+        scope: { runId: run.runId, saleOfferId: run.saleOfferId ?? null },
+        currentRun: drainingRun,
+        queue: queueFixture("2026-06-20T00:00:31.000Z"),
+      }),
+    );
+    await act(async () => trailing.promise);
+    await act(async () => Promise.resolve());
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(result.current.recovery).toMatchObject({
+      status: "available",
+      data: {
+        currentRun: { status: "completed" },
+        queue: { depth: 104 },
+        recentMetrics: [expect.objectContaining({ metricName: "traffic.latency", value: 109 })],
+      },
+    });
+    expect(result.current.recentOrderStates).toHaveLength(20);
+    expect(result.current.recentOrderStates.at(-1)?.orderId).toBe(uuidFor(1_124));
+    expect(result.current.recentOrderLagSamples).toHaveLength(20);
+    expect(result.current.recentOrderLagSamples.at(-1)?.eventId).toBe(uuidFor(3_124));
+
+    await act(async () => vi.advanceTimersByTimeAsync(29_999));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await act(async () => vi.advanceTimersByTimeAsync(1));
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
   it("converges with exactly one recovery when a matching terminal event predates the recovery watermark", async () => {
@@ -416,7 +529,7 @@ describe("useDashboardRecovery", () => {
     act(() => result.current.applyEvent(eventFixture()));
     first.resolve(jsonResponse(authoritativeRecovery));
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(result.current.isRefreshing).toBe(false));
     expect(result.current.liveEventCount).toBe(2);
   });
@@ -433,6 +546,113 @@ function eventFixture(): DashboardEvent {
     unit: "jobs",
     queueName: "orders:process",
   };
+}
+
+function applyMixedEventBurst(
+  applyEvent: (event: DashboardEvent) => void,
+  run: NonNullable<DashboardRecoveryResponse["currentRun"]>,
+  offset: number,
+) {
+  for (let index = 0; index < 5; index += 1) {
+    const observedAt = eventTime(offset + index);
+    applyEvent(queueDepthEvent(observedAt, offset + index));
+    applyEvent({
+      type: "dashboard.metric.observed",
+      runId: run.runId,
+      correlationId: `corr-latency-${offset + index}`,
+      occurredAt: observedAt,
+      observedAt,
+      metricName: "traffic.latency",
+      value: offset + index + 5,
+      unit: "ms",
+    });
+  }
+
+  for (let index = 0; index < 25; index += 1) {
+    const identity = offset + index;
+    const occurredAt = eventTime(identity + 10);
+    const orderId = uuidFor(1_000 + identity);
+    const transitionEventId = uuidFor(2_000 + identity);
+    applyEvent({
+      type: "order.status.updated",
+      eventId: transitionEventId,
+      orderId,
+      publicOrderId: `ord-${identity}`,
+      saleOfferId: run.saleOfferId ?? "44444444-4444-4444-8444-444444444444",
+      runId: run.runId,
+      correlationId: `corr-order-${identity}`,
+      occurredAt,
+      eventName: "order.processing",
+      previousStatus: "queued",
+      status: "processing",
+      customerStatus: "processing",
+      attemptNumber: 1,
+      attemptsMade: 0,
+    });
+    const confirmedAt = eventTime(identity + 40);
+    applyEvent({
+      type: "dashboard.metric.observed",
+      eventId: uuidFor(3_000 + identity),
+      confirmedTransitionEventId: transitionEventId,
+      orderId,
+      publicOrderId: `ord-${identity}`,
+      saleOfferId: run.saleOfferId ?? "44444444-4444-4444-8444-444444444444",
+      runId: run.runId,
+      correlationId: `corr-lag-${identity}`,
+      occurredAt: confirmedAt,
+      observedAt: confirmedAt,
+      metricName: "order.consistency_lag",
+      value: 10,
+      unit: "ms",
+      startedAt: new Date(Date.parse(confirmedAt) - 10).toISOString(),
+      confirmedAt,
+    });
+  }
+}
+
+function queueDepthEvent(observedAt: string, value: number): DashboardEvent {
+  return {
+    type: "dashboard.metric.observed",
+    correlationId: `corr-queue-${value}`,
+    occurredAt: observedAt,
+    observedAt,
+    metricName: "queue.depth",
+    value,
+    unit: "jobs",
+    queueName: "orders:process",
+  };
+}
+
+function queueFixture(updatedAt: string): NonNullable<DashboardRecoveryResponse["queue"]> {
+  return {
+    name: "orders:process",
+    connectivity: "reachable",
+    depth: 0,
+    counts: { waiting: 0, prioritized: 0, paused: 0, delayed: 0, active: 0, failed: 0 },
+    oldestWaitingAgeSeconds: null,
+    retryPressure: {
+      inspectedJobCount: 0,
+      inspectionLimit: 100,
+      retryingJobCount: 0,
+      retryAttemptCount: 0,
+      inspectionTruncated: false,
+    },
+    failedJobs: {
+      totalCount: 0,
+      recent: [],
+      inspectionLimit: 20,
+      inspectionTruncated: false,
+    },
+    updatedAt,
+  };
+}
+
+function eventTime(offsetMs: number): string {
+  return new Date(Date.parse("2026-06-20T00:01:00.000Z") + offsetMs).toISOString();
+}
+
+function uuidFor(value: number): string {
+  return `00000000-0000-4000-8000-${value.toString(16).padStart(12, "0")}`;
 }
 
 function runEventFixture(

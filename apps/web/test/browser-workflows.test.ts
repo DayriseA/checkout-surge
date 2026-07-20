@@ -304,7 +304,7 @@ describe("admin browser workflows", () => {
 });
 
 describe("watch browser recovery", () => {
-  it("requests follow-up recovery when SSE events arrive during a refresh", async () => {
+  it("requests one follow-up when a terminal SSE event races a stale refresh", async () => {
     const firstRecovery = deferred<Response>();
     const fetchMock = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) => {
       if (fetchMock.mock.calls.length === 1) {
@@ -321,7 +321,11 @@ describe("watch browser recovery", () => {
     vi.stubGlobal("EventSource", FakeEventSource);
     vi.stubGlobal("fetch", fetchMock);
 
-    render(createElement(OperatorDashboard, { snapshot: dashboardSnapshotFixture() }));
+    const snapshot = dashboardSnapshotFixture();
+    snapshot.recovery = available(
+      dashboardRecoveryFixture({ currentRun: demoRunFixture({ status: "active" }) }),
+    );
+    render(createElement(OperatorDashboard, { snapshot }));
 
     await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
     act(() => {
@@ -341,7 +345,7 @@ describe("watch browser recovery", () => {
       firstRecovery.resolve(
         jsonResponse(
           dashboardRecoveryFixture({
-            currentRun: demoRunFixture({ status: "completed", trafficStatus: "succeeded" }),
+            currentRun: demoRunFixture({ status: "draining", trafficStatus: "succeeded" }),
             recoveredAt: "2026-06-20T00:00:11.000Z",
           }),
         ),
@@ -354,6 +358,38 @@ describe("watch browser recovery", () => {
       dashboardRecoveryProxyPath,
       dashboardRecoveryProxyPath,
     ]);
+  });
+
+  it("keeps the last Watch snapshot and renders one sync warning after refresh failure", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify(
+          errorPayloadSchema.parse({
+            code: "backend_unavailable",
+            message: "Recovery temporarily unavailable.",
+            correlationId: "watch-refresh-failed",
+            timestamp: "2026-06-20T00:00:11.000Z",
+          }),
+        ),
+        { status: 503, headers: { "content-type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("EventSource", FakeEventSource);
+    vi.stubGlobal("fetch", fetchMock);
+    const snapshot = dashboardSnapshotFixture();
+    snapshot.recovery = available(
+      dashboardRecoveryFixture({ currentRun: demoRunFixture({ status: "active" }) }),
+    );
+
+    render(createElement(OperatorDashboard, { snapshot }));
+    await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
+    act(() => FakeEventSource.instances[0]?.emit("open", new Event("open")));
+
+    await screen.findByText("Recovery temporarily unavailable.");
+    expect(screen.getAllByText("Live sync issue")).toHaveLength(1);
+    expect(screen.getByText("Preview 1k")).toBeTruthy();
+    expect(screen.queryAllByText("Unavailable")).toHaveLength(0);
+    expect(screen.getAllByText("Correlation watch-refresh-failed")).toHaveLength(1);
   });
 });
 

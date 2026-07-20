@@ -259,6 +259,7 @@ export function RecoveryStatusPanel({
   retryAttempt = 0,
   retryDelayMs = null,
   hasSyncIssue = false,
+  syncIssue = null,
   onRefresh,
 }: {
   recovery: BackendRead<DashboardRecoveryResponse>;
@@ -269,6 +270,7 @@ export function RecoveryStatusPanel({
   retryAttempt?: number;
   retryDelayMs?: number | null;
   hasSyncIssue?: boolean;
+  syncIssue?: Extract<BackendRead<DashboardRecoveryResponse>, { status: "unavailable" }> | null;
   onRefresh?: () => void;
 }) {
   const data = recoveryData(recovery);
@@ -305,6 +307,9 @@ export function RecoveryStatusPanel({
                 ? `Retry scheduled in ${formatSeconds(retryDelayMs / 1000)} (attempt ${retryAttempt}).`
                 : "Authoritative recovery is unavailable."}
           </span>
+          {syncIssue ? <span>{syncIssue.reason}</span> : null}
+          {syncIssue?.httpStatus ? <span>HTTP {syncIssue.httpStatus}</span> : null}
+          {syncIssue?.correlationId ? <span>Correlation {syncIssue.correlationId}</span> : null}
         </div>
       ) : null}
       {data ? (

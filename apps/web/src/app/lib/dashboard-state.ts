@@ -8,6 +8,7 @@ import type { BackendRead } from "./api";
 
 export interface DashboardState {
   recovery: BackendRead<DashboardRecoveryResponse>;
+  syncIssue: Extract<BackendRead<DashboardRecoveryResponse>, { status: "unavailable" }> | null;
   liveEventCount: number;
   isRefreshing: boolean;
   eventWatermarks: DashboardEventWatermarks;
@@ -44,14 +45,20 @@ export interface DashboardEventWatermarks {
 export type DashboardStateAction =
   | { type: "snapshot-received"; recovery: BackendRead<DashboardRecoveryResponse> }
   | { type: "refresh-started" }
-  | { type: "refresh-completed"; recovery: BackendRead<DashboardRecoveryResponse> }
-  | { type: "event-received"; event: DashboardEvent; discard: boolean };
+  | {
+      type: "refresh-completed";
+      recovery: BackendRead<DashboardRecoveryResponse>;
+      preserveAvailableRecoveryOnFailure?: boolean;
+    }
+  | { type: "event-received"; event: DashboardEvent; discard: boolean }
+  | { type: "buffered-events-reconciled"; events: DashboardEvent[] };
 
 export function createDashboardState(
   recovery: BackendRead<DashboardRecoveryResponse>,
 ): DashboardState {
   return {
     recovery,
+    syncIssue: recovery.status === "unavailable" ? recovery : null,
     liveEventCount: 0,
     isRefreshing: false,
     eventWatermarks: eventWatermarksForRecovery(recovery),
@@ -69,9 +76,21 @@ export function dashboardStateReducer(
     case "refresh-started":
       return { ...state, isRefreshing: true };
     case "refresh-completed":
+      if (
+        action.recovery.status === "unavailable" &&
+        action.preserveAvailableRecoveryOnFailure &&
+        state.recovery.status === "available"
+      ) {
+        return {
+          ...state,
+          syncIssue: action.recovery,
+          isRefreshing: false,
+        };
+      }
       return {
         ...state,
         recovery: action.recovery,
+        syncIssue: action.recovery.status === "unavailable" ? action.recovery : null,
         isRefreshing: false,
         eventWatermarks: eventWatermarksForRecovery(action.recovery),
         ...orderAdvisoryStateForRecovery(action.recovery),
@@ -80,7 +99,98 @@ export function dashboardStateReducer(
       return action.discard || state.isRefreshing
         ? { ...state, liveEventCount: state.liveEventCount + 1 }
         : applyDashboardEventToState(state, action.event);
+    case "buffered-events-reconciled":
+      return action.events.reduce((nextState, event) => {
+        const liveEventCount = nextState.liveEventCount;
+        return { ...applyDashboardEventToState(nextState, event), liveEventCount };
+      }, state);
   }
+}
+
+const maximumBufferedOrderEvents = 20;
+const maximumBufferedOrderLagEvents = 20;
+const maximumBufferedRunEvents = 2;
+
+/**
+ * Coalesces live hints that race an authoritative read. The limits mirror the
+ * reducer's visible order/lag windows, while replacement projections retain
+ * only their newest pending value.
+ */
+export function bufferDashboardEvent(
+  events: DashboardEvent[],
+  event: DashboardEvent,
+): DashboardEvent[] {
+  if (event.type === "business.event.recorded") return events;
+
+  const key = bufferedEventKey(event);
+  const nextEvents = events.filter((candidate) => bufferedEventKey(candidate) !== key);
+  nextEvents.push(event);
+
+  const category = bufferedEventCategory(event);
+  const limit =
+    category === "order"
+      ? maximumBufferedOrderEvents
+      : category === "order-lag"
+        ? maximumBufferedOrderLagEvents
+        : category === "run"
+          ? maximumBufferedRunEvents
+          : null;
+  if (limit === null) return nextEvents;
+
+  const categoryEvents = nextEvents.filter(
+    (candidate) => bufferedEventCategory(candidate) === category,
+  );
+  const retained = new Set(categoryEvents.slice(-limit));
+  return nextEvents.filter(
+    (candidate) => bufferedEventCategory(candidate) !== category || retained.has(candidate),
+  );
+}
+
+export function bufferedEventsRequireAuthoritativeRecovery(
+  recovery: BackendRead<DashboardRecoveryResponse>,
+  events: DashboardEvent[],
+): boolean {
+  let reconciledRecovery = recovery;
+  let recoveryRequired = false;
+
+  for (const event of events) {
+    recoveryRequired ||= shouldRequestAuthoritativeRecoveryAfterScopedEvent(
+      reconciledRecovery,
+      event,
+    );
+    reconciledRecovery = applyDashboardEvent(reconciledRecovery, event);
+  }
+
+  return recoveryRequired;
+}
+
+function bufferedEventKey(event: DashboardEvent): string {
+  switch (event.type) {
+    case "load.run.updated":
+      return isTerminalRunStatus(event.run.status)
+        ? `run-terminal:${event.run.runId}`
+        : `run-scope:${event.run.runId}`;
+    case "dashboard.metric.observed":
+      return event.metricName === "order.consistency_lag"
+        ? `order-lag:${event.eventId}`
+        : `metric:${event.metricName}`;
+    case "business.outcome.snapshot":
+      return "business-outcome";
+    case "order.status.updated":
+      return `order:${event.orderId}`;
+    case "business.event.recorded":
+      return `business-event:${event.eventId}`;
+  }
+}
+
+function bufferedEventCategory(
+  event: DashboardEvent,
+): "projection" | "run" | "order" | "order-lag" | "business-event" {
+  if (event.type === "load.run.updated") return "run";
+  if (event.type === "order.status.updated") return "order";
+  if (isOrderLagMetric(event)) return "order-lag";
+  if (event.type === "business.event.recorded") return "business-event";
+  return "projection";
 }
 
 export function applyDashboardEventToState(

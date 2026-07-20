@@ -33,6 +33,7 @@ const redisUrl = process.env.TEST_REDIS_URL;
 
 describe.skipIf(!databaseUrl)("business outcome dashboard projection", () => {
   let connection: ReturnType<typeof createDatabaseConnection>;
+  let observedQueries: string[] = [];
 
   beforeAll(async () => {
     if (!databaseUrl) {
@@ -40,7 +41,10 @@ describe.skipIf(!databaseUrl)("business outcome dashboard projection", () => {
     }
 
     await resetTestDatabase({ databaseUrl, migrationsFolder });
-    connection = createDatabaseConnection(databaseUrl, { max: 1 });
+    connection = createDatabaseConnection(databaseUrl, {
+      max: 1,
+      debug: (_connection, query) => observedQueries.push(query),
+    });
   });
 
   afterAll(async () => {
@@ -234,9 +238,13 @@ describe.skipIf(!databaseUrl)("business outcome dashboard projection", () => {
       measuredAt: now.toISOString(),
     });
 
-    await expect(
-      readRecentCompletionOutcomes(connection.db, { saleOfferId, runId }, { now }),
-    ).resolves.toEqual(
+    observedQueries = [];
+    const completionOutcomes = readRecentCompletionOutcomes(
+      connection.db,
+      { saleOfferId, runId },
+      { now },
+    );
+    await expect(completionOutcomes).resolves.toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           publicOrderId: "ord-confirmed",
@@ -263,6 +271,7 @@ describe.skipIf(!databaseUrl)("business outcome dashboard projection", () => {
         }),
       ]),
     );
+    expect(observedQueries).toHaveLength(1);
 
     if (!redisUrl) {
       throw new Error("TEST_REDIS_URL is required for dashboard publication tests.");
