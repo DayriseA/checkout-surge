@@ -315,13 +315,20 @@ async function buildTestServer(options: {
     dashboardRecoveryService:
       options.dashboardRecoveryService ??
       new DashboardRecoveryService({
-        contextReader: staticRecoveryContextReader(fixtureIds.saleOffer),
-        businessOutcomeReader: { read: async () => businessOutcomeFixture() },
-        consistencyLagReader: { read: async () => consistencyLagFixture() },
-        completionOutcomeReader: { read: async () => [] },
-        inventoryStatusService,
-        queueStatusService,
-        erpStatusService,
+        openOperation: async () => ({
+          dependencies: {
+            contextReader: staticRecoveryContextReader(fixtureIds.saleOffer),
+            businessOutcomeReader: { read: async () => businessOutcomeFixture() },
+            consistencyLagReader: { read: async () => consistencyLagFixture() },
+            completionOutcomeReader: { read: async () => [] },
+            inventoryStatusService,
+            queueStatusService,
+            erpStatusService,
+            trafficMetricReader: { readRecent: async () => [] },
+            transportAccountingReader: { read: async () => null },
+          },
+          close: async () => undefined,
+        }),
         logger,
         now: () => new Date("2026-06-20T00:00:10.000Z"),
       }),
@@ -2226,6 +2233,7 @@ describe("API gateway routes", () => {
       businessOutcomeReader: {} as never,
       terminalRunWriter: {} as never,
       completionEnrichmentService: {} as never,
+      finalizationService: { finalizeRun: async () => null, finalizeReadyRuns: async () => 0 },
       apiBaseUrl: "http://api.test",
       buyEndpointPath: "/buy",
       logger: { warn } as never,

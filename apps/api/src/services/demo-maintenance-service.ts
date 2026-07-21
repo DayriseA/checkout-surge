@@ -19,9 +19,9 @@ import {
 import {
   type CheckoutSurgeDatabase,
   type CheckoutSurgeRedis,
-  completeGeneratedRunTeardown,
-  deleteGeneratedRunDurable,
-  deleteGeneratedRunRedisState,
+  type completeGeneratedRunTeardown,
+  type deleteGeneratedRunDurable,
+  type deleteGeneratedRunRedisState,
   demoRunFinalizations,
   demoRunReservationOutcomes,
   demoRunSaleContexts,
@@ -29,7 +29,7 @@ import {
   demoRuns,
   getInventoryStatus,
   InventoryNotInitializedError,
-  prepareGeneratedRunTeardown,
+  type prepareGeneratedRunTeardown,
   readBusinessOutcomeSummary,
   saleOffers,
   setRunSaleEligibility,
@@ -71,9 +71,9 @@ export type DemoQueueQuiescenceRelease =
 
 export interface DemoQueueMaintenance {
   cleanResetOwnedQueues(): Promise<QueueCleanupSummary>;
-  acquireGeneratedRunQuiescence?(runId: string): Promise<DemoQueueQuiescenceLease>;
-  preflightGeneratedRun?(runId: string): Promise<void>;
-  cleanGeneratedRun?(runId: string): Promise<{ deletedJobCount: number }>;
+  acquireGeneratedRunQuiescence(runId: string): Promise<DemoQueueQuiescenceLease>;
+  preflightGeneratedRun(runId: string): Promise<void>;
+  cleanGeneratedRun(runId: string): Promise<{ deletedJobCount: number }>;
 }
 
 export type DemoQueueMaintenanceConflictCode =
@@ -128,14 +128,14 @@ export class DemoMaintenanceService {
         "claimTerminalRun" | "writeAfterTerminalClaims"
       >;
       logger: CheckoutSurgeLogger;
-      deleteGeneratedRunDurable?: typeof deleteGeneratedRunDurable;
-      deleteGeneratedRunRedisState?: typeof deleteGeneratedRunRedisState;
-      prepareGeneratedRunTeardown?: typeof prepareGeneratedRunTeardown;
-      completeGeneratedRunTeardown?: typeof completeGeneratedRunTeardown;
-      clearErpCircuitBreakerState?: () => Promise<void>;
-      trafficAborter?: DemoRunTrafficAborter;
-      dashboardLiveStateReset?: DashboardLiveStateReset;
-      resetWorkflowFence?: DemoResetWorkflowFence;
+      deleteGeneratedRunDurable: typeof deleteGeneratedRunDurable;
+      deleteGeneratedRunRedisState: typeof deleteGeneratedRunRedisState;
+      prepareGeneratedRunTeardown: typeof prepareGeneratedRunTeardown;
+      completeGeneratedRunTeardown: typeof completeGeneratedRunTeardown;
+      clearErpCircuitBreakerState: () => Promise<void>;
+      trafficAborter: DemoRunTrafficAborter;
+      dashboardLiveStateReset: DashboardLiveStateReset;
+      resetWorkflowFence: DemoResetWorkflowFence;
       now?: () => Date;
     },
   ) {}
@@ -145,7 +145,7 @@ export class DemoMaintenanceService {
     DemoMaintenanceService.resetPendingCount += 1;
     const operation = DemoMaintenanceService.resetTail.then(() => {
       const reset = () => this.resetWithoutConcurrentReset(correlationId, arrivedDuringReset);
-      return this.options.resetWorkflowFence?.runExclusive(reset) ?? reset();
+      return this.options.resetWorkflowFence.runExclusive(reset);
     });
     DemoMaintenanceService.resetTail = operation.then(
       () => {
@@ -191,16 +191,6 @@ export class DemoMaintenanceService {
       .from(demoRuns)
       .innerJoin(demoRunSummaries, eq(demoRunSummaries.runId, demoRuns.id))
       .where(and(eq(demoRuns.status, "failed"), eq(demoRuns.failureReason, "admin_reset")));
-
-    if (resetCandidates.length > 0 && !this.options.trafficAborter) {
-      throw new Error("Admin reset traffic aborter is not configured.");
-    }
-    if (
-      (resetCandidates.length > 0 || projectionRetryRows.length > 0) &&
-      !this.options.dashboardLiveStateReset
-    ) {
-      throw new Error("Admin reset dashboard live-state reset is not configured.");
-    }
 
     const fencedRuns: FencedResetRun[] = [];
     for (const candidate of resetCandidates) {
@@ -267,7 +257,7 @@ export class DemoMaintenanceService {
 
     for (const row of fencedRuns) {
       try {
-        await this.options.dashboardLiveStateReset?.fenceRun(row.run.id);
+        await this.options.dashboardLiveStateReset.fenceRun(row.run.id);
       } catch (error) {
         this.options.logger.error(
           { err: error, runId: row.run.id, correlationId },
@@ -278,7 +268,7 @@ export class DemoMaintenanceService {
         );
       }
 
-      await this.options.trafficAborter?.abortCurrent({
+      await this.options.trafficAborter.abortCurrent({
         runId: row.run.id,
         reason: "admin_reset",
         correlationId,
@@ -343,7 +333,7 @@ export class DemoMaintenanceService {
     const projectionRunIds = new Set(fencedRuns.map((row) => row.run.id));
     for (const row of projectionRetryRows) {
       try {
-        if (await this.options.dashboardLiveStateReset?.hasRunState(row.runId)) {
+        if (await this.options.dashboardLiveStateReset.hasRunState(row.runId)) {
           projectionRunIds.add(row.runId);
         }
       } catch (error) {
@@ -358,7 +348,7 @@ export class DemoMaintenanceService {
     }
     for (const runId of projectionRunIds) {
       try {
-        await this.options.dashboardLiveStateReset?.clearRun(runId);
+        await this.options.dashboardLiveStateReset.clearRun(runId);
       } catch (error) {
         this.options.logger.error(
           { err: error, runId, correlationId },
@@ -369,7 +359,7 @@ export class DemoMaintenanceService {
         );
       }
     }
-    await this.options.clearErpCircuitBreakerState?.();
+    await this.options.clearErpCircuitBreakerState();
 
     return adminDemoResetResponseSchema.parse({
       failedRunCount,
@@ -423,10 +413,7 @@ export class DemoMaintenanceService {
     let deletedRunCount = 0;
     let deletedSaleOfferCount = 0;
     for (const candidate of generatedRunCandidates) {
-      const result = await (this.options.deleteGeneratedRunDurable ?? deleteGeneratedRunDurable)(
-        this.options.db,
-        candidate,
-      );
+      const result = await this.options.deleteGeneratedRunDurable(this.options.db, candidate);
       deletedRunCount += result.deletedRunCount;
       deletedSaleOfferCount += result.deletedSaleOfferCount;
 
@@ -435,10 +422,7 @@ export class DemoMaintenanceService {
       }
 
       try {
-        await (this.options.deleteGeneratedRunRedisState ?? deleteGeneratedRunRedisState)(
-          this.options.redis,
-          candidate,
-        );
+        await this.options.deleteGeneratedRunRedisState(this.options.redis, candidate);
       } catch (error) {
         this.options.logger.warn(
           {
@@ -467,7 +451,7 @@ export class DemoMaintenanceService {
     runId: string;
     correlationId: string;
   }): Promise<AdminGeneratedRunTeardownResponse> {
-    const targeted = requireTargetedQueueMaintenance(this.options.queueMaintenance);
+    const targeted = this.options.queueMaintenance;
     let lease: Awaited<ReturnType<typeof targeted.acquireGeneratedRunQuiescence>> | undefined;
     let result: AdminGeneratedRunTeardownResponse | undefined;
     let primaryError: unknown;
@@ -503,10 +487,10 @@ export class DemoMaintenanceService {
                   ? {
                       afterRestored: async () => {
                         try {
-                          await (
-                            this.options.completeGeneratedRunTeardown ??
-                            completeGeneratedRunTeardown
-                          )(this.options.db, input.runId);
+                          await this.options.completeGeneratedRunTeardown(
+                            this.options.db,
+                            input.runId,
+                          );
                         } catch (error) {
                           this.options.logger.warn(
                             {
@@ -550,14 +534,16 @@ export class DemoMaintenanceService {
       runId: string;
       correlationId: string;
     },
-    targeted: RequiredTargetedQueueMaintenance,
+    targeted: DemoQueueMaintenance,
   ): Promise<AdminGeneratedRunTeardownResponse> {
     const now = this.now();
     await targeted.preflightGeneratedRun(input.runId);
 
-    const prepared = await (
-      this.options.prepareGeneratedRunTeardown ?? prepareGeneratedRunTeardown
-    )(this.options.db, input.runId, now);
+    const prepared = await this.options.prepareGeneratedRunTeardown(
+      this.options.db,
+      input.runId,
+      now,
+    );
     if (prepared.outcome === "absent") {
       return adminGeneratedRunTeardownResponseSchema.parse({
         outcome: "already_absent",
@@ -577,7 +563,7 @@ export class DemoMaintenanceService {
       });
     }
 
-    let queueCleanup: Awaited<ReturnType<RequiredTargetedQueueMaintenance["cleanGeneratedRun"]>>;
+    let queueCleanup: Awaited<ReturnType<DemoQueueMaintenance["cleanGeneratedRun"]>>;
     try {
       queueCleanup = await targeted.cleanGeneratedRun(input.runId);
     } catch (error) {
@@ -595,9 +581,10 @@ export class DemoMaintenanceService {
     }
 
     try {
-      const redisCleanup = await (
-        this.options.deleteGeneratedRunRedisState ?? deleteGeneratedRunRedisState
-      )(this.options.redis, prepared);
+      const redisCleanup = await this.options.deleteGeneratedRunRedisState(
+        this.options.redis,
+        prepared,
+      );
       return adminGeneratedRunTeardownResponseSchema.parse({
         outcome: "deleted",
         runId: input.runId,
@@ -706,29 +693,6 @@ export class DemoMaintenanceService {
 
     return row?.count ?? inventory.soldOutPressure.rejectionCount;
   }
-}
-
-type RequiredTargetedQueueMaintenance = {
-  acquireGeneratedRunQuiescence(runId: string): Promise<DemoQueueQuiescenceLease>;
-  preflightGeneratedRun(runId: string): Promise<void>;
-  cleanGeneratedRun(runId: string): Promise<{ deletedJobCount: number }>;
-};
-
-function requireTargetedQueueMaintenance(
-  maintenance: DemoQueueMaintenance,
-): RequiredTargetedQueueMaintenance {
-  if (
-    !maintenance.acquireGeneratedRunQuiescence ||
-    !maintenance.preflightGeneratedRun ||
-    !maintenance.cleanGeneratedRun
-  ) {
-    throw new Error("Targeted queue maintenance is not fully configured.");
-  }
-  return {
-    acquireGeneratedRunQuiescence: maintenance.acquireGeneratedRunQuiescence.bind(maintenance),
-    preflightGeneratedRun: maintenance.preflightGeneratedRun.bind(maintenance),
-    cleanGeneratedRun: maintenance.cleanGeneratedRun.bind(maintenance),
-  };
 }
 
 function mapQueueMaintenanceError(error: unknown): unknown {

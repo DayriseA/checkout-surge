@@ -12,7 +12,7 @@ export interface NotificationRecordJobHandler {
 export function createNotificationRecordJobHandler(dependencies: {
   persistence: NotificationRecordPersistence;
   logger: CheckoutSurgeLogger;
-  publishBusinessOutcomeUpdate?: (job: NotificationRecordJob) => Promise<void>;
+  publishBusinessOutcomeUpdate: (job: NotificationRecordJob) => Promise<void>;
   reportBusinessOutcomeUpdateFailure?: (report: {
     error: unknown;
     orderId: string;
@@ -48,7 +48,7 @@ export function createNotificationRecordJobHandler(dependencies: {
 
 async function publishBusinessOutcomeUpdateWithoutFailingJob(
   dependencies: {
-    publishBusinessOutcomeUpdate?: (job: NotificationRecordJob) => Promise<void>;
+    publishBusinessOutcomeUpdate: (job: NotificationRecordJob) => Promise<void>;
     reportBusinessOutcomeUpdateFailure?: (report: {
       error: unknown;
       orderId: string;
@@ -60,10 +60,6 @@ async function publishBusinessOutcomeUpdateWithoutFailingJob(
   job: NotificationRecordJob,
   logger: CheckoutSurgeLogger,
 ): Promise<void> {
-  if (!dependencies.publishBusinessOutcomeUpdate) {
-    return;
-  }
-
   try {
     await dependencies.publishBusinessOutcomeUpdate(job);
   } catch (error) {

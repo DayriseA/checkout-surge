@@ -1,8 +1,13 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  type BusinessOutcomeSummary,
+  type ConsistencyLagSummary,
   type DemoRunSnapshot,
   demoRunSnapshotSchema,
+  type ErpResilienceStatus,
+  type InventoryStatus,
+  type QueueStatus,
   type TrafficDeliverySummary,
   type TrafficHttpSummary,
   type TransportAttemptCounts,
@@ -404,12 +409,14 @@ describe("DashboardRecoveryService", () => {
       openOperation: async () => ({
         dependencies: {
           contextReader: { readContext: async () => await new Promise<never>(() => undefined) },
-          businessOutcomeReader: { read: async () => null } as never,
-          consistencyLagReader: { read: async () => null } as never,
+          businessOutcomeReader: { read: async () => businessOutcomeFixture() },
+          consistencyLagReader: { read: async () => consistencyLagFixture() },
           completionOutcomeReader: { read: async () => [] },
-          inventoryStatusService: { getStatus: async () => null } as never,
-          queueStatusService: { getStatus: async () => null } as never,
-          erpStatusService: { getStatus: async () => null } as never,
+          inventoryStatusService: { getStatus: async () => inventoryStatusFixture() },
+          queueStatusService: { getStatus: async () => queueStatusFixture() },
+          erpStatusService: { getStatus: async () => erpStatusFixture() },
+          trafficMetricReader: { readRecent: async () => [] },
+          transportAccountingReader: { read: async () => null },
         },
         close,
       }),
@@ -466,33 +473,38 @@ function serviceHarness(
     transportAccountingError?: Error;
   } = {},
 ) {
-  const inventory = vi.fn(async () => null);
-  const business = vi.fn(async () => null);
+  const inventory = vi.fn(async () => inventoryStatusFixture());
+  const business = vi.fn(async () => businessOutcomeFixture());
   const lag = options.lagError
     ? vi.fn(async () => Promise.reject(options.lagError))
-    : vi.fn(async () => null);
+    : vi.fn(async () => consistencyLagFixture());
   const completion = vi.fn(async () => []);
   const metrics = vi.fn(async () => []);
   const transportAccounting = options.transportAccountingError
     ? vi.fn(async () => Promise.reject(options.transportAccountingError))
     : vi.fn(async () => options.transportAccounting ?? null);
-  const queue = vi.fn(async () => null);
-  const erp = vi.fn(async () => null);
+  const queue = vi.fn(async () => queueStatusFixture());
+  const erp = vi.fn(async () => erpStatusFixture());
   const loggerWarn = vi.fn();
   const service = new DashboardRecoveryService({
-    contextReader: {
-      readContext: contextError
-        ? async () => Promise.reject(contextError)
-        : async () => context ?? { currentRun: null, saleOfferId: null },
-    },
-    businessOutcomeReader: { read: business } as never,
-    consistencyLagReader: { read: lag } as never,
-    completionOutcomeReader: { read: completion } as never,
-    inventoryStatusService: { getStatus: inventory } as never,
-    queueStatusService: { getStatus: queue } as never,
-    erpStatusService: { getStatus: erp } as never,
-    trafficMetricReader: { readRecent: metrics },
-    transportAccountingReader: { read: transportAccounting },
+    openOperation: async () => ({
+      dependencies: {
+        contextReader: {
+          readContext: contextError
+            ? async () => Promise.reject(contextError)
+            : async () => context ?? { currentRun: null, saleOfferId: null },
+        },
+        businessOutcomeReader: { read: business },
+        consistencyLagReader: { read: lag },
+        completionOutcomeReader: { read: completion },
+        inventoryStatusService: { getStatus: inventory },
+        queueStatusService: { getStatus: queue },
+        erpStatusService: { getStatus: erp },
+        trafficMetricReader: { readRecent: metrics },
+        transportAccountingReader: { read: transportAccounting },
+      },
+      close: async () => undefined,
+    }),
     logger: { warn: loggerWarn } as never,
     now: () => now,
   });
@@ -507,6 +519,108 @@ function serviceHarness(
     queue,
     erp,
     loggerWarn,
+  };
+}
+
+function inventoryStatusFixture(): InventoryStatus {
+  return {
+    saleOfferId,
+    allocatedStock: 10,
+    remainingStock: 0,
+    reservedStock: 10,
+    pendingPersistenceCount: 0,
+    expiredReservationCount: 0,
+    oldestPendingPersistenceAgeSeconds: 0,
+    reservationThroughput: {
+      windowSeconds: 60,
+      successfulReservationCount: 10,
+      rate: 1,
+      unit: "reservations_per_second",
+      measuredAt: now.toISOString(),
+    },
+    soldOutPressure: { rejectionCount: 0, latestObservedAt: null },
+    lastUpdatedAt: now.toISOString(),
+  };
+}
+
+function businessOutcomeFixture(): BusinessOutcomeSummary {
+  return {
+    acceptedReservations: 0,
+    soldOutRejections: 0,
+    queuedOrders: 0,
+    processingOrders: 0,
+    retryingOrders: 0,
+    confirmedOrders: 0,
+    failedOrders: 0,
+    pendingPersistenceCount: 0,
+    notificationsRecorded: 0,
+  };
+}
+
+function consistencyLagFixture(): ConsistencyLagSummary {
+  return {
+    confirmedOrderCount: 0,
+    pendingConfirmationCount: 0,
+    averageLagMs: null,
+    p95LagMs: null,
+    maxLagMs: null,
+    oldestPendingAgeSeconds: null,
+    measuredAt: now.toISOString(),
+  };
+}
+
+function queueStatusFixture(): QueueStatus {
+  return {
+    name: "orders:process",
+    connectivity: "reachable",
+    depth: 0,
+    counts: { waiting: 0, prioritized: 0, paused: 0, delayed: 0, active: 0, failed: 0 },
+    oldestWaitingAgeSeconds: null,
+    retryPressure: {
+      inspectedJobCount: 0,
+      inspectionLimit: 100,
+      retryingJobCount: 0,
+      retryAttemptCount: 0,
+      inspectionTruncated: false,
+    },
+    failedJobs: { totalCount: 0, recent: [], inspectionLimit: 20, inspectionTruncated: false },
+    updatedAt: now.toISOString(),
+  };
+}
+
+function erpStatusFixture(): ErpResilienceStatus {
+  return {
+    status: "healthy",
+    reason: null,
+    circuit: {
+      state: "closed",
+      consecutiveFailureCount: 0,
+      failureThreshold: 5,
+      resetTimeoutMs: 10_000,
+      openedAt: null,
+      nextAttemptAt: null,
+      halfOpenProbeInFlight: false,
+      updatedAt: now.toISOString(),
+    },
+    retryPressure: {
+      retryingJobCount: 0,
+      retryAttemptCount: 0,
+      inspectedJobCount: 0,
+      inspectionLimit: 100,
+      inspectionTruncated: false,
+    },
+    latestAttempt: null,
+    recentAttemptWindowSeconds: 60,
+    recentAttemptCount: 0,
+    recentFailureCount: 0,
+    recentTimeoutCount: 0,
+    confirmationDelay: {
+      processingOrderCount: 0,
+      oldestProcessingAgeSeconds: null,
+      recentConfirmedCount: 0,
+      averageConfirmationDelayMs: null,
+    },
+    updatedAt: now.toISOString(),
   };
 }
 

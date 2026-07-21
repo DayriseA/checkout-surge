@@ -52,6 +52,10 @@ describe("order process admission boundary", () => {
         connection: {},
         concurrency: 10,
         handler,
+        recovery: {
+          recordRecoverable: async () => undefined,
+          recordDeadLetter: async () => undefined,
+        },
         admission,
         logger: createSilentLogger("worker"),
       }),

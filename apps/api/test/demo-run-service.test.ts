@@ -16,8 +16,11 @@ import {
 } from "@checkout-surge/contracts";
 import { signPublicVisitorCredential } from "@checkout-surge/contracts/public-visitor-credential";
 import {
+  completeGeneratedRunTeardown,
   createDatabaseConnection,
   createRedisClient,
+  deleteGeneratedRunDurable,
+  deleteGeneratedRunRedisState,
   demoPresets,
   demoRunFinalizations,
   demoRunReservationOutcomes,
@@ -28,6 +31,7 @@ import {
   initializeInventory,
   inventoryKeys,
   isRunSaleEligible,
+  prepareGeneratedRunTeardown,
   products,
   publicRuntimePolicies,
   reserveInventoryStock,
@@ -97,6 +101,7 @@ describe("demo-run service validation", () => {
       businessOutcomeReader: {} as never,
       completionEnrichmentService: {} as never,
       terminalRunWriter: {} as never,
+      finalizationService: noOpFinalizationService(),
       apiBaseUrl: "http://api.test",
       buyEndpointPath: "/buy",
       logger: createSilentLogger("api"),
@@ -690,6 +695,7 @@ describe("demo-run metric ingestion acceptance", () => {
       businessOutcomeReader: {} as never,
       completionEnrichmentService: {} as never,
       terminalRunWriter: {} as never,
+      finalizationService: noOpFinalizationService(),
       apiBaseUrl: "http://api.test",
       buyEndpointPath: "/buy",
       logger: { warn: vi.fn() } as never,
@@ -1297,7 +1303,17 @@ describe("demo-run lifecycle start gating", () => {
       db: resetConnection.db,
       redis: redisClient,
       terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(resetConnection.db),
-      queueMaintenance: { cleanResetOwnedQueues: queueCleanup },
+      queueMaintenance: {
+        cleanResetOwnedQueues: queueCleanup,
+        acquireGeneratedRunQuiescence: async () => ({ release: async () => undefined }),
+        preflightGeneratedRun: async () => undefined,
+        cleanGeneratedRun: async () => ({ deletedJobCount: 0 }),
+      },
+      deleteGeneratedRunDurable,
+      deleteGeneratedRunRedisState,
+      prepareGeneratedRunTeardown,
+      completeGeneratedRunTeardown,
+      clearErpCircuitBreakerState: async () => undefined,
       trafficAborter: {
         abortCurrent: async () => {
           abortAttempt += 1;
@@ -2415,19 +2431,19 @@ describe("demo-run lifecycle start gating", () => {
     });
     const postgresWriter = new PostgresTerminalDemoRunSummaryWriter(db);
     let writeAttemptCount = 0;
-    const writePrepared = vi.fn(async (
-      ...args: Parameters<typeof postgresWriter.writePrepared>
-    ) => {
-      writeAttemptCount += 1;
-      if (writeAttemptCount === 1) {
-        const [runId, prepare] = args;
-        return postgresWriter.writePrepared(runId, async (lockedDb) => {
-          await prepare(lockedDb);
-          throw new Error("injected failure before terminal summary persistence");
-        });
-      }
-      return postgresWriter.writePrepared(...args);
-    });
+    const writePrepared = vi.fn(
+      async (...args: Parameters<typeof postgresWriter.writePrepared>) => {
+        writeAttemptCount += 1;
+        if (writeAttemptCount === 1) {
+          const [runId, prepare] = args;
+          return postgresWriter.writePrepared(runId, async (lockedDb) => {
+            await prepare(lockedDb);
+            throw new Error("injected failure before terminal summary persistence");
+          });
+        }
+        return postgresWriter.writePrepared(...args);
+      },
+    );
     let reconciliationCount = 0;
     const reconcileSaleOffer = vi.fn(async (saleOfferId: string) => {
       reconciliationCount += 1;
@@ -2629,6 +2645,7 @@ describe("demo-run lifecycle start gating", () => {
       db,
       redis: redisClient,
       logger: createSilentLogger("api"),
+      pendingPersistenceReconciler: noOpPendingPersistenceReconciler(),
       terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db),
       terminalInventoryRead: createTerminalInventoryRead(redisClient),
       terminalInventoryReadTimeoutMs: 2_000,
@@ -2680,6 +2697,14 @@ describe("demo-run lifecycle start gating", () => {
         maxVUs: null,
         droppedIterations: 0,
         notes: [],
+      },
+      apiRequestLifecycleSummary: {
+        plannedRequests: 10,
+        startedRequests: 10,
+        completedRequests: 10,
+        interruptedRequests: 0,
+        unstartedRequests: 0,
+        failedRequests: 0,
       },
     };
 
@@ -2832,7 +2857,7 @@ describe("demo-run lifecycle start gating", () => {
     expect(businessReadCount).toBe(2);
   });
 
-  it("keeps a completed Redis capture failure as an immutable no-snapshot result", async () => {
+  it("keeps a completed enrichment capture failure immutable while finalization captures terminal inventory", async () => {
     const db = requireConnection(connection).db;
     const redisClient = requireRedis(redis);
     let failCapture = true;
@@ -2864,6 +2889,7 @@ describe("demo-run lifecycle start gating", () => {
       db,
       redis: redisClient,
       logger: createSilentLogger("api"),
+      pendingPersistenceReconciler: noOpPendingPersistenceReconciler(),
       terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db),
       terminalInventoryRead: createTerminalInventoryRead(redisClient),
       terminalInventoryReadTimeoutMs: 2_000,
@@ -2914,6 +2940,14 @@ describe("demo-run lifecycle start gating", () => {
         droppedIterations: 0,
         notes: [],
       },
+      apiRequestLifecycleSummary: {
+        plannedRequests: 10,
+        startedRequests: 10,
+        completedRequests: 10,
+        interruptedRequests: 0,
+        unstartedRequests: 0,
+        failedRequests: 0,
+      },
     };
 
     await expect(service.recordTrafficCompletion(report)).resolves.toMatchObject({
@@ -2934,7 +2968,10 @@ describe("demo-run lifecycle start gating", () => {
 
     expect(finalization?.completionEnrichmentStatus).toBe("completed");
     expect(finalization?.trafficOutcomeSummary).not.toHaveProperty("terminalInventorySnapshot");
-    expect(summary?.terminalInventorySnapshot).toBeNull();
+    expect(summary?.terminalInventorySnapshot).toMatchObject({
+      saleOfferId: started.run.saleOfferId,
+      source: "redis",
+    });
     expect(captureReadCount).toBe(1);
   });
 
@@ -2970,7 +3007,15 @@ describe("demo-run lifecycle start gating", () => {
       redis: requireRedis(redis),
       queueMaintenance: {
         cleanResetOwnedQueues: async () => ({ cleanedQueueCount: 0, cleanedJobCount: 0 }),
+        acquireGeneratedRunQuiescence: async () => ({ release: async () => undefined }),
+        preflightGeneratedRun: async () => undefined,
+        cleanGeneratedRun: async () => ({ deletedJobCount: 0 }),
       },
+      deleteGeneratedRunDurable,
+      deleteGeneratedRunRedisState,
+      prepareGeneratedRunTeardown,
+      completeGeneratedRunTeardown,
+      clearErpCircuitBreakerState: async () => undefined,
       trafficAborter: { abortCurrent: async () => ({ outcome: "no_current_run" }) },
       dashboardLiveStateReset: new RedisDashboardTrafficMetricStore(requireRedis(redis)),
       resetWorkflowFence: new PostgresDemoResetWorkflowFence(resetConnection.sql),
@@ -3126,6 +3171,7 @@ function createPresetManagementService(
     trafficMetricStore: {} as never,
     businessOutcomeReader: { read: async () => emptyBusinessOutcomeSummary() },
     completionEnrichmentService: { completePendingEnrichment: async () => "not_found" },
+    finalizationService: noOpFinalizationService(),
     apiBaseUrl: "http://api.test",
     buyEndpointPath: "/buy",
     logger: createSilentLogger("api"),
@@ -3168,6 +3214,7 @@ function createMetricIngestionService(options: {
     businessOutcomeReader: {} as never,
     completionEnrichmentService: {} as never,
     terminalRunWriter: {} as never,
+    finalizationService: noOpFinalizationService(),
     apiBaseUrl: "http://api.test",
     buyEndpointPath: "/buy",
     logger: { warn: options.warn } as never,
@@ -3296,9 +3343,10 @@ function createStartService(
     trafficMetricStore: overrides.trafficMetricStore ?? ({} as never),
     businessOutcomeReader,
     completionEnrichmentService,
-    ...(overrides.finalizationService
-      ? { finalizationService: overrides.finalizationService }
-      : {}),
+    finalizationService: overrides.finalizationService ?? {
+      finalizeRun: async () => null,
+      finalizeReadyRuns: async () => 0,
+    },
     apiBaseUrl: "http://api.test",
     buyEndpointPath: "/buy",
     logger,
@@ -3330,6 +3378,25 @@ function redisUnavailable(): ReturnType<typeof createRedisClient> {
       throw new Error("Redis unavailable during event publication.");
     },
   } as unknown as ReturnType<typeof createRedisClient>;
+}
+
+function noOpFinalizationService() {
+  return {
+    finalizeRun: async () => null,
+    finalizeReadyRuns: async () => 0,
+  };
+}
+
+function noOpPendingPersistenceReconciler() {
+  return {
+    reconcileSaleOffer: async () => ({
+      found: 0,
+      materialized: 0,
+      reconciled: 0,
+      reversed: 0,
+      failed: 0,
+    }),
+  };
 }
 
 function expectBuyerSpikeTrafficConfig(

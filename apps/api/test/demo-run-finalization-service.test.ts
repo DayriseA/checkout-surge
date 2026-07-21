@@ -15,8 +15,11 @@ import {
   trafficDeliverySummarySchema,
 } from "@checkout-surge/contracts";
 import {
+  completeGeneratedRunTeardown,
   createDatabaseConnection,
   createRedisClient,
+  deleteGeneratedRunDurable,
+  deleteGeneratedRunRedisState,
   demoPresets,
   demoRunFinalizations,
   demoRunReservationOutcomes,
@@ -30,6 +33,7 @@ import {
   orderRecoveryJobs,
   orders,
   pendingPersistenceIndexKey,
+  prepareGeneratedRunTeardown,
   products,
   promoteReservationIdempotencyToAccepted,
   reservationPendingPersistence,
@@ -377,7 +381,7 @@ describe("demo run finalization service", () => {
     const redisClient = requireRedis(redis);
     const reconcileSaleOffer = vi.fn();
     const service = createService(connection, redis, {
-      pendingPersistenceReconciler: { reconcileSaleOffer } as never,
+      pendingPersistenceReconciler: { reconcileSaleOffer },
       now: () => new Date("2026-06-20T01:00:00.000Z"),
     });
 
@@ -1081,13 +1085,22 @@ describe("demo run finalization service", () => {
       redis: redisClient,
       queueMaintenance: {
         cleanResetOwnedQueues: async () => ({ cleanedQueueCount: 0, cleanedJobCount: 0 }),
+        acquireGeneratedRunQuiescence: async () => ({ release: async () => undefined }),
+        preflightGeneratedRun: async () => undefined,
+        cleanGeneratedRun: async () => ({ deletedJobCount: 0 }),
       },
+      deleteGeneratedRunDurable,
+      deleteGeneratedRunRedisState,
+      prepareGeneratedRunTeardown,
+      completeGeneratedRunTeardown,
+      clearErpCircuitBreakerState: async () => undefined,
       trafficAborter: { abortCurrent: async () => ({ outcome: "no_current_run" }) },
       dashboardLiveStateReset: {
         fenceRun: async () => undefined,
         clearRun: async () => undefined,
         hasRunState: async () => false,
       },
+      resetWorkflowFence: { runExclusive: async (operation) => operation() },
       logger: createSilentLogger("api"),
       now: () => new Date("2026-06-20T00:00:11.000Z"),
     });
@@ -1280,13 +1293,30 @@ describe("demo run finalization service", () => {
 
         // t1: recovery reads the still-draining projection before the commit.
         const recoveryService = new DashboardRecoveryService({
-          contextReader: new PostgresDashboardRecoveryContextReader(recoveryConnection.db),
-          businessOutcomeReader: { read: async () => null } as never,
-          consistencyLagReader: { read: async () => null } as never,
-          completionOutcomeReader: { read: async () => [] },
-          inventoryStatusService: { getStatus: async () => null } as never,
-          queueStatusService: { getStatus: async () => null } as never,
-          erpStatusService: { getStatus: async () => null } as never,
+          openOperation: async () => ({
+            dependencies: {
+              contextReader: new PostgresDashboardRecoveryContextReader(recoveryConnection.db),
+              businessOutcomeReader: {
+                read: async () => Promise.reject(new Error("unused business projection")),
+              },
+              consistencyLagReader: {
+                read: async () => Promise.reject(new Error("unused lag projection")),
+              },
+              completionOutcomeReader: { read: async () => [] },
+              inventoryStatusService: {
+                getStatus: async () => Promise.reject(new Error("unused inventory projection")),
+              },
+              queueStatusService: {
+                getStatus: async () => Promise.reject(new Error("unused queue projection")),
+              },
+              erpStatusService: {
+                getStatus: async () => Promise.reject(new Error("unused ERP projection")),
+              },
+              trafficMetricReader: { readRecent: async () => [] },
+              transportAccountingReader: { read: async () => null },
+            },
+            close: async () => undefined,
+          }),
           logger: createSilentLogger("api"),
           now: () => recoveryStartT1,
         });
@@ -1574,6 +1604,15 @@ function createService(
     terminalInventoryRead: createTerminalInventoryRead(requireRedis(redis)),
     terminalInventoryReadTimeoutMs: 2_000,
     logger: createSilentLogger("api"),
+    pendingPersistenceReconciler: {
+      reconcileSaleOffer: async () => ({
+        found: 0,
+        materialized: 0,
+        reconciled: 0,
+        reversed: 0,
+        failed: 0,
+      }),
+    },
     drainTimeoutSeconds: 300,
     now: () => new Date("2026-06-20T00:00:10.000Z"),
     ...options,

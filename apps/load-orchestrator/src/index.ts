@@ -12,7 +12,11 @@ export const loadOrchestratorAppName = "load-orchestrator" as const;
 export const loadOrchestratorAppDependencies = [contractsPackageName, loggerPackageName] as const;
 
 export { HttpLoadApiClient, MetricBatcher } from "./application/api-client.js";
-export { ExecutionConflictError, FileExecutionStore } from "./application/execution-store.js";
+export {
+  ExecutionConflictError,
+  type ExecutionStore,
+  FileExecutionStore,
+} from "./application/execution-store.js";
 export {
   K6RunAccumulator,
   type K6SummaryMetrics,

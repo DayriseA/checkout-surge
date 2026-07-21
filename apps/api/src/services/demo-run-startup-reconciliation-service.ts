@@ -1,11 +1,5 @@
-import {
-  type CheckoutSurgeDatabase,
-  type CheckoutSurgeRedis,
-  demoRuns,
-  setRunSaleEligibility,
-} from "@checkout-surge/db";
+import type { demoRuns } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
-import { eq } from "drizzle-orm";
 import type { PendingPersistenceReconciler } from "./pending-persistence-reconciler.js";
 import type { TrafficCompletionEnrichmentController } from "./traffic-completion-enrichment-service.js";
 
@@ -49,23 +43,21 @@ interface PerRunRecoveryResult {
 export class DemoRunStartupReconciliationService {
   constructor(
     private readonly options: {
-      db: CheckoutSurgeDatabase;
-      redis: CheckoutSurgeRedis;
       logger: CheckoutSurgeLogger;
       pendingPersistenceReconciler: Pick<PendingPersistenceReconciler, "reconcileSaleOffer">;
       completionEnrichmentService: Pick<
         TrafficCompletionEnrichmentController,
         "completePendingEnrichment"
       >;
-      listDrainingRuns?: () => Promise<DemoRunRow[]>;
-      closeRunSaleEligibility?: (input: { runId: string; saleOfferId: string }) => Promise<boolean>;
+      listDrainingRuns: () => Promise<DemoRunRow[]>;
+      closeRunSaleEligibility: (input: { runId: string; saleOfferId: string }) => Promise<boolean>;
     },
   ) {}
 
   async reconcile(): Promise<DemoRunStartupReconciliationSummary> {
     // A list failure is startup-wide. Once discovery succeeds, every candidate
     // gets an independent recovery attempt.
-    const runs = await this.listDrainingRuns();
+    const runs = await this.options.listDrainingRuns();
     const summary: DemoRunStartupReconciliationSummary = {
       discoveredRunCount: runs.length,
       succeededRunCount: 0,
@@ -127,7 +119,12 @@ export class DemoRunStartupReconciliationService {
     };
 
     try {
-      if (await this.closeRunSaleEligibility(run.id, run.saleOfferId)) {
+      if (
+        await this.options.closeRunSaleEligibility({
+          runId: run.id,
+          saleOfferId: run.saleOfferId,
+        })
+      ) {
         result.closedSaleOfferCount = 1;
       }
     } catch (error) {
@@ -167,20 +164,6 @@ export class DemoRunStartupReconciliationService {
     }
 
     return result;
-  }
-
-  private async listDrainingRuns(): Promise<DemoRunRow[]> {
-    if (this.options.listDrainingRuns) {
-      return this.options.listDrainingRuns();
-    }
-    return this.options.db.select().from(demoRuns).where(eq(demoRuns.status, "draining"));
-  }
-
-  private async closeRunSaleEligibility(runId: string, saleOfferId: string): Promise<boolean> {
-    if (this.options.closeRunSaleEligibility) {
-      return this.options.closeRunSaleEligibility({ runId, saleOfferId });
-    }
-    return setRunSaleEligibility(this.options.redis, { runId, saleOfferId, status: "closed" });
   }
 
   private logStageFailure(

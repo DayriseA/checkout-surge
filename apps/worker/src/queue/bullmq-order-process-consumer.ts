@@ -31,7 +31,7 @@ export interface CreateBullMqOrderProcessConsumerOptions {
   handler: OrderProcessJobHandler;
   logger: CheckoutSurgeLogger;
   reportFailure?: (report: OrderProcessJobFailureReport) => void | Promise<void>;
-  recovery?: Pick<OrderRecoveryPersistence, "recordRecoverable" | "recordDeadLetter">;
+  recovery: Pick<OrderRecoveryPersistence, "recordRecoverable" | "recordDeadLetter">;
   admission?: OrderProcessAdmission;
   admissionDelayMs?: number;
 }
@@ -307,7 +307,6 @@ export async function processJob(
     }
 
     if (
-      options.recovery &&
       job.attemptsMade + 1 >= normalizeMaxAttempts(job.opts.attempts) &&
       isRecoverableFailure(error)
     ) {
@@ -341,11 +340,8 @@ export async function processJob(
 async function recordDeadLetter(
   options: CreateBullMqOrderProcessConsumerOptions,
   job: Job<OrderProcessJob, void, typeof orderProcessJobName>,
-  input: Parameters<
-    NonNullable<CreateBullMqOrderProcessConsumerOptions["recovery"]>["recordDeadLetter"]
-  >[0],
+  input: Parameters<CreateBullMqOrderProcessConsumerOptions["recovery"]["recordDeadLetter"]>[0],
 ): Promise<void> {
-  if (!options.recovery) throw new Error(`DLQ handoff unavailable: ${input.reason}`);
   try {
     await options.recovery.recordDeadLetter(input);
   } catch (error) {
@@ -399,9 +395,7 @@ async function markRecoverableDisposition(
 
 async function markDeadLetterDisposition(
   job: Job<OrderProcessJob, void, typeof orderProcessJobName>,
-  input: Parameters<
-    NonNullable<CreateBullMqOrderProcessConsumerOptions["recovery"]>["recordDeadLetter"]
-  >[0],
+  input: Parameters<CreateBullMqOrderProcessConsumerOptions["recovery"]["recordDeadLetter"]>[0],
   error: unknown,
 ): Promise<void> {
   try {

@@ -28,9 +28,12 @@ function persistence(overrides: Partial<OrderRecoveryPersistence> = {}): OrderRe
         createdAt: new Date("2026-06-21T00:00:00.000Z"),
       },
     ]),
-    markEnqueued: vi.fn(),
     markEscalated: vi.fn(),
     recordDeadLetter: vi.fn(),
+    claimForPublication: vi.fn().mockResolvedValue(null),
+    markPublicationFailed: vi.fn(),
+    markResolved: vi.fn(),
+    reconcileTerminal: vi.fn().mockResolvedValue(0),
     ...overrides,
   };
 }
@@ -48,6 +51,7 @@ describe("order recovery scanner", () => {
       logger: createSilentLogger("worker"),
       scanIntervalMs: 1000,
       batchSize: 10,
+      failedJobReader: { findFailedOrderJobs: async () => [] },
       now: () => new Date("2026-06-22T00:00:10.000Z"),
     });
 
@@ -78,6 +82,7 @@ describe("order recovery scanner", () => {
       logger: createSilentLogger("worker"),
       scanIntervalMs: 1000,
       batchSize: 10,
+      failedJobReader: { findFailedOrderJobs: async () => [] },
       maxRecoveryAttempts: 3,
     });
 

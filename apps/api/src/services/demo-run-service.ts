@@ -503,7 +503,7 @@ export class DemoRunService implements DemoRunController {
         TrafficCompletionEnrichmentController,
         "completePendingEnrichment"
       >;
-      finalizationService?: DemoRunFinalizationController;
+      finalizationService: DemoRunFinalizationController;
       apiBaseUrl: string;
       buyEndpointPath: string;
       logger: CheckoutSurgeLogger;
@@ -1124,7 +1124,7 @@ export class DemoRunService implements DemoRunController {
     const updatedRun = await this.readRunSnapshot(report.runId);
     if (completionClaim.inserted) await this.publishRunEvent(updatedRun, report.correlationId, now);
     return (
-      (await this.options.finalizationService?.finalizeRun(report.runId, report.correlationId)) ??
+      (await this.options.finalizationService.finalizeRun(report.runId, report.correlationId)) ??
       updatedRun
     );
   }

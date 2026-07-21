@@ -80,8 +80,7 @@ describe("demo run startup reconciliation service", () => {
       failed: 0,
     }));
     const service = new DemoRunStartupReconciliationService({
-      db,
-      redis: redisClient,
+      ...startupInfrastructure(db, redisClient),
       logger: createSilentLogger("api"),
       pendingPersistenceReconciler: { reconcileSaleOffer },
       completionEnrichmentService: {
@@ -129,8 +128,7 @@ describe("demo run startup reconciliation service", () => {
     const db = requireConnection(connection).db;
     const redisClient = requireRedis(redis);
     const service = new DemoRunStartupReconciliationService({
-      db,
-      redis: redisClient,
+      ...startupInfrastructure(db, redisClient),
       logger: createSilentLogger("api"),
       pendingPersistenceReconciler: {
         reconcileSaleOffer: vi.fn(async () => ({
@@ -179,8 +177,7 @@ describe("demo run startup reconciliation service", () => {
       };
     });
     const service = new DemoRunStartupReconciliationService({
-      db,
-      redis: redisClient,
+      ...startupInfrastructure(db, redisClient),
       logger: createSilentLogger("api"),
       pendingPersistenceReconciler: { reconcileSaleOffer },
       completionEnrichmentService: { completePendingEnrichment },
@@ -233,8 +230,7 @@ describe("demo run startup reconciliation service", () => {
       failed: input.runId?.endsWith("4") ? 1 : 0,
     }));
     const service = new DemoRunStartupReconciliationService({
-      db,
-      redis: redisClient,
+      ...startupInfrastructure(db, redisClient),
       logger: createSilentLogger("api"),
       listDrainingRuns: async () => candidates,
       closeRunSaleEligibility,
@@ -320,8 +316,7 @@ describe("demo run startup reconciliation service", () => {
       logger: createSilentLogger("api"),
     });
     const service = new DemoRunStartupReconciliationService({
-      db,
-      redis: redisClient,
+      ...startupInfrastructure(db, redisClient),
       logger: createSilentLogger("api"),
       pendingPersistenceReconciler,
       completionEnrichmentService: {
@@ -371,6 +366,17 @@ describe("demo run startup reconciliation service", () => {
     expect(jobs).toHaveLength(1);
   });
 });
+
+function startupInfrastructure(
+  db: ReturnType<typeof createDatabaseConnection>["db"],
+  redis: ReturnType<typeof createRedisClient>,
+) {
+  return {
+    listDrainingRuns: () => db.select().from(demoRuns).where(eq(demoRuns.status, "draining")),
+    closeRunSaleEligibility: ({ runId, saleOfferId }: { runId: string; saleOfferId: string }) =>
+      setRunSaleEligibility(redis, { runId, saleOfferId, status: "closed" }),
+  };
+}
 
 async function seedRunFixtures(
   db: ReturnType<typeof createDatabaseConnection>["db"],

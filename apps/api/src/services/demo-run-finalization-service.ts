@@ -67,7 +67,7 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
       db: CheckoutSurgeDatabase;
       redis: CheckoutSurgeRedis;
       logger: CheckoutSurgeLogger;
-      pendingPersistenceReconciler?: Pick<PendingPersistenceReconciler, "reconcileSaleOffer">;
+      pendingPersistenceReconciler: Pick<PendingPersistenceReconciler, "reconcileSaleOffer">;
       terminalRunWriter: Pick<TerminalDemoRunWriter, "writePrepared">;
       terminalInventoryRead: TerminalInventoryReadOperation;
       terminalInventoryReadTimeoutMs: number;
@@ -137,28 +137,26 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
     }
 
     let pendingReconciliationFailed = false;
-    if (this.options.pendingPersistenceReconciler) {
-      try {
-        const reconciliation = await this.options.pendingPersistenceReconciler.reconcileSaleOffer(
-          row.run.saleOfferId,
-          {
-            runId: row.run.id,
-          },
-        );
-        if (reconciliation.failed > 0) {
-          pendingReconciliationFailed = true;
-          this.options.logger.warn(
-            { runId, saleOfferId: row.run.saleOfferId, failed: reconciliation.failed },
-            "Run remains draining while pending Redis reservations remain retryable.",
-          );
-        }
-      } catch (error) {
+    try {
+      const reconciliation = await this.options.pendingPersistenceReconciler.reconcileSaleOffer(
+        row.run.saleOfferId,
+        {
+          runId: row.run.id,
+        },
+      );
+      if (reconciliation.failed > 0) {
         pendingReconciliationFailed = true;
         this.options.logger.warn(
-          { err: error, runId, saleOfferId: row.run.saleOfferId },
-          "Pending Redis reservation reconciliation failed during run finalization.",
+          { runId, saleOfferId: row.run.saleOfferId, failed: reconciliation.failed },
+          "Run remains draining while pending Redis reservations remain retryable.",
         );
       }
+    } catch (error) {
+      pendingReconciliationFailed = true;
+      this.options.logger.warn(
+        { err: error, runId, saleOfferId: row.run.saleOfferId },
+        "Pending Redis reservation reconciliation failed during run finalization.",
+      );
     }
 
     const reconciliationTimedOut =

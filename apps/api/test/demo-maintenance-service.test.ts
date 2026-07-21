@@ -10,7 +10,7 @@ import {
   createDatabaseConnection,
   createRedisClient,
   deleteGeneratedRunDurable,
-  type deleteGeneratedRunRedisState,
+  deleteGeneratedRunRedisState,
   demoPresets,
   demoRunFinalizations,
   demoRunReservationOutcomes,
@@ -41,6 +41,7 @@ import { eq, inArray } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiHttpError } from "../src/runtime/errors.js";
 import {
+  type DemoQueueMaintenance,
   DemoQueueMaintenanceConflict,
   type DemoQueueQuiescenceRelease,
   DemoMaintenanceService as ProductionDemoMaintenanceService,
@@ -79,9 +80,46 @@ const ids = {
   completedOrder: "88888888-8888-4888-8888-888888888882",
 } as const;
 
+type ProductionMaintenanceOptions = ConstructorParameters<
+  typeof ProductionDemoMaintenanceService
+>[0];
+type TestMaintenanceOptions = Omit<
+  ProductionMaintenanceOptions,
+  | "queueMaintenance"
+  | "deleteGeneratedRunDurable"
+  | "deleteGeneratedRunRedisState"
+  | "prepareGeneratedRunTeardown"
+  | "completeGeneratedRunTeardown"
+  | "clearErpCircuitBreakerState"
+  | "trafficAborter"
+  | "dashboardLiveStateReset"
+  | "resetWorkflowFence"
+> & {
+  queueMaintenance: Pick<DemoQueueMaintenance, "cleanResetOwnedQueues"> &
+    Partial<Omit<DemoQueueMaintenance, "cleanResetOwnedQueues">>;
+} & Partial<
+    Pick<
+      ProductionMaintenanceOptions,
+      | "deleteGeneratedRunDurable"
+      | "deleteGeneratedRunRedisState"
+      | "prepareGeneratedRunTeardown"
+      | "completeGeneratedRunTeardown"
+      | "clearErpCircuitBreakerState"
+      | "trafficAborter"
+      | "dashboardLiveStateReset"
+      | "resetWorkflowFence"
+    >
+  >;
+
 class DemoMaintenanceService extends ProductionDemoMaintenanceService {
-  constructor(options: ConstructorParameters<typeof ProductionDemoMaintenanceService>[0]) {
+  constructor(options: TestMaintenanceOptions) {
+    const { queueMaintenance, ...overrides } = options;
     super({
+      deleteGeneratedRunDurable,
+      deleteGeneratedRunRedisState,
+      prepareGeneratedRunTeardown,
+      completeGeneratedRunTeardown,
+      clearErpCircuitBreakerState: async () => undefined,
       trafficAborter: {
         abortCurrent: async () => ({ outcome: "no_current_run" }),
       },
@@ -91,7 +129,13 @@ class DemoMaintenanceService extends ProductionDemoMaintenanceService {
         hasRunState: async () => false,
       },
       resetWorkflowFence: { runExclusive: async (operation) => operation() },
-      ...options,
+      ...overrides,
+      queueMaintenance: {
+        acquireGeneratedRunQuiescence: async () => ({ release: async () => undefined }),
+        preflightGeneratedRun: async () => undefined,
+        cleanGeneratedRun: async () => ({ deletedJobCount: 0 }),
+        ...queueMaintenance,
+      },
     });
   }
 }
@@ -615,23 +659,7 @@ describe("demo maintenance service", () => {
     ).toHaveLength(1);
   });
 
-  it("validates targeted queue capability before mutation and preserves primary release failure", async () => {
-    const prepare = vi.fn();
-    const incomplete = new DemoMaintenanceService({
-      db: requireConnection(connection).db,
-      redis: requireRedis(redis),
-      queueMaintenance: {
-        cleanResetOwnedQueues: async () => ({ cleanedQueueCount: 0, cleanedJobCount: 0 }),
-      },
-      terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(requireConnection(connection).db),
-      logger: createSilentLogger("api"),
-      prepareGeneratedRunTeardown: prepare,
-    });
-    await expect(
-      incomplete.teardownGeneratedRun({ runId: ids.completedRun, correlationId: "corr-miswired" }),
-    ).rejects.toThrow("not fully configured");
-    expect(prepare).not.toHaveBeenCalled();
-
+  it("preserves primary and queue-lease release failures", async () => {
     const primary = new Error("primary queue conflict");
     const release = new Error("release failed");
     const service = new DemoMaintenanceService({

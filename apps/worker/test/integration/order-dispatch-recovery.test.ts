@@ -17,11 +17,14 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createOrderDispatchScanner } from "../../src/application/order-dispatch-scanner.js";
 import {
   createLocalOrderConfirmation,
-  createOrderProcessJobHandler,
+  createOrderProcessJobHandler as createProductionOrderProcessJobHandler,
 } from "../../src/application/order-process-job-handler.js";
 import { PostgresOrderDispatchPersistence } from "../../src/persistence/postgres-order-dispatch-persistence.js";
 import { PostgresOrderTransitionPersistence } from "../../src/persistence/postgres-order-transition-persistence.js";
-import { createBullMqOrderProcessConsumer } from "../../src/queue/bullmq-order-process-consumer.js";
+import {
+  type CreateBullMqOrderProcessConsumerOptions,
+  createBullMqOrderProcessConsumer as createProductionBullMqOrderProcessConsumer,
+} from "../../src/queue/bullmq-order-process-consumer.js";
 import { createBullMqOrderProcessJobPublisher } from "../../src/queue/bullmq-order-process-job-publisher.js";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -44,6 +47,33 @@ const job: OrderProcessJob = {
   quantity: 1,
   queuedAt: queuedAt.toISOString(),
 };
+
+function createBullMqOrderProcessConsumer(
+  options: Omit<CreateBullMqOrderProcessConsumerOptions, "recovery">,
+) {
+  return createProductionBullMqOrderProcessConsumer({
+    recovery: { recordRecoverable: async () => undefined, recordDeadLetter: async () => undefined },
+    ...options,
+  });
+}
+
+function createOrderProcessJobHandler(
+  dependencies: Omit<
+    Parameters<typeof createProductionOrderProcessJobHandler>[0],
+    | "publishBusinessOutcomeUpdate"
+    | "notificationRecordPublisher"
+    | "recovery"
+    | "realtimePublisher"
+  >,
+) {
+  return createProductionOrderProcessJobHandler({
+    ...dependencies,
+    publishBusinessOutcomeUpdate: async () => undefined,
+    notificationRecordPublisher: { publishForConfirmedOrder: async () => undefined },
+    recovery: { handoff: async () => undefined, resolve: async () => undefined },
+    realtimePublisher: { enqueue: () => undefined },
+  });
+}
 
 describe("queued order dispatch recovery", () => {
   let connection!: ReturnType<typeof createDatabaseConnection>;

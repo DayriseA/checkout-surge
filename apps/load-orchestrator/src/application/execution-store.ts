@@ -30,8 +30,17 @@ const durableExecutionSchema = z.preprocess(
 
 export type DurableExecution = z.infer<typeof durableExecutionSchema>;
 
+export interface ExecutionStore {
+  read(): Promise<DurableExecution | null>;
+  accept(
+    request: TrafficExecutionStartRequest,
+    acceptedAt: Date,
+  ): Promise<{ execution: DurableExecution; created: boolean }>;
+  update(execution: DurableExecution): Promise<void>;
+}
+
 /** Atomic single-slot journal. The orchestrator deliberately owns at most one execution. */
-export class FileExecutionStore {
+export class FileExecutionStore implements ExecutionStore {
   private readonly filePath: string;
   private writeChain = Promise.resolve();
   private acceptChain = Promise.resolve();

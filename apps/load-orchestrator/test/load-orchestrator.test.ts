@@ -28,7 +28,9 @@ import {
   MetricBatcher,
 } from "../src/application/api-client.js";
 import {
+  type DurableExecution,
   ExecutionConflictError,
+  type ExecutionStore,
   FileExecutionStore,
   withCompletion,
 } from "../src/application/execution-store.js";
@@ -41,7 +43,7 @@ import {
 import {
   ExecutionSlotConflictError,
   type K6Runner,
-  SpawnK6Runner,
+  SpawnK6Runner as ProductionSpawnK6Runner,
   TrafficTerminationUnconfirmedError,
 } from "../src/application/k6-runner.js";
 import { generateK6Script, k6ScenarioGracefulStop } from "../src/application/k6-script.js";
@@ -95,6 +97,47 @@ const startRequest: TrafficExecutionStartRequest = {
     },
   },
 };
+
+class InMemoryExecutionStore implements ExecutionStore {
+  private execution: DurableExecution | null = null;
+
+  async read(): Promise<DurableExecution | null> {
+    return this.execution;
+  }
+
+  async accept(
+    request: TrafficExecutionStartRequest,
+    acceptedAt: Date,
+  ): Promise<{ execution: DurableExecution; created: boolean }> {
+    if (this.execution && this.execution.state !== "completed") {
+      if (this.execution.request.runId === request.runId) {
+        return { execution: this.execution, created: false };
+      }
+      throw new ExecutionConflictError(this.execution.request.runId);
+    }
+    this.execution = {
+      request,
+      state: "accepted",
+      acceptedAt: acceptedAt.toISOString(),
+    };
+    return { execution: this.execution, created: true };
+  }
+
+  async update(execution: DurableExecution): Promise<void> {
+    this.execution = execution;
+  }
+}
+
+type SpawnK6RunnerOptions = ConstructorParameters<typeof ProductionSpawnK6Runner>[0];
+
+class SpawnK6Runner extends ProductionSpawnK6Runner {
+  constructor(
+    options: Omit<SpawnK6RunnerOptions, "executionStore"> &
+      Partial<Pick<SpawnK6RunnerOptions, "executionStore">>,
+  ) {
+    super({ executionStore: new InMemoryExecutionStore(), ...options });
+  }
+}
 
 function steadyStartRequest(
   ratePerSecond: number,
@@ -2044,6 +2087,10 @@ describe("SpawnK6Runner completion reporting", () => {
       ).rejects.toThrow("still owns");
       k6Process.child.emit("close", 1);
       await waitForCompletionReport(reports, 1);
+      await waitForCondition(
+        async () => (await runner.statusSnapshot(startRequest.runId)).state === "completed",
+        "durable child completion",
+      );
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

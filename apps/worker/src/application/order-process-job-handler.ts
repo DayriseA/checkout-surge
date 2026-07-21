@@ -1,9 +1,9 @@
+import { createHash } from "node:crypto";
 import type {
   OrderConsistencyLagDashboardEvent,
   OrderProcessJob,
   OrderStatusDashboardEvent,
 } from "@checkout-surge/contracts";
-import { createHash } from "node:crypto";
 import { type CheckoutSurgeLogger, childLoggerWithCorrelationId } from "@checkout-surge/logger";
 
 export interface OrderProcessDeliveryMetadata {
@@ -77,7 +77,11 @@ export interface OrderTransitionPersistence {
 }
 
 export interface OrderRealtimePublisher {
-  enqueue(events: readonly [OrderStatusDashboardEvent] | readonly [OrderStatusDashboardEvent, OrderConsistencyLagDashboardEvent]): void;
+  enqueue(
+    events:
+      | readonly [OrderStatusDashboardEvent]
+      | readonly [OrderStatusDashboardEvent, OrderConsistencyLagDashboardEvent],
+  ): void;
 }
 
 export interface OrderConfirmation {
@@ -98,7 +102,7 @@ export interface RecoverableOrderHandoff {
 
 export interface OrderRecoveryHandoff {
   handoff(input: RecoverableOrderHandoff): Promise<void>;
-  resolve?(input: { recoveryKey: string }): Promise<void>;
+  resolve(input: { recoveryKey: string }): Promise<void>;
 }
 
 export interface NotificationRecordPublisher {
@@ -167,9 +171,9 @@ export function createOrderProcessJobHandler(dependencies: {
   logger: CheckoutSurgeLogger;
   isTemporaryConfirmationFailure?: (error: unknown) => boolean;
   shouldRetryWithoutFailingOrder?: (error: unknown) => boolean;
-  publishBusinessOutcomeUpdate?: BusinessOutcomeUpdatePublisher;
+  publishBusinessOutcomeUpdate: BusinessOutcomeUpdatePublisher;
   reportBusinessOutcomeUpdateFailure?: (report: BusinessOutcomeUpdateFailureReport) => void;
-  notificationRecordPublisher?: NotificationRecordPublisher;
+  notificationRecordPublisher: NotificationRecordPublisher;
   reportNotificationRecordPublishFailure?: (report: {
     error: unknown;
     orderId: string;
@@ -177,8 +181,8 @@ export function createOrderProcessJobHandler(dependencies: {
     runId?: string;
     correlationId: string;
   }) => void;
-  recovery?: OrderRecoveryHandoff;
-  realtimePublisher?: OrderRealtimePublisher;
+  recovery: OrderRecoveryHandoff;
+  realtimePublisher: OrderRealtimePublisher;
   reportConsistencyLagClockAnomaly?: (report: {
     orderId: string;
     publicOrderId: string;
@@ -211,7 +215,7 @@ export function createOrderProcessJobHandler(dependencies: {
         // must retain recovery ownership on the last delivery.
         if (isOrderPoisonError(error)) throw error;
         const persistenceError = new OrderProcessingPersistenceError(error);
-        if (dependencies.recovery && !hasRemainingAttempts(delivery)) {
+        if (!hasRemainingAttempts(delivery)) {
           await handoffOrThrow(
             dependencies.recovery,
             {
@@ -264,11 +268,7 @@ export function createOrderProcessJobHandler(dependencies: {
           dependencies.shouldRetryWithoutFailingOrder?.(confirmationError) ?? false;
         const temporary = dependencies.isTemporaryConfirmationFailure?.(confirmationError) ?? false;
         const remainingAttempts = hasRemainingAttempts(delivery);
-        if (
-          dependencies.recovery &&
-          isPersistenceLikeError(confirmationError) &&
-          !remainingAttempts
-        ) {
+        if (isPersistenceLikeError(confirmationError) && !remainingAttempts) {
           await handoffOrThrow(
             dependencies.recovery,
             {
@@ -305,24 +305,31 @@ export function createOrderProcessJobHandler(dependencies: {
         );
 
         try {
-          const failedTransition = await dependencies.persistence.transitionToFailed(job, failure, delivery);
+          const failedTransition = await dependencies.persistence.transitionToFailed(
+            job,
+            failure,
+            delivery,
+          );
           if (failedTransition.changed) {
             enqueueRealtimeEvents(dependencies, job, delivery, failedTransition, logger);
-            await publishBusinessOutcomeUpdateWithoutFailingJob(dependencies, job, "failed", logger);
-          }
-        } catch (persistenceError) {
-          if (dependencies.recovery) {
-            await handoffOrThrow(
-              dependencies.recovery,
-              {
-                job,
-                delivery,
-                reason: "terminal_failure_persistence_unavailable",
-                error: persistenceError,
-              },
-              persistenceError,
+            await publishBusinessOutcomeUpdateWithoutFailingJob(
+              dependencies,
+              job,
+              "failed",
+              logger,
             );
           }
+        } catch (persistenceError) {
+          await handoffOrThrow(
+            dependencies.recovery,
+            {
+              job,
+              delivery,
+              reason: "terminal_failure_persistence_unavailable",
+              error: persistenceError,
+            },
+            persistenceError,
+          );
           logger.error(
             { ...logContext, err: confirmationError, persistenceError },
             "Order confirmation and failure persistence both failed.",
@@ -350,23 +357,21 @@ export function createOrderProcessJobHandler(dependencies: {
           );
         }
       } catch (persistenceError) {
-        if (dependencies.recovery) {
-          await handoffOrThrow(
-            dependencies.recovery,
-            {
-              job,
-              delivery,
-              reason: "confirmed_transition_persistence_unavailable",
-              error: persistenceError,
-              accepted: true,
-              attempt: confirmationResult,
-            },
-            persistenceError,
-          );
-        }
+        await handoffOrThrow(
+          dependencies.recovery,
+          {
+            job,
+            delivery,
+            reason: "confirmed_transition_persistence_unavailable",
+            error: persistenceError,
+            accepted: true,
+            attempt: confirmationResult,
+          },
+          persistenceError,
+        );
         throw persistenceError;
       }
-      if (dependencies.recovery?.resolve && delivery.recoveryKey) {
+      if (delivery.recoveryKey) {
         try {
           await dependencies.recovery.resolve({ recoveryKey: delivery.recoveryKey });
         } catch (resolveError) {
@@ -390,13 +395,15 @@ export function createOrderProcessJobHandler(dependencies: {
 }
 
 function enqueueRealtimeEvents(
-  dependencies: Pick<Parameters<typeof createOrderProcessJobHandler>[0], "realtimePublisher" | "reportConsistencyLagClockAnomaly">,
+  dependencies: Pick<
+    Parameters<typeof createOrderProcessJobHandler>[0],
+    "realtimePublisher" | "reportConsistencyLagClockAnomaly"
+  >,
   job: OrderProcessJob,
   delivery: OrderProcessDeliveryMetadata,
   transition: FreshOrderTransition,
   logger: CheckoutSurgeLogger,
 ): void {
-  if (!dependencies.realtimePublisher) return;
   const occurredAt = transition.occurredAt.toISOString();
   const eventName = `order.${transition.status}` as OrderStatusDashboardEvent["eventName"];
   const statusEvent: OrderStatusDashboardEvent = {
@@ -463,12 +470,19 @@ function enqueueRealtimeEvents(
       },
     ]);
   } catch (error) {
-    logger.error({ err: error, orderId: job.orderId, eventId: transition.eventId }, "Order realtime enqueue failed.");
+    logger.error(
+      { err: error, orderId: job.orderId, eventId: transition.eventId },
+      "Order realtime enqueue failed.",
+    );
   }
 }
 
 function deriveLagEventId(transitionEventId: string): string {
-  const hex = createHash("sha256").update(`order.consistency_lag:${transitionEventId}`).digest("hex").slice(0, 32).split("");
+  const hex = createHash("sha256")
+    .update(`order.consistency_lag:${transitionEventId}`)
+    .digest("hex")
+    .slice(0, 32)
+    .split("");
   hex[12] = "5";
   hex[16] = ((Number.parseInt(hex[16] ?? "0", 16) & 3) | 8).toString(16);
   return `${hex.slice(0, 8).join("")}-${hex.slice(8, 12).join("")}-${hex.slice(12, 16).join("")}-${hex.slice(16, 20).join("")}-${hex.slice(20).join("")}`;
@@ -476,7 +490,7 @@ function deriveLagEventId(transitionEventId: string): string {
 
 async function publishNotificationRecordJobWithoutFailingOrder(
   dependencies: {
-    notificationRecordPublisher?: NotificationRecordPublisher;
+    notificationRecordPublisher: NotificationRecordPublisher;
     reportNotificationRecordPublishFailure?: (report: {
       error: unknown;
       orderId: string;
@@ -489,10 +503,6 @@ async function publishNotificationRecordJobWithoutFailingOrder(
   confirmedAt: string,
   logger: CheckoutSurgeLogger,
 ): Promise<void> {
-  if (!dependencies.notificationRecordPublisher) {
-    return;
-  }
-
   try {
     await dependencies.notificationRecordPublisher.publishForConfirmedOrder(job, confirmedAt);
   } catch (error) {
@@ -519,17 +529,13 @@ async function publishNotificationRecordJobWithoutFailingOrder(
 
 async function publishBusinessOutcomeUpdateWithoutFailingJob(
   dependencies: {
-    publishBusinessOutcomeUpdate?: BusinessOutcomeUpdatePublisher;
+    publishBusinessOutcomeUpdate: BusinessOutcomeUpdatePublisher;
     reportBusinessOutcomeUpdateFailure?: (report: BusinessOutcomeUpdateFailureReport) => void;
   },
   job: OrderProcessJob,
   transition: BusinessOutcomeUpdateFailureReport["transition"],
   logger: CheckoutSurgeLogger,
 ): Promise<void> {
-  if (!dependencies.publishBusinessOutcomeUpdate) {
-    return;
-  }
-
   try {
     await dependencies.publishBusinessOutcomeUpdate(job, transition);
   } catch (error) {
@@ -589,12 +595,11 @@ function isOrderPoisonError(error: unknown): boolean {
 }
 
 async function handoffAcceptedResult(
-  recovery: OrderRecoveryHandoff | undefined,
+  recovery: OrderRecoveryHandoff,
   job: OrderProcessJob,
   delivery: OrderProcessDeliveryMetadata,
   error: unknown,
 ): Promise<void> {
-  if (!recovery) return;
   const record =
     error instanceof Error && "record" in error
       ? (error as { record?: unknown }).record

@@ -145,18 +145,9 @@ export class PostgresDashboardCompletionOutcomeReader implements DashboardComple
 export class DashboardRecoveryService {
   constructor(
     private readonly options: {
-      contextReader?: DashboardRecoveryContextReader;
-      businessOutcomeReader?: DashboardBusinessOutcomeReader;
-      consistencyLagReader?: DashboardConsistencyLagReader;
-      completionOutcomeReader?: DashboardCompletionOutcomeReader;
-      inventoryStatusService?: InventoryStatusService;
-      queueStatusService?: QueueStatusService;
-      erpStatusService?: ErpStatusService;
       logger: CheckoutSurgeLogger;
-      trafficMetricReader?: DashboardTrafficMetricReader;
-      transportAccountingReader?: DashboardTransportAccountingReader;
       now?: () => Date;
-      openOperation?: DashboardRecoveryOperationFactory;
+      openOperation: DashboardRecoveryOperationFactory;
     },
   ) {}
 
@@ -166,14 +157,12 @@ export class DashboardRecoveryService {
   }): Promise<DashboardRecoveryResponse> {
     const signal = input.signal ?? new AbortController().signal;
     if (signal.aborted) throw abortReason(signal);
-    const operation = this.options.openOperation
-      ? await this.options.openOperation(signal)
-      : { dependencies: this.fixedDependencies() };
+    const operation = await this.options.openOperation(signal);
 
     try {
       return await this.assembleRecovery(input.correlationId, signal, operation.dependencies);
     } finally {
-      await operation.close?.();
+      await operation.close();
     }
   }
 
@@ -228,9 +217,7 @@ export class DashboardRecoveryService {
         : Promise.resolve({ ok: true as const, value: null }),
       scope
         ? readSafely("dashboard_traffic_metrics", signal, () =>
-            dependencies.trafficMetricReader
-              ? dependencies.trafficMetricReader.readRecent(scope.runId)
-              : Promise.resolve([] satisfies MetricSample[]),
+            dependencies.trafficMetricReader.readRecent(scope.runId),
           )
         : Promise.resolve({ ok: true as const, value: [] satisfies MetricSample[] }),
       saleScope
@@ -240,9 +227,7 @@ export class DashboardRecoveryService {
         : Promise.resolve({ ok: true as const, value: [] }),
       scope
         ? readSafely("dashboard_transport_accounting", signal, () =>
-            dependencies.transportAccountingReader
-              ? dependencies.transportAccountingReader.read(scope.runId)
-              : Promise.resolve(null),
+            dependencies.transportAccountingReader.read(scope.runId),
           )
         : Promise.resolve({ ok: true as const, value: null }),
     ]);
@@ -281,38 +266,6 @@ export class DashboardRecoveryService {
       recoveredAt: now.toISOString(),
     });
   }
-
-  private fixedDependencies(): DashboardRecoveryDependencies {
-    const required = {
-      contextReader: this.options.contextReader,
-      businessOutcomeReader: this.options.businessOutcomeReader,
-      consistencyLagReader: this.options.consistencyLagReader,
-      completionOutcomeReader: this.options.completionOutcomeReader,
-      inventoryStatusService: this.options.inventoryStatusService,
-      queueStatusService: this.options.queueStatusService,
-      erpStatusService: this.options.erpStatusService,
-    };
-
-    for (const [name, dependency] of Object.entries(required)) {
-      if (!dependency) throw new Error(`Dashboard recovery dependency ${name} is not configured.`);
-    }
-
-    return {
-      contextReader: required.contextReader as DashboardRecoveryContextReader,
-      businessOutcomeReader: required.businessOutcomeReader as DashboardBusinessOutcomeReader,
-      consistencyLagReader: required.consistencyLagReader as DashboardConsistencyLagReader,
-      completionOutcomeReader: required.completionOutcomeReader as DashboardCompletionOutcomeReader,
-      inventoryStatusService: required.inventoryStatusService as InventoryStatusService,
-      queueStatusService: required.queueStatusService as QueueStatusService,
-      erpStatusService: required.erpStatusService as ErpStatusService,
-      ...(this.options.trafficMetricReader
-        ? { trafficMetricReader: this.options.trafficMetricReader }
-        : {}),
-      ...(this.options.transportAccountingReader
-        ? { transportAccountingReader: this.options.transportAccountingReader }
-        : {}),
-    };
-  }
 }
 
 export interface DashboardRecoveryDependencies {
@@ -320,16 +273,16 @@ export interface DashboardRecoveryDependencies {
   businessOutcomeReader: DashboardBusinessOutcomeReader;
   consistencyLagReader: DashboardConsistencyLagReader;
   completionOutcomeReader: DashboardCompletionOutcomeReader;
-  inventoryStatusService: InventoryStatusService;
-  queueStatusService: QueueStatusService;
-  erpStatusService: ErpStatusService;
-  trafficMetricReader?: DashboardTrafficMetricReader;
-  transportAccountingReader?: DashboardTransportAccountingReader;
+  inventoryStatusService: Pick<InventoryStatusService, "getStatus">;
+  queueStatusService: Pick<QueueStatusService, "getStatus">;
+  erpStatusService: Pick<ErpStatusService, "getStatus">;
+  trafficMetricReader: DashboardTrafficMetricReader;
+  transportAccountingReader: DashboardTransportAccountingReader;
 }
 
 export interface DashboardRecoveryOperation {
   dependencies: DashboardRecoveryDependencies;
-  close?(): void | Promise<void>;
+  close(): void | Promise<void>;
 }
 
 export type DashboardRecoveryOperationFactory = (

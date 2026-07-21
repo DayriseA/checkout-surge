@@ -18,9 +18,9 @@ import {
 } from "../../src/queue/bullmq-notification-record-consumer.js";
 import { createBullMqNotificationRecordPublisher } from "../../src/queue/bullmq-notification-record-publisher.js";
 import {
-  createBullMqOrderProcessConsumer,
+  type CreateBullMqOrderProcessConsumerOptions,
+  createBullMqOrderProcessConsumer as createProductionBullMqOrderProcessConsumer,
   deadLetterFailureMarker,
-  type OrderProcessJobFailureReport,
   orderProcessQueueNotReadyMessage,
 } from "../../src/queue/bullmq-order-process-consumer.js";
 import { createOrderProcessJobPublisher } from "../../src/queue/bullmq-order-process-job-publisher.js";
@@ -44,6 +44,16 @@ const notificationJob: NotificationRecordJob = {
   recipientPlaceholder: "simulated-buyer:ord_test",
   confirmedAt: "2026-06-21T00:00:02.000Z",
 };
+
+function createBullMqOrderProcessConsumer(
+  options: Omit<CreateBullMqOrderProcessConsumerOptions, "recovery"> &
+    Partial<Pick<CreateBullMqOrderProcessConsumerOptions, "recovery">>,
+) {
+  return createProductionBullMqOrderProcessConsumer({
+    recovery: { recordRecoverable: async () => undefined, recordDeadLetter: async () => undefined },
+    ...options,
+  });
+}
 
 function testRedisUrl(): string {
   const redisUrl = process.env.TEST_REDIS_URL;
@@ -220,7 +230,10 @@ describe("BullMQ order-processing boundary", () => {
       persistence: {
         recordRecoverable: vi.fn(),
         findRecoverable: vi.fn().mockResolvedValue([]),
-        markEnqueued: vi.fn(),
+        claimForPublication: vi.fn().mockResolvedValue(null),
+        markPublicationFailed: vi.fn(),
+        markResolved: vi.fn(),
+        reconcileTerminal: vi.fn().mockResolvedValue(0),
         markEscalated: vi.fn(),
         recordDeadLetter,
       },
@@ -265,7 +278,9 @@ describe("BullMQ order-processing boundary", () => {
           },
         ]),
         claimForPublication: vi.fn().mockResolvedValue({ attempt: 1 }),
-        markEnqueued: vi.fn(),
+        markPublicationFailed: vi.fn(),
+        markResolved: vi.fn(),
+        reconcileTerminal: vi.fn().mockResolvedValue(0),
         markEscalated: vi.fn(),
         recordDeadLetter: vi.fn(),
       },
@@ -273,6 +288,7 @@ describe("BullMQ order-processing boundary", () => {
       logger: createSilentLogger("worker"),
       scanIntervalMs: 1000,
       batchSize: 10,
+      failedJobReader: { findFailedOrderJobs: async () => [] },
     });
     await scanner.scanOnce();
     expect(await queue.getJob(`recovery-${job.orderId}-1`)).toBeDefined();
@@ -298,7 +314,9 @@ describe("BullMQ order-processing boundary", () => {
         },
       ]),
       claimForPublication: vi.fn().mockResolvedValue({ attempt: 1 }),
-      markEnqueued: vi.fn(),
+      markPublicationFailed: vi.fn(),
+      markResolved: vi.fn(),
+      reconcileTerminal: vi.fn().mockResolvedValue(0),
       markEscalated: vi.fn(),
     };
     const handler = createOrderProcessJobHandler({
@@ -323,7 +341,10 @@ describe("BullMQ order-processing boundary", () => {
         transitionToFailed: vi.fn().mockResolvedValue({ changed: false, status: "failed" }),
       },
       logger: createSilentLogger("worker"),
-      recovery: { handoff: recoveryRecords },
+      recovery: { handoff: recoveryRecords, resolve: async () => undefined },
+      publishBusinessOutcomeUpdate: async () => undefined,
+      notificationRecordPublisher: { publishForConfirmedOrder: async () => undefined },
+      realtimePublisher: { enqueue: () => undefined },
     });
     consumer = createBullMqOrderProcessConsumer({
       connection: { url: testRedisUrl(), maxRetriesPerRequest: null },
@@ -357,6 +378,7 @@ describe("BullMQ order-processing boundary", () => {
       logger: createSilentLogger("worker"),
       scanIntervalMs: 1000,
       batchSize: 10,
+      failedJobReader: { findFailedOrderJobs: async () => [] },
     });
     await scanner.scanOnce();
     await vi.waitFor(
@@ -371,15 +393,15 @@ describe("BullMQ order-processing boundary", () => {
     expect(confirmationCalls).toHaveBeenCalledOnce();
   });
 
-  it("fails invalid payloads and reports basic job metadata", async () => {
-    const failed = deferred<OrderProcessJobFailureReport>();
+  it("dead-letters invalid payloads without invoking the handler", async () => {
     const handle = vi.fn();
+    const recordDeadLetter = vi.fn().mockResolvedValue(undefined);
     consumer = createBullMqOrderProcessConsumer({
       connection: { url: testRedisUrl(), maxRetriesPerRequest: null },
       concurrency: 1,
       handler: { handle },
       logger: createSilentLogger("worker"),
-      reportFailure: failed.resolve,
+      recovery: { recordRecoverable: vi.fn(), recordDeadLetter },
     });
 
     consumer.start();
@@ -387,14 +409,12 @@ describe("BullMQ order-processing boundary", () => {
       jobId: "invalid-job",
     });
 
-    const report = await failed.promise;
-    expect(report).toMatchObject({
-      jobId: "invalid-job",
-      jobName: orderProcessJobName,
-      attemptNumber: 1,
-      attemptsMade: 1,
+    await vi.waitFor(async () => {
+      expect(await (await queue.getJob("invalid-job"))?.getState()).toBe("completed");
     });
-    expect(report.error.name).toBe("ZodError");
+    expect(recordDeadLetter).toHaveBeenCalledWith(
+      expect.objectContaining({ jobId: "invalid-job", reason: "invalid_job_payload" }),
+    );
     expect(handle).not.toHaveBeenCalled();
   });
 
@@ -408,6 +428,7 @@ describe("BullMQ order-processing boundary", () => {
       concurrency: 1,
       handler: {
         handle: async (payload) => {
+          if (payload.orderId === job.orderId) throw new Error("job failed");
           nextJobHandled.resolve(payload);
         },
       },
@@ -419,7 +440,7 @@ describe("BullMQ order-processing boundary", () => {
     });
 
     consumer.start();
-    await queue.add(orderProcessJobName, { ...job, orderId: "invalid" } as OrderProcessJob, {
+    await queue.add(orderProcessJobName, job, {
       jobId: "reporter-error-job",
     });
     await reporterCalled.promise;

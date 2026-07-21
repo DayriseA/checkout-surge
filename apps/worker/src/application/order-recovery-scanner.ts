@@ -18,25 +18,20 @@ export interface RecoverableOrderJob {
 export interface OrderRecoveryPersistence {
   recordRecoverable(input: RecoverableOrderHandoff): Promise<void>;
   findRecoverable(input: { limit: number; now: Date }): Promise<RecoverableOrderJob[]>;
-  markEnqueued(input: {
-    recoveryKey: string;
-    nextAttemptAt: Date;
-    attempts: number;
-  }): Promise<void>;
   markEscalated(input: { recoveryKey: string; error: string }): Promise<void>;
   recordDeadLetter(input: DeadLetterRecord): Promise<void>;
-  claimForPublication?(input: {
+  claimForPublication(input: {
     recoveryKey: string;
     now: Date;
     leaseMs: number;
   }): Promise<{ attempt: number } | null>;
-  markPublicationFailed?(input: {
+  markPublicationFailed(input: {
     recoveryKey: string;
     error: string;
     nextAttemptAt: Date;
   }): Promise<void>;
-  markResolved?(input: { recoveryKey: string }): Promise<void>;
-  reconcileTerminal?(): Promise<number>;
+  markResolved(input: { recoveryKey: string }): Promise<void>;
+  reconcileTerminal(): Promise<number>;
 }
 
 export interface DeadLetterRecord {
@@ -88,18 +83,16 @@ export interface OrderRecoveryScanner {
 }
 
 export function createOrderRecoveryHandoff(
-  persistence: Pick<OrderRecoveryPersistence, "recordRecoverable"> &
-    Partial<Pick<OrderRecoveryPersistence, "markResolved">>,
+  persistence: Pick<OrderRecoveryPersistence, "recordRecoverable" | "markResolved">,
 ): OrderRecoveryHandoff {
-  const handoff: OrderRecoveryHandoff = {
+  return {
     handoff(input) {
       return persistence.recordRecoverable(input);
     },
+    resolve(input) {
+      return persistence.markResolved(input);
+    },
   };
-  if (persistence.markResolved) {
-    handoff.resolve = persistence.markResolved;
-  }
-  return handoff;
 }
 
 export function createOrderRecoveryScanner(dependencies: {
@@ -110,7 +103,7 @@ export function createOrderRecoveryScanner(dependencies: {
   batchSize: number;
   maxRecoveryAttempts?: number;
   recoveryLeaseMs?: number;
-  failedJobReader?: FailedOrderJobReader;
+  failedJobReader: FailedOrderJobReader;
   now?: () => Date;
 }): OrderRecoveryScanner {
   let timer: NodeJS.Timeout | null = null;
@@ -123,46 +116,44 @@ export function createOrderRecoveryScanner(dependencies: {
 
   const scanOnce = async () => {
     const now = dependencies.now?.() ?? new Date();
-    await dependencies.persistence.reconcileTerminal?.();
-    if (dependencies.failedJobReader) {
-      const failedJobs = await dependencies.failedJobReader.findFailedOrderJobs(
-        dependencies.batchSize,
-      );
-      for (const failed of failedJobs) {
-        if (failed.disposition === "dead_letter") {
-          await dependencies.persistence.recordDeadLetter({
-            jobId: failed.jobId ?? `unknown:${failed.jobName ?? "order-process"}`,
-            jobName: failed.jobName ?? "unknown",
-            queueName: "orders:process",
-            payload: failed.rawData,
-            ...(failed.orderId ? { orderId: failed.orderId } : {}),
-            reason: failed.reason ?? "dead_letter_reconciliation",
-            ...(failed.mismatchedFields ? { mismatchedFields: failed.mismatchedFields } : {}),
-            attemptsMade: failed.attemptsMade,
-            ...(failed.correlationId ? { correlationId: failed.correlationId } : {}),
-            observedAt: now,
-          });
-          continue;
-        }
-        if (!failed.job) continue;
-        await dependencies.persistence.recordRecoverable({
-          job: failed.job,
-          delivery: {
-            attemptNumber: failed.attemptsMade + 1,
-            attemptsMade: failed.attemptsMade,
-            maxAttempts: failed.maxAttempts,
-            deliveryId: failed.jobId ?? failed.job.orderId,
-          },
-          reason: "failed_queue_job_reconciliation",
-          error: new Error(failed.failedReason),
-          ...(failed.jobId ? { sourceJobId: failed.jobId } : {}),
-          ...(failed.dispositionId
-            ? { sourceDisposition: failed.dispositionId }
-            : failed.jobId
-              ? { sourceDisposition: `${failed.jobId}:${failed.attemptsMade + 1}` }
-              : {}),
+    await dependencies.persistence.reconcileTerminal();
+    const failedJobs = await dependencies.failedJobReader.findFailedOrderJobs(
+      dependencies.batchSize,
+    );
+    for (const failed of failedJobs) {
+      if (failed.disposition === "dead_letter") {
+        await dependencies.persistence.recordDeadLetter({
+          jobId: failed.jobId ?? `unknown:${failed.jobName ?? "order-process"}`,
+          jobName: failed.jobName ?? "unknown",
+          queueName: "orders:process",
+          payload: failed.rawData,
+          ...(failed.orderId ? { orderId: failed.orderId } : {}),
+          reason: failed.reason ?? "dead_letter_reconciliation",
+          ...(failed.mismatchedFields ? { mismatchedFields: failed.mismatchedFields } : {}),
+          attemptsMade: failed.attemptsMade,
+          ...(failed.correlationId ? { correlationId: failed.correlationId } : {}),
+          observedAt: now,
         });
+        continue;
       }
+      if (!failed.job) continue;
+      await dependencies.persistence.recordRecoverable({
+        job: failed.job,
+        delivery: {
+          attemptNumber: failed.attemptsMade + 1,
+          attemptsMade: failed.attemptsMade,
+          maxAttempts: failed.maxAttempts,
+          deliveryId: failed.jobId ?? failed.job.orderId,
+        },
+        reason: "failed_queue_job_reconciliation",
+        error: new Error(failed.failedReason),
+        ...(failed.jobId ? { sourceJobId: failed.jobId } : {}),
+        ...(failed.dispositionId
+          ? { sourceDisposition: failed.dispositionId }
+          : failed.jobId
+            ? { sourceDisposition: `${failed.jobId}:${failed.attemptsMade + 1}` }
+            : {}),
+      });
     }
     const candidates = await dependencies.persistence.findRecoverable({
       limit: dependencies.batchSize,
@@ -192,39 +183,27 @@ export function createOrderRecoveryScanner(dependencies: {
         escalated += 1;
         continue;
       }
-      let publicationAttempt = candidate.attempts + 1;
-      if (dependencies.persistence.claimForPublication) {
-        const claim = await dependencies.persistence.claimForPublication({
-          recoveryKey: candidate.recoveryKey,
-          now,
-          leaseMs: recoveryLeaseMs,
-        });
-        if (!claim) continue;
-        publicationAttempt = claim.attempt;
-      }
+      const claim = await dependencies.persistence.claimForPublication({
+        recoveryKey: candidate.recoveryKey,
+        now,
+        leaseMs: recoveryLeaseMs,
+      });
+      if (!claim) continue;
+      const publicationAttempt = claim.attempt;
       try {
         await dependencies.publisher.enqueue(candidate.job, {
           jobId: `recovery-${candidate.job.orderId}-${publicationAttempt}`,
           // Recovery is deliberately not constrained by the normal delivery budget.
           attempts: 1,
         });
-        if (!dependencies.persistence.claimForPublication) {
-          await dependencies.persistence.markEnqueued({
-            recoveryKey: candidate.recoveryKey,
-            nextAttemptAt: new Date(now.getTime() + recoveryLeaseMs),
-            attempts: publicationAttempt,
-          });
-        }
         enqueued += 1;
       } catch (error) {
         failed += 1;
-        if (dependencies.persistence.markPublicationFailed) {
-          await dependencies.persistence.markPublicationFailed({
-            recoveryKey: candidate.recoveryKey,
-            error: error instanceof Error ? error.message : String(error),
-            nextAttemptAt: new Date(now.getTime() + 1_000),
-          });
-        }
+        await dependencies.persistence.markPublicationFailed({
+          recoveryKey: candidate.recoveryKey,
+          error: error instanceof Error ? error.message : String(error),
+          nextAttemptAt: new Date(now.getTime() + 1_000),
+        });
         dependencies.logger.error(
           { err: error, recoveryKey: candidate.recoveryKey, orderId: candidate.job.orderId },
           "Order recovery job could not be enqueued.",

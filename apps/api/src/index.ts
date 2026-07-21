@@ -2,21 +2,28 @@ import { contractsPackageName } from "@checkout-surge/contracts";
 import {
   BusinessOutcomePublicationScheduler,
   clearErpCircuitBreakerSnapshots,
+  completeGeneratedRunTeardown,
   createAbortableDatabaseConnection,
   createDatabaseConnection,
   createRedisClient,
   createRedisDashboardEventSubscriber,
   createSqlClient,
   dbPackageName,
+  deleteGeneratedRunDurable,
+  deleteGeneratedRunRedisState,
+  demoRuns,
   getInventoryStatus,
   markReservationPendingPersistence,
+  prepareGeneratedRunTeardown,
   promoteReservationIdempotencyToAccepted,
   publishBusinessOutcomeDashboardUpdate,
   publishDashboardEvent,
   reserveInventoryStock,
   reverseReservation,
+  setRunSaleEligibility,
 } from "@checkout-surge/db";
 import { createServiceLogger, loggerPackageName } from "@checkout-surge/logger";
+import { eq } from "drizzle-orm";
 import { createBullMqDemoQueueMaintenance } from "./queue/bullmq-demo-queue-maintenance.js";
 import { createBullMqOrderProcessJobPublisher } from "./queue/bullmq-order-process-job-publisher.js";
 import { createBullMqOrderProcessQueueInspector } from "./queue/bullmq-order-process-queue-inspector.js";
@@ -249,6 +256,10 @@ export async function startApiServer(): Promise<void> {
     db: connection.db,
     redis,
     clearErpCircuitBreakerState: () => clearErpCircuitBreakerSnapshots(redis),
+    deleteGeneratedRunDurable,
+    deleteGeneratedRunRedisState,
+    prepareGeneratedRunTeardown,
+    completeGeneratedRunTeardown,
     queueMaintenance: demoQueueMaintenance,
     terminalRunWriter,
     trafficAborter: trafficExecutionGateway,
@@ -371,11 +382,13 @@ export async function startApiServer(): Promise<void> {
     drainTimeoutSeconds: config.demoRunDrainTimeoutSeconds,
   });
   const demoRunStartupReconciliationService = new DemoRunStartupReconciliationService({
-    db: connection.db,
-    redis,
     logger,
     pendingPersistenceReconciler,
     completionEnrichmentService: trafficCompletionEnrichmentService,
+    listDrainingRuns: () =>
+      connection.db.select().from(demoRuns).where(eq(demoRuns.status, "draining")),
+    closeRunSaleEligibility: ({ runId, saleOfferId }) =>
+      setRunSaleEligibility(redis, { runId, saleOfferId, status: "closed" }),
   });
   const demoRunService = new DemoRunService({
     db: connection.db,

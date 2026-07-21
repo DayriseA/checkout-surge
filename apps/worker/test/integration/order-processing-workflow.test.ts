@@ -46,10 +46,10 @@ import {
   HttpErpOrderConfirmation,
   isTemporaryErpConfirmationError,
 } from "../../src/application/erp-confirmation-client.js";
-import { createNotificationRecordJobHandler } from "../../src/application/notification-record-job-handler.js";
+import { createNotificationRecordJobHandler as createProductionNotificationRecordJobHandler } from "../../src/application/notification-record-job-handler.js";
 import { createNotificationRecoveryScanner } from "../../src/application/notification-recovery-scanner.js";
 import {
-  createOrderProcessJobHandler,
+  createOrderProcessJobHandler as createProductionOrderProcessJobHandler,
   type OrderConfirmation,
   type OrderTransitionPersistence,
 } from "../../src/application/order-process-job-handler.js";
@@ -67,7 +67,8 @@ import {
 import { createBullMqNotificationRecordConsumer } from "../../src/queue/bullmq-notification-record-consumer.js";
 import { createBullMqNotificationRecordPublisher } from "../../src/queue/bullmq-notification-record-publisher.js";
 import {
-  createBullMqOrderProcessConsumer,
+  type CreateBullMqOrderProcessConsumerOptions,
+  createBullMqOrderProcessConsumer as createProductionBullMqOrderProcessConsumer,
   type OrderProcessJobFailureReport,
 } from "../../src/queue/bullmq-order-process-consumer.js";
 import type { OrderProcessConsumer } from "../../src/queue/order-process-consumer.js";
@@ -96,6 +97,60 @@ const runScopedJob: OrderProcessJob = {
   ...job,
   runId: ids.run,
 };
+
+type HandlerDependencies = Parameters<typeof createProductionOrderProcessJobHandler>[0];
+
+function createOrderProcessJobHandler(
+  dependencies: Omit<
+    HandlerDependencies,
+    | "publishBusinessOutcomeUpdate"
+    | "notificationRecordPublisher"
+    | "recovery"
+    | "realtimePublisher"
+  > &
+    Partial<
+      Pick<
+        HandlerDependencies,
+        "publishBusinessOutcomeUpdate" | "notificationRecordPublisher" | "realtimePublisher"
+      >
+    >,
+) {
+  return createProductionOrderProcessJobHandler({
+    publishBusinessOutcomeUpdate: async () => undefined,
+    notificationRecordPublisher: { publishForConfirmedOrder: async () => undefined },
+    recovery: { handoff: async () => undefined, resolve: async () => undefined },
+    realtimePublisher: { enqueue: () => undefined },
+    ...dependencies,
+  });
+}
+
+function createNotificationRecordJobHandler(
+  dependencies: Omit<
+    Parameters<typeof createProductionNotificationRecordJobHandler>[0],
+    "publishBusinessOutcomeUpdate"
+  > &
+    Partial<
+      Pick<
+        Parameters<typeof createProductionNotificationRecordJobHandler>[0],
+        "publishBusinessOutcomeUpdate"
+      >
+    >,
+) {
+  return createProductionNotificationRecordJobHandler({
+    publishBusinessOutcomeUpdate: async () => undefined,
+    ...dependencies,
+  });
+}
+
+function createBullMqOrderProcessConsumer(
+  options: Omit<CreateBullMqOrderProcessConsumerOptions, "recovery"> &
+    Partial<Pick<CreateBullMqOrderProcessConsumerOptions, "recovery">>,
+) {
+  return createProductionBullMqOrderProcessConsumer({
+    recovery: { recordRecoverable: async () => undefined, recordDeadLetter: async () => undefined },
+    ...options,
+  });
+}
 
 function requireTestEnv(name: "TEST_DATABASE_URL" | "TEST_REDIS_URL"): string {
   const value = process.env[name];
@@ -1267,6 +1322,15 @@ function createFinalizationService(
     db: connection.db,
     redis,
     logger: createSilentLogger("api"),
+    pendingPersistenceReconciler: {
+      reconcileSaleOffer: async () => ({
+        found: 0,
+        materialized: 0,
+        reconciled: 0,
+        reversed: 0,
+        failed: 0,
+      }),
+    },
     terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(connection.db),
     terminalInventoryRead: {
       read: ({ saleOfferId, observedAt }) => getInventoryStatus(redis, saleOfferId, observedAt),

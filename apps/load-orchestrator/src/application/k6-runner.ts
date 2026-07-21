@@ -8,11 +8,7 @@ import type {
 } from "@checkout-surge/contracts";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { type LoadApiClient, MetricBatcher } from "./api-client.js";
-import {
-  type DurableExecution,
-  type FileExecutionStore,
-  withCompletion,
-} from "./execution-store.js";
+import { type DurableExecution, type ExecutionStore, withCompletion } from "./execution-store.js";
 import { K6JsonLineFramer } from "./k6-json-line-framer.js";
 import { K6LiveMetricAggregator } from "./k6-live-metric-aggregator.js";
 import {
@@ -73,7 +69,7 @@ export class SpawnK6Runner implements K6Runner {
       now?: () => Date;
       spawnProcess?: typeof spawn;
       completionRetry?: CompletionRetryConfig;
-      executionStore?: FileExecutionStore;
+      executionStore: ExecutionStore;
       retryIntervalMs?: number;
       shutdownGraceMs?: number;
       shutdownKillWaitMs?: number;
@@ -108,7 +104,7 @@ export class SpawnK6Runner implements K6Runner {
   } | null = null;
 
   async initialize(): Promise<void> {
-    const execution = await this.options.executionStore?.read();
+    const execution = await this.options.executionStore.read();
     if (execution?.state === "accepted" || execution?.state === "executing") {
       const accumulator = new K6RunAccumulator({
         runId: execution.request.runId,
@@ -117,7 +113,7 @@ export class SpawnK6Runner implements K6Runner {
         startedAt: new Date(execution.acceptedAt),
         executionPlan: generateK6Script(execution.request).executionPlan,
       });
-      await this.options.executionStore?.update(
+      await this.options.executionStore.update(
         withCompletion(
           execution,
           accumulator.completionReport({
@@ -139,7 +135,7 @@ export class SpawnK6Runner implements K6Runner {
   async statusSnapshot(
     runId: string,
   ): Promise<{ state: DurableExecution["state"] | "unknown"; acceptedAt?: string }> {
-    const execution = await this.options.executionStore?.read();
+    const execution = await this.options.executionStore.read();
     return execution?.request.runId === runId
       ? { state: execution.state, acceptedAt: execution.acceptedAt }
       : { state: "unknown" };
@@ -188,10 +184,10 @@ export class SpawnK6Runner implements K6Runner {
       if (termination) await termination;
       else if (child) await this.terminateAndReap(child);
       if (this.activeCleanup) await this.activeCleanup;
-      const execution = await this.options.executionStore?.read();
+      const execution = await this.options.executionStore.read();
       if (execution?.request.runId === runId) {
         const { completion: _completion, ...withoutCompletion } = execution;
-        await this.options.executionStore?.update({ ...withoutCompletion, state: "completed" });
+        await this.options.executionStore.update({ ...withoutCompletion, state: "completed" });
       }
       this.cancellingRunId = null;
       this.unconfirmedTerminationRunId = null;
@@ -238,7 +234,7 @@ export class SpawnK6Runner implements K6Runner {
       throw new ExecutionSlotConflictError(this.currentPreparation.runId);
     }
     if (this.currentChild) {
-      const current = await this.options.executionStore?.read();
+      const current = await this.options.executionStore.read();
       if (current?.request.runId === input.runId) {
         return {
           startedAt: new Date(current.acceptedAt),
@@ -259,9 +255,9 @@ export class SpawnK6Runner implements K6Runner {
 
   private async prepareAndStart(input: TrafficExecutionStartRequest): Promise<K6ExecutionStart> {
     const startedAt = this.now();
-    const acceptance = await this.options.executionStore?.accept(input, startedAt);
-    const accepted = acceptance?.execution;
-    if (accepted && !acceptance.created && accepted.state !== "accepted") {
+    const acceptance = await this.options.executionStore.accept(input, startedAt);
+    const accepted = acceptance.execution;
+    if (!acceptance.created && accepted.state !== "accepted") {
       return {
         startedAt: new Date(accepted.acceptedAt),
         plannedRequests: generateK6Script(input).plannedRequests,
@@ -314,8 +310,7 @@ export class SpawnK6Runner implements K6Runner {
       });
       this.activeCleanup = completionSettled;
       try {
-        if (accepted)
-          await this.options.executionStore?.update({ ...accepted, state: "executing" });
+        await this.options.executionStore.update({ ...accepted, state: "executing" });
       } catch (error) {
         await this.terminateAndReap(child);
         await completionSettled;
@@ -344,7 +339,7 @@ export class SpawnK6Runner implements K6Runner {
 
   private async persistPreparationFailure(
     input: TrafficExecutionStartRequest,
-    execution: DurableExecution | undefined,
+    execution: DurableExecution,
     plannedRequests: number,
     executionPlan: ReturnType<typeof generateK6Script>["executionPlan"],
     diagnostics: Awaited<ReturnType<typeof collectLoadRunDiagnostics>>,
@@ -352,10 +347,6 @@ export class SpawnK6Runner implements K6Runner {
     error: unknown,
     workDir: string | null,
   ): Promise<void> {
-    if (!execution || !this.options.executionStore) {
-      if (workDir) await rm(workDir, { recursive: true, force: true }).catch(() => undefined);
-      return;
-    }
     const accumulator = new K6RunAccumulator({
       runId: input.runId,
       correlationId: input.correlationId,
@@ -620,23 +611,21 @@ export class SpawnK6Runner implements K6Runner {
       ...(summary.warning ? { summaryExportWarning: summary.warning } : {}),
     });
 
-    let completionPersisted = !this.options.executionStore;
+    let completionPersisted = false;
     try {
-      if (this.options.executionStore) {
-        const execution = await this.options.executionStore.read();
-        if (execution?.request.runId !== report.runId) {
-          throw new Error("The durable execution journal no longer matches the completed child.");
-        }
-        await this.options.executionStore.update(withCompletion(execution, report));
-        completionPersisted = true;
+      const execution = await this.options.executionStore.read();
+      if (execution?.request.runId !== report.runId) {
+        throw new Error("The durable execution journal no longer matches the completed child.");
       }
+      await this.options.executionStore.update(withCompletion(execution, report));
+      completionPersisted = true;
       await this.sendCompletionWithRetry(report);
-      const delivered = await this.options.executionStore?.read();
+      const delivered = await this.options.executionStore.read();
       if (delivered?.request.runId === report.runId) {
-        await this.options.executionStore?.update({ ...delivered, state: "completed" });
+        await this.options.executionStore.update({ ...delivered, state: "completed" });
       }
     } catch (error) {
-      if (!completionPersisted && this.options.executionStore) {
+      if (!completionPersisted) {
         this.pendingPersistence = { report, workDir: input.workDir };
       }
       this.options.logger.error(
@@ -663,7 +652,7 @@ export class SpawnK6Runner implements K6Runner {
 
   private async attemptPendingDelivery(): Promise<void> {
     try {
-      if (this.pendingPersistence && this.options.executionStore) {
+      if (this.pendingPersistence) {
         const execution = await this.options.executionStore.read();
         if (execution?.request.runId === this.pendingPersistence.report.runId) {
           await this.options.executionStore.update(
@@ -676,10 +665,10 @@ export class SpawnK6Runner implements K6Runner {
           this.pendingPersistence = null;
         }
       }
-      const execution = await this.options.executionStore?.read();
+      const execution = await this.options.executionStore.read();
       if (execution?.state !== "completion_pending" || !execution.completion) return;
       await this.options.apiClient.sendCompletion(execution.completion);
-      await this.options.executionStore?.update({ ...execution, state: "completed" });
+      await this.options.executionStore.update({ ...execution, state: "completed" });
     } catch (error) {
       this.options.logger.warn(
         { err: error },

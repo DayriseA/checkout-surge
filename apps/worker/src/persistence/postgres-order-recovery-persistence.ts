@@ -113,22 +113,6 @@ export class PostgresOrderRecoveryPersistence implements OrderRecoveryPersistenc
     }));
   }
 
-  async markEnqueued(input: {
-    recoveryKey: string;
-    nextAttemptAt: Date;
-    attempts: number;
-  }): Promise<void> {
-    await this.db
-      .update(orderRecoveryJobs)
-      .set({
-        status: "enqueued",
-        attempts: input.attempts,
-        nextAttemptAt: input.nextAttemptAt,
-        updatedAt: this.now(),
-      })
-      .where(eq(orderRecoveryJobs.recoveryKey, input.recoveryKey));
-  }
-
   async claimForPublication(input: {
     recoveryKey: string;
     now: Date;
