@@ -348,7 +348,7 @@ describe("useDashboardRecovery", () => {
     });
   });
 
-  it("bounds a mixed sustained stream and defers trailing-read convergence to 30 seconds", async () => {
+  it("bounds Watch's mixed sustained Preview 1k stream and defers trailing-read convergence to 30 seconds", async () => {
     vi.useFakeTimers();
     const first = deferred<Response>();
     const trailing = deferred<Response>();
@@ -368,6 +368,13 @@ describe("useDashboardRecovery", () => {
       ...recoveryFixture(),
       scope: { runId: run.runId, saleOfferId: run.saleOfferId ?? null },
       currentRun: run,
+    });
+    expect(run).toMatchObject({
+      presetName: "Preview 1k",
+      configSnapshot: {
+        trafficConfig: { buyerCount: 1_000 },
+        inventoryConfig: { startingStock: 250 },
+      },
     });
     const fetchMock = vi
       .fn()
@@ -713,7 +720,7 @@ function runFixture(
   return {
     runId,
     presetId: "33333333-3333-4333-8333-333333333333",
-    presetName: "Hook run",
+    presetName: "Preview 1k",
     operatorMode: "public",
     status: "active",
     trafficStatus: "active",
@@ -723,14 +730,14 @@ function runFixture(
     configSnapshot: {
       trafficConfig: {
         mode: "buyer-spike",
-        buyerCount: 100,
+        buyerCount: 1_000,
         duplicateEachBuyerAttempt: false,
         startDelaySeconds: 0,
         maxDurationSeconds: 2,
         quantityPerAttempt: 1,
       },
       inventoryConfig: {
-        startingStock: 25,
+        startingStock: 250,
         quantityPerCheckout: 1,
         reservationHoldMinutes: 15,
       },

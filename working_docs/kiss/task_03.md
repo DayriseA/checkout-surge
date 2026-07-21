@@ -22,11 +22,11 @@ Retain strict root checking of production and test sources. Do not use `@ts-igno
 
 ## Acceptance criteria
 
-- [ ] All 20 named current test-source errors are repaired at their owning test boundaries.
-- [ ] No suppressions or source/test exclusions were added.
-- [ ] Production typings and public vocabulary remain intact.
-- [ ] `pnpm type-check` exits successfully from the repository root.
-- [ ] Any type-check verification recorded after this repair reports the full root command result; package-scoped checks are supplemental only.
+- [x] All 20 named current test-source errors are repaired at their owning test boundaries.
+- [x] No suppressions or source/test exclusions were added.
+- [x] Production typings and public vocabulary remain intact.
+- [x] `pnpm type-check` exits successfully from the repository root.
+- [x] Any type-check verification recorded after this repair reports the full root command result; package-scoped checks are supplemental only.
 
 ## Verification
 
