@@ -63,7 +63,6 @@ vi.mock("../src/app/lib/server/admin-page-session.js", () => ({
 vi.mock("../src/app/lib/server/admin-reads.js", () => ({
   readAdminErpChaos: vi.fn(),
   readAdminPresets: vi.fn(),
-  readAdminRecovery: vi.fn(),
   readAdminRuntimePolicy: vi.fn(),
 }));
 vi.mock("next/navigation", () => ({
@@ -551,7 +550,6 @@ function dashboardSnapshotFixture(): DashboardBackendSnapshot {
     liveness: available(livenessFixture()),
     readiness: available(readinessFixture()),
     recovery: available(dashboardRecoveryFixture()),
-    erpChaos: available(erpChaosStatusFixture()),
   };
 }
 

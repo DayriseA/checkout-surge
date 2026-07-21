@@ -1,7 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  canTransitionOrder,
-  canTransitionReservation,
   demoPresetVisibilitySchema,
   demoPresetVisibilityValues,
   demoRunReservationOutcomeSchema,
@@ -14,14 +12,12 @@ import {
   erpAttemptStatusValues,
   eventNameForOrderTransition,
   eventNameForReservationTransition,
-  ORDER_TRANSITIONS,
   operatorModeSchema,
   operatorModeValues,
   orderEventNameSchema,
   orderEventNameValues,
   orderStatusSchema,
   orderStatusValues,
-  RESERVATION_TRANSITIONS,
   recoveryJobStatusSchema,
   recoveryJobStatusValues,
   reservationPendingPersistenceStatusSchema,
@@ -106,43 +102,7 @@ describe("shared PostgreSQL vocabulary", () => {
   });
 });
 
-describe("lifecycle transition policy", () => {
-  it("defines only the allowed reservation transitions", () => {
-    expect(RESERVATION_TRANSITIONS).toEqual({
-      secured: ["released", "expired"],
-      rejected: [],
-      released: [],
-      expired: [],
-    });
-    expect(canTransitionReservation("secured", "released")).toBe(true);
-    expect(canTransitionReservation("secured", "expired")).toBe(true);
-    expect(canTransitionReservation("secured", "rejected")).toBe(false);
-    for (const terminal of ["rejected", "released", "expired"] as const) {
-      for (const destination of reservationStatusValues) {
-        expect(canTransitionReservation(terminal, destination)).toBe(false);
-      }
-    }
-  });
-
-  it("defines only the allowed order transitions", () => {
-    expect(ORDER_TRANSITIONS).toEqual({
-      queued: ["processing", "failed"],
-      processing: ["confirmed", "failed"],
-      confirmed: [],
-      failed: [],
-    });
-    expect(canTransitionOrder("queued", "processing")).toBe(true);
-    expect(canTransitionOrder("queued", "failed")).toBe(true);
-    expect(canTransitionOrder("processing", "confirmed")).toBe(true);
-    expect(canTransitionOrder("processing", "failed")).toBe(true);
-    expect(canTransitionOrder("processing", "queued")).toBe(false);
-    for (const terminal of ["confirmed", "failed"] as const) {
-      for (const destination of orderStatusValues) {
-        expect(canTransitionOrder(terminal, destination)).toBe(false);
-      }
-    }
-  });
-
+describe("lifecycle event names", () => {
   it("maps every initial or destination status to its event without validating a pair", () => {
     for (const status of reservationStatusValues) {
       expect(eventNameForReservationTransition(status)).toBe(`reservation.${status}`);

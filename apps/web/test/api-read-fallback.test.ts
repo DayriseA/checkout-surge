@@ -56,10 +56,6 @@ describe("dashboard backend API reads", () => {
       status: "unavailable",
       reason: "Authoritative run state is loading.",
     });
-    expect(snapshot.erpChaos).toMatchObject({
-      status: "unavailable",
-      reason: "backend offline",
-    });
   });
 
   it("does not call dashboard recovery during the server-side watch bootstrap", async () => {
@@ -89,46 +85,7 @@ describe("dashboard backend API reads", () => {
           });
         }
 
-        if (url.endsWith("/chaos")) {
-          return jsonResponse({
-            latencyMs: 125,
-            maxTps: 50,
-            errorRate: 0.1,
-            forcedOutage: false,
-            updatedAt: "2026-06-20T00:00:10.000Z",
-          });
-        }
-
-        return jsonResponse({
-          correlationId: "corr-recovery",
-          scope: null,
-          currentRun: null,
-          inventory: null,
-          recentMetrics: [],
-          queue: null,
-          erp: null,
-          businessOutcome: {
-            acceptedReservations: 3,
-            soldOutRejections: 2,
-            queuedOrders: 1,
-            processingOrders: 0,
-            retryingOrders: 0,
-            confirmedOrders: 1,
-            failedOrders: 0,
-            pendingPersistenceCount: 0,
-            notificationsRecorded: 0,
-          },
-          consistencyLag: {
-            confirmedOrderCount: 1,
-            pendingConfirmationCount: 1,
-            averageLagMs: 225,
-            p95LagMs: 225,
-            maxLagMs: 225,
-            oldestPendingAgeSeconds: 8.5,
-            measuredAt: "2026-06-20T00:00:10.000Z",
-          },
-          recoveredAt: "2026-06-20T00:00:10.000Z",
-        });
+        throw new Error(`Unexpected backend read: ${url}`);
       }),
     );
 
@@ -136,14 +93,10 @@ describe("dashboard backend API reads", () => {
 
     expect(snapshot.recovery.status).toBe("unavailable");
     expect(requestedUrls).not.toContain("http://api.internal/dashboard/recovery");
-    expect(snapshot.erpChaos).toMatchObject({
-      status: "available",
-      data: {
-        latencyMs: 125,
-        maxTps: 50,
-        errorRate: 0.1,
-      },
-    });
+    expect(requestedUrls).toEqual([
+      "http://api.internal/health/live",
+      "http://api.internal/health/ready",
+    ]);
   });
 
   it("reads paginated run history through the shared API contract", async () => {

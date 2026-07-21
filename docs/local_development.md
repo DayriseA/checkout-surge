@@ -331,8 +331,8 @@ Useful package commands:
 | `pnpm --filter api test:api` | Run API package route/service-boundary tests |
 | `pnpm --filter worker test:integration` | Run worker integration tests |
 | `pnpm --filter mock-erp test:unit` | Run mock ERP unit tests |
-| `pnpm --filter load-orchestrator test:api` | Run load orchestrator API tests |
-| `pnpm --filter web test:api` | Run dashboard proxy and backend-read route tests |
+| `pnpm --filter load-orchestrator test:focused:service` | Run the focused load orchestrator service tests |
+| `pnpm --filter web test:focused:proxy` | Run the focused dashboard proxy and backend-read tests |
 
 ## Testing Workflow
 

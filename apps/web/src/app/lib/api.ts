@@ -4,9 +4,6 @@ import {
   adminRunHistoryDetailResponseSchema,
   controlServiceTokenHeaderName,
   type DashboardRecoveryResponse,
-  type ErpChaosStatus,
-  erpChaosStatusPath,
-  erpChaosStatusSchema,
   type HealthResponse,
   healthResponseSchema,
   type LivenessResponse,
@@ -33,7 +30,6 @@ export interface DashboardBackendSnapshot {
   liveness: BackendRead<LivenessResponse>;
   readiness: BackendRead<HealthResponse>;
   recovery: BackendRead<DashboardRecoveryResponse>;
-  erpChaos: BackendRead<ErpChaosStatus>;
 }
 
 export interface PublicDemoSurface {
@@ -44,10 +40,6 @@ export interface PublicDemoSurface {
 
 function apiBaseUrl(): string {
   return webServerConfig().apiBaseUrl;
-}
-
-function mockErpBaseUrl(): string {
-  return webServerConfig().mockErpBaseUrl;
 }
 
 function errorReason(error: unknown): string {
@@ -88,14 +80,12 @@ export function pendingDashboardRecovery(): BackendRead<DashboardRecoveryRespons
 
 export async function getDashboardBackendSnapshot(): Promise<DashboardBackendSnapshot> {
   const apiBase = apiBaseUrl();
-  const mockErpBase = mockErpBaseUrl();
-  const [liveness, readiness, erpChaos] = await Promise.all([
+  const [liveness, readiness] = await Promise.all([
     readJson(`${apiBase}/health/live`, livenessResponseSchema),
     readJson(`${apiBase}/health/ready`, healthResponseSchema),
-    readJson(`${mockErpBase}${erpChaosStatusPath}`, erpChaosStatusSchema),
   ]);
 
-  return { liveness, readiness, recovery: pendingDashboardRecovery(), erpChaos };
+  return { liveness, readiness, recovery: pendingDashboardRecovery() };
 }
 
 export async function getPublicDemoSurface(): Promise<PublicDemoSurface> {

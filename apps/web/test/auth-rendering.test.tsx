@@ -6,7 +6,6 @@ const sessionMock = vi.hoisted(() => vi.fn(async () => false));
 const adminReads = vi.hoisted(() => ({
   erp: vi.fn(async () => ({ status: "available" })),
   presets: vi.fn(async () => ({ status: "available" })),
-  recovery: vi.fn(async () => ({ status: "available" })),
   policy: vi.fn(async () => ({ status: "available" })),
 }));
 const historyRead = vi.hoisted(() => vi.fn());
@@ -16,7 +15,6 @@ vi.mock("../src/app/lib/server/admin-page-session.js", () => ({
 vi.mock("../src/app/lib/server/admin-reads.js", () => ({
   readAdminErpChaos: adminReads.erp,
   readAdminPresets: adminReads.presets,
-  readAdminRecovery: adminReads.recovery,
   readAdminRuntimePolicy: adminReads.policy,
 }));
 vi.mock("../src/app/components/admin/admin-authenticated-surface.js", () => ({
@@ -81,7 +79,6 @@ describe("server-decided admin presentation", () => {
     expect(adminReads.erp).toHaveBeenCalledOnce();
     expect(adminReads.presets).toHaveBeenCalledOnce();
     expect(adminReads.policy).toHaveBeenCalledOnce();
-    expect(adminReads.recovery).not.toHaveBeenCalled();
   });
 
   it("keeps History public while including cleanup only in authenticated server HTML", async () => {

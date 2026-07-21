@@ -148,28 +148,6 @@ export const queueNameValues = [orderProcessQueueName] as const;
 export const queueNameSchema = z.enum(queueNameValues);
 export type QueueName = z.infer<typeof queueNameSchema>;
 
-export const RESERVATION_TRANSITIONS = {
-  secured: ["released", "expired"],
-  rejected: [],
-  released: [],
-  expired: [],
-} as const satisfies Record<ReservationStatus, readonly ReservationStatus[]>;
-
-export const ORDER_TRANSITIONS = {
-  queued: ["processing", "failed"],
-  processing: ["confirmed", "failed"],
-  confirmed: [],
-  failed: [],
-} as const satisfies Record<OrderStatus, readonly OrderStatus[]>;
-
-export function canTransitionReservation(from: ReservationStatus, to: ReservationStatus): boolean {
-  return (RESERVATION_TRANSITIONS[from] as readonly ReservationStatus[]).includes(to);
-}
-
-export function canTransitionOrder(from: OrderStatus, to: OrderStatus): boolean {
-  return (ORDER_TRANSITIONS[from] as readonly OrderStatus[]).includes(to);
-}
-
 export function eventNameForReservationTransition(status: ReservationStatus): OrderEventName {
   return `reservation.${status}`;
 }

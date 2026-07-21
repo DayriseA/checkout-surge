@@ -24,7 +24,6 @@ import {
   applyDashboardEvent,
   createDashboardState,
   dashboardStateReducer,
-  shouldRequestAuthoritativeRecoveryAfterEvent,
   shouldRequestAuthoritativeRecoveryAfterScopedEvent,
 } from "../src/app/lib/dashboard-state.js";
 
@@ -818,12 +817,6 @@ describe("Phase 6 dashboard behavior", () => {
 
     expect(applyDashboardEvent(recovery, delayedEvent)).toBe(recovery);
     expect(shouldRequestAuthoritativeRecoveryAfterScopedEvent(recovery, delayedEvent)).toBe(false);
-  });
-
-  it("uses authoritative recovery after terminal run events", () => {
-    expect(shouldRequestAuthoritativeRecoveryAfterEvent(runEventFixture("completed"))).toBe(true);
-    expect(shouldRequestAuthoritativeRecoveryAfterEvent(runEventFixture("failed"))).toBe(true);
-    expect(shouldRequestAuthoritativeRecoveryAfterEvent(runEventFixture("active"))).toBe(false);
   });
 
   it("does not regress any finalized projection when live events arrive out of order", () => {

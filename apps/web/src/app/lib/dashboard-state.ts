@@ -527,10 +527,6 @@ function eventWatermarksForRecovery(
   };
 }
 
-export function shouldRequestAuthoritativeRecoveryAfterEvent(event: DashboardEvent): boolean {
-  return event.type === "load.run.updated" && ["completed", "failed"].includes(event.run.status);
-}
-
 export function shouldRequestAuthoritativeRecoveryAfterScopedEvent(
   recovery: BackendRead<DashboardRecoveryResponse>,
   event: DashboardEvent,
