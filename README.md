@@ -6,6 +6,8 @@ The Node.js system and its containerized reference runtime are implemented and l
 
 The buyers, mock ERP downstream dependency, and post-confirmation notifications are simulated because this is a systems demonstration, not a commerce business. The local runtime and verification paths are designed to make inventory consistency, API responsiveness, downstream pressure, and delayed processing observable; benchmark claims require separate reproducible evidence from the environment in which they are measured.
 
+The supported local topology is single-instance: one API process is also the sole maintenance authority, one Next.js process serves the web application, one load-orchestrator process owns one journal, and one worker runtime owns background processing. These remain separate containers. The single Caddy dashboard proxy/edge is only the ingress and routing boundary; it is not another web application process or application authority. Horizontally scaled application services are outside the accepted product and verification contract.
+
 ---
 
 ## How It Works
@@ -16,7 +18,7 @@ During a simulated limited-inventory surge:
 2. k6 generates direct API traffic from synthetic buyers using the run ID and generated sale offer ID.
 3. Redis atomically reserves inventory for that run-scoped limited-stock offer.
 4. The API returns a reservation response and pushes order processing to BullMQ; a worker-owned dispatch scanner repairs a committed order whose immediate enqueue was lost.
-5. A worker confirms orders against the mock ERP / downstream business system with run-scoped distributed admission, retry, timeout, and circuit-breaker behavior. Durable ERP-result and recovery records protect accepted downstream results across retries and restarts.
+5. The worker runtime confirms orders against the mock ERP / downstream business system with run-scoped admission, retry, timeout, and circuit-breaker behavior. Durable ERP-result and recovery records protect accepted downstream results across retries and restarts.
 6. A simulated notification record is written after successful confirmation.
 7. The live spectator view shows request rate, queue depth, inventory drain, completion outcomes, and consistency lag in real time.
 

@@ -2,7 +2,7 @@
 
 This document defines the implemented load generation and metric streaming behavior. The demo flow starts traffic from API-owned preset run snapshots. The load orchestrator owns k6 execution, but the public/admin product contract is a discriminated traffic config plus generated `runId` and generated `saleOfferId`.
 
-The implemented reference boundary is one API-owned current demo run and one file-journaled traffic execution in a single load-orchestrator process. Distributed k6 execution, horizontally coordinated orchestrator slots, hosted benchmark isolation, and benchmark evidence are not implemented by this local contract.
+The implemented reference boundary is one API-owned current demo run, with one API process as the sole maintenance authority, one Next.js web process, one worker runtime, and one file-journaled traffic execution in a single load-orchestrator process. The single Caddy dashboard proxy/edge remains only an ingress path. Distributed k6 execution, horizontally coordinated orchestrator slots, horizontally replicated application services, hosted benchmark isolation, and benchmark evidence are not implemented by this local contract.
 
 ---
 

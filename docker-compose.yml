@@ -1,5 +1,9 @@
 name: ${COMPOSE_PROJECT_NAME:-checkout-surge-gpt-55}
 
+# Supported local contract: one api (the sole maintenance authority), one worker runtime,
+# one Next.js web process, and one load-orchestrator process with one journal.
+# dashboard-proxy is the single ingress path, not another application authority.
+
 x-app-env: &app-env
   NODE_ENV: production
   LOG_LEVEL: ${LOG_LEVEL:-info}
