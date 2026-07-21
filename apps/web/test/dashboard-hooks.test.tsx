@@ -488,6 +488,45 @@ describe("useDashboardRecovery", () => {
     expect(result.current.recovery).toEqual(available(authoritativeIdle));
   });
 
+  it("coalesces an overlapping idle new-run hint into one recovery that reveals the run", async () => {
+    const startCapturedAtT0 = "2026-06-20T00:00:20.000Z";
+    const idleRecoveryCompletedAtT1 = "2026-06-20T00:00:30.000Z";
+    const eventDeliveredAtT2 = "2026-06-20T00:00:31.000Z";
+    const newRun = runFixture("22222222-2222-4222-8222-222222222222", startCapturedAtT0);
+    const overlappingEvent: DashboardEvent = {
+      ...runEventFixture(newRun),
+      occurredAt: startCapturedAtT0,
+    };
+    const idleRecovery = recoveryFixture(idleRecoveryCompletedAtT1);
+    const authoritativeRecovery = {
+      ...recoveryFixture(eventDeliveredAtT2),
+      scope: { runId: newRun.runId, saleOfferId: newRun.saleOfferId ?? null },
+      currentRun: newRun,
+    };
+    const request = deferred<Response>();
+    const fetchMock = vi.fn().mockImplementationOnce(() => request.promise);
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = renderHook(() => useDashboardRecovery(available(idleRecovery)));
+
+    act(() => {
+      result.current.applyEvent(overlappingEvent);
+      result.current.applyEvent(overlappingEvent);
+    });
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    expect(result.current.recovery).toEqual(available(idleRecovery));
+    expect(result.current.isRefreshing).toBe(true);
+
+    request.resolve(jsonResponse(authoritativeRecovery));
+    await waitFor(() => expect(result.current.recovery).toEqual(available(authoritativeRecovery)));
+    expect(result.current.isRefreshing).toBe(false);
+    expect(fetchMock).toHaveBeenCalledOnce();
+
+    act(() => result.current.applyEvent(overlappingEvent));
+    await act(async () => Promise.resolve());
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
   it("clears old-run projections immediately and serializes recovery after a new-run event", async () => {
     const first = deferred<Response>();
     const newRun = runFixture("22222222-2222-4222-8222-222222222222", "2026-06-20T00:01:00.000Z");

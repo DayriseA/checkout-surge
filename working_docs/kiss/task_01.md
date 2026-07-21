@@ -22,11 +22,11 @@ Retain strict protection against stale events from prior runs, current terminal 
 
 ## Acceptance criteria
 
-- [ ] The exact t0/t1/t2 race is represented by a focused regression.
-- [ ] A coherent nonterminal new-run event that is too old for `recoveredAt` triggers exactly one coalesced authoritative recovery.
-- [ ] The recovered new run becomes visible without idle polling.
-- [ ] Stale events from an older run remain rejected.
-- [ ] Routes and server composition are unchanged.
+- [x] The exact t0/t1/t2 race is represented by a focused regression.
+- [x] A coherent nonterminal new-run event that is too old for `recoveredAt` triggers exactly one coalesced authoritative recovery.
+- [x] The recovered new run becomes visible without idle polling.
+- [x] Stale events from an older run remain rejected.
+- [x] Routes and server composition are unchanged.
 
 ## Verification
 
@@ -34,8 +34,8 @@ Run focused web tests, for example `pnpm --filter web test:unit -- test/dashboar
 
 ## Working record
 
-- Status: pending
-- Completed scope: none
-- Decisions: none
-- Verification: not run
-- Follow-up: none
+- Status: completed
+- Completed scope: Updated the browser recovery decision so a coherent nonterminal lifecycle hint received against an idle snapshot can request authoritative recovery when its envelope timestamp predates `recoveredAt`. Direct reducer application remains rejected. Added the deterministic t0 start → t1 idle recovery → t2 delivery reducer regression, hook coverage for duplicate-hint coalescing and authoritative new-run visibility, and focused rejection coverage for incoherent envelopes and stale prior-run events. No recovery-hook production code, polling, route, server, protocol, or contract change was needed.
+- Decisions: Reused the hook's existing single-flight recovery and bounded buffered-event reconciliation rather than adding another authority. Limited the new hint to an idle available recovery, a nonterminal `load.run.updated` payload, coherent envelope/payload run identity, and an envelope timestamp strictly older than the recovery watermark. Updated `docs/architecture.md`, `docs/cross_service_conventions.md`, and `docs/load_generation_metrics_streaming.md` because each described the prior new-run/recovery decision and would otherwise contradict the corrected behavior.
+- Verification: `pnpm --filter web test:unit -- test/dashboard-phase6.test.ts test/dashboard-hooks.test.tsx test/dashboard-recovery-ui.test.ts` passed 27 files / 243 tests, but the separator caused Vitest to run the full web suite rather than filter files. The corrected focused command `pnpm --filter web exec node ../../scripts/run-with-test-env.mjs vitest run --config vitest.config.ts test/dashboard-phase6.test.ts test/dashboard-hooks.test.tsx test/dashboard-recovery-ui.test.ts` passed 3 files / 60 tests. `pnpm --filter web type-check` passed. `pnpm --filter web lint` passed (95 files checked). `pnpm exec biome lint apps/web/src/app/lib/dashboard-state.ts apps/web/test/dashboard-phase6.test.ts apps/web/test/dashboard-hooks.test.tsx docs/architecture.md docs/cross_service_conventions.md docs/load_generation_metrics_streaming.md` passed for the three supported TypeScript files; Markdown is not processed by the configured Biome lint command. `git diff --check` passed.
+- Follow-up: none for Task 01; the planned revisioned-projection migration remains separate later work.

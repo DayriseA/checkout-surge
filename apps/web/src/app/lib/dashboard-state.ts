@@ -537,12 +537,23 @@ export function shouldRequestAuthoritativeRecoveryAfterScopedEvent(
 ): boolean {
   if (recovery.status !== "available") return false;
   const eventScope = classifyDashboardEventScope(recovery.data, event);
-  if (eventScope === "rejected") return false;
+  if (eventScope === "rejected") {
+    return isIdleRunHintBlockedByRecoveryWatermark(recovery.data, event);
+  }
   if (eventScope === "new-run") return true;
   // Only a terminal signal that matches the recovered run and actually advances
   // its lifecycle justifies authoritative recovery; duplicate terminal events
   // for an already terminal (or idle) client must not start a recovery loop.
   return isMatchingTerminalRunSignal(recovery.data, event);
+}
+
+function isIdleRunHintBlockedByRecoveryWatermark(
+  recovery: DashboardRecoveryResponse,
+  event: DashboardEvent,
+): event is RunDashboardEvent {
+  if (!isRunDashboardEvent(event) || recovery.currentRun !== null) return false;
+  if (event.runId !== event.run.runId || isTerminalRunStatus(event.run.status)) return false;
+  return Date.parse(event.occurredAt) < Date.parse(recovery.recoveredAt);
 }
 
 function classifyDashboardEventScope(

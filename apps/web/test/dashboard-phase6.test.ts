@@ -1148,6 +1148,77 @@ describe("terminal overlap convergence", () => {
   });
 });
 
+describe("idle new-run overlap convergence", () => {
+  const startCapturedAtT0 = "2026-06-20T00:00:20.000Z";
+  const idleRecoveryCompletedAtT1 = "2026-06-20T00:00:30.000Z";
+
+  function overlappingRunEvent(): RunDashboardEvent {
+    return runEventAt("active", startCapturedAtT0, {
+      ...runFixture(),
+      runId: "88888888-8888-4888-8888-888888888888",
+      startedAt: startCapturedAtT0,
+      trafficStartedAt: startCapturedAtT0,
+    });
+  }
+
+  it("rejects direct application but requests recovery when the t0 start event arrives after the t1 idle recovery", () => {
+    const idleRecovery = availableRecovery({
+      ...recoveryFixture(),
+      recoveredAt: idleRecoveryCompletedAtT1,
+    });
+    const eventDeliveredAtT2 = overlappingRunEvent();
+
+    expect(Date.parse(eventDeliveredAtT2.occurredAt)).toBeLessThan(
+      Date.parse(idleRecoveryCompletedAtT1),
+    );
+    const nextState = dashboardStateReducer(createDashboardState(idleRecovery), {
+      type: "event-received",
+      event: eventDeliveredAtT2,
+      discard: false,
+    });
+    expect(nextState.recovery).toBe(idleRecovery);
+    expect(
+      shouldRequestAuthoritativeRecoveryAfterScopedEvent(idleRecovery, eventDeliveredAtT2),
+    ).toBe(true);
+  });
+
+  it("does not request recovery for an incoherent overlapping run envelope", () => {
+    const idleRecovery = availableRecovery({
+      ...recoveryFixture(),
+      recoveredAt: idleRecoveryCompletedAtT1,
+    });
+    const incoherentEvent = {
+      ...overlappingRunEvent(),
+      runId: previousRunFixture().runId,
+    };
+
+    expect(applyDashboardEvent(idleRecovery, incoherentEvent)).toBe(idleRecovery);
+    expect(shouldRequestAuthoritativeRecoveryAfterScopedEvent(idleRecovery, incoherentEvent)).toBe(
+      false,
+    );
+  });
+
+  it("does not request recovery for a stale nonterminal event from an older run", () => {
+    const currentRun = {
+      ...runFixture(),
+      startedAt: "2026-06-20T00:00:25.000Z",
+      trafficStartedAt: "2026-06-20T00:00:25.000Z",
+    };
+    const currentRecovery = availableRecovery({
+      ...recoveryFixture(),
+      scope: { runId: currentRun.runId, saleOfferId: currentRun.saleOfferId ?? null },
+      currentRun,
+      recoveredAt: idleRecoveryCompletedAtT1,
+    });
+    const stalePriorRun = runEventAt("active", startCapturedAtT0, previousRunFixture());
+
+    expect(applyDashboardEvent(currentRecovery, stalePriorRun)).toBe(currentRecovery);
+    expect(
+      shouldRequestAuthoritativeRecoveryAfterScopedEvent(currentRecovery, stalePriorRun),
+    ).toBe(false);
+  });
+});
+
 function reduceDashboardEvents(
   state: ReturnType<typeof createDashboardState>,
   events: DashboardEvent[],
