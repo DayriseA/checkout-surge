@@ -1,6 +1,9 @@
 import type { AcceptedRunConfigSnapshot } from "@checkout-surge/contracts";
 import { describe, expect, it } from "vitest";
-import { syntheticTrafficDeliverySummary } from "../src/services/traffic-delivery-plan.js";
+import {
+  syntheticFailedTrafficSummary,
+  syntheticTrafficDeliverySummary,
+} from "../src/services/traffic-delivery-plan.js";
 
 const baseSnapshot = {
   trafficConfig: {
@@ -51,6 +54,40 @@ describe("synthetic traffic delivery plan", () => {
       interruptedRequests: 0,
       unstartedRequests: 10_002,
       trafficDeliveryStatus: "failed",
+    });
+  });
+
+  it("builds one zero-attempt failed transport summary", () => {
+    expect(syntheticFailedTrafficSummary(baseSnapshot, ["not started"])).toEqual({
+      httpSummary: {
+        plannedRequests: 10_002,
+        startedRequests: 0,
+        completedRequests: 0,
+        interruptedRequests: 0,
+        unstartedRequests: 10_002,
+        failedRequests: 0,
+        acceptedResponses: 0,
+        soldOutResponses: 0,
+        unexpectedResponses: 0,
+        failureRate: 0,
+      },
+      trafficDeliverySummary: {
+        plannedRequests: 10_002,
+        startedRequests: 0,
+        completedRequests: 0,
+        interruptedRequests: 0,
+        unstartedRequests: 10_002,
+        trafficMode: "steady-arrival-rate",
+        plannedBuyers: null,
+        scheduledRatePerSecond: 5_001,
+        configuredDurationSeconds: 2,
+        preAllocatedVUs: 5_001,
+        maxVUs: 10_000,
+        droppedIterations: 0,
+        completedIterations: 0,
+        trafficDeliveryStatus: "failed",
+        notes: ["not started"],
+      },
     });
   });
 

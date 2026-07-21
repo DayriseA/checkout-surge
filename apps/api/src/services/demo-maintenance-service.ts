@@ -1,5 +1,4 @@
 import {
-  type AcceptedRunConfigSnapshot,
   type AdminDemoResetResponse,
   type AdminGeneratedRunTeardownResponse,
   type AdminMaintenanceCleanupRunsResponse,
@@ -12,7 +11,6 @@ import {
   normalizeLegacyApiRequestLifecycleSummaryJson,
   normalizeLegacyLoadRunDiagnosticsSummaryJson,
   type TerminalInventorySnapshot,
-  type TrafficConfig,
   type TrafficDeliverySummary,
   type TrafficHttpSummary,
 } from "@checkout-surge/contracts";
@@ -37,6 +35,7 @@ import {
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { and, asc, desc, eq, inArray, isNull, lt, notInArray, or } from "drizzle-orm";
 import { ApiHttpError } from "../runtime/errors.js";
+import { emptyBusinessOutcomeSummary } from "./demo-run-projections.js";
 import type { DemoResetWorkflowFence } from "./postgres-demo-reset-workflow-fence.js";
 import type {
   TerminalDemoRunSummaryInput,
@@ -46,7 +45,7 @@ import {
   normalizePersistedTrafficHttpSummary,
   normalizeTrafficDeliverySummary,
 } from "./traffic-delivery-classifier.js";
-import { syntheticTrafficDeliverySummary } from "./traffic-delivery-plan.js";
+import { syntheticFailedTrafficSummary } from "./traffic-delivery-plan.js";
 
 export interface QueueCleanupSummary {
   cleanedQueueCount: number;
@@ -755,8 +754,9 @@ function adminResetTrafficSummary(
     };
   }
 
-  const summary = failedBeforeTrafficCompletionSummary(
+  const summary = syntheticFailedTrafficSummary(
     acceptedRunConfigSnapshotSchema.parse(run.configSnapshot),
+    ["Admin reset failed the run before traffic completion."],
   );
 
   return {
@@ -765,52 +765,5 @@ function adminResetTrafficSummary(
     httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
     loadRunDiagnosticsSummary: {},
     apiRequestLifecycleSummary: {},
-  };
-}
-
-function failedBeforeTrafficCompletionSummary(config: AcceptedRunConfigSnapshot): {
-  httpSummary: TrafficHttpSummary;
-  trafficDeliverySummary: TrafficDeliverySummary;
-} {
-  const plannedRequests = plannedTrafficRequests(config.trafficConfig);
-
-  return {
-    httpSummary: {
-      plannedRequests,
-      startedRequests: 0,
-      completedRequests: 0,
-      interruptedRequests: 0,
-      unstartedRequests: plannedRequests,
-      failedRequests: 0,
-      acceptedResponses: 0,
-      soldOutResponses: 0,
-      unexpectedResponses: 0,
-      failureRate: 0,
-    },
-    trafficDeliverySummary: syntheticTrafficDeliverySummary(config, [
-      "Admin reset failed the run before traffic completion.",
-    ]),
-  };
-}
-
-function plannedTrafficRequests(config: TrafficConfig): number {
-  if (config.mode === "buyer-spike") {
-    return config.buyerCount * (config.duplicateEachBuyerAttempt ? 2 : 1);
-  }
-
-  return config.ratePerSecond * config.durationSeconds;
-}
-
-function emptyBusinessOutcomeSummary(): BusinessOutcomeSummary {
-  return {
-    acceptedReservations: 0,
-    soldOutRejections: 0,
-    queuedOrders: 0,
-    processingOrders: 0,
-    retryingOrders: 0,
-    confirmedOrders: 0,
-    failedOrders: 0,
-    pendingPersistenceCount: 0,
-    notificationsRecorded: 0,
   };
 }

@@ -4,8 +4,6 @@ import {
   type AdminRunHistoryDetailResponse,
   adminDeleteRunHistoryResponseSchema,
   adminRunHistoryDetailResponseSchema,
-  type DemoRunSnapshot,
-  demoRunSnapshotSchema,
   type PublicRunHistoryDetailResponse,
   type PublicRunHistoryRun,
   type PublicRunHistorySummary,
@@ -36,6 +34,7 @@ import {
   simulatedNotifications,
 } from "@checkout-surge/db";
 import { count, desc, eq, inArray, sql } from "drizzle-orm";
+import { toDemoRunSnapshot } from "./demo-run-projections.js";
 import {
   normalizePersistedTrafficHttpSummary,
   normalizeTrafficDeliverySummary,
@@ -376,24 +375,6 @@ function toRunHistorySummary(row: typeof demoRunSummaries.$inferSelect): RunHist
       ? { terminalInventorySnapshot: row.terminalInventorySnapshot }
       : {}),
     capturedAt: row.capturedAt.toISOString(),
-  });
-}
-
-function toDemoRunSnapshot(row: typeof demoRuns.$inferSelect): DemoRunSnapshot {
-  return demoRunSnapshotSchema.parse({
-    runId: row.id,
-    presetId: row.presetId,
-    presetName: row.presetName,
-    operatorMode: row.operatorMode,
-    status: row.status,
-    trafficStatus: row.trafficStatus,
-    ...(row.saleOfferId ? { saleOfferId: row.saleOfferId } : {}),
-    configSnapshot: row.configSnapshot,
-    ...(row.startedAt ? { startedAt: row.startedAt.toISOString() } : {}),
-    ...(row.trafficStartedAt ? { trafficStartedAt: row.trafficStartedAt.toISOString() } : {}),
-    ...(row.trafficEndedAt ? { trafficEndedAt: row.trafficEndedAt.toISOString() } : {}),
-    ...(row.finalizedAt ? { finalizedAt: row.finalizedAt.toISOString() } : {}),
-    ...(row.failureReason ? { failureReason: row.failureReason } : {}),
   });
 }
 

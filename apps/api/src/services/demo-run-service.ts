@@ -16,7 +16,6 @@ import {
   archiveAdminPresetResponseSchema,
   type BusinessOutcomeSummary,
   type CopyDemoPresetToCustomRequest,
-  calculatePlannedRequests,
   collectAcceptedRunConfigSnapshotViolations,
   collectPublicRuntimePolicyViolations,
   controlServiceTokenHeaderName,
@@ -28,7 +27,6 @@ import {
   dashboardEventSchema,
   dashboardEventsRedisChannel,
   demoPresetContractSchema,
-  demoRunSnapshotSchema,
   type ErrorPayloadCode,
   emptyHttpTimingBreakdownSummary,
   type LoadMetricIngestRequest,
@@ -48,11 +46,9 @@ import {
   startDemoRunResponseSchema,
   type TerminalInventorySnapshot,
   type TrafficCompletionReport,
-  type TrafficDeliverySummary,
   type TrafficExecutionAbortResponse,
   type TrafficExecutionStartRequest,
   type TrafficExecutionStartResponse,
-  type TrafficHttpSummary,
   trafficCompletionReportSchema,
   trafficExecutionAbortPath,
   trafficExecutionAbortRequestSchema,
@@ -85,6 +81,11 @@ import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { ApiHttpError } from "../runtime/errors.js";
 import type { DashboardBusinessOutcomeReader } from "./dashboard-recovery-service.js";
 import type { DemoRunFinalizationController } from "./demo-run-finalization-service.js";
+import {
+  emptyBusinessOutcomeSummary,
+  toDemoRunSnapshot,
+  toRedisTerminalInventorySnapshot,
+} from "./demo-run-projections.js";
 import type {
   PublicRunBudgetReservation,
   PublicRunBudgetStore,
@@ -96,7 +97,7 @@ import {
 } from "./traffic-completion-binding.js";
 import type { TrafficCompletionEnrichmentController } from "./traffic-completion-enrichment-service.js";
 import { normalizeTrafficDeliverySummary } from "./traffic-delivery-classifier.js";
-import { syntheticTrafficDeliverySummary } from "./traffic-delivery-plan.js";
+import { syntheticFailedTrafficSummary } from "./traffic-delivery-plan.js";
 
 export const demoRunStartLockKey = "checkout_surge_demo_run_start";
 const singleNonTerminalRunIndexName = "demo_runs_single_non_terminal_idx";
@@ -1365,9 +1366,9 @@ export class DemoRunService implements DemoRunController {
       const terminalInventorySnapshot = run.saleOfferId
         ? await this.captureTerminalInventorySnapshot(run.saleOfferId, businessOutcome, now)
         : null;
-      const trafficSummary = failedBeforeTrafficStartSummary(
+      const trafficSummary = syntheticFailedTrafficSummary(
         acceptedRunConfigSnapshotSchema.parse(run.configSnapshot),
-        failureReason,
+        [`${failureReason}_before_traffic_start`],
       );
 
       await this.options.terminalRunWriter.write({
@@ -1434,17 +1435,12 @@ export class DemoRunService implements DemoRunController {
   ): Promise<TerminalInventorySnapshot | null> {
     try {
       const inventory = await getInventoryStatus(this.options.redis, saleOfferId, capturedAt);
-      return {
+      return toRedisTerminalInventorySnapshot({
         saleOfferId,
-        startingStock: inventory.allocatedStock,
-        remainingStock: inventory.remainingStock,
-        reservedStock: inventory.reservedStock,
-        acceptedReservations: businessOutcome.acceptedReservations,
-        soldOutRejections: inventory.soldOutPressure.rejectionCount,
-        pendingPersistenceCount: inventory.pendingPersistenceCount,
-        capturedAt: capturedAt.toISOString(),
-        source: "redis",
-      };
+        inventory,
+        businessOutcome,
+        capturedAt,
+      });
     } catch (error) {
       this.options.logger.warn(
         { err: error, saleOfferId },
@@ -1494,24 +1490,6 @@ export class DemoRunService implements DemoRunController {
   private generateId(): string {
     return this.options.generateId?.() ?? randomUUID();
   }
-}
-
-export function toDemoRunSnapshot(run: typeof demoRuns.$inferSelect): DemoRunSnapshot {
-  return demoRunSnapshotSchema.parse({
-    runId: run.id,
-    presetId: run.presetId,
-    presetName: run.presetName,
-    operatorMode: run.operatorMode,
-    status: run.status,
-    trafficStatus: run.trafficStatus,
-    ...(run.saleOfferId ? { saleOfferId: run.saleOfferId } : {}),
-    configSnapshot: run.configSnapshot,
-    ...(run.startedAt ? { startedAt: run.startedAt.toISOString() } : {}),
-    ...(run.trafficStartedAt ? { trafficStartedAt: run.trafficStartedAt.toISOString() } : {}),
-    ...(run.trafficEndedAt ? { trafficEndedAt: run.trafficEndedAt.toISOString() } : {}),
-    ...(run.finalizedAt ? { finalizedAt: run.finalizedAt.toISOString() } : {}),
-    ...(run.failureReason ? { failureReason: run.failureReason } : {}),
-  });
 }
 
 function throwCompletionMismatch(
@@ -1710,48 +1688,6 @@ export async function validateActivePublicRuntimePolicyAtStartup(
   }
 
   validatePublicRuntimePolicyUpdate(parsed.data);
-}
-
-function failedBeforeTrafficStartSummary(
-  config: AcceptedRunConfigSnapshot,
-  failureReason: string,
-): {
-  httpSummary: TrafficHttpSummary;
-  trafficDeliverySummary: TrafficDeliverySummary;
-} {
-  const plannedRequests = calculatePlannedRequests(config.trafficConfig);
-
-  return {
-    httpSummary: {
-      plannedRequests,
-      startedRequests: 0,
-      completedRequests: 0,
-      interruptedRequests: 0,
-      unstartedRequests: plannedRequests,
-      failedRequests: 0,
-      acceptedResponses: 0,
-      soldOutResponses: 0,
-      unexpectedResponses: 0,
-      failureRate: 0,
-    },
-    trafficDeliverySummary: syntheticTrafficDeliverySummary(config, [
-      `${failureReason}_before_traffic_start`,
-    ]),
-  };
-}
-
-function emptyBusinessOutcomeSummary(): BusinessOutcomeSummary {
-  return {
-    acceptedReservations: 0,
-    soldOutRejections: 0,
-    queuedOrders: 0,
-    processingOrders: 0,
-    retryingOrders: 0,
-    confirmedOrders: 0,
-    failedOrders: 0,
-    pendingPersistenceCount: 0,
-    notificationsRecorded: 0,
-  };
 }
 
 function trafficMetricKey(runId: string): string {

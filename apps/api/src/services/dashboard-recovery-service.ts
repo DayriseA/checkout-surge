@@ -5,7 +5,6 @@ import {
   type DashboardRecoveryResponse,
   type DemoRunSnapshot,
   dashboardRecoveryResponseSchema,
-  demoRunSnapshotSchema,
   type MetricSample,
   type TransportAttemptCounts,
   transportAttemptCountsSchema,
@@ -21,6 +20,7 @@ import {
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { desc, eq, inArray, sql } from "drizzle-orm";
 import { abortReason, settleWithAbort } from "../runtime/operation-lifecycle.js";
+import { toDemoRunSnapshot } from "./demo-run-projections.js";
 import type { DashboardTrafficMetricReader } from "./demo-run-service.js";
 import type { ErpStatusService } from "./erp-status-service.js";
 import type { InventoryStatusService } from "./inventory-status-service.js";
@@ -288,24 +288,6 @@ export interface DashboardRecoveryOperation {
 export type DashboardRecoveryOperationFactory = (
   signal: AbortSignal,
 ) => DashboardRecoveryOperation | Promise<DashboardRecoveryOperation>;
-
-function toDemoRunSnapshot(run: typeof demoRuns.$inferSelect): DemoRunSnapshot {
-  return demoRunSnapshotSchema.parse({
-    runId: run.id,
-    presetId: run.presetId,
-    presetName: run.presetName,
-    operatorMode: run.operatorMode,
-    status: run.status,
-    trafficStatus: run.trafficStatus,
-    ...(run.saleOfferId ? { saleOfferId: run.saleOfferId } : {}),
-    configSnapshot: run.configSnapshot,
-    ...(run.startedAt ? { startedAt: run.startedAt.toISOString() } : {}),
-    ...(run.trafficStartedAt ? { trafficStartedAt: run.trafficStartedAt.toISOString() } : {}),
-    ...(run.trafficEndedAt ? { trafficEndedAt: run.trafficEndedAt.toISOString() } : {}),
-    ...(run.finalizedAt ? { finalizedAt: run.finalizedAt.toISOString() } : {}),
-    ...(run.failureReason ? { failureReason: run.failureReason } : {}),
-  });
-}
 
 async function readSafely<T>(
   projection: string,

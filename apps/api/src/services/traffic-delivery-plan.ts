@@ -1,4 +1,8 @@
-import type { AcceptedRunConfigSnapshot, TrafficDeliverySummary } from "@checkout-surge/contracts";
+import type {
+  AcceptedRunConfigSnapshot,
+  TrafficDeliverySummary,
+  TrafficHttpSummary,
+} from "@checkout-surge/contracts";
 import { calculatePlannedRequests, resolveSteadyArrivalVus } from "@checkout-surge/contracts";
 
 export function syntheticTrafficDeliverySummary(
@@ -27,5 +31,31 @@ export function syntheticTrafficDeliverySummary(
     completedIterations: 0,
     trafficDeliveryStatus: "failed",
     notes,
+  };
+}
+
+export function syntheticFailedTrafficSummary(
+  config: AcceptedRunConfigSnapshot,
+  notes: string[],
+): {
+  httpSummary: TrafficHttpSummary;
+  trafficDeliverySummary: TrafficDeliverySummary;
+} {
+  const plannedRequests = calculatePlannedRequests(config.trafficConfig);
+
+  return {
+    httpSummary: {
+      plannedRequests,
+      startedRequests: 0,
+      completedRequests: 0,
+      interruptedRequests: 0,
+      unstartedRequests: plannedRequests,
+      failedRequests: 0,
+      acceptedResponses: 0,
+      soldOutResponses: 0,
+      unexpectedResponses: 0,
+      failureRate: 0,
+    },
+    trafficDeliverySummary: syntheticTrafficDeliverySummary(config, notes),
   };
 }

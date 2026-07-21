@@ -4,11 +4,9 @@ import {
   type BusinessOutcomeSummary,
   businessOutcomeSummarySchema,
   type DemoRunSnapshot,
-  demoRunSnapshotSchema,
   type InventoryStatus,
   normalizeLegacyApiRequestLifecycleSummaryJson,
   normalizeLegacyLoadRunDiagnosticsSummaryJson,
-  type TerminalInventorySnapshot,
   type TrafficDeliverySummary,
   type TrafficHttpSummary,
   terminalInventorySnapshotSchema,
@@ -32,6 +30,7 @@ import {
   acceptedResponseAccountingWarning,
   reconcileAcceptedResponses,
 } from "./accepted-response-accounting.js";
+import { toDemoRunSnapshot, toRedisTerminalInventorySnapshot } from "./demo-run-projections.js";
 import type { PendingPersistenceReconciler } from "./pending-persistence-reconciler.js";
 import type { TerminalDemoRunWriter } from "./terminal-demo-run-writer.js";
 import {
@@ -297,7 +296,7 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
             evidence.http.plannedRequests,
           ),
           businessOutcome: latestBusinessOutcome,
-          terminalInventorySnapshot: toTerminalInventorySnapshot({
+          terminalInventorySnapshot: toRedisTerminalInventorySnapshot({
             saleOfferId: requireSaleOfferId(row.run),
             inventory: latestInventory,
             businessOutcome: latestBusinessOutcome,
@@ -608,46 +607,9 @@ async function readRecoveryPressure(
   };
 }
 
-function toTerminalInventorySnapshot(input: {
-  saleOfferId: string;
-  inventory: InventoryStatus;
-  businessOutcome: BusinessOutcomeSummary;
-  capturedAt: Date;
-}): TerminalInventorySnapshot {
-  return {
-    saleOfferId: input.saleOfferId,
-    startingStock: input.inventory.allocatedStock,
-    remainingStock: input.inventory.remainingStock,
-    reservedStock: input.inventory.reservedStock,
-    acceptedReservations: input.businessOutcome.acceptedReservations,
-    soldOutRejections: input.inventory.soldOutPressure.rejectionCount,
-    pendingPersistenceCount: input.inventory.pendingPersistenceCount,
-    capturedAt: input.capturedAt.toISOString(),
-    source: "redis",
-  };
-}
-
 function requireSaleOfferId(run: typeof demoRuns.$inferSelect): string {
   if (!run.saleOfferId) {
     throw new Error(`Demo run ${run.id} has no sale offer.`);
   }
   return run.saleOfferId;
-}
-
-function toDemoRunSnapshot(run: typeof demoRuns.$inferSelect): DemoRunSnapshot {
-  return demoRunSnapshotSchema.parse({
-    runId: run.id,
-    presetId: run.presetId,
-    presetName: run.presetName,
-    operatorMode: run.operatorMode,
-    status: run.status,
-    trafficStatus: run.trafficStatus,
-    ...(run.saleOfferId ? { saleOfferId: run.saleOfferId } : {}),
-    configSnapshot: run.configSnapshot,
-    ...(run.startedAt ? { startedAt: run.startedAt.toISOString() } : {}),
-    ...(run.trafficStartedAt ? { trafficStartedAt: run.trafficStartedAt.toISOString() } : {}),
-    ...(run.trafficEndedAt ? { trafficEndedAt: run.trafficEndedAt.toISOString() } : {}),
-    ...(run.finalizedAt ? { finalizedAt: run.finalizedAt.toISOString() } : {}),
-    ...(run.failureReason ? { failureReason: run.failureReason } : {}),
-  });
 }

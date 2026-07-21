@@ -1,4 +1,3 @@
-import type { BusinessOutcomeSummary, TerminalInventorySnapshot } from "@checkout-surge/contracts";
 import {
   type CheckoutSurgeDatabase,
   type CheckoutSurgeRedis,
@@ -12,6 +11,7 @@ import {
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { and, eq } from "drizzle-orm";
 import type { DashboardBusinessOutcomeReader } from "./dashboard-recovery-service.js";
+import { toRedisTerminalInventorySnapshot } from "./demo-run-projections.js";
 
 export type TrafficCompletionEnrichmentResult = "completed" | "already_completed" | "not_found";
 
@@ -25,9 +25,7 @@ export interface TrafficCompletionEnrichmentController {
  * PostgreSQL transaction across Redis. Competing attempts may observe Redis,
  * but only the first compare-and-set can make its observation authoritative.
  */
-export class TrafficCompletionEnrichmentService
-  implements TrafficCompletionEnrichmentController
-{
+export class TrafficCompletionEnrichmentService implements TrafficCompletionEnrichmentController {
   constructor(
     private readonly options: {
       db: CheckoutSurgeDatabase;
@@ -67,7 +65,7 @@ export class TrafficCompletionEnrichmentService
       runId: row.run.id,
     });
     const terminalInventorySnapshot = inventory
-      ? toTerminalInventorySnapshot({
+      ? toRedisTerminalInventorySnapshot({
           saleOfferId: row.run.saleOfferId,
           inventory,
           businessOutcome,
@@ -109,8 +107,7 @@ export class TrafficCompletionEnrichmentService
             runId,
             outcome: "api_sold_out_decision",
             count: terminalInventorySnapshot.soldOutRejections,
-            latestObservedAt:
-              terminalInventorySnapshot.soldOutRejections > 0 ? capturedAt : null,
+            latestObservedAt: terminalInventorySnapshot.soldOutRejections > 0 ? capturedAt : null,
             source: "redis",
             capturedAt,
             createdAt: capturedAt,
@@ -119,8 +116,7 @@ export class TrafficCompletionEnrichmentService
             target: [demoRunReservationOutcomes.runId, demoRunReservationOutcomes.outcome],
             set: {
               count: terminalInventorySnapshot.soldOutRejections,
-              latestObservedAt:
-                terminalInventorySnapshot.soldOutRejections > 0 ? capturedAt : null,
+              latestObservedAt: terminalInventorySnapshot.soldOutRejections > 0 ? capturedAt : null,
               source: "redis",
               capturedAt,
             },
@@ -213,23 +209,4 @@ function withoutApiOwnedEnrichment(
     ...loadGeneratorOutcome
   } = trafficOutcomeSummary;
   return loadGeneratorOutcome;
-}
-
-function toTerminalInventorySnapshot(input: {
-  saleOfferId: string;
-  inventory: Awaited<ReturnType<typeof getInventoryStatus>>;
-  businessOutcome: BusinessOutcomeSummary;
-  capturedAt: Date;
-}): TerminalInventorySnapshot {
-  return {
-    saleOfferId: input.saleOfferId,
-    startingStock: input.inventory.allocatedStock,
-    remainingStock: input.inventory.remainingStock,
-    reservedStock: input.inventory.reservedStock,
-    acceptedReservations: input.businessOutcome.acceptedReservations,
-    soldOutRejections: input.inventory.soldOutPressure.rejectionCount,
-    pendingPersistenceCount: input.inventory.pendingPersistenceCount,
-    capturedAt: input.capturedAt.toISOString(),
-    source: "redis",
-  };
 }
