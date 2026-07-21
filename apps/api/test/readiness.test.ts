@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createBoundedInfrastructureReadinessCheck } from "../src/runtime/readiness.js";
 
 function createDeferred(): { promise: Promise<void>; resolve: () => void } {
-  let resolve = () => undefined;
+  let resolve: () => void = () => undefined;
   const promise = new Promise<void>((resolvePromise) => {
     resolve = resolvePromise;
   });

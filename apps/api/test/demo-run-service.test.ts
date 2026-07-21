@@ -2415,12 +2415,18 @@ describe("demo-run lifecycle start gating", () => {
     });
     const postgresWriter = new PostgresTerminalDemoRunSummaryWriter(db);
     let writeAttemptCount = 0;
-    const write = vi.fn(async (input: Parameters<typeof postgresWriter.write>[0]) => {
+    const writePrepared = vi.fn(async (
+      ...args: Parameters<typeof postgresWriter.writePrepared>
+    ) => {
       writeAttemptCount += 1;
       if (writeAttemptCount === 1) {
-        throw new Error("injected failure before terminal summary persistence");
+        const [runId, prepare] = args;
+        return postgresWriter.writePrepared(runId, async (lockedDb) => {
+          await prepare(lockedDb);
+          throw new Error("injected failure before terminal summary persistence");
+        });
       }
-      return postgresWriter.write(input);
+      return postgresWriter.writePrepared(...args);
     });
     let reconciliationCount = 0;
     const reconcileSaleOffer = vi.fn(async (saleOfferId: string) => {
@@ -2428,10 +2434,16 @@ describe("demo-run lifecycle start gating", () => {
       if (reconciliationCount > 1) {
         await initializeInventory(redisClient, {
           saleOfferId,
-          allocatedStock: 7,
-          initializedAt: new Date("2026-06-20T00:00:20.000Z"),
+          allocatedStock: 1_000,
+          initializedAt: new Date("2026-06-20T00:00:14.000Z"),
           run: { runId: startedRunId, status: "closed" },
         });
+        const inventory = inventoryKeys(saleOfferId);
+        await redisClient.hset(inventory.state, {
+          remainingStock: "850",
+          reservedStock: "150",
+        });
+        await redisClient.hset(inventory.reservationOutcomes, "api_sold_out_decision", "23");
       }
       return { found: 0, materialized: 0, reconciled: 0, reversed: 0, failed: 0 };
     });
@@ -2441,7 +2453,7 @@ describe("demo-run lifecycle start gating", () => {
       redis: redisClient,
       logger: createSilentLogger("api"),
       pendingPersistenceReconciler: { reconcileSaleOffer },
-      terminalRunWriter: { write },
+      terminalRunWriter: { writePrepared },
       terminalInventoryRead: createTerminalInventoryRead(redisClient),
       terminalInventoryReadTimeoutMs: 2_000,
       drainTimeoutSeconds: 300,
@@ -2464,24 +2476,18 @@ describe("demo-run lifecycle start gating", () => {
     const inventory = inventoryKeys(saleOfferId);
     await redisClient.hset(inventory.state, { remainingStock: "850", reservedStock: "150" });
     await redisClient.hset(inventory.reservationOutcomes, "api_sold_out_decision", "23");
+    const reportFixture = trafficCompletionFixture({
+      runId: started.run.runId,
+      status: "succeeded",
+      exitCode: 0,
+      completedAt: "2026-06-20T00:00:12.000Z",
+      plannedRequests: 10,
+      correlationId: "corr-post-enrichment",
+    });
     const report: TrafficCompletionReport = {
-      ...trafficCompletionFixture({
-        runId: started.run.runId,
-        status: "succeeded",
-        exitCode: 0,
-        completedAt: "2026-06-20T00:00:12.000Z",
-        plannedRequests: 10,
-        correlationId: "corr-post-enrichment",
-      }),
+      ...reportFixture,
       httpSummary: {
-        ...trafficCompletionFixture({
-          runId: started.run.runId,
-          status: "succeeded",
-          exitCode: 0,
-          completedAt: "2026-06-20T00:00:12.000Z",
-          plannedRequests: 10,
-          correlationId: "corr-post-enrichment",
-        }).httpSummary,
+        ...reportFixture.httpSummary,
         startedRequests: 10,
         completedRequests: 10,
         interruptedRequests: 0,
@@ -2501,6 +2507,13 @@ describe("demo-run lifecycle start gating", () => {
         maxVUs: null,
         droppedIterations: 0,
         notes: [],
+      },
+      apiRequestLifecycleSummary: {
+        ...reportFixture.apiRequestLifecycleSummary,
+        startedRequests: 10,
+        completedRequests: 10,
+        interruptedRequests: 0,
+        unstartedRequests: 0,
       },
     };
 
@@ -2576,11 +2589,22 @@ describe("demo-run lifecycle start gating", () => {
     expect(afterRedelivery?.trafficOutcomeSummary).toEqual(authoritativeOutcome);
     expect(soldOutAfterRedelivery?.count).toBe(23);
     expect(summaries).toHaveLength(1);
-    expect(summaries[0]?.terminalInventorySnapshot).toEqual(authoritativeSnapshot);
+    expect(summaries[0]?.terminalInventorySnapshot).toEqual({
+      saleOfferId,
+      startingStock: 1_000,
+      remainingStock: 850,
+      reservedStock: 150,
+      acceptedReservations: 0,
+      soldOutRejections: 23,
+      pendingPersistenceCount: 0,
+      capturedAt: "2026-06-20T00:00:15.000Z",
+      source: "redis",
+    });
+    expect(summaries[0]?.terminalInventorySnapshot).not.toEqual(authoritativeSnapshot);
     expect(summaries[0]?.loadRunDiagnosticsSummary).toEqual(report.loadRunDiagnosticsSummary);
     expect(captureReadCount).toBe(1);
     expect(readBusinessOutcome).toHaveBeenCalledOnce();
-    expect(write).toHaveBeenCalledTimes(2);
+    expect(writePrepared).toHaveBeenCalledTimes(2);
   });
 
   it("keeps a claimed completion non-terminal until enrichment durably concludes", async () => {

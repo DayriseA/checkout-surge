@@ -1,9 +1,12 @@
 import * as contracts from "@checkout-surge/contracts";
-import { isPgEnum, type PgEnum } from "drizzle-orm/pg-core";
+import { isPgEnum } from "drizzle-orm/pg-core";
 import { describe, expect, it } from "vitest";
 import * as schema from "../../src/schema.js";
 
-type ExportedPgEnum = PgEnum<[string, ...string[]]>;
+type ExportedPgEnumMetadata = {
+  readonly enumName: string;
+  readonly enumValues: readonly string[];
+};
 
 const enumInventory = {
   demoPresetVisibilityEnum: [
@@ -78,7 +81,7 @@ const enumInventory = {
     "traffic_completion_enrichment_status",
     contracts.trafficCompletionEnrichmentStatusValues,
   ],
-} as const satisfies Record<string, readonly [ExportedPgEnum, string, readonly string[]]>;
+} as const satisfies Record<string, readonly [ExportedPgEnumMetadata, string, readonly string[]]>;
 
 describe("PostgreSQL enum vocabulary parity", () => {
   it("explicitly inventories every exported pgEnum declaration", () => {

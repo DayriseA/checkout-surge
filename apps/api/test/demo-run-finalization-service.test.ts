@@ -6,7 +6,6 @@ import type {
   AcceptedRunConfigSnapshot,
   AdminDemoResetResponse,
   BusinessOutcomeSummary,
-  DashboardRecoveryResponse,
   TerminalInventorySnapshot,
   TrafficCompletionReport,
 } from "@checkout-surge/contracts";
@@ -1437,12 +1436,11 @@ describe("demo run finalization service", () => {
     };
     subscriberRedis.on("message", handleSubscriberMessage);
     let finalizationPromise: Promise<unknown> | null = null;
-    let staleRecovery: DashboardRecoveryResponse | null = null;
 
     try {
       await seedDrainingRun({ db, redis: redisClient, trafficDeliveryStatus: "complete" });
       await subscriberRedis.subscribe(dashboardEventsRedisChannel);
-      await lockConnection.db.transaction(async (tx) => {
+      const staleRecovery = await lockConnection.db.transaction(async (tx) => {
         await tx.execute(
           sql`select pg_advisory_xact_lock(hashtext(${terminalDemoRunTransitionLockKey(ids.run)}))`,
         );
@@ -1463,11 +1461,12 @@ describe("demo run finalization service", () => {
           logger: createSilentLogger("api"),
           now: () => recoveryStartT1,
         });
-        staleRecovery = await recoveryService.getRecovery({
+        const recovery = await recoveryService.getRecovery({
           correlationId: "corr-recovery-overlap",
         });
         // The terminal writer has not committed, so nothing may be published yet.
         expect(terminalEvents).toHaveLength(0);
+        return recovery;
       });
 
       // The lock release lets the terminal writer commit before publication.
