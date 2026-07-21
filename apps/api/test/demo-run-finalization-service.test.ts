@@ -46,6 +46,7 @@ import { createSilentLogger } from "@checkout-surge/logger";
 import { count, eq, sql } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { PostgresRunRetryPolicyResolver } from "../src/queue/postgres-run-retry-policy-resolver.js";
+import { OperationDeadlineExceededError } from "../src/runtime/operation-lifecycle.js";
 import {
   DashboardRecoveryService,
   PostgresDashboardRecoveryContextReader,
@@ -1139,6 +1140,107 @@ describe("demo run finalization service", () => {
     }
   });
 
+  it("times out and cancels the in-fence inventory read, then releases the terminal fence", async () => {
+    const db = requireConnection(connection).db;
+    const redisClient = requireRedis(redis);
+    const observerConnection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
+    const subscriberRedis = createRedisClient(requireTestRedisUrl(), {
+      lazyConnect: true,
+      maxRetriesPerRequest: 3,
+    });
+    const barrierChannel = "task-02-terminal-inventory-timeout-barrier";
+    const barrierSentinel = "terminal-inventory-timeout-observed";
+    const terminalEvents: unknown[] = [];
+    const observedBarriers: string[] = [];
+    let inventoryReadCallCount = 0;
+    let lockHeldDuringInventoryRead: boolean | undefined;
+    let abortReason: unknown;
+    const terminalInventoryRead = {
+      read: async (input: { saleOfferId: string; observedAt: Date; signal: AbortSignal }) => {
+        inventoryReadCallCount += 1;
+        if (inventoryReadCallCount > 1) {
+          return getInventoryStatus(redisClient, input.saleOfferId, input.observedAt);
+        }
+
+        const rows = await observerConnection.sql`
+          select pg_try_advisory_xact_lock(
+            hashtext(${terminalDemoRunTransitionLockKey(ids.run)})
+          ) as acquired
+        `;
+        lockHeldDuringInventoryRead = rows[0]?.acquired === false;
+
+        return await new Promise<never>((_resolve, reject) => {
+          const rejectForAbort = () => {
+            abortReason = input.signal.reason;
+            reject(input.signal.reason);
+          };
+          input.signal.addEventListener("abort", rejectForAbort, { once: true });
+          if (input.signal.aborted) rejectForAbort();
+        });
+      },
+    };
+    const service = createService(connection, redis, {
+      terminalInventoryRead,
+      terminalInventoryReadTimeoutMs: 500,
+    });
+    const handleSubscriberMessage = (channel: string, message: string) => {
+      if (channel === dashboardEventsRedisChannel) {
+        terminalEvents.push(JSON.parse(message));
+      }
+      if (channel === barrierChannel && message === barrierSentinel) {
+        observedBarriers.push(message);
+      }
+    };
+    subscriberRedis.on("message", handleSubscriberMessage);
+
+    try {
+      await seedDrainingRun({ db, redis: redisClient, trafficDeliveryStatus: "complete" });
+      await subscriberRedis.subscribe(dashboardEventsRedisChannel, barrierChannel);
+
+      await expect(
+        service.finalizeRun(ids.run, "corr-terminal-inventory-timeout"),
+      ).resolves.toMatchObject({ status: "draining" });
+      await redisClient.publish(barrierChannel, barrierSentinel);
+      await waitForObservedCount(observedBarriers, 1);
+
+      const summariesAfterTimeout = await db
+        .select()
+        .from(demoRunSummaries)
+        .where(eq(demoRunSummaries.runId, ids.run));
+      expect(lockHeldDuringInventoryRead).toBe(true);
+      expect(abortReason).toBeInstanceOf(OperationDeadlineExceededError);
+      expect(summariesAfterTimeout).toHaveLength(0);
+      expect(terminalEvents).toHaveLength(0);
+
+      await expect(
+        service.finalizeRun(ids.run, "corr-terminal-inventory-retry"),
+      ).resolves.toMatchObject({ status: "completed" });
+      await redisClient.publish(barrierChannel, barrierSentinel);
+      await waitForObservedCount(observedBarriers, 2);
+
+      const summariesAfterRetry = await db
+        .select()
+        .from(demoRunSummaries)
+        .where(eq(demoRunSummaries.runId, ids.run));
+      expect(inventoryReadCallCount).toBe(2);
+      expect(summariesAfterRetry).toHaveLength(1);
+      expect(terminalEvents).toHaveLength(1);
+      expect(terminalEvents[0]).toMatchObject({
+        type: "load.run.updated",
+        runId: ids.run,
+        run: { status: "completed" },
+      });
+    } finally {
+      subscriberRedis.off("message", handleSubscriberMessage);
+      try {
+        await subscriberRedis.unsubscribe(dashboardEventsRedisChannel, barrierChannel);
+      } finally {
+        subscriberRedis.disconnect();
+        await observerConnection.close();
+      }
+    }
+  });
+
   it("keeps run and summary terminal state consistent when reset races with finalization", async () => {
     const db = requireConnection(connection).db;
     const redisClient = requireRedis(redis);
@@ -1627,6 +1729,10 @@ function createService(
     terminalRunWriter?: ConstructorParameters<
       typeof DemoRunFinalizationService
     >[0]["terminalRunWriter"];
+    terminalInventoryRead?: ConstructorParameters<
+      typeof DemoRunFinalizationService
+    >[0]["terminalInventoryRead"];
+    terminalInventoryReadTimeoutMs?: number;
     now?: () => Date;
     drainTimeoutSeconds?: number;
   } = {},
@@ -1637,11 +1743,20 @@ function createService(
       options.terminalRunWriter ??
       new PostgresTerminalDemoRunSummaryWriter(requireConnection(connection).db),
     redis: requireRedis(redis),
+    terminalInventoryRead: createTerminalInventoryRead(requireRedis(redis)),
+    terminalInventoryReadTimeoutMs: 2_000,
     logger: createSilentLogger("api"),
     drainTimeoutSeconds: 300,
     now: () => new Date("2026-06-20T00:00:10.000Z"),
     ...options,
   });
+}
+
+function createTerminalInventoryRead(redis: ReturnType<typeof createRedisClient>) {
+  return {
+    read: ({ saleOfferId, observedAt }: { saleOfferId: string; observedAt: Date }) =>
+      getInventoryStatus(redis, saleOfferId, observedAt),
+  };
 }
 
 async function getPendingStructureCounts(

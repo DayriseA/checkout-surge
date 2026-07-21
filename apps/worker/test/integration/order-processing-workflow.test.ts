@@ -20,6 +20,7 @@ import {
   demoRunSummaries,
   demoRuns,
   erpAttempts,
+  getInventoryStatus,
   initializeInventory,
   orderEvents,
   orders,
@@ -1267,6 +1268,10 @@ function createFinalizationService(
     redis,
     logger: createSilentLogger("api"),
     terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(connection.db),
+    terminalInventoryRead: {
+      read: ({ saleOfferId, observedAt }) => getInventoryStatus(redis, saleOfferId, observedAt),
+    },
+    terminalInventoryReadTimeoutMs: 2_000,
     drainTimeoutSeconds: 300,
     now: () => new Date("2026-06-21T00:00:10.000Z"),
   });

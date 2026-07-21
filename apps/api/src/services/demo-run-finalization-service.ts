@@ -5,6 +5,7 @@ import {
   businessOutcomeSummarySchema,
   type DemoRunSnapshot,
   demoRunSnapshotSchema,
+  type InventoryStatus,
   normalizeLegacyApiRequestLifecycleSummaryJson,
   normalizeLegacyLoadRunDiagnosticsSummaryJson,
   type TerminalInventorySnapshot,
@@ -26,6 +27,7 @@ import {
 } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { and, eq, inArray } from "drizzle-orm";
+import { OperationDeadlineExceededError, settleWithAbort } from "../runtime/operation-lifecycle.js";
 import {
   acceptedResponseAccountingWarning,
   reconcileAcceptedResponses,
@@ -36,6 +38,14 @@ import {
   normalizePersistedTrafficHttpSummary,
   normalizeTrafficDeliverySummary,
 } from "./traffic-delivery-classifier.js";
+
+export interface TerminalInventoryReadOperation {
+  read(input: {
+    saleOfferId: string;
+    observedAt: Date;
+    signal: AbortSignal;
+  }): Promise<InventoryStatus>;
+}
 
 export interface DemoRunFinalizationController {
   finalizeRun(runId: string, correlationId?: string): Promise<DemoRunSnapshot | null>;
@@ -59,10 +69,19 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
       logger: CheckoutSurgeLogger;
       pendingPersistenceReconciler?: Pick<PendingPersistenceReconciler, "reconcileSaleOffer">;
       terminalRunWriter: Pick<TerminalDemoRunWriter, "writePrepared">;
+      terminalInventoryRead: TerminalInventoryReadOperation;
+      terminalInventoryReadTimeoutMs: number;
       drainTimeoutSeconds: number;
       now?: () => Date;
     },
-  ) {}
+  ) {
+    if (
+      !Number.isSafeInteger(options.terminalInventoryReadTimeoutMs) ||
+      options.terminalInventoryReadTimeoutMs <= 0
+    ) {
+      throw new RangeError("terminalInventoryReadTimeoutMs must be a positive integer.");
+    }
+  }
 
   async finalizeReadyRuns(): Promise<number> {
     const rows = await this.options.db
@@ -190,13 +209,9 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
           saleOfferId: requireSaleOfferId(row.run),
           runId: row.run.id,
         });
-        let latestInventory: Awaited<ReturnType<typeof getInventoryStatus>>;
+        let latestInventory: InventoryStatus;
         try {
-          latestInventory = await getInventoryStatus(
-            this.options.redis,
-            requireSaleOfferId(row.run),
-            now,
-          );
+          latestInventory = await this.readTerminalInventory(requireSaleOfferId(row.run), now);
         } catch (error) {
           this.options.logger.warn(
             { err: error, runId, saleOfferId: requireSaleOfferId(row.run) },
@@ -370,6 +385,31 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
   private drainTimeoutAt(run: typeof demoRuns.$inferSelect): Date {
     const startedAt = run.trafficEndedAt ?? run.updatedAt;
     return new Date(startedAt.getTime() + this.options.drainTimeoutSeconds * 1000);
+  }
+
+  private async readTerminalInventory(
+    saleOfferId: string,
+    observedAt: Date,
+  ): Promise<InventoryStatus> {
+    const timeoutMs = this.options.terminalInventoryReadTimeoutMs;
+    const controller = new AbortController();
+    const deadline = setTimeout(() => {
+      controller.abort(new OperationDeadlineExceededError(timeoutMs));
+    }, timeoutMs);
+    deadline.unref();
+
+    try {
+      return await settleWithAbort(
+        this.options.terminalInventoryRead.read({
+          saleOfferId,
+          observedAt,
+          signal: controller.signal,
+        }),
+        controller.signal,
+      );
+    } finally {
+      clearTimeout(deadline);
+    }
   }
 
   private deriveFailureReason(input: {
@@ -572,7 +612,7 @@ async function readRecoveryPressure(
 
 function toTerminalInventorySnapshot(input: {
   saleOfferId: string;
-  inventory: Awaited<ReturnType<typeof getInventoryStatus>>;
+  inventory: InventoryStatus;
   businessOutcome: BusinessOutcomeSummary;
   capturedAt: Date;
 }): TerminalInventorySnapshot {

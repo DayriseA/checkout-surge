@@ -24,6 +24,7 @@ import {
   demoRunSaleContexts,
   demoRunSummaries,
   demoRuns,
+  getInventoryStatus,
   initializeInventory,
   inventoryKeys,
   isRunSaleEligible,
@@ -2441,6 +2442,8 @@ describe("demo-run lifecycle start gating", () => {
       logger: createSilentLogger("api"),
       pendingPersistenceReconciler: { reconcileSaleOffer },
       terminalRunWriter: { write },
+      terminalInventoryRead: createTerminalInventoryRead(redisClient),
+      terminalInventoryReadTimeoutMs: 2_000,
       drainTimeoutSeconds: 300,
       now: () => new Date("2026-06-20T00:00:15.000Z"),
     });
@@ -2603,6 +2606,8 @@ describe("demo-run lifecycle start gating", () => {
       redis: redisClient,
       logger: createSilentLogger("api"),
       terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db),
+      terminalInventoryRead: createTerminalInventoryRead(redisClient),
+      terminalInventoryReadTimeoutMs: 2_000,
       drainTimeoutSeconds: 300,
       now: () => new Date("2026-06-20T00:00:10.000Z"),
     });
@@ -2836,6 +2841,8 @@ describe("demo-run lifecycle start gating", () => {
       redis: redisClient,
       logger: createSilentLogger("api"),
       terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db),
+      terminalInventoryRead: createTerminalInventoryRead(redisClient),
+      terminalInventoryReadTimeoutMs: 2_000,
       drainTimeoutSeconds: 300,
       now: () => new Date("2026-06-20T00:00:10.000Z"),
     });
@@ -3656,5 +3663,12 @@ function publicRuntimePolicyMutable() {
     publicRunBudget: policy.publicRunBudget,
     publicCustomDefaults: policy.publicCustomDefaults,
     publicCustomLimits: policy.publicCustomLimits,
+  };
+}
+
+function createTerminalInventoryRead(redis: ReturnType<typeof createRedisClient>) {
+  return {
+    read: ({ saleOfferId, observedAt }: { saleOfferId: string; observedAt: Date }) =>
+      getInventoryStatus(redis, saleOfferId, observedAt),
   };
 }

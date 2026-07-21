@@ -75,6 +75,7 @@ import { TrafficCompletionEnrichmentService } from "./services/traffic-completio
 
 export const apiAppName = "api" as const;
 export const apiAppDependencies = [contractsPackageName, dbPackageName, loggerPackageName] as const;
+const terminalInventoryReadTimeoutMs = 2_000;
 
 export { createBullMqDemoQueueMaintenance } from "./queue/bullmq-demo-queue-maintenance.js";
 export { createBullMqOrderProcessJobPublisher } from "./queue/bullmq-order-process-job-publisher.js";
@@ -348,6 +349,26 @@ export async function startApiServer(): Promise<void> {
     logger,
     pendingPersistenceReconciler,
     terminalRunWriter,
+    terminalInventoryRead: {
+      read: async ({ saleOfferId, observedAt, signal }) => {
+        const operationRedis = createRedisClient(config.redisUrl, {
+          lazyConnect: true,
+          maxRetriesPerRequest: 0,
+          commandTimeout: terminalInventoryReadTimeoutMs,
+        });
+        const disconnect = () => operationRedis.disconnect();
+        signal.addEventListener("abort", disconnect, { once: true });
+        if (signal.aborted) disconnect();
+
+        try {
+          return await getInventoryStatus(operationRedis, saleOfferId, observedAt);
+        } finally {
+          signal.removeEventListener("abort", disconnect);
+          disconnect();
+        }
+      },
+    },
+    terminalInventoryReadTimeoutMs,
     drainTimeoutSeconds: config.demoRunDrainTimeoutSeconds,
   });
   const demoRunStartupReconciliationService = new DemoRunStartupReconciliationService({
