@@ -82,15 +82,19 @@ pnpm runtime:setup
 
 `runtime:setup` uses `docker compose run` and auto-starts PostgreSQL and Redis as dependencies, so it can be run without a prior `runtime:up`. By itself it does not start the API, worker, mock ERP, load orchestrator, or dashboard services.
 
-Setup strictly validates the environment-backed public-policy bootstrap before database mutations and inserts it only when `active` is absent. The migration step also upgrades the repository's legacy active-policy JSON by adding only the four public custom VU/ERP limit keys that older seeds omitted. Its VU values are bounded by the persisted deployment caps, and its ERP maximum accommodates the persisted custom default (including the historical 150 TPS default). Existing keys, including explicit JSON `null`, are never replaced; the complete result must pass the current shared policy schema or setup exits with field-level diagnostics. Rerunning setup preserves the existing PostgreSQL policy, including admin edits, and a valid current policy is a semantic no-op. Change an established deployment through the protected admin policy controls, or wipe the database when a new bootstrap from environment values is intended.
+Setup strictly validates the environment-backed public-policy bootstrap before database mutations and inserts it only when `active` is absent. The current migration chain also narrowly hydrates the repository's older active-policy JSON by adding only the four public custom VU/ERP limit keys that older seeds omitted. Its VU values are bounded by the persisted deployment caps, and its ERP maximum accommodates the persisted custom default (including the historical 150 TPS default). Existing keys, including explicit JSON `null`, are never replaced; the complete result must pass the current shared policy schema or setup exits with field-level diagnostics. Rerunning setup preserves the existing PostgreSQL policy, including admin edits, and a valid current policy is a semantic no-op. That current hydration behavior is not an in-place-upgrade promise for future pre-release shapes; change current policy through the protected admin controls, or use the intentional wipe below when the local data shape becomes incompatible or a new environment bootstrap is intended.
 
-For a clean wipe-and-rebuild (drops all data and re-seeds):
+### Intentional pre-release wipe and rebuild
+
+Pre-release reference-runtime data is disposable. When a repository change is incompatible with existing local PostgreSQL, Redis, or load-journal state, confirm that `COMPOSE_PROJECT_NAME` selects the intended Compose project, then use this one rebuild workflow instead of translating the legacy state:
 
 ```bash
 pnpm runtime:wipe
 pnpm runtime:setup
 pnpm runtime:up
 ```
+
+`runtime:wipe` maps to `docker compose down --volumes --remove-orphans`. It stops and removes the selected Compose project's runtime containers and network, removes its orphan containers, and deletes that project's named PostgreSQL, Redis, and load-orchestrator journal volumes. It does not delete another Compose project's volumes or the host-native load-orchestrator journal, whose default path is `.checkout-surge/load-orchestrator`. `runtime:setup` then creates the current database/Redis shape and baseline data (auto-starting its PostgreSQL and Redis dependencies), and `runtime:up` starts the complete reference runtime.
 
 Reset the running demo only when you need explicit admin recovery or a refreshed local baseline:
 
@@ -285,7 +289,7 @@ The worker-facing Mock ERP confirmation contract is `POST http://localhost:4100/
 | `pnpm runtime:up:debug` | Build and start the full runtime with loopback-only direct service ports for host-native debugging |
 | `pnpm runtime:down` | Stop the full local reference runtime while preserving named-volume PostgreSQL, Redis, and load-orchestrator journal state |
 | `pnpm runtime:setup` | Run migrations and seed demo baseline data, durable presets, and Redis inventory inside the compose network |
-| `pnpm runtime:wipe` | Stop the runtime and delete its named volumes, orphan containers, PostgreSQL/Redis data, and load-orchestrator journal state |
+| `pnpm runtime:wipe` | Stop the selected Compose project and delete its named PostgreSQL, Redis, and load-orchestrator journal volumes plus its orphan containers; it does not delete the host-native journal |
 | `pnpm runtime:reset` | Reset the running demo through the API and Mock ERP admin reset endpoints for recovery/local maintenance |
 | `pnpm runtime:smoke` | Check compose/service readiness, recovery, SSE, and in-container k6 without mutating durable business/run state; the recovery read consumes short-lived admission capacity and may issue a visitor cookie |
 | `pnpm runtime:soak:recovery` | On an idle runtime, probe direct-web and proxy-to-web health for more than two recovery limiter windows, verify `/` remains reachable, then verify two independently signed BFF recovery identities receive authoritative idle state; deterministic component tests separately prove Start controls become enabled after hydration; intentionally opt-in and multi-minute |

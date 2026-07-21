@@ -22,11 +22,11 @@ Retain truthful current product classifications, durable behavior within a runni
 
 ## Acceptance criteria
 
-- [ ] Evidence for or against retained external DB volume/load-journal data is checked and recorded.
-- [ ] If no retention evidence exists, scope/domain/local docs state disposable data and one intentional wipe path.
-- [ ] Docs instruct rebuild rather than translation of legacy local data.
-- [ ] If retention evidence exists, implementation stops pending explicit product direction.
-- [ ] No compatibility deletion or migration squashing occurs in this task.
+- [x] Evidence for or against retained external DB volume/load-journal data is checked and recorded.
+- [x] If no retention evidence exists, scope/domain/local docs state disposable data and one intentional wipe path.
+- [x] Docs instruct rebuild rather than translation of legacy local data.
+- [x] No retained external-data evidence exists, so the stop condition was not triggered.
+- [x] No compatibility deletion or migration squashing occurs in this task.
 
 ## Verification
 
@@ -34,8 +34,8 @@ Validate the documented wipe path through its safe preconditions or focused guar
 
 ## Working record
 
-- Status: pending
-- Completed scope: none
-- Decisions: none
-- Verification: not run
-- Follow-up: none
+- Status: complete
+- Completed scope: Recorded the authoritative compatibility decision in `docs/scope_and_caveats.md`; clarified domain durability in `docs/core_business_entities.md`; documented one selected-project reference-runtime wipe/rebuild workflow in `docs/local_development.md`; and kept README/runtime-topology mirrors concise.
+- Decisions: The repository remains a pre-release local reference runtime. Durable business and load-execution behavior is retained within the current supported runtime/data shape, but legacy local PostgreSQL, Redis, and load-journal shapes have no in-place upgrade promise. After an incompatible pre-release change, users intentionally wipe and rebuild rather than translate legacy local state. This documentation decision does not remove current migrations or normalizers.
+- Verification: No retained external-data blocker was found. `docker compose config --volumes` resolved only `checkout-surge-postgres-data`, `checkout-surge-redis-data`, and `checkout-surge-load-orchestrator-data`. Resolved Compose JSON gave all three project-prefixed names and no `external` flag; `COMPOSE_PROJECT_NAME=task09-evidence` changed each resolved name to that selected project. `docker compose --dry-run down --volumes --remove-orphans` reported removal only of the default project's three named volumes and performed no wipe. Source inspection confirmed `runtime:wipe` maps to that command, Compose mounts the orchestrator journal at `/var/lib/checkout-surge/load-orchestrator`, and host-native configuration instead defaults to `.checkout-surge/load-orchestrator`. Changed local Markdown targets/headings exist and `git diff --check`, `pnpm lint`, `pnpm type-check`, and `pnpm test:unit` passed. `pnpm format:check` found 52 formatting/import diagnostics in application/test files outside this documentation task; Biome ignores Markdown, and its focused check reported that none of these changed documentation files are processed. The forbidden composition and characterization lanes were not run.
+- Follow-up: Tasks 12–14 own any migration squashing, legacy normalizer removal, or policy-storage simplification. If a retained external volume, hosted retention contract, or release-stability requirement is later accepted, revisit the compatibility classification before those deletions.

@@ -741,6 +741,8 @@ Important implications:
 
 ## Storage Boundaries
 
+In this document, **durable** means that the current supported runtime/data shape preserves business facts through its documented process, handoff, and restart failure modes. It does not promise in-place upgrades of legacy pre-release local PostgreSQL, Redis, or load-journal data; [Scope and Caveats](scope_and_caveats.md#intentional-non-goals) owns that compatibility boundary.
+
 ### PostgreSQL
 
 PostgreSQL is the durable business source of truth for:
@@ -874,7 +876,7 @@ The implemented schema, Redis keys, and public contracts are now concrete. The c
 - payment authorization, cancellation, and automatic reservation expiry/release,
 - external notification-provider integration.
 
-Any implementation in those areas must preserve the existing reservation/order distinction, durable recovery boundaries, and hosted retention policy. Their classification and decision triggers are tracked in [Scope and Caveats](scope_and_caveats.md#deferred-decisions); this section remains authoritative for the domain constraints.
+Any implementation in those areas must preserve the existing reservation/order distinction, durable recovery boundaries, and accepted compatibility boundary. Their classification and decision triggers are tracked in [Scope and Caveats](scope_and_caveats.md); this section remains authoritative for the domain constraints.
 
 ---
 

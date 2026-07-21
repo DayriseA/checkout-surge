@@ -144,11 +144,7 @@ pnpm test
 pnpm test:infra:down
 ```
 
-To delete all local runtime volumes and their PostgreSQL, Redis, and load-orchestrator journal state, use the explicitly destructive wipe command:
-
-```bash
-pnpm runtime:wipe
-```
+Pre-release reference-runtime state is disposable, and in-place upgrades of legacy local data shapes are not promised. After an incompatible change, follow the single [intentional wipe-and-rebuild workflow](docs/local_development.md#intentional-pre-release-wipe-and-rebuild); it is destructive only to the selected Compose project's runtime resources and does not remove the host-native load-orchestrator journal. The authoritative compatibility boundary is recorded in [Scope and Caveats](docs/scope_and_caveats.md#intentional-non-goals).
 
 For local ports, environment variables, health endpoints, and command references, see [docs/local_development.md](docs/local_development.md).
 
