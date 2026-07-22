@@ -114,7 +114,9 @@ function DialogHarness({
   const [open, setOpen] = useState(false);
   return (
     <>
-      <button onClick={() => setOpen(true)} type="button">Open confirmation</button>
+      <button onClick={() => setOpen(true)} type="button">
+        Open confirmation
+      </button>
       <button type="button">Outside</button>
       <ConfirmationDialog
         confirmDisabled={confirmDisabled}

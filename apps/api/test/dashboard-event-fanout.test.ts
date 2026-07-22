@@ -190,41 +190,44 @@ describe("dashboard event fan-out", () => {
     fanout.close();
   });
 
-  it.each(["request", "response", "write-throw", "overflow", "shutdown"] as const)(
-    "cleans every listener idempotently after %s teardown and ignores late drain",
-    (teardown) => {
-      const fanout = createFanout({ maxBufferedFrames: 1 });
-      const input = connectionInput("first", "ip4:192.0.2.1");
-      const request = input.request as unknown as FakeRequest;
-      const response = input.response as unknown as FakeResponse;
-      fanout.connect(input);
-      if (teardown === "request") request.emit("close");
-      if (teardown === "response") response.emit("close");
-      if (teardown === "write-throw") {
-        response.throwOnWrite = true;
-        fanout.publish(dashboardEvent);
-      }
-      if (teardown === "overflow") {
-        response.writeResult = false;
-        fanout.publish(dashboardEvent);
-        fanout.publish(dashboardEvent);
-        fanout.publish(dashboardEvent);
-      }
-      if (teardown === "shutdown") fanout.close();
-      const chunksAfterClose = response.chunks.length;
-
-      request.emit("close");
-      response.emit("close");
-      response.emit("drain");
+  it.each([
+    "request",
+    "response",
+    "write-throw",
+    "overflow",
+    "shutdown",
+  ] as const)("cleans every listener idempotently after %s teardown and ignores late drain", (teardown) => {
+    const fanout = createFanout({ maxBufferedFrames: 1 });
+    const input = connectionInput("first", "ip4:192.0.2.1");
+    const request = input.request as unknown as FakeRequest;
+    const response = input.response as unknown as FakeResponse;
+    fanout.connect(input);
+    if (teardown === "request") request.emit("close");
+    if (teardown === "response") response.emit("close");
+    if (teardown === "write-throw") {
+      response.throwOnWrite = true;
       fanout.publish(dashboardEvent);
+    }
+    if (teardown === "overflow") {
+      response.writeResult = false;
+      fanout.publish(dashboardEvent);
+      fanout.publish(dashboardEvent);
+      fanout.publish(dashboardEvent);
+    }
+    if (teardown === "shutdown") fanout.close();
+    const chunksAfterClose = response.chunks.length;
 
-      expect(fanout.clientCount()).toBe(0);
-      expect(request.listenerCount("close")).toBe(0);
-      expect(response.listenerCount("close")).toBe(0);
-      expect(response.listenerCount("drain")).toBe(0);
-      expect(response.chunks).toHaveLength(chunksAfterClose);
-    },
-  );
+    request.emit("close");
+    response.emit("close");
+    response.emit("drain");
+    fanout.publish(dashboardEvent);
+
+    expect(fanout.clientCount()).toBe(0);
+    expect(request.listenerCount("close")).toBe(0);
+    expect(response.listenerCount("close")).toBe(0);
+    expect(response.listenerCount("drain")).toBe(0);
+    expect(response.chunks).toHaveLength(chunksAfterClose);
+  });
 
   it("atomically distinguishes per-source and total capacity and frees slots once", () => {
     let id = 0;
@@ -275,20 +278,20 @@ describe("dashboard event fan-out", () => {
     expect(fanout.clientCount()).toBe(0);
   });
 
-  it.each(["throw", "headers"] as const)(
-    "frees opening capacity after initial %s and permits reconnect",
-    (failure) => {
-      const fanout = createFanout({ maxClients: 1, maxClientsPerSource: 1 });
-      const input = connectionInput("failed", "ip4:192.0.2.1");
-      const response = input.response as unknown as FakeResponse;
-      if (failure === "throw") response.throwOnWrite = true;
-      else response.throwOnWriteHead = true;
-      expect(fanout.connect(input)).toBe("connected");
-      expect(fanout.clientCount()).toBe(0);
-      expect(fanout.connect(connectionInput("later", "ip4:192.0.2.1"))).toBe("connected");
-      fanout.close();
-    },
-  );
+  it.each([
+    "throw",
+    "headers",
+  ] as const)("frees opening capacity after initial %s and permits reconnect", (failure) => {
+    const fanout = createFanout({ maxClients: 1, maxClientsPerSource: 1 });
+    const input = connectionInput("failed", "ip4:192.0.2.1");
+    const response = input.response as unknown as FakeResponse;
+    if (failure === "throw") response.throwOnWrite = true;
+    else response.throwOnWriteHead = true;
+    expect(fanout.connect(input)).toBe("connected");
+    expect(fanout.clientCount()).toBe(0);
+    expect(fanout.connect(connectionInput("later", "ip4:192.0.2.1"))).toBe("connected");
+    fanout.close();
+  });
 
   it("keeps an opening frame that reports backpressure and queues later frames", () => {
     const fanout = createFanout();
@@ -308,13 +311,16 @@ describe("dashboard event fan-out", () => {
     fanout.close();
   });
 
-  it.each([0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY])(
-    "rejects invalid or zero queue bounds (%s)",
-    (value) => {
-      expect(() => createFanout({ maxBufferedFrames: value })).toThrow(/maxBufferedFrames/);
-      expect(() => createFanout({ maxBufferedBytes: value })).toThrow(/maxBufferedBytes/);
-    },
-  );
+  it.each([
+    0,
+    -1,
+    1.5,
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+  ])("rejects invalid or zero queue bounds (%s)", (value) => {
+    expect(() => createFanout({ maxBufferedFrames: value })).toThrow(/maxBufferedFrames/);
+    expect(() => createFanout({ maxBufferedBytes: value })).toThrow(/maxBufferedBytes/);
+  });
 });
 
 function createFanout(

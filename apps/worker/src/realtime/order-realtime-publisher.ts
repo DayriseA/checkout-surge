@@ -32,8 +32,16 @@ export function createBoundedOrderRealtimePublisher(options: {
   maxQueuedEvents?: number;
   maxBatchEvents?: number;
   onInvalid?(error: unknown, event: unknown, stats: OrderRealtimePublisherCounters): void;
-  onDrop?(events: readonly OrderRealtimeEvent[], reason: "closed" | "queue_overflow" | "group_exceeds_batch", stats: OrderRealtimePublisherCounters): void;
-  onPublishError?(error: unknown, event: OrderRealtimeEvent, stats: OrderRealtimePublisherCounters): void;
+  onDrop?(
+    events: readonly OrderRealtimeEvent[],
+    reason: "closed" | "queue_overflow" | "group_exceeds_batch",
+    stats: OrderRealtimePublisherCounters,
+  ): void;
+  onPublishError?(
+    error: unknown,
+    event: OrderRealtimeEvent,
+    stats: OrderRealtimePublisherCounters,
+  ): void;
   onStats?(stats: OrderRealtimePublisherCounters): void;
 }): BoundedOrderRealtimePublisher {
   const maxQueuedEvents = positiveInteger(options.maxQueuedEvents ?? 1_024, "maxQueuedEvents");
@@ -60,7 +68,11 @@ export function createBoundedOrderRealtimePublisher(options: {
   const observe = () => {
     counters.queueDepth = queueDepth;
     counters.highWaterMark = highWaterMark;
-    try { options.onStats?.(cloneCounters(counters)); } catch { /* observability is best effort */ }
+    try {
+      options.onStats?.(cloneCounters(counters));
+    } catch {
+      /* observability is best effort */
+    }
   };
 
   const startDrain = () => {
@@ -89,7 +101,11 @@ export function createBoundedOrderRealtimePublisher(options: {
           counters.published[eventType(event)] += 1;
         } catch (error) {
           counters.failed[eventType(event)] += 1;
-          try { options.onPublishError?.(error, event, cloneCounters(counters)); } catch { /* best effort */ }
+          try {
+            options.onPublishError?.(error, event, cloneCounters(counters));
+          } catch {
+            /* best effort */
+          }
         } finally {
           counters.inFlight = 0;
         }
@@ -107,7 +123,15 @@ export function createBoundedOrderRealtimePublisher(options: {
         if (!result.success || !isOrderRealtimeEvent(result.data)) {
           const type = eventType(candidate);
           counters.invalid[type] += 1;
-          try { options.onInvalid?.(result.success ? new Error("Unsupported realtime event type.") : result.error, candidate, cloneCounters(counters)); } catch { /* best effort */ }
+          try {
+            options.onInvalid?.(
+              result.success ? new Error("Unsupported realtime event type.") : result.error,
+              candidate,
+              cloneCounters(counters),
+            );
+          } catch {
+            /* best effort */
+          }
           observe();
           return;
         }
@@ -122,7 +146,11 @@ export function createBoundedOrderRealtimePublisher(options: {
             : null;
       if (dropReason) {
         for (const event of parsed) counters.dropped[eventType(event)] += 1;
-        try { options.onDrop?.(parsed, dropReason, cloneCounters(counters)); } catch { /* best effort */ }
+        try {
+          options.onDrop?.(parsed, dropReason, cloneCounters(counters));
+        } catch {
+          /* best effort */
+        }
         observe();
         return;
       }
@@ -145,8 +173,10 @@ export function createBoundedOrderRealtimePublisher(options: {
 }
 
 function isOrderRealtimeEvent(event: DashboardEvent): event is OrderRealtimeEvent {
-  return event.type === "order.status.updated" ||
-    (event.type === "dashboard.metric.observed" && event.metricName === "order.consistency_lag");
+  return (
+    event.type === "order.status.updated" ||
+    (event.type === "dashboard.metric.observed" && event.metricName === "order.consistency_lag")
+  );
 }
 
 function eventType(event: OrderRealtimeEvent): EventType;
@@ -155,8 +185,11 @@ function eventType(event: unknown): EventType | "unknown" {
   if (typeof event === "object" && event !== null && "type" in event) {
     const type = (event as { type?: unknown }).type;
     if (type === "order.status.updated") return type;
-    if (type === "dashboard.metric.observed" && "metricName" in event &&
-      (event as { metricName?: unknown }).metricName === "order.consistency_lag") {
+    if (
+      type === "dashboard.metric.observed" &&
+      "metricName" in event &&
+      (event as { metricName?: unknown }).metricName === "order.consistency_lag"
+    ) {
       return "order.consistency_lag";
     }
   }
@@ -164,7 +197,8 @@ function eventType(event: unknown): EventType | "unknown" {
 }
 
 function positiveInteger(value: number, name: string): number {
-  if (!Number.isInteger(value) || value <= 0) throw new Error(`${name} must be a positive integer.`);
+  if (!Number.isInteger(value) || value <= 0)
+    throw new Error(`${name} must be a positive integer.`);
   return value;
 }
 

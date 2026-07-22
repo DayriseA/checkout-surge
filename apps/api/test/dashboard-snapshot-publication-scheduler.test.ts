@@ -6,9 +6,11 @@ import { DashboardSnapshotPublicationScheduler } from "../src/services/dashboard
 describe("DashboardSnapshotPublicationScheduler", () => {
   it("does no work on the sold-out loser path and coalesces a burst at 500 ms", async () => {
     vi.useFakeTimers();
-    const readInventory = vi.fn().mockResolvedValue(
-      inventoryFixture({ soldOutCount: 100, soldOutObservedAt: "2026-07-13T12:00:03.000Z" }),
-    );
+    const readInventory = vi
+      .fn()
+      .mockResolvedValue(
+        inventoryFixture({ soldOutCount: 100, soldOutObservedAt: "2026-07-13T12:00:03.000Z" }),
+      );
     const publish = vi.fn().mockResolvedValue(undefined);
     const scheduler = new DashboardSnapshotPublicationScheduler({
       readInventory,

@@ -72,6 +72,20 @@ const durableRow: DurableAcceptanceLiveRow = {
   },
 };
 
+const matchingDurableRow: DurableAcceptanceLiveRow = {
+  reservation: {
+    ...durableRow.reservation,
+    correlationId: hold.correlationId,
+    securedAt: new Date(hold.securedAt),
+    expiresAt: new Date(hold.expiresAt),
+  },
+  order: {
+    ...durableRow.order,
+    correlationId: hold.correlationId,
+    queuedAt: new Date(hold.securedAt),
+  },
+};
+
 describe("PostgresBuyPersistence uniqueness-race recovery", () => {
   it.each([
     {
@@ -126,25 +140,20 @@ describe("PostgresBuyPersistence uniqueness-race recovery", () => {
     "reservations_reservation_token_unique",
   ])("returns the durable winner after a matching %s conflict", async (constraint_name) => {
     const error = Object.assign(new Error("unique violation"), { code: "23505", constraint_name });
-    const persistence = new PostgresBuyPersistence(fakeDatabase(error, durableRow));
+    const persistence = new PostgresBuyPersistence(fakeDatabase(error, matchingDurableRow));
 
     await expect(persistence.persistSecuredReservation({ reservation: hold })).resolves.toEqual({
-      reservation: {
-        ...hold,
-        correlationId: "winner-correlation",
-        securedAt: "2026-07-12T11:59:59.123Z",
-        expiresAt: "2026-07-12T12:14:59.123Z",
-      },
+      reservation: hold,
       order: {
         id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
         publicOrderId: "ord_winner",
         saleOfferId: hold.saleOfferId,
         reservationId: hold.id,
         runId: hold.runId,
-        correlationId: "winner-correlation",
+        correlationId: hold.correlationId,
         quantity: hold.quantity,
         status: "queued",
-        queuedAt: "2026-07-12T11:59:59.456Z",
+        queuedAt: hold.securedAt,
       },
     });
   });
@@ -155,7 +164,7 @@ describe("PostgresBuyPersistence uniqueness-race recovery", () => {
       constraint_name: "reservations_pkey",
     });
     const wrappedError = new Error("Failed query", { cause: postgresError });
-    const persistence = new PostgresBuyPersistence(fakeDatabase(wrappedError, durableRow));
+    const persistence = new PostgresBuyPersistence(fakeDatabase(wrappedError, matchingDurableRow));
 
     await expect(
       persistence.persistSecuredReservation({ reservation: hold }),
@@ -193,18 +202,73 @@ describe("PostgresBuyPersistence uniqueness-race recovery", () => {
     ["reservations_pkey", "missing durable buy", null],
     [
       "reservations_pkey",
-      "mismatched durable buy",
-      { ...durableRow, reservation: { ...durableRow.reservation, quantity: 99 } },
+      "mismatched quantity",
+      {
+        ...matchingDurableRow,
+        reservation: { ...matchingDurableRow.reservation, quantity: 99 },
+      },
+    ],
+    [
+      "reservations_pkey",
+      "mismatched reservation correlation",
+      {
+        ...matchingDurableRow,
+        reservation: {
+          ...matchingDurableRow.reservation,
+          correlationId: "different-correlation",
+        },
+      },
+    ],
+    [
+      "reservations_pkey",
+      "mismatched order correlation",
+      {
+        ...matchingDurableRow,
+        order: { ...matchingDurableRow.order, correlationId: "different-correlation" },
+      },
     ],
     ["reservations_reservation_token_unique", "missing durable buy", null],
     [
       "reservations_reservation_token_unique",
-      "mismatched durable buy",
+      "mismatched order reservation",
       {
-        ...durableRow,
+        ...matchingDurableRow,
         order: {
-          ...durableRow.order,
+          ...matchingDurableRow.order,
           reservationId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+        },
+      },
+    ],
+    [
+      "reservations_reservation_token_unique",
+      "mismatched secured timestamp",
+      {
+        ...matchingDurableRow,
+        reservation: {
+          ...matchingDurableRow.reservation,
+          securedAt: new Date("2026-07-12T11:59:59.999Z"),
+        },
+      },
+    ],
+    [
+      "reservations_reservation_token_unique",
+      "mismatched expiry timestamp",
+      {
+        ...matchingDurableRow,
+        reservation: {
+          ...matchingDurableRow.reservation,
+          expiresAt: new Date("2026-07-12T12:14:59.999Z"),
+        },
+      },
+    ],
+    [
+      "reservations_reservation_token_unique",
+      "mismatched queued timestamp",
+      {
+        ...matchingDurableRow,
+        order: {
+          ...matchingDurableRow.order,
+          queuedAt: new Date("2026-07-12T11:59:59.999Z"),
         },
       },
     ],

@@ -200,23 +200,22 @@ describe("API runtime configuration", () => {
     ).toThrow(/DASHBOARD_RECOVERY_MAX_CONCURRENT/);
   });
 
-  it.each(["0", "-1", "1.5", "invalid"])(
-    "rejects non-positive or invalid dashboard SSE queue limits (%s)",
-    (value) => {
-      for (const name of [
-        "DASHBOARD_SSE_MAX_BUFFERED_FRAMES",
-        "DASHBOARD_SSE_MAX_BUFFERED_BYTES",
-      ]) {
-        expect(() =>
-          loadApiConfig({
-            ...baseEnv,
-            CONTROL_SERVICE_TOKEN: "deployment-token",
-            [name]: value,
-          }),
-        ).toThrow(new RegExp(name));
-      }
-    },
-  );
+  it.each([
+    "0",
+    "-1",
+    "1.5",
+    "invalid",
+  ])("rejects non-positive or invalid dashboard SSE queue limits (%s)", (value) => {
+    for (const name of ["DASHBOARD_SSE_MAX_BUFFERED_FRAMES", "DASHBOARD_SSE_MAX_BUFFERED_BYTES"]) {
+      expect(() =>
+        loadApiConfig({
+          ...baseEnv,
+          CONTROL_SERVICE_TOKEN: "deployment-token",
+          [name]: value,
+        }),
+      ).toThrow(new RegExp(name));
+    }
+  });
 
   it("rejects per-source limits larger than their total or global limit", () => {
     expect(() =>

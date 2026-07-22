@@ -1,9 +1,9 @@
 import "server-only";
 
 import { cookies } from "next/headers";
+import { isValidAdminSessionToken } from "./admin-session";
 import { adminSessionCookieName } from "./backend-proxy";
 import { webServerConfig } from "./config";
-import { isValidAdminSessionToken } from "./admin-session";
 
 export async function hasValidAdminPageSession(): Promise<boolean> {
   const config = webServerConfig();

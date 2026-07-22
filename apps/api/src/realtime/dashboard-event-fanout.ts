@@ -1,5 +1,5 @@
-import { randomUUID } from "node:crypto";
 import { Buffer } from "node:buffer";
+import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { type DashboardEvent, dashboardEventSchema } from "@checkout-surge/contracts";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";

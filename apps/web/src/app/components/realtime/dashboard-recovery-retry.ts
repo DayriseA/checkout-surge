@@ -77,10 +77,7 @@ export function createDashboardRecoveryRetryScheduler({
       attempt += 1;
       delayMs = Math.max(
         minimumDelayMs,
-        Math.min(
-          policy.maximumDelayMs,
-          policy.initialDelayMs * policy.multiplier ** (attempt - 1),
-        ),
+        Math.min(policy.maximumDelayMs, policy.initialDelayMs * policy.multiplier ** (attempt - 1)),
       );
       timer = setTimer(() => {
         timer = null;

@@ -3,7 +3,6 @@
 import {
   type AdminPresetListResponse,
   type AdminPublicRuntimePolicyResponse,
-  archiveAdminPresetResponseSchema,
   adminDemoResetResponseSchema,
   adminMaintenanceCleanupRunsResponseSchema,
   adminPresetListResponseSchema,
@@ -11,6 +10,7 @@ import {
   adminPublicRuntimePolicyResponseSchema,
   adminPublicRuntimePolicyUpdateRequestSchema,
   archiveAdminPresetRequestSchema,
+  archiveAdminPresetResponseSchema,
   copyDemoPresetToCustomRequestSchema,
   type DashboardRecoveryResponse,
   duplicateDemoPresetRequestSchema,
@@ -22,19 +22,19 @@ import {
   startDemoRunRequestSchema,
   startDemoRunResponseSchema,
 } from "@checkout-surge/contracts";
-import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { BackendRead } from "../../lib/api";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   configFromDraft,
   draftFromPreset,
   draftFromRuntimePolicy,
+  type PresetDraft,
   parseInteger,
   parseNumber,
   policyFromDraft,
-  type PresetDraft,
   type RuntimePolicyDraft,
 } from "../../lib/admin-drafts";
+import type { BackendRead } from "../../lib/api";
 import { readProxyJson } from "../../lib/client/proxy-json";
 import {
   adminDemoResetProxyPath,
@@ -49,20 +49,20 @@ import {
   adminPublicRuntimePolicyProxyPath,
 } from "../../lib/control-paths";
 import { formatDashboardTime } from "../../lib/dashboard-time";
+import { ConfirmationDialog } from "../confirmation-dialog";
+import { useDashboardRecovery } from "../realtime/use-dashboard-recovery";
+import { StatusPill } from "../status-pill";
 import {
   AdminErpDiagnosticsView,
   AdminPresetView,
   AdminRuntimePolicyView,
-  Fact,
-  Unavailable,
   buttonClassName,
   currentRunStatus,
+  Fact,
   navigateToWatch,
   panelClassName,
+  Unavailable,
 } from "./admin-feature-views";
-import { StatusPill } from "../status-pill";
-import { ConfirmationDialog } from "../confirmation-dialog";
-import { useDashboardRecovery } from "../realtime/use-dashboard-recovery";
 
 export interface AdminAuthenticatedSurfaceProps {
   initialErpChaos: BackendRead<ErpChaosStatus>;
@@ -439,43 +439,43 @@ export function AdminPresetController({
 
   return (
     <>
-    <AdminPresetView
-      draft={draft}
-      duplicateTargetSlug={duplicateTargetSlug}
-      isPending={isPending}
-      notice={notice}
-      onArchive={() => {
-        setArchiveError(null);
-        setArchiveOpen(true);
-      }}
-      onCopyToCustom={() => void copyToCustom()}
-      onDuplicate={(targetSlug) => void duplicate(targetSlug)}
-      onDuplicateTargetSlugChange={setDuplicateTargetSlug}
-      onSave={() => void save()}
-      onSelect={(slug) => {
-        if (slug !== selectedSlug) isDraftDirtyRef.current = false;
-        setSelectedSlug(slug);
-      }}
-      onStart={() => void start()}
-      onUpdateDraft={(next) => {
-        isDraftDirtyRef.current = true;
-        setDraft((current) => (current ? { ...current, ...next } : null));
-      }}
-      presets={presets}
-      presetsRead={presetsRead}
-      selectedPreset={selectedPreset}
-      startBlocked={isRunStartBlocked(recovery)}
-    />
-    <ConfirmationDialog
-      confirmLabel="Archive preset"
-      description={`Archive the "${selectedPreset?.display.name ?? "selected"}" preset. It will leave the active list while historical runs are retained.`}
-      error={archiveError}
-      onCancel={() => setArchiveOpen(false)}
-      onConfirm={() => void archive()}
-      open={archiveOpen}
-      pending={isPending}
-      title="Archive this preset?"
-    />
+      <AdminPresetView
+        draft={draft}
+        duplicateTargetSlug={duplicateTargetSlug}
+        isPending={isPending}
+        notice={notice}
+        onArchive={() => {
+          setArchiveError(null);
+          setArchiveOpen(true);
+        }}
+        onCopyToCustom={() => void copyToCustom()}
+        onDuplicate={(targetSlug) => void duplicate(targetSlug)}
+        onDuplicateTargetSlugChange={setDuplicateTargetSlug}
+        onSave={() => void save()}
+        onSelect={(slug) => {
+          if (slug !== selectedSlug) isDraftDirtyRef.current = false;
+          setSelectedSlug(slug);
+        }}
+        onStart={() => void start()}
+        onUpdateDraft={(next) => {
+          isDraftDirtyRef.current = true;
+          setDraft((current) => (current ? { ...current, ...next } : null));
+        }}
+        presets={presets}
+        presetsRead={presetsRead}
+        selectedPreset={selectedPreset}
+        startBlocked={isRunStartBlocked(recovery)}
+      />
+      <ConfirmationDialog
+        confirmLabel="Archive preset"
+        description={`Archive the "${selectedPreset?.display.name ?? "selected"}" preset. It will leave the active list while historical runs are retained.`}
+        error={archiveError}
+        onCancel={() => setArchiveOpen(false)}
+        onConfirm={() => void archive()}
+        open={archiveOpen}
+        pending={isPending}
+        title="Archive this preset?"
+      />
     </>
   );
 }
@@ -651,34 +651,34 @@ export function AdminErpDiagnosticsController({
 
   return (
     <>
-    <AdminErpDiagnosticsView
-      errorRate={draft.errorRate}
-      erpChaos={erpChaos}
-      forcedOutage={draft.forcedOutage}
-      isPending={isPending}
-      latencyMs={draft.latencyMs}
-      maxTps={draft.maxTps}
-      notice={notice}
-      onApply={apply}
-      onErrorRateChange={(errorRate) => updateErpDraft({ errorRate })}
-      onForcedOutageChange={(forcedOutage) => updateErpDraft({ forcedOutage })}
-      onLatencyMsChange={(latencyMs) => updateErpDraft({ latencyMs })}
-      onMaxTpsChange={(maxTps) => updateErpDraft({ maxTps })}
-      onReset={() => {
-        setResetError(null);
-        setResetOpen(true);
-      }}
-    />
-    <ConfirmationDialog
-      confirmLabel="Reset ERP controls"
-      description="Reset the shared ERP latency, throughput, error-rate, and outage controls to their defaults."
-      error={resetError}
-      onCancel={() => setResetOpen(false)}
-      onConfirm={() => void submit(adminErpChaosResetProxyPath, { method: "POST" })}
-      open={resetOpen}
-      pending={isPending}
-      title="Reset ERP controls?"
-    />
+      <AdminErpDiagnosticsView
+        errorRate={draft.errorRate}
+        erpChaos={erpChaos}
+        forcedOutage={draft.forcedOutage}
+        isPending={isPending}
+        latencyMs={draft.latencyMs}
+        maxTps={draft.maxTps}
+        notice={notice}
+        onApply={apply}
+        onErrorRateChange={(errorRate) => updateErpDraft({ errorRate })}
+        onForcedOutageChange={(forcedOutage) => updateErpDraft({ forcedOutage })}
+        onLatencyMsChange={(latencyMs) => updateErpDraft({ latencyMs })}
+        onMaxTpsChange={(maxTps) => updateErpDraft({ maxTps })}
+        onReset={() => {
+          setResetError(null);
+          setResetOpen(true);
+        }}
+      />
+      <ConfirmationDialog
+        confirmLabel="Reset ERP controls"
+        description="Reset the shared ERP latency, throughput, error-rate, and outage controls to their defaults."
+        error={resetError}
+        onCancel={() => setResetOpen(false)}
+        onConfirm={() => void submit(adminErpChaosResetProxyPath, { method: "POST" })}
+        open={resetOpen}
+        pending={isPending}
+        title="Reset ERP controls?"
+      />
     </>
   );
 

@@ -1,9 +1,9 @@
+import { describe, expect, it } from "vitest";
 import {
   parsePublicVisitorCredential,
   signPublicVisitorCredential,
   verifyPublicVisitorCredential,
 } from "../src/public-visitor-credential.js";
-import { describe, expect, it } from "vitest";
 
 const secret = "fixture-cookie-secret";
 const visitorId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";

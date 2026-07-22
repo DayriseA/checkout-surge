@@ -132,7 +132,9 @@ export function RunHistoryAdminControls({ summaries }: { summaries: RunHistorySu
             Delete All Run Summaries
           </button>
         </div>
-        {statusMessage ? <p className="m-0 text-sm font-semibold text-muted-strong">{statusMessage}</p> : null}
+        {statusMessage ? (
+          <p className="m-0 text-sm font-semibold text-muted-strong">{statusMessage}</p>
+        ) : null}
       </div>
       <ConfirmationDialog
         confirmDisabled={intent?.kind === "all" && deleteAllConfirmation !== deleteAllToken}
@@ -147,7 +149,9 @@ export function RunHistoryAdminControls({ summaries }: { summaries: RunHistorySu
         onConfirm={() => void confirmDelete()}
         open={intent !== null}
         pending={isSubmitting}
-        title={intent?.kind === "all" ? "Delete all run summaries?" : "Delete selected run summaries?"}
+        title={
+          intent?.kind === "all" ? "Delete all run summaries?" : "Delete selected run summaries?"
+        }
       >
         {intent?.kind === "all" ? (
           <label className="grid gap-1 text-sm font-semibold text-muted-strong">
@@ -165,7 +169,10 @@ export function RunHistoryAdminControls({ summaries }: { summaries: RunHistorySu
 }
 
 function errorMessageFromPayload(payload: unknown, fallback: string): string {
-  return typeof payload === "object" && payload !== null && "message" in payload && typeof payload.message === "string"
+  return typeof payload === "object" &&
+    payload !== null &&
+    "message" in payload &&
+    typeof payload.message === "string"
     ? payload.message
     : fallback;
 }

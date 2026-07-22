@@ -30,14 +30,15 @@ describe("dashboard events streaming proxy", () => {
   it("passes the private upstream byte stream through with fixed SSE headers", async () => {
     const stream = new ReadableStream<Uint8Array>();
     const request = new Request(`http://dashboard.local${dashboardEventsPath}`);
-    const fetchMock = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) =>
-      new Response(stream, {
-        headers: {
-          "cache-control": "private",
-          "content-type": "application/octet-stream",
-          "x-private-upstream": "do-not-forward",
-        },
-      }),
+    const fetchMock = vi.fn(
+      async (_input: string | URL | Request, _init?: RequestInit) =>
+        new Response(stream, {
+          headers: {
+            "cache-control": "private",
+            "content-type": "application/octet-stream",
+            "x-private-upstream": "do-not-forward",
+          },
+        }),
     );
     vi.stubGlobal("fetch", fetchMock);
 
@@ -62,11 +63,12 @@ describe("dashboard events streaming proxy", () => {
   it("preserves only a non-success upstream status", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () =>
-        new Response("private API failure at http://api.internal", {
-          status: 429,
-          headers: { "retry-after": "private-value" },
-        }),
+      vi.fn(
+        async () =>
+          new Response("private API failure at http://api.internal", {
+            status: 429,
+            headers: { "retry-after": "private-value" },
+          }),
       ),
     );
 

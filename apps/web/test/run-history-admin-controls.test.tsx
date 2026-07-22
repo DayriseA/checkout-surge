@@ -96,11 +96,15 @@ describe("RunHistoryAdminControls", () => {
     await user.click(screen.getByRole("button", { name: "Delete all summaries" }));
     await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
     expect(refresh).toHaveBeenCalledOnce();
-    expect((screen.getByRole("button", { name: /Delete Selected/ }) as HTMLButtonElement).disabled).toBe(true);
+    expect(
+      (screen.getByRole("button", { name: /Delete Selected/ }) as HTMLButtonElement).disabled,
+    ).toBe(true);
 
     await user.click(screen.getByRole("button", { name: "Delete All Run Summaries" }));
     expect((screen.getByRole("textbox") as HTMLInputElement).value).toBe("");
-    expect((screen.getByRole("button", { name: "Delete all summaries" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(
+      (screen.getByRole("button", { name: "Delete all summaries" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
   });
 });
 

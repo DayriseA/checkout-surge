@@ -43,7 +43,10 @@ export interface ErpAttemptPersistence {
 export class ErpConfirmationFailedError extends Error {
   override readonly name = "ErpConfirmationFailedError";
 
-  constructor(readonly response: ErpConfirmationResponse, readonly attemptRecorded = true) {
+  constructor(
+    readonly response: ErpConfirmationResponse,
+    readonly attemptRecorded = true,
+  ) {
     super(response.errorMessage ?? "The ERP rejected the confirmation request.");
   }
 }
@@ -67,7 +70,10 @@ export class ErpConfirmationRequestError extends Error {
 export class ErpConfirmationTimeoutError extends Error {
   override readonly name = "ErpConfirmationTimeoutError";
 
-  constructor(readonly timeoutMs: number, readonly attemptRecorded = true) {
+  constructor(
+    readonly timeoutMs: number,
+    readonly attemptRecorded = true,
+  ) {
     super(`The ERP confirmation request timed out after ${timeoutMs}ms.`);
   }
 }

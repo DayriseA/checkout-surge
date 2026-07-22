@@ -26,7 +26,9 @@ describe("BusinessOutcomePublicationScheduler", () => {
 
     expect(publish).toHaveBeenCalledTimes(2);
     expect(maximumInFlight).toBe(1);
-    expect(publish.mock.calls[1]?.[0]).toEqual(expect.objectContaining({ correlationId: "during" }));
+    expect(publish.mock.calls[1]?.[0]).toEqual(
+      expect.objectContaining({ correlationId: "during" }),
+    );
   });
 
   it("bounds independent instances per process and close flushes once", async () => {
@@ -91,7 +93,10 @@ describe("BusinessOutcomePublicationScheduler", () => {
       maxPendingScopes: 1,
     });
     scheduler.markDirty(scope("oldest"));
-    scheduler.markDirty({ ...scope("newest"), saleOfferId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" });
+    scheduler.markDirty({
+      ...scope("newest"),
+      saleOfferId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    });
     await scheduler.flush();
     expect(onDrop).toHaveBeenCalledWith(scope("oldest"));
     expect(publish).toHaveBeenCalledOnce();
@@ -102,10 +107,7 @@ describe("BusinessOutcomePublicationScheduler", () => {
   it("contains a rejected projection and continues the captured batch", async () => {
     const projectionError = new Error("projection unavailable");
     const onError = vi.fn();
-    const publish = vi
-      .fn()
-      .mockRejectedValueOnce(projectionError)
-      .mockResolvedValueOnce(undefined);
+    const publish = vi.fn().mockRejectedValueOnce(projectionError).mockResolvedValueOnce(undefined);
     const scheduler = new BusinessOutcomePublicationScheduler({ publish, onError });
     scheduler.markDirty(scope("failing"));
     scheduler.markDirty({

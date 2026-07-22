@@ -40,7 +40,13 @@ beforeEach(() => {
   sessionMock.mockResolvedValue(false);
   historyRead.mockResolvedValue({
     status: "available",
-    data: { summaries: [], page: 1, pageSize: 10, totalCount: 0, timestamp: "2026-06-20T00:00:00.000Z" },
+    data: {
+      summaries: [],
+      page: 1,
+      pageSize: 10,
+      totalCount: 0,
+      timestamp: "2026-06-20T00:00:00.000Z",
+    },
   });
 });
 

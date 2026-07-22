@@ -124,9 +124,7 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
           </div>
           <StatusPill
             label={publicAvailabilityStatus(recovery)}
-            tone={
-              recovery.status === "unavailable" ? "unavailable" : isBlocked ? "pending" : "ok"
-            }
+            tone={recovery.status === "unavailable" ? "unavailable" : isBlocked ? "pending" : "ok"}
           />
         </div>
         {surface.presets.status === "available" && curatedPresets.length > 0 ? (
@@ -173,10 +171,7 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
         {recovery.status === "available" ? (
           <dl className="m-0 grid gap-3">
             <Fact label="Run" value={recovery.data.currentRun?.presetName ?? "No active run"} />
-            <Fact
-              label="Traffic"
-              value={recovery.data.currentRun?.trafficStatus ?? "Not active"}
-            />
+            <Fact label="Traffic" value={recovery.data.currentRun?.trafficStatus ?? "Not active"} />
             <Fact label="Recovered" value={formatDashboardTime(recovery.data.recoveredAt)} />
           </dl>
         ) : (
