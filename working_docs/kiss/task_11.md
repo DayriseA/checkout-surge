@@ -22,11 +22,11 @@ Retain aggregate consistency lag, focused durable per-order diagnostics, four go
 
 ## Acceptance criteria
 
-- [ ] Scope/domain docs state a clear per-order realtime presentation decision.
-- [ ] Default decision removes separate realtime per-order protocol/panel while retaining aggregate lag and durable diagnostic read, unless a documented product reason selects the bounded exception.
-- [ ] Any recent-activity exception is explicitly bounded, sampled, and rate-limited within a later shared projection.
-- [ ] Four gold signals and the no-storefront boundary remain explicit.
-- [ ] No protocol/component rewrite occurs in this task.
+- [x] Scope/domain docs state a clear per-order realtime presentation decision.
+- [x] Default decision removes separate realtime per-order protocol/panel while retaining aggregate lag and durable diagnostic read, unless a documented product reason selects the bounded exception.
+- [x] No recent-activity exception was selected; docs constrain any future reconsideration to a bounded, sampled, and rate-limited collection within the later shared projection.
+- [x] Four gold signals and the no-storefront boundary remain explicit.
+- [x] No protocol/component rewrite occurs in this task.
 
 ## Verification
 
@@ -34,8 +34,8 @@ Review updated scope/domain docs against current dashboard contracts/components 
 
 ## Working record
 
-- Status: pending
-- Completed scope: none
-- Decisions: none
-- Verification: not run
-- Follow-up: none
+- Status: complete
+- Completed scope: Recorded the presentation decision in `docs/scope_and_caveats.md`; aligned the durable diagnostic boundary in `docs/core_business_entities.md`; and marked the current mixed protocol versus accepted later target in `docs/load_generation_metrics_streaming.md`. No application code, contract, component, SSE protocol, test, dependency, or runtime behavior changed.
+- Decisions: Later revisioned-projection work removes the separate per-order realtime status/lag protocol, browser per-order buffers, and live recent-activity panels/collections together. No recent-activity exception is selected. Aggregate consistency lag, all four dashboard gold signals, the focused durable `GET /orders/:publicOrderId/status` diagnostic, protected Run History drill-down, and the API-direct/no-storefront boundary remain. The docs explicitly identify the current per-order implementation as still present until that later migration.
+- Verification: Direct file/heading checks passed for the new `Dashboard Recovery Model` and `5. Order` links. Focused searches confirmed the four gold signals and API-direct/no-storefront boundary remain explicit, the durable status route exists, and the current per-order contracts/publisher/components are still present and described as current implementation rather than already deleted. The documentation scan found no conflicting accepted-scope decision; architecture, cross-service, and repository-layout references describe the still-current implementation. `git diff --check` passed. No dedicated Markdown check exists in the root scripts, so no broader lint, runtime, or test lane was run for this documentation-only decision. An initial ad hoc Node link-parser attempt failed on an invalid regular expression before the successful direct link checks; it made no changes. The forbidden composition and characterization lanes were not run.
+- Follow-up: The later dashboard revisioned-projection task owns protocol, contract, producer, reducer, component, and mechanism-specific test deletion. The later scope-document cleanup task separately owns removal of administrative metadata from `docs/scope_and_caveats.md`.
