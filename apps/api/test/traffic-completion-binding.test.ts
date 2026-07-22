@@ -16,12 +16,12 @@ describe("traffic completion redelivery", () => {
     const existing = {
       exitCode: 0,
       errorMessage: null,
+      transportAttemptCounts: report.transportAttemptCounts,
       httpSummary: report.httpSummary,
       trafficOutcomeSummary: report.trafficOutcomeSummary,
       trafficDeliverySummary: classifiedDelivery,
       httpTimingBreakdownSummary: report.httpTimingBreakdownSummary,
       loadRunDiagnosticsSummary: report.loadRunDiagnosticsSummary,
-      apiRequestLifecycleSummary: report.apiRequestLifecycleSummary,
     };
 
     expect(
@@ -34,7 +34,7 @@ describe("traffic completion redelivery", () => {
     ).toBeNull();
   });
 
-  it("rejects old persisted lifecycle evidence with run and field context", () => {
+  it("rejects invalid persisted transport evidence with run and field context", () => {
     const report = completionReport();
     const classifiedDelivery = trafficDeliverySummarySchema.parse({
       ...report.trafficDeliverySummary,
@@ -47,17 +47,17 @@ describe("traffic completion redelivery", () => {
         {
           exitCode: 0,
           errorMessage: null,
+          transportAttemptCounts: { completedRequests: 10 },
           httpSummary: report.httpSummary,
           trafficOutcomeSummary: report.trafficOutcomeSummary,
           trafficDeliverySummary: classifiedDelivery,
           httpTimingBreakdownSummary: report.httpTimingBreakdownSummary,
           loadRunDiagnosticsSummary: report.loadRunDiagnosticsSummary,
-          apiRequestLifecycleSummary: { completedRequests: 10, failedRequests: 0 },
         },
         report,
         classifiedDelivery,
       ),
-    ).toThrow(/demo run 11111111-1111-4111-8111-111111111111.*apiRequestLifecycleSummary/);
+    ).toThrow(/demo run 11111111-1111-4111-8111-111111111111.*transportAttemptCounts/);
   });
 });
 
@@ -67,12 +67,14 @@ function completionReport(): TrafficCompletionReport {
     runId: "11111111-1111-4111-8111-111111111111",
     status: "succeeded",
     exitCode: 0,
-    httpSummary: {
+    transportAttemptCounts: {
       plannedRequests: 10,
       startedRequests: 10,
       completedRequests: 10,
       interruptedRequests: 0,
       unstartedRequests: 0,
+    },
+    httpSummary: {
       failedRequests: 0,
       acceptedResponses: 4,
       soldOutResponses: 6,
@@ -85,11 +87,6 @@ function completionReport(): TrafficCompletionReport {
       unexpectedResponses: 0,
     },
     trafficDeliverySummary: {
-      plannedRequests: 10,
-      startedRequests: 10,
-      completedRequests: 10,
-      interruptedRequests: 0,
-      unstartedRequests: 0,
       trafficMode: "buyer-spike",
       plannedBuyers: 10,
       scheduledRatePerSecond: null,
@@ -134,14 +131,6 @@ function completionReport(): TrafficCompletionReport {
         completedIterations: "summary_export",
       },
       summaryExportWarnings: [],
-    },
-    apiRequestLifecycleSummary: {
-      plannedRequests: 10,
-      startedRequests: 10,
-      completedRequests: 10,
-      interruptedRequests: 0,
-      unstartedRequests: 0,
-      failedRequests: 0,
     },
     completedAt,
     correlationId: "corr-redelivery",

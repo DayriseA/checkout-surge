@@ -593,7 +593,7 @@ function dashboardRecoveryFixture(
     erp: null,
     businessOutcome: null,
     consistencyLag: null,
-    transportAccounting: null,
+    transportAttemptCounts: null,
     recentCompletionOutcomes: [],
     recoveredAt: "2026-06-20T00:00:10.000Z",
     ...overrides,
@@ -800,12 +800,14 @@ function runHistorySummaryFixture(
     status: "completed",
     startedAt: "2026-06-20T00:00:00.000Z",
     endedAt: "2026-06-20T00:00:10.000Z",
-    httpSummary: {
+    transportAttemptCounts: {
       plannedRequests: 10,
       startedRequests: 10,
       completedRequests: 10,
       interruptedRequests: 0,
       unstartedRequests: 0,
+    },
+    httpSummary: {
       failedRequests: 0,
       acceptedResponses: 6,
       soldOutResponses: 4,
@@ -814,11 +816,6 @@ function runHistorySummaryFixture(
       failureRate: 0,
     },
     trafficDeliverySummary: {
-      plannedRequests: 10,
-      startedRequests: 10,
-      completedRequests: 10,
-      interruptedRequests: 0,
-      unstartedRequests: 0,
       trafficMode: null,
       plannedBuyers: null,
       scheduledRatePerSecond: null,

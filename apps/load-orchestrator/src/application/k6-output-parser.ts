@@ -214,14 +214,14 @@ export class K6RunAccumulator {
     );
     const interruptedRequests = started.value - completed.value;
     const unstartedRequests = this.options.plannedRequests - started.value;
+    const transportAttemptCounts = {
+      plannedRequests: this.options.plannedRequests,
+      startedRequests: started.value,
+      completedRequests: completed.value,
+      interruptedRequests,
+      unstartedRequests,
+    };
     const trafficDeliverySummary = this.trafficDeliverySummary({
-      transportCounts: {
-        plannedRequests: this.options.plannedRequests,
-        startedRequests: started.value,
-        completedRequests: completed.value,
-        interruptedRequests,
-        unstartedRequests,
-      },
       droppedIterations,
       completedIterations,
     });
@@ -246,12 +246,8 @@ export class K6RunAccumulator {
       status: input.status,
       ...(input.exitCode === undefined ? {} : { exitCode: input.exitCode }),
       ...(input.errorMessage ? { errorMessage: input.errorMessage } : {}),
+      transportAttemptCounts,
       httpSummary: {
-        plannedRequests: this.options.plannedRequests,
-        startedRequests: started.value,
-        completedRequests: completed.value,
-        interruptedRequests,
-        unstartedRequests,
         failedRequests,
         acceptedResponses: acceptedResponses.value,
         soldOutResponses: soldOutResponses.value,
@@ -288,14 +284,6 @@ export class K6RunAccumulator {
         terminalMetricSources,
         summaryExportWarnings,
       } satisfies LoadRunDiagnosticsSummary,
-      apiRequestLifecycleSummary: {
-        plannedRequests: this.options.plannedRequests,
-        startedRequests: started.value,
-        completedRequests: completed.value,
-        interruptedRequests,
-        unstartedRequests,
-        failedRequests,
-      },
       completedAt: input.completedAt.toISOString(),
       correlationId: this.options.correlationId,
     };
@@ -342,13 +330,6 @@ export class K6RunAccumulator {
   }
 
   private trafficDeliverySummary(input: {
-    transportCounts: {
-      plannedRequests: number;
-      startedRequests: number;
-      completedRequests: number;
-      interruptedRequests: number;
-      unstartedRequests: number;
-    };
     droppedIterations: SelectedCount;
     completedIterations: SelectedCount;
   }) {
@@ -360,7 +341,6 @@ export class K6RunAccumulator {
     }
 
     return {
-      ...input.transportCounts,
       trafficMode: plan.trafficMode,
       plannedBuyers: plan.trafficMode === "buyer-spike" ? plan.buyerCount : null,
       scheduledRatePerSecond:

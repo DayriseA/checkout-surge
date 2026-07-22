@@ -188,6 +188,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "transport_attempt_counts": {
+          "name": "transport_attempt_counts",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
         "http_summary": {
           "name": "http_summary",
           "type": "jsonb",
@@ -214,12 +220,6 @@
         },
         "load_run_diagnostics_summary": {
           "name": "load_run_diagnostics_summary",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "api_request_lifecycle_summary": {
-          "name": "api_request_lifecycle_summary",
           "type": "jsonb",
           "primaryKey": false,
           "notNull": true
@@ -594,6 +594,12 @@
           "primaryKey": false,
           "notNull": true
         },
+        "transport_attempt_counts": {
+          "name": "transport_attempt_counts",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
         "http_summary": {
           "name": "http_summary",
           "type": "jsonb",
@@ -614,12 +620,6 @@
         },
         "load_run_diagnostics_summary": {
           "name": "load_run_diagnostics_summary",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "api_request_lifecycle_summary": {
-          "name": "api_request_lifecycle_summary",
           "type": "jsonb",
           "primaryKey": false,
           "notNull": true

@@ -437,7 +437,7 @@ describe("Phase 6 dashboard behavior", () => {
         },
       ],
       erp: erpFixture(),
-      transportAccounting: {
+      transportAttemptCounts: {
         plannedRequests: 1_000,
         startedRequests: 900,
         completedRequests: 850,
@@ -721,7 +721,7 @@ describe("Phase 6 dashboard behavior", () => {
         erp: null,
         businessOutcome: null,
         consistencyLag: null,
-        transportAccounting: null,
+        transportAttemptCounts: null,
         recentCompletionOutcomes: [],
         recoveredAt: event.occurredAt,
       }),
@@ -751,7 +751,7 @@ describe("Phase 6 dashboard behavior", () => {
       erp: null,
       businessOutcome: null,
       consistencyLag: null,
-      transportAccounting: null,
+      transportAttemptCounts: null,
       recentCompletionOutcomes: [],
     });
     expect(shouldRequestAuthoritativeRecoveryAfterScopedEvent(recovery, event)).toBe(true);
@@ -1206,9 +1206,9 @@ describe("idle new-run overlap convergence", () => {
     const stalePriorRun = runEventAt("active", startCapturedAtT0, previousRunFixture());
 
     expect(applyDashboardEvent(currentRecovery, stalePriorRun)).toBe(currentRecovery);
-    expect(
-      shouldRequestAuthoritativeRecoveryAfterScopedEvent(currentRecovery, stalePriorRun),
-    ).toBe(false);
+    expect(shouldRequestAuthoritativeRecoveryAfterScopedEvent(currentRecovery, stalePriorRun)).toBe(
+      false,
+    );
   });
 });
 
@@ -1370,7 +1370,7 @@ function scopeDerivedProjections(recovery: DashboardRecoveryResponse) {
     erp,
     businessOutcome,
     consistencyLag,
-    transportAccounting,
+    transportAttemptCounts,
     recentCompletionOutcomes,
   } = recovery;
   return {
@@ -1380,7 +1380,7 @@ function scopeDerivedProjections(recovery: DashboardRecoveryResponse) {
     erp,
     businessOutcome,
     consistencyLag,
-    transportAccounting,
+    transportAttemptCounts,
     recentCompletionOutcomes,
   };
 }
@@ -1622,7 +1622,7 @@ function recoveryFixture(): DashboardRecoveryResponse {
       oldestPendingAgeSeconds: 8.5,
       measuredAt: "2026-06-20T00:00:10.000Z",
     },
-    transportAccounting: null,
+    transportAttemptCounts: null,
     recentCompletionOutcomes: [
       {
         orderId: "11111111-1111-4111-8111-111111111111",

@@ -622,12 +622,12 @@ Logical fields:
 - `runId`
 - `exitCode`
 - `errorMessage`
+- `transportAttemptCounts`
 - `httpSummary`
 - `trafficOutcomeSummary`
 - `trafficDeliverySummary`
 - `httpTimingBreakdownSummary`
 - `loadRunDiagnosticsSummary`
-- `apiRequestLifecycleSummary`
 - `completionEnrichmentStatus`
 - `trafficSummaryReceivedAt`
 - `createdAt`
@@ -636,14 +636,15 @@ Logical fields:
 Notes:
 
 - k6 success or failure is not the same thing as API-owned demo-run completion.
-- The first completion report inserted for a run is authoritative. It is inserted with `completionEnrichmentStatus: pending`; legacy rows default to `completed` for compatibility. Duplicate or conflicting deliveries re-drive sale closure and finalization without replacing the stored report.
+- The first completion report inserted for a run is authoritative. It is inserted with `completionEnrichmentStatus: pending`. Duplicate or conflicting deliveries re-drive sale closure and finalization without replacing the stored report.
 - Traffic-completion enrichment performs Redis and PostgreSQL reads outside a database transaction, then changes `pending` to `completed` with a database compare-and-set. The winning update atomically persists the API-owned nested snapshot/business outcome and matching sold-out aggregate. A completed Redis capture failure is represented by `completed` with no snapshot and is not retried into a later observation.
 - Pending enrichment is an incomplete finalization input, not a drain blocker or timeout: no terminal run transition or summary is allowed until it concludes. Startup and periodic lifecycle recovery retry pending enrichment.
 - The API acknowledges completion only after the draining transition, sale closure, outcome enrichment, reconciliation, and finalization pass are safely re-drivable.
 - Successful traffic completion moves a run into business draining; finalization waits for run-scoped business work to settle.
 - `trafficOutcomeSummary.terminalInventorySnapshot`, when present, is the strict, durable Redis observation captured during traffic-completion enrichment. It remains traffic-boundary evidence. Absence is valid when the observation was explicitly unavailable; a present malformed value is corrupt durable evidence and blocks finalization rather than being interpreted as absence. Normal finalization independently captures post-cleanup Redis inventory for Run History while re-reading the latest PostgreSQL business outcome; it does not reuse this earlier observation as terminal state.
-- Current completion input carries raw delivery and execution-plan evidence without `trafficDeliveryStatus`; the API derives the authoritative stored status from planned and unstarted requests. Persisted finalization/history readers require all current transport fields and the matching stored status. They reject old field names, incomplete lifecycle/diagnostic/timing objects, and contradictory values instead of translating or recomputing them. Warning and degraded delivery can still produce a completed run when business invariants pass; failed traffic fidelity uses `traffic_delivery_major_shortfall` after drainable accepted work settles.
-- `trafficDeliverySummary` preserves traffic mode, mode-specific buyer/rate/duration/effective-VU plan fields, the required `unstartedRequests` transport count, and completed/dropped iteration diagnostics. `requestShortfall` is retired; delivery quality is derived from `unstartedRequests`.
+- `transportAttemptCounts` is the only transport-total object. It stores planned, started, response-completed, interrupted, and unstarted client attempts and enforces `planned = started + unstarted` and `started = completed + interrupted`. A started attempt is client-side evidence, not proof that the API server received it.
+- `httpSummary` contains response outcomes, failure evidence, and p95 latency without copying transport totals. `trafficDeliverySummary` contains traffic mode, mode-specific buyer/rate/duration/effective-VU plan fields, completed/dropped iteration diagnostics, notes, and the API-owned `trafficDeliveryStatus` without copying transport totals. Delivery quality is derived from canonical planned and unstarted counts.
+- Current completion input carries raw delivery and execution-plan evidence without `trafficDeliveryStatus`; the API derives the authoritative stored status from `transportAttemptCounts`. Persisted finalization/history readers require the current canonical counts, projections, diagnostics, timing, and matching stored status. They reject old field names, incomplete current objects, and contradictory values instead of translating them. Warning and degraded delivery can still produce a completed run when business invariants pass; failed traffic fidelity uses `traffic_delivery_major_shortfall` after drainable accepted work settles.
 - Finalization treats unexpected responses as `traffic_outcome_unexpected_responses` and reconciles accepted responses against secured reservations and orders. Missing evidence times out as `accepted_response_accounting_timeout`; coherent durable counts above the k6 counter are preserved with a structured `traffic_outcome_counter_underreported` diagnostic.
 
 ### 18. DemoRunSummary
@@ -665,11 +666,11 @@ Logical fields:
 - `failureReason`
 - `startedAt`
 - `endedAt`
+- `transportAttemptCounts`
 - `httpSummary`
 - `trafficDeliverySummary`
 - `httpTimingBreakdownSummary`
 - `loadRunDiagnosticsSummary`
-- `apiRequestLifecycleSummary`
 - `businessOutcomeSummary`
 - `terminalInventorySnapshot` optional
 - `capturedAt`
@@ -678,7 +679,7 @@ Logical fields:
 Notes:
 
 - Run summaries are separate from live dashboard recovery state.
-- Persisted run snapshots, HTTP and delivery summaries, business outcomes, terminal inventory, and the runtime-policy payload use their shared contract types in the Drizzle schema. Finalization timing, real-run diagnostics, and request-lifecycle JSON also use their current shared contract types; terminal run-summary diagnostics remain generic because API-owned failure and accounting annotations are legitimate current variants. Event-polymorphic order-event payloads remain outside this boundary. These TypeScript annotations do not validate existing rows or raw SQL writes; API read boundaries perform runtime schema validation and reject malformed current data with run, row, and field context.
+- Persisted run snapshots, transport-attempt counts, HTTP and delivery summaries, business outcomes, terminal inventory, and the runtime-policy payload use their shared contract types in the Drizzle schema. Finalization timing and real-run diagnostics also use their current shared contract types; terminal run-summary diagnostics remain generic because API-owned failure and accounting annotations are legitimate current variants. Event-polymorphic order-event payloads remain outside this boundary. These TypeScript annotations do not validate existing rows or raw SQL writes; API read boundaries perform runtime schema validation and reject malformed current data with run, row, and field context.
 - `terminalInventorySnapshot` carries the Redis-derived terminal observation produced by the applicable terminal workflow, so completed runs stay auditable after live Redis state is reset. Normal post-traffic finalization captures it only after every pending-persistence hold has converged and after the fresh Redis sold-out count agrees with the paired durable business aggregate; disagreement remains draining. Traffic-completion enrichment remains separate earlier evidence. Admin reset and early-failure workflows may capture their own terminal observations. Startup repair does not synthesize a terminal projection for orchestrator-owned or draining work.
 - Run History displays traffic delivery quality from `trafficDeliverySummary.trafficDeliveryStatus` next to the terminal run status, rather than encoding warning/degraded delivery as separate demo-run lifecycle states.
 - A terminal run should have one summary-backed history record whether it ended through normal finalization, admin recovery, traffic-start failure, or initialization failure.

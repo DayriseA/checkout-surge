@@ -238,10 +238,9 @@ describe("demo-run service validation", () => {
             maxDurationSeconds: 2,
           },
         },
-        httpSummary: { ...report.httpSummary, plannedRequests: 9_999 },
+        transportAttemptCounts: { ...report.transportAttemptCounts, plannedRequests: 9_999 },
         trafficDeliverySummary: {
           ...report.trafficDeliverySummary,
-          plannedRequests: 9_999,
           plannedBuyers: 9_999,
         },
       }),
@@ -2044,7 +2043,7 @@ describe("demo-run lifecycle start gating", () => {
       failureReason: "inventory_initialization_failed",
       terminalInventorySnapshot: null,
     });
-    expect(summaries[0]?.httpSummary).toMatchObject({
+    expect(summaries[0]?.transportAttemptCounts).toMatchObject({
       plannedRequests: 10_000,
       startedRequests: 0,
       completedRequests: 0,
@@ -2055,10 +2054,6 @@ describe("demo-run lifecycle start gating", () => {
       trafficDeliveryStatus: "failed",
       droppedIterations: 0,
       completedIterations: 0,
-      startedRequests: 0,
-      completedRequests: 0,
-      interruptedRequests: 0,
-      unstartedRequests: 10_000,
       trafficMode: "buyer-spike",
       plannedBuyers: 10_000,
     });
@@ -2115,12 +2110,14 @@ describe("demo-run lifecycle start gating", () => {
             failureReason: "existing_terminal_summary",
             startedAt: new Date("2026-06-20T00:00:10.000Z"),
             endedAt: new Date("2026-06-20T00:00:12.000Z"),
-            httpSummary: {
+            transportAttemptCounts: {
               plannedRequests: 10_000,
               startedRequests: 0,
               completedRequests: 0,
               interruptedRequests: 0,
               unstartedRequests: 10_000,
+            },
+            httpSummary: {
               failedRequests: 0,
               acceptedResponses: 0,
               soldOutResponses: 0,
@@ -2128,11 +2125,6 @@ describe("demo-run lifecycle start gating", () => {
               failureRate: 0,
             },
             trafficDeliverySummary: trafficDeliverySummarySchema.parse({
-              plannedRequests: 10_000,
-              startedRequests: 0,
-              completedRequests: 0,
-              interruptedRequests: 0,
-              unstartedRequests: 10_000,
               trafficMode: null,
               plannedBuyers: null,
               scheduledRatePerSecond: null,
@@ -2146,7 +2138,6 @@ describe("demo-run lifecycle start gating", () => {
             }),
             httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
             loadRunDiagnosticsSummary: { source: "existing-summary" },
-            apiRequestLifecycleSummary: { source: "existing-summary" },
             businessOutcomeSummary: emptyBusinessOutcomeSummary(),
             terminalInventorySnapshot: null,
             capturedAt: new Date("2026-06-20T00:00:12.000Z"),
@@ -2207,12 +2198,14 @@ describe("demo-run lifecycle start gating", () => {
       const completionRun = await service.recordTrafficCompletion({
         runId: "77777777-7777-4777-8777-777777777777",
         status: "succeeded",
-        httpSummary: {
+        transportAttemptCounts: {
           plannedRequests: 10_000,
           startedRequests: 0,
           completedRequests: 0,
           interruptedRequests: 0,
           unstartedRequests: 10_000,
+        },
+        httpSummary: {
           failedRequests: 0,
           acceptedResponses: 0,
           soldOutResponses: 0,
@@ -2221,11 +2214,6 @@ describe("demo-run lifecycle start gating", () => {
         },
         trafficOutcomeSummary: {},
         trafficDeliverySummary: {
-          plannedRequests: 10_000,
-          startedRequests: 0,
-          completedRequests: 0,
-          interruptedRequests: 0,
-          unstartedRequests: 10_000,
           trafficMode: "buyer-spike",
           plannedBuyers: 10_000,
           scheduledRatePerSecond: null,
@@ -2239,14 +2227,6 @@ describe("demo-run lifecycle start gating", () => {
         loadRunDiagnosticsSummary: {
           ...runnerDiagnosticsFixture("2026-06-20T00:00:12.000Z", 10_000),
           completedAt: "2026-06-20T00:00:12.000Z",
-        },
-        apiRequestLifecycleSummary: {
-          plannedRequests: 10_000,
-          startedRequests: 0,
-          completedRequests: 0,
-          interruptedRequests: 0,
-          unstartedRequests: 10_000,
-          failedRequests: 0,
         },
         completedAt: "2026-06-20T00:00:12.000Z",
         correlationId: "corr-fast-completion",
@@ -2408,8 +2388,7 @@ describe("demo-run lifecycle start gating", () => {
     expect(finalization).toMatchObject({
       exitCode: 0,
       errorMessage: null,
-      httpSummary: expect.objectContaining({ plannedRequests: 111 }),
-      trafficDeliverySummary: expect.objectContaining({ plannedRequests: 111 }),
+      transportAttemptCounts: expect.objectContaining({ plannedRequests: 111 }),
       completionEnrichmentStatus: "completed",
     });
     expect(finalization?.trafficOutcomeSummary).toMatchObject({
@@ -2546,19 +2525,14 @@ describe("demo-run lifecycle start gating", () => {
     });
     const report: TrafficCompletionReport = {
       ...reportFixture,
-      httpSummary: {
-        ...reportFixture.httpSummary,
+      transportAttemptCounts: {
+        ...reportFixture.transportAttemptCounts,
         startedRequests: 10,
         completedRequests: 10,
         interruptedRequests: 0,
         unstartedRequests: 0,
       },
       trafficDeliverySummary: {
-        plannedRequests: 10,
-        startedRequests: 10,
-        completedRequests: 10,
-        interruptedRequests: 0,
-        unstartedRequests: 0,
         trafficMode: "buyer-spike",
         plannedBuyers: 10,
         scheduledRatePerSecond: null,
@@ -2567,13 +2541,6 @@ describe("demo-run lifecycle start gating", () => {
         maxVUs: null,
         droppedIterations: 0,
         notes: [],
-      },
-      apiRequestLifecycleSummary: {
-        ...reportFixture.apiRequestLifecycleSummary,
-        startedRequests: 10,
-        completedRequests: 10,
-        interruptedRequests: 0,
-        unstartedRequests: 0,
       },
     };
 
@@ -2595,6 +2562,8 @@ describe("demo-run lifecycle start gating", () => {
     expect(committedFinalization?.completionEnrichmentStatus).toBe("completed");
     expect(committedFinalization?.trafficDeliverySummary).toMatchObject({
       trafficDeliveryStatus: "complete",
+    });
+    expect(committedFinalization?.transportAttemptCounts).toMatchObject({
       startedRequests: 10,
       unstartedRequests: 0,
     });
@@ -2713,7 +2682,7 @@ describe("demo-run lifecycle start gating", () => {
         plannedRequests: 10,
         correlationId: "corr-pending-enrichment",
       }),
-      httpSummary: {
+      transportAttemptCounts: {
         ...trafficCompletionFixture({
           runId: started.run.runId,
           status: "succeeded",
@@ -2721,18 +2690,13 @@ describe("demo-run lifecycle start gating", () => {
           completedAt: "2026-06-20T00:00:12.000Z",
           plannedRequests: 10,
           correlationId: "corr-pending-enrichment",
-        }).httpSummary,
+        }).transportAttemptCounts,
         startedRequests: 10,
         completedRequests: 10,
         interruptedRequests: 0,
         unstartedRequests: 0,
       },
       trafficDeliverySummary: {
-        plannedRequests: 10,
-        startedRequests: 10,
-        completedRequests: 10,
-        interruptedRequests: 0,
-        unstartedRequests: 0,
         trafficMode: "buyer-spike",
         plannedBuyers: 10,
         scheduledRatePerSecond: null,
@@ -2741,14 +2705,6 @@ describe("demo-run lifecycle start gating", () => {
         maxVUs: null,
         droppedIterations: 0,
         notes: [],
-      },
-      apiRequestLifecycleSummary: {
-        plannedRequests: 10,
-        startedRequests: 10,
-        completedRequests: 10,
-        interruptedRequests: 0,
-        unstartedRequests: 0,
-        failedRequests: 0,
       },
     };
 
@@ -2955,7 +2911,7 @@ describe("demo-run lifecycle start gating", () => {
         plannedRequests: 10,
         correlationId: "corr-no-snapshot",
       }),
-      httpSummary: {
+      transportAttemptCounts: {
         ...trafficCompletionFixture({
           runId: started.run.runId,
           status: "succeeded",
@@ -2963,18 +2919,13 @@ describe("demo-run lifecycle start gating", () => {
           completedAt: "2026-06-20T00:00:12.000Z",
           plannedRequests: 10,
           correlationId: "corr-no-snapshot",
-        }).httpSummary,
+        }).transportAttemptCounts,
         startedRequests: 10,
         completedRequests: 10,
         interruptedRequests: 0,
         unstartedRequests: 0,
       },
       trafficDeliverySummary: {
-        plannedRequests: 10,
-        startedRequests: 10,
-        completedRequests: 10,
-        interruptedRequests: 0,
-        unstartedRequests: 0,
         trafficMode: "buyer-spike",
         plannedBuyers: 10,
         scheduledRatePerSecond: null,
@@ -2983,14 +2934,6 @@ describe("demo-run lifecycle start gating", () => {
         maxVUs: null,
         droppedIterations: 0,
         notes: [],
-      },
-      apiRequestLifecycleSummary: {
-        plannedRequests: 10,
-        startedRequests: 10,
-        completedRequests: 10,
-        interruptedRequests: 0,
-        unstartedRequests: 0,
-        failedRequests: 0,
       },
     };
 
@@ -3512,12 +3455,14 @@ function trafficCompletionFixture(input: {
     status: input.status,
     exitCode: input.exitCode,
     ...(input.errorMessage ? { errorMessage: input.errorMessage } : {}),
-    httpSummary: {
+    transportAttemptCounts: {
       plannedRequests: input.plannedRequests,
       startedRequests: 0,
       completedRequests: 0,
       interruptedRequests: 0,
       unstartedRequests: input.plannedRequests,
+    },
+    httpSummary: {
       failedRequests: 0,
       acceptedResponses: 0,
       soldOutResponses: 0,
@@ -3526,11 +3471,6 @@ function trafficCompletionFixture(input: {
     },
     trafficOutcomeSummary: {},
     trafficDeliverySummary: {
-      plannedRequests: input.plannedRequests,
-      startedRequests: 0,
-      completedRequests: 0,
-      interruptedRequests: 0,
-      unstartedRequests: input.plannedRequests,
       trafficMode: "buyer-spike",
       plannedBuyers: input.plannedRequests,
       scheduledRatePerSecond: null,
@@ -3542,14 +3482,6 @@ function trafficCompletionFixture(input: {
     },
     httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
     loadRunDiagnosticsSummary: runnerDiagnosticsFixture(input.completedAt, input.plannedRequests),
-    apiRequestLifecycleSummary: {
-      plannedRequests: input.plannedRequests,
-      startedRequests: 0,
-      completedRequests: 0,
-      interruptedRequests: 0,
-      unstartedRequests: input.plannedRequests,
-      failedRequests: 0,
-    },
     completedAt: input.completedAt,
     correlationId: input.correlationId,
   };

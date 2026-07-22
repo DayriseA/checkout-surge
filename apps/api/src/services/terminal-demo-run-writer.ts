@@ -3,6 +3,7 @@ import type {
   TerminalInventorySnapshot,
   TrafficDeliverySummary,
   TrafficHttpSummary,
+  TransportAttemptCounts,
 } from "@checkout-surge/contracts";
 import type {
   CheckoutSurgeDatabase,
@@ -28,11 +29,11 @@ export interface TerminalDemoRunSummaryInput {
   failureReason: string | null;
   finalizedAt: Date;
   capturedAt?: Date;
+  transportAttemptCounts: TransportAttemptCounts;
   httpSummary: TrafficHttpSummary;
   trafficDeliverySummary: TrafficDeliverySummary;
   httpTimingBreakdownSummary: Record<string, unknown>;
   loadRunDiagnosticsSummary: Record<string, unknown>;
-  apiRequestLifecycleSummary: Record<string, unknown>;
   businessOutcome: BusinessOutcomeSummary;
   terminalInventorySnapshot: TerminalInventorySnapshot | null;
   allowedCurrentStatuses: DemoRunStatus[];

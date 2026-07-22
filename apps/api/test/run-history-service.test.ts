@@ -90,7 +90,7 @@ describe("run history service", () => {
       presetName: "History Failed",
       status: "failed",
       failureReason: "traffic_delivery_major_shortfall",
-      httpSummary: {
+      transportAttemptCounts: {
         plannedRequests: 10,
         startedRequests: 5,
         unstartedRequests: 5,
@@ -692,12 +692,14 @@ function summaryFixture(input: {
     failureReason: input.failureReason,
     startedAt: new Date("2026-06-20T00:00:00.000Z"),
     endedAt: input.capturedAt,
-    httpSummary: {
+    transportAttemptCounts: {
       plannedRequests: 10,
       startedRequests: input.startedRequests,
       completedRequests: input.startedRequests,
       interruptedRequests: 0,
       unstartedRequests: 10 - input.startedRequests,
+    },
+    httpSummary: {
       failedRequests: 0,
       acceptedResponses: 3,
       soldOutResponses: 2,
@@ -706,11 +708,6 @@ function summaryFixture(input: {
       failureRate: 0,
     },
     trafficDeliverySummary: trafficDeliverySummarySchema.parse({
-      plannedRequests: 10,
-      startedRequests: input.startedRequests,
-      completedRequests: input.startedRequests,
-      interruptedRequests: 0,
-      unstartedRequests: 10 - input.startedRequests,
       trafficMode: null,
       plannedBuyers: null,
       scheduledRatePerSecond: null,
@@ -724,7 +721,6 @@ function summaryFixture(input: {
     }),
     httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
     loadRunDiagnosticsSummary: {},
-    apiRequestLifecycleSummary: {},
     businessOutcomeSummary: {
       acceptedReservations: 3,
       soldOutRejections: 2,

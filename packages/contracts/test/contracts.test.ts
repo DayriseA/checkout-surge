@@ -469,12 +469,14 @@ describe("run lifecycle contracts", () => {
       runId,
       status: "succeeded",
       exitCode: 0,
-      httpSummary: {
+      transportAttemptCounts: {
         plannedRequests: 10,
         startedRequests: 10,
         completedRequests: 10,
         interruptedRequests: 0,
         unstartedRequests: 0,
+      },
+      httpSummary: {
         failedRequests: 0,
         acceptedResponses: 2,
         soldOutResponses: 8,
@@ -484,11 +486,6 @@ describe("run lifecycle contracts", () => {
       },
       trafficOutcomeSummary: {},
       trafficDeliverySummary: {
-        plannedRequests: 10,
-        startedRequests: 10,
-        completedRequests: 10,
-        interruptedRequests: 0,
-        unstartedRequests: 0,
         trafficMode: "buyer-spike",
         plannedBuyers: 10,
         scheduledRatePerSecond: null,
@@ -514,14 +511,6 @@ describe("run lifecycle contracts", () => {
           completedIterations: "summary_export",
         },
         summaryExportWarnings: ["k6_outcome_counter_point_stream_fallback_used"],
-      },
-      apiRequestLifecycleSummary: {
-        plannedRequests: 10,
-        startedRequests: 10,
-        completedRequests: 10,
-        interruptedRequests: 0,
-        unstartedRequests: 0,
-        failedRequests: 0,
       },
       completedAt: timestamp,
       correlationId,
@@ -746,11 +735,6 @@ describe("run lifecycle contracts", () => {
 
   it("accepts unclassified completion evidence but requires status in stored history", () => {
     const evidence = {
-      plannedRequests: 10,
-      startedRequests: 9,
-      completedRequests: 9,
-      interruptedRequests: 0,
-      unstartedRequests: 1,
       trafficMode: "buyer-spike" as const,
       plannedBuyers: 10,
       scheduledRatePerSecond: null,
@@ -776,7 +760,7 @@ describe("run lifecycle contracts", () => {
       trafficDeliveryStatus: "warning",
     });
     expect(() =>
-      trafficCompletionDeliverySummarySchema.parse({ ...evidence, plannedRequests: 0 }),
+      trafficCompletionDeliverySummarySchema.parse({ ...evidence, plannedRequests: 10 }),
     ).toThrow();
   });
 
@@ -819,7 +803,6 @@ describe("run lifecycle contracts", () => {
     }
 
     const httpSummary = {
-      ...coherent,
       failedRequests: 0,
       acceptedResponses: 2,
       soldOutResponses: 5,
@@ -827,25 +810,22 @@ describe("run lifecycle contracts", () => {
       failureRate: 0,
     };
     expect(trafficHttpSummarySchema.safeParse(httpSummary).success).toBe(true);
-    expect(
-      trafficHttpSummarySchema.safeParse({ ...httpSummary, completedRequests: 8 }).success,
-    ).toBe(false);
-    expect(
-      trafficHttpSummarySchema.safeParse({ ...httpSummary, startedRequests: 10 }).success,
-    ).toBe(false);
+    expect(trafficHttpSummarySchema.safeParse({ ...httpSummary, ...coherent }).success).toBe(false);
   });
 
-  it("rejects a completion report whose HTTP and delivery count copies disagree", () => {
+  it("keeps one canonical transport count object on completion reports", () => {
     const report = trafficCompletionReportSchema.parse({
       runId,
       status: "succeeded",
       exitCode: 0,
-      httpSummary: {
+      transportAttemptCounts: {
         plannedRequests: 10,
         startedRequests: 10,
         completedRequests: 8,
         interruptedRequests: 2,
         unstartedRequests: 0,
+      },
+      httpSummary: {
         failedRequests: 0,
         acceptedResponses: 2,
         soldOutResponses: 6,
@@ -854,11 +834,6 @@ describe("run lifecycle contracts", () => {
       },
       trafficOutcomeSummary: {},
       trafficDeliverySummary: {
-        plannedRequests: 10,
-        startedRequests: 10,
-        completedRequests: 8,
-        interruptedRequests: 2,
-        unstartedRequests: 0,
         trafficMode: "buyer-spike",
         plannedBuyers: 10,
         scheduledRatePerSecond: null,
@@ -870,34 +845,10 @@ describe("run lifecycle contracts", () => {
       },
       httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
       loadRunDiagnosticsSummary: runnerDiagnostics(),
-      apiRequestLifecycleSummary: {
-        plannedRequests: 10,
-        startedRequests: 10,
-        completedRequests: 8,
-        interruptedRequests: 2,
-        unstartedRequests: 0,
-        failedRequests: 0,
-      },
       completedAt: timestamp,
       correlationId,
     });
-    expect(report.httpSummary.interruptedRequests).toBe(2);
-
-    for (const field of [
-      "startedRequests",
-      "completedRequests",
-      "interruptedRequests",
-      "unstartedRequests",
-    ] as const) {
-      const disagreement = trafficCompletionReportSchema.safeParse({
-        ...report,
-        trafficDeliverySummary: {
-          ...report.trafficDeliverySummary,
-          [field]: report.trafficDeliverySummary[field] + 1,
-        },
-      });
-      expect(disagreement.success).toBe(false);
-    }
+    expect(report.transportAttemptCounts.interruptedRequests).toBe(2);
 
     for (const [field, value, message] of [
       ["unstartedRequests", 1, "plannedRequests must equal startedRequests + unstartedRequests"],
@@ -909,20 +860,20 @@ describe("run lifecycle contracts", () => {
     ] as const) {
       const brokenEquation = trafficCompletionReportSchema.safeParse({
         ...report,
-        apiRequestLifecycleSummary: {
-          ...report.apiRequestLifecycleSummary,
+        transportAttemptCounts: {
+          ...report.transportAttemptCounts,
           [field]: value,
         },
       });
       expect(brokenEquation.success).toBe(false);
       if (!brokenEquation.success) {
         expect(brokenEquation.error.issues).toContainEqual(
-          expect.objectContaining({ path: ["apiRequestLifecycleSummary", field], message }),
+          expect.objectContaining({ path: ["transportAttemptCounts", field], message }),
         );
       }
     }
 
-    const coherentLifecycleDisagreement = trafficCompletionReportSchema.safeParse({
+    const duplicateLifecycleCopy = trafficCompletionReportSchema.safeParse({
       ...report,
       apiRequestLifecycleSummary: {
         plannedRequests: 10,
@@ -933,40 +884,12 @@ describe("run lifecycle contracts", () => {
         failedRequests: 0,
       },
     });
-    expect(coherentLifecycleDisagreement.success).toBe(false);
-    if (!coherentLifecycleDisagreement.success) {
-      expect(coherentLifecycleDisagreement.error.issues).toContainEqual(
-        expect.objectContaining({
-          path: ["apiRequestLifecycleSummary", "startedRequests"],
-          message: "must match httpSummary.startedRequests",
-        }),
-      );
-    }
-
-    for (const invalidLifecycle of [
-      {},
-      { ...report.apiRequestLifecycleSummary, extraDiagnostic: true },
-      {
-        plannedRequests: 10,
-        emittedRequests: 8,
-        completedRequests: 8,
-        failedRequests: 0,
-      },
-    ]) {
-      expect(
-        trafficCompletionReportSchema.safeParse({
-          ...report,
-          apiRequestLifecycleSummary: invalidLifecycle,
-        }).success,
-      ).toBe(false);
-    }
+    expect(duplicateLifecycleCopy.success).toBe(false);
 
     const legacyNames = trafficCompletionReportSchema.safeParse({
       ...report,
       httpSummary: {
-        plannedRequests: 10,
         emittedRequests: 10,
-        completedRequests: 10,
         failedRequests: 0,
         acceptedResponses: 2,
         soldOutResponses: 8,
@@ -2157,12 +2080,14 @@ describe("public runtime policy contract", () => {
           status: "completed",
           startedAt: timestamp,
           endedAt: timestamp,
-          httpSummary: {
+          transportAttemptCounts: {
             plannedRequests: 10,
             startedRequests: 10,
             completedRequests: 10,
             interruptedRequests: 0,
             unstartedRequests: 0,
+          },
+          httpSummary: {
             failedRequests: 0,
             acceptedResponses: 6,
             soldOutResponses: 4,
@@ -2171,11 +2096,6 @@ describe("public runtime policy contract", () => {
             failureRate: 0,
           },
           trafficDeliverySummary: {
-            plannedRequests: 10,
-            startedRequests: 10,
-            completedRequests: 10,
-            interruptedRequests: 0,
-            unstartedRequests: 0,
             trafficMode: "buyer-spike",
             plannedBuyers: 10,
             scheduledRatePerSecond: null,
@@ -2986,12 +2906,14 @@ describe("public runtime policy contract", () => {
         runId,
         status: "succeeded",
         exitCode: 0,
-        httpSummary: {
+        transportAttemptCounts: {
           plannedRequests: 400,
           startedRequests: 400,
           completedRequests: 400,
           interruptedRequests: 0,
           unstartedRequests: 0,
+        },
+        httpSummary: {
           failedRequests: 0,
           acceptedResponses: 200,
           soldOutResponses: 200,
@@ -3001,11 +2923,6 @@ describe("public runtime policy contract", () => {
         },
         trafficOutcomeSummary: {},
         trafficDeliverySummary: {
-          plannedRequests: 400,
-          startedRequests: 400,
-          completedRequests: 400,
-          interruptedRequests: 0,
-          unstartedRequests: 0,
           trafficMode: "buyer-spike",
           plannedBuyers: 200,
           scheduledRatePerSecond: null,
@@ -3027,14 +2944,6 @@ describe("public runtime policy contract", () => {
             startDelaySeconds: 0,
             maxDurationSeconds: 5,
           },
-        },
-        apiRequestLifecycleSummary: {
-          plannedRequests: 400,
-          startedRequests: 400,
-          completedRequests: 400,
-          interruptedRequests: 0,
-          unstartedRequests: 0,
-          failedRequests: 0,
         },
         completedAt: timestamp,
         correlationId,

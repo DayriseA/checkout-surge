@@ -1293,6 +1293,7 @@ async function seedTrafficCompleteRunArtifacts(
   await connection.db.insert(demoRunFinalizations).values({
     runId: ids.run,
     exitCode: 0,
+    transportAttemptCounts: report.transportAttemptCounts,
     httpSummary: report.httpSummary,
     trafficOutcomeSummary: report.trafficOutcomeSummary,
     trafficDeliverySummary: trafficDeliverySummarySchema.parse({
@@ -1302,7 +1303,6 @@ async function seedTrafficCompleteRunArtifacts(
     }),
     httpTimingBreakdownSummary: report.httpTimingBreakdownSummary,
     loadRunDiagnosticsSummary: report.loadRunDiagnosticsSummary,
-    apiRequestLifecycleSummary: report.apiRequestLifecycleSummary,
     trafficSummaryReceivedAt: new Date(report.completedAt),
     createdAt: new Date(report.completedAt),
     updatedAt: new Date(report.completedAt),
@@ -1429,12 +1429,14 @@ function trafficCompletionReportFixture(): TrafficCompletionReport {
     runId: ids.run,
     status: "succeeded",
     exitCode: 0,
-    httpSummary: {
+    transportAttemptCounts: {
       plannedRequests: 1,
       startedRequests: 1,
       completedRequests: 1,
       interruptedRequests: 0,
       unstartedRequests: 0,
+    },
+    httpSummary: {
       failedRequests: 0,
       acceptedResponses: 1,
       soldOutResponses: 0,
@@ -1444,11 +1446,6 @@ function trafficCompletionReportFixture(): TrafficCompletionReport {
     },
     trafficOutcomeSummary: {},
     trafficDeliverySummary: {
-      plannedRequests: 1,
-      startedRequests: 1,
-      completedRequests: 1,
-      interruptedRequests: 0,
-      unstartedRequests: 0,
       trafficMode: "buyer-spike",
       plannedBuyers: 1,
       scheduledRatePerSecond: null,
@@ -1492,14 +1489,6 @@ function trafficCompletionReportFixture(): TrafficCompletionReport {
         completedIterations: "summary_export",
       },
       summaryExportWarnings: [],
-    },
-    apiRequestLifecycleSummary: {
-      plannedRequests: 1,
-      startedRequests: 1,
-      completedRequests: 1,
-      interruptedRequests: 0,
-      unstartedRequests: 0,
-      failedRequests: 0,
     },
     completedAt: "2026-06-21T00:00:03.000Z",
     correlationId: job.correlationId,

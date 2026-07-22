@@ -769,7 +769,7 @@ function recoveryForIncomingRun(
       erp: null,
       businessOutcome: null,
       consistencyLag: null,
-      transportAccounting: null,
+      transportAttemptCounts: null,
       recentCompletionOutcomes: [],
       recoveredAt: event.occurredAt,
     },

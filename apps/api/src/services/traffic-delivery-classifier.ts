@@ -6,6 +6,7 @@ import {
   trafficCompletionDeliverySummarySchema,
   trafficDeliverySummarySchema,
   trafficHttpSummarySchema,
+  transportAttemptCountsSchema,
 } from "@checkout-surge/contracts";
 import type { ZodError } from "zod";
 
@@ -33,9 +34,12 @@ export function classifyTrafficDelivery(
 /** Adds the API-owned delivery classification to a validated current completion. */
 export function classifyTrafficDeliverySummary(
   input: TrafficCompletionDeliverySummary,
+  transportAttemptCounts: TransportAttemptCounts,
 ): TrafficDeliverySummary {
   const evidence = trafficCompletionDeliverySummarySchema.parse(input);
-  const trafficDeliveryStatus = classifyTrafficDelivery(evidence);
+  const canonicalTransportAttemptCounts =
+    transportAttemptCountsSchema.parse(transportAttemptCounts);
+  const trafficDeliveryStatus = classifyTrafficDelivery(canonicalTransportAttemptCounts);
   if (!trafficDeliveryStatus) {
     throw new Error("Traffic delivery cannot be classified with zero planned requests.");
   }
@@ -50,13 +54,14 @@ export function classifyTrafficDeliverySummary(
 /** Strictly validates the current persisted delivery shape and its API-owned status. */
 export function parsePersistedTrafficDeliverySummary(
   input: unknown,
+  transportAttemptCounts: TransportAttemptCounts,
   context: string,
 ): TrafficDeliverySummary {
   const parsed = trafficDeliverySummarySchema.safeParse(input);
   if (!parsed.success) {
     throw persistedTrafficSummaryError(context, "trafficDeliverySummary", parsed.error);
   }
-  const expectedStatus = classifyTrafficDelivery(parsed.data);
+  const expectedStatus = classifyTrafficDelivery(transportAttemptCounts);
   if (parsed.data.trafficDeliveryStatus !== expectedStatus) {
     throw new Error(
       `Invalid persisted trafficDeliverySummary for ${context}: trafficDeliveryStatus must be ${expectedStatus ?? "classifiable from a positive plannedRequests count"}.`,
@@ -73,6 +78,18 @@ export function parsePersistedTrafficHttpSummary(
   const parsed = trafficHttpSummarySchema.safeParse(input);
   if (!parsed.success) {
     throw persistedTrafficSummaryError(context, "httpSummary", parsed.error);
+  }
+  return parsed.data;
+}
+
+/** Strictly validates canonical persisted transport-attempt counts. */
+export function parsePersistedTransportAttemptCounts(
+  input: unknown,
+  context: string,
+): TransportAttemptCounts {
+  const parsed = transportAttemptCountsSchema.safeParse(input);
+  if (!parsed.success) {
+    throw persistedTrafficSummaryError(context, "transportAttemptCounts", parsed.error);
   }
   return parsed.data;
 }

@@ -2,6 +2,7 @@ import type {
   AdminRunHistoryDetailResponse,
   PublicRunHistoryDetailResponse,
   TrafficHttpSummary,
+  TransportAttemptCounts,
 } from "@checkout-surge/contracts";
 import { StatusPill } from "./status-pill";
 
@@ -52,7 +53,10 @@ export function AdminRunHistoryDetail({ detail }: RunHistoryDetailProps) {
             ]}
             title="Lifecycle"
           />
-          <FactList facts={trafficAccountingFacts(summary.httpSummary)} title="Traffic" />
+          <FactList
+            facts={trafficAccountingFacts(summary.transportAttemptCounts, summary.httpSummary)}
+            title="Traffic"
+          />
           <FactList
             facts={[
               ["Reservations", formatNumber(summary.businessOutcomeSummary.acceptedReservations)],
@@ -325,7 +329,10 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
               ["Captured", formatDate(summary.capturedAt)],
             ]}
           />
-          <FactList title="Traffic" facts={trafficAccountingFacts(summary.httpSummary)} />
+          <FactList
+            title="Traffic"
+            facts={trafficAccountingFacts(summary.transportAttemptCounts, summary.httpSummary)}
+          />
           <FactList
             title="Order aggregates"
             facts={[
@@ -373,13 +380,16 @@ function nullableMetricMs(value: number | null): string {
   return value === null ? "n/a" : `${formatNumber(value)}ms`;
 }
 
-function trafficAccountingFacts(summary: TrafficHttpSummary): Array<[string, string]> {
+function trafficAccountingFacts(
+  transportAttemptCounts: TransportAttemptCounts,
+  summary: TrafficHttpSummary,
+): Array<[string, string]> {
   return [
-    ["Planned", formatNumber(summary.plannedRequests)],
-    ["Started", formatNumber(summary.startedRequests)],
-    ["Responses completed", formatNumber(summary.completedRequests)],
-    ["Interrupted", formatNumber(summary.interruptedRequests)],
-    ["Unstarted", formatNumber(summary.unstartedRequests)],
+    ["Planned", formatNumber(transportAttemptCounts.plannedRequests)],
+    ["Started", formatNumber(transportAttemptCounts.startedRequests)],
+    ["Responses completed", formatNumber(transportAttemptCounts.completedRequests)],
+    ["Interrupted", formatNumber(transportAttemptCounts.interruptedRequests)],
+    ["Unstarted", formatNumber(transportAttemptCounts.unstartedRequests)],
     ["Accepted", formatNumber(summary.acceptedResponses)],
     ["Sold out", formatNumber(summary.soldOutResponses)],
     ["Unexpected", formatNumber(summary.unexpectedResponses)],

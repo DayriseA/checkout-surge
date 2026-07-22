@@ -326,17 +326,18 @@ describe("demo run finalization service", () => {
     await seedDrainingRun({ db, redis: redisClient, trafficDeliveryStatus: "complete" });
     const diagnostics = runnerDiagnosticsFixture();
     const { startedRequests, ...oldTerminalMetricSources } = diagnostics.terminalMetricSources;
+    const retiredDiagnostics = {
+      ...diagnostics,
+      terminalMetricSources: {
+        emittedRequests: startedRequests,
+        ...oldTerminalMetricSources,
+      },
+    } as unknown as typeof diagnostics;
     await db
       .update(demoRunFinalizations)
       .set({
         trafficOutcomeSummary: { loadGeneratorOutcome: "old-shape-rejection" },
-        loadRunDiagnosticsSummary: {
-          ...diagnostics,
-          terminalMetricSources: {
-            emittedRequests: startedRequests,
-            ...oldTerminalMetricSources,
-          },
-        },
+        loadRunDiagnosticsSummary: retiredDiagnostics,
       })
       .where(eq(demoRunFinalizations.runId, ids.run));
 
@@ -350,7 +351,7 @@ describe("demo run finalization service", () => {
     expect(summary).toBeUndefined();
   });
 
-  it("rejects retired request-lifecycle evidence before terminal summary persistence", async () => {
+  it("rejects malformed transport-attempt evidence before terminal summary persistence", async () => {
     const db = requireConnection(connection).db;
     const redisClient = requireRedis(redis);
     const service = createService(connection, redis);
@@ -358,11 +359,11 @@ describe("demo run finalization service", () => {
     await seedDrainingRun({ db, redis: redisClient, trafficDeliveryStatus: "complete" });
     await db
       .update(demoRunFinalizations)
-      .set({ apiRequestLifecycleSummary: { completedRequests: 10, failedRequests: 0 } })
+      .set({ transportAttemptCounts: { completedRequests: 10 } as never })
       .where(eq(demoRunFinalizations.runId, ids.run));
 
-    await expect(service.finalizeRun(ids.run, "corr-finalize-old-lifecycle")).rejects.toThrow(
-      new RegExp(`${ids.run}.*apiRequestLifecycleSummary`),
+    await expect(service.finalizeRun(ids.run, "corr-finalize-invalid-transport")).rejects.toThrow(
+      new RegExp(`${ids.run}.*transportAttemptCounts`),
     );
     const [summary] = await db
       .select()
@@ -1308,7 +1309,7 @@ describe("demo run finalization service", () => {
                 getStatus: async () => Promise.reject(new Error("unused ERP projection")),
               },
               trafficMetricReader: { readRecent: async () => [] },
-              transportAccountingReader: { read: async () => null },
+              transportAttemptCountsReader: { read: async () => null },
             },
             close: async () => undefined,
           }),
@@ -1403,9 +1404,11 @@ describe("demo run finalization service", () => {
     expect(finalized?.failureReason).toBe("traffic_delivery_major_shortfall");
     expect(summary?.status).toBe("failed");
     expect(summary?.failureReason).toBe("traffic_delivery_major_shortfall");
-    expect(summary?.trafficDeliverySummary).toMatchObject({
+    expect(summary?.transportAttemptCounts).toMatchObject({
       startedRequests: 5,
       unstartedRequests: 5,
+    });
+    expect(summary?.trafficDeliverySummary).toMatchObject({
       trafficDeliveryStatus: "failed",
     });
   });
@@ -1702,6 +1705,8 @@ async function seedDrainingRun(input: {
   await input.db.insert(demoRunFinalizations).values({
     runId: ids.run,
     exitCode: 0,
+    transportAttemptCounts: trafficCompletionReportFixture(input.trafficDeliveryStatus)
+      .transportAttemptCounts,
     httpSummary: trafficCompletionReportFixture(input.trafficDeliveryStatus).httpSummary,
     trafficOutcomeSummary: {},
     trafficDeliverySummary: trafficDeliverySummarySchema.parse({
@@ -1716,8 +1721,6 @@ async function seedDrainingRun(input: {
       waiting: { averageMs: 10, p95Ms: 20 },
     },
     loadRunDiagnosticsSummary: runnerDiagnosticsFixture(),
-    apiRequestLifecycleSummary: trafficCompletionReportFixture(input.trafficDeliveryStatus)
-      .apiRequestLifecycleSummary,
     trafficSummaryReceivedAt: trafficEndedAt,
     createdAt: trafficEndedAt,
     updatedAt: trafficEndedAt,
@@ -1915,12 +1918,14 @@ async function setAcceptedDeliveryEvidence(
   await db
     .update(demoRunFinalizations)
     .set({
-      httpSummary: {
+      transportAttemptCounts: {
         plannedRequests,
         startedRequests,
         completedRequests: startedRequests,
         interruptedRequests: 0,
-        unstartedRequests: plannedRequests - startedRequests,
+        unstartedRequests,
+      },
+      httpSummary: {
         failedRequests: 0,
         acceptedResponses: input.acceptedResponses,
         soldOutResponses: 0,
@@ -1928,11 +1933,6 @@ async function setAcceptedDeliveryEvidence(
         failureRate: 0,
       },
       trafficDeliverySummary: {
-        plannedRequests,
-        startedRequests,
-        completedRequests: startedRequests,
-        interruptedRequests: 0,
-        unstartedRequests,
         trafficMode: "buyer-spike",
         plannedBuyers: plannedRequests === 400 ? 200 : 10,
         scheduledRatePerSecond: null,
@@ -1986,12 +1986,14 @@ function trafficCompletionReportFixture(
     runId: ids.run,
     status: "succeeded",
     exitCode: 0,
-    httpSummary: {
+    transportAttemptCounts: {
       plannedRequests: 10,
       startedRequests: trafficDeliveryStatus === "failed" ? 5 : 10,
       completedRequests: trafficDeliveryStatus === "failed" ? 5 : 10,
       interruptedRequests: 0,
       unstartedRequests: trafficDeliveryStatus === "failed" ? 5 : 0,
+    },
+    httpSummary: {
       failedRequests: 0,
       acceptedResponses: 0,
       soldOutResponses: trafficDeliveryStatus === "failed" ? 3 : 8,
@@ -2001,11 +2003,6 @@ function trafficCompletionReportFixture(
     },
     trafficOutcomeSummary: {},
     trafficDeliverySummary: {
-      plannedRequests: 10,
-      startedRequests: trafficDeliveryStatus === "failed" ? 5 : 10,
-      completedRequests: trafficDeliveryStatus === "failed" ? 5 : 10,
-      interruptedRequests: 0,
-      unstartedRequests: trafficDeliveryStatus === "failed" ? 5 : 0,
       trafficMode: "buyer-spike",
       plannedBuyers: 10,
       scheduledRatePerSecond: null,
@@ -2017,14 +2014,6 @@ function trafficCompletionReportFixture(
     },
     httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
     loadRunDiagnosticsSummary: runnerDiagnosticsFixture(),
-    apiRequestLifecycleSummary: {
-      plannedRequests: 10,
-      startedRequests: trafficDeliveryStatus === "failed" ? 5 : 10,
-      completedRequests: trafficDeliveryStatus === "failed" ? 5 : 10,
-      interruptedRequests: 0,
-      unstartedRequests: trafficDeliveryStatus === "failed" ? 5 : 0,
-      failedRequests: 0,
-    },
     completedAt: "2026-06-20T00:00:05.000Z",
     correlationId: "corr-finalize-test",
   };

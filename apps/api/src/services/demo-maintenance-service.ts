@@ -12,7 +12,8 @@ import {
   type TerminalInventorySnapshot,
   type TrafficDeliverySummary,
   type TrafficHttpSummary,
-  trafficCompletionApiRequestLifecycleSummarySchema,
+  type TransportAttemptCounts,
+  transportAttemptCountsSchema,
 } from "@checkout-surge/contracts";
 import {
   type CheckoutSurgeDatabase,
@@ -300,6 +301,7 @@ export class DemoMaintenanceService {
         failureReason: "admin_reset",
         finalizedAt: fencedRun.finalizedAt,
         capturedAt: now,
+        transportAttemptCounts: trafficSummary.transportAttemptCounts,
         httpSummary: trafficSummary.httpSummary,
         trafficDeliverySummary: trafficSummary.trafficDeliverySummary,
         httpTimingBreakdownSummary: trafficSummary.httpTimingBreakdownSummary,
@@ -310,16 +312,6 @@ export class DemoMaintenanceService {
           ...(fencedRun.previousTrafficStatus
             ? { previousTrafficStatus: fencedRun.previousTrafficStatus }
             : {}),
-        },
-        apiRequestLifecycleSummary: {
-          ...trafficSummary.apiRequestLifecycleSummary,
-          failureReason: "admin_reset",
-          ...(fencedRun.previousStatus ? { previousStatus: fencedRun.previousStatus } : {}),
-          ...(fencedRun.previousTrafficStatus
-            ? { previousTrafficStatus: fencedRun.previousTrafficStatus }
-            : {}),
-          resetAt: fencedRun.finalizedAt.toISOString(),
-          correlationId,
         },
         businessOutcome,
         terminalInventorySnapshot,
@@ -734,11 +726,11 @@ function adminResetTrafficSummary(
   run: typeof demoRuns.$inferSelect,
   finalization: typeof demoRunFinalizations.$inferSelect | null,
 ): {
+  transportAttemptCounts: TransportAttemptCounts;
   httpSummary: TrafficHttpSummary;
   trafficDeliverySummary: TrafficDeliverySummary;
   httpTimingBreakdownSummary: Record<string, unknown>;
   loadRunDiagnosticsSummary: Record<string, unknown>;
-  apiRequestLifecycleSummary: Record<string, unknown>;
 } {
   if (finalization) {
     const context = `demo run ${run.id} finalization used by admin reset`;
@@ -758,25 +750,26 @@ function adminResetTrafficSummary(
         diagnostics.error,
       );
     }
-    const lifecycle = trafficCompletionApiRequestLifecycleSummarySchema.safeParse(
-      finalization.apiRequestLifecycleSummary,
+    const transportAttemptCounts = transportAttemptCountsSchema.safeParse(
+      finalization.transportAttemptCounts,
     );
-    if (!lifecycle.success) {
+    if (!transportAttemptCounts.success) {
       throw invalidAdminResetFinalizationField(
         context,
-        "apiRequestLifecycleSummary",
-        lifecycle.error,
+        "transportAttemptCounts",
+        transportAttemptCounts.error,
       );
     }
     return {
+      transportAttemptCounts: transportAttemptCounts.data,
       httpSummary: parsePersistedTrafficHttpSummary(finalization.httpSummary, context),
       trafficDeliverySummary: parsePersistedTrafficDeliverySummary(
         finalization.trafficDeliverySummary,
+        transportAttemptCounts.data,
         context,
       ),
       httpTimingBreakdownSummary: timing.data,
       loadRunDiagnosticsSummary: diagnostics.data,
-      apiRequestLifecycleSummary: lifecycle.data,
     };
   }
 
@@ -786,11 +779,11 @@ function adminResetTrafficSummary(
   );
 
   return {
+    transportAttemptCounts: summary.transportAttemptCounts,
     httpSummary: summary.httpSummary,
     trafficDeliverySummary: summary.trafficDeliverySummary,
     httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
     loadRunDiagnosticsSummary: {},
-    apiRequestLifecycleSummary: {},
   };
 }
 

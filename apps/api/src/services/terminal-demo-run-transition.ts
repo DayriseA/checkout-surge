@@ -1,4 +1,8 @@
-import { trafficDeliverySummarySchema, trafficHttpSummarySchema } from "@checkout-surge/contracts";
+import {
+  trafficDeliverySummarySchema,
+  trafficHttpSummarySchema,
+  transportAttemptCountsSchema,
+} from "@checkout-surge/contracts";
 import type { CheckoutSurgeDatabase } from "@checkout-surge/db";
 import { demoRunSummaries, demoRuns } from "@checkout-surge/db";
 import { and, eq, inArray, sql } from "drizzle-orm";
@@ -195,11 +199,11 @@ export class PostgresTerminalDemoRunSummaryWriter implements TerminalDemoRunWrit
       failureReason: input.failureReason,
       startedAt: input.run.startedAt,
       endedAt: input.finalizedAt,
+      transportAttemptCounts: transportAttemptCountsSchema.parse(input.transportAttemptCounts),
       httpSummary: trafficHttpSummarySchema.parse(input.httpSummary),
       trafficDeliverySummary: trafficDeliverySummarySchema.parse(input.trafficDeliverySummary),
       httpTimingBreakdownSummary: input.httpTimingBreakdownSummary,
       loadRunDiagnosticsSummary: input.loadRunDiagnosticsSummary,
-      apiRequestLifecycleSummary: input.apiRequestLifecycleSummary,
       businessOutcomeSummary: input.businessOutcome,
       terminalInventorySnapshot: input.terminalInventorySnapshot,
       capturedAt,

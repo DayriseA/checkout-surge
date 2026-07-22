@@ -12,10 +12,7 @@ import {
   uuidSchema,
 } from "./primitives.js";
 import { orderProcessBullMqQueueName, orderProcessQueueName } from "./queue.js";
-import {
-  refineTransportAttemptCounts,
-  transportAttemptCountsShape,
-} from "./traffic-transport-counts.js";
+import { transportAttemptCountsSchema } from "./traffic-transport-counts.js";
 
 export const trafficExecutionStartPath = "/traffic/start" as const;
 export const trafficExecutionAbortPath = "/traffic/current/abort" as const;
@@ -284,7 +281,6 @@ export type TrafficCompletionAcknowledgement = z.infer<
 
 export const trafficHttpSummarySchema = z
   .object({
-    ...transportAttemptCountsShape,
     failedRequests: nonnegativeIntegerSchema,
     acceptedResponses: nonnegativeIntegerSchema,
     soldOutResponses: nonnegativeIntegerSchema,
@@ -292,15 +288,12 @@ export const trafficHttpSummarySchema = z
     p95LatencyMs: nonnegativeNumberSchema.optional(),
     failureRate: percentageSchema,
   })
-  .strict()
-  .superRefine(refineTransportAttemptCounts);
+  .strict();
 export type TrafficHttpSummary = z.infer<typeof trafficHttpSummarySchema>;
 
 /** Real completion input. Quality is classified by the API, not the caller. */
 export const trafficCompletionDeliverySummarySchema = z
   .object({
-    ...transportAttemptCountsShape,
-    plannedRequests: positiveIntegerSchema,
     trafficMode: z.enum(["buyer-spike", "steady-arrival-rate"]),
     plannedBuyers: positiveIntegerSchema.nullable(),
     scheduledRatePerSecond: positiveIntegerSchema.nullable(),
@@ -311,15 +304,13 @@ export const trafficCompletionDeliverySummarySchema = z
     completedIterations: nonnegativeIntegerSchema.nullable().optional(),
     notes: z.array(z.string().trim().min(1)).default([]),
   })
-  .strict()
-  .superRefine(refineTransportAttemptCounts);
+  .strict();
 export type TrafficCompletionDeliverySummary = z.infer<
   typeof trafficCompletionDeliverySummarySchema
 >;
 
 /** Field map of the authoritative persisted/history delivery summary. */
 export const trafficDeliverySummaryShape = {
-  ...transportAttemptCountsShape,
   trafficMode: z.enum(["buyer-spike", "steady-arrival-rate"]).nullable(),
   plannedBuyers: positiveIntegerSchema.nullable(),
   scheduledRatePerSecond: positiveIntegerSchema.nullable(),
@@ -333,10 +324,7 @@ export const trafficDeliverySummaryShape = {
 } as const;
 
 /** Authoritative persisted/history shape. The API-derived status is always present. */
-export const trafficDeliverySummarySchema = z
-  .object(trafficDeliverySummaryShape)
-  .strict()
-  .superRefine(refineTransportAttemptCounts);
+export const trafficDeliverySummarySchema = z.object(trafficDeliverySummaryShape).strict();
 export type TrafficDeliverySummary = z.infer<typeof trafficDeliverySummarySchema>;
 
 export const loadExecutionPlanSchema = z
@@ -544,38 +532,18 @@ export const realLoadRunDiagnosticsSummarySchema = loadRunDiagnosticsSummarySche
 });
 export type RealLoadRunDiagnosticsSummary = z.infer<typeof realLoadRunDiagnosticsSummarySchema>;
 
-/** Strict request-lifecycle accounting emitted by a real traffic completion. */
-export const trafficCompletionApiRequestLifecycleSummarySchema = z
-  .object({
-    ...transportAttemptCountsShape,
-    failedRequests: nonnegativeIntegerSchema,
-  })
-  .strict()
-  .superRefine(refineTransportAttemptCounts);
-export type TrafficCompletionApiRequestLifecycleSummary = z.infer<
-  typeof trafficCompletionApiRequestLifecycleSummarySchema
->;
-
-const transportAttemptCountFieldNames = [
-  "plannedRequests",
-  "startedRequests",
-  "completedRequests",
-  "interruptedRequests",
-  "unstartedRequests",
-] as const;
-
 export const trafficCompletionReportSchema = z
   .object({
     runId: uuidSchema,
     status: trafficExecutionStatusSchema.extract(["succeeded", "failed"]),
     exitCode: z.number().int().optional(),
     errorMessage: z.string().trim().min(1).optional(),
+    transportAttemptCounts: transportAttemptCountsSchema,
     httpSummary: trafficHttpSummarySchema,
     trafficOutcomeSummary: jsonObjectSchema,
     trafficDeliverySummary: trafficCompletionDeliverySummarySchema,
     httpTimingBreakdownSummary: httpTimingBreakdownSummarySchema,
     loadRunDiagnosticsSummary: realLoadRunDiagnosticsSummarySchema,
-    apiRequestLifecycleSummary: trafficCompletionApiRequestLifecycleSummarySchema,
     completedAt: isoTimestampSchema,
     correlationId: correlationIdSchema,
   })
@@ -610,13 +578,8 @@ export const trafficCompletionReportSchema = z
           };
     const executionPlanMismatches: Array<[string, unknown, unknown]> = [
       [
-        "httpSummary.plannedRequests",
-        value.httpSummary.plannedRequests,
-        plan.plannedEmittedAttempts,
-      ],
-      [
-        "trafficDeliverySummary.plannedRequests",
-        delivery.plannedRequests,
+        "transportAttemptCounts.plannedRequests",
+        value.transportAttemptCounts.plannedRequests,
         plan.plannedEmittedAttempts,
       ],
       ...Object.entries(expectedDeliveryIdentity).map(
@@ -634,23 +597,6 @@ export const trafficCompletionReportSchema = z
           code: "custom",
           path: path.split("."),
           message: "must match the reported execution plan",
-        });
-      }
-    }
-
-    for (const field of transportAttemptCountFieldNames) {
-      if (delivery[field] !== value.httpSummary[field]) {
-        context.addIssue({
-          code: "custom",
-          path: ["trafficDeliverySummary", field],
-          message: `must match httpSummary.${field}`,
-        });
-      }
-      if (value.apiRequestLifecycleSummary[field] !== value.httpSummary[field]) {
-        context.addIssue({
-          code: "custom",
-          path: ["apiRequestLifecycleSummary", field],
-          message: `must match httpSummary.${field}`,
         });
       }
     }

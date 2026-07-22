@@ -169,11 +169,13 @@ describe("K6RunAccumulator summary precedence", () => {
       },
     });
 
-    expect(report.httpSummary).toMatchObject({
+    expect(report.transportAttemptCounts).toMatchObject({
       startedRequests: 0,
       completedRequests: 0,
       interruptedRequests: 0,
       unstartedRequests: 10,
+    });
+    expect(report.httpSummary).toMatchObject({
       acceptedResponses: 7,
       soldOutResponses: 2,
       unexpectedResponses: 0,
@@ -230,20 +232,14 @@ describe("K6RunAccumulator transport-attempt reconciliation", () => {
       },
     });
 
-    expect(report.httpSummary).toMatchObject({
+    expect(report.transportAttemptCounts).toMatchObject({
       plannedRequests: 1_000,
       startedRequests: 1_000,
       completedRequests: 750,
       interruptedRequests: 250,
       unstartedRequests: 0,
     });
-    expect(report.trafficDeliverySummary).toMatchObject({
-      plannedRequests: 1_000,
-      startedRequests: 1_000,
-      completedRequests: 750,
-      interruptedRequests: 250,
-      unstartedRequests: 0,
-    });
+    expect(report.trafficDeliverySummary).not.toHaveProperty("startedRequests");
     expect(report.loadRunDiagnosticsSummary.terminalMetricSources).toMatchObject({
       startedRequests: "summary_export",
       completedRequests: "summary_export",
@@ -263,7 +259,7 @@ describe("K6RunAccumulator transport-attempt reconciliation", () => {
       },
     });
 
-    expect(report.httpSummary).toMatchObject({
+    expect(report.transportAttemptCounts).toMatchObject({
       plannedRequests: 1_000,
       startedRequests: 750,
       completedRequests: 750,
@@ -285,7 +281,7 @@ describe("K6RunAccumulator transport-attempt reconciliation", () => {
       },
     });
 
-    expect(report.httpSummary).toMatchObject({
+    expect(report.transportAttemptCounts).toMatchObject({
       plannedRequests: 1_000,
       startedRequests: 800,
       completedRequests: 750,
@@ -306,7 +302,7 @@ describe("K6RunAccumulator transport-attempt reconciliation", () => {
       },
     });
 
-    expect(report.httpSummary).toMatchObject({
+    expect(report.transportAttemptCounts).toMatchObject({
       startedRequests: 1_000,
       completedRequests: 750,
       interruptedRequests: 250,
@@ -335,14 +331,7 @@ describe("K6RunAccumulator transport-attempt reconciliation", () => {
       },
     });
 
-    expect(report.httpSummary).toMatchObject({
-      plannedRequests: 10,
-      startedRequests: 10,
-      completedRequests: expectedCompleted,
-      interruptedRequests: expectedInterrupted,
-      unstartedRequests: 0,
-    });
-    expect(report.apiRequestLifecycleSummary).toMatchObject({
+    expect(report.transportAttemptCounts).toMatchObject({
       plannedRequests: 10,
       startedRequests: 10,
       completedRequests: expectedCompleted,
@@ -364,7 +353,7 @@ describe("K6RunAccumulator transport-attempt reconciliation", () => {
       summaryMetrics: { attemptsStarted: 10, httpRequests: 7, timingPhases: {} },
     });
 
-    expect(report.httpSummary).toMatchObject({
+    expect(report.transportAttemptCounts).toMatchObject({
       completedRequests: 7,
       interruptedRequests: 3,
       unstartedRequests: 0,
@@ -387,7 +376,7 @@ describe("K6RunAccumulator transport-attempt reconciliation", () => {
       },
     });
 
-    expect(report.httpSummary).toMatchObject({
+    expect(report.transportAttemptCounts).toMatchObject({
       completedRequests: 7,
       interruptedRequests: 3,
       unstartedRequests: 0,
@@ -403,7 +392,7 @@ describe("K6RunAccumulator transport-attempt reconciliation", () => {
 
     const report = accumulator.completionReport({ status: "failed", completedAt });
 
-    expect(report.httpSummary).toMatchObject({
+    expect(report.transportAttemptCounts).toMatchObject({
       startedRequests: 750,
       completedRequests: 750,
       interruptedRequests: 0,

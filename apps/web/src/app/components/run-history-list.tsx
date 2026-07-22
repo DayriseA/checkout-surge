@@ -98,11 +98,11 @@ function RunHistorySummaryArticle({ summary }: { summary: RunHistorySummary }) {
         />
         <SummarySection
           facts={[
-            ["Planned", formatNumber(summary.httpSummary.plannedRequests)],
-            ["Started", formatNumber(summary.httpSummary.startedRequests)],
-            ["Responses completed", formatNumber(summary.httpSummary.completedRequests)],
-            ["Interrupted", formatNumber(summary.httpSummary.interruptedRequests)],
-            ["Unstarted", formatNumber(summary.httpSummary.unstartedRequests)],
+            ["Planned", formatNumber(summary.transportAttemptCounts.plannedRequests)],
+            ["Started", formatNumber(summary.transportAttemptCounts.startedRequests)],
+            ["Responses completed", formatNumber(summary.transportAttemptCounts.completedRequests)],
+            ["Interrupted", formatNumber(summary.transportAttemptCounts.interruptedRequests)],
+            ["Unstarted", formatNumber(summary.transportAttemptCounts.unstartedRequests)],
             ["Accepted", formatNumber(summary.httpSummary.acceptedResponses)],
             ["Sold out", formatNumber(summary.httpSummary.soldOutResponses)],
             ["Unexpected", formatNumber(summary.httpSummary.unexpectedResponses)],

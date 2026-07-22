@@ -45,7 +45,7 @@ import {
   PostgresDashboardCompletionOutcomeReader,
   PostgresDashboardConsistencyLagReader,
   PostgresDashboardRecoveryContextReader,
-  PostgresDashboardTransportAccountingReader,
+  PostgresDashboardTransportAttemptCountsReader,
 } from "./services/dashboard-recovery-service.js";
 import { DashboardSnapshotPublicationScheduler } from "./services/dashboard-snapshot-publication-scheduler.js";
 import { DemoMaintenanceService } from "./services/demo-maintenance-service.js";
@@ -96,7 +96,7 @@ export {
   PostgresDashboardCompletionOutcomeReader,
   PostgresDashboardConsistencyLagReader,
   PostgresDashboardRecoveryContextReader,
-  PostgresDashboardTransportAccountingReader,
+  PostgresDashboardTransportAttemptCountsReader,
 } from "./services/dashboard-recovery-service.js";
 export { DashboardSnapshotPublicationScheduler } from "./services/dashboard-snapshot-publication-scheduler.js";
 export { DemoMaintenanceService } from "./services/demo-maintenance-service.js";
@@ -324,7 +324,7 @@ export async function startApiServer(): Promise<void> {
           queueStatusService: operationQueueStatusService,
           erpStatusService: operationErpStatusService,
           trafficMetricReader: new RedisDashboardTrafficMetricStore(operationRedis),
-          transportAccountingReader: new PostgresDashboardTransportAccountingReader(
+          transportAttemptCountsReader: new PostgresDashboardTransportAttemptCountsReader(
             operationDatabase.db,
           ),
         },

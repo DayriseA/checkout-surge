@@ -8,9 +8,9 @@ import {
   publicRuntimePolicyPersistedSchema,
   type RealLoadRunDiagnosticsSummary,
   type TerminalInventorySnapshot,
-  type TrafficCompletionApiRequestLifecycleSummary,
   type TrafficDeliverySummary,
   type TrafficHttpSummary,
+  type TransportAttemptCounts,
 } from "@checkout-surge/contracts";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createDatabaseConnection } from "../../src/client.js";
@@ -52,6 +52,13 @@ describe.skipIf(!databaseUrl)("contract-typed persisted JSON", () => {
   it("round-trips preset, run, finalization, summary, inventory, and policy JSON without shape loss", async () => {
     const configSnapshot = configSnapshotFixture();
     const httpSummary = httpSummaryFixture();
+    const transportAttemptCounts: TransportAttemptCounts = {
+      plannedRequests: 10,
+      startedRequests: 10,
+      completedRequests: 10,
+      interruptedRequests: 0,
+      unstartedRequests: 0,
+    };
     const trafficDeliverySummary = trafficDeliverySummaryFixture();
     const businessOutcomeSummary = businessOutcomeSummaryFixture();
     const terminalInventorySnapshot = terminalInventorySnapshotFixture();
@@ -90,14 +97,6 @@ describe.skipIf(!databaseUrl)("contract-typed persisted JSON", () => {
         completedIterations: "summary_export",
       },
       summaryExportWarnings: [],
-    };
-    const apiRequestLifecycleSummary: TrafficCompletionApiRequestLifecycleSummary = {
-      plannedRequests: 10,
-      startedRequests: 10,
-      completedRequests: 10,
-      interruptedRequests: 0,
-      unstartedRequests: 0,
-      failedRequests: 0,
     };
     const policy = publicRuntimePolicyPersistedSchema.parse({
       isPublicRunBudgetEnforced: true,
@@ -154,12 +153,12 @@ describe.skipIf(!databaseUrl)("contract-typed persisted JSON", () => {
     await connection.db.insert(demoRunFinalizations).values({
       runId: ids.run,
       exitCode: 0,
+      transportAttemptCounts,
       httpSummary,
       trafficOutcomeSummary,
       trafficDeliverySummary,
       httpTimingBreakdownSummary,
       loadRunDiagnosticsSummary,
-      apiRequestLifecycleSummary,
       trafficSummaryReceivedAt: capturedAt,
     });
     await connection.db.insert(demoRunSummaries).values({
@@ -168,11 +167,11 @@ describe.skipIf(!databaseUrl)("contract-typed persisted JSON", () => {
       status: "completed",
       startedAt: capturedAt,
       endedAt: capturedAt,
+      transportAttemptCounts,
       httpSummary,
       trafficDeliverySummary,
       httpTimingBreakdownSummary,
       loadRunDiagnosticsSummary,
-      apiRequestLifecycleSummary,
       businessOutcomeSummary,
       terminalInventorySnapshot,
       capturedAt,
@@ -193,17 +192,17 @@ describe.skipIf(!databaseUrl)("contract-typed persisted JSON", () => {
       ...configSnapshot,
     });
     expect(run?.configSnapshot).toEqual(configSnapshot);
+    expect(finalization?.transportAttemptCounts).toEqual(transportAttemptCounts);
     expect(finalization?.httpSummary).toEqual(httpSummary);
     expect(finalization?.trafficOutcomeSummary).toEqual(trafficOutcomeSummary);
     expect(finalization?.trafficDeliverySummary).toEqual(trafficDeliverySummary);
     expect(finalization?.httpTimingBreakdownSummary).toEqual(httpTimingBreakdownSummary);
     expect(finalization?.loadRunDiagnosticsSummary).toEqual(loadRunDiagnosticsSummary);
-    expect(finalization?.apiRequestLifecycleSummary).toEqual(apiRequestLifecycleSummary);
+    expect(summary?.transportAttemptCounts).toEqual(transportAttemptCounts);
     expect(summary?.httpSummary).toEqual(httpSummary);
     expect(summary?.trafficDeliverySummary).toEqual(trafficDeliverySummary);
     expect(summary?.httpTimingBreakdownSummary).toEqual(httpTimingBreakdownSummary);
     expect(summary?.loadRunDiagnosticsSummary).toEqual(loadRunDiagnosticsSummary);
-    expect(summary?.apiRequestLifecycleSummary).toEqual(apiRequestLifecycleSummary);
     expect(summary?.businessOutcomeSummary).toEqual(businessOutcomeSummary);
     expect(summary?.terminalInventorySnapshot).toEqual(terminalInventorySnapshot);
     expect(policyRow?.policy).toEqual(policy);
@@ -248,11 +247,6 @@ function configSnapshotFixture(): AcceptedRunConfigSnapshot {
 
 function httpSummaryFixture(): TrafficHttpSummary {
   return {
-    plannedRequests: 10,
-    startedRequests: 10,
-    completedRequests: 10,
-    interruptedRequests: 0,
-    unstartedRequests: 0,
     failedRequests: 0,
     acceptedResponses: 7,
     soldOutResponses: 3,
@@ -264,11 +258,6 @@ function httpSummaryFixture(): TrafficHttpSummary {
 
 function trafficDeliverySummaryFixture(): TrafficDeliverySummary {
   return {
-    plannedRequests: 10,
-    startedRequests: 10,
-    completedRequests: 10,
-    interruptedRequests: 0,
-    unstartedRequests: 0,
     trafficMode: "buyer-spike",
     plannedBuyers: 10,
     scheduledRatePerSecond: null,

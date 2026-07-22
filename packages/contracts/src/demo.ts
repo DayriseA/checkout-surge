@@ -43,10 +43,7 @@ import {
   simulatedNotificationChannelSchema,
   simulatedNotificationStatusSchema,
 } from "./queue.js";
-import {
-  refineTransportAttemptCounts,
-  transportAttemptCountsSchema,
-} from "./traffic-transport-counts.js";
+import { transportAttemptCountsSchema } from "./traffic-transport-counts.js";
 
 export const publicPresetListPath = "/demo/presets/public" as const;
 export const publicRuntimePolicyPath = "/demo/runtime-policy" as const;
@@ -379,7 +376,7 @@ export const dashboardRecoveryResponseSchema = z
      * no completion evidence is available (for example while traffic is still
      * starting or executing).
      */
-    transportAccounting: transportAttemptCountsSchema.nullable().default(null),
+    transportAttemptCounts: transportAttemptCountsSchema.nullable().default(null),
     recoveredAt: isoTimestampSchema,
   })
   .strict()
@@ -420,6 +417,7 @@ export type DashboardRecoveryResponse = z.infer<typeof dashboardRecoveryResponse
 
 export const runHistorySummarySchema = demoRunSummaryShapeSchema
   .extend({
+    transportAttemptCounts: transportAttemptCountsSchema,
     httpSummary: trafficHttpSummarySchema,
     trafficDeliverySummary: trafficDeliverySummarySchema,
     businessOutcomeSummary: businessOutcomeSummarySchema,
@@ -559,10 +557,7 @@ const publicTerminalInventorySnapshotSchema = terminalInventorySnapshotSchema
 const { notes: _internalDeliveryNotes, ...publicTrafficDeliverySummaryShape } =
   trafficDeliverySummaryShape;
 
-const publicTrafficDeliverySummarySchema = z
-  .object(publicTrafficDeliverySummaryShape)
-  .strict()
-  .superRefine(refineTransportAttemptCounts);
+const publicTrafficDeliverySummarySchema = z.object(publicTrafficDeliverySummaryShape).strict();
 
 export const publicRunHistorySummarySchema = z
   .object({
@@ -571,6 +566,7 @@ export const publicRunHistorySummarySchema = z
     status: demoRunStatusSchema,
     startedAt: isoTimestampSchema.optional(),
     endedAt: isoTimestampSchema,
+    transportAttemptCounts: transportAttemptCountsSchema,
     httpSummary: trafficHttpSummarySchema,
     trafficDeliverySummary: publicTrafficDeliverySummarySchema,
     businessOutcomeSummary: businessOutcomeSummarySchema,

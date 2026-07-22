@@ -195,12 +195,14 @@ function runHistoryFixture(): RunHistoryListResponse {
         status: "completed",
         startedAt: "2026-06-20T00:00:00.000Z",
         endedAt: "2026-06-20T00:00:10.000Z",
-        httpSummary: {
+        transportAttemptCounts: {
           plannedRequests: 10,
           startedRequests: 10,
           completedRequests: 10,
           interruptedRequests: 0,
           unstartedRequests: 0,
+        },
+        httpSummary: {
           failedRequests: 0,
           acceptedResponses: 6,
           soldOutResponses: 4,
@@ -209,11 +211,6 @@ function runHistoryFixture(): RunHistoryListResponse {
           failureRate: 0,
         },
         trafficDeliverySummary: {
-          plannedRequests: 10,
-          startedRequests: 10,
-          completedRequests: 10,
-          interruptedRequests: 0,
-          unstartedRequests: 0,
           trafficMode: null,
           plannedBuyers: null,
           scheduledRatePerSecond: null,
@@ -276,16 +273,15 @@ function runHistoryDetailFixture(): RunHistoryDetailResponse {
   return {
     summary: {
       ...summary,
+      transportAttemptCounts: transportCounts,
       httpSummary: {
         ...summary.httpSummary,
-        ...transportCounts,
         acceptedResponses: 4,
         soldOutResponses: 3,
         unexpectedResponses: 0,
       },
       trafficDeliverySummary: {
         ...publicDeliverySummary,
-        ...transportCounts,
         completedIterations: 7,
         trafficDeliveryStatus: "failed",
       },

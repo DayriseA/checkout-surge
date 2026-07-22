@@ -325,7 +325,7 @@ async function buildTestServer(options: {
             queueStatusService,
             erpStatusService,
             trafficMetricReader: { readRecent: async () => [] },
-            transportAccountingReader: { read: async () => null },
+            transportAttemptCountsReader: { read: async () => null },
           },
           close: async () => undefined,
         }),
@@ -554,12 +554,14 @@ function runHistoryListResponseFixture(): RunHistoryListResponse {
         status: "completed",
         startedAt: "2026-06-20T00:00:00.000Z",
         endedAt: "2026-06-20T00:00:10.000Z",
-        httpSummary: {
+        transportAttemptCounts: {
           plannedRequests: 10,
           startedRequests: 10,
           completedRequests: 10,
           interruptedRequests: 0,
           unstartedRequests: 0,
+        },
+        httpSummary: {
           failedRequests: 0,
           acceptedResponses: 6,
           soldOutResponses: 4,
@@ -568,11 +570,6 @@ function runHistoryListResponseFixture(): RunHistoryListResponse {
           failureRate: 0,
         },
         trafficDeliverySummary: {
-          plannedRequests: 10,
-          startedRequests: 10,
-          completedRequests: 10,
-          interruptedRequests: 0,
-          unstartedRequests: 0,
           trafficMode: null,
           plannedBuyers: null,
           scheduledRatePerSecond: null,
@@ -2286,12 +2283,14 @@ describe("API gateway routes", () => {
       runId: fixtureIds.run,
       status: "succeeded",
       exitCode: 0,
-      httpSummary: {
+      transportAttemptCounts: {
         plannedRequests: 2,
         startedRequests: 2,
         completedRequests: 2,
         interruptedRequests: 0,
         unstartedRequests: 0,
+      },
+      httpSummary: {
         failedRequests: 0,
         acceptedResponses: 1,
         soldOutResponses: 1,
@@ -2301,11 +2300,6 @@ describe("API gateway routes", () => {
       },
       trafficOutcomeSummary: {},
       trafficDeliverySummary: {
-        plannedRequests: 2,
-        startedRequests: 2,
-        completedRequests: 2,
-        interruptedRequests: 0,
-        unstartedRequests: 0,
         trafficMode: "buyer-spike",
         plannedBuyers: 2,
         scheduledRatePerSecond: null,
@@ -2317,14 +2311,6 @@ describe("API gateway routes", () => {
       },
       httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
       loadRunDiagnosticsSummary: runnerDiagnosticsFixture(),
-      apiRequestLifecycleSummary: {
-        plannedRequests: 2,
-        startedRequests: 2,
-        completedRequests: 2,
-        interruptedRequests: 0,
-        unstartedRequests: 0,
-        failedRequests: 0,
-      },
       completedAt: "2026-06-20T00:00:10.000Z",
       correlationId: fixtureCorrelationId,
     };
@@ -4456,12 +4442,14 @@ function internalCompletionReportFixture() {
     runId: fixtureIds.run,
     status: "succeeded",
     exitCode: 0,
-    httpSummary: {
+    transportAttemptCounts: {
       plannedRequests: 2,
       startedRequests: 2,
       completedRequests: 2,
       interruptedRequests: 0,
       unstartedRequests: 0,
+    },
+    httpSummary: {
       failedRequests: 0,
       acceptedResponses: 1,
       soldOutResponses: 1,
@@ -4470,11 +4458,6 @@ function internalCompletionReportFixture() {
     },
     trafficOutcomeSummary: {},
     trafficDeliverySummary: {
-      plannedRequests: 2,
-      startedRequests: 2,
-      completedRequests: 2,
-      interruptedRequests: 0,
-      unstartedRequests: 0,
       trafficMode: "buyer-spike",
       plannedBuyers: 2,
       scheduledRatePerSecond: null,
@@ -4486,14 +4469,6 @@ function internalCompletionReportFixture() {
     },
     httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
     loadRunDiagnosticsSummary: runnerDiagnosticsFixture(),
-    apiRequestLifecycleSummary: {
-      plannedRequests: 2,
-      startedRequests: 2,
-      completedRequests: 2,
-      interruptedRequests: 0,
-      unstartedRequests: 0,
-      failedRequests: 0,
-    },
     completedAt: "2026-06-20T00:00:10.000Z",
     correlationId: fixtureCorrelationId,
   };

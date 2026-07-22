@@ -10,6 +10,7 @@ import type {
   TrafficConfig,
   TrafficDeliverySummary,
   TrafficHttpSummary,
+  TransportAttemptCounts,
 } from "@checkout-surge/contracts";
 import type {
   DemoPreset,
@@ -41,10 +42,16 @@ type _RunConfigSelect = Expect<Equal<DemoRun["configSnapshot"], AcceptedRunConfi
 type _FinalizationHttpSelect = Expect<
   Equal<DemoRunFinalization["httpSummary"], TrafficHttpSummary>
 >;
+type _FinalizationTransportSelect = Expect<
+  Equal<DemoRunFinalization["transportAttemptCounts"], TransportAttemptCounts>
+>;
 type _FinalizationDeliverySelect = Expect<
   Equal<DemoRunFinalization["trafficDeliverySummary"], TrafficDeliverySummary>
 >;
 type _SummaryHttpSelect = Expect<Equal<DemoRunSummary["httpSummary"], TrafficHttpSummary>>;
+type _SummaryTransportSelect = Expect<
+  Equal<DemoRunSummary["transportAttemptCounts"], TransportAttemptCounts>
+>;
 type _SummaryDeliverySelect = Expect<
   Equal<DemoRunSummary["trafficDeliverySummary"], TrafficDeliverySummary>
 >;
@@ -68,10 +75,16 @@ type _RunConfigInsert = Expect<Equal<NewDemoRun["configSnapshot"], AcceptedRunCo
 type _FinalizationHttpInsert = Expect<
   Equal<NewDemoRunFinalization["httpSummary"], TrafficHttpSummary>
 >;
+type _FinalizationTransportInsert = Expect<
+  Equal<NewDemoRunFinalization["transportAttemptCounts"], TransportAttemptCounts>
+>;
 type _FinalizationDeliveryInsert = Expect<
   Equal<NewDemoRunFinalization["trafficDeliverySummary"], TrafficDeliverySummary>
 >;
 type _SummaryHttpInsert = Expect<Equal<NewDemoRunSummary["httpSummary"], TrafficHttpSummary>>;
+type _SummaryTransportInsert = Expect<
+  Equal<NewDemoRunSummary["transportAttemptCounts"], TransportAttemptCounts>
+>;
 type _SummaryDeliveryInsert = Expect<
   Equal<NewDemoRunSummary["trafficDeliverySummary"], TrafficDeliverySummary>
 >;

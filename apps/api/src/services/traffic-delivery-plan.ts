@@ -2,6 +2,7 @@ import type {
   AcceptedRunConfigSnapshot,
   TrafficDeliverySummary,
   TrafficHttpSummary,
+  TransportAttemptCounts,
 } from "@checkout-surge/contracts";
 import { calculatePlannedRequests, resolveSteadyArrivalVus } from "@checkout-surge/contracts";
 
@@ -10,16 +11,10 @@ export function syntheticTrafficDeliverySummary(
   notes: string[],
 ): TrafficDeliverySummary {
   const traffic = config.trafficConfig;
-  const plannedRequests = calculatePlannedRequests(traffic);
   const resolvedK6Vus =
     traffic.mode === "steady-arrival-rate" ? resolveSteadyArrivalVus(traffic) : null;
 
   return {
-    plannedRequests,
-    startedRequests: 0,
-    completedRequests: 0,
-    interruptedRequests: 0,
-    unstartedRequests: plannedRequests,
     trafficMode: traffic.mode,
     plannedBuyers: traffic.mode === "buyer-spike" ? traffic.buyerCount : null,
     scheduledRatePerSecond: traffic.mode === "steady-arrival-rate" ? traffic.ratePerSecond : null,
@@ -38,18 +33,21 @@ export function syntheticFailedTrafficSummary(
   config: AcceptedRunConfigSnapshot,
   notes: string[],
 ): {
+  transportAttemptCounts: TransportAttemptCounts;
   httpSummary: TrafficHttpSummary;
   trafficDeliverySummary: TrafficDeliverySummary;
 } {
   const plannedRequests = calculatePlannedRequests(config.trafficConfig);
 
   return {
-    httpSummary: {
+    transportAttemptCounts: {
       plannedRequests,
       startedRequests: 0,
       completedRequests: 0,
       interruptedRequests: 0,
       unstartedRequests: plannedRequests,
+    },
+    httpSummary: {
       failedRequests: 0,
       acceptedResponses: 0,
       soldOutResponses: 0,

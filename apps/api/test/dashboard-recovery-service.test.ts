@@ -29,7 +29,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   DashboardRecoveryService,
   PostgresDashboardRecoveryContextReader,
-  PostgresDashboardTransportAccountingReader,
+  PostgresDashboardTransportAttemptCountsReader,
 } from "../src/services/dashboard-recovery-service.js";
 
 const now = new Date("2026-07-14T12:00:00.000Z");
@@ -108,12 +108,14 @@ describe("PostgresDashboardRecoveryContextReader integration", () => {
     await db.insert(demoRunFinalizations).values({
       runId,
       exitCode: 0,
-      httpSummary: {
+      transportAttemptCounts: {
         plannedRequests: 1_000,
         startedRequests: 1_000,
         completedRequests: 750,
         interruptedRequests: 250,
         unstartedRequests: 0,
+      },
+      httpSummary: {
         failedRequests: 0,
         acceptedResponses: 250,
         soldOutResponses: 500,
@@ -122,11 +124,6 @@ describe("PostgresDashboardRecoveryContextReader integration", () => {
       },
       trafficOutcomeSummary: {},
       trafficDeliverySummary: {
-        plannedRequests: 1_000,
-        startedRequests: 1_000,
-        completedRequests: 750,
-        interruptedRequests: 250,
-        unstartedRequests: 0,
         trafficMode: "buyer-spike",
         plannedBuyers: 1_000,
         scheduledRatePerSecond: null,
@@ -140,13 +137,12 @@ describe("PostgresDashboardRecoveryContextReader integration", () => {
       },
       httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
       loadRunDiagnosticsSummary: currentDiagnosticsFixture(1_000),
-      apiRequestLifecycleSummary: currentLifecycleFixture(1_000, 750, 250),
       trafficSummaryReceivedAt: now,
       createdAt: now,
       updatedAt: now,
     });
 
-    const reader = new PostgresDashboardTransportAccountingReader(db);
+    const reader = new PostgresDashboardTransportAttemptCountsReader(db);
 
     await expect(reader.read(runId)).resolves.toEqual({
       plannedRequests: 1_000,
@@ -207,20 +203,26 @@ describe("PostgresDashboardRecoveryContextReader integration", () => {
     await db.insert(demoRunFinalizations).values({
       runId: legacyRunId,
       exitCode: 1,
+      transportAttemptCounts: {
+        plannedRequests: 1_000,
+        emittedRequests: 750,
+        completedRequests: 750,
+        interruptedRequests: 0,
+        unstartedRequests: 250,
+      } as unknown as TransportAttemptCounts,
       httpSummary: legacyHttpSummary,
       trafficOutcomeSummary: {},
       trafficDeliverySummary: legacyDeliverySummary,
       httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
       loadRunDiagnosticsSummary: currentDiagnosticsFixture(1_000),
-      apiRequestLifecycleSummary: currentLifecycleFixture(1_000, 750, 0, 250),
       trafficSummaryReceivedAt: now,
       createdAt: now,
       updatedAt: now,
     });
 
     await expect(
-      new PostgresDashboardTransportAccountingReader(db).read(legacyRunId),
-    ).rejects.toThrow(new RegExp(`${legacyRunId}.*trafficDeliverySummary`));
+      new PostgresDashboardTransportAttemptCountsReader(db).read(legacyRunId),
+    ).rejects.toThrow(new RegExp(`${legacyRunId}.*transportAttemptCounts`));
   });
 });
 
@@ -306,7 +308,7 @@ describe("DashboardRecoveryService", () => {
       consistencyLag: null,
       recentCompletionOutcomes: [],
       recentMetrics: [],
-      transportAccounting: null,
+      transportAttemptCounts: null,
       recoveredAt: now.toISOString(),
     });
     expect(harness.inventory).not.toHaveBeenCalled();
@@ -314,7 +316,7 @@ describe("DashboardRecoveryService", () => {
     expect(harness.lag).not.toHaveBeenCalled();
     expect(harness.completion).not.toHaveBeenCalled();
     expect(harness.metrics).not.toHaveBeenCalled();
-    expect(harness.transportAccounting).not.toHaveBeenCalled();
+    expect(harness.transportAttemptCounts).not.toHaveBeenCalled();
     expect(harness.queue).toHaveBeenCalledOnce();
     expect(harness.erp).toHaveBeenCalledOnce();
   });
@@ -377,38 +379,38 @@ describe("DashboardRecoveryService", () => {
       unstartedRequests: 0,
     };
     const harness = serviceHarness({ currentRun: runSnapshot(), saleOfferId }, undefined, {
-      transportAccounting: counts,
+      transportAttemptCounts: counts,
     });
 
     const recovery = await harness.service.getRecovery({ correlationId: "corr-draining" });
 
-    expect(harness.transportAccounting).toHaveBeenCalledWith(runId);
-    expect(recovery.transportAccounting).toEqual(counts);
+    expect(harness.transportAttemptCounts).toHaveBeenCalledWith(runId);
+    expect(recovery.transportAttemptCounts).toEqual(counts);
   });
 
   it("keeps transport accounting null while no completion evidence is available", async () => {
     const harness = serviceHarness({ currentRun: runSnapshot(), saleOfferId }, undefined, {
-      transportAccounting: null,
+      transportAttemptCounts: null,
     });
 
     const recovery = await harness.service.getRecovery({ correlationId: "corr-active" });
 
-    expect(harness.transportAccounting).toHaveBeenCalledWith(runId);
-    expect(recovery.transportAccounting).toBeNull();
+    expect(harness.transportAttemptCounts).toHaveBeenCalledWith(runId);
+    expect(recovery.transportAttemptCounts).toBeNull();
   });
 
   it("degrades a transport accounting read failure to null without losing the scope", async () => {
     const projectionError = new Error("transport accounting unavailable");
     const harness = serviceHarness({ currentRun: runSnapshot(), saleOfferId }, undefined, {
-      transportAccountingError: projectionError,
+      transportAttemptCountsError: projectionError,
     });
 
     const recovery = await harness.service.getRecovery({ correlationId: "corr-ta-failure" });
 
     expect(recovery.scope).toEqual({ runId, saleOfferId });
-    expect(recovery.transportAccounting).toBeNull();
+    expect(recovery.transportAttemptCounts).toBeNull();
     expect(harness.loggerWarn).toHaveBeenCalledWith(
-      { err: projectionError, projection: "dashboard_transport_accounting" },
+      { err: projectionError, projection: "dashboard_transport_attempt_counts" },
       "Dashboard recovery projection unavailable.",
     );
   });
@@ -427,7 +429,7 @@ describe("DashboardRecoveryService", () => {
           queueStatusService: { getStatus: async () => queueStatusFixture() },
           erpStatusService: { getStatus: async () => erpStatusFixture() },
           trafficMetricReader: { readRecent: async () => [] },
-          transportAccountingReader: { read: async () => null },
+          transportAttemptCountsReader: { read: async () => null },
         },
         close,
       }),
@@ -480,8 +482,8 @@ function serviceHarness(
   contextError?: Error,
   options: {
     lagError?: Error;
-    transportAccounting?: TransportAttemptCounts | null;
-    transportAccountingError?: Error;
+    transportAttemptCounts?: TransportAttemptCounts | null;
+    transportAttemptCountsError?: Error;
   } = {},
 ) {
   const inventory = vi.fn(async () => inventoryStatusFixture());
@@ -491,9 +493,9 @@ function serviceHarness(
     : vi.fn(async () => consistencyLagFixture());
   const completion = vi.fn(async () => []);
   const metrics = vi.fn(async () => []);
-  const transportAccounting = options.transportAccountingError
-    ? vi.fn(async () => Promise.reject(options.transportAccountingError))
-    : vi.fn(async () => options.transportAccounting ?? null);
+  const transportAttemptCounts = options.transportAttemptCountsError
+    ? vi.fn(async () => Promise.reject(options.transportAttemptCountsError))
+    : vi.fn(async () => options.transportAttemptCounts ?? null);
   const queue = vi.fn(async () => queueStatusFixture());
   const erp = vi.fn(async () => erpStatusFixture());
   const loggerWarn = vi.fn();
@@ -512,7 +514,7 @@ function serviceHarness(
         queueStatusService: { getStatus: queue },
         erpStatusService: { getStatus: erp },
         trafficMetricReader: { readRecent: metrics },
-        transportAccountingReader: { read: transportAccounting },
+        transportAttemptCountsReader: { read: transportAttemptCounts },
       },
       close: async () => undefined,
     }),
@@ -526,7 +528,7 @@ function serviceHarness(
     lag,
     completion,
     metrics,
-    transportAccounting,
+    transportAttemptCounts,
     queue,
     erp,
     loggerWarn,
@@ -685,22 +687,6 @@ function currentDiagnosticsFixture(plannedRequests: number) {
       completedIterations: "summary_export" as const,
     },
     summaryExportWarnings: [],
-  };
-}
-
-function currentLifecycleFixture(
-  plannedRequests: number,
-  completedRequests: number,
-  interruptedRequests: number,
-  unstartedRequests = 0,
-) {
-  return {
-    plannedRequests,
-    startedRequests: completedRequests + interruptedRequests,
-    completedRequests,
-    interruptedRequests,
-    unstartedRequests,
-    failedRequests: 0,
   };
 }
 

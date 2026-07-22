@@ -441,13 +441,14 @@ export function selectTerminalSummary(recovery, summaries, runId) {
 }
 
 export function assertBusinessCompletion(summary) {
+  const transportAttemptCounts = summary.transportAttemptCounts;
   const delivery = summary.trafficDeliverySummary;
   const business = summary.businessOutcomeSummary;
   const failures = [];
   if (
     delivery.trafficDeliveryStatus === "failed" ||
-    delivery.startedRequests <= 0 ||
-    delivery.droppedIterations > delivery.plannedRequests
+    transportAttemptCounts.startedRequests <= 0 ||
+    delivery.droppedIterations > transportAttemptCounts.plannedRequests
   )
     failures.push("traffic delivery");
   if (business.acceptedReservations <= 0 || business.confirmedOrders <= 0)
@@ -463,7 +464,7 @@ export function assertBusinessCompletion(summary) {
     failures.push("notification drain");
   if (failures.length)
     throw new Error(
-      `Incomplete terminal business outcome: ${failures.join(", ")}; ${JSON.stringify({ delivery, business })}`,
+      `Incomplete terminal business outcome: ${failures.join(", ")}; ${JSON.stringify({ transportAttemptCounts, delivery, business })}`,
     );
 }
 
@@ -529,6 +530,7 @@ function describeRunObservation(observation, runId) {
     history: summary
       ? {
           status: summary.status,
+          transportAttemptCounts: summary.transportAttemptCounts,
           trafficDeliverySummary: summary.trafficDeliverySummary,
           businessOutcomeSummary: summary.businessOutcomeSummary,
         }

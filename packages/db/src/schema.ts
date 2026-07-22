@@ -24,11 +24,11 @@ import type {
   PublicRuntimePolicyMutable as PublicRuntimePolicyMutableContract,
   RealLoadRunDiagnosticsSummary,
   TerminalInventorySnapshot,
-  TrafficCompletionApiRequestLifecycleSummary,
   TrafficConfig,
   TrafficDeliverySummary,
   TrafficExecutionStatus,
   TrafficHttpSummary,
+  TransportAttemptCounts,
 } from "@checkout-surge/contracts";
 import {
   demoPresetVisibilityValues,
@@ -641,6 +641,7 @@ export const demoRunFinalizations = pgTable(
       .references(() => demoRuns.id, { onDelete: "cascade" }),
     exitCode: integer("exit_code"),
     errorMessage: text("error_message"),
+    transportAttemptCounts: jsonObject<TransportAttemptCounts>("transport_attempt_counts"),
     httpSummary: jsonObject<TrafficHttpSummary>("http_summary"),
     trafficOutcomeSummary: jsonObject<JsonRecord>("traffic_outcome_summary"),
     trafficDeliverySummary: jsonObject<TrafficDeliverySummary>("traffic_delivery_summary"),
@@ -649,9 +650,6 @@ export const demoRunFinalizations = pgTable(
     ),
     loadRunDiagnosticsSummary: jsonObject<RealLoadRunDiagnosticsSummary>(
       "load_run_diagnostics_summary",
-    ),
-    apiRequestLifecycleSummary: jsonObject<TrafficCompletionApiRequestLifecycleSummary>(
-      "api_request_lifecycle_summary",
     ),
     completionEnrichmentStatus: trafficCompletionEnrichmentStatusEnum(
       "completion_enrichment_status",
@@ -680,11 +678,11 @@ export const demoRunSummaries = pgTable(
     failureReason: text("failure_reason"),
     startedAt: timestamp("started_at", { withTimezone: true }),
     endedAt: timestamp("ended_at", { withTimezone: true }).notNull(),
+    transportAttemptCounts: jsonObject<TransportAttemptCounts>("transport_attempt_counts"),
     httpSummary: jsonObject<TrafficHttpSummary>("http_summary"),
     trafficDeliverySummary: jsonObject<TrafficDeliverySummary>("traffic_delivery_summary"),
     httpTimingBreakdownSummary: jsonObject<JsonRecord>("http_timing_breakdown_summary"),
     loadRunDiagnosticsSummary: jsonObject<JsonRecord>("load_run_diagnostics_summary"),
-    apiRequestLifecycleSummary: jsonObject<JsonRecord>("api_request_lifecycle_summary"),
     businessOutcomeSummary: jsonObject<BusinessOutcomeSummary>("business_outcome_summary"),
     terminalInventorySnapshot: jsonb(
       "terminal_inventory_snapshot",

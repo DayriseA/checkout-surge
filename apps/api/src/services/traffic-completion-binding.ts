@@ -5,9 +5,9 @@ import {
   realLoadRunDiagnosticsSummarySchema,
   type TrafficCompletionReport,
   type TrafficDeliverySummary,
-  trafficCompletionApiRequestLifecycleSummarySchema,
   trafficDeliverySummarySchema,
   trafficHttpSummarySchema,
+  transportAttemptCountsSchema,
 } from "@checkout-surge/contracts";
 import { z } from "zod";
 import { parsePersistedAcceptedRunConfigSnapshot } from "./persisted-demo-run-state.js";
@@ -15,11 +15,11 @@ import { parsePersistedTrafficDeliverySummary } from "./traffic-delivery-classif
 
 const persistedRedeliveryEvidenceSchema = z
   .object({
+    transportAttemptCounts: transportAttemptCountsSchema,
     httpSummary: trafficHttpSummarySchema,
     trafficDeliverySummary: trafficDeliverySummarySchema,
     httpTimingBreakdownSummary: httpTimingBreakdownSummarySchema,
     loadRunDiagnosticsSummary: realLoadRunDiagnosticsSummarySchema,
-    apiRequestLifecycleSummary: trafficCompletionApiRequestLifecycleSummarySchema,
   })
   .strict();
 
@@ -59,18 +59,11 @@ export function findTrafficCompletionBindingMismatch(
   }
 
   const expectedPlannedRequests = expectedPlan.plannedEmittedAttempts;
-  if (report.httpSummary.plannedRequests !== expectedPlannedRequests) {
+  if (report.transportAttemptCounts.plannedRequests !== expectedPlannedRequests) {
     return {
-      field: "httpSummary.plannedRequests",
+      field: "transportAttemptCounts.plannedRequests",
       expected: expectedPlannedRequests,
-      actual: report.httpSummary.plannedRequests,
-    };
-  }
-  if (report.trafficDeliverySummary.plannedRequests !== expectedPlannedRequests) {
-    return {
-      field: "trafficDeliverySummary.plannedRequests",
-      expected: expectedPlannedRequests,
-      actual: report.trafficDeliverySummary.plannedRequests,
+      actual: report.transportAttemptCounts.plannedRequests,
     };
   }
 
@@ -99,22 +92,22 @@ export function findTrafficCompletionRedeliveryMismatch(
   existing: {
     exitCode: unknown;
     errorMessage: unknown;
+    transportAttemptCounts: unknown;
     httpSummary: unknown;
     trafficOutcomeSummary: Record<string, unknown>;
     trafficDeliverySummary: unknown;
     httpTimingBreakdownSummary: unknown;
     loadRunDiagnosticsSummary: unknown;
-    apiRequestLifecycleSummary: unknown;
   },
   report: TrafficCompletionReport,
   classifiedTrafficDeliverySummary: TrafficDeliverySummary,
 ): TrafficCompletionMismatch | null {
   const parsedExisting = persistedRedeliveryEvidenceSchema.safeParse({
+    transportAttemptCounts: existing.transportAttemptCounts,
     httpSummary: existing.httpSummary,
     trafficDeliverySummary: existing.trafficDeliverySummary,
     httpTimingBreakdownSummary: existing.httpTimingBreakdownSummary,
     loadRunDiagnosticsSummary: existing.loadRunDiagnosticsSummary,
-    apiRequestLifecycleSummary: existing.apiRequestLifecycleSummary,
   });
   if (!parsedExisting.success) {
     const issues = parsedExisting.error.issues
@@ -126,6 +119,7 @@ export function findTrafficCompletionRedeliveryMismatch(
   }
   const persistedDelivery = parsePersistedTrafficDeliverySummary(
     parsedExisting.data.trafficDeliverySummary,
+    parsedExisting.data.transportAttemptCounts,
     `demo run ${report.runId} finalization`,
   );
 
@@ -133,6 +127,11 @@ export function findTrafficCompletionRedeliveryMismatch(
     ["status", report.status, run.trafficStatus],
     ["exitCode", report.exitCode ?? null, existing.exitCode],
     ["errorMessage", report.errorMessage ?? null, existing.errorMessage],
+    [
+      "transportAttemptCounts",
+      report.transportAttemptCounts,
+      parsedExisting.data.transportAttemptCounts,
+    ],
     ["httpSummary", report.httpSummary, parsedExisting.data.httpSummary],
     [
       "trafficOutcomeSummary",
@@ -149,11 +148,6 @@ export function findTrafficCompletionRedeliveryMismatch(
       "loadRunDiagnosticsSummary",
       report.loadRunDiagnosticsSummary,
       parsedExisting.data.loadRunDiagnosticsSummary,
-    ],
-    [
-      "apiRequestLifecycleSummary",
-      report.apiRequestLifecycleSummary,
-      parsedExisting.data.apiRequestLifecycleSummary,
     ],
     ["completedAt", report.completedAt, run.trafficEndedAt?.toISOString()],
   ];

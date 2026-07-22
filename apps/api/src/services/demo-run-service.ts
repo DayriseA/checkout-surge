@@ -1030,6 +1030,7 @@ export class DemoRunService implements DemoRunController {
     const report = trafficCompletionReportSchema.parse(input);
     const classifiedTrafficDeliverySummary = classifyTrafficDeliverySummary(
       report.trafficDeliverySummary,
+      report.transportAttemptCounts,
     );
     const now = this.now();
     const completionClaim = await this.options.db.transaction(async (tx) => {
@@ -1096,12 +1097,12 @@ export class DemoRunService implements DemoRunController {
           runId: report.runId,
           exitCode: report.exitCode ?? null,
           errorMessage: report.errorMessage ?? null,
+          transportAttemptCounts: report.transportAttemptCounts,
           httpSummary: report.httpSummary,
           trafficOutcomeSummary: report.trafficOutcomeSummary,
           trafficDeliverySummary: classifiedTrafficDeliverySummary,
           httpTimingBreakdownSummary: report.httpTimingBreakdownSummary,
           loadRunDiagnosticsSummary: report.loadRunDiagnosticsSummary,
-          apiRequestLifecycleSummary: report.apiRequestLifecycleSummary,
           completionEnrichmentStatus: "pending",
           trafficSummaryReceivedAt: now,
           createdAt: now,
@@ -1392,18 +1393,13 @@ export class DemoRunService implements DemoRunController {
         terminalStatus: "failed",
         failureReason,
         finalizedAt: now,
+        transportAttemptCounts: trafficSummary.transportAttemptCounts,
         httpSummary: trafficSummary.httpSummary,
         trafficDeliverySummary: trafficSummary.trafficDeliverySummary,
         httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
         loadRunDiagnosticsSummary: {
           failureReason,
           previousTrafficStatus: run.trafficStatus,
-        },
-        apiRequestLifecycleSummary: {
-          failureReason,
-          previousStatus: run.status,
-          previousTrafficStatus: run.trafficStatus,
-          finalizedAt: now.toISOString(),
         },
         businessOutcome,
         terminalInventorySnapshot,

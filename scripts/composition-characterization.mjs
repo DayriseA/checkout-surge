@@ -114,7 +114,7 @@ async function characterizeSoldOutIdempotencyAndRecovery() {
   const summary = history.summaries?.find((candidate) => candidate.runId === runId);
   assert(summary, "terminal run summary was not durable");
   assert(
-    summary.httpSummary?.plannedRequests === 20,
+    summary.transportAttemptCounts?.plannedRequests === 20,
     "sold-out characterization planned request count drifted",
   );
   assert(
@@ -184,15 +184,16 @@ async function characterizeRepresentativeSurge() {
   const detail = await jsonRequest(`${apiBaseUrl}/demo/runs/history/${runId}`);
   const summary = detail.summary;
   assert(
-    summary.httpSummary?.plannedRequests === 10_000,
+    summary.transportAttemptCounts?.plannedRequests === 10_000,
     "surge preset no longer plans 10,000 requests",
   );
   assert(
-    summary.httpSummary.startedRequests === 10_000,
+    summary.transportAttemptCounts.startedRequests === 10_000,
     "surge started request count did not match the 10,000 request plan",
   );
   assert(
-    summary.httpSummary.completedRequests === summary.httpSummary.startedRequests,
+    summary.transportAttemptCounts.completedRequests ===
+      summary.transportAttemptCounts.startedRequests,
     "surge did not complete every started request",
   );
   assert(
@@ -201,7 +202,7 @@ async function characterizeRepresentativeSurge() {
   );
   assert(
     summary.httpSummary.acceptedResponses + summary.httpSummary.soldOutResponses ===
-      summary.httpSummary.completedRequests,
+      summary.transportAttemptCounts.completedRequests,
     "surge responses were not fully classified as accepted or sold out",
   );
   assert(

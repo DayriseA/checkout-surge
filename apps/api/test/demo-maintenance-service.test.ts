@@ -899,7 +899,7 @@ describe("demo maintenance service", () => {
       },
     });
     expect(summaries.find((summary) => summary.runId === ids.drainingRun)).toMatchObject({
-      httpSummary: {
+      transportAttemptCounts: {
         plannedRequests: 10,
         startedRequests: 0,
         completedRequests: 0,
@@ -907,11 +907,6 @@ describe("demo maintenance service", () => {
         unstartedRequests: 10,
       },
       trafficDeliverySummary: {
-        plannedRequests: 10,
-        startedRequests: 0,
-        completedRequests: 0,
-        interruptedRequests: 0,
-        unstartedRequests: 10,
         droppedIterations: 0,
         completedIterations: 0,
         trafficDeliveryStatus: "failed",
@@ -1222,7 +1217,6 @@ describe("demo maintenance service", () => {
       capturedAt: new Date("2026-06-20T00:00:20.000Z"),
     });
     expect(summary?.loadRunDiagnosticsSummary).not.toHaveProperty("previousStatus");
-    expect(summary?.apiRequestLifecycleSummary).not.toHaveProperty("previousStatus");
   });
 
   it("rejects through Redis after reset closes admission without durable buy work", async () => {
@@ -1834,7 +1828,7 @@ describe("demo maintenance service", () => {
     });
     await db
       .update(demoRunFinalizations)
-      .set({ apiRequestLifecycleSummary: { completedRequests: 10, failedRequests: 0 } })
+      .set({ transportAttemptCounts: { completedRequests: 10 } as never })
       .where(eq(demoRunFinalizations.runId, ids.drainingRun));
     const postgresTerminalRunWriter = new PostgresTerminalDemoRunSummaryWriter(db);
     const service = new DemoMaintenanceService({
@@ -1849,7 +1843,7 @@ describe("demo maintenance service", () => {
     });
 
     await expect(service.reset("corr-invalid-finalization")).rejects.toThrow(
-      new RegExp(`${ids.drainingRun}.*apiRequestLifecycleSummary`),
+      new RegExp(`${ids.drainingRun}.*transportAttemptCounts`),
     );
     await expect(
       db.select().from(demoRunSummaries).where(eq(demoRunSummaries.runId, ids.drainingRun)),
@@ -2070,12 +2064,14 @@ async function seedRun(
       runId: input.runId,
       exitCode: 0,
       errorMessage: null,
-      httpSummary: {
+      transportAttemptCounts: {
         plannedRequests: 10,
         startedRequests: 10,
         completedRequests: 10,
         interruptedRequests: 0,
         unstartedRequests: 0,
+      },
+      httpSummary: {
         failedRequests: 0,
         acceptedResponses: 8,
         soldOutResponses: 2,
@@ -2084,11 +2080,6 @@ async function seedRun(
       },
       trafficOutcomeSummary: {},
       trafficDeliverySummary: trafficDeliverySummarySchema.parse({
-        plannedRequests: 10,
-        startedRequests: 10,
-        completedRequests: 10,
-        interruptedRequests: 0,
-        unstartedRequests: 0,
         trafficMode: null,
         plannedBuyers: null,
         scheduledRatePerSecond: null,
@@ -2105,7 +2096,6 @@ async function seedRun(
         waiting: { averageMs: 30, p95Ms: 42 },
       },
       loadRunDiagnosticsSummary: currentFinalizationDiagnosticsFixture(10),
-      apiRequestLifecycleSummary: currentRequestLifecycleFixture(10),
       trafficSummaryReceivedAt: new Date("2026-06-20T00:00:05.000Z"),
       createdAt: new Date("2026-06-20T00:00:05.000Z"),
       updatedAt: new Date("2026-06-20T00:00:05.000Z"),
@@ -2368,12 +2358,14 @@ async function seedCleanupDurableGraph(
   await db.insert(demoRunFinalizations).values({
     runId: ids.completedRun,
     exitCode: 0,
-    httpSummary: {
+    transportAttemptCounts: {
       plannedRequests: 10,
       startedRequests: 10,
       completedRequests: 10,
       interruptedRequests: 0,
       unstartedRequests: 0,
+    },
+    httpSummary: {
       failedRequests: 0,
       acceptedResponses: 0,
       soldOutResponses: 0,
@@ -2382,11 +2374,6 @@ async function seedCleanupDurableGraph(
     },
     trafficOutcomeSummary: {},
     trafficDeliverySummary: trafficDeliverySummarySchema.parse({
-      plannedRequests: 10,
-      startedRequests: 10,
-      completedRequests: 10,
-      interruptedRequests: 0,
-      unstartedRequests: 0,
       trafficMode: null,
       plannedBuyers: null,
       scheduledRatePerSecond: null,
@@ -2400,7 +2387,6 @@ async function seedCleanupDurableGraph(
     }),
     httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
     loadRunDiagnosticsSummary: currentFinalizationDiagnosticsFixture(10),
-    apiRequestLifecycleSummary: currentRequestLifecycleFixture(10),
     trafficSummaryReceivedAt: now,
     createdAt: now,
     updatedAt: now,
@@ -2447,17 +2433,6 @@ function currentFinalizationDiagnosticsFixture(plannedRequests: number) {
       completedIterations: "summary_export" as const,
     },
     summaryExportWarnings: [],
-  };
-}
-
-function currentRequestLifecycleFixture(plannedRequests: number) {
-  return {
-    plannedRequests,
-    startedRequests: plannedRequests,
-    completedRequests: plannedRequests,
-    interruptedRequests: 0,
-    unstartedRequests: 0,
-    failedRequests: 0,
   };
 }
 
@@ -2518,12 +2493,14 @@ async function seedTerminalSummary(
     failureReason: input.failureReason,
     startedAt: new Date("2026-06-20T00:00:00.000Z"),
     endedAt: new Date("2026-06-20T00:00:06.000Z"),
-    httpSummary: {
+    transportAttemptCounts: {
       plannedRequests: 10,
       startedRequests: 10,
       completedRequests: 10,
       interruptedRequests: 0,
       unstartedRequests: 0,
+    },
+    httpSummary: {
       failedRequests: 0,
       acceptedResponses: input.status === "completed" ? 10 : 8,
       soldOutResponses: input.status === "completed" ? 0 : 2,
@@ -2531,11 +2508,6 @@ async function seedTerminalSummary(
       failureRate: 0,
     },
     trafficDeliverySummary: trafficDeliverySummarySchema.parse({
-      plannedRequests: 10,
-      startedRequests: 10,
-      completedRequests: 10,
-      interruptedRequests: 0,
-      unstartedRequests: 0,
       trafficMode: null,
       plannedBuyers: null,
       scheduledRatePerSecond: null,
@@ -2552,7 +2524,6 @@ async function seedTerminalSummary(
       waiting: { averageMs: 20, p95Ms: 30 },
     },
     loadRunDiagnosticsSummary: { source: "existing-summary" },
-    apiRequestLifecycleSummary: { source: "existing-summary" },
     businessOutcomeSummary: {
       acceptedReservations: input.status === "completed" ? 10 : 8,
       soldOutRejections: input.status === "completed" ? 0 : 2,

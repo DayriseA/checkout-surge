@@ -628,7 +628,7 @@ function recoveryFixture(
     erp: null,
     businessOutcome: null,
     consistencyLag: null,
-    transportAccounting: null,
+    transportAttemptCounts: null,
     recentCompletionOutcomes: [],
     recoveredAt: "2026-06-20T00:00:10.000Z",
   };

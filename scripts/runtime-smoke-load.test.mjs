@@ -276,7 +276,8 @@ test("terminal polling surfaces failure immediately and diagnoses timeout state"
           {
             runId,
             status: "draining",
-            trafficDeliverySummary: { startedRequests: 4 },
+            transportAttemptCounts: { startedRequests: 4 },
+            trafficDeliverySummary: {},
             businessOutcomeSummary: { queuedOrders: 1 },
           },
         ],
@@ -336,10 +337,12 @@ test("rejects incomplete business drain and terminal failed delivery", () => {
   assert.throws(
     () =>
       assertBusinessCompletion({
-        trafficDeliverySummary: {
-          trafficDeliveryStatus: "failed",
+        transportAttemptCounts: {
           plannedRequests: 4,
           startedRequests: 0,
+        },
+        trafficDeliverySummary: {
+          trafficDeliveryStatus: "failed",
           droppedIterations: 0,
         },
         businessOutcomeSummary: {

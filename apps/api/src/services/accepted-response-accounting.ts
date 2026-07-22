@@ -3,6 +3,7 @@ import type {
   BusinessOutcomeSummary,
   TrafficDeliverySummary,
   TrafficHttpSummary,
+  TransportAttemptCounts,
 } from "@checkout-surge/contracts";
 
 export interface AcceptedResponseAccounting {
@@ -17,12 +18,14 @@ export interface AcceptedResponseAccounting {
 
 export function reconcileAcceptedResponses(input: {
   config: AcceptedRunConfigSnapshot;
+  transportAttemptCounts: TransportAttemptCounts;
   delivery: TrafficDeliverySummary;
   http: TrafficHttpSummary;
   business: BusinessOutcomeSummary;
 }): AcceptedResponseAccounting {
   const duplicateNormalizationApplied = isCompleteDuplicateBuyerDelivery(
     input.config,
+    input.transportAttemptCounts,
     input.delivery,
   );
   const normalizedExpectedCount = duplicateNormalizationApplied
@@ -54,6 +57,7 @@ export function reconcileAcceptedResponses(input: {
 
 function isCompleteDuplicateBuyerDelivery(
   config: AcceptedRunConfigSnapshot,
+  transportAttemptCounts: TransportAttemptCounts,
   delivery: TrafficDeliverySummary,
 ): boolean {
   const traffic = config.trafficConfig;
@@ -62,10 +66,10 @@ function isCompleteDuplicateBuyerDelivery(
 
   return (
     delivery.trafficMode === "buyer-spike" &&
-    delivery.plannedRequests === expectedAttempts &&
+    transportAttemptCounts.plannedRequests === expectedAttempts &&
     delivery.completedIterations === expectedAttempts &&
-    delivery.startedRequests === expectedAttempts &&
-    delivery.unstartedRequests === 0
+    transportAttemptCounts.startedRequests === expectedAttempts &&
+    transportAttemptCounts.unstartedRequests === 0
   );
 }
 

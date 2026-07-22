@@ -36,11 +36,6 @@ const baseSnapshot = {
 describe("synthetic traffic delivery plan", () => {
   it("uses the shared capped automatic steady-arrival VU resolution", () => {
     expect(syntheticTrafficDeliverySummary(baseSnapshot, ["not started"])).toMatchObject({
-      plannedRequests: 10_002,
-      startedRequests: 0,
-      completedRequests: 0,
-      interruptedRequests: 0,
-      unstartedRequests: 10_002,
       preAllocatedVUs: 5_001,
       maxVUs: 10_000,
       notes: ["not started"],
@@ -49,22 +44,20 @@ describe("synthetic traffic delivery plan", () => {
 
   it("marks every planned attempt unstarted with a failed delivery status", () => {
     expect(syntheticTrafficDeliverySummary(baseSnapshot, [])).toMatchObject({
-      startedRequests: 0,
-      completedRequests: 0,
-      interruptedRequests: 0,
-      unstartedRequests: 10_002,
       trafficDeliveryStatus: "failed",
     });
   });
 
   it("builds one zero-attempt failed transport summary", () => {
     expect(syntheticFailedTrafficSummary(baseSnapshot, ["not started"])).toEqual({
-      httpSummary: {
+      transportAttemptCounts: {
         plannedRequests: 10_002,
         startedRequests: 0,
         completedRequests: 0,
         interruptedRequests: 0,
         unstartedRequests: 10_002,
+      },
+      httpSummary: {
         failedRequests: 0,
         acceptedResponses: 0,
         soldOutResponses: 0,
@@ -72,11 +65,6 @@ describe("synthetic traffic delivery plan", () => {
         failureRate: 0,
       },
       trafficDeliverySummary: {
-        plannedRequests: 10_002,
-        startedRequests: 0,
-        completedRequests: 0,
-        interruptedRequests: 0,
-        unstartedRequests: 10_002,
         trafficMode: "steady-arrival-rate",
         plannedBuyers: null,
         scheduledRatePerSecond: 5_001,

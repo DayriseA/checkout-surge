@@ -8,7 +8,8 @@ import {
   realLoadRunDiagnosticsSummarySchema,
   type TrafficDeliverySummary,
   type TrafficHttpSummary,
-  trafficCompletionApiRequestLifecycleSummarySchema,
+  type TransportAttemptCounts,
+  transportAttemptCountsSchema,
 } from "@checkout-surge/contracts";
 import {
   type CheckoutSurgeDatabase,
@@ -287,11 +288,11 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
           terminalStatus: latestFailureReason ? "failed" : "completed",
           failureReason: latestFailureReason,
           finalizedAt: now,
+          transportAttemptCounts: evidence.transportAttemptCounts,
           httpSummary: evidence.http,
           trafficDeliverySummary: evidence.delivery,
           httpTimingBreakdownSummary: evidence.timing,
           loadRunDiagnosticsSummary,
-          apiRequestLifecycleSummary: evidence.lifecycle,
           businessOutcome: latestBusinessOutcome,
           terminalInventorySnapshot: toRedisTerminalInventorySnapshot({
             saleOfferId: requireSaleOfferId(row.run),
@@ -491,11 +492,11 @@ function parseFinalizationEvidence(
   finalization: typeof demoRunFinalizations.$inferSelect,
 ): {
   config: AcceptedRunConfigSnapshot;
+  transportAttemptCounts: TransportAttemptCounts;
   delivery: TrafficDeliverySummary;
   http: TrafficHttpSummary;
   timing: ReturnType<typeof httpTimingBreakdownSummarySchema.parse>;
   diagnostics: ReturnType<typeof realLoadRunDiagnosticsSummarySchema.parse>;
-  lifecycle: ReturnType<typeof trafficCompletionApiRequestLifecycleSummarySchema.parse>;
 } {
   const context = `demo run ${run.id} finalization`;
   const timing = httpTimingBreakdownSummarySchema.safeParse(
@@ -510,19 +511,23 @@ function parseFinalizationEvidence(
   if (!diagnostics.success) {
     throw invalidFinalizationField(context, "loadRunDiagnosticsSummary", diagnostics.error);
   }
-  const lifecycle = trafficCompletionApiRequestLifecycleSummarySchema.safeParse(
-    finalization.apiRequestLifecycleSummary,
+  const transportAttemptCounts = transportAttemptCountsSchema.safeParse(
+    finalization.transportAttemptCounts,
   );
-  if (!lifecycle.success) {
-    throw invalidFinalizationField(context, "apiRequestLifecycleSummary", lifecycle.error);
+  if (!transportAttemptCounts.success) {
+    throw invalidFinalizationField(context, "transportAttemptCounts", transportAttemptCounts.error);
   }
   return {
     config: parsePersistedAcceptedRunConfigSnapshot(run.configSnapshot, context),
-    delivery: parsePersistedTrafficDeliverySummary(finalization.trafficDeliverySummary, context),
+    transportAttemptCounts: transportAttemptCounts.data,
+    delivery: parsePersistedTrafficDeliverySummary(
+      finalization.trafficDeliverySummary,
+      transportAttemptCounts.data,
+      context,
+    ),
     http: parsePersistedTrafficHttpSummary(finalization.httpSummary, context),
     timing: timing.data,
     diagnostics: diagnostics.data,
-    lifecycle: lifecycle.data,
   };
 }
 

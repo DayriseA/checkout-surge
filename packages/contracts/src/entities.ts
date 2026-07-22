@@ -116,6 +116,8 @@ export const demoRunSummaryShapeSchema = z
     failureReason: z.string().trim().min(1).optional(),
     startedAt: isoTimestampSchema.optional(),
     endedAt: isoTimestampSchema,
+    transportAttemptCounts: jsonObjectSchema,
+    httpSummary: jsonObjectSchema,
     trafficDeliverySummary: jsonObjectSchema,
     businessOutcomeSummary: jsonObjectSchema,
     terminalInventorySnapshot: jsonObjectSchema.optional(),

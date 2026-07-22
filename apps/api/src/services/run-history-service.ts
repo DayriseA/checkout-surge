@@ -43,6 +43,7 @@ import {
 import {
   parsePersistedTrafficDeliverySummary,
   parsePersistedTrafficHttpSummary,
+  parsePersistedTransportAttemptCounts,
 } from "./traffic-delivery-classifier.js";
 
 const detailRecordLimit = 20;
@@ -323,8 +324,13 @@ function toPublicRunHistorySummary(
   const inventory = row.terminalInventorySnapshot
     ? parsePersistedTerminalInventorySnapshot(row.terminalInventorySnapshot, context)
     : null;
+  const transportAttemptCounts = parsePersistedTransportAttemptCounts(
+    row.transportAttemptCounts,
+    context,
+  );
   const { notes: _notes, ...publicDeliverySummary } = parsePersistedTrafficDeliverySummary(
     row.trafficDeliverySummary,
+    transportAttemptCounts,
     context,
   );
   return publicRunHistorySummarySchema.parse({
@@ -333,6 +339,7 @@ function toPublicRunHistorySummary(
     status: row.status,
     ...(row.startedAt ? { startedAt: row.startedAt.toISOString() } : {}),
     endedAt: row.endedAt.toISOString(),
+    transportAttemptCounts,
     httpSummary: parsePersistedTrafficHttpSummary(row.httpSummary, context),
     trafficDeliverySummary: publicDeliverySummary,
     businessOutcomeSummary: parsePersistedBusinessOutcomeSummary(
@@ -374,6 +381,10 @@ function toPublicRunHistoryRun(row: typeof demoRuns.$inferSelect): PublicRunHist
 
 function toRunHistorySummary(row: typeof demoRunSummaries.$inferSelect): RunHistorySummary {
   const context = `run summary ${row.id} for demo run ${row.runId}`;
+  const transportAttemptCounts = parsePersistedTransportAttemptCounts(
+    row.transportAttemptCounts,
+    context,
+  );
   return runHistorySummarySchema.parse({
     id: row.id,
     runId: row.runId,
@@ -382,9 +393,11 @@ function toRunHistorySummary(row: typeof demoRunSummaries.$inferSelect): RunHist
     ...(row.failureReason ? { failureReason: row.failureReason } : {}),
     ...(row.startedAt ? { startedAt: row.startedAt.toISOString() } : {}),
     endedAt: row.endedAt.toISOString(),
+    transportAttemptCounts,
     httpSummary: parsePersistedTrafficHttpSummary(row.httpSummary, context),
     trafficDeliverySummary: parsePersistedTrafficDeliverySummary(
       row.trafficDeliverySummary,
+      transportAttemptCounts,
       context,
     ),
     businessOutcomeSummary: parsePersistedBusinessOutcomeSummary(

@@ -336,7 +336,7 @@ export function RequestSurgePanel({
 }) {
   const data = recoveryData(recovery);
   const inventory = data?.inventory ?? null;
-  const transportAccounting = data?.transportAccounting ?? null;
+  const transportAttemptCounts = data?.transportAttemptCounts ?? null;
   const latestMetric = data?.recentMetrics.at(-1) ?? null;
   const requestRateMetric = data
     ? findLatestMetric(
@@ -415,23 +415,26 @@ export function RequestSurgePanel({
             Shared 1-second producer event-time window; latency is the window mean and failures are
             the fraction of valid HTTP failure observations.
           </p>
-          {transportAccounting ? (
+          {transportAttemptCounts ? (
             <dl className={factGridClassName}>
-              <Fact label="Planned" value={formatNumber(transportAccounting.plannedRequests)} />
-              <Fact label="Started" value={formatNumber(transportAccounting.startedRequests)} />
+              <Fact label="Planned" value={formatNumber(transportAttemptCounts.plannedRequests)} />
+              <Fact label="Started" value={formatNumber(transportAttemptCounts.startedRequests)} />
               <Fact
                 label="Responses completed"
-                value={formatNumber(transportAccounting.completedRequests)}
+                value={formatNumber(transportAttemptCounts.completedRequests)}
               />
               <Fact
                 label="Interrupted"
-                value={formatNumber(transportAccounting.interruptedRequests)}
+                value={formatNumber(transportAttemptCounts.interruptedRequests)}
               />
-              <Fact label="Unstarted" value={formatNumber(transportAccounting.unstartedRequests)} />
+              <Fact
+                label="Unstarted"
+                value={formatNumber(transportAttemptCounts.unstartedRequests)}
+              />
             </dl>
           ) : (
             <p className="mb-0 mt-3 text-xs leading-5 text-muted">
-              Terminal transport accounting appears here once traffic completion evidence is
+              Terminal transport attempt counts appear here once traffic completion evidence is
               recorded.
             </p>
           )}

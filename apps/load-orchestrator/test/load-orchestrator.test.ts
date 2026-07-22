@@ -920,20 +920,19 @@ describe("load-orchestrator k6 mapping", () => {
       "traffic.latency",
       "traffic.failure_rate",
     ]);
-    expect(report.httpSummary).toMatchObject({
+    expect(report.transportAttemptCounts).toMatchObject({
       plannedRequests: 2,
       startedRequests: 1,
       completedRequests: 1,
       interruptedRequests: 0,
       unstartedRequests: 1,
+    });
+    expect(report.httpSummary).toMatchObject({
       acceptedResponses: 1,
       soldOutResponses: 1,
       unexpectedResponses: 0,
     });
     expect(report.trafficDeliverySummary).toMatchObject({
-      startedRequests: 1,
-      completedRequests: 1,
-      unstartedRequests: 1,
       trafficMode: "buyer-spike",
       plannedBuyers: 200,
     });
@@ -967,13 +966,15 @@ describe("load-orchestrator k6 mapping", () => {
       runId: startRequest.runId,
       status: "succeeded",
       exitCode: 0,
-      trafficDeliverySummary: {
-        trafficMode: "buyer-spike",
-        plannedBuyers: 200,
+      transportAttemptCounts: {
         startedRequests: 1,
         completedRequests: 1,
         interruptedRequests: 0,
         unstartedRequests: 0,
+      },
+      trafficDeliverySummary: {
+        trafficMode: "buyer-spike",
+        plannedBuyers: 200,
       },
     });
     expect(report).not.toHaveProperty("demoRunStatus");
@@ -1015,23 +1016,17 @@ describe("load-orchestrator k6 mapping", () => {
     });
 
     expect(report.httpSummary).toMatchObject({
-      plannedRequests: 2,
-      startedRequests: 2,
-      completedRequests: 2,
-      interruptedRequests: 0,
-      unstartedRequests: 0,
       failedRequests: 0,
       acceptedResponses: 0,
       soldOutResponses: 2,
       unexpectedResponses: 0,
       failureRate: 1,
     });
-    expect(report.apiRequestLifecycleSummary).toMatchObject({
+    expect(report.transportAttemptCounts).toMatchObject({
       startedRequests: 2,
       completedRequests: 2,
       interruptedRequests: 0,
       unstartedRequests: 0,
-      failedRequests: 0,
     });
     expect(report.trafficDeliverySummary).not.toHaveProperty("trafficDeliveryStatus");
   });
@@ -1064,24 +1059,18 @@ describe("load-orchestrator k6 mapping", () => {
     });
 
     expect(report.httpSummary).toMatchObject({
-      plannedRequests: 1,
-      startedRequests: 1,
-      completedRequests: 1,
-      interruptedRequests: 0,
-      unstartedRequests: 0,
       failedRequests: 1,
       soldOutResponses: 0,
       unexpectedResponses: 1,
       failureRate: 0,
     });
-    expect(report.apiRequestLifecycleSummary).toMatchObject({
+    expect(report.transportAttemptCounts).toMatchObject({
       startedRequests: 1,
       completedRequests: 1,
       interruptedRequests: 0,
       unstartedRequests: 0,
-      failedRequests: 1,
     });
-    expect(report.trafficDeliverySummary).toMatchObject({ unstartedRequests: 0, notes: [] });
+    expect(report.trafficDeliverySummary).toMatchObject({ notes: [] });
     expect(report.trafficDeliverySummary).not.toHaveProperty("trafficDeliveryStatus");
   });
 
@@ -1119,10 +1108,6 @@ describe("load-orchestrator k6 mapping", () => {
       configuredDurationSeconds: null,
       preAllocatedVUs: null,
       maxVUs: null,
-      startedRequests: 400,
-      completedRequests: 400,
-      interruptedRequests: 0,
-      unstartedRequests: 0,
       completedIterations: 398,
       droppedIterations: 1,
     });
@@ -1163,10 +1148,6 @@ describe("load-orchestrator k6 mapping", () => {
       configuredDurationSeconds: 7,
       preAllocatedVUs: 9,
       maxVUs: 18,
-      startedRequests: 0,
-      completedRequests: 0,
-      interruptedRequests: 0,
-      unstartedRequests: 63,
       completedIterations: null,
     });
   });
@@ -1225,7 +1206,7 @@ describe("SpawnK6Runner completion reporting", () => {
     await waitForCondition(() => pathMissing(workDir), "summary-owned temp directory cleanup");
 
     expect(reports[0]).toBe(reports[1]);
-    expect(reports[1]?.httpSummary.startedRequests).toBe(0);
+    expect(reports[1]?.transportAttemptCounts.startedRequests).toBe(0);
     expect(reports[1]?.loadRunDiagnosticsSummary).toMatchObject({
       terminalMetricSources: {
         startedRequests: "summary_export",
@@ -1298,10 +1279,12 @@ describe("SpawnK6Runner completion reporting", () => {
     await waitForReadline();
 
     expect(reports).toHaveLength(1);
-    expect(report.httpSummary).toMatchObject({
+    expect(report.transportAttemptCounts).toMatchObject({
       startedRequests: 2,
       completedRequests: 2,
       interruptedRequests: 0,
+    });
+    expect(report.httpSummary).toMatchObject({
       acceptedResponses: 1,
     });
     expect(report.loadRunDiagnosticsSummary.terminalMetricSources).toMatchObject({
@@ -1863,22 +1846,18 @@ describe("SpawnK6Runner completion reporting", () => {
       exitCode: 0,
       completedAt: completionTimestamp,
       correlationId: startRequest.correlationId,
-      httpSummary: {
+      transportAttemptCounts: {
         plannedRequests: 400,
         startedRequests: 1,
         completedRequests: 1,
         interruptedRequests: 0,
         unstartedRequests: 399,
+      },
+      httpSummary: {
         failedRequests: 0,
         acceptedResponses: 1,
         unexpectedResponses: 0,
         failureRate: 0,
-      },
-      trafficDeliverySummary: {
-        plannedRequests: 400,
-        startedRequests: 1,
-        completedRequests: 1,
-        unstartedRequests: 399,
       },
       loadRunDiagnosticsSummary: {
         stderrLines: ["prefix-€"],
@@ -1931,7 +1910,7 @@ describe("SpawnK6Runner completion reporting", () => {
     const report = await waitForCompletionReport(reports, 1);
 
     expect(calls).toEqual(["metrics", "completion"]);
-    expect(report.httpSummary.startedRequests).toBe(2);
+    expect(report.transportAttemptCounts.startedRequests).toBe(2);
   });
 
   it("reports non-zero k6 exits as failed completions and cleans up", async () => {
@@ -1986,22 +1965,19 @@ describe("SpawnK6Runner completion reporting", () => {
       exitCode: 23,
       errorMessage: "k6 exited with code 23.",
       completedAt: completionTimestamp,
-      httpSummary: {
+      transportAttemptCounts: {
         plannedRequests: 400,
         startedRequests: 1,
         completedRequests: 1,
         interruptedRequests: 0,
         unstartedRequests: 399,
+      },
+      httpSummary: {
         failedRequests: 1,
         unexpectedResponses: 1,
         failureRate: 1,
       },
       trafficDeliverySummary: {
-        plannedRequests: 400,
-        startedRequests: 1,
-        completedRequests: 1,
-        interruptedRequests: 0,
-        unstartedRequests: 399,
         droppedIterations: 1,
         notes: ["k6_dropped_iterations_observed"],
       },
@@ -2043,20 +2019,15 @@ describe("SpawnK6Runner completion reporting", () => {
       status: "failed",
       errorMessage: "spawn /missing/k6 ENOENT",
       completedAt: completionTimestamp,
-      httpSummary: {
+      transportAttemptCounts: {
         plannedRequests: 400,
         startedRequests: 0,
         completedRequests: 0,
         interruptedRequests: 0,
         unstartedRequests: 400,
-        failedRequests: 0,
       },
-      trafficDeliverySummary: {
-        plannedRequests: 400,
-        startedRequests: 0,
-        completedRequests: 0,
-        interruptedRequests: 0,
-        unstartedRequests: 400,
+      httpSummary: {
+        failedRequests: 0,
       },
     });
     expect(report).not.toHaveProperty("exitCode");
@@ -2440,13 +2411,8 @@ describe("SpawnK6Runner completion reporting", () => {
       runId: startRequest.runId,
       status: "succeeded",
       exitCode: 0,
-      httpSummary: {
+      transportAttemptCounts: {
         plannedRequests: 400,
-        startedRequests: 1,
-        completedRequests: 1,
-        unstartedRequests: 399,
-      },
-      trafficDeliverySummary: {
         startedRequests: 1,
         completedRequests: 1,
         unstartedRequests: 399,
