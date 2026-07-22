@@ -88,7 +88,7 @@ Create a local environment file:
 cp .env.example .env
 ```
 
-Before starting the reference runtime, populate these blank entries in `.env` with private values: `CONTROL_SERVICE_TOKEN`, `ADMIN_DASHBOARD_PASSPHRASE`, `ADMIN_SESSION_SECRET`, `PUBLIC_CLIENT_COOKIE_SECRET`, and `ADMIN_EDGE_ATTESTATION_SECRET`. Use distinct values, especially for the two signing secrets. The production-mode Compose services reject missing/blank and known-placeholder required values; `PUBLIC_CLIENT_COOKIE_SECRET` must contain at least 16 UTF-8 bytes and must differ from `ADMIN_SESSION_SECRET`.
+Before starting the reference runtime, populate these blank entries in `.env` with private values: `CONTROL_SERVICE_TOKEN`, `ADMIN_DASHBOARD_PASSPHRASE`, `ADMIN_SESSION_SECRET`, and `PUBLIC_CLIENT_COOKIE_SECRET`. Use distinct values, especially for the two signing secrets. The production-mode Compose services reject missing/blank and known-placeholder required values; `PUBLIC_CLIENT_COOKIE_SECRET` must contain at least 16 UTF-8 bytes and must differ from `ADMIN_SESSION_SECRET`.
 
 Build and start the full containerized reference runtime. This starts or recreates containers but does not run migrations or seed data, and it preserves existing named-volume state:
 

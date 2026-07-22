@@ -1,12 +1,7 @@
-import Redis from "ioredis";
 import { createAdminLoginHandler, defaultAdminLoginDependencies } from "./admin-login";
-import {
-  AdminLoginAttemptLimiter,
-  MemoryAdminLoginAttemptStore,
-  RedisAdminLoginAttemptStore,
-  resolveTrustedAdminClient,
-} from "./admin-login-limiter";
+import { AdminLoginAttemptLimiter } from "./admin-login-limiter";
 import { resetWebServerConfigForTests, webServerConfig } from "./config";
+import { readPublicVisitorIdentity } from "./public-visitor";
 
 let limiter: AdminLoginAttemptLimiter | undefined;
 
@@ -18,20 +13,7 @@ export function adminLoginAttemptLimiter(): AdminLoginAttemptLimiter {
     globalCapacity: config.adminLoginGlobalAttempts,
     refillWindowMs: config.adminLoginWindowSeconds * 1000,
   };
-  const store =
-    config.isProduction && config.redisUrl
-      ? new RedisAdminLoginAttemptStore(
-          new Redis(config.redisUrl, {
-            lazyConnect: true,
-            connectTimeout: 2_000,
-            commandTimeout: 2_000,
-            maxRetriesPerRequest: 1,
-            enableOfflineQueue: true,
-            retryStrategy: () => null,
-          }),
-        )
-      : new MemoryAdminLoginAttemptStore();
-  limiter = new AdminLoginAttemptLimiter(store, policy);
+  limiter = new AdminLoginAttemptLimiter(policy);
   return limiter;
 }
 
@@ -39,7 +21,10 @@ export const handleAdminLogin = createAdminLoginHandler({
   ...defaultAdminLoginDependencies,
   limiter: adminLoginAttemptLimiter,
   resolveClient(request) {
-    return resolveTrustedAdminClient(request, webServerConfig().adminEdgeAttestationSecret ?? undefined);
+    const config = webServerConfig();
+    return (
+      readPublicVisitorIdentity(request, config.publicClientCookieSecret)?.visitorId ?? "unknown"
+    );
   },
   config() {
     const config = webServerConfig();

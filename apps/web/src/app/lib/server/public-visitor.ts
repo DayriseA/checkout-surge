@@ -14,14 +14,19 @@ export interface PublicVisitorIdentity {
   setCookie?: string;
 }
 
+export interface ExistingPublicVisitorIdentity {
+  credential: string;
+  visitorId: string;
+}
+
 export function resolvePublicVisitorIdentity(
   ctx: ProxyRequestContext,
 ): PublicVisitorIdentity | Response {
   const secret = webServerConfig().publicClientCookieSecret;
 
-  const existing = readSignedVisitorCookie(ctx.request, secret);
+  const existing = readPublicVisitorIdentity(ctx.request, secret);
   if (existing) {
-    return { credential: existing };
+    return { credential: existing.credential };
   }
 
   const id = randomUUID();
@@ -40,7 +45,10 @@ export function resolvePublicVisitorIdentity(
   };
 }
 
-function readSignedVisitorCookie(request: Request, secret: string): string | null {
+export function readPublicVisitorIdentity(
+  request: Request,
+  secret: string,
+): ExistingPublicVisitorIdentity | null {
   const rawCookie = request.headers.get("cookie");
   const signedValue = rawCookie
     ?.split(";")
@@ -60,7 +68,7 @@ function readSignedVisitorCookie(request: Request, secret: string): string | nul
   }
 
   const verified = verifyPublicVisitorCredential(secret, decoded);
-  return verified ? decoded : null;
+  return verified ? { credential: decoded, visitorId: verified.visitorId } : null;
 }
 
 function serializePublicVisitorCookie(signedValue: string, request: Request): string {

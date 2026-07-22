@@ -1,6 +1,6 @@
 import { correlationIdHeaderName } from "@checkout-surge/logger";
 import { adminPassphraseHeaderName } from "../control-paths";
-import type { AdminLoginAttemptLimiter } from "./admin-login-limiter";
+import type { AdminLoginLimiter, LoginAdmission } from "./admin-login-limiter";
 import { requireAdminOrigin } from "./admin-origin";
 import { createAdminSessionToken, verifyAdminPassphrase } from "./admin-session";
 import {
@@ -18,7 +18,7 @@ export interface AdminLoginConfig {
 }
 
 export interface AdminLoginDependencies {
-  limiter(): AdminLoginAttemptLimiter;
+  limiter(): AdminLoginLimiter;
   resolveClient(request: Request): string;
   config(): AdminLoginConfig | null;
   now(): Date;
@@ -34,15 +34,14 @@ export function createAdminLoginHandler(dependencies: AdminLoginDependencies) {
     const candidate = request.headers.get(adminPassphraseHeaderName);
     if (candidate === null) return invalidCredential(ctx);
 
-    let limiter: AdminLoginAttemptLimiter;
+    const now = dependencies.now();
+    let admission: LoginAdmission;
     try {
-      limiter = dependencies.limiter();
+      const limiter = dependencies.limiter();
+      admission = await limiter.admit(dependencies.resolveClient(request), now.getTime());
     } catch {
       return limiterUnavailable(ctx);
     }
-    const now = dependencies.now();
-    const admission = await limiter.admit(dependencies.resolveClient(request), now.getTime());
-    if (admission.outcome === "unavailable") return limiterUnavailable(ctx);
     if (admission.outcome === "limited") {
       return jsonError(
         ctx,

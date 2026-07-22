@@ -29,9 +29,8 @@ The checked-in secret values are intentionally blank. Before `pnpm runtime:up`, 
 - `ADMIN_DASHBOARD_PASSPHRASE`
 - `ADMIN_SESSION_SECRET`
 - `PUBLIC_CLIENT_COOKIE_SECRET`
-- `ADMIN_EDGE_ATTESTATION_SECRET`
 
-The reference Compose services run with `NODE_ENV=production`; they reject missing/blank and known-placeholder required values. `PUBLIC_CLIENT_COOKIE_SECRET` alone has a general minimum-length rule: at least 16 UTF-8 bytes. It is shared only by the web issuer and API verifier and must differ from `ADMIN_SESSION_SECRET`. `ADMIN_EDGE_ATTESTATION_SECRET` authenticates Caddy's normalized client identity to the web service and is also required by the production-mode local reference runtime. Private, deployment-specific values remain the operator recommendation for every listed secret, but the code does not apply one blanket strength or minimum-length rule to all of them.
+The reference Compose services run with `NODE_ENV=production`; they reject missing/blank and known-placeholder required values. `PUBLIC_CLIENT_COOKIE_SECRET` alone has a general minimum-length rule: at least 16 UTF-8 bytes. It is shared only by the web issuer/verifier and API verifier and must differ from `ADMIN_SESSION_SECRET`. Private, deployment-specific values remain the operator recommendation for every listed secret, but the code does not apply one blanket strength or minimum-length rule to all of them.
 
 ## Runtime Modes
 
@@ -422,7 +421,7 @@ Most infrastructure URLs have local defaults, but every run/control service chan
 | :-- | :-- | :-- |
 | `NODE_ENV` | `development` host-native; `production` in reference Compose; `test` in test commands | Runtime mode and strict production-only security/storage requirements |
 | `DATABASE_URL` | `postgresql://postgres:postgres@localhost:5432/checkout_surge` | API, worker, Mock ERP durable result ledger, db package |
-| `REDIS_URL` | `redis://localhost:6379` | API, worker, web production login limiter, db package |
+| `REDIS_URL` | `redis://localhost:6379` | API, worker, db package |
 | `CONTROL_SERVICE_TOKEN` | Required; generate a private deployment-specific value | API, web, mock ERP, load orchestrator |
 | `ADMIN_DASHBOARD_PASSPHRASE` | Required; generate a private admin passphrase | Web admin session |
 | `ADMIN_SESSION_SECRET` | Required; generate a private HMAC secret distinct from `PUBLIC_CLIENT_COOKIE_SECRET` | Web admin session cookies |
@@ -430,8 +429,7 @@ Most infrastructure URLs have local defaults, but every run/control service chan
 | `ADMIN_LOGIN_CLIENT_ATTEMPTS` | `5` per window | Web admin login per-client token bucket |
 | `ADMIN_LOGIN_GLOBAL_ATTEMPTS` | `20` per window | Web admin login global token bucket |
 | `ADMIN_LOGIN_WINDOW_SECONDS` | `60` | Web admin login refill/window duration |
-| `ADMIN_EDGE_ATTESTATION_SECRET` | Required in production/reference Compose; generate a private value | Caddy-to-web attestation for normalized login source identity |
-| `PUBLIC_CLIENT_COOKIE_SECRET` | Required; generate a private HMAC secret distinct from `ADMIN_SESSION_SECRET` | Web issuance and API verification of anonymous public visitor credentials |
+| `PUBLIC_CLIENT_COOKIE_SECRET` | Required; generate a private HMAC secret distinct from `ADMIN_SESSION_SECRET` | Web issuance/verification and API verification of anonymous public visitor credentials |
 | `API_BASE_URL` | `http://localhost:4000` | Web, load orchestrator |
 | `MOCK_ERP_BASE_URL` | `http://localhost:4100` | Web, worker |
 | `LOAD_ORCHESTRATOR_BASE_URL` | `http://localhost:4200` | API traffic-execution gateway |

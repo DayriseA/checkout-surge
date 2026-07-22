@@ -3,7 +3,11 @@ import { dashboardEventsPath } from "@checkout-surge/contracts";
 import { describe, expect, it } from "vitest";
 
 const configurations = [
-  ["compose", new URL("../../../infra/caddy/Caddyfile", import.meta.url), "api-dashboard-edge:4000"],
+  [
+    "compose",
+    new URL("../../../infra/caddy/Caddyfile", import.meta.url),
+    "api-dashboard-edge:4000",
+  ],
   [
     "host-native",
     new URL("../../../infra/caddy/Caddyfile.host-native", import.meta.url),
@@ -33,5 +37,6 @@ describe.each(configurations)("%s Caddy dashboard events routing", (_name, file,
     expect(sseHandler).not.toContain("encode gzip");
     expect(fallbackHandler).toContain("encode gzip");
     expect(fallbackHandler).not.toContain(apiTarget);
+    expect(fallbackHandler).not.toContain("header_up");
   });
 });

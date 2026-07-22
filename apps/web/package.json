@@ -18,7 +18,6 @@
   "dependencies": {
     "@checkout-surge/contracts": "workspace:*",
     "@checkout-surge/logger": "workspace:*",
-    "ioredis": "^5.11.1",
     "next": "^16.2.9",
     "react": "^19.2.7",
     "react-dom": "^19.2.7"

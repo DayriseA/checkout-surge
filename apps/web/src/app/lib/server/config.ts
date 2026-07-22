@@ -16,9 +16,6 @@ export interface WebServerConfig {
   adminLoginClientAttempts: number;
   adminLoginGlobalAttempts: number;
   adminLoginWindowSeconds: number;
-  redisUrl: string | null;
-  adminEdgeAttestationSecret: string | null;
-  isProduction: boolean;
   secureAdminCookie: boolean;
 }
 
@@ -32,7 +29,6 @@ const unsafeSecretValues = new Set([
   "change-me-admin-passphrase",
   "change-me-admin-session-secret",
   "change-me-public-client-cookie-secret",
-  "change-me-admin-edge-attestation-secret",
 ]);
 
 const requiredSecrets = [
@@ -78,22 +74,6 @@ export function loadWebServerConfig(env: Record<string, string | undefined>): We
   );
   const adminSecurity = parseAdminSecurityConfig(env);
   if (!adminSecurity) throw new Error("Unsafe web admin security configuration.");
-  if (
-    adminSecurity.edgeAttestationSecret &&
-    unsafeSecretValues.has(adminSecurity.edgeAttestationSecret)
-  ) {
-    throw new Error(
-      "Unsafe web admin security configuration: ADMIN_EDGE_ATTESTATION_SECRET uses a known placeholder.",
-    );
-  }
-  if (adminSecurity.redisUrl) {
-    try {
-      const redisUrl = new URL(adminSecurity.redisUrl);
-      if (redisUrl.protocol !== "redis:" && redisUrl.protocol !== "rediss:") throw new Error();
-    } catch {
-      throw new Error("Unsafe web admin security configuration: REDIS_URL must be a redis URL.");
-    }
-  }
 
   return {
     apiBaseUrl,
@@ -107,9 +87,6 @@ export function loadWebServerConfig(env: Record<string, string | undefined>): We
     adminLoginClientAttempts: adminSecurity.loginClientAttempts,
     adminLoginGlobalAttempts: adminSecurity.loginGlobalAttempts,
     adminLoginWindowSeconds: adminSecurity.loginWindowSeconds,
-    redisUrl: adminSecurity.redisUrl,
-    adminEdgeAttestationSecret: adminSecurity.edgeAttestationSecret,
-    isProduction: env.NODE_ENV === "production",
     secureAdminCookie: adminSecurity.secureCookie,
   };
 }

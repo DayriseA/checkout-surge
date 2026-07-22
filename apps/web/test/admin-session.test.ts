@@ -1,17 +1,15 @@
 import { createHmac } from "node:crypto";
-import type Redis from "ioredis";
+import {
+  publicVisitorCookieName,
+  signPublicVisitorCredential,
+} from "@checkout-surge/contracts/public-visitor-credential";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   parseAdminSecurityConfig,
   parseAllowedWebOrigins,
 } from "../src/app/lib/server/admin-config";
 import { createAdminLoginHandler, serializeSessionCookie } from "../src/app/lib/server/admin-login";
-import {
-  AdminLoginAttemptLimiter,
-  MemoryAdminLoginAttemptStore,
-  RedisAdminLoginAttemptStore,
-  resolveTrustedAdminClient,
-} from "../src/app/lib/server/admin-login-limiter";
+import { AdminLoginAttemptLimiter } from "../src/app/lib/server/admin-login-limiter";
 import { handleAdminLogout } from "../src/app/lib/server/admin-logout";
 import { requireAdminOrigin } from "../src/app/lib/server/admin-origin";
 import {
@@ -24,6 +22,7 @@ import {
   initializeWebServerConfig,
   resetWebServerConfigForTests,
 } from "../src/app/lib/server/config";
+import { readPublicVisitorIdentity } from "../src/app/lib/server/public-visitor";
 
 describe("admin session core", () => {
   it("compares credentials through fixed-length digests", () => {
@@ -109,7 +108,7 @@ describe("admin sign-out", () => {
 
 describe("admin login limiter", () => {
   it("reports Retry-After and refills client and global buckets", async () => {
-    const clientLimiter = new AdminLoginAttemptLimiter(new MemoryAdminLoginAttemptStore(), {
+    const clientLimiter = new AdminLoginAttemptLimiter({
       clientCapacity: 1,
       globalCapacity: 10,
       refillWindowMs: 1_000,
@@ -121,7 +120,7 @@ describe("admin login limiter", () => {
     });
     expect(await clientLimiter.admit("a", 1_000)).toEqual({ outcome: "admitted" });
 
-    const globalLimiter = new AdminLoginAttemptLimiter(new MemoryAdminLoginAttemptStore(), {
+    const globalLimiter = new AdminLoginAttemptLimiter({
       clientCapacity: 10,
       globalCapacity: 1,
       refillWindowMs: 1_000,
@@ -136,35 +135,18 @@ describe("admin login limiter", () => {
 
   it("prunes stale client buckets and enforces a deterministic hard cap", async () => {
     const policy = { clientCapacity: 10, globalCapacity: 100, refillWindowMs: 1_000 };
-    const store = new MemoryAdminLoginAttemptStore(2);
-    await store.admit("a".repeat(64), 0, policy);
-    await store.admit("b".repeat(64), 1, policy);
-    expect(store.clientBucketCount).toBe(2);
-    await store.admit("c".repeat(64), 2, policy);
-    expect(store.clientBucketCount).toBe(2);
-    await store.admit("d".repeat(64), 2_002, policy);
-    expect(store.clientBucketCount).toBe(1);
-  });
-
-  it("hashes identities before storage and maps store outages to unavailable", async () => {
-    const admit = vi.fn().mockResolvedValue({ outcome: "admitted" as const });
-    const limiter = new AdminLoginAttemptLimiter(
-      { admit },
-      { clientCapacity: 1, globalCapacity: 1, refillWindowMs: 1_000 },
-    );
-    await limiter.admit("raw-client-identity", 0);
-    expect(admit.mock.calls[0]?.[0]).toMatch(/^[0-9a-f]{64}$/);
-    expect(admit.mock.calls[0]?.[0]).not.toContain("raw-client-identity");
-
-    const unavailable = new AdminLoginAttemptLimiter(
-      { admit: vi.fn().mockRejectedValue(new Error("store down")) },
-      { clientCapacity: 1, globalCapacity: 1, refillWindowMs: 1_000 },
-    );
-    await expect(unavailable.admit("identity", 0)).resolves.toEqual({ outcome: "unavailable" });
+    const limiter = new AdminLoginAttemptLimiter(policy, Date.now, 2);
+    await limiter.admit("a", 0);
+    await limiter.admit("b", 1);
+    expect(limiter.clientBucketCount).toBe(2);
+    await limiter.admit("c", 2);
+    expect(limiter.clientBucketCount).toBe(2);
+    await limiter.admit("d", 2_002);
+    expect(limiter.clientBucketCount).toBe(1);
   });
 
   it("retains global admission history", async () => {
-    const limiter = new AdminLoginAttemptLimiter(new MemoryAdminLoginAttemptStore(), {
+    const limiter = new AdminLoginAttemptLimiter({
       clientCapacity: 5,
       globalCapacity: 2,
       refillWindowMs: 1000,
@@ -174,71 +156,41 @@ describe("admin login limiter", () => {
     expect((await limiter.admit("c", 2)).outcome).toBe("limited");
   });
 
-  it("is atomic across concurrent limiter instances sharing a store", async () => {
-    const store = new MemoryAdminLoginAttemptStore();
+  it("applies one process-wide global bound across rotating client identities", async () => {
     const policy = { clientCapacity: 10, globalCapacity: 2, refillWindowMs: 10_000 };
-    const first = new AdminLoginAttemptLimiter(store, policy);
-    const second = new AdminLoginAttemptLimiter(store, policy);
+    const limiter = new AdminLoginAttemptLimiter(policy);
     const results = await Promise.all([
-      first.admit("a", 0),
-      second.admit("b", 0),
-      first.admit("c", 0),
+      limiter.admit("a", 0),
+      limiter.admit("b", 0),
+      limiter.admit("c", 0),
     ]);
     expect(results.filter((result) => result.outcome === "admitted")).toHaveLength(2);
     expect(results.filter((result) => result.outcome === "limited")).toHaveLength(1);
   });
 
-  it("uses one Redis eval with same-slot bounded keys and validates its response", async () => {
-    const evalMock = vi.fn().mockResolvedValue([0, 1500]);
-    const store = new RedisAdminLoginAttemptStore({ eval: evalMock } as unknown as Redis);
-    const admission = await store.admit("a".repeat(64), 100, {
-      clientCapacity: 2,
-      globalCapacity: 3,
-      refillWindowMs: 1000,
-    });
-    expect(admission).toEqual({ outcome: "limited", retryAfterSeconds: 2 });
-    expect(evalMock).toHaveBeenCalledOnce();
-    const args = evalMock.mock.calls[0];
-    expect(args).toBeDefined();
-    if (!args) throw new Error("Expected Redis eval call");
-    expect(args[1]).toBe(2);
-    expect(args[2]).toMatch(/\{admin-login\}.*client:[0-9a-f]{64}$/);
-    expect(args[3]).toMatch(/\{admin-login\}.*global$/);
-    expect(String(args[0])).toContain("PEXPIRE");
-
-    for (const invalid of [
-      [0.5, 0],
-      [0, "1000"],
-      [0, Number.NaN],
-    ]) {
-      evalMock.mockResolvedValueOnce(invalid);
-      await expect(
-        store.admit("b".repeat(64), 100, {
-          clientCapacity: 2,
-          globalCapacity: 3,
-          refillWindowMs: 1000,
-        }),
-      ).rejects.toThrow("Invalid Redis limiter result");
-    }
-  });
-
-  it("trusts only bounded identity with a valid server attestation", () => {
-    const trusted = new Request("http://dashboard.local", {
+  it("uses only a server-verifiable visitor cookie and ignores identity headers", () => {
+    const secret = "visitor-cookie-secret";
+    const visitorId = "123e4567-e89b-12d3-a456-426614174000";
+    const credential = signPublicVisitorCredential(secret, visitorId, 100);
+    expect(credential).not.toBeNull();
+    const request = new Request("http://dashboard.local", {
       headers: {
-        "x-checkout-surge-client-id": "203.0.113.4",
-        "x-checkout-surge-client-attestation": "edge",
+        cookie: `${publicVisitorCookieName}=${credential}`,
+        "x-client-id": "caller-supplied",
         forwarded: "for=evil",
         "x-forwarded-for": "evil",
       },
     });
-    expect(resolveTrustedAdminClient(trusted, "edge")).toBe("203.0.113.4");
-    expect(resolveTrustedAdminClient(trusted, "wrong")).toBe("unknown");
+    expect(readPublicVisitorIdentity(request, secret)).toEqual({ credential, visitorId });
+    expect(readPublicVisitorIdentity(request, "wrong-secret")).toBeNull();
     expect(
-      resolveTrustedAdminClient(
-        new Request("http://dashboard.local", { headers: { "x-forwarded-for": "203.0.113.4" } }),
-        "edge",
+      readPublicVisitorIdentity(
+        new Request("http://dashboard.local", {
+          headers: { forwarded: "for=evil", "x-forwarded-for": "evil", "x-client-id": visitorId },
+        }),
+        secret,
       ),
-    ).toBe("unknown");
+    ).toBeNull();
   });
 });
 
@@ -260,14 +212,9 @@ describe("admin login workflow", () => {
   });
 
   it("denies every untrusted unsafe Origin before limiter admission", async () => {
-    const store = { admit: vi.fn().mockResolvedValue({ outcome: "admitted" as const }) };
+    const limiter = { admit: vi.fn().mockResolvedValue({ outcome: "admitted" as const }) };
     const handler = createAdminLoginHandler({
-      limiter: () =>
-        new AdminLoginAttemptLimiter(store, {
-          clientCapacity: 1,
-          globalCapacity: 1,
-          refillWindowMs: 1000,
-        }),
+      limiter: () => limiter,
       resolveClient: () => "unknown",
       config: () => ({
         passphrase: "secret",
@@ -298,7 +245,7 @@ describe("admin login workflow", () => {
       );
       expect(denied.status).toBe(403);
     }
-    expect(store.admit).not.toHaveBeenCalled();
+    expect(limiter.admit).not.toHaveBeenCalled();
     const accepted = await handler(
       new Request("https://dashboard.local/api/admin/session", {
         method: "POST",
@@ -306,7 +253,7 @@ describe("admin login workflow", () => {
       }),
     );
     expect(accepted.status).toBe(200);
-    expect(store.admit).toHaveBeenCalledOnce();
+    expect(limiter.admit).toHaveBeenCalledOnce();
     expect(accepted.headers.get("set-cookie")).toMatch(
       /Max-Age=60; Path=\/; HttpOnly; SameSite=Strict; Secure/,
     );
@@ -323,11 +270,9 @@ describe("admin login workflow", () => {
       headers: { "x-admin-passphrase": "candidate-secret" },
     });
     const limited = createAdminLoginHandler({
-      limiter: () =>
-        new AdminLoginAttemptLimiter(
-          { admit: vi.fn().mockResolvedValue({ outcome: "limited", retryAfterSeconds: 7 }) },
-          { clientCapacity: 1, globalCapacity: 1, refillWindowMs: 1_000 },
-        ),
+      limiter: () => ({
+        admit: vi.fn().mockResolvedValue({ outcome: "limited", retryAfterSeconds: 7 }),
+      }),
       resolveClient: () => "unknown",
       config,
       now: () => new Date(0),
@@ -342,11 +287,7 @@ describe("admin login workflow", () => {
     expect(config).not.toHaveBeenCalled();
 
     const unavailable = createAdminLoginHandler({
-      limiter: () =>
-        new AdminLoginAttemptLimiter(
-          { admit: vi.fn().mockRejectedValue(new Error("down")) },
-          { clientCapacity: 1, globalCapacity: 1, refillWindowMs: 1_000 },
-        ),
+      limiter: () => ({ admit: vi.fn().mockRejectedValue(new Error("unexpected failure")) }),
       resolveClient: () => "unknown",
       config,
       now: () => new Date(0),
@@ -363,11 +304,7 @@ describe("admin login workflow", () => {
   it("does not expose passphrases in admitted credential failures", async () => {
     const admit = vi.fn().mockResolvedValue({ outcome: "admitted" as const });
     const handler = createAdminLoginHandler({
-      limiter: () =>
-        new AdminLoginAttemptLimiter(
-          { admit },
-          { clientCapacity: 1, globalCapacity: 1, refillWindowMs: 1_000 },
-        ),
+      limiter: () => ({ admit }),
       resolveClient: () => "raw-client-identity",
       config: () => ({
         passphrase: "expected-secret",
@@ -378,16 +315,21 @@ describe("admin login workflow", () => {
       now: () => new Date(0),
       requireOrigin: () => null,
     });
+    const absentResponse = await handler(new Request("http://dashboard.local"));
     const response = await handler(
       new Request("http://dashboard.local", {
         headers: { "x-admin-passphrase": "candidate-secret" },
       }),
     );
+    expect(absentResponse.status).toBe(401);
     expect(response.status).toBe(401);
+    await expect(absentResponse.json()).resolves.toMatchObject({
+      code: "admin_passphrase_required",
+      message: "A valid admin passphrase is required.",
+    });
     const serialized = JSON.stringify(await response.json());
     expect(serialized).not.toMatch(/candidate-secret|expected-secret|signing-secret/);
-    expect(admit.mock.calls[0]?.[0]).toMatch(/^[0-9a-f]{64}$/);
-    expect(admit.mock.calls[0]?.[0]).not.toMatch(/candidate-secret|raw-client-identity/);
+    expect(admit).toHaveBeenCalledWith("raw-client-identity", 0);
   });
 
   it.each([
@@ -411,11 +353,7 @@ describe("admin login workflow", () => {
     const admit = vi.fn().mockResolvedValue({ outcome: "admitted" as const });
     const config = vi.fn(() => configured);
     const handler = createAdminLoginHandler({
-      limiter: () =>
-        new AdminLoginAttemptLimiter(
-          { admit },
-          { clientCapacity: 1, globalCapacity: 1, refillWindowMs: 1_000 },
-        ),
+      limiter: () => ({ admit }),
       resolveClient: () => "raw-identity",
       config,
       now: () => new Date(0),
@@ -439,17 +377,11 @@ describe("admin login workflow", () => {
     const security = parseAdminSecurityConfig({
       NODE_ENV: "production",
       WEB_ORIGIN: origin,
-      REDIS_URL: "redis://redis:6379",
-      ADMIN_EDGE_ATTESTATION_SECRET: "edge-secret",
     });
     expect(security).not.toBeNull();
     if (!security) throw new Error("Expected valid security configuration");
     const handler = createAdminLoginHandler({
-      limiter: () =>
-        new AdminLoginAttemptLimiter(
-          { admit: vi.fn().mockResolvedValue({ outcome: "admitted" }) },
-          { clientCapacity: 1, globalCapacity: 1, refillWindowMs: 1_000 },
-        ),
+      limiter: () => ({ admit: vi.fn().mockResolvedValue({ outcome: "admitted" }) }),
       resolveClient: () => "unknown",
       config: () => ({
         passphrase: "candidate",
@@ -471,7 +403,7 @@ describe("admin login workflow", () => {
   it("maps request-time invalid configuration to a stable unavailable response", async () => {
     const handler = createAdminLoginHandler({
       limiter: () =>
-        new AdminLoginAttemptLimiter(new MemoryAdminLoginAttemptStore(), {
+        new AdminLoginAttemptLimiter({
           clientCapacity: 1,
           globalCapacity: 1,
           refillWindowMs: 1000,

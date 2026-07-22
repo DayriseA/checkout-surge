@@ -7,8 +7,6 @@ export interface AdminSecurityConfig {
   loginClientAttempts: number;
   loginGlobalAttempts: number;
   loginWindowSeconds: number;
-  redisUrl: string | null;
-  edgeAttestationSecret: string | null;
 }
 
 export function parseAllowedWebOrigins(raw: string | undefined): readonly string[] | null {
@@ -56,20 +54,6 @@ export function parseAdminSecurityConfig(
   )
     return null;
 
-  const production = env.NODE_ENV === "production";
-  const redisUrl = nonBlank(env.REDIS_URL);
-  const edgeAttestationSecret = nonBlank(env.ADMIN_EDGE_ATTESTATION_SECRET);
-  if (production && (!redisUrl || !edgeAttestationSecret)) return null;
-  if (edgeAttestationSecret === "change-me-admin-edge-attestation-secret") return null;
-  if (redisUrl) {
-    try {
-      const parsed = new URL(redisUrl);
-      if (parsed.protocol !== "redis:" && parsed.protocol !== "rediss:") return null;
-    } catch {
-      return null;
-    }
-  }
-
   return {
     allowedOrigins,
     secureCookie: allowedOrigins[0]?.startsWith("https://") === true,
@@ -77,8 +61,6 @@ export function parseAdminSecurityConfig(
     loginClientAttempts,
     loginGlobalAttempts,
     loginWindowSeconds,
-    redisUrl,
-    edgeAttestationSecret,
   };
 }
 
@@ -87,9 +69,4 @@ function positiveInteger(raw: string | undefined, fallback: number): number | nu
   if (!/^\d+$/.test(raw)) return null;
   const value = Number(raw);
   return Number.isSafeInteger(value) && value > 0 ? value : null;
-}
-
-function nonBlank(raw: string | undefined): string | null {
-  if (raw === undefined || raw.trim() === "") return null;
-  return raw.trim();
 }

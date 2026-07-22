@@ -7,13 +7,15 @@ name: ${COMPOSE_PROJECT_NAME:-checkout-surge-gpt-55}
 x-app-env: &app-env
   NODE_ENV: production
   LOG_LEVEL: ${LOG_LEVEL:-info}
-  DATABASE_URL: postgresql://postgres:postgres@postgres:5432/checkout_surge
-  REDIS_URL: redis://redis:6379
   API_BASE_URL: http://api:4000
   MOCK_ERP_BASE_URL: http://mock-erp:4100
   LOAD_ORCHESTRATOR_BASE_URL: http://load-orchestrator:4200
   WEB_BASE_URL: http://localhost:8080
   WEB_ORIGIN: http://localhost:8080
+
+x-data-env: &data-env
+  DATABASE_URL: postgresql://postgres:postgres@postgres:5432/checkout_surge
+  REDIS_URL: redis://redis:6379
 
 services:
   postgres:
@@ -50,7 +52,7 @@ services:
         SERVICE_NAME: api
     restart: on-failure
     environment:
-      <<: *app-env
+      <<: [*app-env, *data-env]
       CONTROL_SERVICE_TOKEN: ${CONTROL_SERVICE_TOKEN}
       PUBLIC_CLIENT_COOKIE_SECRET: ${PUBLIC_CLIENT_COOKIE_SECRET}
       PORT: 4000
@@ -112,7 +114,7 @@ services:
       args:
         SERVICE_NAME: worker
     environment:
-      <<: *app-env
+      <<: [*app-env, *data-env]
       HEALTH_PORT: 4300
       HEALTH_HOST: 0.0.0.0
       WORKER_POSTGRES_POOL_MAX: ${WORKER_POSTGRES_POOL_MAX:-10}
@@ -150,7 +152,7 @@ services:
       args:
         SERVICE_NAME: mock-erp
     environment:
-      <<: *app-env
+      <<: [*app-env, *data-env]
       CONTROL_SERVICE_TOKEN: ${CONTROL_SERVICE_TOKEN}
       PORT: 4100
       HOST: 0.0.0.0
@@ -220,17 +222,13 @@ services:
       ADMIN_LOGIN_CLIENT_ATTEMPTS: ${ADMIN_LOGIN_CLIENT_ATTEMPTS:-5}
       ADMIN_LOGIN_GLOBAL_ATTEMPTS: ${ADMIN_LOGIN_GLOBAL_ATTEMPTS:-20}
       ADMIN_LOGIN_WINDOW_SECONDS: ${ADMIN_LOGIN_WINDOW_SECONDS:-60}
-      ADMIN_EDGE_ATTESTATION_SECRET: ${ADMIN_EDGE_ATTESTATION_SECRET}
       PUBLIC_CLIENT_COOKIE_SECRET: ${PUBLIC_CLIENT_COOKIE_SECRET}
-      REDIS_URL: redis://redis:6379
     depends_on:
       api:
         condition: service_healthy
       mock-erp:
         condition: service_healthy
       load-orchestrator:
-        condition: service_healthy
-      redis:
         condition: service_healthy
     healthcheck:
       test:
@@ -244,8 +242,6 @@ services:
 
   dashboard-proxy:
     image: caddy:2-alpine
-    environment:
-      ADMIN_EDGE_ATTESTATION_SECRET: ${ADMIN_EDGE_ATTESTATION_SECRET}
     ports:
       - "${DASHBOARD_PROXY_HOST_PORT:-8080}:8080"
     volumes:
@@ -272,7 +268,7 @@ services:
       dockerfile: packages/db/Dockerfile
       target: runtime
     environment:
-      <<: *app-env
+      <<: [*app-env, *data-env]
       PUBLIC_RUN_BUDGET_WINDOW_SECONDS: ${PUBLIC_RUN_BUDGET_WINDOW_SECONDS:-300}
       PUBLIC_RUN_BUDGET_PER_VISITOR_MAX_STARTS: ${PUBLIC_RUN_BUDGET_PER_VISITOR_MAX_STARTS:-2}
       PUBLIC_RUN_BUDGET_GLOBAL_MAX_STARTS: ${PUBLIC_RUN_BUDGET_GLOBAL_MAX_STARTS:-6}

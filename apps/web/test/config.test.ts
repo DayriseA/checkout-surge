@@ -63,9 +63,6 @@ describe("web server secret configuration", () => {
       adminLoginClientAttempts: 5,
       adminLoginGlobalAttempts: 20,
       adminLoginWindowSeconds: 60,
-      redisUrl: null,
-      adminEdgeAttestationSecret: null,
-      isProduction: false,
       secureAdminCookie: false,
     });
   });
@@ -99,15 +96,11 @@ describe("web server secret configuration", () => {
     );
   });
 
-  it("requires shared limiter and attestation configuration in production", () => {
-    expect(() => loadWebServerConfig({ ...validSecrets, NODE_ENV: "production" })).toThrow();
-    const config = loadWebServerConfig({
-      ...validSecrets,
-      NODE_ENV: "production",
-      REDIS_URL: "redis://redis:6379",
-      ADMIN_EDGE_ATTESTATION_SECRET: "edge-attestation",
-    });
+  it("uses the same local login policy in the production-mode single web process", () => {
+    const config = loadWebServerConfig({ ...validSecrets, NODE_ENV: "production" });
     expect(config.webOrigins).toEqual(["http://dashboard.local"]);
+    expect(config.adminLoginClientAttempts).toBe(5);
+    expect(config.adminLoginGlobalAttempts).toBe(20);
   });
 
   it("rejects a public cookie secret shorter than 16 UTF-8 bytes", () => {
