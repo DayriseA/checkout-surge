@@ -88,16 +88,6 @@ describe.skipIf(!databaseUrl)("deterministic test database reset", () => {
       restored: `SELECT to_regclass('public.products_sku_unique') IS NOT NULL AS restored`,
       shape: "index",
     },
-    {
-      damage: `DROP TRIGGER products_set_updated_at ON products`,
-      restored: `SELECT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'products_set_updated_at') AS restored`,
-      shape: "trigger",
-    },
-    {
-      damage: `CREATE OR REPLACE FUNCTION set_updated_at() RETURNS trigger LANGUAGE plpgsql AS 'BEGIN RETURN NEW; END'`,
-      restored: `SELECT pg_get_functiondef('set_updated_at()'::regprocedure) LIKE '%NEW."updated_at" = now()%' AS restored`,
-      shape: "function",
-    },
   ])("rebuilds after $shape drift with an unchanged journal", async ({ damage, restored }) => {
     await reset();
     await withDatabase((sql) => sql.unsafe(damage));

@@ -61,25 +61,22 @@ describe("Drizzle migration metadata", () => {
     );
   });
 
-  it("keeps required snapshot-invisible objects in the baseline without upgrade scaffolding", async () => {
+  it("keeps only the required snapshot-invisible core without upgrade scaffolding", async () => {
     const baseline = await readFile(path.join(drizzleFolder, "0000_baseline.sql"), "utf8");
 
     for (const requiredSql of [
       'CREATE EXTENSION IF NOT EXISTS "pgcrypto"',
       'CREATE UNIQUE INDEX "demo_runs_single_non_terminal_idx"',
       'CREATE UNIQUE INDEX "simulated_notifications_order_id_unique"',
-      'CREATE FUNCTION "enforce_order_backing_reservation"()',
-      'CREATE FUNCTION "enforce_erp_attempt_order_attribution"()',
-      'CREATE FUNCTION "set_updated_at"()',
-      'CREATE FUNCTION "enforce_run_owned_sale_offer_attribution"()',
-      'CREATE TRIGGER "orders_enforce_backing_reservation"',
-      'CREATE TRIGGER "order_events_enforce_parent_attribution"',
-      'CREATE TRIGGER "products_set_updated_at"',
-      'CREATE TRIGGER "sim_notifications_enforce_run_sale_attribution"',
+      'CONSTRAINT "orders_backing_reservation_fk"',
+      'CONSTRAINT "orders_run_sale_context_fk"',
+      'CONSTRAINT "order_events_run_sale_context_fk"',
+      'CONSTRAINT "simulated_notifications_order_attribution_fk"',
     ]) {
       expect(baseline).toContain(requiredSql);
     }
 
+    expect(baseline).not.toMatch(/CREATE (?:OR REPLACE )?FUNCTION|CREATE TRIGGER/i);
     expect(baseline).not.toMatch(
       /LOCK TABLE|contradictory historical|backfill|hydrate|UPDATE "public_runtime_policies"/i,
     );

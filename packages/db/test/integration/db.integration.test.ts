@@ -47,40 +47,16 @@ const reservationExpiresAt = "2026-06-20T12:15:00.000Z";
 const orderQueuedAt = "2026-06-20T12:00:01.000Z";
 const saleStartsAt = "2026-06-20T00:00:00.000Z";
 const saleEndsAt = "2026-06-21T00:00:00.000Z";
-const expectedHandAuthoredFunctions = [
-  "enforce_demo_run_sale_context_offer_purpose",
-  "enforce_erp_attempt_order_attribution",
-  "enforce_order_backing_reservation",
-  "enforce_order_event_parent_attribution",
-  "enforce_run_owned_sale_offer_attribution",
-  "preserve_order_backing_reservation",
-  "preserve_order_child_attribution",
-  "preserve_reservation_only_event_attribution",
-  "set_updated_at",
-].sort();
-const expectedHandAuthoredTriggers = [
-  "demo_presets_set_updated_at",
-  "demo_run_finalizations_set_updated_at",
-  "demo_run_sale_contexts_enforce_offer_purpose",
-  "demo_run_sale_contexts_set_updated_at",
-  "demo_runs_set_updated_at",
-  "erp_attempts_enforce_order_attribution",
-  "order_events_enforce_parent_attribution",
-  "order_events_enforce_run_owned_sale_offer_attribution",
-  "orders_enforce_backing_reservation",
-  "orders_enforce_run_owned_sale_offer_attribution",
-  "orders_preserve_child_attribution",
-  "orders_set_updated_at",
-  "products_set_updated_at",
-  "public_runtime_policies_set_updated_at",
-  "reservation_pending_persistence_set_updated_at",
-  "reservations_enforce_run_owned_sale_offer_attribution",
-  "reservations_preserve_event_attribution",
-  "reservations_preserve_order_backing_reservation",
-  "reservations_set_updated_at",
-  "rpp_enforce_run_sale_attribution",
-  "sale_offers_set_updated_at",
-  "sim_notifications_enforce_run_sale_attribution",
+const expectedDeclarativeAttributionConstraints = [
+  "demo_run_sale_contexts_run_sale_offer_demo_runs_fk",
+  "erp_attempts_order_correlation_fk",
+  "order_events_run_sale_context_fk",
+  "orders_backing_reservation_fk",
+  "orders_run_sale_context_fk",
+  "reservation_pending_persistence_run_sale_context_fk",
+  "reservations_run_sale_context_fk",
+  "simulated_notifications_order_attribution_fk",
+  "simulated_notifications_run_sale_context_fk",
 ].sort();
 const dashboardEvent: DashboardEvent = {
   type: "dashboard.metric.observed",
@@ -368,9 +344,13 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: s
   }
 }
 
-async function expectConstraintViolation(promise: Promise<unknown>, constraintName: string) {
+async function expectConstraintViolation(
+  promise: Promise<unknown>,
+  constraintName: string,
+  code = "23514",
+) {
   const error = await promise.catch((caught: unknown) => caught);
-  expect(error).toMatchObject({ code: "23514", constraint_name: constraintName });
+  expect(error).toMatchObject({ code, constraint_name: constraintName });
 }
 
 describe("database migrations, seed data, and reset behavior", () => {
@@ -391,7 +371,7 @@ describe("database migrations, seed data, and reset behavior", () => {
     redis.disconnect();
   });
 
-  it("applies the schema and run sale ownership guards", async () => {
+  it("applies the schema with only declarative attribution guards", async () => {
     const tableRows = await withDatabase(
       (sql) =>
         sql<{ table_name: string }[]>`
@@ -422,10 +402,11 @@ describe("database migrations, seed data, and reset behavior", () => {
     );
     const ownershipConstraintRows = await withDatabase(
       (sql) =>
-        sql<{ conname: string; confdeltype: string }[]>`
-        SELECT conname, confdeltype
+        sql<{ conname: string }[]>`
+        SELECT conname
         FROM pg_constraint
-        WHERE conname = 'demo_run_sale_contexts_run_sale_offer_demo_runs_fk'
+        WHERE conname = ANY(${expectedDeclarativeAttributionConstraints}::text[])
+        ORDER BY conname
       `,
     );
 
@@ -436,14 +417,11 @@ describe("database migrations, seed data, and reset behavior", () => {
       "reservations",
       "sale_offers",
     ]);
-    expect(triggerRows.map((row) => row.tgname).sort()).toEqual(expectedHandAuthoredTriggers);
-    expect(functionRows.map((row) => row.proname).sort()).toEqual(expectedHandAuthoredFunctions);
-    expect(ownershipConstraintRows).toEqual([
-      {
-        conname: "demo_run_sale_contexts_run_sale_offer_demo_runs_fk",
-        confdeltype: "c",
-      },
-    ]);
+    expect(triggerRows).toEqual([]);
+    expect(functionRows).toEqual([]);
+    expect(ownershipConstraintRows.map((row) => row.conname)).toEqual(
+      expectedDeclarativeAttributionConstraints,
+    );
   });
 
   it("applies the baseline to an empty dedicated test database and reruns as a no-op", async () => {
@@ -1288,16 +1266,13 @@ describe("database migrations, seed data, and reset behavior", () => {
     });
   });
 
-  it("enforces ERP attempt attribution on inserts and updates, including nullable runs", async () => {
+  it("enforces ERP attempt correlation attribution declaratively", async () => {
     await withDatabase(async (sql) => {
       const generatedIds = buildOrderReservationIds(922);
-      const alternateIds = buildOrderReservationIds(923);
       const catalogIds = buildOrderReservationIds(924);
       await insertCatalogSaleOffer(sql, { ...generatedIds, purpose: "generated_run" });
-      await insertCatalogSaleOffer(sql, { ...alternateIds, purpose: "generated_run" });
       await insertCatalogSaleOffer(sql, catalogIds);
       await insertGeneratedRunContext(sql, generatedIds);
-      await insertGeneratedRunContext(sql, alternateIds);
       await insertReservation(sql, {
         reservationId: generatedIds.reservationId,
         saleOfferId: generatedIds.saleOfferId,
@@ -1327,23 +1302,17 @@ describe("database migrations, seed data, and reset behavior", () => {
       `;
       await insertAttempt("erp-attribution-valid", generatedIds.runId, "corr-erp-attribution");
       await expectConstraintViolation(
-        insertAttempt("erp-attribution-null", null, "corr-erp-attribution"),
-        "erp_attempts_order_attribution_agreement",
-      );
-      await expectConstraintViolation(
-        insertAttempt("erp-attribution-run", alternateIds.runId, "corr-erp-attribution"),
-        "erp_attempts_order_attribution_agreement",
-      );
-      await expectConstraintViolation(
         insertAttempt("erp-attribution-correlation", generatedIds.runId, "corr-other"),
-        "erp_attempts_order_attribution_agreement",
+        "erp_attempts_order_correlation_fk",
+        "23503",
       );
       await expectConstraintViolation(
         sql`
           UPDATE "erp_attempts" SET "correlation_id" = 'corr-other'
           WHERE "delivery_id" = 'erp-attribution-valid'
         `,
-        "erp_attempts_order_attribution_agreement",
+        "erp_attempts_order_correlation_fk",
+        "23503",
       );
 
       await insertReservation(sql, {
@@ -1366,120 +1335,6 @@ describe("database migrations, seed data, and reset behavior", () => {
           0, ${orderQueuedAt}::timestamptz, ${orderQueuedAt}::timestamptz
         )
       `;
-    });
-  });
-
-  it("enforces linked, reservation-only, and unlinked order-event attribution policies", async () => {
-    await withDatabase(async (sql) => {
-      const ids = buildOrderReservationIds(925);
-      const alternateIds = buildOrderReservationIds(926);
-      const generatedIds = buildOrderReservationIds(929);
-      await insertCatalogSaleOffer(sql, ids);
-      await insertCatalogSaleOffer(sql, alternateIds);
-      await insertCatalogSaleOffer(sql, { ...generatedIds, purpose: "generated_run" });
-      await insertGeneratedRunContext(sql, generatedIds);
-      await insertReservation(sql, {
-        reservationId: ids.reservationId,
-        saleOfferId: ids.saleOfferId,
-        correlationId: "corr-event-attribution",
-      });
-      await insertReservation(sql, {
-        reservationId: alternateIds.reservationId,
-        saleOfferId: alternateIds.saleOfferId,
-        correlationId: "corr-event-alternate",
-      });
-      await insertOrder(sql, {
-        orderId: ids.orderId,
-        saleOfferId: ids.saleOfferId,
-        reservationId: ids.reservationId,
-        correlationId: "corr-event-attribution",
-      });
-
-      const insertEvent = (input: {
-        id: string;
-        orderId: string | null;
-        reservationId: string | null;
-        saleOfferId: string;
-        correlationId: string;
-        runId?: string | null;
-      }) => sql`
-        INSERT INTO "order_events" (
-          "id", "order_id", "reservation_id", "sale_offer_id", "correlation_id", "run_id",
-          "event_name", "source", "occurred_at"
-        ) VALUES (
-          ${input.id}, ${input.orderId}, ${input.reservationId}, ${input.saleOfferId},
-          ${input.correlationId}, ${input.runId ?? null}, 'order.queued', 'test', ${orderQueuedAt}::timestamptz
-        )
-      `;
-      const baseEvent = {
-        orderId: ids.orderId,
-        reservationId: ids.reservationId,
-        saleOfferId: ids.saleOfferId,
-        correlationId: "corr-event-attribution",
-      };
-      await insertEvent({ ...baseEvent, id: "93000000-0000-4000-8000-000000000001" });
-      for (const [id, override] of [
-        ["93000000-0000-4000-8000-000000000002", { reservationId: alternateIds.reservationId }],
-        ["93000000-0000-4000-8000-000000000003", { saleOfferId: alternateIds.saleOfferId }],
-        ["93000000-0000-4000-8000-000000000004", { correlationId: "corr-other" }],
-        ["93000000-0000-4000-8000-000000000009", { runId: generatedIds.runId }],
-      ] as const) {
-        await expectConstraintViolation(
-          insertEvent({ ...baseEvent, ...override, id }),
-          "order_events_order_attribution_agreement",
-        );
-      }
-      await expectConstraintViolation(
-        sql`
-          UPDATE "order_events" SET "correlation_id" = 'corr-other'
-          WHERE "id" = '93000000-0000-4000-8000-000000000001'
-        `,
-        "order_events_order_attribution_agreement",
-      );
-
-      await insertEvent({
-        ...baseEvent,
-        id: "93000000-0000-4000-8000-000000000005",
-        orderId: null,
-      });
-      await expectConstraintViolation(
-        insertEvent({
-          id: "93000000-0000-4000-8000-000000000006",
-          orderId: null,
-          reservationId: ids.reservationId,
-          saleOfferId: alternateIds.saleOfferId,
-          correlationId: "corr-event-attribution",
-        }),
-        "order_events_reservation_attribution_agreement",
-      );
-      await expectConstraintViolation(
-        insertEvent({
-          id: "93000000-0000-4000-8000-000000000010",
-          orderId: null,
-          reservationId: ids.reservationId,
-          saleOfferId: ids.saleOfferId,
-          correlationId: "corr-event-attribution",
-          runId: generatedIds.runId,
-        }),
-        "order_events_reservation_attribution_agreement",
-      );
-      await expectConstraintViolation(
-        insertEvent({
-          id: "93000000-0000-4000-8000-000000000007",
-          orderId: null,
-          reservationId: ids.reservationId,
-          saleOfferId: ids.saleOfferId,
-          correlationId: "corr-other",
-        }),
-        "order_events_reservation_attribution_agreement",
-      );
-      await insertEvent({
-        id: "93000000-0000-4000-8000-000000000008",
-        orderId: null,
-        reservationId: null,
-        saleOfferId: alternateIds.saleOfferId,
-        correlationId: "corr-unlinked",
-      });
     });
   });
 
@@ -1543,76 +1398,6 @@ describe("database migrations, seed data, and reset behavior", () => {
     });
   });
 
-  it("prevents parent attribution changes from invalidating existing children", async () => {
-    await withDatabase(async (sql) => {
-      const ids = buildOrderReservationIds(927);
-      const alternateIds = buildOrderReservationIds(928);
-      await insertCatalogSaleOffer(sql, ids);
-      await insertCatalogSaleOffer(sql, alternateIds);
-      await insertReservation(sql, {
-        reservationId: ids.reservationId,
-        saleOfferId: ids.saleOfferId,
-        correlationId: "corr-parent-preservation",
-      });
-      await insertReservation(sql, {
-        reservationId: alternateIds.reservationId,
-        saleOfferId: alternateIds.saleOfferId,
-        correlationId: "corr-parent-alternate",
-      });
-      await insertOrder(sql, {
-        orderId: ids.orderId,
-        saleOfferId: ids.saleOfferId,
-        reservationId: ids.reservationId,
-        correlationId: "corr-parent-preservation",
-      });
-      await sql`
-        INSERT INTO "erp_attempts" (
-          "order_id", "delivery_id", "correlation_id", "attempt_number", "status",
-          "latency_ms", "started_at", "finished_at"
-        ) VALUES (
-          ${ids.orderId}, 'parent-preservation', 'corr-parent-preservation', 1, 'failed',
-          0, ${orderQueuedAt}::timestamptz, ${orderQueuedAt}::timestamptz
-        )
-      `;
-      await sql`
-        INSERT INTO "order_events" (
-          "order_id", "reservation_id", "sale_offer_id", "correlation_id",
-          "event_name", "source", "occurred_at"
-        ) VALUES (
-          ${ids.orderId}, ${ids.reservationId}, ${ids.saleOfferId}, 'corr-parent-preservation',
-          'order.queued', 'test', ${orderQueuedAt}::timestamptz
-        )
-      `;
-      await expectConstraintViolation(
-        sql`
-          UPDATE "orders"
-          SET "reservation_id" = ${alternateIds.reservationId},
-              "sale_offer_id" = ${alternateIds.saleOfferId},
-              "correlation_id" = 'corr-parent-alternate'
-          WHERE "id" = ${ids.orderId}
-        `,
-        "orders_child_attribution_preservation",
-      );
-
-      await sql`
-        INSERT INTO "order_events" (
-          "order_id", "reservation_id", "sale_offer_id", "correlation_id",
-          "event_name", "source", "occurred_at"
-        ) VALUES (
-          NULL, ${alternateIds.reservationId}, ${alternateIds.saleOfferId}, 'corr-parent-alternate',
-          'reservation.secured', 'test', ${orderQueuedAt}::timestamptz
-        )
-      `;
-      await expectConstraintViolation(
-        sql`
-          UPDATE "reservations" SET "correlation_id" = 'corr-parent-mutated'
-          WHERE "id" = ${alternateIds.reservationId}
-        `,
-        "reservations_event_attribution_preservation",
-      );
-    });
-  });
-
   it("accepts orders backed by matching reservations", async () => {
     await withDatabase(async (sql) => {
       const ids = buildOrderReservationIds(1);
@@ -1667,7 +1452,7 @@ describe("database migrations, seed data, and reset behavior", () => {
         quantity: 2,
       });
 
-      await expect(
+      await expectConstraintViolation(
         insertOrder(sql, {
           orderId: ids.orderId,
           saleOfferId: ids.alternateSaleOfferId,
@@ -1675,8 +1460,10 @@ describe("database migrations, seed data, and reset behavior", () => {
           correlationId,
           quantity: 2,
         }),
-      ).rejects.toThrow("must match reservation");
-      await expect(
+        "orders_backing_reservation_fk",
+        "23503",
+      );
+      await expectConstraintViolation(
         insertOrder(sql, {
           orderId: ids.alternateOrderId,
           saleOfferId: ids.saleOfferId,
@@ -1684,8 +1471,10 @@ describe("database migrations, seed data, and reset behavior", () => {
           correlationId: "corr-order-reservation-other",
           quantity: 2,
         }),
-      ).rejects.toThrow("must match reservation");
-      await expect(
+        "orders_backing_reservation_fk",
+        "23503",
+      );
+      await expectConstraintViolation(
         insertOrder(sql, {
           orderId: ids.thirdOrderId,
           saleOfferId: ids.saleOfferId,
@@ -1693,13 +1482,16 @@ describe("database migrations, seed data, and reset behavior", () => {
           correlationId,
           quantity: 1,
         }),
-      ).rejects.toThrow("must match reservation");
+        "orders_backing_reservation_fk",
+        "23503",
+      );
     });
   });
 
-  it("rejects orders whose nullable run ID differs from the reservation", async () => {
+  it("rejects orders attributed to a different run sale context", async () => {
     await withDatabase(async (sql) => {
       const ids = buildOrderReservationIds(30);
+      const alternateIds = buildOrderReservationIds(31);
       const correlationId = "corr-order-reservation-run";
 
       await insertCatalogSaleOffer(sql, {
@@ -1708,6 +1500,12 @@ describe("database migrations, seed data, and reset behavior", () => {
         purpose: "generated_run",
       });
       await insertGeneratedRunContext(sql, ids);
+      await insertCatalogSaleOffer(sql, {
+        productId: alternateIds.productId,
+        saleOfferId: alternateIds.saleOfferId,
+        purpose: "generated_run",
+      });
+      await insertGeneratedRunContext(sql, alternateIds);
       await insertReservation(sql, {
         reservationId: ids.reservationId,
         saleOfferId: ids.saleOfferId,
@@ -1715,15 +1513,17 @@ describe("database migrations, seed data, and reset behavior", () => {
         correlationId,
       });
 
-      await expect(
+      await expectConstraintViolation(
         insertOrder(sql, {
           orderId: ids.orderId,
           saleOfferId: ids.saleOfferId,
           reservationId: ids.reservationId,
-          runId: null,
+          runId: alternateIds.runId,
           correlationId,
         }),
-      ).rejects.toThrow("must match reservation");
+        "orders_run_sale_context_fk",
+        "23503",
+      );
     });
   });
 
@@ -1745,13 +1545,15 @@ describe("database migrations, seed data, and reset behavior", () => {
         correlationId,
       });
 
-      await expect(
+      await expectConstraintViolation(
         sql`
           UPDATE "reservations"
           SET "quantity" = 2
           WHERE "id" = ${ids.reservationId}
         `,
-      ).rejects.toThrow("cannot be changed because an order depends");
+        "orders_backing_reservation_fk",
+        "23503",
+      );
     });
   });
 

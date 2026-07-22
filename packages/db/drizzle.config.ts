@@ -1,8 +1,8 @@
 import { defineConfig } from "drizzle-kit";
 
-// Drizzle snapshots cover schema declarations only. Required PostgreSQL
-// functions, triggers, the extension, and the expression index remain explicit
-// custom SQL in the single reviewed baseline.
+// Drizzle snapshots cover schema declarations only. The pgcrypto extension and
+// single-nonterminal-run expression index remain explicit custom SQL in the
+// single reviewed baseline.
 const databaseUrl = process.env.DATABASE_URL ?? process.env.TEST_DATABASE_URL;
 
 export default defineConfig({

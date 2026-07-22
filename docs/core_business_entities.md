@@ -282,7 +282,7 @@ Notes:
 - A nullable unique successful `idempotencyKey` forms the worker-local stable success boundary.
 - `terminal` records the worker's disposition at call time: success and non-retryable rejection are terminal, while a temporary failure is nonterminal only when the delivery has a known remaining attempt. An absent maximum is conservatively terminal. The marker is mirrored into the attempt event payload and exposed only in protected admin run-history rows; anonymous detail exposes closed status counts and nullable aggregate latency metrics. It does not prohibit later manual or recovery replay.
 - The attempt record should be durable even when the final order eventually succeeds, because the retry history is part of the portfolio story.
-- PostgreSQL requires `finishedAt >= startedAt`. It also compares the duplicated nullable `runId` and non-null `correlationId` with the referenced order on every insert and relevant update.
+- PostgreSQL requires `finishedAt >= startedAt` and uses a composite foreign key to bind `orderId` and `correlationId` to the referenced order. The worker validates the complete delivered order identity, including nullable `runId`, against the locked durable order before processing; the database does not duplicate that workflow check procedurally.
 
 ### 7. ErpConfirmationResult
 
@@ -385,8 +385,8 @@ Notes:
 - Run-scoped order events include `runId` so protected admin Run History can read a bounded event timeline directly by run, including events that are not reachable through an already-persisted order or reservation row. Anonymous detail exposes only the aggregate event count.
 - `payload` should remain structured JSON, not free-form log text.
 - `OrderEvent` is a business history mechanism, not a replacement for service logs.
-- When `orderId` is present, PostgreSQL requires the event's `reservationId`, `saleOfferId`, nullable `runId`, and `correlationId` to match that order. Order attribution takes precedence and includes the order's backing reservation identity.
-- When only `reservationId` is present, the event's offer, nullable run, and correlation attribution must match that reservation. Fully unlinked events remain allowed, and both nullable foreign keys retain `ON DELETE SET NULL` behavior.
+- API and worker persistence services construct linked event attribution from the freshly inserted or locked durable order/reservation rather than accepting those fields from an independent writer. PostgreSQL binds every non-null run/sale pair to `DemoRunSaleContext` and retains ordinary order/reservation foreign keys.
+- Fully unlinked events remain allowed, and both nullable parent foreign keys retain `ON DELETE SET NULL` behavior. Avoiding a wider composite parent foreign key here preserves those simple history semantics without hand-authored partial-column delete machinery.
 
 ### 11. DemoPreset
 
@@ -480,20 +480,17 @@ Logical fields:
 
 Notes:
 
-- The referenced `SaleOffer` must have `purpose = generated_run`.
+- The run-creation service creates the referenced `SaleOffer` with `purpose = generated_run` and inserts the context in the same transaction.
 - The non-null context pair `(runId, saleOfferId)` has a composite foreign key to the unique `DemoRun.(id, saleOfferId)` pair. This prevents contradictory context inserts and updates as well as later changes to either ownership column on the run.
-- `Reservation`, `Order`, `ReservationPendingPersistence`, `OrderEvent`, and `SimulatedNotification` records for generated sale offers must match the owning run context.
+- `Reservation`, `Order`, `ReservationPendingPersistence`, `OrderEvent`, and `SimulatedNotification` records with non-null run attribution must match the owning run context through composite foreign keys.
 - The context is deleted with its demo run, while the generated sale offer is cleaned up after dependent run records are removed.
 
 Enforcement note:
 
 - These ownership invariants are guarded at two layers. Redis validates generated-run ownership and accepting state before any PostgreSQL operation. Once Redis secures a hold and the API resolves its frozen run policy, the normal write path acquires shared PostgreSQL run admission and validates the durable `(runId, saleOfferId)` pairing plus non-terminal lifecycle state before committing run-attributed rows and publishing the deterministic job. Terminal/reset transitions use the corresponding exclusive lock. Admission callbacks use their reserved session and never perform a nested checkout from the bounded base pool. A terminal-race rejection reverses the Redis hold after admission is released.
-- Behind that, PostgreSQL enforces context ownership declaratively with the composite foreign key and enforces the remaining purpose and business-row rules with PL/pgSQL trigger functions that act as the last line of defense if a write ever bypasses or contradicts the application check. These triggers are not generated or surfaced by Drizzle:
-  - `enforce_demo_run_sale_context_offer_purpose` rejects a context whose referenced sale offer is not `purpose = generated_run`.
-  - `enforce_run_owned_sale_offer_attribution` rejects a run-attributed row (`Reservation`, `Order`, `ReservationPendingPersistence`, `OrderEvent`, `SimulatedNotification`) whose `runId` does not match the run that owns its generated `saleOfferId`.
-- A similar composite foreign key on each run-attributed business table would not fully cover its rule: those tables allow `runId = NULL`, and PostgreSQL `MATCH SIMPLE` skips the foreign-key check when any referencing column is `NULL`. The attribution trigger closes that nullable gap where a generated offer is written with a missing run, and also rejects a catalog offer paired with any run. The context table itself has two non-null ownership columns, so its composite foreign key has no corresponding `MATCH SIMPLE` gap. Trigger lookups are single-row probes on indexed/unique columns against a tiny per-run table, so the per-write cost is negligible.
-- These triggers and functions live in the hand-authored section of the single reviewed baseline and are invisible to `schema.ts` and `drizzle-kit` introspection. They must be preserved whenever the pre-release baseline is regenerated or amended, otherwise the enforcement is silently lost.
-- Lifecycle checks are declarative constraints in `schema.ts`. Current child/parent attribution triggers are installed directly by the baseline; child writes lock their referenced order or reservation, while parent updates inspect existing children under the parent row lock, so concurrent writes cannot create a disagreement between the two directions.
+- PostgreSQL enforces the context-to-run ownership pair and every non-null business-row `(runId, saleOfferId)` pair declaratively with composite foreign keys in `schema.ts`. With the default `MATCH SIMPLE`, a null `runId` skips that structural check for any sale purpose, not only catalog offers. The API therefore owns nullable catalog selection and prevents a generated offer from losing run attribution by validating run/sale under the run lock and constructing the durable rows from the same secured hold. Run creation separately owns generated-offer purpose when it creates the offer and context in one transaction.
+- Order-to-reservation offer/correlation/quantity identity, ERP-attempt correlation, and notification-to-order attribution also use composite foreign keys. Row-local quantity, window, lifecycle, timestamp, and terminal-summary checks remain declarative.
+- The API and worker own workflow checks that keys cannot express cleanly: generated-offer purpose at context construction, nullable job/run identity, legal order transitions, and event construction from a locked or freshly inserted parent. Worker sequencing validates an order-processing job through locked transition persistence before ERP-attempt persistence consumes it; notification persistence performs its own lock and identity validation. There is no generalized database validation framework and the baseline installs no trigger functions or non-internal triggers.
 
 ### 14. ReservationPendingPersistence
 

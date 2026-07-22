@@ -120,7 +120,7 @@ checkout-surge/
 ### `packages/db`
 
 - Drizzle ORM schema definitions and migration tooling; the package artifact includes the compiled modules plus one reviewed baseline SQL file, one journal entry, and one linked snapshot.
-- The baseline appends required PostgreSQL functions, triggers, the `pgcrypto` extension, and the constant-expression single-nonterminal-run index because those objects do not reliably round-trip through this repository's schema and generator setup.
+- The baseline appends only the `pgcrypto` extension and constant-expression single-nonterminal-run index because those objects do not reliably round-trip through this repository's schema and generator setup. Keys, foreign keys, uniqueness, and row-local checks remain declared in `schema.ts`; the current baseline has no trigger functions or non-internal triggers.
 - Owns PostgreSQL connection construction, Redis inventory/dashboard/resilience helpers, the reusable bounded business-outcome publication scheduler used by API and worker composition roots, seed/reset helpers, and the public testing entry point.
 - Shared by `apps/api`, `apps/worker`, and `apps/mock-erp` so schema migrations and durable ERP-result semantics are one source of truth.
 - `apps/load-orchestrator` deliberately does not use this package; its traffic execution journal is file-backed.

@@ -45,6 +45,13 @@ CREATE TABLE "demo_run_finalizations" (
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
+CREATE TABLE "demo_run_sale_contexts" (
+	"run_id" uuid PRIMARY KEY NOT NULL,
+	"sale_offer_id" uuid NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
 CREATE TABLE "demo_run_sold_out_counts" (
 	"run_id" uuid PRIMARY KEY NOT NULL,
 	"count" integer DEFAULT 0 NOT NULL,
@@ -52,13 +59,6 @@ CREATE TABLE "demo_run_sold_out_counts" (
 	"captured_at" timestamp with time zone NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "demo_run_sold_out_counts_count_nonnegative" CHECK ("demo_run_sold_out_counts"."count" >= 0)
-);
---> statement-breakpoint
-CREATE TABLE "demo_run_sale_contexts" (
-	"run_id" uuid PRIMARY KEY NOT NULL,
-	"sale_offer_id" uuid NOT NULL,
-	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
 CREATE TABLE "demo_run_summaries" (
@@ -294,39 +294,42 @@ CREATE TABLE "simulated_notifications" (
 );
 --> statement-breakpoint
 CREATE UNIQUE INDEX "demo_runs_id_sale_offer_id_unique" ON "demo_runs" USING btree ("id","sale_offer_id");--> statement-breakpoint
+CREATE UNIQUE INDEX "demo_run_sale_contexts_run_sale_offer_unique" ON "demo_run_sale_contexts" USING btree ("run_id","sale_offer_id");--> statement-breakpoint
+CREATE UNIQUE INDEX "orders_erp_attribution_identity_unique" ON "orders" USING btree ("id","correlation_id");--> statement-breakpoint
+CREATE UNIQUE INDEX "orders_notification_attribution_identity_unique" ON "orders" USING btree ("id","sale_offer_id","correlation_id");--> statement-breakpoint
+CREATE UNIQUE INDEX "reservations_backing_order_identity_unique" ON "reservations" USING btree ("id","sale_offer_id","correlation_id","quantity");--> statement-breakpoint
 ALTER TABLE "demo_run_finalizations" ADD CONSTRAINT "demo_run_finalizations_run_id_demo_runs_id_fk" FOREIGN KEY ("run_id") REFERENCES "public"."demo_runs"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "demo_run_sold_out_counts" ADD CONSTRAINT "demo_run_sold_out_counts_run_id_demo_runs_id_fk" FOREIGN KEY ("run_id") REFERENCES "public"."demo_runs"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "demo_run_sale_contexts" ADD CONSTRAINT "demo_run_sale_contexts_run_id_demo_runs_id_fk" FOREIGN KEY ("run_id") REFERENCES "public"."demo_runs"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "demo_run_sale_contexts" ADD CONSTRAINT "demo_run_sale_contexts_sale_offer_id_sale_offers_id_fk" FOREIGN KEY ("sale_offer_id") REFERENCES "public"."sale_offers"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "demo_run_sale_contexts" ADD CONSTRAINT "demo_run_sale_contexts_run_sale_offer_demo_runs_fk" FOREIGN KEY ("run_id","sale_offer_id") REFERENCES "public"."demo_runs"("id","sale_offer_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "demo_run_sold_out_counts" ADD CONSTRAINT "demo_run_sold_out_counts_run_id_demo_runs_id_fk" FOREIGN KEY ("run_id") REFERENCES "public"."demo_runs"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "demo_run_summaries" ADD CONSTRAINT "demo_run_summaries_run_id_demo_runs_id_fk" FOREIGN KEY ("run_id") REFERENCES "public"."demo_runs"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "demo_runs" ADD CONSTRAINT "demo_runs_preset_id_demo_presets_id_fk" FOREIGN KEY ("preset_id") REFERENCES "public"."demo_presets"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "demo_runs" ADD CONSTRAINT "demo_runs_sale_offer_id_sale_offers_id_fk" FOREIGN KEY ("sale_offer_id") REFERENCES "public"."sale_offers"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "erp_attempts" ADD CONSTRAINT "erp_attempts_order_id_orders_id_fk" FOREIGN KEY ("order_id") REFERENCES "public"."orders"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "erp_attempts" ADD CONSTRAINT "erp_attempts_run_id_demo_runs_id_fk" FOREIGN KEY ("run_id") REFERENCES "public"."demo_runs"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "erp_attempts" ADD CONSTRAINT "erp_attempts_order_correlation_fk" FOREIGN KEY ("order_id","correlation_id") REFERENCES "public"."orders"("id","correlation_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "order_events" ADD CONSTRAINT "order_events_order_id_orders_id_fk" FOREIGN KEY ("order_id") REFERENCES "public"."orders"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "order_events" ADD CONSTRAINT "order_events_reservation_id_reservations_id_fk" FOREIGN KEY ("reservation_id") REFERENCES "public"."reservations"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "order_events" ADD CONSTRAINT "order_events_sale_offer_id_sale_offers_id_fk" FOREIGN KEY ("sale_offer_id") REFERENCES "public"."sale_offers"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "order_events" ADD CONSTRAINT "order_events_run_id_demo_runs_id_fk" FOREIGN KEY ("run_id") REFERENCES "public"."demo_runs"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "order_events" ADD CONSTRAINT "order_events_run_sale_context_fk" FOREIGN KEY ("run_id","sale_offer_id") REFERENCES "public"."demo_run_sale_contexts"("run_id","sale_offer_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "order_recovery_jobs" ADD CONSTRAINT "order_recovery_jobs_order_id_orders_id_fk" FOREIGN KEY ("order_id") REFERENCES "public"."orders"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "orders" ADD CONSTRAINT "orders_sale_offer_id_sale_offers_id_fk" FOREIGN KEY ("sale_offer_id") REFERENCES "public"."sale_offers"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "orders" ADD CONSTRAINT "orders_reservation_id_reservations_id_fk" FOREIGN KEY ("reservation_id") REFERENCES "public"."reservations"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "orders" ADD CONSTRAINT "orders_run_id_demo_runs_id_fk" FOREIGN KEY ("run_id") REFERENCES "public"."demo_runs"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "orders" ADD CONSTRAINT "orders_backing_reservation_fk" FOREIGN KEY ("reservation_id","sale_offer_id","correlation_id","quantity") REFERENCES "public"."reservations"("id","sale_offer_id","correlation_id","quantity") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "orders" ADD CONSTRAINT "orders_run_sale_context_fk" FOREIGN KEY ("run_id","sale_offer_id") REFERENCES "public"."demo_run_sale_contexts"("run_id","sale_offer_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "reservation_pending_persistence" ADD CONSTRAINT "reservation_pending_persistence_sale_offer_id_sale_offers_id_fk" FOREIGN KEY ("sale_offer_id") REFERENCES "public"."sale_offers"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "reservation_pending_persistence" ADD CONSTRAINT "reservation_pending_persistence_run_id_demo_runs_id_fk" FOREIGN KEY ("run_id") REFERENCES "public"."demo_runs"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "reservation_pending_persistence" ADD CONSTRAINT "reservation_pending_persistence_run_sale_context_fk" FOREIGN KEY ("run_id","sale_offer_id") REFERENCES "public"."demo_run_sale_contexts"("run_id","sale_offer_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "reservations" ADD CONSTRAINT "reservations_sale_offer_id_sale_offers_id_fk" FOREIGN KEY ("sale_offer_id") REFERENCES "public"."sale_offers"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "reservations" ADD CONSTRAINT "reservations_run_id_demo_runs_id_fk" FOREIGN KEY ("run_id") REFERENCES "public"."demo_runs"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "reservations" ADD CONSTRAINT "reservations_run_sale_context_fk" FOREIGN KEY ("run_id","sale_offer_id") REFERENCES "public"."demo_run_sale_contexts"("run_id","sale_offer_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "sale_offers" ADD CONSTRAINT "sale_offers_product_id_products_id_fk" FOREIGN KEY ("product_id") REFERENCES "public"."products"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "simulated_notifications" ADD CONSTRAINT "simulated_notifications_order_id_orders_id_fk" FOREIGN KEY ("order_id") REFERENCES "public"."orders"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "simulated_notifications" ADD CONSTRAINT "simulated_notifications_sale_offer_id_sale_offers_id_fk" FOREIGN KEY ("sale_offer_id") REFERENCES "public"."sale_offers"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "simulated_notifications" ADD CONSTRAINT "simulated_notifications_run_id_demo_runs_id_fk" FOREIGN KEY ("run_id") REFERENCES "public"."demo_runs"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "simulated_notifications" ADD CONSTRAINT "simulated_notifications_order_attribution_fk" FOREIGN KEY ("order_id","sale_offer_id","correlation_id") REFERENCES "public"."orders"("id","sale_offer_id","correlation_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "simulated_notifications" ADD CONSTRAINT "simulated_notifications_run_sale_context_fk" FOREIGN KEY ("run_id","sale_offer_id") REFERENCES "public"."demo_run_sale_contexts"("run_id","sale_offer_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 CREATE UNIQUE INDEX "demo_presets_slug_unique" ON "demo_presets" USING btree ("slug");--> statement-breakpoint
 CREATE INDEX "demo_presets_visibility_idx" ON "demo_presets" USING btree ("visibility");--> statement-breakpoint
 CREATE INDEX "demo_presets_archived_at_idx" ON "demo_presets" USING btree ("archived_at");--> statement-breakpoint
 CREATE UNIQUE INDEX "demo_run_finalizations_run_id_unique" ON "demo_run_finalizations" USING btree ("run_id");--> statement-breakpoint
 CREATE INDEX "demo_run_finalizations_run_id_idx" ON "demo_run_finalizations" USING btree ("run_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "demo_run_sale_contexts_sale_offer_id_unique" ON "demo_run_sale_contexts" USING btree ("sale_offer_id");--> statement-breakpoint
-CREATE UNIQUE INDEX "demo_run_sale_contexts_run_sale_offer_unique" ON "demo_run_sale_contexts" USING btree ("run_id","sale_offer_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "demo_run_summaries_run_id_unique" ON "demo_run_summaries" USING btree ("run_id");--> statement-breakpoint
 CREATE INDEX "demo_run_summaries_captured_at_idx" ON "demo_run_summaries" USING btree ("captured_at");--> statement-breakpoint
 CREATE INDEX "demo_run_teardown_receipts_sale_offer_id_idx" ON "demo_run_teardown_receipts" USING btree ("sale_offer_id");--> statement-breakpoint
@@ -380,308 +383,8 @@ CREATE INDEX "simulated_notifications_sale_offer_id_idx" ON "simulated_notificat
 CREATE INDEX "simulated_notifications_run_id_idx" ON "simulated_notifications" USING btree ("run_id");--> statement-breakpoint
 CREATE INDEX "simulated_notifications_run_id_recorded_at_created_at_idx" ON "simulated_notifications" USING btree ("run_id","recorded_at" DESC NULLS LAST,"created_at" DESC NULLS LAST);
 --> statement-breakpoint
--- Drizzle snapshots do not represent this constant-expression partial index.
--- It is the cross-writer invariant admitting at most one non-terminal run.
+-- A constant-expression partial unique index is the simplest durable guard
+-- against concurrent direct writers creating more than one nonterminal run.
 CREATE UNIQUE INDEX "demo_runs_single_non_terminal_idx"
-  ON "demo_runs" ((status IN ('starting', 'active', 'draining')))
-  WHERE status IN ('starting', 'active', 'draining');
---> statement-breakpoint
--- The functions and triggers below are required final-state objects that are
--- also invisible to Drizzle snapshots.
-CREATE FUNCTION "enforce_order_backing_reservation"()
-RETURNS trigger AS $$
-DECLARE
-  backing_reservation "reservations"%ROWTYPE;
-BEGIN
-  SELECT *
-  INTO backing_reservation
-  FROM "reservations"
-  WHERE "id" = NEW."reservation_id"
-  FOR UPDATE;
-
-  IF NOT FOUND THEN
-    RAISE EXCEPTION 'orders.reservation_id % must reference an existing reservation', NEW."reservation_id"
-      USING ERRCODE = '23514';
-  END IF;
-
-  IF backing_reservation."sale_offer_id" IS DISTINCT FROM NEW."sale_offer_id"
-    OR backing_reservation."run_id" IS DISTINCT FROM NEW."run_id"
-    OR backing_reservation."correlation_id" IS DISTINCT FROM NEW."correlation_id"
-    OR backing_reservation."quantity" IS DISTINCT FROM NEW."quantity" THEN
-    RAISE EXCEPTION 'order % must match reservation %', NEW."id", NEW."reservation_id"
-      USING ERRCODE = '23514';
-  END IF;
-
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
---> statement-breakpoint
-CREATE TRIGGER "orders_enforce_backing_reservation"
-BEFORE INSERT OR UPDATE ON "orders"
-FOR EACH ROW EXECUTE FUNCTION "enforce_order_backing_reservation"();
---> statement-breakpoint
-CREATE FUNCTION "preserve_order_backing_reservation"()
-RETURNS trigger AS $$
-BEGIN
-  IF EXISTS (
-    SELECT 1
-    FROM "orders" AS existing_order
-    WHERE existing_order."reservation_id" = NEW."id"
-      AND (
-        existing_order."sale_offer_id" IS DISTINCT FROM NEW."sale_offer_id"
-        OR existing_order."run_id" IS DISTINCT FROM NEW."run_id"
-        OR existing_order."correlation_id" IS DISTINCT FROM NEW."correlation_id"
-        OR existing_order."quantity" IS DISTINCT FROM NEW."quantity"
-      )
-  ) THEN
-    RAISE EXCEPTION 'reservation % cannot be changed because an order depends on its attribution', NEW."id"
-      USING ERRCODE = '23514';
-  END IF;
-
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
---> statement-breakpoint
-CREATE TRIGGER "reservations_preserve_order_backing_reservation"
-BEFORE UPDATE OF "sale_offer_id", "run_id", "correlation_id", "quantity" ON "reservations"
-FOR EACH ROW EXECUTE FUNCTION "preserve_order_backing_reservation"();
---> statement-breakpoint
-CREATE FUNCTION "enforce_erp_attempt_order_attribution"()
-RETURNS trigger AS $$
-DECLARE
-  parent_order "orders"%ROWTYPE;
-BEGIN
-  SELECT * INTO parent_order FROM "orders" WHERE "id" = NEW."order_id" FOR UPDATE;
-
-  IF NOT FOUND
-    OR NEW."run_id" IS DISTINCT FROM parent_order."run_id"
-    OR NEW."correlation_id" IS DISTINCT FROM parent_order."correlation_id" THEN
-    RAISE EXCEPTION 'ERP attempt % must match order % attribution', NEW."id", NEW."order_id"
-      USING ERRCODE = '23514', CONSTRAINT = 'erp_attempts_order_attribution_agreement';
-  END IF;
-
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
---> statement-breakpoint
-CREATE TRIGGER "erp_attempts_enforce_order_attribution"
-BEFORE INSERT OR UPDATE OF "order_id", "run_id", "correlation_id" ON "erp_attempts"
-FOR EACH ROW EXECUTE FUNCTION "enforce_erp_attempt_order_attribution"();
---> statement-breakpoint
-CREATE FUNCTION "enforce_order_event_parent_attribution"()
-RETURNS trigger AS $$
-DECLARE
-  parent_order "orders"%ROWTYPE;
-  parent_reservation "reservations"%ROWTYPE;
-BEGIN
-  IF NEW."order_id" IS NOT NULL THEN
-    SELECT * INTO parent_order FROM "orders" WHERE "id" = NEW."order_id" FOR UPDATE;
-
-    IF NOT FOUND
-      OR NEW."reservation_id" IS DISTINCT FROM parent_order."reservation_id"
-      OR NEW."sale_offer_id" IS DISTINCT FROM parent_order."sale_offer_id"
-      OR NEW."run_id" IS DISTINCT FROM parent_order."run_id"
-      OR NEW."correlation_id" IS DISTINCT FROM parent_order."correlation_id" THEN
-      RAISE EXCEPTION 'order event % must match order % attribution', NEW."id", NEW."order_id"
-        USING ERRCODE = '23514', CONSTRAINT = 'order_events_order_attribution_agreement';
-    END IF;
-  ELSIF NEW."reservation_id" IS NOT NULL THEN
-    SELECT * INTO parent_reservation FROM "reservations" WHERE "id" = NEW."reservation_id" FOR UPDATE;
-
-    IF NOT FOUND
-      OR NEW."sale_offer_id" IS DISTINCT FROM parent_reservation."sale_offer_id"
-      OR NEW."run_id" IS DISTINCT FROM parent_reservation."run_id"
-      OR NEW."correlation_id" IS DISTINCT FROM parent_reservation."correlation_id" THEN
-      RAISE EXCEPTION 'order event % must match reservation % attribution', NEW."id", NEW."reservation_id"
-        USING ERRCODE = '23514', CONSTRAINT = 'order_events_reservation_attribution_agreement';
-    END IF;
-  END IF;
-
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
---> statement-breakpoint
-CREATE TRIGGER "order_events_enforce_parent_attribution"
-BEFORE INSERT OR UPDATE OF "order_id", "reservation_id", "sale_offer_id", "run_id", "correlation_id" ON "order_events"
-FOR EACH ROW EXECUTE FUNCTION "enforce_order_event_parent_attribution"();
---> statement-breakpoint
-CREATE FUNCTION "preserve_order_child_attribution"()
-RETURNS trigger AS $$
-BEGIN
-  IF EXISTS (
-    SELECT 1 FROM "erp_attempts" AS attempt
-    WHERE attempt."order_id" = NEW."id"
-      AND (attempt."run_id" IS DISTINCT FROM NEW."run_id"
-        OR attempt."correlation_id" IS DISTINCT FROM NEW."correlation_id")
-  ) OR EXISTS (
-    SELECT 1 FROM "order_events" AS event
-    WHERE event."order_id" = NEW."id"
-      AND (event."reservation_id" IS DISTINCT FROM NEW."reservation_id"
-        OR event."sale_offer_id" IS DISTINCT FROM NEW."sale_offer_id"
-        OR event."run_id" IS DISTINCT FROM NEW."run_id"
-        OR event."correlation_id" IS DISTINCT FROM NEW."correlation_id")
-  ) THEN
-    RAISE EXCEPTION 'order % attribution cannot invalidate existing ERP attempts or events', NEW."id"
-      USING ERRCODE = '23514', CONSTRAINT = 'orders_child_attribution_preservation';
-  END IF;
-
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
---> statement-breakpoint
-CREATE TRIGGER "orders_preserve_child_attribution"
-BEFORE UPDATE OF "reservation_id", "sale_offer_id", "run_id", "correlation_id" ON "orders"
-FOR EACH ROW EXECUTE FUNCTION "preserve_order_child_attribution"();
---> statement-breakpoint
-CREATE FUNCTION "preserve_reservation_only_event_attribution"()
-RETURNS trigger AS $$
-BEGIN
-  IF EXISTS (
-    SELECT 1 FROM "order_events" AS event
-    WHERE event."order_id" IS NULL
-      AND event."reservation_id" = NEW."id"
-      AND (event."sale_offer_id" IS DISTINCT FROM NEW."sale_offer_id"
-        OR event."run_id" IS DISTINCT FROM NEW."run_id"
-        OR event."correlation_id" IS DISTINCT FROM NEW."correlation_id")
-  ) THEN
-    RAISE EXCEPTION 'reservation % attribution cannot invalidate existing reservation-only events', NEW."id"
-      USING ERRCODE = '23514', CONSTRAINT = 'reservations_event_attribution_preservation';
-  END IF;
-
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
---> statement-breakpoint
-CREATE TRIGGER "reservations_preserve_event_attribution"
-BEFORE UPDATE OF "sale_offer_id", "run_id", "correlation_id" ON "reservations"
-FOR EACH ROW EXECUTE FUNCTION "preserve_reservation_only_event_attribution"();
---> statement-breakpoint
-CREATE FUNCTION "set_updated_at"()
-RETURNS trigger AS $$
-BEGIN
-  NEW."updated_at" = now();
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
---> statement-breakpoint
-CREATE TRIGGER "products_set_updated_at"
-BEFORE UPDATE ON "products"
-FOR EACH ROW EXECUTE FUNCTION "set_updated_at"();
---> statement-breakpoint
-CREATE TRIGGER "sale_offers_set_updated_at"
-BEFORE UPDATE ON "sale_offers"
-FOR EACH ROW EXECUTE FUNCTION "set_updated_at"();
---> statement-breakpoint
-CREATE TRIGGER "demo_presets_set_updated_at"
-BEFORE UPDATE ON "demo_presets"
-FOR EACH ROW EXECUTE FUNCTION "set_updated_at"();
---> statement-breakpoint
-CREATE TRIGGER "demo_runs_set_updated_at"
-BEFORE UPDATE ON "demo_runs"
-FOR EACH ROW EXECUTE FUNCTION "set_updated_at"();
---> statement-breakpoint
-CREATE TRIGGER "demo_run_sale_contexts_set_updated_at"
-BEFORE UPDATE ON "demo_run_sale_contexts"
-FOR EACH ROW EXECUTE FUNCTION "set_updated_at"();
---> statement-breakpoint
-CREATE TRIGGER "reservations_set_updated_at"
-BEFORE UPDATE ON "reservations"
-FOR EACH ROW EXECUTE FUNCTION "set_updated_at"();
---> statement-breakpoint
-CREATE TRIGGER "orders_set_updated_at"
-BEFORE UPDATE ON "orders"
-FOR EACH ROW EXECUTE FUNCTION "set_updated_at"();
---> statement-breakpoint
-CREATE TRIGGER "reservation_pending_persistence_set_updated_at"
-BEFORE UPDATE ON "reservation_pending_persistence"
-FOR EACH ROW EXECUTE FUNCTION "set_updated_at"();
---> statement-breakpoint
-CREATE TRIGGER "demo_run_finalizations_set_updated_at"
-BEFORE UPDATE ON "demo_run_finalizations"
-FOR EACH ROW EXECUTE FUNCTION "set_updated_at"();
---> statement-breakpoint
-CREATE TRIGGER "public_runtime_policies_set_updated_at"
-BEFORE UPDATE ON "public_runtime_policies"
-FOR EACH ROW EXECUTE FUNCTION "set_updated_at"();
---> statement-breakpoint
-CREATE FUNCTION "enforce_demo_run_sale_context_offer_purpose"()
-RETURNS trigger AS $$
-DECLARE
-  offer_purpose "sale_offer_purpose";
-BEGIN
-  SELECT "purpose"
-  INTO offer_purpose
-  FROM "sale_offers"
-  WHERE "id" = NEW."sale_offer_id";
-
-  IF offer_purpose IS DISTINCT FROM 'generated_run'::"sale_offer_purpose" THEN
-    RAISE EXCEPTION 'demo_run_sale_contexts.sale_offer_id % must reference a generated_run sale offer', NEW."sale_offer_id"
-      USING ERRCODE = '23514';
-  END IF;
-
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
---> statement-breakpoint
-CREATE TRIGGER "demo_run_sale_contexts_enforce_offer_purpose"
-BEFORE INSERT OR UPDATE OF "sale_offer_id" ON "demo_run_sale_contexts"
-FOR EACH ROW EXECUTE FUNCTION "enforce_demo_run_sale_context_offer_purpose"();
---> statement-breakpoint
-CREATE FUNCTION "enforce_run_owned_sale_offer_attribution"()
-RETURNS trigger AS $$
-DECLARE
-  offer_purpose "sale_offer_purpose";
-  owner_run_id uuid;
-BEGIN
-  SELECT "purpose"
-  INTO offer_purpose
-  FROM "sale_offers"
-  WHERE "id" = NEW."sale_offer_id";
-
-  IF offer_purpose IS NULL THEN
-    RETURN NEW;
-  END IF;
-
-  IF offer_purpose = 'generated_run'::"sale_offer_purpose" THEN
-    SELECT "run_id"
-    INTO owner_run_id
-    FROM "demo_run_sale_contexts"
-    WHERE "sale_offer_id" = NEW."sale_offer_id";
-
-    IF owner_run_id IS NULL THEN
-      RAISE EXCEPTION 'generated_run sale offer % has no demo_run_sale_context', NEW."sale_offer_id"
-        USING ERRCODE = '23514';
-    END IF;
-
-    IF NEW."run_id" IS NULL OR NEW."run_id" <> owner_run_id THEN
-      RAISE EXCEPTION 'run-attributed row must use owning run %, got % for sale offer %', owner_run_id, NEW."run_id", NEW."sale_offer_id"
-        USING ERRCODE = '23514';
-    END IF;
-  ELSIF NEW."run_id" IS NOT NULL THEN
-    RAISE EXCEPTION 'run-attributed rows must reference generated_run sale offers, got catalog sale offer %', NEW."sale_offer_id"
-      USING ERRCODE = '23514';
-  END IF;
-
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
---> statement-breakpoint
-CREATE TRIGGER "reservations_enforce_run_owned_sale_offer_attribution"
-BEFORE INSERT OR UPDATE OF "sale_offer_id", "run_id" ON "reservations"
-FOR EACH ROW EXECUTE FUNCTION "enforce_run_owned_sale_offer_attribution"();
---> statement-breakpoint
-CREATE TRIGGER "orders_enforce_run_owned_sale_offer_attribution"
-BEFORE INSERT OR UPDATE OF "sale_offer_id", "run_id" ON "orders"
-FOR EACH ROW EXECUTE FUNCTION "enforce_run_owned_sale_offer_attribution"();
---> statement-breakpoint
-CREATE TRIGGER "rpp_enforce_run_sale_attribution"
-BEFORE INSERT OR UPDATE OF "sale_offer_id", "run_id" ON "reservation_pending_persistence"
-FOR EACH ROW EXECUTE FUNCTION "enforce_run_owned_sale_offer_attribution"();
---> statement-breakpoint
-CREATE TRIGGER "order_events_enforce_run_owned_sale_offer_attribution"
-BEFORE INSERT OR UPDATE OF "sale_offer_id", "run_id" ON "order_events"
-FOR EACH ROW EXECUTE FUNCTION "enforce_run_owned_sale_offer_attribution"();
---> statement-breakpoint
-CREATE TRIGGER "sim_notifications_enforce_run_sale_attribution"
-BEFORE INSERT OR UPDATE OF "sale_offer_id", "run_id" ON "simulated_notifications"
-FOR EACH ROW EXECUTE FUNCTION "enforce_run_owned_sale_offer_attribution"();
+ON "demo_runs" ((true))
+WHERE "status" IN ('starting', 'active', 'draining');

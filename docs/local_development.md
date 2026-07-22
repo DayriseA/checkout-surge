@@ -372,7 +372,7 @@ To verify the reviewed baseline against disposable infrastructure:
 pnpm test:db:migrate
 ```
 
-The checked-in `packages/db/drizzle` directory is part of the database package artifact and is resolved relative to that package in both TypeScript and compiled execution. It contains exactly one baseline SQL file, one journal entry, and one linked snapshot. Drizzle snapshots describe only `schema.ts`; the baseline SQL must also retain the reviewed `pgcrypto` extension, single-nonterminal-run expression index, and current hand-authored functions/triggers.
+The checked-in `packages/db/drizzle` directory is part of the database package artifact and is resolved relative to that package in both TypeScript and compiled execution. It contains exactly one baseline SQL file, one journal entry, and one linked snapshot. Drizzle snapshots describe the declarative schema in `schema.ts`; the baseline SQL must also retain only the reviewed `pgcrypto` extension and single-nonterminal-run expression index. The current baseline has no trigger functions or non-internal triggers.
 
 Before release stability is promised, amend this baseline in place for schema changes: generate a fresh declarative baseline from the current `schema.ts` into a temporary directory, review it as an empty-database final state, replace the checked-in SQL/snapshot/journal together, restore and review the required snapshot-invisible custom SQL, then run the DB unit, migration, integration, and type-check commands. Do not add a compatibility migration or old-row backfill. Existing local runtime data must first follow the selected-project wipe-and-rebuild workflow above.
 

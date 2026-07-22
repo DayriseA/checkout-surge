@@ -40,9 +40,9 @@ import {
 } from "@checkout-surge/contracts";
 import { relations, sql } from "drizzle-orm";
 
-// Drizzle snapshots cannot represent the required PostgreSQL functions,
-// triggers, extension, or expression index appended to the reviewed baseline.
-// Preserve that custom SQL when amending the pre-release baseline.
+// Drizzle snapshots cannot represent the pgcrypto extension or the expression
+// index appended to the reviewed baseline. Preserve that small custom SQL
+// section when amending the pre-release baseline.
 import {
   boolean,
   check,
@@ -259,7 +259,7 @@ export const reservations = pgTable(
       .notNull()
       .references(() => saleOffers.id, { onDelete: "restrict" }),
     correlationId: text("correlation_id").notNull(),
-    runId: uuid("run_id").references(() => demoRuns.id, { onDelete: "restrict" }),
+    runId: uuid("run_id"),
     quantity: integer("quantity").default(1).notNull(),
     reservationToken: text("reservation_token").notNull(),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
@@ -269,7 +269,18 @@ export const reservations = pgTable(
   },
   (table) => [
     uniqueIndex("reservations_reservation_token_unique").on(table.reservationToken),
+    uniqueIndex("reservations_backing_order_identity_unique").on(
+      table.id,
+      table.saleOfferId,
+      table.correlationId,
+      table.quantity,
+    ),
     check("reservations_quantity_positive", sql`${table.quantity} > 0`),
+    foreignKey({
+      name: "reservations_run_sale_context_fk",
+      columns: [table.runId, table.saleOfferId],
+      foreignColumns: [demoRunSaleContexts.runId, demoRunSaleContexts.saleOfferId],
+    }).onDelete("restrict"),
     index("reservations_sale_offer_id_idx").on(table.saleOfferId),
     index("reservations_run_id_idx").on(table.runId),
     index("reservations_correlation_id_idx").on(table.correlationId),
@@ -284,11 +295,9 @@ export const orders = pgTable(
     saleOfferId: uuid("sale_offer_id")
       .notNull()
       .references(() => saleOffers.id, { onDelete: "restrict" }),
-    reservationId: uuid("reservation_id")
-      .notNull()
-      .references(() => reservations.id, { onDelete: "restrict" }),
+    reservationId: uuid("reservation_id").notNull(),
     correlationId: text("correlation_id").notNull(),
-    runId: uuid("run_id").references(() => demoRuns.id, { onDelete: "restrict" }),
+    runId: uuid("run_id"),
     quantity: integer("quantity").default(1).notNull(),
     status: orderStatusEnum("status").default("queued").notNull(),
     failureCode: text("failure_code"),
@@ -303,6 +312,12 @@ export const orders = pgTable(
   (table) => [
     uniqueIndex("orders_public_order_id_unique").on(table.publicOrderId),
     uniqueIndex("orders_reservation_id_unique").on(table.reservationId),
+    uniqueIndex("orders_erp_attribution_identity_unique").on(table.id, table.correlationId),
+    uniqueIndex("orders_notification_attribution_identity_unique").on(
+      table.id,
+      table.saleOfferId,
+      table.correlationId,
+    ),
     check("orders_quantity_positive", sql`${table.quantity} > 0`),
     check(
       "orders_confirmed_requires_confirmed_at",
@@ -320,6 +335,21 @@ export const orders = pgTable(
       "orders_terminal_timestamps_after_queued_at",
       sql`(${table.confirmedAt} IS NULL OR ${table.confirmedAt} >= ${table.queuedAt}) AND (${table.failedAt} IS NULL OR ${table.failedAt} >= ${table.queuedAt})`,
     ),
+    foreignKey({
+      name: "orders_backing_reservation_fk",
+      columns: [table.reservationId, table.saleOfferId, table.correlationId, table.quantity],
+      foreignColumns: [
+        reservations.id,
+        reservations.saleOfferId,
+        reservations.correlationId,
+        reservations.quantity,
+      ],
+    }).onDelete("restrict"),
+    foreignKey({
+      name: "orders_run_sale_context_fk",
+      columns: [table.runId, table.saleOfferId],
+      foreignColumns: [demoRunSaleContexts.runId, demoRunSaleContexts.saleOfferId],
+    }).onDelete("restrict"),
     index("orders_sale_offer_id_idx").on(table.saleOfferId),
     index("orders_run_id_idx").on(table.runId),
     index("orders_run_id_queued_at_created_at_idx").on(
@@ -336,9 +366,7 @@ export const erpAttempts = pgTable(
   "erp_attempts",
   {
     id: uuid("id").defaultRandom().primaryKey(),
-    orderId: uuid("order_id")
-      .notNull()
-      .references(() => orders.id, { onDelete: "cascade" }),
+    orderId: uuid("order_id").notNull(),
     deliveryId: text("delivery_id").notNull(),
     correlationId: text("correlation_id").notNull(),
     runId: uuid("run_id").references(() => demoRuns.id, { onDelete: "restrict" }),
@@ -370,6 +398,11 @@ export const erpAttempts = pgTable(
       sql`${table.httpStatus} IS NULL OR (${table.httpStatus} >= 100 AND ${table.httpStatus} <= 599)`,
     ),
     check("erp_attempts_finished_after_started", sql`${table.finishedAt} >= ${table.startedAt}`),
+    foreignKey({
+      name: "erp_attempts_order_correlation_fk",
+      columns: [table.orderId, table.correlationId],
+      foreignColumns: [orders.id, orders.correlationId],
+    }).onDelete("cascade"),
     index("erp_attempts_order_id_idx").on(table.orderId),
     index("erp_attempts_run_id_idx").on(table.runId),
     index("erp_attempts_run_id_finished_at_created_at_idx").on(
@@ -469,7 +502,7 @@ export const orderEvents = pgTable(
       .notNull()
       .references(() => saleOffers.id, { onDelete: "restrict" }),
     correlationId: text("correlation_id").notNull(),
-    runId: uuid("run_id").references(() => demoRuns.id, { onDelete: "restrict" }),
+    runId: uuid("run_id"),
     eventName: orderEventNameEnum("event_name").notNull(),
     payload: jsonb("payload").$type<JsonRecord>().default(sql`'{}'::jsonb`).notNull(),
     source: text("source").notNull(),
@@ -488,6 +521,11 @@ export const orderEvents = pgTable(
     ),
     index("order_events_event_name_idx").on(table.eventName),
     index("order_events_occurred_at_idx").on(table.occurredAt),
+    foreignKey({
+      name: "order_events_run_sale_context_fk",
+      columns: [table.runId, table.saleOfferId],
+      foreignColumns: [demoRunSaleContexts.runId, demoRunSaleContexts.saleOfferId],
+    }).onDelete("restrict"),
   ],
 );
 
@@ -500,7 +538,7 @@ export const reservationPendingPersistence = pgTable(
       .notNull()
       .references(() => saleOffers.id, { onDelete: "restrict" }),
     correlationId: text("correlation_id").notNull(),
-    runId: uuid("run_id").references(() => demoRuns.id, { onDelete: "restrict" }),
+    runId: uuid("run_id"),
     idempotencyKey: text("idempotency_key").notNull(),
     quantity: integer("quantity").default(1).notNull(),
     reservationToken: text("reservation_token").notNull(),
@@ -519,6 +557,11 @@ export const reservationPendingPersistence = pgTable(
       table.idempotencyKey,
     ),
     check("reservation_pending_persistence_quantity_positive", sql`${table.quantity} > 0`),
+    foreignKey({
+      name: "reservation_pending_persistence_run_sale_context_fk",
+      columns: [table.runId, table.saleOfferId],
+      foreignColumns: [demoRunSaleContexts.runId, demoRunSaleContexts.saleOfferId],
+    }).onDelete("restrict"),
     index("reservation_pending_persistence_sale_offer_id_idx").on(table.saleOfferId),
     index("reservation_pending_persistence_run_id_idx").on(table.runId),
     index("reservation_pending_persistence_status_idx").on(table.status),
@@ -529,20 +572,28 @@ export const simulatedNotifications = pgTable(
   "simulated_notifications",
   {
     id: uuid("id").defaultRandom().primaryKey(),
-    orderId: uuid("order_id")
-      .notNull()
-      .references(() => orders.id, { onDelete: "cascade" }),
+    orderId: uuid("order_id").notNull(),
     saleOfferId: uuid("sale_offer_id")
       .notNull()
       .references(() => saleOffers.id, { onDelete: "restrict" }),
     correlationId: text("correlation_id").notNull(),
-    runId: uuid("run_id").references(() => demoRuns.id, { onDelete: "restrict" }),
+    runId: uuid("run_id"),
     recipientPlaceholder: text("recipient_placeholder").notNull(),
     recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull(),
     createdAt: createdAt(),
   },
   (table) => [
     uniqueIndex("simulated_notifications_order_id_unique").on(table.orderId),
+    foreignKey({
+      name: "simulated_notifications_order_attribution_fk",
+      columns: [table.orderId, table.saleOfferId, table.correlationId],
+      foreignColumns: [orders.id, orders.saleOfferId, orders.correlationId],
+    }).onDelete("cascade"),
+    foreignKey({
+      name: "simulated_notifications_run_sale_context_fk",
+      columns: [table.runId, table.saleOfferId],
+      foreignColumns: [demoRunSaleContexts.runId, demoRunSaleContexts.saleOfferId],
+    }).onDelete("restrict"),
     index("simulated_notifications_order_id_idx").on(table.orderId),
     index("simulated_notifications_sale_offer_id_idx").on(table.saleOfferId),
     index("simulated_notifications_run_id_idx").on(table.runId),
