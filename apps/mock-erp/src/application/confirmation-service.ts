@@ -4,19 +4,6 @@ import {
   type ErpConfirmationResponse,
   erpConfirmationResponseSchema,
 } from "@checkout-surge/contracts";
-import { jsonDeepEqual } from "@checkout-surge/db";
-
-export interface ConfirmationLedger {
-  get(request: ErpConfirmationRequest): Promise<ErpConfirmationResponse | null>;
-  remember(
-    request: ErpConfirmationRequest,
-    response: ErpConfirmationResponse,
-  ): Promise<ErpConfirmationResponse>;
-  perform?(
-    request: ErpConfirmationRequest,
-    produce: () => Promise<ErpConfirmationResponse>,
-  ): Promise<ErpConfirmationResponse>;
-}
 
 export class ConfirmationIdempotencyConflictError extends Error {
   override readonly name = "ConfirmationIdempotencyConflictError";
@@ -43,7 +30,15 @@ export interface ConfirmationServiceOptions {
   decisionProvider?: ConfirmationDecisionProvider;
   generateConfirmationId?: () => string;
   now?: () => Date;
-  ledger?: ConfirmationLedger;
+}
+
+interface ConfirmationIdentity {
+  orderId: string;
+  publicOrderId: string;
+  reservationId: string;
+  saleOfferId: string;
+  runId: string | null;
+  quantity: number;
 }
 
 const successfulDecisionProvider: ConfirmationDecisionProvider = {
@@ -54,34 +49,31 @@ export class ConfirmationService {
   private readonly decisionProvider: ConfirmationDecisionProvider;
   private readonly generateConfirmationId: () => string;
   private readonly now: () => Date;
-  private readonly ledger: ConfirmationLedger;
+  private readonly ledger = new InMemoryConfirmationLedger();
   private readonly inFlight = new Map<
     string,
-    { request: ErpConfirmationRequest; promise: Promise<ErpConfirmationResponse> }
+    { identity: ConfirmationIdentity; promise: Promise<ErpConfirmationResponse> }
   >();
 
   constructor(options: ConfirmationServiceOptions = {}) {
     this.decisionProvider = options.decisionProvider ?? successfulDecisionProvider;
     this.generateConfirmationId = options.generateConfirmationId ?? randomUUID;
     this.now = options.now ?? (() => new Date());
-    this.ledger = options.ledger ?? new InMemoryConfirmationLedger();
   }
 
   async confirm(request: ErpConfirmationRequest): Promise<ErpConfirmationResponse> {
     const running = this.inFlight.get(request.idempotencyKey);
     if (running) {
-      assertFingerprint(confirmationFingerprint(running.request), request);
+      assertSameConfirmationIdentity(running.identity, request);
       return running.promise;
     }
-    const existingConfirmation = await this.ledger.get(request);
+    const existingConfirmation = this.ledger.get(request);
     if (existingConfirmation) return existingConfirmation;
-    const concurrent = this.inFlight.get(request.idempotencyKey);
-    if (concurrent) {
-      assertFingerprint(confirmationFingerprint(concurrent.request), request);
-      return concurrent.promise;
-    }
     const operation = this.confirmFirst(request);
-    this.inFlight.set(request.idempotencyKey, { request, promise: operation });
+    this.inFlight.set(request.idempotencyKey, {
+      identity: confirmationIdentity(request),
+      promise: operation,
+    });
     try {
       return await operation;
     } finally {
@@ -90,12 +82,6 @@ export class ConfirmationService {
   }
 
   private async confirmFirst(request: ErpConfirmationRequest): Promise<ErpConfirmationResponse> {
-    if (this.ledger.perform) {
-      return this.ledger.perform(request, () => this.produceConfirmation(request));
-    }
-    const existingConfirmation = await this.ledger.get(request);
-    if (existingConfirmation) return existingConfirmation;
-
     const response = await this.produceConfirmation(request);
     return response.status === "succeeded" ? this.ledger.remember(request, response) : response;
   }
@@ -129,45 +115,53 @@ export class ConfirmationService {
   }
 }
 
-export class InMemoryConfirmationLedger implements ConfirmationLedger {
+export class InMemoryConfirmationLedger {
   private readonly confirmations = new Map<
     string,
-    { fingerprint: Record<string, unknown>; response: ErpConfirmationResponse }
+    { identity: ConfirmationIdentity; response: ErpConfirmationResponse }
   >();
-  async get(request: ErpConfirmationRequest): Promise<ErpConfirmationResponse | null> {
+
+  get(request: ErpConfirmationRequest): ErpConfirmationResponse | null {
     const existing = this.confirmations.get(request.idempotencyKey);
     if (!existing) return null;
-    assertFingerprint(existing.fingerprint, request);
+    assertSameConfirmationIdentity(existing.identity, request);
     return existing.response;
   }
-  async remember(
+
+  remember(
     request: ErpConfirmationRequest,
     response: ErpConfirmationResponse,
-  ): Promise<ErpConfirmationResponse> {
+  ): ErpConfirmationResponse {
     const existing = this.confirmations.get(request.idempotencyKey);
     if (existing) {
-      assertFingerprint(existing.fingerprint, request);
+      assertSameConfirmationIdentity(existing.identity, request);
       return existing.response;
     }
     this.confirmations.set(request.idempotencyKey, {
-      fingerprint: confirmationFingerprint(request),
+      identity: confirmationIdentity(request),
       response,
     });
     return response;
   }
+}
 
-  async perform(
-    request: ErpConfirmationRequest,
-    produce: () => Promise<ErpConfirmationResponse>,
-  ): Promise<ErpConfirmationResponse> {
-    const existing = await this.get(request);
-    if (existing) return existing;
-    const response = await produce();
-    return response.status === "succeeded" ? this.remember(request, response) : response;
+function assertSameConfirmationIdentity(
+  existing: ConfirmationIdentity,
+  request: ErpConfirmationRequest,
+): void {
+  if (
+    existing.orderId !== request.orderId ||
+    existing.publicOrderId !== request.publicOrderId ||
+    existing.reservationId !== request.reservationId ||
+    existing.saleOfferId !== request.saleOfferId ||
+    (existing.runId ?? null) !== (request.runId ?? null) ||
+    existing.quantity !== request.quantity
+  ) {
+    throw new ConfirmationIdempotencyConflictError(request.idempotencyKey);
   }
 }
 
-export function confirmationFingerprint(request: ErpConfirmationRequest): Record<string, unknown> {
+function confirmationIdentity(request: ErpConfirmationRequest): ConfirmationIdentity {
   return {
     orderId: request.orderId,
     publicOrderId: request.publicOrderId,
@@ -176,11 +170,4 @@ export function confirmationFingerprint(request: ErpConfirmationRequest): Record
     runId: request.runId ?? null,
     quantity: request.quantity,
   };
-}
-
-export function assertFingerprint(value: unknown, request: ErpConfirmationRequest): void {
-  const expected = confirmationFingerprint(request);
-  if (!jsonDeepEqual(value, expected)) {
-    throw new ConfirmationIdempotencyConflictError(request.idempotencyKey);
-  }
 }

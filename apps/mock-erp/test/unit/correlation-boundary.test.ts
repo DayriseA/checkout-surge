@@ -7,7 +7,6 @@ import { correlationIdHeaderName, createServiceLogger } from "@checkout-surge/lo
 import { describe, expect, it } from "vitest";
 import { ErpChaosConfigStore } from "../../src/application/chaos-control-service.js";
 import { ConfirmationService } from "../../src/application/confirmation-service.js";
-import { createMockErpReadiness } from "../../src/application/readiness.js";
 import { buildMockErpServer } from "../../src/server.js";
 
 const defaultChaosConfig = { latencyMs: 0, maxTps: 100, errorRate: 0, forcedOutage: false };
@@ -43,10 +42,6 @@ describe("Mock ERP correlation boundary", () => {
       chaosConfigStore: new ErpChaosConfigStore(defaultChaosConfig, testSafetyCaps),
       controlServiceToken,
       logger,
-      readiness: createMockErpReadiness({
-        ledgerProbe: { check: async () => undefined },
-        timeoutMs: 100,
-      }),
     });
     server.route({
       method: "GET",

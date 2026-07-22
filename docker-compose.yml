@@ -159,11 +159,10 @@ services:
       args:
         SERVICE_NAME: mock-erp
     environment:
-      <<: [*app-env, *data-env]
+      <<: *app-env
       CONTROL_SERVICE_TOKEN: ${CONTROL_SERVICE_TOKEN}
       PORT: 4100
       HOST: 0.0.0.0
-      MOCK_ERP_READINESS_TIMEOUT_MS: ${MOCK_ERP_READINESS_TIMEOUT_MS:-2000}
       LATENCY_MS: ${LATENCY_MS:-0}
       MAX_TPS: ${MAX_TPS:-100}
       ERROR_RATE: ${ERROR_RATE:-0}
@@ -172,9 +171,6 @@ services:
       ADMIN_MIN_MAX_TPS: ${ADMIN_MIN_MAX_TPS:-1}
       ADMIN_MAX_ERROR_RATE: ${ADMIN_MAX_ERROR_RATE:-1}
       ADMIN_ALLOW_FORCED_OUTAGE: ${ADMIN_ALLOW_FORCED_OUTAGE:-true}
-    depends_on:
-      postgres:
-        condition: service_healthy
     healthcheck:
       test:
         [

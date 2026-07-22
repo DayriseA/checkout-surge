@@ -12,7 +12,6 @@ const redisDbByPackageSuffix = new Map([
   ["worker", 2],
   ["db", 3],
   ["web", 4],
-  ["mock_erp", 5],
   ["load_orchestrator", 6],
   ["contracts", 7],
   ["logger", 8],

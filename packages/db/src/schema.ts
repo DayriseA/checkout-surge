@@ -413,26 +413,6 @@ export const erpAttempts = pgTable(
   ],
 );
 
-/** Durable first-write-wins ERP result ledger. */
-export const erpConfirmationResults = pgTable(
-  "erp_confirmation_results",
-  {
-    id: uuid("id").defaultRandom().primaryKey(),
-    idempotencyKey: text("idempotency_key").notNull(),
-    orderId: text("order_id").notNull(),
-    requestFingerprint: jsonb("request_fingerprint").$type<JsonRecord>().notNull(),
-    response: jsonb("response").$type<JsonRecord>().notNull(),
-    confirmationId: text("confirmation_id").notNull(),
-    httpStatus: integer("http_status").notNull(),
-    processedAt: timestamp("processed_at", { withTimezone: true }).notNull(),
-    createdAt: createdAt(),
-  },
-  (table) => [
-    uniqueIndex("erp_confirmation_results_idempotency_key_unique").on(table.idempotencyKey),
-    index("erp_confirmation_results_created_at_idx").on(table.createdAt),
-  ],
-);
-
 export const orderRecoveryJobs = pgTable(
   "order_recovery_jobs",
   {
@@ -890,8 +870,6 @@ export type Order = typeof orders.$inferSelect;
 export type NewOrder = typeof orders.$inferInsert;
 export type ErpAttempt = typeof erpAttempts.$inferSelect;
 export type NewErpAttempt = typeof erpAttempts.$inferInsert;
-export type ErpConfirmationResult = typeof erpConfirmationResults.$inferSelect;
-export type NewErpConfirmationResult = typeof erpConfirmationResults.$inferInsert;
 export type OrderRecoveryJob = typeof orderRecoveryJobs.$inferSelect;
 export type NewOrderRecoveryJob = typeof orderRecoveryJobs.$inferInsert;
 export type OrderDeadLetter = typeof orderDeadLetters.$inferSelect;

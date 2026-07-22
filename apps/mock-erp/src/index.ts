@@ -1,26 +1,16 @@
 import { contractsPackageName } from "@checkout-surge/contracts";
-import { createDatabaseConnection, dbPackageName } from "@checkout-surge/db";
 import { createServiceLogger, loggerPackageName } from "@checkout-surge/logger";
 import {
   ChaosConfirmationDecisionProvider,
   ErpChaosConfigStore,
 } from "./application/chaos-control-service.js";
 import { ConfirmationService } from "./application/confirmation-service.js";
-import {
-  PostgresConfirmationLedger,
-  PostgresConfirmationLedgerReadinessProbe,
-} from "./application/postgres-confirmation-ledger.js";
-import { createMockErpReadiness } from "./application/readiness.js";
 import { SlidingWindowTpsLimiter } from "./application/tps-limiter.js";
 import { loadMockErpConfig } from "./runtime/config.js";
 import { buildMockErpServer } from "./server.js";
 
 export const mockErpAppName = "mock-erp" as const;
-export const mockErpAppDependencies = [
-  contractsPackageName,
-  dbPackageName,
-  loggerPackageName,
-] as const;
+export const mockErpAppDependencies = [contractsPackageName, loggerPackageName] as const;
 
 export {
   ChaosConfirmationDecisionProvider,
@@ -32,20 +22,9 @@ export {
   type ConfirmationDecision,
   type ConfirmationDecisionProvider,
   ConfirmationIdempotencyConflictError,
-  type ConfirmationLedger,
   ConfirmationService,
   InMemoryConfirmationLedger,
 } from "./application/confirmation-service.js";
-export {
-  PostgresConfirmationLedger,
-  PostgresConfirmationLedgerReadinessProbe,
-} from "./application/postgres-confirmation-ledger.js";
-export {
-  type ConfirmationLedgerReadinessProbe,
-  confirmationLedgerReadinessCheckName,
-  createMockErpReadiness,
-  type MockErpReadiness,
-} from "./application/readiness.js";
 export {
   SlidingWindowTpsLimiter,
   type SlidingWindowTpsLimiterOptions,
@@ -57,23 +36,16 @@ export { buildMockErpServer } from "./server.js";
 export async function startMockErp(): Promise<void> {
   const config = loadMockErpConfig(process.env);
   const logger = createServiceLogger({ service: "mock-erp" });
-  const database = createDatabaseConnection(requireDatabaseUrl(process.env));
-  const confirmationLedger = new PostgresConfirmationLedger(database.db);
   const chaosConfigStore = new ErpChaosConfigStore(
     config.defaultChaosConfig,
     config.chaosSafetyCaps,
   );
   const server = buildMockErpServer({
     confirmationService: new ConfirmationService({
-      ledger: confirmationLedger,
       decisionProvider: new ChaosConfirmationDecisionProvider({
         configStore: chaosConfigStore,
         tpsLimiter: new SlidingWindowTpsLimiter(),
       }),
-    }),
-    readiness: createMockErpReadiness({
-      ledgerProbe: new PostgresConfirmationLedgerReadinessProbe(database.sql),
-      timeoutMs: config.readinessTimeoutMs,
     }),
     chaosConfigStore,
     controlServiceToken: config.controlServiceToken,
@@ -83,7 +55,7 @@ export async function startMockErp(): Promise<void> {
 
   let closePromise: Promise<void> | null = null;
   const close = (): Promise<void> => {
-    closePromise ??= server.close().finally(() => database.close());
+    closePromise ??= server.close();
     return closePromise;
   };
 
@@ -119,12 +91,6 @@ export async function startMockErp(): Promise<void> {
       logger.error({ err: cleanupError }, "Mock ERP startup cleanup failed.");
     }
   }
-}
-
-function requireDatabaseUrl(env: NodeJS.ProcessEnv): string {
-  const value = env.DATABASE_URL?.trim();
-  if (!value) throw new Error("DATABASE_URL is required.");
-  return value;
 }
 
 if (process.env.NODE_ENV !== "test" && import.meta.url === `file://${process.argv[1]}`) {

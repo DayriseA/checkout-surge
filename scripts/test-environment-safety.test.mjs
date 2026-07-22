@@ -17,7 +17,6 @@ describe("test command environment safety", () => {
       "checkout_surge_test_worker",
       "checkout_surge_test_db",
       "checkout_surge_test_web",
-      "checkout_surge_test_mock_erp",
       "checkout_surge_test_load_orchestrator",
       "checkout_surge_test_contracts",
       "checkout_surge_test_logger",

@@ -18,7 +18,7 @@ During a simulated limited-inventory surge:
 2. k6 generates direct API traffic from synthetic buyers using the run ID and generated sale offer ID.
 3. Redis atomically reserves inventory for that run-scoped limited-stock offer.
 4. The API returns a reservation response and pushes order processing to BullMQ; a worker-owned dispatch scanner repairs a committed order whose immediate enqueue was lost.
-5. The worker runtime confirms orders against the mock ERP / downstream business system with process-local run-scoped admission, retry, timeout, and circuit-breaker behavior. BullMQ keeps excess work queued or delayed and supplies the worker process-wide concurrency ceiling. Durable ERP-result and recovery records protect accepted downstream results across retries and restarts.
+5. The worker runtime confirms orders against the mock ERP / downstream business system with process-local run-scoped admission, retry, timeout, and circuit-breaker behavior. BullMQ keeps excess work queued or delayed and supplies the worker process-wide concurrency ceiling. Worker-owned durable ERP-attempt and recovery records protect accepted downstream results across retries and restarts; the mock ERP's own idempotent replay is intentionally process-local.
 6. A simulated notification record is written after successful confirmation.
 7. The live spectator view shows request rate, queue depth, inventory drain, completion outcomes, and consistency lag in real time.
 

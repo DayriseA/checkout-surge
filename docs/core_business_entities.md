@@ -18,7 +18,7 @@ The goal is to keep the limited-inventory checkout flow and its recovery boundar
 | Rejected reservation persistence | Do not create a PostgreSQL row for every immediate sold-out rejection in the current model | At surge scale, persisting every reject would create noise without improving business recovery or operator understanding. |
 | Order model | Create an order only from a successful reservation | Orders represent the asynchronous business process, not every attempted click. |
 | ERP attempt model | Store ERP calls as append-only attempt records per order | Retry behavior, latency analysis, and failure diagnosis all require attempt history, not just a final outcome. |
-| ERP result model | Store successful Mock ERP confirmations in an independent first-write-wins ledger | Repeated or concurrent delivery must replay the same accepted external result across service instances and restarts. |
+| ERP result model | Keep durable accepted-result idempotency in worker-owned `ErpAttempt` records and process-local replay in the Mock ERP | Checkout durability survives retries and restarts without turning the simulated downstream service into a second database authority. |
 | Order recovery model | Store retryable/accepted-result handoff recovery and poison-job evidence independently from the live queue | An accepted ERP result must not be lost because local persistence failed, and malformed jobs need durable audit evidence. |
 | Order event model | Keep an append-only event timeline for reservation and order facts | The operator dashboard, run recap, and post-incident debugging all benefit from a durable event history. |
 | Demo preset model | Store public and admin preset definitions as durable database rows | Presets are the public/admin control contract; operators edit accepted configurations rather than raw k6 parameters. |
@@ -44,22 +44,21 @@ The implemented core business objects are:
 4. `Reservation`
 5. `Order`
 6. `ErpAttempt`
-7. `ErpConfirmationResult`
-8. `OrderRecoveryJob`
-9. `OrderDeadLetter`
-10. `OrderEvent`
+7. `OrderRecoveryJob`
+8. `OrderDeadLetter`
+9. `OrderEvent`
 
 The implemented demo-run control and history model also includes:
 
-11. `DemoPreset`
-12. `DemoRun`
-13. `DemoRunSaleContext`
-14. `ReservationPendingPersistence`
-15. `SimulatedNotification`
-16. `DemoRunSoldOutCount`
-17. `DemoRunFinalization`
-18. `DemoRunSummary`
-19. `PublicRuntimePolicy`
+10. `DemoPreset`
+11. `DemoRun`
+12. `DemoRunSaleContext`
+13. `ReservationPendingPersistence`
+14. `SimulatedNotification`
+15. `DemoRunSoldOutCount`
+16. `DemoRunFinalization`
+17. `DemoRunSummary`
+18. `PublicRuntimePolicy`
 
 These objects intentionally separate:
 
@@ -284,36 +283,7 @@ Notes:
 - The attempt record should be durable even when the final order eventually succeeds, because the retry history is part of the portfolio story.
 - PostgreSQL requires `finishedAt >= startedAt` and uses a composite foreign key to bind `orderId` and `correlationId` to the referenced order. The worker validates the complete delivered order identity, including nullable `runId`, against the locked durable order before processing; the database does not duplicate that workflow check procedurally.
 
-### 7. ErpConfirmationResult
-
-`ErpConfirmationResult` is the Mock ERP-owned first-write-wins result ledger, independent from checkout orders.
-
-Primary responsibilities:
-
-- persist a successful response before the Mock ERP returns it;
-- replay the same response for concurrent calls and after service restart;
-- reject reuse of an idempotency key with a contradictory immutable request.
-
-Implemented fields:
-
-- `id`
-- `idempotencyKey`
-- `orderId` (the external request identity, intentionally not a foreign key to checkout orders)
-- `requestFingerprint`
-- `response`
-- `confirmationId`
-- `httpStatus`
-- `processedAt`
-- `createdAt`
-
-Notes:
-
-- The unique idempotency key is authoritative across Mock ERP processes; an in-process single-flight map is only a fast coalescing path.
-- A generated run's successful results remain replayable for the full lifetime of its orders. Targeted teardown and broad retention remove those results by external `orderId` in the same transaction as the terminal generated-run graph, before deleting the orders; unrelated run and catalog results are preserved.
-- Failed/transient decisions are not cached, so a later delivery can retry.
-- The worker-facing confirmation response is a strict status-discriminated contract. A successful response carries a non-empty `confirmationId` and HTTP status `200`, with no error metadata. A failed response carries a `4xx` or `5xx` HTTP status plus non-empty error code and message, with no confirmation ID.
-
-### 8. OrderRecoveryJob
+### 7. OrderRecoveryJob
 
 `OrderRecoveryJob` is durable worker-owned recovery state for a processing handoff that cannot safely be treated as an ordinary failed order.
 
@@ -332,7 +302,7 @@ Implemented statuses:
 
 Key fields include `recoveryKey`, recovery/source job IDs, `orderId`, validated payload, optional captured result, reason, attempt count, last error, next-attempt/claim/resolution/escalation timestamps, and creation/update timestamps.
 
-### 9. OrderDeadLetter
+### 8. OrderDeadLetter
 
 `OrderDeadLetter` is the durable audit record for a poison or structurally invalid order-processing job.
 
@@ -344,7 +314,7 @@ Primary responsibilities:
 
 This table is an audit boundary, not a separate BullMQ dead-letter queue.
 
-### 10. OrderEvent
+### 9. OrderEvent
 
 `OrderEvent` is the append-only event timeline for reservation and order facts.
 
@@ -388,7 +358,7 @@ Notes:
 - API and worker persistence services construct linked event attribution from the freshly inserted or locked durable order/reservation rather than accepting those fields from an independent writer. PostgreSQL binds every non-null run/sale pair to `DemoRunSaleContext` and retains ordinary order/reservation foreign keys.
 - Fully unlinked events remain allowed, and both nullable parent foreign keys retain `ON DELETE SET NULL` behavior. Avoiding a wider composite parent foreign key here preserves those simple history semantics without hand-authored partial-column delete machinery.
 
-### 11. DemoPreset
+### 10. DemoPreset
 
 `DemoPreset` is the durable public/admin control definition used to start demo runs.
 
@@ -423,7 +393,7 @@ Notes:
 - `isSystem` marks seeded/reserved canonical slugs so operator duplicates can be distinguished from system presets. Only operator-created (non-system), editable, non-custom, active admin presets are archivable; public presets, `public-custom`, the persisted `Custom` scratch preset, and all seeded/system admin presets are never archivable.
 - Archival is a soft delete: it sets `archivedAt` but keeps the row intact. Active preset lists and lookups exclude rows where `archivedAt` is not null, so an archived preset can no longer be saved, copied, duplicated, or started. The global unique slug index still reserves archived slugs, so they cannot be reused. `DemoRun.presetId` references (`ON DELETE RESTRICT`) remain valid because the preset row is retained, preserving historical run integrity.
 
-### 12. DemoRun
+### 11. DemoRun
 
 `DemoRun` is the durable lifecycle record for one accepted public or admin run.
 
@@ -461,7 +431,7 @@ Notes:
 - A `starting` row is a durable traffic intent. The API poller replays its exact ID and immutable snapshot against the load orchestrator's journal after ambiguous start outcomes or API restart.
 - Boundary snapshots encode the lifecycle as a strict status-discriminated union. `starting` has no traffic timestamps; `active` requires `trafficStartedAt`; `draining` requires both traffic timestamps; and `completed` additionally requires `finalizedAt` while forbidding a failure reason. A failed snapshot always requires `finalizedAt` and `failureReason`, but legally may have no traffic timestamps when startup failed, only `trafficStartedAt` when an active run was reset, or both traffic timestamps after completion evidence. Failed API finalization may retain either succeeded or failed terminal traffic status because business draining can fail after traffic itself succeeded.
 
-### 13. DemoRunSaleContext
+### 12. DemoRunSaleContext
 
 `DemoRunSaleContext` is the ownership link between a demo run and its generated sale offer.
 
@@ -492,7 +462,7 @@ Enforcement note:
 - Order-to-reservation offer/correlation/quantity identity, ERP-attempt correlation, and notification-to-order attribution also use composite foreign keys. Row-local quantity, window, lifecycle, timestamp, and terminal-summary checks remain declarative.
 - The API and worker own workflow checks that keys cannot express cleanly: generated-offer purpose at context construction, nullable job/run identity, legal order transitions, and event construction from a locked or freshly inserted parent. Worker sequencing validates an order-processing job through locked transition persistence before ERP-attempt persistence consumes it; notification persistence performs its own lock and identity validation. There is no generalized database validation framework and the baseline installs no trigger functions or non-internal triggers.
 
-### 14. ReservationPendingPersistence
+### 13. ReservationPendingPersistence
 
 `ReservationPendingPersistence` is subordinate PostgreSQL audit evidence for the Redis-to-PostgreSQL handoff. Redis per-sale pending records remain the discovery and retry-scheduling authority; this table does not drive work.
 
@@ -500,7 +470,7 @@ Logical fields are deliberately minimal: `reservationId`, `saleOfferId`, optiona
 
 The Redis hold and pending record are created atomically with the stock decision. Recovery never reapplies that decision. Request replay delegates to the same owner; startup reconciliation, completion enrichment, finalization, maintenance, routes, and workers do not scan, schedule, retry, or resolve this handoff. Exhaustion preserves the hold, remains operator-queryable in Redis and PostgreSQL, and prevents finalization from silently succeeding.
 
-### 15. SimulatedNotification
+### 14. SimulatedNotification
 
 `SimulatedNotification` is the durable record of a post-confirmation notification workflow.
 
@@ -528,7 +498,7 @@ Notes:
 - Current worker behavior records simulated notification completion after successful order confirmation.
 - A worker-owned scanner finds confirmed orders missing this record and reasserts the deterministic notification job. Terminally failed notification jobs are removed so later scanner delivery can reuse the same ID.
 
-### 16. DemoRunSoldOutCount
+### 15. DemoRunSoldOutCount
 
 `DemoRunSoldOutCount` is the durable per-run aggregate for sold-out decisions that are intentionally not persisted as individual rows.
 
@@ -552,7 +522,7 @@ Notes:
 - Redis provenance and the sold-out outcome are inherent in this specific capture path rather than repeated as single-value columns.
 - This is the durable counterpart of the architectural decision to aggregate sold-out pressure instead of writing a PostgreSQL row per immediate rejection. See `docs/redis_inventory_hot_path.md` for the Redis-side `sold-out` counter it is derived from.
 
-### 17. DemoRunFinalization
+### 16. DemoRunFinalization
 
 `DemoRunFinalization` stores the traffic-completion report and finalization inputs for a run.
 
@@ -593,7 +563,7 @@ Notes:
 - Current completion input carries raw delivery and execution-plan evidence without `trafficDeliveryStatus`; the API derives the authoritative stored status from `transportAttemptCounts`. Persisted finalization/history readers require the current canonical counts, projections, diagnostics, timing, and matching stored status. They reject old field names, incomplete current objects, and contradictory values instead of translating them. Warning and degraded delivery can still produce a completed run when business invariants pass; failed traffic fidelity uses `traffic_delivery_major_shortfall` after drainable accepted work settles.
 - Finalization treats unexpected responses as `traffic_outcome_unexpected_responses` and reconciles accepted responses against secured reservations and orders. Missing evidence times out as `accepted_response_accounting_timeout`; coherent durable counts above the k6 counter are preserved with a structured `traffic_outcome_counter_underreported` diagnostic.
 
-### 18. DemoRunSummary
+### 17. DemoRunSummary
 
 `DemoRunSummary` is the immutable historical artifact exposed through Run History.
 
@@ -630,7 +600,7 @@ Notes:
 - Run History displays traffic delivery quality from `trafficDeliverySummary.trafficDeliveryStatus` next to the terminal run status, rather than encoding warning/degraded delivery as separate demo-run lifecycle states.
 - A terminal run should have one summary-backed history record whether it ended through normal finalization, admin recovery, traffic-start failure, or initialization failure.
 
-### 19. PublicRuntimePolicy
+### 18. PublicRuntimePolicy
 
 `PublicRuntimePolicy` is the API-owned singleton policy that bounds public demo starts and public custom-run configuration.
 
@@ -671,7 +641,6 @@ The implemented domain relationships are:
 - One successful `Reservation` creates one `Order`.
 - One `Order` has many `ErpAttempt` records.
 - One `Order` may have durable `OrderRecoveryJob` records; recovery keys make logical recovery evidence idempotent.
-- `ErpConfirmationResult` is deliberately independent of the checkout `Order` foreign-key graph because it belongs to the Mock ERP boundary.
 - `OrderDeadLetter` preserves invalid/untrusted queue evidence and therefore does not require a valid order foreign key.
 - One `Order` has many `OrderEvent` records.
 - One `Order` may have at most one simulated notification record.
@@ -701,7 +670,6 @@ PostgreSQL is the durable business source of truth for:
 - successful `Reservation`
 - `Order`
 - `ErpAttempt`
-- `ErpConfirmationResult`
 - `OrderRecoveryJob`
 - `OrderDeadLetter`
 - `OrderEvent`
@@ -741,6 +709,10 @@ Redis is intentionally not the final historical source for:
 - confirmed order history
 - ERP attempt history
 - durable simulation timelines
+
+### Process-local Mock ERP state
+
+The Mock ERP keeps successful confirmation responses in memory so concurrent and repeated calls with the same immutable order identity replay one response during a process lifetime. Failed decisions are not cached. A restart may forget this simulated confirmation history; the worker's durable successful `ErpAttempt` idempotency key and accepted-result recovery prevent that from creating a second durable checkout outcome.
 
 ### Derived UI Projections
 
@@ -821,7 +793,7 @@ This document establishes a domain model that preserves the core architectural s
 - products, sale offers, and durable order history live in PostgreSQL,
 - inventory is a split object with Redis on the hot path,
 - reservations are distinct from orders,
-- ERP retries are captured as delivery-scoped append-only attempt history, successful Mock ERP decisions are first-write-wins, and unsafe handoffs have durable recovery/dead-letter evidence,
+- ERP retries and accepted results are captured as delivery-scoped durable attempt history, Mock ERP replay is process-local, and unsafe handoffs have durable recovery/dead-letter evidence,
 - business facts are preserved in an event timeline,
-- demo presets, runs, generated sale ownership contexts, pending-persistence audit evidence, simulated notifications, ERP results/recovery evidence, sold-out aggregates, finalizations, summaries, and the public runtime policy are durable PostgreSQL records,
+- demo presets, runs, generated sale ownership contexts, pending-persistence audit evidence, simulated notifications, ERP attempts/recovery evidence, sold-out aggregates, finalizations, summaries, and the public runtime policy are durable PostgreSQL records,
 - and the UI derives dashboard-facing statuses from those underlying states rather than redefining the lifecycle itself.

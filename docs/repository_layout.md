@@ -93,8 +93,9 @@ checkout-surge/
 - Applies run-scoped ERP behavior supplied by accepted jobs; `LATENCY_MS`, `MAX_TPS`, `ERROR_RATE`, and `FORCED_OUTAGE` remain environment-backed catalog/fallback diagnostics.
 - Owns runtime admin chaos controls for latency, TPS cap, error rate, and forced outage.
 - Enforces each TPS scope with an in-process rolling one-second limiter in the single supported Mock ERP process; additional processes are outside the local topology and would not share limiter history.
-- Uses `packages/db` for the durable first-write-wins ERP confirmation-result ledger.
+- Replays successful confirmations from a process-local in-memory ledger and rejects contradictory reuse during that process lifetime. A restart may forget this simulated history; durable accepted-result idempotency belongs to the worker's PostgreSQL `erp_attempts` boundary.
 - Has no knowledge of the queue or any other internal service.
+- Consumes `packages/contracts` and `packages/logger`; it has no PostgreSQL or Redis dependency.
 
 ### `apps/load-orchestrator`
 
@@ -123,7 +124,7 @@ checkout-surge/
 - Drizzle ORM schema definitions and migration tooling; the package artifact includes the compiled modules plus one reviewed baseline SQL file, one journal entry, and one linked snapshot.
 - The baseline appends only the `pgcrypto` extension and constant-expression single-nonterminal-run index because those objects do not reliably round-trip through this repository's schema and generator setup. Keys, foreign keys, uniqueness, and row-local checks remain declared in `schema.ts`; the current baseline has no trigger functions or non-internal triggers.
 - Owns PostgreSQL connection construction, Redis inventory/dashboard/resilience helpers, the reusable bounded business-outcome publication scheduler used by API and worker composition roots, seed/reset helpers, and the public testing entry point.
-- Shared by `apps/api`, `apps/worker`, and `apps/mock-erp` so schema migrations and durable ERP-result semantics are one source of truth.
+- Shared by `apps/api` and `apps/worker` so durable checkout records and worker ERP-attempt semantics remain one source of truth.
 - `apps/load-orchestrator` deliberately does not use this package; its traffic execution journal is file-backed.
 
 ---

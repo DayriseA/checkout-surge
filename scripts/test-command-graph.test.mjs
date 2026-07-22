@@ -28,7 +28,6 @@ const owners = {
   api: [["api", "apps/api", "vitest.api.config.ts", "api-service"]],
   integration: [
     ["@checkout-surge/db", "packages/db", "vitest.integration.config.ts", "db-integration"],
-    ["mock-erp", "apps/mock-erp", "vitest.integration.config.ts", "mock-erp-integration"],
     ["worker", "apps/worker", "vitest.integration.config.ts", "worker-integration"],
   ],
 };

@@ -243,10 +243,10 @@ Healthy readiness includes these checks:
 | :-- | :-- |
 | API gateway | `database_reachable=ok`, `redis_reachable=ok`, `order_process_queue_reachable=ok` |
 | Worker | `database_reachable=ok`, `redis_reachable=ok`, `order_process_worker_running=ok`, `order_process_queue_reachable=ok`, `notification_record_worker_running=ok`, `notification_record_queue_reachable=ok` |
-| Mock ERP | `confirmation_endpoint_ready=ok`, `confirmation_ledger_reachable=ok` |
+| Mock ERP | `confirmation_endpoint_ready=ok` |
 | Load orchestrator | `api_readiness_reachable=ok`, `preset_traffic_start_enabled=ok`, `k6_binary_executable=ok` |
 
-`status: "degraded"` means the process is reachable but one non-fatal readiness check is not ideal. The load orchestrator directly executes the configured `K6_BINARY` with `version`, including bare PATH commands such as `k6`; spawn failure, non-zero exit, signal exit, or timeout makes readiness unavailable. `status: "unavailable"` means a required dependency or worker loop is not ready; the API, worker, mock ERP, and load orchestrator return HTTP 503 for unavailable readiness. Mock ERP liveness remains a cheap process/listener signal while readiness verifies its PostgreSQL confirmation-results relation with a bounded, read-only query and reports only stable, sanitized failure messages.
+`status: "degraded"` means the process is reachable but one non-fatal readiness check is not ideal. The load orchestrator directly executes the configured `K6_BINARY` with `version`, including bare PATH commands such as `k6`; spawn failure, non-zero exit, signal exit, or timeout makes readiness unavailable. `status: "unavailable"` means a required dependency or worker loop is not ready; the API, worker, and load orchestrator return HTTP 503 for unavailable readiness. Mock ERP readiness reflects only its running confirmation HTTP endpoint and has no dependency probe.
 
 For the host-native infrastructure-only workflow, stop PostgreSQL and Redis when finished:
 
@@ -420,7 +420,7 @@ Most infrastructure URLs have local defaults, but every run/control service chan
 | Variable | Default / Example | Used by |
 | :-- | :-- | :-- |
 | `NODE_ENV` | `development` host-native; `production` in reference Compose; `test` in test commands | Runtime mode and strict production-only security/storage requirements |
-| `DATABASE_URL` | `postgresql://postgres:postgres@localhost:5432/checkout_surge` | API, worker, Mock ERP durable result ledger, db package |
+| `DATABASE_URL` | `postgresql://postgres:postgres@localhost:5432/checkout_surge` | API, worker, db package |
 | `REDIS_URL` | `redis://localhost:6379` | API, worker, db package |
 | `CONTROL_SERVICE_TOKEN` | Required; generate a private deployment-specific value | API, web, mock ERP, load orchestrator |
 | `ADMIN_DASHBOARD_PASSPHRASE` | Required; generate a private admin passphrase | Web admin session |
@@ -453,7 +453,6 @@ Most infrastructure URLs have local defaults, but every run/control service chan
 | `API_LISTEN_BACKLOG` | `8192` | API listener accept backlog for one-second public spike validation |
 | `API_POSTGRES_POOL_MAX` | `10` | Long-lived API application/data-path PostgreSQL pool maximum; control-plane pools described below are separate |
 | `API_READINESS_TIMEOUT_MS` | `2000` | End-to-end API readiness deadline in milliseconds; must remain below the Compose healthcheck's 3-second timeout. Readiness is single-flight per API process and can open at most one separate, short-lived PostgreSQL connection. |
-| `MOCK_ERP_READINESS_TIMEOUT_MS` | `2000` | Mock ERP confirmation-ledger readiness deadline in milliseconds; must remain below the Compose healthcheck's 3-second timeout. The read-only relation probe is cancelled when this deadline expires. |
 | `WORKER_POSTGRES_POOL_MAX` | `10` | Worker PostgreSQL connection pool maximum |
 | `HEALTH_PORT` | `4300` | Worker health server |
 | `ERP_REQUEST_TIMEOUT_MS` | `2000` | Worker ERP client default; run snapshots can supply the active demonstration policy |

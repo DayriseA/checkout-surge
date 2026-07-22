@@ -75,7 +75,7 @@ The repository provides these root scripts:
 - `pnpm test:integration` runs only tests that require PostgreSQL and/or Redis test services.
 - `pnpm test:api` runs only API/service-boundary tests.
 - `pnpm test:watch` runs the fast unit test loop for active development.
-- `pnpm test:coverage` is the bounded full coverage gate. It discovers all seven unit owners, the API/service owner, and the DB, mock ERP, and worker integration owners through package-local Turbo scripts. Start clean dedicated PostgreSQL and Redis services with `pnpm test:infra:up` before running it and always stop them with `pnpm test:infra:down` afterward.
+- `pnpm test:coverage` is the bounded full coverage gate. It discovers all seven unit owners, the API/service owner, and the DB and worker integration owners through package-local Turbo scripts. Mock ERP behavior is covered at its process-local service boundary and has no database integration lane. Start clean dedicated PostgreSQL and Redis services with `pnpm test:infra:up` before running it and always stop them with `pnpm test:infra:down` afterward.
 - `pnpm test:coverage:unit` is the explicitly fast, infrastructure-free unit-only coverage command.
 - `pnpm test:infra:up` starts the dedicated test PostgreSQL and Redis services and waits for their declared healthchecks before returning.
 - `pnpm test:infra:down` stops dedicated test services and deletes their named volumes.

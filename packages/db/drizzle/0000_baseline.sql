@@ -132,18 +132,6 @@ CREATE TABLE "erp_attempts" (
 	CONSTRAINT "erp_attempts_finished_after_started" CHECK ("erp_attempts"."finished_at" >= "erp_attempts"."started_at")
 );
 --> statement-breakpoint
-CREATE TABLE "erp_confirmation_results" (
-	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
-	"idempotency_key" text NOT NULL,
-	"order_id" text NOT NULL,
-	"request_fingerprint" jsonb NOT NULL,
-	"response" jsonb NOT NULL,
-	"confirmation_id" text NOT NULL,
-	"http_status" integer NOT NULL,
-	"processed_at" timestamp with time zone NOT NULL,
-	"created_at" timestamp with time zone DEFAULT now() NOT NULL
-);
---> statement-breakpoint
 CREATE TABLE "order_dead_letters" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"job_id" text NOT NULL,
@@ -339,8 +327,6 @@ CREATE UNIQUE INDEX "erp_attempts_success_idempotency_key_unique" ON "erp_attemp
 CREATE INDEX "erp_attempts_order_id_idx" ON "erp_attempts" USING btree ("order_id");--> statement-breakpoint
 CREATE INDEX "erp_attempts_run_id_idx" ON "erp_attempts" USING btree ("run_id");--> statement-breakpoint
 CREATE INDEX "erp_attempts_run_id_finished_at_created_at_idx" ON "erp_attempts" USING btree ("run_id","finished_at" DESC NULLS LAST,"created_at" DESC NULLS LAST);--> statement-breakpoint
-CREATE UNIQUE INDEX "erp_confirmation_results_idempotency_key_unique" ON "erp_confirmation_results" USING btree ("idempotency_key");--> statement-breakpoint
-CREATE INDEX "erp_confirmation_results_created_at_idx" ON "erp_confirmation_results" USING btree ("created_at");--> statement-breakpoint
 CREATE UNIQUE INDEX "order_dead_letters_queue_job_name_unique" ON "order_dead_letters" USING btree ("queue_name","job_id","job_name");--> statement-breakpoint
 CREATE INDEX "order_dead_letters_observed_at_idx" ON "order_dead_letters" USING btree ("observed_at");--> statement-breakpoint
 CREATE INDEX "order_events_order_id_idx" ON "order_events" USING btree ("order_id");--> statement-breakpoint
