@@ -5,7 +5,7 @@ import type {
   DemoPresetDisplay,
   ErpRunConfig,
   InventoryConfig,
-  PublicRuntimePolicy as PublicRuntimePolicyContract,
+  PublicRuntimePolicyMutable as PublicRuntimePolicyMutableContract,
   TerminalInventorySnapshot,
   TrafficConfig,
   TrafficDeliverySummary,
@@ -55,7 +55,7 @@ type _SummaryInventorySelect = Expect<
   Equal<DemoRunSummary["terminalInventorySnapshot"], TerminalInventorySnapshot | null>
 >;
 type _RuntimePolicySelect = Expect<
-  Equal<PublicRuntimePolicy["policy"], PublicRuntimePolicyContract>
+  Equal<PublicRuntimePolicy["policy"], PublicRuntimePolicyMutableContract>
 >;
 type _PresetDisplayInsert = Expect<Equal<NewDemoPreset["display"], DemoPresetDisplay>>;
 type _PresetTrafficInsert = Expect<Equal<NewDemoPreset["trafficConfig"], TrafficConfig>>;
@@ -85,7 +85,7 @@ type _SummaryInventoryInsert = Expect<
   >
 >;
 type _RuntimePolicyInsert = Expect<
-  Equal<NewPublicRuntimePolicy["policy"], PublicRuntimePolicyContract>
+  Equal<NewPublicRuntimePolicy["policy"], PublicRuntimePolicyMutableContract>
 >;
 
 const validTrafficConfig: NewDemoPreset["trafficConfig"] = {

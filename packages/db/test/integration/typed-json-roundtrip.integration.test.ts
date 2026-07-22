@@ -5,7 +5,7 @@ import {
   type BusinessOutcomeSummary,
   emptyHttpTimingBreakdownSummary,
   type HttpTimingBreakdownSummary,
-  publicRuntimePolicySchema,
+  publicRuntimePolicyPersistedSchema,
   type RealLoadRunDiagnosticsSummary,
   type TerminalInventorySnapshot,
   type TrafficCompletionApiRequestLifecycleSummary,
@@ -99,7 +99,7 @@ describe.skipIf(!databaseUrl)("contract-typed persisted JSON", () => {
       unstartedRequests: 0,
       failedRequests: 0,
     };
-    const policy = publicRuntimePolicySchema.parse({
+    const policy = publicRuntimePolicyPersistedSchema.parse({
       isPublicRunBudgetEnforced: true,
       publicRunBudget: {
         windowSeconds: 300,
@@ -122,15 +122,6 @@ describe.skipIf(!databaseUrl)("contract-typed persisted JSON", () => {
         maxErpErrorRate: 0.25,
         allowForcedOutage: false,
         allowedTrafficModes: ["buyer-spike", "steady-arrival-rate"],
-      },
-      deploymentHardCaps: {
-        maxBuyers: 100_000,
-        maxTotalRequests: 100_000,
-        maxRequestsPerSecond: 10_000,
-        maxTrafficDurationSeconds: 300,
-        maxTrafficStartDelaySeconds: 30,
-        maxPreAllocatedVus: 10_000,
-        maxVus: 10_000,
       },
     });
 
@@ -216,6 +207,7 @@ describe.skipIf(!databaseUrl)("contract-typed persisted JSON", () => {
     expect(summary?.businessOutcomeSummary).toEqual(businessOutcomeSummary);
     expect(summary?.terminalInventorySnapshot).toEqual(terminalInventorySnapshot);
     expect(policyRow?.policy).toEqual(policy);
+    expect(policyRow?.policy).not.toHaveProperty("deploymentHardCaps");
   });
 });
 

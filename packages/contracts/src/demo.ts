@@ -34,7 +34,10 @@ import {
   positiveIntegerSchema,
   uuidSchema,
 } from "./primitives.js";
-import { collectPublicRuntimePolicyViolations } from "./public-runtime-policy-validation.js";
+import {
+  collectPublicRuntimePolicyMutableViolations,
+  collectPublicRuntimePolicyViolations,
+} from "./public-runtime-policy-validation.js";
 import {
   queueStatusSchema,
   simulatedNotificationChannelSchema,
@@ -687,6 +690,21 @@ export const publicRuntimePolicyMutableSchema = z
     publicCustomLimits: publicCustomLimitsSchema,
   })
   .strict();
+export const publicRuntimePolicyPersistedSchema = publicRuntimePolicyMutableSchema.superRefine(
+  (policy, context) => {
+    for (const violation of collectPublicRuntimePolicyMutableViolations(policy)) {
+      context.addIssue({
+        code: "custom",
+        message: violation.message,
+        path: violation.path,
+        params: {
+          violationCode: violation.code,
+          ...(violation.details ? { details: violation.details } : {}),
+        },
+      });
+    }
+  },
+);
 export type PublicRuntimePolicyMutable = z.infer<typeof publicRuntimePolicyMutableSchema>;
 
 const publicRuntimePolicyStructureSchema = publicRuntimePolicyMutableSchema

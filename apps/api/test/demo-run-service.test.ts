@@ -4,6 +4,7 @@ import type {
   AcceptedRunConfigSnapshot,
   BusinessOutcomeSummary,
   PublicRuntimePolicy,
+  PublicRuntimePolicyMutable,
   TrafficCompletionReport,
   TrafficConfig,
   TrafficExecutionStartRequest,
@@ -49,13 +50,12 @@ import {
   DemoRunService,
   DemoRunValidationError,
   HttpTrafficExecutionGateway,
-  hydratePublicRuntimePolicy,
   isSingleNonTerminalRunViolation,
   maximumPendingMetricBatches,
   RedisDashboardTrafficMetricStore,
+  resolveEffectivePublicRuntimePolicy,
   validateAcceptedRunSnapshot,
   validateActivePublicRuntimePolicyAtStartup,
-  validatePublicRuntimePolicyUpdate,
 } from "../src/services/demo-run-service.js";
 import { PostgresDemoResetWorkflowFence } from "../src/services/postgres-demo-reset-workflow-fence.js";
 import { RedisPublicRunBudgetStore } from "../src/services/public-run-budget-store.js";
@@ -193,7 +193,6 @@ describe("demo-run service validation", () => {
       },
     };
 
-    expect(() => validatePublicRuntimePolicyUpdate(policy)).not.toThrow();
     expect(() =>
       validateAcceptedRunSnapshot(snapshot, policy, {
         operatorMode: "admin",
@@ -203,22 +202,6 @@ describe("demo-run service validation", () => {
       expect.objectContaining({
         code: fixture.expectedCode,
         details: fixture.expectedDetails,
-      }),
-    );
-  });
-
-  it("rejects public runtime policy updates above deployment hard caps", () => {
-    const policy = publicRuntimePolicy();
-    policy.publicCustomLimits.maxTotalRequests = policy.deploymentHardCaps.maxTotalRequests + 1;
-
-    expect(() => validatePublicRuntimePolicyUpdate(policy)).toThrow(
-      "Accepted run configuration exceeds a configured cap.",
-    );
-    expect(() => validatePublicRuntimePolicyUpdate(policy)).toThrow(DemoRunValidationError);
-    expect(() => validatePublicRuntimePolicyUpdate(policy)).toThrowError(
-      expect.objectContaining({
-        code: "public_limit_total_requests_exceeds_deployment_cap",
-        details: { value: 100_001, cap: 100_000 },
       }),
     );
   });
@@ -380,28 +363,21 @@ describe("demo-run service validation", () => {
     ).toMatchObject({ field: "loadRunDiagnosticsSummary.executionPlan" });
   });
 
-  it("rejects public custom defaults that exceed the updated public limits", () => {
-    const policy = publicRuntimePolicy();
-    policy.publicCustomLimits.maxBuyers = 100;
+  it("constructs effective policy from strict mutable persistence and current caps", () => {
+    const effectiveFixture = publicRuntimePolicy();
+    const persisted = publicRuntimePolicyMutable();
+    const currentCaps = { ...effectiveFixture.deploymentHardCaps, maxBuyers: 20_000 };
 
-    expect(() => validatePublicRuntimePolicyUpdate(policy)).toThrowError(
-      expect.objectContaining({
-        name: "DemoRunValidationError",
-        code: "public_custom_default_public_buyers_exceeded",
-        message: "Public custom defaults must fit within the active public runtime policy.",
-        details: { value: 500, cap: 100 },
-      }),
-    );
-  });
+    const effective = resolveEffectivePublicRuntimePolicy(persisted, currentCaps);
 
-  it("overlays current deployment caps without mutating persisted public policy", () => {
-    const persisted = publicRuntimePolicy();
-    const currentCaps = { ...persisted.deploymentHardCaps, maxBuyers: 20_000 };
-
-    const hydrated = hydratePublicRuntimePolicy(persisted, currentCaps);
-
-    expect(hydrated.deploymentHardCaps.maxBuyers).toBe(20_000);
-    expect(persisted.deploymentHardCaps.maxBuyers).toBe(100_000);
+    expect(effective.deploymentHardCaps.maxBuyers).toBe(20_000);
+    expect(persisted).not.toHaveProperty("deploymentHardCaps");
+    expect(() =>
+      resolveEffectivePublicRuntimePolicy(
+        { ...persisted, deploymentHardCaps: effectiveFixture.deploymentHardCaps },
+        currentCaps,
+      ),
+    ).toThrow(/Unrecognized key.*deploymentHardCaps/i);
   });
 });
 
@@ -918,7 +894,7 @@ describe("demo-run preset management", () => {
       .db.insert(publicRuntimePolicies)
       .values({
         id: "active",
-        policy: publicRuntimePolicy(),
+        policy: publicRuntimePolicyMutable(),
         createdAt: new Date("2026-06-20T00:00:00.000Z"),
         updatedAt: new Date("2026-06-20T00:00:00.000Z"),
       });
@@ -1149,7 +1125,7 @@ describe("demo-run public runtime policy management", () => {
       "corr-policy-save",
     );
     const [row] = await requireConnection(connection).db.select().from(publicRuntimePolicies);
-    const persistedPolicy = row?.policy as PublicRuntimePolicy | undefined;
+    const persistedPolicy = row?.policy as PublicRuntimePolicyMutable | undefined;
 
     expect(response.correlationId).toBe("corr-policy-save");
     expect(response.policy.publicRunBudget.perVisitorMaxStarts).toBe(1);
@@ -1157,23 +1133,59 @@ describe("demo-run public runtime policy management", () => {
     expect(response.policy.publicCustomLimits.maxBuyers).toBe(500);
     expect(response.policy.deploymentHardCaps.maxBuyers).toBe(100_000);
     expect(persistedPolicy?.publicRunBudget.globalMaxStarts).toBe(2);
-    expect(persistedPolicy?.deploymentHardCaps.maxTotalRequests).toBe(100_000);
+    expect(persistedPolicy).not.toHaveProperty("deploymentHardCaps");
   });
 
-  it("rejects policy updates above deployment hard caps without changing the stored row", async () => {
-    const service = createPresetManagementService(requireConnection(connection));
+  it("prioritizes deployment-cap update errors when multiple policy rules fail", async () => {
+    const effectiveFixture = publicRuntimePolicy();
+    const service = createPresetManagementService(requireConnection(connection), {
+      ...effectiveFixture.deploymentHardCaps,
+      maxBuyers: 450,
+    });
     const policy = publicRuntimePolicyMutable();
     policy.publicCustomLimits.maxTotalRequests = 100_001;
+    policy.publicCustomLimits.maxPreAllocatedVus = 1001;
+    policy.publicCustomLimits.maxBuyers = 400;
 
     await expect(
       service.updateAdminPublicRuntimePolicy({ policy }, "corr-policy-reject"),
     ).rejects.toMatchObject({
       code: "public_limit_total_requests_exceeds_deployment_cap",
+      details: { value: 100_001, cap: 100_000 },
     });
 
     const [row] = await requireConnection(connection).db.select().from(publicRuntimePolicies);
-    const persistedPolicy = row?.policy as PublicRuntimePolicy | undefined;
+    const persistedPolicy = row?.policy as PublicRuntimePolicyMutable | undefined;
     expect(persistedPolicy?.publicCustomLimits.maxTotalRequests).toBe(10_000);
+  });
+
+  it("rejects automatic default VUs above deployment caps without changing the stored row", async () => {
+    const effectiveFixture = publicRuntimePolicy();
+    const service = createPresetManagementService(requireConnection(connection), {
+      ...effectiveFixture.deploymentHardCaps,
+      maxPreAllocatedVus: 10,
+      maxVus: 10,
+    });
+    const policy = publicRuntimePolicyMutable();
+    policy.publicCustomLimits.maxPreAllocatedVus = 10;
+    policy.publicCustomLimits.maxVus = 10;
+    policy.publicCustomDefaults.trafficConfig = {
+      mode: "steady-arrival-rate",
+      ratePerSecond: 6,
+      startDelaySeconds: 0,
+      durationSeconds: 1,
+      quantityPerAttempt: 1,
+    };
+
+    await expect(
+      service.updateAdminPublicRuntimePolicy({ policy }, "corr-policy-default-vus-reject"),
+    ).rejects.toMatchObject({
+      code: "public_custom_default_deployment_max_vus_exceeded",
+      details: { value: 12, cap: 10 },
+    });
+
+    const [row] = await requireConnection(connection).db.select().from(publicRuntimePolicies);
+    expect(row?.policy.publicCustomDefaults.trafficConfig.mode).toBe("buyer-spike");
   });
 
   it("rejects startup when current deployment caps are below the durable public policy", async () => {
@@ -1186,19 +1198,36 @@ describe("demo-run public runtime policy management", () => {
     ).rejects.toThrow(/publicCustomLimits\.maxBuyers.*public_limit_buyers_exceeds_deployment_cap/);
   });
 
-  it("accepts the legacy-compatible hydrated policy at startup", async () => {
+  it("accepts current mutable policy at startup", async () => {
     const policy = publicRuntimePolicy();
-    policy.publicCustomDefaults.erpConfig.maxTps = 150;
-    policy.publicCustomLimits.maxErpMaxTps = 150;
+    const mutablePolicy = publicRuntimePolicyMutable();
+    mutablePolicy.publicCustomDefaults.erpConfig.maxTps = 150;
+    mutablePolicy.publicCustomLimits.maxErpMaxTps = 150;
     const db = requireConnection(connection).db;
     await db
       .update(publicRuntimePolicies)
-      .set({ policy })
+      .set({ policy: mutablePolicy })
       .where(eq(publicRuntimePolicies.id, "active"));
 
     await expect(
       validateActivePublicRuntimePolicyAtStartup(db, policy.deploymentHardCaps),
     ).resolves.toBeUndefined();
+  });
+
+  it("rejects obsolete cap-bearing persisted policy at startup", async () => {
+    const db = requireConnection(connection).db;
+    const policy = publicRuntimePolicy();
+    await db.execute(sql`
+      UPDATE ${publicRuntimePolicies}
+      SET policy = policy || ${JSON.stringify({
+        deploymentHardCaps: policy.deploymentHardCaps,
+      })}::jsonb
+      WHERE id = 'active'
+    `);
+
+    await expect(
+      validateActivePublicRuntimePolicyAtStartup(db, policy.deploymentHardCaps),
+    ).rejects.toThrow(/Unrecognized key.*deploymentHardCaps/i);
   });
 
   it("changes effective hard caps between service boots without reseeding", async () => {
@@ -1886,7 +1915,7 @@ describe("demo-run lifecycle start gating", () => {
     };
 
     const firstDecision = await store.reserve({
-      policy,
+      budget: policy.publicRunBudget,
       publicVisitorId: "visitor-budget-1",
       now: new Date("2026-06-20T00:00:00.000Z"),
     });
@@ -1894,7 +1923,7 @@ describe("demo-run lifecycle start gating", () => {
     const firstReservation = firstDecision.reservation;
     await expect(
       store.reserve({
-        policy,
+        budget: policy.publicRunBudget,
         publicVisitorId: "visitor-budget-1",
         now: new Date("2026-06-20T00:00:01.000Z"),
       }),
@@ -1906,7 +1935,7 @@ describe("demo-run lifecycle start gating", () => {
     expect(await requireRedis(redis).get(firstReservation.globalKey)).toBeNull();
     expect(await requireRedis(redis).get(firstReservation.visitorKey)).toBeNull();
     await store.reserve({
-      policy,
+      budget: policy.publicRunBudget,
       publicVisitorId: "visitor-budget-1",
       now: new Date("2026-06-20T00:00:59.000Z"),
     });
@@ -1918,18 +1947,18 @@ describe("demo-run lifecycle start gating", () => {
       globalMaxStarts: 2,
     };
     await store.reserve({
-      policy,
+      budget: policy.publicRunBudget,
       publicVisitorId: "visitor-budget-2",
       now: new Date("2026-06-20T00:00:02.000Z"),
     });
     await store.reserve({
-      policy,
+      budget: policy.publicRunBudget,
       publicVisitorId: "visitor-budget-3",
       now: new Date("2026-06-20T00:00:03.000Z"),
     });
     await expect(
       store.reserve({
-        policy,
+        budget: policy.publicRunBudget,
         publicVisitorId: "visitor-budget-4",
         now: new Date("2026-06-20T00:00:04.000Z"),
       }),
@@ -1946,7 +1975,7 @@ describe("demo-run lifecycle start gating", () => {
 
     const visitorDecisions = await Promise.all(
       Array.from({ length: 10 }, () =>
-        store.reserve({ policy, publicVisitorId: "concurrent", now }),
+        store.reserve({ budget: policy.publicRunBudget, publicVisitorId: "concurrent", now }),
       ),
     );
     const visitorReservations = visitorDecisions.flatMap((decision) =>
@@ -1958,10 +1987,18 @@ describe("demo-run lifecycle start gating", () => {
     expect(await client.get(oldReservation.globalKey)).toBe("2");
     expect(await client.get(oldReservation.visitorKey)).toBe("2");
 
-    const allowedGlobal = await store.reserve({ policy, publicVisitorId: "other-a", now });
+    const allowedGlobal = await store.reserve({
+      budget: policy.publicRunBudget,
+      publicVisitorId: "other-a",
+      now,
+    });
     expect(allowedGlobal.outcome).toBe("allowed");
     const globalBefore = await client.get(oldReservation.globalKey);
-    const deniedGlobal = await store.reserve({ policy, publicVisitorId: "denied-visitor", now });
+    const deniedGlobal = await store.reserve({
+      budget: policy.publicRunBudget,
+      publicVisitorId: "denied-visitor",
+      now,
+    });
     expect(deniedGlobal).toEqual({ outcome: "denied", reason: "global" });
     const deniedKey = oldReservation.visitorKey.replace("concurrent", "denied-visitor");
     expect(await client.get(deniedKey)).toBeNull();
@@ -1972,7 +2009,7 @@ describe("demo-run lifecycle start gating", () => {
     expect(oldReservation.reservationKey).toContain(globalHashTag);
 
     const nextDecision = await store.reserve({
-      policy,
+      budget: policy.publicRunBudget,
       publicVisitorId: "concurrent",
       now: new Date("2026-06-20T00:01:00.000Z"),
     });
@@ -3573,7 +3610,7 @@ async function seedStartFixtures(
   await seedPresetFixtures(connection);
   await connection.db.insert(publicRuntimePolicies).values({
     id: "active",
-    policy: publicRuntimePolicy(),
+    policy: publicRuntimePolicyMutable(),
     createdAt: new Date("2026-06-20T00:00:00.000Z"),
     updatedAt: new Date("2026-06-20T00:00:00.000Z"),
   });

@@ -1,5 +1,5 @@
 import { fileURLToPath } from "node:url";
-import { publicRuntimePolicySchema } from "@checkout-surge/contracts";
+import { publicRuntimePolicyPersistedSchema } from "@checkout-surge/contracts";
 import { readMigrationFiles } from "drizzle-orm/migrator";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { createDatabaseConnection } from "./client.js";
@@ -65,7 +65,7 @@ async function validateMigratedActivePublicRuntimePolicy(
     return;
   }
 
-  const parsed = publicRuntimePolicySchema.safeParse(row.policy);
+  const parsed = publicRuntimePolicyPersistedSchema.safeParse(row.policy);
   if (parsed.success) {
     return;
   }

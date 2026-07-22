@@ -17,7 +17,6 @@ import {
   type BusinessOutcomeSummary,
   type CopyDemoPresetToCustomRequest,
   collectAcceptedRunConfigSnapshotViolations,
-  collectPublicRuntimePolicyViolations,
   controlServiceTokenHeaderName,
   type DemoPresetContract,
   type DemoRunConfigOverride,
@@ -78,6 +77,7 @@ import {
 } from "@checkout-surge/db";
 import { type CheckoutSurgeLogger, correlationIdHeaderName } from "@checkout-surge/logger";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { ZodError } from "zod";
 import { ApiHttpError } from "../runtime/errors.js";
 import type { DashboardBusinessOutcomeReader } from "./dashboard-recovery-service.js";
 import type { DemoRunFinalizationController } from "./demo-run-finalization-service.js";
@@ -733,18 +733,20 @@ export class DemoRunService implements DemoRunController {
   ): Promise<AdminPublicRuntimePolicyResponse> {
     const now = this.now();
     const mutablePolicy = publicRuntimePolicyMutableSchema.parse(request.policy);
-    const nextPolicy: PublicRuntimePolicy = {
-      ...mutablePolicy,
-      deploymentHardCaps: this.options.deploymentHardCaps,
-    };
-
-    validatePublicRuntimePolicyUpdate(nextPolicy);
-    const validatedNextPolicy = publicRuntimePolicySchema.parse(nextPolicy);
+    let effectivePolicy: PublicRuntimePolicy;
+    try {
+      effectivePolicy = resolveEffectivePublicRuntimePolicy(
+        mutablePolicy,
+        this.options.deploymentHardCaps,
+      );
+    } catch (error) {
+      throwPublicRuntimePolicyUpdateError(error);
+    }
 
     const [updated] = await this.options.db
       .update(publicRuntimePolicies)
       .set({
-        policy: validatedNextPolicy,
+        policy: mutablePolicy,
         updatedAt: now,
       })
       .where(eq(publicRuntimePolicies.id, "active"))
@@ -757,7 +759,14 @@ export class DemoRunService implements DemoRunController {
       );
     }
 
-    return toAdminPublicRuntimePolicyResponse(updated, correlationId, now);
+    return toAdminPublicRuntimePolicyResponse(
+      {
+        ...updated,
+        policy: effectivePolicy,
+      },
+      correlationId,
+      now,
+    );
   }
 
   async startRun(
@@ -794,7 +803,7 @@ export class DemoRunService implements DemoRunController {
       const publicVisitorId = verifiedVisitor.visitorId;
       reservePublicBudget = async () => {
         const decision = await this.options.publicRunBudgetStore.reserve({
-          policy,
+          budget: policy.publicRunBudget,
           publicVisitorId,
           now,
         });
@@ -1329,7 +1338,7 @@ export class DemoRunService implements DemoRunController {
 
     return {
       ...row,
-      policy: hydratePublicRuntimePolicy(row.policy, this.options.deploymentHardCaps),
+      policy: resolveEffectivePublicRuntimePolicy(row.policy, this.options.deploymentHardCaps),
     };
   }
 
@@ -1638,23 +1647,17 @@ export function validateAcceptedRunSnapshot(
   }
 }
 
-export function validatePublicRuntimePolicyUpdate(policy: PublicRuntimePolicy): void {
-  const [violation] = collectPublicRuntimePolicyViolations(policy);
-  if (violation) {
-    throw new DemoRunValidationError(violation.code, violation.message, violation.details);
-  }
-}
-
-export function hydratePublicRuntimePolicy(
-  persistedPolicy: unknown,
+/**
+ * The single boundary that validates strict persisted mutable JSON and combines
+ * it with the API process's environment-owned deployment caps.
+ */
+export function resolveEffectivePublicRuntimePolicy(
+  persistedMutablePolicy: unknown,
   deploymentHardCaps: DeploymentHardCaps,
 ): PublicRuntimePolicy {
-  if (!persistedPolicy || typeof persistedPolicy !== "object" || Array.isArray(persistedPolicy)) {
-    return publicRuntimePolicySchema.parse(persistedPolicy);
-  }
-
+  const mutablePolicy = publicRuntimePolicyMutableSchema.parse(persistedMutablePolicy);
   return publicRuntimePolicySchema.parse({
-    ...persistedPolicy,
+    ...mutablePolicy,
     deploymentHardCaps,
   });
 }
@@ -1673,28 +1676,51 @@ export async function validateActivePublicRuntimePolicyAtStartup(
     throw new Error('Active public runtime policy "active" is missing.');
   }
 
-  const parsed = publicRuntimePolicySchema.safeParse(
-    row.policy && typeof row.policy === "object" && !Array.isArray(row.policy)
-      ? { ...row.policy, deploymentHardCaps }
-      : row.policy,
-  );
-  if (!parsed.success) {
-    const diagnostics = parsed.error.issues.map((issue) => {
+  try {
+    resolveEffectivePublicRuntimePolicy(row.policy, deploymentHardCaps);
+  } catch (error) {
+    if (!(error instanceof ZodError)) throw error;
+    const diagnostics = error.issues.map((issue) => {
       const path = issue.path.length > 0 ? issue.path.join(".") : "policy";
+      const params = "params" in issue ? issue.params : undefined;
       const violationCode =
-        "params" in issue &&
-        issue.params &&
-        typeof issue.params === "object" &&
-        "violationCode" in issue.params &&
-        typeof issue.params.violationCode === "string"
-          ? ` (${issue.params.violationCode})`
+        params &&
+        typeof params === "object" &&
+        "violationCode" in params &&
+        typeof params.violationCode === "string"
+          ? ` (${params.violationCode})`
           : "";
       return `${path}${violationCode}: ${issue.message}`;
     });
     throw new Error(`Active public runtime policy is invalid: ${diagnostics.join("; ")}`);
   }
+}
 
-  validatePublicRuntimePolicyUpdate(parsed.data);
+function throwPublicRuntimePolicyUpdateError(error: unknown): never {
+  if (!(error instanceof ZodError)) throw error;
+  const issue = error.issues[0];
+  const params = issue && "params" in issue ? issue.params : undefined;
+  if (
+    issue &&
+    params &&
+    typeof params === "object" &&
+    "violationCode" in params &&
+    typeof params.violationCode === "string"
+  ) {
+    const details =
+      "details" in params &&
+      params.details &&
+      typeof params.details === "object" &&
+      !Array.isArray(params.details)
+        ? (params.details as Record<string, unknown>)
+        : undefined;
+    throw new DemoRunValidationError(
+      params.violationCode as ErrorPayloadCode,
+      issue.message,
+      details,
+    );
+  }
+  throw error;
 }
 
 function trafficMetricKey(runId: string): string {
@@ -1739,7 +1765,9 @@ class TrafficAbortTimeoutError extends Error {}
 class TrafficAbortInvalidResponseError extends Error {}
 
 function toAdminPublicRuntimePolicyResponse(
-  row: typeof publicRuntimePolicies.$inferSelect,
+  row: Omit<typeof publicRuntimePolicies.$inferSelect, "policy"> & {
+    policy: PublicRuntimePolicy;
+  },
   correlationId: string,
   timestamp: Date,
 ): AdminPublicRuntimePolicyResponse {

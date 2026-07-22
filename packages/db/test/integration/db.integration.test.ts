@@ -6,7 +6,7 @@ import {
   backpressureConfigSchema,
   type DashboardEvent,
   dashboardEventsRedisChannel,
-  publicRuntimePolicySchema,
+  publicRuntimePolicyPersistedSchema,
 } from "@checkout-surge/contracts";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -524,6 +524,21 @@ describe("database migrations, seed data, and reset behavior", () => {
       await expect(
         runDatabaseMigrations({ databaseUrl, expectedDatabaseName: databaseName }),
       ).rejects.toThrow(/publicCustomLimits\.maxPreAllocatedVus \(public_vus_limit_invalid\)/);
+
+      await withDatabase(
+        (sql) => sql`
+          UPDATE public_runtime_policies
+          SET policy = jsonb_set(
+            policy,
+            '{publicCustomLimits,maxPreAllocatedVus}',
+            '1000'::jsonb
+          ) || '{"deploymentHardCaps":{"maxBuyers":100000}}'::jsonb
+          WHERE id = 'active'
+        `,
+      );
+      await expect(
+        runDatabaseMigrations({ databaseUrl, expectedDatabaseName: databaseName }),
+      ).rejects.toThrow(/Unrecognized key.*deploymentHardCaps/i);
     } finally {
       await resetTestDatabase();
     }
@@ -921,9 +936,10 @@ describe("database migrations, seed data, and reset behavior", () => {
       demo_presets: 8,
       public_runtime_policies: 1,
     });
-    expect(publicRuntimePolicySchema.parse(policyRow?.policy).publicRunBudget.windowSeconds).toBe(
-      999,
-    );
+    expect(
+      publicRuntimePolicyPersistedSchema.parse(policyRow?.policy).publicRunBudget.windowSeconds,
+    ).toBe(999);
+    expect(policyRow?.policy).not.toHaveProperty("deploymentHardCaps");
     expect(policyRow?.created_at).toEqual(initialPolicyRow?.created_at);
     expect(new Date(policyRow?.updated_at ?? 0).getTime()).toBeGreaterThan(
       new Date(initialPolicyRow?.updated_at ?? 0).getTime(),
@@ -1072,7 +1088,6 @@ describe("database migrations, seed data, and reset behavior", () => {
       PUBLIC_RUN_BUDGET_WINDOW_SECONDS: "301",
       PUBLIC_RUN_BUDGET_PER_VISITOR_MAX_STARTS: "3",
       PUBLIC_RUN_BUDGET_GLOBAL_MAX_STARTS: "7",
-      DEMO_MAX_BUYERS: "300000",
       PUBLIC_CUSTOM_MAX_TOTAL_REQUESTS: "20000",
       PUBLIC_CUSTOM_MAX_BUYERS: "200000",
       PUBLIC_CUSTOM_MAX_REQUESTS_PER_SECOND: "2000",
@@ -1091,7 +1106,7 @@ describe("database migrations, seed data, and reset behavior", () => {
         SELECT policy FROM public_runtime_policies WHERE id = 'active'
       `,
     );
-    const policy = publicRuntimePolicySchema.parse(row?.policy);
+    const policy = publicRuntimePolicyPersistedSchema.parse(row?.policy);
 
     expect(policy.publicRunBudget).toEqual({
       windowSeconds: 301,
@@ -1112,7 +1127,7 @@ describe("database migrations, seed data, and reset behavior", () => {
       maxErpMaxTps: 300,
       maxErpErrorRate: 0.3,
     });
-    expect(policy.deploymentHardCaps.maxBuyers).toBe(300_000);
+    expect(policy).not.toHaveProperty("deploymentHardCaps");
   });
 
   it("backfills legacy preset breaker defaults while preserving runtime policy JSON", async () => {
@@ -1184,7 +1199,7 @@ describe("database migrations, seed data, and reset behavior", () => {
     for (const preset of firstPresetState) {
       expect(() => backpressureConfigSchema.parse(preset.backpressure_config)).not.toThrow();
     }
-    expect(() => publicRuntimePolicySchema.parse(policyRow?.policy)).toThrow();
+    expect(() => publicRuntimePolicyPersistedSchema.parse(policyRow?.policy)).toThrow();
     expect(policyRow?.policy).toMatchObject({
       publicCustomDefaults: { backpressureConfig: { orderProcessConcurrency: 5 } },
       publicRunBudget: { windowSeconds: 999 },

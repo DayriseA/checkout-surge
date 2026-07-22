@@ -26,6 +26,7 @@ import {
   buyRequestSchema,
   buyResponseSchema,
   collectAcceptedRunConfigSnapshotViolations,
+  collectPublicRuntimePolicyMutableViolations,
   collectPublicRuntimePolicyViolations,
   completionOutcomeSchema,
   controlServiceTokenHeaderName,
@@ -74,6 +75,7 @@ import {
   publicPresetListPath,
   publicRuntimePolicyMutableSchema,
   publicRuntimePolicyPath,
+  publicRuntimePolicyPersistedSchema,
   publicRuntimePolicySchema,
   publicVisitorIdHeaderName,
   queueStatusSchema,
@@ -2612,6 +2614,137 @@ describe("public runtime policy contract", () => {
     expect(parsed.success).toBe(false);
     if (!parsed.success) {
       expect(parsed.error.issues[0]?.path).toEqual(path);
+    }
+  });
+
+  it("orders persisted relationship violations before public-default violations", () => {
+    const { deploymentHardCaps: _deploymentHardCaps, ...mutable } = semanticRuntimePolicy();
+    mutable.publicCustomLimits.maxPreAllocatedVus = 11;
+    mutable.publicCustomLimits.maxBuyers = 5;
+
+    expect(collectPublicRuntimePolicyMutableViolations(mutable)).toEqual([
+      {
+        code: "public_vus_limit_invalid",
+        message: "Public preallocated VUs cannot exceed max VUs.",
+        details: { maxPreAllocatedVus: 11, maxVus: 10 },
+        path: ["publicCustomLimits", "maxPreAllocatedVus"],
+      },
+      {
+        code: "public_custom_default_public_buyers_exceeded",
+        message: "Public custom defaults must fit within the active public runtime policy.",
+        details: { value: 10, cap: 5 },
+        path: ["publicCustomDefaults", "trafficConfig", "buyerCount"],
+      },
+    ]);
+  });
+
+  it("preserves effective policy violation order without duplicating default causes", () => {
+    const policy = semanticRuntimePolicy();
+    policy.publicCustomLimits.maxTotalRequests = 101;
+    policy.publicCustomLimits.maxPreAllocatedVus = 11;
+    policy.publicCustomLimits.maxBuyers = 5;
+    policy.deploymentHardCaps.maxBuyers = 7;
+
+    expect(collectPublicRuntimePolicyViolations(policy)).toEqual([
+      {
+        code: "public_limit_total_requests_exceeds_deployment_cap",
+        message: "Accepted run configuration exceeds a configured cap.",
+        details: { value: 101, cap: 100 },
+        path: ["publicCustomLimits", "maxTotalRequests"],
+      },
+      {
+        code: "public_vus_limit_invalid",
+        message: "Public preallocated VUs cannot exceed max VUs.",
+        details: { maxPreAllocatedVus: 11, maxVus: 10 },
+        path: ["publicCustomLimits", "maxPreAllocatedVus"],
+      },
+      {
+        code: "public_custom_default_deployment_buyers_exceeded",
+        message: "Public custom defaults must fit within the active public runtime policy.",
+        details: { value: 10, cap: 7 },
+        path: ["publicCustomDefaults", "trafficConfig", "buyerCount"],
+      },
+      {
+        code: "public_custom_default_public_buyers_exceeded",
+        message: "Public custom defaults must fit within the active public runtime policy.",
+        details: { value: 10, cap: 5 },
+        path: ["publicCustomDefaults", "trafficConfig", "buyerCount"],
+      },
+    ]);
+
+    const parsed = publicRuntimePolicySchema.safeParse(policy);
+    expect(parsed.success).toBe(false);
+    if (!parsed.success) {
+      expect(
+        parsed.error.issues.map((issue) =>
+          "params" in issue &&
+          issue.params &&
+          typeof issue.params === "object" &&
+          "violationCode" in issue.params
+            ? issue.params.violationCode
+            : undefined,
+        ),
+      ).toEqual([
+        "public_limit_total_requests_exceeds_deployment_cap",
+        "public_vus_limit_invalid",
+        "public_custom_default_deployment_buyers_exceeded",
+        "public_custom_default_public_buyers_exceeded",
+      ]);
+    }
+  });
+
+  it("validates strict persisted mutable policy without deployment caps", () => {
+    const effective = semanticRuntimePolicy();
+    const { deploymentHardCaps, ...mutable } = effective;
+
+    expect(collectPublicRuntimePolicyMutableViolations(mutable)).toEqual([]);
+    expect(publicRuntimePolicyPersistedSchema.parse(mutable)).toEqual(mutable);
+    expect(() =>
+      publicRuntimePolicyPersistedSchema.parse({ ...mutable, deploymentHardCaps }),
+    ).toThrow(/Unrecognized key.*deploymentHardCaps/i);
+
+    mutable.publicCustomLimits.maxBuyers = 5;
+    expect(collectPublicRuntimePolicyMutableViolations(mutable)[0]).toMatchObject({
+      code: "public_custom_default_public_buyers_exceeded",
+      path: ["publicCustomDefaults", "trafficConfig", "buyerCount"],
+    });
+    expect(publicRuntimePolicyPersistedSchema.safeParse(mutable).success).toBe(false);
+  });
+
+  it("validates automatic default VUs against deployment caps only for effective policy", () => {
+    const effective = semanticRuntimePolicy();
+    effective.publicCustomDefaults.trafficConfig = {
+      mode: "steady-arrival-rate",
+      ratePerSecond: 6,
+      startDelaySeconds: 0,
+      durationSeconds: 1,
+      quantityPerAttempt: 1,
+    };
+    effective.deploymentHardCaps.maxPreAllocatedVus = 10;
+    effective.deploymentHardCaps.maxVus = 10;
+    const { deploymentHardCaps: _deploymentHardCaps, ...mutable } = effective;
+
+    expect(collectPublicRuntimePolicyMutableViolations(mutable)).toEqual([]);
+    expect(publicRuntimePolicyPersistedSchema.safeParse(mutable).success).toBe(true);
+    expect(collectPublicRuntimePolicyViolations(effective)).toEqual([
+      {
+        code: "public_custom_default_deployment_max_vus_exceeded",
+        message: "Public custom defaults must fit within the active public runtime policy.",
+        details: { value: 12, cap: 10 },
+        path: ["publicCustomDefaults", "trafficConfig", "k6Vus", "maxVus"],
+      },
+    ]);
+
+    const parsed = publicRuntimePolicySchema.safeParse(effective);
+    expect(parsed.success).toBe(false);
+    if (!parsed.success) {
+      expect(parsed.error.issues[0]).toMatchObject({
+        path: ["publicCustomDefaults", "trafficConfig", "k6Vus", "maxVus"],
+        params: {
+          violationCode: "public_custom_default_deployment_max_vus_exceeded",
+          details: { value: 12, cap: 10 },
+        },
+      });
     }
   });
 

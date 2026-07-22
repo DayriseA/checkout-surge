@@ -21,7 +21,7 @@ import type {
   HttpTimingBreakdownSummary,
   InventoryConfig,
   OperatorMode,
-  PublicRuntimePolicy as PublicRuntimePolicyContract,
+  PublicRuntimePolicyMutable as PublicRuntimePolicyMutableContract,
   RealLoadRunDiagnosticsSummary,
   TerminalInventorySnapshot,
   TrafficCompletionApiRequestLifecycleSummary,
@@ -716,7 +716,7 @@ export const publicRuntimePolicies = pgTable(
   "public_runtime_policies",
   {
     id: text("id").default("active").primaryKey(),
-    policy: jsonObject<PublicRuntimePolicyContract>("policy"),
+    policy: jsonObject<PublicRuntimePolicyMutableContract>("policy"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

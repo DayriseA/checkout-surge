@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { PublicRuntimePolicy } from "@checkout-surge/contracts";
+import type { PublicRunBudget } from "@checkout-surge/contracts";
 import type { CheckoutSurgeRedis } from "@checkout-surge/db";
 
 const reserveScript = `
@@ -32,7 +32,7 @@ export interface PublicRunBudgetReservation {
 
 export interface PublicRunBudgetStore {
   reserve(input: {
-    policy: PublicRuntimePolicy;
+    budget: PublicRunBudget;
     publicVisitorId: string;
     now: Date;
   }): Promise<PublicRunBudgetDecision>;
@@ -47,17 +47,15 @@ export class RedisPublicRunBudgetStore implements PublicRunBudgetStore {
   constructor(private readonly redis: CheckoutSurgeRedis) {}
 
   async reserve(input: {
-    policy: PublicRuntimePolicy;
+    budget: PublicRunBudget;
     publicVisitorId: string;
     now: Date;
   }): Promise<PublicRunBudgetDecision> {
-    const window = Math.floor(
-      input.now.getTime() / (input.policy.publicRunBudget.windowSeconds * 1000),
-    );
+    const window = Math.floor(input.now.getTime() / (input.budget.windowSeconds * 1000));
     const hashTag = `{${window}}`;
     const globalKey = `demo-run:public-budget:${hashTag}:global`;
     const visitorKey = `demo-run:public-budget:${hashTag}:visitor:${input.publicVisitorId}`;
-    const ttlSeconds = input.policy.publicRunBudget.windowSeconds * 2;
+    const ttlSeconds = input.budget.windowSeconds * 2;
 
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const reservationId = randomUUID();
@@ -68,8 +66,8 @@ export class RedisPublicRunBudgetStore implements PublicRunBudgetStore {
         globalKey,
         visitorKey,
         reservationKey,
-        input.policy.publicRunBudget.globalMaxStarts,
-        input.policy.publicRunBudget.perVisitorMaxStarts,
+        input.budget.globalMaxStarts,
+        input.budget.perVisitorMaxStarts,
         ttlSeconds,
       );
       if (result === "allowed")

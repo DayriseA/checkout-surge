@@ -1,4 +1,4 @@
-import type { PublicRuntimePolicy } from "./demo.js";
+import type { PublicRuntimePolicy, PublicRuntimePolicyMutable } from "./demo.js";
 import type { ErrorPayloadCode } from "./error.js";
 import type { OperatorMode } from "./lifecycle.js";
 import {
@@ -53,7 +53,20 @@ export function collectPublicRuntimePolicyViolations(
   const violations: PublicRuntimePolicyViolation[] = [];
   collectPublicLimitCapViolations(policy, violations);
   collectLimitRelationshipViolations(policy, violations);
-  collectDefaultSnapshotViolations(policy, violations);
+  collectEffectiveDefaultSnapshotViolations(policy, violations);
+  return violations;
+}
+
+/**
+ * Validates the policy semantics that are intrinsic to the persisted mutable
+ * values and therefore do not depend on one deployment's environment caps.
+ */
+export function collectPublicRuntimePolicyMutableViolations(
+  policy: PublicRuntimePolicyMutable,
+): PublicRuntimePolicyViolation[] {
+  const violations: PublicRuntimePolicyViolation[] = [];
+  collectLimitRelationshipViolations(policy, violations);
+  collectMutableDefaultSnapshotViolations(policy, violations);
   return violations;
 }
 
@@ -179,7 +192,7 @@ function collectPublicLimitCapViolations(
 
 function collectPublicCustomSnapshotViolations(
   snapshot: AcceptedRunConfigSnapshot,
-  policy: PublicRuntimePolicy,
+  policy: Pick<PublicRuntimePolicyMutable, "publicCustomLimits">,
   violations: PublicRuntimePolicyViolation[],
   trafficMetrics: { totalRequests: number; requestRate: number; durationSeconds: number },
 ): void {
@@ -262,7 +275,7 @@ function collectPublicCustomSnapshotViolations(
 
 function collectPublicErpViolations(
   snapshot: AcceptedRunConfigSnapshot,
-  policy: PublicRuntimePolicy,
+  policy: Pick<PublicRuntimePolicyMutable, "publicCustomLimits">,
   violations: PublicRuntimePolicyViolation[],
 ): void {
   const limits = policy.publicCustomLimits;
@@ -293,7 +306,7 @@ function collectPublicErpViolations(
 }
 
 function collectLimitRelationshipViolations(
-  policy: PublicRuntimePolicy,
+  policy: PublicRuntimePolicyMutable,
   violations: PublicRuntimePolicyViolation[],
 ): void {
   const limits = policy.publicCustomLimits;
@@ -315,7 +328,21 @@ function collectLimitRelationshipViolations(
   }
 }
 
-function collectDefaultSnapshotViolations(
+function collectMutableDefaultSnapshotViolations(
+  policy: PublicRuntimePolicyMutable,
+  violations: PublicRuntimePolicyViolation[],
+): void {
+  const causes: PublicRuntimePolicyViolation[] = [];
+  collectPublicCustomSnapshotViolations(
+    policy.publicCustomDefaults,
+    policy,
+    causes,
+    defaultSnapshotTrafficMetrics(policy),
+  );
+  appendWrappedDefaultViolations(causes, violations);
+}
+
+function collectEffectiveDefaultSnapshotViolations(
   policy: PublicRuntimePolicy,
   violations: PublicRuntimePolicyViolation[],
 ): void {
@@ -323,6 +350,26 @@ function collectDefaultSnapshotViolations(
     operatorMode: "public",
     enforcePublicCustomLimits: true,
   });
+  appendWrappedDefaultViolations(causes, violations);
+}
+
+function defaultSnapshotTrafficMetrics(policy: PublicRuntimePolicyMutable): {
+  totalRequests: number;
+  requestRate: number;
+  durationSeconds: number;
+} {
+  const traffic = policy.publicCustomDefaults.trafficConfig;
+  return {
+    totalRequests: calculatePlannedRequests(traffic),
+    requestRate: calculateRequestRate(traffic),
+    durationSeconds: calculateTrafficDurationSeconds(traffic),
+  };
+}
+
+function appendWrappedDefaultViolations(
+  causes: PublicRuntimePolicyViolation[],
+  violations: PublicRuntimePolicyViolation[],
+): void {
   for (const cause of causes) {
     violations.push({
       code: `public_custom_default_${cause.code}` as ErrorPayloadCode,

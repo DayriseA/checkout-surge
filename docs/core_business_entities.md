@@ -703,9 +703,9 @@ Logical fields:
 Notes:
 
 - The singleton row uses the stable id `active`.
-- An explicit seed/setup validates the environment-backed mutable-policy baseline and inserts it only when the active singleton is absent. The seven API-owned deployment caps are mirrored into setup solely for this semantic validation and compatibility storage. Rerunning setup preserves admin-edited values; a fresh database is required to bootstrap from changed setup defaults.
-- The migration runner validates an existing active singleton against the current structural and semantic policy contract without translating older shapes. Incompatible pre-release state is rebuilt through the documented selected-project wipe workflow.
-- Admin-protected controls may update this row. API startup configuration owns deployment hard caps, overlays them at the persistence/application boundary, and rejects updates or startup when mutable policy values exceed current caps.
+- An explicit seed/setup validates the mutable policy's intrinsic relationships and defaults, then inserts it only when the active singleton is absent. It does not read or store API-owned deployment caps. Rerunning setup preserves admin-edited values; a fresh database is required to bootstrap from changed setup defaults.
+- The migration runner validates an existing active singleton against the current strict mutable structural and intrinsic semantic contract without translating older or cap-bearing shapes. Incompatible pre-release state is rebuilt through the documented selected-project wipe workflow.
+- Admin-protected controls may update this row. API startup configuration is the sole owner of deployment hard caps. One API effective-policy construction boundary combines the strict mutable row and caps, preserving effective response DTOs while rejecting updates or startup when mutable values exceed current caps.
 - Public runtime policy changes do not mutate public preset definitions; they control public custom-run bounds and public budget behavior.
 
 ---

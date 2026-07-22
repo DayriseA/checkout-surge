@@ -3,8 +3,8 @@ import {
   type DemoPresetDisplay,
   type ErpRunConfig,
   type InventoryConfig,
-  type PublicRuntimePolicy,
-  publicRuntimePolicySchema,
+  type PublicRuntimePolicyMutable,
+  publicRuntimePolicyPersistedSchema,
   type TrafficConfig,
 } from "@checkout-surge/contracts";
 import { eq, sql } from "drizzle-orm";
@@ -482,8 +482,8 @@ function backpressureConfig(options: { orderProcessConcurrency: number }): Backp
   };
 }
 
-function buildPublicRuntimePolicy(): PublicRuntimePolicy {
-  return publicRuntimePolicySchema.parse({
+function buildPublicRuntimePolicy(): PublicRuntimePolicyMutable {
+  return publicRuntimePolicyPersistedSchema.parse({
     isPublicRunBudgetEnforced: true,
     publicRunBudget: {
       windowSeconds: optionalIntegerEnv("PUBLIC_RUN_BUDGET_WINDOW_SECONDS", 300),
@@ -517,17 +517,6 @@ function buildPublicRuntimePolicy(): PublicRuntimePolicy {
       maxErpErrorRate: optionalNumberEnv("PUBLIC_CUSTOM_MAX_ERP_ERROR_RATE", 0.25),
       allowForcedOutage: false,
       allowedTrafficModes: ["buyer-spike", "steady-arrival-rate"],
-    },
-    deploymentHardCaps: {
-      // Mirrored for first-seed semantic validation and compatibility storage only.
-      // The API overlays its independently loaded deployment config at runtime.
-      maxBuyers: optionalIntegerEnv("DEMO_MAX_BUYERS", 100_000),
-      maxTotalRequests: optionalIntegerEnv("DEMO_MAX_TOTAL_REQUESTS", 100_000),
-      maxRequestsPerSecond: optionalIntegerEnv("DEMO_MAX_REQUESTS_PER_SECOND", 10_000),
-      maxTrafficDurationSeconds: optionalIntegerEnv("DEMO_MAX_TRAFFIC_DURATION_SECONDS", 300),
-      maxTrafficStartDelaySeconds: optionalIntegerEnv("DEMO_MAX_TRAFFIC_START_DELAY_SECONDS", 30),
-      maxPreAllocatedVus: optionalIntegerEnv("DEMO_MAX_PRE_ALLOCATED_VUS", 10_000),
-      maxVus: optionalIntegerEnv("DEMO_MAX_VUS", 10_000),
     },
   });
 }
