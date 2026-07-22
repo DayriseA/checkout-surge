@@ -55,20 +55,9 @@ export interface QueueCleanupSummary {
 }
 
 export interface DemoQueueQuiescenceLease {
-  /**
-   * Relinquishes the adapter's exclusive turn. Safe restoration resumes only
-   * maintenance-owned pauses and runs finalization before another lease enters;
-   * unsafe post-commit queue failures retain those pauses for a later retry.
-   */
-  release(options: DemoQueueQuiescenceRelease): Promise<void>;
+  /** Restores every queue pause introduced by this maintenance operation. */
+  release(): Promise<void>;
 }
-
-export type DemoQueueQuiescenceRelease =
-  | { disposition: "retain_owned_pauses" }
-  | {
-      disposition: "restore_owned_pauses";
-      afterRestored?: () => Promise<void>;
-    };
 
 export interface DemoQueueMaintenance {
   cleanResetOwnedQueues(): Promise<QueueCleanupSummary>;
@@ -79,7 +68,6 @@ export interface DemoQueueMaintenance {
 
 export type DemoQueueMaintenanceConflictCode =
   | "active_job"
-  | "maintenance_owned_by_other_run"
   | "malformed_claimed_job"
   | "not_quiescent";
 
@@ -116,8 +104,8 @@ export interface DashboardLiveStateReset {
 }
 
 export class DemoMaintenanceService {
-  private static resetTail: Promise<void> = Promise.resolve();
-  private static resetPendingCount = 0;
+  private maintenanceTail: Promise<void> = Promise.resolve();
+  private resetPendingCount = 0;
 
   constructor(
     private readonly options: {
@@ -142,21 +130,16 @@ export class DemoMaintenanceService {
   ) {}
 
   async reset(correlationId: string): Promise<AdminDemoResetResponse> {
-    const arrivedDuringReset = DemoMaintenanceService.resetPendingCount > 0;
-    DemoMaintenanceService.resetPendingCount += 1;
-    const operation = DemoMaintenanceService.resetTail.then(() => {
-      const reset = () => this.resetWithoutConcurrentReset(correlationId, arrivedDuringReset);
-      return this.options.resetWorkflowFence.runExclusive(reset);
-    });
-    DemoMaintenanceService.resetTail = operation.then(
-      () => {
-        DemoMaintenanceService.resetPendingCount -= 1;
-      },
-      () => {
-        DemoMaintenanceService.resetPendingCount -= 1;
-      },
+    const arrivedDuringReset = this.resetPendingCount > 0;
+    this.resetPendingCount += 1;
+    const operation = this.runSerializedMaintenance(() =>
+      this.options.resetWorkflowFence.runExclusive(() =>
+        this.resetWithoutConcurrentReset(correlationId, arrivedDuringReset),
+      ),
     );
-    return operation;
+    return operation.finally(() => {
+      this.resetPendingCount -= 1;
+    });
   }
 
   private async resetWithoutConcurrentReset(
@@ -368,6 +351,14 @@ export class DemoMaintenanceService {
     olderThanDays: number;
     correlationId: string;
   }): Promise<AdminMaintenanceCleanupRunsResponse> {
+    return this.runSerializedMaintenance(() => this.cleanupOldRunsSerialized(input));
+  }
+
+  private async cleanupOldRunsSerialized(input: {
+    keepLatest: number;
+    olderThanDays: number;
+    correlationId: string;
+  }): Promise<AdminMaintenanceCleanupRunsResponse> {
     const now = this.now();
     const cutoffBefore = new Date(now.getTime() - input.olderThanDays * 24 * 60 * 60 * 1000);
     const latestRows = await this.options.db
@@ -443,18 +434,22 @@ export class DemoMaintenanceService {
     runId: string;
     correlationId: string;
   }): Promise<AdminGeneratedRunTeardownResponse> {
+    return this.runSerializedMaintenance(() => this.teardownGeneratedRunSerialized(input));
+  }
+
+  private async teardownGeneratedRunSerialized(input: {
+    runId: string;
+    correlationId: string;
+  }): Promise<AdminGeneratedRunTeardownResponse> {
     const targeted = this.options.queueMaintenance;
     let lease: Awaited<ReturnType<typeof targeted.acquireGeneratedRunQuiescence>> | undefined;
     let result: AdminGeneratedRunTeardownResponse | undefined;
     let primaryError: unknown;
-    let retainOwnedQueuePauses = false;
     try {
       lease = await targeted.acquireGeneratedRunQuiescence(input.runId);
       result = await this.teardownQuiescedGeneratedRun(input, targeted);
     } catch (error) {
-      const failure = unwrapQueueConvergenceError(error);
-      retainOwnedQueuePauses = failure.retainOwnedQueuePauses;
-      primaryError = mapQueueMaintenanceError(failure.error);
+      primaryError = mapQueueMaintenanceError(error);
       if (primaryError instanceof ApiHttpError && primaryError.statusCode === 409) {
         this.options.logger.warn(
           {
@@ -465,55 +460,41 @@ export class DemoMaintenanceService {
           "Generated demo run teardown was refused.",
         );
       }
-    }
-
-    let releaseError: unknown;
-    if (lease) {
-      try {
-        await lease.release(
-          retainOwnedQueuePauses
-            ? { disposition: "retain_owned_pauses" }
-            : {
-                disposition: "restore_owned_pauses",
-                ...(result?.outcome === "deleted"
-                  ? {
-                      afterRestored: async () => {
-                        try {
-                          await this.options.completeGeneratedRunTeardown(
-                            this.options.db,
-                            input.runId,
-                          );
-                        } catch (error) {
-                          this.options.logger.warn(
-                            {
-                              err: error,
-                              runId: input.runId,
-                              saleOfferId: result.saleOfferId,
-                              correlationId: input.correlationId,
-                            },
-                            "Generated-run external cleanup succeeded but receipt completion requires retry.",
-                          );
-                          throw error;
-                        }
-                      },
-                    }
-                  : {}),
-              },
-        );
-      } catch (error) {
-        releaseError = error;
+    } finally {
+      if (lease) {
+        try {
+          await lease.release();
+        } catch (error) {
+          this.options.logger.warn(
+            { err: error, runId: input.runId, correlationId: input.correlationId },
+            "Generated-run teardown could not restore queue availability; retry the same cleanup request.",
+          );
+          primaryError = primaryError
+            ? new AggregateError(
+                [primaryError, error],
+                `Generated-run teardown failed and queue state restoration also failed: ${messageOf(primaryError)}`,
+              )
+            : error;
+        }
       }
     }
-    if (primaryError && releaseError) {
-      throw new AggregateError(
-        [primaryError, releaseError],
-        `Generated-run teardown failed and queue state restoration also failed: ${messageOf(primaryError)}`,
-      );
-    }
     if (primaryError) throw primaryError;
-    if (releaseError) throw releaseError;
     if (!result) throw new Error("Generated-run teardown completed without a response.");
     if (result.outcome === "deleted") {
+      try {
+        await this.options.completeGeneratedRunTeardown(this.options.db, input.runId);
+      } catch (error) {
+        this.options.logger.warn(
+          {
+            err: error,
+            runId: input.runId,
+            saleOfferId: result.saleOfferId,
+            correlationId: input.correlationId,
+          },
+          "Generated-run external cleanup succeeded but receipt completion requires retry.",
+        );
+        throw error;
+      }
       this.options.logger.info(result, "Generated demo run teardown completed.");
     } else {
       this.options.logger.info(result, "Generated demo run teardown was already absent.");
@@ -566,11 +547,11 @@ export class DemoMaintenanceService {
           runId: input.runId,
           saleOfferId: prepared.saleOfferId,
           correlationId: input.correlationId,
-          queuePausesRetained: true,
+          queueResumeWillBeAttempted: true,
         },
-        "Generated-run queue convergence failed after durable deletion; maintenance-owned queues remain paused for retry.",
+        "Generated-run queue convergence failed after durable deletion; queue availability will be restored before returning the retryable failure.",
       );
-      throw new PostCommitQueueConvergenceError(error);
+      throw error;
     }
 
     try {
@@ -605,6 +586,15 @@ export class DemoMaintenanceService {
 
   private now(): Date {
     return this.options.now?.() ?? new Date();
+  }
+
+  private runSerializedMaintenance<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.maintenanceTail.then(operation);
+    this.maintenanceTail = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
   }
 
   private async readResetRun(runId: string): Promise<{
@@ -691,24 +681,6 @@ function mapQueueMaintenanceError(error: unknown): unknown {
     message: error.message,
     details: { conflictReason: error.code },
   });
-}
-
-class PostCommitQueueConvergenceError extends Error {
-  constructor(readonly originalError: unknown) {
-    super("Generated-run queue convergence failed after durable deletion.", {
-      cause: originalError,
-    });
-    this.name = "PostCommitQueueConvergenceError";
-  }
-}
-
-function unwrapQueueConvergenceError(error: unknown): {
-  error: unknown;
-  retainOwnedQueuePauses: boolean;
-} {
-  return error instanceof PostCommitQueueConvergenceError
-    ? { error: error.originalError, retainOwnedQueuePauses: true }
-    : { error, retainOwnedQueuePauses: false };
 }
 
 function messageOf(error: unknown): string {

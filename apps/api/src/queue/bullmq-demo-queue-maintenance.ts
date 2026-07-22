@@ -40,13 +40,6 @@ export interface TargetQueueBoundary {
   drain(delayed?: boolean): Promise<void>;
   clean(grace: number, limit: number, state: "completed" | "failed"): Promise<string[]>;
   getJobs(states: string[]): Promise<TargetQueueJob[]>;
-  readMaintenancePauseOwner(): Promise<string | null>;
-  claimMaintenancePauseOwnership(
-    runId: string,
-  ): Promise<
-    { outcome: "claimed" | "already_owned" } | { outcome: "foreign_owner"; runId: string }
-  >;
-  clearMaintenancePauseOwnership(runId: string): Promise<boolean>;
   close(): Promise<void>;
 }
 
@@ -70,8 +63,8 @@ export function createBullMqDemoQueueMaintenance(
 export function createDemoQueueMaintenance(
   queues: TargetQueueBoundary[],
 ): DemoQueueMaintenance & { close(): Promise<void> } {
-  const ownedPauseRestorations = new Map<TargetQueueBoundary, string>();
-  let quiescenceTail = Promise.resolve();
+  const queuesNeedingResume = new Set<TargetQueueBoundary>();
+  let activeLeaseDone: Promise<void> | undefined;
   let closePromise: Promise<void> | undefined;
   return {
     async cleanResetOwnedQueues(): Promise<QueueCleanupSummary> {
@@ -85,50 +78,38 @@ export function createDemoQueueMaintenance(
       return { cleanedQueueCount: queues.length, cleanedJobCount };
     },
 
-    async acquireGeneratedRunQuiescence(runId) {
+    async acquireGeneratedRunQuiescence(_runId) {
       if (closePromise) {
         throw new Error("Queue maintenance is closing and cannot acquire quiescence.");
       }
+      if (activeLeaseDone) {
+        throw new Error("Queue maintenance already has an active quiescence lease.");
+      }
 
-      const previousTurn = quiescenceTail;
-      let finishTurn!: () => void;
-      // Reserving a new unresolved tail before waiting makes acquisitions FIFO:
-      // every later caller waits for this lease's complete release path.
-      quiescenceTail = new Promise<void>((resolve) => {
-        finishTurn = resolve;
+      let finishActiveLease!: () => void;
+      activeLeaseDone = new Promise<void>((resolve) => {
+        finishActiveLease = () => {
+          activeLeaseDone = undefined;
+          resolve();
+        };
       });
-      await previousTurn;
 
-      const newlyClaimed = new Set<TargetQueueBoundary>();
-      const leaseOwnedQueues = new Set<TargetQueueBoundary>();
+      const queuesToResume = new Set<TargetQueueBoundary>();
       try {
         for (const queue of queues) {
-          const existingOwner =
-            ownedPauseRestorations.get(queue) ?? (await queue.readMaintenancePauseOwner());
-          if (existingOwner) {
-            if (existingOwner !== runId) throw foreignOwnerError(queue, existingOwner, runId);
-            ownedPauseRestorations.set(queue, runId);
-            leaseOwnedQueues.add(queue);
+          if (queuesNeedingResume.has(queue)) {
+            queuesToResume.add(queue);
             if (!(await queue.isPaused())) await queue.pause();
             continue;
           }
           if (await queue.isPaused()) continue;
-          const claim = await queue.claimMaintenancePauseOwnership(runId);
-          if (claim.outcome === "foreign_owner") {
-            throw foreignOwnerError(queue, claim.runId, runId);
-          }
-          if (claim.outcome === "claimed") newlyClaimed.add(queue);
-          leaseOwnedQueues.add(queue);
-          ownedPauseRestorations.set(queue, runId);
+          queuesToResume.add(queue);
+          queuesNeedingResume.add(queue);
           await queue.pause();
         }
       } catch (error) {
-        const rollbackErrors = await restoreQueueStates(
-          newlyClaimed,
-          runId,
-          ownedPauseRestorations,
-        );
-        finishTurn();
+        const rollbackErrors = await resumeQueues(queuesToResume, queuesNeedingResume);
+        finishActiveLease();
         if (rollbackErrors.length > 0) {
           throw new AggregateError(
             [error, ...rollbackErrors],
@@ -140,22 +121,16 @@ export function createDemoQueueMaintenance(
 
       let released = false;
       return {
-        async release(options) {
+        async release() {
           if (released) return;
           released = true;
           try {
-            if (options.disposition === "retain_owned_pauses") return;
-            const errors = await restoreQueueStates(
-              leaseOwnedQueues,
-              runId,
-              ownedPauseRestorations,
-            );
+            const errors = await resumeQueues(queuesToResume, queuesNeedingResume);
             if (errors.length > 0) {
               throw new AggregateError(errors, "Could not fully restore queue pause state.");
             }
-            await options.afterRestored?.();
           } finally {
-            finishTurn();
+            finishActiveLease();
           }
         },
       };
@@ -196,9 +171,10 @@ export function createDemoQueueMaintenance(
     },
 
     close() {
+      const leaseDone = activeLeaseDone;
       closePromise ??= (async () => {
-        await quiescenceTail;
-        await Promise.all(queues.map((queue) => queue.close()));
+        await leaseDone;
+        await closeQueues(queues, queuesNeedingResume);
       })();
       return closePromise;
     },
@@ -210,42 +186,6 @@ function bullMqBoundary(
   queue: Queue,
   parse: TargetQueueBoundary["parse"],
 ): TargetQueueBoundary {
-  const maintenancePauseOwnershipKey = queue.toKey(
-    "checkout-surge:generated-run-maintenance-pause-owned",
-  );
-  let scriptsDefined = false;
-  const maintenancePauseClaimCommand = "checkoutSurgeClaimGeneratedRunMaintenancePause";
-  const maintenancePauseClearCommand = "checkoutSurgeClearGeneratedRunMaintenancePause";
-  const maintenanceClient = async () => {
-    const client = await queue.client;
-    if (!scriptsDefined) {
-      client.defineCommand(maintenancePauseClaimCommand, {
-        numberOfKeys: 1,
-        lua: `
-          local current = redis.call("GET", KEYS[1])
-          if not current then
-            redis.call("SET", KEYS[1], ARGV[1])
-            return {"claimed", ARGV[1]}
-          end
-          if current == ARGV[1] then
-            return {"already_owned", current}
-          end
-          return {"foreign_owner", current}
-        `,
-      });
-      client.defineCommand(maintenancePauseClearCommand, {
-        numberOfKeys: 1,
-        lua: `
-          if redis.call("GET", KEYS[1]) == ARGV[1] then
-            return redis.call("DEL", KEYS[1])
-          end
-          return 0
-        `,
-      });
-      scriptsDefined = true;
-    }
-    return client;
-  };
   return {
     semanticName,
     parse,
@@ -255,72 +195,39 @@ function bullMqBoundary(
     drain: (delayed) => queue.drain(delayed),
     clean: (grace, limit, state) => queue.clean(grace, limit, state),
     getJobs: (states) => queue.getJobs(states as Parameters<Queue["getJobs"]>[0], 0, -1, true),
-    readMaintenancePauseOwner: async () =>
-      (await maintenanceClient()).get(maintenancePauseOwnershipKey),
-    claimMaintenancePauseOwnership: async (runId) => {
-      const result = (await (
-        await maintenanceClient()
-      ).runCommand(maintenancePauseClaimCommand, [maintenancePauseOwnershipKey, runId])) as [
-        "claimed" | "already_owned" | "foreign_owner",
-        string,
-      ];
-      return result[0] === "foreign_owner"
-        ? { outcome: result[0], runId: result[1] }
-        : { outcome: result[0] };
-    },
-    clearMaintenancePauseOwnership: async (runId) =>
-      Number(
-        await (await maintenanceClient()).runCommand(maintenancePauseClearCommand, [
-          maintenancePauseOwnershipKey,
-          runId,
-        ]),
-      ) === 1,
     close: () => queue.close(),
   };
 }
 
-async function restoreQueueStates(
+async function resumeQueues(
   queues: Iterable<TargetQueueBoundary>,
-  runId: string,
-  ownedPauseRestorations: Map<TargetQueueBoundary, string>,
+  queuesNeedingResume: Set<TargetQueueBoundary>,
 ): Promise<unknown[]> {
   const attempted = [...queues];
-  const results = await Promise.allSettled(
-    attempted.map(async (queue) => {
-      const owner = await queue.readMaintenancePauseOwner();
-      if (owner !== runId) {
-        throw new Error(
-          `Cannot restore ${queue.semanticName}: maintenance pause is owned by ${owner ?? "no run"}, not ${runId}.`,
-        );
-      }
-      await queue.resume();
-      if (!(await queue.clearMaintenancePauseOwnership(runId))) {
-        await queue.pause();
-        throw new Error(
-          `Could not clear ${queue.semanticName} maintenance pause ownership for run ${runId}.`,
-        );
-      }
-    }),
-  );
+  const results = await Promise.allSettled(attempted.map((queue) => queue.resume()));
   const errors: unknown[] = [];
   results.forEach((result, index) => {
     const queue = attempted[index];
     if (!queue) return;
-    if (result.status === "fulfilled") ownedPauseRestorations.delete(queue);
+    if (result.status === "fulfilled") queuesNeedingResume.delete(queue);
     else errors.push(result.reason);
   });
   return errors;
 }
 
-function foreignOwnerError(
-  queue: TargetQueueBoundary,
-  ownerRunId: string,
-  requestedRunId: string,
-): DemoQueueMaintenanceConflict {
-  return new DemoQueueMaintenanceConflict(
-    "maintenance_owned_by_other_run",
-    `${queue.semanticName} is paused for generated-run maintenance owned by run ${ownerRunId}; retry run ${requestedRunId} after the owning teardown completes.`,
-  );
+async function closeQueues(
+  queues: TargetQueueBoundary[],
+  queuesNeedingResume: Set<TargetQueueBoundary>,
+): Promise<void> {
+  const resumeErrors = await resumeQueues(queuesNeedingResume, queuesNeedingResume);
+  const closeResults = await Promise.allSettled(queues.map((queue) => queue.close()));
+  const errors = [
+    ...resumeErrors,
+    ...closeResults.flatMap((result) => (result.status === "rejected" ? [result.reason] : [])),
+  ];
+  if (errors.length > 0) {
+    throw new AggregateError(errors, "Could not fully restore and close queue maintenance.");
+  }
 }
 
 async function assertNoConflictingJobs(

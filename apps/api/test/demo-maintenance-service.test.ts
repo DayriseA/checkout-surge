@@ -42,8 +42,6 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiHttpError } from "../src/runtime/errors.js";
 import {
   type DemoQueueMaintenance,
-  DemoQueueMaintenanceConflict,
-  type DemoQueueQuiescenceRelease,
   DemoMaintenanceService as ProductionDemoMaintenanceService,
 } from "../src/services/demo-maintenance-service.js";
 import { PostgresBuyPersistence } from "../src/services/postgres-buy-persistence.js";
@@ -198,7 +196,7 @@ describe("demo maintenance service", () => {
     await redisClient.set(`demo-run:${ids.completedRun}:traffic-metrics`, "metric");
     const preflightGeneratedRun = vi.fn(async () => undefined);
     const cleanGeneratedRun = vi.fn(async () => ({ deletedJobCount: 2 }));
-    const releaseDispositions: DemoQueueQuiescenceRelease["disposition"][] = [];
+    const release = vi.fn(async () => undefined);
     let failRedis = true;
     let failReceiptCompletion = true;
     const service = new DemoMaintenanceService({
@@ -207,10 +205,7 @@ describe("demo maintenance service", () => {
       queueMaintenance: {
         cleanResetOwnedQueues: async () => ({ cleanedQueueCount: 0, cleanedJobCount: 0 }),
         acquireGeneratedRunQuiescence: async (_runId) => ({
-          release: async (options) => {
-            releaseDispositions.push(options.disposition);
-            await restoreQueueLease(options);
-          },
+          release,
         }),
         preflightGeneratedRun,
         cleanGeneratedRun,
@@ -244,7 +239,7 @@ describe("demo maintenance service", () => {
         expect.objectContaining({ idempotencyKey: "cleanup-catalog-confirmation" }),
       ]),
     );
-    expect(releaseDispositions).toEqual(["restore_owned_pauses"]);
+    expect(release).toHaveBeenCalledOnce();
     expect(await readRunScopedGraphCounts(db, ids.completedRun)).toEqual({
       erpAttempts: 0,
       finalizations: 0,
@@ -419,7 +414,7 @@ describe("demo maintenance service", () => {
         status === "starting" ? "starting" : status === "active" ? "active" : "succeeded",
       failureReason: null,
     });
-    const release = vi.fn(restoreQueueLease);
+    const release = vi.fn(async () => undefined);
     const service = new DemoMaintenanceService({
       db,
       redis: redisClient,
@@ -444,10 +439,10 @@ describe("demo maintenance service", () => {
     expect(await db.select().from(demoRuns).where(eq(demoRuns.id, ids.completedRun))).toHaveLength(
       1,
     );
-    expect(release).toHaveBeenCalledWith({ disposition: "restore_owned_pauses" });
+    expect(release).toHaveBeenCalledOnce();
   });
 
-  it("accepts a terminal failed run and retries a post-commit queue failure", async () => {
+  it("resumes queues after a post-commit failure and retries from durable coordinates", async () => {
     const db = requireConnection(connection).db;
     const redisClient = requireRedis(redis);
     await seedBase(db);
@@ -459,24 +454,14 @@ describe("demo maintenance service", () => {
       failureReason: "traffic_failed",
       runInventoryStatus: "closed",
     });
-    await seedRun(db, redisClient, {
-      runId: ids.activeRun,
-      saleOfferId: ids.activeOffer,
-      status: "active",
-      trafficStatus: "active",
-      failureReason: null,
-      runInventoryStatus: "accepting",
-    });
     let failQueue = true;
-    let maintenanceOwner: string | null = null;
-    let pauseCalls = 0;
     const acquireRunIds: string[] = [];
+    const release = vi.fn(async () => undefined);
     const preflightGeneratedRun = vi.fn(async () => undefined);
     const cleanGeneratedRun = vi.fn(async () => {
       if (failQueue) throw new Error("queue unavailable");
       return { deletedJobCount: 0 };
     });
-    const releaseDispositions: DemoQueueQuiescenceRelease["disposition"][] = [];
     const service = new DemoMaintenanceService({
       db,
       redis: redisClient,
@@ -484,22 +469,7 @@ describe("demo maintenance service", () => {
         cleanResetOwnedQueues: async () => ({ cleanedQueueCount: 0, cleanedJobCount: 0 }),
         acquireGeneratedRunQuiescence: async (requestedRunId) => {
           acquireRunIds.push(requestedRunId);
-          if (maintenanceOwner && maintenanceOwner !== requestedRunId) {
-            throw new DemoQueueMaintenanceConflict(
-              "maintenance_owned_by_other_run",
-              `maintenance belongs to ${maintenanceOwner}`,
-            );
-          }
-          if (!maintenanceOwner) pauseCalls += 1;
-          maintenanceOwner = requestedRunId;
-          return {
-            release: async (options) => {
-              releaseDispositions.push(options.disposition);
-              if (options.disposition === "retain_owned_pauses") return;
-              maintenanceOwner = null;
-              await options.afterRestored?.();
-            },
-          };
+          return { release };
         },
         preflightGeneratedRun,
         cleanGeneratedRun,
@@ -512,21 +482,23 @@ describe("demo maintenance service", () => {
     ).rejects.toThrow("queue unavailable");
     expect(await db.select().from(demoRuns).where(eq(demoRuns.id, ids.failedRun))).toHaveLength(0);
     expect(await db.select().from(demoRunTeardownReceipts)).toHaveLength(1);
-    expect(maintenanceOwner).toBe(ids.failedRun);
-    expect(pauseCalls).toBe(1);
-    expect(releaseDispositions).toEqual(["retain_owned_pauses"]);
+    expect(release).toHaveBeenCalledOnce();
+    expect(preflightGeneratedRun).toHaveBeenCalledTimes(1);
+    expect(cleanGeneratedRun).toHaveBeenCalledTimes(1);
 
-    for (const blockedRunId of [ids.completedRun, ids.activeRun]) {
-      await expect(
-        service.teardownGeneratedRun({
-          runId: blockedRunId,
-          correlationId: `corr-foreign-${blockedRunId}`,
-        }),
-      ).rejects.toMatchObject({
-        statusCode: 409,
-        code: "run_cleanup_conflict",
-      });
-    }
+    failQueue = false;
+    await expect(
+      service.teardownGeneratedRun({ runId: ids.failedRun, correlationId: "corr-queue-retry" }),
+    ).resolves.toMatchObject({ outcome: "deleted", saleOfferId: ids.failedOffer });
+    expect(await db.select().from(demoRunTeardownReceipts)).toHaveLength(0);
+    expect(release).toHaveBeenCalledTimes(2);
+    expect(acquireRunIds).toEqual([ids.failedRun, ids.failedRun]);
+  });
+
+  it("serializes concurrent local teardowns through complete pause-clean-resume sequences", async () => {
+    const db = requireConnection(connection).db;
+    const redisClient = requireRedis(redis);
+    await seedBase(db);
     await seedRun(db, redisClient, {
       runId: ids.completedRun,
       saleOfferId: ids.completedOffer,
@@ -535,39 +507,79 @@ describe("demo maintenance service", () => {
       failureReason: null,
       runInventoryStatus: "closed",
     });
-    await expect(
-      service.teardownGeneratedRun({
-        runId: ids.completedRun,
-        correlationId: "corr-foreign-terminal",
-      }),
-    ).rejects.toMatchObject({
-      statusCode: 409,
-      code: "run_cleanup_conflict",
+    await seedRun(db, redisClient, {
+      runId: ids.failedRun,
+      saleOfferId: ids.failedOffer,
+      status: "failed",
+      trafficStatus: "failed",
+      failureReason: "traffic_failed",
+      runInventoryStatus: "closed",
     });
-    expect(maintenanceOwner).toBe(ids.failedRun);
-    expect(pauseCalls).toBe(1);
-    expect(preflightGeneratedRun).toHaveBeenCalledTimes(1);
-    expect(cleanGeneratedRun).toHaveBeenCalledTimes(1);
-    expect(await db.select().from(demoRuns).where(eq(demoRuns.id, ids.activeRun))).toHaveLength(1);
-    expect(await db.select().from(demoRuns).where(eq(demoRuns.id, ids.completedRun))).toHaveLength(
-      1,
-    );
-    expect(await db.select().from(demoRunTeardownReceipts)).toHaveLength(1);
+    const operations: string[] = [];
+    let reportFirstCleanStarted: (() => void) | undefined;
+    const firstCleanStarted = new Promise<void>((resolve) => {
+      reportFirstCleanStarted = resolve;
+    });
+    let allowFirstClean: (() => void) | undefined;
+    const firstCleanGate = new Promise<void>((resolve) => {
+      allowFirstClean = resolve;
+    });
+    const service = new DemoMaintenanceService({
+      db,
+      redis: redisClient,
+      queueMaintenance: {
+        cleanResetOwnedQueues: async () => ({ cleanedQueueCount: 0, cleanedJobCount: 0 }),
+        acquireGeneratedRunQuiescence: async (runId) => {
+          operations.push(`pause:${runId}`);
+          return {
+            release: async () => {
+              operations.push(`resume:${runId}`);
+            },
+          };
+        },
+        preflightGeneratedRun: async (runId) => {
+          operations.push(`preflight:${runId}`);
+        },
+        cleanGeneratedRun: async (runId) => {
+          operations.push(`clean:${runId}`);
+          if (runId === ids.completedRun) {
+            reportFirstCleanStarted?.();
+            await firstCleanGate;
+          }
+          return { deletedJobCount: 0 };
+        },
+      },
+      terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db),
+      logger: createSilentLogger("api"),
+    });
 
-    failQueue = false;
-    await expect(
-      service.teardownGeneratedRun({ runId: ids.failedRun, correlationId: "corr-queue-retry" }),
-    ).resolves.toMatchObject({ outcome: "deleted", saleOfferId: ids.failedOffer });
-    expect(await db.select().from(demoRunTeardownReceipts)).toHaveLength(0);
-    expect(maintenanceOwner).toBeNull();
-    expect(pauseCalls).toBe(1);
-    expect(releaseDispositions).toEqual(["retain_owned_pauses", "restore_owned_pauses"]);
-    expect(acquireRunIds).toEqual([
-      ids.failedRun,
-      ids.completedRun,
-      ids.activeRun,
-      ids.completedRun,
-      ids.failedRun,
+    const first = service.teardownGeneratedRun({
+      runId: ids.completedRun,
+      correlationId: "corr-serialized-first",
+    });
+    await firstCleanStarted;
+    const second = service.teardownGeneratedRun({
+      runId: ids.failedRun,
+      correlationId: "corr-serialized-second",
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(operations).toEqual([
+      `pause:${ids.completedRun}`,
+      `preflight:${ids.completedRun}`,
+      `clean:${ids.completedRun}`,
+    ]);
+
+    allowFirstClean?.();
+    await expect(Promise.all([first, second])).resolves.toHaveLength(2);
+    expect(operations).toEqual([
+      `pause:${ids.completedRun}`,
+      `preflight:${ids.completedRun}`,
+      `clean:${ids.completedRun}`,
+      `resume:${ids.completedRun}`,
+      `pause:${ids.failedRun}`,
+      `preflight:${ids.failedRun}`,
+      `clean:${ids.failedRun}`,
+      `resume:${ids.failedRun}`,
     ]);
   });
 
@@ -590,10 +602,8 @@ describe("demo maintenance service", () => {
       queueMaintenance: {
         cleanResetOwnedQueues: async () => ({ cleanedQueueCount: 0, cleanedJobCount: 0 }),
         acquireGeneratedRunQuiescence: async (_runId) => ({
-          release: async (options) => {
-            if (options.disposition === "retain_owned_pauses") return;
+          release: async () => {
             if (failRelease) throw new Error("resume unavailable");
-            await options.afterRestored?.();
           },
         }),
         preflightGeneratedRun: async () => undefined,
@@ -623,7 +633,7 @@ describe("demo maintenance service", () => {
     const queueMaintenance = {
       cleanResetOwnedQueues: async () => ({ cleanedQueueCount: 0, cleanedJobCount: 0 }),
       acquireGeneratedRunQuiescence: async (_runId: string) => ({
-        release: restoreQueueLease,
+        release: async () => undefined,
       }),
       preflightGeneratedRun: async () => undefined,
       cleanGeneratedRun: async () => ({ deletedJobCount: 0 }),
@@ -2587,12 +2597,6 @@ function createCleanupService(
       ? { deleteGeneratedRunRedisState: overrides.deleteGeneratedRunRedisState }
       : {}),
   });
-}
-
-async function restoreQueueLease(options: DemoQueueQuiescenceRelease): Promise<void> {
-  if (options.disposition === "restore_owned_pauses") {
-    await options.afterRestored?.();
-  }
 }
 
 function configSnapshotFixture(): AcceptedRunConfigSnapshot {
