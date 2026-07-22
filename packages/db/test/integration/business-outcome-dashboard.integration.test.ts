@@ -13,8 +13,8 @@ import { createDatabaseConnection } from "../../src/client.js";
 import { createRedisDashboardEventSubscriber } from "../../src/redis-dashboard-events.js";
 import {
   demoPresets,
-  demoRunReservationOutcomes,
   demoRunSaleContexts,
+  demoRunSoldOutCounts,
   demoRuns,
   erpAttempts,
   orders,
@@ -101,11 +101,9 @@ describe.skipIf(!databaseUrl)("business outcome dashboard projection", () => {
       runId,
       saleOfferId,
     });
-    await connection.db.insert(demoRunReservationOutcomes).values({
+    await connection.db.insert(demoRunSoldOutCounts).values({
       runId,
-      outcome: "api_sold_out_decision",
       count: 7,
-      source: "redis",
       capturedAt: now,
       latestObservedAt: now,
     });
@@ -124,7 +122,6 @@ describe.skipIf(!databaseUrl)("business outcome dashboard projection", () => {
         runId,
         correlationId: `corr-${status}`,
         quantity: 1,
-        status: "secured" as const,
         reservationToken: `res-${status}`,
         securedAt: securedAtByStatus[status as keyof typeof securedAtByStatus],
         expiresAt: new Date("2026-06-21T00:15:00.000Z"),
@@ -152,7 +149,6 @@ describe.skipIf(!databaseUrl)("business outcome dashboard projection", () => {
       runId,
       correlationId: "corr-delayed",
       quantity: 1,
-      status: "secured",
       reservationToken: "res-delayed",
       securedAt: new Date(now.getTime() - 6_000),
       expiresAt: new Date("2026-06-21T00:15:00.000Z"),
@@ -199,9 +195,7 @@ describe.skipIf(!databaseUrl)("business outcome dashboard projection", () => {
       saleOfferId,
       runId,
       correlationId: "corr-confirmed",
-      channel: "email",
       recipientPlaceholder: "buyer@example.invalid",
-      status: "recorded",
       recordedAt: now,
     });
 

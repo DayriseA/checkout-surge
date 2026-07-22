@@ -12,7 +12,7 @@ import type { CheckoutSurgeDatabase } from "./client.js";
 import type { CheckoutSurgeRedis } from "./redis.js";
 import { publishDashboardEvent } from "./redis-dashboard-events.js";
 import {
-  demoRunReservationOutcomes,
+  demoRunSoldOutCounts,
   erpAttempts,
   orders,
   reservationPendingPersistence,
@@ -58,7 +58,7 @@ export async function readBusinessOutcomeSummary(
     pendingPersistenceCount,
     notificationsRecorded,
   ] = await Promise.all([
-    countRows(db, reservations, and(reservationFilter, eq(reservations.status, "secured"))),
+    countRows(db, reservations, reservationFilter),
     readSoldOutRejections(db, scope.runId),
     countRows(db, orders, and(orderFilter, eq(orders.status, "queued"))),
     countRows(db, orders, and(orderFilter, eq(orders.status, "processing"))),
@@ -70,11 +70,7 @@ export async function readBusinessOutcomeSummary(
       reservationPendingPersistence,
       and(pendingFilter, eq(reservationPendingPersistence.status, "pending_reconciliation")),
     ),
-    countRows(
-      db,
-      simulatedNotifications,
-      and(notificationFilter, eq(simulatedNotifications.status, "recorded")),
-    ),
+    countRows(db, simulatedNotifications, notificationFilter),
   ]);
 
   return businessOutcomeSummarySchema.parse({
@@ -362,14 +358,9 @@ async function readSoldOutRejections(
   }
 
   const [row] = await db
-    .select({ value: demoRunReservationOutcomes.count })
-    .from(demoRunReservationOutcomes)
-    .where(
-      and(
-        eq(demoRunReservationOutcomes.runId, runId),
-        eq(demoRunReservationOutcomes.outcome, "api_sold_out_decision"),
-      ),
-    )
+    .select({ value: demoRunSoldOutCounts.count })
+    .from(demoRunSoldOutCounts)
+    .where(eq(demoRunSoldOutCounts.runId, runId))
     .limit(1);
 
   return row?.value ?? 0;

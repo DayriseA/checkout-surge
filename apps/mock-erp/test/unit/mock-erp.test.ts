@@ -947,7 +947,7 @@ describe("Mock ERP HTTP service", () => {
 
     expect(response.statusCode).toBe(400);
     expect(errorPayloadSchema.parse(response.json())).toMatchObject({
-      code: "chaos_config_exceeds_caps",
+      code: "invalid_chaos_configuration",
       details: { latencyMs: { maximum: 100, actual: 101 } },
     });
   });

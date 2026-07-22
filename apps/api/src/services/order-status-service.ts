@@ -59,7 +59,6 @@ export class OrderStatusService implements OrderStatusController {
       saleOfferId: readModel.order.saleOfferId,
       reservation: {
         id: readModel.reservation.id,
-        status: readModel.reservation.status,
         expiresAt: readModel.reservation.expiresAt.toISOString(),
       },
       order: {
@@ -71,8 +70,6 @@ export class OrderStatusService implements OrderStatusController {
         failureCode: readModel.order.failureCode,
         failureMessage: readModel.order.failureMessage,
       },
-      customerStatus:
-        readModel.order.status === "queued" ? "reservation_secured" : readModel.order.status,
       consistencyLagMs,
       timeline: events.map((event) => ({
         eventName: event.eventName,

@@ -15,13 +15,7 @@ export class PostgresNotificationRecoveryPersistence implements NotificationReco
     const rows = await this.db
       .select({ order: orders })
       .from(orders)
-      .leftJoin(
-        simulatedNotifications,
-        and(
-          eq(simulatedNotifications.orderId, orders.id),
-          eq(simulatedNotifications.channel, "email"),
-        ),
-      )
+      .leftJoin(simulatedNotifications, eq(simulatedNotifications.orderId, orders.id))
       .where(
         and(
           eq(orders.status, "confirmed"),

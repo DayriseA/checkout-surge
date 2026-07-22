@@ -315,7 +315,7 @@ export class HttpTrafficExecutionGateway implements TrafficExecutionGateway, Tra
     if (!response.ok) {
       throw new ApiHttpError({
         statusCode: 502,
-        code: "load_orchestrator_start_failed",
+        code: "load_orchestrator_unavailable",
         message: "The load orchestrator rejected the run start.",
         details: {
           statusCode: response.status,
@@ -379,7 +379,7 @@ export class HttpTrafficExecutionGateway implements TrafficExecutionGateway, Tra
       if (error instanceof TrafficAbortInvalidResponseError) {
         throw new ApiHttpError({
           statusCode: 502,
-          code: "load_orchestrator_abort_invalid_response",
+          code: "load_orchestrator_unavailable",
           message: "The load orchestrator returned an invalid abort confirmation.",
         });
       }
@@ -415,7 +415,7 @@ export class HttpTrafficExecutionGateway implements TrafficExecutionGateway, Tra
     ) {
       throw new ApiHttpError({
         statusCode: 502,
-        code: "load_orchestrator_abort_invalid_response",
+        code: "load_orchestrator_unavailable",
         message: "The load orchestrator returned an invalid abort confirmation.",
       });
     }
@@ -577,14 +577,15 @@ export class DemoRunService implements DemoRunController {
       .limit(1);
 
     if (existingTarget) {
-      throw new DemoRunValidationError("preset_slug_conflict", "A preset already uses that slug.", {
+      throw new DemoRunValidationError("preset_conflict", "A preset already uses that slug.", {
+        conflictReason: "slug_in_use",
         slug: targetSlug,
       });
     }
 
     if (source.slug === "public-custom") {
       throw new DemoRunValidationError(
-        "preset_not_duplicable",
+        "preset_operation_not_allowed",
         "The public custom base preset cannot be duplicated.",
       );
     }
@@ -660,14 +661,16 @@ export class DemoRunService implements DemoRunController {
       .limit(1);
 
     if (!row || row.archivedAt !== null) {
-      throw new DemoRunValidationError("preset_not_found", "Demo preset was not found.", { slug });
+      throw new DemoRunValidationError("resource_not_found", "Demo preset was not found.", {
+        slug,
+      });
     }
 
     if (!isPresetRowArchivable(row)) {
       throw new DemoRunValidationError(
-        "preset_not_archivable",
+        "preset_conflict",
         "Only operator-created admin presets can be archived.",
-        { slug },
+        { conflictReason: "not_archivable", slug },
       );
     }
 
@@ -689,15 +692,15 @@ export class DemoRunService implements DemoRunController {
         .limit(1);
 
       if (!current || current.archivedAt !== null) {
-        throw new DemoRunValidationError("preset_not_found", "Demo preset was not found.", {
+        throw new DemoRunValidationError("resource_not_found", "Demo preset was not found.", {
           slug,
         });
       }
 
       throw new DemoRunValidationError(
-        "preset_not_archivable",
+        "preset_conflict",
         "Only operator-created admin presets can be archived.",
-        { slug },
+        { conflictReason: "not_archivable", slug },
       );
     }
 
@@ -754,7 +757,7 @@ export class DemoRunService implements DemoRunController {
 
     if (!updated) {
       throw new DemoRunValidationError(
-        "public_runtime_policy_not_found",
+        "resource_not_found",
         "Public runtime policy is not configured.",
       );
     }
@@ -808,15 +811,13 @@ export class DemoRunService implements DemoRunController {
           now,
         });
         if (decision.outcome === "denied") {
-          throw decision.reason === "visitor"
-            ? new DemoRunValidationError(
-                "public_visitor_run_budget_exceeded",
-                "Public visitor run budget is exhausted.",
-              )
-            : new DemoRunValidationError(
-                "public_run_budget_exceeded",
-                "Public run budget is exhausted.",
-              );
+          throw new DemoRunValidationError(
+            "public_run_budget_exceeded",
+            decision.reason === "visitor"
+              ? "Public visitor run budget is exhausted."
+              : "Public run budget is exhausted.",
+            { budget: decision.reason },
+          );
         }
         reservation = decision.reservation;
       };
@@ -861,7 +862,7 @@ export class DemoRunService implements DemoRunController {
         if (
           !(error instanceof ApiHttpError && error.code === "load_orchestrator_start_ambiguous")
         ) {
-          await this.failRun(accepted.run.runId, "load_orchestrator_start_failed", correlationId);
+          await this.failRun(accepted.run.runId, "load_orchestrator_unavailable", correlationId);
         }
         throw error;
       }
@@ -950,7 +951,7 @@ export class DemoRunService implements DemoRunController {
             .limit(1)
             .for("update");
           if (!run) {
-            throw new DemoRunValidationError("run_not_found", "Demo run was not found.", {
+            throw new DemoRunValidationError("resource_not_found", "Demo run was not found.", {
               runId: request.runId,
             });
           }
@@ -959,7 +960,7 @@ export class DemoRunService implements DemoRunController {
             !(["starting", "active"] as string[]).includes(run.trafficStatus)
           ) {
             throw new DemoRunValidationError(
-              "traffic_metric_run_not_eligible",
+              "traffic_report_rejected",
               "Demo run is not eligible for traffic metric ingestion.",
               { runId: request.runId, status: run.status, trafficStatus: run.trafficStatus },
             );
@@ -968,7 +969,7 @@ export class DemoRunService implements DemoRunController {
           const outcome = await retainAndPublish();
           if (outcome === "fenced") {
             throw new DemoRunValidationError(
-              "traffic_metric_run_not_eligible",
+              "traffic_report_rejected",
               "Demo run traffic metrics have been fenced.",
               { runId: request.runId, status: run.status, trafficStatus: run.trafficStatus },
             );
@@ -1041,12 +1042,13 @@ export class DemoRunService implements DemoRunController {
         .limit(1)
         .for("update");
       if (!run) {
-        throw new DemoRunValidationError("run_not_found", "Demo run was not found.", {
+        throw new DemoRunValidationError("resource_not_found", "Demo run was not found.", {
           runId: report.runId,
         });
       }
       if (!run.saleOfferId) {
-        throw new DemoRunValidationError("run_sale_offer_missing", "Demo run has no sale offer.", {
+        throw new DemoRunValidationError("run_conflict", "Demo run has no sale offer.", {
+          conflictReason: "sale_offer_missing",
           runId: report.runId,
         });
       }
@@ -1085,7 +1087,7 @@ export class DemoRunService implements DemoRunController {
         !(["starting", "active"] as string[]).includes(run.trafficStatus)
       ) {
         throw new DemoRunValidationError(
-          "traffic_completion_run_not_eligible",
+          "traffic_report_rejected",
           "Demo run is not eligible for traffic completion ingestion.",
           { runId: report.runId, status: run.status, trafficStatus: run.trafficStatus },
         );
@@ -1129,7 +1131,7 @@ export class DemoRunService implements DemoRunController {
         .returning({ id: demoRuns.id });
       if (!inserted || !claimedRun) {
         throw new DemoRunValidationError(
-          "traffic_completion_run_not_eligible",
+          "traffic_report_rejected",
           "Demo run completion could not claim the active traffic lifecycle.",
           { runId: report.runId },
         );
@@ -1169,9 +1171,10 @@ export class DemoRunService implements DemoRunController {
 
         if (existingRun) {
           throw new DemoRunValidationError(
-            "demo_run_already_active",
+            "run_conflict",
             "A demo run is already starting, active, or draining.",
             {
+              conflictReason: "active_run_exists",
               runId: existingRun.id,
               status: existingRun.status,
             },
@@ -1193,9 +1196,9 @@ export class DemoRunService implements DemoRunController {
 
         if (incompleteReset) {
           throw new DemoRunValidationError(
-            "demo_reset_incomplete",
+            "run_conflict",
             "The prior demo reset must be repaired before another run can start.",
-            { runId: incompleteReset.runId },
+            { conflictReason: "reset_incomplete", runId: incompleteReset.runId },
           );
         }
 
@@ -1210,7 +1213,7 @@ export class DemoRunService implements DemoRunController {
 
         if (!product) {
           throw new DemoRunValidationError(
-            "active_product_not_found",
+            "resource_not_found",
             "No active product is available for demo runs.",
           );
         }
@@ -1261,8 +1264,9 @@ export class DemoRunService implements DemoRunController {
     } catch (error) {
       if (isSingleNonTerminalRunViolation(error)) {
         throw new DemoRunValidationError(
-          "demo_run_already_active",
+          "run_conflict",
           "A demo run is already starting, active, or draining.",
+          { conflictReason: "active_run_exists" },
         );
       }
       throw error;
@@ -1277,7 +1281,7 @@ export class DemoRunService implements DemoRunController {
 
     if (request.operatorMode === "public" && preset.visibility !== "public") {
       throw new DemoRunValidationError(
-        "preset_not_public",
+        "preset_operation_not_allowed",
         "Public runs can only use public presets.",
       );
     }
@@ -1315,7 +1319,9 @@ export class DemoRunService implements DemoRunController {
       .limit(1);
 
     if (!preset) {
-      throw new DemoRunValidationError("preset_not_found", "Demo preset was not found.", { slug });
+      throw new DemoRunValidationError("resource_not_found", "Demo preset was not found.", {
+        slug,
+      });
     }
 
     return toDemoPresetContract(preset);
@@ -1332,7 +1338,7 @@ export class DemoRunService implements DemoRunController {
 
     if (!row) {
       throw new DemoRunValidationError(
-        "public_runtime_policy_not_found",
+        "resource_not_found",
         "Public runtime policy is not configured.",
       );
     }
@@ -1469,7 +1475,7 @@ export class DemoRunService implements DemoRunController {
       .where(eq(demoRuns.id, runId))
       .limit(1);
     if (!run) {
-      throw new DemoRunValidationError("run_not_found", "Demo run was not found.", { runId });
+      throw new DemoRunValidationError("resource_not_found", "Demo run was not found.", { runId });
     }
     return toDemoRunSnapshot(run);
   }
@@ -1509,7 +1515,7 @@ function throwCompletionMismatch(
   mismatch: { field: string; expected?: unknown; actual?: unknown },
 ): never {
   throw new DemoRunValidationError(
-    "traffic_completion_report_mismatch",
+    "traffic_report_rejected",
     "Traffic completion does not match the accepted demo run.",
     {
       runId,
@@ -1581,7 +1587,7 @@ function toAdminPresetListItem(row: typeof demoPresets.$inferSelect): AdminPrese
 function ensureEditableAdminPreset(preset: DemoPresetContract): void {
   if (preset.visibility !== "admin" || !preset.isEditable) {
     throw new DemoRunValidationError(
-      "preset_not_editable",
+      "preset_operation_not_allowed",
       "Only editable admin presets can be changed.",
       { slug: preset.slug },
     );
@@ -1597,7 +1603,7 @@ function normalizeSlug(slug: string): string {
 
   if (!normalized) {
     throw new DemoRunValidationError(
-      "invalid_preset_slug",
+      "invalid_request",
       "Preset slug must contain a letter or number.",
     );
   }
@@ -1610,7 +1616,7 @@ function requirePresetRow(
   slug: string,
 ): typeof demoPresets.$inferSelect {
   if (!preset) {
-    throw new DemoRunValidationError("preset_not_found", "Demo preset was not found.", { slug });
+    throw new DemoRunValidationError("resource_not_found", "Demo preset was not found.", { slug });
   }
 
   return preset;
@@ -1639,7 +1645,11 @@ export function validateAcceptedRunSnapshot(
 ): void {
   const [violation] = collectAcceptedRunConfigSnapshotViolations(snapshot, policy, options);
   if (violation) {
-    throw new DemoRunValidationError(violation.code, violation.message, violation.details);
+    throw new DemoRunValidationError("invalid_run_configuration", violation.message, {
+      violationCode: violation.code,
+      path: violation.path,
+      ...violation.details,
+    });
   }
 }
 
@@ -1710,11 +1720,11 @@ function throwPublicRuntimePolicyUpdateError(error: unknown): never {
       !Array.isArray(params.details)
         ? (params.details as Record<string, unknown>)
         : undefined;
-    throw new DemoRunValidationError(
-      params.violationCode as ErrorPayloadCode,
-      issue.message,
-      details,
-    );
+    throw new DemoRunValidationError("invalid_runtime_policy", issue.message, {
+      violationCode: params.violationCode,
+      path: issue.path,
+      ...details,
+    });
   }
   throw error;
 }
@@ -1778,7 +1788,8 @@ function toAdminPublicRuntimePolicyResponse(
 
 function requireRunSaleOfferId(run: DemoRunSnapshot): string {
   if (!run.saleOfferId) {
-    throw new DemoRunValidationError("run_sale_offer_missing", "Demo run has no sale offer.", {
+    throw new DemoRunValidationError("run_conflict", "Demo run has no sale offer.", {
+      conflictReason: "sale_offer_missing",
       runId: run.runId,
     });
   }

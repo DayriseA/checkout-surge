@@ -54,13 +54,10 @@ export function registerDashboardRoutes(
       reply.header("retry-after", options.recoveryRetryAfterSeconds.toString());
       return reply.status(atCapacity || unavailable || timedOut ? 503 : 429).send(
         createErrorPayload({
-          code: atCapacity
-            ? "dashboard_recovery_at_capacity"
-            : unavailable
-              ? "dashboard_recovery_limiter_unavailable"
-              : timedOut
-                ? "dashboard_recovery_timed_out"
-                : "dashboard_recovery_rate_limited",
+          code:
+            atCapacity || unavailable || timedOut
+              ? "dashboard_recovery_unavailable"
+              : "dashboard_recovery_rate_limited",
           message: atCapacity
             ? "Dashboard recovery is at capacity."
             : unavailable
@@ -69,6 +66,17 @@ export function registerDashboardRoutes(
                 ? "Dashboard recovery exceeded its response deadline."
                 : "Dashboard recovery request rate exceeded.",
           correlationId: request.correlationId,
+          ...(atCapacity || unavailable || timedOut
+            ? {
+                details: {
+                  reason: atCapacity
+                    ? "at_capacity"
+                    : unavailable
+                      ? "limiter_unavailable"
+                      : "timed_out",
+                },
+              }
+            : {}),
         }),
       );
     } finally {

@@ -401,8 +401,6 @@ function adminRunHistoryDetailFixture(): AdminRunHistoryDetailResponse {
           notificationId: "99999999-9999-4999-8999-999999999993",
           orderId: "99999999-9999-4999-8999-999999999991",
           publicOrderId: "ord_history_1",
-          channel: "email",
-          status: "recorded",
           recordedAt: "2026-06-20T00:00:08.000Z",
         },
       ],

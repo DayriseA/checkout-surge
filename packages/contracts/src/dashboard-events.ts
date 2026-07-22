@@ -4,13 +4,9 @@ import {
   consistencyLagSummarySchema,
   demoRunSnapshotSchema,
 } from "./demo.js";
-import {
-  orderEventNameSchema,
-  orderStatusSchema,
-  queueNameSchema,
-  simulatedPurchaseStatusSchema,
-} from "./lifecycle.js";
+import { orderEventNameSchema, orderStatusSchema } from "./lifecycle.js";
 import { correlationIdSchema, isoTimestampSchema, uuidSchema } from "./primitives.js";
+import { orderProcessQueueName } from "./queue.js";
 
 export const dashboardEventsPath = "/dashboard/events" as const;
 export const dashboardRecoveryPath = "/dashboard/recovery" as const;
@@ -96,7 +92,7 @@ const queueDepthMetricSchema = z
     metricName: z.literal("queue.depth"),
     value: z.number().int().nonnegative(),
     unit: z.literal("jobs"),
-    queueName: queueNameSchema,
+    queueName: z.literal(orderProcessQueueName),
     runId: uuidSchema.optional(),
   })
   .strict();
@@ -150,11 +146,17 @@ export const orderConsistencyLagDashboardEventSchema = z
       context.addIssue({ code: "custom", message: "Lag timestamps must equal confirmedAt." });
     }
     if (event.eventId === event.confirmedTransitionEventId) {
-      context.addIssue({ code: "custom", message: "Lag and transition event IDs must be distinct." });
+      context.addIssue({
+        code: "custom",
+        message: "Lag and transition event IDs must be distinct.",
+      });
     }
     const rawLagMs = Date.parse(event.confirmedAt) - Date.parse(event.startedAt);
     if (Number.isFinite(rawLagMs) && event.value !== Math.max(0, rawLagMs)) {
-      context.addIssue({ code: "custom", message: "Lag value must equal the clamped confirmedAt-startedAt duration." });
+      context.addIssue({
+        code: "custom",
+        message: "Lag value must equal the clamped confirmedAt-startedAt duration.",
+      });
     }
   });
 export type OrderConsistencyLagDashboardEvent = z.infer<
@@ -196,7 +198,6 @@ export const orderStatusDashboardEventSchema = z
     ]),
     previousStatus: orderStatusSchema.extract(["queued", "processing"]),
     status: orderStatusSchema.extract(["processing", "confirmed", "failed"]),
-    customerStatus: simulatedPurchaseStatusSchema.extract(["processing", "confirmed", "failed"]),
     attemptNumber: z.number().int().positive(),
     attemptsMade: z.number().int().nonnegative(),
   })
@@ -207,12 +208,11 @@ export const orderStatusDashboardEventSchema = z
       "order.confirmed": { previousStatus: "processing", status: "confirmed" },
       "order.failed": { previousStatus: "processing", status: "failed" },
     }[event.eventName];
-    if (
-      event.previousStatus !== expected.previousStatus ||
-      event.status !== expected.status ||
-      event.customerStatus !== expected.status
-    ) {
-      context.addIssue({ code: "custom", message: "Order event name and status transition disagree." });
+    if (event.previousStatus !== expected.previousStatus || event.status !== expected.status) {
+      context.addIssue({
+        code: "custom",
+        message: "Order event name and status transition disagree.",
+      });
     }
   });
 export type OrderStatusDashboardEvent = z.infer<typeof orderStatusDashboardEventSchema>;

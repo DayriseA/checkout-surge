@@ -1,6 +1,5 @@
 import {
   buyOutcomeHeaderName,
-  buyRejectionReasonHeaderName,
   deriveLoadExecutionPlan,
   type LoadExecutionPlan,
   loadRunIdHeaderName,
@@ -80,7 +79,6 @@ const acceptedResponses = new Counter("checkout_reservation_accepted");
 const soldOutResponses = new Counter("checkout_sold_out_rejections");
 const unexpectedResponses = new Counter("checkout_unexpected_responses");
 const checkoutOutcomeHeaderName = "${buyOutcomeHeaderName}";
-const checkoutRejectionReasonHeaderName = "${buyRejectionReasonHeaderName}";
 
 export const options = ${JSON.stringify({ discardResponseBodies: true, scenarios: { checkout: scenario } })};
 
@@ -127,14 +125,11 @@ export default function () {
   responsesCompleted.add(1);
 
   const outcome = readResponseHeader(response, checkoutOutcomeHeaderName);
-  const rejectionReason = readResponseHeader(response, checkoutRejectionReasonHeaderName);
   const isAccepted =
     response.status === 202 &&
     (outcome === "reservation_secured" ||
-      outcome === "idempotent_replay" ||
       outcome === "reservation_pending_persistence");
-  const isSoldOut =
-    response.status === 409 && outcome === "sold_out" && rejectionReason === "sold_out";
+  const isSoldOut = response.status === 409 && outcome === "sold_out";
 
   if (isAccepted) {
     acceptedResponses.add(1);

@@ -9,7 +9,6 @@ const hold: SecuredReservationHold = {
   runId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
   correlationId: "attempt-correlation",
   quantity: 2,
-  status: "secured",
   reservationToken: "shared-reservation-token",
   securedAt: "2026-07-12T12:00:00.000Z",
   expiresAt: "2026-07-12T12:15:00.000Z",
@@ -22,7 +21,6 @@ interface DurableAcceptanceLiveRow {
     runId: string | null;
     correlationId: string;
     quantity: number;
-    status: "secured";
     reservationToken: string;
     securedAt: Date;
     expiresAt: Date;
@@ -52,7 +50,6 @@ const durableRow: DurableAcceptanceLiveRow = {
     runId: hold.runId ?? null,
     correlationId: "winner-correlation",
     quantity: hold.quantity,
-    status: "secured" as const,
     reservationToken: hold.reservationToken,
     securedAt: new Date("2026-07-12T11:59:59.123Z"),
     expiresAt: new Date("2026-07-12T12:14:59.123Z"),

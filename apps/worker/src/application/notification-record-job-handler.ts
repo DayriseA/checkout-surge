@@ -31,7 +31,6 @@ export function createNotificationRecordJobHandler(dependencies: {
           orderId: job.orderId,
           saleOfferId: job.saleOfferId,
           ...(job.runId ? { runId: job.runId } : {}),
-          channel: job.channel,
           recorded: result.recorded,
         },
         result.recorded

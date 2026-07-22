@@ -1,9 +1,22 @@
-import type { OrderConsistencyLagDashboardEvent, OrderStatusDashboardEvent } from "@checkout-surge/contracts";
+import type {
+  OrderConsistencyLagDashboardEvent,
+  OrderStatusDashboardEvent,
+} from "@checkout-surge/contracts";
 import { describe, expect, it, vi } from "vitest";
 import { createBoundedOrderRealtimePublisher } from "../../src/realtime/order-realtime-publisher.js";
 
-const processing = statusEvent("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "order.processing", "queued", "processing");
-const confirmed = statusEvent("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "order.confirmed", "processing", "confirmed");
+const processing = statusEvent(
+  "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  "order.processing",
+  "queued",
+  "processing",
+);
+const confirmed = statusEvent(
+  "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+  "order.confirmed",
+  "processing",
+  "confirmed",
+);
 const lag: OrderConsistencyLagDashboardEvent = {
   type: "dashboard.metric.observed",
   eventId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
@@ -24,7 +37,9 @@ const lag: OrderConsistencyLagDashboardEvent = {
 describe("bounded order realtime publisher", () => {
   it("keeps publication single-flight, accepts confirmation pairs atomically, and drops whole overflow groups", async () => {
     let release!: () => void;
-    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
     let inFlight = 0;
     let maxInFlight = 0;
     const publish = vi.fn(
@@ -37,18 +52,31 @@ describe("bounded order realtime publisher", () => {
       },
     );
     const onDrop = vi.fn();
-    const publisher = createBoundedOrderRealtimePublisher({ publish, maxQueuedEvents: 2, maxBatchEvents: 2, onDrop });
+    const publisher = createBoundedOrderRealtimePublisher({
+      publish,
+      maxQueuedEvents: 2,
+      maxBatchEvents: 2,
+      onDrop,
+    });
 
     publisher.enqueue([processing]);
     publisher.enqueue([confirmed, lag]);
     publisher.enqueue([processing]);
     expect(publisher.stats().queueDepth).toBe(2);
-    expect(onDrop).toHaveBeenCalledWith([processing], "queue_overflow", expect.objectContaining({ queueDepth: 2, highWaterMark: 2 }));
+    expect(onDrop).toHaveBeenCalledWith(
+      [processing],
+      "queue_overflow",
+      expect.objectContaining({ queueDepth: 2, highWaterMark: 2 }),
+    );
     release();
     await publisher.close();
 
     expect(maxInFlight).toBe(1);
-    expect(publish.mock.calls.map(([event]) => event.eventId)).toEqual([processing.eventId, confirmed.eventId, lag.eventId]);
+    expect(publish.mock.calls.map(([event]) => event.eventId)).toEqual([
+      processing.eventId,
+      confirmed.eventId,
+      lag.eventId,
+    ]);
     expect(publisher.stats().dropped["order.status.updated"]).toBe(1);
     expect(publisher.stats().highWaterMark).toBe(2);
     expect(publisher.stats().largestBatch).toBe(2);
@@ -58,7 +86,12 @@ describe("bounded order realtime publisher", () => {
   it("drops a whole enqueue group that exceeds the batch bound", async () => {
     const publish = vi.fn().mockResolvedValue(undefined);
     const onDrop = vi.fn();
-    const publisher = createBoundedOrderRealtimePublisher({ publish, maxQueuedEvents: 4, maxBatchEvents: 2, onDrop });
+    const publisher = createBoundedOrderRealtimePublisher({
+      publish,
+      maxQueuedEvents: 4,
+      maxBatchEvents: 2,
+      onDrop,
+    });
 
     publisher.enqueue([processing, confirmed, lag]);
     publisher.enqueue([confirmed, lag]);
@@ -70,12 +103,20 @@ describe("bounded order realtime publisher", () => {
       expect.objectContaining({ queueDepth: 0, highWaterMark: 0 }),
     );
     expect(publish).toHaveBeenCalledTimes(2);
-    expect(publisher.stats()).toMatchObject({ queueDepth: 0, highWaterMark: 2, largestBatch: 2, maxInFlight: 1 });
+    expect(publisher.stats()).toMatchObject({
+      queueDepth: 0,
+      highWaterMark: 2,
+      largestBatch: 2,
+      maxInFlight: 1,
+    });
   });
 
   it("counts invalid and rejected publications and continues draining", async () => {
     const onPublishError = vi.fn();
-    const publish = vi.fn().mockRejectedValueOnce(new Error("redis unavailable")).mockResolvedValue(undefined);
+    const publish = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("redis unavailable"))
+      .mockResolvedValue(undefined);
     const publisher = createBoundedOrderRealtimePublisher({ publish, onPublishError });
     publisher.enqueue([{ ...processing, attemptNumber: 0 } as OrderStatusDashboardEvent]);
     publisher.enqueue([processing]);
@@ -106,7 +147,6 @@ function statusEvent(
     eventName,
     previousStatus,
     status,
-    customerStatus: status,
     attemptNumber: 1,
     attemptsMade: 0,
   };

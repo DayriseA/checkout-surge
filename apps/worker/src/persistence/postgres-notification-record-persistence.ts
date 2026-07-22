@@ -62,14 +62,12 @@ export class PostgresNotificationRecordPersistence implements NotificationRecord
           saleOfferId: order.saleOfferId,
           correlationId: order.correlationId,
           ...(order.runId ? { runId: order.runId } : {}),
-          channel: job.channel,
           recipientPlaceholder: job.recipientPlaceholder,
-          status: "recorded",
           recordedAt,
           createdAt: recordedAt,
         })
         .onConflictDoNothing({
-          target: [simulatedNotifications.orderId, simulatedNotifications.channel],
+          target: simulatedNotifications.orderId,
         })
         .returning({ id: simulatedNotifications.id });
 
@@ -85,9 +83,7 @@ export class PostgresNotificationRecordPersistence implements NotificationRecord
         correlationId: order.correlationId,
         eventName: "notification.recorded",
         payload: {
-          channel: job.channel,
           recipientPlaceholder: job.recipientPlaceholder,
-          notificationStatus: "recorded",
         },
         source: "worker",
         occurredAt: recordedAt,

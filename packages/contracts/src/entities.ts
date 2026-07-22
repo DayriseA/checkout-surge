@@ -3,7 +3,6 @@ import {
   demoPresetVisibilitySchema,
   demoRunStatusSchema,
   orderStatusSchema,
-  reservationStatusSchema,
   saleOfferPurposeSchema,
 } from "./lifecycle.js";
 import {
@@ -51,7 +50,6 @@ export const reservationSummarySchema = z
     correlationId: correlationIdSchema,
     runId: uuidSchema.optional(),
     quantity: positiveIntegerSchema,
-    status: reservationStatusSchema,
     reservationToken: z.string().trim().min(1).optional(),
     expiresAt: isoTimestampSchema,
     securedAt: isoTimestampSchema,

@@ -1,10 +1,5 @@
 import { z } from "zod";
-import {
-  metricNameSchema,
-  orderEventNameSchema,
-  reservationDecisionSchema,
-  reservationStatusSchema,
-} from "./lifecycle.js";
+import { metricNameSchema, orderEventNameSchema, reservationDecisionSchema } from "./lifecycle.js";
 import {
   correlationIdSchema,
   isoTimestampSchema,
@@ -105,7 +100,6 @@ export const securedReservationHoldSchema = z
     correlationId: correlationIdSchema,
     runId: uuidSchema.optional(),
     quantity: positiveIntegerSchema,
-    status: reservationStatusSchema.extract(["secured"]),
     reservationToken: z.string().trim().min(1),
     expiresAt: isoTimestampSchema,
     securedAt: isoTimestampSchema,

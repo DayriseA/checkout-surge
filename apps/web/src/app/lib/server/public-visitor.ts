@@ -30,7 +30,7 @@ export function resolvePublicVisitorIdentity(
     return jsonError(
       ctx,
       503,
-      "public_client_cookie_secret_not_configured",
+      "service_misconfigured",
       "Public visitor cookie signing is not configured.",
     );
   }

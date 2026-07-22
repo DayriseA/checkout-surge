@@ -6,7 +6,6 @@ import path from "node:path";
 import { PassThrough } from "node:stream";
 import {
   buyOutcomeHeaderName,
-  buyRejectionReasonHeaderName,
   controlServiceTokenHeaderName,
   type HealthStatus,
   healthResponseSchema,
@@ -661,17 +660,12 @@ describe("load-orchestrator k6 mapping", () => {
     expect(script.contents).toContain(
       `const checkoutOutcomeHeaderName = "${buyOutcomeHeaderName}"`,
     );
-    expect(script.contents).toContain(
-      `const checkoutRejectionReasonHeaderName = "${buyRejectionReasonHeaderName}"`,
-    );
     expect(script.contents).toContain(`"${correlationIdHeaderName}": correlationId`);
     expect(script.contents).not.toContain("response.json(");
     expect(script.contents).toContain('outcome === "reservation_secured"');
-    expect(script.contents).toContain('outcome === "idempotent_replay"');
+    expect(script.contents).not.toContain('outcome === "idempotent_replay"');
     expect(script.contents).toContain('outcome === "reservation_pending_persistence"');
-    expect(script.contents).toContain(
-      'response.status === 409 && outcome === "sold_out" && rejectionReason === "sold_out"',
-    );
+    expect(script.contents).toContain('response.status === 409 && outcome === "sold_out"');
     expect(script.contents).toContain("key.toLowerCase() === headerName");
     expect(script.contents).toContain("run:");
     expect(script.contents).toContain(":buyer:");

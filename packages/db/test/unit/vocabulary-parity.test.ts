@@ -19,16 +19,6 @@ const enumInventory = {
     "demo_run_operator_mode",
     contracts.operatorModeValues,
   ],
-  demoRunReservationOutcomeEnum: [
-    schema.demoRunReservationOutcomeEnum,
-    "demo_run_reservation_outcome",
-    contracts.demoRunReservationOutcomeValues,
-  ],
-  demoRunReservationOutcomeSourceEnum: [
-    schema.demoRunReservationOutcomeSourceEnum,
-    "demo_run_reservation_outcome_source",
-    contracts.demoRunReservationOutcomeSourceValues,
-  ],
   demoRunStatusEnum: [schema.demoRunStatusEnum, "demo_run_status", contracts.demoRunStatusValues],
   demoRunTrafficStatusEnum: [
     schema.demoRunTrafficStatusEnum,
@@ -56,25 +46,10 @@ const enumInventory = {
     "reservation_pending_persistence_status",
     contracts.reservationPendingPersistenceStatusValues,
   ],
-  reservationStatusEnum: [
-    schema.reservationStatusEnum,
-    "reservation_status",
-    contracts.reservationStatusValues,
-  ],
   saleOfferPurposeEnum: [
     schema.saleOfferPurposeEnum,
     "sale_offer_purpose",
     contracts.saleOfferPurposeValues,
-  ],
-  simulatedNotificationChannelEnum: [
-    schema.simulatedNotificationChannelEnum,
-    "simulated_notification_channel",
-    contracts.simulatedNotificationChannelValues,
-  ],
-  simulatedNotificationStatusEnum: [
-    schema.simulatedNotificationStatusEnum,
-    "simulated_notification_status",
-    contracts.simulatedNotificationStatusValues,
   ],
   trafficCompletionEnrichmentStatusEnum: [
     schema.trafficCompletionEnrichmentStatusEnum,

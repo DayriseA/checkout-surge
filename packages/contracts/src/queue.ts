@@ -15,14 +15,6 @@ export const notificationRecordQueueName = "notifications:record" as const;
 export const notificationRecordBullMqQueueName = "notifications-record" as const;
 export const notificationRecordJobName = "notification.record" as const;
 
-export const simulatedNotificationChannelValues = ["email", "sms"] as const;
-export const simulatedNotificationChannelSchema = z.enum(simulatedNotificationChannelValues);
-export type SimulatedNotificationChannel = z.infer<typeof simulatedNotificationChannelSchema>;
-
-export const simulatedNotificationStatusValues = ["recorded"] as const;
-export const simulatedNotificationStatusSchema = z.enum(simulatedNotificationStatusValues);
-export type SimulatedNotificationStatus = z.infer<typeof simulatedNotificationStatusSchema>;
-
 export const orderProcessJobSchema = z
   .object({
     orderId: uuidSchema,
@@ -43,7 +35,6 @@ export const notificationRecordJobSchema = z
     saleOfferId: uuidSchema,
     correlationId: correlationIdSchema,
     runId: uuidSchema.optional(),
-    channel: simulatedNotificationChannelSchema,
     recipientPlaceholder: z.string().trim().min(1),
     confirmedAt: isoTimestampSchema,
   })

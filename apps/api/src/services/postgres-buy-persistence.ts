@@ -71,7 +71,6 @@ export class PostgresBuyPersistence implements BuyPersistence {
         ...(hold.runId ? { runId: hold.runId } : {}),
         quantity: hold.quantity,
         correlationId: hold.correlationId,
-        status: "secured",
         reservationToken: hold.reservationToken,
         securedAt: new Date(hold.securedAt),
         expiresAt: new Date(hold.expiresAt),
@@ -128,7 +127,6 @@ export class PostgresBuyPersistence implements BuyPersistence {
         eventName: "reservation.secured",
         payload: {
           quantity: hold.quantity,
-          reservationStatus: "secured",
         },
         source: "api",
         occurredAt: new Date(hold.securedAt),
@@ -142,7 +140,6 @@ export class PostgresBuyPersistence implements BuyPersistence {
         eventName: "order.queued",
         payload: {
           quantity: hold.quantity,
-          orderStatus: "queued",
         },
         source: "api",
         occurredAt: new Date(hold.securedAt),
@@ -484,7 +481,6 @@ function toReservationSummary(row: {
     correlationId: row.correlationId,
     ...(row.runId ? { runId: row.runId } : {}),
     quantity: row.quantity,
-    status: "secured",
     reservationToken: row.reservationToken,
     expiresAt: row.expiresAt.toISOString(),
     securedAt: row.securedAt.toISOString(),

@@ -107,7 +107,6 @@ async function seedOrder(connection: ReturnType<typeof createDatabaseConnection>
     saleOfferId: ids.saleOffer,
     correlationId: "corr-erp-status-reader",
     quantity: 1,
-    status: "secured",
     reservationToken: "erp-status-reader-token",
     expiresAt: new Date("2026-06-22T00:15:00.000Z"),
     securedAt: new Date("2026-06-22T00:00:00.000Z"),

@@ -160,11 +160,7 @@ export function AdminRunHistoryDetail({ detail }: RunHistoryDetailProps) {
           records={detail.notifications.records.map((notification) => ({
             id: notification.notificationId,
             title: notification.publicOrderId,
-            facts: [
-              ["Channel", notification.channel],
-              ["Status", notification.status],
-              ["Recorded", formatDate(notification.recordedAt)],
-            ],
+            facts: [["Recorded", formatDate(notification.recordedAt)]],
           }))}
           title="Notifications"
           totalCount={detail.notifications.totalCount}

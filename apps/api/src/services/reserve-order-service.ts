@@ -170,25 +170,6 @@ function safelyReportPartialFailure<Report extends ReservationPartialFailureRepo
 
 type RejectedReservationOutcome = ReservationRejectedResponse["outcome"];
 
-function simulatedStatusForRejectedOutcome(
-  outcome: RejectedReservationOutcome,
-): "sold_out" | "sale_not_active" | null {
-  switch (outcome) {
-    case "sold_out":
-      return "sold_out";
-    case "run_not_accepting_traffic":
-      return "sale_not_active";
-    case "inventory_not_initialized":
-    case "idempotency_conflict":
-    case "quantity_invalid":
-      return null;
-    default: {
-      const exhaustive: never = outcome;
-      throw new Error(`Unhandled rejected reservation outcome: ${String(exhaustive)}`);
-    }
-  }
-}
-
 export class ReserveOrderService {
   private readonly persistence: BuyPersistence;
   private readonly stockReservations: StockReservationGateway;
@@ -737,7 +718,6 @@ export class ReserveOrderService {
       correlationId,
       ...(request.runId ? { runId: request.runId } : {}),
       quantity: request.quantity,
-      status: "secured",
       reservationToken: `res_${tokenId}`,
       securedAt: securedAt.toISOString(),
       expiresAt: new Date(securedAt.getTime() + this.reservationHoldMinutes * 60_000).toISOString(),
@@ -751,7 +731,6 @@ export class ReserveOrderService {
       timestamp: persisted.reservation.securedAt,
       reservation: persisted.reservation,
       order: persisted.order,
-      simulatedStatus: "reservation_secured",
     });
   }
 
@@ -766,7 +745,6 @@ export class ReserveOrderService {
       timestamp: now.toISOString(),
       reservation,
       order: null,
-      simulatedStatus: "reservation_secured",
       retryAfterSeconds: this.pendingPersistenceRetryAfterSeconds,
     });
   }
@@ -778,12 +756,10 @@ export class ReserveOrderService {
   ): BuyResponse {
     return buyResponseSchema.parse({
       outcome,
-      reason: outcome,
       correlationId,
       timestamp: now.toISOString(),
       reservation: null,
       order: null,
-      simulatedStatus: simulatedStatusForRejectedOutcome(outcome),
     });
   }
 }

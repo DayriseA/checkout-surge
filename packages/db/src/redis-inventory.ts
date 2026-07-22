@@ -26,7 +26,7 @@ export interface InventoryKeys {
   pendingPersistence: string;
   pendingPersistenceRecords: string;
   events: string;
-  reservationOutcomes: string;
+  soldOut: string;
   reservationThroughput: string;
   idempotency: (idempotencyKey: string) => string;
 }
@@ -138,7 +138,7 @@ export function inventoryKeys(saleOfferId: string): InventoryKeys {
     pendingPersistence: `${prefix}:pending-persistence`,
     pendingPersistenceRecords: `${prefix}:pending-persistence-records`,
     events: `${prefix}:events`,
-    reservationOutcomes: `${prefix}:reservation-outcomes`,
+    soldOut: `${prefix}:sold-out`,
     reservationThroughput: `${prefix}:reservation-throughput`,
     idempotency: (idempotencyKey) => `${prefix}:idempotency:${idempotencyKey}`,
   };
@@ -187,7 +187,7 @@ export async function initializeInventory(
       lastUpdatedAt: timestamp,
       ...(run ? { runId: run.runId, runSaleStatus: run.status } : {}),
     })
-    .hset(keys.reservationOutcomes, "api_sold_out_decision", "0");
+    .hset(keys.soldOut, "count", "0");
 
   if (run) {
     initialization.set(
@@ -243,11 +243,7 @@ export async function getInventoryStatus(
     redis.zcard(keys.pendingPersistence),
     redis.zrange(keys.pendingPersistence, 0, 0, "WITHSCORES"),
     redis.zcount(keys.reservationExpirations, "-inf", now.getTime()),
-    redis.hmget(
-      keys.reservationOutcomes,
-      "api_sold_out_decision",
-      "api_sold_out_decision_latest_observed_at",
-    ),
+    redis.hmget(keys.soldOut, "count", "latest_observed_at"),
     redis.hmget(keys.reservationThroughput, ...throughputFields),
   ]);
   const stateSaleOfferId = requireStateValue(state, "saleOfferId");
@@ -276,7 +272,7 @@ export async function getInventoryStatus(
     soldOutPressure: {
       rejectionCount: parseOptionalNonnegativeInteger(
         reservationOutcomeValues[0] ?? null,
-        "api_sold_out_decision",
+        "sold-out count",
       ),
       latestObservedAt: reservationOutcomeValues[1] ?? null,
     },

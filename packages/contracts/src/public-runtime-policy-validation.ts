@@ -1,5 +1,4 @@
 import type { PublicRuntimePolicy, PublicRuntimePolicyMutable } from "./demo.js";
-import type { ErrorPayloadCode } from "./error.js";
 import type { OperatorMode } from "./lifecycle.js";
 import {
   type AcceptedRunConfigSnapshot,
@@ -8,8 +7,48 @@ import {
   type TrafficConfig,
 } from "./load.js";
 
+export const directSnapshotViolationCodes = [
+  "deployment_buyers_exceeded",
+  "deployment_duration_exceeded",
+  "deployment_max_vus_exceeded",
+  "deployment_preallocated_vus_exceeded",
+  "deployment_request_rate_exceeded",
+  "deployment_start_delay_exceeded",
+  "deployment_total_requests_exceeded",
+  "public_buyers_exceeded",
+  "public_duration_exceeded",
+  "public_erp_error_rate_exceeded",
+  "public_erp_latency_exceeded",
+  "public_erp_tps_exceeded",
+  "public_forced_outage_not_allowed",
+  "public_max_vus_exceeded",
+  "public_preallocated_vus_exceeded",
+  "public_request_rate_exceeded",
+  "public_start_delay_exceeded",
+  "public_starting_stock_exceeded",
+  "public_total_requests_exceeded",
+  "public_traffic_mode_not_allowed",
+] as const;
+
+const runtimePolicyDefinitionViolationCodes = [
+  "public_erp_tps_limit_invalid",
+  "public_limit_buyers_exceeds_deployment_cap",
+  "public_limit_duration_exceeds_deployment_cap",
+  "public_limit_max_vus_exceeds_deployment_cap",
+  "public_limit_preallocated_vus_exceeds_deployment_cap",
+  "public_limit_request_rate_exceeds_deployment_cap",
+  "public_limit_start_delay_exceeds_deployment_cap",
+  "public_limit_total_requests_exceeds_deployment_cap",
+  "public_vus_limit_invalid",
+] as const;
+
+export type PublicRuntimePolicyViolationCode =
+  | (typeof directSnapshotViolationCodes)[number]
+  | (typeof runtimePolicyDefinitionViolationCodes)[number]
+  | `public_custom_default_${(typeof directSnapshotViolationCodes)[number]}`;
+
 export interface PublicRuntimePolicyViolation {
-  code: ErrorPayloadCode;
+  code: PublicRuntimePolicyViolationCode;
   message: string;
   details?: Record<string, unknown>;
   path: (string | number)[];
@@ -372,7 +411,7 @@ function appendWrappedDefaultViolations(
 ): void {
   for (const cause of causes) {
     violations.push({
-      code: `public_custom_default_${cause.code}` as ErrorPayloadCode,
+      code: `public_custom_default_${cause.code}` as PublicRuntimePolicyViolationCode,
       message: "Public custom defaults must fit within the active public runtime policy.",
       ...(cause.details ? { details: cause.details } : {}),
       path: ["publicCustomDefaults", ...cause.path],
@@ -410,7 +449,7 @@ function addCapViolation(
   violations: PublicRuntimePolicyViolation[],
   value: number,
   cap: number,
-  code: ErrorPayloadCode,
+  code: PublicRuntimePolicyViolationCode,
   path: (string | number)[],
 ): void {
   if (value > cap) {

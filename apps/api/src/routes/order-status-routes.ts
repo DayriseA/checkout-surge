@@ -29,7 +29,7 @@ export function registerOrderStatusRoutes(
     if (!status) {
       throw new ApiHttpError({
         statusCode: 404,
-        code: "order_not_found",
+        code: "resource_not_found",
         message: "Order status was not found",
         details: { publicOrderId },
       });

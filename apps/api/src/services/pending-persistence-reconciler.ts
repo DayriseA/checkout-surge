@@ -90,7 +90,6 @@ export class PendingPersistenceReconciler {
           correlationId: record.correlationId,
           ...(record.runId ? { runId: record.runId } : {}),
           quantity: record.quantity,
-          status: "secured",
           reservationToken: record.reservationToken,
           securedAt: record.securedAt,
           expiresAt: record.expiresAt,

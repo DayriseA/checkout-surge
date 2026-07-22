@@ -43,7 +43,11 @@ export function registerDemoRunRoutes(
   });
 
   app.get(publicRuntimePolicyPath, async (_request, reply) => {
-    return reply.status(200).send(await options.demoRunService.getPublicRuntimePolicy());
+    try {
+      return reply.status(200).send(await options.demoRunService.getPublicRuntimePolicy());
+    } catch (error) {
+      throw mapDemoRunError(error);
+    }
   });
 
   app.get(adminPublicRuntimePolicyPath, async (request, reply) => {
@@ -116,13 +120,17 @@ export function registerDemoRunRoutes(
       return unauthorized;
     }
 
-    return reply
-      .status(200)
-      .send(
-        await options.demoRunService.saveAdminPreset(
-          saveDemoPresetRequestSchema.parse(request.body),
-        ),
-      );
+    try {
+      return reply
+        .status(200)
+        .send(
+          await options.demoRunService.saveAdminPreset(
+            saveDemoPresetRequestSchema.parse(request.body),
+          ),
+        );
+    } catch (error) {
+      throw mapDemoRunError(error);
+    }
   });
 
   app.post(adminPresetDuplicatePath, async (request, reply) => {
@@ -131,13 +139,17 @@ export function registerDemoRunRoutes(
       return unauthorized;
     }
 
-    return reply
-      .status(201)
-      .send(
-        await options.demoRunService.duplicatePreset(
-          duplicateDemoPresetRequestSchema.parse(request.body),
-        ),
-      );
+    try {
+      return reply
+        .status(201)
+        .send(
+          await options.demoRunService.duplicatePreset(
+            duplicateDemoPresetRequestSchema.parse(request.body),
+          ),
+        );
+    } catch (error) {
+      throw mapDemoRunError(error);
+    }
   });
 
   app.post(adminPresetCopyToCustomPath, async (request, reply) => {
@@ -146,13 +158,17 @@ export function registerDemoRunRoutes(
       return unauthorized;
     }
 
-    return reply
-      .status(200)
-      .send(
-        await options.demoRunService.copyPresetToCustom(
-          copyDemoPresetToCustomRequestSchema.parse(request.body),
-        ),
-      );
+    try {
+      return reply
+        .status(200)
+        .send(
+          await options.demoRunService.copyPresetToCustom(
+            copyDemoPresetToCustomRequestSchema.parse(request.body),
+          ),
+        );
+    } catch (error) {
+      throw mapDemoRunError(error);
+    }
   });
 
   app.post(startDemoRunPath, async (request, reply) => {
@@ -280,29 +296,21 @@ function mapDemoRunError(error: unknown): unknown {
     return error;
   }
 
-  const conflictCodes = new Set([
-    "demo_run_already_active",
-    "demo_reset_incomplete",
-    "preset_not_archivable",
-    "traffic_completion_report_mismatch",
-    "traffic_completion_run_not_eligible",
-    "traffic_metric_run_not_eligible",
-  ]);
-  const notFoundCodes = new Set([
-    "preset_not_found",
-    "public_runtime_policy_not_found",
-    "run_not_found",
-  ]);
+  const conflictCodes = new Set(["run_conflict", "preset_conflict", "traffic_report_rejected"]);
+  const notFoundCodes = new Set(["resource_not_found"]);
   const forbiddenCodes = new Set(["public_visitor_forbidden"]);
+  const rateLimitedCodes = new Set(["public_run_budget_exceeded"]);
 
   return new ApiHttpError({
     statusCode: forbiddenCodes.has(error.code)
       ? 403
-      : conflictCodes.has(error.code)
-        ? 409
-        : notFoundCodes.has(error.code)
-          ? 404
-          : 400,
+      : rateLimitedCodes.has(error.code)
+        ? 429
+        : conflictCodes.has(error.code)
+          ? 409
+          : notFoundCodes.has(error.code)
+            ? 404
+            : 400,
     code: error.code,
     message: error.message,
     ...(error.details ? { details: error.details } : {}),

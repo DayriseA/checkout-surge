@@ -22,8 +22,8 @@ import {
   type deleteGeneratedRunDurable,
   type deleteGeneratedRunRedisState,
   demoRunFinalizations,
-  demoRunReservationOutcomes,
   demoRunSaleContexts,
+  demoRunSoldOutCounts,
   demoRunSummaries,
   demoRuns,
   getInventoryStatus,
@@ -547,11 +547,12 @@ export class DemoMaintenanceService {
     if (prepared.outcome !== "ready") {
       throw new ApiHttpError({
         statusCode: 409,
-        code: prepared.outcome === "non_terminal" ? "run_not_terminal" : "run_ownership_mismatch",
+        code: "run_cleanup_conflict",
         message:
           prepared.outcome === "non_terminal"
             ? "The generated run must be terminal before teardown."
             : "The run is not owned by a matching generated sale offer.",
+        details: { conflictReason: prepared.outcome },
       });
     }
 
@@ -673,14 +674,9 @@ export class DemoMaintenanceService {
     inventory: Awaited<ReturnType<typeof getInventoryStatus>>,
   ): Promise<number> {
     const [row] = await this.options.db
-      .select({ count: demoRunReservationOutcomes.count })
-      .from(demoRunReservationOutcomes)
-      .where(
-        and(
-          eq(demoRunReservationOutcomes.runId, runId),
-          eq(demoRunReservationOutcomes.outcome, "api_sold_out_decision"),
-        ),
-      )
+      .select({ count: demoRunSoldOutCounts.count })
+      .from(demoRunSoldOutCounts)
+      .where(eq(demoRunSoldOutCounts.runId, runId))
       .limit(1);
 
     return row?.count ?? inventory.soldOutPressure.rejectionCount;
@@ -689,15 +685,12 @@ export class DemoMaintenanceService {
 
 function mapQueueMaintenanceError(error: unknown): unknown {
   if (!(error instanceof DemoQueueMaintenanceConflict)) return error;
-  const code =
-    error.code === "active_job"
-      ? "run_queue_job_active"
-      : error.code === "maintenance_owned_by_other_run"
-        ? "run_queue_maintenance_owned_by_other_run"
-        : error.code === "malformed_claimed_job"
-          ? "run_queue_job_malformed"
-          : "run_queue_not_quiescent";
-  return new ApiHttpError({ statusCode: 409, code, message: error.message });
+  return new ApiHttpError({
+    statusCode: 409,
+    code: "run_cleanup_conflict",
+    message: error.message,
+    details: { conflictReason: error.code },
+  });
 }
 
 class PostCommitQueueConvergenceError extends Error {

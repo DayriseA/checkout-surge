@@ -2,7 +2,7 @@ import {
   type CheckoutSurgeDatabase,
   type CheckoutSurgeRedis,
   demoRunFinalizations,
-  demoRunReservationOutcomes,
+  demoRunSoldOutCounts,
   demoRuns,
   getInventoryStatus,
   InventoryNotInitializedError,
@@ -102,22 +102,19 @@ export class TrafficCompletionEnrichmentService implements TrafficCompletionEnri
 
       if (terminalInventorySnapshot) {
         await tx
-          .insert(demoRunReservationOutcomes)
+          .insert(demoRunSoldOutCounts)
           .values({
             runId,
-            outcome: "api_sold_out_decision",
             count: terminalInventorySnapshot.soldOutRejections,
             latestObservedAt: terminalInventorySnapshot.soldOutRejections > 0 ? capturedAt : null,
-            source: "redis",
             capturedAt,
             createdAt: capturedAt,
           })
           .onConflictDoUpdate({
-            target: [demoRunReservationOutcomes.runId, demoRunReservationOutcomes.outcome],
+            target: demoRunSoldOutCounts.runId,
             set: {
               count: terminalInventorySnapshot.soldOutRejections,
               latestObservedAt: terminalInventorySnapshot.soldOutRejections > 0 ? capturedAt : null,
-              source: "redis",
               capturedAt,
             },
           });

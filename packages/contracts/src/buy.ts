@@ -1,12 +1,9 @@
 import { z } from "zod";
 import { orderSummarySchema, reservationSummarySchema } from "./entities.js";
-import {
-  orderStatusSchema,
-  reservationDecisionSchema,
-  reservationRejectReasonSchema,
-  reservationStatusSchema,
-  simulatedPurchaseStatusSchema,
-} from "./lifecycle.js";
+import { orderStatusSchema, publicBuyOutcomeValues } from "./lifecycle.js";
+
+export { publicBuyOutcomeValues } from "./lifecycle.js";
+
 import {
   correlationIdSchema,
   idempotencyKeySchema,
@@ -17,13 +14,9 @@ import {
 
 export const loadRunIdHeaderName = "x-load-run-id" as const;
 export const buyOutcomeHeaderName = "x-checkout-outcome" as const;
-export const buyRejectionReasonHeaderName = "x-checkout-rejection-reason" as const;
 
-export const buyOutcomeHeaderValueSchema = reservationDecisionSchema;
+export const buyOutcomeHeaderValueSchema = z.enum(publicBuyOutcomeValues);
 export type BuyOutcomeHeaderValue = z.infer<typeof buyOutcomeHeaderValueSchema>;
-
-export const buyRejectionReasonHeaderValueSchema = reservationRejectReasonSchema;
-export type BuyRejectionReasonHeaderValue = z.infer<typeof buyRejectionReasonHeaderValueSchema>;
 
 export const buyRequestSchema = z
   .object({
@@ -65,7 +58,6 @@ export const orderStatusResponseSchema = z
     reservation: z
       .object({
         id: uuidSchema,
-        status: reservationStatusSchema,
         expiresAt: isoTimestampSchema,
       })
       .strict(),
@@ -80,21 +72,13 @@ export const orderStatusResponseSchema = z
         failureMessage: z.string().trim().min(1).nullable(),
       })
       .strict(),
-    customerStatus: simulatedPurchaseStatusSchema.extract([
-      "reservation_secured",
-      "processing",
-      "confirmed",
-      "failed",
-    ]),
     consistencyLagMs: z.number().min(0).nullable(),
     timeline: z.array(orderTimelineEntrySchema),
   })
   .strict();
 export type OrderStatusResponse = z.infer<typeof orderStatusResponseSchema>;
 
-export const acceptedReservationSummarySchema = reservationSummarySchema.extend({
-  status: z.literal("secured"),
-});
+export const acceptedReservationSummarySchema = reservationSummarySchema;
 export type AcceptedReservationSummary = z.infer<typeof acceptedReservationSummarySchema>;
 
 export const acceptedOrderSummarySchema = orderSummarySchema
@@ -115,7 +99,6 @@ export const reservationAcceptedResponseSchema = z
     timestamp: isoTimestampSchema,
     reservation: acceptedReservationSummarySchema,
     order: acceptedOrderSummarySchema,
-    simulatedStatus: simulatedPurchaseStatusSchema.extract(["reservation_secured"]),
   })
   .strict();
 export type ReservationAcceptedResponse = z.infer<typeof reservationAcceptedResponseSchema>;
@@ -127,7 +110,6 @@ export const reservationPendingPersistenceResponseSchema = z
     timestamp: isoTimestampSchema,
     reservation: reservationSummarySchema,
     order: z.null(),
-    simulatedStatus: simulatedPurchaseStatusSchema.extract(["reservation_secured"]),
     retryAfterSeconds: positiveIntegerSchema,
   })
   .strict();
@@ -145,8 +127,6 @@ const rejectedResponseBaseShape = {
 const soldOutRejectedResponseSchema = z
   .object({
     outcome: z.literal("sold_out"),
-    reason: z.literal("sold_out"),
-    simulatedStatus: z.literal("sold_out"),
     ...rejectedResponseBaseShape,
   })
   .strict();
@@ -154,8 +134,6 @@ const soldOutRejectedResponseSchema = z
 const runNotAcceptingTrafficRejectedResponseSchema = z
   .object({
     outcome: z.literal("run_not_accepting_traffic"),
-    reason: z.literal("run_not_accepting_traffic"),
-    simulatedStatus: z.literal("sale_not_active"),
     ...rejectedResponseBaseShape,
   })
   .strict();
@@ -163,8 +141,6 @@ const runNotAcceptingTrafficRejectedResponseSchema = z
 const inventoryNotInitializedRejectedResponseSchema = z
   .object({
     outcome: z.literal("inventory_not_initialized"),
-    reason: z.literal("inventory_not_initialized"),
-    simulatedStatus: z.null(),
     ...rejectedResponseBaseShape,
   })
   .strict();
@@ -172,8 +148,6 @@ const inventoryNotInitializedRejectedResponseSchema = z
 const idempotencyConflictRejectedResponseSchema = z
   .object({
     outcome: z.literal("idempotency_conflict"),
-    reason: z.literal("idempotency_conflict"),
-    simulatedStatus: z.null(),
     ...rejectedResponseBaseShape,
   })
   .strict();
@@ -181,8 +155,6 @@ const idempotencyConflictRejectedResponseSchema = z
 const quantityInvalidRejectedResponseSchema = z
   .object({
     outcome: z.literal("quantity_invalid"),
-    reason: z.literal("quantity_invalid"),
-    simulatedStatus: z.null(),
     ...rejectedResponseBaseShape,
   })
   .strict();

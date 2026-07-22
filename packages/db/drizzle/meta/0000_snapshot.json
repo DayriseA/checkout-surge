@@ -1,5 +1,5 @@
 {
-  "id": "a2336caf-ad8c-4087-8603-48a9690eaac6",
+  "id": "19f3b2ec-7177-44b8-947a-ff21fe238f9b",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -306,128 +306,6 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.demo_run_reservation_outcomes": {
-      "name": "demo_run_reservation_outcomes",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "run_id": {
-          "name": "run_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "outcome": {
-          "name": "outcome",
-          "type": "demo_run_reservation_outcome",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "count": {
-          "name": "count",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "latest_observed_at": {
-          "name": "latest_observed_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "source": {
-          "name": "source",
-          "type": "demo_run_reservation_outcome_source",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "captured_at": {
-          "name": "captured_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "demo_run_reservation_outcomes_run_outcome_unique": {
-          "name": "demo_run_reservation_outcomes_run_outcome_unique",
-          "columns": [
-            {
-              "expression": "run_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "outcome",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "demo_run_reservation_outcomes_run_id_idx": {
-          "name": "demo_run_reservation_outcomes_run_id_idx",
-          "columns": [
-            {
-              "expression": "run_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "demo_run_reservation_outcomes_run_id_demo_runs_id_fk": {
-          "name": "demo_run_reservation_outcomes_run_id_demo_runs_id_fk",
-          "tableFrom": "demo_run_reservation_outcomes",
-          "tableTo": "demo_runs",
-          "columnsFrom": [
-            "run_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "demo_run_reservation_outcomes_count_nonnegative": {
-          "name": "demo_run_reservation_outcomes_count_nonnegative",
-          "value": "\"demo_run_reservation_outcomes\".\"count\" >= 0"
-        }
-      },
-      "isRLSEnabled": false
-    },
     "public.demo_run_sale_contexts": {
       "name": "demo_run_sale_contexts",
       "schema": "",
@@ -544,6 +422,70 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.demo_run_sold_out_counts": {
+      "name": "demo_run_sold_out_counts",
+      "schema": "",
+      "columns": {
+        "run_id": {
+          "name": "run_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "count": {
+          "name": "count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "latest_observed_at": {
+          "name": "latest_observed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "captured_at": {
+          "name": "captured_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "demo_run_sold_out_counts_run_id_demo_runs_id_fk": {
+          "name": "demo_run_sold_out_counts_run_id_demo_runs_id_fk",
+          "tableFrom": "demo_run_sold_out_counts",
+          "tableTo": "demo_runs",
+          "columnsFrom": [
+            "run_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "demo_run_sold_out_counts_count_nonnegative": {
+          "name": "demo_run_sold_out_counts_count_nonnegative",
+          "value": "\"demo_run_sold_out_counts\".\"count\" >= 0"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.demo_run_summaries": {
@@ -2612,13 +2554,6 @@
           "notNull": true,
           "default": 1
         },
-        "status": {
-          "name": "status",
-          "type": "reservation_status",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
-        },
         "reservation_token": {
           "name": "reservation_token",
           "type": "text",
@@ -2636,24 +2571,6 @@
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": true
-        },
-        "released_at": {
-          "name": "released_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "expired_at": {
-          "name": "expired_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "release_reason": {
-          "name": "release_reason",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
         },
         "created_at": {
           "name": "created_at",
@@ -2730,21 +2647,6 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
-        },
-        "reservations_status_idx": {
-          "name": "reservations_status_idx",
-          "columns": [
-            {
-              "expression": "status",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
         }
       },
       "foreignKeys": {
@@ -2782,14 +2684,6 @@
         "reservations_quantity_positive": {
           "name": "reservations_quantity_positive",
           "value": "\"reservations\".\"quantity\" > 0"
-        },
-        "reservations_released_requires_released_at": {
-          "name": "reservations_released_requires_released_at",
-          "value": "\"reservations\".\"status\" <> 'released' OR \"reservations\".\"released_at\" IS NOT NULL"
-        },
-        "reservations_expired_requires_expired_at": {
-          "name": "reservations_expired_requires_expired_at",
-          "value": "\"reservations\".\"status\" <> 'expired' OR \"reservations\".\"expired_at\" IS NOT NULL"
         }
       },
       "isRLSEnabled": false
@@ -2989,26 +2883,11 @@
           "primaryKey": false,
           "notNull": false
         },
-        "channel": {
-          "name": "channel",
-          "type": "simulated_notification_channel",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
-        },
         "recipient_placeholder": {
           "name": "recipient_placeholder",
           "type": "text",
           "primaryKey": false,
           "notNull": true
-        },
-        "status": {
-          "name": "status",
-          "type": "simulated_notification_status",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'recorded'"
         },
         "recorded_at": {
           "name": "recorded_at",
@@ -3025,17 +2904,11 @@
         }
       },
       "indexes": {
-        "simulated_notifications_order_channel_unique": {
-          "name": "simulated_notifications_order_channel_unique",
+        "simulated_notifications_order_id_unique": {
+          "name": "simulated_notifications_order_id_unique",
           "columns": [
             {
               "expression": "order_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "channel",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -3184,22 +3057,6 @@
         "admin"
       ]
     },
-    "public.demo_run_reservation_outcome": {
-      "name": "demo_run_reservation_outcome",
-      "schema": "public",
-      "values": [
-        "api_sold_out_decision"
-      ]
-    },
-    "public.demo_run_reservation_outcome_source": {
-      "name": "demo_run_reservation_outcome_source",
-      "schema": "public",
-      "values": [
-        "redis",
-        "postgres",
-        "api"
-      ]
-    },
     "public.demo_run_status": {
       "name": "demo_run_status",
       "schema": "public",
@@ -3236,9 +3093,6 @@
       "schema": "public",
       "values": [
         "reservation.secured",
-        "reservation.rejected",
-        "reservation.released",
-        "reservation.expired",
         "order.queued",
         "order.processing",
         "order.confirmed",
@@ -3277,37 +3131,12 @@
         "reconciled"
       ]
     },
-    "public.reservation_status": {
-      "name": "reservation_status",
-      "schema": "public",
-      "values": [
-        "secured",
-        "rejected",
-        "released",
-        "expired"
-      ]
-    },
     "public.sale_offer_purpose": {
       "name": "sale_offer_purpose",
       "schema": "public",
       "values": [
         "catalog",
         "generated_run"
-      ]
-    },
-    "public.simulated_notification_channel": {
-      "name": "simulated_notification_channel",
-      "schema": "public",
-      "values": [
-        "email",
-        "sms"
-      ]
-    },
-    "public.simulated_notification_status": {
-      "name": "simulated_notification_status",
-      "schema": "public",
-      "values": [
-        "recorded"
       ]
     },
     "public.traffic_completion_enrichment_status": {

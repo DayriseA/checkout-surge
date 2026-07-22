@@ -179,7 +179,7 @@ describe("HttpTrafficExecutionGateway abort", () => {
       async () => new Response("upstream secret", { status: 503 }),
       "load_orchestrator_abort_unconfirmed",
     ],
-    ["malformed", async () => Response.json({}), "load_orchestrator_abort_invalid_response"],
+    ["malformed", async () => Response.json({}), "load_orchestrator_unavailable"],
   ] as const)("maps %s failures without exposing upstream details", async (_name, fetchImpl, code) => {
     const gateway = new HttpTrafficExecutionGateway({
       loadOrchestratorBaseUrl: "http://load.test",

@@ -1,34 +1,20 @@
 import { z } from "zod";
-import { orderProcessQueueName } from "./queue.js";
 
 export const saleOfferPurposeValues = ["catalog", "generated_run"] as const;
 export const saleOfferPurposeSchema = z.enum(saleOfferPurposeValues);
 export type SaleOfferPurpose = z.infer<typeof saleOfferPurposeSchema>;
 
-export const reservationStatusValues = ["secured", "rejected", "released", "expired"] as const;
-export const reservationStatusSchema = z.enum(reservationStatusValues);
-export type ReservationStatus = z.infer<typeof reservationStatusSchema>;
-
-export const reservationRejectReasonValues = [
-  "sold_out",
-  "inventory_not_initialized",
-  "quantity_invalid",
-  "run_not_accepting_traffic",
-  "idempotency_conflict",
-] as const;
-export const reservationRejectReasonSchema = z.enum(reservationRejectReasonValues);
-export type ReservationRejectReason = z.infer<typeof reservationRejectReasonSchema>;
-
-export const reservationDecisionValues = [
+export const publicBuyOutcomeValues = [
   "reservation_secured",
+  "reservation_pending_persistence",
   "sold_out",
+  "run_not_accepting_traffic",
   "inventory_not_initialized",
-  "idempotent_replay",
   "idempotency_conflict",
   "quantity_invalid",
-  "reservation_pending_persistence",
-  "run_not_accepting_traffic",
 ] as const;
+
+export const reservationDecisionValues = [...publicBuyOutcomeValues, "idempotent_replay"] as const;
 export const reservationDecisionSchema = z.enum(reservationDecisionValues);
 export type ReservationDecision = z.infer<typeof reservationDecisionSchema>;
 
@@ -46,9 +32,6 @@ export type RecoveryJobStatus = z.infer<typeof recoveryJobStatusSchema>;
 
 export const orderEventNameValues = [
   "reservation.secured",
-  "reservation.rejected",
-  "reservation.released",
-  "reservation.expired",
   "order.queued",
   "order.processing",
   "order.confirmed",
@@ -71,26 +54,6 @@ export const reservationPendingPersistenceStatusSchema = z.enum(
 export type ReservationPendingPersistenceStatus = z.infer<
   typeof reservationPendingPersistenceStatusSchema
 >;
-
-export const demoRunReservationOutcomeValues = ["api_sold_out_decision"] as const;
-export const demoRunReservationOutcomeSchema = z.enum(demoRunReservationOutcomeValues);
-export type DemoRunReservationOutcomeName = z.infer<typeof demoRunReservationOutcomeSchema>;
-
-export const demoRunReservationOutcomeSourceValues = ["redis", "postgres", "api"] as const;
-export const demoRunReservationOutcomeSourceSchema = z.enum(demoRunReservationOutcomeSourceValues);
-export type DemoRunReservationOutcomeSource = z.infer<typeof demoRunReservationOutcomeSourceSchema>;
-
-export const simulatedPurchaseStatusValues = [
-  "sold_out",
-  "reservation_secured",
-  "processing",
-  "confirmed",
-  "failed",
-  "reservation_expired",
-  "sale_not_active",
-] as const;
-export const simulatedPurchaseStatusSchema = z.enum(simulatedPurchaseStatusValues);
-export type SimulatedPurchaseStatus = z.infer<typeof simulatedPurchaseStatusSchema>;
 
 export const demoPresetVisibilityValues = ["public", "admin"] as const;
 export const demoPresetVisibilitySchema = z.enum(demoPresetVisibilityValues);
@@ -143,15 +106,3 @@ export const metricNameValues = [
 ] as const;
 export const metricNameSchema = z.enum(metricNameValues);
 export type MetricName = z.infer<typeof metricNameSchema>;
-
-export const queueNameValues = [orderProcessQueueName] as const;
-export const queueNameSchema = z.enum(queueNameValues);
-export type QueueName = z.infer<typeof queueNameSchema>;
-
-export function eventNameForReservationTransition(status: ReservationStatus): OrderEventName {
-  return `reservation.${status}`;
-}
-
-export function eventNameForOrderTransition(status: OrderStatus): OrderEventName {
-  return `order.${status}`;
-}

@@ -3,8 +3,8 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import type { CheckoutSurgeDatabase } from "./client.js";
 import {
   demoRunFinalizations,
-  demoRunReservationOutcomes,
   demoRunSaleContexts,
+  demoRunSoldOutCounts,
   demoRunSummaries,
   demoRuns,
   demoRunTeardownReceipts,
@@ -189,7 +189,7 @@ async function deleteGeneratedRunRows(
   await tx
     .delete(reservationPendingPersistence)
     .where(eq(reservationPendingPersistence.runId, runId));
-  await tx.delete(demoRunReservationOutcomes).where(eq(demoRunReservationOutcomes.runId, runId));
+  await tx.delete(demoRunSoldOutCounts).where(eq(demoRunSoldOutCounts.runId, runId));
   await tx.delete(demoRunFinalizations).where(eq(demoRunFinalizations.runId, runId));
   await tx.delete(demoRunSummaries).where(eq(demoRunSummaries.runId, runId));
   await tx.delete(demoRunSaleContexts).where(eq(demoRunSaleContexts.runId, runId));

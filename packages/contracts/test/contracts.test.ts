@@ -21,8 +21,6 @@ import {
   archiveAdminPresetResponseSchema,
   buyOutcomeHeaderName,
   buyOutcomeHeaderValueSchema,
-  buyRejectionReasonHeaderName,
-  buyRejectionReasonHeaderValueSchema,
   buyRequestSchema,
   buyResponseSchema,
   collectAcceptedRunConfigSnapshotViolations,
@@ -39,7 +37,6 @@ import {
   demoRunSnapshotSchema,
   demoRunStatusValues,
   deriveLoadExecutionPlan,
-  directSnapshotViolationCodes,
   type ErrorPayloadCode,
   emptyHttpTimingBreakdownSummary,
   erpChaosResetPath,
@@ -81,7 +78,6 @@ import {
   queueStatusSchema,
   reservationDecisionValues,
   reservationRejectedResponseSchema,
-  reservationStatusValues,
   resolveSteadyArrivalVus,
   runHistoryDetailParamsSchema,
   runHistoryDetailPath,
@@ -91,7 +87,6 @@ import {
   runHistoryListResponseSchema,
   runHistoryPath,
   securedReservationHoldSchema,
-  simulatedPurchaseStatusValues,
   startDemoRunPath,
   startDemoRunRequestSchema,
   stockReservationDecisionSchema,
@@ -243,8 +238,7 @@ describe("traffic ownership contracts", () => {
 });
 
 describe("shared lifecycle vocabulary", () => {
-  it("keeps reservation and order states distinct", () => {
-    expect(reservationStatusValues).toEqual(["secured", "rejected", "released", "expired"]);
+  it("keeps reservation existence distinct from the order lifecycle", () => {
     expect(orderStatusValues).toEqual(["queued", "processing", "confirmed", "failed"]);
     expect(demoRunStatusValues).toEqual(["starting", "active", "draining", "completed", "failed"]);
     expect(trafficExecutionStatusValues).toEqual([
@@ -987,7 +981,6 @@ describe("public order-status contracts", () => {
     saleOfferId,
     reservation: {
       id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-      status: "secured" as const,
       expiresAt: "2026-06-20T12:15:00.000Z",
     },
     order: {
@@ -999,7 +992,6 @@ describe("public order-status contracts", () => {
       failureCode: null,
       failureMessage: null,
     },
-    customerStatus: "reservation_secured" as const,
     consistencyLagMs: null,
     timeline: [
       {
@@ -1024,11 +1016,11 @@ describe("public order-status contracts", () => {
   });
 
   it.each([
-    ["queued", "reservation_secured", null],
-    ["processing", "processing", null],
-    ["confirmed", "confirmed", 120_000],
-    ["failed", "failed", null],
-  ] as const)("accepts the %s read model", (status, customerStatus, consistencyLagMs) => {
+    ["queued", null],
+    ["processing", null],
+    ["confirmed", 120_000],
+    ["failed", null],
+  ] as const)("accepts the %s read model", (status, consistencyLagMs) => {
     const parsed = orderStatusResponseSchema.parse({
       ...response,
       order: {
@@ -1040,11 +1032,10 @@ describe("public order-status contracts", () => {
         failureCode: status === "failed" ? "erp_rejected" : null,
         failureMessage: status === "failed" ? "ERP rejected the order" : null,
       },
-      customerStatus,
       consistencyLagMs,
     });
 
-    expect(parsed.customerStatus).toBe(customerStatus);
+    expect(parsed.order.status).toBe(status);
   });
 
   it("rejects malformed, unknown, negative, and leaked response data", () => {
@@ -1058,7 +1049,7 @@ describe("public order-status contracts", () => {
       }),
     ).toThrow();
     expect(() =>
-      orderStatusResponseSchema.parse({ ...response, customerStatus: "reservation_expired" }),
+      orderStatusResponseSchema.parse({ ...response, customerStatus: "queued" }),
     ).toThrow();
     expect(() =>
       orderStatusResponseSchema.parse({
@@ -1121,8 +1112,8 @@ describe("canonical error-code vocabulary", () => {
     }
   });
 
-  it("includes the public order lookup not-found code", () => {
-    expect(errorPayloadCodeSchema.parse("order_not_found")).toBe("order_not_found");
+  it("uses one public lookup code while details identify the resource", () => {
+    expect(errorPayloadCodeSchema.parse("resource_not_found")).toBe("resource_not_found");
   });
 
   it("keeps the exact schema-driving list duplicate-free and lowercase snake-case", () => {
@@ -1146,14 +1137,29 @@ describe("canonical error-code vocabulary", () => {
     }
   });
 
-  it("keeps every public_custom_default code aligned with a direct snapshot violation code", () => {
-    const expectedPrefixed = directSnapshotViolationCodes.map(
-      (code) => `public_custom_default_${code}`,
+  it("keeps detailed policy causes out of the public HTTP vocabulary", () => {
+    expect(errorPayloadCodes).toContain("invalid_run_configuration");
+    expect(errorPayloadCodes).toContain("invalid_runtime_policy");
+    expect(errorPayloadCodes.some((code) => code.startsWith("deployment_"))).toBe(false);
+    expect(errorPayloadCodes.some((code) => code.startsWith("public_custom_default_"))).toBe(false);
+  });
+
+  it("uses grouped categories instead of mechanical conflict and recovery variants", () => {
+    expect(errorPayloadCodes).toEqual(
+      expect.arrayContaining([
+        "preset_conflict",
+        "run_conflict",
+        "run_cleanup_conflict",
+        "dashboard_recovery_unavailable",
+      ]),
     );
-    const actualPrefixed = errorPayloadCodes.filter((code) =>
-      code.startsWith("public_custom_default_"),
-    );
-    expect(actualPrefixed.sort()).toEqual([...expectedPrefixed].sort());
+    for (const retiredCode of [
+      "resource_conflict",
+      "run_sale_offer_missing",
+      "dashboard_recovery_at_capacity",
+    ]) {
+      expect(errorPayloadCodeSchema.safeParse(retiredCode).success, retiredCode).toBe(false);
+    }
   });
 
   it("requires the strict envelope with code, message, correlationId, and timestamp", () => {
@@ -1426,23 +1432,14 @@ describe("buy and dashboard contracts", () => {
 
   it("exposes canonical buy classification header names and values", () => {
     expect(buyOutcomeHeaderName).toBe("x-checkout-outcome");
-    expect(buyRejectionReasonHeaderName).toBe("x-checkout-rejection-reason");
 
-    for (const outcome of reservationDecisionValues) {
+    for (const outcome of reservationDecisionValues.filter(
+      (value) => value !== "idempotent_replay",
+    )) {
       expect(buyOutcomeHeaderValueSchema.parse(outcome)).toBe(outcome);
     }
-    for (const reason of [
-      "sold_out",
-      "inventory_not_initialized",
-      "quantity_invalid",
-      "run_not_accepting_traffic",
-      "idempotency_conflict",
-    ] as const) {
-      expect(buyRejectionReasonHeaderValueSchema.parse(reason)).toBe(reason);
-    }
-
+    expect(() => buyOutcomeHeaderValueSchema.parse("idempotent_replay")).toThrow();
     expect(() => buyOutcomeHeaderValueSchema.parse("unrelated_outcome")).toThrow();
-    expect(() => buyRejectionReasonHeaderValueSchema.parse("unrelated_reason")).toThrow();
   });
 
   it("validates accepted and sold-out reservation outcomes", () => {
@@ -1455,7 +1452,6 @@ describe("buy and dashboard contracts", () => {
         saleOfferId,
         correlationId: "original-correlation",
         quantity: 1,
-        status: "secured",
         reservationToken: "reservation-token",
         securedAt: timestamp,
         expiresAt: "2026-06-20T12:15:00.000Z",
@@ -1470,7 +1466,6 @@ describe("buy and dashboard contracts", () => {
         status: "queued",
         queuedAt: timestamp,
       },
-      simulatedStatus: "reservation_secured",
     } as const;
     expect(buyResponseSchema.parse(accepted).outcome).toBe("reservation_secured");
     expect(() => buyResponseSchema.parse({ ...accepted, outcome: "idempotent_replay" })).toThrow();
@@ -1493,70 +1488,55 @@ describe("buy and dashboard contracts", () => {
       }),
     ).toThrow();
     expect(() =>
-      buyResponseSchema.parse({
-        ...accepted,
-        reservation: { ...accepted.reservation, status: "released" },
-      }),
+      buyResponseSchema.parse({ ...accepted, simulatedStatus: "reservation_secured" }),
     ).toThrow();
 
     expect(
       buyResponseSchema.parse({
         outcome: "sold_out",
-        reason: "sold_out",
         correlationId,
         timestamp,
         reservation: null,
         order: null,
-        simulatedStatus: "sold_out",
       }).outcome,
     ).toBe("sold_out");
     expect(
       buyResponseSchema.parse({
         outcome: "quantity_invalid",
-        reason: "quantity_invalid",
         correlationId,
         timestamp,
         reservation: null,
         order: null,
-        simulatedStatus: null,
       }).outcome,
     ).toBe("quantity_invalid");
   });
 
-  it("exposes the canonical decision and presentation vocabulary for run closures", () => {
+  it("exposes the canonical decision vocabulary for run closures", () => {
     expect(reservationDecisionValues).toContain("run_not_accepting_traffic");
-    expect(simulatedPurchaseStatusValues).toContain("sale_not_active");
   });
 
   it.each([
-    { outcome: "sold_out", simulatedStatus: "sold_out" },
-    { outcome: "run_not_accepting_traffic", simulatedStatus: "sale_not_active" },
-    { outcome: "inventory_not_initialized", simulatedStatus: null },
-    { outcome: "idempotency_conflict", simulatedStatus: null },
-    { outcome: "quantity_invalid", simulatedStatus: null },
-  ] as const)("parses the $outcome rejection with its exact reason and presentation", ({
-    outcome,
-    simulatedStatus,
-  }) => {
+    "sold_out",
+    "run_not_accepting_traffic",
+    "inventory_not_initialized",
+    "idempotency_conflict",
+    "quantity_invalid",
+  ] as const)("parses the %s rejection from its outcome alone", (outcome) => {
     const payload = {
       outcome,
-      reason: outcome,
       correlationId,
       timestamp,
       reservation: null,
       order: null,
-      simulatedStatus,
     };
     const parsed = reservationRejectedResponseSchema.parse(payload);
     expect(parsed.outcome).toBe(outcome);
-    expect(parsed.reason).toBe(outcome);
     expect(parsed.reservation).toBeNull();
     expect(parsed.order).toBeNull();
-    expect(parsed.simulatedStatus).toBe(simulatedStatus);
     expect(buyResponseSchema.parse(payload).outcome).toBe(outcome);
   });
 
-  it("rejects invalid outcome, reason, and presentation cross-pairs", () => {
+  it("rejects internal and duplicate rejection vocabulary", () => {
     const base = {
       correlationId,
       timestamp,
@@ -1567,36 +1547,15 @@ describe("buy and dashboard contracts", () => {
     expect(() =>
       reservationRejectedResponseSchema.parse({
         ...base,
+        outcome: "idempotent_replay",
+      }),
+    ).toThrow();
+
+    expect(() =>
+      reservationRejectedResponseSchema.parse({
+        ...base,
         outcome: "idempotency_conflict",
         reason: "idempotency_conflict",
-        simulatedStatus: "sold_out",
-      }),
-    ).toThrow();
-
-    expect(() =>
-      reservationRejectedResponseSchema.parse({
-        ...base,
-        outcome: "idempotency_conflict",
-        reason: "sold_out",
-        simulatedStatus: null,
-      }),
-    ).toThrow();
-
-    expect(() =>
-      reservationRejectedResponseSchema.parse({
-        ...base,
-        outcome: "run_not_accepting_traffic",
-        reason: "run_not_accepting_traffic",
-        simulatedStatus: "sold_out",
-      }),
-    ).toThrow();
-
-    expect(() =>
-      reservationRejectedResponseSchema.parse({
-        ...base,
-        outcome: "run_not_accepting_traffic",
-        reason: "run_not_accepting_traffic",
-        simulatedStatus: null,
       }),
     ).toThrow();
 
@@ -1604,23 +1563,9 @@ describe("buy and dashboard contracts", () => {
       reservationRejectedResponseSchema.parse({
         ...base,
         outcome: "sold_out",
-        reason: "sold_out",
-        simulatedStatus: null,
+        simulatedStatus: "sold_out",
       }),
     ).toThrow();
-  });
-
-  it("requires an explicit null simulatedStatus rather than omitting the field", () => {
-    const { simulatedStatus: _omitted, ...withoutSimulatedStatus } = {
-      outcome: "idempotency_conflict",
-      reason: "idempotency_conflict",
-      correlationId,
-      timestamp,
-      reservation: null,
-      order: null,
-      simulatedStatus: null,
-    };
-    expect(() => reservationRejectedResponseSchema.parse(withoutSimulatedStatus)).toThrow();
   });
 
   it("validates stable Redis stock reservation decisions", () => {
@@ -1630,7 +1575,6 @@ describe("buy and dashboard contracts", () => {
       correlationId,
       runId,
       quantity: 2,
-      status: "secured",
       reservationToken: "reservation-token",
       securedAt: timestamp,
       expiresAt: "2026-06-20T12:15:00.000Z",
@@ -1842,21 +1786,18 @@ describe("buy and dashboard contracts", () => {
         eventName: "order.processing",
         previousStatus: "queued",
         status: "processing",
-        customerStatus: "processing",
       },
       {
         ...statusBase,
         eventName: "order.confirmed",
         previousStatus: "processing",
         status: "confirmed",
-        customerStatus: "confirmed",
       },
       {
         ...statusBase,
         eventName: "order.failed",
         previousStatus: "processing",
         status: "failed",
-        customerStatus: "failed",
       },
     ] as const;
     for (const status of statuses)
@@ -2308,8 +2249,6 @@ describe("public runtime policy contract", () => {
               notificationId: "99999999-9999-4999-8999-999999999993",
               orderId: "99999999-9999-4999-8999-999999999991",
               publicOrderId: "ord_history_1",
-              channel: "email",
-              status: "recorded",
               recordedAt: timestamp,
             },
           ],

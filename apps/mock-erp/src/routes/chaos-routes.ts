@@ -39,7 +39,7 @@ export function registerChaosRoutes(
       if (error instanceof ErpChaosConfigSafetyError) {
         return reply.status(400).send(
           createMockErpErrorPayload({
-            code: "chaos_config_exceeds_caps",
+            code: "invalid_chaos_configuration",
             message: error.message,
             details: error.details,
             correlationId: request.correlationId,

@@ -234,7 +234,7 @@ describe("PostgreSQL worker order transitions", () => {
         correlationId: job.correlationId,
         source: "worker",
         occurredAt: new Date("2026-06-21T00:00:01.000Z"),
-        payload: { orderStatus: "processing", attemptNumber: 2, attemptsMade: 1 },
+        payload: { attemptNumber: 2, attemptsMade: 1 },
       },
       {
         orderId: ids.order,
@@ -244,7 +244,7 @@ describe("PostgreSQL worker order transitions", () => {
         correlationId: job.correlationId,
         source: "worker",
         occurredAt: new Date("2026-06-21T00:00:02.000Z"),
-        payload: { orderStatus: "confirmed", attemptNumber: 2, attemptsMade: 1 },
+        payload: { attemptNumber: 2, attemptsMade: 1 },
       },
     ]);
     expect(processingTransition.eventId).toBe(events[2]?.id);
@@ -337,7 +337,6 @@ describe("PostgreSQL worker order transitions", () => {
       orderId: ids.order,
       saleOfferId: ids.saleOffer,
       correlationId: job.correlationId,
-      channel: "email",
       recipientPlaceholder: "simulated-buyer:ord_worker_integration",
       confirmedAt: "2026-06-21T00:00:02.000Z",
     };
@@ -369,9 +368,7 @@ describe("PostgreSQL worker order transitions", () => {
         saleOfferId: ids.saleOffer,
         correlationId: job.correlationId,
         runId: null,
-        channel: "email",
         recipientPlaceholder: "simulated-buyer:ord_worker_integration",
-        status: "recorded",
         recordedAt: new Date("2026-06-21T00:00:03.000Z"),
       },
     ]);
@@ -385,9 +382,7 @@ describe("PostgreSQL worker order transitions", () => {
       source: "worker",
       occurredAt: new Date("2026-06-21T00:00:03.000Z"),
       payload: {
-        channel: "email",
         recipientPlaceholder: "simulated-buyer:ord_worker_integration",
-        notificationStatus: "recorded",
       },
     });
   });
@@ -431,7 +426,6 @@ describe("PostgreSQL worker order transitions", () => {
     expect(failedTransition.occurredAt).toEqual(failedEvents[0]?.occurredAt);
     expect(failedTransition.occurredAt).toEqual(order?.failedAt);
     expect(failedEvents[0]?.payload).toEqual({
-      orderStatus: "failed",
       attemptNumber: 4,
       attemptsMade: 3,
       failureCode: "order_confirmation_failed",
@@ -1114,7 +1108,6 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
       failureMessage: "The ERP is temporarily unavailable.",
     });
     expect(failedEvent?.payload).toMatchObject({
-      orderStatus: "failed",
       attemptNumber: 1,
       attemptsMade: 0,
       failureCode: "erp_retries_exhausted",
@@ -1243,7 +1236,6 @@ async function seedQueuedOrder(
     ...(testJob.runId ? { runId: testJob.runId } : {}),
     correlationId: testJob.correlationId,
     quantity: testJob.quantity,
-    status: "secured",
     reservationToken: "worker-test-reservation-token",
     securedAt: queuedAt,
     expiresAt: new Date("2026-06-21T00:15:00.000Z"),
@@ -1267,7 +1259,7 @@ async function seedQueuedOrder(
       ...(testJob.runId ? { runId: testJob.runId } : {}),
       correlationId: testJob.correlationId,
       eventName: "reservation.secured",
-      payload: { quantity: 1, reservationStatus: "secured" },
+      payload: { quantity: 1 },
       source: "api",
       occurredAt: queuedAt,
     },
@@ -1278,7 +1270,7 @@ async function seedQueuedOrder(
       ...(testJob.runId ? { runId: testJob.runId } : {}),
       correlationId: testJob.correlationId,
       eventName: "order.queued",
-      payload: { quantity: 1, orderStatus: "queued" },
+      payload: { quantity: 1 },
       source: "api",
       occurredAt: queuedAt,
     },

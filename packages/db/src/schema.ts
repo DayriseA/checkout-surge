@@ -3,18 +3,13 @@ import type {
   BackpressureConfig,
   BusinessOutcomeSummary,
   DemoPresetVisibility as ContractDemoPresetVisibility,
-  DemoRunReservationOutcomeName as ContractDemoRunReservationOutcomeName,
-  DemoRunReservationOutcomeSource as ContractDemoRunReservationOutcomeSource,
   DemoRunStatus as ContractDemoRunStatus,
   ErpAttemptStatus as ContractErpAttemptStatus,
   OrderEventName as ContractOrderEventName,
   OrderStatus as ContractOrderStatus,
   RecoveryJobStatus as ContractRecoveryJobStatus,
   ReservationPendingPersistenceStatus as ContractReservationPendingPersistenceStatus,
-  ReservationStatus as ContractReservationStatus,
   SaleOfferPurpose as ContractSaleOfferPurpose,
-  SimulatedNotificationChannel as ContractSimulatedNotificationChannel,
-  SimulatedNotificationStatus as ContractSimulatedNotificationStatus,
   TrafficCompletionEnrichmentStatus as ContractTrafficCompletionEnrichmentStatus,
   DemoPresetDisplay,
   ErpRunConfig,
@@ -32,8 +27,6 @@ import type {
 } from "@checkout-surge/contracts";
 import {
   demoPresetVisibilityValues,
-  demoRunReservationOutcomeSourceValues,
-  demoRunReservationOutcomeValues,
   demoRunStatusValues,
   erpAttemptStatusValues,
   operatorModeValues,
@@ -41,10 +34,7 @@ import {
   orderStatusValues,
   recoveryJobStatusValues,
   reservationPendingPersistenceStatusValues,
-  reservationStatusValues,
   saleOfferPurposeValues,
-  simulatedNotificationChannelValues,
-  simulatedNotificationStatusValues,
   trafficCompletionEnrichmentStatusValues,
   trafficExecutionStatusValues,
 } from "@checkout-surge/contracts";
@@ -73,26 +63,18 @@ export type JsonValue = JsonRecord | JsonValue[] | string | number | boolean | n
 
 export {
   demoPresetVisibilityValues,
-  demoRunReservationOutcomeSourceValues,
-  demoRunReservationOutcomeValues,
   demoRunStatusValues,
   erpAttemptStatusValues,
   orderEventNameValues,
   orderStatusValues,
   recoveryJobStatusValues,
   reservationPendingPersistenceStatusValues,
-  reservationStatusValues,
   saleOfferPurposeValues,
-  simulatedNotificationChannelValues,
-  simulatedNotificationStatusValues,
   trafficCompletionEnrichmentStatusValues,
 };
 
 export type SaleOfferPurpose = ContractSaleOfferPurpose;
 export const saleOfferPurposeEnum = pgEnum("sale_offer_purpose", saleOfferPurposeValues);
-
-export type ReservationStatus = ContractReservationStatus;
-export const reservationStatusEnum = pgEnum("reservation_status", reservationStatusValues);
 
 export type OrderStatus = ContractOrderStatus;
 export const orderStatusEnum = pgEnum("order_status", orderStatusValues);
@@ -136,30 +118,6 @@ export type ReservationPendingPersistenceStatus = ContractReservationPendingPers
 export const reservationPendingPersistenceStatusEnum = pgEnum(
   "reservation_pending_persistence_status",
   reservationPendingPersistenceStatusValues,
-);
-
-export type SimulatedNotificationChannel = ContractSimulatedNotificationChannel;
-export const simulatedNotificationChannelEnum = pgEnum(
-  "simulated_notification_channel",
-  simulatedNotificationChannelValues,
-);
-
-export type SimulatedNotificationStatus = ContractSimulatedNotificationStatus;
-export const simulatedNotificationStatusEnum = pgEnum(
-  "simulated_notification_status",
-  simulatedNotificationStatusValues,
-);
-
-export type DemoRunReservationOutcomeName = ContractDemoRunReservationOutcomeName;
-export const demoRunReservationOutcomeEnum = pgEnum(
-  "demo_run_reservation_outcome",
-  demoRunReservationOutcomeValues,
-);
-
-export type DemoRunReservationOutcomeSource = ContractDemoRunReservationOutcomeSource;
-export const demoRunReservationOutcomeSourceEnum = pgEnum(
-  "demo_run_reservation_outcome_source",
-  demoRunReservationOutcomeSourceValues,
 );
 
 const createdAt = () => timestamp("created_at", { withTimezone: true }).defaultNow().notNull();
@@ -303,31 +261,18 @@ export const reservations = pgTable(
     correlationId: text("correlation_id").notNull(),
     runId: uuid("run_id").references(() => demoRuns.id, { onDelete: "restrict" }),
     quantity: integer("quantity").default(1).notNull(),
-    status: reservationStatusEnum("status").notNull(),
     reservationToken: text("reservation_token").notNull(),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     securedAt: timestamp("secured_at", { withTimezone: true }).notNull(),
-    releasedAt: timestamp("released_at", { withTimezone: true }),
-    expiredAt: timestamp("expired_at", { withTimezone: true }),
-    releaseReason: text("release_reason"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
   (table) => [
     uniqueIndex("reservations_reservation_token_unique").on(table.reservationToken),
     check("reservations_quantity_positive", sql`${table.quantity} > 0`),
-    check(
-      "reservations_released_requires_released_at",
-      sql`${table.status} <> 'released' OR ${table.releasedAt} IS NOT NULL`,
-    ),
-    check(
-      "reservations_expired_requires_expired_at",
-      sql`${table.status} <> 'expired' OR ${table.expiredAt} IS NOT NULL`,
-    ),
     index("reservations_sale_offer_id_idx").on(table.saleOfferId),
     index("reservations_run_id_idx").on(table.runId),
     index("reservations_correlation_id_idx").on(table.correlationId),
-    index("reservations_status_idx").on(table.status),
   ],
 );
 
@@ -592,14 +537,12 @@ export const simulatedNotifications = pgTable(
       .references(() => saleOffers.id, { onDelete: "restrict" }),
     correlationId: text("correlation_id").notNull(),
     runId: uuid("run_id").references(() => demoRuns.id, { onDelete: "restrict" }),
-    channel: simulatedNotificationChannelEnum("channel").notNull(),
     recipientPlaceholder: text("recipient_placeholder").notNull(),
-    status: simulatedNotificationStatusEnum("status").default("recorded").notNull(),
     recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull(),
     createdAt: createdAt(),
   },
   (table) => [
-    uniqueIndex("simulated_notifications_order_channel_unique").on(table.orderId, table.channel),
+    uniqueIndex("simulated_notifications_order_id_unique").on(table.orderId),
     index("simulated_notifications_order_id_idx").on(table.orderId),
     index("simulated_notifications_sale_offer_id_idx").on(table.saleOfferId),
     index("simulated_notifications_run_id_idx").on(table.runId),
@@ -611,25 +554,19 @@ export const simulatedNotifications = pgTable(
   ],
 );
 
-export const demoRunReservationOutcomes = pgTable(
-  "demo_run_reservation_outcomes",
+export const demoRunSoldOutCounts = pgTable(
+  "demo_run_sold_out_counts",
   {
-    id: uuid("id").defaultRandom().primaryKey(),
     runId: uuid("run_id")
+      .primaryKey()
       .notNull()
       .references(() => demoRuns.id, { onDelete: "cascade" }),
-    outcome: demoRunReservationOutcomeEnum("outcome").notNull(),
     count: integer("count").default(0).notNull(),
     latestObservedAt: timestamp("latest_observed_at", { withTimezone: true }),
-    source: demoRunReservationOutcomeSourceEnum("source").notNull(),
     capturedAt: timestamp("captured_at", { withTimezone: true }).notNull(),
     createdAt: createdAt(),
   },
-  (table) => [
-    uniqueIndex("demo_run_reservation_outcomes_run_outcome_unique").on(table.runId, table.outcome),
-    check("demo_run_reservation_outcomes_count_nonnegative", sql`${table.count} >= 0`),
-    index("demo_run_reservation_outcomes_run_id_idx").on(table.runId),
-  ],
+  (table) => [check("demo_run_sold_out_counts_count_nonnegative", sql`${table.count} >= 0`)],
 );
 
 export const demoRunFinalizations = pgTable(
@@ -757,7 +694,7 @@ export const demoRunsRelations = relations(demoRuns, ({ one, many }) => ({
   orderEvents: many(orderEvents),
   pendingPersistence: many(reservationPendingPersistence),
   simulatedNotifications: many(simulatedNotifications),
-  reservationOutcomes: many(demoRunReservationOutcomes),
+  soldOutCount: one(demoRunSoldOutCounts),
   finalization: one(demoRunFinalizations),
   summary: one(demoRunSummaries),
 }));
@@ -801,7 +738,7 @@ export const ordersRelations = relations(orders, ({ one, many }) => ({
   }),
   erpAttempts: many(erpAttempts),
   events: many(orderEvents),
-  simulatedNotifications: many(simulatedNotifications),
+  simulatedNotification: one(simulatedNotifications),
 }));
 
 export const erpAttemptsRelations = relations(erpAttempts, ({ one }) => ({
@@ -870,15 +807,12 @@ export const simulatedNotificationsRelations = relations(simulatedNotifications,
   }),
 }));
 
-export const demoRunReservationOutcomesRelations = relations(
-  demoRunReservationOutcomes,
-  ({ one }) => ({
-    run: one(demoRuns, {
-      fields: [demoRunReservationOutcomes.runId],
-      references: [demoRuns.id],
-    }),
+export const demoRunSoldOutCountsRelations = relations(demoRunSoldOutCounts, ({ one }) => ({
+  run: one(demoRuns, {
+    fields: [demoRunSoldOutCounts.runId],
+    references: [demoRuns.id],
   }),
-);
+}));
 
 export const demoRunFinalizationsRelations = relations(demoRunFinalizations, ({ one }) => ({
   run: one(demoRuns, {
@@ -922,8 +856,8 @@ export type ReservationPendingPersistence = typeof reservationPendingPersistence
 export type NewReservationPendingPersistence = typeof reservationPendingPersistence.$inferInsert;
 export type SimulatedNotification = typeof simulatedNotifications.$inferSelect;
 export type NewSimulatedNotification = typeof simulatedNotifications.$inferInsert;
-export type DemoRunReservationOutcome = typeof demoRunReservationOutcomes.$inferSelect;
-export type NewDemoRunReservationOutcome = typeof demoRunReservationOutcomes.$inferInsert;
+export type DemoRunSoldOutCount = typeof demoRunSoldOutCounts.$inferSelect;
+export type NewDemoRunSoldOutCount = typeof demoRunSoldOutCounts.$inferInsert;
 export type DemoRunFinalization = typeof demoRunFinalizations.$inferSelect;
 export type NewDemoRunFinalization = typeof demoRunFinalizations.$inferInsert;
 export type DemoRunSummary = typeof demoRunSummaries.$inferSelect;

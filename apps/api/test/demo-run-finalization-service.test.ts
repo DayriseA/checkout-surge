@@ -22,8 +22,8 @@ import {
   deleteGeneratedRunRedisState,
   demoPresets,
   demoRunFinalizations,
-  demoRunReservationOutcomes,
   demoRunSaleContexts,
+  demoRunSoldOutCounts,
   demoRunSummaries,
   demoRuns,
   erpAttempts,
@@ -217,20 +217,18 @@ describe("demo run finalization service", () => {
         },
       })
       .where(eq(demoRunFinalizations.runId, ids.run));
-    await db.insert(demoRunReservationOutcomes).values({
+    await db.insert(demoRunSoldOutCounts).values({
       runId: ids.run,
-      outcome: "api_sold_out_decision",
       count: 7,
       latestObservedAt: new Date("2026-06-20T00:00:09.000Z"),
-      source: "redis",
       capturedAt: new Date("2026-06-20T00:00:10.000Z"),
       createdAt: new Date("2026-06-20T00:00:10.000Z"),
     });
     await redisClient.hset(
-      inventoryKeys(ids.saleOffer).reservationOutcomes,
-      "api_sold_out_decision",
+      inventoryKeys(ids.saleOffer).soldOut,
+      "count",
       "7",
-      "api_sold_out_decision_latest_observed_at",
+      "latest_observed_at",
       "2026-06-20T00:00:09.000Z",
     );
     await db
@@ -248,9 +246,7 @@ describe("demo run finalization service", () => {
       saleOfferId: ids.saleOffer,
       runId: ids.run,
       correlationId: "corr-finalize-test",
-      channel: "email",
       recipientPlaceholder: "buyer@example.invalid",
-      status: "recorded",
       recordedAt: new Date("2026-06-20T00:00:08.000Z"),
       createdAt: new Date("2026-06-20T00:00:08.000Z"),
     });
@@ -437,20 +433,18 @@ describe("demo run finalization service", () => {
     const service = createService(connection, redis);
 
     await seedDrainingRun({ db, redis: redisClient, trafficDeliveryStatus: "complete" });
-    await db.insert(demoRunReservationOutcomes).values({
+    await db.insert(demoRunSoldOutCounts).values({
       runId: ids.run,
-      outcome: "api_sold_out_decision",
       count: 1,
       latestObservedAt: new Date("2026-06-20T00:00:09.000Z"),
-      source: "redis",
       capturedAt: new Date("2026-06-20T00:00:10.000Z"),
       createdAt: new Date("2026-06-20T00:00:10.000Z"),
     });
     await redisClient.hset(
-      inventoryKeys(ids.saleOffer).reservationOutcomes,
-      "api_sold_out_decision",
+      inventoryKeys(ids.saleOffer).soldOut,
+      "count",
       "2",
-      "api_sold_out_decision_latest_observed_at",
+      "latest_observed_at",
       "2026-06-20T00:00:09.000Z",
     );
 
@@ -477,9 +471,7 @@ describe("demo run finalization service", () => {
       saleOfferId: ids.saleOffer,
       runId: ids.run,
       correlationId: "corr-finalize-test",
-      channel: "email",
       recipientPlaceholder: "buyer@example.invalid",
-      status: "recorded",
       recordedAt: new Date("2026-06-20T00:00:08.000Z"),
     });
     await db.insert(orderRecoveryJobs).values({
@@ -555,9 +547,7 @@ describe("demo run finalization service", () => {
       saleOfferId: ids.saleOffer,
       runId: ids.run,
       correlationId: "corr-finalize-test",
-      channel: "email",
       recipientPlaceholder: "buyer@example.invalid",
-      status: "recorded",
       recordedAt: new Date("2026-06-20T00:00:08.000Z"),
     });
 
@@ -730,7 +720,6 @@ describe("demo run finalization service", () => {
           runId: ids.run,
           correlationId: `pending-page-${index}`,
           quantity: 1,
-          status: "secured",
           reservationToken: `pending-token-${index}`,
           securedAt: "2026-06-20T00:00:02.000Z",
           expiresAt: "2026-06-20T00:15:02.000Z",
@@ -851,7 +840,6 @@ describe("demo run finalization service", () => {
         runId: ids.run,
         correlationId: "terminal-stale-hold",
         quantity: 1,
-        status: "secured",
         reservationToken: "terminal-stale-token",
         securedAt: "2026-06-20T00:00:02.000Z",
         expiresAt: "2026-06-20T00:15:02.000Z",
@@ -938,9 +926,7 @@ describe("demo run finalization service", () => {
           saleOfferId: ids.saleOffer,
           runId: ids.run,
           correlationId: "corr-finalize-test",
-          channel: "email",
           recipientPlaceholder: "buyer@example.invalid",
-          status: "recorded",
           recordedAt: new Date("2026-06-20T00:00:08.000Z"),
           createdAt: new Date("2026-06-20T00:00:08.000Z"),
         });
@@ -1387,9 +1373,7 @@ describe("demo run finalization service", () => {
       saleOfferId: ids.saleOffer,
       runId: ids.run,
       correlationId: "corr-finalize-test",
-      channel: "email",
       recipientPlaceholder: "buyer@example.invalid",
-      status: "recorded",
       recordedAt: new Date("2026-06-20T00:00:09.000Z"),
     });
 
@@ -1777,7 +1761,6 @@ function reservationFixture(id: string): typeof reservations.$inferInsert {
     runId: ids.run,
     correlationId: "corr-finalize-test",
     quantity: 1,
-    status: "secured",
     reservationToken: `token-${id}`,
     securedAt: new Date("2026-06-20T00:00:02.000Z"),
     expiresAt: new Date("2026-06-20T00:15:02.000Z"),

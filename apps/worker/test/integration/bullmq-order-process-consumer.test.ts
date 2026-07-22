@@ -40,7 +40,6 @@ const notificationJob: NotificationRecordJob = {
   orderId: job.orderId,
   saleOfferId: job.saleOfferId,
   correlationId: job.correlationId,
-  channel: "email",
   recipientPlaceholder: "simulated-buyer:ord_test",
   confirmedAt: "2026-06-21T00:00:02.000Z",
 };

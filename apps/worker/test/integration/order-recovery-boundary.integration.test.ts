@@ -71,7 +71,6 @@ run("PostgreSQL durable order recovery boundary", () => {
       saleOfferId: ids.offer,
       correlationId: job.correlationId,
       quantity: 1,
-      status: "secured",
       reservationToken: "recovery-boundary-token",
       securedAt: now,
       expiresAt: new Date("2026-06-22T00:15:00.000Z"),

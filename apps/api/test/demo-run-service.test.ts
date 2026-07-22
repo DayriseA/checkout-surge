@@ -24,8 +24,8 @@ import {
   deleteGeneratedRunRedisState,
   demoPresets,
   demoRunFinalizations,
-  demoRunReservationOutcomes,
   demoRunSaleContexts,
+  demoRunSoldOutCounts,
   demoRunSummaries,
   demoRuns,
   getInventoryStatus,
@@ -200,8 +200,11 @@ describe("demo-run service validation", () => {
       }),
     ).toThrowError(
       expect.objectContaining({
-        code: fixture.expectedCode,
-        details: fixture.expectedDetails,
+        code: "invalid_run_configuration",
+        details: expect.objectContaining({
+          ...fixture.expectedDetails,
+          violationCode: fixture.expectedCode,
+        }),
       }),
     );
   });
@@ -600,11 +603,11 @@ describe("demo-run metric ingestion acceptance", () => {
     });
 
     await expect(missing.ingestMetrics(metricRequest)).rejects.toMatchObject({
-      code: "run_not_found",
+      code: "resource_not_found",
       details: { runId: metricRequest.runId },
     });
     await expect(draining.ingestMetrics(metricRequest)).rejects.toMatchObject({
-      code: "traffic_metric_run_not_eligible",
+      code: "traffic_report_rejected",
       details: {
         runId: metricRequest.runId,
         status: "draining",
@@ -804,7 +807,7 @@ describe("demo-run preset management", () => {
         },
         ...snapshot,
       }),
-    ).rejects.toMatchObject({ code: "preset_not_editable" });
+    ).rejects.toMatchObject({ code: "preset_operation_not_allowed" });
     expect(updated.preset.slug).toBe("custom");
     expect(updated.preset.display.name).toBe("Custom Saved");
     expect(expectBuyerSpikeTrafficConfig(updated.preset.trafficConfig)).toMatchObject({
@@ -826,13 +829,16 @@ describe("demo-run preset management", () => {
         sourceSlug: "preview-1k",
         targetSlug: "preview-copy",
       }),
-    ).rejects.toMatchObject({ code: "preset_slug_conflict" });
+    ).rejects.toMatchObject({
+      code: "preset_conflict",
+      details: { conflictReason: "slug_in_use", slug: "preview-copy" },
+    });
     await expect(
       service.duplicatePreset({
         sourceSlug: "public-custom",
         targetSlug: "public-custom-copy",
       }),
-    ).rejects.toMatchObject({ code: "preset_not_duplicable" });
+    ).rejects.toMatchObject({ code: "preset_operation_not_allowed" });
     expect(created.preset.slug).toBe("preview-copy");
     expect(created.preset.visibility).toBe("admin");
     expect(created.preset.isEditable).toBe(true);
@@ -878,17 +884,17 @@ describe("demo-run preset management", () => {
     // Archived presets disappear from normal active lookup, so they can no
     // longer be saved, copied, duplicated, or started.
     await expect(service.saveAdminPreset(created.preset)).rejects.toMatchObject({
-      code: "preset_not_found",
+      code: "resource_not_found",
     });
     await expect(
       service.copyPresetToCustom({ sourceSlug: "operator-duplicate" }),
-    ).rejects.toMatchObject({ code: "preset_not_found" });
+    ).rejects.toMatchObject({ code: "resource_not_found" });
     await expect(
       service.duplicatePreset({ sourceSlug: "operator-duplicate", targetSlug: "another-copy" }),
-    ).rejects.toMatchObject({ code: "preset_not_found" });
+    ).rejects.toMatchObject({ code: "resource_not_found" });
 
     // Admin start reaches the preset lookup after the runtime policy read; an
-    // archived slug is rejected as preset_not_found before any run is created.
+    // archived slug is rejected as resource_not_found before any run is created.
     await requireConnection(connection)
       .db.insert(publicRuntimePolicies)
       .values({
@@ -902,7 +908,7 @@ describe("demo-run preset management", () => {
         { presetSlug: "operator-duplicate", operatorMode: "admin" },
         "corr-archived-start",
       ),
-    ).rejects.toMatchObject({ code: "preset_not_found" });
+    ).rejects.toMatchObject({ code: "resource_not_found" });
 
     const [row] = await requireConnection(connection)
       .db.select()
@@ -968,18 +974,18 @@ describe("demo-run preset management", () => {
       });
 
     await expect(service.archiveAdminPreset({ slug: "preview-1k" })).rejects.toMatchObject({
-      code: "preset_not_archivable",
-      details: { slug: "preview-1k" },
+      code: "preset_conflict",
+      details: { conflictReason: "not_archivable", slug: "preview-1k" },
     });
     await expect(service.archiveAdminPreset({ slug: "public-custom" })).rejects.toMatchObject({
-      code: "preset_not_archivable",
+      code: "preset_conflict",
     });
     await expect(service.archiveAdminPreset({ slug: "custom" })).rejects.toMatchObject({
-      code: "preset_not_archivable",
+      code: "preset_conflict",
     });
     await expect(service.archiveAdminPreset({ slug: "system-admin-preset" })).rejects.toMatchObject(
       {
-        code: "preset_not_archivable",
+        code: "preset_conflict",
       },
     );
 
@@ -990,17 +996,17 @@ describe("demo-run preset management", () => {
     expect(adminList.presets.find((preset) => preset.slug === "custom")?.canArchive).toBe(false);
   });
 
-  it("reports preset_not_found for unknown and already-archived slugs", async () => {
+  it("reports resource_not_found for unknown and already-archived slugs", async () => {
     const service = createPresetManagementService(requireConnection(connection));
     await service.duplicatePreset({ sourceSlug: "preview-1k", targetSlug: "archive-once" });
     await service.archiveAdminPreset({ slug: "archive-once" });
 
     await expect(service.archiveAdminPreset({ slug: "never-seeded" })).rejects.toMatchObject({
-      code: "preset_not_found",
+      code: "resource_not_found",
       details: { slug: "never-seeded" },
     });
     await expect(service.archiveAdminPreset({ slug: "archive-once" })).rejects.toMatchObject({
-      code: "preset_not_found",
+      code: "resource_not_found",
     });
   });
 
@@ -1022,7 +1028,7 @@ describe("demo-run preset management", () => {
     await expect(
       service.archiveAdminPreset({ slug: "concurrently-protected" }),
     ).rejects.toMatchObject({
-      code: "preset_not_archivable",
+      code: "preset_conflict",
       details: { slug: "concurrently-protected" },
     });
 
@@ -1033,7 +1039,7 @@ describe("demo-run preset management", () => {
     expect(row).toMatchObject({ isSystem: true, archivedAt: null });
   });
 
-  it("reports preset_not_found when another archive wins after eligibility is read", async () => {
+  it("reports resource_not_found when another archive wins after eligibility is read", async () => {
     const activeConnection = requireConnection(connection);
     const setupService = createPresetManagementService(activeConnection);
     const created = await setupService.duplicatePreset({
@@ -1052,7 +1058,7 @@ describe("demo-run preset management", () => {
     await expect(
       service.archiveAdminPreset({ slug: "concurrently-archived" }),
     ).rejects.toMatchObject({
-      code: "preset_not_found",
+      code: "resource_not_found",
       details: { slug: "concurrently-archived" },
     });
 
@@ -1070,7 +1076,10 @@ describe("demo-run preset management", () => {
 
     await expect(
       service.duplicatePreset({ sourceSlug: "preview-1k", targetSlug: "reused-slug" }),
-    ).rejects.toMatchObject({ code: "preset_slug_conflict", details: { slug: "reused-slug" } });
+    ).rejects.toMatchObject({
+      code: "preset_conflict",
+      details: { conflictReason: "slug_in_use", slug: "reused-slug" },
+    });
   });
 });
 
@@ -1149,8 +1158,12 @@ describe("demo-run public runtime policy management", () => {
     await expect(
       service.updateAdminPublicRuntimePolicy({ policy }, "corr-policy-reject"),
     ).rejects.toMatchObject({
-      code: "public_limit_total_requests_exceeds_deployment_cap",
-      details: { value: 100_001, cap: 100_000 },
+      code: "invalid_runtime_policy",
+      details: {
+        value: 100_001,
+        cap: 100_000,
+        violationCode: "public_limit_total_requests_exceeds_deployment_cap",
+      },
     });
 
     const [row] = await requireConnection(connection).db.select().from(publicRuntimePolicies);
@@ -1179,8 +1192,12 @@ describe("demo-run public runtime policy management", () => {
     await expect(
       service.updateAdminPublicRuntimePolicy({ policy }, "corr-policy-default-vus-reject"),
     ).rejects.toMatchObject({
-      code: "public_custom_default_deployment_max_vus_exceeded",
-      details: { value: 12, cap: 10 },
+      code: "invalid_runtime_policy",
+      details: {
+        value: 12,
+        cap: 10,
+        violationCode: "public_custom_default_deployment_max_vus_exceeded",
+      },
     });
 
     const [row] = await requireConnection(connection).db.select().from(publicRuntimePolicies);
@@ -1307,8 +1324,8 @@ describe("demo-run lifecycle start gating", () => {
     await expect(
       service.startRun({ presetSlug: "preview-1k", operatorMode: "admin" }, "corr-start"),
     ).rejects.toMatchObject({
-      code: "demo_run_already_active",
-      details: { status },
+      code: "run_conflict",
+      details: { conflictReason: "active_run_exists", status },
     });
   });
 
@@ -1382,7 +1399,7 @@ describe("demo-run lifecycle start gating", () => {
       expect(start).not.toHaveBeenCalled();
 
       const rejectedStart = expect(startPromise).rejects.toMatchObject({
-        code: "demo_reset_incomplete",
+        code: "run_conflict",
         details: { runId: existingRunId("active") },
       });
       releaseAbort();
@@ -1437,13 +1454,13 @@ describe("demo-run lifecycle start gating", () => {
 
     await trafficMetricStore.clearRun(runId);
     await expect(service.ingestMetrics(batch)).rejects.toMatchObject({
-      code: "traffic_metric_run_not_eligible",
+      code: "traffic_report_rejected",
     });
     expect(await trafficMetricStore.readRecent(runId)).toEqual([]);
 
     await db.update(demoRuns).set({ status: "failed" }).where(eq(demoRuns.id, runId));
     await expect(service.ingestMetrics(batch)).rejects.toMatchObject({
-      code: "traffic_metric_run_not_eligible",
+      code: "traffic_report_rejected",
     });
     expect(await trafficMetricStore.readRecent(runId)).toEqual([]);
   });
@@ -1516,7 +1533,7 @@ describe("demo-run lifecycle start gating", () => {
     expect(accepted).toHaveLength(1);
     expect(rejected).toHaveLength(1);
     expect(rejected[0]).toMatchObject({
-      reason: { code: "demo_run_already_active" },
+      reason: { code: "run_conflict" },
     });
     expect(await requireConnection(connection).db.select().from(demoRuns)).toHaveLength(1);
     expect(await requireConnection(connection).db.select().from(saleOffers)).toHaveLength(1);
@@ -1562,7 +1579,7 @@ describe("demo-run lifecycle start gating", () => {
           },
           "corr-direct-writer-race",
         ),
-      ).rejects.toMatchObject({ code: "demo_run_already_active" });
+      ).rejects.toMatchObject({ code: "run_conflict" });
 
       expect(await requireConnection(connection).db.select().from(demoRuns)).toHaveLength(1);
       expect(await requireConnection(connection).db.select().from(saleOffers)).toHaveLength(0);
@@ -1594,7 +1611,7 @@ describe("demo-run lifecycle start gating", () => {
         },
         "visibility-rejection",
       ),
-    ).rejects.toMatchObject({ code: "preset_not_public" });
+    ).rejects.toMatchObject({ code: "preset_operation_not_allowed" });
     expect(reserve).not.toHaveBeenCalled();
 
     await seedExistingRun(requireConnection(connection), {
@@ -1610,12 +1627,12 @@ describe("demo-run lifecycle start gating", () => {
         },
         "overlap-rejection",
       ),
-    ).rejects.toMatchObject({ code: "demo_run_already_active" });
+    ).rejects.toMatchObject({ code: "run_conflict" });
     expect(reserve).not.toHaveBeenCalled();
   });
 
   it.each([
-    ["visitor", "public_visitor_run_budget_exceeded"],
+    ["visitor", "public_run_budget_exceeded"],
     ["global", "public_run_budget_exceeded"],
   ] as const)("maps %s budget denial decisions to stable application errors", async (reason, code) => {
     const service = createStartService(requireConnection(connection), requireRedis(redis), {
@@ -2086,7 +2103,7 @@ describe("demo-run lifecycle start gating", () => {
     expect(summaries[0]).toMatchObject({
       runId: "77777777-7777-4777-8777-777777777777",
       status: "failed",
-      failureReason: "load_orchestrator_start_failed",
+      failureReason: "load_orchestrator_unavailable",
     });
     expect(summaries[0]?.terminalInventorySnapshot).toMatchObject({
       saleOfferId: "77777777-7777-4777-8777-777777777778",
@@ -2344,7 +2361,6 @@ describe("demo-run lifecycle start gating", () => {
           runId: started.run.runId,
           correlationId: "completion-race-buy-correlation",
           quantity: 1,
-          status: "secured",
           reservationToken: "completion-race-buy-token",
           securedAt: "2026-06-20T00:00:12.000Z",
           expiresAt: "2026-06-20T00:15:12.000Z",
@@ -2356,10 +2372,10 @@ describe("demo-run lifecycle start gating", () => {
       remainingStock: "900",
       reservedStock: "100",
     });
-    await requireRedis(redis).hset(inventory.reservationOutcomes, "api_sold_out_decision", "17");
+    await requireRedis(redis).hset(inventory.soldOut, "count", "17");
     const duplicate = service.recordTrafficCompletion(conflictingReport);
     await expect(duplicate).rejects.toMatchObject({
-      code: "traffic_completion_report_mismatch",
+      code: "traffic_report_rejected",
     });
     releaseFirstEnrichment();
     await expect(first).rejects.toThrow("finalization temporarily failed");
@@ -2377,8 +2393,8 @@ describe("demo-run lifecycle start gating", () => {
       .where(eq(demoRunFinalizations.runId, started.run.runId));
     const [soldOutOutcome] = await requireConnection(connection)
       .db.select()
-      .from(demoRunReservationOutcomes)
-      .where(eq(demoRunReservationOutcomes.runId, started.run.runId));
+      .from(demoRunSoldOutCounts)
+      .where(eq(demoRunSoldOutCounts.runId, started.run.runId));
     expect(finalizeRun).toHaveBeenCalledTimes(2);
     expect(run).toMatchObject({
       status: "draining",
@@ -2399,16 +2415,16 @@ describe("demo-run lifecycle start gating", () => {
       }),
       businessOutcomeAtTrafficCompletion: emptyBusinessOutcomeSummary(),
     });
-    expect(soldOutOutcome).toMatchObject({ count: 0, source: "redis" });
+    expect(soldOutOutcome).toMatchObject({ count: 0 });
 
     const authoritativeOutcome = structuredClone(finalization?.trafficOutcomeSummary);
     await requireRedis(redis).hset(inventory.state, {
       remainingStock: "1",
       reservedStock: "999",
     });
-    await requireRedis(redis).hset(inventory.reservationOutcomes, "api_sold_out_decision", "99");
+    await requireRedis(redis).hset(inventory.soldOut, "count", "99");
     await expect(service.recordTrafficCompletion(conflictingReport)).rejects.toMatchObject({
-      code: "traffic_completion_report_mismatch",
+      code: "traffic_report_rejected",
     });
     const [afterRedelivery] = await requireConnection(connection)
       .db.select()
@@ -2416,8 +2432,8 @@ describe("demo-run lifecycle start gating", () => {
       .where(eq(demoRunFinalizations.runId, started.run.runId));
     const [soldOutAfterRedelivery] = await requireConnection(connection)
       .db.select()
-      .from(demoRunReservationOutcomes)
-      .where(eq(demoRunReservationOutcomes.runId, started.run.runId));
+      .from(demoRunSoldOutCounts)
+      .where(eq(demoRunSoldOutCounts.runId, started.run.runId));
     expect(afterRedelivery?.trafficOutcomeSummary).toEqual(authoritativeOutcome);
     expect(soldOutAfterRedelivery?.count).toBe(0);
     expect(businessReads).toBe(1);
@@ -2482,7 +2498,7 @@ describe("demo-run lifecycle start gating", () => {
           remainingStock: "850",
           reservedStock: "150",
         });
-        await redisClient.hset(inventory.reservationOutcomes, "api_sold_out_decision", "23");
+        await redisClient.hset(inventory.soldOut, "count", "23");
       }
       return { found: 0, materialized: 0, reconciled: 0, reversed: 0, failed: 0 };
     });
@@ -2514,7 +2530,7 @@ describe("demo-run lifecycle start gating", () => {
     }
     const inventory = inventoryKeys(saleOfferId);
     await redisClient.hset(inventory.state, { remainingStock: "850", reservedStock: "150" });
-    await redisClient.hset(inventory.reservationOutcomes, "api_sold_out_decision", "23");
+    await redisClient.hset(inventory.soldOut, "count", "23");
     const reportFixture = trafficCompletionFixture({
       runId: started.run.runId,
       status: "succeeded",
@@ -2553,8 +2569,8 @@ describe("demo-run lifecycle start gating", () => {
       .where(eq(demoRunFinalizations.runId, started.run.runId));
     const [committedSoldOut] = await db
       .select()
-      .from(demoRunReservationOutcomes)
-      .where(eq(demoRunReservationOutcomes.runId, started.run.runId));
+      .from(demoRunSoldOutCounts)
+      .where(eq(demoRunSoldOutCounts.runId, started.run.runId));
     const authoritativeOutcome = structuredClone(committedFinalization?.trafficOutcomeSummary);
     const authoritativeSnapshot = (authoritativeOutcome as { terminalInventorySnapshot?: unknown })
       .terminalInventorySnapshot;
@@ -2591,7 +2607,7 @@ describe("demo-run lifecycle start gating", () => {
       inventory.pendingPersistence,
       inventory.pendingPersistenceRecords,
       inventory.events,
-      inventory.reservationOutcomes,
+      inventory.soldOut,
       inventory.reservationThroughput,
       runSaleEligibilityKey(started.run.runId),
     );
@@ -2608,8 +2624,8 @@ describe("demo-run lifecycle start gating", () => {
       .where(eq(demoRunFinalizations.runId, started.run.runId));
     const [soldOutAfterRedelivery] = await db
       .select()
-      .from(demoRunReservationOutcomes)
-      .where(eq(demoRunReservationOutcomes.runId, started.run.runId));
+      .from(demoRunSoldOutCounts)
+      .where(eq(demoRunSoldOutCounts.runId, started.run.runId));
     const summaries = await db
       .select()
       .from(demoRunSummaries)

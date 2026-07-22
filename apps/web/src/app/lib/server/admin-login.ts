@@ -57,27 +57,12 @@ export function createAdminLoginHandler(dependencies: AdminLoginDependencies) {
 
     const config = dependencies.config();
     if (!config)
-      return jsonError(
-        ctx,
-        503,
-        "admin_session_config_invalid",
-        "Admin sessions are not configured.",
-      );
+      return jsonError(ctx, 503, "service_misconfigured", "Admin sessions are not configured.");
     if (!config.passphrase)
-      return jsonError(
-        ctx,
-        503,
-        "admin_passphrase_not_configured",
-        "Admin controls are not configured.",
-      );
+      return jsonError(ctx, 503, "service_misconfigured", "Admin controls are not configured.");
     if (!verifyAdminPassphrase(candidate, config.passphrase)) return invalidCredential(ctx);
     if (!config.sessionSecret)
-      return jsonError(
-        ctx,
-        503,
-        "admin_session_secret_not_configured",
-        "Admin sessions are not configured.",
-      );
+      return jsonError(ctx, 503, "service_misconfigured", "Admin sessions are not configured.");
 
     const nowSeconds = Math.floor(now.getTime() / 1000);
     const token = createAdminSessionToken({
@@ -108,10 +93,5 @@ function invalidCredential(ctx: ProxyRequestContext): Response {
 }
 
 function limiterUnavailable(ctx: ProxyRequestContext): Response {
-  return jsonError(
-    ctx,
-    503,
-    "admin_login_limiter_unavailable",
-    "Admin login is temporarily unavailable.",
-  );
+  return jsonError(ctx, 503, "service_unavailable", "Admin login is temporarily unavailable.");
 }

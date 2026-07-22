@@ -84,7 +84,6 @@ describe("OrderStatusService", () => {
       saleOfferId: ids.saleOffer,
       reservation: {
         id: ids.reservation,
-        status: "secured",
         expiresAt: "2026-07-15T10:15:00.000Z",
       },
       order: {
@@ -96,7 +95,6 @@ describe("OrderStatusService", () => {
         failureCode: null,
         failureMessage: null,
       },
-      customerStatus: "reservation_secured",
       consistencyLagMs: null,
     });
     expect(status?.timeline).toEqual([
@@ -116,25 +114,21 @@ describe("OrderStatusService", () => {
   it.each([
     {
       durableStatus: "processing" as const,
-      customerStatus: "processing" as const,
       terminalEventName: null,
       consistencyLagMs: null,
     },
     {
       durableStatus: "confirmed" as const,
-      customerStatus: "confirmed" as const,
       terminalEventName: "order.confirmed" as const,
       consistencyLagMs: 120_000,
     },
     {
       durableStatus: "failed" as const,
-      customerStatus: "failed" as const,
       terminalEventName: "order.failed" as const,
       consistencyLagMs: null,
     },
   ])("maps a coherent $durableStatus lifecycle and later-event raw labels", async ({
     durableStatus,
-    customerStatus,
     terminalEventName,
     consistencyLagMs,
   }) => {
@@ -147,7 +141,6 @@ describe("OrderStatusService", () => {
 
     expect(status).toMatchObject({
       correlationId: `${durableStatus}-lookup`,
-      customerStatus,
       consistencyLagMs,
       order: {
         status: durableStatus,
@@ -202,7 +195,6 @@ describe("OrderStatusService", () => {
       saleOfferId: ids.saleOffer,
       correlationId: "persisted-reservation-correlation",
       quantity: 1,
-      status: "secured",
       reservationToken: "order-status-token",
       securedAt: queuedAt,
       expiresAt: new Date("2026-07-15T10:15:00.000Z"),

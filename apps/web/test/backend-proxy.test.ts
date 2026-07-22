@@ -224,7 +224,7 @@ describe("backend proxy request context", () => {
     );
     const jsonResponse = jsonFailure as Response;
     expect(jsonResponse.status).toBe(400);
-    expect(errorPayloadSchema.parse(await jsonResponse.json()).code).toBe("invalid_json");
+    expect(errorPayloadSchema.parse(await jsonResponse.json()).code).toBe("invalid_request");
 
     const validationFailure = validateJson(ctx, { unexpected: true }, successSchema);
     const validationResponse = validationFailure as Response;
@@ -236,9 +236,7 @@ describe("backend proxy request context", () => {
     injectConfig({ controlServiceToken: "" });
     const tokenResponse = requireControlServiceToken(ctxWith("token-corr")) as Response;
     expect(tokenResponse.status).toBe(503);
-    expect(errorPayloadSchema.parse(await tokenResponse.json()).code).toBe(
-      "control_token_not_configured",
-    );
+    expect(errorPayloadSchema.parse(await tokenResponse.json()).code).toBe("service_misconfigured");
     expect(tokenResponse.headers.get(correlationIdHeaderName)).toBe("token-corr");
   });
 
@@ -341,7 +339,7 @@ describe("backend proxy request context", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () =>
-        upstreamResponse(canonicalError("preset_not_archivable", "upstream-corr"), 409, {
+        upstreamResponse(canonicalError("preset_conflict", "upstream-corr"), 409, {
           [correlationIdHeaderName]: "upstream-corr",
           "retry-after": "30",
         }),
@@ -359,7 +357,7 @@ describe("backend proxy request context", () => {
     expect(response.headers.get(correlationIdHeaderName)).toBe("upstream-corr");
     expect(response.headers.get("retry-after")).toBe("30");
     expect(errorPayloadSchema.parse(await response.json())).toMatchObject({
-      code: "preset_not_archivable",
+      code: "preset_conflict",
       correlationId: "upstream-corr",
     });
   });
@@ -367,9 +365,7 @@ describe("backend proxy request context", () => {
   it("recovers the upstream error header from the canonical body when missing", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () =>
-        upstreamResponse(canonicalError("demo_run_already_active", "body-corr"), 409),
-      ),
+      vi.fn(async () => upstreamResponse(canonicalError("run_conflict", "body-corr"), 409)),
     );
     const ctx = ctxWith("bff-corr");
     const response = await proxyJson({
@@ -391,14 +387,14 @@ describe("backend proxy request context", () => {
     [
       "body/header mismatch",
       () =>
-        upstreamResponse(canonicalError("demo_run_already_active", "body-corr"), 409, {
+        upstreamResponse(canonicalError("run_conflict", "body-corr"), 409, {
           [correlationIdHeaderName]: "header-corr",
         }),
     ],
     [
       "invalid header",
       () =>
-        upstreamResponse(canonicalError("demo_run_already_active", "body-corr"), 409, {
+        upstreamResponse(canonicalError("run_conflict", "body-corr"), 409, {
           [correlationIdHeaderName]: "x".repeat(200),
         }),
     ],
@@ -494,7 +490,7 @@ describe("backend proxy request context", () => {
       "fetch",
       vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
         expect(readOutboundHeaders(init)[correlationIdHeaderName]).toBe("e2e-corr");
-        return upstreamResponse(canonicalError("preset_not_found", "e2e-corr"), 404, {
+        return upstreamResponse(canonicalError("resource_not_found", "e2e-corr"), 404, {
           [correlationIdHeaderName]: "e2e-corr",
         });
       }),
@@ -550,9 +546,7 @@ describe("backend proxy request context", () => {
     expect(result).toBeInstanceOf(Response);
     const response = result as Response;
     expect(response.status).toBe(503);
-    expect(errorPayloadSchema.parse(await response.json()).code).toBe(
-      "public_client_cookie_secret_not_configured",
-    );
+    expect(errorPayloadSchema.parse(await response.json()).code).toBe("service_misconfigured");
     expect(response.headers.get(correlationIdHeaderName)).toBe(ctx.correlationId);
   });
 

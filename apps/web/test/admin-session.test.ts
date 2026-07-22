@@ -1,17 +1,19 @@
 import { createHmac } from "node:crypto";
-import { afterEach, describe, expect, it, vi } from "vitest";
 import type Redis from "ioredis";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   parseAdminSecurityConfig,
   parseAllowedWebOrigins,
 } from "../src/app/lib/server/admin-config";
 import { createAdminLoginHandler, serializeSessionCookie } from "../src/app/lib/server/admin-login";
-import { requireAdminOrigin } from "../src/app/lib/server/admin-origin";
-import { handleAdminLogout } from "../src/app/lib/server/admin-logout";
 import {
-  initializeWebServerConfig,
-  resetWebServerConfigForTests,
-} from "../src/app/lib/server/config";
+  AdminLoginAttemptLimiter,
+  MemoryAdminLoginAttemptStore,
+  RedisAdminLoginAttemptStore,
+  resolveTrustedAdminClient,
+} from "../src/app/lib/server/admin-login-limiter";
+import { handleAdminLogout } from "../src/app/lib/server/admin-logout";
+import { requireAdminOrigin } from "../src/app/lib/server/admin-origin";
 import {
   createAdminSessionToken,
   isValidAdminSessionToken,
@@ -19,11 +21,9 @@ import {
   verifyAdminPassphrase,
 } from "../src/app/lib/server/admin-session";
 import {
-  AdminLoginAttemptLimiter,
-  MemoryAdminLoginAttemptStore,
-  RedisAdminLoginAttemptStore,
-  resolveTrustedAdminClient,
-} from "../src/app/lib/server/admin-login-limiter";
+  initializeWebServerConfig,
+  resetWebServerConfigForTests,
+} from "../src/app/lib/server/config";
 
 describe("admin session core", () => {
   it("compares credentials through fixed-length digests", () => {
@@ -355,7 +355,7 @@ describe("admin login workflow", () => {
     const unavailableResponse = await unavailable(request);
     expect(unavailableResponse.status).toBe(503);
     await expect(unavailableResponse.json()).resolves.toMatchObject({
-      code: "admin_login_limiter_unavailable",
+      code: "service_unavailable",
     });
     expect(config).not.toHaveBeenCalled();
   });
@@ -394,7 +394,7 @@ describe("admin login workflow", () => {
     [
       "absent passphrase",
       { passphrase: null, sessionSecret: "signing", sessionMaxAgeSeconds: 60, secureCookie: false },
-      "admin_passphrase_not_configured",
+      "service_misconfigured",
     ],
     [
       "absent session secret",
@@ -404,9 +404,9 @@ describe("admin login workflow", () => {
         sessionMaxAgeSeconds: 60,
         secureCookie: false,
       },
-      "admin_session_secret_not_configured",
+      "service_misconfigured",
     ],
-    ["invalid present max age", null, "admin_session_config_invalid"],
+    ["invalid present max age", null, "service_misconfigured"],
   ])("counts admitted attempts before %s configuration failures", async (_case, configured, code) => {
     const admit = vi.fn().mockResolvedValue({ outcome: "admitted" as const });
     const config = vi.fn(() => configured);
@@ -485,7 +485,7 @@ describe("admin login workflow", () => {
       new Request("http://dashboard.local", { headers: { "x-admin-passphrase": "candidate" } }),
     );
     expect(response.status).toBe(503);
-    await expect(response.json()).resolves.toMatchObject({ code: "admin_session_config_invalid" });
+    await expect(response.json()).resolves.toMatchObject({ code: "service_misconfigured" });
   });
 });
 

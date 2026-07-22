@@ -1,19 +1,14 @@
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";--> statement-breakpoint
 CREATE TYPE "public"."demo_preset_visibility" AS ENUM('public', 'admin');--> statement-breakpoint
 CREATE TYPE "public"."demo_run_operator_mode" AS ENUM('public', 'admin');--> statement-breakpoint
-CREATE TYPE "public"."demo_run_reservation_outcome" AS ENUM('api_sold_out_decision');--> statement-breakpoint
-CREATE TYPE "public"."demo_run_reservation_outcome_source" AS ENUM('redis', 'postgres', 'api');--> statement-breakpoint
 CREATE TYPE "public"."demo_run_status" AS ENUM('starting', 'active', 'draining', 'completed', 'failed');--> statement-breakpoint
 CREATE TYPE "public"."demo_run_traffic_status" AS ENUM('not_started', 'starting', 'active', 'succeeded', 'failed');--> statement-breakpoint
 CREATE TYPE "public"."erp_attempt_status" AS ENUM('succeeded', 'failed', 'timed_out');--> statement-breakpoint
-CREATE TYPE "public"."order_event_name" AS ENUM('reservation.secured', 'reservation.rejected', 'reservation.released', 'reservation.expired', 'order.queued', 'order.processing', 'order.confirmed', 'order.failed', 'notification.recorded', 'inventory.updated', 'erp.attempt.failed', 'erp.attempt.succeeded');--> statement-breakpoint
+CREATE TYPE "public"."order_event_name" AS ENUM('reservation.secured', 'order.queued', 'order.processing', 'order.confirmed', 'order.failed', 'notification.recorded', 'inventory.updated', 'erp.attempt.failed', 'erp.attempt.succeeded');--> statement-breakpoint
 CREATE TYPE "public"."order_status" AS ENUM('queued', 'processing', 'confirmed', 'failed');--> statement-breakpoint
 CREATE TYPE "public"."recovery_job_status" AS ENUM('pending', 'enqueued', 'escalated', 'resolved');--> statement-breakpoint
 CREATE TYPE "public"."reservation_pending_persistence_status" AS ENUM('pending_reconciliation', 'reconciled');--> statement-breakpoint
-CREATE TYPE "public"."reservation_status" AS ENUM('secured', 'rejected', 'released', 'expired');--> statement-breakpoint
 CREATE TYPE "public"."sale_offer_purpose" AS ENUM('catalog', 'generated_run');--> statement-breakpoint
-CREATE TYPE "public"."simulated_notification_channel" AS ENUM('email', 'sms');--> statement-breakpoint
-CREATE TYPE "public"."simulated_notification_status" AS ENUM('recorded');--> statement-breakpoint
 CREATE TYPE "public"."traffic_completion_enrichment_status" AS ENUM('pending', 'completed');--> statement-breakpoint
 CREATE TABLE "demo_presets" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
@@ -50,16 +45,13 @@ CREATE TABLE "demo_run_finalizations" (
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
-CREATE TABLE "demo_run_reservation_outcomes" (
-	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
-	"run_id" uuid NOT NULL,
-	"outcome" "demo_run_reservation_outcome" NOT NULL,
+CREATE TABLE "demo_run_sold_out_counts" (
+	"run_id" uuid PRIMARY KEY NOT NULL,
 	"count" integer DEFAULT 0 NOT NULL,
 	"latest_observed_at" timestamp with time zone,
-	"source" "demo_run_reservation_outcome_source" NOT NULL,
 	"captured_at" timestamp with time zone NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	CONSTRAINT "demo_run_reservation_outcomes_count_nonnegative" CHECK ("demo_run_reservation_outcomes"."count" >= 0)
+	CONSTRAINT "demo_run_sold_out_counts_count_nonnegative" CHECK ("demo_run_sold_out_counts"."count" >= 0)
 );
 --> statement-breakpoint
 CREATE TABLE "demo_run_sale_contexts" (
@@ -267,18 +259,12 @@ CREATE TABLE "reservations" (
 	"correlation_id" text NOT NULL,
 	"run_id" uuid,
 	"quantity" integer DEFAULT 1 NOT NULL,
-	"status" "reservation_status" NOT NULL,
 	"reservation_token" text NOT NULL,
 	"expires_at" timestamp with time zone NOT NULL,
 	"secured_at" timestamp with time zone NOT NULL,
-	"released_at" timestamp with time zone,
-	"expired_at" timestamp with time zone,
-	"release_reason" text,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
-	CONSTRAINT "reservations_quantity_positive" CHECK ("reservations"."quantity" > 0),
-	CONSTRAINT "reservations_released_requires_released_at" CHECK ("reservations"."status" <> 'released' OR "reservations"."released_at" IS NOT NULL),
-	CONSTRAINT "reservations_expired_requires_expired_at" CHECK ("reservations"."status" <> 'expired' OR "reservations"."expired_at" IS NOT NULL)
+	CONSTRAINT "reservations_quantity_positive" CHECK ("reservations"."quantity" > 0)
 );
 --> statement-breakpoint
 CREATE TABLE "sale_offers" (
@@ -302,16 +288,14 @@ CREATE TABLE "simulated_notifications" (
 	"sale_offer_id" uuid NOT NULL,
 	"correlation_id" text NOT NULL,
 	"run_id" uuid,
-	"channel" "simulated_notification_channel" NOT NULL,
 	"recipient_placeholder" text NOT NULL,
-	"status" "simulated_notification_status" DEFAULT 'recorded' NOT NULL,
 	"recorded_at" timestamp with time zone NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
 CREATE UNIQUE INDEX "demo_runs_id_sale_offer_id_unique" ON "demo_runs" USING btree ("id","sale_offer_id");--> statement-breakpoint
 ALTER TABLE "demo_run_finalizations" ADD CONSTRAINT "demo_run_finalizations_run_id_demo_runs_id_fk" FOREIGN KEY ("run_id") REFERENCES "public"."demo_runs"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "demo_run_reservation_outcomes" ADD CONSTRAINT "demo_run_reservation_outcomes_run_id_demo_runs_id_fk" FOREIGN KEY ("run_id") REFERENCES "public"."demo_runs"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "demo_run_sold_out_counts" ADD CONSTRAINT "demo_run_sold_out_counts_run_id_demo_runs_id_fk" FOREIGN KEY ("run_id") REFERENCES "public"."demo_runs"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "demo_run_sale_contexts" ADD CONSTRAINT "demo_run_sale_contexts_run_id_demo_runs_id_fk" FOREIGN KEY ("run_id") REFERENCES "public"."demo_runs"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "demo_run_sale_contexts" ADD CONSTRAINT "demo_run_sale_contexts_sale_offer_id_sale_offers_id_fk" FOREIGN KEY ("sale_offer_id") REFERENCES "public"."sale_offers"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "demo_run_sale_contexts" ADD CONSTRAINT "demo_run_sale_contexts_run_sale_offer_demo_runs_fk" FOREIGN KEY ("run_id","sale_offer_id") REFERENCES "public"."demo_runs"("id","sale_offer_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
@@ -341,8 +325,6 @@ CREATE INDEX "demo_presets_visibility_idx" ON "demo_presets" USING btree ("visib
 CREATE INDEX "demo_presets_archived_at_idx" ON "demo_presets" USING btree ("archived_at");--> statement-breakpoint
 CREATE UNIQUE INDEX "demo_run_finalizations_run_id_unique" ON "demo_run_finalizations" USING btree ("run_id");--> statement-breakpoint
 CREATE INDEX "demo_run_finalizations_run_id_idx" ON "demo_run_finalizations" USING btree ("run_id");--> statement-breakpoint
-CREATE UNIQUE INDEX "demo_run_reservation_outcomes_run_outcome_unique" ON "demo_run_reservation_outcomes" USING btree ("run_id","outcome");--> statement-breakpoint
-CREATE INDEX "demo_run_reservation_outcomes_run_id_idx" ON "demo_run_reservation_outcomes" USING btree ("run_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "demo_run_sale_contexts_sale_offer_id_unique" ON "demo_run_sale_contexts" USING btree ("sale_offer_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "demo_run_sale_contexts_run_sale_offer_unique" ON "demo_run_sale_contexts" USING btree ("run_id","sale_offer_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "demo_run_summaries_run_id_unique" ON "demo_run_summaries" USING btree ("run_id");--> statement-breakpoint
@@ -389,11 +371,10 @@ CREATE UNIQUE INDEX "reservations_reservation_token_unique" ON "reservations" US
 CREATE INDEX "reservations_sale_offer_id_idx" ON "reservations" USING btree ("sale_offer_id");--> statement-breakpoint
 CREATE INDEX "reservations_run_id_idx" ON "reservations" USING btree ("run_id");--> statement-breakpoint
 CREATE INDEX "reservations_correlation_id_idx" ON "reservations" USING btree ("correlation_id");--> statement-breakpoint
-CREATE INDEX "reservations_status_idx" ON "reservations" USING btree ("status");--> statement-breakpoint
 CREATE INDEX "sale_offers_product_id_idx" ON "sale_offers" USING btree ("product_id");--> statement-breakpoint
 CREATE INDEX "sale_offers_purpose_idx" ON "sale_offers" USING btree ("purpose");--> statement-breakpoint
 CREATE INDEX "sale_offers_active_window_idx" ON "sale_offers" USING btree ("is_active","sale_starts_at","sale_ends_at");--> statement-breakpoint
-CREATE UNIQUE INDEX "simulated_notifications_order_channel_unique" ON "simulated_notifications" USING btree ("order_id","channel");--> statement-breakpoint
+CREATE UNIQUE INDEX "simulated_notifications_order_id_unique" ON "simulated_notifications" USING btree ("order_id");--> statement-breakpoint
 CREATE INDEX "simulated_notifications_order_id_idx" ON "simulated_notifications" USING btree ("order_id");--> statement-breakpoint
 CREATE INDEX "simulated_notifications_sale_offer_id_idx" ON "simulated_notifications" USING btree ("sale_offer_id");--> statement-breakpoint
 CREATE INDEX "simulated_notifications_run_id_idx" ON "simulated_notifications" USING btree ("run_id");--> statement-breakpoint
@@ -407,7 +388,7 @@ CREATE UNIQUE INDEX "demo_runs_single_non_terminal_idx"
 --> statement-breakpoint
 -- The functions and triggers below are required final-state objects that are
 -- also invisible to Drizzle snapshots.
-CREATE FUNCTION "enforce_order_backing_secured_reservation"()
+CREATE FUNCTION "enforce_order_backing_reservation"()
 RETURNS trigger AS $$
 DECLARE
   backing_reservation "reservations"%ROWTYPE;
@@ -419,16 +400,15 @@ BEGIN
   FOR UPDATE;
 
   IF NOT FOUND THEN
-    RAISE EXCEPTION 'orders.reservation_id % must reference an existing secured reservation', NEW."reservation_id"
+    RAISE EXCEPTION 'orders.reservation_id % must reference an existing reservation', NEW."reservation_id"
       USING ERRCODE = '23514';
   END IF;
 
-  IF backing_reservation."status" IS DISTINCT FROM 'secured'::"reservation_status"
-    OR backing_reservation."sale_offer_id" IS DISTINCT FROM NEW."sale_offer_id"
+  IF backing_reservation."sale_offer_id" IS DISTINCT FROM NEW."sale_offer_id"
     OR backing_reservation."run_id" IS DISTINCT FROM NEW."run_id"
     OR backing_reservation."correlation_id" IS DISTINCT FROM NEW."correlation_id"
     OR backing_reservation."quantity" IS DISTINCT FROM NEW."quantity" THEN
-    RAISE EXCEPTION 'order % must match secured reservation %', NEW."id", NEW."reservation_id"
+    RAISE EXCEPTION 'order % must match reservation %', NEW."id", NEW."reservation_id"
       USING ERRCODE = '23514';
   END IF;
 
@@ -436,11 +416,11 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 --> statement-breakpoint
-CREATE TRIGGER "orders_enforce_backing_secured_reservation"
+CREATE TRIGGER "orders_enforce_backing_reservation"
 BEFORE INSERT OR UPDATE ON "orders"
-FOR EACH ROW EXECUTE FUNCTION "enforce_order_backing_secured_reservation"();
+FOR EACH ROW EXECUTE FUNCTION "enforce_order_backing_reservation"();
 --> statement-breakpoint
-CREATE FUNCTION "preserve_order_backing_secured_reservation"()
+CREATE FUNCTION "preserve_order_backing_reservation"()
 RETURNS trigger AS $$
 BEGIN
   IF EXISTS (
@@ -448,14 +428,13 @@ BEGIN
     FROM "orders" AS existing_order
     WHERE existing_order."reservation_id" = NEW."id"
       AND (
-        NEW."status" IS DISTINCT FROM 'secured'::"reservation_status"
-        OR existing_order."sale_offer_id" IS DISTINCT FROM NEW."sale_offer_id"
+        existing_order."sale_offer_id" IS DISTINCT FROM NEW."sale_offer_id"
         OR existing_order."run_id" IS DISTINCT FROM NEW."run_id"
         OR existing_order."correlation_id" IS DISTINCT FROM NEW."correlation_id"
         OR existing_order."quantity" IS DISTINCT FROM NEW."quantity"
       )
   ) THEN
-    RAISE EXCEPTION 'reservation % cannot be changed because an order depends on its secured attribution', NEW."id"
+    RAISE EXCEPTION 'reservation % cannot be changed because an order depends on its attribution', NEW."id"
       USING ERRCODE = '23514';
   END IF;
 
@@ -463,9 +442,9 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 --> statement-breakpoint
-CREATE TRIGGER "reservations_preserve_order_backing_secured_reservation"
-BEFORE UPDATE OF "status", "sale_offer_id", "run_id", "correlation_id", "quantity" ON "reservations"
-FOR EACH ROW EXECUTE FUNCTION "preserve_order_backing_secured_reservation"();
+CREATE TRIGGER "reservations_preserve_order_backing_reservation"
+BEFORE UPDATE OF "sale_offer_id", "run_id", "correlation_id", "quantity" ON "reservations"
+FOR EACH ROW EXECUTE FUNCTION "preserve_order_backing_reservation"();
 --> statement-breakpoint
 CREATE FUNCTION "enforce_erp_attempt_order_attribution"()
 RETURNS trigger AS $$

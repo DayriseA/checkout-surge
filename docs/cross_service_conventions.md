@@ -16,7 +16,7 @@ The goal is to preserve one canonical vocabulary across the implemented shared c
 | Timestamp format | Use ISO 8601 strings with an explicit timezone offset at service boundaries; services should emit UTC `Z` strings | This is explicit, portable, and easy to consume across logs, APIs, dashboard realtime payloads, and UI clients. |
 | Error payload baseline | Standardize on a strict shared shape with a closed machine-code vocabulary, `message`, optional `details`, `correlationId`, and `timestamp` | Gives clients a stable contract while rejecting typoed or drifting public error codes. |
 | Scope of this document | Define semantics and names; leave exact request/response payload schemas to the contract layer | Keeps this document focused on shared language rather than prematurely freezing every contract detail. |
-| Reservation lifecycle | `secured`, `rejected`, `released`, `expired` | Separates immediate success, immediate failure, explicit stock release, and time-based hold expiry with minimal ambiguity. |
+| Reservation fact | A durable reservation row or Redis hold is secured by construction | The implemented demo has no durable rejected, released, or expired reservation producer, so a copied single-value status would not add meaning. |
 | Order lifecycle | `queued`, `processing`, `confirmed`, `failed` | Matches the asynchronous pipeline while keeping business state distinct from retry metadata. |
 | Queue naming convention | Use lowercase colon-separated semantic queue names with plural domain names by default; the first canonical queue is `orders:process` | Keeps queue names readable and extensible without overcommitting to future queue topology. |
 | Metric naming convention | Use lowercase dot notation and reserve semantic names for benchmark and dashboard signals | Keeps dashboard, backend, and documentation vocabulary aligned to the benchmark story. |
@@ -48,7 +48,6 @@ The project uses a simple event naming rule:
 Examples:
 
 - `reservation.secured`
-- `reservation.released`
 - `order.queued`
 - `order.processing`
 - `order.confirmed`
@@ -124,30 +123,24 @@ Conventions:
 
 - `code` must be one of the values exported by the shared `@checkout-surge/contracts` error-code schema; unknown or typoed codes are invalid rather than pass-through strings.
 - The exported tuple is the sole schema-driving vocabulary for canonical HTTP errors across the API, Mock ERP, load orchestrator, and web BFF. Persistence failure reasons, worker diagnostics, validation-library issue codes, and other non-HTTP discriminators are separate vocabularies and must not be added merely because they also use a field named `code`.
+- Public codes describe a client or operator action category. Mechanical validation permutations share `invalid_run_configuration` or `invalid_runtime_policy`; their exact internal violation code and field path belong in `details` when useful.
 - Adding a canonical HTTP error code is an intentional shared-contract change: add it once to the exported tuple, keep its lowercase snake-case spelling stable, type the producer with the exported code union, and update contract coverage. Services must not restore an open string schema or introduce a catch-all code to avoid that review.
-- Internal load output uses `run_not_found` for an absent accepted run, `traffic_metric_run_not_eligible` or `traffic_completion_run_not_eligible` for a wrong durable lifecycle, and `traffic_completion_report_mismatch` for completion evidence that conflicts with the frozen accepted plan or the first immutable completion. These protected responses still carry the body correlation ID in the canonical envelope and response header.
+- Protected load endpoints use `resource_not_found` for an absent accepted run and `traffic_execution_conflict` for a lifecycle or immutable-completion conflict. Exact conflict causes remain structured details. These responses still carry the body correlation ID in the canonical envelope and response header.
 - `message` should be concise and human-readable.
 - `details` should carry optional structured context, not a second free-form paragraph.
 - Errors returned to clients should avoid leaking infrastructure internals unless that information is intentionally part of the user-facing contract.
 - Browser-facing proxy failures use the same full envelope. A backend non-success response is preserved only after strict envelope validation; malformed, non-JSON, unknown-code, or correlation-inconsistent responses become a safe `502 invalid_backend_response` envelope owned by the proxy request.
 - The response `x-correlation-id` is the authoritative lookup key. It must agree with any `correlationId` in the response body; a canonical upstream error may recover a missing header from its validated body.
-- Protected generated-run teardown requires the control service token (`401` when absent or wrong) and a UUID run parameter (`400` when malformed). It uses `409` for a non-terminal run, ownership mismatch, active/changing attributed queue work, or `run_queue_maintenance_owned_by_other_run` when retained queue maintenance belongs to another run. Infrastructure or post-commit cleanup failures return the canonical `5xx` error envelope and retain durable retry coordinates; clients must repeat the same bodyless DELETE. A post-commit queue-convergence failure also keeps maintenance-owned physical queues paused, including across API restart, until that exact run retry removes the remaining jobs; each marker stores its owning run ID, and another run cannot adopt, resume, clear, or clean through it. Pre-existing operator pauses remain untouched. Successful cleanup and receipt retries return the canonical request `correlationId` and UTC cleanup timestamp; a later repeat returns `already_absent`. The supported topology sends this mutation to the sole API maintenance authority; its process-local serialization does not support additional API processes.
-- Protected admin reset uses one canonical correlation ID across the API-to-load-orchestrator abort. The abort request always includes the selected run ID and `admin_reset` reason. `no_current_run` is an idempotent success after the API run is durably fenced; a current-run mismatch remains a distinct `409`. The API applies a distinct 20-second default deadline to the complete abort response, including body parsing, so Task 33's bounded TERM-to-KILL escalation can complete. Transport failure, timeout, malformed success, server failure, or unconfirmed child termination becomes a stable API failure without forwarding upstream bodies or credentials. A claimed `failed/admin_reset` run without an immutable summary makes subsequent start admission return `409 demo_reset_incomplete` under the global start lock until reset repair completes; an admin-reset row with its summary does not block starts. Full reset success is returned only after the matching run is fenced, admission is closed, cancellation is confirmed, reset-owned queues are handled, the immutable terminal summary exists, and the run-scoped live metric projection is cleared.
+- Protected generated-run teardown requires the control service token (`401` when absent or wrong) and a UUID run parameter (`400` when malformed). It uses the grouped `run_cleanup_conflict` category for non-terminal, ownership, or active/changing queue conflicts, with the exact conflict reason in `details`. Infrastructure or post-commit cleanup failures return the canonical `5xx` error envelope and retain durable retry coordinates; clients must repeat the same bodyless DELETE. A post-commit queue-convergence failure also keeps maintenance-owned physical queues paused, including across API restart, until that exact run retry removes the remaining jobs; each marker stores its owning run ID, and another run cannot adopt, resume, clear, or clean through it. Pre-existing operator pauses remain untouched. Successful cleanup and receipt retries return the canonical request `correlationId` and UTC cleanup timestamp; a later repeat returns `already_absent`. The supported topology sends this mutation to the sole API maintenance authority; its process-local serialization does not support additional API processes.
+- Protected admin reset uses one canonical correlation ID across the API-to-load-orchestrator abort. The abort request always includes the selected run ID and `admin_reset` reason. `no_current_run` is an idempotent success after the API run is durably fenced; a current-run mismatch remains a distinct `409`. The API applies a distinct 20-second default deadline to the complete abort response, including body parsing, so Task 33's bounded TERM-to-KILL escalation can complete. Transport failure, timeout, malformed success, server failure, or unconfirmed child termination becomes a stable API failure without forwarding upstream bodies or credentials. A claimed `failed/admin_reset` run without an immutable summary makes subsequent start admission return `409 run_conflict` with `details.conflictReason = reset_incomplete` under the global start lock until reset repair completes; an admin-reset row with its summary does not block starts. Full reset success is returned only after the matching run is fenced, admission is closed, cancellation is confirmed, reset-owned queues are handled, the immutable terminal summary exists, and the run-scoped live metric projection is cleared.
 
 ---
 
-## Reservation Lifecycle
+## Reservation Fact
 
-The canonical reservation lifecycle is:
+The implemented reservation vocabulary has one durable fact: `reservation.secured`. A Redis hold or PostgreSQL reservation row is secured by construction, so neither carries a copied status field.
 
-- `secured`
-- `rejected`
-- `released`
-- `expired`
-
-`rejected` is the canonical immediate unable-to-reserve state. More specific reasons such as sold out or duplicate submission can be carried separately as reason codes when needed.
-
-The implemented reservation workflows permit only `secured -> released | expired`; all other reservation states are terminal. The shared event-name helper maps any initial or destination status to `reservation.<status>` and does not validate a `(from, to)` transition pair.
+An unsuccessful stock decision is represented once by the public buy `outcome` and does not create a durable reservation. Release and expiry workflows remain future extensions and must define their vocabulary when they gain real producers and consequences.
 
 ---
 
@@ -162,7 +155,7 @@ The canonical order lifecycle is:
 
 Retrying remains a derived processing condition rather than a first-class order state. Retry counts, retry delays, and ERP-attempt history can be represented separately without changing the canonical lifecycle vocabulary.
 
-The implemented order workflows permit `queued -> processing | failed` and `processing -> confirmed | failed`; `confirmed` and `failed` are terminal. The shared event-name helper maps any initial or destination status to `order.<status>` and does not validate a `(from, to)` transition pair.
+The implemented order workflows permit `queued -> processing | failed` and `processing -> confirmed | failed`; `confirmed` and `failed` are terminal. Producers select the explicit event name that describes the transition rather than deriving it through a generic status-to-event helper.
 
 ---
 

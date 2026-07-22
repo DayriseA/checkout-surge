@@ -224,8 +224,6 @@ describe("ReserveOrderService queue handoff", () => {
 
     expect(response).toMatchObject({
       outcome: "run_not_accepting_traffic",
-      reason: "run_not_accepting_traffic",
-      simulatedStatus: "sale_not_active",
       reservation: null,
       order: null,
     });
@@ -236,53 +234,48 @@ describe("ReserveOrderService queue handoff", () => {
   });
 
   it.each([
-    { decision: "sold_out", simulatedStatus: "sold_out" },
-    { decision: "run_not_accepting_traffic", simulatedStatus: "sale_not_active" },
-    { decision: "inventory_not_initialized", simulatedStatus: null },
-    { decision: "idempotency_conflict", simulatedStatus: null },
-    { decision: "quantity_invalid", simulatedStatus: null },
-  ] as const)(
-    "maps the Redis $decision rejection without persistence, lookups, or snapshots",
-    async ({ decision, simulatedStatus }) => {
-      const persistSecuredReservation = vi.fn();
-      const getPersistedBuyByReservationId = vi.fn();
-      const scheduleInventory = vi.fn();
-      const scheduleQueue = vi.fn();
-      const enqueue = vi.fn();
-      const observeSoldOut = vi.fn();
-      const service = buildService({
-        persistence: { persistSecuredReservation, getPersistedBuyByReservationId },
-        stockReservations: acceptingGateway({
-          reserve: async () => ({ outcome: decision, reservation: null }),
-        }),
-        dashboardSnapshotPublications: { scheduleInventory, scheduleQueue },
-        orderProcessJobPublisher: { enqueue },
-        soldOutObservations: { observeSoldOut },
-      });
+    "sold_out",
+    "run_not_accepting_traffic",
+    "inventory_not_initialized",
+    "idempotency_conflict",
+    "quantity_invalid",
+  ] as const)("maps the Redis $decision rejection without persistence, lookups, or snapshots", async (decision) => {
+    const persistSecuredReservation = vi.fn();
+    const getPersistedBuyByReservationId = vi.fn();
+    const scheduleInventory = vi.fn();
+    const scheduleQueue = vi.fn();
+    const enqueue = vi.fn();
+    const observeSoldOut = vi.fn();
+    const service = buildService({
+      persistence: { persistSecuredReservation, getPersistedBuyByReservationId },
+      stockReservations: acceptingGateway({
+        reserve: async () => ({ outcome: decision, reservation: null }),
+      }),
+      dashboardSnapshotPublications: { scheduleInventory, scheduleQueue },
+      orderProcessJobPublisher: { enqueue },
+      soldOutObservations: { observeSoldOut },
+    });
 
-      const response = await service.reserve({ request, correlationId, now });
+    const response = await service.reserve({ request, correlationId, now });
 
-      expect(response).toEqual(
-        expect.objectContaining({
-          outcome: decision,
-          reason: decision,
-          simulatedStatus,
-          reservation: null,
-          order: null,
-        }),
-      );
-      expect(persistSecuredReservation).not.toHaveBeenCalled();
-      expect(getPersistedBuyByReservationId).not.toHaveBeenCalled();
-      expect(scheduleInventory).not.toHaveBeenCalled();
-      expect(scheduleQueue).not.toHaveBeenCalled();
-      expect(enqueue).not.toHaveBeenCalled();
-      if (decision === "sold_out") {
-        expect(observeSoldOut).toHaveBeenCalledOnce();
-      } else {
-        expect(observeSoldOut).not.toHaveBeenCalled();
-      }
-    },
-  );
+    expect(response).toEqual(
+      expect.objectContaining({
+        outcome: decision,
+        reservation: null,
+        order: null,
+      }),
+    );
+    expect(persistSecuredReservation).not.toHaveBeenCalled();
+    expect(getPersistedBuyByReservationId).not.toHaveBeenCalled();
+    expect(scheduleInventory).not.toHaveBeenCalled();
+    expect(scheduleQueue).not.toHaveBeenCalled();
+    expect(enqueue).not.toHaveBeenCalled();
+    if (decision === "sold_out") {
+      expect(observeSoldOut).toHaveBeenCalledOnce();
+    } else {
+      expect(observeSoldOut).not.toHaveBeenCalled();
+    }
+  });
 
   it("enqueues the persisted summaries before Redis promotion and returns immediately after acceptance", async () => {
     const callOrder: string[] = [];
@@ -379,43 +372,40 @@ describe("ReserveOrderService queue handoff", () => {
     "reservation_secured",
     "reservation_pending_persistence",
     "idempotent_replay",
-  ] as const)(
-    "checks durable evidence before reversing a %s hold when policy resolution proves the run is missing",
-    async (outcome) => {
-      const persistSecuredReservation = vi.fn();
-      const getPersistedBuyByReservationId = vi.fn();
-      const withRunAdmissionLock = vi.fn();
-      const enqueue = vi.fn();
-      const promoteAccepted = vi.fn();
-      const reverse = vi.fn(async () => "reversed" as const);
-      const resolve = vi.fn(async () => null);
-      const service = buildService({
-        persistence: {
-          persistSecuredReservation,
-          getPersistedBuyByReservationId,
-          withRunAdmissionLock,
-        },
-        stockReservations: acceptingGateway({
-          reserve: async ({ reservation }) => ({ outcome, reservation }),
-          promoteAccepted,
-          reverse,
-        }),
-        runRetryPolicyResolver: { resolve },
-        orderProcessJobPublisher: { enqueue },
-      });
+  ] as const)("checks durable evidence before reversing a %s hold when policy resolution proves the run is missing", async (outcome) => {
+    const persistSecuredReservation = vi.fn();
+    const getPersistedBuyByReservationId = vi.fn();
+    const withRunAdmissionLock = vi.fn();
+    const enqueue = vi.fn();
+    const promoteAccepted = vi.fn();
+    const reverse = vi.fn(async () => "reversed" as const);
+    const resolve = vi.fn(async () => null);
+    const service = buildService({
+      persistence: {
+        persistSecuredReservation,
+        getPersistedBuyByReservationId,
+        withRunAdmissionLock,
+      },
+      stockReservations: acceptingGateway({
+        reserve: async ({ reservation }) => ({ outcome, reservation }),
+        promoteAccepted,
+        reverse,
+      }),
+      runRetryPolicyResolver: { resolve },
+      orderProcessJobPublisher: { enqueue },
+    });
 
-      await expect(service.reserve({ request, correlationId, now })).rejects.toMatchObject({
-        code: "run_sale_offer_mismatch",
-      });
-      expect(resolve).toHaveBeenCalledWith(request.runId);
-      expect(reverse).toHaveBeenCalledOnce();
-      expect(withRunAdmissionLock).not.toHaveBeenCalled();
-      expect(persistSecuredReservation).not.toHaveBeenCalled();
-      expect(getPersistedBuyByReservationId).toHaveBeenCalledOnce();
-      expect(enqueue).not.toHaveBeenCalled();
-      expect(promoteAccepted).not.toHaveBeenCalled();
-    },
-  );
+    await expect(service.reserve({ request, correlationId, now })).rejects.toMatchObject({
+      code: "run_sale_offer_mismatch",
+    });
+    expect(resolve).toHaveBeenCalledWith(request.runId);
+    expect(reverse).toHaveBeenCalledOnce();
+    expect(withRunAdmissionLock).not.toHaveBeenCalled();
+    expect(persistSecuredReservation).not.toHaveBeenCalled();
+    expect(getPersistedBuyByReservationId).toHaveBeenCalledOnce();
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(promoteAccepted).not.toHaveBeenCalled();
+  });
 
   it("preserves and re-enqueues matching durable evidence after a terminal admission race", async () => {
     let securedHold: SecuredReservationHold | null = null;
@@ -555,7 +545,6 @@ describe("ReserveOrderService queue handoff", () => {
       runId: request.runId,
       correlationId,
       quantity: 1,
-      status: "secured",
       reservationToken: "res_historical",
       securedAt: now.toISOString(),
       expiresAt: new Date(now.getTime() + 900_000).toISOString(),
@@ -828,7 +817,6 @@ describe("ReserveOrderService queue handoff", () => {
       runId: request.runId,
       correlationId: "winner-correlation",
       quantity: request.quantity,
-      status: "secured",
       reservationToken: "shared-race-token",
       securedAt: now.toISOString(),
       expiresAt: new Date(now.getTime() + 900_000).toISOString(),
@@ -879,7 +867,6 @@ describe("ReserveOrderService queue handoff", () => {
       runId: request.runId,
       correlationId: "original-workflow-correlation",
       quantity: 1,
-      status: "secured",
       reservationToken: "res_historical",
       securedAt: now.toISOString(),
       expiresAt: new Date(now.getTime() + 900_000).toISOString(),
@@ -926,7 +913,6 @@ describe("ReserveOrderService queue handoff", () => {
       timestamp: hold.securedAt,
       reservation: hold,
       order: persistedBuy(hold).order,
-      simulatedStatus: "reservation_secured",
     });
     expect(response.timestamp).not.toBe(retryNow.toISOString());
     expect(response.reservation.correlationId).toBe("original-workflow-correlation");

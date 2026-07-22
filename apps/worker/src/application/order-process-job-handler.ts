@@ -418,7 +418,6 @@ function enqueueRealtimeEvents(
     eventName,
     previousStatus: transition.previousStatus,
     status: transition.status,
-    customerStatus: transition.status,
     attemptNumber: delivery.attemptNumber,
     attemptsMade: delivery.attemptsMade,
   };

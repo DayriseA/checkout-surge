@@ -439,7 +439,6 @@ function notificationJob(attributedRunId?: string) {
     saleOfferId: crypto.randomUUID(),
     correlationId: "corr-queue",
     runId: attributedRunId,
-    channel: "email",
     recipientPlaceholder: "buyer@example.invalid",
     confirmedAt: new Date().toISOString(),
   };

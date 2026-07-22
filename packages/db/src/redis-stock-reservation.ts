@@ -97,7 +97,6 @@ if not idempotencyJson then
     saleOfferId = ARGV[3],
     reservationToken = ARGV[4],
     correlationId = ARGV[5],
-    status = "secured",
     securedAt = ARGV[7],
     expiresAt = ARGV[8]
   }
@@ -351,7 +350,7 @@ end
 assertOptionalKeyType(KEYS[2], "hash", "Inventory reservations")
 assertOptionalKeyType(KEYS[3], "zset", "Inventory reservation-expirations")
 assertOptionalKeyType(KEYS[4], "list", "Inventory events")
-assertOptionalKeyType(KEYS[5], "hash", "Inventory reservation-outcomes")
+assertOptionalKeyType(KEYS[5], "hash", "Inventory sold-out count")
 assertOptionalKeyType(KEYS[6], "hash", "Inventory reservation-throughput")
 assertOptionalKeyType(KEYS[7], "zset", "Inventory pending-persistence")
 assertOptionalKeyType(KEYS[8], "hash", "Inventory pending-persistence records")
@@ -381,8 +380,8 @@ if remainingStock + reservedStock ~= allocatedStock then
 end
 
 local soldOutCount = parseNonnegativeInteger(
-  redis.call("HGET", KEYS[5], "api_sold_out_decision"),
-  "Inventory api_sold_out_decision"
+  redis.call("HGET", KEYS[5], "count"),
+  "Inventory sold-out count"
 )
 
 local expirationScore = tonumber(ARGV[3])
@@ -429,10 +428,10 @@ end
 
 if quantity > remainingStock then
   if soldOutCount >= maximumSafeInteger then
-    return redis.error_reply("Inventory api_sold_out_decision cannot exceed the safe integer limit")
+    return redis.error_reply("Inventory sold-out count cannot exceed the safe integer limit")
   end
-  redis.call("HINCRBY", KEYS[5], "api_sold_out_decision", 1)
-  redis.call("HSET", KEYS[5], "api_sold_out_decision_latest_observed_at", ARGV[4])
+  redis.call("HINCRBY", KEYS[5], "count", 1)
+  redis.call("HSET", KEYS[5], "latest_observed_at", ARGV[4])
   return cjson.encode({ outcome = "sold_out", reservation = cjson.null })
 end
 
@@ -517,7 +516,7 @@ export async function reserveInventoryStock(
     keys.reservations,
     keys.reservationExpirations,
     keys.events,
-    keys.reservationOutcomes,
+    keys.soldOut,
     keys.reservationThroughput,
     keys.pendingPersistence,
     keys.pendingPersistenceRecords,

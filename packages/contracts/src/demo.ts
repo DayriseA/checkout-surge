@@ -38,11 +38,7 @@ import {
   collectPublicRuntimePolicyMutableViolations,
   collectPublicRuntimePolicyViolations,
 } from "./public-runtime-policy-validation.js";
-import {
-  queueStatusSchema,
-  simulatedNotificationChannelSchema,
-  simulatedNotificationStatusSchema,
-} from "./queue.js";
+import { queueStatusSchema } from "./queue.js";
 import { transportAttemptCountsSchema } from "./traffic-transport-counts.js";
 
 export const publicPresetListPath = "/demo/presets/public" as const;
@@ -492,8 +488,6 @@ export const runHistoryNotificationSchema = z
     notificationId: uuidSchema,
     orderId: uuidSchema,
     publicOrderId: z.string().trim().min(1),
-    channel: simulatedNotificationChannelSchema,
-    status: simulatedNotificationStatusSchema,
     recordedAt: isoTimestampSchema,
   })
   .strict();

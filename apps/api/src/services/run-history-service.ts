@@ -205,8 +205,6 @@ export class RunHistoryService implements RunHistoryController {
           notificationId: simulatedNotifications.id,
           orderId: simulatedNotifications.orderId,
           publicOrderId: orders.publicOrderId,
-          channel: simulatedNotifications.channel,
-          status: simulatedNotifications.status,
           recordedAt: simulatedNotifications.recordedAt,
           createdAt: simulatedNotifications.createdAt,
         })
@@ -466,16 +464,12 @@ function toRunHistoryNotification(row: {
   notificationId: string;
   orderId: string;
   publicOrderId: string;
-  channel: (typeof simulatedNotifications.$inferSelect)["channel"];
-  status: (typeof simulatedNotifications.$inferSelect)["status"];
   recordedAt: Date;
 }): RunHistoryNotification {
   return runHistoryNotificationSchema.parse({
     notificationId: row.notificationId,
     orderId: row.orderId,
     publicOrderId: row.publicOrderId,
-    channel: row.channel,
-    status: row.status,
     recordedAt: row.recordedAt.toISOString(),
   });
 }

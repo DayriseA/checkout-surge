@@ -10,7 +10,6 @@ const hold: SecuredReservationHold = {
   runId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
   correlationId: "reconciler-test",
   quantity: 1,
-  status: "secured",
   reservationToken: "res_reconciler",
   securedAt: "2026-06-20T00:00:00.000Z",
   expiresAt: "2026-06-20T00:15:00.000Z",

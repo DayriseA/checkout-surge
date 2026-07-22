@@ -291,7 +291,6 @@ describe("demo run startup reconciliation service", () => {
         runId: ids.drainingRun,
         correlationId: "startup-recovery-real-hold",
         quantity: 1,
-        status: "secured",
         reservationToken: "startup-recovery-token",
         securedAt: "2026-06-20T00:00:05.000Z",
         expiresAt: "2026-06-20T00:15:05.000Z",

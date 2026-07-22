@@ -37,7 +37,7 @@ export function registerRunHistoryRoutes(
     if (!detail) {
       throw new ApiHttpError({
         statusCode: 404,
-        code: "run_history_detail_not_found",
+        code: "resource_not_found",
         message: "Run history detail was not found.",
         details: { runId },
       });
@@ -63,7 +63,7 @@ export function registerRunHistoryRoutes(
     if (!detail) {
       throw new ApiHttpError({
         statusCode: 404,
-        code: "run_history_detail_not_found",
+        code: "resource_not_found",
         message: "Run history detail was not found.",
         details: { runId },
       });

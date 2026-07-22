@@ -50,10 +50,10 @@ const saleEndsAt = "2026-06-21T00:00:00.000Z";
 const expectedHandAuthoredFunctions = [
   "enforce_demo_run_sale_context_offer_purpose",
   "enforce_erp_attempt_order_attribution",
-  "enforce_order_backing_secured_reservation",
+  "enforce_order_backing_reservation",
   "enforce_order_event_parent_attribution",
   "enforce_run_owned_sale_offer_attribution",
-  "preserve_order_backing_secured_reservation",
+  "preserve_order_backing_reservation",
   "preserve_order_child_attribution",
   "preserve_reservation_only_event_attribution",
   "set_updated_at",
@@ -67,7 +67,7 @@ const expectedHandAuthoredTriggers = [
   "erp_attempts_enforce_order_attribution",
   "order_events_enforce_parent_attribution",
   "order_events_enforce_run_owned_sale_offer_attribution",
-  "orders_enforce_backing_secured_reservation",
+  "orders_enforce_backing_reservation",
   "orders_enforce_run_owned_sale_offer_attribution",
   "orders_preserve_child_attribution",
   "orders_set_updated_at",
@@ -76,7 +76,7 @@ const expectedHandAuthoredTriggers = [
   "reservation_pending_persistence_set_updated_at",
   "reservations_enforce_run_owned_sale_offer_attribution",
   "reservations_preserve_event_attribution",
-  "reservations_preserve_order_backing_secured_reservation",
+  "reservations_preserve_order_backing_reservation",
   "reservations_set_updated_at",
   "rpp_enforce_run_sale_attribution",
   "sale_offers_set_updated_at",
@@ -93,7 +93,6 @@ const dashboardEvent: DashboardEvent = {
 };
 
 type TestSql = ReturnType<typeof createDatabaseConnection>["sql"];
-type ReservationStatusForTest = "secured" | "rejected" | "released" | "expired";
 type OrderStatusForTest = "queued" | "processing" | "confirmed" | "failed";
 type SaleOfferPurposeForTest = "catalog" | "generated_run";
 
@@ -115,7 +114,6 @@ function buildReservationInput(options: {
       correlationId: `corr-reservation-${options.sequence}`,
       ...(options.runId ? { runId: options.runId } : {}),
       quantity: options.quantity ?? 1,
-      status: "secured" as const,
       reservationToken: `reservation-token-${options.sequence}`,
       securedAt: reservationSecuredAt,
       expiresAt: reservationExpiresAt,
@@ -268,7 +266,6 @@ async function insertReservation(
     correlationId: string;
     runId?: string | null;
     quantity?: number;
-    status?: ReservationStatusForTest;
   },
 ): Promise<void> {
   await sql`
@@ -278,12 +275,9 @@ async function insertReservation(
       "correlation_id",
       "run_id",
       "quantity",
-      "status",
       "reservation_token",
       "secured_at",
-      "expires_at",
-      "released_at",
-      "expired_at"
+      "expires_at"
     )
     VALUES (
       ${input.reservationId},
@@ -291,12 +285,9 @@ async function insertReservation(
       ${input.correlationId},
       ${input.runId ?? null},
       ${input.quantity ?? 1},
-      ${input.status ?? "secured"}::"reservation_status",
       ${`token-${input.reservationId}`},
       ${reservationSecuredAt}::timestamptz,
-      ${reservationExpiresAt}::timestamptz,
-      ${input.status === "released" ? reservationSecuredAt : null}::timestamptz,
-      ${input.status === "expired" ? reservationSecuredAt : null}::timestamptz
+      ${reservationExpiresAt}::timestamptz
     )
   `;
 }
@@ -1237,22 +1228,6 @@ describe("database migrations, seed data, and reset behavior", () => {
         correlationId: "corr-lifecycle-checks",
       });
 
-      await expectConstraintViolation(
-        sql`UPDATE "reservations" SET "status" = 'released' WHERE "id" = ${ids.reservationId}`,
-        "reservations_released_requires_released_at",
-      );
-      await expectConstraintViolation(
-        sql`UPDATE "reservations" SET "status" = 'expired' WHERE "id" = ${ids.reservationId}`,
-        "reservations_expired_requires_expired_at",
-      );
-      await sql`
-        UPDATE "reservations"
-        SET "status" = 'released', "released_at" = "secured_at", "expired_at" = "secured_at"
-        WHERE "id" = ${ids.reservationId}
-      `;
-      await sql`
-        UPDATE "reservations" SET "status" = 'secured' WHERE "id" = ${ids.reservationId}
-      `;
       await insertOrder(sql, {
         orderId: ids.orderId,
         saleOfferId: ids.saleOfferId,
@@ -1638,7 +1613,7 @@ describe("database migrations, seed data, and reset behavior", () => {
     });
   });
 
-  it("accepts orders backed by matching secured reservations", async () => {
+  it("accepts orders backed by matching reservations", async () => {
     await withDatabase(async (sql) => {
       const ids = buildOrderReservationIds(1);
       const correlationId = "corr-order-reservation-valid";
@@ -1675,35 +1650,6 @@ describe("database migrations, seed data, and reset behavior", () => {
     });
   });
 
-  it.each([
-    "rejected",
-    "released",
-    "expired",
-  ] as const)("rejects orders backed by %s reservations", async (status) => {
-    await withDatabase(async (sql) => {
-      const sequenceByStatus = { rejected: 10, released: 11, expired: 12 } as const;
-      const ids = buildOrderReservationIds(sequenceByStatus[status]);
-      const correlationId = `corr-order-reservation-${status}`;
-
-      await insertCatalogSaleOffer(sql, ids);
-      await insertReservation(sql, {
-        reservationId: ids.reservationId,
-        saleOfferId: ids.saleOfferId,
-        correlationId,
-        status,
-      });
-
-      await expect(
-        insertOrder(sql, {
-          orderId: ids.orderId,
-          saleOfferId: ids.saleOfferId,
-          reservationId: ids.reservationId,
-          correlationId,
-        }),
-      ).rejects.toThrow("must match secured reservation");
-    });
-  });
-
   it("rejects orders whose offer, correlation ID, or quantity differs from the reservation", async () => {
     await withDatabase(async (sql) => {
       const ids = buildOrderReservationIds(20);
@@ -1729,7 +1675,7 @@ describe("database migrations, seed data, and reset behavior", () => {
           correlationId,
           quantity: 2,
         }),
-      ).rejects.toThrow("must match secured reservation");
+      ).rejects.toThrow("must match reservation");
       await expect(
         insertOrder(sql, {
           orderId: ids.alternateOrderId,
@@ -1738,7 +1684,7 @@ describe("database migrations, seed data, and reset behavior", () => {
           correlationId: "corr-order-reservation-other",
           quantity: 2,
         }),
-      ).rejects.toThrow("must match secured reservation");
+      ).rejects.toThrow("must match reservation");
       await expect(
         insertOrder(sql, {
           orderId: ids.thirdOrderId,
@@ -1747,7 +1693,7 @@ describe("database migrations, seed data, and reset behavior", () => {
           correlationId,
           quantity: 1,
         }),
-      ).rejects.toThrow("must match secured reservation");
+      ).rejects.toThrow("must match reservation");
     });
   });
 
@@ -1777,7 +1723,7 @@ describe("database migrations, seed data, and reset behavior", () => {
           runId: null,
           correlationId,
         }),
-      ).rejects.toThrow("must match secured reservation");
+      ).rejects.toThrow("must match reservation");
     });
   });
 
@@ -1802,64 +1748,10 @@ describe("database migrations, seed data, and reset behavior", () => {
       await expect(
         sql`
           UPDATE "reservations"
-          SET "status" = 'released'::"reservation_status", "released_at" = "secured_at"
+          SET "quantity" = 2
           WHERE "id" = ${ids.reservationId}
         `,
       ).rejects.toThrow("cannot be changed because an order depends");
-    });
-  });
-
-  it("rejects worker-style order confirmation when the backing reservation is invalid", async () => {
-    await withDatabase(async (sql) => {
-      const ids = buildOrderReservationIds(50);
-      const correlationId = "corr-order-reservation-worker-transition";
-
-      await insertCatalogSaleOffer(sql, ids);
-      await insertReservation(sql, {
-        reservationId: ids.reservationId,
-        saleOfferId: ids.saleOfferId,
-        correlationId,
-      });
-      await insertOrder(sql, {
-        orderId: ids.orderId,
-        saleOfferId: ids.saleOfferId,
-        reservationId: ids.reservationId,
-        correlationId,
-        status: "processing",
-        processingAt: orderQueuedAt,
-      });
-      await sql`
-        ALTER TABLE "reservations"
-        DISABLE TRIGGER "reservations_preserve_order_backing_secured_reservation"
-      `;
-      try {
-        await sql`
-          UPDATE "reservations"
-          SET "status" = 'released'::"reservation_status", "released_at" = "secured_at"
-          WHERE "id" = ${ids.reservationId}
-        `;
-      } finally {
-        await sql`
-          ALTER TABLE "reservations"
-          ENABLE TRIGGER "reservations_preserve_order_backing_secured_reservation"
-        `;
-      }
-
-      try {
-        await expect(
-          sql`
-            UPDATE "orders"
-            SET "status" = 'confirmed'::"order_status", "confirmed_at" = ${orderQueuedAt}::timestamptz
-            WHERE "id" = ${ids.orderId}
-          `,
-        ).rejects.toThrow("must match secured reservation");
-      } finally {
-        await sql`
-          UPDATE "reservations"
-          SET "status" = 'secured'::"reservation_status"
-          WHERE "id" = ${ids.reservationId}
-        `;
-      }
     });
   });
 
@@ -2244,9 +2136,9 @@ describe("database migrations, seed data, and reset behavior", () => {
     expect(await redis.exists(keys.idempotency(input.idempotencyKey))).toBe(0);
     expect(await redis.exists(keys.reservations, keys.reservationExpirations)).toBe(0);
     expect(await redis.llen(keys.events)).toBe(1);
-    expect(await redis.hgetall(keys.reservationOutcomes)).toEqual({
-      api_sold_out_decision: "1",
-      api_sold_out_decision_latest_observed_at: reservationSecuredAt,
+    expect(await redis.hgetall(keys.soldOut)).toEqual({
+      count: "1",
+      latest_observed_at: reservationSecuredAt,
     });
   });
 
@@ -3085,7 +2977,7 @@ describe("database migrations, seed data, and reset behavior", () => {
     });
     expect(await redis.exists(keys.reservations, keys.reservationExpirations)).toBe(0);
     expect(await redis.llen(keys.events)).toBe(1);
-    expect(await redis.hget(keys.reservationOutcomes, "api_sold_out_decision")).toBe("0");
+    expect(await redis.hget(keys.soldOut, "count")).toBe("0");
   });
 
   it("does not oversell under concurrent reservations", async () => {
@@ -3118,7 +3010,7 @@ describe("database migrations, seed data, and reset behavior", () => {
       });
       expect(await redis.hlen(keys.reservations)).toBe(100);
       expect(await redis.zcard(keys.reservationExpirations)).toBe(100);
-      expect(await redis.hget(keys.reservationOutcomes, "api_sold_out_decision")).toBe("150");
+      expect(await redis.hget(keys.soldOut, "count")).toBe("150");
       expect(await redis.llen(keys.events)).toBe(101);
       expect(await redis.hlen(keys.reservationThroughput)).toBeLessThanOrEqual(120);
       expect(

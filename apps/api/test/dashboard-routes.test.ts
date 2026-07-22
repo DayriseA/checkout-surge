@@ -36,10 +36,10 @@ describe("dashboard route admission", () => {
   });
 
   it.each([
-    ["rate_limited", 429, "dashboard_recovery_rate_limited"],
-    ["at_capacity", 503, "dashboard_recovery_at_capacity"],
-    ["unavailable", 503, "dashboard_recovery_limiter_unavailable"],
-  ] as const)("rejects recovery %s before service work", async (outcome, status, code) => {
+    ["rate_limited", 429, "dashboard_recovery_rate_limited", undefined],
+    ["at_capacity", 503, "dashboard_recovery_unavailable", "at_capacity"],
+    ["unavailable", 503, "dashboard_recovery_unavailable", "limiter_unavailable"],
+  ] as const)("rejects recovery %s before service work", async (outcome, status, code, reason) => {
     const getRecovery = vi.fn();
     const server = buildServer({ recoveryOutcome: outcome, getRecovery });
     const response = await server.inject({
@@ -48,7 +48,12 @@ describe("dashboard route admission", () => {
       headers: correlationHeader,
     });
     expect(response.statusCode).toBe(status);
-    expect(errorPayloadSchema.parse(response.json()).code).toBe(code);
+    expect(errorPayloadSchema.parse(response.json())).toMatchObject({
+      code,
+      correlationId: "route-correlation",
+      ...(reason ? { details: { reason } } : {}),
+    });
+    expect(response.headers[correlationIdHeaderName]).toBe("route-correlation");
     expect(response.headers["retry-after"]).toBe("11");
     expect(getRecovery).not.toHaveBeenCalled();
     await server.close();
@@ -97,9 +102,11 @@ describe("dashboard route admission", () => {
 
     expect(response.statusCode).toBe(503);
     expect(errorPayloadSchema.parse(response.json())).toMatchObject({
-      code: "dashboard_recovery_timed_out",
+      code: "dashboard_recovery_unavailable",
       correlationId: "route-correlation",
+      details: { reason: "timed_out" },
     });
+    expect(response.headers[correlationIdHeaderName]).toBe("route-correlation");
     expect(response.headers["retry-after"]).toBe("11");
     await server.close();
   });

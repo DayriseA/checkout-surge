@@ -631,7 +631,6 @@ function applyMixedEventBurst(
       eventName: "order.processing",
       previousStatus: "queued",
       status: "processing",
-      customerStatus: "processing",
       attemptNumber: 1,
       attemptsMade: 0,
     });

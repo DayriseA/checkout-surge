@@ -46,12 +46,7 @@ export function mockErpBaseUrl(): string {
 export function requireControlServiceToken(ctx: ProxyRequestContext): string | Response {
   const token = webServerConfig().controlServiceToken;
   if (!token) {
-    return jsonError(
-      ctx,
-      503,
-      "control_token_not_configured",
-      "Control service token is not configured.",
-    );
+    return jsonError(ctx, 503, "service_misconfigured", "Control service token is not configured.");
   }
   return token;
 }
@@ -60,7 +55,7 @@ export async function readJsonRequest(ctx: ProxyRequestContext): Promise<unknown
   try {
     return await ctx.request.json();
   } catch {
-    return jsonError(ctx, 400, "invalid_json", "Request body must be valid JSON.");
+    return jsonError(ctx, 400, "invalid_request", "Request body must be valid JSON.");
   }
 }
 

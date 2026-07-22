@@ -24,12 +24,12 @@ The goal is to keep the limited-inventory checkout flow and its recovery boundar
 | Demo preset model | Store public and admin preset definitions as durable database rows | Presets are the public/admin control contract; operators edit accepted configurations rather than raw k6 parameters. |
 | Demo run model | Store every run with an immutable configuration snapshot and generated run sale offer | Repeated runs need isolated inventory and reproducible run-scoped behavior without mutating the editable preset draft. |
 | Pending persistence model | Track Redis-secured holds that have not yet produced durable reservation/order rows | The system must preserve secured stock decisions and make reconciliation gaps visible instead of hiding partial failures. |
-| Simulated notification model | Record post-confirmation notification facts durably without sending real email or SMS | The demo proves workflow boundaries without introducing real external delivery providers. |
+| Simulated notification model | Record the specific post-confirmation simulated-email fact durably without invoking a real provider | The demo proves workflow boundaries without introducing an unimplemented channel vocabulary. |
 | Run summary and finalization model | Persist traffic summaries, business outcomes, and terminal finalization records per run | Run History and benchmark artifacts must explain both k6 HTTP behavior and asynchronous business completion. |
 | Public runtime policy model | Persist the active public-run policy as a singleton API-owned row | Admins can adjust public budgets, defaults, and custom-run limits without changing deployment hard caps or seeded preset definitions. |
 | Traffic delivery quality | Classify request delivery inside `trafficDeliverySummary.trafficDeliveryStatus` as `complete`, `warning`, `degraded`, or `failed` | Keeps traffic fidelity visible without adding terminal demo-run statuses beyond `completed` and `failed`. |
 | Quantity semantics | Keep `quantity` in the model, but default the limited-inventory flow to one unit per checkout | The demo is single-item focused, but the schema should not require a breaking change to support quantity later. |
-| UI status strategy | Keep canonical persistence states minimal and derive dashboard-facing labels from reservation plus order state | This avoids contaminating the core domain model with presentation-specific labels while still supporting clear operator feedback. |
+| UI status strategy | Keep canonical persistence states minimal and display the buy outcome or canonical order status directly | This avoids parallel customer/simulated status vocabularies while still supporting clear operator feedback. |
 | Realtime order presentation | Make the live dashboard aggregate-first and remove its separate per-order realtime feed and panels during the later revisioned-projection migration | Per-order live activity does not strengthen the surge demo enough to justify a second update protocol. Aggregate consistency lag remains a gold signal; focused durable diagnostics use `GET /orders/:publicOrderId/status` or protected Run History. |
 
 ---
@@ -56,7 +56,7 @@ The implemented demo-run control and history model also includes:
 13. `DemoRunSaleContext`
 14. `ReservationPendingPersistence`
 15. `SimulatedNotification`
-16. `DemoRunReservationOutcome`
+16. `DemoRunSoldOutCount`
 17. `DemoRunFinalization`
 18. `DemoRunSummary`
 19. `PublicRuntimePolicy`
@@ -170,7 +170,7 @@ Notes:
 
 Primary responsibilities:
 
-- represent the outcome of the atomic stock-hold decision,
+- represent a successful atomic stock-hold decision,
 - define the hold window before downstream confirmation finishes,
 - connect the fast Redis decision to the slower durable order workflow.
 
@@ -181,28 +181,18 @@ Recommended fields:
 - `correlationId`
 - `runId`
 - `quantity`
-- `status`
 - `reservationToken`
 - `expiresAt`
 - `securedAt`
-- `releasedAt` optional
-- `expiredAt` optional
-- `releaseReason` optional
 - `createdAt`
 - `updatedAt`
 
-Canonical statuses:
-
-- `secured`
-- `rejected`
-- `released`
-- `expired`
-
 Important boundary:
 
+- A durable reservation row exists only for a secured hold; row existence carries that fact without a copied single-value status.
 - Immediate unsuccessful attempts such as sold-out responses are not represented as durable reservations in the current model.
-- Rejected attempts remain response facts, metrics, and optional event/log payloads unless a later requirement creates a business reason to persist them.
-- PostgreSQL requires `releasedAt` when status is `released` and `expiredAt` when status is `expired`. These are intentionally one-way guarantees: timestamps may be present in other states, and the database does not infer or rewrite historical transition times.
+- Rejected attempts remain response facts and metrics unless a later requirement creates a business reason to persist them.
+- Release and expiry are deferred production extensions, not unproduced durable states in the current schema.
 
 ### 5. Order
 
@@ -245,7 +235,7 @@ Notes:
 - These statuses intentionally match the lifecycle defined in `docs/cross_service_conventions.md`.
 - Retry metadata is not a separate order status; it belongs in ERP-attempt history and derived UI messaging.
 - PostgreSQL requires `processingAt` for `processing`, `confirmed`, and `failed` orders, the matching terminal timestamp for `confirmed` and `failed`, and any non-null terminal timestamp to be at or after `queuedAt`. Equality is valid. These checks remain one-way implications rather than an exact-state encoding: earlier states may carry later timestamps, both terminal timestamps may coexist, and terminal timestamps are not ordered against `processingAt`.
-- `GET /orders/:publicOrderId/status` is the public mutable read model for these durable states. It exposes the public order ID, sale offer, reservation status/expiry, nullable lifecycle and failure fields, confirmed-order consistency lag, and the persisted event timeline while omitting the internal order UUID, reservation tokens, event payloads, and run attribution.
+- `GET /orders/:publicOrderId/status` is the public mutable read model for these durable states. It exposes the public order ID, sale offer, secured reservation identity/expiry, the canonical order status, nullable lifecycle and failure fields, confirmed-order consistency lag, and the persisted event timeline while omitting the internal order UUID, reservation tokens, event payloads, and run attribution.
 - This endpoint is the retained focused diagnostic read after the separate per-order realtime presentation is removed. It does not imply a customer storefront or a general customer-tracking product.
 - `POST /buy` and its idempotent replays remain acceptance-shaped (`secured` reservation and `queued` order); consumers must not use a replay as a current-status lookup.
 
@@ -381,9 +371,6 @@ Recommended fields:
 Expected event names include:
 
 - `reservation.secured`
-- `reservation.rejected`
-- `reservation.released`
-- `reservation.expired`
 - `order.queued`
 - `order.processing`
 - `order.confirmed`
@@ -563,25 +550,20 @@ Logical fields:
 - `saleOfferId`
 - `correlationId`
 - `runId`
-- `channel`
 - `recipientPlaceholder`
-- `status`
 - `recordedAt`
 - `createdAt`
 
-Canonical statuses:
-
-- `recorded`
-
 Notes:
 
-- Notification records are audit facts, not provider delivery receipts.
+- Notification row existence is the recorded simulated-email audit fact; there is no copied single-value status or unimplemented channel choice.
+- Notification records are not provider delivery receipts.
 - Current worker behavior records simulated notification completion after successful order confirmation.
 - A worker-owned scanner finds confirmed orders missing this record and reasserts the deterministic notification job. Terminally failed notification jobs are removed so later scanner delivery can reuse the same ID.
 
-### 16. DemoRunReservationOutcome
+### 16. DemoRunSoldOutCount
 
-`DemoRunReservationOutcome` is the durable per-run aggregate for reservation outcomes that are intentionally not persisted as individual rows.
+`DemoRunSoldOutCount` is the durable per-run aggregate for sold-out decisions that are intentionally not persisted as individual rows.
 
 Primary responsibilities:
 
@@ -591,20 +573,17 @@ Primary responsibilities:
 
 Logical fields:
 
-- `id`
 - `runId`
-- `outcome`
 - `count`
 - `latestObservedAt` optional
-- `source`
 - `capturedAt`
 - `createdAt`
 
 Notes:
 
-- The first tracked `outcome` should be `api_sold_out_decision`, counted in Redis on the losing reservation path and copied into this table during finalization with `source = redis`.
-- `(runId, outcome)` is unique, so finalization can idempotently upsert the latest aggregate for a run.
-- This is the durable counterpart of the architectural decision to aggregate sold-out pressure instead of writing a PostgreSQL row per immediate rejection. See `docs/redis_inventory_hot_path.md` for the Redis-side `reservation-outcomes` counter it is derived from.
+- `runId` is the row key, so finalization can idempotently upsert the latest aggregate for a run.
+- Redis provenance and the sold-out outcome are inherent in this specific capture path rather than repeated as single-value columns.
+- This is the durable counterpart of the architectural decision to aggregate sold-out pressure instead of writing a PostgreSQL row per immediate rejection. See `docs/redis_inventory_hot_path.md` for the Redis-side `sold-out` counter it is derived from.
 
 ### 17. DemoRunFinalization
 
@@ -728,9 +707,9 @@ The implemented domain relationships are:
 - `ErpConfirmationResult` is deliberately independent of the checkout `Order` foreign-key graph because it belongs to the Mock ERP boundary.
 - `OrderDeadLetter` preserves invalid/untrusted queue evidence and therefore does not require a valid order foreign key.
 - One `Order` has many `OrderEvent` records.
-- One `Order` may have simulated notification records.
+- One `Order` may have at most one simulated notification record.
 - One `Reservation` may also have many `OrderEvent` records tied to the same `correlationId`.
-- One `DemoRun` has many `DemoRunReservationOutcome` aggregate rows, unique per `(runId, outcome)`.
+- One `DemoRun` has at most one `DemoRunSoldOutCount` aggregate row, keyed by `runId`.
 - One `DemoRun` has at most one `DemoRunFinalization` and at most one immutable `DemoRunSummary`.
 - The deployment has one active `PublicRuntimePolicy` singleton row.
 
@@ -765,7 +744,7 @@ PostgreSQL is the durable business source of truth for:
 - `DemoRunSaleContext`
 - `ReservationPendingPersistence`
 - `SimulatedNotification`
-- `DemoRunReservationOutcome`
+- `DemoRunSoldOutCount`
 - `DemoRunFinalization`
 - `DemoRunSummary`
 - `PublicRuntimePolicy`
@@ -818,32 +797,17 @@ The UI projection layer may combine:
 
 ## Statuses Surfaced to Admin and Run Summaries
 
-The canonical persistence states remain small:
-
-- reservation: `secured`, `rejected`, `released`, `expired`
-- order: `queued`, `processing`, `confirmed`, `failed`
+The canonical persistence model remains small: reservation row existence means secured, while order status is `queued`, `processing`, `confirmed`, or `failed`.
 
 The live operator dashboard should expose these states as aggregate run outcomes. Protected Run History may retain bounded drill-down records, and `GET /orders/:publicOrderId/status` remains the focused durable diagnostic for a known order.
 
-The recent completion-outcome DTO is also status-discriminated. Every outcome has `queuedAt`; processing and terminal outcomes require `processingAt`; confirmed and failed outcomes require only their matching terminal timestamp and forbid the opposite one. Notification display state and `notificationRecordedAt` occur together only on confirmed outcomes. This keeps the dashboard projection aligned with the durable producer rather than accepting timestamps from a later or contradictory lifecycle state.
+The recent completion-outcome DTO is also status-discriminated. Every outcome has `queuedAt`; processing and terminal outcomes require `processingAt`; confirmed and failed outcomes require only their matching terminal timestamp and forbid the opposite one. `notificationRecordedAt` occurs only on confirmed outcomes. This keeps the dashboard projection aligned with the durable producer rather than accepting timestamps from a later or contradictory lifecycle state.
 
-### Simulated Purchase Status Model
+### Purchase Outcome and Order Status
 
-Simulated purchase status should be derived from reservation outcome plus order state:
+The buy response carries one public `outcome`: `reservation_secured`, `reservation_pending_persistence`, `sold_out`, `run_not_accepting_traffic`, `inventory_not_initialized`, `idempotency_conflict`, or `quantity_invalid`. It does not repeat that decision in a rejection reason or simulated-status field. The internal Redis `idempotent_replay` decision projects to the normal public `reservation_secured` response.
 
-| Simulated Status | Derived From | Meaning |
-| :-- | :-- | :-- |
-| `sold_out` | immediate reservation reject with reason `sold_out` | No stock could be secured. |
-| `sale_not_active` | immediate reservation reject with reason `run_not_accepting_traffic` | The run or sale is closed, mismatched, unknown, or otherwise ineligible for traffic. |
-| `reservation_secured` | reservation `secured` and order `queued` | Stock is held and background confirmation will continue. |
-| `processing` | order `processing` or queued-with-visible-delay | ERP confirmation is still in progress. |
-| `confirmed` | order `confirmed` | Purchase completed successfully. |
-| `failed` | order `failed` | Background confirmation failed terminally. |
-| `reservation_expired` | reservation `expired` | Hold lapsed before completion or required recovery released it. |
-
-Rejected decisions that do not describe a simulated customer lifecycle state keep `simulatedStatus` present but set it to `null`: `inventory_not_initialized` is an operational readiness failure, `idempotency_conflict` is a request conflict, and `quantity_invalid` is a request validation or decision failure. Consumers should derive neutral failure text from the precise rejection reason and must not fall back to “Sold out.”
-
-This keeps status language aligned with the portfolio story:
+After acceptance, consumers use the order's canonical status directly. This keeps status language aligned with the portfolio story:
 
 - fast reservation,
 - slower final confirmation,
@@ -853,7 +817,7 @@ This keeps status language aligned with the portfolio story:
 
 The admin interface should expose both raw lifecycle state and supporting context:
 
-- reservation status
+- secured reservation identity and expiry
 - order status
 - current retry count
 - latest ERP-attempt outcome
@@ -892,5 +856,5 @@ This document establishes a domain model that preserves the core architectural s
 - reservations are distinct from orders,
 - ERP retries are captured as delivery-scoped append-only attempt history, successful Mock ERP decisions are first-write-wins, and unsafe handoffs have durable recovery/dead-letter evidence,
 - business facts are preserved in an event timeline,
-- demo presets, runs, generated sale ownership contexts, pending persistence, simulated notifications, ERP results/recovery evidence, reservation-outcome aggregates, finalizations, summaries, and the public runtime policy are durable PostgreSQL records,
+- demo presets, runs, generated sale ownership contexts, pending persistence, simulated notifications, ERP results/recovery evidence, sold-out aggregates, finalizations, summaries, and the public runtime policy are durable PostgreSQL records,
 - and the UI derives dashboard-facing statuses from those underlying states rather than redefining the lifecycle itself.

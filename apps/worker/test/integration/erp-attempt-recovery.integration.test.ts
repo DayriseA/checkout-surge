@@ -78,7 +78,6 @@ run("PostgreSQL ERP attempt delivery identity", () => {
         saleOfferId: ids.offer,
         correlationId: job.correlationId,
         quantity: 1,
-        status: "secured",
         reservationToken: "erp-attempt-token",
         securedAt: new Date("2026-06-22T00:00:00Z"),
         expiresAt: new Date("2026-06-22T00:15:00Z"),

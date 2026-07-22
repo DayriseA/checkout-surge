@@ -21,7 +21,6 @@ import {
   archiveAdminPresetResponseSchema,
   type BusinessOutcomeSummary,
   buyOutcomeHeaderName,
-  buyRejectionReasonHeaderName,
   buyResponseSchema,
   controlServiceTokenHeaderName,
   type DashboardEvent,
@@ -212,7 +211,6 @@ function orderStatusFixture(correlationId: string): OrderStatusResponse {
     saleOfferId: fixtureIds.saleOffer,
     reservation: {
       id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-      status: "secured",
       expiresAt: "2026-06-20T00:15:00.000Z",
     },
     order: {
@@ -224,7 +222,6 @@ function orderStatusFixture(correlationId: string): OrderStatusResponse {
       failureCode: null,
       failureMessage: null,
     },
-    customerStatus: "reservation_secured",
     consistencyLagMs: null,
     timeline: [
       {
@@ -666,8 +663,6 @@ function adminRunHistoryDetailResponseFixture(): AdminRunHistoryDetailResponse {
           notificationId: "99999999-9999-4999-8999-999999999993",
           orderId: "99999999-9999-4999-8999-999999999991",
           publicOrderId: "ord_history_1",
-          channel: "email",
-          status: "recorded",
           recordedAt: "2026-06-20T00:00:07.000Z",
         },
       ],
@@ -924,7 +919,6 @@ class AcceptingPersistence implements BuyPersistence {
     const hold = input.reservation;
     const reservation: AcceptedReservationSummary = {
       ...hold,
-      status: "secured",
     };
     const order: AcceptedOrderSummary = {
       id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
@@ -1062,7 +1056,7 @@ describe("API gateway routes", () => {
 
     expect(missing.statusCode).toBe(404);
     expect(missingPayload).toMatchObject({
-      code: "order_not_found",
+      code: "resource_not_found",
       message: "Order status was not found",
       details: { publicOrderId: "ord_missing" },
       correlationId: "status-missing-correlation",
@@ -1309,6 +1303,36 @@ describe("API gateway routes", () => {
     expect(policy.policy.deploymentHardCaps.maxTotalRequests).toBe(100_000);
   });
 
+  it("maps a missing public runtime policy through the canonical error boundary", async () => {
+    const server = await trackedServer({
+      persistence: new AcceptingPersistence(),
+      demoRunService: {
+        ...demoRunControllerFixture(),
+        getPublicRuntimePolicy: async () => {
+          throw new DemoRunValidationError(
+            "resource_not_found",
+            "Public runtime policy is not configured.",
+          );
+        },
+      },
+    });
+    const correlationId = "corr-public-policy-missing";
+    const response = await server.inject({
+      method: "GET",
+      url: publicRuntimePolicyPath,
+      headers: { [correlationIdHeaderName]: correlationId },
+    });
+    const payload = errorPayloadSchema.parse(response.json());
+
+    expect(response.statusCode).toBe(404);
+    expect(response.headers[correlationIdHeaderName]).toBe(correlationId);
+    expect(payload).toMatchObject({
+      code: "resource_not_found",
+      message: "Public runtime policy is not configured.",
+      correlationId,
+    });
+  });
+
   it("protects admin public runtime policy reads and updates", async () => {
     const getAdminPublicRuntimePolicy = vi.fn(
       demoRunControllerFixture().getAdminPublicRuntimePolicy,
@@ -1436,7 +1460,7 @@ describe("API gateway routes", () => {
     expect(missing.statusCode).toBe(404);
     expect(missing.headers["cache-control"]).toBe("no-store");
     expect(missingPayload).toMatchObject({
-      code: "run_history_detail_not_found",
+      code: "resource_not_found",
       details: { runId: "ffffffff-ffff-4fff-8fff-ffffffffffff" },
     });
     expect(detail).toHaveBeenCalledWith(fixtureIds.run);
@@ -1816,11 +1840,11 @@ describe("API gateway routes", () => {
   });
 
   it.each([
-    ["run_not_terminal", "corr-non-terminal"],
-    ["run_ownership_mismatch", "corr-ownership"],
-    ["run_queue_job_active", "corr-active-job"],
-    ["run_queue_maintenance_owned_by_other_run", "corr-foreign-maintenance"],
-    ["run_queue_not_quiescent", "corr-changing-job"],
+    ["run_cleanup_conflict", "corr-non-terminal"],
+    ["run_cleanup_conflict", "corr-ownership"],
+    ["run_cleanup_conflict", "corr-active-job"],
+    ["run_cleanup_conflict", "corr-foreign-maintenance"],
+    ["run_cleanup_conflict", "corr-changing-job"],
   ] as const)("maps targeted teardown conflict %s to 409", async (code, correlationId) => {
     const runId = randomUUID();
     const server = await trackedServer({
@@ -1946,6 +1970,91 @@ describe("API gateway routes", () => {
     expect(copyPresetToCustom).toHaveBeenCalledWith({ sourceSlug: "preview-1k" });
   });
 
+  it.each([
+    {
+      operation: "save",
+      code: "resource_not_found",
+      statusCode: 404,
+      details: { slug: "custom" },
+    },
+    {
+      operation: "duplicate",
+      code: "preset_conflict",
+      statusCode: 409,
+      details: { conflictReason: "slug_in_use", slug: "preview-copy" },
+    },
+    {
+      operation: "copy",
+      code: "preset_operation_not_allowed",
+      statusCode: 400,
+      details: { slug: "preview-1k" },
+    },
+    {
+      operation: "copy",
+      code: "public_visitor_forbidden",
+      statusCode: 403,
+      details: { visitor: "invalid" },
+    },
+  ] as const)("maps $operation preset failures to correlated $statusCode responses", async ({
+    operation,
+    code,
+    statusCode,
+    details,
+  }) => {
+    const fail = async () => {
+      throw new DemoRunValidationError(code, "Preset mutation failed.", details);
+    };
+    const server = await trackedServer({
+      persistence: new AcceptingPersistence(),
+      demoRunService: {
+        ...demoRunControllerFixture(),
+        ...(operation === "save" ? { saveAdminPreset: fail } : {}),
+        ...(operation === "duplicate" ? { duplicatePreset: fail } : {}),
+        ...(operation === "copy" ? { copyPresetToCustom: fail } : {}),
+      },
+    });
+    const correlationId = `corr-preset-${operation}-${statusCode}`;
+    const request =
+      operation === "save"
+        ? {
+            url: adminPresetSavePath,
+            payload: {
+              slug: "custom",
+              display: {
+                name: "Custom",
+                description: "Updated custom preset.",
+                sortOrder: 10,
+                outcomeFocus: [],
+              },
+              ...acceptedRunConfigSnapshotFixture(),
+            },
+          }
+        : operation === "duplicate"
+          ? {
+              url: adminPresetDuplicatePath,
+              payload: { sourceSlug: "preview-1k", targetSlug: "preview-copy" },
+            }
+          : {
+              url: adminPresetCopyToCustomPath,
+              payload: { sourceSlug: "preview-1k" },
+            };
+
+    const response = await server.inject({
+      method: "POST",
+      url: request.url,
+      headers: {
+        [controlServiceTokenHeaderName]: "test-control-token",
+        [correlationIdHeaderName]: correlationId,
+      },
+      payload: request.payload,
+    });
+    const error = errorPayloadSchema.parse(response.json());
+
+    expect(response.statusCode).toBe(statusCode);
+    expect(response.headers[correlationIdHeaderName]).toBe(correlationId);
+    expect(error).toMatchObject({ code, correlationId, details });
+  });
+
   it("protects and delegates admin preset archival through the DELETE route", async () => {
     const archiveAdminPreset = vi.fn(demoRunControllerFixture().archiveAdminPreset);
     const server = await trackedServer({
@@ -1992,8 +2101,8 @@ describe("API gateway routes", () => {
   });
 
   it.each([
-    ["preset_not_archivable", 409],
-    ["preset_not_found", 404],
+    ["preset_conflict", 409],
+    ["resource_not_found", 404],
   ] as const)("maps archive error %s to %i through the DELETE route", async (code, statusCode) => {
     const archiveAdminPreset = vi.fn(async () => {
       throw new DemoRunValidationError(code, "Archive failed.", { slug: "preview-copy" });
@@ -2059,7 +2168,7 @@ describe("API gateway routes", () => {
   it("maps an incomplete durable admin reset to a canonical 409", async () => {
     const startRun = vi.fn(async () => {
       throw new DemoRunValidationError(
-        "demo_reset_incomplete",
+        "run_conflict",
         "The prior demo reset must be repaired before another run can start.",
         { runId: fixtureIds.run },
       );
@@ -2081,11 +2190,46 @@ describe("API gateway routes", () => {
 
     expect(response.statusCode).toBe(409);
     expect(response.json()).toMatchObject({
-      code: "demo_reset_incomplete",
+      code: "run_conflict",
       correlationId: "corr-reset-incomplete",
       details: { runId: fixtureIds.run },
     });
     expect(startRun).toHaveBeenCalledOnce();
+  });
+
+  it("maps public fixed-window run-budget exhaustion to a correlated 429", async () => {
+    const startRun = vi.fn(async () => {
+      throw new DemoRunValidationError(
+        "public_run_budget_exceeded",
+        "Public visitor run budget is exhausted.",
+        { budget: "visitor" },
+      );
+    });
+    const server = await trackedServer({
+      persistence: new AcceptingPersistence(),
+      demoRunService: { ...demoRunControllerFixture(), startRun },
+    });
+    const correlationId = "corr-public-budget-exhausted";
+    const response = await server.inject({
+      method: "POST",
+      url: startDemoRunPath,
+      headers: {
+        [controlServiceTokenHeaderName]: "test-control-token",
+        [demoRunOperatorModeHeaderName]: "public",
+        [publicVisitorIdHeaderName]: "signed-visitor-1",
+        [correlationIdHeaderName]: correlationId,
+      },
+      payload: { presetSlug: "preview-1k" },
+    });
+    const error = errorPayloadSchema.parse(response.json());
+
+    expect(response.statusCode).toBe(429);
+    expect(response.headers[correlationIdHeaderName]).toBe(correlationId);
+    expect(error).toMatchObject({
+      code: "public_run_budget_exceeded",
+      correlationId,
+      details: { budget: "visitor" },
+    });
   });
 
   it("protects internal load metric ingestion with the control service token", async () => {
@@ -2143,8 +2287,8 @@ describe("API gateway routes", () => {
   });
 
   it.each([
-    ["run_not_found", 404],
-    ["traffic_metric_run_not_eligible", 409],
+    ["resource_not_found", 404],
+    ["traffic_report_rejected", 409],
   ] as const)("maps metric admission %s with body correlation", async (code, statusCode) => {
     const server = await trackedServer({
       persistence: new AcceptingPersistence(),
@@ -2350,7 +2494,7 @@ describe("API gateway routes", () => {
         ...demoRunControllerFixture(),
         recordTrafficCompletion: async () => {
           throw new DemoRunValidationError(
-            "traffic_completion_report_mismatch",
+            "traffic_report_rejected",
             "Traffic completion does not match the accepted demo run.",
             { runId: fixtureIds.run, field: "loadRunDiagnosticsSummary.executionPlan" },
           );
@@ -2367,7 +2511,7 @@ describe("API gateway routes", () => {
     expect(response.statusCode).toBe(409);
     expect(response.headers[correlationIdHeaderName]).toBe(fixtureCorrelationId);
     expect(response.json()).toMatchObject({
-      code: "traffic_completion_report_mismatch",
+      code: "traffic_report_rejected",
       correlationId: fixtureCorrelationId,
       details: {
         runId: fixtureIds.run,
@@ -2434,7 +2578,6 @@ describe("API gateway routes", () => {
     expect(response.statusCode).toBe(400);
     expect(response.headers["x-correlation-id"]).toBeTruthy();
     expect(response.headers[buyOutcomeHeaderName]).toBeUndefined();
-    expect(response.headers[buyRejectionReasonHeaderName]).toBeUndefined();
     expect(() => errorPayloadSchema.parse(response.json())).not.toThrow();
   });
 
@@ -2458,7 +2601,6 @@ describe("API gateway routes", () => {
     expect(response.statusCode).toBe(202);
     expect(response.headers["x-correlation-id"]).toBe("phase2-test-correlation");
     expect(response.headers[buyOutcomeHeaderName]).toBe("reservation_secured");
-    expect(response.headers[buyRejectionReasonHeaderName]).toBeUndefined();
     expect(payload.correlationId).toBe("phase2-test-correlation");
     expect(payload.outcome).toBe("reservation_secured");
   });
@@ -2546,7 +2688,7 @@ describe("API gateway routes", () => {
     const payload = errorPayloadSchema.parse(response.json());
 
     expect(response.statusCode).toBe(400);
-    expect(payload.code).toBe("run_attribution_mismatch");
+    expect(payload.code).toBe("invalid_request");
     expect(payload.details).toEqual({
       bodyRunId: fixtureIds.run,
       headerRunId: "ffffffff-ffff-4fff-8fff-ffffffffffff",
@@ -2554,7 +2696,7 @@ describe("API gateway routes", () => {
     });
   });
 
-  it("maps the atomic Redis run rejection to a sale-not-active 409 response", async () => {
+  it("maps the atomic Redis run rejection from its outcome alone", async () => {
     const stockReservations: StockReservationGateway = {
       reserve: async () => ({ outcome: "run_not_accepting_traffic", reservation: null }),
       markPendingPersistence: async () => undefined,
@@ -2579,11 +2721,8 @@ describe("API gateway routes", () => {
 
     expect(response.statusCode).toBe(409);
     expect(response.headers[buyOutcomeHeaderName]).toBe("run_not_accepting_traffic");
-    expect(response.headers[buyRejectionReasonHeaderName]).toBe("run_not_accepting_traffic");
     expect(payload).toMatchObject({
       outcome: "run_not_accepting_traffic",
-      reason: "run_not_accepting_traffic",
-      simulatedStatus: "sale_not_active",
       reservation: null,
       order: null,
     });
@@ -2593,38 +2732,26 @@ describe("API gateway routes", () => {
     {
       decision: "sold_out",
       status: 409,
-      reason: "sold_out",
-      simulatedStatus: "sold_out",
     },
     {
       decision: "run_not_accepting_traffic",
       status: 409,
-      reason: "run_not_accepting_traffic",
-      simulatedStatus: "sale_not_active",
     },
     {
       decision: "inventory_not_initialized",
       status: 503,
-      reason: "inventory_not_initialized",
-      simulatedStatus: null,
     },
     {
       decision: "idempotency_conflict",
       status: 409,
-      reason: "idempotency_conflict",
-      simulatedStatus: null,
     },
     {
       decision: "quantity_invalid",
       status: 400,
-      reason: "quantity_invalid",
-      simulatedStatus: null,
     },
   ] as const)("does no PostgreSQL work for the route-level Redis $decision rejection", async ({
     decision,
     status,
-    reason,
-    simulatedStatus,
   }) => {
     const persistSecuredReservation = vi.fn();
     const getPersistedBuyByReservationId = vi.fn();
@@ -2652,12 +2779,9 @@ describe("API gateway routes", () => {
     const payload = buyResponseSchema.parse(response.json());
     expect(response.statusCode).toBe(status);
     expect(response.headers[buyOutcomeHeaderName]).toBe(decision);
-    expect(response.headers[buyRejectionReasonHeaderName]).toBe(reason);
     expect(payload).toEqual(
       expect.objectContaining({
         outcome: decision,
-        reason,
-        simulatedStatus,
         reservation: null,
         order: null,
       }),
@@ -2693,7 +2817,6 @@ describe("API gateway routes", () => {
 
     expect(response.statusCode).toBe(500);
     expect(response.headers[buyOutcomeHeaderName]).toBeUndefined();
-    expect(response.headers[buyRejectionReasonHeaderName]).toBeUndefined();
     expect(persistSecuredReservation).not.toHaveBeenCalled();
     expect(getPersistedBuyByReservationId).not.toHaveBeenCalled();
   });
@@ -2734,7 +2857,6 @@ describe("API gateway routes", () => {
     expect(buyResponseSchema.parse(replay.json()).outcome).toBe("reservation_secured");
     expect(replay.statusCode).toBe(202);
     expect(replay.headers[buyOutcomeHeaderName]).toBe("reservation_secured");
-    expect(replay.headers[buyRejectionReasonHeaderName]).toBeUndefined();
   });
 
   it("preserves pending-persistence retry and classification headers", async () => {
@@ -2762,7 +2884,6 @@ describe("API gateway routes", () => {
     );
     expect(response.statusCode).toBe(202);
     expect(response.headers[buyOutcomeHeaderName]).toBe("reservation_pending_persistence");
-    expect(response.headers[buyRejectionReasonHeaderName]).toBeUndefined();
     expect(response.headers["retry-after"]).toBe("30");
     expect(response.headers[correlationIdHeaderName]).toBe("pending-header-correlation");
   });
@@ -2866,7 +2987,6 @@ describe("API buy persistence", () => {
           saleOfferId: fixtureIds.saleOffer,
           correlationId: "persistence-budget-correlation",
           quantity: 1,
-          status: "secured",
           reservationToken: "persistence-budget-token",
           securedAt: "2026-06-20T12:00:00.000Z",
           expiresAt: "2026-06-20T12:15:00.000Z",
@@ -2927,9 +3047,8 @@ describe("API buy persistence", () => {
 
       expect(response.statusCode).toBe(202);
       expect(payload.outcome).toBe("reservation_secured");
-      expect(reservationRow?.status).toBe("secured");
-      expect(reservationRow?.correlationId).toBe("persist-correlation");
       expect(reservationRow?.id).toBe(payload.reservation?.id);
+      expect(reservationRow?.correlationId).toBe("persist-correlation");
       expect(reservationRow?.reservationToken).toBe(payload.reservation?.reservationToken);
       expect(reservationRow?.securedAt.toISOString()).toBe(payload.reservation?.securedAt);
       expect(reservationRow?.expiresAt.toISOString()).toBe(payload.reservation?.expiresAt);
@@ -2958,7 +3077,6 @@ describe("API buy persistence", () => {
         saleOfferId: fixtureIds.saleOffer,
         correlationId: "reconciler-full-convergence-correlation",
         quantity: 1,
-        status: "secured",
         reservationToken: "reservation-token-77",
         securedAt: "2026-06-20T12:00:00.000Z",
         expiresAt: "2026-06-20T12:15:00.000Z",
@@ -3366,8 +3484,6 @@ describe("API buy persistence", () => {
       expect(response.statusCode).toBe(409);
       expect(payload).toMatchObject({
         outcome: "run_not_accepting_traffic",
-        reason: "run_not_accepting_traffic",
-        simulatedStatus: "sale_not_active",
         reservation: null,
         order: null,
       });
@@ -3880,8 +3996,6 @@ describe("API buy persistence", () => {
       expect(response.statusCode).toBe(409);
       expect(payload).toMatchObject({
         outcome: "run_not_accepting_traffic",
-        reason: "run_not_accepting_traffic",
-        simulatedStatus: "sale_not_active",
         reservation: null,
         order: null,
       });
@@ -3980,7 +4094,7 @@ describe("API buy persistence", () => {
       if (payload.outcome !== "inventory_not_initialized") {
         throw new Error(`Expected missing offer rejection, received ${payload.outcome}.`);
       }
-      expect(payload.reason).toBe("inventory_not_initialized");
+      expect(payload.outcome).toBe("inventory_not_initialized");
       expect(payload.reservation).toBeNull();
       expect(payload.order).toBeNull();
       expect(reservationRows).toEqual([]);
@@ -4028,7 +4142,7 @@ describe("API buy persistence", () => {
       if (payload.outcome !== "sold_out") {
         throw new Error(`Expected sold-out rejection, received ${payload.outcome}.`);
       }
-      expect(payload.reason).toBe("sold_out");
+      expect(payload.outcome).toBe("sold_out");
       expect(payload.reservation).toBeNull();
       expect(payload.order).toBeNull();
       expect(reservationRows).toEqual([]);
@@ -4140,9 +4254,8 @@ describe("API buy persistence", () => {
         correlationId: "queued-status-correlation",
         publicOrderId: firstPayload.order.publicOrderId,
         saleOfferId: fixtureIds.saleOffer,
-        reservation: { id: firstPayload.reservation.id, status: "secured" },
+        reservation: { id: firstPayload.reservation.id },
         order: { status: "queued" },
-        customerStatus: "reservation_secured",
         consistencyLagMs: null,
       });
       expect(status.timeline.map((event) => event.eventName)).toEqual([
@@ -4261,7 +4374,7 @@ describe("API buy persistence", () => {
         expect(statusResponse.headers[correlationIdHeaderName]).toBe(statusCorrelationId);
         expect(liveStatus.correlationId).toBe(statusCorrelationId);
         expect(liveStatus.order.status).toBe(testCase.terminal.status);
-        expect(liveStatus.customerStatus).toBe(testCase.terminal.status);
+        expect(liveStatus.order.status).toBe(testCase.terminal.status);
         expect(liveStatus.order.processingAt).toBe(processingAt.toISOString());
         expect(liveStatus.timeline).toEqual([
           {

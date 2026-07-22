@@ -13,8 +13,8 @@ import {
   deleteGeneratedRunRedisState,
   demoPresets,
   demoRunFinalizations,
-  demoRunReservationOutcomes,
   demoRunSaleContexts,
+  demoRunSoldOutCounts,
   demoRunSummaries,
   demoRuns,
   demoRunTeardownReceipts,
@@ -436,7 +436,11 @@ describe("demo maintenance service", () => {
     });
     await expect(
       service.teardownGeneratedRun({ runId: ids.completedRun, correlationId: "corr-active" }),
-    ).rejects.toMatchObject({ statusCode: 409, code: "run_not_terminal" });
+    ).rejects.toMatchObject({
+      statusCode: 409,
+      code: "run_cleanup_conflict",
+      details: { conflictReason: "non_terminal" },
+    });
     expect(await db.select().from(demoRuns).where(eq(demoRuns.id, ids.completedRun))).toHaveLength(
       1,
     );
@@ -520,7 +524,7 @@ describe("demo maintenance service", () => {
         }),
       ).rejects.toMatchObject({
         statusCode: 409,
-        code: "run_queue_maintenance_owned_by_other_run",
+        code: "run_cleanup_conflict",
       });
     }
     await seedRun(db, redisClient, {
@@ -538,7 +542,7 @@ describe("demo maintenance service", () => {
       }),
     ).rejects.toMatchObject({
       statusCode: 409,
-      code: "run_queue_maintenance_owned_by_other_run",
+      code: "run_cleanup_conflict",
     });
     expect(maintenanceOwner).toBe(ids.failedRun);
     expect(pauseCalls).toBe(1);
@@ -633,7 +637,11 @@ describe("demo maintenance service", () => {
     });
     await expect(
       service.teardownGeneratedRun({ runId: ids.catalogRun, correlationId: "corr-catalog" }),
-    ).rejects.toMatchObject({ statusCode: 409, code: "run_ownership_mismatch" });
+    ).rejects.toMatchObject({
+      statusCode: 409,
+      code: "run_cleanup_conflict",
+      details: { conflictReason: "ownership_mismatch" },
+    });
     expect(await db.select().from(demoRuns).where(eq(demoRuns.id, ids.catalogRun))).toHaveLength(1);
     expect(
       await db.select().from(saleOffers).where(eq(saleOffers.id, ids.catalogOffer)),
@@ -650,7 +658,11 @@ describe("demo maintenance service", () => {
     await db.delete(demoRunSaleContexts).where(eq(demoRunSaleContexts.runId, ids.completedRun));
     await expect(
       service.teardownGeneratedRun({ runId: ids.completedRun, correlationId: "corr-missing" }),
-    ).rejects.toMatchObject({ statusCode: 409, code: "run_ownership_mismatch" });
+    ).rejects.toMatchObject({
+      statusCode: 409,
+      code: "run_cleanup_conflict",
+      details: { conflictReason: "ownership_mismatch" },
+    });
     expect(await db.select().from(demoRuns).where(eq(demoRuns.id, ids.completedRun))).toHaveLength(
       1,
     );
@@ -1270,8 +1282,6 @@ describe("demo maintenance service", () => {
     });
     await expect(reservePromise).resolves.toMatchObject({
       outcome: "run_not_accepting_traffic",
-      reason: "run_not_accepting_traffic",
-      simulatedStatus: "sale_not_active",
     });
     expect(await db.select().from(reservations)).toHaveLength(0);
     expect(await db.select().from(orders)).toHaveLength(0);
@@ -2153,7 +2163,6 @@ async function seedCatalogOrder(
     saleOfferId: ids.catalogOffer,
     correlationId: "corr-catalog-order",
     quantity: 1,
-    status: "secured",
     reservationToken: "catalog-token",
     securedAt: now,
     expiresAt: new Date("2026-06-20T00:15:04.000Z"),
@@ -2208,7 +2217,6 @@ async function seedActiveRunBusinessState(
     saleOfferId: ids.activeOffer,
     runId: ids.activeRun,
     quantity: 1,
-    status: "secured" as const,
     reservationToken: "active-token",
     correlationId: "corr-active-business",
     securedAt: "2026-06-20T00:00:02.000Z",
@@ -2231,7 +2239,6 @@ async function seedActiveRunBusinessState(
     runId: ids.activeRun,
     correlationId: "corr-active-business",
     quantity: 1,
-    status: "secured",
     reservationToken: "active-token",
     securedAt: new Date("2026-06-20T00:00:02.000Z"),
     expiresAt: new Date("2026-06-20T00:15:02.000Z"),
@@ -2251,12 +2258,10 @@ async function seedActiveRunBusinessState(
     createdAt: new Date("2026-06-20T00:00:03.000Z"),
     updatedAt: new Date("2026-06-20T00:00:03.000Z"),
   });
-  await db.insert(demoRunReservationOutcomes).values({
+  await db.insert(demoRunSoldOutCounts).values({
     runId: ids.activeRun,
-    outcome: "api_sold_out_decision",
     count: 4,
     latestObservedAt: new Date("2026-06-20T00:00:04.000Z"),
-    source: "redis",
     capturedAt: new Date("2026-06-20T00:00:04.000Z"),
     createdAt: new Date("2026-06-20T00:00:04.000Z"),
   });
@@ -2272,7 +2277,6 @@ async function seedCleanupDurableGraph(
     runId: ids.completedRun,
     correlationId: "corr-cleanup-graph",
     quantity: 1,
-    status: "secured",
     reservationToken: "cleanup-token",
     securedAt: now,
     expiresAt: new Date("2026-06-20T00:15:04.000Z"),
@@ -2326,9 +2330,7 @@ async function seedCleanupDurableGraph(
     saleOfferId: ids.completedOffer,
     correlationId: "corr-cleanup-graph",
     runId: ids.completedRun,
-    channel: "email",
     recipientPlaceholder: "buyer@example.invalid",
-    status: "recorded",
     recordedAt: now,
     createdAt: now,
   });
@@ -2346,12 +2348,10 @@ async function seedCleanupDurableGraph(
     createdAt: now,
     updatedAt: now,
   });
-  await db.insert(demoRunReservationOutcomes).values({
+  await db.insert(demoRunSoldOutCounts).values({
     runId: ids.completedRun,
-    outcome: "api_sold_out_decision",
     count: 2,
     latestObservedAt: now,
-    source: "redis",
     capturedAt: now,
     createdAt: now,
   });
@@ -2460,7 +2460,7 @@ async function readRunScopedGraphCounts(
       .select()
       .from(reservationPendingPersistence)
       .where(eq(reservationPendingPersistence.runId, runId)),
-    db.select().from(demoRunReservationOutcomes).where(eq(demoRunReservationOutcomes.runId, runId)),
+    db.select().from(demoRunSoldOutCounts).where(eq(demoRunSoldOutCounts.runId, runId)),
     db.select().from(demoRunFinalizations).where(eq(demoRunFinalizations.runId, runId)),
     db.select().from(demoRunSummaries).where(eq(demoRunSummaries.runId, runId)),
   ]);

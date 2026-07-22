@@ -23,7 +23,6 @@ export function createBullMqNotificationRecordPublisher(options: {
         saleOfferId: job.saleOfferId,
         correlationId: job.correlationId,
         ...(job.runId ? { runId: job.runId } : {}),
-        channel: "email",
         recipientPlaceholder: `simulated-buyer:${job.publicOrderId}`,
         confirmedAt,
       };

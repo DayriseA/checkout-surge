@@ -47,7 +47,6 @@ function orderStatusEventFixture(
     eventName,
     previousStatus,
     status,
-    customerStatus: status,
     attemptNumber: 1,
     attemptsMade: 0,
     ...overrides,
