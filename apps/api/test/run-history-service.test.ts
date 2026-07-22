@@ -112,7 +112,7 @@ describe("run history service", () => {
     expect(secondPage.summaries[0]?.runId).toBe(ids.olderRun);
   });
 
-  it("normalizes legacy emitted-era delivery rows when reading history", async () => {
+  it("rejects emitted-era delivery rows with summary-row context", async () => {
     const db = requireConnection(connection).db;
     const service = createService(connection);
     await seedHistory(db);
@@ -130,20 +130,89 @@ describe("run history service", () => {
       .set({ trafficDeliverySummary: legacyDeliverySummary })
       .where(eq(demoRunSummaries.id, ids.newerSummary));
 
-    const history = await service.list({ page: 1, pageSize: 10 });
-    expect(history.summaries[0]?.trafficDeliverySummary).toMatchObject({
-      plannedRequests: 100,
-      startedRequests: 94,
-      completedRequests: 94,
-      interruptedRequests: 0,
-      unstartedRequests: 6,
+    await expect(service.list({ page: 1, pageSize: 10 })).rejects.toThrow(
+      new RegExp(`${ids.newerSummary}.*${ids.newerRun}.*trafficDeliverySummary`),
+    );
+  });
+
+  it("rejects stored run config snapshots that rely on wire defaults with run context", async () => {
+    const db = requireConnection(connection).db;
+    const service = createService(connection);
+    await seedHistory(db);
+    const config = configSnapshotFixture();
+    const { forcedOutage: _defaulted, ...incompleteErpConfig } = config.erpConfig;
+    await db
+      .update(demoRuns)
+      .set({
+        configSnapshot: {
+          ...config,
+          erpConfig: incompleteErpConfig,
+        } as unknown as (typeof demoRuns.$inferSelect)["configSnapshot"],
+      })
+      .where(eq(demoRuns.id, ids.newerRun));
+
+    await expect(service.detail(ids.newerRun)).rejects.toThrow(
+      new RegExp(`${ids.newerRun}.*configSnapshot\\.erpConfig\\.forcedOutage`),
+    );
+  });
+
+  it("rejects stored business summaries that rely on wire defaults with row context", async () => {
+    const db = requireConnection(connection).db;
+    const service = createService(connection);
+    await seedHistory(db);
+    const summary = summaryFixture({
+      id: ids.newerSummary,
+      runId: ids.newerRun,
+      presetName: "History Failed",
+      status: "failed",
+      failureReason: "traffic_delivery_major_shortfall",
+      capturedAt: new Date("2026-06-20T00:00:08.000Z"),
+      startedRequests: 5,
       trafficDeliveryStatus: "failed",
-      trafficMode: null,
-      completedIterations: null,
     });
-    expect(history.summaries[0]?.trafficDeliverySummary).not.toHaveProperty("emittedRequests");
-    expect(history.summaries[0]?.trafficDeliverySummary).not.toHaveProperty("unstartedIterations");
-    expect(history.summaries[0]?.trafficDeliverySummary).not.toHaveProperty("requestShortfall");
+    const { processingOrders: _defaulted, ...incompleteBusinessOutcome } =
+      summary.businessOutcomeSummary;
+    await db
+      .update(demoRunSummaries)
+      .set({
+        businessOutcomeSummary:
+          incompleteBusinessOutcome as unknown as (typeof demoRunSummaries.$inferSelect)["businessOutcomeSummary"],
+      })
+      .where(eq(demoRunSummaries.id, ids.newerSummary));
+
+    await expect(service.list({ page: 1, pageSize: 10 })).rejects.toThrow(
+      new RegExp(`${ids.newerSummary}.*${ids.newerRun}.*businessOutcomeSummary\\.processingOrders`),
+    );
+  });
+
+  it("rejects malformed terminal inventory with summary-row context", async () => {
+    const db = requireConnection(connection).db;
+    const service = createService(connection);
+    await seedHistory(db);
+    await db
+      .update(demoRunSummaries)
+      .set({
+        terminalInventorySnapshot: {
+          ...summaryFixture({
+            id: ids.newerSummary,
+            runId: ids.newerRun,
+            presetName: "History Failed",
+            status: "failed",
+            failureReason: "traffic_delivery_major_shortfall",
+            capturedAt: new Date("2026-06-20T00:00:08.000Z"),
+            startedRequests: 5,
+            trafficDeliveryStatus: "failed",
+          }).terminalInventorySnapshot,
+          remainingStock: -1,
+        } as (typeof demoRunSummaries.$inferSelect)["terminalInventorySnapshot"],
+      })
+      .where(eq(demoRunSummaries.id, ids.newerSummary));
+
+    await expect(service.list({ page: 1, pageSize: 10 })).rejects.toThrow(
+      new RegExp(
+        `${ids.newerSummary}.*${ids.newerRun}.*terminalInventorySnapshot\\.remainingStock`,
+      ),
+    );
   });
 
   it("returns aggregate public detail and row-oriented admin detail", async () => {
@@ -642,7 +711,14 @@ function summaryFixture(input: {
       completedRequests: input.startedRequests,
       interruptedRequests: 0,
       unstartedRequests: 10 - input.startedRequests,
+      trafficMode: null,
+      plannedBuyers: null,
+      scheduledRatePerSecond: null,
+      configuredDurationSeconds: null,
+      preAllocatedVUs: null,
+      maxVUs: null,
       droppedIterations: 10 - input.startedRequests,
+      completedIterations: null,
       trafficDeliveryStatus: input.trafficDeliveryStatus,
       notes: input.trafficDeliveryStatus === "failed" ? ["private-delivery-diagnostic-marker"] : [],
     }),

@@ -1,6 +1,6 @@
 import {
   type AcceptedRunConfigSnapshot,
-  acceptedRunConfigSnapshotSchema,
+  materializedAcceptedRunConfigSnapshotSchema,
 } from "@checkout-surge/contracts";
 import { type CheckoutSurgeDatabase, demoRuns } from "@checkout-surge/db";
 import { eq } from "drizzle-orm";
@@ -20,7 +20,7 @@ export class PostgresRunConfigReader implements RunConfigReader {
       return null;
     }
 
-    const parsed = acceptedRunConfigSnapshotSchema.safeParse(row.configSnapshot);
+    const parsed = materializedAcceptedRunConfigSnapshotSchema.safeParse(row.configSnapshot);
     if (!parsed.success) {
       throw new PersistedRunConfigCorruptionError(runId, parsed.error);
     }
@@ -36,7 +36,37 @@ export class PersistedRunConfigCorruptionError extends Error {
     readonly runId: string,
     cause: unknown,
   ) {
-    super(`Persisted configuration for demo run "${runId}" is invalid.`, { cause });
+    const detail = validationErrorDetail(cause);
+    super(`Persisted configuration for demo run "${runId}" is invalid: ${detail}`, { cause });
     this.name = "PersistedRunConfigCorruptionError";
   }
+}
+
+function validationErrorDetail(cause: unknown): string {
+  if (isValidationError(cause)) {
+    return cause.issues
+      .map((issue) => {
+        const path = issue.path.join(".");
+        return `configSnapshot${path ? `.${path}` : ""}: ${issue.message}`;
+      })
+      .join("; ");
+  }
+  return cause instanceof Error ? cause.message : String(cause);
+}
+
+function isValidationError(
+  value: unknown,
+): value is Error & { issues: Array<{ path: PropertyKey[]; message: string }> } {
+  if (!(value instanceof Error) || !("issues" in value) || !Array.isArray(value.issues)) {
+    return false;
+  }
+  return value.issues.every(
+    (issue) =>
+      typeof issue === "object" &&
+      issue !== null &&
+      "path" in issue &&
+      Array.isArray(issue.path) &&
+      "message" in issue &&
+      typeof issue.message === "string",
+  );
 }

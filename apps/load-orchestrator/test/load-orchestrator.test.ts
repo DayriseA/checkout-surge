@@ -193,7 +193,71 @@ describe("load-orchestrator configuration", () => {
 });
 
 describe("durable execution ownership", () => {
-  it("migrates Task-9 completion journals with timestamp-only diagnostics", async () => {
+  it("rejects journals whose stored request relies on a wire default", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "checkout-surge-incomplete-journal-"));
+    try {
+      if (startRequest.configSnapshot.trafficConfig.mode !== "buyer-spike") {
+        throw new Error("Expected the shared start fixture to use buyer-spike traffic.");
+      }
+      const { duplicateEachBuyerAttempt: _defaulted, ...incompleteTrafficConfig } =
+        startRequest.configSnapshot.trafficConfig;
+      await writeFile(
+        path.join(directory, "execution.json"),
+        JSON.stringify({
+          request: {
+            ...startRequest,
+            configSnapshot: {
+              ...startRequest.configSnapshot,
+              trafficConfig: incompleteTrafficConfig,
+            },
+          },
+          state: "accepted",
+          acceptedAt: timestamp,
+        }),
+      );
+
+      await expect(new FileExecutionStore(directory).read()).rejects.toThrow(
+        /execution\.json.*request\.configSnapshot\.trafficConfig\.duplicateEachBuyerAttempt/,
+      );
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects journals whose stored completion relies on a wire default", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "checkout-surge-incomplete-journal-"));
+    try {
+      const report = new K6RunAccumulator({
+        runId: startRequest.runId,
+        correlationId: startRequest.correlationId,
+        plannedRequests: 400,
+        startedAt: new Date(timestamp),
+        executionPlan: generateK6Script(startRequest).executionPlan,
+      }).completionReport({ status: "failed", completedAt: new Date(completionTimestamp) });
+      const { completedIterations: _defaulted, ...incompleteDeliverySummary } =
+        report.trafficDeliverySummary;
+      await writeFile(
+        path.join(directory, "execution.json"),
+        JSON.stringify({
+          request: startRequest,
+          state: "completion_pending",
+          acceptedAt: timestamp,
+          completion: {
+            ...report,
+            trafficDeliverySummary: incompleteDeliverySummary,
+          },
+        }),
+      );
+
+      await expect(new FileExecutionStore(directory).read()).rejects.toThrow(
+        /execution\.json.*completion\.trafficDeliverySummary\.completedIterations/,
+      );
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects journals with timestamp-only diagnostics and names the journal path", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "checkout-surge-legacy-journal-"));
     try {
       const report = new K6RunAccumulator({
@@ -216,23 +280,9 @@ describe("durable execution ownership", () => {
           },
         }),
       );
-      expect(
-        (await new FileExecutionStore(directory).read())?.completion?.loadRunDiagnosticsSummary,
-      ).toMatchObject({
-        executionPlan: generateK6Script(startRequest).executionPlan,
-        stderrLines: [],
-        nproc: null,
-      });
-      expect(
-        (await new FileExecutionStore(directory).read())?.completion?.httpTimingBreakdownSummary,
-      ).toEqual({
-        blocked: null,
-        connecting: null,
-        tlsHandshaking: null,
-        sending: null,
-        waiting: null,
-        receiving: null,
-      });
+      await expect(new FileExecutionStore(directory).read()).rejects.toThrow(
+        /execution\.json.*completion\.loadRunDiagnosticsSummary/,
+      );
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
@@ -241,7 +291,7 @@ describe("durable execution ownership", () => {
   it.each([
     42,
     null,
-  ])("migrates the legacy runner p95-only timing shape (%s) without relabeling duration", async (legacyP95LatencyMs) => {
+  ])("rejects the retired p95-only timing shape (%s)", async (legacyP95LatencyMs) => {
     const directory = await mkdtemp(path.join(tmpdir(), "checkout-surge-legacy-journal-"));
     try {
       const report = new K6RunAccumulator({
@@ -270,31 +320,15 @@ describe("durable execution ownership", () => {
         }),
       );
 
-      const migrated = (await new FileExecutionStore(directory).read())?.completion;
-      expect(migrated?.httpTimingBreakdownSummary).toEqual({
-        blocked: null,
-        connecting: null,
-        tlsHandshaking: null,
-        sending: null,
-        waiting: null,
-        receiving: null,
-      });
-      expect(migrated?.loadRunDiagnosticsSummary).toMatchObject({
-        terminalMetricSources: {
-          startedRequests: null,
-          completedRequests: null,
-        },
-        summaryExportWarnings: [
-          "summary_export_missing",
-          "k6_outcome_counter_summary_export_unavailable",
-        ],
-      });
+      await expect(new FileExecutionStore(directory).read()).rejects.toThrow(
+        /execution\.json.*completion\.httpTimingBreakdownSummary/,
+      );
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
   });
 
-  it("migrates legacy journals with emitted-era transport counts to canonical counts", async () => {
+  it("rejects journals with emitted-era transport and completion shapes", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "checkout-surge-legacy-journal-"));
     try {
       const canonical = new K6RunAccumulator({
@@ -355,45 +389,15 @@ describe("durable execution ownership", () => {
         }),
       );
 
-      const migrated = (await new FileExecutionStore(directory).read())?.completion;
-
-      expect(migrated?.httpSummary).toMatchObject({
-        plannedRequests: 400,
-        startedRequests: 300,
-        completedRequests: 300,
-        interruptedRequests: 0,
-        unstartedRequests: 100,
-      });
-      expect(migrated?.httpSummary).not.toHaveProperty("emittedRequests");
-      expect(migrated?.trafficDeliverySummary).toMatchObject({
-        plannedRequests: 400,
-        startedRequests: 300,
-        completedRequests: 300,
-        interruptedRequests: 0,
-        unstartedRequests: 100,
-        completedIterations: 300,
-      });
-      expect(migrated?.trafficDeliverySummary).not.toHaveProperty("emittedRequests");
-      expect(migrated?.trafficDeliverySummary).not.toHaveProperty("unstartedIterations");
-      expect(migrated?.trafficDeliverySummary).not.toHaveProperty("requestShortfall");
-      expect(migrated?.loadRunDiagnosticsSummary.terminalMetricSources).toMatchObject({
-        startedRequests: "summary_export",
-        completedRequests: "summary_export",
-      });
-      expect(migrated?.apiRequestLifecycleSummary).toMatchObject({
-        plannedRequests: 400,
-        startedRequests: 300,
-        completedRequests: 300,
-        interruptedRequests: 0,
-        unstartedRequests: 100,
-        failedRequests: 0,
-      });
+      await expect(new FileExecutionStore(directory).read()).rejects.toThrow(
+        /execution\.json.*completion\.httpSummary/,
+      );
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
   });
 
-  it("rejects unknown legacy timing shapes instead of broadening journal migration", async () => {
+  it("rejects malformed timing shapes", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "checkout-surge-legacy-journal-"));
     try {
       const report = new K6RunAccumulator({
@@ -427,7 +431,7 @@ describe("durable execution ownership", () => {
     }
   });
 
-  it("does not broaden legacy migration to diagnostic objects with extra fields", async () => {
+  it("rejects diagnostic objects with extra fields", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "checkout-surge-legacy-journal-"));
     try {
       const report = new K6RunAccumulator({

@@ -47,7 +47,7 @@ The full local reference runtime includes exactly one of each application runtim
 
 The application runtimes remain separate containers. Caddy only routes the single dashboard origin: it is not an additional web application process, a maintenance owner, or a second application authority. The load orchestrator is part of the demonstrated system and runs in its own container with k6 installed inside that runtime image.
 
-Its one-execution journal is mounted on the named `checkout-surge-load-orchestrator-data` volume. Container restarts therefore preserve accepted, executing, or completed traffic evidence and pending API completion delivery; `runtime:wipe` removes that volume together with the database and Redis volumes.
+Its one-execution journal is mounted on the named `checkout-surge-load-orchestrator-data` volume. Container restarts therefore preserve current-shape accepted, executing, or completed traffic evidence and pending API completion delivery; journal reads validate that current shape directly and identify the mounted journal path when malformed. `runtime:wipe` removes that volume together with the database and Redis volumes, which is the supported response to an incompatible pre-release journal.
 
 This single-instance layout is the supported local contract, not a claim that the services are generically horizontally scalable. Compose's general `--scale` capability is not disabled, but scaled application services are outside this repository's accepted topology and verification. Some replica-coordination mechanisms still exist in the implementation; later simplification tasks own their deletion or replacement and this topology decision does not advertise them as a supported product mode.
 

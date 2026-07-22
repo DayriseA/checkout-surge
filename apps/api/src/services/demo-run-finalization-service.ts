@@ -1,15 +1,14 @@
 import {
   type AcceptedRunConfigSnapshot,
-  acceptedRunConfigSnapshotSchema,
   type BusinessOutcomeSummary,
   businessOutcomeSummarySchema,
   type DemoRunSnapshot,
+  httpTimingBreakdownSummarySchema,
   type InventoryStatus,
-  normalizeLegacyApiRequestLifecycleSummaryJson,
-  normalizeLegacyLoadRunDiagnosticsSummaryJson,
+  realLoadRunDiagnosticsSummarySchema,
   type TrafficDeliverySummary,
   type TrafficHttpSummary,
-  terminalInventorySnapshotSchema,
+  trafficCompletionApiRequestLifecycleSummarySchema,
 } from "@checkout-surge/contracts";
 import {
   type CheckoutSurgeDatabase,
@@ -32,10 +31,14 @@ import {
 } from "./accepted-response-accounting.js";
 import { toDemoRunSnapshot, toRedisTerminalInventorySnapshot } from "./demo-run-projections.js";
 import type { PendingPersistenceReconciler } from "./pending-persistence-reconciler.js";
+import {
+  parsePersistedAcceptedRunConfigSnapshot,
+  parsePersistedTerminalInventorySnapshot,
+} from "./persisted-demo-run-state.js";
 import type { TerminalDemoRunWriter } from "./terminal-demo-run-writer.js";
 import {
-  normalizePersistedTrafficHttpSummary,
-  normalizeTrafficDeliverySummary,
+  parsePersistedTrafficDeliverySummary,
+  parsePersistedTrafficHttpSummary,
 } from "./traffic-delivery-classifier.js";
 
 export interface TerminalInventoryReadOperation {
@@ -188,7 +191,7 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
     const evidence = parseFinalizationEvidence(row.run, finalization);
     let pendingAtTrafficCompletion: boolean;
     try {
-      pendingAtTrafficCompletion = hadPendingPersistenceAtTrafficCompletion(finalization);
+      pendingAtTrafficCompletion = hadPendingPersistenceAtTrafficCompletion(finalization, runId);
     } catch (error) {
       this.options.logger.warn(
         { err: error, runId },
@@ -275,12 +278,9 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
             reconciliationTimedOut || (timedOut && pendingAtTrafficCompletion),
         });
         const accountingWarning = acceptedResponseAccountingWarning(latestAccounting);
-        const normalizedDiagnostics = normalizeLegacyLoadRunDiagnosticsSummaryJson(
-          finalization.loadRunDiagnosticsSummary,
-        );
         const loadRunDiagnosticsSummary = accountingWarning
-          ? appendAccountingWarning(normalizedDiagnostics, accountingWarning)
-          : normalizedDiagnostics;
+          ? appendAccountingWarning(evidence.diagnostics, accountingWarning)
+          : evidence.diagnostics;
 
         return {
           run: row.run,
@@ -289,12 +289,9 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
           finalizedAt: now,
           httpSummary: evidence.http,
           trafficDeliverySummary: evidence.delivery,
-          httpTimingBreakdownSummary: finalization.httpTimingBreakdownSummary,
+          httpTimingBreakdownSummary: evidence.timing,
           loadRunDiagnosticsSummary,
-          apiRequestLifecycleSummary: normalizeLegacyApiRequestLifecycleSummaryJson(
-            finalization.apiRequestLifecycleSummary,
-            evidence.http.plannedRequests,
-          ),
+          apiRequestLifecycleSummary: evidence.lifecycle,
           businessOutcome: latestBusinessOutcome,
           terminalInventorySnapshot: toRedisTerminalInventorySnapshot({
             saleOfferId: requireSaleOfferId(row.run),
@@ -496,23 +493,61 @@ function parseFinalizationEvidence(
   config: AcceptedRunConfigSnapshot;
   delivery: TrafficDeliverySummary;
   http: TrafficHttpSummary;
+  timing: ReturnType<typeof httpTimingBreakdownSummarySchema.parse>;
+  diagnostics: ReturnType<typeof realLoadRunDiagnosticsSummarySchema.parse>;
+  lifecycle: ReturnType<typeof trafficCompletionApiRequestLifecycleSummarySchema.parse>;
 } {
+  const context = `demo run ${run.id} finalization`;
+  const timing = httpTimingBreakdownSummarySchema.safeParse(
+    finalization.httpTimingBreakdownSummary,
+  );
+  if (!timing.success) {
+    throw invalidFinalizationField(context, "httpTimingBreakdownSummary", timing.error);
+  }
+  const diagnostics = realLoadRunDiagnosticsSummarySchema.safeParse(
+    finalization.loadRunDiagnosticsSummary,
+  );
+  if (!diagnostics.success) {
+    throw invalidFinalizationField(context, "loadRunDiagnosticsSummary", diagnostics.error);
+  }
+  const lifecycle = trafficCompletionApiRequestLifecycleSummarySchema.safeParse(
+    finalization.apiRequestLifecycleSummary,
+  );
+  if (!lifecycle.success) {
+    throw invalidFinalizationField(context, "apiRequestLifecycleSummary", lifecycle.error);
+  }
   return {
-    config: acceptedRunConfigSnapshotSchema.parse(run.configSnapshot),
-    delivery: normalizeTrafficDeliverySummary(finalization.trafficDeliverySummary),
-    http: normalizePersistedTrafficHttpSummary(finalization.httpSummary),
+    config: parsePersistedAcceptedRunConfigSnapshot(run.configSnapshot, context),
+    delivery: parsePersistedTrafficDeliverySummary(finalization.trafficDeliverySummary, context),
+    http: parsePersistedTrafficHttpSummary(finalization.httpSummary, context),
+    timing: timing.data,
+    diagnostics: diagnostics.data,
+    lifecycle: lifecycle.data,
   };
+}
+
+function invalidFinalizationField(
+  context: string,
+  field: string,
+  error: { issues: ReadonlyArray<{ path: PropertyKey[]; message: string }> },
+): Error {
+  const issues = error.issues
+    .map((issue) => `${field}.${issue.path.join(".")}: ${issue.message}`)
+    .join("; ");
+  return new Error(`Invalid persisted ${field} for ${context}: ${issues}`, { cause: error });
 }
 
 function hadPendingPersistenceAtTrafficCompletion(
   finalization: typeof demoRunFinalizations.$inferSelect,
+  runId: string,
 ): boolean {
   if (!("terminalInventorySnapshot" in finalization.trafficOutcomeSummary)) {
     return false;
   }
   return (
-    terminalInventorySnapshotSchema.parse(
+    parsePersistedTerminalInventorySnapshot(
       finalization.trafficOutcomeSummary.terminalInventorySnapshot,
+      `demo run ${runId} finalization trafficOutcomeSummary`,
     ).pendingPersistenceCount > 0
   );
 }

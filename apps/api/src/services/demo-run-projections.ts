@@ -6,8 +6,10 @@ import {
   type TerminalInventorySnapshot,
 } from "@checkout-surge/contracts";
 import type { demoRuns } from "@checkout-surge/db";
+import { parsePersistedAcceptedRunConfigSnapshot } from "./persisted-demo-run-state.js";
 
 export function toDemoRunSnapshot(run: typeof demoRuns.$inferSelect): DemoRunSnapshot {
+  const context = `demo run ${run.id}`;
   return demoRunSnapshotSchema.parse({
     runId: run.id,
     presetId: run.presetId,
@@ -16,7 +18,7 @@ export function toDemoRunSnapshot(run: typeof demoRuns.$inferSelect): DemoRunSna
     status: run.status,
     trafficStatus: run.trafficStatus,
     ...(run.saleOfferId ? { saleOfferId: run.saleOfferId } : {}),
-    configSnapshot: run.configSnapshot,
+    configSnapshot: parsePersistedAcceptedRunConfigSnapshot(run.configSnapshot, context),
     ...(run.startedAt ? { startedAt: run.startedAt.toISOString() } : {}),
     ...(run.trafficStartedAt ? { trafficStartedAt: run.trafficStartedAt.toISOString() } : {}),
     ...(run.trafficEndedAt ? { trafficEndedAt: run.trafficEndedAt.toISOString() } : {}),

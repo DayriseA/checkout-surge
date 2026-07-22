@@ -236,6 +236,12 @@ export const businessOutcomeSummarySchema = z
   .strict();
 export type BusinessOutcomeSummary = z.infer<typeof businessOutcomeSummarySchema>;
 
+/** Materialized business outcome state. Persisted summaries may not rely on wire defaults. */
+export const materializedBusinessOutcomeSummarySchema = businessOutcomeSummarySchema.safeExtend({
+  processingOrders: nonnegativeIntegerSchema,
+  retryingOrders: nonnegativeIntegerSchema,
+});
+
 export const consistencyLagSummarySchema = z
   .object({
     confirmedOrderCount: nonnegativeIntegerSchema,

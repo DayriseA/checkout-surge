@@ -86,6 +86,7 @@ import {
   toDemoRunSnapshot,
   toRedisTerminalInventorySnapshot,
 } from "./demo-run-projections.js";
+import { parsePersistedAcceptedRunConfigSnapshot } from "./persisted-demo-run-state.js";
 import type {
   PublicRunBudgetReservation,
   PublicRunBudgetStore,
@@ -96,7 +97,7 @@ import {
   findTrafficCompletionRedeliveryMismatch,
 } from "./traffic-completion-binding.js";
 import type { TrafficCompletionEnrichmentController } from "./traffic-completion-enrichment-service.js";
-import { normalizeTrafficDeliverySummary } from "./traffic-delivery-classifier.js";
+import { classifyTrafficDeliverySummary } from "./traffic-delivery-classifier.js";
 import { syntheticFailedTrafficSummary } from "./traffic-delivery-plan.js";
 
 export const demoRunStartLockKey = "checkout_surge_demo_run_start";
@@ -999,7 +1000,10 @@ export class DemoRunService implements DemoRunController {
           apiBaseUrl: this.options.apiBaseUrl,
           buyEndpointPath: this.options.buyEndpointPath,
           correlationId,
-          configSnapshot: acceptedRunConfigSnapshotSchema.parse(run.configSnapshot),
+          configSnapshot: parsePersistedAcceptedRunConfigSnapshot(
+            run.configSnapshot,
+            `demo run ${run.id} starting reconciliation`,
+          ),
         });
         await this.updateRunAfterTrafficStart(run.id, response, this.now());
         reconciled += 1;
@@ -1015,7 +1019,7 @@ export class DemoRunService implements DemoRunController {
 
   async recordTrafficCompletion(input: TrafficCompletionReport): Promise<DemoRunSnapshot> {
     const report = trafficCompletionReportSchema.parse(input);
-    const normalizedTrafficDeliverySummary = normalizeTrafficDeliverySummary(
+    const classifiedTrafficDeliverySummary = classifyTrafficDeliverySummary(
       report.trafficDeliverySummary,
     );
     const now = this.now();
@@ -1036,12 +1040,15 @@ export class DemoRunService implements DemoRunController {
           runId: report.runId,
         });
       }
+      if (!run.startedAt) {
+        throw new Error(`Current demo run ${run.id} has no startedAt timestamp.`);
+      }
 
       const bindingMismatch = findTrafficCompletionBindingMismatch(
         {
           runId: run.id,
           configSnapshot: run.configSnapshot,
-          acceptedAt: run.startedAt ?? run.createdAt,
+          acceptedAt: run.startedAt,
           trafficStartedAt: run.trafficStartedAt,
         },
         report,
@@ -1058,7 +1065,7 @@ export class DemoRunService implements DemoRunController {
           run,
           existing,
           report,
-          normalizedTrafficDeliverySummary,
+          classifiedTrafficDeliverySummary,
         );
         if (redeliveryMismatch) throwCompletionMismatch(run.id, redeliveryMismatch);
         return { inserted: false };
@@ -1082,7 +1089,7 @@ export class DemoRunService implements DemoRunController {
           errorMessage: report.errorMessage ?? null,
           httpSummary: report.httpSummary,
           trafficOutcomeSummary: report.trafficOutcomeSummary,
-          trafficDeliverySummary: normalizedTrafficDeliverySummary,
+          trafficDeliverySummary: classifiedTrafficDeliverySummary,
           httpTimingBreakdownSummary: report.httpTimingBreakdownSummary,
           loadRunDiagnosticsSummary: report.loadRunDiagnosticsSummary,
           apiRequestLifecycleSummary: report.apiRequestLifecycleSummary,
@@ -1367,7 +1374,7 @@ export class DemoRunService implements DemoRunController {
         ? await this.captureTerminalInventorySnapshot(run.saleOfferId, businessOutcome, now)
         : null;
       const trafficSummary = syntheticFailedTrafficSummary(
-        acceptedRunConfigSnapshotSchema.parse(run.configSnapshot),
+        parsePersistedAcceptedRunConfigSnapshot(run.configSnapshot, `demo run ${run.id}`),
         [`${failureReason}_before_traffic_start`],
       );
 

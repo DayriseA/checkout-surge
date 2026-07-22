@@ -1,16 +1,27 @@
 import { isDeepStrictEqual } from "node:util";
 import {
-  acceptedRunConfigSnapshotSchema,
   deriveLoadExecutionPlan,
-  normalizeLegacyApiRequestLifecycleSummaryJson,
-  normalizeLegacyLoadRunDiagnosticsSummaryJson,
+  httpTimingBreakdownSummarySchema,
+  realLoadRunDiagnosticsSummarySchema,
   type TrafficCompletionReport,
   type TrafficDeliverySummary,
+  trafficCompletionApiRequestLifecycleSummarySchema,
+  trafficDeliverySummarySchema,
+  trafficHttpSummarySchema,
 } from "@checkout-surge/contracts";
-import {
-  normalizePersistedTrafficHttpSummary,
-  normalizeTrafficDeliverySummary,
-} from "./traffic-delivery-classifier.js";
+import { z } from "zod";
+import { parsePersistedAcceptedRunConfigSnapshot } from "./persisted-demo-run-state.js";
+import { parsePersistedTrafficDeliverySummary } from "./traffic-delivery-classifier.js";
+
+const persistedRedeliveryEvidenceSchema = z
+  .object({
+    httpSummary: trafficHttpSummarySchema,
+    trafficDeliverySummary: trafficDeliverySummarySchema,
+    httpTimingBreakdownSummary: httpTimingBreakdownSummarySchema,
+    loadRunDiagnosticsSummary: realLoadRunDiagnosticsSummarySchema,
+    apiRequestLifecycleSummary: trafficCompletionApiRequestLifecycleSummarySchema,
+  })
+  .strict();
 
 export interface TrafficCompletionMismatch {
   field: string;
@@ -33,7 +44,10 @@ export function findTrafficCompletionBindingMismatch(
     return { field: "runId", expected: run.runId, actual: report.runId };
   }
 
-  const snapshot = acceptedRunConfigSnapshotSchema.parse(run.configSnapshot);
+  const snapshot = parsePersistedAcceptedRunConfigSnapshot(
+    run.configSnapshot,
+    `demo run ${run.runId}`,
+  );
   const expectedPlan = deriveLoadExecutionPlan(snapshot.trafficConfig);
   const reportedPlan = report.loadRunDiagnosticsSummary.executionPlan;
   if (!isDeepStrictEqual(reportedPlan, expectedPlan)) {
@@ -93,40 +107,53 @@ export function findTrafficCompletionRedeliveryMismatch(
     apiRequestLifecycleSummary: unknown;
   },
   report: TrafficCompletionReport,
-  normalizedTrafficDeliverySummary: TrafficDeliverySummary,
+  classifiedTrafficDeliverySummary: TrafficDeliverySummary,
 ): TrafficCompletionMismatch | null {
+  const parsedExisting = persistedRedeliveryEvidenceSchema.safeParse({
+    httpSummary: existing.httpSummary,
+    trafficDeliverySummary: existing.trafficDeliverySummary,
+    httpTimingBreakdownSummary: existing.httpTimingBreakdownSummary,
+    loadRunDiagnosticsSummary: existing.loadRunDiagnosticsSummary,
+    apiRequestLifecycleSummary: existing.apiRequestLifecycleSummary,
+  });
+  if (!parsedExisting.success) {
+    const issues = parsedExisting.error.issues
+      .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+      .join("; ");
+    throw new Error(`Invalid persisted finalization for demo run ${report.runId}: ${issues}`, {
+      cause: parsedExisting.error,
+    });
+  }
+  const persistedDelivery = parsePersistedTrafficDeliverySummary(
+    parsedExisting.data.trafficDeliverySummary,
+    `demo run ${report.runId} finalization`,
+  );
+
   const comparisons: Array<[string, unknown, unknown]> = [
     ["status", report.status, run.trafficStatus],
     ["exitCode", report.exitCode ?? null, existing.exitCode],
     ["errorMessage", report.errorMessage ?? null, existing.errorMessage],
-    ["httpSummary", report.httpSummary, normalizeExistingHttpSummary(existing.httpSummary)],
+    ["httpSummary", report.httpSummary, parsedExisting.data.httpSummary],
     [
       "trafficOutcomeSummary",
       report.trafficOutcomeSummary,
       withoutCompletionEnrichment(existing.trafficOutcomeSummary),
     ],
-    [
-      "trafficDeliverySummary",
-      normalizedTrafficDeliverySummary,
-      normalizeExistingDeliverySummary(existing.trafficDeliverySummary),
-    ],
+    ["trafficDeliverySummary", classifiedTrafficDeliverySummary, persistedDelivery],
     [
       "httpTimingBreakdownSummary",
       report.httpTimingBreakdownSummary,
-      existing.httpTimingBreakdownSummary,
+      parsedExisting.data.httpTimingBreakdownSummary,
     ],
     [
       "loadRunDiagnosticsSummary",
       report.loadRunDiagnosticsSummary,
-      normalizeLegacyLoadRunDiagnosticsSummaryJson(existing.loadRunDiagnosticsSummary),
+      parsedExisting.data.loadRunDiagnosticsSummary,
     ],
     [
       "apiRequestLifecycleSummary",
       report.apiRequestLifecycleSummary,
-      normalizeLegacyApiRequestLifecycleSummaryJson(
-        existing.apiRequestLifecycleSummary,
-        report.httpSummary.plannedRequests,
-      ),
+      parsedExisting.data.apiRequestLifecycleSummary,
     ],
     ["completedAt", report.completedAt, run.trafficEndedAt?.toISOString()],
   ];
@@ -134,27 +161,6 @@ export function findTrafficCompletionRedeliveryMismatch(
     if (!isDeepStrictEqual(actual, expected)) return { field };
   }
   return null;
-}
-
-/**
- * Persisted summaries written before canonical transport-attempt accounting
- * are normalized at this read boundary so redelivery comparison stays
- * semantic. Rows that cannot be normalized compare raw and simply mismatch.
- */
-function normalizeExistingHttpSummary(value: unknown): unknown {
-  try {
-    return normalizePersistedTrafficHttpSummary(value);
-  } catch {
-    return value;
-  }
-}
-
-function normalizeExistingDeliverySummary(value: unknown): unknown {
-  try {
-    return normalizeTrafficDeliverySummary(value);
-  } catch {
-    return value;
-  }
 }
 
 function withoutCompletionEnrichment(value: Record<string, unknown>): Record<string, unknown> {

@@ -18,10 +18,13 @@ import type {
   TrafficCompletionEnrichmentStatus as ContractTrafficCompletionEnrichmentStatus,
   DemoPresetDisplay,
   ErpRunConfig,
+  HttpTimingBreakdownSummary,
   InventoryConfig,
   OperatorMode,
   PublicRuntimePolicy as PublicRuntimePolicyContract,
+  RealLoadRunDiagnosticsSummary,
   TerminalInventorySnapshot,
+  TrafficCompletionApiRequestLifecycleSummary,
   TrafficConfig,
   TrafficDeliverySummary,
   TrafficExecutionStatus,
@@ -641,9 +644,15 @@ export const demoRunFinalizations = pgTable(
     httpSummary: jsonObject<TrafficHttpSummary>("http_summary"),
     trafficOutcomeSummary: jsonObject<JsonRecord>("traffic_outcome_summary"),
     trafficDeliverySummary: jsonObject<TrafficDeliverySummary>("traffic_delivery_summary"),
-    httpTimingBreakdownSummary: jsonObject<JsonRecord>("http_timing_breakdown_summary"),
-    loadRunDiagnosticsSummary: jsonObject<JsonRecord>("load_run_diagnostics_summary"),
-    apiRequestLifecycleSummary: jsonObject<JsonRecord>("api_request_lifecycle_summary"),
+    httpTimingBreakdownSummary: jsonObject<HttpTimingBreakdownSummary>(
+      "http_timing_breakdown_summary",
+    ),
+    loadRunDiagnosticsSummary: jsonObject<RealLoadRunDiagnosticsSummary>(
+      "load_run_diagnostics_summary",
+    ),
+    apiRequestLifecycleSummary: jsonObject<TrafficCompletionApiRequestLifecycleSummary>(
+      "api_request_lifecycle_summary",
+    ),
     completionEnrichmentStatus: trafficCompletionEnrichmentStatusEnum(
       "completion_enrichment_status",
     )

@@ -36,8 +36,13 @@ import {
 import { count, desc, eq, inArray, sql } from "drizzle-orm";
 import { toDemoRunSnapshot } from "./demo-run-projections.js";
 import {
-  normalizePersistedTrafficHttpSummary,
-  normalizeTrafficDeliverySummary,
+  parsePersistedAcceptedRunConfigSnapshot,
+  parsePersistedBusinessOutcomeSummary,
+  parsePersistedTerminalInventorySnapshot,
+} from "./persisted-demo-run-state.js";
+import {
+  parsePersistedTrafficDeliverySummary,
+  parsePersistedTrafficHttpSummary,
 } from "./traffic-delivery-classifier.js";
 
 const detailRecordLimit = 20;
@@ -314,9 +319,13 @@ export class RunHistoryService implements RunHistoryController {
 function toPublicRunHistorySummary(
   row: typeof demoRunSummaries.$inferSelect,
 ): PublicRunHistorySummary {
-  const inventory = row.terminalInventorySnapshot;
-  const { notes: _notes, ...publicDeliverySummary } = normalizeTrafficDeliverySummary(
+  const context = `run summary ${row.id} for demo run ${row.runId}`;
+  const inventory = row.terminalInventorySnapshot
+    ? parsePersistedTerminalInventorySnapshot(row.terminalInventorySnapshot, context)
+    : null;
+  const { notes: _notes, ...publicDeliverySummary } = parsePersistedTrafficDeliverySummary(
     row.trafficDeliverySummary,
+    context,
   );
   return publicRunHistorySummarySchema.parse({
     runId: row.runId,
@@ -324,9 +333,12 @@ function toPublicRunHistorySummary(
     status: row.status,
     ...(row.startedAt ? { startedAt: row.startedAt.toISOString() } : {}),
     endedAt: row.endedAt.toISOString(),
-    httpSummary: normalizePersistedTrafficHttpSummary(row.httpSummary),
+    httpSummary: parsePersistedTrafficHttpSummary(row.httpSummary, context),
     trafficDeliverySummary: publicDeliverySummary,
-    businessOutcomeSummary: row.businessOutcomeSummary,
+    businessOutcomeSummary: parsePersistedBusinessOutcomeSummary(
+      row.businessOutcomeSummary,
+      context,
+    ),
     ...(inventory
       ? {
           terminalInventorySnapshot: {
@@ -345,13 +357,14 @@ function toPublicRunHistorySummary(
 }
 
 function toPublicRunHistoryRun(row: typeof demoRuns.$inferSelect): PublicRunHistoryRun {
+  const context = `demo run ${row.id}`;
   return publicRunHistoryRunSchema.parse({
     runId: row.id,
     presetName: row.presetName,
     operatorMode: row.operatorMode,
     status: row.status,
     trafficStatus: row.trafficStatus,
-    configSnapshot: row.configSnapshot,
+    configSnapshot: parsePersistedAcceptedRunConfigSnapshot(row.configSnapshot, context),
     ...(row.startedAt ? { startedAt: row.startedAt.toISOString() } : {}),
     ...(row.trafficStartedAt ? { trafficStartedAt: row.trafficStartedAt.toISOString() } : {}),
     ...(row.trafficEndedAt ? { trafficEndedAt: row.trafficEndedAt.toISOString() } : {}),
@@ -360,6 +373,7 @@ function toPublicRunHistoryRun(row: typeof demoRuns.$inferSelect): PublicRunHist
 }
 
 function toRunHistorySummary(row: typeof demoRunSummaries.$inferSelect): RunHistorySummary {
+  const context = `run summary ${row.id} for demo run ${row.runId}`;
   return runHistorySummarySchema.parse({
     id: row.id,
     runId: row.runId,
@@ -368,11 +382,22 @@ function toRunHistorySummary(row: typeof demoRunSummaries.$inferSelect): RunHist
     ...(row.failureReason ? { failureReason: row.failureReason } : {}),
     ...(row.startedAt ? { startedAt: row.startedAt.toISOString() } : {}),
     endedAt: row.endedAt.toISOString(),
-    httpSummary: normalizePersistedTrafficHttpSummary(row.httpSummary),
-    trafficDeliverySummary: normalizeTrafficDeliverySummary(row.trafficDeliverySummary),
-    businessOutcomeSummary: row.businessOutcomeSummary,
+    httpSummary: parsePersistedTrafficHttpSummary(row.httpSummary, context),
+    trafficDeliverySummary: parsePersistedTrafficDeliverySummary(
+      row.trafficDeliverySummary,
+      context,
+    ),
+    businessOutcomeSummary: parsePersistedBusinessOutcomeSummary(
+      row.businessOutcomeSummary,
+      context,
+    ),
     ...(row.terminalInventorySnapshot
-      ? { terminalInventorySnapshot: row.terminalInventorySnapshot }
+      ? {
+          terminalInventorySnapshot: parsePersistedTerminalInventorySnapshot(
+            row.terminalInventorySnapshot,
+            context,
+          ),
+        }
       : {}),
     capturedAt: row.capturedAt.toISOString(),
   });

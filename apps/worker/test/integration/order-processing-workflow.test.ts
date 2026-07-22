@@ -1297,6 +1297,7 @@ async function seedTrafficCompleteRunArtifacts(
     trafficOutcomeSummary: report.trafficOutcomeSummary,
     trafficDeliverySummary: trafficDeliverySummarySchema.parse({
       ...report.trafficDeliverySummary,
+      completedIterations: report.trafficDeliverySummary.completedIterations ?? null,
       trafficDeliveryStatus: "complete",
     }),
     httpTimingBreakdownSummary: report.httpTimingBreakdownSummary,

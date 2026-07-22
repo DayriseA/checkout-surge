@@ -2,17 +2,17 @@ import {
   type AdminDemoResetResponse,
   type AdminGeneratedRunTeardownResponse,
   type AdminMaintenanceCleanupRunsResponse,
-  acceptedRunConfigSnapshotSchema,
   adminDemoResetResponseSchema,
   adminGeneratedRunTeardownResponseSchema,
   adminMaintenanceCleanupRunsResponseSchema,
   type BusinessOutcomeSummary,
   emptyHttpTimingBreakdownSummary,
-  normalizeLegacyApiRequestLifecycleSummaryJson,
-  normalizeLegacyLoadRunDiagnosticsSummaryJson,
+  httpTimingBreakdownSummarySchema,
+  realLoadRunDiagnosticsSummarySchema,
   type TerminalInventorySnapshot,
   type TrafficDeliverySummary,
   type TrafficHttpSummary,
+  trafficCompletionApiRequestLifecycleSummarySchema,
 } from "@checkout-surge/contracts";
 import {
   type CheckoutSurgeDatabase,
@@ -36,14 +36,15 @@ import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { and, asc, desc, eq, inArray, isNull, lt, notInArray, or } from "drizzle-orm";
 import { ApiHttpError } from "../runtime/errors.js";
 import { emptyBusinessOutcomeSummary } from "./demo-run-projections.js";
+import { parsePersistedAcceptedRunConfigSnapshot } from "./persisted-demo-run-state.js";
 import type { DemoResetWorkflowFence } from "./postgres-demo-reset-workflow-fence.js";
 import type {
   TerminalDemoRunSummaryInput,
   TerminalDemoRunWriter,
 } from "./terminal-demo-run-writer.js";
 import {
-  normalizePersistedTrafficHttpSummary,
-  normalizeTrafficDeliverySummary,
+  parsePersistedTrafficDeliverySummary,
+  parsePersistedTrafficHttpSummary,
 } from "./traffic-delivery-classifier.js";
 import { syntheticFailedTrafficSummary } from "./traffic-delivery-plan.js";
 
@@ -740,22 +741,47 @@ function adminResetTrafficSummary(
   apiRequestLifecycleSummary: Record<string, unknown>;
 } {
   if (finalization) {
+    const context = `demo run ${run.id} finalization used by admin reset`;
+    const timing = httpTimingBreakdownSummarySchema.safeParse(
+      finalization.httpTimingBreakdownSummary,
+    );
+    if (!timing.success) {
+      throw invalidAdminResetFinalizationField(context, "httpTimingBreakdownSummary", timing.error);
+    }
+    const diagnostics = realLoadRunDiagnosticsSummarySchema.safeParse(
+      finalization.loadRunDiagnosticsSummary,
+    );
+    if (!diagnostics.success) {
+      throw invalidAdminResetFinalizationField(
+        context,
+        "loadRunDiagnosticsSummary",
+        diagnostics.error,
+      );
+    }
+    const lifecycle = trafficCompletionApiRequestLifecycleSummarySchema.safeParse(
+      finalization.apiRequestLifecycleSummary,
+    );
+    if (!lifecycle.success) {
+      throw invalidAdminResetFinalizationField(
+        context,
+        "apiRequestLifecycleSummary",
+        lifecycle.error,
+      );
+    }
     return {
-      httpSummary: normalizePersistedTrafficHttpSummary(finalization.httpSummary),
-      trafficDeliverySummary: normalizeTrafficDeliverySummary(finalization.trafficDeliverySummary),
-      httpTimingBreakdownSummary: finalization.httpTimingBreakdownSummary,
-      loadRunDiagnosticsSummary: normalizeLegacyLoadRunDiagnosticsSummaryJson(
-        finalization.loadRunDiagnosticsSummary,
+      httpSummary: parsePersistedTrafficHttpSummary(finalization.httpSummary, context),
+      trafficDeliverySummary: parsePersistedTrafficDeliverySummary(
+        finalization.trafficDeliverySummary,
+        context,
       ),
-      apiRequestLifecycleSummary: normalizeLegacyApiRequestLifecycleSummaryJson(
-        finalization.apiRequestLifecycleSummary,
-        finalization.httpSummary.plannedRequests,
-      ),
+      httpTimingBreakdownSummary: timing.data,
+      loadRunDiagnosticsSummary: diagnostics.data,
+      apiRequestLifecycleSummary: lifecycle.data,
     };
   }
 
   const summary = syntheticFailedTrafficSummary(
-    acceptedRunConfigSnapshotSchema.parse(run.configSnapshot),
+    parsePersistedAcceptedRunConfigSnapshot(run.configSnapshot, `demo run ${run.id} admin reset`),
     ["Admin reset failed the run before traffic completion."],
   );
 
@@ -766,4 +792,15 @@ function adminResetTrafficSummary(
     loadRunDiagnosticsSummary: {},
     apiRequestLifecycleSummary: {},
   };
+}
+
+function invalidAdminResetFinalizationField(
+  context: string,
+  field: string,
+  error: { issues: ReadonlyArray<{ path: PropertyKey[]; message: string }> },
+): Error {
+  const issues = error.issues
+    .map((issue) => `${field}.${issue.path.join(".")}: ${issue.message}`)
+    .join("; ");
+  return new Error(`Invalid persisted ${field} for ${context}: ${issues}`, { cause: error });
 }

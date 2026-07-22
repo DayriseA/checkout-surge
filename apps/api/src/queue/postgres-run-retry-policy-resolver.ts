@@ -1,7 +1,7 @@
-import { acceptedRunConfigSnapshotSchema } from "@checkout-surge/contracts";
 import { type CheckoutSurgeDatabase, demoRuns } from "@checkout-surge/db";
 import { eq } from "drizzle-orm";
 
+import { parsePersistedAcceptedRunConfigSnapshot } from "../services/persisted-demo-run-state.js";
 import type { RunRetryPolicyResolver } from "../services/run-retry-policy-resolver.js";
 
 export class PostgresRunRetryPolicyResolver implements RunRetryPolicyResolver {
@@ -14,6 +14,9 @@ export class PostgresRunRetryPolicyResolver implements RunRetryPolicyResolver {
       .where(eq(demoRuns.id, runId))
       .limit(1);
     if (!row) return null;
-    return acceptedRunConfigSnapshotSchema.parse(row.configSnapshot).backpressureConfig.retryPolicy;
+    return parsePersistedAcceptedRunConfigSnapshot(
+      row.configSnapshot,
+      `demo run ${runId} retry policy`,
+    ).backpressureConfig.retryPolicy;
   }
 }

@@ -18,14 +18,14 @@ import {
   readRecentCompletionOutcomes,
 } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
-import { desc, eq, inArray, sql } from "drizzle-orm";
+import { desc, eq, inArray } from "drizzle-orm";
 import { abortReason, settleWithAbort } from "../runtime/operation-lifecycle.js";
 import { toDemoRunSnapshot } from "./demo-run-projections.js";
 import type { DashboardTrafficMetricReader } from "./demo-run-service.js";
 import type { ErpStatusService } from "./erp-status-service.js";
 import type { InventoryStatusService } from "./inventory-status-service.js";
 import type { QueueStatusService } from "./queue-status-service.js";
-import { normalizeTrafficDeliverySummary } from "./traffic-delivery-classifier.js";
+import { parsePersistedTrafficDeliverySummary } from "./traffic-delivery-classifier.js";
 
 export interface DashboardRecoveryContext {
   currentRun: DemoRunSnapshot | null;
@@ -73,7 +73,10 @@ export class PostgresDashboardTransportAccountingReader
       .limit(1);
 
     if (!row) return null;
-    const delivery = normalizeTrafficDeliverySummary(row.trafficDeliverySummary);
+    const delivery = parsePersistedTrafficDeliverySummary(
+      row.trafficDeliverySummary,
+      `demo run ${runId} finalization`,
+    );
     return transportAttemptCountsSchema.parse({
       plannedRequests: delivery.plannedRequests,
       startedRequests: delivery.startedRequests,
@@ -92,19 +95,21 @@ export class PostgresDashboardRecoveryContextReader implements DashboardRecovery
       .select()
       .from(demoRuns)
       .where(inArray(demoRuns.status, ["starting", "active", "draining"]))
-      .orderBy(
-        desc(sql`coalesce(${demoRuns.startedAt}, ${demoRuns.createdAt})`),
-        desc(demoRuns.createdAt),
-        desc(demoRuns.id),
-      )
+      .orderBy(desc(demoRuns.startedAt), desc(demoRuns.createdAt), desc(demoRuns.id))
       .limit(1);
 
     if (currentRunRow) {
+      if (!currentRunRow.startedAt) {
+        throw new Error(`Current demo run ${currentRunRow.id} has no startedAt timestamp.`);
+      }
+      if (!currentRunRow.saleOfferId) {
+        throw new Error(`Current demo run ${currentRunRow.id} has no saleOfferId.`);
+      }
       const currentRun = toDemoRunSnapshot(currentRunRow);
 
       return {
         currentRun,
-        saleOfferId: currentRun.saleOfferId ?? null,
+        saleOfferId: currentRunRow.saleOfferId,
       };
     }
 
@@ -181,7 +186,7 @@ export class DashboardRecoveryService {
     const scope = context.currentRun
       ? Object.freeze({
           runId: context.currentRun.runId,
-          saleOfferId: context.currentRun.saleOfferId ?? null,
+          saleOfferId: context.saleOfferId,
         })
       : null;
     const saleScope = scope?.saleOfferId

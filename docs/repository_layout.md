@@ -98,7 +98,7 @@ checkout-surge/
 ### `apps/load-orchestrator`
 
 - Owns k6 script execution, scenario parameterization, traffic execution state, and the output-parsing pipeline.
-- Persists one atomic execution journal outside PostgreSQL, including accepted/executing/completed state, and retains slot ownership until completion acknowledgement.
+- Persists one atomic execution journal outside PostgreSQL, including accepted/executing/completed state, and retains slot ownership until completion acknowledgement. Reads accept only the current single-slot journal and completion-report schemas; malformed state reports the durable file path and validation field instead of being migrated.
 - Owns authenticated, run-ID-fenced cancellation and retains the slot until child exit is confirmed; routes and callers never signal k6 directly.
 - Directly probes the configured k6 executable for readiness and attaches bounded stderr plus system, k6-version, and resolved-plan diagnostics to natural completion reports.
 - Uses the traffic-execution lifecycle `starting -> active -> succeeded | failed`.

@@ -62,6 +62,7 @@ import {
   PostgresTerminalDemoRunSummaryWriter,
   terminalDemoRunTransitionLockKey,
 } from "../src/services/terminal-demo-run-transition.js";
+import { classifyTrafficDelivery } from "../src/services/traffic-delivery-classifier.js";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const dbPackageRoot = path.resolve(packageRoot, "../../packages/db");
@@ -317,63 +318,57 @@ describe("demo run finalization service", () => {
     );
   });
 
-  it("captures actual terminal inventory even when traffic evidence has no inventory snapshot", async () => {
+  it("rejects retired diagnostics before terminal summary persistence", async () => {
     const db = requireConnection(connection).db;
     const redisClient = requireRedis(redis);
     const service = createService(connection, redis);
 
     await seedDrainingRun({ db, redis: redisClient, trafficDeliveryStatus: "complete" });
     const diagnostics = runnerDiagnosticsFixture();
-    const { startedRequests, ...legacyTerminalMetricSources } = diagnostics.terminalMetricSources;
+    const { startedRequests, ...oldTerminalMetricSources } = diagnostics.terminalMetricSources;
     await db
       .update(demoRunFinalizations)
       .set({
-        trafficOutcomeSummary: { loadGeneratorOutcome: "legacy" },
+        trafficOutcomeSummary: { loadGeneratorOutcome: "old-shape-rejection" },
         loadRunDiagnosticsSummary: {
           ...diagnostics,
           terminalMetricSources: {
             emittedRequests: startedRequests,
-            ...legacyTerminalMetricSources,
+            ...oldTerminalMetricSources,
           },
         },
-        apiRequestLifecycleSummary: { completedRequests: 10, failedRequests: 0 },
       })
       .where(eq(demoRunFinalizations.runId, ids.run));
 
-    await expect(service.finalizeRun(ids.run, "corr-finalize-legacy")).resolves.toMatchObject({
-      status: "completed",
-    });
+    await expect(service.finalizeRun(ids.run, "corr-finalize-old-shape")).rejects.toThrow(
+      new RegExp(`${ids.run}.*loadRunDiagnosticsSummary`),
+    );
     const [summary] = await db
       .select()
       .from(demoRunSummaries)
       .where(eq(demoRunSummaries.runId, ids.run));
-    const [legacyFinalization] = await db
-      .select()
-      .from(demoRunFinalizations)
+    expect(summary).toBeUndefined();
+  });
+
+  it("rejects retired request-lifecycle evidence before terminal summary persistence", async () => {
+    const db = requireConnection(connection).db;
+    const redisClient = requireRedis(redis);
+    const service = createService(connection, redis);
+
+    await seedDrainingRun({ db, redis: redisClient, trafficDeliveryStatus: "complete" });
+    await db
+      .update(demoRunFinalizations)
+      .set({ apiRequestLifecycleSummary: { completedRequests: 10, failedRequests: 0 } })
       .where(eq(demoRunFinalizations.runId, ids.run));
 
-    expect(summary?.terminalInventorySnapshot).toMatchObject({
-      startingStock: 10,
-      remainingStock: 10,
-      reservedStock: 0,
-      pendingPersistenceCount: 0,
-      capturedAt: "2026-06-20T00:00:10.000Z",
-    });
-    expect(summary?.loadRunDiagnosticsSummary).toMatchObject({
-      terminalMetricSources: { startedRequests: "summary_export" },
-    });
-    expect(summary?.loadRunDiagnosticsSummary.terminalMetricSources).not.toHaveProperty(
-      "emittedRequests",
+    await expect(service.finalizeRun(ids.run, "corr-finalize-old-lifecycle")).rejects.toThrow(
+      new RegExp(`${ids.run}.*apiRequestLifecycleSummary`),
     );
-    expect(summary?.apiRequestLifecycleSummary).toMatchObject({
-      plannedRequests: 10,
-      startedRequests: 10,
-      completedRequests: 10,
-      interruptedRequests: 0,
-      unstartedRequests: 0,
-      failedRequests: 0,
-    });
-    expect(legacyFinalization?.completionEnrichmentStatus).toBe("completed");
+    const [summary] = await db
+      .select()
+      .from(demoRunSummaries)
+      .where(eq(demoRunSummaries.runId, ids.run));
+    expect(summary).toBeUndefined();
   });
 
   it("does not treat pending completion enrichment as a drain timeout or write a summary", async () => {
@@ -1711,6 +1706,9 @@ async function seedDrainingRun(input: {
     trafficOutcomeSummary: {},
     trafficDeliverySummary: trafficDeliverySummarySchema.parse({
       ...trafficCompletionReportFixture(input.trafficDeliveryStatus).trafficDeliverySummary,
+      completedIterations:
+        trafficCompletionReportFixture(input.trafficDeliveryStatus).trafficDeliverySummary
+          .completedIterations ?? null,
       trafficDeliveryStatus: input.trafficDeliveryStatus,
     }),
     httpTimingBreakdownSummary: {
@@ -1718,7 +1716,8 @@ async function seedDrainingRun(input: {
       waiting: { averageMs: 10, p95Ms: 20 },
     },
     loadRunDiagnosticsSummary: runnerDiagnosticsFixture(),
-    apiRequestLifecycleSummary: {},
+    apiRequestLifecycleSummary: trafficCompletionReportFixture(input.trafficDeliveryStatus)
+      .apiRequestLifecycleSummary,
     trafficSummaryReceivedAt: trafficEndedAt,
     createdAt: trafficEndedAt,
     updatedAt: trafficEndedAt,
@@ -1907,6 +1906,12 @@ async function setAcceptedDeliveryEvidence(
 ): Promise<void> {
   const plannedRequests = input.plannedRequests ?? 10;
   const startedRequests = input.startedRequests ?? plannedRequests;
+  const unstartedRequests = input.unstartedRequests ?? plannedRequests - startedRequests;
+  const trafficDeliveryStatus = classifyTrafficDelivery({
+    plannedRequests,
+    unstartedRequests,
+  });
+  if (!trafficDeliveryStatus) throw new Error("Test fixture requires a positive request plan.");
   await db
     .update(demoRunFinalizations)
     .set({
@@ -1927,7 +1932,7 @@ async function setAcceptedDeliveryEvidence(
         startedRequests,
         completedRequests: startedRequests,
         interruptedRequests: 0,
-        unstartedRequests: input.unstartedRequests ?? plannedRequests - startedRequests,
+        unstartedRequests,
         trafficMode: "buyer-spike",
         plannedBuyers: plannedRequests === 400 ? 200 : 10,
         scheduledRatePerSecond: null,
@@ -1936,7 +1941,7 @@ async function setAcceptedDeliveryEvidence(
         maxVUs: null,
         droppedIterations: 0,
         completedIterations: input.completedIterations ?? startedRequests,
-        trafficDeliveryStatus: "complete",
+        trafficDeliveryStatus,
         notes: [],
       },
     })

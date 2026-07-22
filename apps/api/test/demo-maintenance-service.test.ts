@@ -1820,6 +1820,42 @@ describe("demo maintenance service", () => {
     );
   });
 
+  it("rejects malformed stored finalization evidence during admin reset", async () => {
+    const db = requireConnection(connection).db;
+    const redisClient = requireRedis(redis);
+    await seedBase(db);
+    await seedRun(db, redisClient, {
+      runId: ids.drainingRun,
+      saleOfferId: ids.drainingOffer,
+      status: "draining",
+      trafficStatus: "succeeded",
+      failureReason: null,
+      runInventoryStatus: "closed",
+    });
+    await db
+      .update(demoRunFinalizations)
+      .set({ apiRequestLifecycleSummary: { completedRequests: 10, failedRequests: 0 } })
+      .where(eq(demoRunFinalizations.runId, ids.drainingRun));
+    const postgresTerminalRunWriter = new PostgresTerminalDemoRunSummaryWriter(db);
+    const service = new DemoMaintenanceService({
+      db,
+      redis: redisClient,
+      queueMaintenance: {
+        cleanResetOwnedQueues: async () => ({ cleanedQueueCount: 0, cleanedJobCount: 0 }),
+      },
+      terminalRunWriter: postgresTerminalRunWriter,
+      logger: createSilentLogger("api"),
+      now: () => new Date("2026-06-20T00:00:10.000Z"),
+    });
+
+    await expect(service.reset("corr-invalid-finalization")).rejects.toThrow(
+      new RegExp(`${ids.drainingRun}.*apiRequestLifecycleSummary`),
+    );
+    await expect(
+      db.select().from(demoRunSummaries).where(eq(demoRunSummaries.runId, ids.drainingRun)),
+    ).resolves.toHaveLength(0);
+  });
+
   it.each([
     {
       status: "starting" as const,
@@ -2053,7 +2089,14 @@ async function seedRun(
         completedRequests: 10,
         interruptedRequests: 0,
         unstartedRequests: 0,
+        trafficMode: null,
+        plannedBuyers: null,
+        scheduledRatePerSecond: null,
+        configuredDurationSeconds: null,
+        preAllocatedVUs: null,
+        maxVUs: null,
         droppedIterations: 0,
+        completedIterations: null,
         trafficDeliveryStatus: "complete",
         notes: [],
       }),
@@ -2061,8 +2104,8 @@ async function seedRun(
         ...emptyHttpTimingBreakdownSummary,
         waiting: { averageMs: 30, p95Ms: 42 },
       },
-      loadRunDiagnosticsSummary: { source: "fixture" },
-      apiRequestLifecycleSummary: { source: "fixture" },
+      loadRunDiagnosticsSummary: currentFinalizationDiagnosticsFixture(10),
+      apiRequestLifecycleSummary: currentRequestLifecycleFixture(10),
       trafficSummaryReceivedAt: new Date("2026-06-20T00:00:05.000Z"),
       createdAt: new Date("2026-06-20T00:00:05.000Z"),
       updatedAt: new Date("2026-06-20T00:00:05.000Z"),
@@ -2326,9 +2369,9 @@ async function seedCleanupDurableGraph(
     runId: ids.completedRun,
     exitCode: 0,
     httpSummary: {
-      plannedRequests: 0,
-      startedRequests: 0,
-      completedRequests: 0,
+      plannedRequests: 10,
+      startedRequests: 10,
+      completedRequests: 10,
       interruptedRequests: 0,
       unstartedRequests: 0,
       failedRequests: 0,
@@ -2339,18 +2382,25 @@ async function seedCleanupDurableGraph(
     },
     trafficOutcomeSummary: {},
     trafficDeliverySummary: trafficDeliverySummarySchema.parse({
-      plannedRequests: 0,
-      startedRequests: 0,
-      completedRequests: 0,
+      plannedRequests: 10,
+      startedRequests: 10,
+      completedRequests: 10,
       interruptedRequests: 0,
       unstartedRequests: 0,
+      trafficMode: null,
+      plannedBuyers: null,
+      scheduledRatePerSecond: null,
+      configuredDurationSeconds: null,
+      preAllocatedVUs: null,
+      maxVUs: null,
       droppedIterations: 0,
+      completedIterations: null,
       trafficDeliveryStatus: "complete",
       notes: [],
     }),
     httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
-    loadRunDiagnosticsSummary: {},
-    apiRequestLifecycleSummary: {},
+    loadRunDiagnosticsSummary: currentFinalizationDiagnosticsFixture(10),
+    apiRequestLifecycleSummary: currentRequestLifecycleFixture(10),
     trafficSummaryReceivedAt: now,
     createdAt: now,
     updatedAt: now,
@@ -2361,6 +2411,54 @@ async function seedCleanupDurableGraph(
     status: "completed",
     failureReason: null,
   });
+}
+
+function currentFinalizationDiagnosticsFixture(plannedRequests: number) {
+  return {
+    startedAt: "2026-06-20T00:00:00.000Z",
+    completedAt: "2026-06-20T00:00:05.000Z",
+    nproc: null,
+    ulimitNofile: null,
+    processMaxOpenFiles: null,
+    networkDiagnostics: null,
+    k6Version: null,
+    executionPlan: {
+      trafficMode: "buyer-spike" as const,
+      buyerCount: plannedRequests,
+      duplicateEachBuyerAttempt: false,
+      iterationsPerVu: 1,
+      plannedEmittedAttempts: plannedRequests,
+      startDelaySeconds: 0,
+      maxDurationSeconds: 10,
+    },
+    stderrLines: [],
+    stderrLineCountObserved: 0,
+    stderrLineCountRetained: 0,
+    stderrRetainedLineLimit: 50 as const,
+    stderrLineTruncationLength: 500 as const,
+    stderrLineTruncatedCount: 0,
+    terminalMetricSources: {
+      startedRequests: "summary_export" as const,
+      completedRequests: "summary_export" as const,
+      acceptedResponses: "summary_export" as const,
+      soldOutResponses: "summary_export" as const,
+      unexpectedResponses: "summary_export" as const,
+      droppedIterations: "summary_export" as const,
+      completedIterations: "summary_export" as const,
+    },
+    summaryExportWarnings: [],
+  };
+}
+
+function currentRequestLifecycleFixture(plannedRequests: number) {
+  return {
+    plannedRequests,
+    startedRequests: plannedRequests,
+    completedRequests: plannedRequests,
+    interruptedRequests: 0,
+    unstartedRequests: 0,
+    failedRequests: 0,
+  };
 }
 
 async function readRunScopedGraphCounts(
@@ -2438,7 +2536,14 @@ async function seedTerminalSummary(
       completedRequests: 10,
       interruptedRequests: 0,
       unstartedRequests: 0,
+      trafficMode: null,
+      plannedBuyers: null,
+      scheduledRatePerSecond: null,
+      configuredDurationSeconds: null,
+      preAllocatedVUs: null,
+      maxVUs: null,
       droppedIterations: 0,
+      completedIterations: null,
       trafficDeliveryStatus: input.status === "completed" ? "complete" : "failed",
       notes: [],
     }),

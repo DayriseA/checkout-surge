@@ -763,7 +763,11 @@ describe("run lifecycle contracts", () => {
     );
     expect(() => trafficDeliverySummarySchema.parse(evidence)).toThrow();
     expect(
-      trafficDeliverySummarySchema.parse({ ...evidence, trafficDeliveryStatus: "warning" }),
+      trafficDeliverySummarySchema.parse({
+        ...evidence,
+        completedIterations: null,
+        trafficDeliveryStatus: "warning",
+      }),
     ).toEqual({
       ...evidence,
       completedIterations: null,
@@ -2170,7 +2174,14 @@ describe("public runtime policy contract", () => {
             completedRequests: 10,
             interruptedRequests: 0,
             unstartedRequests: 0,
+            trafficMode: "buyer-spike",
+            plannedBuyers: 10,
+            scheduledRatePerSecond: null,
+            configuredDurationSeconds: null,
+            preAllocatedVUs: null,
+            maxVUs: null,
             droppedIterations: 0,
+            completedIterations: 10,
             trafficDeliveryStatus: "complete",
             notes: [],
           },

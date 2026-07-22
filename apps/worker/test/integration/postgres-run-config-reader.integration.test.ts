@@ -4,7 +4,7 @@ import type { AcceptedRunConfigSnapshot } from "@checkout-surge/contracts";
 import { createDatabaseConnection, demoPresets, demoRuns } from "@checkout-surge/db";
 import { resetTestDatabase } from "@checkout-surge/db/testing";
 import { sql } from "drizzle-orm";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import {
   type PersistedRunConfigCorruptionError,
   PostgresRunConfigReader,
@@ -19,11 +19,12 @@ const runId = "57575757-1000-4000-8000-000000000002";
 describe.skipIf(!databaseUrl)("PostgresRunConfigReader", () => {
   let connection: ReturnType<typeof createDatabaseConnection>;
 
-  beforeAll(async () => {
+  beforeEach(async () => {
     if (!databaseUrl) {
       throw new Error("TEST_DATABASE_URL is required for run-config reader integration tests.");
     }
 
+    await connection?.close();
     await resetTestDatabase({ databaseUrl, migrationsFolder });
     connection = createDatabaseConnection(databaseUrl, { max: 1 });
     await seedRun(connection);
@@ -50,7 +51,31 @@ describe.skipIf(!databaseUrl)("PostgresRunConfigReader", () => {
       name: "PersistedRunConfigCorruptionError",
       code: "persisted_run_config_invalid",
       runId,
-      message: `Persisted configuration for demo run "${runId}" is invalid.`,
+      message: expect.stringMatching(new RegExp(`${runId}.*configSnapshot\\.trafficConfig`)),
+      cause: expect.any(Error),
+    } satisfies Partial<PersistedRunConfigCorruptionError>);
+  });
+
+  it("rejects a stored snapshot that relies on a wire default", async () => {
+    const snapshot = configSnapshotFixture();
+    const { quantityPerCheckout: _defaulted, ...incompleteInventoryConfig } =
+      snapshot.inventoryConfig;
+    await connection.db.execute(
+      sql`UPDATE ${demoRuns}
+          SET config_snapshot = ${JSON.stringify({
+            ...snapshot,
+            inventoryConfig: incompleteInventoryConfig,
+          })}::jsonb
+          WHERE ${demoRuns.id} = ${runId}`,
+    );
+
+    await expect(new PostgresRunConfigReader(connection.db).read(runId)).rejects.toMatchObject({
+      name: "PersistedRunConfigCorruptionError",
+      code: "persisted_run_config_invalid",
+      runId,
+      message: expect.stringMatching(
+        new RegExp(`${runId}.*configSnapshot\\.inventoryConfig\\.quantityPerCheckout`),
+      ),
       cause: expect.any(Error),
     } satisfies Partial<PersistedRunConfigCorruptionError>);
   });

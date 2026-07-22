@@ -170,6 +170,32 @@ export const acceptedRunConfigSnapshotSchema = z
   .strict();
 export type AcceptedRunConfigSnapshot = z.infer<typeof acceptedRunConfigSnapshotSchema>;
 
+/** Materialized accepted-run state. Persisted snapshots may not rely on wire defaults. */
+const materializedBuyerSpikeTrafficConfigSchema = buyerSpikeTrafficConfigSchema.safeExtend({
+  duplicateEachBuyerAttempt: z.boolean(),
+  startDelaySeconds: nonnegativeIntegerSchema,
+  quantityPerAttempt: positiveIntegerSchema,
+});
+const materializedSteadyArrivalTrafficConfigSchema = steadyArrivalTrafficConfigSchema.safeExtend({
+  startDelaySeconds: nonnegativeIntegerSchema,
+  quantityPerAttempt: positiveIntegerSchema,
+});
+export const materializedAcceptedRunConfigSnapshotSchema = z
+  .object({
+    trafficConfig: z.discriminatedUnion("mode", [
+      materializedBuyerSpikeTrafficConfigSchema,
+      materializedSteadyArrivalTrafficConfigSchema,
+    ]),
+    inventoryConfig: inventoryConfigSchema.safeExtend({
+      quantityPerCheckout: positiveIntegerSchema,
+    }),
+    erpConfig: erpRunConfigSchema.safeExtend({
+      forcedOutage: z.boolean(),
+    }),
+    backpressureConfig: backpressureConfigSchema,
+  })
+  .strict();
+
 export const trafficExecutionStartRequestSchema = z
   .object({
     runId: uuidSchema,
@@ -181,6 +207,12 @@ export const trafficExecutionStartRequestSchema = z
   })
   .strict();
 export type TrafficExecutionStartRequest = z.infer<typeof trafficExecutionStartRequestSchema>;
+
+/** Materialized start request stored in the durable execution journal. */
+export const materializedTrafficExecutionStartRequestSchema =
+  trafficExecutionStartRequestSchema.safeExtend({
+    configSnapshot: materializedAcceptedRunConfigSnapshotSchema,
+  });
 
 export const trafficExecutionStartResponseSchema = z
   .object({
@@ -264,29 +296,6 @@ export const trafficHttpSummarySchema = z
   .superRefine(refineTransportAttemptCounts);
 export type TrafficHttpSummary = z.infer<typeof trafficHttpSummarySchema>;
 
-const trafficDeliveryEvidenceShape = {
-  ...transportAttemptCountsShape,
-  trafficMode: z.enum(["buyer-spike", "steady-arrival-rate"]).nullable().optional(),
-  plannedBuyers: positiveIntegerSchema.nullable().optional(),
-  scheduledRatePerSecond: positiveIntegerSchema.nullable().optional(),
-  configuredDurationSeconds: positiveIntegerSchema.nullable().optional(),
-  preAllocatedVUs: positiveIntegerSchema.nullable().optional(),
-  maxVUs: positiveIntegerSchema.nullable().optional(),
-  droppedIterations: nonnegativeIntegerSchema,
-  completedIterations: nonnegativeIntegerSchema.nullable().optional(),
-  notes: z.array(z.string().trim().min(1)).default([]),
-};
-
-/** Compatible raw evidence, including legacy rows whose producer supplied a status. */
-export const trafficDeliveryEvidenceSchema = z
-  .object({
-    ...trafficDeliveryEvidenceShape,
-    trafficDeliveryStatus: trafficDeliveryStatusSchema.optional(),
-  })
-  .strict()
-  .superRefine(refineTransportAttemptCounts);
-export type TrafficDeliveryEvidence = z.infer<typeof trafficDeliveryEvidenceSchema>;
-
 /** Real completion input. Quality is classified by the API, not the caller. */
 export const trafficCompletionDeliverySummarySchema = z
   .object({
@@ -311,15 +320,15 @@ export type TrafficCompletionDeliverySummary = z.infer<
 /** Field map of the authoritative persisted/history delivery summary. */
 export const trafficDeliverySummaryShape = {
   ...transportAttemptCountsShape,
-  trafficMode: z.enum(["buyer-spike", "steady-arrival-rate"]).nullable().default(null),
-  plannedBuyers: positiveIntegerSchema.nullable().default(null),
-  scheduledRatePerSecond: positiveIntegerSchema.nullable().default(null),
-  configuredDurationSeconds: positiveIntegerSchema.nullable().default(null),
-  preAllocatedVUs: positiveIntegerSchema.nullable().default(null),
-  maxVUs: positiveIntegerSchema.nullable().default(null),
+  trafficMode: z.enum(["buyer-spike", "steady-arrival-rate"]).nullable(),
+  plannedBuyers: positiveIntegerSchema.nullable(),
+  scheduledRatePerSecond: positiveIntegerSchema.nullable(),
+  configuredDurationSeconds: positiveIntegerSchema.nullable(),
+  preAllocatedVUs: positiveIntegerSchema.nullable(),
+  maxVUs: positiveIntegerSchema.nullable(),
   droppedIterations: nonnegativeIntegerSchema,
-  completedIterations: nonnegativeIntegerSchema.nullable().default(null),
-  notes: z.array(z.string().trim().min(1)).default([]),
+  completedIterations: nonnegativeIntegerSchema.nullable(),
+  notes: z.array(z.string().trim().min(1)),
   trafficDeliveryStatus: trafficDeliveryStatusSchema,
 } as const;
 
@@ -647,6 +656,14 @@ export const trafficCompletionReportSchema = z
     }
   });
 export type TrafficCompletionReport = z.infer<typeof trafficCompletionReportSchema>;
+
+/** Materialized completion stored in the durable execution journal. */
+export const materializedTrafficCompletionReportSchema = trafficCompletionReportSchema.safeExtend({
+  trafficDeliverySummary: trafficCompletionDeliverySummarySchema.safeExtend({
+    completedIterations: nonnegativeIntegerSchema.nullable(),
+    notes: z.array(z.string().trim().min(1)),
+  }),
+});
 
 export const loadMetricIngestRequestSchema = z
   .object({

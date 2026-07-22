@@ -1,13 +1,13 @@
 import {
-  normalizeLegacyTrafficDeliverySummaryJson,
-  normalizeLegacyTrafficHttpSummaryJson,
-  type TrafficDeliveryEvidence,
+  type TrafficCompletionDeliverySummary,
   type TrafficDeliverySummary,
   type TrafficHttpSummary,
-  trafficDeliveryEvidenceSchema,
+  type TransportAttemptCounts,
+  trafficCompletionDeliverySummarySchema,
   trafficDeliverySummarySchema,
   trafficHttpSummarySchema,
 } from "@checkout-surge/contracts";
+import type { ZodError } from "zod";
 
 export const warningShortfallRatio = 0.01;
 export const failureShortfallRatio = 0.05;
@@ -18,7 +18,7 @@ export const failureShortfallRatio = 0.05;
  * some were interrupted has complete attempt delivery.
  */
 export function classifyTrafficDelivery(
-  summary: Pick<TrafficDeliveryEvidence, "plannedRequests" | "unstartedRequests">,
+  summary: Pick<TransportAttemptCounts, "plannedRequests" | "unstartedRequests">,
 ): TrafficDeliverySummary["trafficDeliveryStatus"] | null {
   if (summary.plannedRequests <= 0) return null;
 
@@ -30,16 +30,11 @@ export function classifyTrafficDelivery(
   return "failed";
 }
 
-/**
- * Read-boundary normalization for persisted delivery summaries. Legacy rows
- * (old `emittedRequests`/`unstartedIterations`/`requestShortfall` names) are
- * mapped to canonical transport counts first; the API then derives the
- * delivery status itself instead of trusting any producer-supplied status.
- */
-export function normalizeTrafficDeliverySummary(input: unknown): TrafficDeliverySummary {
-  const evidence = trafficDeliveryEvidenceSchema.parse(
-    normalizeLegacyTrafficDeliverySummaryJson(input),
-  );
+/** Adds the API-owned delivery classification to a validated current completion. */
+export function classifyTrafficDeliverySummary(
+  input: TrafficCompletionDeliverySummary,
+): TrafficDeliverySummary {
+  const evidence = trafficCompletionDeliverySummarySchema.parse(input);
   const trafficDeliveryStatus = classifyTrafficDelivery(evidence);
   if (!trafficDeliveryStatus) {
     throw new Error("Traffic delivery cannot be classified with zero planned requests.");
@@ -47,22 +42,44 @@ export function normalizeTrafficDeliverySummary(input: unknown): TrafficDelivery
 
   return trafficDeliverySummarySchema.parse({
     ...evidence,
-    trafficMode: evidence.trafficMode ?? null,
-    plannedBuyers: evidence.plannedBuyers ?? null,
-    scheduledRatePerSecond: evidence.scheduledRatePerSecond ?? null,
-    configuredDurationSeconds: evidence.configuredDurationSeconds ?? null,
-    preAllocatedVUs: evidence.preAllocatedVUs ?? null,
-    maxVUs: evidence.maxVUs ?? null,
     completedIterations: evidence.completedIterations ?? null,
     trafficDeliveryStatus,
   });
 }
 
-/**
- * Read-boundary normalization for persisted HTTP summaries. Legacy rows whose
- * `emittedRequests` carried completed-response semantics are mapped to
- * canonical transport counts before strict parsing.
- */
-export function normalizePersistedTrafficHttpSummary(input: unknown): TrafficHttpSummary {
-  return trafficHttpSummarySchema.parse(normalizeLegacyTrafficHttpSummaryJson(input));
+/** Strictly validates the current persisted delivery shape and its API-owned status. */
+export function parsePersistedTrafficDeliverySummary(
+  input: unknown,
+  context: string,
+): TrafficDeliverySummary {
+  const parsed = trafficDeliverySummarySchema.safeParse(input);
+  if (!parsed.success) {
+    throw persistedTrafficSummaryError(context, "trafficDeliverySummary", parsed.error);
+  }
+  const expectedStatus = classifyTrafficDelivery(parsed.data);
+  if (parsed.data.trafficDeliveryStatus !== expectedStatus) {
+    throw new Error(
+      `Invalid persisted trafficDeliverySummary for ${context}: trafficDeliveryStatus must be ${expectedStatus ?? "classifiable from a positive plannedRequests count"}.`,
+    );
+  }
+  return parsed.data;
+}
+
+/** Strictly validates the current persisted HTTP-summary shape. */
+export function parsePersistedTrafficHttpSummary(
+  input: unknown,
+  context: string,
+): TrafficHttpSummary {
+  const parsed = trafficHttpSummarySchema.safeParse(input);
+  if (!parsed.success) {
+    throw persistedTrafficSummaryError(context, "httpSummary", parsed.error);
+  }
+  return parsed.data;
+}
+
+function persistedTrafficSummaryError(context: string, field: string, error: ZodError): Error {
+  const issues = error.issues
+    .map((issue) => `${[field, ...issue.path].join(".")}: ${issue.message}`)
+    .join("; ");
+  return new Error(`Invalid persisted ${field} for ${context}: ${issues}`, { cause: error });
 }

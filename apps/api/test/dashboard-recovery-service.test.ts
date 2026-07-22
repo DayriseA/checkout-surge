@@ -6,6 +6,7 @@ import {
   type DemoRunSnapshot,
   demoRunSnapshotSchema,
   type ErpResilienceStatus,
+  emptyHttpTimingBreakdownSummary,
   type InventoryStatus,
   type QueueStatus,
   type TrafficDeliverySummary,
@@ -137,9 +138,9 @@ describe("PostgresDashboardRecoveryContextReader integration", () => {
         trafficDeliveryStatus: "complete",
         notes: [],
       },
-      httpTimingBreakdownSummary: {},
-      loadRunDiagnosticsSummary: {},
-      apiRequestLifecycleSummary: {},
+      httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
+      loadRunDiagnosticsSummary: currentDiagnosticsFixture(1_000),
+      apiRequestLifecycleSummary: currentLifecycleFixture(1_000, 750, 250),
       trafficSummaryReceivedAt: now,
       createdAt: now,
       updatedAt: now,
@@ -157,7 +158,7 @@ describe("PostgresDashboardRecoveryContextReader integration", () => {
     await expect(reader.read("99999999-9999-4999-8999-999999999999")).resolves.toBeNull();
   });
 
-  it("normalizes legacy emitted-era finalization rows when projecting transport accounting", async () => {
+  it("rejects emitted-era finalization rows when projecting transport accounting", async () => {
     if (!connection) throw new Error("Test database connection was not initialized.");
     const db = connection.db;
     const legacyRunId = "44444444-4444-4444-8444-444444444444";
@@ -209,25 +210,17 @@ describe("PostgresDashboardRecoveryContextReader integration", () => {
       httpSummary: legacyHttpSummary,
       trafficOutcomeSummary: {},
       trafficDeliverySummary: legacyDeliverySummary,
-      httpTimingBreakdownSummary: {},
-      loadRunDiagnosticsSummary: {},
-      apiRequestLifecycleSummary: {},
+      httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
+      loadRunDiagnosticsSummary: currentDiagnosticsFixture(1_000),
+      apiRequestLifecycleSummary: currentLifecycleFixture(1_000, 750, 0, 250),
       trafficSummaryReceivedAt: now,
       createdAt: now,
       updatedAt: now,
     });
 
-    // The old producer never recorded interrupted traffic: legacy rows map to
-    // started = old emitted, completed = old emitted, interrupted = 0.
     await expect(
       new PostgresDashboardTransportAccountingReader(db).read(legacyRunId),
-    ).resolves.toEqual({
-      plannedRequests: 1_000,
-      startedRequests: 750,
-      completedRequests: 750,
-      interruptedRequests: 0,
-      unstartedRequests: 250,
-    });
+    ).rejects.toThrow(new RegExp(`${legacyRunId}.*trafficDeliverySummary`));
   });
 });
 
@@ -241,14 +234,14 @@ describe("PostgresDashboardRecoveryContextReader", () => {
     expect(database.select).toHaveBeenCalledTimes(1);
   });
 
-  it("orders recoverable runs by effective start with deterministic creation and ID ties", async () => {
-    const newerEffectiveStart = databaseRun({
+  it("orders current-shape recoverable runs by start with deterministic creation and ID ties", async () => {
+    const newerStart = databaseRun({
       id: "ffffffff-ffff-4fff-8fff-ffffffffffff",
       startedAt: new Date("2026-07-14T11:00:00.000Z"),
       createdAt: new Date("2026-07-14T10:00:00.000Z"),
       updatedAt: new Date("2026-07-14T10:30:00.000Z"),
     });
-    const database = controlledDatabase([newerEffectiveStart]);
+    const database = controlledDatabase([newerStart]);
 
     const context = await new PostgresDashboardRecoveryContextReader(database.db).readContext();
     const dialect = new PgDialect();
@@ -256,12 +249,45 @@ describe("PostgresDashboardRecoveryContextReader", () => {
       (expression) => dialect.sqlToQuery(expression).sql,
     );
 
-    expect(context.currentRun?.runId).toBe(newerEffectiveStart.id);
+    expect(context.currentRun?.runId).toBe(newerStart.id);
     expect(orderingSql).toEqual([
-      'coalesce("demo_runs"."started_at", "demo_runs"."created_at") desc',
+      '"demo_runs"."started_at" desc',
       '"demo_runs"."created_at" desc',
       '"demo_runs"."id" desc',
     ]);
+  });
+
+  it.each([
+    ["startedAt", { startedAt: null }],
+    ["saleOfferId", { saleOfferId: null }],
+  ])("rejects a current run missing %s", async (field, override) => {
+    const row = databaseRun(override);
+    const database = controlledDatabase([row]);
+
+    await expect(
+      new PostgresDashboardRecoveryContextReader(database.db).readContext(),
+    ).rejects.toThrow(new RegExp(`${row.id}.*${field}`));
+  });
+
+  it("rejects a stored config snapshot that relies on wire defaults with run context", async () => {
+    const row = databaseRun();
+    const config = configSnapshot();
+    const { quantityPerCheckout: _defaulted, ...incompleteInventoryConfig } =
+      config.inventoryConfig;
+    const malformedRow = {
+      ...row,
+      configSnapshot: {
+        ...config,
+        inventoryConfig: incompleteInventoryConfig,
+      } as unknown as (typeof demoRuns.$inferSelect)["configSnapshot"],
+    };
+    const database = controlledDatabase([malformedRow]);
+
+    await expect(
+      new PostgresDashboardRecoveryContextReader(database.db).readContext(),
+    ).rejects.toThrow(
+      new RegExp(`${row.id}.*configSnapshot\\.inventoryConfig\\.quantityPerCheckout`),
+    );
   });
 });
 
@@ -307,21 +333,6 @@ describe("DashboardRecoveryService", () => {
     expect(harness.completion).toHaveBeenCalledWith(expectedScope, now);
     expect(harness.metrics).toHaveBeenCalledWith(runId);
     expect(recovery.recoveredAt).toBe(now.toISOString());
-  });
-
-  it("keeps a legacy run without an offer visible and reads only its run-ID metrics", async () => {
-    const currentRun = runSnapshot({ saleOfferId: undefined });
-    const harness = serviceHarness({ currentRun, saleOfferId: null });
-
-    const recovery = await harness.service.getRecovery({ correlationId: "corr-legacy" });
-
-    expect(recovery.scope).toEqual({ runId, saleOfferId: null });
-    expect(recovery.currentRun?.runId).toBe(runId);
-    expect(harness.metrics).toHaveBeenCalledWith(runId);
-    expect(harness.inventory).not.toHaveBeenCalled();
-    expect(harness.business).not.toHaveBeenCalled();
-    expect(harness.lag).not.toHaveBeenCalled();
-    expect(harness.completion).not.toHaveBeenCalled();
   });
 
   it("degrades context failure to no scope and warns without invoking run-owned ports", async () => {
@@ -638,6 +649,59 @@ function runSnapshot(overrides: Partial<DemoRunSnapshot> = {}): DemoRunSnapshot 
     trafficStartedAt: now.toISOString(),
     ...overrides,
   });
+}
+
+function currentDiagnosticsFixture(plannedRequests: number) {
+  return {
+    startedAt: now.toISOString(),
+    completedAt: now.toISOString(),
+    nproc: null,
+    ulimitNofile: null,
+    processMaxOpenFiles: null,
+    networkDiagnostics: null,
+    k6Version: null,
+    executionPlan: {
+      trafficMode: "buyer-spike" as const,
+      buyerCount: plannedRequests,
+      duplicateEachBuyerAttempt: false,
+      iterationsPerVu: 1,
+      plannedEmittedAttempts: plannedRequests,
+      startDelaySeconds: 0,
+      maxDurationSeconds: 2,
+    },
+    stderrLines: [],
+    stderrLineCountObserved: 0,
+    stderrLineCountRetained: 0,
+    stderrRetainedLineLimit: 50 as const,
+    stderrLineTruncationLength: 500 as const,
+    stderrLineTruncatedCount: 0,
+    terminalMetricSources: {
+      startedRequests: "summary_export" as const,
+      completedRequests: "summary_export" as const,
+      acceptedResponses: "summary_export" as const,
+      soldOutResponses: "summary_export" as const,
+      unexpectedResponses: "summary_export" as const,
+      droppedIterations: "summary_export" as const,
+      completedIterations: "summary_export" as const,
+    },
+    summaryExportWarnings: [],
+  };
+}
+
+function currentLifecycleFixture(
+  plannedRequests: number,
+  completedRequests: number,
+  interruptedRequests: number,
+  unstartedRequests = 0,
+) {
+  return {
+    plannedRequests,
+    startedRequests: completedRequests + interruptedRequests,
+    completedRequests,
+    interruptedRequests,
+    unstartedRequests,
+    failedRequests: 0,
+  };
 }
 
 function configSnapshot() {

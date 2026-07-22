@@ -6,50 +6,22 @@ import {
 import { describe, expect, it } from "vitest";
 import { findTrafficCompletionRedeliveryMismatch } from "../src/services/traffic-completion-binding.js";
 
-describe("traffic completion redelivery compatibility", () => {
-  it("compares legacy persisted transport, lifecycle, and metric-source names semantically", () => {
+describe("traffic completion redelivery", () => {
+  it("accepts an exact redelivery against current persisted evidence", () => {
     const report = completionReport();
-    const { startedRequests: startedSource, ...terminalMetricSources } =
-      report.loadRunDiagnosticsSummary.terminalMetricSources;
+    const classifiedDelivery = trafficDeliverySummarySchema.parse({
+      ...report.trafficDeliverySummary,
+      trafficDeliveryStatus: "complete",
+    });
     const existing = {
       exitCode: 0,
       errorMessage: null,
-      httpSummary: {
-        plannedRequests: 10,
-        emittedRequests: 10,
-        completedRequests: 10,
-        failedRequests: 0,
-        acceptedResponses: 4,
-        soldOutResponses: 6,
-        unexpectedResponses: 0,
-        failureRate: 0,
-      },
+      httpSummary: report.httpSummary,
       trafficOutcomeSummary: report.trafficOutcomeSummary,
-      trafficDeliverySummary: {
-        plannedRequests: 10,
-        emittedRequests: 10,
-        trafficMode: "buyer-spike",
-        plannedBuyers: 10,
-        scheduledRatePerSecond: null,
-        configuredDurationSeconds: null,
-        preAllocatedVUs: null,
-        maxVUs: null,
-        droppedIterations: 0,
-        completedIterations: 10,
-        unstartedIterations: 0,
-        requestShortfall: 0,
-        trafficDeliveryStatus: "complete",
-        notes: [],
-      },
+      trafficDeliverySummary: classifiedDelivery,
       httpTimingBreakdownSummary: report.httpTimingBreakdownSummary,
-      loadRunDiagnosticsSummary: {
-        ...report.loadRunDiagnosticsSummary,
-        terminalMetricSources: {
-          emittedRequests: startedSource,
-          ...terminalMetricSources,
-        },
-      },
-      apiRequestLifecycleSummary: { completedRequests: 10, failedRequests: 0 },
+      loadRunDiagnosticsSummary: report.loadRunDiagnosticsSummary,
+      apiRequestLifecycleSummary: report.apiRequestLifecycleSummary,
     };
 
     expect(
@@ -57,12 +29,35 @@ describe("traffic completion redelivery compatibility", () => {
         { trafficStatus: "succeeded", trafficEndedAt: new Date(report.completedAt) },
         existing,
         report,
-        trafficDeliverySummarySchema.parse({
-          ...report.trafficDeliverySummary,
-          trafficDeliveryStatus: "complete",
-        }),
+        classifiedDelivery,
       ),
     ).toBeNull();
+  });
+
+  it("rejects old persisted lifecycle evidence with run and field context", () => {
+    const report = completionReport();
+    const classifiedDelivery = trafficDeliverySummarySchema.parse({
+      ...report.trafficDeliverySummary,
+      trafficDeliveryStatus: "complete",
+    });
+
+    expect(() =>
+      findTrafficCompletionRedeliveryMismatch(
+        { trafficStatus: "succeeded", trafficEndedAt: new Date(report.completedAt) },
+        {
+          exitCode: 0,
+          errorMessage: null,
+          httpSummary: report.httpSummary,
+          trafficOutcomeSummary: report.trafficOutcomeSummary,
+          trafficDeliverySummary: classifiedDelivery,
+          httpTimingBreakdownSummary: report.httpTimingBreakdownSummary,
+          loadRunDiagnosticsSummary: report.loadRunDiagnosticsSummary,
+          apiRequestLifecycleSummary: { completedRequests: 10, failedRequests: 0 },
+        },
+        report,
+        classifiedDelivery,
+      ),
+    ).toThrow(/demo run 11111111-1111-4111-8111-111111111111.*apiRequestLifecycleSummary/);
   });
 });
 

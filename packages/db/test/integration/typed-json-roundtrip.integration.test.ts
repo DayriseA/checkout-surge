@@ -3,8 +3,12 @@ import { fileURLToPath } from "node:url";
 import {
   type AcceptedRunConfigSnapshot,
   type BusinessOutcomeSummary,
+  emptyHttpTimingBreakdownSummary,
+  type HttpTimingBreakdownSummary,
   publicRuntimePolicySchema,
+  type RealLoadRunDiagnosticsSummary,
   type TerminalInventorySnapshot,
+  type TrafficCompletionApiRequestLifecycleSummary,
   type TrafficDeliverySummary,
   type TrafficHttpSummary,
 } from "@checkout-surge/contracts";
@@ -52,9 +56,49 @@ describe.skipIf(!databaseUrl)("contract-typed persisted JSON", () => {
     const businessOutcomeSummary = businessOutcomeSummaryFixture();
     const terminalInventorySnapshot = terminalInventorySnapshotFixture();
     const trafficOutcomeSummary = { terminalInventorySnapshot, producer: "roundtrip-test" };
-    const httpTimingBreakdownSummary = { total: { averageMs: 21, p95Ms: 42 } };
-    const loadRunDiagnosticsSummary = { source: "k6", warningCount: 1 };
-    const apiRequestLifecycleSummary = { completed: 10, rejected: 0 };
+    const httpTimingBreakdownSummary: HttpTimingBreakdownSummary = emptyHttpTimingBreakdownSummary;
+    const loadRunDiagnosticsSummary: RealLoadRunDiagnosticsSummary = {
+      startedAt: capturedAt.toISOString(),
+      completedAt: capturedAt.toISOString(),
+      nproc: null,
+      ulimitNofile: null,
+      processMaxOpenFiles: null,
+      networkDiagnostics: null,
+      k6Version: "k6 v1.0.0",
+      executionPlan: {
+        trafficMode: "buyer-spike",
+        buyerCount: 10,
+        duplicateEachBuyerAttempt: false,
+        iterationsPerVu: 1,
+        plannedEmittedAttempts: 10,
+        startDelaySeconds: 0,
+        maxDurationSeconds: 10,
+      },
+      stderrLines: [],
+      stderrLineCountObserved: 0,
+      stderrLineCountRetained: 0,
+      stderrRetainedLineLimit: 50,
+      stderrLineTruncationLength: 500,
+      stderrLineTruncatedCount: 0,
+      terminalMetricSources: {
+        startedRequests: "summary_export",
+        completedRequests: "summary_export",
+        acceptedResponses: "summary_export",
+        soldOutResponses: "summary_export",
+        unexpectedResponses: "summary_export",
+        droppedIterations: "summary_export",
+        completedIterations: "summary_export",
+      },
+      summaryExportWarnings: [],
+    };
+    const apiRequestLifecycleSummary: TrafficCompletionApiRequestLifecycleSummary = {
+      plannedRequests: 10,
+      startedRequests: 10,
+      completedRequests: 10,
+      interruptedRequests: 0,
+      unstartedRequests: 0,
+      failedRequests: 0,
+    };
     const policy = publicRuntimePolicySchema.parse({
       isPublicRunBudgetEnforced: true,
       publicRunBudget: {
