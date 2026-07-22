@@ -51,7 +51,6 @@ import { createNotificationRecoveryScanner } from "../../src/application/notific
 import {
   createOrderProcessJobHandler as createProductionOrderProcessJobHandler,
   type OrderConfirmation,
-  type OrderTransitionPersistence,
 } from "../../src/application/order-process-job-handler.js";
 import { PostgresErpAttemptPersistence } from "../../src/persistence/postgres-erp-attempt-persistence.js";
 import {
@@ -583,79 +582,6 @@ describe("PostgreSQL worker order transitions", () => {
         DROP FUNCTION IF EXISTS reject_erp_attempt_event();
       `);
     }
-  });
-
-  it("reuses a successful ERP attempt after confirmed-state persistence fails", async () => {
-    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          status: "succeeded",
-          confirmationId: "erp_confirmation_reused",
-          httpStatus: 200,
-          latencyMs: 20,
-          timestamp: "2026-06-21T00:00:02.000Z",
-        }),
-        { status: 200, headers: { "content-type": "application/json" } },
-      ),
-    );
-    const confirmedPersistenceError = new Error("confirmed persistence unavailable");
-    const innerPersistence = new PostgresOrderTransitionPersistence(connection.db);
-    let failNextConfirmation = true;
-    const transitionToConfirmed = vi.fn(
-      async (...args: Parameters<OrderTransitionPersistence["transitionToConfirmed"]>) => {
-        if (failNextConfirmation) {
-          failNextConfirmation = false;
-          throw confirmedPersistenceError;
-        }
-
-        return innerPersistence.transitionToConfirmed(...args);
-      },
-    );
-    const persistence: OrderTransitionPersistence = {
-      transitionToProcessing: (...args) => innerPersistence.transitionToProcessing(...args),
-      transitionToConfirmed,
-      transitionToFailed: (...args) => innerPersistence.transitionToFailed(...args),
-    };
-    const handler = createOrderProcessJobHandler({
-      confirmation: new HttpErpOrderConfirmation({
-        baseUrl: "http://mock-erp:4100",
-        requestTimeoutMs: 1000,
-        attemptPersistence: new PostgresErpAttemptPersistence(connection.db),
-        fetch,
-        now: sequenceClock(
-          new Date("2026-06-21T00:00:01.000Z"),
-          new Date("2026-06-21T00:00:01.020Z"),
-        ),
-      }),
-      persistence,
-      logger: createSilentLogger("worker"),
-      isTemporaryConfirmationFailure: isTemporaryErpConfirmationError,
-    });
-
-    await expect(
-      handler.handle(job, { attemptNumber: 1, attemptsMade: 0, maxAttempts: 2 }),
-    ).rejects.toBe(confirmedPersistenceError);
-    await expect(
-      handler.handle(job, { attemptNumber: 2, attemptsMade: 1, maxAttempts: 2 }),
-    ).resolves.toBeUndefined();
-
-    const [order] = await connection.db.select().from(orders).where(eq(orders.id, ids.order));
-    const attempts = await connection.db
-      .select()
-      .from(erpAttempts)
-      .where(eq(erpAttempts.orderId, ids.order))
-      .orderBy(asc(erpAttempts.attemptNumber));
-
-    expect(fetch).toHaveBeenCalledOnce();
-    expect(transitionToConfirmed).toHaveBeenCalledTimes(2);
-    expect(order?.status).toBe("confirmed");
-    expect(attempts).toMatchObject([
-      {
-        attemptNumber: 1,
-        status: "succeeded",
-        httpStatus: 200,
-      },
-    ]);
   });
 
   it("fails missing and materially mismatched jobs without fabricating events", async () => {

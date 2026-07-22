@@ -1,4 +1,10 @@
-import type { OrderProcessJob } from "@checkout-surge/contracts";
+import {
+  type ErpConfirmationRequest,
+  type ErpConfirmationResponse,
+  erpConfirmationPath,
+  erpConfirmationRequestSchema,
+  type OrderProcessJob,
+} from "@checkout-surge/contracts";
 import {
   createDatabaseConnection,
   erpAttempts,
@@ -9,12 +15,21 @@ import {
   saleOffers,
 } from "@checkout-surge/db";
 import { resetTestDatabase } from "@checkout-surge/db/testing";
+import { createSilentLogger } from "@checkout-surge/logger";
 import { eq } from "drizzle-orm";
+import { fastify } from "fastify";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { HttpErpOrderConfirmation } from "../../src/application/erp-confirmation-client.js";
+import {
+  createOrderProcessJobHandler,
+  type OrderConfirmation,
+  type OrderTransitionPersistence,
+} from "../../src/application/order-process-job-handler.js";
 import {
   ErpAttemptContradictionError,
   PostgresErpAttemptPersistence,
 } from "../../src/persistence/postgres-erp-attempt-persistence.js";
+import { PostgresOrderTransitionPersistence } from "../../src/persistence/postgres-order-transition-persistence.js";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 const run = databaseUrl ? describe : describe.skip;
@@ -38,7 +53,7 @@ const job: OrderProcessJob = {
   queuedAt: "2026-06-22T00:00:00.000Z",
 };
 
-run("PostgreSQL ERP attempt delivery identity", () => {
+run("PostgreSQL ERP attempt recovery", () => {
   const connection = databaseUrl ? createDatabaseConnection(databaseUrl, { max: 4 }) : null;
   const requireConnection = () => {
     if (!connection) throw new Error("TEST_DATABASE_URL is required for integration tests.");
@@ -181,4 +196,166 @@ run("PostgreSQL ERP attempt delivery identity", () => {
       requirePersistence().recordAttempt({ ...base, httpStatus: 201 }),
     ).rejects.toBeInstanceOf(ErpAttemptContradictionError);
   });
+
+  it("replays a durably accepted ERP result after the ERP is replaced", async () => {
+    const transitionPersistence = new PostgresOrderTransitionPersistence(
+      requireConnection().db,
+      sequenceClock(new Date("2026-06-22T00:00:01.000Z"), new Date("2026-06-22T00:00:03.000Z")),
+    );
+    const confirmedPersistenceError = new Error(
+      "interrupted before the confirmed order transition",
+    );
+    const interruptedPersistence: OrderTransitionPersistence = {
+      transitionToProcessing: (...args) => transitionPersistence.transitionToProcessing(...args),
+      transitionToConfirmed: async () => {
+        throw confirmedPersistenceError;
+      },
+      transitionToFailed: (...args) => transitionPersistence.transitionToFailed(...args),
+    };
+    const originalErp = await startInMemoryErpService("original");
+
+    let interruption: unknown;
+    try {
+      const originalHandler = createHandler(
+        createHttpConfirmation(originalErp.baseUrl, requirePersistence()),
+        interruptedPersistence,
+      );
+      interruption = await originalHandler
+        .handle(job, {
+          attemptNumber: 1,
+          attemptsMade: 0,
+          maxAttempts: 2,
+          deliveryId: "original-delivery",
+        })
+        .catch((error: unknown) => error);
+    } finally {
+      await originalErp.close();
+    }
+
+    expect(interruption).toBe(confirmedPersistenceError);
+    expect(originalErp.receivedRequests).toEqual([
+      expect.objectContaining({
+        orderId: ids.order,
+        idempotencyKey: `erp-confirmation:${ids.order}`,
+      }),
+    ]);
+    await expect(readRecoveryState(requireConnection())).resolves.toMatchObject({
+      orderStatus: "processing",
+      successfulAttemptCount: 1,
+      confirmedEventCount: 0,
+      confirmationIds: ["original-confirmation-1"],
+    });
+
+    const replacementErp = await startInMemoryErpService("replacement");
+    try {
+      const replayHandler = createHandler(
+        createHttpConfirmation(replacementErp.baseUrl, requirePersistence()),
+        transitionPersistence,
+      );
+      await replayHandler.handle(job, {
+        attemptNumber: 2,
+        attemptsMade: 1,
+        maxAttempts: 2,
+        deliveryId: "replay-delivery",
+      });
+
+      expect(replacementErp.receivedRequests).toEqual([]);
+      await expect(readRecoveryState(requireConnection())).resolves.toMatchObject({
+        orderStatus: "confirmed",
+        successfulAttemptCount: 1,
+        confirmedEventCount: 1,
+        confirmationIds: ["original-confirmation-1"],
+      });
+    } finally {
+      await replacementErp.close();
+    }
+  });
 });
+
+function createHttpConfirmation(
+  baseUrl: string,
+  attemptPersistence: PostgresErpAttemptPersistence,
+): HttpErpOrderConfirmation {
+  return new HttpErpOrderConfirmation({
+    baseUrl,
+    requestTimeoutMs: 1_000,
+    attemptPersistence,
+    now: sequenceClock(new Date("2026-06-22T00:00:01.000Z"), new Date("2026-06-22T00:00:01.020Z")),
+  });
+}
+
+function createHandler(confirmation: OrderConfirmation, persistence: OrderTransitionPersistence) {
+  return createOrderProcessJobHandler({
+    confirmation,
+    persistence,
+    logger: createSilentLogger("worker"),
+    publishBusinessOutcomeUpdate: async () => undefined,
+    notificationRecordPublisher: { publishForConfirmedOrder: async () => undefined },
+    recovery: { handoff: async () => undefined, resolve: async () => undefined },
+    realtimePublisher: { enqueue: () => undefined },
+  });
+}
+
+async function startInMemoryErpService(instanceName: string): Promise<{
+  baseUrl: string;
+  receivedRequests: ErpConfirmationRequest[];
+  close(): Promise<void>;
+}> {
+  const receivedRequests: ErpConfirmationRequest[] = [];
+  const confirmationsByIdempotencyKey = new Map<string, ErpConfirmationResponse>();
+  const server = fastify({ logger: false });
+
+  server.post(erpConfirmationPath, async (request) => {
+    const confirmationRequest = erpConfirmationRequestSchema.parse(request.body);
+    receivedRequests.push(confirmationRequest);
+    const existing = confirmationsByIdempotencyKey.get(confirmationRequest.idempotencyKey);
+    if (existing) return existing;
+
+    const response: ErpConfirmationResponse = {
+      status: "succeeded",
+      confirmationId: `${instanceName}-confirmation-${confirmationsByIdempotencyKey.size + 1}`,
+      httpStatus: 200,
+      latencyMs: 20,
+      timestamp: "2026-06-22T00:00:01.020Z",
+    };
+    confirmationsByIdempotencyKey.set(confirmationRequest.idempotencyKey, response);
+    return response;
+  });
+
+  const baseUrl = await server.listen({ host: "127.0.0.1", port: 0 });
+  return { baseUrl, receivedRequests, close: () => server.close() };
+}
+
+async function readRecoveryState(connection: ReturnType<typeof createDatabaseConnection>): Promise<{
+  orderStatus: string | undefined;
+  successfulAttemptCount: number;
+  confirmedEventCount: number;
+  confirmationIds: Array<string | null>;
+}> {
+  const [order] = await connection.db.select().from(orders).where(eq(orders.id, ids.order));
+  const attempts = await connection.db
+    .select()
+    .from(erpAttempts)
+    .where(eq(erpAttempts.orderId, ids.order));
+  const events = await connection.db
+    .select()
+    .from(orderEvents)
+    .where(eq(orderEvents.orderId, ids.order));
+
+  return {
+    orderStatus: order?.status,
+    successfulAttemptCount: attempts.filter((attempt) => attempt.status === "succeeded").length,
+    confirmedEventCount: events.filter((event) => event.eventName === "order.confirmed").length,
+    confirmationIds: attempts.map((attempt) => attempt.confirmationId),
+  };
+}
+
+function sequenceClock(...dates: Date[]): () => Date {
+  let index = 0;
+  return () => {
+    const date = dates[index];
+    index += 1;
+    if (!date) throw new Error("Test clock exhausted.");
+    return date;
+  };
+}
