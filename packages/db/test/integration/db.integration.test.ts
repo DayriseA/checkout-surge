@@ -1,11 +1,8 @@
 import { execFile } from "node:child_process";
-import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import {
-  acceptedRunConfigSnapshotSchema,
   backpressureConfigSchema,
   type DashboardEvent,
   dashboardEventsRedisChannel,
@@ -50,65 +47,6 @@ const reservationExpiresAt = "2026-06-20T12:15:00.000Z";
 const orderQueuedAt = "2026-06-20T12:00:01.000Z";
 const saleStartsAt = "2026-06-20T00:00:00.000Z";
 const saleEndsAt = "2026-06-21T00:00:00.000Z";
-// Exact active-policy JSON emitted by the a2f6192 seed with its default environment.
-const legacyPublicRuntimePolicy = {
-  isPublicRunBudgetEnforced: true,
-  publicRunBudget: {
-    windowSeconds: 300,
-    perVisitorMaxStarts: 2,
-    globalMaxStarts: 6,
-  },
-  publicCustomDefaults: {
-    trafficConfig: {
-      mode: "buyer-spike",
-      buyerCount: 500,
-      duplicateEachBuyerAttempt: false,
-      startDelaySeconds: 0,
-      maxDurationSeconds: 10,
-      quantityPerAttempt: 1,
-    },
-    inventoryConfig: {
-      startingStock: 100,
-      quantityPerCheckout: 1,
-      reservationHoldMinutes: 15,
-    },
-    erpConfig: {
-      latencyMs: 100,
-      maxTps: 150,
-      errorRate: 0,
-      forcedOutage: false,
-      requestTimeoutMs: 2000,
-    },
-    backpressureConfig: {
-      queueName: "orders:process",
-      physicalQueueName: "orders-process",
-      orderProcessConcurrency: 5,
-      drainTimeoutSeconds: 300,
-      pendingPersistenceRetryAfterSeconds: 30,
-    },
-  },
-  publicCustomLimits: {
-    maxTotalRequests: 10_000,
-    maxBuyers: 10_000,
-    maxRequestsPerSecond: 1000,
-    maxTrafficDurationSeconds: 120,
-    maxTrafficStartDelaySeconds: 10,
-    maxStartingStock: 10_000,
-    maxErpLatencyMs: 2000,
-    maxErpErrorRate: 0.25,
-    allowForcedOutage: false,
-    allowedTrafficModes: ["buyer-spike", "steady-arrival-rate"],
-  },
-  deploymentHardCaps: {
-    maxBuyers: 100_000,
-    maxTotalRequests: 100_000,
-    maxRequestsPerSecond: 10_000,
-    maxTrafficDurationSeconds: 300,
-    maxTrafficStartDelaySeconds: 30,
-    maxPreAllocatedVus: 10_000,
-    maxVus: 10_000,
-  },
-} as const;
 const expectedHandAuthoredFunctions = [
   "enforce_demo_run_sale_context_offer_purpose",
   "enforce_erp_attempt_order_attribution",
@@ -230,103 +168,6 @@ async function rebuildAsEmptyPublicSchema(): Promise<void> {
     await sql.unsafe("DROP SCHEMA IF EXISTS drizzle CASCADE");
     await sql.unsafe("CREATE SCHEMA public");
   });
-}
-
-async function createPreTaskMigrationFolder(): Promise<string> {
-  const temporaryRoot = await mkdtemp(
-    path.join(os.tmpdir(), "checkout-surge-pre-task-migrations-"),
-  );
-  const temporaryMigrations = path.join(temporaryRoot, "drizzle");
-  await cp(migrationsFolder, temporaryMigrations, { recursive: true });
-
-  const currentTriggerMigration = await readFile(
-    path.join(temporaryMigrations, "0013_install_timestamp_and_ownership_triggers.sql"),
-    "utf8",
-  );
-  const historicalEmbeddedTriggerSql = currentTriggerMigration.replace(
-    /DROP TRIGGER IF EXISTS[^\n]+;\n--> statement-breakpoint\n/g,
-    "",
-  );
-  const initialMigrationPath = path.join(temporaryMigrations, "0000_initial_schema.sql");
-  await writeFile(
-    initialMigrationPath,
-    `${await readFile(initialMigrationPath, "utf8")}\n${historicalEmbeddedTriggerSql}`,
-  );
-
-  const journalPath = path.join(temporaryMigrations, "meta", "_journal.json");
-  const journal = JSON.parse(await readFile(journalPath, "utf8")) as {
-    entries: unknown[];
-  };
-  journal.entries = journal.entries.slice(0, 2);
-  await writeFile(journalPath, `${JSON.stringify(journal, null, 2)}\n`);
-
-  return temporaryMigrations;
-}
-
-async function createHistoricalInitialMigrationFolder(): Promise<string> {
-  const temporaryRoot = await mkdtemp(
-    path.join(os.tmpdir(), "checkout-surge-historical-migrations-"),
-  );
-  const temporaryMigrations = path.join(temporaryRoot, "drizzle");
-  await cp(migrationsFolder, temporaryMigrations, { recursive: true });
-
-  const triggerMigration = await readFile(
-    path.join(temporaryMigrations, "0013_install_timestamp_and_ownership_triggers.sql"),
-    "utf8",
-  );
-  const historicalEmbeddedTriggerSql = triggerMigration.replace(
-    /DROP TRIGGER IF EXISTS[^\n]+;\n--> statement-breakpoint\n/g,
-    "",
-  );
-  const initialMigrationPath = path.join(temporaryMigrations, "0000_initial_schema.sql");
-  await writeFile(
-    initialMigrationPath,
-    `${await readFile(initialMigrationPath, "utf8")}\n${historicalEmbeddedTriggerSql}`,
-  );
-
-  const journalPath = path.join(temporaryMigrations, "meta", "_journal.json");
-  const journal = JSON.parse(await readFile(journalPath, "utf8")) as {
-    entries: unknown[];
-  };
-  journal.entries = journal.entries.slice(0, 1);
-  await writeFile(journalPath, `${JSON.stringify(journal, null, 2)}\n`);
-
-  return temporaryMigrations;
-}
-
-async function removeRunSaleContextOwnershipConstraint(sql: TestSql): Promise<void> {
-  await sql`
-    ALTER TABLE "demo_run_sale_contexts"
-    DROP CONSTRAINT IF EXISTS "demo_run_sale_contexts_run_sale_offer_demo_runs_fk"
-  `;
-  await sql`DROP INDEX IF EXISTS "demo_runs_id_sale_offer_id_unique"`;
-}
-
-async function removeLifecycleAndChildAttributionGuards(sql: TestSql): Promise<void> {
-  await sql`DROP TRIGGER IF EXISTS "erp_attempts_enforce_order_attribution" ON "erp_attempts"`;
-  await sql`DROP TRIGGER IF EXISTS "order_events_enforce_parent_attribution" ON "order_events"`;
-  await sql`DROP TRIGGER IF EXISTS "orders_preserve_child_attribution" ON "orders"`;
-  await sql`DROP TRIGGER IF EXISTS "reservations_preserve_event_attribution" ON "reservations"`;
-  await sql`DROP FUNCTION IF EXISTS "enforce_erp_attempt_order_attribution"()`;
-  await sql`DROP FUNCTION IF EXISTS "enforce_order_event_parent_attribution"()`;
-  await sql`DROP FUNCTION IF EXISTS "preserve_order_child_attribution"()`;
-  await sql`DROP FUNCTION IF EXISTS "preserve_reservation_only_event_attribution"()`;
-  await sql`
-    ALTER TABLE "reservations"
-      DROP CONSTRAINT IF EXISTS "reservations_released_requires_released_at",
-      DROP CONSTRAINT IF EXISTS "reservations_expired_requires_expired_at"
-  `;
-  await sql`
-    ALTER TABLE "orders"
-      DROP CONSTRAINT IF EXISTS "orders_confirmed_requires_confirmed_at",
-      DROP CONSTRAINT IF EXISTS "orders_failed_requires_failed_at",
-      DROP CONSTRAINT IF EXISTS "orders_in_progress_requires_processing_at",
-      DROP CONSTRAINT IF EXISTS "orders_terminal_timestamps_after_queued_at"
-  `;
-  await sql`
-    ALTER TABLE "erp_attempts"
-      DROP CONSTRAINT IF EXISTS "erp_attempts_finished_after_started"
-  `;
 }
 
 async function insertCatalogSaleOffer(
@@ -541,13 +382,6 @@ async function expectConstraintViolation(promise: Promise<unknown>, constraintNa
   expect(error).toMatchObject({ code: "23514", constraint_name: constraintName });
 }
 
-async function removeRunHistoryChronologicalIndexes(sql: TestSql): Promise<void> {
-  await sql`DROP INDEX IF EXISTS "orders_run_id_queued_at_created_at_idx"`;
-  await sql`DROP INDEX IF EXISTS "erp_attempts_run_id_finished_at_created_at_idx"`;
-  await sql`DROP INDEX IF EXISTS "simulated_notifications_run_id_recorded_at_created_at_idx"`;
-  await sql`DROP INDEX IF EXISTS "order_events_run_id_occurred_at_created_at_idx"`;
-}
-
 describe("database migrations, seed data, and reset behavior", () => {
   let redis: Redis;
 
@@ -621,7 +455,7 @@ describe("database migrations, seed data, and reset behavior", () => {
     ]);
   });
 
-  it("applies the full journal to an empty dedicated test database and reruns as a no-op", async () => {
+  it("applies the baseline to an empty dedicated test database and reruns as a no-op", async () => {
     const databaseUrl = requireTestEnv("TEST_DATABASE_URL");
     const { databaseName } = validateDedicatedTestDatabaseUrl(databaseUrl);
 
@@ -638,120 +472,26 @@ describe("database migrations, seed data, and reset behavior", () => {
           sql<{ count: number }[]>`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`,
       );
 
-      expect(firstCount?.count).toBe(15);
+      expect(firstCount?.count).toBe(1);
       expect(secondCount).toEqual(firstCount);
     } finally {
       await resetTestDatabase();
     }
   });
 
-  it("upgrades the pre-task 0000/0001 state with embedded triggers without duplicates", async () => {
+  it("preserves valid current policy data and rejects invalid current policy data", async () => {
     const databaseUrl = requireTestEnv("TEST_DATABASE_URL");
     const { databaseName } = validateDedicatedTestDatabaseUrl(databaseUrl);
-    const preTaskMigrations = await createPreTaskMigrationFolder();
 
     try {
-      await rebuildAsEmptyPublicSchema();
-      await runDatabaseMigrations({
-        databaseUrl,
-        expectedDatabaseName: databaseName,
-        migrationsFolder: preTaskMigrations,
-      });
-      await runDatabaseMigrations({ databaseUrl, expectedDatabaseName: databaseName });
-      await runDatabaseMigrations({ databaseUrl, expectedDatabaseName: databaseName });
-
-      const [result] = await withDatabase(
-        (sql) => sql<{ migrations: number; triggers: number }[]>`
-          SELECT
-            (SELECT count(*)::int FROM drizzle.__drizzle_migrations) AS migrations,
-            (SELECT count(*)::int FROM pg_trigger WHERE NOT tgisinternal) AS triggers
-        `,
-      );
-      expect(result).toEqual({ migrations: 15, triggers: expectedHandAuthoredTriggers.length });
-    } finally {
-      await rm(path.dirname(preTaskMigrations), { recursive: true, force: true });
-      await resetTestDatabase();
-    }
-  });
-
-  it("hydrates the actual historical public runtime policy and preserves it on reruns", async () => {
-    const databaseUrl = requireTestEnv("TEST_DATABASE_URL");
-    const { databaseName } = validateDedicatedTestDatabaseUrl(databaseUrl);
-    const historicalMigrations = await createHistoricalInitialMigrationFolder();
-
-    try {
-      await rebuildAsEmptyPublicSchema();
-      await runDatabaseMigrations({
-        databaseUrl,
-        expectedDatabaseName: databaseName,
-        migrationsFolder: historicalMigrations,
-      });
+      await runSeedScript();
       await withDatabase(
         (sql) => sql`
-          INSERT INTO public_runtime_policies (id, policy)
-          VALUES ('active', ${JSON.stringify(legacyPublicRuntimePolicy)}::jsonb)
-        `,
-      );
-
-      await runDatabaseMigrations({ databaseUrl, expectedDatabaseName: databaseName });
-      const readPolicy = () =>
-        withDatabase(
-          (sql) => sql<{ policy: Record<string, unknown>; updated_at: string }[]>`
-            SELECT policy, updated_at::text
-            FROM public_runtime_policies
-            WHERE id = 'active'
-          `,
-        );
-      const [migrated] = await readPolicy();
-      const parsed = publicRuntimePolicySchema.parse(migrated?.policy);
-      const addedLimitKeys = Object.keys(parsed.publicCustomLimits)
-        .filter(
-          (key) => !Object.hasOwn(legacyPublicRuntimePolicy.publicCustomLimits, key),
-        )
-        .sort();
-
-      expect(addedLimitKeys).toEqual([
-        "maxErpMaxTps",
-        "maxPreAllocatedVus",
-        "maxVus",
-        "minErpMaxTps",
-      ]);
-      expect(parsed.publicCustomLimits).toMatchObject({
-        maxPreAllocatedVus: 1000,
-        maxVus: 1000,
-        minErpMaxTps: 1,
-        maxErpMaxTps: 150,
-      });
-      expect(parsed).toMatchObject(legacyPublicRuntimePolicy);
-
-      await runDatabaseMigrations({ databaseUrl, expectedDatabaseName: databaseName });
-      expect((await readPolicy())[0]).toEqual(migrated);
-
-      await runSeedScript();
-      expect((await readPolicy())[0]).toEqual(migrated);
-    } finally {
-      await rm(path.dirname(historicalMigrations), { recursive: true, force: true });
-      await resetTestDatabase();
-    }
-  });
-
-  it("leaves customized current policies unchanged and fails clearly without replacing null", async () => {
-    const databaseUrl = requireTestEnv("TEST_DATABASE_URL");
-    const { databaseName } = validateDedicatedTestDatabaseUrl(databaseUrl);
-
-    try {
-      await runSeedScript();
-      await withDatabase(async (sql) => {
-        await sql`
           UPDATE public_runtime_policies
           SET policy = jsonb_set(policy, '{publicRunBudget,windowSeconds}', '777'::jsonb)
           WHERE id = 'active'
-        `;
-        await sql`
-          DELETE FROM drizzle.__drizzle_migrations
-          WHERE id = (SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 1)
-        `;
-      });
+        `,
+      );
       const [customized] = await withDatabase(
         (sql) => sql<{ policy: unknown; updated_at: string }[]>`
           SELECT policy, updated_at::text
@@ -770,42 +510,11 @@ describe("database migrations, seed data, and reset behavior", () => {
       );
       expect(afterMigration).toEqual(customized);
 
-      const partiallyLegacyPolicy = structuredClone(customized?.policy) as {
-        publicCustomLimits: Record<string, unknown>;
-      };
-      delete partiallyLegacyPolicy.publicCustomLimits.maxPreAllocatedVus;
-      delete partiallyLegacyPolicy.publicCustomLimits.maxErpMaxTps;
-      partiallyLegacyPolicy.publicCustomLimits.maxVus = 600;
-      partiallyLegacyPolicy.publicCustomLimits.minErpMaxTps = 75;
-      await withDatabase(async (sql) => {
-        await sql`
-          UPDATE public_runtime_policies
-          SET policy = ${JSON.stringify(partiallyLegacyPolicy)}::jsonb
-          WHERE id = 'active'
-        `;
-        await sql`
-          DELETE FROM drizzle.__drizzle_migrations
-          WHERE id = (SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 1)
-        `;
-      });
-      await runDatabaseMigrations({ databaseUrl, expectedDatabaseName: databaseName });
-      const [partiallyHydrated] = await withDatabase(
-        (sql) => sql<{ policy: { publicCustomLimits: Record<string, unknown> } }[]>`
-          SELECT policy FROM public_runtime_policies WHERE id = 'active'
-        `,
-      );
-      expect(partiallyHydrated?.policy.publicCustomLimits).toMatchObject({
-        maxPreAllocatedVus: 600,
-        maxVus: 600,
-        minErpMaxTps: 75,
-        maxErpMaxTps: 100,
-      });
-
       await withDatabase(
         (sql) => sql`
           UPDATE public_runtime_policies
           SET policy = jsonb_set(
-            ${JSON.stringify(customized?.policy)}::jsonb,
+            policy,
             '{publicCustomLimits,maxPreAllocatedVus}',
             '1001'::jsonb
           )
@@ -815,37 +524,6 @@ describe("database migrations, seed data, and reset behavior", () => {
       await expect(
         runDatabaseMigrations({ databaseUrl, expectedDatabaseName: databaseName }),
       ).rejects.toThrow(/publicCustomLimits\.maxPreAllocatedVus \(public_vus_limit_invalid\)/);
-
-      await withDatabase(async (sql) => {
-        await sql`
-          UPDATE public_runtime_policies
-          SET policy = jsonb_set(
-            ${JSON.stringify(customized?.policy)}::jsonb #- '{publicCustomLimits,maxPreAllocatedVus}',
-            '{publicCustomLimits,maxVus}',
-            'null'::jsonb
-          )
-          WHERE id = 'active'
-        `;
-        await sql`
-          DELETE FROM drizzle.__drizzle_migrations
-          WHERE id = (SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 1)
-        `;
-      });
-
-      await expect(
-        runDatabaseMigrations({ databaseUrl, expectedDatabaseName: databaseName }),
-      ).rejects.toThrow(
-        /publicCustomLimits\.maxVus: Invalid input: expected number, received null/,
-      );
-      const [invalidPolicy] = await withDatabase(
-        (sql) => sql<{ policy: { publicCustomLimits: Record<string, unknown> } }[]>`
-          SELECT policy FROM public_runtime_policies WHERE id = 'active'
-        `,
-      );
-      expect(invalidPolicy?.policy.publicCustomLimits).toMatchObject({
-        maxPreAllocatedVus: 1000,
-        maxVus: null,
-      });
     } finally {
       await resetTestDatabase();
     }
@@ -978,104 +656,6 @@ describe("database migrations, seed data, and reset behavior", () => {
     ]);
   });
 
-  it("aborts ownership migration when legacy run and context offers contradict", async () => {
-    const presetId = "38000000-0000-4000-8000-000000000001";
-    const runId = "38000000-0000-4000-8000-000000000002";
-    const runSaleOfferId = "38000000-0000-4000-8000-000000000003";
-    const contextSaleOfferId = "38000000-0000-4000-8000-000000000004";
-
-    await withDatabase(async (sql) => {
-      await removeRunHistoryChronologicalIndexes(sql);
-      await removeLifecycleAndChildAttributionGuards(sql);
-      await removeRunSaleContextOwnershipConstraint(sql);
-      await sql`DROP TABLE demo_run_teardown_receipts`;
-      await sql`
-        DELETE FROM drizzle.__drizzle_migrations
-        WHERE id IN (
-          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 8
-        )
-      `;
-      await insertCatalogSaleOffer(sql, {
-        productId: "38000000-0000-4000-8000-000000000005",
-        saleOfferId: runSaleOfferId,
-        purpose: "generated_run",
-      });
-      await insertCatalogSaleOffer(sql, {
-        productId: "38000000-0000-4000-8000-000000000006",
-        saleOfferId: contextSaleOfferId,
-        purpose: "generated_run",
-      });
-      await sql`
-        INSERT INTO demo_presets (
-          id, slug, visibility, is_editable, display,
-          traffic_config, inventory_config, erp_config, backpressure_config
-        ) VALUES (
-          ${presetId}, 'legacy-run-sale-ownership', 'admin', true,
-          '{"name":"Legacy ownership"}'::jsonb,
-          '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb
-        )
-      `;
-      await sql`
-        INSERT INTO demo_runs (
-          id, preset_id, preset_name, operator_mode, status, config_snapshot, sale_offer_id
-        ) VALUES (
-          ${runId}, ${presetId}, 'Legacy ownership', 'admin', 'completed', '{}'::jsonb,
-          ${runSaleOfferId}
-        )
-      `;
-      await sql`
-        INSERT INTO demo_run_sale_contexts (run_id, sale_offer_id)
-        VALUES (${runId}, ${contextSaleOfferId})
-      `;
-    });
-
-    const migrationError = await runDatabaseMigrations({
-      databaseUrl: requireTestEnv("TEST_DATABASE_URL"),
-      migrationsFolder,
-    }).catch((error: unknown) => error);
-    expect(migrationError).toMatchObject({
-      cause: {
-        code: "23514",
-        constraint_name: "demo_run_sale_contexts_existing_ownership_consistency",
-      },
-    });
-    await expect(
-      withDatabase(
-        (sql) => sql`
-          SELECT 1
-          FROM pg_constraint
-          WHERE conname = 'demo_run_sale_contexts_run_sale_offer_demo_runs_fk'
-        `,
-      ),
-    ).resolves.toEqual([]);
-
-    await withDatabase(
-      (sql) => sql`
-        UPDATE demo_run_sale_contexts
-        SET sale_offer_id = ${runSaleOfferId}
-        WHERE run_id = ${runId}
-      `,
-    );
-    await runDatabaseMigrations({
-      databaseUrl: requireTestEnv("TEST_DATABASE_URL"),
-      migrationsFolder,
-    });
-    await withDatabase(async (sql) => {
-      await sql`DELETE FROM demo_runs WHERE id = ${runId}`;
-      await sql`DELETE FROM demo_presets WHERE id = ${presetId}`;
-      await sql`
-        DELETE FROM sale_offers WHERE id IN (${runSaleOfferId}, ${contextSaleOfferId})
-      `;
-      await sql`
-        DELETE FROM products
-        WHERE id IN (
-          '38000000-0000-4000-8000-000000000005',
-          '38000000-0000-4000-8000-000000000006'
-        )
-      `;
-    });
-  });
-
   it("keeps matching run context creation valid and rejects contradictory mutations", async () => {
     const presetId = "38000000-0000-4000-8000-000000000011";
     const runAId = "38000000-0000-4000-8000-000000000012";
@@ -1163,400 +743,6 @@ describe("database migrations, seed data, and reset behavior", () => {
           '38000000-0000-4000-8000-000000000019'
         )
       `;
-    });
-  });
-
-  it("backfills legacy traffic completions as enrichment-completed during migration", async () => {
-    const legacyRunId = "55555555-5555-4555-8555-555555555559";
-    await runSeedScript();
-    await withDatabase(async (sql) => {
-      await removeRunHistoryChronologicalIndexes(sql);
-      await removeLifecycleAndChildAttributionGuards(sql);
-      await removeRunSaleContextOwnershipConstraint(sql);
-      await sql`DROP TABLE demo_run_teardown_receipts`;
-      await sql`ALTER TABLE demo_run_finalizations DROP COLUMN completion_enrichment_status`;
-      await sql`DROP TYPE traffic_completion_enrichment_status`;
-      await sql`
-        DELETE FROM drizzle.__drizzle_migrations
-        WHERE id IN (
-          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 9
-        )
-      `;
-      await sql`
-        INSERT INTO demo_runs (
-          id, preset_id, preset_name, operator_mode, status, traffic_status, config_snapshot
-        )
-        SELECT
-          ${legacyRunId},
-          id,
-          display ->> 'name',
-          'admin',
-          'completed',
-          'succeeded',
-          jsonb_build_object(
-            'trafficConfig', traffic_config,
-            'inventoryConfig', inventory_config,
-            'erpConfig', erp_config,
-            'backpressureConfig', backpressure_config
-          )
-        FROM demo_presets
-        WHERE slug = 'admin-smoke-steady'
-      `;
-      await sql`
-        INSERT INTO demo_run_finalizations (
-          run_id,
-          http_summary,
-          traffic_outcome_summary,
-          traffic_delivery_summary,
-          http_timing_breakdown_summary,
-          load_run_diagnostics_summary,
-          api_request_lifecycle_summary
-        ) VALUES (${legacyRunId}, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb)
-      `;
-    });
-
-    await runDatabaseMigrations({
-      databaseUrl: requireTestEnv("TEST_DATABASE_URL"),
-      migrationsFolder,
-    });
-
-    const [legacyFinalization] = await withDatabase(
-      (sql) => sql<{ completion_enrichment_status: string }[]>`
-        SELECT completion_enrichment_status
-        FROM demo_run_finalizations
-        WHERE run_id = ${legacyRunId}
-      `,
-    );
-    expect(legacyFinalization?.completion_enrichment_status).toBe("completed");
-  });
-
-  it("backfills legacy breaker and retry configuration during a migrate-only upgrade", async () => {
-    await runSeedScript();
-    await withDatabase(async (sql) => {
-      await removeRunHistoryChronologicalIndexes(sql);
-      await removeRunSaleContextOwnershipConstraint(sql);
-      await sql`DROP TABLE demo_run_teardown_receipts`;
-      await sql`
-        UPDATE demo_presets
-        SET backpressure_config = (backpressure_config
-          - 'circuitBreakerFailureThreshold'
-          - 'circuitBreakerResetTimeoutMs'
-          - 'retryPolicy')
-        WHERE slug = 'admin-smoke-steady'
-      `;
-      await sql`
-        UPDATE public_runtime_policies
-        SET policy = jsonb_set(
-          jsonb_set(policy, '{publicRunBudget,windowSeconds}', '999'::jsonb),
-          '{publicCustomDefaults,backpressureConfig}',
-          (policy #> '{publicCustomDefaults,backpressureConfig}')
-            - 'circuitBreakerFailureThreshold'
-            - 'circuitBreakerResetTimeoutMs'
-            - 'retryPolicy',
-          true
-        )
-        WHERE id = 'active'
-      `;
-      await sql`
-        INSERT INTO demo_runs (
-          id, preset_id, preset_name, operator_mode, status, traffic_status, config_snapshot
-        )
-        SELECT
-          '55555555-5555-4555-8555-555555555558',
-          id,
-          display ->> 'name',
-          'admin',
-          'completed',
-          'succeeded',
-          jsonb_build_object(
-            'trafficConfig', traffic_config,
-            'inventoryConfig', inventory_config,
-            'erpConfig', erp_config,
-            'backpressureConfig',
-              (backpressure_config || jsonb_build_object(
-                'circuitBreakerFailureThreshold', 5,
-                'circuitBreakerResetTimeoutMs', 10000
-              )) - 'retryPolicy'
-          )
-        FROM demo_presets
-        WHERE slug = 'admin-smoke-steady'
-      `;
-      await sql`
-        ALTER TABLE demo_run_finalizations DROP COLUMN completion_enrichment_status
-      `;
-      await sql`
-        DROP TYPE traffic_completion_enrichment_status
-      `;
-      await removeLifecycleAndChildAttributionGuards(sql);
-      await sql`
-        DELETE FROM drizzle.__drizzle_migrations
-        WHERE id IN (
-          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 11
-        )
-      `;
-    });
-
-    await runDatabaseMigrations({
-      databaseUrl: requireTestEnv("TEST_DATABASE_URL"),
-      migrationsFolder,
-    });
-
-    const [preset] = await withDatabase(
-      (sql) => sql<{ backpressure_config: Record<string, unknown> }[]>`
-        SELECT backpressure_config
-        FROM demo_presets
-        WHERE slug = 'admin-smoke-steady'
-      `,
-    );
-    const [policy] = await withDatabase(
-      (sql) => sql<{ policy: unknown }[]>`
-        SELECT policy
-        FROM public_runtime_policies
-        WHERE id = 'active'
-      `,
-    );
-    const [legacyRun] = await withDatabase(
-      (sql) => sql<{ config_snapshot: unknown }[]>`
-        SELECT config_snapshot
-        FROM demo_runs
-        WHERE id = '55555555-5555-4555-8555-555555555558'
-      `,
-    );
-    expect(preset?.backpressure_config).toMatchObject({
-      circuitBreakerFailureThreshold: 5,
-      circuitBreakerResetTimeoutMs: 10_000,
-      queueName: "orders:process",
-      retryPolicy: { maxAttempts: 4, initialBackoffMs: 500 },
-    });
-    expect(policy?.policy).toMatchObject({
-      publicCustomDefaults: {
-        backpressureConfig: {
-          circuitBreakerFailureThreshold: 5,
-          circuitBreakerResetTimeoutMs: 10_000,
-          retryPolicy: { maxAttempts: 4, initialBackoffMs: 500 },
-        },
-      },
-      publicRunBudget: { windowSeconds: 999 },
-    });
-    expect(() => publicRuntimePolicySchema.parse(policy?.policy)).not.toThrow();
-    const migratedSnapshot = acceptedRunConfigSnapshotSchema.parse(legacyRun?.config_snapshot);
-    expect(migratedSnapshot.backpressureConfig.retryPolicy).toEqual({
-      maxAttempts: 4,
-      initialBackoffMs: 500,
-    });
-  });
-
-  it("backfills preset archive lifecycle columns during a migrate-only upgrade", async () => {
-    const canonicalPresetId = "44444444-4444-4444-8444-444444444460";
-    const operatorDuplicateId = "44444444-4444-4444-8444-444444444461";
-
-    // Rewind to before migration 0009: drop the new columns and index, remove
-    // the 0009 and later journal entries, then insert representative legacy rows before
-    // re-migrating so the backfill semantics are exercised, not just a fresh
-    // schema build.
-    await withDatabase(async (sql) => {
-      await removeRunHistoryChronologicalIndexes(sql);
-      await removeLifecycleAndChildAttributionGuards(sql);
-      await sql`DROP INDEX IF EXISTS "demo_presets_archived_at_idx"`;
-      await sql`ALTER TABLE "demo_presets" DROP COLUMN IF EXISTS "archived_at"`;
-      await sql`ALTER TABLE "demo_presets" DROP COLUMN IF EXISTS "is_system"`;
-      await sql`
-        DELETE FROM drizzle.__drizzle_migrations
-        WHERE id IN (
-          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 6
-        )
-      `;
-      await sql`
-        INSERT INTO "demo_presets" (
-          "id", "slug", "visibility", "is_editable", "is_custom", "display",
-          "traffic_config", "inventory_config", "erp_config", "backpressure_config"
-        ) VALUES
-          (
-            ${canonicalPresetId},
-            'admin-smoke-steady',
-            'admin'::"demo_preset_visibility",
-            true,
-            false,
-            '{"name":"Admin Smoke Steady","description":"Legacy canonical","sortOrder":100,"outcomeFocus":[]}'::jsonb,
-            '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb
-          ),
-          (
-            ${operatorDuplicateId},
-            'operator-smoke-copy',
-            'admin'::"demo_preset_visibility",
-            true,
-            false,
-            '{"name":"Operator Smoke Copy","description":"Noncanonical duplicate","sortOrder":101,"outcomeFocus":[]}'::jsonb,
-            '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb
-          )
-        ON CONFLICT ("slug") DO NOTHING
-      `;
-    });
-
-    await runDatabaseMigrations({
-      databaseUrl: requireTestEnv("TEST_DATABASE_URL"),
-      migrationsFolder,
-    });
-
-    const [isSystemColumn] = await withDatabase(
-      (sql) =>
-        sql<{ is_nullable: string; column_default: string | null }[]>`
-          SELECT is_nullable, column_default
-          FROM information_schema.columns
-          WHERE table_schema = 'public'
-            AND table_name = 'demo_presets'
-            AND column_name = 'is_system'
-        `,
-    );
-    const [archivedAtColumn] = await withDatabase(
-      (sql) =>
-        sql<{ is_nullable: string; column_default: string | null }[]>`
-          SELECT is_nullable, column_default
-          FROM information_schema.columns
-          WHERE table_schema = 'public'
-            AND table_name = 'demo_presets'
-            AND column_name = 'archived_at'
-        `,
-    );
-    const [archiveIndex] = await withDatabase(
-      (sql) => sql<{ exists: boolean }[]>`
-        SELECT to_regclass('public.demo_presets_archived_at_idx') IS NOT NULL AS "exists"
-      `,
-    );
-    const presetRows = await withDatabase(
-      (sql) =>
-        sql<{ slug: string; is_system: boolean; archived_at: string | null }[]>`
-          SELECT slug, is_system, archived_at::text
-          FROM demo_presets
-          WHERE slug IN ('admin-smoke-steady', 'operator-smoke-copy')
-          ORDER BY slug
-        `,
-    );
-
-    expect(isSystemColumn?.is_nullable).toBe("NO");
-    expect(isSystemColumn?.column_default).toBe("false");
-    expect(archivedAtColumn?.is_nullable).toBe("YES");
-    expect(archivedAtColumn?.column_default).toBeNull();
-    expect(archiveIndex?.exists).toBe(true);
-    expect(presetRows).toEqual([
-      { slug: "admin-smoke-steady", is_system: true, archived_at: null },
-      { slug: "operator-smoke-copy", is_system: false, archived_at: null },
-    ]);
-
-    // Leave the database usable for subsequent tests.
-    await withDatabase(
-      (sql) =>
-        sql`DELETE FROM demo_presets WHERE id IN (${canonicalPresetId}, ${operatorDuplicateId})`,
-    );
-  });
-
-  it("backfills conservative ERP attempt terminal markers and enforces the final column contract", async () => {
-    const confirmedIds = buildOrderReservationIds(901);
-    const failedIds = buildOrderReservationIds(902);
-    const processingIds = buildOrderReservationIds(903);
-    const correlationId = "corr-erp-terminal-migration";
-
-    await withDatabase(async (sql) => {
-      await removeRunHistoryChronologicalIndexes(sql);
-      await removeLifecycleAndChildAttributionGuards(sql);
-      await sql`ALTER TABLE "erp_attempts" DROP COLUMN IF EXISTS "terminal"`;
-      await sql`
-        DELETE FROM drizzle.__drizzle_migrations
-        WHERE id IN (
-          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 5
-        )
-      `;
-      await insertCatalogSaleOffer(sql, confirmedIds);
-      for (const { ids, status } of [
-        { ids: confirmedIds, status: "confirmed" as const },
-        { ids: failedIds, status: "failed" as const },
-        { ids: processingIds, status: "processing" as const },
-      ]) {
-        await insertReservation(sql, {
-          reservationId: ids.reservationId,
-          saleOfferId: confirmedIds.saleOfferId,
-          correlationId,
-        });
-        await insertOrder(sql, {
-          orderId: ids.orderId,
-          saleOfferId: confirmedIds.saleOfferId,
-          reservationId: ids.reservationId,
-          correlationId,
-          status,
-          processingAt: orderQueuedAt,
-          confirmedAt: status === "confirmed" ? orderQueuedAt : null,
-          failedAt: status === "failed" ? orderQueuedAt : null,
-        });
-      }
-      await sql`
-        INSERT INTO "erp_attempts" (
-          "order_id", "delivery_id", "correlation_id", "attempt_number", "status",
-          "latency_ms", "started_at", "finished_at", "created_at"
-        ) VALUES
-          (${confirmedIds.orderId}, 'confirmed-failure', ${correlationId}, 1, 'failed', 10, '2026-06-20T12:00:01Z', '2026-06-20T12:00:01Z', '2026-06-20T12:00:01Z'),
-          (${confirmedIds.orderId}, 'confirmed-success', ${correlationId}, 2, 'succeeded', 10, '2026-06-20T12:00:02Z', '2026-06-20T12:00:02Z', '2026-06-20T12:00:02Z'),
-          (${failedIds.orderId}, 'failed-earlier', ${correlationId}, 1, 'failed', 10, '2026-06-20T12:00:01Z', '2026-06-20T12:00:01Z', '2026-06-20T12:00:01Z'),
-          (${failedIds.orderId}, 'failed-latest', ${correlationId}, 2, 'timed_out', 10, '2026-06-20T12:00:02Z', '2026-06-20T12:00:02Z', '2026-06-20T12:00:02Z'),
-          (${processingIds.orderId}, 'processing-ambiguous', ${correlationId}, 1, 'failed', 10, '2026-06-20T12:00:01Z', '2026-06-20T12:00:01Z', '2026-06-20T12:00:01Z')
-      `;
-    });
-
-    await runDatabaseMigrations({
-      databaseUrl: requireTestEnv("TEST_DATABASE_URL"),
-      migrationsFolder,
-    });
-
-    await withDatabase(async (sql) => {
-      const rows = await sql<{ delivery_id: string; terminal: boolean }[]>`
-        SELECT "delivery_id", "terminal"
-        FROM "erp_attempts"
-        WHERE "correlation_id" = ${correlationId}
-        ORDER BY "delivery_id"
-      `;
-      expect(rows).toEqual([
-        { delivery_id: "confirmed-failure", terminal: false },
-        { delivery_id: "confirmed-success", terminal: true },
-        { delivery_id: "failed-earlier", terminal: false },
-        { delivery_id: "failed-latest", terminal: true },
-        { delivery_id: "processing-ambiguous", terminal: false },
-      ]);
-
-      const [column] = await sql<{ is_nullable: string; column_default: string | null }[]>`
-        SELECT is_nullable, column_default
-        FROM information_schema.columns
-        WHERE table_schema = 'public'
-          AND table_name = 'erp_attempts'
-          AND column_name = 'terminal'
-      `;
-      expect(column).toEqual({ is_nullable: "NO", column_default: "false" });
-
-      await sql`
-        INSERT INTO "erp_attempts" (
-          "order_id", "delivery_id", "correlation_id", "attempt_number", "status",
-          "latency_ms", "started_at", "finished_at"
-        ) VALUES (
-          ${processingIds.orderId}, 'default-terminal', ${correlationId}, 2, 'failed',
-          10, '2026-06-20T12:00:03Z', '2026-06-20T12:00:03Z'
-        )
-      `;
-      const [defaulted] = await sql<{ terminal: boolean }[]>`
-        SELECT terminal FROM erp_attempts WHERE delivery_id = 'default-terminal'
-      `;
-      expect(defaulted?.terminal).toBe(false);
-      await expect(sql`
-        INSERT INTO "erp_attempts" (
-          "order_id", "delivery_id", "correlation_id", "attempt_number", "status", "terminal",
-          "latency_ms", "started_at", "finished_at"
-        ) VALUES (
-          ${processingIds.orderId}, 'null-terminal', ${correlationId}, 3, 'failed', NULL,
-          10, '2026-06-20T12:00:04Z', '2026-06-20T12:00:04Z'
-        )
-      `).rejects.toThrow();
-
-      await sql`DELETE FROM orders WHERE id IN (${confirmedIds.orderId}, ${failedIds.orderId}, ${processingIds.orderId})`;
-      await sql`DELETE FROM reservations WHERE id IN (${confirmedIds.reservationId}, ${failedIds.reservationId}, ${processingIds.reservationId})`;
-      await sql`DELETE FROM sale_offers WHERE id = ${confirmedIds.saleOfferId}`;
-      await sql`DELETE FROM products WHERE id = ${confirmedIds.productId}`;
     });
   });
 
@@ -2024,111 +1210,6 @@ describe("database migrations, seed data, and reset behavior", () => {
     // own bounded invalid fixtures rather than inheriting this one.
     await withDatabase((sql) => sql`DELETE FROM public_runtime_policies WHERE id = 'active'`);
     await runSeedScript();
-  });
-
-  it("fails closed on legacy lifecycle contradictions and succeeds after explicit remediation", async () => {
-    const ids = buildOrderReservationIds(920);
-
-    await withDatabase(async (sql) => {
-      await removeRunHistoryChronologicalIndexes(sql);
-      await removeLifecycleAndChildAttributionGuards(sql);
-      await sql`
-        DELETE FROM drizzle.__drizzle_migrations
-        WHERE id IN (
-          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 4
-        )
-      `;
-      await insertCatalogSaleOffer(sql, ids);
-      await insertReservation(sql, {
-        reservationId: ids.reservationId,
-        saleOfferId: ids.saleOfferId,
-        correlationId: "corr-lifecycle-preflight",
-        status: "released",
-      });
-      await sql`
-        UPDATE "reservations" SET "released_at" = NULL WHERE "id" = ${ids.reservationId}
-      `;
-    });
-
-    const migrationError = await runDatabaseMigrations({
-      databaseUrl: requireTestEnv("TEST_DATABASE_URL"),
-      migrationsFolder,
-    }).catch((error: unknown) => error);
-    expect(migrationError).toMatchObject({
-      cause: {
-        code: "23514",
-        constraint_name: "reservations_released_requires_released_at",
-      },
-    });
-
-    await withDatabase(
-      (sql) => sql`
-        UPDATE "reservations" SET "released_at" = "secured_at"
-        WHERE "id" = ${ids.reservationId}
-      `,
-    );
-    await runDatabaseMigrations({
-      databaseUrl: requireTestEnv("TEST_DATABASE_URL"),
-      migrationsFolder,
-    });
-  });
-
-  it("fails closed on legacy attribution contradictions and succeeds after explicit remediation", async () => {
-    const ids = buildOrderReservationIds(930);
-
-    await withDatabase(async (sql) => {
-      await removeRunHistoryChronologicalIndexes(sql);
-      await removeLifecycleAndChildAttributionGuards(sql);
-      await sql`
-        DELETE FROM drizzle.__drizzle_migrations
-        WHERE id IN (
-          SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 4
-        )
-      `;
-      await insertCatalogSaleOffer(sql, ids);
-      await insertReservation(sql, {
-        reservationId: ids.reservationId,
-        saleOfferId: ids.saleOfferId,
-        correlationId: "corr-attribution-preflight",
-      });
-      await insertOrder(sql, {
-        orderId: ids.orderId,
-        saleOfferId: ids.saleOfferId,
-        reservationId: ids.reservationId,
-        correlationId: "corr-attribution-preflight",
-      });
-      await sql`
-        INSERT INTO "order_events" (
-          "order_id", "reservation_id", "sale_offer_id", "correlation_id",
-          "event_name", "source", "occurred_at"
-        ) VALUES (
-          ${ids.orderId}, ${ids.reservationId}, ${ids.saleOfferId}, 'corr-legacy-mismatch',
-          'order.queued', 'legacy-test', ${orderQueuedAt}::timestamptz
-        )
-      `;
-    });
-
-    const migrationError = await runDatabaseMigrations({
-      databaseUrl: requireTestEnv("TEST_DATABASE_URL"),
-      migrationsFolder,
-    }).catch((error: unknown) => error);
-    expect(migrationError).toMatchObject({
-      cause: {
-        code: "23514",
-        constraint_name: "order_events_order_attribution_agreement",
-      },
-    });
-
-    await withDatabase(
-      (sql) => sql`
-        UPDATE "order_events" SET "correlation_id" = 'corr-attribution-preflight'
-        WHERE "order_id" = ${ids.orderId}
-      `,
-    );
-    await runDatabaseMigrations({
-      databaseUrl: requireTestEnv("TEST_DATABASE_URL"),
-      migrationsFolder,
-    });
   });
 
   it("enforces lifecycle timestamp constraints while preserving one-way and equality semantics", async () => {

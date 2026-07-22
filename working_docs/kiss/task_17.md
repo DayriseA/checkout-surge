@@ -15,7 +15,7 @@ Keep primary/foreign keys, uniqueness, the single-nonterminal-run invariant, and
 ## Scope and concrete current paths
 
 - `packages/db/src/schema.ts`, `packages/db/drizzle/` baseline and `meta/` snapshots/journal.
-- The post-task-12 baseline's current trigger definitions, using the retired `0011_lifecycle_and_child_attribution_guards.sql` and `0013_install_timestamp_and_ownership_triggers.sql` names only as historical search terms when needed, plus migration metadata tests.
+- The post-task-12 baseline's current trigger definitions and migration metadata tests.
 - DB integration/migration tests, API persistence code only where a deleted trigger revealed an actual service-owned check, and schema documentation.
 
 ## Retained behavior and non-goals

@@ -40,7 +40,7 @@ The checked-in commands support host-native development, local Dev Containers, a
 
 - Use real PostgreSQL and/or Redis through dedicated test services.
 - Validate migrations, seed data, Redis inventory operations, persistence behavior, and cross-package boundaries.
-- Migration integration coverage includes the historical public runtime-policy fixture, exact compatibility additions, preservation/idempotency, full shared-schema refinements, and fail-closed explicit-null behavior.
+- Migration integration coverage applies the baseline from an empty approved database, verifies its current declarative and custom objects, checks idempotent reruns, preserves valid current policy data, and fails closed on invalid current policy data.
 - Must explicitly reset their state before or between suites.
 
 ### API / Service Tests
@@ -80,7 +80,7 @@ The repository provides these root scripts:
 - `pnpm test:infra:up` starts the dedicated test PostgreSQL and Redis services and waits for their declared healthchecks before returning.
 - `pnpm test:infra:down` stops dedicated test services and deletes their named volumes.
 - `pnpm test:infra:reset` deletes and recreates only the dedicated test PostgreSQL/Redis services and volumes, then waits for readiness.
-- `pnpm test:db:migrate` rehearses the real incremental `drizzle-kit` migration path (the one deployment uses) against the db package's isolated test database, creating it on demand. Useful when authoring a new migration; not required before running tests, which provision and migrate their databases automatically.
+- `pnpm test:db:migrate` applies the reviewed baseline against the db package's isolated test database, creating it on demand. It is a focused verification aid; tests provision and migrate their databases automatically.
 - `pnpm test:composition` runs the slow isolated deployed-topology characterization.
 - `pnpm test:characterization` runs focused browser recovery coverage and then the deployed-topology characterization.
 

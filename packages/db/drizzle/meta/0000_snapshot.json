@@ -1,5 +1,5 @@
 {
-  "id": "175901f5-4539-484b-98d9-a4d45fd5f91d",
+  "id": "a2336caf-ad8c-4087-8603-48a9690eaac6",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -41,6 +41,19 @@
           "primaryKey": false,
           "notNull": true,
           "default": false
+        },
+        "is_system": {
+          "name": "is_system",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "archived_at": {
+          "name": "archived_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
         },
         "display": {
           "name": "display",
@@ -108,6 +121,21 @@
           "columns": [
             {
               "expression": "visibility",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "demo_presets_archived_at_idx": {
+          "name": "demo_presets_archived_at_idx",
+          "columns": [
+            {
+              "expression": "archived_at",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -195,6 +223,14 @@
           "type": "jsonb",
           "primaryKey": false,
           "notNull": true
+        },
+        "completion_enrichment_status": {
+          "name": "completion_enrichment_status",
+          "type": "traffic_completion_enrichment_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'completed'"
         },
         "traffic_summary_received_at": {
           "name": "traffic_summary_received_at",
@@ -487,6 +523,21 @@
           ],
           "onDelete": "restrict",
           "onUpdate": "no action"
+        },
+        "demo_run_sale_contexts_run_sale_offer_demo_runs_fk": {
+          "name": "demo_run_sale_contexts_run_sale_offer_demo_runs_fk",
+          "tableFrom": "demo_run_sale_contexts",
+          "tableTo": "demo_runs",
+          "columnsFrom": [
+            "run_id",
+            "sale_offer_id"
+          ],
+          "columnsTo": [
+            "id",
+            "sale_offer_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -657,6 +708,66 @@
       },
       "isRLSEnabled": false
     },
+    "public.demo_run_teardown_receipts": {
+      "name": "demo_run_teardown_receipts",
+      "schema": "",
+      "columns": {
+        "run_id": {
+          "name": "run_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "sale_offer_id": {
+          "name": "sale_offer_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "preset_name": {
+          "name": "preset_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "durable_deleted_at": {
+          "name": "durable_deleted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "demo_run_teardown_receipts_sale_offer_id_idx": {
+          "name": "demo_run_teardown_receipts_sale_offer_id_idx",
+          "columns": [
+            {
+              "expression": "sale_offer_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.demo_runs": {
       "name": "demo_runs",
       "schema": "",
@@ -776,6 +887,27 @@
           "method": "btree",
           "with": {}
         },
+        "demo_runs_id_sale_offer_id_unique": {
+          "name": "demo_runs_id_sale_offer_id_unique",
+          "columns": [
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "sale_offer_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "demo_runs_preset_id_idx": {
           "name": "demo_runs_preset_id_idx",
           "columns": [
@@ -858,6 +990,12 @@
           "primaryKey": false,
           "notNull": true
         },
+        "delivery_id": {
+          "name": "delivery_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
         "correlation_id": {
           "name": "correlation_id",
           "type": "text",
@@ -882,6 +1020,13 @@
           "typeSchema": "public",
           "primaryKey": false,
           "notNull": true
+        },
+        "terminal": {
+          "name": "terminal",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
         },
         "http_status": {
           "name": "http_status",
@@ -919,6 +1064,24 @@
           "primaryKey": false,
           "notNull": true
         },
+        "confirmation_id": {
+          "name": "confirmation_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "idempotency_key": {
+          "name": "idempotency_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "response": {
+          "name": "response",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -928,8 +1091,8 @@
         }
       },
       "indexes": {
-        "erp_attempts_order_attempt_unique": {
-          "name": "erp_attempts_order_attempt_unique",
+        "erp_attempts_order_delivery_attempt_unique": {
+          "name": "erp_attempts_order_delivery_attempt_unique",
           "columns": [
             {
               "expression": "order_id",
@@ -938,7 +1101,28 @@
               "nulls": "last"
             },
             {
+              "expression": "delivery_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
               "expression": "attempt_number",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "erp_attempts_success_idempotency_key_unique": {
+          "name": "erp_attempts_success_idempotency_key_unique",
+          "columns": [
+            {
+              "expression": "idempotency_key",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -971,6 +1155,33 @@
               "expression": "run_id",
               "isExpression": false,
               "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "erp_attempts_run_id_finished_at_created_at_idx": {
+          "name": "erp_attempts_run_id_finished_at_created_at_idx",
+          "columns": [
+            {
+              "expression": "run_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "finished_at",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": false,
               "nulls": "last"
             }
           ],
@@ -1023,8 +1234,244 @@
         "erp_attempts_http_status_valid": {
           "name": "erp_attempts_http_status_valid",
           "value": "\"erp_attempts\".\"http_status\" IS NULL OR (\"erp_attempts\".\"http_status\" >= 100 AND \"erp_attempts\".\"http_status\" <= 599)"
+        },
+        "erp_attempts_finished_after_started": {
+          "name": "erp_attempts_finished_after_started",
+          "value": "\"erp_attempts\".\"finished_at\" >= \"erp_attempts\".\"started_at\""
         }
       },
+      "isRLSEnabled": false
+    },
+    "public.erp_confirmation_results": {
+      "name": "erp_confirmation_results",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "idempotency_key": {
+          "name": "idempotency_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "order_id": {
+          "name": "order_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "request_fingerprint": {
+          "name": "request_fingerprint",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "response": {
+          "name": "response",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "confirmation_id": {
+          "name": "confirmation_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "http_status": {
+          "name": "http_status",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "processed_at": {
+          "name": "processed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "erp_confirmation_results_idempotency_key_unique": {
+          "name": "erp_confirmation_results_idempotency_key_unique",
+          "columns": [
+            {
+              "expression": "idempotency_key",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "erp_confirmation_results_created_at_idx": {
+          "name": "erp_confirmation_results_created_at_idx",
+          "columns": [
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.order_dead_letters": {
+      "name": "order_dead_letters",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "job_id": {
+          "name": "job_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "job_name": {
+          "name": "job_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "claimed_order_id": {
+          "name": "claimed_order_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "queue_name": {
+          "name": "queue_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'orders:process'"
+        },
+        "payload": {
+          "name": "payload",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "mismatched_fields": {
+          "name": "mismatched_fields",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "attempts_made": {
+          "name": "attempts_made",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "correlation_id": {
+          "name": "correlation_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "observed_at": {
+          "name": "observed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "order_dead_letters_queue_job_name_unique": {
+          "name": "order_dead_letters_queue_job_name_unique",
+          "columns": [
+            {
+              "expression": "queue_name",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "job_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "job_name",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "order_dead_letters_observed_at_idx": {
+          "name": "order_dead_letters_observed_at_idx",
+          "columns": [
+            {
+              "expression": "observed_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
       "isRLSEnabled": false
     },
     "public.order_events": {
@@ -1163,6 +1610,33 @@
           "method": "btree",
           "with": {}
         },
+        "order_events_run_id_occurred_at_created_at_idx": {
+          "name": "order_events_run_id_occurred_at_created_at_idx",
+          "columns": [
+            {
+              "expression": "run_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "occurred_at",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "order_events_event_name_idx": {
           "name": "order_events_event_name_idx",
           "columns": [
@@ -1245,6 +1719,199 @@
             "id"
           ],
           "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.order_recovery_jobs": {
+      "name": "order_recovery_jobs",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "recovery_key": {
+          "name": "recovery_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "job_id": {
+          "name": "job_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_job_id": {
+          "name": "source_job_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "source_disposition": {
+          "name": "source_disposition",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "order_id": {
+          "name": "order_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "payload": {
+          "name": "payload",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "result": {
+          "name": "result",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "recovery_job_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'pending'"
+        },
+        "attempts": {
+          "name": "attempts",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "last_error": {
+          "name": "last_error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "next_attempt_at": {
+          "name": "next_attempt_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "claimed_at": {
+          "name": "claimed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "resolved_at": {
+          "name": "resolved_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "escalated_at": {
+          "name": "escalated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "order_recovery_jobs_recovery_key_unique": {
+          "name": "order_recovery_jobs_recovery_key_unique",
+          "columns": [
+            {
+              "expression": "recovery_key",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "order_recovery_jobs_status_next_attempt_idx": {
+          "name": "order_recovery_jobs_status_next_attempt_idx",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "next_attempt_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "order_recovery_jobs_order_id_idx": {
+          "name": "order_recovery_jobs_order_id_idx",
+          "columns": [
+            {
+              "expression": "order_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "order_recovery_jobs_order_id_orders_id_fk": {
+          "name": "order_recovery_jobs_order_id_orders_id_fk",
+          "tableFrom": "order_recovery_jobs",
+          "tableTo": "orders",
+          "columnsFrom": [
+            "order_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
           "onUpdate": "no action"
         }
       },
@@ -1422,6 +2089,33 @@
           "method": "btree",
           "with": {}
         },
+        "orders_run_id_queued_at_created_at_idx": {
+          "name": "orders_run_id_queued_at_created_at_idx",
+          "columns": [
+            {
+              "expression": "run_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "queued_at",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "orders_correlation_id_idx": {
           "name": "orders_correlation_id_idx",
           "columns": [
@@ -1501,6 +2195,22 @@
         "orders_quantity_positive": {
           "name": "orders_quantity_positive",
           "value": "\"orders\".\"quantity\" > 0"
+        },
+        "orders_confirmed_requires_confirmed_at": {
+          "name": "orders_confirmed_requires_confirmed_at",
+          "value": "\"orders\".\"status\" <> 'confirmed' OR \"orders\".\"confirmed_at\" IS NOT NULL"
+        },
+        "orders_failed_requires_failed_at": {
+          "name": "orders_failed_requires_failed_at",
+          "value": "\"orders\".\"status\" <> 'failed' OR \"orders\".\"failed_at\" IS NOT NULL"
+        },
+        "orders_in_progress_requires_processing_at": {
+          "name": "orders_in_progress_requires_processing_at",
+          "value": "\"orders\".\"status\" NOT IN ('processing', 'confirmed', 'failed') OR \"orders\".\"processing_at\" IS NOT NULL"
+        },
+        "orders_terminal_timestamps_after_queued_at": {
+          "name": "orders_terminal_timestamps_after_queued_at",
+          "value": "(\"orders\".\"confirmed_at\" IS NULL OR \"orders\".\"confirmed_at\" >= \"orders\".\"queued_at\") AND (\"orders\".\"failed_at\" IS NULL OR \"orders\".\"failed_at\" >= \"orders\".\"queued_at\")"
         }
       },
       "isRLSEnabled": false
@@ -2072,6 +2782,14 @@
         "reservations_quantity_positive": {
           "name": "reservations_quantity_positive",
           "value": "\"reservations\".\"quantity\" > 0"
+        },
+        "reservations_released_requires_released_at": {
+          "name": "reservations_released_requires_released_at",
+          "value": "\"reservations\".\"status\" <> 'released' OR \"reservations\".\"released_at\" IS NOT NULL"
+        },
+        "reservations_expired_requires_expired_at": {
+          "name": "reservations_expired_requires_expired_at",
+          "value": "\"reservations\".\"status\" <> 'expired' OR \"reservations\".\"expired_at\" IS NOT NULL"
         }
       },
       "isRLSEnabled": false
@@ -2372,6 +3090,33 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "simulated_notifications_run_id_recorded_at_created_at_idx": {
+          "name": "simulated_notifications_run_id_recorded_at_created_at_idx",
+          "columns": [
+            {
+              "expression": "run_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "recorded_at",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
@@ -2514,6 +3259,16 @@
         "failed"
       ]
     },
+    "public.recovery_job_status": {
+      "name": "recovery_job_status",
+      "schema": "public",
+      "values": [
+        "pending",
+        "enqueued",
+        "escalated",
+        "resolved"
+      ]
+    },
     "public.reservation_pending_persistence_status": {
       "name": "reservation_pending_persistence_status",
       "schema": "public",
@@ -2553,6 +3308,14 @@
       "schema": "public",
       "values": [
         "recorded"
+      ]
+    },
+    "public.traffic_completion_enrichment_status": {
+      "name": "traffic_completion_enrichment_status",
+      "schema": "public",
+      "values": [
+        "pending",
+        "completed"
       ]
     }
   },

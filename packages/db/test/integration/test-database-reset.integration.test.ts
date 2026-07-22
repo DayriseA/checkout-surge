@@ -129,20 +129,10 @@ describe.skipIf(!databaseUrl)("deterministic test database reset", () => {
     }
   });
 
-  it("rebuilds when the applied Drizzle journal is altered, missing, or reordered", async () => {
+  it("rebuilds when the applied baseline journal is altered or missing", async () => {
     const corruptions = [
       `UPDATE drizzle.__drizzle_migrations SET hash = repeat('0', 64) WHERE id = (SELECT min(id) FROM drizzle.__drizzle_migrations)`,
       `DELETE FROM drizzle.__drizzle_migrations WHERE id = (SELECT max(id) FROM drizzle.__drizzle_migrations)`,
-      `WITH first_two AS (
-        SELECT id, row_number() OVER (ORDER BY id) AS position
-        FROM drizzle.__drizzle_migrations ORDER BY id LIMIT 2
-      )
-      UPDATE drizzle.__drizzle_migrations migration
-      SET id = CASE
-        WHEN first_two.position = 1 THEN (SELECT max(id) + 1 FROM drizzle.__drizzle_migrations)
-        ELSE (SELECT id FROM first_two WHERE position = 1)
-      END
-      FROM first_two WHERE migration.id = first_two.id`,
     ];
 
     for (const corruption of corruptions) {
@@ -152,7 +142,7 @@ describe.skipIf(!databaseUrl)("deterministic test database reset", () => {
         (sql) =>
           sql<{ count: number }[]>`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`,
       );
-      expect(journal?.count).toBe(15);
+      expect(journal?.count).toBe(1);
     }
   });
 

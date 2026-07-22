@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { cp, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { cp, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,20 +22,14 @@ interface Snapshot {
   id: string;
   prevId: string;
   version: string;
-  [key: string]: unknown;
 }
 
 async function readJson<T>(filePath: string): Promise<T> {
   return JSON.parse(await readFile(filePath, "utf8")) as T;
 }
 
-function snapshotManagedState(snapshot: Snapshot): Omit<Snapshot, "id" | "prevId"> {
-  const { id: _id, prevId: _prevId, ...managedState } = snapshot;
-  return managedState;
-}
-
 describe("Drizzle migration metadata", () => {
-  it("has one ordered, linked PostgreSQL v7 snapshot per journal entry", async () => {
+  it("has exactly one linked PostgreSQL v7 baseline snapshot and SQL file", async () => {
     const journal = await readJson<Journal>(path.join(metadataFolder, "_journal.json"));
     const snapshotFiles = (await readdir(metadataFolder))
       .filter((fileName) => fileName.endsWith("_snapshot.json"))
@@ -45,46 +39,49 @@ describe("Drizzle migration metadata", () => {
       .sort();
 
     expect(journal).toMatchObject({ version: "7", dialect: "postgresql" });
+    expect(journal.entries).toHaveLength(1);
+    expect(journal.entries[0]).toMatchObject({
+      idx: 0,
+      version: "7",
+      tag: "0000_baseline",
+    });
     expect(snapshotFiles).toEqual(
       journal.entries.map((entry) => `${entry.idx.toString().padStart(4, "0")}_snapshot.json`),
     );
     expect(sqlFiles).toEqual(journal.entries.map((entry) => `${entry.tag}.sql`));
 
-    let expectedPrevId = "00000000-0000-0000-0000-000000000000";
-    const snapshotIds = new Set<string>();
-    for (const [position, entry] of journal.entries.entries()) {
-      expect(entry).toMatchObject({ idx: position, version: "7" });
-      expect(entry.tag.startsWith(`${position.toString().padStart(4, "0")}_`)).toBe(true);
-
-      const snapshotFile = snapshotFiles[position];
-      expect(snapshotFile).toBeDefined();
-      const snapshot = await readJson<Snapshot>(path.join(metadataFolder, snapshotFile ?? ""));
-      expect(snapshot).toMatchObject({
-        version: "7",
-        dialect: "postgresql",
-        prevId: expectedPrevId,
-      });
-      expect(snapshot.id).toMatch(
-        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
-      );
-      expect(snapshotIds.has(snapshot.id)).toBe(false);
-      snapshotIds.add(snapshot.id);
-      expectedPrevId = snapshot.id;
-    }
-    expect(snapshotIds.size).toBe(journal.entries.length);
+    const snapshot = await readJson<Snapshot>(path.join(metadataFolder, "0000_snapshot.json"));
+    expect(snapshot).toMatchObject({
+      version: "7",
+      dialect: "postgresql",
+      prevId: "00000000-0000-0000-0000-000000000000",
+    });
+    expect(snapshot.id).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
   });
 
-  it("records custom SQL entries as explicit snapshot-invisible state", async () => {
-    for (const index of [1, 3, 4, 5, 13, 14]) {
-      const previous = await readJson<Snapshot>(
-        path.join(metadataFolder, `${(index - 1).toString().padStart(4, "0")}_snapshot.json`),
-      );
-      const current = await readJson<Snapshot>(
-        path.join(metadataFolder, `${index.toString().padStart(4, "0")}_snapshot.json`),
-      );
+  it("keeps required snapshot-invisible objects in the baseline without upgrade scaffolding", async () => {
+    const baseline = await readFile(path.join(drizzleFolder, "0000_baseline.sql"), "utf8");
 
-      expect(snapshotManagedState(current)).toEqual(snapshotManagedState(previous));
+    for (const requiredSql of [
+      'CREATE EXTENSION IF NOT EXISTS "pgcrypto"',
+      'CREATE UNIQUE INDEX "demo_runs_single_non_terminal_idx"',
+      'CREATE FUNCTION "enforce_order_backing_secured_reservation"()',
+      'CREATE FUNCTION "enforce_erp_attempt_order_attribution"()',
+      'CREATE FUNCTION "set_updated_at"()',
+      'CREATE FUNCTION "enforce_run_owned_sale_offer_attribution"()',
+      'CREATE TRIGGER "orders_enforce_backing_secured_reservation"',
+      'CREATE TRIGGER "order_events_enforce_parent_attribution"',
+      'CREATE TRIGGER "products_set_updated_at"',
+      'CREATE TRIGGER "sim_notifications_enforce_run_sale_attribution"',
+    ]) {
+      expect(baseline).toContain(requiredSql);
     }
+
+    expect(baseline).not.toMatch(
+      /LOCK TABLE|contradictory historical|backfill|hydrate|UPDATE "public_runtime_policies"/i,
+    );
   });
 
   it("generates no accidental schema migration from the current schema", async () => {
@@ -104,11 +101,9 @@ describe("Drizzle migration metadata", () => {
           dialect: "postgresql",
         })};\n`,
       );
-      const result = await execFileAsync(
-        drizzleKit,
-        ["generate", "--config", temporaryConfig],
-        { cwd: temporaryRoot },
-      );
+      const result = await execFileAsync(drizzleKit, ["generate", "--config", temporaryConfig], {
+        cwd: temporaryRoot,
+      });
 
       expect(`${result.stdout}\n${result.stderr}`).toContain(
         "No schema changes, nothing to migrate",

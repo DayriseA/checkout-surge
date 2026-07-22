@@ -494,7 +494,7 @@ Logical fields:
 Notes:
 
 - The referenced `SaleOffer` must have `purpose = generated_run`.
-- The non-null context pair `(runId, saleOfferId)` has a composite foreign key to the unique `DemoRun.(id, saleOfferId)` pair. This prevents contradictory context inserts and updates as well as later changes to either ownership column on the run. Existing-database migration aborts if contradictory historical rows exist so ownership must be reconciled explicitly rather than guessed.
+- The non-null context pair `(runId, saleOfferId)` has a composite foreign key to the unique `DemoRun.(id, saleOfferId)` pair. This prevents contradictory context inserts and updates as well as later changes to either ownership column on the run.
 - `Reservation`, `Order`, `ReservationPendingPersistence`, `OrderEvent`, and `SimulatedNotification` records for generated sale offers must match the owning run context.
 - The context is deleted with its demo run, while the generated sale offer is cleaned up after dependent run records are removed.
 
@@ -505,8 +505,8 @@ Enforcement note:
   - `enforce_demo_run_sale_context_offer_purpose` rejects a context whose referenced sale offer is not `purpose = generated_run`.
   - `enforce_run_owned_sale_offer_attribution` rejects a run-attributed row (`Reservation`, `Order`, `ReservationPendingPersistence`, `OrderEvent`, `SimulatedNotification`) whose `runId` does not match the run that owns its generated `saleOfferId`.
 - A similar composite foreign key on each run-attributed business table would not fully cover its rule: those tables allow `runId = NULL`, and PostgreSQL `MATCH SIMPLE` skips the foreign-key check when any referencing column is `NULL`. The attribution trigger closes that nullable gap where a generated offer is written with a missing run, and also rejects a catalog offer paired with any run. The context table itself has two non-null ownership columns, so its composite foreign key has no corresponding `MATCH SIMPLE` gap. Trigger lookups are single-row probes on indexed/unique columns against a tiny per-run table, so the per-write cost is negligible.
-- These triggers and functions live in a hand-authored SQL migration and are invisible to `schema.ts` and `drizzle-kit` introspection. They must be preserved whenever migrations are regenerated, reset, or squashed, otherwise the enforcement is silently lost.
-- Lifecycle and child/parent attribution guards are installed by append-only migration `0011_lifecycle_and_child_attribution_guards`. The migration takes write-conflicting locks across the affected tables, audits historical lifecycle and attribution contradictions, and aborts with SQLSTATE `23514` plus a stable constraint name instead of inventing timestamps or choosing an attribution source. Operators must reconcile the named contradiction explicitly and retry. Lifecycle checks are added `NOT VALID` and then validated in the same guarded migration; child-write guards are installed before parent-preservation guards. Child writes lock their referenced order or reservation, while parent updates inspect existing children under the parent row lock, so concurrent writes cannot create a disagreement between the two directions.
+- These triggers and functions live in the hand-authored section of the single reviewed baseline and are invisible to `schema.ts` and `drizzle-kit` introspection. They must be preserved whenever the pre-release baseline is regenerated or amended, otherwise the enforcement is silently lost.
+- Lifecycle checks are declarative constraints in `schema.ts`. Current child/parent attribution triggers are installed directly by the baseline; child writes lock their referenced order or reservation, while parent updates inspect existing children under the parent row lock, so concurrent writes cannot create a disagreement between the two directions.
 
 ### 14. ReservationPendingPersistence
 
@@ -704,7 +704,7 @@ Notes:
 
 - The singleton row uses the stable id `active`.
 - An explicit seed/setup validates the environment-backed mutable-policy baseline and inserts it only when the active singleton is absent. The seven API-owned deployment caps are mirrored into setup solely for this semantic validation and compatibility storage. Rerunning setup preserves admin-edited values; a fresh database is required to bootstrap from changed setup defaults.
-- The append-only compatibility migration for the repository's older seed shape adds only absent `maxPreAllocatedVus`, `maxVus`, `minErpMaxTps`, and `maxErpMaxTps` keys. It derives VU limits within persisted deployment caps and ensures the ERP maximum includes the persisted default (150 TPS in the historical fixture). Key presence is authoritative: existing values and explicit `null` are preserved, and the complete hydrated object must pass structural and semantic contract validation.
+- The migration runner validates an existing active singleton against the current structural and semantic policy contract without translating older shapes. Incompatible pre-release state is rebuilt through the documented selected-project wipe workflow.
 - Admin-protected controls may update this row. API startup configuration owns deployment hard caps, overlays them at the persistence/application boundary, and rejects updates or startup when mutable policy values exceed current caps.
 - Public runtime policy changes do not mutate public preset definitions; they control public custom-run bounds and public budget behavior.
 

@@ -84,7 +84,7 @@ pnpm runtime:setup
 
 `runtime:setup` uses `docker compose run` and auto-starts PostgreSQL and Redis as dependencies, so it can be run without a prior `runtime:up`. By itself it does not start the API, worker, mock ERP, load orchestrator, or dashboard services.
 
-Setup strictly validates the environment-backed public-policy bootstrap before database mutations and inserts it only when `active` is absent. The current migration chain also narrowly hydrates the repository's older active-policy JSON by adding only the four public custom VU/ERP limit keys that older seeds omitted. Its VU values are bounded by the persisted deployment caps, and its ERP maximum accommodates the persisted custom default (including the historical 150 TPS default). Existing keys, including explicit JSON `null`, are never replaced; the complete result must pass the current shared policy schema or setup exits with field-level diagnostics. Rerunning setup preserves the existing PostgreSQL policy, including admin edits, and a valid current policy is a semantic no-op. That current hydration behavior is not an in-place-upgrade promise for future pre-release shapes; change current policy through the protected admin controls, or use the intentional wipe below when the local data shape becomes incompatible or a new environment bootstrap is intended.
+Setup strictly validates the environment-backed public-policy bootstrap before database mutations and inserts it only when `active` is absent. After applying the baseline, the migration runner also validates any existing active policy with the current shared schema and reports field-level diagnostics for malformed current data. Rerunning setup preserves the existing PostgreSQL policy, including admin edits, and a valid current policy is a semantic no-op. Use the intentional wipe below when the pre-release data shape is incompatible or a new environment bootstrap is intended.
 
 ### Intentional pre-release wipe and rebuild
 
@@ -326,7 +326,7 @@ The worker-facing Mock ERP confirmation contract is `POST http://localhost:4100/
 | `pnpm test:infra:up` | Start isolated test PostgreSQL and Redis from `docker-compose.test.yml` |
 | `pnpm test:infra:down` | Stop isolated test services and remove their volumes |
 | `pnpm test:infra:reset` | Reset isolated test PostgreSQL and Redis services |
-| `pnpm test:db:migrate` | Rehearse incremental `drizzle-kit` migration against the isolated test database — useful when authoring a new migration; not required before running tests |
+| `pnpm test:db:migrate` | Apply the reviewed baseline against the isolated test database; not required before running tests |
 
 Useful package commands:
 
@@ -366,13 +366,15 @@ pnpm test:infra:up
 pnpm test
 ```
 
-When authoring a new migration, rehearse the real incremental `drizzle-kit` upgrade path against disposable infrastructure before it touches development data:
+To verify the reviewed baseline against disposable infrastructure:
 
 ```bash
 pnpm test:db:migrate
 ```
 
-The checked-in `packages/db/drizzle` directory is part of the database package artifact and is resolved relative to that package in both TypeScript and compiled execution. Keep each journal entry, SQL file, and linked `meta/*_snapshot.json` together. Drizzle snapshots describe the TypeScript schema only: the hand-authored functions, triggers, expression indexes, data backfills, and audit blocks in SQL migrations remain authoritative even when `drizzle-kit generate` reports no schema change. After applying migrations, the project migration runner validates an existing active public runtime policy with the complete shared schema, including semantic refinements; malformed operator data is reported rather than repaired as if it were omitted legacy data.
+The checked-in `packages/db/drizzle` directory is part of the database package artifact and is resolved relative to that package in both TypeScript and compiled execution. It contains exactly one baseline SQL file, one journal entry, and one linked snapshot. Drizzle snapshots describe only `schema.ts`; the baseline SQL must also retain the reviewed `pgcrypto` extension, single-nonterminal-run expression index, and current hand-authored functions/triggers.
+
+Before release stability is promised, amend this baseline in place for schema changes: generate a fresh declarative baseline from the current `schema.ts` into a temporary directory, review it as an empty-database final state, replace the checked-in SQL/snapshot/journal together, restore and review the required snapshot-invisible custom SQL, then run the DB unit, migration, integration, and type-check commands. Do not add a compatibility migration or old-row backfill. Existing local runtime data must first follow the selected-project wipe-and-rebuild workflow above.
 
 Run at most one `runtime-setup` or migration job at a time for each database; serialize migration execution. A failed job can be retried after it exits, and already-applied entries remain no-ops. The pinned PostgreSQL migrator applies all pending entries in one transaction, but it does not provide an explicit deployment/advisory lock for competing migration processes.
 

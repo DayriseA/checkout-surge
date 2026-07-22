@@ -47,9 +47,9 @@ import {
 } from "@checkout-surge/contracts";
 import { relations, sql } from "drizzle-orm";
 
-// Preservation warning: Drizzle snapshots cannot represent the hand-authored
-// PostgreSQL functions/triggers and other custom SQL in drizzle/*.sql. Do not
-// remove or replace those journaled migrations based on schema generation alone.
+// Drizzle snapshots cannot represent the required PostgreSQL functions,
+// triggers, extension, or expression index appended to the reviewed baseline.
+// Preserve that custom SQL when amending the pre-release baseline.
 import {
   boolean,
   check,
@@ -257,10 +257,9 @@ export const demoRuns = pgTable(
     updatedAt: updatedAt(),
   },
   (table) => [
-    // The constant-expression partial unique index that admits only one
-    // non-terminal run is hand-authored in 0003_demo_runs_single_non_terminal.sql.
-    // Keep it out of this declaration because Drizzle does not reliably
-    // round-trip expression indexes; do not generate a duplicate schema index.
+    // The baseline hand-authors the constant-expression partial unique index
+    // admitting only one non-terminal run. Keep it out of this declaration
+    // because Drizzle does not reliably round-trip expression indexes.
     uniqueIndex("demo_runs_sale_offer_id_unique").on(table.saleOfferId),
     uniqueIndex("demo_runs_id_sale_offer_id_unique").on(table.id, table.saleOfferId),
     index("demo_runs_preset_id_idx").on(table.presetId),

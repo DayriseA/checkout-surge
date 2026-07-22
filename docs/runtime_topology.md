@@ -63,7 +63,7 @@ Expected command contract:
 
 - `pnpm runtime:up` starts the full containerized topology.
 - `pnpm runtime:down` stops the full containerized topology and preserves its named volumes.
-- `pnpm runtime:setup` explicitly runs migrations and seeds the demo product, baseline sale offer, durable presets, Redis inventory, and a validated environment-backed public runtime policy on first bootstrap. Compose mirrors the API-owned seven `DEMO_MAX_*` ceilings into this one-shot service solely so it can validate and store the initial policy against the deployed caps; the running API remains authoritative and overlays its own startup config. The runtime drain timeout is not a setup input. The current migration chain narrowly hydrates absent VU/ERP limit keys in repository-owned older policies, then validates the full policy; supplied keys—including explicit `null`—are preserved, so invalid operator data fails clearly instead of being silently reset. Rerunning setup is a semantic no-op for valid current policies and preserves admin edits. This current migration behavior is not a future pre-release compatibility promise; use the protected admin policy controls for current data or the [intentional wipe-and-rebuild workflow](local_development.md#intentional-pre-release-wipe-and-rebuild) after an incompatible local data-shape change.
+- `pnpm runtime:setup` applies the single reviewed database baseline and seeds the demo product, baseline sale offer, durable presets, Redis inventory, and a validated environment-backed public runtime policy on first bootstrap. Compose mirrors the API-owned seven `DEMO_MAX_*` ceilings into this one-shot service solely so it can validate and store the initial policy against the deployed caps; the running API remains authoritative and overlays its own startup config. The runtime drain timeout is not a setup input. Rerunning setup is a semantic no-op for valid current policies and preserves admin edits. An incompatible pre-release shape requires the [intentional wipe-and-rebuild workflow](local_development.md#intentional-pre-release-wipe-and-rebuild), not legacy-data hydration.
 - `pnpm health:check` verifies full demo readiness, including the dashboard and backend service readiness.
 
 `runtime:up` does not run migrations or seed demo data.
@@ -90,7 +90,7 @@ Use this for test loops.
 Expected command contract:
 
 - `pnpm test:infra:up` starts isolated PostgreSQL and Redis from `docker-compose.test.yml`. Per-package test databases are created and migrated on demand by the tests themselves.
-- `pnpm test:db:migrate` rehearses incremental `drizzle-kit` migration against the isolated test database (migration-authoring aid, not a test prerequisite).
+- `pnpm test:db:migrate` applies the reviewed baseline against the isolated test database (migration verification aid, not a test prerequisite).
 - `pnpm test:infra:down` stops and removes isolated test infrastructure.
 
 Tests should continue to avoid normal development and demo state.
