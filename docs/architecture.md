@@ -139,7 +139,7 @@ Public-facing controls are narrowly scoped: curated read-only preset starts, bou
 
 ### 8. Dashboard read amplification
 
-The public SSE fan-out applies atomic process-local total and per-source connection caps before registering a client. Dashboard recovery acquires a small process-local concurrency permit and an atomic Redis global/per-source fixed-window budget before touching PostgreSQL, Redis projections, or BullMQ. Rejections return retry guidance, limiter failures fail closed, and the default three concurrent recovery builds stay below the default API PostgreSQL pool of ten.
+The public SSE fan-out applies atomic process-local total and per-source connection caps before registering a client. One process-local dashboard recovery boundary enforces the concurrent-build ceiling plus global and per-source fixed-window request budgets before touching PostgreSQL, Redis projections, or BullMQ. It records only admitted source counts, so the source map is bounded by the configured global request budget and is cleared on the next window. Rate exhaustion returns a retryable `429`; local concurrent-capacity exhaustion returns a retryable `503`. The default three concurrent recovery builds stay below the default API PostgreSQL pool of ten.
 
 ### 9. Lost queue and completion handoffs
 

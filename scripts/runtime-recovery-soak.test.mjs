@@ -6,9 +6,9 @@ import {
   runRecoverySoak,
 } from "./runtime-recovery-soak.mjs";
 
-test("requires a soak strictly longer than two recovery limiter windows", () => {
+test("requires a soak strictly longer than two recovery budget windows", () => {
   assert.throws(
-    () => assertSoakCoversTwoWindows({ limiterWindowSeconds: 60, soakSeconds: 120 }),
+    () => assertSoakCoversTwoWindows({ budgetWindowSeconds: 60, soakSeconds: 120 }),
     /must be greater than two.*\(120\)/,
   );
   assert.throws(
@@ -91,7 +91,7 @@ function configFixture() {
   return {
     directWebBaseUrl: "http://web.test",
     dashboardBaseUrl: "http://proxy.test",
-    limiterWindowSeconds: 10,
+    budgetWindowSeconds: 10,
     soakSeconds: 21,
     probeIntervalMs: 5_000,
   };
@@ -102,7 +102,7 @@ function runOneRound(fetch) {
   return runRecoverySoak({
     config: {
       ...configFixture(),
-      limiterWindowSeconds: 1,
+      budgetWindowSeconds: 1,
       soakSeconds: 3,
       probeIntervalMs: 3_000,
     },

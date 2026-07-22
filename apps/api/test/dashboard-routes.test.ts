@@ -38,7 +38,6 @@ describe("dashboard route admission", () => {
   it.each([
     ["rate_limited", 429, "dashboard_recovery_rate_limited", undefined],
     ["at_capacity", 503, "dashboard_recovery_unavailable", "at_capacity"],
-    ["unavailable", 503, "dashboard_recovery_unavailable", "limiter_unavailable"],
   ] as const)("rejects recovery %s before service work", async (outcome, status, code, reason) => {
     const getRecovery = vi.fn();
     const server = buildServer({ recoveryOutcome: outcome, getRecovery });
@@ -114,7 +113,7 @@ describe("dashboard route admission", () => {
 
 function buildServer(options: {
   sseOutcome?: DashboardSseAdmission;
-  recoveryOutcome?: "rate_limited" | "at_capacity" | "unavailable";
+  recoveryOutcome?: "rate_limited" | "at_capacity";
   getRecovery?: DashboardRecoveryService["getRecovery"];
   release?: () => void;
   workflowOutcome?: DashboardRecoveryWorkflowResult;

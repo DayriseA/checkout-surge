@@ -3,24 +3,24 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const defaultLimiterWindowSeconds = 60;
+const defaultBudgetWindowSeconds = 60;
 const defaultProbeIntervalMs = 5_000;
 
 export function readRecoverySoakConfig(env = process.env) {
-  const limiterWindowSeconds = positiveIntegerEnv(
+  const budgetWindowSeconds = positiveIntegerEnv(
     env,
     "DASHBOARD_RECOVERY_WINDOW_SECONDS",
-    defaultLimiterWindowSeconds,
+    defaultBudgetWindowSeconds,
   );
   const soakSeconds = positiveIntegerEnv(
     env,
     "RUNTIME_RECOVERY_SOAK_SECONDS",
-    limiterWindowSeconds * 2 + 5,
+    budgetWindowSeconds * 2 + 5,
   );
   const config = {
     directWebBaseUrl: envUrl(env, "DIRECT_WEB_BASE_URL", "http://localhost:3000"),
     dashboardBaseUrl: envUrl(env, "WEB_BASE_URL", "http://localhost:8080"),
-    limiterWindowSeconds,
+    budgetWindowSeconds,
     soakSeconds,
     probeIntervalMs: positiveIntegerEnv(
       env,
@@ -32,10 +32,10 @@ export function readRecoverySoakConfig(env = process.env) {
   return config;
 }
 
-export function assertSoakCoversTwoWindows({ limiterWindowSeconds, soakSeconds }) {
-  if (soakSeconds <= limiterWindowSeconds * 2) {
+export function assertSoakCoversTwoWindows({ budgetWindowSeconds, soakSeconds }) {
+  if (soakSeconds <= budgetWindowSeconds * 2) {
     throw new Error(
-      `RUNTIME_RECOVERY_SOAK_SECONDS must be greater than two DASHBOARD_RECOVERY_WINDOW_SECONDS windows (${limiterWindowSeconds * 2}).`,
+      `RUNTIME_RECOVERY_SOAK_SECONDS must be greater than two DASHBOARD_RECOVERY_WINDOW_SECONDS windows (${budgetWindowSeconds * 2}).`,
     );
   }
 }
@@ -52,7 +52,7 @@ export async function runRecoverySoak({
   let probeRounds = 0;
 
   write(
-    `Soaking direct-web and proxy health for ${config.soakSeconds}s (>2 x ${config.limiterWindowSeconds}s limiter windows).`,
+    `Soaking direct-web and proxy health for ${config.soakSeconds}s (>2 x ${config.budgetWindowSeconds}s recovery budget windows).`,
   );
 
   while (now() < deadline) {

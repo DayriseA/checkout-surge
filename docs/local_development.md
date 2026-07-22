@@ -126,7 +126,7 @@ pnpm runtime:soak:recovery
 pnpm runtime:smoke
 ```
 
-The runtime smoke does not mutate durable business or run state. Its same-origin recovery read does increment short-lived Redis fixed-window recovery-admission counters and may issue a visitor cookie in the response. It also keeps the SSE connection open until a complete heartbeat or dashboard event frame crosses the same-origin proxy; response headers alone are not sufficient. On an otherwise idle runtime, expect this step to complete after the first heartbeat, normally about 15 seconds after connection, within its 25-second request-plus-frame deadline.
+The runtime smoke does not mutate durable business or run state. Its same-origin recovery read does increment short-lived process-local fixed-window recovery-admission counters and may issue a visitor cookie in the response. It also keeps the SSE connection open until a complete heartbeat or dashboard event frame crosses the same-origin proxy; response headers alone are not sufficient. On an otherwise idle runtime, expect this step to complete after the first heartbeat, normally about 15 seconds after connection, within its 25-second request-plus-frame deadline.
 
 Run the mutating dashboard-to-load-run smoke check when you want to prove the full control and asynchronous business path. Before creating its own runs, it calls only the protected API demo-reset endpoint; that can terminalize an existing recoverable run and clear that run's live projection, but it does not invoke the operational `runtime:reset` client's separate Mock ERP chaos reset. The smoke retains the existing eight-second low-rate steady scenario and follows it with a bounded curated-like 32-buyer burst whose stock allows all 32 requests to enter accepted admission. For each run it subscribes to SSE, verifies run-correlated realtime and reserved inventory, waits for a completed immutable summary with confirmed orders, notifications, and no asynchronous blockers, and invokes protected exact-run teardown before continuing. Each accepted start retains one visitor/global public run-budget reservation until its fixed window expires; exact-run teardown does not release accepted-start budget.
 
@@ -294,7 +294,7 @@ The worker-facing Mock ERP confirmation contract is `POST http://localhost:4100/
 | `pnpm runtime:wipe` | Stop the selected Compose project and delete its named PostgreSQL, Redis, and load-orchestrator journal volumes plus its orphan containers; it does not delete the host-native journal |
 | `pnpm runtime:reset` | Reset the running demo through the API and Mock ERP admin reset endpoints for recovery/local maintenance |
 | `pnpm runtime:smoke` | Check compose/service readiness, recovery, SSE, and in-container k6 without mutating durable business/run state; the recovery read consumes short-lived admission capacity and may issue a visitor cookie |
-| `pnpm runtime:soak:recovery` | On an idle runtime, probe direct-web and proxy-to-web health for more than two recovery limiter windows, verify `/` remains reachable, then verify two independently signed BFF recovery identities receive authoritative idle state; deterministic component tests separately prove Start controls become enabled after hydration; intentionally opt-in and multi-minute |
+| `pnpm runtime:soak:recovery` | On an idle runtime, probe direct-web and proxy-to-web health for more than two recovery budget windows, verify `/` remains reachable, then verify two independently signed BFF recovery identities receive authoritative idle state; deterministic component tests separately prove Start controls become enabled after hydration; intentionally opt-in and multi-minute |
 | `pnpm runtime:smoke:load` | API-reset any recoverable current run, then prove and exactly tear down both the steady and bounded 32-buyer accepted-burst realtime/business paths; each start consumes a fixed-window public run-budget reservation, and the smoke does not reset Mock ERP chaos |
 | `pnpm maintenance:cleanup-runs` | Authoritatively delete terminal generated demo runs whose `demo_runs.created_at` is at least seven days old by default, preserving active runs, catalog-backed runs, and the latest 15 runs across the full population; then attempt best-effort related Redis teardown. Override with `-- --older-than-days <days>` and/or `-- --keep-latest <count>` |
 | `pnpm dev` | Build shared packages, then run all app `dev` tasks through Turbo |
@@ -412,7 +412,7 @@ The Dev Container merge explicitly replaces all five application builds with the
 
 When API is running, `runtime:reset`, `runtime:smoke:load`, `runtime:soak:recovery`, `health:check`, and `maintenance:cleanup-runs` invoke the profile-gated `runtime-tools` service on the Compose network. If API is not running they retain their host-local Node fallback. `runtime:up` never starts `runtime-tools` or the profile-gated k6 compatibility service.
 
-The tooling service receives only its internal API, worker, Mock ERP, load-orchestrator, direct-web, and dashboard-proxy URLs; the control and public-cookie credentials used by operational requests; the drain/finalization timing overrides consumed by the load smoke; and the limiter-window and soak timing overrides consumed by the recovery soak. It does not receive PostgreSQL, Redis, admin-session, passphrase, origin, or unrelated application configuration.
+The tooling service receives only its internal API, worker, Mock ERP, load-orchestrator, direct-web, and dashboard-proxy URLs; the control and public-cookie credentials used by operational requests; the drain/finalization timing overrides consumed by the load smoke; and the recovery-budget-window and soak timing overrides consumed by the recovery soak. It does not receive PostgreSQL, Redis, admin-session, passphrase, origin, or unrelated application configuration.
 
 ## Configuration Reference
 
@@ -486,10 +486,10 @@ Most infrastructure URLs have local defaults, but every run/control service chan
 | `DASHBOARD_SSE_MAX_BUFFERED_FRAMES` / `DASHBOARD_SSE_MAX_BUFFERED_BYTES` | `32` / `262144` | Positive per-client limits for complete SSE frames queued after socket backpressure; crossing either limit disconnects only that client so native EventSource reconnect can recover |
 | `DASHBOARD_SSE_RETRY_AFTER_SECONDS` | `10` | Retry guidance for rejected realtime connections |
 | `DASHBOARD_RECOVERY_MAX_CONCURRENT` | `3` | Per-process recovery builds. Each admitted build owns a short-lived PostgreSQL pool capped at one connection, separately from `API_POSTGRES_POOL_MAX`. |
-| `DASHBOARD_RECOVERY_GLOBAL_MAX_REQUESTS` / `DASHBOARD_RECOVERY_PER_SOURCE_MAX_REQUESTS` | `60` / `12` per 60 seconds | Redis-backed global/per-source recovery budgets in the reference runtime |
+| `DASHBOARD_RECOVERY_GLOBAL_MAX_REQUESTS` / `DASHBOARD_RECOVERY_PER_SOURCE_MAX_REQUESTS` | `60` / `12` per 60 seconds | Process-local global/per-source recovery budgets; admitted source entries are bounded by the global cap |
 | `DASHBOARD_RECOVERY_WINDOW_SECONDS` / `DASHBOARD_RECOVERY_RETRY_AFTER_SECONDS` | `60` / `10` | Fixed-window duration and rejection retry guidance |
-| `DASHBOARD_RECOVERY_TIMEOUT_MS` | `5000` | End-to-end recovery deadline, including Redis admission and every PostgreSQL, Redis, and BullMQ projection read |
-| `RUNTIME_RECOVERY_SOAK_SECONDS` | `2 * DASHBOARD_RECOVERY_WINDOW_SECONDS + 5` | Opt-in idle recovery soak duration; any explicit value must be strictly greater than two recovery limiter windows |
+| `DASHBOARD_RECOVERY_TIMEOUT_MS` | `5000` | End-to-end recovery deadline, including local admission and every PostgreSQL, Redis, and BullMQ projection read |
+| `RUNTIME_RECOVERY_SOAK_SECONDS` | `2 * DASHBOARD_RECOVERY_WINDOW_SECONDS + 5` | Opt-in idle recovery soak duration; any explicit value must be strictly greater than two recovery budget windows |
 | `RUNTIME_RECOVERY_SOAK_PROBE_INTERVAL_MS` | `5000` | Interval for the opt-in direct-web and proxy-to-web health soak |
 | `API_TRUSTED_PROXY_CIDRS` | loopback and Compose Caddy `172.30.0.2/32` | Exact Caddy proxy boundary used for Fastify client-IP derivation; replace with the deployed proxy address |
 | `PUBLIC_RUN_BUDGET_GLOBAL_MAX_STARTS` | `6` | `runtime-setup` first-seed public run-budget global cap |
@@ -516,7 +516,7 @@ Most infrastructure URLs have local defaults, but every run/control service chan
 
 The notification and durable order-recovery variables above are read by the host-native worker and documented in `apps/worker/.env.example`. The current reference Compose file does not forward overrides for `NOTIFICATION_RECORD_CONCURRENCY`, `NOTIFICATION_RECOVERY_*`, or `ORDER_RECOVERY_*`, so its worker uses the built-in values shown in this table. Compose does forward the `ORDER_DISPATCH_*`, aggregate order concurrency, ERP fallback, and pool-size settings.
 
-Dashboard SSE and recovery admission rejections advise a 10-second retry through `Retry-After`. Recovery requests proxied by Next carry the existing HMAC-verified public visitor credential; direct/debug requests fall back to the trusted network source. Arbitrary visitor headers and direct `X-Forwarded-For` values are not trusted. Redis limiter failures reject recovery reads rather than exposing dependency capacity.
+Dashboard SSE and recovery admission rejections advise a 10-second retry through `Retry-After`. Recovery requests proxied by Next carry the existing HMAC-verified public visitor credential; direct/debug requests fall back to the trusted network source. Arbitrary visitor headers and direct `X-Forwarded-For` values are not trusted. Recovery rate exhaustion returns `429 dashboard_recovery_rate_limited`; local concurrent-capacity exhaustion and deadline expiry return `503 dashboard_recovery_unavailable` with `at_capacity` or `timed_out` details.
 
 ## Design Decisions & Rationale
 

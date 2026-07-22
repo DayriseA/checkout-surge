@@ -6,26 +6,22 @@ import type { DashboardRecoveryService } from "../src/services/dashboard-recover
 import { DashboardRecoveryWorkflow } from "../src/services/dashboard-recovery-workflow.js";
 
 describe("dashboard recovery workflow cancellation", () => {
-  it("bounds a never-settling admission and returns its pending permit", async () => {
-    let admissionAttempt = 0;
-    const admission = createAdmission(async () => {
-      admissionAttempt += 1;
-      return admissionAttempt === 1 ? await new Promise<never>(() => undefined) : "allowed";
-    });
+  it("returns a deadline that expires before local admission without consuming its budget", async () => {
+    const admission = createAdmission();
     const recovery = { getRecovery: vi.fn() } as unknown as DashboardRecoveryService;
     const workflow = new DashboardRecoveryWorkflow({ admission, recovery });
     const controller = new AbortController();
-    const resultPromise = workflow.recover(input(controller.signal));
-
     controller.abort(new OperationDeadlineExceededError(50));
 
-    await expect(resultPromise).resolves.toEqual({ outcome: "timed_out" });
+    await expect(workflow.recover(input(controller.signal))).resolves.toEqual({
+      outcome: "timed_out",
+    });
     expect(recovery.getRecovery).not.toHaveBeenCalled();
     await expect(admission.admit("later")).resolves.toMatchObject({ outcome: "admitted" });
   });
 
   it("releases three abandoned permits exactly once and later recovers successfully", async () => {
-    const admission = createAdmission(async () => "allowed");
+    const admission = createAdmission();
     const pending = new Promise<never>(() => undefined);
     const healthyResponse = recoveryFixture();
     const getRecovery = vi
@@ -104,11 +100,8 @@ describe("dashboard recovery workflow cancellation", () => {
   });
 });
 
-function createAdmission(
-  admit: () => Promise<"allowed" | "global" | "source">,
-): DashboardRecoveryAdmissionService {
+function createAdmission(): DashboardRecoveryAdmissionService {
   return new DashboardRecoveryAdmissionService({
-    store: { admit },
     maxConcurrent: 3,
     globalMax: 10,
     perSourceMax: 10,

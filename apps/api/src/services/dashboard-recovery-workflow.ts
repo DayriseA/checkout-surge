@@ -5,7 +5,7 @@ import type { DashboardRecoveryService } from "./dashboard-recovery-service.js";
 
 export type DashboardRecoveryWorkflowResult =
   | { outcome: "recovered"; response: DashboardRecoveryResponse }
-  | { outcome: "rate_limited" | "at_capacity" | "limiter_unavailable" | "timed_out" }
+  | { outcome: "rate_limited" | "at_capacity" | "timed_out" }
   | { outcome: "client_disconnected" };
 
 export interface DashboardRecoveryWorkflowController {
@@ -32,9 +32,7 @@ export class DashboardRecoveryWorkflow implements DashboardRecoveryWorkflowContr
     try {
       const admission = await this.options.admission.admit(input.sourceKey, input.signal);
       if (admission.outcome !== "admitted") {
-        return {
-          outcome: admission.outcome === "unavailable" ? "limiter_unavailable" : admission.outcome,
-        };
+        return { outcome: admission.outcome };
       }
 
       try {

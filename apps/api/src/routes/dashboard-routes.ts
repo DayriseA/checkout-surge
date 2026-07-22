@@ -49,31 +49,24 @@ export function registerDashboardRoutes(
       if (result.outcome === "client_disconnected") return reply;
 
       const atCapacity = result.outcome === "at_capacity";
-      const unavailable = result.outcome === "limiter_unavailable";
       const timedOut = result.outcome === "timed_out";
       reply.header("retry-after", options.recoveryRetryAfterSeconds.toString());
-      return reply.status(atCapacity || unavailable || timedOut ? 503 : 429).send(
+      return reply.status(atCapacity || timedOut ? 503 : 429).send(
         createErrorPayload({
           code:
-            atCapacity || unavailable || timedOut
+            atCapacity || timedOut
               ? "dashboard_recovery_unavailable"
               : "dashboard_recovery_rate_limited",
           message: atCapacity
             ? "Dashboard recovery is at capacity."
-            : unavailable
-              ? "Dashboard recovery admission is temporarily unavailable."
-              : timedOut
-                ? "Dashboard recovery exceeded its response deadline."
-                : "Dashboard recovery request rate exceeded.",
+            : timedOut
+              ? "Dashboard recovery exceeded its response deadline."
+              : "Dashboard recovery request rate exceeded.",
           correlationId: request.correlationId,
-          ...(atCapacity || unavailable || timedOut
+          ...(atCapacity || timedOut
             ? {
                 details: {
-                  reason: atCapacity
-                    ? "at_capacity"
-                    : unavailable
-                      ? "limiter_unavailable"
-                      : "timed_out",
+                  reason: atCapacity ? "at_capacity" : "timed_out",
                 },
               }
             : {}),

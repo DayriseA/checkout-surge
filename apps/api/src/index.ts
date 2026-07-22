@@ -35,10 +35,7 @@ import { loadApiConfig } from "./runtime/config.js";
 import type { ApiFastifyInstance } from "./runtime/fastify.js";
 import { createBoundedInfrastructureReadinessCheck } from "./runtime/readiness.js";
 import { buildApiServer } from "./server.js";
-import {
-  DashboardRecoveryAdmissionService,
-  RedisDashboardRecoveryBudgetStore,
-} from "./services/dashboard-recovery-admission.js";
+import { DashboardRecoveryAdmissionService } from "./services/dashboard-recovery-admission.js";
 import {
   DashboardRecoveryService,
   PostgresDashboardBusinessOutcomeReader,
@@ -168,13 +165,6 @@ export async function startApiServer(): Promise<void> {
     maxBufferedBytes: config.dashboardSseMaxBufferedBytes,
   });
   const dashboardRecoveryAdmission = new DashboardRecoveryAdmissionService({
-    store: new RedisDashboardRecoveryBudgetStore(() =>
-      createRedisClient(config.redisUrl, {
-        lazyConnect: true,
-        maxRetriesPerRequest: 0,
-        commandTimeout: config.dashboardRecoveryTimeoutMs,
-      }),
-    ),
     maxConcurrent: config.dashboardRecoveryMaxConcurrent,
     globalMax: config.dashboardRecoveryGlobalMaxRequests,
     perSourceMax: config.dashboardRecoveryPerSourceMaxRequests,
