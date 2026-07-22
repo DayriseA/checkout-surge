@@ -539,32 +539,27 @@ export const reservationPendingPersistence = pgTable(
       .references(() => saleOffers.id, { onDelete: "restrict" }),
     correlationId: text("correlation_id").notNull(),
     runId: uuid("run_id"),
-    idempotencyKey: text("idempotency_key").notNull(),
-    quantity: integer("quantity").default(1).notNull(),
-    reservationToken: text("reservation_token").notNull(),
     status: reservationPendingPersistenceStatusEnum("status")
       .default("pending_reconciliation")
       .notNull(),
-    securedAt: timestamp("secured_at", { withTimezone: true }).notNull(),
-    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    attemptCount: integer("attempt_count").default(0).notNull(),
+    lastError: text("last_error"),
+    exhaustedAt: timestamp("exhausted_at", { withTimezone: true }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
   (table) => [
     uniqueIndex("reservation_pending_persistence_reservation_id_unique").on(table.reservationId),
-    uniqueIndex("reservation_pending_persistence_offer_idempotency_unique").on(
-      table.saleOfferId,
-      table.idempotencyKey,
+    check(
+      "reservation_pending_persistence_attempt_count_nonnegative",
+      sql`${table.attemptCount} >= 0`,
     ),
-    check("reservation_pending_persistence_quantity_positive", sql`${table.quantity} > 0`),
     foreignKey({
       name: "reservation_pending_persistence_run_sale_context_fk",
       columns: [table.runId, table.saleOfferId],
       foreignColumns: [demoRunSaleContexts.runId, demoRunSaleContexts.saleOfferId],
     }).onDelete("restrict"),
-    index("reservation_pending_persistence_sale_offer_id_idx").on(table.saleOfferId),
     index("reservation_pending_persistence_run_id_idx").on(table.runId),
-    index("reservation_pending_persistence_status_idx").on(table.status),
   ],
 );
 

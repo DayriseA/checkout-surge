@@ -6,6 +6,7 @@ import type {
 } from "@checkout-surge/contracts";
 import {
   type CheckoutSurgeDatabase,
+  createAbortableSqlClient,
   createDatabase,
   demoRuns,
   orderEvents,
@@ -35,7 +36,10 @@ type DatabaseWithClient = CheckoutSurgeDatabase & { $client: SqlClient };
 type ReservedClient = Awaited<ReturnType<SqlClient["reserve"]>>;
 
 export class PostgresBuyPersistence implements BuyPersistence {
-  constructor(private readonly db: CheckoutSurgeDatabase) {}
+  constructor(
+    private readonly db: CheckoutSurgeDatabase,
+    private readonly signal?: AbortSignal,
+  ) {}
 
   async persistSecuredReservation(input: {
     reservation: SecuredReservationHold;
@@ -146,14 +150,6 @@ export class PostgresBuyPersistence implements BuyPersistence {
       },
     ]);
 
-    await tx
-      .update(reservationPendingPersistence)
-      .set({
-        status: "reconciled",
-        updatedAt: new Date(),
-      })
-      .where(eq(reservationPendingPersistence.reservationId, reservation.id));
-
     return {
       reservation: toReservationSummary(reservation),
       order: toOrderSummary(order),
@@ -176,10 +172,11 @@ export class PostgresBuyPersistence implements BuyPersistence {
     // constructing a database facade. Reuse the base client's maps on the
     // reserved session; all queries still execute on the reserved connection.
     Object.defineProperty(reservedClient, "options", { value: client.options });
-    const reservedDb = createDatabase(reservedClient as SqlClient);
+    const operationClient = this.operationClient(reservedClient);
+    const reservedDb = createDatabase(operationClient);
     let locked = false;
     try {
-      await reservedClient`select pg_advisory_lock_shared(hashtext(${terminalDemoRunTransitionLockKey(runId)}))`;
+      await operationClient`select pg_advisory_lock_shared(hashtext(${terminalDemoRunTransitionLockKey(runId)}))`;
       locked = true;
       const [run] = await reservedDb
         .select({ saleOfferId: demoRuns.saleOfferId, status: demoRuns.status })
@@ -196,11 +193,11 @@ export class PostgresBuyPersistence implements BuyPersistence {
       // Each persistence operation commits on the reserved session while this
       // shared session-level advisory lock remains held through BullMQ enqueue.
       // The callback must not check out another connection from the base pool.
-      return await input.operation(this.databaseOperations(reservedDb, reservedClient));
+      return await input.operation(this.databaseOperations(reservedDb, operationClient));
     } finally {
       try {
         if (locked) {
-          await reservedClient`select pg_advisory_unlock_shared(hashtext(${terminalDemoRunTransitionLockKey(runId)}))`;
+          await operationClient`select pg_advisory_unlock_shared(hashtext(${terminalDemoRunTransitionLockKey(runId)}))`;
         }
       } finally {
         reservedClient.release();
@@ -242,23 +239,23 @@ export class PostgresBuyPersistence implements BuyPersistence {
     return this.databaseOperations(this.db).getPersistedBuyByReservationId(reservationId);
   }
 
-  async recordPendingPersistence(input: {
+  async recordPendingPersistenceAttempt(input: {
     reservation: SecuredReservationHold;
-    idempotencyKey: string;
+    attemptCount: number;
+    attemptedAt: Date;
   }): Promise<void> {
-    await this.databaseOperations(this.db).recordPendingPersistence?.(input);
+    await this.db.transaction((tx) => this.recordPendingPersistenceAttemptInTransaction(tx, input));
   }
 
-  private async recordPendingPersistenceInTransaction(
+  private async recordPendingPersistenceAttemptInTransaction(
     tx: PostgresTransaction,
     input: {
       reservation: SecuredReservationHold;
-      idempotencyKey: string;
+      attemptCount: number;
+      attemptedAt: Date;
     },
   ): Promise<void> {
     const hold = input.reservation;
-    const now = new Date();
-
     await tx
       .insert(reservationPendingPersistence)
       .values({
@@ -266,12 +263,9 @@ export class PostgresBuyPersistence implements BuyPersistence {
         saleOfferId: hold.saleOfferId,
         correlationId: hold.correlationId,
         ...(hold.runId ? { runId: hold.runId } : {}),
-        idempotencyKey: input.idempotencyKey,
-        quantity: hold.quantity,
-        reservationToken: hold.reservationToken,
         status: "pending_reconciliation",
-        securedAt: new Date(hold.securedAt),
-        expiresAt: new Date(hold.expiresAt),
+        attemptCount: input.attemptCount,
+        updatedAt: input.attemptedAt,
       })
       .onConflictDoUpdate({
         target: reservationPendingPersistence.reservationId,
@@ -279,37 +273,77 @@ export class PostgresBuyPersistence implements BuyPersistence {
           saleOfferId: hold.saleOfferId,
           correlationId: hold.correlationId,
           runId: hold.runId ?? null,
-          idempotencyKey: input.idempotencyKey,
-          quantity: hold.quantity,
-          reservationToken: hold.reservationToken,
           status: "pending_reconciliation",
-          securedAt: new Date(hold.securedAt),
-          expiresAt: new Date(hold.expiresAt),
-          updatedAt: now,
+          attemptCount: input.attemptCount,
+          lastError: null,
+          exhaustedAt: null,
+          updatedAt: input.attemptedAt,
         },
       });
   }
 
-  async markPendingPersistenceReconciled(input: { reservationId: string }): Promise<void> {
-    await this.databaseOperations(this.db).markPendingPersistenceReconciled?.(input);
+  async markPendingPersistenceResolved(input: {
+    reservationId: string;
+    resolvedAt: Date;
+  }): Promise<void> {
+    await this.db.transaction((tx) => this.markPendingPersistenceResolvedInTransaction(tx, input));
   }
 
-  private async markPendingPersistenceReconciledInTransaction(
+  private async markPendingPersistenceResolvedInTransaction(
     tx: PostgresTransaction,
-    input: { reservationId: string },
+    input: { reservationId: string; resolvedAt: Date },
   ): Promise<void> {
-    await tx
+    const resolved = await tx
       .update(reservationPendingPersistence)
       .set({
         status: "reconciled",
-        updatedAt: new Date(),
+        updatedAt: input.resolvedAt,
       })
-      .where(eq(reservationPendingPersistence.reservationId, input.reservationId));
+      .where(eq(reservationPendingPersistence.reservationId, input.reservationId))
+      .returning({ id: reservationPendingPersistence.id });
+    if (resolved.length !== 1) {
+      throw new Error(`Pending-persistence audit ${input.reservationId} was not found.`);
+    }
+  }
+
+  async markPendingPersistenceExhausted(input: {
+    reservation: SecuredReservationHold;
+    attemptCount: number;
+    exhaustedAt: Date;
+    error: string;
+  }): Promise<void> {
+    const hold = input.reservation;
+    await this.db
+      .insert(reservationPendingPersistence)
+      .values({
+        reservationId: hold.id,
+        saleOfferId: hold.saleOfferId,
+        correlationId: hold.correlationId,
+        ...(hold.runId ? { runId: hold.runId } : {}),
+        status: "exhausted",
+        attemptCount: input.attemptCount,
+        lastError: input.error.slice(0, 500),
+        exhaustedAt: input.exhaustedAt,
+        updatedAt: input.exhaustedAt,
+      })
+      .onConflictDoUpdate({
+        target: reservationPendingPersistence.reservationId,
+        set: {
+          saleOfferId: hold.saleOfferId,
+          correlationId: hold.correlationId,
+          runId: hold.runId ?? null,
+          status: "exhausted",
+          attemptCount: input.attemptCount,
+          lastError: input.error.slice(0, 500),
+          exhaustedAt: input.exhaustedAt,
+          updatedAt: input.exhaustedAt,
+        },
+      });
   }
 
   private databaseOperations(
     database: CheckoutSurgeDatabase,
-    reservedClient?: ReservedClient,
+    reservedClient?: SqlClient,
   ): BuyPersistenceOperations {
     const runTransaction = <T>(operation: (tx: PostgresTransaction) => Promise<T>): Promise<T> => {
       if (reservedClient) {
@@ -350,30 +384,27 @@ export class PostgresBuyPersistence implements BuyPersistence {
       },
       getPersistedBuyByReservationId: (reservationId) =>
         this.getPersistedBuyByReservationIdInDatabase(database, reservationId),
-      recordPendingPersistence: (input) =>
-        runTransaction((tx) => this.recordPendingPersistenceInTransaction(tx, input)),
-      markPendingPersistenceReconciled: (input) =>
-        runTransaction((tx) => this.markPendingPersistenceReconciledInTransaction(tx, input)),
     };
   }
 
   private async withSharedRunLock<T>(
     runId: string,
-    operation: (database: CheckoutSurgeDatabase, client: ReservedClient) => Promise<T>,
+    operation: (database: CheckoutSurgeDatabase, client: SqlClient) => Promise<T>,
   ): Promise<T> {
     const client = (this.db as DatabaseWithClient).$client;
     const reservedClient = await client.reserve();
     Object.defineProperty(reservedClient, "options", { value: client.options });
-    const reservedDb = createDatabase(reservedClient as SqlClient);
+    const operationClient = this.operationClient(reservedClient);
+    const reservedDb = createDatabase(operationClient);
     let locked = false;
     try {
-      await reservedClient`select pg_advisory_lock_shared(hashtext(${terminalDemoRunTransitionLockKey(runId)}))`;
+      await operationClient`select pg_advisory_lock_shared(hashtext(${terminalDemoRunTransitionLockKey(runId)}))`;
       locked = true;
-      return await operation(reservedDb, reservedClient);
+      return await operation(reservedDb, operationClient);
     } finally {
       try {
         if (locked) {
-          await reservedClient`select pg_advisory_unlock_shared(hashtext(${terminalDemoRunTransitionLockKey(runId)}))`;
+          await operationClient`select pg_advisory_unlock_shared(hashtext(${terminalDemoRunTransitionLockKey(runId)}))`;
         }
       } finally {
         reservedClient.release();
@@ -381,8 +412,13 @@ export class PostgresBuyPersistence implements BuyPersistence {
     }
   }
 
+  private operationClient(reservedClient: ReservedClient): SqlClient {
+    const client = reservedClient as SqlClient;
+    return this.signal ? createAbortableSqlClient(client, this.signal) : client;
+  }
+
   private async runReservedTransaction<T>(
-    client: ReservedClient,
+    client: SqlClient,
     operation: () => Promise<T>,
   ): Promise<T> {
     await client`begin`;

@@ -29,14 +29,12 @@ import {
   demoRunSummaries,
   demoRuns,
   getInventoryStatus,
-  initializeInventory,
   inventoryKeys,
   isRunSaleEligible,
   prepareGeneratedRunTeardown,
   products,
   publicRuntimePolicies,
   reserveInventoryStock,
-  runSaleEligibilityKey,
   saleOffers,
 } from "@checkout-surge/db";
 import { resetTestDatabase } from "@checkout-surge/db/testing";
@@ -2439,219 +2437,6 @@ describe("demo-run lifecycle start gating", () => {
     expect(businessReads).toBe(1);
   });
 
-  it("re-drives real finalization after enrichment commits and Redis inventory is removed", async () => {
-    const db = requireConnection(connection).db;
-    const redisClient = requireRedis(redis);
-    const enrichmentBusinessOutcome: BusinessOutcomeSummary = {
-      ...emptyBusinessOutcomeSummary(),
-      acceptedReservations: 149,
-      soldOutRejections: 23,
-    };
-    const readBusinessOutcome = vi.fn(async () => enrichmentBusinessOutcome);
-    let captureReadCount = 0;
-    const captureRedis = new Proxy(redisClient, {
-      get(target, property) {
-        if (property === "hgetall") {
-          return async (...args: Parameters<typeof target.hgetall>) => {
-            captureReadCount += 1;
-            return target.hgetall(...args);
-          };
-        }
-        const value = target[property as keyof typeof target];
-        return typeof value === "function" ? value.bind(target) : value;
-      },
-    }) as typeof redisClient;
-    const completionEnrichmentService = new TrafficCompletionEnrichmentService({
-      db,
-      redis: captureRedis,
-      businessOutcomeReader: { read: readBusinessOutcome },
-      logger: createSilentLogger("api"),
-      now: () => new Date("2026-06-20T00:00:10.000Z"),
-    });
-    const postgresWriter = new PostgresTerminalDemoRunSummaryWriter(db);
-    let writeAttemptCount = 0;
-    const writePrepared = vi.fn(
-      async (...args: Parameters<typeof postgresWriter.writePrepared>) => {
-        writeAttemptCount += 1;
-        if (writeAttemptCount === 1) {
-          const [runId, prepare] = args;
-          return postgresWriter.writePrepared(runId, async (lockedDb) => {
-            await prepare(lockedDb);
-            throw new Error("injected failure before terminal summary persistence");
-          });
-        }
-        return postgresWriter.writePrepared(...args);
-      },
-    );
-    let reconciliationCount = 0;
-    const reconcileSaleOffer = vi.fn(async (saleOfferId: string) => {
-      reconciliationCount += 1;
-      if (reconciliationCount > 1) {
-        await initializeInventory(redisClient, {
-          saleOfferId,
-          allocatedStock: 1_000,
-          initializedAt: new Date("2026-06-20T00:00:14.000Z"),
-          run: { runId: startedRunId, status: "closed" },
-        });
-        const inventory = inventoryKeys(saleOfferId);
-        await redisClient.hset(inventory.state, {
-          remainingStock: "850",
-          reservedStock: "150",
-        });
-        await redisClient.hset(inventory.soldOut, "count", "23");
-      }
-      return { found: 0, materialized: 0, reconciled: 0, reversed: 0, failed: 0 };
-    });
-    let startedRunId = "";
-    const finalizationService = new DemoRunFinalizationService({
-      db,
-      redis: redisClient,
-      logger: createSilentLogger("api"),
-      pendingPersistenceReconciler: { reconcileSaleOffer },
-      terminalRunWriter: { writePrepared },
-      terminalInventoryRead: createTerminalInventoryRead(redisClient),
-      terminalInventoryReadTimeoutMs: 2_000,
-      drainTimeoutSeconds: 300,
-      now: () => new Date("2026-06-20T00:00:15.000Z"),
-    });
-    const service = createStartService(requireConnection(connection), redisClient, {
-      businessOutcomeReader: { read: readBusinessOutcome },
-      completionEnrichmentService,
-      finalizationService,
-    });
-    const started = await service.startRun(
-      completionStartCommand(10),
-      "corr-post-enrichment-start",
-    );
-    startedRunId = started.run.runId;
-    const saleOfferId = started.run.saleOfferId;
-    if (!saleOfferId) {
-      throw new Error("Started run did not expose its sale offer.");
-    }
-    const inventory = inventoryKeys(saleOfferId);
-    await redisClient.hset(inventory.state, { remainingStock: "850", reservedStock: "150" });
-    await redisClient.hset(inventory.soldOut, "count", "23");
-    const reportFixture = trafficCompletionFixture({
-      runId: started.run.runId,
-      status: "succeeded",
-      exitCode: 0,
-      completedAt: "2026-06-20T00:00:12.000Z",
-      plannedRequests: 10,
-      correlationId: "corr-post-enrichment",
-    });
-    const report: TrafficCompletionReport = {
-      ...reportFixture,
-      transportAttemptCounts: {
-        ...reportFixture.transportAttemptCounts,
-        startedRequests: 10,
-        completedRequests: 10,
-        interruptedRequests: 0,
-        unstartedRequests: 0,
-      },
-      trafficDeliverySummary: {
-        trafficMode: "buyer-spike",
-        plannedBuyers: 10,
-        scheduledRatePerSecond: null,
-        configuredDurationSeconds: null,
-        preAllocatedVUs: null,
-        maxVUs: null,
-        droppedIterations: 0,
-        notes: [],
-      },
-    };
-
-    await expect(service.recordTrafficCompletion(report)).rejects.toThrow(
-      "injected failure before terminal summary persistence",
-    );
-    const [committedFinalization] = await db
-      .select()
-      .from(demoRunFinalizations)
-      .where(eq(demoRunFinalizations.runId, started.run.runId));
-    const [committedSoldOut] = await db
-      .select()
-      .from(demoRunSoldOutCounts)
-      .where(eq(demoRunSoldOutCounts.runId, started.run.runId));
-    const authoritativeOutcome = structuredClone(committedFinalization?.trafficOutcomeSummary);
-    const authoritativeSnapshot = (authoritativeOutcome as { terminalInventorySnapshot?: unknown })
-      .terminalInventorySnapshot;
-
-    expect(committedFinalization?.completionEnrichmentStatus).toBe("completed");
-    expect(committedFinalization?.trafficDeliverySummary).toMatchObject({
-      trafficDeliveryStatus: "complete",
-    });
-    expect(committedFinalization?.transportAttemptCounts).toMatchObject({
-      startedRequests: 10,
-      unstartedRequests: 0,
-    });
-    expect(committedFinalization?.loadRunDiagnosticsSummary).toEqual(
-      report.loadRunDiagnosticsSummary,
-    );
-    expect(authoritativeOutcome).toMatchObject({
-      businessOutcomeAtTrafficCompletion: enrichmentBusinessOutcome,
-      terminalInventorySnapshot: {
-        saleOfferId,
-        remainingStock: 850,
-        reservedStock: 150,
-        acceptedReservations: 149,
-        soldOutRejections: 23,
-        capturedAt: "2026-06-20T00:00:10.000Z",
-      },
-    });
-    expect(committedSoldOut?.count).toBe(23);
-    expect(await db.select().from(demoRunSummaries)).toHaveLength(0);
-
-    await redisClient.unlink(
-      inventory.state,
-      inventory.reservations,
-      inventory.reservationExpirations,
-      inventory.pendingPersistence,
-      inventory.pendingPersistenceRecords,
-      inventory.events,
-      inventory.soldOut,
-      inventory.reservationThroughput,
-      runSaleEligibilityKey(started.run.runId),
-    );
-
-    await expect(service.recordTrafficCompletion(report)).resolves.toMatchObject({
-      status: "completed",
-    });
-    await expect(service.recordTrafficCompletion(report)).resolves.toMatchObject({
-      status: "completed",
-    });
-    const [afterRedelivery] = await db
-      .select()
-      .from(demoRunFinalizations)
-      .where(eq(demoRunFinalizations.runId, started.run.runId));
-    const [soldOutAfterRedelivery] = await db
-      .select()
-      .from(demoRunSoldOutCounts)
-      .where(eq(demoRunSoldOutCounts.runId, started.run.runId));
-    const summaries = await db
-      .select()
-      .from(demoRunSummaries)
-      .where(eq(demoRunSummaries.runId, started.run.runId));
-
-    expect(afterRedelivery?.trafficOutcomeSummary).toEqual(authoritativeOutcome);
-    expect(soldOutAfterRedelivery?.count).toBe(23);
-    expect(summaries).toHaveLength(1);
-    expect(summaries[0]?.terminalInventorySnapshot).toEqual({
-      saleOfferId,
-      startingStock: 1_000,
-      remainingStock: 850,
-      reservedStock: 150,
-      acceptedReservations: 0,
-      soldOutRejections: 23,
-      pendingPersistenceCount: 0,
-      capturedAt: "2026-06-20T00:00:15.000Z",
-      source: "redis",
-    });
-    expect(summaries[0]?.terminalInventorySnapshot).not.toEqual(authoritativeSnapshot);
-    expect(summaries[0]?.loadRunDiagnosticsSummary).toEqual(report.loadRunDiagnosticsSummary);
-    expect(captureReadCount).toBe(1);
-    expect(readBusinessOutcome).toHaveBeenCalledOnce();
-    expect(writePrepared).toHaveBeenCalledTimes(2);
-  });
-
   it("keeps a claimed completion non-terminal until enrichment durably concludes", async () => {
     const db = requireConnection(connection).db;
     const redisClient = requireRedis(redis);
@@ -2674,7 +2459,6 @@ describe("demo-run lifecycle start gating", () => {
       db,
       redis: redisClient,
       logger: createSilentLogger("api"),
-      pendingPersistenceReconciler: noOpPendingPersistenceReconciler(),
       terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db),
       terminalInventoryRead: createTerminalInventoryRead(redisClient),
       terminalInventoryReadTimeoutMs: 2_000,
@@ -2905,7 +2689,6 @@ describe("demo-run lifecycle start gating", () => {
       db,
       redis: redisClient,
       logger: createSilentLogger("api"),
-      pendingPersistenceReconciler: noOpPendingPersistenceReconciler(),
       terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db),
       terminalInventoryRead: createTerminalInventoryRead(redisClient),
       terminalInventoryReadTimeoutMs: 2_000,
@@ -3387,18 +3170,6 @@ function noOpFinalizationService() {
   return {
     finalizeRun: async () => null,
     finalizeReadyRuns: async () => 0,
-  };
-}
-
-function noOpPendingPersistenceReconciler() {
-  return {
-    reconcileSaleOffer: async () => ({
-      found: 0,
-      materialized: 0,
-      reconciled: 0,
-      reversed: 0,
-      failed: 0,
-    }),
   };
 }
 

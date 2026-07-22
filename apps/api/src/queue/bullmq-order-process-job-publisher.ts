@@ -9,6 +9,7 @@ import { type ConnectionOptions, Queue } from "bullmq";
 import type { OrderProcessJobPublisher } from "../services/order-process-job-publisher.js";
 
 export interface BullMqOrderProcessJobPublisher extends OrderProcessJobPublisher {
+  abort(): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -23,6 +24,7 @@ export interface OrderProcessQueue {
     },
   ): Promise<unknown>;
   close(): Promise<void>;
+  disconnect?(): Promise<void>;
 }
 
 export interface OrderProcessRetryOptions {
@@ -67,6 +69,7 @@ export function createOrderProcessJobPublisher(
         jobId: job.orderId,
       });
     },
+    abort: () => queue.disconnect?.() ?? queue.close(),
     close: () => queue.close(),
   };
 }

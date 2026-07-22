@@ -2,9 +2,14 @@ import { describe, expect, it, vi } from "vitest";
 import { closeApiResources } from "../src/runtime/api-resource-cleanup.js";
 
 describe("API resource cleanup", () => {
-  it("drains the server before closing request dependencies", async () => {
+  it("closes recovery admission, then drains the server before request dependencies", async () => {
+    let recoveryClosed = false;
+    const closePendingPersistenceRecovery = vi.fn(async () => {
+      recoveryClosed = true;
+    });
     let serverClosed = false;
     const closeServer = vi.fn(async () => {
+      expect(recoveryClosed).toBe(true);
       await Promise.resolve();
       serverClosed = true;
     });
@@ -32,6 +37,7 @@ describe("API resource cleanup", () => {
     });
 
     await closeApiResources({
+      closePendingPersistenceRecovery,
       closeServer,
       closeDashboardPublicationScheduler,
       closeBusinessOutcomePublicationScheduler,
@@ -43,6 +49,7 @@ describe("API resource cleanup", () => {
       closeDatabase,
     });
 
+    expect(closePendingPersistenceRecovery).toHaveBeenCalledOnce();
     expect(closeServer).toHaveBeenCalledOnce();
     expect(closeDashboardPublicationScheduler).toHaveBeenCalledOnce();
     expect(closeBusinessOutcomePublicationScheduler).toHaveBeenCalledOnce();
@@ -56,6 +63,7 @@ describe("API resource cleanup", () => {
 
   it("attempts every dependency cleanup and aggregates all failures after server close fails", async () => {
     const serverError = new Error("server close failed");
+    const pendingRecoveryError = new Error("pending recovery close failed");
     const subscriberError = new Error("subscriber close failed");
     const schedulerError = new Error("scheduler close failed");
     const publisherError = new Error("publisher close failed");
@@ -64,6 +72,7 @@ describe("API resource cleanup", () => {
     const redisError = new Error("Redis disconnect failed");
     const databaseError = new Error("database close failed");
     const closeServer = vi.fn().mockRejectedValue(serverError);
+    const closePendingPersistenceRecovery = vi.fn().mockRejectedValue(pendingRecoveryError);
     const closeDashboardEventSubscriber = vi.fn().mockRejectedValue(subscriberError);
     const closeDashboardPublicationScheduler = vi.fn().mockRejectedValue(schedulerError);
     const closeBusinessOutcomePublicationScheduler = vi.fn(async () => undefined);
@@ -78,6 +87,7 @@ describe("API resource cleanup", () => {
 
     try {
       await closeApiResources({
+        closePendingPersistenceRecovery,
         closeServer,
         closeDashboardPublicationScheduler,
         closeBusinessOutcomePublicationScheduler,
@@ -94,6 +104,7 @@ describe("API resource cleanup", () => {
 
     expect(cleanupError).toBeInstanceOf(AggregateError);
     expect((cleanupError as AggregateError).errors).toEqual([
+      pendingRecoveryError,
       serverError,
       schedulerError,
       subscriberError,
@@ -103,6 +114,7 @@ describe("API resource cleanup", () => {
       redisError,
       databaseError,
     ]);
+    expect(closePendingPersistenceRecovery).toHaveBeenCalledOnce();
     expect(closeServer).toHaveBeenCalledOnce();
     expect(closeDashboardPublicationScheduler).toHaveBeenCalledOnce();
     expect(closeDashboardEventSubscriber).toHaveBeenCalledOnce();

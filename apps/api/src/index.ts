@@ -20,10 +20,11 @@ import {
   publishDashboardEvent,
   reserveInventoryStock,
   reverseReservation,
+  saleOffers,
   setRunSaleEligibility,
 } from "@checkout-surge/db";
 import { createServiceLogger, loggerPackageName } from "@checkout-surge/logger";
-import { eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { createBullMqDemoQueueMaintenance } from "./queue/bullmq-demo-queue-maintenance.js";
 import { createBullMqOrderProcessJobPublisher } from "./queue/bullmq-order-process-job-publisher.js";
 import { createBullMqOrderProcessQueueInspector } from "./queue/bullmq-order-process-queue-inspector.js";
@@ -62,7 +63,7 @@ import {
 } from "./services/erp-status-service.js";
 import { InventoryStatusService } from "./services/inventory-status-service.js";
 import { OrderStatusService } from "./services/order-status-service.js";
-import { PendingPersistenceReconciler } from "./services/pending-persistence-reconciler.js";
+import { PendingPersistenceRecoveryService } from "./services/pending-persistence-recovery-service.js";
 import { PostgresBuyPersistence } from "./services/postgres-buy-persistence.js";
 import { PostgresDemoResetWorkflowFence } from "./services/postgres-demo-reset-workflow-fence.js";
 import { RedisPublicRunBudgetStore } from "./services/public-run-budget-store.js";
@@ -107,7 +108,7 @@ export {
 export { InventoryStatusService } from "./services/inventory-status-service.js";
 export type { OrderProcessJobPublisher } from "./services/order-process-job-publisher.js";
 export { OrderStatusService } from "./services/order-status-service.js";
-export { PendingPersistenceReconciler } from "./services/pending-persistence-reconciler.js";
+export { PendingPersistenceRecoveryService } from "./services/pending-persistence-recovery-service.js";
 export { PostgresBuyPersistence } from "./services/postgres-buy-persistence.js";
 export { QueueStatusService } from "./services/queue-status-service.js";
 export { ReserveOrderService } from "./services/reserve-order-service.js";
@@ -122,6 +123,11 @@ export async function startApiServer(): Promise<void> {
   const redis = createRedisClient(config.redisUrl, {
     lazyConnect: true,
     maxRetriesPerRequest: 3,
+  });
+  const pendingPersistenceDiscoveryRedis = createRedisClient(config.redisUrl, {
+    lazyConnect: true,
+    maxRetriesPerRequest: 0,
+    commandTimeout: config.pendingPersistenceRecoveryDiscoveryTimeoutMs,
   });
   const dashboardEventSubscriberRedis = createRedisClient(config.redisUrl, {
     lazyConnect: true,
@@ -225,16 +231,137 @@ export async function startApiServer(): Promise<void> {
       );
     },
   });
-  const pendingPersistenceReconciler = new PendingPersistenceReconciler({
-    redis,
+  const pendingPersistenceRecovery = new PendingPersistenceRecoveryService({
+    redis: pendingPersistenceDiscoveryRedis,
     persistence,
+    audit: {
+      recordAttempt: (input) => persistence.recordPendingPersistenceAttempt(input),
+      markResolved: (input) => persistence.markPendingPersistenceResolved(input),
+      markExhausted: (input) => persistence.markPendingPersistenceExhausted(input),
+    },
     stockReservations: stockReservationGateway,
     orderProcessJobPublisher,
+    openDiscoveryScope: async (signal) => {
+      const operationRedis = createRedisClient(config.redisUrl, {
+        lazyConnect: true,
+        maxRetriesPerRequest: 0,
+        commandTimeout: config.pendingPersistenceRecoveryDiscoveryTimeoutMs,
+      });
+      const disconnect = () => operationRedis.disconnect();
+      signal.addEventListener("abort", disconnect, { once: true });
+      if (signal.aborted) disconnect();
+      return {
+        redis: operationRedis,
+        close: async () => {
+          signal.removeEventListener("abort", disconnect);
+          disconnect();
+        },
+      };
+    },
+    listRunScopes: async (signal) => {
+      const operationDatabase = createAbortableDatabaseConnection(config.databaseUrl, signal, {
+        max: 1,
+        connect_timeout: Math.ceil(config.pendingPersistenceRecoveryDiscoveryTimeoutMs / 1_000),
+      });
+      try {
+        const [runRows, catalogRows] = await Promise.all([
+          operationDatabase.db
+            .select({ runId: demoRuns.id, saleOfferId: demoRuns.saleOfferId })
+            .from(demoRuns)
+            .where(inArray(demoRuns.status, ["starting", "active", "draining"])),
+          operationDatabase.db
+            .select({ saleOfferId: saleOffers.id })
+            .from(saleOffers)
+            .where(and(eq(saleOffers.purpose, "catalog"), eq(saleOffers.isActive, true))),
+        ]);
+        return [
+          ...runRows.flatMap((row) =>
+            row.saleOfferId ? [{ runId: row.runId, saleOfferId: row.saleOfferId }] : [],
+          ),
+          ...catalogRows,
+        ];
+      } finally {
+        await operationDatabase.close();
+      }
+    },
+    openAttemptScope: async ({ signal, timeoutMs }) => {
+      const operationDatabase = createAbortableDatabaseConnection(config.databaseUrl, signal, {
+        max: 1,
+        connect_timeout: Math.ceil(timeoutMs / 1_000),
+      });
+      const operationRedis = createRedisClient(config.redisUrl, {
+        lazyConnect: true,
+        maxRetriesPerRequest: 0,
+        commandTimeout: timeoutMs,
+      });
+      const operationPublisher = createBullMqOrderProcessJobPublisher(
+        {
+          url: config.redisUrl,
+          maxRetriesPerRequest: 0,
+          commandTimeout: timeoutMs,
+        },
+        {
+          maxAttempts: config.orderProcessMaxAttempts,
+          backoffBaseMs: config.orderProcessBackoffBaseMs,
+        },
+      );
+      const operationPersistence = new PostgresBuyPersistence(operationDatabase.db, signal);
+      let publisherAbortPromise: Promise<void> | undefined;
+      const abort = () => {
+        operationRedis.disconnect();
+        publisherAbortPromise ??= operationPublisher.abort();
+        void publisherAbortPromise.catch((error: unknown) => {
+          logger.warn({ err: error }, "Pending-persistence recovery queue disconnect failed.");
+        });
+      };
+      signal.addEventListener("abort", abort, { once: true });
+      if (signal.aborted) abort();
+
+      return {
+        persistence: operationPersistence,
+        audit: {
+          recordAttempt: (input) => operationPersistence.recordPendingPersistenceAttempt(input),
+          markResolved: (input) => operationPersistence.markPendingPersistenceResolved(input),
+          markExhausted: (input) => operationPersistence.markPendingPersistenceExhausted(input),
+        },
+        stockReservations: {
+          promoteAccepted: (input) =>
+            promoteReservationIdempotencyToAccepted(operationRedis, input).then(() => undefined),
+        },
+        orderProcessJobPublisher: operationPublisher,
+        runRetryPolicyResolver: new PostgresRunRetryPolicyResolver(operationDatabase.db),
+        close: async () => {
+          signal.removeEventListener("abort", abort);
+          abort();
+          const cleanup = await Promise.allSettled([
+            operationDatabase.close(),
+            publisherAbortPromise,
+          ]);
+          const errors = cleanup.flatMap((result) =>
+            result.status === "rejected" ? [result.reason] : [],
+          );
+          if (errors.length > 0) {
+            throw new AggregateError(
+              errors,
+              "Pending-persistence recovery resource cleanup failed.",
+            );
+          }
+        },
+      };
+    },
+    closeDiscovery: async () => pendingPersistenceDiscoveryRedis.disconnect(),
     runRetryPolicyResolver,
     idempotencyTtlSeconds: config.idempotencyTtlSeconds,
     dashboardSnapshotPublications,
     businessOutcomeUpdates: businessOutcomePublications,
     logger,
+    recoveryWindowSeconds: config.pendingPersistenceRecoveryWindowSeconds,
+    maxAttempts: config.pendingPersistenceRecoveryMaxAttempts,
+    initialBackoffMs: config.pendingPersistenceRecoveryInitialBackoffMs,
+    maxBackoffMs: config.pendingPersistenceRecoveryMaxBackoffMs,
+    pollIntervalMs: config.pendingPersistenceRecoveryPollIntervalMs,
+    discoveryTimeoutMs: config.pendingPersistenceRecoveryDiscoveryTimeoutMs,
+    maxConcurrentDirectAttempts: config.pendingPersistenceRecoveryMaxConcurrentDirectAttempts,
   });
   const trafficMetricStore = new RedisDashboardTrafficMetricStore(redis);
   const trafficExecutionGateway = new HttpTrafficExecutionGateway({
@@ -347,7 +474,6 @@ export async function startApiServer(): Promise<void> {
     db: connection.db,
     redis,
     logger,
-    pendingPersistenceReconciler,
     terminalRunWriter,
     terminalInventoryRead: {
       read: async ({ saleOfferId, observedAt, signal }) => {
@@ -373,7 +499,6 @@ export async function startApiServer(): Promise<void> {
   });
   const demoRunStartupReconciliationService = new DemoRunStartupReconciliationService({
     logger,
-    pendingPersistenceReconciler,
     completionEnrichmentService: trafficCompletionEnrichmentService,
     listDrainingRuns: () =>
       connection.db.select().from(demoRuns).where(eq(demoRuns.status, "draining")),
@@ -404,6 +529,7 @@ export async function startApiServer(): Promise<void> {
     reservationHoldMinutes: config.reservationHoldMinutes,
     idempotencyTtlSeconds: config.idempotencyTtlSeconds,
     pendingPersistenceRetryAfterSeconds: config.pendingPersistenceRetryAfterSeconds,
+    pendingPersistenceRecovery,
     dashboardSnapshotPublications,
     soldOutObservations: dashboardSnapshotPublications,
     reportPersistenceFailure: (report) => {
@@ -416,12 +542,6 @@ export async function startApiServer(): Promise<void> {
       logger.error(
         partialFailureLogContext(report),
         "Could not ensure the Redis pending-persistence marker.",
-      );
-    },
-    reportPendingPersistenceRecordFailure: (report) => {
-      logger.error(
-        partialFailureLogContext(report),
-        "Could not record the pending-persistence reconciliation state.",
       );
     },
     reportPromotionFailure: (report) => {
@@ -462,6 +582,7 @@ export async function startApiServer(): Promise<void> {
         clearInterval(finalizationPoller);
       }
       await closeApiResources({
+        closePendingPersistenceRecovery: () => pendingPersistenceRecovery.close(),
         closeServer: async () => {
           dashboardEventFanout.close();
           await server?.close();
@@ -490,14 +611,7 @@ export async function startApiServer(): Promise<void> {
   try {
     await validateActivePublicRuntimePolicyAtStartup(connection.db, config.deploymentHardCaps);
     const startupReconciliation = await demoRunStartupReconciliationService.reconcile();
-    try {
-      await pendingPersistenceReconciler.reconcileAll();
-    } catch (error) {
-      logger.warn(
-        { err: error },
-        "Global pending Redis reservation reconciliation will retry on the next lifecycle pass.",
-      );
-    }
+    pendingPersistenceRecovery.start();
     if (startupReconciliation.discoveredRunCount > 0) {
       logger.info(startupReconciliation, "API startup demo-run reconciliation completed.");
     }
@@ -508,7 +622,6 @@ export async function startApiServer(): Promise<void> {
       });
       void (async () => {
         await trafficCompletionEnrichmentService.reconcilePendingEnrichments();
-        await pendingPersistenceReconciler.reconcileAll();
         await demoRunFinalizationService.finalizeReadyRuns();
       })().catch((error: unknown) => {
         logger.error({ err: error }, "Demo run completion lifecycle poll failed.");

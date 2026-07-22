@@ -55,6 +55,7 @@ describe("shared PostgreSQL vocabulary", () => {
     expect(reservationPendingPersistenceStatusValues).toEqual([
       "pending_reconciliation",
       "reconciled",
+      "exhausted",
     ]);
   });
 

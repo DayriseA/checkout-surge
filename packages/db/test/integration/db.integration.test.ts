@@ -24,9 +24,9 @@ import {
   inventoryKeys,
   isRunSaleEligible,
   markReservationPendingPersistence,
-  pendingPersistenceIndexKey,
   promoteReservationIdempotencyToAccepted,
   publishDashboardEvent,
+  readPendingPersistencePage,
   reserveInventoryStock,
   reverseReservation,
   runSaleEligibilityKey,
@@ -1775,12 +1775,6 @@ describe("database migrations, seed data, and reset behavior", () => {
       quantity: input.reservation.quantity,
       reservationToken: input.reservation.reservationToken,
     });
-    expect(
-      await redis.zscore(
-        "inventory:pending-persistence-index",
-        `${saleOfferId}:${input.reservation.id}`,
-      ),
-    ).toBe(new Date(reservationSecuredAt).getTime().toString());
     expect(await getInventoryStatus(redis, saleOfferId)).toMatchObject({
       pendingPersistenceCount: 1,
     });
@@ -2061,9 +2055,6 @@ describe("database migrations, seed data, and reset behavior", () => {
     expect(await redis.ttl(keys.idempotency(input.idempotencyKey))).toBeGreaterThanOrEqual(239);
     expect(await redis.zscore(keys.pendingPersistence, input.reservation.id)).toBeNull();
     expect(await redis.hget(keys.pendingPersistenceRecords, input.reservation.id)).toBeNull();
-    expect(
-      await redis.zscore(pendingPersistenceIndexKey, `${saleOfferId}:${input.reservation.id}`),
-    ).toBeNull();
     await expect(reserveInventoryStock(redis, input)).resolves.toEqual({
       outcome: "idempotent_replay",
       reservation: input.reservation,
@@ -2158,18 +2149,9 @@ describe("database migrations, seed data, and reset behavior", () => {
     expect(
       await redis.hget(keys.pendingPersistenceRecords, original.reservation.id),
     ).not.toBeNull();
-    expect(
-      await redis.zscore(pendingPersistenceIndexKey, `${saleOfferId}:${original.reservation.id}`),
-    ).not.toBeNull();
     expect(await redis.zscore(keys.pendingPersistence, replacement.reservation.id)).not.toBeNull();
     expect(
       await redis.hget(keys.pendingPersistenceRecords, replacement.reservation.id),
-    ).not.toBeNull();
-    expect(
-      await redis.zscore(
-        pendingPersistenceIndexKey,
-        `${saleOfferId}:${replacement.reservation.id}`,
-      ),
     ).not.toBeNull();
   });
 
@@ -2216,16 +2198,124 @@ describe("database migrations, seed data, and reset behavior", () => {
       deferPendingPersistenceRecord(redis, {
         saleOfferId,
         reservationId: input.reservation.id,
-        now: deferredAt,
+        attemptCount: 1,
+        status: "pending",
+        nextRecoveryAt: deferredAt,
+        recoveryDeadlineAt: new Date("2026-06-20T13:05:00.000Z"),
+        lastError: "database unavailable",
       }),
     ).resolves.toBe("deferred");
     expect(await redis.zscore(keys.pendingPersistence, input.reservation.id)).toBe(
       deferredAt.getTime().toString(),
     );
-    expect(
-      await redis.zscore(pendingPersistenceIndexKey, `${saleOfferId}:${input.reservation.id}`),
-    ).toBe(deferredAt.getTime().toString());
     expect(await redis.hget(keys.pendingPersistenceRecords, input.reservation.id)).not.toBeNull();
+  });
+
+  it("reports authoritative removal when promotion wins before retry scheduling", async () => {
+    const saleOfferId = "10000000-0000-4000-8000-000000000034";
+    const keys = inventoryKeys(saleOfferId);
+    const input = buildReservationInput({ saleOfferId, sequence: 34 });
+    const deadline = new Date("2026-06-20T13:05:00.000Z");
+    await initializeInventory(redis, { saleOfferId, allocatedStock: 1 });
+    await reserveInventoryStock(redis, input);
+    await promoteReservationIdempotencyToAccepted(redis, input);
+
+    await expect(
+      deferPendingPersistenceRecord(redis, {
+        saleOfferId,
+        reservationId: input.reservation.id,
+        attemptCount: 1,
+        status: "exhausted",
+        nextRecoveryAt: deadline,
+        recoveryDeadlineAt: deadline,
+        lastError: "late failure response",
+      }),
+    ).resolves.toBe("removed");
+    expect(await redis.zscore(keys.pendingPersistence, input.reservation.id)).toBeNull();
+    expect(await redis.hget(keys.pendingPersistenceRecords, input.reservation.id)).toBeNull();
+  });
+
+  it.each([
+    { status: "pending" as const, nextRecoveryAt: new Date("2026-06-20T13:00:00.000Z") },
+    { status: "exhausted" as const, nextRecoveryAt: new Date("2026-06-20T13:05:00.000Z") },
+  ])("preserves $status recovery state and scheduling score when ensuring the marker", async (state) => {
+    const saleOfferId =
+      state.status === "pending"
+        ? "10000000-0000-4000-8000-000000000030"
+        : "10000000-0000-4000-8000-000000000031";
+    const keys = inventoryKeys(saleOfferId);
+    const input = buildReservationInput({
+      saleOfferId,
+      sequence: state.status === "pending" ? 30 : 31,
+    });
+    const deadline = new Date("2026-06-20T13:10:00.000Z");
+    await initializeInventory(redis, { saleOfferId, allocatedStock: 1 });
+    await reserveInventoryStock(redis, input);
+    await deferPendingPersistenceRecord(redis, {
+      saleOfferId,
+      reservationId: input.reservation.id,
+      attemptCount: 4,
+      status: state.status,
+      nextRecoveryAt: state.nextRecoveryAt,
+      recoveryDeadlineAt: deadline,
+      lastError: "preserve this error",
+    });
+    const recordBefore = JSON.parse(
+      (await redis.hget(keys.pendingPersistenceRecords, input.reservation.id)) ?? "null",
+    );
+    const scoreBefore = await redis.zscore(keys.pendingPersistence, input.reservation.id);
+
+    await markReservationPendingPersistence(redis, input);
+
+    expect(
+      JSON.parse(
+        (await redis.hget(keys.pendingPersistenceRecords, input.reservation.id)) ?? "null",
+      ),
+    ).toEqual(recordBefore);
+    expect(await redis.zscore(keys.pendingPersistence, input.reservation.id)).toBe(scoreBefore);
+  });
+
+  it("quarantines a malformed due cursor so it cannot starve later valid work", async () => {
+    const saleOfferId = "10000000-0000-4000-8000-000000000032";
+    const keys = inventoryKeys(saleOfferId);
+    const first = buildReservationInput({ saleOfferId, sequence: 32 });
+    const second = buildReservationInput({ saleOfferId, sequence: 33 });
+    await initializeInventory(redis, { saleOfferId, allocatedStock: 2 });
+    await reserveInventoryStock(redis, first);
+    await reserveInventoryStock(redis, second);
+    const malformedMetadata = JSON.parse(
+      (await redis.hget(keys.pendingPersistenceRecords, first.reservation.id)) ?? "null",
+    );
+    malformedMetadata.idempotencyKey = "";
+    await redis.hset(
+      keys.pendingPersistenceRecords,
+      first.reservation.id,
+      JSON.stringify(malformedMetadata),
+    );
+
+    await expect(
+      readPendingPersistencePage(redis, {
+        saleOfferId,
+        dueAt: new Date(reservationSecuredAt),
+        limit: 1,
+      }),
+    ).resolves.toEqual({
+      records: [],
+      issues: [{ reservationId: first.reservation.id, reason: "malformed_pending_record" }],
+    });
+    await expect(
+      readPendingPersistencePage(redis, {
+        saleOfferId,
+        dueAt: new Date(reservationSecuredAt),
+        limit: 1,
+      }),
+    ).resolves.toMatchObject({
+      records: [expect.objectContaining({ id: second.reservation.id })],
+      issues: [],
+    });
+    expect(await redis.zscore(keys.pendingPersistence, first.reservation.id)).toBe(
+      Number.MAX_SAFE_INTEGER.toString(),
+    );
   });
 
   it("reverses a pending hold atomically and is idempotent on repetition", async () => {
@@ -2247,12 +2337,6 @@ describe("database migrations, seed data, and reset behavior", () => {
     expect(await redis.hget(keys.reservations, input.reservation.id)).toBeNull();
     expect(await redis.zscore(keys.pendingPersistence, input.reservation.id)).toBeNull();
     expect(await redis.hget(keys.pendingPersistenceRecords, input.reservation.id)).toBeNull();
-    expect(
-      await redis.zscore(
-        "inventory:pending-persistence-index",
-        `${saleOfferId}:${input.reservation.id}`,
-      ),
-    ).toBeNull();
     expect(await redis.get(keys.idempotency(input.idempotencyKey))).toBeNull();
     await expect(
       reverseReservation(redis, {
@@ -2619,9 +2703,6 @@ describe("database migrations, seed data, and reset behavior", () => {
         idempotencyKey,
       }),
     );
-    // This assertion owns the process-wide pending index cardinality; isolate it from
-    // pending holds intentionally retained by earlier inventory scenarios in this suite.
-    await redis.del(pendingPersistenceIndexKey);
     await initializeInventory(redis, { saleOfferId, allocatedStock: 10 });
 
     const decisions = await Promise.all(
@@ -2654,7 +2735,6 @@ describe("database migrations, seed data, and reset behavior", () => {
     expect(await redis.zcard(keys.reservationExpirations)).toBe(1);
     expect(await redis.zcard(keys.pendingPersistence)).toBe(1);
     expect(await redis.hlen(keys.pendingPersistenceRecords)).toBe(1);
-    expect(await redis.zcard(pendingPersistenceIndexKey)).toBe(1);
     expect(await redis.keys(`${keys.prefix}:idempotency:*`)).toEqual([
       keys.idempotency(idempotencyKey),
     ]);
@@ -2675,9 +2755,6 @@ describe("database migrations, seed data, and reset behavior", () => {
       new Date(winner.expiresAt).getTime().toString(),
     );
     expect(await redis.zscore(keys.pendingPersistence, winner.id)).toBe(
-      new Date(winner.securedAt).getTime().toString(),
-    );
-    expect(await redis.zscore(pendingPersistenceIndexKey, `${saleOfferId}:${winner.id}`)).toBe(
       new Date(winner.securedAt).getTime().toString(),
     );
     expect(await redis.llen(keys.events)).toBe(2);

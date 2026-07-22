@@ -32,6 +32,21 @@ describe("order-processing job publisher", () => {
     expect(close).toHaveBeenCalledOnce();
   });
 
+  it("disconnects immediately when an owned recovery operation aborts", async () => {
+    const disconnect = vi.fn().mockResolvedValue(undefined);
+    const close = vi.fn().mockResolvedValue(undefined);
+    const publisher = createOrderProcessJobPublisher({
+      add: vi.fn().mockResolvedValue(undefined),
+      disconnect,
+      close,
+    } as OrderProcessQueue);
+
+    await publisher.abort();
+
+    expect(disconnect).toHaveBeenCalledOnce();
+    expect(close).not.toHaveBeenCalled();
+  });
+
   it("uses explicit retry options when supplied", async () => {
     const add = vi.fn().mockResolvedValue(undefined);
     const publisher = createOrderProcessJobPublisher(

@@ -5,6 +5,7 @@ import {
   type BusinessOutcomeUpdateFailureReport,
   type BuyPersistence,
   type OrderEnqueueFailureReport,
+  type PendingPersistenceRecovery,
   type PersistedBuyAcceptance,
   type ReservationPartialFailureReport,
   ReserveOrderService,
@@ -28,7 +29,7 @@ function buildService(options: {
     typeof ReserveOrderService
   >[0]["runRetryPolicyResolver"];
   reportPersistenceFailure?: (report: ReservationPartialFailureReport) => void;
-  reportPendingPersistenceRecordFailure?: (report: ReservationPartialFailureReport) => void;
+  pendingPersistenceRecovery?: PendingPersistenceRecovery;
   reportPendingPersistenceEnsureFailure?: (report: ReservationPartialFailureReport) => void;
   reportPromotionFailure?: (report: ReservationPartialFailureReport) => void;
   reportOrderEnqueueFailure?: (report: OrderEnqueueFailureReport) => void;
@@ -56,6 +57,9 @@ function buildService(options: {
     reservationHoldMinutes: 15,
     idempotencyTtlSeconds: 1800,
     pendingPersistenceRetryAfterSeconds: 30,
+    pendingPersistenceRecovery: options.pendingPersistenceRecovery ?? {
+      recoverReservation: async () => null,
+    },
     generateId: (() => {
       const ids = ["cccccccc-cccc-4ccc-8ccc-cccccccccccc", "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"];
       let index = 0;
@@ -63,9 +67,6 @@ function buildService(options: {
     })(),
     ...(options.reportPersistenceFailure
       ? { reportPersistenceFailure: options.reportPersistenceFailure }
-      : {}),
-    ...(options.reportPendingPersistenceRecordFailure
-      ? { reportPendingPersistenceRecordFailure: options.reportPendingPersistenceRecordFailure }
       : {}),
     ...(options.reportPendingPersistenceEnsureFailure
       ? { reportPendingPersistenceEnsureFailure: options.reportPendingPersistenceEnsureFailure }
@@ -370,7 +371,6 @@ describe("ReserveOrderService queue handoff", () => {
 
   it.each([
     "reservation_secured",
-    "reservation_pending_persistence",
     "idempotent_replay",
   ] as const)("checks durable evidence before reversing a %s hold when policy resolution proves the run is missing", async (outcome) => {
     const persistSecuredReservation = vi.fn();
@@ -720,6 +720,13 @@ describe("ReserveOrderService queue handoff", () => {
           }
         },
       },
+      pendingPersistenceRecovery: {
+        recoverReservation: async () => {
+          enqueueAttempts += 1;
+          await promoteAccepted();
+          return durableBuy;
+        },
+      },
     });
 
     await expect(service.reserve({ request, correlationId, now })).rejects.toThrow(
@@ -747,17 +754,21 @@ describe("ReserveOrderService queue handoff", () => {
       durableBuy = persistedBuy(reservation);
       return durableBuy;
     });
-    const recordPendingPersistence = vi.fn(async () => undefined);
     const markPendingPersistence = vi.fn(async () => undefined);
     const promoteAccepted = vi.fn(async () => undefined);
     const enqueue = vi.fn(async () => undefined);
     const publishBusinessOutcomeUpdate = vi.fn(async () => undefined);
     const observeSoldOut = vi.fn();
+    const recoverReservation = vi.fn(
+      async ({ reservation }: { reservation: SecuredReservationHold }) => {
+        durableBuy = await persistSecuredReservation({ reservation });
+        return durableBuy;
+      },
+    );
     const service = buildService({
       persistence: {
         persistSecuredReservation,
         getPersistedBuyByReservationId: async () => durableBuy,
-        recordPendingPersistence,
       },
       stockReservations: acceptingGateway({
         reserve: async (input) => {
@@ -772,6 +783,7 @@ describe("ReserveOrderService queue handoff", () => {
       orderProcessJobPublisher: { enqueue },
       publishBusinessOutcomeUpdate,
       soldOutObservations: { observeSoldOut },
+      pendingPersistenceRecovery: { recoverReservation },
     });
 
     const first = await service.reserve({ request, correlationId, now });
@@ -798,16 +810,61 @@ describe("ReserveOrderService queue handoff", () => {
     expect(replay.order.publicOrderId).toBe(reconciledWinner.order.publicOrderId);
     expect(persistSecuredReservation).toHaveBeenCalledTimes(2);
     expect(persistSecuredReservation.mock.calls[1]?.[0].reservation).toEqual(originalHold);
-    expect(recordPendingPersistence).toHaveBeenCalledOnce();
     expect(markPendingPersistence).toHaveBeenCalledOnce();
-    expect(enqueue).toHaveBeenCalledOnce();
-    expect(promoteAccepted).toHaveBeenCalledWith({
+    expect(recoverReservation).toHaveBeenCalledWith({
       idempotencyKey: request.idempotencyKey,
-      idempotencyTtlSeconds: 1800,
       reservation: originalHold,
     });
-    expect(publishBusinessOutcomeUpdate).toHaveBeenCalledOnce();
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(promoteAccepted).not.toHaveBeenCalled();
+    expect(publishBusinessOutcomeUpdate).not.toHaveBeenCalled();
     expect(observeSoldOut).not.toHaveBeenCalled();
+  });
+
+  it("keeps an overloaded direct recovery publicly pending and retryable", async () => {
+    const originalHold: SecuredReservationHold = {
+      id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+      saleOfferId: request.saleOfferId,
+      runId: request.runId,
+      correlationId,
+      quantity: request.quantity,
+      reservationToken: "direct-recovery-overload",
+      securedAt: now.toISOString(),
+      expiresAt: new Date(now.getTime() + 900_000).toISOString(),
+    };
+    const winner = persistedBuy(originalHold);
+    const recoverReservation = vi
+      .fn<PendingPersistenceRecovery["recoverReservation"]>()
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(winner);
+    const markPendingPersistence = vi.fn(async () => undefined);
+    const service = buildService({
+      persistence: {
+        persistSecuredReservation: vi.fn(async () => winner),
+        getPersistedBuyByReservationId: vi.fn(async () => null),
+      },
+      stockReservations: acceptingGateway({
+        reserve: async () => ({
+          outcome: "reservation_pending_persistence",
+          reservation: originalHold,
+        }),
+        markPendingPersistence,
+      }),
+      pendingPersistenceRecovery: { recoverReservation },
+    });
+
+    await expect(service.reserve({ request, correlationId, now })).resolves.toMatchObject({
+      outcome: "reservation_pending_persistence",
+      reservation: { id: originalHold.id },
+      order: null,
+    });
+    await expect(service.reserve({ request, correlationId, now })).resolves.toMatchObject({
+      outcome: "reservation_secured",
+      reservation: { id: originalHold.id },
+      order: { id: winner.order.id },
+    });
+    expect(markPendingPersistence).toHaveBeenCalledOnce();
+    expect(recoverReservation).toHaveBeenCalledTimes(2);
   });
 
   it("uses a persistence-race recovery as durable replay without pending side effects", async () => {
@@ -822,7 +879,6 @@ describe("ReserveOrderService queue handoff", () => {
       expiresAt: new Date(now.getTime() + 900_000).toISOString(),
     };
     const winner = persistedBuy(originalHold);
-    const recordPendingPersistence = vi.fn();
     const markPendingPersistence = vi.fn();
     const reportPersistenceFailure = vi.fn();
     const enqueue = vi.fn();
@@ -831,7 +887,6 @@ describe("ReserveOrderService queue handoff", () => {
       persistence: {
         getPersistedBuyByReservationId: async () => null,
         persistSecuredReservation: async () => winner,
-        recordPendingPersistence,
       },
       stockReservations: acceptingGateway({
         reserve: async () => ({
@@ -843,6 +898,7 @@ describe("ReserveOrderService queue handoff", () => {
       }),
       orderProcessJobPublisher: { enqueue },
       reportPersistenceFailure,
+      pendingPersistenceRecovery: { recoverReservation: async () => winner },
     });
 
     const response = await service.reserve({ request, correlationId, now });
@@ -854,10 +910,9 @@ describe("ReserveOrderService queue handoff", () => {
       order: { id: winner.order.id, publicOrderId: winner.order.publicOrderId },
     });
     expect(reportPersistenceFailure).not.toHaveBeenCalled();
-    expect(recordPendingPersistence).not.toHaveBeenCalled();
     expect(markPendingPersistence).not.toHaveBeenCalled();
-    expect(enqueue).toHaveBeenCalledOnce();
-    expect(promoteAccepted).toHaveBeenCalledOnce();
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(promoteAccepted).not.toHaveBeenCalled();
   });
 
   it("re-enqueues an accepted historical replay before returning it", async () => {
@@ -929,33 +984,6 @@ describe("ReserveOrderService queue handoff", () => {
 });
 
 describe("ReserveOrderService partial failures", () => {
-  it("records pending-persistence context when PostgreSQL order creation fails", async () => {
-    const persistenceError = new Error("database unavailable");
-    const recordPendingPersistence = vi.fn(async () => undefined);
-    const service = buildService({
-      persistence: {
-        persistSecuredReservation: async () => {
-          throw persistenceError;
-        },
-        getPersistedBuyByReservationId: async () => null,
-        recordPendingPersistence,
-      },
-      stockReservations: acceptingGateway(),
-    });
-
-    const response = await service.reserve({ request, correlationId, now });
-
-    expect(response.outcome).toBe("reservation_pending_persistence");
-    expect(recordPendingPersistence).toHaveBeenCalledWith({
-      idempotencyKey: request.idempotencyKey,
-      reservation: expect.objectContaining({
-        saleOfferId: request.saleOfferId,
-        runId: request.runId,
-        correlationId,
-      }),
-    });
-  });
-
   it("ensures the Redis pending marker only after admission is released", async () => {
     const callOrder: string[] = [];
     const admissionOperations = {
@@ -964,9 +992,6 @@ describe("ReserveOrderService partial failures", () => {
         throw new Error("database unavailable");
       },
       getPersistedBuyByReservationId: async () => null,
-      recordPendingPersistence: async () => {
-        callOrder.push("record pending");
-      },
     };
     const service = buildService({
       persistence: {
@@ -991,41 +1016,9 @@ describe("ReserveOrderService partial failures", () => {
     expect(callOrder).toEqual([
       "admission start",
       "persist failure",
-      "record pending",
       "admission end",
       "ensure Redis pending",
     ]);
-  });
-
-  it("does not hide the pending response when pending-persistence recording fails", async () => {
-    const recordError = new Error("pending record unavailable");
-    const reportPendingPersistenceRecordFailure = vi.fn();
-    const service = buildService({
-      persistence: {
-        persistSecuredReservation: async () => {
-          throw new Error("database unavailable");
-        },
-        getPersistedBuyByReservationId: async () => null,
-        recordPendingPersistence: async () => {
-          throw recordError;
-        },
-      },
-      stockReservations: acceptingGateway(),
-      reportPendingPersistenceRecordFailure,
-    });
-
-    const response = await service.reserve({ request, correlationId, now });
-
-    expect(response.outcome).toBe("reservation_pending_persistence");
-    expect(reportPendingPersistenceRecordFailure).toHaveBeenCalledWith(
-      expect.objectContaining({
-        error: recordError,
-        saleOfferId: request.saleOfferId,
-        runId: request.runId,
-        correlationId,
-        idempotencyKey: request.idempotencyKey,
-      }),
-    );
   });
 
   it("returns explicit pending when PostgreSQL and the marker ensure both fail", async () => {
@@ -1078,14 +1071,12 @@ describe("ReserveOrderService partial failures", () => {
     });
     const reverse = vi.fn(async () => "reversed" as const);
     const markPendingPersistence = vi.fn();
-    const recordPendingPersistence = vi.fn();
     const service = buildService({
       persistence: {
         persistSecuredReservation: async () => {
           throw persistenceError;
         },
         getPersistedBuyByReservationId: async () => null,
-        recordPendingPersistence,
       },
       stockReservations: acceptingGateway({ reverse, markPendingPersistence }),
     });
@@ -1096,7 +1087,6 @@ describe("ReserveOrderService partial failures", () => {
       reservation: expect.objectContaining({ id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee" }),
     });
     expect(markPendingPersistence).not.toHaveBeenCalled();
-    expect(recordPendingPersistence).not.toHaveBeenCalled();
   });
 
   it("keeps incidental persistence messages retryable", async () => {

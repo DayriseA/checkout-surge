@@ -233,6 +233,7 @@ describe("generated buy bounded-pool admission", () => {
       reservationHoldMinutes: 15,
       idempotencyTtlSeconds: 1_800,
       pendingPersistenceRetryAfterSeconds: 5,
+      pendingPersistenceRecovery: { recoverReservation: async () => null },
       generateId: randomUUID,
     });
 

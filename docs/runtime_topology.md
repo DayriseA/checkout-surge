@@ -37,7 +37,7 @@ The goal is to make the architecture-realistic topology easy to run locally with
 The full local reference runtime includes exactly one of each application runtime:
 
 - one `apps/web` Next.js process with public demo, live watch, admin console, and run history routes
-- one `apps/api` process that owns the API gateway, SSE fan-out, and all API maintenance workflows
+- one `apps/api` process that owns the API gateway, SSE fan-out, API maintenance workflows, and the sole deadline-bounded per-sale pending-persistence recovery scheduler plus its bounded exact-replay admission for run and catalog scopes
 - one `apps/worker` runtime for order-processing and notification workers plus autonomous dispatch, ERP-result, and notification recovery scanners; its per-run order admission is process-local beneath BullMQ's process-wide concurrency ceiling
 - `apps/mock-erp` simulated downstream ERP
 - one `apps/load-orchestrator` process with one file journal, k6 wrapper, and metric streamer

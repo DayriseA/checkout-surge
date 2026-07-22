@@ -9,7 +9,6 @@ import {
 import type { CheckoutSurgeRedis } from "./redis.js";
 import {
   inventoryKeys,
-  pendingPersistenceIndexKey,
   reservationThroughputWindowSeconds,
   runSaleEligibilityKey,
 } from "./redis-inventory.js";
@@ -30,10 +29,6 @@ end
 local recordsType = redis.call("TYPE", KEYS[4]).ok
 if recordsType ~= "none" and recordsType ~= "hash" then
   return redis.error_reply("Inventory pending-persistence records key must be a hash")
-end
-local indexType = redis.call("TYPE", KEYS[5]).ok
-if indexType ~= "none" and indexType ~= "zset" then
-  return redis.error_reply("Inventory pending-persistence index key must be a sorted set")
 end
 local idempotencyJson = redis.call("GET", KEYS[1])
 if not idempotencyJson then
@@ -59,7 +54,7 @@ end
 if not redis.call("HGET", KEYS[2], ARGV[1]) then
   return "missing_hold"
 end
-redis.call("ZADD", KEYS[3], ARGV[9], ARGV[1])
+local maximumSafeInteger = 9007199254740991
 local pendingRecord = {
   id = ARGV[1],
   saleOfferId = ARGV[3],
@@ -69,10 +64,33 @@ local pendingRecord = {
   quantity = tonumber(ARGV[2]),
   reservationToken = ARGV[4],
   securedAt = ARGV[7],
-  expiresAt = ARGV[8]
+  expiresAt = ARGV[8],
+  recoveryAttemptCount = 0,
+  recoveryStatus = "pending",
+  nextRecoveryAt = ARGV[7]
 }
+local existingPendingRecord = redis.call("HGET", KEYS[4], ARGV[1])
+local schedulingScore = redis.call("ZSCORE", KEYS[3], ARGV[1])
+if existingPendingRecord then
+  local existing = cjson.decode(existingPendingRecord)
+  pendingRecord.recoveryAttemptCount = existing.recoveryAttemptCount or 0
+  pendingRecord.recoveryStatus = existing.recoveryStatus or "pending"
+  pendingRecord.nextRecoveryAt = existing.nextRecoveryAt or ARGV[7]
+  pendingRecord.recoveryDeadlineAt = existing.recoveryDeadlineAt
+  pendingRecord.lastRecoveryError = existing.lastRecoveryError
+  if not schedulingScore then
+    if pendingRecord.recoveryStatus == "exhausted" then
+      schedulingScore = maximumSafeInteger
+    else
+      schedulingScore = existing.nextRecoveryAtEpochMs or ARGV[9]
+    end
+  end
+else
+  schedulingScore = ARGV[9]
+end
+pendingRecord.nextRecoveryAtEpochMs = tonumber(schedulingScore)
 redis.call("HSET", KEYS[4], ARGV[1], cjson.encode(pendingRecord))
-redis.call("ZADD", KEYS[5], ARGV[9], ARGV[3] .. ":" .. ARGV[1])
+redis.call("ZADD", KEYS[3], schedulingScore, ARGV[1])
 return "marked"
 `;
 
@@ -84,10 +102,6 @@ end
 local recordsType = redis.call("TYPE", KEYS[3]).ok
 if recordsType ~= "none" and recordsType ~= "hash" then
   return redis.error_reply("Inventory pending-persistence records key must be a hash")
-end
-local indexType = redis.call("TYPE", KEYS[4]).ok
-if indexType ~= "none" and indexType ~= "zset" then
-  return redis.error_reply("Inventory pending-persistence index key must be a sorted set")
 end
 local idempotencyJson = redis.call("GET", KEYS[1])
 if not idempotencyJson then
@@ -111,7 +125,6 @@ if not idempotencyJson then
   redis.call("SET", KEYS[1], cjson.encode(acceptedRecord), "EX", ARGV[9])
   redis.call("ZREM", KEYS[2], ARGV[1])
   redis.call("HDEL", KEYS[3], ARGV[1])
-  redis.call("ZREM", KEYS[4], ARGV[3] .. ":" .. ARGV[1])
   return "promoted"
 end
 local record = cjson.decode(idempotencyJson)
@@ -129,7 +142,6 @@ if record.status == "accepted" then
   redis.call("SET", KEYS[1], cjson.encode(record), "EX", ARGV[9])
   redis.call("ZREM", KEYS[2], ARGV[1])
   redis.call("HDEL", KEYS[3], ARGV[1])
-  redis.call("ZREM", KEYS[4], ARGV[3] .. ":" .. ARGV[1])
   return "already_accepted"
 end
 if record.status ~= "pending_persistence" then
@@ -139,7 +151,6 @@ record.status = "accepted"
 redis.call("SET", KEYS[1], cjson.encode(record), "EX", ARGV[9])
 redis.call("ZREM", KEYS[2], ARGV[1])
 redis.call("HDEL", KEYS[3], ARGV[1])
-redis.call("ZREM", KEYS[4], ARGV[3] .. ":" .. ARGV[1])
 return "promoted"
 `;
 
@@ -158,7 +169,6 @@ assertOptionalKeyType(KEYS[4], "list", "Inventory events")
 assertOptionalKeyType(KEYS[5], "zset", "Inventory pending-persistence")
 assertOptionalKeyType(KEYS[6], "hash", "Inventory pending-persistence records")
 assertOptionalKeyType(KEYS[7], "string", "Inventory idempotency")
-assertOptionalKeyType(KEYS[8], "zset", "Inventory pending-persistence index")
 
 local rawHold = redis.call("HGET", KEYS[2], ARGV[1])
 local rawIdempotency = redis.call("GET", KEYS[7])
@@ -202,7 +212,6 @@ end
 if not rawHold then
   redis.call("ZREM", KEYS[5], ARGV[1])
   redis.call("HDEL", KEYS[6], ARGV[1])
-  redis.call("ZREM", KEYS[8], ARGV[3] .. ":" .. ARGV[1])
   if rawIdempotency then
     local idempotency = cjson.decode(rawIdempotency)
     if idempotency.reservation and idempotency.reservation.id == ARGV[1] then
@@ -239,7 +248,6 @@ redis.call("HDEL", KEYS[2], ARGV[1])
 redis.call("ZREM", KEYS[3], ARGV[1])
 redis.call("ZREM", KEYS[5], ARGV[1])
 redis.call("HDEL", KEYS[6], ARGV[1])
-redis.call("ZREM", KEYS[8], ARGV[3] .. ":" .. ARGV[1])
 if rawIdempotency then
   local idempotency = cjson.decode(rawIdempotency)
   if idempotency.reservation and idempotency.reservation.id == ARGV[1] then
@@ -311,10 +319,10 @@ elseif inventoryScope == "generated_run" then
     or runSaleStatus ~= "accepting" then
     return cjson.encode({ outcome = "run_not_accepting_traffic", reservation = cjson.null })
   end
-  if redis.call("TYPE", KEYS[11]).ok ~= "string" then
+  if redis.call("TYPE", KEYS[10]).ok ~= "string" then
     return cjson.encode({ outcome = "run_not_accepting_traffic", reservation = cjson.null })
   end
-  local eligibilityJson = redis.call("GET", KEYS[11])
+  local eligibilityJson = redis.call("GET", KEYS[10])
   local decoded, eligibility = pcall(cjson.decode, eligibilityJson)
   if not decoded
     or type(eligibility) ~= "table"
@@ -355,7 +363,6 @@ assertOptionalKeyType(KEYS[6], "hash", "Inventory reservation-throughput")
 assertOptionalKeyType(KEYS[7], "zset", "Inventory pending-persistence")
 assertOptionalKeyType(KEYS[8], "hash", "Inventory pending-persistence records")
 assertOptionalKeyType(KEYS[9], "string", "Inventory idempotency")
-assertOptionalKeyType(KEYS[10], "zset", "Inventory pending-persistence index")
 
 if redis.call("HGET", KEYS[2], reservation.id)
   or redis.call("ZSCORE", KEYS[3], reservation.id)
@@ -450,10 +457,12 @@ local pendingRecord = {
   quantity = quantity,
   reservationToken = reservation.reservationToken,
   securedAt = reservation.securedAt,
-  expiresAt = reservation.expiresAt
+  expiresAt = reservation.expiresAt,
+  recoveryAttemptCount = 0,
+  recoveryStatus = "pending",
+  nextRecoveryAt = reservation.securedAt
 }
 redis.call("HSET", KEYS[8], reservation.id, cjson.encode(pendingRecord))
-redis.call("ZADD", KEYS[10], ARGV[8], reservation.saleOfferId .. ":" .. reservation.id)
 
 if existingThroughputSecond == throughputSecond then
   redis.call("HINCRBY", KEYS[6], throughputCountField, 1)
@@ -521,7 +530,6 @@ export async function reserveInventoryStock(
     keys.pendingPersistence,
     keys.pendingPersistenceRecords,
     keys.idempotency(idempotencyKey),
-    pendingPersistenceIndexKey,
     runSaleEligibilityKey(reservation.runId ?? "none"),
     reservation.quantity.toString(),
     JSON.stringify(reservation),
@@ -547,7 +555,7 @@ function ensureReserveInventoryCommand(
 ): RedisWithReserveInventoryCommand {
   if (!reserveInventoryCommandConnections.has(redis)) {
     redis.defineCommand(reserveInventoryCommandName, {
-      numberOfKeys: 11,
+      numberOfKeys: 10,
       lua: reserveInventoryScript,
     });
     reserveInventoryCommandConnections.add(redis);
@@ -567,12 +575,11 @@ export async function markReservationPendingPersistence(
   const keys = inventoryKeys(reservation.saleOfferId);
   const result = await redis.eval(
     markPendingPersistenceScript,
-    5,
+    4,
     keys.idempotency(idempotencyKey),
     keys.reservations,
     keys.pendingPersistence,
     keys.pendingPersistenceRecords,
-    pendingPersistenceIndexKey,
     reservation.id,
     reservation.quantity.toString(),
     reservation.saleOfferId,
@@ -605,11 +612,10 @@ export async function promoteReservationIdempotencyToAccepted(
   const keys = inventoryKeys(reservation.saleOfferId);
   const result = await redis.eval(
     promoteAcceptedScript,
-    4,
+    3,
     keys.idempotency(idempotencyKey),
     keys.pendingPersistence,
     keys.pendingPersistenceRecords,
-    pendingPersistenceIndexKey,
     reservation.id,
     reservation.quantity.toString(),
     reservation.saleOfferId,
@@ -638,112 +644,239 @@ export interface PendingPersistenceRecord {
   reservationToken: string;
   securedAt: string;
   expiresAt: string;
+  recoveryAttemptCount: number;
+  recoveryStatus: "pending" | "exhausted";
+  nextRecoveryAt: string;
+  recoveryDeadlineAt?: string;
+  lastRecoveryError?: string;
+}
+
+export interface PendingPersistenceReadIssue {
+  reservationId: string;
+  reason:
+    | "missing_pending_record"
+    | "missing_hold"
+    | "malformed_pending_record"
+    | "mismatched_hold";
+}
+
+export interface PendingPersistencePage {
+  records: PendingPersistenceRecord[];
+  issues: PendingPersistenceReadIssue[];
+}
+
+const quarantinedPendingPersistenceScore = Number.MAX_SAFE_INTEGER;
+
+export async function readPendingPersistencePage(
+  redis: CheckoutSurgeRedis,
+  input: { saleOfferId: string; limit?: number; dueAt?: Date },
+): Promise<PendingPersistencePage> {
+  const keys = inventoryKeys(input.saleOfferId);
+  const limit = Math.max(1, Math.min(input.limit ?? 100, 1000));
+  const ids = input.dueAt
+    ? await redis.zrangebyscore(
+        keys.pendingPersistence,
+        "-inf",
+        input.dueAt.getTime(),
+        "LIMIT",
+        0,
+        limit,
+      )
+    : await redis.zrange(keys.pendingPersistence, 0, limit - 1);
+  if (ids.length === 0) return { records: [], issues: [] };
+
+  const [rawRecords, rawHolds] = await Promise.all([
+    Promise.all(ids.map((id) => redis.hget(keys.pendingPersistenceRecords, id))),
+    Promise.all(ids.map((id) => redis.hget(keys.reservations, id))),
+  ]);
+  const records: PendingPersistenceRecord[] = [];
+  const issues: PendingPersistenceReadIssue[] = [];
+  for (let index = 0; index < ids.length; index += 1) {
+    const reservationId = ids[index];
+    if (!reservationId) continue;
+    const parsed = parsePendingPersistenceRecord(
+      reservationId,
+      rawRecords[index] ?? null,
+      rawHolds[index] ?? null,
+    );
+    if ("issue" in parsed) issues.push(parsed.issue);
+    else records.push(parsed.record);
+  }
+  if (issues.length > 0) {
+    await Promise.all(
+      issues.map((issue) =>
+        redis.zadd(
+          keys.pendingPersistence,
+          quarantinedPendingPersistenceScore,
+          issue.reservationId,
+        ),
+      ),
+    );
+  }
+  return { records, issues };
 }
 
 export async function readPendingPersistenceRecords(
   redis: CheckoutSurgeRedis,
   input: { saleOfferId: string; limit?: number },
 ): Promise<PendingPersistenceRecord[]> {
+  return (await readPendingPersistencePage(redis, input)).records;
+}
+
+export async function readPendingPersistenceRecord(
+  redis: CheckoutSurgeRedis,
+  input: { saleOfferId: string; reservationId: string },
+): Promise<{ record: PendingPersistenceRecord | null; issue?: PendingPersistenceReadIssue }> {
   const keys = inventoryKeys(input.saleOfferId);
-  const limit = Math.max(1, Math.min(input.limit ?? 100, 1000));
-  const ids = await redis.zrange(keys.pendingPersistence, 0, limit - 1);
-  if (ids.length === 0) {
-    return [];
-  }
-
-  const [records, holds] = await Promise.all([
-    Promise.all(ids.map((id) => redis.hget(keys.pendingPersistenceRecords, id))),
-    Promise.all(ids.map((id) => redis.hget(keys.reservations, id))),
+  const [score, rawRecord, rawHold] = await Promise.all([
+    redis.zscore(keys.pendingPersistence, input.reservationId),
+    redis.hget(keys.pendingPersistenceRecords, input.reservationId),
+    redis.hget(keys.reservations, input.reservationId),
   ]);
-  const result: PendingPersistenceRecord[] = [];
-  for (let index = 0; index < ids.length; index += 1) {
-    const raw = records[index];
-    const rawHold = holds[index];
-    if (!raw || !rawHold) {
-      continue;
-    }
+  if (score === null) return { record: null };
+  const parsed = parsePendingPersistenceRecord(input.reservationId, rawRecord, rawHold);
+  if ("issue" in parsed) {
+    await redis.zadd(
+      keys.pendingPersistence,
+      quarantinedPendingPersistenceScore,
+      input.reservationId,
+    );
+    return { record: null, issue: parsed.issue };
+  }
+  return { record: parsed.record };
+}
 
-    try {
-      const parsed = JSON.parse(raw) as Partial<PendingPersistenceRecord>;
-      const hold = securedReservationHoldSchema.parse(JSON.parse(rawHold));
-      if (
-        typeof parsed.id !== "string" ||
-        typeof parsed.saleOfferId !== "string" ||
-        typeof parsed.correlationId !== "string" ||
-        typeof parsed.idempotencyKey !== "string" ||
-        typeof parsed.quantity !== "number" ||
-        typeof parsed.reservationToken !== "string" ||
-        typeof parsed.securedAt !== "string" ||
-        typeof parsed.expiresAt !== "string"
-      ) {
-        continue;
-      }
-      if (
-        hold.id !== parsed.id ||
-        hold.saleOfferId !== parsed.saleOfferId ||
-        hold.quantity !== parsed.quantity ||
-        hold.reservationToken !== parsed.reservationToken ||
-        hold.correlationId !== parsed.correlationId ||
-        (hold.runId ?? "") !== (parsed.runId ?? "") ||
-        hold.securedAt !== parsed.securedAt ||
-        hold.expiresAt !== parsed.expiresAt
-      ) {
-        continue;
-      }
-      result.push({
+function parsePendingPersistenceRecord(
+  reservationId: string,
+  rawRecord: string | null,
+  rawHold: string | null,
+): { record: PendingPersistenceRecord } | { issue: PendingPersistenceReadIssue } {
+  if (!rawRecord) return { issue: { reservationId, reason: "missing_pending_record" } };
+  if (!rawHold) return { issue: { reservationId, reason: "missing_hold" } };
+  try {
+    const parsed = JSON.parse(rawRecord) as Partial<PendingPersistenceRecord>;
+    const hold = securedReservationHoldSchema.parse(JSON.parse(rawHold));
+    const attemptCount = parsed.recoveryAttemptCount ?? 0;
+    const status = parsed.recoveryStatus ?? "pending";
+    const nextRecoveryAt = parsed.nextRecoveryAt ?? parsed.securedAt;
+    const deadline = parsed.recoveryDeadlineAt;
+    const parsedIdempotencyKey = idempotencyKeySchema.safeParse(parsed.idempotencyKey);
+    if (
+      parsed.id !== reservationId ||
+      typeof parsed.saleOfferId !== "string" ||
+      typeof parsed.correlationId !== "string" ||
+      !parsedIdempotencyKey.success ||
+      typeof parsed.quantity !== "number" ||
+      typeof parsed.reservationToken !== "string" ||
+      typeof parsed.securedAt !== "string" ||
+      typeof parsed.expiresAt !== "string" ||
+      !Number.isSafeInteger(attemptCount) ||
+      attemptCount < 0 ||
+      (status !== "pending" && status !== "exhausted") ||
+      typeof nextRecoveryAt !== "string" ||
+      !Number.isFinite(Date.parse(nextRecoveryAt)) ||
+      (deadline !== undefined &&
+        (typeof deadline !== "string" || !Number.isFinite(Date.parse(deadline))))
+    ) {
+      return { issue: { reservationId, reason: "malformed_pending_record" } };
+    }
+    if (
+      hold.id !== parsed.id ||
+      hold.saleOfferId !== parsed.saleOfferId ||
+      hold.quantity !== parsed.quantity ||
+      hold.reservationToken !== parsed.reservationToken ||
+      hold.correlationId !== parsed.correlationId ||
+      (hold.runId ?? "") !== (parsed.runId ?? "") ||
+      hold.securedAt !== parsed.securedAt ||
+      hold.expiresAt !== parsed.expiresAt
+    ) {
+      return { issue: { reservationId, reason: "mismatched_hold" } };
+    }
+    return {
+      record: {
         id: parsed.id,
         saleOfferId: parsed.saleOfferId,
         correlationId: parsed.correlationId,
         ...(typeof parsed.runId === "string" ? { runId: parsed.runId } : {}),
-        idempotencyKey: parsed.idempotencyKey,
+        idempotencyKey: parsedIdempotencyKey.data,
         quantity: parsed.quantity,
         reservationToken: parsed.reservationToken,
         securedAt: parsed.securedAt,
         expiresAt: parsed.expiresAt,
-      });
-    } catch {
-      // A malformed companion record must not hide all other pending holds.
-    }
+        recoveryAttemptCount: attemptCount,
+        recoveryStatus: status,
+        nextRecoveryAt,
+        ...(deadline ? { recoveryDeadlineAt: deadline } : {}),
+        ...(typeof parsed.lastRecoveryError === "string"
+          ? { lastRecoveryError: parsed.lastRecoveryError }
+          : {}),
+      },
+    };
+  } catch {
+    return { issue: { reservationId, reason: "malformed_pending_record" } };
   }
-
-  return result;
 }
 
 export type ReservationReversalResult = "reversed" | "not_held";
 
 const deferPendingPersistenceRecordScript = `
-local indexType = redis.call("TYPE", KEYS[1]).ok
-if indexType ~= "none" and indexType ~= "zset" then
-  return redis.error_reply("Inventory pending-persistence index key must be a sorted set")
-end
-local pendingType = redis.call("TYPE", KEYS[2]).ok
+local pendingType = redis.call("TYPE", KEYS[1]).ok
 if pendingType ~= "none" and pendingType ~= "zset" then
   return redis.error_reply("Inventory pending-persistence key must be a sorted set")
 end
-if redis.call("ZSCORE", KEYS[2], ARGV[1]) then
-  redis.call("ZADD", KEYS[2], ARGV[2], ARGV[1])
-  redis.call("ZADD", KEYS[1], ARGV[2], ARGV[3])
-  return "deferred"
+local recordsType = redis.call("TYPE", KEYS[2]).ok
+if recordsType ~= "none" and recordsType ~= "hash" then
+  return redis.error_reply("Inventory pending-persistence records key must be a hash")
 end
-redis.call("ZREM", KEYS[1], ARGV[3])
-return "removed"
+if not redis.call("ZSCORE", KEYS[1], ARGV[1]) then
+  return "removed"
+end
+local rawRecord = redis.call("HGET", KEYS[2], ARGV[1])
+if not rawRecord then
+  return "missing_record"
+end
+local record = cjson.decode(rawRecord)
+record.recoveryAttemptCount = tonumber(ARGV[2])
+record.recoveryStatus = ARGV[3]
+record.nextRecoveryAt = ARGV[4]
+record.recoveryDeadlineAt = ARGV[5]
+record.lastRecoveryError = ARGV[6]
+record.nextRecoveryAtEpochMs = tonumber(ARGV[7])
+redis.call("HSET", KEYS[2], ARGV[1], cjson.encode(record))
+redis.call("ZADD", KEYS[1], ARGV[7], ARGV[1])
+return ARGV[3] == "exhausted" and "exhausted" or "deferred"
 `;
 
 export async function deferPendingPersistenceRecord(
   redis: CheckoutSurgeRedis,
-  input: { saleOfferId: string; reservationId: string; now?: Date },
-): Promise<"deferred" | "removed"> {
+  input: {
+    saleOfferId: string;
+    reservationId: string;
+    attemptCount: number;
+    status: "pending" | "exhausted";
+    nextRecoveryAt: Date;
+    recoveryDeadlineAt: Date;
+    lastError: string;
+  },
+): Promise<"deferred" | "exhausted" | "removed"> {
   const keys = inventoryKeys(input.saleOfferId);
   const result = await redis.eval(
     deferPendingPersistenceRecordScript,
     2,
-    pendingPersistenceIndexKey,
     keys.pendingPersistence,
+    keys.pendingPersistenceRecords,
     input.reservationId,
-    (input.now ?? new Date()).getTime().toString(),
-    `${input.saleOfferId}:${input.reservationId}`,
+    input.attemptCount.toString(),
+    input.status,
+    input.nextRecoveryAt.toISOString(),
+    input.recoveryDeadlineAt.toISOString(),
+    input.lastError.slice(0, 500),
+    (input.status === "exhausted"
+      ? Number.MAX_SAFE_INTEGER
+      : input.nextRecoveryAt.getTime()
+    ).toString(),
   );
-  if (result !== "deferred" && result !== "removed") {
+  if (result !== "deferred" && result !== "exhausted" && result !== "removed") {
     throw new Error(`Could not defer pending persistence record: ${String(result)}.`);
   }
   return result;
@@ -758,7 +891,7 @@ export async function reverseReservation(
   const keys = inventoryKeys(reservation.saleOfferId);
   const result = await redis.eval(
     reverseReservationScript,
-    8,
+    7,
     keys.state,
     keys.reservations,
     keys.reservationExpirations,
@@ -766,7 +899,6 @@ export async function reverseReservation(
     keys.pendingPersistence,
     keys.pendingPersistenceRecords,
     keys.idempotency(idempotencyKey),
-    pendingPersistenceIndexKey,
     reservation.id,
     reservation.quantity.toString(),
     reservation.saleOfferId,

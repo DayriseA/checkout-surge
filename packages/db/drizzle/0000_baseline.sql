@@ -7,7 +7,7 @@ CREATE TYPE "public"."erp_attempt_status" AS ENUM('succeeded', 'failed', 'timed_
 CREATE TYPE "public"."order_event_name" AS ENUM('reservation.secured', 'order.queued', 'order.processing', 'order.confirmed', 'order.failed', 'notification.recorded', 'inventory.updated', 'erp.attempt.failed', 'erp.attempt.succeeded');--> statement-breakpoint
 CREATE TYPE "public"."order_status" AS ENUM('queued', 'processing', 'confirmed', 'failed');--> statement-breakpoint
 CREATE TYPE "public"."recovery_job_status" AS ENUM('pending', 'enqueued', 'escalated', 'resolved');--> statement-breakpoint
-CREATE TYPE "public"."reservation_pending_persistence_status" AS ENUM('pending_reconciliation', 'reconciled');--> statement-breakpoint
+CREATE TYPE "public"."reservation_pending_persistence_status" AS ENUM('pending_reconciliation', 'reconciled', 'exhausted');--> statement-breakpoint
 CREATE TYPE "public"."sale_offer_purpose" AS ENUM('catalog', 'generated_run');--> statement-breakpoint
 CREATE TYPE "public"."traffic_completion_enrichment_status" AS ENUM('pending', 'completed');--> statement-breakpoint
 CREATE TABLE "demo_presets" (
@@ -242,15 +242,13 @@ CREATE TABLE "reservation_pending_persistence" (
 	"sale_offer_id" uuid NOT NULL,
 	"correlation_id" text NOT NULL,
 	"run_id" uuid,
-	"idempotency_key" text NOT NULL,
-	"quantity" integer DEFAULT 1 NOT NULL,
-	"reservation_token" text NOT NULL,
 	"status" "reservation_pending_persistence_status" DEFAULT 'pending_reconciliation' NOT NULL,
-	"secured_at" timestamp with time zone NOT NULL,
-	"expires_at" timestamp with time zone NOT NULL,
+	"attempt_count" integer DEFAULT 0 NOT NULL,
+	"last_error" text,
+	"exhausted_at" timestamp with time zone,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
-	CONSTRAINT "reservation_pending_persistence_quantity_positive" CHECK ("reservation_pending_persistence"."quantity" > 0)
+	CONSTRAINT "reservation_pending_persistence_attempt_count_nonnegative" CHECK ("reservation_pending_persistence"."attempt_count" >= 0)
 );
 --> statement-breakpoint
 CREATE TABLE "reservations" (
@@ -366,10 +364,7 @@ CREATE UNIQUE INDEX "products_sku_unique" ON "products" USING btree ("sku");--> 
 CREATE UNIQUE INDEX "products_slug_unique" ON "products" USING btree ("slug");--> statement-breakpoint
 CREATE INDEX "products_is_active_idx" ON "products" USING btree ("is_active");--> statement-breakpoint
 CREATE UNIQUE INDEX "reservation_pending_persistence_reservation_id_unique" ON "reservation_pending_persistence" USING btree ("reservation_id");--> statement-breakpoint
-CREATE UNIQUE INDEX "reservation_pending_persistence_offer_idempotency_unique" ON "reservation_pending_persistence" USING btree ("sale_offer_id","idempotency_key");--> statement-breakpoint
-CREATE INDEX "reservation_pending_persistence_sale_offer_id_idx" ON "reservation_pending_persistence" USING btree ("sale_offer_id");--> statement-breakpoint
 CREATE INDEX "reservation_pending_persistence_run_id_idx" ON "reservation_pending_persistence" USING btree ("run_id");--> statement-breakpoint
-CREATE INDEX "reservation_pending_persistence_status_idx" ON "reservation_pending_persistence" USING btree ("status");--> statement-breakpoint
 CREATE UNIQUE INDEX "reservations_reservation_token_unique" ON "reservations" USING btree ("reservation_token");--> statement-breakpoint
 CREATE INDEX "reservations_sale_offer_id_idx" ON "reservations" USING btree ("sale_offer_id");--> statement-breakpoint
 CREATE INDEX "reservations_run_id_idx" ON "reservations" USING btree ("run_id");--> statement-breakpoint

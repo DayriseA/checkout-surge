@@ -4,6 +4,7 @@ import {
   loadApiConfig as loadProductionApiConfig,
   runSaleEligibilitySafetyMarginSeconds,
 } from "../src/runtime/config.js";
+import { pendingPersistenceRecoveryDefaults } from "../src/runtime/pending-persistence-recovery-policy.js";
 
 const loadApiConfig = (environment: Record<string, string | undefined>) =>
   loadProductionApiConfig({ ...environment, NODE_ENV: "test" });
@@ -111,6 +112,75 @@ describe("API runtime configuration", () => {
     expect(overridden.demoRunDrainTimeoutSeconds).toBe(17);
   });
 
+  it("loads every pending-persistence recovery default and override", () => {
+    const defaults = loadApiConfig({ ...baseEnv, CONTROL_SERVICE_TOKEN: "deployment-token" });
+    expect(defaults).toMatchObject({
+      pendingPersistenceRecoveryWindowSeconds:
+        pendingPersistenceRecoveryDefaults.recoveryWindowSeconds,
+      pendingPersistenceRecoveryMaxAttempts: pendingPersistenceRecoveryDefaults.maxAttempts,
+      pendingPersistenceRecoveryInitialBackoffMs:
+        pendingPersistenceRecoveryDefaults.initialBackoffMs,
+      pendingPersistenceRecoveryMaxBackoffMs: pendingPersistenceRecoveryDefaults.maxBackoffMs,
+      pendingPersistenceRecoveryPollIntervalMs: pendingPersistenceRecoveryDefaults.pollIntervalMs,
+      pendingPersistenceRecoveryDiscoveryTimeoutMs:
+        pendingPersistenceRecoveryDefaults.discoveryTimeoutMs,
+      pendingPersistenceRecoveryMaxConcurrentDirectAttempts:
+        pendingPersistenceRecoveryDefaults.maxConcurrentDirectAttempts,
+    });
+
+    const overrides = loadApiConfig({
+      ...baseEnv,
+      CONTROL_SERVICE_TOKEN: "deployment-token",
+      PENDING_PERSISTENCE_RECOVERY_WINDOW_SECONDS: "41",
+      PENDING_PERSISTENCE_RECOVERY_MAX_ATTEMPTS: "7",
+      PENDING_PERSISTENCE_RECOVERY_INITIAL_BACKOFF_MS: "250",
+      PENDING_PERSISTENCE_RECOVERY_MAX_BACKOFF_MS: "5000",
+      PENDING_PERSISTENCE_RECOVERY_POLL_INTERVAL_MS: "750",
+      PENDING_PERSISTENCE_RECOVERY_DISCOVERY_TIMEOUT_MS: "1250",
+      PENDING_PERSISTENCE_RECOVERY_MAX_CONCURRENT_DIRECT_ATTEMPTS: "4",
+    });
+    expect(overrides).toMatchObject({
+      pendingPersistenceRecoveryWindowSeconds: 41,
+      pendingPersistenceRecoveryMaxAttempts: 7,
+      pendingPersistenceRecoveryInitialBackoffMs: 250,
+      pendingPersistenceRecoveryMaxBackoffMs: 5_000,
+      pendingPersistenceRecoveryPollIntervalMs: 750,
+      pendingPersistenceRecoveryDiscoveryTimeoutMs: 1_250,
+      pendingPersistenceRecoveryMaxConcurrentDirectAttempts: 4,
+    });
+  });
+
+  it.each([
+    "PENDING_PERSISTENCE_RECOVERY_WINDOW_SECONDS",
+    "PENDING_PERSISTENCE_RECOVERY_MAX_ATTEMPTS",
+    "PENDING_PERSISTENCE_RECOVERY_INITIAL_BACKOFF_MS",
+    "PENDING_PERSISTENCE_RECOVERY_MAX_BACKOFF_MS",
+    "PENDING_PERSISTENCE_RECOVERY_POLL_INTERVAL_MS",
+    "PENDING_PERSISTENCE_RECOVERY_DISCOVERY_TIMEOUT_MS",
+    "PENDING_PERSISTENCE_RECOVERY_MAX_CONCURRENT_DIRECT_ATTEMPTS",
+  ])("rejects invalid %s values", (name) => {
+    for (const value of ["0", "-1", "1.5", "invalid", String(Number.MAX_SAFE_INTEGER + 1)]) {
+      expect(() =>
+        loadApiConfig({
+          ...baseEnv,
+          CONTROL_SERVICE_TOKEN: "deployment-token",
+          [name]: value,
+        }),
+      ).toThrow(new RegExp(name));
+    }
+  });
+
+  it("rejects pending-persistence initial backoff above its maximum", () => {
+    expect(() =>
+      loadApiConfig({
+        ...baseEnv,
+        CONTROL_SERVICE_TOKEN: "deployment-token",
+        PENDING_PERSISTENCE_RECOVERY_INITIAL_BACKOFF_MS: "1001",
+        PENDING_PERSISTENCE_RECOVERY_MAX_BACKOFF_MS: "1000",
+      }),
+    ).toThrow(/INITIAL_BACKOFF_MS must not exceed PENDING_PERSISTENCE_RECOVERY_MAX_BACKOFF_MS/);
+  });
+
   it.each([
     "12oops",
     "1.5",
@@ -147,6 +217,7 @@ describe("API runtime configuration", () => {
       DEMO_MAX_TRAFFIC_START_DELAY_SECONDS: "0",
       DEMO_RUN_DRAIN_TIMEOUT_SECONDS: "1",
       PENDING_PERSISTENCE_RETRY_AFTER_SECONDS: "30",
+      PENDING_PERSISTENCE_RECOVERY_WINDOW_SECONDS: "30",
       DEMO_RUN_FINALIZATION_POLL_INTERVAL_SECONDS: "5",
     };
 

@@ -4,6 +4,7 @@ import {
   publicVisitorCredentialMinimumSecretBytes,
 } from "@checkout-surge/contracts/public-visitor-credential";
 import { runSaleEligibilityTtlSeconds } from "@checkout-surge/db";
+import { pendingPersistenceRecoveryDefaults } from "./pending-persistence-recovery-policy.js";
 
 export const runSaleEligibilitySafetyMarginSeconds = 24 * 60 * 60;
 export const composeApiHealthcheckTimeoutMs = 3_000;
@@ -20,6 +21,13 @@ export interface ApiConfig {
   reservationHoldMinutes: number;
   idempotencyTtlSeconds: number;
   pendingPersistenceRetryAfterSeconds: number;
+  pendingPersistenceRecoveryWindowSeconds: number;
+  pendingPersistenceRecoveryMaxAttempts: number;
+  pendingPersistenceRecoveryInitialBackoffMs: number;
+  pendingPersistenceRecoveryMaxBackoffMs: number;
+  pendingPersistenceRecoveryPollIntervalMs: number;
+  pendingPersistenceRecoveryDiscoveryTimeoutMs: number;
+  pendingPersistenceRecoveryMaxConcurrentDirectAttempts: number;
   webOrigins: string[];
   apiBaseUrl: string;
   loadOrchestratorBaseUrl: string;
@@ -81,6 +89,41 @@ export function loadApiConfig(env: NodeJS.ProcessEnv): ApiConfig {
       env.PENDING_PERSISTENCE_RETRY_AFTER_SECONDS,
       "PENDING_PERSISTENCE_RETRY_AFTER_SECONDS",
       30,
+    ),
+    pendingPersistenceRecoveryWindowSeconds: parsePositiveInteger(
+      env.PENDING_PERSISTENCE_RECOVERY_WINDOW_SECONDS,
+      "PENDING_PERSISTENCE_RECOVERY_WINDOW_SECONDS",
+      pendingPersistenceRecoveryDefaults.recoveryWindowSeconds,
+    ),
+    pendingPersistenceRecoveryMaxAttempts: parsePositiveInteger(
+      env.PENDING_PERSISTENCE_RECOVERY_MAX_ATTEMPTS,
+      "PENDING_PERSISTENCE_RECOVERY_MAX_ATTEMPTS",
+      pendingPersistenceRecoveryDefaults.maxAttempts,
+    ),
+    pendingPersistenceRecoveryInitialBackoffMs: parsePositiveInteger(
+      env.PENDING_PERSISTENCE_RECOVERY_INITIAL_BACKOFF_MS,
+      "PENDING_PERSISTENCE_RECOVERY_INITIAL_BACKOFF_MS",
+      pendingPersistenceRecoveryDefaults.initialBackoffMs,
+    ),
+    pendingPersistenceRecoveryMaxBackoffMs: parsePositiveInteger(
+      env.PENDING_PERSISTENCE_RECOVERY_MAX_BACKOFF_MS,
+      "PENDING_PERSISTENCE_RECOVERY_MAX_BACKOFF_MS",
+      pendingPersistenceRecoveryDefaults.maxBackoffMs,
+    ),
+    pendingPersistenceRecoveryPollIntervalMs: parsePositiveInteger(
+      env.PENDING_PERSISTENCE_RECOVERY_POLL_INTERVAL_MS,
+      "PENDING_PERSISTENCE_RECOVERY_POLL_INTERVAL_MS",
+      pendingPersistenceRecoveryDefaults.pollIntervalMs,
+    ),
+    pendingPersistenceRecoveryDiscoveryTimeoutMs: parsePositiveInteger(
+      env.PENDING_PERSISTENCE_RECOVERY_DISCOVERY_TIMEOUT_MS,
+      "PENDING_PERSISTENCE_RECOVERY_DISCOVERY_TIMEOUT_MS",
+      pendingPersistenceRecoveryDefaults.discoveryTimeoutMs,
+    ),
+    pendingPersistenceRecoveryMaxConcurrentDirectAttempts: parsePositiveInteger(
+      env.PENDING_PERSISTENCE_RECOVERY_MAX_CONCURRENT_DIRECT_ATTEMPTS,
+      "PENDING_PERSISTENCE_RECOVERY_MAX_CONCURRENT_DIRECT_ATTEMPTS",
+      pendingPersistenceRecoveryDefaults.maxConcurrentDirectAttempts,
     ),
     webOrigins: parseCsv(env.WEB_ORIGIN),
     apiBaseUrl: parseUrl(env.API_BASE_URL, "API_BASE_URL", "http://localhost:4000"),
@@ -201,6 +244,14 @@ export function loadApiConfig(env: NodeJS.ProcessEnv): ApiConfig {
       "DASHBOARD_MAX_SSE_CLIENTS_PER_SOURCE must not exceed DASHBOARD_MAX_SSE_CLIENTS.",
     );
   }
+  if (
+    config.pendingPersistenceRecoveryInitialBackoffMs >
+    config.pendingPersistenceRecoveryMaxBackoffMs
+  ) {
+    throw new Error(
+      "PENDING_PERSISTENCE_RECOVERY_INITIAL_BACKOFF_MS must not exceed PENDING_PERSISTENCE_RECOVERY_MAX_BACKOFF_MS.",
+    );
+  }
   if (config.deploymentHardCaps.maxPreAllocatedVus > config.deploymentHardCaps.maxVus) {
     throw new Error("DEMO_MAX_PRE_ALLOCATED_VUS must not exceed DEMO_MAX_VUS.");
   }
@@ -223,7 +274,7 @@ function validateRunSaleEligibilityLifetime(config: ApiConfig): void {
     config.deploymentHardCaps.maxTrafficStartDelaySeconds,
     config.deploymentHardCaps.maxTrafficDurationSeconds,
     config.demoRunDrainTimeoutSeconds,
-    config.pendingPersistenceRetryAfterSeconds,
+    config.pendingPersistenceRecoveryWindowSeconds,
     config.demoRunFinalizationPollIntervalSeconds,
   ].reduce((total, value) => {
     const next = total + value;
@@ -237,7 +288,7 @@ function validateRunSaleEligibilityLifetime(config: ApiConfig): void {
 
   if (configuredLifecycleSeconds >= maximumLifecycleSeconds) {
     throw new Error(
-      `DEMO_MAX_TRAFFIC_START_DELAY_SECONDS + DEMO_MAX_TRAFFIC_DURATION_SECONDS + DEMO_RUN_DRAIN_TIMEOUT_SECONDS + PENDING_PERSISTENCE_RETRY_AFTER_SECONDS + DEMO_RUN_FINALIZATION_POLL_INTERVAL_SECONDS must total less than ${maximumLifecycleSeconds} seconds so the ${runSaleEligibilityTtlSeconds}-second run-sale eligibility TTL retains its ${runSaleEligibilitySafetyMarginSeconds}-second safety margin.`,
+      `DEMO_MAX_TRAFFIC_START_DELAY_SECONDS + DEMO_MAX_TRAFFIC_DURATION_SECONDS + DEMO_RUN_DRAIN_TIMEOUT_SECONDS + PENDING_PERSISTENCE_RECOVERY_WINDOW_SECONDS + DEMO_RUN_FINALIZATION_POLL_INTERVAL_SECONDS must total less than ${maximumLifecycleSeconds} seconds so the ${runSaleEligibilityTtlSeconds}-second run-sale eligibility TTL retains its ${runSaleEligibilitySafetyMarginSeconds}-second safety margin.`,
     );
   }
 }

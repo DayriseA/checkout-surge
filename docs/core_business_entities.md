@@ -494,41 +494,11 @@ Enforcement note:
 
 ### 14. ReservationPendingPersistence
 
-`ReservationPendingPersistence` records a Redis-secured hold that still needs durable reconciliation.
+`ReservationPendingPersistence` is subordinate PostgreSQL audit evidence for the Redis-to-PostgreSQL handoff. Redis per-sale pending records remain the discovery and retry-scheduling authority; this table does not drive work.
 
-Primary responsibilities:
+Logical fields are deliberately minimal: `reservationId`, `saleOfferId`, optional `runId`, `correlationId`, `status`, `attemptCount`, `lastError`, `exhaustedAt`, and creation/update times. It does not mirror the idempotency key, quantity, token, or hold window. Canonical statuses are `pending_reconciliation`, `reconciled`, and `exhausted`. The sole `PendingPersistenceRecoveryService` upserts an attempt audit, verifies/materializes and deterministically reasserts the queue job, marks resolution, and only then removes Redis pending state. First-pass expiry upserts exhausted evidence with zero attempts. Business-outcome projection can display pending/exhausted audit rows, but terminal accounting and blockers use the authoritative Redis pending count so audit history is never a second finalization authority.
 
-- preserve the Redis fast-path decision when PostgreSQL writes fail after stock has been secured,
-- expose pending reconciliation to operators and finalization logic,
-- retain enough context to reconcile or explain the hold later.
-
-Logical fields:
-
-- `id`
-- `reservationId`
-- `saleOfferId`
-- `correlationId`
-- `runId`
-- `idempotencyKey`
-- `quantity`
-- `reservationToken`
-- `status`
-- `securedAt`
-- `expiresAt`
-- `createdAt`
-- `updatedAt`
-
-Canonical statuses:
-
-- `pending_reconciliation`
-- `reconciled`
-
-Notes:
-
-- `reservationId` is reserved by the Redis success path even when the durable `reservations` row does not yet exist.
-- Pending visibility is created atomically with the Redis stock decision and removed atomically with accepted-idempotency promotion after durable persistence.
-- Eligible request retries can converge the hold while admission remains open. During draining and API startup, an autonomous reconciler reads the Redis companion record/index without reopening admission, restores or finds the durable buy, reasserts the deterministic order job, marks this row reconciled, and promotes Redis.
-- Terminal-safe reconciliation classifies exact durable evidence before mutation: a matching reservation/order is re-enqueued and promoted, while only a hold with no durable buy and a terminal/invalid ownership disposition is reversed. Other failures remain discoverable and are rescored so later records are not starved. Drain timeout may select `pending_persistence_reconciliation_timeout`, but the run remains draining until every Redis pending structure has converged; only then may the failed immutable summary be written. Guarded terminal writing and immutable-summary uniqueness retain their normal race and retry behavior.
+The Redis hold and pending record are created atomically with the stock decision. Recovery never reapplies that decision. Request replay delegates to the same owner; startup reconciliation, completion enrichment, finalization, maintenance, routes, and workers do not scan, schedule, retry, or resolve this handoff. Exhaustion preserves the hold, remains operator-queryable in Redis and PostgreSQL, and prevents finalization from silently succeeding.
 
 ### 15. SimulatedNotification
 
@@ -615,7 +585,7 @@ Notes:
 - The first completion report inserted for a run is authoritative. It is inserted with `completionEnrichmentStatus: pending`. Duplicate or conflicting deliveries re-drive sale closure and finalization without replacing the stored report.
 - Traffic-completion enrichment performs Redis and PostgreSQL reads outside a database transaction, then changes `pending` to `completed` with a database compare-and-set. The winning update atomically persists the API-owned nested snapshot/business outcome and matching sold-out aggregate. A completed Redis capture failure is represented by `completed` with no snapshot and is not retried into a later observation.
 - Pending enrichment is an incomplete finalization input, not a drain blocker or timeout: no terminal run transition or summary is allowed until it concludes. Startup and periodic lifecycle recovery retry pending enrichment.
-- The API acknowledges completion only after the draining transition, sale closure, outcome enrichment, reconciliation, and finalization pass are safely re-drivable.
+- The API acknowledges completion only after the draining transition, sale closure, outcome enrichment, and finalization handoff are safely re-drivable.
 - Successful traffic completion moves a run into business draining; finalization waits for run-scoped business work to settle.
 - `trafficOutcomeSummary.terminalInventorySnapshot`, when present, is the strict, durable Redis observation captured during traffic-completion enrichment. It remains traffic-boundary evidence. Absence is valid when the observation was explicitly unavailable; a present malformed value is corrupt durable evidence and blocks finalization rather than being interpreted as absence. Normal finalization independently captures post-cleanup Redis inventory for Run History while re-reading the latest PostgreSQL business outcome; it does not reuse this earlier observation as terminal state.
 - `transportAttemptCounts` is the only transport-total object. It stores planned, started, response-completed, interrupted, and unstarted client attempts and enforces `planned = started + unstarted` and `started = completed + interrupted`. A started attempt is client-side evidence, not proof that the API server received it.
@@ -853,5 +823,5 @@ This document establishes a domain model that preserves the core architectural s
 - reservations are distinct from orders,
 - ERP retries are captured as delivery-scoped append-only attempt history, successful Mock ERP decisions are first-write-wins, and unsafe handoffs have durable recovery/dead-letter evidence,
 - business facts are preserved in an event timeline,
-- demo presets, runs, generated sale ownership contexts, pending persistence, simulated notifications, ERP results/recovery evidence, sold-out aggregates, finalizations, summaries, and the public runtime policy are durable PostgreSQL records,
+- demo presets, runs, generated sale ownership contexts, pending-persistence audit evidence, simulated notifications, ERP results/recovery evidence, sold-out aggregates, finalizations, summaries, and the public runtime policy are durable PostgreSQL records,
 - and the UI derives dashboard-facing statuses from those underlying states rather than redefining the lifecycle itself.

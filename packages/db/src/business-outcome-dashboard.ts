@@ -68,7 +68,10 @@ export async function readBusinessOutcomeSummary(
     countRows(
       db,
       reservationPendingPersistence,
-      and(pendingFilter, eq(reservationPendingPersistence.status, "pending_reconciliation")),
+      and(
+        pendingFilter,
+        inArray(reservationPendingPersistence.status, ["pending_reconciliation", "exhausted"]),
+      ),
     ),
     countRows(db, simulatedNotifications, notificationFilter),
   ]);

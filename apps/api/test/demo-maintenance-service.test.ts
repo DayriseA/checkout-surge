@@ -1265,6 +1265,7 @@ describe("demo maintenance service", () => {
       reservationHoldMinutes: 15,
       idempotencyTtlSeconds: 1800,
       pendingPersistenceRetryAfterSeconds: 30,
+      pendingPersistenceRecovery: { recoverReservation: async () => null },
     });
     const maintenanceService = new DemoMaintenanceService({
       db,
@@ -1348,6 +1349,7 @@ describe("demo maintenance service", () => {
       reservationHoldMinutes: 15,
       idempotencyTtlSeconds: 1800,
       pendingPersistenceRetryAfterSeconds: 30,
+      pendingPersistenceRecovery: { recoverReservation: async () => null },
       generateId: (() => {
         const generatedIds = [
           "99999999-9999-4999-8999-999999999991",
@@ -1428,6 +1430,7 @@ describe("demo maintenance service", () => {
       reservationHoldMinutes: 15,
       idempotencyTtlSeconds: 1800,
       pendingPersistenceRetryAfterSeconds: 30,
+      pendingPersistenceRecovery: { recoverReservation: async () => null },
       generateId: (() => {
         const generatedIds = [
           "99999999-9999-4999-8999-999999999981",
@@ -2349,12 +2352,7 @@ async function seedCleanupDurableGraph(
     saleOfferId: ids.completedOffer,
     correlationId: "corr-cleanup-graph-pending",
     runId: ids.completedRun,
-    idempotencyKey: "cleanup-pending-idempotency",
-    quantity: 1,
-    reservationToken: "cleanup-pending-token",
     status: "pending_reconciliation",
-    securedAt: now,
-    expiresAt: new Date("2026-06-20T00:15:04.000Z"),
     createdAt: now,
     updatedAt: now,
   });

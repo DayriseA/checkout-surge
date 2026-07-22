@@ -1,5 +1,5 @@
 {
-  "id": "008823c2-cf8c-4638-8e6d-eeb5a94529aa",
+  "id": "52e08f1c-5546-4c35-abcf-cca925d72ba4",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -2316,25 +2316,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "idempotency_key": {
-          "name": "idempotency_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "quantity": {
-          "name": "quantity",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 1
-        },
-        "reservation_token": {
-          "name": "reservation_token",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
         "status": {
           "name": "status",
           "type": "reservation_pending_persistence_status",
@@ -2343,17 +2324,24 @@
           "notNull": true,
           "default": "'pending_reconciliation'"
         },
-        "secured_at": {
-          "name": "secured_at",
-          "type": "timestamp with time zone",
+        "attempt_count": {
+          "name": "attempt_count",
+          "type": "integer",
           "primaryKey": false,
-          "notNull": true
+          "notNull": true,
+          "default": 0
         },
-        "expires_at": {
-          "name": "expires_at",
+        "last_error": {
+          "name": "last_error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "exhausted_at": {
+          "name": "exhausted_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
         },
         "created_at": {
           "name": "created_at",
@@ -2386,62 +2374,11 @@
           "method": "btree",
           "with": {}
         },
-        "reservation_pending_persistence_offer_idempotency_unique": {
-          "name": "reservation_pending_persistence_offer_idempotency_unique",
-          "columns": [
-            {
-              "expression": "sale_offer_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "idempotency_key",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "reservation_pending_persistence_sale_offer_id_idx": {
-          "name": "reservation_pending_persistence_sale_offer_id_idx",
-          "columns": [
-            {
-              "expression": "sale_offer_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
         "reservation_pending_persistence_run_id_idx": {
           "name": "reservation_pending_persistence_run_id_idx",
           "columns": [
             {
               "expression": "run_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "reservation_pending_persistence_status_idx": {
-          "name": "reservation_pending_persistence_status_idx",
-          "columns": [
-            {
-              "expression": "status",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -2477,9 +2414,9 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {
-        "reservation_pending_persistence_quantity_positive": {
-          "name": "reservation_pending_persistence_quantity_positive",
-          "value": "\"reservation_pending_persistence\".\"quantity\" > 0"
+        "reservation_pending_persistence_attempt_count_nonnegative": {
+          "name": "reservation_pending_persistence_attempt_count_nonnegative",
+          "value": "\"reservation_pending_persistence\".\"attempt_count\" >= 0"
         }
       },
       "isRLSEnabled": false
@@ -3069,7 +3006,7 @@
     "public.reservation_pending_persistence_status": {
       "name": "reservation_pending_persistence_status",
       "schema": "public",
-      "values": ["pending_reconciliation", "reconciled"]
+      "values": ["pending_reconciliation", "reconciled", "exhausted"]
     },
     "public.sale_offer_purpose": {
       "name": "sale_offer_purpose",

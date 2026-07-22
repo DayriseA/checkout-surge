@@ -47,6 +47,7 @@ export type OrderEventName = z.infer<typeof orderEventNameSchema>;
 export const reservationPendingPersistenceStatusValues = [
   "pending_reconciliation",
   "reconciled",
+  "exhausted",
 ] as const;
 export const reservationPendingPersistenceStatusSchema = z.enum(
   reservationPendingPersistenceStatusValues,

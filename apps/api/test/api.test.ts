@@ -76,6 +76,7 @@ import {
   products,
   promoteReservationIdempotencyToAccepted,
   readBusinessOutcomeSummary,
+  readPendingPersistenceRecords,
   reservationPendingPersistence,
   reservations,
   reserveInventoryStock,
@@ -125,7 +126,7 @@ import {
   type OrderStatusController,
   OrderStatusService,
 } from "../src/services/order-status-service.js";
-import { PendingPersistenceReconciler } from "../src/services/pending-persistence-reconciler.js";
+import { PendingPersistenceRecoveryService } from "../src/services/pending-persistence-recovery-service.js";
 import { PostgresBuyPersistence } from "../src/services/postgres-buy-persistence.js";
 import {
   type OrderProcessQueueInspector,
@@ -133,6 +134,7 @@ import {
 } from "../src/services/queue-status-service.js";
 import {
   type BuyPersistence,
+  type PendingPersistenceRecovery,
   type PersistedBuyAcceptance,
   type ReservationPartialFailureReport,
   ReserveOrderService,
@@ -256,6 +258,7 @@ async function buildTestServer(options: {
   runHistoryService?: RunHistoryController;
   logger?: CheckoutSurgeLogger;
   reportPersistenceFailure?: (report: ReservationPartialFailureReport) => void;
+  pendingPersistenceRecovery?: PendingPersistenceRecovery;
 }): Promise<ApiFastifyInstance> {
   const inventoryReader =
     options.inventoryReader === undefined
@@ -345,6 +348,9 @@ async function buildTestServer(options: {
       reservationHoldMinutes: 15,
       idempotencyTtlSeconds: 1800,
       pendingPersistenceRetryAfterSeconds: 30,
+      pendingPersistenceRecovery: options.pendingPersistenceRecovery ?? {
+        recoverReservation: async () => null,
+      },
       generateId: options.generateId ?? deterministicIdGenerator(),
       ...(options.reportPersistenceFailure
         ? { reportPersistenceFailure: options.reportPersistenceFailure }
@@ -374,6 +380,33 @@ async function buildTestServer(options: {
       } as never),
     runHistoryService: options.runHistoryService ?? runHistoryControllerFixture(),
     startedAt: new Date("2026-06-20T00:00:00.000Z"),
+  });
+}
+
+function createTestPendingPersistenceRecovery(input: {
+  redis: CheckoutSurgeRedis;
+  persistence: BuyPersistence;
+  auditPersistence: PostgresBuyPersistence;
+  stockReservations: Pick<StockReservationGateway, "promoteAccepted">;
+  orderProcessJobPublisher: OrderProcessJobPublisher;
+  listRunScopes?: () => Promise<Array<{ runId?: string; saleOfferId: string }>>;
+  now?: () => Date;
+}): PendingPersistenceRecoveryService {
+  return new PendingPersistenceRecoveryService({
+    redis: input.redis,
+    persistence: input.persistence,
+    audit: {
+      recordAttempt: (attempt) => input.auditPersistence.recordPendingPersistenceAttempt(attempt),
+      markResolved: (resolved) => input.auditPersistence.markPendingPersistenceResolved(resolved),
+      markExhausted: (exhausted) =>
+        input.auditPersistence.markPendingPersistenceExhausted(exhausted),
+    },
+    stockReservations: input.stockReservations,
+    orderProcessJobPublisher: input.orderProcessJobPublisher,
+    listRunScopes: input.listRunScopes ?? (async () => []),
+    idempotencyTtlSeconds: 1_800,
+    logger: createSilentLogger("api"),
+    ...(input.now ? { now: input.now } : {}),
   });
 }
 
@@ -2996,7 +3029,7 @@ describe("API buy persistence", () => {
       const operationQueries = wireQueries.map((query) =>
         query.trim().split(/\s+/u)[0]?.toLowerCase(),
       );
-      expect(operationQueries).toEqual(["begin", "insert", "insert", "insert", "update", "commit"]);
+      expect(operationQueries).toEqual(["begin", "insert", "insert", "insert", "commit"]);
     } finally {
       await measuredConnection.close();
     }
@@ -3086,9 +3119,15 @@ describe("API buy persistence", () => {
       throw new Error("Expected a secured Redis hold.");
     }
     const jobs: OrderProcessJob[] = [];
-    const reconciler = new PendingPersistenceReconciler({
+    const persistence = new PostgresBuyPersistence(connection.db);
+    const recovery = new PendingPersistenceRecoveryService({
       redis,
-      persistence: new PostgresBuyPersistence(connection.db),
+      persistence,
+      audit: {
+        recordAttempt: (input) => persistence.recordPendingPersistenceAttempt(input),
+        markResolved: (input) => persistence.markPendingPersistenceResolved(input),
+        markExhausted: (input) => persistence.markPendingPersistenceExhausted(input),
+      },
       stockReservations: {
         promoteAccepted: (input) =>
           promoteReservationIdempotencyToAccepted(initializedRedis, input).then(() => undefined),
@@ -3099,10 +3138,15 @@ describe("API buy persistence", () => {
           jobs.push(job);
         },
       },
+      listRunScopes: async () => [],
       logger: createSilentLogger("api"),
+      now: () => new Date("2026-06-20T12:00:01.000Z"),
     });
 
-    const result = await reconciler.reconcileSaleOffer(fixtureIds.saleOffer);
+    const result = await recovery.recoverReservation({
+      reservation: decision.reservation,
+      idempotencyKey,
+    });
     const reservationRows = await connection.db.select().from(reservations);
     const orderRows = await connection.db.select().from(orders);
     const eventRows = await connection.db
@@ -3116,7 +3160,7 @@ describe("API buy persistence", () => {
       reservation: decision.reservation,
     });
 
-    expect(result).toMatchObject({ found: 1, materialized: 1, reconciled: 1, failed: 0 });
+    expect(result).toMatchObject({ reservation: { id: decision.reservation.id } });
     expect(reservationRows).toHaveLength(1);
     expect(orderRows).toHaveLength(1);
     expect(eventRows.map((event) => event.eventName)).toEqual([
@@ -3126,6 +3170,60 @@ describe("API buy persistence", () => {
     expect(jobs).toHaveLength(1);
     expect(inventoryStatus.pendingPersistenceCount).toBe(0);
     expect(replay.outcome).toBe("idempotent_replay");
+  });
+
+  it("preserves resolved audit when Redis promotion applies but its response is lost", async () => {
+    if (!connection || !redis) {
+      throw new Error("Test infrastructure was not initialized.");
+    }
+    const initializedRedis = redis;
+    const idempotencyKey = "promotion-response-lost";
+    const decision = await reserveInventoryStock(redis, {
+      idempotencyKey,
+      idempotencyTtlSeconds: 1_800,
+      reservation: {
+        id: "aaaaaaaa-aaaa-4aaa-8aaa-000000000078",
+        saleOfferId: fixtureIds.saleOffer,
+        correlationId: "promotion-response-lost-correlation",
+        quantity: 1,
+        reservationToken: "promotion-response-lost-token",
+        securedAt: "2026-06-20T12:00:00.000Z",
+        expiresAt: "2026-06-20T12:15:00.000Z",
+      },
+    });
+    if (!decision.reservation) throw new Error("Expected a secured Redis hold.");
+    const persistence = new PostgresBuyPersistence(connection.db);
+    const recovery = new PendingPersistenceRecoveryService({
+      redis,
+      persistence,
+      audit: {
+        recordAttempt: (input) => persistence.recordPendingPersistenceAttempt(input),
+        markResolved: (input) => persistence.markPendingPersistenceResolved(input),
+        markExhausted: (input) => persistence.markPendingPersistenceExhausted(input),
+      },
+      stockReservations: {
+        promoteAccepted: async (input) => {
+          await promoteReservationIdempotencyToAccepted(initializedRedis, input);
+          throw new Error("simulated lost Redis response");
+        },
+      },
+      orderProcessJobPublisher: { enqueue: async () => undefined },
+      listRunScopes: async () => [],
+      idempotencyTtlSeconds: 1_800,
+      maxAttempts: 1,
+      logger: createSilentLogger("api"),
+      now: () => new Date("2026-06-20T12:00:01.000Z"),
+    });
+
+    await expect(
+      recovery.recoverReservation({ reservation: decision.reservation, idempotencyKey }),
+    ).resolves.toMatchObject({ reservation: { id: decision.reservation.id } });
+    const [auditRow] = await connection.db
+      .select()
+      .from(reservationPendingPersistence)
+      .where(eq(reservationPendingPersistence.reservationId, decision.reservation.id));
+    expect(auditRow).toMatchObject({ status: "reconciled", attemptCount: 1 });
+    expect((await getInventoryStatus(redis, fixtureIds.saleOffer)).pendingPersistenceCount).toBe(0);
   });
 
   it("returns 202 after publishing one deterministic BullMQ job without a running worker", async () => {
@@ -3354,18 +3452,28 @@ describe("API buy persistence", () => {
       { connection: { url: redisUrl, maxRetriesPerRequest: 3 } },
     );
     let enqueueAttempts = 0;
-    const server = await buildTestServer({
-      persistence: new PostgresBuyPersistence(connection.db),
-      stockReservations: createRedisStockReservations(redis),
-      orderProcessJobPublisher: {
-        enqueue: async (job) => {
-          enqueueAttempts += 1;
-          if (enqueueAttempts === 1) {
-            throw new Error("simulated queue handoff interruption");
-          }
-          await publisher.enqueue(job);
-        },
+    const persistence = new PostgresBuyPersistence(connection.db);
+    const stockReservations = createRedisStockReservations(redis);
+    const orderProcessJobPublisher = {
+      enqueue: async (job: OrderProcessJob) => {
+        enqueueAttempts += 1;
+        if (enqueueAttempts === 1) {
+          throw new Error("simulated queue handoff interruption");
+        }
+        await publisher.enqueue(job);
       },
+    };
+    const server = await buildTestServer({
+      persistence,
+      stockReservations,
+      orderProcessJobPublisher,
+      pendingPersistenceRecovery: createTestPendingPersistenceRecovery({
+        redis,
+        persistence,
+        auditPersistence: persistence,
+        stockReservations,
+        orderProcessJobPublisher,
+      }),
       generateId: randomUUID,
     });
 
@@ -3574,7 +3682,6 @@ describe("API buy persistence", () => {
 
     const realPersistence = new PostgresBuyPersistence(connection.db);
     let persistCallCount = 0;
-    let recordPendingCallCount = 0;
     let releasePersistenceBarrier: (() => void) | undefined;
     const persistenceBarrier = new Promise<void>((resolve) => {
       releasePersistenceBarrier = resolve;
@@ -3590,17 +3697,21 @@ describe("API buy persistence", () => {
         await waitForInsertRaceBarrier(persistenceBarrier);
         return realPersistence.persistSecuredReservation(input);
       },
-      recordPendingPersistence: async (input) => {
-        recordPendingCallCount += 1;
-        await realPersistence.recordPendingPersistence(input);
-      },
-      markPendingPersistenceReconciled: (input) =>
-        realPersistence.markPendingPersistenceReconciled(input),
     };
     const reportPersistenceFailure = vi.fn();
+    const stockReservations = createRedisStockReservations(redis);
+    const orderProcessJobPublisher = { enqueue: async () => undefined };
     const server = await buildTestServer({
       persistence: controlledPersistence,
-      stockReservations: createRedisStockReservations(redis),
+      stockReservations,
+      orderProcessJobPublisher,
+      pendingPersistenceRecovery: createTestPendingPersistenceRecovery({
+        redis,
+        persistence: controlledPersistence,
+        auditPersistence: realPersistence,
+        stockReservations,
+        orderProcessJobPublisher,
+      }),
       generateId: randomUUID,
       reportPersistenceFailure,
     });
@@ -3637,7 +3748,6 @@ describe("API buy persistence", () => {
         2,
       );
       expect(persistCallCount).toBe(2);
-      expect(recordPendingCallCount).toBe(0);
       expect(new Set(payloads.map((payload) => payload.reservation?.id)).size).toBe(1);
       expect(
         new Set(payloads.flatMap((payload) => (payload.order ? [payload.order.id] : []))).size,
@@ -3649,7 +3759,8 @@ describe("API buy persistence", () => {
         "order.queued",
         "reservation.secured",
       ]);
-      expect(pendingRows).toEqual([]);
+      expect(pendingRows).toHaveLength(1);
+      expect(pendingRows[0]).toMatchObject({ attemptCount: 1, status: "reconciled" });
       expect(await redis.zcard(keys.pendingPersistence)).toBe(0);
       expect(await redis.hlen(keys.pendingPersistenceRecords)).toBe(0);
       expect(businessOutcome.pendingPersistenceCount).toBe(0);
@@ -3690,9 +3801,20 @@ describe("API buy persistence", () => {
       FOR EACH ROW EXECUTE FUNCTION reject_test_order_queued_event()
     `;
 
+    const persistence = new PostgresBuyPersistence(connection.db);
+    const stockReservations = createRedisStockReservations(redis);
+    const orderProcessJobPublisher = { enqueue: async () => undefined };
     const server = await buildTestServer({
-      persistence: new PostgresBuyPersistence(connection.db),
-      stockReservations: createRedisStockReservations(redis),
+      persistence,
+      stockReservations,
+      orderProcessJobPublisher,
+      pendingPersistenceRecovery: createTestPendingPersistenceRecovery({
+        redis,
+        persistence,
+        auditPersistence: persistence,
+        stockReservations,
+        orderProcessJobPublisher,
+      }),
       generateId: randomUUID,
     });
 
@@ -3730,8 +3852,7 @@ describe("API buy persistence", () => {
       expect(await getInventoryStatus(redis, fixtureIds.saleOffer)).toMatchObject({
         pendingPersistenceCount: 1,
       });
-      expect(pendingRowsAfterFailure).toHaveLength(1);
-      expect(pendingRowsAfterFailure[0]?.status).toBe("pending_reconciliation");
+      expect(pendingRowsAfterFailure).toEqual([]);
 
       await connection.sql`
         DROP TRIGGER IF EXISTS order_events_reject_test_order_queued ON order_events
@@ -3845,9 +3966,25 @@ describe("API buy persistence", () => {
       FOR EACH ROW EXECUTE FUNCTION reject_test_order_queued_event()
     `;
 
+    const persistence = new PostgresBuyPersistence(connection.db);
+    const stockReservations = createRedisStockReservations(redis);
+    const enqueue = vi.fn(async () => undefined);
+    let recoveryNow = new Date();
+    const recoveryOptions = {
+      redis,
+      persistence,
+      auditPersistence: persistence,
+      stockReservations,
+      orderProcessJobPublisher: { enqueue },
+      listRunScopes: async () => [{ runId: fixtureIds.run, saleOfferId: generatedSaleOfferId }],
+      now: () => recoveryNow,
+    };
+    const recovery = createTestPendingPersistenceRecovery(recoveryOptions);
     const server = await buildTestServer({
-      persistence: new PostgresBuyPersistence(connection.db),
-      stockReservations: createRedisStockReservations(redis),
+      persistence,
+      stockReservations,
+      orderProcessJobPublisher: { enqueue },
+      pendingPersistenceRecovery: recovery,
       generateId: randomUUID,
     });
 
@@ -3866,10 +4003,13 @@ describe("API buy persistence", () => {
         },
       });
       const payload = buyResponseSchema.parse(response.json());
-      const pendingRows = await connection.db
+      const pendingAuditRows = await connection.db
         .select()
         .from(reservationPendingPersistence)
         .where(eq(reservationPendingPersistence.reservationId, payload.reservation?.id ?? ""));
+      const pendingRecords = await readPendingPersistenceRecords(redis, {
+        saleOfferId: generatedSaleOfferId,
+      });
 
       expect(response.statusCode).toBe(202);
       expect(payload.outcome).toBe("reservation_pending_persistence");
@@ -3878,20 +4018,68 @@ describe("API buy persistence", () => {
       expect(await connection.db.select().from(reservations)).toEqual([]);
       expect(await connection.db.select().from(orders)).toEqual([]);
       expect(await connection.db.select().from(orderEvents)).toEqual([]);
-      expect(pendingRows).toHaveLength(1);
-      expect(pendingRows[0]).toMatchObject({
-        reservationId: payload.reservation?.id,
+      expect(pendingAuditRows).toEqual([]);
+      expect(pendingRecords).toHaveLength(1);
+      expect(pendingRecords[0]).toMatchObject({
+        id: payload.reservation?.id,
         saleOfferId: generatedSaleOfferId,
         runId: fixtureIds.run,
         idempotencyKey: "generated-run-pending-persistence",
         quantity: 1,
         reservationToken: payload.reservation?.reservationToken,
-        status: "pending_reconciliation",
+        recoveryAttemptCount: 0,
+        recoveryStatus: "pending",
       });
       expect(await getInventoryStatus(redis, generatedSaleOfferId)).toMatchObject({
         remainingStock: 2,
         reservedStock: 1,
         pendingPersistenceCount: 1,
+      });
+
+      recoveryNow = new Date(Date.parse(payload.reservation?.securedAt ?? "") + 1);
+      await expect(recovery.runOnce()).resolves.toMatchObject({ attempted: 1, deferred: 1 });
+      const [deferred] = await readPendingPersistenceRecords(redis, {
+        saleOfferId: generatedSaleOfferId,
+      });
+      expect(deferred).toMatchObject({ recoveryAttemptCount: 1, recoveryStatus: "pending" });
+
+      await connection.db
+        .update(demoRuns)
+        .set({ status: "draining" })
+        .where(eq(demoRuns.id, fixtureIds.run));
+      await connection.sql`
+        DROP TRIGGER IF EXISTS order_events_reject_test_order_queued ON order_events
+      `;
+      recoveryNow = new Date(deferred?.nextRecoveryAt ?? "");
+      const restartedRecovery = createTestPendingPersistenceRecovery(recoveryOptions);
+      await expect(restartedRecovery.runOnce()).resolves.toMatchObject({
+        attempted: 1,
+        materialized: 1,
+        resolved: 1,
+      });
+
+      const [reservationRow] = await connection.db.select().from(reservations);
+      const [orderRow] = await connection.db.select().from(orders);
+      const eventRows = await connection.db.select().from(orderEvents);
+      const [auditRow] = await connection.db.select().from(reservationPendingPersistence);
+      expect(reservationRow?.id).toBe(payload.reservation?.id);
+      expect(orderRow?.reservationId).toBe(payload.reservation?.id);
+      expect(eventRows.map((event) => event.eventName).sort()).toEqual([
+        "order.queued",
+        "reservation.secured",
+      ]);
+      expect(auditRow).toMatchObject({
+        reservationId: payload.reservation?.id,
+        runId: fixtureIds.run,
+        attemptCount: 2,
+        status: "reconciled",
+      });
+      expect(enqueue).toHaveBeenCalledOnce();
+      expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({ orderId: orderRow?.id }));
+      expect(await getInventoryStatus(redis, generatedSaleOfferId)).toMatchObject({
+        remainingStock: 2,
+        reservedStock: 1,
+        pendingPersistenceCount: 0,
       });
     } finally {
       try {
@@ -4515,9 +4703,19 @@ describe("API buy persistence", () => {
         await redisGateway.promoteAccepted(input);
       },
     };
+    const persistence = new PostgresBuyPersistence(connection.db);
+    const orderProcessJobPublisher = { enqueue: async () => undefined };
     const server = await buildTestServer({
-      persistence: new PostgresBuyPersistence(connection.db),
+      persistence,
       stockReservations: gateway,
+      orderProcessJobPublisher,
+      pendingPersistenceRecovery: createTestPendingPersistenceRecovery({
+        redis,
+        persistence,
+        auditPersistence: persistence,
+        stockReservations: gateway,
+        orderProcessJobPublisher,
+      }),
     });
 
     try {

@@ -184,11 +184,6 @@ describe.skipIf(!databaseUrl)("business outcome dashboard projection", () => {
       saleOfferId,
       runId,
       correlationId: "corr-pending",
-      idempotencyKey: "pending-key",
-      quantity: 1,
-      reservationToken: "res-pending",
-      securedAt: now,
-      expiresAt: new Date("2026-06-21T00:15:00.000Z"),
     });
     await connection.db.insert(simulatedNotifications).values({
       orderId: "66666666-6666-4666-8666-666666666662",

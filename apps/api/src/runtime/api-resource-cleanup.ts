@@ -1,4 +1,5 @@
 export interface ApiResourceCleanupOperations {
+  closePendingPersistenceRecovery(): Promise<void>;
   closeServer(): Promise<void>;
   closeDashboardPublicationScheduler(): Promise<void>;
   closeBusinessOutcomePublicationScheduler(): Promise<void>;
@@ -12,6 +13,12 @@ export interface ApiResourceCleanupOperations {
 
 export async function closeApiResources(operations: ApiResourceCleanupOperations): Promise<void> {
   const errors: unknown[] = [];
+
+  try {
+    await runCleanup(operations.closePendingPersistenceRecovery);
+  } catch (error) {
+    errors.push(error);
+  }
 
   try {
     await runCleanup(operations.closeServer);

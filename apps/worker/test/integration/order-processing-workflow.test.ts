@@ -1315,15 +1315,6 @@ function createFinalizationService(
     db: connection.db,
     redis,
     logger: createSilentLogger("api"),
-    pendingPersistenceReconciler: {
-      reconcileSaleOffer: async () => ({
-        found: 0,
-        materialized: 0,
-        reconciled: 0,
-        reversed: 0,
-        failed: 0,
-      }),
-    },
     terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(connection.db),
     terminalInventoryRead: {
       read: ({ saleOfferId, observedAt }) => getInventoryStatus(redis, saleOfferId, observedAt),

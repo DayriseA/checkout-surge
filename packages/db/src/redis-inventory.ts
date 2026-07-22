@@ -10,7 +10,6 @@ import { inventoryEventHistoryLimit } from "./redis-inventory-policy.js";
 
 const inventoryNamespaceScanBatchSize = 100;
 export const reservationThroughputWindowSeconds = 60;
-export const pendingPersistenceIndexKey = "inventory:pending-persistence-index";
 /**
  * Defense-in-depth authorization lifetime for generated-run traffic. Seven days
  * is comfortably beyond the reference runtime's traffic, drain, and retry

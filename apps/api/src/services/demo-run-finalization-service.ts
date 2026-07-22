@@ -31,7 +31,6 @@ import {
   reconcileAcceptedResponses,
 } from "./accepted-response-accounting.js";
 import { toDemoRunSnapshot, toRedisTerminalInventorySnapshot } from "./demo-run-projections.js";
-import type { PendingPersistenceReconciler } from "./pending-persistence-reconciler.js";
 import {
   parsePersistedAcceptedRunConfigSnapshot,
   parsePersistedTerminalInventorySnapshot,
@@ -70,7 +69,6 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
       db: CheckoutSurgeDatabase;
       redis: CheckoutSurgeRedis;
       logger: CheckoutSurgeLogger;
-      pendingPersistenceReconciler: Pick<PendingPersistenceReconciler, "reconcileSaleOffer">;
       terminalRunWriter: Pick<TerminalDemoRunWriter, "writePrepared">;
       terminalInventoryRead: TerminalInventoryReadOperation;
       terminalInventoryReadTimeoutMs: number;
@@ -139,40 +137,10 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
       return toDemoRunSnapshot(row.run);
     }
 
-    let pendingReconciliationFailed = false;
-    try {
-      const reconciliation = await this.options.pendingPersistenceReconciler.reconcileSaleOffer(
-        row.run.saleOfferId,
-        {
-          runId: row.run.id,
-        },
-      );
-      if (reconciliation.failed > 0) {
-        pendingReconciliationFailed = true;
-        this.options.logger.warn(
-          { runId, saleOfferId: row.run.saleOfferId, failed: reconciliation.failed },
-          "Run remains draining while pending Redis reservations remain retryable.",
-        );
-      }
-    } catch (error) {
-      pendingReconciliationFailed = true;
-      this.options.logger.warn(
-        { err: error, runId, saleOfferId: row.run.saleOfferId },
-        "Pending Redis reservation reconciliation failed during run finalization.",
-      );
-    }
-
-    const reconciliationTimedOut =
-      pendingReconciliationFailed && now.getTime() >= this.drainTimeoutAt(row.run).getTime();
-    if (pendingReconciliationFailed && !reconciliationTimedOut) {
-      return toDemoRunSnapshot(row.run);
-    }
-
     const decision = await this.decideFinalization({
       run: row.run,
       finalization,
       now,
-      pendingReconciliationFailed,
     });
 
     if (!decision.ready) {
@@ -252,12 +220,14 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
         );
         const latestAccounting = reconcileAcceptedResponses({
           ...evidence,
-          business: latestBusinessOutcome,
+          business: {
+            ...latestBusinessOutcome,
+            pendingPersistenceCount: latestInventory.pendingPersistenceCount,
+          },
         });
         const latestBlockers = [
           ...latestBusinessBlockers,
           ...(latestAccounting.accounted ? [] : ["accepted_response_accounting"]),
-          ...(pendingReconciliationFailed ? ["pending_persistence_reconciliation"] : []),
         ];
         if (latestBlockers.length > 0 && !timedOut) {
           this.options.logger.debug(
@@ -275,8 +245,7 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
           accountingTimedOut:
             latestBusinessBlockers.length === 0 && !latestAccounting.accounted && timedOut,
           escalatedRecoveryCount: latestRecoveryPressure.escalatedCount,
-          reconciliationTimedOut:
-            reconciliationTimedOut || (timedOut && pendingAtTrafficCompletion),
+          reconciliationTimedOut: timedOut && pendingAtTrafficCompletion,
         });
         const accountingWarning = acceptedResponseAccountingWarning(latestAccounting);
         const loadRunDiagnosticsSummary = accountingWarning
@@ -317,7 +286,6 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
     run: typeof demoRuns.$inferSelect;
     finalization: typeof demoRunFinalizations.$inferSelect;
     now: Date;
-    pendingReconciliationFailed: boolean;
   }): Promise<FinalizationDecision> {
     const timeoutAt = this.drainTimeoutAt(input.run);
     const businessOutcome = await readBusinessOutcomeSummary(this.options.db, {
@@ -346,11 +314,13 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
       recoveryPressure.escalatedQueuedCount,
     );
     const evidence = parseFinalizationEvidence(input.run, input.finalization);
-    const accounting = reconcileAcceptedResponses({ ...evidence, business: businessOutcome });
+    const accounting = reconcileAcceptedResponses({
+      ...evidence,
+      business: { ...businessOutcome, pendingPersistenceCount: pendingRedisCount },
+    });
     const blockers = [
       ...businessBlockers,
       ...(accounting.accounted ? [] : ["accepted_response_accounting"]),
-      ...(input.pendingReconciliationFailed ? ["pending_persistence_reconciliation"] : []),
     ];
     const timedOut = input.now.getTime() >= timeoutAt.getTime();
 
@@ -366,7 +336,7 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
       businessTimedOut: businessBlockers.length > 0 && timedOut,
       accountingTimedOut: businessBlockers.length === 0 && !accounting.accounted && timedOut,
       escalatedRecoveryCount: recoveryPressure.escalatedCount,
-      reconciliationTimedOut: input.pendingReconciliationFailed && timedOut,
+      reconciliationTimedOut: timedOut && pendingRedisCount > 0,
     });
 
     return {
@@ -578,7 +548,7 @@ function businessDrainBlockers(
   const parsed = businessOutcomeSummarySchema.parse(outcome);
   const blockers: string[] = [];
 
-  if (parsed.pendingPersistenceCount > 0 || pendingRedisCount > 0) {
+  if (pendingRedisCount > 0) {
     blockers.push("pending_persistence");
   }
   if (pendingRecoveryCount > 0) {

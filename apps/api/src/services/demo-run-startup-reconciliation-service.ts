@@ -1,6 +1,5 @@
 import type { demoRuns } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
-import type { PendingPersistenceReconciler } from "./pending-persistence-reconciler.js";
 import type { TrafficCompletionEnrichmentController } from "./traffic-completion-enrichment-service.js";
 
 type DemoRunRow = typeof demoRuns.$inferSelect;
@@ -9,7 +8,6 @@ export type DemoRunStartupReconciliationFailureStage =
   | "missing_sale_offer"
   | "eligibility_close"
   | "completion_enrichment"
-  | "pending_reconciliation"
   | "recovery_workflow";
 
 export interface DemoRunStartupReconciliationFailure {
@@ -24,14 +22,12 @@ export interface DemoRunStartupReconciliationSummary {
   failedRunCount: number;
   closedSaleOfferCount: number;
   completionEnrichedRunCount: number;
-  pendingPersistenceEffectCount: number;
   failures: DemoRunStartupReconciliationFailure[];
 }
 
 interface PerRunRecoveryResult {
   closedSaleOfferCount: number;
   completionEnrichedRunCount: number;
-  pendingPersistenceEffectCount: number;
   failureStages: DemoRunStartupReconciliationFailureStage[];
 }
 
@@ -44,7 +40,6 @@ export class DemoRunStartupReconciliationService {
   constructor(
     private readonly options: {
       logger: CheckoutSurgeLogger;
-      pendingPersistenceReconciler: Pick<PendingPersistenceReconciler, "reconcileSaleOffer">;
       completionEnrichmentService: Pick<
         TrafficCompletionEnrichmentController,
         "completePendingEnrichment"
@@ -64,7 +59,6 @@ export class DemoRunStartupReconciliationService {
       failedRunCount: 0,
       closedSaleOfferCount: 0,
       completionEnrichedRunCount: 0,
-      pendingPersistenceEffectCount: 0,
       failures: [],
     };
 
@@ -77,13 +71,11 @@ export class DemoRunStartupReconciliationService {
         result = {
           closedSaleOfferCount: 0,
           completionEnrichedRunCount: 0,
-          pendingPersistenceEffectCount: 0,
           failureStages: ["recovery_workflow"],
         };
       }
       summary.closedSaleOfferCount += result.closedSaleOfferCount;
       summary.completionEnrichedRunCount += result.completionEnrichedRunCount;
-      summary.pendingPersistenceEffectCount += result.pendingPersistenceEffectCount;
 
       if (result.failureStages.length === 0) {
         summary.succeededRunCount += 1;
@@ -106,7 +98,6 @@ export class DemoRunStartupReconciliationService {
       return {
         closedSaleOfferCount: 0,
         completionEnrichedRunCount: 0,
-        pendingPersistenceEffectCount: 0,
         failureStages: ["missing_sale_offer"],
       };
     }
@@ -114,7 +105,6 @@ export class DemoRunStartupReconciliationService {
     const result: PerRunRecoveryResult = {
       closedSaleOfferCount: 0,
       completionEnrichedRunCount: 0,
-      pendingPersistenceEffectCount: 0,
       failureStages: [],
     };
 
@@ -145,22 +135,6 @@ export class DemoRunStartupReconciliationService {
     } catch (error) {
       result.failureStages.push("completion_enrichment");
       this.logStageFailure(run, "completion_enrichment", error);
-    }
-
-    try {
-      const reconciliation = await this.options.pendingPersistenceReconciler.reconcileSaleOffer(
-        run.saleOfferId,
-        { runId: run.id },
-      );
-      result.pendingPersistenceEffectCount = reconciliation.reconciled + reconciliation.reversed;
-      if (reconciliation.failed > 0) {
-        throw new Error(
-          `Pending persistence reconciliation left ${reconciliation.failed} item(s) retryable.`,
-        );
-      }
-    } catch (error) {
-      result.failureStages.push("pending_reconciliation");
-      this.logStageFailure(run, "pending_reconciliation", error);
     }
 
     return result;
