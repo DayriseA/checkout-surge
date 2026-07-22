@@ -256,8 +256,8 @@ export async function processJob(
       return;
     }
     const recovery = readRecoveryMetadata(job.id, parsed.data.orderId);
-    const lease = await options.admission?.tryAcquire(parsed.data);
-    if (options.admission && !lease) {
+    const permit = await options.admission?.tryAcquire(parsed.data);
+    if (options.admission && !permit) {
       const baseDelay = options.admissionDelayMs ?? 100;
       const jitter = Math.floor(Math.random() * Math.max(1, baseDelay));
       await job.moveToDelayed(Date.now() + baseDelay + jitter, token);
@@ -272,13 +272,13 @@ export async function processJob(
         ...(recovery ? { recoveryKey: recovery.recoveryKey, deliveryId: recovery.deliveryId } : {}),
       });
     } finally {
-      if (lease) {
+      if (permit) {
         try {
-          await lease.release();
+          await permit.release();
         } catch (releaseError) {
           options.logger.error(
             { err: releaseError, jobId: job.id, ...correlationLogContext(parsed.data) },
-            "Order-processing admission lease release failed; the lease will expire.",
+            "Order-processing admission permit release failed.",
           );
         }
       }

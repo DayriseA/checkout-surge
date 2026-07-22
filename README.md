@@ -18,7 +18,7 @@ During a simulated limited-inventory surge:
 2. k6 generates direct API traffic from synthetic buyers using the run ID and generated sale offer ID.
 3. Redis atomically reserves inventory for that run-scoped limited-stock offer.
 4. The API returns a reservation response and pushes order processing to BullMQ; a worker-owned dispatch scanner repairs a committed order whose immediate enqueue was lost.
-5. The worker runtime confirms orders against the mock ERP / downstream business system with run-scoped admission, retry, timeout, and circuit-breaker behavior. Durable ERP-result and recovery records protect accepted downstream results across retries and restarts.
+5. The worker runtime confirms orders against the mock ERP / downstream business system with process-local run-scoped admission, retry, timeout, and circuit-breaker behavior. BullMQ keeps excess work queued or delayed and supplies the worker process-wide concurrency ceiling. Durable ERP-result and recovery records protect accepted downstream results across retries and restarts.
 6. A simulated notification record is written after successful confirmation.
 7. The live spectator view shows request rate, queue depth, inventory drain, completion outcomes, and consistency lag in real time.
 
@@ -66,7 +66,7 @@ For the deeper design rationale and failure modes, see [docs/architecture.md](do
 - Redis-backed atomic inventory reservation with idempotency protection
 - Async order processing through BullMQ workers, with autonomous order-dispatch, ERP-result, pending-hold, and notification recovery
 - Mock ERP / downstream latency, TPS, error-rate, and outage controls
-- Frozen per-run retry, concurrency, and circuit-breaker behavior around downstream calls
+- Frozen per-run retry, process-local concurrency, and circuit-breaker behavior around downstream calls
 - Real-time live spectator view with bounded SSE admission and rate-limited recovery reads
 - k6-based load orchestration with a durable execution journal, retried completion delivery, and API-owned business-boundary finalization
 - Public Run History summaries and aggregate-only detail views for terminal runs, with bounded row detail reserved for admins

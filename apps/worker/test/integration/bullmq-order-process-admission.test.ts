@@ -4,11 +4,11 @@ import { createSilentLogger } from "@checkout-surge/logger";
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ProcessLocalOrderProcessAdmission } from "../../src/application/order-process-admission.js";
 import {
   type CreateBullMqOrderProcessConsumerOptions,
   createBullMqOrderProcessConsumer as createProductionBullMqOrderProcessConsumer,
 } from "../../src/queue/bullmq-order-process-consumer.js";
-import { RedisOrderProcessAdmission } from "../../src/queue/redis-order-process-admission.js";
 
 const runId = "55555555-5555-4555-8555-555555555555";
 const baseJob: OrderProcessJob = {
@@ -62,7 +62,7 @@ function snapshot(orderProcessConcurrency: number): AcceptedRunConfigSnapshot {
   };
 }
 
-describe("BullMQ distributed admission", () => {
+describe("BullMQ process-local admission", () => {
   let redis: Redis;
   let queue: Queue<OrderProcessJob, void, typeof orderProcessJobName>;
   const consumers: Array<ReturnType<typeof createBullMqOrderProcessConsumer>> = [];
@@ -86,12 +86,9 @@ describe("BullMQ distributed admission", () => {
       deliveries.push(delivery.attemptsMade);
       if (job.orderId === baseJob.orderId) await firstBlocked;
     });
-    const admission = new RedisOrderProcessAdmission({
-      redis,
+    const admission = new ProcessLocalOrderProcessAdmission({
       runConfigReader: { read: async () => snapshot(1) },
       fallbackConcurrency: 10,
-      leaseMs: 2000,
-      keyPrefix: "test:bull-admission",
     });
     const consumer = createBullMqOrderProcessConsumer({
       connection: { url: url(), maxRetriesPerRequest: null },
@@ -121,27 +118,25 @@ describe("BullMQ distributed admission", () => {
     expect(reportFailure).not.toHaveBeenCalled();
   });
 
-  it("waits for held work on shutdown and removes its admission lease", async () => {
+  it("waits for held work on shutdown and closes local admission", async () => {
     let releaseHandler: (() => void) | undefined;
     const held = new Promise<void>((resolve) => (releaseHandler = resolve));
-    const keyPrefix = "test:shutdown-admission";
+    const admission = new ProcessLocalOrderProcessAdmission({
+      runConfigReader: { read: async () => snapshot(1) },
+      fallbackConcurrency: 10,
+    });
+    const handle = vi.fn(async () => held);
     const consumer = createBullMqOrderProcessConsumer({
       connection: { url: url(), maxRetriesPerRequest: null },
       concurrency: 10,
-      admission: new RedisOrderProcessAdmission({
-        redis,
-        runConfigReader: { read: async () => snapshot(1) },
-        fallbackConcurrency: 10,
-        leaseMs: 2000,
-        keyPrefix,
-      }),
-      handler: { handle: vi.fn(async () => held) },
+      admission,
+      handler: { handle },
       logger: createSilentLogger("worker"),
     });
     consumers.push(consumer);
     consumer.start();
     await queue.add(orderProcessJobName, baseJob, { jobId: baseJob.orderId });
-    await vi.waitFor(async () => expect(await redis.exists(`${keyPrefix}:run:${runId}`)).toBe(1));
+    await vi.waitFor(() => expect(handle).toHaveBeenCalledOnce());
     let closed = false;
     const closing = consumer.close().then(() => {
       closed = true;
@@ -151,7 +146,7 @@ describe("BullMQ distributed admission", () => {
     releaseHandler?.();
     await closing;
     consumers.splice(consumers.indexOf(consumer), 1);
-    expect(await redis.exists(`${keyPrefix}:run:${runId}`)).toBe(0);
+    await expect(admission.tryAcquire(baseJob)).resolves.toBeNull();
   });
 
   it("honors mixed run limits above five while the worker aggregate stays capped", async () => {
@@ -173,11 +168,9 @@ describe("BullMQ distributed admission", () => {
       aggregate -= 1;
       active.set(id, next - 1);
     });
-    const admission = new RedisOrderProcessAdmission({
-      redis,
+    const admission = new ProcessLocalOrderProcessAdmission({
       runConfigReader: { read: async (id) => snapshot(id === runId ? 8 : 2) },
       fallbackConcurrency: 10,
-      keyPrefix: "test:mixed-admission",
     });
     const consumer = createBullMqOrderProcessConsumer({
       connection: { url: url(), maxRetriesPerRequest: null },

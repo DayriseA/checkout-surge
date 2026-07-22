@@ -38,7 +38,7 @@ The full local reference runtime includes exactly one of each application runtim
 
 - one `apps/web` Next.js process with public demo, live watch, admin console, and run history routes
 - one `apps/api` process that owns the API gateway, SSE fan-out, and all API maintenance workflows
-- one `apps/worker` runtime for order-processing and notification workers plus autonomous dispatch, ERP-result, and notification recovery scanners
+- one `apps/worker` runtime for order-processing and notification workers plus autonomous dispatch, ERP-result, and notification recovery scanners; its per-run order admission is process-local beneath BullMQ's process-wide concurrency ceiling
 - `apps/mock-erp` simulated downstream ERP
 - one `apps/load-orchestrator` process with one file journal, k6 wrapper, and metric streamer
 - PostgreSQL
@@ -49,7 +49,7 @@ The application runtimes remain separate containers. Caddy only routes the singl
 
 Its one-execution journal is mounted on the named `checkout-surge-load-orchestrator-data` volume. Container restarts therefore preserve current-shape accepted, executing, or completed traffic evidence and pending API completion delivery; journal reads validate that current shape directly and identify the mounted journal path when malformed. `runtime:wipe` removes that volume together with the database and Redis volumes, which is the supported response to an incompatible pre-release journal.
 
-This single-instance layout is the supported local contract, not a claim that the services are generically horizontally scalable. Compose's general `--scale` capability is not disabled, but scaled application services are outside this repository's accepted topology and verification. Some replica-coordination mechanisms still exist in the implementation; later simplification tasks own their deletion or replacement and this topology decision does not advertise them as a supported product mode.
+This single-instance layout is the supported local contract, not a claim that the services are generically horizontally scalable. Compose's general `--scale` capability is not disabled, but scaled application services are outside this repository's accepted topology and verification. In particular, worker admission intentionally coordinates only within this one process and makes no cross-process fairness or concurrency guarantee. Replica-coordination mechanisms elsewhere remain subject to their own simplification tasks and are not advertised as a supported product mode.
 
 ---
 

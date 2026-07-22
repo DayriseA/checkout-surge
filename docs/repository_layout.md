@@ -11,7 +11,7 @@ This is the current repository structure and ownership map.
 | Repo strategy | Monorepo | Shared contracts, single boot, atomic cross-service commits. Polyrepo overhead unjustified for this project. |
 | Monorepo tooling | Turborepo + pnpm workspaces | Task pipeline awareness (e.g. `contracts` builds before `api`) and incremental caching with minimal setup cost. |
 | Frontend shape | One Next.js dashboard app with public, watch, admin, and history routes | Portfolio value is in the backend and realistic simulation behavior; frontend work should support operating and explaining the system, not become a commerce storefront. |
-| Worker placement | Separate `apps/worker` | Must be independently scalable and must not share the API event loop — required by the delivery constraint that the API stays responsive under queue pressure. |
+| Worker placement | Separate `apps/worker` | Must be an independent runtime and must not share the API event loop — required by the delivery constraint that the API stays responsive under queue pressure. The accepted topology runs one worker instance. |
 | Mock ERP placement | Separate `apps/mock-erp` | Must be a real HTTP service across a real network boundary for circuit breakers and backpressure patterns to be meaningful. |
 | Load orchestrator placement | Separate `apps/load-orchestrator` | Realistic load simulation is a first-class deliverable. Dashboard integration requires a wrapper service to trigger runs and stream metrics. |
 | Shared packages | `contracts`, `logger`, `db` | All three are blockers for parallel service work. See rationale per package below. |
@@ -79,7 +79,7 @@ checkout-surge/
 
 - Owns order state transitions: queued → processing → confirmed / failed.
 - Is the only service that calls `apps/mock-erp`.
-- Resolves frozen run retry policy, applies Redis-backed per-run admission, and selects run-scoped circuit breakers around ERP calls.
+- Resolves frozen run retry policy, applies bounded process-local per-run admission below BullMQ's process-wide concurrency ceiling, and selects run-scoped circuit breakers around ERP calls.
 - Runs autonomous scanners for committed-but-undispatched queued orders, durable ERP-result recovery, and missing simulated-notification jobs.
 - Persists poison order-job audit records and recovery/escalation state through `packages/db` adapters.
 - Publishes transport-neutral dashboard realtime events through Redis Pub/Sub without importing or hosting the browser-facing SSE runtime.

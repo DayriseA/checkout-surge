@@ -22,6 +22,7 @@ import {
 import { createNotificationRecordJobHandler } from "./application/notification-record-job-handler.js";
 import { createNotificationRecoveryScanner } from "./application/notification-recovery-scanner.js";
 import { createOrderDispatchScanner } from "./application/order-dispatch-scanner.js";
+import { ProcessLocalOrderProcessAdmission } from "./application/order-process-admission.js";
 import { createOrderProcessJobHandler } from "./application/order-process-job-handler.js";
 import {
   createOrderRecoveryHandoff,
@@ -39,7 +40,6 @@ import { createBullMqNotificationRecordConsumer } from "./queue/bullmq-notificat
 import { createBullMqNotificationRecordPublisher } from "./queue/bullmq-notification-record-publisher.js";
 import { createBullMqOrderProcessConsumer } from "./queue/bullmq-order-process-consumer.js";
 import { createBullMqOrderProcessJobPublisher } from "./queue/bullmq-order-process-job-publisher.js";
-import { RedisOrderProcessAdmission } from "./queue/redis-order-process-admission.js";
 import { createBoundedOrderRealtimePublisher } from "./realtime/order-realtime-publisher.js";
 import { loadWorkerConfig } from "./runtime/config.js";
 import { createWorkerReadiness } from "./runtime/readiness.js";
@@ -139,14 +139,14 @@ export {
 } from "./queue/bullmq-order-process-job-publisher.js";
 export type { NotificationRecordConsumer } from "./queue/notification-record-consumer.js";
 export type { OrderProcessConsumer } from "./queue/order-process-consumer.js";
+export {
+  type BoundedOrderRealtimePublisher,
+  createBoundedOrderRealtimePublisher,
+  type OrderRealtimePublisherCounters,
+} from "./realtime/order-realtime-publisher.js";
 export { loadWorkerConfig, type WorkerConfig } from "./runtime/config.js";
 export { createWorkerReadiness } from "./runtime/readiness.js";
 export { createWorkerRuntime } from "./runtime/worker-runtime.js";
-export {
-  createBoundedOrderRealtimePublisher,
-  type BoundedOrderRealtimePublisher,
-  type OrderRealtimePublisherCounters,
-} from "./realtime/order-realtime-publisher.js";
 export { buildWorkerHealthServer } from "./server.js";
 
 export async function startWorker(): Promise<void> {
@@ -163,7 +163,11 @@ export async function startWorker(): Promise<void> {
     publish: (input) => publishBusinessOutcomeDashboardUpdate(database.db, redis, input),
     onError: (error, input) => {
       logger.error(
-        { err: error, saleOfferId: input.saleOfferId, ...(input.runId ? { runId: input.runId } : {}) },
+        {
+          err: error,
+          saleOfferId: input.saleOfferId,
+          ...(input.runId ? { runId: input.runId } : {}),
+        },
         "Dashboard business outcome projection failed.",
       );
     },
@@ -176,9 +180,21 @@ export async function startWorker(): Promise<void> {
   });
   const orderRealtimePublisher = createBoundedOrderRealtimePublisher({
     publish: (event) => publishDashboardEvent(redis, event),
-    onInvalid: (error, event, stats) => logger.error({ err: error, event, realtime: stats }, "Invalid order realtime event was dropped."),
-    onDrop: (events, reason, stats) => logger.warn({ reason, events, realtime: stats }, "Order realtime advisory event group was dropped."),
-    onPublishError: (error, event, stats) => logger.error({ err: error, ...event, realtime: stats }, "Order realtime Redis publication failed."),
+    onInvalid: (error, event, stats) =>
+      logger.error(
+        { err: error, event, realtime: stats },
+        "Invalid order realtime event was dropped.",
+      ),
+    onDrop: (events, reason, stats) =>
+      logger.warn(
+        { reason, events, realtime: stats },
+        "Order realtime advisory event group was dropped.",
+      ),
+    onPublishError: (error, event, stats) =>
+      logger.error(
+        { err: error, ...event, realtime: stats },
+        "Order realtime Redis publication failed.",
+      ),
   });
   const notificationRecordPublisher = createBullMqNotificationRecordPublisher({
     connection: {
@@ -250,15 +266,9 @@ export async function startWorker(): Promise<void> {
       maxRetriesPerRequest: null,
     },
     concurrency: config.orderProcessConcurrency,
-    admission: new RedisOrderProcessAdmission({
-      redis,
+    admission: new ProcessLocalOrderProcessAdmission({
       runConfigReader,
       fallbackConcurrency: config.orderProcessConcurrency,
-      onError: (operation, error) =>
-        logger.error(
-          { err: error, operation },
-          "Order-processing admission lease operation failed.",
-        ),
     }),
     handler: createOrderProcessJobHandler({
       confirmation: new RunScopedBackpressureOrderConfirmation({

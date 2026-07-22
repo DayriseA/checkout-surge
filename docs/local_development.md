@@ -455,7 +455,7 @@ Most infrastructure URLs have local defaults, but every run/control service chan
 | `ERP_REQUEST_TIMEOUT_MS` | `2000` | Worker ERP client default; run snapshots can supply the active demonstration policy |
 | `ERP_CIRCUIT_FAILURE_THRESHOLD` | `5` | Worker catalog/missing-snapshot circuit-breaker fallback and seed default |
 | `ERP_CIRCUIT_RESET_TIMEOUT_MS` | `10000` | Worker catalog/missing-snapshot circuit-breaker fallback and seed default |
-| `ORDER_PROCESS_CONCURRENCY` | `10` | Aggregate worker queue-scanning ceiling; must be at least the shared accepted-run hard cap of 10. Per-run snapshots independently limit admitted handlers. |
+| `ORDER_PROCESS_CONCURRENCY` | `10` | BullMQ's process-wide order-handler execution ceiling; must be at least the shared accepted-run hard cap of 10. Frozen per-run snapshots independently limit handlers through process-local admission in the single worker runtime. |
 | `NOTIFICATION_RECORD_CONCURRENCY` | `5` | Worker notification-record consumer concurrency |
 | `NOTIFICATION_RECOVERY_SCAN_INTERVAL_MS` / `NOTIFICATION_RECOVERY_BATCH_SIZE` | `1000` / `100` | Worker scan cadence and batch for confirmed orders missing notification records |
 | `ORDER_DISPATCH_SCAN_INTERVAL_MS` / `ORDER_DISPATCH_BATCH_SIZE` | `1000` / `100` | Worker scan cadence and batch for committed queued orders whose immediate enqueue may have been lost |
