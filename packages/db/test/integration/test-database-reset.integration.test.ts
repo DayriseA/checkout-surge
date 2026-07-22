@@ -4,12 +4,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createDatabaseConnection } from "../../src/client.js";
-import { acquireTestInfrastructureLock, resetTestDatabase } from "../../src/testing.js";
+import { runDatabaseMigrations } from "../../src/migrations.js";
+import { resetTestDatabase } from "../../src/testing.js";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const migrationsFolder = path.join(packageRoot, "drizzle");
 const databaseUrl = process.env.TEST_DATABASE_URL;
-const fingerprintTable = "__test_schema_fingerprint";
 
 describe.skipIf(!databaseUrl)("deterministic test database reset", () => {
   beforeAll(async () => {
@@ -20,7 +20,7 @@ describe.skipIf(!databaseUrl)("deterministic test database reset", () => {
     await reset();
   });
 
-  it("dynamically truncates a newly migrated table, restarts identity, and preserves metadata", async () => {
+  it("rebuilds clean data and migration state and restarts generated sequences", async () => {
     const temporaryMigrations = await createTemporaryMigrations(
       `CREATE TABLE reset_probe (id serial PRIMARY KEY, value text NOT NULL);`,
     );
@@ -40,15 +40,8 @@ describe.skipIf(!databaseUrl)("deterministic test database reset", () => {
       });
 
       const state = await withDatabase(async (sql) => {
-        const [counts] = await sql<
-          {
-            fingerprints: number;
-            migrations: number;
-            probes: number;
-          }[]
-        >`
+        const [counts] = await sql<{ migrations: number; probes: number }[]>`
           SELECT
-            (SELECT count(*)::int FROM ${sql(fingerprintTable)}) AS fingerprints,
             (SELECT count(*)::int FROM drizzle.__drizzle_migrations) AS migrations,
             (SELECT count(*)::int FROM reset_probe) AS probes
         `;
@@ -58,8 +51,7 @@ describe.skipIf(!databaseUrl)("deterministic test database reset", () => {
         return { counts, inserted };
       });
 
-      expect(state.counts).toMatchObject({ fingerprints: 1, probes: 0 });
-      expect(state.counts?.migrations).toBeGreaterThan(1);
+      expect(state.counts).toEqual({ migrations: 2, probes: 0 });
       expect(state.inserted?.id).toBe(1);
     } finally {
       await rm(temporaryMigrations, { force: true, recursive: true });
@@ -67,76 +59,54 @@ describe.skipIf(!databaseUrl)("deterministic test database reset", () => {
     }
   });
 
-  it.each([
-    {
-      damage: `DROP TABLE products CASCADE`,
-      restored: `SELECT to_regclass('public.products') IS NOT NULL AS restored`,
-      shape: "table",
-    },
-    {
-      damage: `ALTER TABLE products ALTER COLUMN is_active DROP DEFAULT`,
-      restored: `SELECT column_default = 'true' AS restored FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'products' AND column_name = 'is_active'`,
-      shape: "column default",
-    },
-    {
-      damage: `ALTER TABLE products DROP CONSTRAINT products_pkey CASCADE`,
-      restored: `SELECT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'products_pkey') AS restored`,
-      shape: "constraint",
-    },
-    {
-      damage: `DROP INDEX products_sku_unique`,
-      restored: `SELECT to_regclass('public.products_sku_unique') IS NOT NULL AS restored`,
-      shape: "index",
-    },
-  ])("rebuilds after $shape drift with an unchanged journal", async ({ damage, restored }) => {
+  it("recovers schema drift by restoring the reviewed baseline exactly", async () => {
+    await withDatabase(async (sql) => {
+      await sql.unsafe("DROP TABLE products CASCADE");
+      await sql.unsafe("CREATE TABLE reset_rogue_table (id integer PRIMARY KEY)");
+    });
+
     await reset();
-    await withDatabase((sql) => sql.unsafe(damage));
+
+    const [state] = await withDatabase(
+      (sql) => sql<{ foreign_key_exists: boolean; index_exists: boolean; rogue_exists: boolean }[]>`
+        SELECT
+          EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conname = 'sale_offers_product_id_products_id_fk'
+          ) AS foreign_key_exists,
+          to_regclass('public.products_sku_unique') IS NOT NULL AS index_exists,
+          to_regclass('public.reset_rogue_table') IS NOT NULL AS rogue_exists
+      `,
+    );
+
+    expect(state).toEqual({
+      foreign_key_exists: true,
+      index_exists: true,
+      rogue_exists: false,
+    });
+  });
+
+  it("fails closed on a connected-database identity mismatch before migration work", async () => {
+    await withDatabase((sql) => sql.unsafe("CREATE TABLE identity_guard_probe (id integer)"));
+
+    await expect(
+      runDatabaseMigrations({
+        databaseUrl: requireDatabaseUrl(),
+        expectedDatabaseName: "checkout_surge_test_logger",
+        migrationsFolder,
+      }),
+    ).rejects.toThrow("connected database identity did not match");
+
+    const [probe] = await withDatabase(
+      (sql) => sql<{ exists: boolean }[]>`
+        SELECT to_regclass('public.identity_guard_probe') IS NOT NULL AS "exists"
+      `,
+    );
+    expect(probe?.exists).toBe(true);
     await reset();
-    const [result] = await withDatabase((sql) => sql.unsafe<{ restored: boolean }[]>(restored));
-    expect(result?.restored).toBe(true);
   });
 
-  it("rebuilds for missing, malformed, duplicate, and stale fingerprint markers", async () => {
-    const corruptions = [
-      `DROP TABLE ${fingerprintTable}`,
-      `DELETE FROM ${fingerprintTable}`,
-      `UPDATE ${fingerprintTable} SET fingerprint = 'malformed'`,
-      `INSERT INTO ${fingerprintTable} SELECT * FROM ${fingerprintTable}`,
-      `UPDATE ${fingerprintTable} SET fingerprint = repeat('0', 64)`,
-    ];
-
-    for (const corruption of corruptions) {
-      await withDatabase((sql) => sql.unsafe(corruption));
-      await reset();
-      const [marker] = await withDatabase(
-        (sql) => sql<{ count: number; valid: boolean }[]>`
-          SELECT count(*)::int AS count,
-            bool_and(fingerprint ~ '^[a-f0-9]{64}$') AS valid
-          FROM ${sql(fingerprintTable)}
-        `,
-      );
-      expect(marker).toEqual({ count: 1, valid: true });
-    }
-  });
-
-  it("rebuilds when the applied baseline journal is altered or missing", async () => {
-    const corruptions = [
-      `UPDATE drizzle.__drizzle_migrations SET hash = repeat('0', 64) WHERE id = (SELECT min(id) FROM drizzle.__drizzle_migrations)`,
-      `DELETE FROM drizzle.__drizzle_migrations WHERE id = (SELECT max(id) FROM drizzle.__drizzle_migrations)`,
-    ];
-
-    for (const corruption of corruptions) {
-      await withDatabase((sql) => sql.unsafe(corruption));
-      await reset();
-      const [journal] = await withDatabase(
-        (sql) =>
-          sql<{ count: number }[]>`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`,
-      );
-      expect(journal?.count).toBe(1);
-    }
-  });
-
-  it("does not record a fingerprint when migration rebuild fails and releases its locks", async () => {
+  it("releases the serialization lock after a migration failure", async () => {
     const temporaryMigrations = await createTemporaryMigrations("THIS IS NOT VALID SQL;");
     try {
       await expect(
@@ -145,12 +115,6 @@ describe.skipIf(!databaseUrl)("deterministic test database reset", () => {
           migrationsFolder: temporaryMigrations,
         }),
       ).rejects.toThrow();
-      const [marker] = await withDatabase(
-        (sql) => sql<{ exists: boolean }[]>`
-          SELECT to_regclass('public.__test_schema_fingerprint') IS NOT NULL AS "exists"
-        `,
-      );
-      expect(marker?.exists).toBe(false);
     } finally {
       await rm(temporaryMigrations, { force: true, recursive: true });
     }
@@ -158,10 +122,13 @@ describe.skipIf(!databaseUrl)("deterministic test database reset", () => {
     await expect(reset()).resolves.toBeUndefined();
   });
 
-  it("serializes independent clients with a PostgreSQL advisory lock", async () => {
-    const blocker = createDatabaseConnection(requireDatabaseUrl(), { max: 1 });
-    const databaseName = new URL(requireDatabaseUrl()).pathname.slice(1);
+  it("serializes rebuilds with the administration-database advisory lock", async () => {
+    const administrationUrl = new URL(requireDatabaseUrl());
+    const databaseName = administrationUrl.pathname.slice(1);
+    administrationUrl.pathname = "/postgres";
+    const blocker = createDatabaseConnection(administrationUrl.toString(), { max: 1 });
     const lockKey = `checkout-surge-test-database-reset:${databaseName}`;
+
     try {
       await blocker.sql`SELECT pg_advisory_lock(hashtextextended(${lockKey}, 0))`;
       let completed = false;
@@ -175,16 +142,6 @@ describe.skipIf(!databaseUrl)("deterministic test database reset", () => {
     } finally {
       await blocker.close();
     }
-  });
-
-  it("does not share filesystem locks between package databases", async () => {
-    const loggerUrl = new URL(requireDatabaseUrl());
-    loggerUrl.pathname = "/checkout_surge_test_logger";
-    const [databaseLock, loggerLock] = await Promise.all([
-      acquireTestInfrastructureLock({ databaseUrl: requireDatabaseUrl(), timeoutMs: 500 }),
-      acquireTestInfrastructureLock({ databaseUrl: loggerUrl.toString(), timeoutMs: 500 }),
-    ]);
-    await Promise.all([databaseLock.release(), loggerLock.release()]);
   });
 });
 

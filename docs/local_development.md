@@ -325,7 +325,7 @@ The worker-facing Mock ERP confirmation contract is `POST http://localhost:4100/
 | `pnpm test:infra:up` | Start isolated test PostgreSQL and Redis from `docker-compose.test.yml` |
 | `pnpm test:infra:down` | Stop isolated test services and remove their volumes |
 | `pnpm test:infra:reset` | Reset isolated test PostgreSQL and Redis services |
-| `pnpm test:db:migrate` | Apply the reviewed baseline against the isolated test database; not required before running tests |
+| `pnpm test:db:migrate` | Destructively rebuild only the approved `@checkout-surge/db` package-isolated test database from the reviewed baseline; verification aid, not required before tests |
 
 Useful package commands:
 
@@ -358,14 +358,14 @@ pnpm test:characterization
 
 Set `COMPOSITION_KEEP_RUNTIME=true` to retain a failed composition project for inspection. The 10k characterization preserves the 10,000-buyer burst and requires the exact 1,000 accepted / 9,000 sold-out result when the host delivers every planned iteration. On constrained hosts it permits k6-dropped iterations but still requires complete request accounting, no unexpected responses, consistent inventory, and every accepted reservation to traverse the worker, ERP, notification, and Run History boundaries.
 
-For infrastructure-backed tests, start the isolated test services first — the test databases themselves are created and migrated on demand:
+For infrastructure-backed tests, start the isolated test services first — the package-isolated test databases are created and rebuilt from migrations on demand:
 
 ```bash
 pnpm test:infra:up
 pnpm test
 ```
 
-To verify the reviewed baseline against disposable infrastructure:
+To verify the reviewed baseline against disposable infrastructure, run the command below. It destructively rebuilds only the approved `@checkout-surge/db` package-isolated test database from the reviewed baseline, discarding any data and schema drift in that database. Tests provision their own package-isolated databases, so this remains a focused verification aid rather than a prerequisite.
 
 ```bash
 pnpm test:db:migrate
@@ -375,9 +375,9 @@ The checked-in `packages/db/drizzle` directory is part of the database package a
 
 Before release stability is promised, amend this baseline in place for schema changes: generate a fresh declarative baseline from the current `schema.ts` into a temporary directory, review it as an empty-database final state, replace the checked-in SQL/snapshot/journal together, restore and review the required snapshot-invisible custom SQL, then run the DB unit, migration, integration, and type-check commands. Do not add a compatibility migration or old-row backfill. Existing local runtime data must first follow the selected-project wipe-and-rebuild workflow above.
 
-Run at most one `runtime-setup` or migration job at a time for each database; serialize migration execution. A failed job can be retried after it exits, and already-applied entries remain no-ops. The pinned PostgreSQL migrator applies all pending entries in one transaction, but it does not provide an explicit deployment/advisory lock for competing migration processes.
+Run at most one development/runtime `runtime-setup` or migration job at a time for each database; serialize that migration execution. A failed job can be retried after it exits, and already-applied entries remain no-ops. The pinned PostgreSQL migrator applies all pending entries in one transaction, but it does not provide an explicit deployment/advisory lock for competing migration processes. The isolated `test:db:migrate` rebuild is different: `resetTestDatabase` serializes it with the test database's administration-database advisory lock.
 
-If `pnpm test:db:migrate` fails during the `@checkout-surge/db` TypeScript build with missing or mismatched `@checkout-surge/contracts` exports/types, rebuild the shared contract declarations first. The db package compiles against `packages/contracts/dist`, and the direct db migration script does not build workspace dependencies for you:
+If `pnpm test:db:migrate` fails to start with missing or mismatched `@checkout-surge/contracts` exports/types, rebuild the shared contract declarations and db package first. The db package compiles against `packages/contracts/dist`, and the direct test-database rebuild command does not build workspace dependencies for you:
 
 ```bash
 pnpm --filter @checkout-surge/contracts build

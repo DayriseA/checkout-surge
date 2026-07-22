@@ -1,13 +1,13 @@
 import { sql as drizzleSql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { createAbortableDatabaseConnection, createSqlClient } from "../../src/index.js";
-import { createTestDatabaseIfMissing } from "../../src/testing.js";
+import { resetTestDatabase } from "../../src/testing.js";
 
 describe("abortable postgres.js client", () => {
   it("cancels active and pool-queued statements without blocking a later pool", async () => {
     const databaseUrl = process.env.TEST_DATABASE_URL;
     if (!databaseUrl) throw new Error("TEST_DATABASE_URL is required.");
-    await createTestDatabaseIfMissing(databaseUrl);
+    await resetTestDatabase({ databaseUrl });
     const observer = createSqlClient(databaseUrl, { max: 1 });
     const controller = new AbortController();
     const connection = createAbortableDatabaseConnection(databaseUrl, controller.signal, {

@@ -1,16 +1,5 @@
-import { runDatabaseMigrations } from "../migrations.js";
-import {
-  assertTestEnvironment,
-  validateDedicatedTestDatabaseUrl,
-} from "../test-environment-safety.js";
-import { requireEnv } from "./env.js";
-import { createTestDatabaseIfMissing } from "./test-database.js";
+import { resetTestDatabase } from "../testing.js";
 
-const databaseUrl = requireEnv("TEST_DATABASE_URL");
-assertTestEnvironment("migrate the test database");
-const { databaseName } = validateDedicatedTestDatabaseUrl(databaseUrl);
+await resetTestDatabase();
 
-await createTestDatabaseIfMissing(databaseUrl);
-await runDatabaseMigrations({ databaseUrl, expectedDatabaseName: databaseName });
-
-console.log("Isolated test database migrations applied.");
+console.log("Isolated test database rebuilt from reviewed migrations.");

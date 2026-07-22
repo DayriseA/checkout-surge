@@ -89,8 +89,8 @@ Use this for test loops.
 
 Expected command contract:
 
-- `pnpm test:infra:up` starts isolated PostgreSQL and Redis from `docker-compose.test.yml`. Per-package test databases are created and migrated on demand by the tests themselves.
-- `pnpm test:db:migrate` applies the reviewed baseline against the isolated test database (migration verification aid, not a test prerequisite).
+- `pnpm test:infra:up` starts isolated PostgreSQL and Redis from `docker-compose.test.yml`. Per-package test databases are created and rebuilt from migrations on demand by the tests themselves.
+- `pnpm test:db:migrate` destructively rebuilds only the approved `@checkout-surge/db` package-isolated test database from the reviewed baseline (verification aid, not a test prerequisite).
 - `pnpm test:infra:down` stops and removes isolated test infrastructure.
 
 Tests should continue to avoid normal development and demo state.
