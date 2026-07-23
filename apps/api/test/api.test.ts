@@ -59,6 +59,7 @@ import {
   startDemoRunPath,
   startDemoRunResponseSchema,
 } from "@checkout-surge/contracts";
+import { previewRunConfigSnapshotFixture as acceptedRunConfigSnapshotFixture } from "@checkout-surge/contracts/testing";
 import {
   type CheckoutSurgeRedis,
   createDatabaseConnection,
@@ -487,41 +488,6 @@ function demoRunSnapshotFixture(): DemoRunSnapshot {
     configSnapshot: acceptedRunConfigSnapshotFixture(),
     startedAt: "2026-06-20T00:00:10.000Z",
     trafficStartedAt: "2026-06-20T00:00:10.000Z",
-  };
-}
-
-function acceptedRunConfigSnapshotFixture() {
-  return {
-    trafficConfig: {
-      mode: "buyer-spike" as const,
-      buyerCount: 1000,
-      duplicateEachBuyerAttempt: false,
-      startDelaySeconds: 0,
-      maxDurationSeconds: 2,
-      quantityPerAttempt: 1,
-    },
-    inventoryConfig: {
-      startingStock: 250,
-      quantityPerCheckout: 1,
-      reservationHoldMinutes: 15,
-    },
-    erpConfig: {
-      latencyMs: 80,
-      maxTps: 250,
-      errorRate: 0,
-      forcedOutage: false,
-      requestTimeoutMs: 2000,
-    },
-    backpressureConfig: {
-      queueName: "orders:process" as const,
-      physicalQueueName: "orders-process" as const,
-      orderProcessConcurrency: 5,
-      retryPolicy: { maxAttempts: 4, initialBackoffMs: 500 },
-      drainTimeoutSeconds: 300,
-      pendingPersistenceRetryAfterSeconds: 30,
-      circuitBreakerFailureThreshold: 5,
-      circuitBreakerResetTimeoutMs: 10_000,
-    },
   };
 }
 

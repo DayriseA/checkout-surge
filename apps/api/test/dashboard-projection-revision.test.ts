@@ -3,6 +3,7 @@ import {
   dashboardProjectionScopeId,
   demoRunSnapshotSchema,
 } from "@checkout-surge/contracts";
+import { previewRunConfigSnapshotFixture } from "@checkout-surge/contracts/testing";
 import {
   type CheckoutSurgeRedis,
   createRedisClient,
@@ -149,38 +150,7 @@ function runSnapshot() {
     status: "active",
     trafficStatus: "active",
     saleOfferId,
-    configSnapshot: {
-      trafficConfig: {
-        mode: "buyer-spike",
-        buyerCount: 1_000,
-        duplicateEachBuyerAttempt: false,
-        startDelaySeconds: 0,
-        maxDurationSeconds: 2,
-        quantityPerAttempt: 1,
-      },
-      inventoryConfig: {
-        startingStock: 250,
-        quantityPerCheckout: 1,
-        reservationHoldMinutes: 15,
-      },
-      erpConfig: {
-        latencyMs: 80,
-        maxTps: 250,
-        errorRate: 0,
-        forcedOutage: false,
-        requestTimeoutMs: 2_000,
-      },
-      backpressureConfig: {
-        queueName: "orders:process",
-        physicalQueueName: "orders-process",
-        orderProcessConcurrency: 5,
-        retryPolicy: { maxAttempts: 4, initialBackoffMs: 500 },
-        pendingPersistenceRetryAfterSeconds: 30,
-        circuitBreakerFailureThreshold: 5,
-        circuitBreakerResetTimeoutMs: 10_000,
-        drainTimeoutSeconds: 300,
-      },
-    },
+    configSnapshot: previewRunConfigSnapshotFixture(),
     startedAt: "2026-07-23T11:59:00.000Z",
     trafficStartedAt: "2026-07-23T11:59:01.000Z",
   });

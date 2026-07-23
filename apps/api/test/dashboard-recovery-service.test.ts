@@ -1,7 +1,6 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  type BusinessOutcomeSummary,
   type ConsistencyLagSummary,
   type DemoRunSnapshot,
   dashboardProjectionSchemaName,
@@ -14,6 +13,7 @@ import {
   type QueueStatus,
   type TransportAttemptCounts,
 } from "@checkout-surge/contracts";
+import { previewRunConfigSnapshotFixture as configSnapshot } from "@checkout-surge/contracts/testing";
 import {
   type CheckoutSurgeDatabase,
   createDatabaseConnection,
@@ -32,6 +32,7 @@ import {
   PostgresDashboardRecoveryContextReader,
   PostgresDashboardTransportAttemptCountsReader,
 } from "../src/services/dashboard-recovery-service.js";
+import { emptyBusinessOutcomeSummary as businessOutcomeFixture } from "../src/services/demo-run-projections.js";
 
 const now = new Date("2026-07-14T12:00:00.000Z");
 const runId = "11111111-1111-4111-8111-111111111111";
@@ -769,20 +770,6 @@ function inventoryStatusFixture(): InventoryStatus {
   };
 }
 
-function businessOutcomeFixture(): BusinessOutcomeSummary {
-  return {
-    acceptedReservations: 0,
-    soldOutRejections: 0,
-    queuedOrders: 0,
-    processingOrders: 0,
-    retryingOrders: 0,
-    confirmedOrders: 0,
-    failedOrders: 0,
-    pendingPersistenceCount: 0,
-    notificationsRecorded: 0,
-  };
-}
-
 function consistencyLagFixture(): ConsistencyLagSummary {
   return {
     confirmedOrderCount: 0,
@@ -900,41 +887,6 @@ function currentDiagnosticsFixture(plannedRequests: number) {
       completedIterations: "summary_export" as const,
     },
     summaryExportWarnings: [],
-  };
-}
-
-function configSnapshot() {
-  return {
-    trafficConfig: {
-      mode: "buyer-spike" as const,
-      buyerCount: 1000,
-      duplicateEachBuyerAttempt: false,
-      startDelaySeconds: 0,
-      maxDurationSeconds: 2,
-      quantityPerAttempt: 1,
-    },
-    inventoryConfig: {
-      startingStock: 250,
-      quantityPerCheckout: 1,
-      reservationHoldMinutes: 15,
-    },
-    erpConfig: {
-      latencyMs: 80,
-      maxTps: 250,
-      errorRate: 0,
-      forcedOutage: false,
-      requestTimeoutMs: 2000,
-    },
-    backpressureConfig: {
-      queueName: "orders:process" as const,
-      physicalQueueName: "orders-process" as const,
-      orderProcessConcurrency: 5,
-      retryPolicy: { maxAttempts: 4, initialBackoffMs: 500 },
-      drainTimeoutSeconds: 300,
-      pendingPersistenceRetryAfterSeconds: 30,
-      circuitBreakerFailureThreshold: 5,
-      circuitBreakerResetTimeoutMs: 10_000,
-    },
   };
 }
 

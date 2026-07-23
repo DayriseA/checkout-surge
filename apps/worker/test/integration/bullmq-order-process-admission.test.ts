@@ -5,10 +5,7 @@ import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProcessLocalOrderProcessAdmission } from "../../src/application/order-process-admission.js";
-import {
-  type CreateBullMqOrderProcessConsumerOptions,
-  createBullMqOrderProcessConsumer as createProductionBullMqOrderProcessConsumer,
-} from "../../src/queue/bullmq-order-process-consumer.js";
+import { createBullMqOrderProcessConsumer } from "./order-process-consumer-test-helper.js";
 
 const runId = "55555555-5555-4555-8555-555555555555";
 const baseJob: OrderProcessJob = {
@@ -21,16 +18,6 @@ const baseJob: OrderProcessJob = {
   quantity: 1,
   queuedAt: "2026-07-13T00:00:00.000Z",
 };
-
-function createBullMqOrderProcessConsumer(
-  options: Omit<CreateBullMqOrderProcessConsumerOptions, "recovery"> &
-    Partial<Pick<CreateBullMqOrderProcessConsumerOptions, "recovery">>,
-) {
-  return createProductionBullMqOrderProcessConsumer({
-    recovery: { recordRecoverable: async () => undefined, recordDeadLetter: async () => undefined },
-    ...options,
-  });
-}
 
 function url() {
   if (!process.env.TEST_REDIS_URL) throw new Error("TEST_REDIS_URL is required");

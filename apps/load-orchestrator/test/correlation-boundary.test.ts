@@ -9,8 +9,8 @@ import { correlationIdHeaderName, createServiceLogger } from "@checkout-surge/lo
 import { describe, expect, it, vi } from "vitest";
 import type { K6Runner } from "../src/application/k6-runner.js";
 import { TrafficExecutionService } from "../src/application/traffic-execution-service.js";
-import type { LoadOrchestratorConfig } from "../src/runtime/config.js";
 import { buildLoadOrchestratorServer } from "../src/server.js";
+import { createLoadOrchestratorConfig as createConfig } from "./load-orchestrator-test-helper.js";
 
 const timestamp = "2026-06-20T12:00:00.000Z";
 
@@ -53,21 +53,6 @@ const startRequest: TrafficExecutionStartRequest = {
     },
   },
 };
-
-function createConfig(overrides: Partial<LoadOrchestratorConfig> = {}): LoadOrchestratorConfig {
-  return {
-    host: "127.0.0.1",
-    port: 4200,
-    apiBaseUrl: "http://localhost:4000",
-    buyEndpointPath: "/buy",
-    k6Binary: "k6",
-    k6CancellationTimeoutMs: 10_000,
-    completionDeliveryRetryIntervalMs: 5_000,
-    controlServiceToken: "test-token",
-    stateDirectory: "/tmp/checkout-surge-test-state",
-    ...overrides,
-  };
-}
 
 describe("load-orchestrator correlation boundary", () => {
   it("binds the inbound id into the response header, error body, routine logs, and promotes body correlation", async () => {

@@ -90,6 +90,8 @@ Tier membership lives in package manifests. Root unit, API, integration, watch, 
 
 The repository does not maintain a separate test that parses package manifests and asserts the command graph as text. The commands themselves, package-local Vitest configurations, root type-check, and focused script tests are the authoritative evidence; this avoids turning test-runner wiring into a second mechanically synchronized product.
 
+The suite also does not parse every admin route or Caddy configuration as source text. Admin proxy behavior is exercised through the route tests, and exact SSE routing is exercised by the deployed runtime workflows. `scripts/runtime-image-contract.test.mjs` retains only the smallest static packaging evidence that is not cheaply observable in those workflows: non-root direct entrypoints, deployable artifact allowlists, standalone/migration packaging, and build-context secret exclusions.
+
 Coverage uses V8 and the shared policy in `vitest.coverage.config.ts`. Every lane explicitly includes all production `src/**/*.ts` and `src/**/*.tsx` files and excludes only source declaration files, so unexecuted production modules count against the initial 10% statements, branches, functions, and lines floor and named high-risk paths remain visible. The floors are evaluated independently for each package/tier lane, not against a globally merged repository report. Every lane writes text output and `coverage-summary.json` to its unique `coverage/<owner>-<tier>` directory, including reports from failed test runs where Vitest permits. A future CI caller should provision and clean up test infrastructure around the same root command and retain those directories; this repository does not currently claim a hosted CI coverage gate.
 
 ---
@@ -172,6 +174,8 @@ The test database setup should:
 - avoid relying on the normal demo seed unless the test is explicitly validating demo seed behavior.
 
 Schema and seed verification belongs in the schema/seed test suite. API and reservation behavior should create the data it needs through test fixtures so failures remain easy to diagnose.
+
+Cross-package test fixtures are allowed only through a package-owned public `testing` export. `@checkout-surge/contracts/testing` owns the shared contract-valid Preview 1k configuration used by API and web tests, while `@checkout-surge/db/testing` owns the guarded database reset. Same-package defaults may use a focused test helper beside their suites. Scenario-specific values, clocks, deferreds, response helpers, and environment guards stay local so tests continue to show the behavior they arrange. Testing exports must not expose PostgreSQL, Redis, BullMQ, or other infrastructure clients.
 
 ---
 

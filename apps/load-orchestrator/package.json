@@ -15,7 +15,7 @@
     "test:unit": "vitest run --config vitest.unit.config.ts",
     "test:unit:watch": "vitest --watch --config vitest.unit.config.ts",
     "test:coverage:unit": "vitest run --config vitest.unit.config.ts --coverage",
-    "test:focused:service": "vitest run --config vitest.unit.config.ts test/load-orchestrator.test.ts",
+    "test:focused:service": "vitest run --config vitest.unit.config.ts test/load-orchestrator.test.ts test/load-orchestrator-boundaries.test.ts",
     "test:k6-compat": "vitest run --config vitest.k6.config.ts"
   },
   "dependencies": {

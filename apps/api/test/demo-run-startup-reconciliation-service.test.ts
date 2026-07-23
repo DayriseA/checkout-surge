@@ -17,6 +17,7 @@ import { resetTestDatabase } from "@checkout-surge/db/testing";
 import { createSilentLogger } from "@checkout-surge/logger";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { emptyBusinessOutcomeSummary } from "../src/services/demo-run-projections.js";
 import {
   DemoRunStartupReconciliationService,
   PostgresStartingDemoRunReconciliationStore,
@@ -387,20 +388,6 @@ function restartDiagnostics() {
       completedIterations: "summary_export" as const,
     },
     summaryExportWarnings: [],
-  };
-}
-
-function emptyBusinessOutcomeSummary() {
-  return {
-    acceptedReservations: 0,
-    soldOutRejections: 0,
-    queuedOrders: 0,
-    processingOrders: 0,
-    retryingOrders: 0,
-    confirmedOrders: 0,
-    failedOrders: 0,
-    pendingPersistenceCount: 0,
-    notificationsRecorded: 0,
   };
 }
 

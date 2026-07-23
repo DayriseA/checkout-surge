@@ -15,6 +15,11 @@
       "types": "./dist/public-visitor-credential.d.ts",
       "import": "./dist/public-visitor-credential.js",
       "default": "./dist/public-visitor-credential.js"
+    },
+    "./testing": {
+      "types": "./dist/testing.d.ts",
+      "import": "./dist/testing.js",
+      "default": "./dist/testing.js"
     }
   },
   "files": [

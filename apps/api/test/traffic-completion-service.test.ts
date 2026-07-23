@@ -23,6 +23,7 @@ import { createSilentLogger } from "@checkout-surge/logger";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { DemoRunFinalizationService } from "../src/services/demo-run-finalization-service.js";
+import { emptyBusinessOutcomeSummary } from "../src/services/demo-run-projections.js";
 import { PostgresStartingDemoRunReconciliationStore } from "../src/services/demo-run-startup-reconciliation-service.js";
 import { PostgresTerminalDemoRunSummaryWriter } from "../src/services/terminal-demo-run-transition.js";
 import { TrafficCompletionEnrichmentService } from "../src/services/traffic-completion-enrichment-service.js";
@@ -575,20 +576,6 @@ function noStartedTrafficCompletionReport(): TrafficCompletionReport {
       droppedIterations: 10,
       completedIterations: 0,
     },
-  };
-}
-
-function emptyBusinessOutcomeSummary() {
-  return {
-    acceptedReservations: 0,
-    soldOutRejections: 0,
-    queuedOrders: 0,
-    processingOrders: 0,
-    retryingOrders: 0,
-    confirmedOrders: 0,
-    failedOrders: 0,
-    pendingPersistenceCount: 0,
-    notificationsRecorded: 0,
   };
 }
 

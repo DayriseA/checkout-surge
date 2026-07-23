@@ -8,6 +8,7 @@ import {
   dashboardProjectionScopeId,
   errorPayloadSchema,
 } from "@checkout-surge/contracts";
+import { previewRunConfigSnapshotFixture } from "@checkout-surge/contracts/testing";
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { type ReactNode, StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -311,38 +312,7 @@ function activeRun(): ActiveRun {
     saleOfferId: "44444444-4444-4444-8444-444444444444",
     startedAt: "2026-06-20T00:00:00.000Z",
     trafficStartedAt: "2026-06-20T00:00:00.000Z",
-    configSnapshot: {
-      trafficConfig: {
-        mode: "buyer-spike",
-        buyerCount: 1_000,
-        duplicateEachBuyerAttempt: false,
-        startDelaySeconds: 0,
-        maxDurationSeconds: 2,
-        quantityPerAttempt: 1,
-      },
-      inventoryConfig: {
-        startingStock: 250,
-        quantityPerCheckout: 1,
-        reservationHoldMinutes: 15,
-      },
-      erpConfig: {
-        latencyMs: 80,
-        maxTps: 250,
-        errorRate: 0,
-        forcedOutage: false,
-        requestTimeoutMs: 2_000,
-      },
-      backpressureConfig: {
-        queueName: "orders:process",
-        physicalQueueName: "orders-process",
-        orderProcessConcurrency: 5,
-        retryPolicy: { maxAttempts: 4, initialBackoffMs: 500 },
-        drainTimeoutSeconds: 300,
-        pendingPersistenceRetryAfterSeconds: 30,
-        circuitBreakerFailureThreshold: 5,
-        circuitBreakerResetTimeoutMs: 10_000,
-      },
-    },
+    configSnapshot: previewRunConfigSnapshotFixture(),
   };
 }
 

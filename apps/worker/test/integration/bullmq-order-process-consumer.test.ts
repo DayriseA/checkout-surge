@@ -18,14 +18,13 @@ import {
 } from "../../src/queue/bullmq-notification-record-consumer.js";
 import { createBullMqNotificationRecordPublisher } from "../../src/queue/bullmq-notification-record-publisher.js";
 import {
-  type CreateBullMqOrderProcessConsumerOptions,
-  createBullMqOrderProcessConsumer as createProductionBullMqOrderProcessConsumer,
   deadLetterFailureMarker,
   orderProcessQueueNotReadyMessage,
 } from "../../src/queue/bullmq-order-process-consumer.js";
 import { createOrderProcessJobPublisher } from "../../src/queue/bullmq-order-process-job-publisher.js";
 import type { NotificationRecordConsumer } from "../../src/queue/notification-record-consumer.js";
 import type { OrderProcessConsumer } from "../../src/queue/order-process-consumer.js";
+import { createBullMqOrderProcessConsumer } from "./order-process-consumer-test-helper.js";
 
 const job: OrderProcessJob = {
   orderId: "11111111-1111-4111-8111-111111111111",
@@ -43,16 +42,6 @@ const notificationJob: NotificationRecordJob = {
   recipientPlaceholder: "simulated-buyer:ord_test",
   confirmedAt: "2026-06-21T00:00:02.000Z",
 };
-
-function createBullMqOrderProcessConsumer(
-  options: Omit<CreateBullMqOrderProcessConsumerOptions, "recovery"> &
-    Partial<Pick<CreateBullMqOrderProcessConsumerOptions, "recovery">>,
-) {
-  return createProductionBullMqOrderProcessConsumer({
-    recovery: { recordRecoverable: async () => undefined, recordDeadLetter: async () => undefined },
-    ...options,
-  });
-}
 
 function testRedisUrl(): string {
   const redisUrl = process.env.TEST_REDIS_URL;

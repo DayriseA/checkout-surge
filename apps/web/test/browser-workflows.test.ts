@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 
 import {
-  type AcceptedRunConfigSnapshot,
   type AdminPresetListResponse,
   type AdminPublicRuntimePolicyResponse,
   type DashboardProjection,
@@ -22,6 +21,7 @@ import {
   type RunHistoryListResponse,
   type RunHistorySummary,
 } from "@checkout-surge/contracts";
+import { previewRunConfigSnapshotFixture as configSnapshotFixture } from "@checkout-surge/contracts/testing";
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createElement } from "react";
@@ -789,41 +789,6 @@ function publicRuntimePolicyFixture(): PublicRuntimePolicy {
       maxTrafficStartDelaySeconds: 30,
       maxPreAllocatedVus: 10_000,
       maxVus: 10_000,
-    },
-  };
-}
-
-function configSnapshotFixture(): AcceptedRunConfigSnapshot {
-  return {
-    trafficConfig: {
-      mode: "buyer-spike",
-      buyerCount: 1000,
-      duplicateEachBuyerAttempt: false,
-      startDelaySeconds: 0,
-      maxDurationSeconds: 2,
-      quantityPerAttempt: 1,
-    },
-    inventoryConfig: {
-      startingStock: 250,
-      quantityPerCheckout: 1,
-      reservationHoldMinutes: 15,
-    },
-    erpConfig: {
-      latencyMs: 80,
-      maxTps: 250,
-      errorRate: 0,
-      forcedOutage: false,
-      requestTimeoutMs: 2000,
-    },
-    backpressureConfig: {
-      queueName: "orders:process",
-      physicalQueueName: "orders-process",
-      orderProcessConcurrency: 5,
-      retryPolicy: { maxAttempts: 4, initialBackoffMs: 500 },
-      drainTimeoutSeconds: 300,
-      pendingPersistenceRetryAfterSeconds: 30,
-      circuitBreakerFailureThreshold: 5,
-      circuitBreakerResetTimeoutMs: 10_000,
     },
   };
 }

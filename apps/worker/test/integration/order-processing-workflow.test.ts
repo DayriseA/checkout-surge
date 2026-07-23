@@ -66,12 +66,9 @@ import {
 } from "../../src/persistence/postgres-order-transition-persistence.js";
 import { createBullMqNotificationRecordConsumer } from "../../src/queue/bullmq-notification-record-consumer.js";
 import { createBullMqNotificationRecordPublisher } from "../../src/queue/bullmq-notification-record-publisher.js";
-import {
-  type CreateBullMqOrderProcessConsumerOptions,
-  createBullMqOrderProcessConsumer as createProductionBullMqOrderProcessConsumer,
-  type OrderProcessJobFailureReport,
-} from "../../src/queue/bullmq-order-process-consumer.js";
+import type { OrderProcessJobFailureReport } from "../../src/queue/bullmq-order-process-consumer.js";
 import type { OrderProcessConsumer } from "../../src/queue/order-process-consumer.js";
+import { createBullMqOrderProcessConsumer } from "./order-process-consumer-test-helper.js";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const migrationsFolder = path.resolve(packageRoot, "../../packages/db/drizzle");
@@ -132,16 +129,6 @@ function createNotificationRecordJobHandler(
   return createProductionNotificationRecordJobHandler({
     publishBusinessOutcomeUpdate: async () => undefined,
     ...dependencies,
-  });
-}
-
-function createBullMqOrderProcessConsumer(
-  options: Omit<CreateBullMqOrderProcessConsumerOptions, "recovery"> &
-    Partial<Pick<CreateBullMqOrderProcessConsumerOptions, "recovery">>,
-) {
-  return createProductionBullMqOrderProcessConsumer({
-    recovery: { recordRecoverable: async () => undefined, recordDeadLetter: async () => undefined },
-    ...options,
   });
 }
 

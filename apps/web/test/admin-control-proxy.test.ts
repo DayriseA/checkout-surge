@@ -16,6 +16,7 @@ import {
   runHistoryPath,
   startDemoRunPath,
 } from "@checkout-surge/contracts";
+import { previewRunConfigSnapshotFixture as configSnapshotPayload } from "@checkout-surge/contracts/testing";
 import { correlationIdHeaderName } from "@checkout-surge/logger";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { POST as copyPresetToCustom } from "../src/app/api/admin/demo/presets/copy-to-custom/route.js";
@@ -970,38 +971,7 @@ function startDemoRunPayload(operatorMode: "public" | "admin" = "public") {
       status: "active",
       trafficStatus: "active",
       saleOfferId: "22222222-2222-4222-8222-222222222222",
-      configSnapshot: {
-        trafficConfig: {
-          mode: "buyer-spike",
-          buyerCount: 1000,
-          duplicateEachBuyerAttempt: false,
-          startDelaySeconds: 0,
-          maxDurationSeconds: 2,
-          quantityPerAttempt: 1,
-        },
-        inventoryConfig: {
-          startingStock: 250,
-          quantityPerCheckout: 1,
-          reservationHoldMinutes: 15,
-        },
-        erpConfig: {
-          latencyMs: 80,
-          maxTps: 250,
-          errorRate: 0,
-          forcedOutage: false,
-          requestTimeoutMs: 2000,
-        },
-        backpressureConfig: {
-          queueName: "orders:process",
-          physicalQueueName: "orders-process",
-          orderProcessConcurrency: 5,
-          retryPolicy: { maxAttempts: 4, initialBackoffMs: 500 },
-          drainTimeoutSeconds: 300,
-          pendingPersistenceRetryAfterSeconds: 30,
-          circuitBreakerFailureThreshold: 5,
-          circuitBreakerResetTimeoutMs: 10_000,
-        },
-      },
+      configSnapshot: configSnapshotPayload(),
       startedAt: "2026-06-20T00:00:10.000Z",
       trafficStartedAt: "2026-06-20T00:00:10.000Z",
     },
@@ -1030,41 +1000,6 @@ function demoPresetPayload(slug: string) {
     ...configSnapshotPayload(),
     createdAt: "2026-06-20T00:00:10.000Z",
     updatedAt: "2026-06-20T00:00:10.000Z",
-  };
-}
-
-function configSnapshotPayload() {
-  return {
-    trafficConfig: {
-      mode: "buyer-spike",
-      buyerCount: 1000,
-      duplicateEachBuyerAttempt: false,
-      startDelaySeconds: 0,
-      maxDurationSeconds: 2,
-      quantityPerAttempt: 1,
-    },
-    inventoryConfig: {
-      startingStock: 250,
-      quantityPerCheckout: 1,
-      reservationHoldMinutes: 15,
-    },
-    erpConfig: {
-      latencyMs: 80,
-      maxTps: 250,
-      errorRate: 0,
-      forcedOutage: false,
-      requestTimeoutMs: 2000,
-    },
-    backpressureConfig: {
-      queueName: "orders:process",
-      physicalQueueName: "orders-process",
-      orderProcessConcurrency: 5,
-      retryPolicy: { maxAttempts: 4, initialBackoffMs: 500 },
-      drainTimeoutSeconds: 300,
-      pendingPersistenceRetryAfterSeconds: 30,
-      circuitBreakerFailureThreshold: 5,
-      circuitBreakerResetTimeoutMs: 10_000,
-    },
   };
 }
 

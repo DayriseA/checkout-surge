@@ -21,11 +21,8 @@ import {
 } from "../../src/application/order-process-job-handler.js";
 import { PostgresOrderDispatchPersistence } from "../../src/persistence/postgres-order-dispatch-persistence.js";
 import { PostgresOrderTransitionPersistence } from "../../src/persistence/postgres-order-transition-persistence.js";
-import {
-  type CreateBullMqOrderProcessConsumerOptions,
-  createBullMqOrderProcessConsumer as createProductionBullMqOrderProcessConsumer,
-} from "../../src/queue/bullmq-order-process-consumer.js";
 import { createBullMqOrderProcessJobPublisher } from "../../src/queue/bullmq-order-process-job-publisher.js";
+import { createBullMqOrderProcessConsumer } from "./order-process-consumer-test-helper.js";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const migrationsFolder = path.resolve(packageRoot, "../../packages/db/drizzle");
@@ -47,15 +44,6 @@ const job: OrderProcessJob = {
   quantity: 1,
   queuedAt: queuedAt.toISOString(),
 };
-
-function createBullMqOrderProcessConsumer(
-  options: Omit<CreateBullMqOrderProcessConsumerOptions, "recovery">,
-) {
-  return createProductionBullMqOrderProcessConsumer({
-    recovery: { recordRecoverable: async () => undefined, recordDeadLetter: async () => undefined },
-    ...options,
-  });
-}
 
 function createOrderProcessJobHandler(
   dependencies: Omit<

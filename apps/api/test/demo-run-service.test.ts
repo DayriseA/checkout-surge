@@ -2,7 +2,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
   AcceptedRunConfigSnapshot,
-  BusinessOutcomeSummary,
   PublicRuntimePolicy,
   TrafficConfig,
   TrafficExecutionStartRequest,
@@ -33,6 +32,7 @@ import { AdminDemoResetService } from "../src/services/admin-demo-reset-service.
 import { RedisDashboardTrafficMetricStore } from "../src/services/dashboard-traffic-metric-store.js";
 import { ProcessLocalDemoMaintenanceAuthority } from "../src/services/demo-maintenance-authority.js";
 import { DemoPresetService } from "../src/services/demo-preset-service.js";
+import { emptyBusinessOutcomeSummary } from "../src/services/demo-run-projections.js";
 import {
   DemoRunLifecycleService,
   isSingleNonTerminalRunViolation,
@@ -1313,20 +1313,6 @@ async function readPresetRow(
   }
 
   return preset;
-}
-
-function emptyBusinessOutcomeSummary(): BusinessOutcomeSummary {
-  return {
-    acceptedReservations: 0,
-    soldOutRejections: 0,
-    queuedOrders: 0,
-    processingOrders: 0,
-    retryingOrders: 0,
-    confirmedOrders: 0,
-    failedOrders: 0,
-    pendingPersistenceCount: 0,
-    notificationsRecorded: 0,
-  };
 }
 
 async function seedStartFixtures(
