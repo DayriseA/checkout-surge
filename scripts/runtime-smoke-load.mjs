@@ -15,6 +15,8 @@ import {
 
 const dashboardBaselineFlag = "--dashboard-delivery-baseline";
 const dashboardInstrumentationTimeoutMs = 10_000;
+const dashboardProjectionSampleLimit = 6;
+const dashboardProjectionSampleIntervalMs = 500;
 
 export async function runRuntimeLoadSmoke(options = {}) {
   const env = options.env ?? process.env;
@@ -104,6 +106,25 @@ export async function runDashboardDeliveryBaseline(options = {}) {
     runId = uuidSchema.parse(started.run.runId);
     saleOfferId = uuidSchema.parse(started.run.saleOfferId);
     measurement.recordScope(runId, saleOfferId);
+    const projectionSamples = [];
+    for (let index = 0; index < dashboardProjectionSampleLimit; index += 1) {
+      const projection = await readDashboardRecovery({
+        dashboardBaseUrl,
+        fetchImpl,
+      });
+      const isMeasuredScope =
+        projection.scope?.runId === runId && projection.scope.saleOfferId === saleOfferId;
+      const lifecycle = projection.currentRun?.status;
+      if (isMeasuredScope && (lifecycle === "active" || lifecycle === "draining")) {
+        projectionSamples.push(projection);
+      } else if (projectionSamples.length > 0) {
+        break;
+      }
+      if (index < dashboardProjectionSampleLimit - 1) {
+        await sleep(dashboardProjectionSampleIntervalMs);
+      }
+    }
+    const projectionMeasurement = selectRepresentativeDashboardProjection(projectionSamples);
     await measurement.waitForDeadline();
     const snapshot = measurement.stop();
     const observation = await readRunObservation({
@@ -128,6 +149,7 @@ export async function runDashboardDeliveryBaseline(options = {}) {
       durationMs: snapshot.durationMs,
       activeScopeCount: snapshot.activeScopeCount,
       rawRedisProducerEvents: snapshot.rawRedisProducerEvents,
+      projectionMeasurement,
       sseClient: {
         deliveredFrames: snapshot.deliveredFrames,
         deliveredDataMessages: snapshot.deliveredDataMessages,
@@ -455,6 +477,34 @@ export async function collectDashboardEvents(url, fetchImpl, signal, measurement
     if (!signal.aborted) throw error;
   }
   return events;
+}
+
+export function selectRepresentativeDashboardProjection(samples) {
+  if (samples.length === 0) {
+    throw new Error("Dashboard baseline could not sample the measured active or draining scope.");
+  }
+
+  const measuredSamples = samples.map((projection) => ({
+    projection,
+    serializedBytes: Buffer.byteLength(JSON.stringify(projection), "utf8"),
+  }));
+  const selected = measuredSamples.reduce((largest, candidate) =>
+    candidate.serializedBytes > largest.serializedBytes ? candidate : largest,
+  );
+
+  return {
+    sampleCount: measuredSamples.length,
+    serializedBytes: selected.serializedBytes,
+    selectedOccupancy: {
+      lifecycle: selected.projection.currentRun?.status ?? "idle",
+      recentMetricCount: selected.projection.recentMetrics.length,
+      recentCompletionOutcomeCount: selected.projection.recentCompletionOutcomes.length,
+      queuePresent: selected.projection.queue !== null,
+      queueRecentFailedJobCount: selected.projection.queue?.failedJobs.recent.length ?? 0,
+      queueFailedJobCount: selected.projection.queue?.failedJobs.totalCount ?? 0,
+      transportAttemptCounts: selected.projection.transportAttemptCounts,
+    },
+  };
 }
 
 export function createDashboardDeliveryMeasurement(options = {}) {
@@ -800,13 +850,7 @@ export async function prepareExactRunCleanup(input) {
 }
 
 async function readRunObservation({ dashboardBaseUrl, apiBaseUrl, runId, fetchImpl }) {
-  const recovery = dashboardRecoveryResponseSchema.parse(
-    await requestJson(
-      `${dashboardBaseUrl}/api/dashboard/recovery`,
-      { method: "GET", headers: { accept: "application/json" } },
-      fetchImpl,
-    ),
-  );
+  const recovery = await readDashboardRecovery({ dashboardBaseUrl, fetchImpl });
   const history = runHistoryListResponseSchema.parse(
     await requestJson(
       `${apiBaseUrl}/demo/runs/history?page=1&pageSize=50`,
@@ -815,6 +859,16 @@ async function readRunObservation({ dashboardBaseUrl, apiBaseUrl, runId, fetchIm
     ),
   );
   return { recovery, summaries: history.summaries, runId };
+}
+
+async function readDashboardRecovery({ dashboardBaseUrl, fetchImpl }) {
+  return dashboardRecoveryResponseSchema.parse(
+    await requestJson(
+      `${dashboardBaseUrl}/api/dashboard/recovery`,
+      { method: "GET", headers: { accept: "application/json" } },
+      fetchImpl,
+    ),
+  );
 }
 
 function describeRunObservation(observation, runId) {

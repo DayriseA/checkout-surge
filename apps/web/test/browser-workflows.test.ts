@@ -8,6 +8,9 @@ import {
   type DashboardRecoveryResponse,
   type DemoPresetContract,
   type DemoRunSnapshot,
+  dashboardProjectionSchemaName,
+  dashboardProjectionSchemaVersion,
+  dashboardProjectionScopeId,
   demoRunSnapshotSchema,
   type ErpChaosStatus,
   errorPayloadSchema,
@@ -609,11 +612,14 @@ function dashboardRecoveryFixture(
   overrides: Partial<DashboardRecoveryResponse> = {},
 ): DashboardRecoveryResponse {
   const currentRun = overrides.currentRun ?? null;
+  const scope = recoveryScope(currentRun);
   return {
+    schema: dashboardProjectionSchemaName,
+    version: dashboardProjectionSchemaVersion,
+    scopeId: dashboardProjectionScopeId(scope),
+    revision: 1,
     correlationId: "corr-web-recovery",
-    scope: currentRun
-      ? { runId: currentRun.runId, saleOfferId: currentRun.saleOfferId ?? null }
-      : null,
+    scope,
     currentRun: null,
     inventory: null,
     recentMetrics: [],
@@ -626,6 +632,14 @@ function dashboardRecoveryFixture(
     recoveredAt: "2026-06-20T00:00:10.000Z",
     ...overrides,
   };
+}
+
+function recoveryScope(currentRun: DashboardRecoveryResponse["currentRun"]) {
+  if (!currentRun) return null;
+  if (!currentRun.saleOfferId) {
+    throw new Error(`Run ${currentRun.runId} fixture requires a sale offer.`);
+  }
+  return { runId: currentRun.runId, saleOfferId: currentRun.saleOfferId };
 }
 
 function erpChaosStatusFixture(): ErpChaosStatus {

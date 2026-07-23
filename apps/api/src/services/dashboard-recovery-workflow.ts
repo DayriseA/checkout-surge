@@ -1,10 +1,10 @@
-import type { DashboardRecoveryResponse } from "@checkout-surge/contracts";
+import type { DashboardProjection } from "@checkout-surge/contracts";
 import { OperationDeadlineExceededError, settleWithAbort } from "../runtime/operation-lifecycle.js";
 import type { DashboardRecoveryAdmissionController } from "./dashboard-recovery-admission.js";
-import type { DashboardRecoveryService } from "./dashboard-recovery-service.js";
+import type { DashboardProjectionService } from "./dashboard-recovery-service.js";
 
 export type DashboardRecoveryWorkflowResult =
-  | { outcome: "recovered"; response: DashboardRecoveryResponse }
+  | { outcome: "recovered"; response: DashboardProjection }
   | { outcome: "rate_limited" | "at_capacity" | "timed_out" }
   | { outcome: "client_disconnected" };
 
@@ -20,7 +20,7 @@ export class DashboardRecoveryWorkflow implements DashboardRecoveryWorkflowContr
   constructor(
     private readonly options: {
       admission: DashboardRecoveryAdmissionController;
-      recovery: DashboardRecoveryService;
+      recovery: DashboardProjectionService;
     },
   ) {}
 

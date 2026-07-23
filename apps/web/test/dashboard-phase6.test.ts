@@ -1,6 +1,9 @@
 import {
   type DashboardEvent,
   type DashboardRecoveryResponse,
+  dashboardProjectionSchemaName,
+  dashboardProjectionSchemaVersion,
+  dashboardProjectionScopeId,
   demoRunSnapshotSchema,
   type OrderConsistencyLagDashboardEvent,
   type OrderStatusDashboardEvent,
@@ -699,6 +702,7 @@ describe("Phase 6 dashboard behavior", () => {
       ...runFixture(),
       startedAt: "2026-06-20T00:00:11.000Z",
     });
+    const eventScope = scopeForRun(event.run);
 
     const nextState = dashboardStateReducer(createDashboardState(recovery), {
       type: "event-received",
@@ -708,11 +712,12 @@ describe("Phase 6 dashboard behavior", () => {
 
     expect(nextState.recovery).toEqual(
       availableRecovery({
+        schema: dashboardProjectionSchemaName,
+        version: dashboardProjectionSchemaVersion,
+        scopeId: dashboardProjectionScopeId(null),
+        revision: 1,
         correlationId: "corr-web-recovery",
-        scope: {
-          runId: event.run.runId,
-          saleOfferId: event.run.saleOfferId ?? null,
-        },
+        scope: eventScope,
         currentRun: event.run,
         inventory: null,
         recentMetrics: [],
@@ -1027,7 +1032,7 @@ describe("terminal overlap convergence", () => {
     const drainingRun = runEventFixture("draining", runFixture()).run;
     return availableRecovery({
       ...recoveryFixture(),
-      scope: { runId: drainingRun.runId, saleOfferId: drainingRun.saleOfferId ?? null },
+      scope: scopeForRun(drainingRun),
       currentRun: drainingRun,
       recoveredAt: recoveryStartT1,
     });
@@ -1112,7 +1117,7 @@ describe("terminal overlap convergence", () => {
     const completedRun = runEventFixture("completed", runFixture()).run;
     const recovery = availableRecovery({
       ...recoveryFixture(),
-      scope: { runId: completedRun.runId, saleOfferId: completedRun.saleOfferId ?? null },
+      scope: scopeForRun(completedRun),
       currentRun: completedRun,
       recoveredAt: recoveryStartT1,
     });
@@ -1198,7 +1203,8 @@ describe("idle new-run overlap convergence", () => {
     };
     const currentRecovery = availableRecovery({
       ...recoveryFixture(),
-      scope: { runId: currentRun.runId, saleOfferId: currentRun.saleOfferId ?? null },
+      scopeId: dashboardProjectionScopeId(scopeForRun(currentRun)),
+      scope: scopeForRun(currentRun),
       currentRun,
       recoveredAt: idleRecoveryCompletedAtT1,
     });
@@ -1341,11 +1347,11 @@ function runEventFixture(
 function populatedRecovery(
   currentRun: ReturnType<typeof runFixture> | null,
 ): DashboardRecoveryResponse {
+  const scope = currentRun ? scopeForRun(currentRun) : null;
   return {
     ...recoveryFixture(),
-    scope: currentRun
-      ? { runId: currentRun.runId, saleOfferId: currentRun.saleOfferId ?? null }
-      : null,
+    scopeId: dashboardProjectionScopeId(scope),
+    scope,
     currentRun,
     inventory: inventoryFixture(currentRun?.saleOfferId),
     recentMetrics: [
@@ -1594,6 +1600,10 @@ function erpFixture(): NonNullable<DashboardRecoveryResponse["erp"]> {
 
 function recoveryFixture(): DashboardRecoveryResponse {
   return {
+    schema: dashboardProjectionSchemaName,
+    version: dashboardProjectionSchemaVersion,
+    scopeId: "idle",
+    revision: 1,
     correlationId: "corr-web-recovery",
     scope: null,
     currentRun: null,
@@ -1640,4 +1650,9 @@ function recoveryFixture(): DashboardRecoveryResponse {
     ],
     recoveredAt: "2026-06-20T00:00:10.000Z",
   };
+}
+
+function scopeForRun(run: NonNullable<DashboardRecoveryResponse["currentRun"]>) {
+  if (!run.saleOfferId) throw new Error(`Run ${run.runId} fixture requires a sale offer.`);
+  return { runId: run.runId, saleOfferId: run.saleOfferId };
 }

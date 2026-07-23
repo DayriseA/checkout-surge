@@ -7,11 +7,23 @@ const saleOfferId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb4";
 
 describe("generated-run Redis cleanup", () => {
   it("is an idempotent no-op when the namespace is absent", async () => {
+    const evalCommand = vi.fn().mockResolvedValue(0);
     const scan = vi.fn().mockResolvedValue(["0", []]);
     const unlink = vi.fn().mockResolvedValue(0);
 
-    await deleteGeneratedRunRedisState(redisStub({ scan, unlink }), { runId, saleOfferId });
+    await deleteGeneratedRunRedisState(redisStub({ eval: evalCommand, scan, unlink }), {
+      runId,
+      saleOfferId,
+    });
 
+    expect(evalCommand).toHaveBeenCalledWith(
+      expect.any(String),
+      2,
+      `inventory:${saleOfferId}:state`,
+      `demo-run:${runId}:dashboard-projection-revision`,
+      runId,
+      saleOfferId,
+    );
     expect(scan).toHaveBeenCalledWith("0", "MATCH", `inventory:${saleOfferId}:*`, "COUNT", 100);
     expect(unlink).toHaveBeenCalledOnce();
     expect(unlink).toHaveBeenCalledWith(
@@ -23,13 +35,17 @@ describe("generated-run Redis cleanup", () => {
 
   it("scans multiple pages and unlinks dynamic inventory children plus eligibility", async () => {
     const dynamicKey = `inventory:${saleOfferId}:idempotency:dynamic-request`;
+    const evalCommand = vi.fn().mockResolvedValue(2);
     const scan = vi
       .fn()
-      .mockResolvedValueOnce(["17", [`inventory:${saleOfferId}:state`, dynamicKey]])
+      .mockResolvedValueOnce(["17", [dynamicKey]])
       .mockResolvedValueOnce(["0", [`inventory:${saleOfferId}:events`]]);
     const unlink = vi.fn().mockResolvedValue(1);
 
-    await deleteGeneratedRunRedisState(redisStub({ scan, unlink }), { runId, saleOfferId });
+    await deleteGeneratedRunRedisState(redisStub({ eval: evalCommand, scan, unlink }), {
+      runId,
+      saleOfferId,
+    });
 
     expect(scan).toHaveBeenNthCalledWith(
       2,
@@ -39,7 +55,7 @@ describe("generated-run Redis cleanup", () => {
       "COUNT",
       100,
     );
-    expect(unlink).toHaveBeenNthCalledWith(1, `inventory:${saleOfferId}:state`, dynamicKey);
+    expect(unlink).toHaveBeenNthCalledWith(1, dynamicKey);
     expect(unlink).toHaveBeenNthCalledWith(2, `inventory:${saleOfferId}:events`);
     expect(unlink).toHaveBeenNthCalledWith(
       3,
@@ -51,18 +67,23 @@ describe("generated-run Redis cleanup", () => {
 
   it("surfaces UNLINK failures", async () => {
     const failure = new Error("Redis UNLINK failed");
+    const evalCommand = vi.fn().mockResolvedValue(2);
     const scan = vi.fn().mockResolvedValue(["0", [`inventory:${saleOfferId}:state`]]);
     const unlink = vi.fn().mockRejectedValue(failure);
 
     await expect(
-      deleteGeneratedRunRedisState(redisStub({ scan, unlink }), { runId, saleOfferId }),
+      deleteGeneratedRunRedisState(redisStub({ eval: evalCommand, scan, unlink }), {
+        runId,
+        saleOfferId,
+      }),
     ).rejects.toBe(failure);
   });
 
   it("validates both generated-run identifiers before scanning", async () => {
+    const evalCommand = vi.fn();
     const scan = vi.fn();
     const unlink = vi.fn();
-    const redis = redisStub({ scan, unlink });
+    const redis = redisStub({ eval: evalCommand, scan, unlink });
 
     await expect(
       deleteGeneratedRunRedisState(redis, { runId: "invalid", saleOfferId }),
@@ -70,12 +91,14 @@ describe("generated-run Redis cleanup", () => {
     await expect(
       deleteGeneratedRunRedisState(redis, { runId, saleOfferId: "invalid" }),
     ).rejects.toThrow();
+    expect(evalCommand).not.toHaveBeenCalled();
     expect(scan).not.toHaveBeenCalled();
     expect(unlink).not.toHaveBeenCalled();
   });
 });
 
 function redisStub(input: {
+  eval: ReturnType<typeof vi.fn>;
   scan: ReturnType<typeof vi.fn>;
   unlink: ReturnType<typeof vi.fn>;
 }): CheckoutSurgeRedis {

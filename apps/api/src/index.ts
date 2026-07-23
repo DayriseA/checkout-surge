@@ -39,7 +39,7 @@ import { buildApiServer } from "./server.js";
 import { AdminDemoResetService } from "./services/admin-demo-reset-service.js";
 import { DashboardRecoveryAdmissionService } from "./services/dashboard-recovery-admission.js";
 import {
-  DashboardRecoveryService,
+  DashboardProjectionService,
   PostgresDashboardBusinessOutcomeReader,
 } from "./services/dashboard-recovery-service.js";
 import { DashboardSnapshotPublicationScheduler } from "./services/dashboard-snapshot-publication-scheduler.js";
@@ -92,7 +92,7 @@ export { DashboardEventFanout } from "./realtime/dashboard-event-fanout.js";
 export { type ApiConfig, loadApiConfig } from "./runtime/config.js";
 export { buildApiServer } from "./server.js";
 export {
-  DashboardRecoveryService,
+  DashboardProjectionService,
   PostgresDashboardBusinessOutcomeReader,
   PostgresDashboardCompletionOutcomeReader,
   PostgresDashboardConsistencyLagReader,
@@ -311,7 +311,7 @@ export async function startApiServer(): Promise<void> {
     logger,
   });
   const runHistoryService = new RunHistoryService({ db: connection.db });
-  const dashboardRecoveryService = new DashboardRecoveryService({
+  const dashboardProjectionService = new DashboardProjectionService({
     openOperation: createDashboardRecoveryOperationFactory({
       databaseUrl: config.databaseUrl,
       redisUrl: config.redisUrl,
@@ -493,7 +493,7 @@ export async function startApiServer(): Promise<void> {
       logger,
       readiness,
       dashboardEventFanout,
-      dashboardRecoveryService,
+      dashboardRecoveryService: dashboardProjectionService,
       dashboardRecoveryAdmission,
       erpStatusService,
       inventoryStatusService,

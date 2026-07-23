@@ -4,8 +4,7 @@ import {
   demoPresetSchema,
   demoRunSummaryShapeSchema,
 } from "./entities.js";
-import { erpResilienceStatusSchema } from "./erp.js";
-import { inventoryStatusSchema, terminalInventorySnapshotSchema } from "./inventory.js";
+import { terminalInventorySnapshotSchema } from "./inventory.js";
 import {
   demoRunStatusSchema,
   erpAttemptStatusSchema,
@@ -38,7 +37,6 @@ import {
   collectPublicRuntimePolicyMutableViolations,
   collectPublicRuntimePolicyViolations,
 } from "./public-runtime-policy-validation.js";
-import { queueStatusSchema } from "./queue.js";
 import { transportAttemptCountsSchema } from "./traffic-transport-counts.js";
 
 export const publicPresetListPath = "/demo/presets/public" as const;
@@ -336,80 +334,6 @@ export const completionOutcomeSchema = z.discriminatedUnion("orderStatus", [
     .strict(),
 ]);
 export type CompletionOutcome = z.infer<typeof completionOutcomeSchema>;
-
-export const dashboardRecoveryResponseSchema = z
-  .object({
-    correlationId: correlationIdSchema,
-    scope: z
-      .object({
-        runId: uuidSchema,
-        saleOfferId: uuidSchema.nullable(),
-      })
-      .strict()
-      .nullable(),
-    currentRun: demoRunSnapshotSchema.nullable(),
-    inventory: inventoryStatusSchema.nullable(),
-    recentMetrics: z
-      .array(
-        z
-          .object({
-            metricName: z.string().trim().min(1),
-            value: z.number().finite(),
-            unit: z.string().trim().min(1),
-            timestamp: isoTimestampSchema,
-          })
-          .strict(),
-      )
-      .default([]),
-    queue: queueStatusSchema.nullable(),
-    erp: erpResilienceStatusSchema.nullable(),
-    businessOutcome: businessOutcomeSummarySchema.nullable(),
-    consistencyLag: consistencyLagSummarySchema.nullable(),
-    recentCompletionOutcomes: z.array(completionOutcomeSchema).default([]),
-    /**
-     * Terminal transport-attempt accounting for the selected current run,
-     * projected from the run's traffic-completion evidence. It is `null` while
-     * no completion evidence is available (for example while traffic is still
-     * starting or executing).
-     */
-    transportAttemptCounts: transportAttemptCountsSchema.nullable().default(null),
-    recoveredAt: isoTimestampSchema,
-  })
-  .strict()
-  .superRefine((recovery, context) => {
-    if (recovery.currentRun === null && recovery.scope !== null) {
-      context.addIssue({
-        code: "custom",
-        path: ["scope"],
-        message: "Scope must be null when no current run is selected.",
-      });
-      return;
-    }
-    if (recovery.currentRun !== null && recovery.scope === null) {
-      context.addIssue({
-        code: "custom",
-        path: ["scope"],
-        message: "Scope must identify the selected current run.",
-      });
-      return;
-    }
-    if (recovery.currentRun === null || recovery.scope === null) return;
-    if (recovery.scope.runId !== recovery.currentRun.runId) {
-      context.addIssue({
-        code: "custom",
-        path: ["scope", "runId"],
-        message: "Scope run ID must match the selected current run.",
-      });
-    }
-    if (recovery.scope.saleOfferId !== (recovery.currentRun.saleOfferId ?? null)) {
-      context.addIssue({
-        code: "custom",
-        path: ["scope", "saleOfferId"],
-        message: "Scope sale offer ID must match the selected current run.",
-      });
-    }
-  });
-export type DashboardRecoveryResponse = z.infer<typeof dashboardRecoveryResponseSchema>;
 
 export const runHistorySummarySchema = demoRunSummaryShapeSchema
   .extend({

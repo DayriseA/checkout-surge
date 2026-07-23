@@ -31,6 +31,10 @@ import {
   dashboardEventSchema,
   dashboardEventsPath,
   dashboardEventsRedisChannel,
+  dashboardProjectionSchema,
+  dashboardProjectionSchemaName,
+  dashboardProjectionSchemaVersion,
+  dashboardProjectionScopeId,
   dashboardRecoveryPath,
   dashboardRecoveryResponseSchema,
   demoRunOperatorModeHeaderName,
@@ -54,6 +58,7 @@ import {
   internalTrafficCompletionPath,
   inventoryStatusSchema,
   inventoryUpdatedEventPayloadSchema,
+  isNewerDashboardProjectionForScope,
   loadExecutionPlanSchema,
   loadMetricIngestRequestSchema,
   loadRunDiagnosticsSummarySchema,
@@ -1867,10 +1872,28 @@ describe("buy and dashboard contracts", () => {
   });
 
   it("validates dashboard recovery projections for the operator view", () => {
+    const runId = "11111111-1111-4111-8111-111111111111";
+    const saleOfferId = "22222222-2222-4222-8222-222222222222";
+    const currentRun = {
+      runId,
+      presetId: "33333333-3333-4333-8333-333333333333",
+      presetName: "Preview 1k",
+      operatorMode: "public" as const,
+      status: "active" as const,
+      trafficStatus: "active" as const,
+      saleOfferId,
+      configSnapshot: acceptedRunSnapshot(),
+      startedAt: timestamp,
+      trafficStartedAt: timestamp,
+    };
     const recovery = dashboardRecoveryResponseSchema.parse({
+      schema: dashboardProjectionSchemaName,
+      version: dashboardProjectionSchemaVersion,
       correlationId,
-      scope: null,
-      currentRun: null,
+      scopeId: dashboardProjectionScopeId({ runId, saleOfferId }),
+      revision: 1,
+      scope: { runId, saleOfferId },
+      currentRun,
       inventory: null,
       recentMetrics: [],
       queue: null,
@@ -1899,7 +1922,8 @@ describe("buy and dashboard contracts", () => {
         {
           orderId: "11111111-1111-4111-8111-111111111111",
           publicOrderId: "ord_recent",
-          saleOfferId: "22222222-2222-4222-8222-222222222222",
+          saleOfferId,
+          runId,
           correlationId: "corr-recent",
           orderStatus: "confirmed",
           displayStatus: "notification_recorded",
@@ -1917,6 +1941,104 @@ describe("buy and dashboard contracts", () => {
     expect(recovery.businessOutcome?.retryingOrders).toBe(2);
     expect(recovery.consistencyLag?.p95LagMs).toBe(350);
     expect(recovery.recentCompletionOutcomes[0]?.displayStatus).toBe("notification_recorded");
+    expect(
+      dashboardProjectionSchema.safeParse({
+        ...recovery,
+        recentCompletionOutcomes: recovery.recentCompletionOutcomes.map((outcome) => ({
+          ...outcome,
+          runId: "44444444-4444-4444-8444-444444444444",
+        })),
+      }).success,
+    ).toBe(false);
+    expect(
+      dashboardProjectionSchema.safeParse({
+        ...recovery,
+        recentCompletionOutcomes: recovery.recentCompletionOutcomes.map((outcome) =>
+          omit(outcome, "runId"),
+        ),
+      }).success,
+    ).toBe(false);
+  });
+
+  it("keeps the deprecated recovery schema as the exact projection schema", () => {
+    expect(dashboardRecoveryResponseSchema).toBe(dashboardProjectionSchema);
+
+    const idleProjection = {
+      schema: dashboardProjectionSchemaName,
+      version: dashboardProjectionSchemaVersion,
+      correlationId,
+      scopeId: dashboardProjectionScopeId(null),
+      revision: 1,
+      scope: null,
+      currentRun: null,
+      inventory: null,
+      recentMetrics: [],
+      queue: null,
+      erp: null,
+      businessOutcome: null,
+      consistencyLag: null,
+      recentCompletionOutcomes: [],
+      transportAttemptCounts: null,
+      recoveredAt: timestamp,
+    };
+
+    expect(dashboardProjectionSchema.parse(idleProjection)).toEqual(idleProjection);
+    for (const metadata of ["schema", "version", "scopeId", "revision"] as const) {
+      const missingMetadata = omit(idleProjection, metadata);
+      expect(dashboardProjectionSchema.safeParse(missingMetadata).success).toBe(false);
+      expect(dashboardRecoveryResponseSchema.safeParse(missingMetadata).success).toBe(false);
+    }
+  });
+
+  it("rejects run-owned data from idle projections", () => {
+    const idleProjection = {
+      schema: dashboardProjectionSchemaName,
+      version: dashboardProjectionSchemaVersion,
+      correlationId,
+      scopeId: dashboardProjectionScopeId(null),
+      revision: 1,
+      scope: null,
+      currentRun: null,
+      inventory: null,
+      recentMetrics: [],
+      queue: null,
+      erp: null,
+      businessOutcome: null,
+      consistencyLag: null,
+      recentCompletionOutcomes: [],
+      transportAttemptCounts: null,
+      recoveredAt: timestamp,
+    };
+
+    expect(
+      dashboardProjectionSchema.safeParse({
+        ...idleProjection,
+        recentMetrics: [
+          {
+            metricName: "traffic.latency",
+            value: 10,
+            unit: "ms",
+            timestamp,
+          },
+        ],
+      }).success,
+    ).toBe(false);
+    expect(
+      dashboardProjectionSchema.safeParse({
+        ...idleProjection,
+        businessOutcome: {
+          acceptedReservations: 1,
+          soldOutRejections: 0,
+          queuedOrders: 0,
+          processingOrders: 0,
+          retryingOrders: 0,
+          confirmedOrders: 0,
+          failedOrders: 0,
+          pendingPersistenceCount: 0,
+          notificationsRecorded: 0,
+        },
+      }).success,
+    ).toBe(false);
   });
 
   it("rejects dashboard recovery metadata that disagrees with the selected run", () => {
@@ -1931,7 +2053,14 @@ describe("buy and dashboard contracts", () => {
       configSnapshot: acceptedRunSnapshot(),
     };
     const baseRecovery = {
+      schema: dashboardProjectionSchemaName,
+      version: dashboardProjectionSchemaVersion,
       correlationId,
+      scopeId: dashboardProjectionScopeId({
+        runId: currentRun.runId,
+        saleOfferId: currentRun.saleOfferId,
+      }),
+      revision: 2,
       currentRun,
       inventory: null,
       recentMetrics: [],
@@ -1966,6 +2095,46 @@ describe("buy and dashboard contracts", () => {
         scope: { runId: currentRun.runId, saleOfferId: null },
       }),
     ).toThrow();
+  });
+
+  it("orders dashboard projections only within one canonical scope", () => {
+    const current = {
+      scopeId: dashboardProjectionScopeId({
+        runId: "11111111-1111-4111-8111-111111111111",
+        saleOfferId: "33333333-3333-4333-8333-333333333333",
+      }),
+      revision: 7,
+    };
+
+    expect(isNewerDashboardProjectionForScope(current, { ...current, revision: 8 })).toBe(true);
+    expect(isNewerDashboardProjectionForScope(current, { ...current, revision: 7 })).toBe(false);
+    expect(isNewerDashboardProjectionForScope(current, { ...current, revision: 6 })).toBe(false);
+    expect(
+      isNewerDashboardProjectionForScope(current, {
+        scopeId: dashboardProjectionScopeId(null),
+        revision: 9_999,
+      }),
+    ).toBe(false);
+  });
+
+  it("rejects noncanonical projection identity and scope metadata", () => {
+    const parsed = dashboardProjectionSchema.safeParse({
+      schema: dashboardProjectionSchemaName,
+      version: dashboardProjectionSchemaVersion,
+      correlationId,
+      scopeId: "run:ambiguous",
+      revision: 1,
+      scope: null,
+      currentRun: null,
+      inventory: null,
+      queue: null,
+      erp: null,
+      businessOutcome: null,
+      consistencyLag: null,
+      recoveredAt: timestamp,
+    });
+
+    expect(parsed.success).toBe(false);
   });
 });
 

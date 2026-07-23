@@ -4,6 +4,9 @@ import {
   type DashboardEvent,
   type DashboardRecoveryResponse,
   dashboardEventsPath,
+  dashboardProjectionSchemaName,
+  dashboardProjectionSchemaVersion,
+  dashboardProjectionScopeId,
   demoRunSnapshotSchema,
   errorPayloadSchema,
 } from "@checkout-surge/contracts";
@@ -202,7 +205,8 @@ describe("useDashboardRecovery", () => {
     const run = runFixture("22222222-2222-4222-8222-222222222222", "2026-06-20T00:00:00.000Z");
     const activeRecovery = {
       ...recoveryFixture(),
-      scope: { runId: run.runId, saleOfferId: run.saleOfferId ?? null },
+      scopeId: dashboardProjectionScopeId(scopeForRun(run)),
+      scope: scopeForRun(run),
       currentRun: run,
     };
     const terminalRecovery = recoveryFixture("2026-06-20T00:00:40.000Z");
@@ -366,7 +370,8 @@ describe("useDashboardRecovery", () => {
     });
     const initial = available({
       ...recoveryFixture(),
-      scope: { runId: run.runId, saleOfferId: run.saleOfferId ?? null },
+      scopeId: dashboardProjectionScopeId(scopeForRun(run)),
+      scope: scopeForRun(run),
       currentRun: run,
     });
     expect(run).toMatchObject({
@@ -383,7 +388,8 @@ describe("useDashboardRecovery", () => {
       .mockResolvedValueOnce(
         jsonResponse({
           ...recoveryFixture("2026-06-20T00:01:31.000Z"),
-          scope: { runId: run.runId, saleOfferId: run.saleOfferId ?? null },
+          scopeId: dashboardProjectionScopeId(scopeForRun(run)),
+          scope: scopeForRun(run),
           currentRun: terminalRun,
         }),
       );
@@ -399,7 +405,8 @@ describe("useDashboardRecovery", () => {
     first.resolve(
       jsonResponse({
         ...recoveryFixture("2026-06-20T00:00:30.000Z"),
-        scope: { runId: run.runId, saleOfferId: run.saleOfferId ?? null },
+        scopeId: dashboardProjectionScopeId(scopeForRun(run)),
+        scope: scopeForRun(run),
         currentRun: drainingRun,
         queue: queueFixture("2026-06-20T00:00:30.000Z"),
       }),
@@ -414,7 +421,8 @@ describe("useDashboardRecovery", () => {
     trailing.resolve(
       jsonResponse({
         ...recoveryFixture("2026-06-20T00:00:31.000Z"),
-        scope: { runId: run.runId, saleOfferId: run.saleOfferId ?? null },
+        scopeId: dashboardProjectionScopeId(scopeForRun(run)),
+        scope: scopeForRun(run),
         currentRun: drainingRun,
         queue: queueFixture("2026-06-20T00:00:31.000Z"),
       }),
@@ -474,7 +482,8 @@ describe("useDashboardRecovery", () => {
     };
     const staleRecovery = {
       ...recoveryFixture(recoveryStartT1),
-      scope: { runId: drainingRun.runId, saleOfferId: drainingRun.saleOfferId ?? null },
+      scopeId: dashboardProjectionScopeId(scopeForRun(drainingRun)),
+      scope: scopeForRun(drainingRun),
       currentRun: drainingRun,
     };
     const authoritativeIdle = recoveryFixture("2026-06-20T00:00:31.000Z");
@@ -507,7 +516,8 @@ describe("useDashboardRecovery", () => {
     const idleRecovery = recoveryFixture(idleRecoveryCompletedAtT1);
     const authoritativeRecovery = {
       ...recoveryFixture(eventDeliveredAtT2),
-      scope: { runId: newRun.runId, saleOfferId: newRun.saleOfferId ?? null },
+      scopeId: dashboardProjectionScopeId(scopeForRun(newRun)),
+      scope: scopeForRun(newRun),
       currentRun: newRun,
     };
     const request = deferred<Response>();
@@ -763,6 +773,10 @@ function runFixture(
 
 function recoveryFixture(recoveredAt = "2026-06-20T00:00:10.000Z"): DashboardRecoveryResponse {
   return {
+    schema: dashboardProjectionSchemaName,
+    version: dashboardProjectionSchemaVersion,
+    scopeId: "idle",
+    revision: 1,
     correlationId: "corr-web-recovery",
     scope: null,
     currentRun: null,
@@ -776,6 +790,11 @@ function recoveryFixture(recoveredAt = "2026-06-20T00:00:10.000Z"): DashboardRec
     recentCompletionOutcomes: [],
     recoveredAt,
   };
+}
+
+function scopeForRun(run: NonNullable<DashboardRecoveryResponse["currentRun"]>) {
+  if (!run.saleOfferId) throw new Error(`Run ${run.runId} fixture requires a sale offer.`);
+  return { runId: run.runId, saleOfferId: run.saleOfferId };
 }
 
 function available<T>(data: T): BackendRead<T> {

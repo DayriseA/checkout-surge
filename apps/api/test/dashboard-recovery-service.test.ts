@@ -4,6 +4,9 @@ import {
   type BusinessOutcomeSummary,
   type ConsistencyLagSummary,
   type DemoRunSnapshot,
+  dashboardProjectionSchemaName,
+  dashboardProjectionSchemaVersion,
+  dashboardProjectionScopeId,
   demoRunSnapshotSchema,
   type ErpResilienceStatus,
   emptyHttpTimingBreakdownSummary,
@@ -27,7 +30,7 @@ import type { SQL } from "drizzle-orm";
 import { PgDialect } from "drizzle-orm/pg-core";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
-  DashboardRecoveryService,
+  DashboardProjectionService,
   PostgresDashboardRecoveryContextReader,
   PostgresDashboardTransportAttemptCountsReader,
 } from "../src/services/dashboard-recovery-service.js";
@@ -293,14 +296,18 @@ describe("PostgresDashboardRecoveryContextReader", () => {
   });
 });
 
-describe("DashboardRecoveryService", () => {
+describe("DashboardProjectionService", () => {
   it("skips every run-owned port without a current run while retaining global health", async () => {
-    const harness = serviceHarness({ currentRun: null, saleOfferId: saleOfferId });
+    const harness = serviceHarness({ currentRun: null, saleOfferId: null });
 
     const recovery = await harness.service.getRecovery({ correlationId: "corr-no-run" });
 
     expect(recovery).toMatchObject({
+      schema: dashboardProjectionSchemaName,
+      version: dashboardProjectionSchemaVersion,
       correlationId: "corr-no-run",
+      scopeId: dashboardProjectionScopeId(null),
+      revision: 1,
       scope: null,
       currentRun: null,
       inventory: null,
@@ -329,6 +336,8 @@ describe("DashboardRecoveryService", () => {
 
     const expectedScope = { runId, saleOfferId };
     expect(recovery.scope).toEqual(expectedScope);
+    expect(recovery.scopeId).toBe(dashboardProjectionScopeId(expectedScope));
+    expect(recovery.revision).toBe(1);
     expect(harness.inventory).toHaveBeenCalledWith(saleOfferId);
     expect(harness.business).toHaveBeenCalledWith(expectedScope);
     expect(harness.lag).toHaveBeenCalledWith(expectedScope, now);
@@ -337,19 +346,61 @@ describe("DashboardRecoveryService", () => {
     expect(recovery.recoveredAt).toBe(now.toISOString());
   });
 
-  it("degrades context failure to no scope and warns without invoking run-owned ports", async () => {
+  it("builds the same complete schema for an explicitly selected terminal live scope", async () => {
+    const terminalRun = runSnapshot({
+      status: "completed",
+      trafficStatus: "succeeded",
+      trafficEndedAt: now.toISOString(),
+      finalizedAt: now.toISOString(),
+    });
+    const harness = serviceHarness({ currentRun: terminalRun, saleOfferId });
+
+    const projection = await harness.service.build({
+      correlationId: "corr-terminal-live",
+      scope: { runId, saleOfferId },
+    });
+
+    expect(projection.currentRun).toMatchObject({
+      runId,
+      saleOfferId,
+      status: "completed",
+      finalizedAt: now.toISOString(),
+    });
+    expect(projection.scopeId).toBe(dashboardProjectionScopeId({ runId, saleOfferId }));
+  });
+
+  it("rejects context failure, closes resources, and does not allocate a revision", async () => {
     const contextError = new Error("context unavailable");
     const harness = serviceHarness(null, contextError);
 
-    const recovery = await harness.service.getRecovery({ correlationId: "corr-context-failure" });
+    await expect(
+      harness.service.getRecovery({ correlationId: "corr-context-failure" }),
+    ).rejects.toBe(contextError);
 
-    expect(recovery.scope).toBeNull();
-    expect(recovery.currentRun).toBeNull();
+    expect(harness.inventory).not.toHaveBeenCalled();
+    expect(harness.business).not.toHaveBeenCalled();
+    expect(harness.lag).not.toHaveBeenCalled();
+    expect(harness.completion).not.toHaveBeenCalled();
     expect(harness.metrics).not.toHaveBeenCalled();
-    expect(harness.loggerWarn).toHaveBeenCalledWith(
-      { err: contextError, projection: "dashboard_run_context" },
-      "Dashboard recovery projection unavailable.",
-    );
+    expect(harness.transportAttemptCounts).not.toHaveBeenCalled();
+    expect(harness.queue).not.toHaveBeenCalled();
+    expect(harness.erp).not.toHaveBeenCalled();
+    expect(harness.allocateRevision).not.toHaveBeenCalled();
+    expect(harness.close).toHaveBeenCalledOnce();
+    expect(harness.loggerWarn).not.toHaveBeenCalled();
+  });
+
+  it("rejects an incoherent selected context before reading projections or allocating", async () => {
+    const harness = serviceHarness({ currentRun: runSnapshot(), saleOfferId: null });
+
+    await expect(
+      harness.service.getRecovery({ correlationId: "corr-incoherent-context" }),
+    ).rejects.toThrow(/context must select a run and sale offer together/i);
+
+    expect(harness.inventory).not.toHaveBeenCalled();
+    expect(harness.queue).not.toHaveBeenCalled();
+    expect(harness.allocateRevision).not.toHaveBeenCalled();
+    expect(harness.close).toHaveBeenCalledOnce();
   });
 
   it("degrades one scoped projection without losing the selected scope", async () => {
@@ -415,24 +466,69 @@ describe("DashboardRecoveryService", () => {
     );
   });
 
+  it("serializes coherent builds before allocating their scoped revisions", async () => {
+    let contextReadCount = 0;
+    let releaseFirstRead!: () => void;
+    let markFirstReadStarted!: () => void;
+    const firstReadBlocked = new Promise<void>((resolve) => {
+      releaseFirstRead = resolve;
+    });
+    const firstReadStarted = new Promise<void>((resolve) => {
+      markFirstReadStarted = resolve;
+    });
+    const harness = serviceHarness({ currentRun: runSnapshot(), saleOfferId }, undefined, {
+      contextReader: async () => {
+        contextReadCount += 1;
+        if (contextReadCount === 1) {
+          markFirstReadStarted();
+          await firstReadBlocked;
+        }
+        return { currentRun: runSnapshot(), saleOfferId };
+      },
+    });
+    const first = harness.service.build({ correlationId: "first", scope: { runId, saleOfferId } });
+
+    await firstReadStarted;
+    const second = harness.service.build({
+      correlationId: "second",
+      scope: { runId, saleOfferId },
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(contextReadCount).toBe(1);
+
+    releaseFirstRead();
+    const [firstProjection, secondProjection] = await Promise.all([first, second]);
+    expect(firstProjection.revision).toBe(1);
+    expect(secondProjection.revision).toBe(2);
+    expect(contextReadCount).toBe(2);
+  });
+
   it("settles a never-ending projection on abort and closes operation resources", async () => {
     const close = vi.fn();
     const controller = new AbortController();
-    const service = new DashboardRecoveryService({
-      openOperation: async () => ({
-        dependencies: {
-          contextReader: { readContext: async () => await new Promise<never>(() => undefined) },
-          businessOutcomeReader: { read: async () => businessOutcomeFixture() },
-          consistencyLagReader: { read: async () => consistencyLagFixture() },
-          completionOutcomeReader: { read: async () => [] },
-          inventoryStatusService: { getStatus: async () => inventoryStatusFixture() },
-          queueStatusService: { getStatus: async () => queueStatusFixture() },
-          erpStatusService: { getStatus: async () => erpStatusFixture() },
-          trafficMetricReader: { readRecent: async () => [] },
-          transportAttemptCountsReader: { read: async () => null },
-        },
-        close,
-      }),
+    let markOpened!: () => void;
+    const opened = new Promise<void>((resolve) => {
+      markOpened = resolve;
+    });
+    const service = new DashboardProjectionService({
+      openOperation: async () => {
+        markOpened();
+        return {
+          dependencies: {
+            contextReader: { readContext: async () => await new Promise<never>(() => undefined) },
+            businessOutcomeReader: { read: async () => businessOutcomeFixture() },
+            consistencyLagReader: { read: async () => consistencyLagFixture() },
+            completionOutcomeReader: { read: async () => [] },
+            inventoryStatusService: { getStatus: async () => inventoryStatusFixture() },
+            queueStatusService: { getStatus: async () => queueStatusFixture() },
+            erpStatusService: { getStatus: async () => erpStatusFixture() },
+            trafficMetricReader: { readRecent: async () => [] },
+            transportAttemptCountsReader: { read: async () => null },
+            revisionAllocator: { allocate: async () => 1 },
+          },
+          close,
+        };
+      },
       logger: { warn: vi.fn() } as never,
     });
     const recovery = service.getRecovery({
@@ -440,6 +536,7 @@ describe("DashboardRecoveryService", () => {
       signal: controller.signal,
     });
 
+    await opened;
     controller.abort(new Error("client disconnected"));
 
     await expect(recovery).rejects.toThrow("client disconnected");
@@ -481,6 +578,10 @@ function serviceHarness(
   context: { currentRun: DemoRunSnapshot | null; saleOfferId: string | null } | null,
   contextError?: Error,
   options: {
+    contextReader?: () => Promise<{
+      currentRun: DemoRunSnapshot | null;
+      saleOfferId: string | null;
+    }>;
     lagError?: Error;
     transportAttemptCounts?: TransportAttemptCounts | null;
     transportAttemptCountsError?: Error;
@@ -499,13 +600,21 @@ function serviceHarness(
   const queue = vi.fn(async () => queueStatusFixture());
   const erp = vi.fn(async () => erpStatusFixture());
   const loggerWarn = vi.fn();
-  const service = new DashboardRecoveryService({
+  let revision = 0;
+  const allocateRevision = vi.fn(async () => {
+    revision += 1;
+    return revision;
+  });
+  const close = vi.fn(async () => undefined);
+  const service = new DashboardProjectionService({
     openOperation: async () => ({
       dependencies: {
         contextReader: {
-          readContext: contextError
-            ? async () => Promise.reject(contextError)
-            : async () => context ?? { currentRun: null, saleOfferId: null },
+          readContext: options.contextReader
+            ? options.contextReader
+            : contextError
+              ? async () => Promise.reject(contextError)
+              : async () => context ?? { currentRun: null, saleOfferId: null },
         },
         businessOutcomeReader: { read: business },
         consistencyLagReader: { read: lag },
@@ -515,8 +624,9 @@ function serviceHarness(
         erpStatusService: { getStatus: erp },
         trafficMetricReader: { readRecent: metrics },
         transportAttemptCountsReader: { read: transportAttemptCounts },
+        revisionAllocator: { allocate: allocateRevision },
       },
-      close: async () => undefined,
+      close,
     }),
     logger: { warn: loggerWarn } as never,
     now: () => now,
@@ -532,6 +642,8 @@ function serviceHarness(
     queue,
     erp,
     loggerWarn,
+    allocateRevision,
+    close,
   };
 }
 

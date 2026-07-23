@@ -2,16 +2,23 @@ import {
   type BusinessOutcomeSummary,
   type CompletionOutcome,
   type ConsistencyLagSummary,
-  type DashboardRecoveryResponse,
+  type DashboardProjection,
+  type DashboardProjectionScope,
   type DemoRunSnapshot,
-  dashboardRecoveryResponseSchema,
+  dashboardProjectionSchema,
+  dashboardProjectionSchemaName,
+  dashboardProjectionSchemaVersion,
+  dashboardProjectionScopeId,
   type MetricSample,
   type TransportAttemptCounts,
 } from "@checkout-surge/contracts";
 import {
   type CheckoutSurgeDatabase,
+  type CheckoutSurgeRedis,
   demoRunFinalizations,
   demoRuns,
+  incrementDashboardProjectionRevision,
+  incrementIdleDashboardProjectionRevision,
   readBusinessOutcomeSummary,
   readConsistencyLagSummary,
   readRecentCompletionOutcomes,
@@ -33,7 +40,7 @@ export interface DashboardRecoveryContext {
 }
 
 export interface DashboardRecoveryContextReader {
-  readContext(): Promise<DashboardRecoveryContext>;
+  readContext(scope?: DashboardProjectionScope): Promise<DashboardRecoveryContext>;
 }
 
 export interface DashboardBusinessOutcomeReader {
@@ -83,11 +90,15 @@ export class PostgresDashboardTransportAttemptCountsReader
 export class PostgresDashboardRecoveryContextReader implements DashboardRecoveryContextReader {
   constructor(private readonly db: CheckoutSurgeDatabase) {}
 
-  async readContext(): Promise<DashboardRecoveryContext> {
+  async readContext(scope?: DashboardProjectionScope): Promise<DashboardRecoveryContext> {
     const [currentRunRow] = await this.db
       .select()
       .from(demoRuns)
-      .where(inArray(demoRuns.status, ["starting", "active", "draining"]))
+      .where(
+        scope
+          ? eq(demoRuns.id, scope.runId)
+          : inArray(demoRuns.status, ["starting", "active", "draining"]),
+      )
       .orderBy(desc(demoRuns.startedAt), desc(demoRuns.createdAt), desc(demoRuns.id))
       .limit(1);
 
@@ -97,6 +108,11 @@ export class PostgresDashboardRecoveryContextReader implements DashboardRecovery
       }
       if (!currentRunRow.saleOfferId) {
         throw new Error(`Current demo run ${currentRunRow.id} has no saleOfferId.`);
+      }
+      if (scope && currentRunRow.saleOfferId !== scope.saleOfferId) {
+        throw new Error(
+          `Demo run ${currentRunRow.id} does not belong to sale offer ${scope.saleOfferId}.`,
+        );
       }
       const currentRun = toDemoRunSnapshot(currentRunRow);
 
@@ -140,7 +156,24 @@ export class PostgresDashboardCompletionOutcomeReader implements DashboardComple
   }
 }
 
-export class DashboardRecoveryService {
+export interface DashboardProjectionRevisionAllocator {
+  allocate(scope: DashboardProjectionScope | null): Promise<number>;
+}
+
+export class RedisDashboardProjectionRevisionAllocator
+  implements DashboardProjectionRevisionAllocator
+{
+  constructor(private readonly redis: CheckoutSurgeRedis) {}
+
+  async allocate(scope: DashboardProjectionScope | null): Promise<number> {
+    if (scope) return incrementDashboardProjectionRevision(this.redis, scope);
+    return incrementIdleDashboardProjectionRevision(this.redis);
+  }
+}
+
+export class DashboardProjectionService {
+  private buildTail: Promise<void> = Promise.resolve();
+
   constructor(
     private readonly options: {
       logger: CheckoutSurgeLogger;
@@ -149,39 +182,71 @@ export class DashboardRecoveryService {
     },
   ) {}
 
-  async getRecovery(input: {
+  build(input: {
     correlationId: string;
     signal?: AbortSignal;
-  }): Promise<DashboardRecoveryResponse> {
+    scope?: DashboardProjectionScope;
+  }): Promise<DashboardProjection> {
     const signal = input.signal ?? new AbortController().signal;
-    if (signal.aborted) throw abortReason(signal);
-    const operation = await this.options.openOperation(signal);
+    const queuedBuild = this.buildTail.then(async () => {
+      if (signal.aborted) throw abortReason(signal);
+      const operation = await this.options.openOperation(signal);
 
-    return await runWithResourceCleanup(
-      () => this.assembleRecovery(input.correlationId, signal, operation.dependencies),
-      () => operation.close(),
-      "Dashboard recovery operation and cleanup failed.",
+      return await runWithResourceCleanup(
+        () =>
+          this.assembleProjection(input.correlationId, signal, operation.dependencies, input.scope),
+        () => operation.close(),
+        "Dashboard projection operation and cleanup failed.",
+      );
+    });
+    this.buildTail = queuedBuild.then(
+      () => undefined,
+      () => undefined,
     );
+    return settleWithAbort(queuedBuild, signal);
   }
 
-  private async assembleRecovery(
+  /** Current recovery adapter; Task 38 live publication calls `build` directly. */
+  getRecovery(input: {
+    correlationId: string;
+    signal?: AbortSignal;
+  }): Promise<DashboardProjection> {
+    return this.build(input);
+  }
+
+  private async assembleProjection(
     correlationId: string,
     signal: AbortSignal,
     dependencies: DashboardRecoveryDependencies,
-  ): Promise<DashboardRecoveryResponse> {
+    requestedScope?: DashboardProjectionScope,
+  ): Promise<DashboardProjection> {
     const now = this.options.now?.() ?? new Date();
-    const contextResult = await readSafely("dashboard_run_context", signal, () =>
-      dependencies.contextReader.readContext(),
+    const context = await settleWithAbort(
+      dependencies.contextReader.readContext(requestedScope),
+      signal,
     );
-    const context = contextResult.ok
-      ? contextResult.value
-      : { currentRun: null, saleOfferId: null };
-    const scope = context.currentRun
-      ? Object.freeze({
-          runId: context.currentRun.runId,
-          saleOfferId: context.saleOfferId,
-        })
-      : null;
+    if ((context.currentRun === null) !== (context.saleOfferId === null)) {
+      throw new Error("Dashboard projection context must select a run and sale offer together.");
+    }
+    if (
+      context.currentRun &&
+      context.saleOfferId &&
+      context.currentRun.saleOfferId !== context.saleOfferId
+    ) {
+      throw new Error("Dashboard projection context run and sale offer must agree.");
+    }
+    if (requestedScope && (!context.currentRun || !context.saleOfferId)) {
+      throw new Error(
+        `Dashboard projection scope ${dashboardProjectionScopeId(requestedScope)} was not found.`,
+      );
+    }
+    const scope =
+      context.currentRun && context.saleOfferId
+        ? Object.freeze({
+            runId: context.currentRun.runId,
+            saleOfferId: context.saleOfferId,
+          })
+        : null;
     const saleScope = scope?.saleOfferId
       ? Object.freeze({ runId: scope.runId, saleOfferId: scope.saleOfferId })
       : null;
@@ -231,7 +296,6 @@ export class DashboardRecoveryService {
     ]);
 
     for (const result of [
-      contextResult,
       inventoryResult,
       queueResult,
       erpResult,
@@ -249,8 +313,13 @@ export class DashboardRecoveryService {
       }
     }
 
-    return dashboardRecoveryResponseSchema.parse({
+    const revision = await settleWithAbort(dependencies.revisionAllocator.allocate(scope), signal);
+    return dashboardProjectionSchema.parse({
+      schema: dashboardProjectionSchemaName,
+      version: dashboardProjectionSchemaVersion,
       correlationId,
+      scopeId: dashboardProjectionScopeId(scope),
+      revision,
       scope,
       currentRun: context.currentRun,
       inventory: inventoryResult.ok ? inventoryResult.value : null,
@@ -278,6 +347,7 @@ export interface DashboardRecoveryDependencies {
   erpStatusService: Pick<ErpStatusService, "getStatus">;
   trafficMetricReader: DashboardTrafficMetricReader;
   transportAttemptCountsReader: DashboardTransportAttemptCountsReader;
+  revisionAllocator: DashboardProjectionRevisionAllocator;
 }
 
 export interface DashboardRecoveryOperation {

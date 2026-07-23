@@ -11,6 +11,7 @@ import {
   prepareExactRunCleanup,
   requireReadiness,
   runtimeLoadSmokeScenarios,
+  selectRepresentativeDashboardProjection,
   selectTerminalSummary,
   startRawDashboardEventCounter,
   teardownWithRetry,
@@ -57,6 +58,52 @@ test("retains steady smoke and adds a bounded accepted buyer burst", () => {
         scenarios[1],
       ),
     /accepted 31 reservations; expected 32/,
+  );
+});
+
+test("selects the largest bounded projection sample and reports its occupancy", () => {
+  const smaller = {
+    currentRun: { status: "active" },
+    recentMetrics: [],
+    recentCompletionOutcomes: [],
+    queue: null,
+    transportAttemptCounts: null,
+  };
+  const larger = {
+    currentRun: { status: "draining" },
+    recentMetrics: [{ metricName: "traffic.latency", value: 12, unit: "ms" }],
+    recentCompletionOutcomes: [{ orderId: "order-1" }, { orderId: "order-2" }],
+    queue: {
+      failedJobs: {
+        totalCount: 3,
+        recent: [{ jobId: "job-1" }, { jobId: "job-2" }],
+      },
+    },
+    transportAttemptCounts: {
+      plannedRequests: 1_000,
+      startedRequests: 1_000,
+      completedRequests: 900,
+      interruptedRequests: 100,
+      unstartedRequests: 0,
+    },
+  };
+
+  assert.deepEqual(selectRepresentativeDashboardProjection([smaller, larger]), {
+    sampleCount: 2,
+    serializedBytes: Buffer.byteLength(JSON.stringify(larger), "utf8"),
+    selectedOccupancy: {
+      lifecycle: "draining",
+      recentMetricCount: 1,
+      recentCompletionOutcomeCount: 2,
+      queuePresent: true,
+      queueRecentFailedJobCount: 2,
+      queueFailedJobCount: 3,
+      transportAttemptCounts: larger.transportAttemptCounts,
+    },
+  });
+  assert.throws(
+    () => selectRepresentativeDashboardProjection([]),
+    /could not sample the measured active or draining scope/,
   );
 });
 

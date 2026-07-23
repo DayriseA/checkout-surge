@@ -1,14 +1,18 @@
+import {
+  dashboardProjectionSchemaName,
+  dashboardProjectionSchemaVersion,
+} from "@checkout-surge/contracts";
 import { createSilentLogger } from "@checkout-surge/logger";
 import { describe, expect, it, vi } from "vitest";
 import { OperationDeadlineExceededError } from "../src/runtime/operation-lifecycle.js";
 import { DashboardRecoveryAdmissionService } from "../src/services/dashboard-recovery-admission.js";
-import type { DashboardRecoveryService } from "../src/services/dashboard-recovery-service.js";
+import type { DashboardProjectionService } from "../src/services/dashboard-recovery-service.js";
 import { DashboardRecoveryWorkflow } from "../src/services/dashboard-recovery-workflow.js";
 
 describe("dashboard recovery workflow cancellation", () => {
   it("returns a deadline that expires before local admission without consuming its budget", async () => {
     const admission = createAdmission();
-    const recovery = { getRecovery: vi.fn() } as unknown as DashboardRecoveryService;
+    const recovery = { getRecovery: vi.fn() } as unknown as DashboardProjectionService;
     const workflow = new DashboardRecoveryWorkflow({ admission, recovery });
     const controller = new AbortController();
     controller.abort(new OperationDeadlineExceededError(50));
@@ -25,14 +29,14 @@ describe("dashboard recovery workflow cancellation", () => {
     const pending = new Promise<never>(() => undefined);
     const healthyResponse = recoveryFixture();
     const getRecovery = vi
-      .fn<DashboardRecoveryService["getRecovery"]>()
+      .fn<DashboardProjectionService["getRecovery"]>()
       .mockImplementationOnce(async () => pending)
       .mockImplementationOnce(async () => pending)
       .mockImplementationOnce(async () => pending)
       .mockResolvedValueOnce(healthyResponse);
     const workflow = new DashboardRecoveryWorkflow({
       admission,
-      recovery: { getRecovery } as unknown as DashboardRecoveryService,
+      recovery: { getRecovery } as unknown as DashboardProjectionService,
     });
     const controllers = Array.from({ length: 3 }, () => new AbortController());
     const abandoned = controllers.map((controller, index) =>
@@ -63,7 +67,7 @@ describe("dashboard recovery workflow cancellation", () => {
       admission,
       recovery: {
         getRecovery: async () => await new Promise<never>(() => undefined),
-      } as unknown as DashboardRecoveryService,
+      } as unknown as DashboardProjectionService,
     });
     const controller = new AbortController();
     const result = workflow.recover(input(controller.signal));
@@ -87,7 +91,7 @@ describe("dashboard recovery workflow cancellation", () => {
       admission,
       recovery: {
         getRecovery: async () => recoveryPromise,
-      } as unknown as DashboardRecoveryService,
+      } as unknown as DashboardProjectionService,
     });
     const controller = new AbortController();
     const result = workflow.recover(input(controller.signal));
@@ -116,7 +120,11 @@ function input(signal: AbortSignal, sourceKey = "source") {
 
 function recoveryFixture() {
   return {
+    schema: dashboardProjectionSchemaName,
+    version: dashboardProjectionSchemaVersion,
     correlationId: "workflow-correlation",
+    scopeId: "idle",
+    revision: 1,
     scope: null,
     recoveredAt: "2026-07-18T00:00:00.000Z",
     currentRun: null,

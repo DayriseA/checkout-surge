@@ -18,6 +18,7 @@ import {
   PostgresDashboardConsistencyLagReader,
   PostgresDashboardRecoveryContextReader,
   PostgresDashboardTransportAttemptCountsReader,
+  RedisDashboardProjectionRevisionAllocator,
 } from "../services/dashboard-recovery-service.js";
 import { RedisDashboardTrafficMetricStore } from "../services/dashboard-traffic-metric-store.js";
 import {
@@ -134,6 +135,7 @@ export function createDashboardRecoveryOperationFactory(
         transportAttemptCountsReader: new PostgresDashboardTransportAttemptCountsReader(
           operationDatabase.db,
         ),
+        revisionAllocator: new RedisDashboardProjectionRevisionAllocator(operationRedis),
       },
       close: createOperationResourceCleanup({
         signal,

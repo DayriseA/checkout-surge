@@ -3,6 +3,9 @@ import {
   type AdminPublicRuntimePolicyResponse,
   type DashboardRecoveryResponse,
   type DemoPresetContract,
+  dashboardProjectionSchemaName,
+  dashboardProjectionSchemaVersion,
+  dashboardProjectionScopeId,
   demoRunSnapshotSchema,
   type ErpChaosStatus,
   type PublicPresetListResponse,
@@ -255,11 +258,14 @@ function adminRuntimePolicyFixture(): AdminPublicRuntimePolicyResponse {
 function recoveryFixture(
   currentRun: DashboardRecoveryResponse["currentRun"],
 ): DashboardRecoveryResponse {
+  const scope = recoveryScope(currentRun);
   return {
+    schema: dashboardProjectionSchemaName,
+    version: dashboardProjectionSchemaVersion,
+    scopeId: dashboardProjectionScopeId(scope),
+    revision: 1,
     correlationId: "corr-web-recovery",
-    scope: currentRun
-      ? { runId: currentRun.runId, saleOfferId: currentRun.saleOfferId ?? null }
-      : null,
+    scope,
     currentRun,
     inventory: null,
     recentMetrics: [],
@@ -271,6 +277,14 @@ function recoveryFixture(
     recentCompletionOutcomes: [],
     recoveredAt: "2026-06-20T00:00:10.000Z",
   };
+}
+
+function recoveryScope(currentRun: DashboardRecoveryResponse["currentRun"]) {
+  if (!currentRun) return null;
+  if (!currentRun.saleOfferId) {
+    throw new Error(`Run ${currentRun.runId} fixture requires a sale offer.`);
+  }
+  return { runId: currentRun.runId, saleOfferId: currentRun.saleOfferId };
 }
 
 function runFixture(status: "active" | "draining"): DashboardRecoveryResponse["currentRun"] {

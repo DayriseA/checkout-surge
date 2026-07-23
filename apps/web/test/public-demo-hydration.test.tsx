@@ -1,6 +1,10 @@
 // @vitest-environment jsdom
 
-import type { DashboardRecoveryResponse } from "@checkout-surge/contracts";
+import {
+  type DashboardRecoveryResponse,
+  dashboardProjectionSchemaName,
+  dashboardProjectionSchemaVersion,
+} from "@checkout-surge/contracts";
 import { act } from "@testing-library/react";
 import { createElement } from "react";
 import { hydrateRoot } from "react-dom/client";
@@ -60,6 +64,10 @@ describe("PublicDemoEntry hydration", () => {
 
 function publicSurfaceFixture(): PublicDemoSurface {
   const recovery: DashboardRecoveryResponse = {
+    schema: dashboardProjectionSchemaName,
+    version: dashboardProjectionSchemaVersion,
+    scopeId: "idle",
+    revision: 1,
     correlationId: "corr-web-recovery",
     scope: null,
     currentRun: null,

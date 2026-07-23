@@ -754,13 +754,24 @@ function recoveryForIncomingRun(
   recovery: Extract<BackendRead<DashboardRecoveryResponse>, { status: "available" }>,
   event: RunDashboardEvent,
 ): BackendRead<DashboardRecoveryResponse> {
+  const saleOfferId = event.run.saleOfferId;
+  if (!saleOfferId) {
+    return recovery;
+  }
+
+  // Projection metadata stays server-issued and inert in this legacy mixed reducer.
+  // Task 39 deletes this advisory mutation path when atomic projection replacement lands.
   return {
     ...recovery,
     data: {
+      schema: recovery.data.schema,
+      version: recovery.data.version,
+      scopeId: recovery.data.scopeId,
+      revision: recovery.data.revision,
       correlationId: recovery.data.correlationId,
       scope: {
         runId: event.run.runId,
-        saleOfferId: event.run.saleOfferId ?? null,
+        saleOfferId,
       },
       currentRun: event.run,
       inventory: null,

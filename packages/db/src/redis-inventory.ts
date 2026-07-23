@@ -45,6 +45,38 @@ export function runSaleEligibilityKey(runId: string): string {
   return `demo-run:${runId}:sale-eligibility`;
 }
 
+export function dashboardProjectionRevisionKey(runId: string): string {
+  return `demo-run:${uuidSchema.parse(runId)}:dashboard-projection-revision`;
+}
+
+export async function incrementIdleDashboardProjectionRevision(
+  redis: CheckoutSurgeRedis,
+): Promise<number> {
+  return positiveIntegerSchema
+    .max(Number.MAX_SAFE_INTEGER)
+    .parse(await redis.incr("dashboard-projection:idle:revision"));
+}
+
+export async function incrementDashboardProjectionRevision(
+  redis: CheckoutSurgeRedis,
+  input: { runId: string; saleOfferId: string },
+): Promise<number> {
+  const runId = uuidSchema.parse(input.runId);
+  const saleOfferId = uuidSchema.parse(input.saleOfferId);
+  const result = await redis.eval(
+    incrementDashboardProjectionRevisionScript,
+    2,
+    inventoryKeys(saleOfferId).state,
+    dashboardProjectionRevisionKey(runId),
+    runId,
+    saleOfferId,
+  );
+  if (result === "scope_retired") {
+    throw new Error(`Dashboard projection scope for run ${runId} is retired.`);
+  }
+  return positiveIntegerSchema.max(Number.MAX_SAFE_INTEGER).parse(result);
+}
+
 /** Removes all persistent Redis state owned by one generated run. */
 export async function deleteGeneratedRunRedisState(
   redis: CheckoutSurgeRedis,
@@ -53,7 +85,17 @@ export async function deleteGeneratedRunRedisState(
   const runId = uuidSchema.parse(input.runId);
   const saleOfferId = uuidSchema.parse(input.saleOfferId);
 
-  let deletedKeyCount = await deleteInventoryNamespace(redis, inventoryKeys(saleOfferId).prefix);
+  let deletedKeyCount = Number(
+    await redis.eval(
+      retireDashboardProjectionScopeScript,
+      2,
+      inventoryKeys(saleOfferId).state,
+      dashboardProjectionRevisionKey(runId),
+      runId,
+      saleOfferId,
+    ),
+  );
+  deletedKeyCount += await deleteInventoryNamespace(redis, inventoryKeys(saleOfferId).prefix);
   deletedKeyCount += await redis.unlink(
     runSaleEligibilityKey(runId),
     `demo-run:${runId}:traffic-metrics`,
@@ -323,6 +365,43 @@ elseif redis.call("EXISTS", KEYS[2]) == 1 then
   redis.call("SET", KEYS[2], ARGV[4], "KEEPTTL")
 end
 return "updated"
+`;
+
+const incrementDashboardProjectionRevisionScript = `
+local stateType = redis.call("TYPE", KEYS[1]).ok
+if stateType == "none" then
+  return "scope_retired"
+end
+if stateType ~= "hash" then
+  return redis.error_reply("Inventory state key must be a hash")
+end
+if redis.call("HGET", KEYS[1], "inventoryScope") ~= "generated_run" then
+  return redis.error_reply("Dashboard projection revision requires generated-run inventory")
+end
+if redis.call("HGET", KEYS[1], "runId") ~= ARGV[1] then
+  return redis.error_reply("Inventory run ID must match dashboard projection scope")
+end
+if redis.call("HGET", KEYS[1], "saleOfferId") ~= ARGV[2] then
+  return redis.error_reply("Inventory sale offer ID must match dashboard projection scope")
+end
+return redis.call("INCR", KEYS[2])
+`;
+
+const retireDashboardProjectionScopeScript = `
+local stateType = redis.call("TYPE", KEYS[1]).ok
+if stateType == "none" then
+  return redis.call("DEL", KEYS[2])
+end
+if stateType ~= "hash" then
+  return redis.error_reply("Inventory state key must be a hash")
+end
+if redis.call("HGET", KEYS[1], "runId") ~= ARGV[1] then
+  return redis.error_reply("Inventory run ID must match retired dashboard projection scope")
+end
+if redis.call("HGET", KEYS[1], "saleOfferId") ~= ARGV[2] then
+  return redis.error_reply("Inventory sale offer ID must match retired dashboard projection scope")
+end
+return redis.call("DEL", KEYS[1], KEYS[2])
 `;
 
 function buildThroughputFields(): string[] {

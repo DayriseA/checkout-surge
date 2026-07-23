@@ -1,4 +1,9 @@
-import { dashboardRecoveryResponseSchema, errorPayloadSchema } from "@checkout-surge/contracts";
+import {
+  dashboardProjectionSchemaName,
+  dashboardProjectionSchemaVersion,
+  dashboardRecoveryResponseSchema,
+  errorPayloadSchema,
+} from "@checkout-surge/contracts";
 import { correlationIdHeaderName, createSilentLogger } from "@checkout-surge/logger";
 import { installFastifyCorrelation } from "@checkout-surge/logger/fastify";
 import { fastify } from "fastify";
@@ -7,7 +12,7 @@ import type { DashboardSseAdmission } from "../src/realtime/dashboard-event-fano
 import { registerDashboardRoutes } from "../src/routes/dashboard-routes.js";
 import type { ApiFastifyInstance } from "../src/runtime/fastify.js";
 import type { DashboardRecoveryAdmissionController } from "../src/services/dashboard-recovery-admission.js";
-import type { DashboardRecoveryService } from "../src/services/dashboard-recovery-service.js";
+import type { DashboardProjectionService } from "../src/services/dashboard-recovery-service.js";
 import type { DashboardRecoveryWorkflowResult } from "../src/services/dashboard-recovery-workflow.js";
 import { DashboardRecoveryWorkflow } from "../src/services/dashboard-recovery-workflow.js";
 
@@ -114,7 +119,7 @@ describe("dashboard route admission", () => {
 function buildServer(options: {
   sseOutcome?: DashboardSseAdmission;
   recoveryOutcome?: "rate_limited" | "at_capacity";
-  getRecovery?: DashboardRecoveryService["getRecovery"];
+  getRecovery?: DashboardProjectionService["getRecovery"];
   release?: () => void;
   workflowOutcome?: DashboardRecoveryWorkflowResult;
 }) {
@@ -145,7 +150,7 @@ function buildServer(options: {
       : new DashboardRecoveryWorkflow({
           recovery: {
             getRecovery: options.getRecovery ?? vi.fn().mockResolvedValue(recoveryFixture()),
-          } as unknown as DashboardRecoveryService,
+          } as unknown as DashboardProjectionService,
           admission,
         }),
     sourceResolver: {
@@ -161,7 +166,11 @@ function buildServer(options: {
 
 function recoveryFixture() {
   return {
+    schema: dashboardProjectionSchemaName,
+    version: dashboardProjectionSchemaVersion,
     correlationId: "route-correlation",
+    scopeId: "idle",
+    revision: 1,
     scope: null,
     recoveredAt: "2026-07-13T00:00:00.000Z",
     currentRun: null,

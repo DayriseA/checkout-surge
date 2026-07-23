@@ -44,7 +44,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { OperationDeadlineExceededError } from "../src/runtime/operation-lifecycle.js";
 import { AdminDemoResetService } from "../src/services/admin-demo-reset-service.js";
 import {
-  DashboardRecoveryService,
+  DashboardProjectionService,
   PostgresDashboardRecoveryContextReader,
 } from "../src/services/dashboard-recovery-service.js";
 import { ProcessLocalDemoMaintenanceAuthority } from "../src/services/demo-maintenance-authority.js";
@@ -997,7 +997,7 @@ describe("demo run finalization service", () => {
         await waitForWaitingAdvisoryLock(observerConnection.sql);
 
         // t1: recovery reads the still-draining projection before the commit.
-        const recoveryService = new DashboardRecoveryService({
+        const recoveryService = new DashboardProjectionService({
           openOperation: async () => ({
             dependencies: {
               contextReader: new PostgresDashboardRecoveryContextReader(recoveryConnection.db),
@@ -1019,6 +1019,7 @@ describe("demo run finalization service", () => {
               },
               trafficMetricReader: { readRecent: async () => [] },
               transportAttemptCountsReader: { read: async () => null },
+              revisionAllocator: { allocate: async () => 1 },
             },
             close: async () => undefined,
           }),

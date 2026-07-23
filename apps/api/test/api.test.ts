@@ -106,8 +106,8 @@ import { buildApiServer } from "../src/server.js";
 import type { AdminDemoResetWorkflow } from "../src/services/admin-demo-reset-service.js";
 import type { DashboardRecoveryAdmissionController } from "../src/services/dashboard-recovery-admission.js";
 import {
+  DashboardProjectionService,
   type DashboardRecoveryContextReader,
-  DashboardRecoveryService,
 } from "../src/services/dashboard-recovery-service.js";
 import type { RedisDashboardTrafficMetricStore } from "../src/services/dashboard-traffic-metric-store.js";
 import type { DemoPresetController } from "../src/services/demo-preset-service.js";
@@ -255,7 +255,7 @@ async function buildTestServer(options: {
   orderStatusService?: OrderStatusController;
   queueInspector?: OrderProcessQueueInspector;
   erpStatusService?: ErpStatusService;
-  dashboardRecoveryService?: DashboardRecoveryService;
+  dashboardRecoveryService?: DashboardProjectionService;
   dashboardRecoveryAdmission?: DashboardRecoveryAdmissionController;
   dashboardEventFanout?: DashboardEventFanout;
   presetService?: DemoPresetController;
@@ -326,7 +326,7 @@ async function buildTestServer(options: {
     dashboardEventFanout: options.dashboardEventFanout ?? new DashboardEventFanout({ logger }),
     dashboardRecoveryService:
       options.dashboardRecoveryService ??
-      new DashboardRecoveryService({
+      new DashboardProjectionService({
         openOperation: async () => ({
           dependencies: {
             contextReader: staticRecoveryContextReader(fixtureIds.saleOffer),
@@ -338,6 +338,7 @@ async function buildTestServer(options: {
             erpStatusService,
             trafficMetricReader: { readRecent: async () => [] },
             transportAttemptCountsReader: { read: async () => null },
+            revisionAllocator: { allocate: async () => 1 },
           },
           close: async () => undefined,
         }),
