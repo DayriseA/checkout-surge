@@ -1,7 +1,7 @@
 import {
+  dashboardProjectionSchema,
   dashboardProjectionSchemaName,
   dashboardProjectionSchemaVersion,
-  dashboardRecoveryResponseSchema,
   errorPayloadSchema,
 } from "@checkout-surge/contracts";
 import { correlationIdHeaderName, createSilentLogger } from "@checkout-surge/logger";
@@ -9,7 +9,7 @@ import { installFastifyCorrelation } from "@checkout-surge/logger/fastify";
 import { fastify } from "fastify";
 import { describe, expect, it, vi } from "vitest";
 import { ZodError } from "zod";
-import type { DashboardSseAdmission } from "../src/realtime/dashboard-event-fanout.js";
+import type { DashboardSseAdmission } from "../src/realtime/dashboard-projection-fanout.js";
 import { registerDashboardRoutes } from "../src/routes/dashboard-routes.js";
 import type { ApiFastifyInstance } from "../src/runtime/fastify.js";
 import type { DashboardRecoveryAdmissionController } from "../src/services/dashboard-recovery-admission.js";
@@ -77,9 +77,7 @@ describe("dashboard route admission", () => {
       headers: correlationHeader,
     });
     expect(success.statusCode).toBe(200);
-    expect(dashboardRecoveryResponseSchema.parse(success.json()).correlationId).toBe(
-      "route-correlation",
-    );
+    expect(dashboardProjectionSchema.parse(success.json()).correlationId).toBe("route-correlation");
     expect(success.headers[correlationIdHeaderName]).toBe("route-correlation");
     expect(getRecovery).toHaveBeenCalledWith({
       correlationId: "route-correlation",
@@ -179,7 +177,7 @@ function buildServer(options: {
         : { outcome: "admitted", release: options.release ?? (() => undefined) },
   };
   registerDashboardRoutes(app, {
-    dashboardEventFanout: {
+    dashboardProjectionFanout: {
       connect: () => options.sseOutcome ?? "connected",
     },
     dashboardRecoveryWorkflow: options.workflowOutcome

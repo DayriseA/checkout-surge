@@ -86,9 +86,9 @@ Avoid:
 
 Checkout-Surge uses one complete revisioned browser projection.
 
-- API and worker code currently publish validated dashboard dirty signals to Redis Pub/Sub; Task 40 removes obsolete per-order variants and legacy fan-out.
+- API and worker code publish validated dashboard projection-dirty signals to Redis Pub/Sub.
 - The API gateway owns the browser-facing SSE stream at `/dashboard/events` and assembles complete `checkout-surge.dashboard-projection` version 1 frames.
-- Dashboard clients receive complete projections over same-origin `EventSource` and ignore transitional legacy event frames.
+- Dashboard clients receive complete projections over same-origin `EventSource`; no delta or per-order event schema is part of the browser protocol.
 - Dashboard observability remains public for the demo; admin access gates only privileged controls.
 - Live projections are ephemeral operator feedback, not the durable system of record.
 - `/dashboard/recovery` is the authoritative reconnect and refresh path. It returns the same complete projection schema; it is not an event replay feed.
@@ -99,13 +99,13 @@ The browser compares revisions only inside one scope. A higher same-scope revisi
 
 Unavailable reads retain the existing bounded exponential retry policy. Initial loading and public/admin start gating fail closed. Watch keeps its last successful complete projection after a failed read and labels it last-known-good. An accepted live or HTTP projection clears that warning and cancels a scheduled retry. There is no active-run polling loop; immediate lifecycle/terminal publication and connection-triggered current reads provide convergence.
 
-Inventory and queue realtime signals are literal-specific `dashboard.metric.observed` points: nonnegative integer `inventory.remaining` in `items`, cumulative nonnegative integer `inventory.sold_out_rejection` in `rejections`, and nonnegative integer `queue.depth` in `jobs`. Sale-offer or queue dimensions are required by contract. Their observation times come from the coherent source reads. They update only the represented scalar; `/dashboard/recovery` remains authoritative for complete inventory and queue projections. Fresh holds publish best-effort; replays do not. Sold-out scopes coalesce for 500 ms, while queue inspection repeats every two seconds until drain.
+Inventory and queue mutations publish only the internal projection-dirty signal. Fresh holds dirty best-effort; replays do not. Sold-out scopes coalesce for 500 ms, while queue inspection repeats every two seconds until drain. The projection service reads the complete inventory and queue values for both SSE and `/dashboard/recovery`.
 
-`business.outcome.snapshot` remains a cumulative full replacement and is deliberately retained as a Surge projection extension, not a domain event or delta. API and worker mutation handlers mark it dirty only after fresh durable changes; the single API process and single worker runtime each own one scheduler that coalesces each `(runId, saleOfferId)` for 500 ms and retains dirty-during-read work. Consumers replace by event time, never increment, and recovery/finalization remain authoritative. Duplicate-tolerant mechanics are retained implementation detail pending later simplification, not a supported replica contract.
+API and worker business mutation handlers mark the dashboard dirty only after fresh durable changes. The single API process and single worker runtime each own one scheduler that coalesces each `(runId, saleOfferId)` for 500 ms. The projection service reads aggregate business outcomes and consistency lag into the next complete replacement; no aggregate delta contract exists.
 
 The cutover is canonical-only: publishers and consumers deploy together, existing browser tabs must reload, and active k6 processes must be restarted. Legacy wire shapes and singular k6 counters are not normalized, avoiding duplicate aggregate/delta application and counter double counting.
 
-Worker per-order realtime remains transitional Task 40 residue. It uses the durable `order_events.id` as the status event ID and the committed transition timestamp as `occurredAt`; a confirmation produces one atomic queue group containing the confirmed status and a distinct deterministic lag-event ID. The process-local queue and publication counters remain implemented and tested until they are deleted with the contract/fan-out path. The browser does not parse or apply these frames. Retained completion and aggregate consistency-lag views come from the complete projection, while focused order investigation remains the durable status read or Run History.
+The worker does not publish individual order status or consistency-lag messages. Retained completion and aggregate consistency-lag views come from the complete projection, while focused order investigation uses the durable status read or protected Run History.
 
 ---
 
@@ -186,7 +186,6 @@ The reserved canonical metric names are:
 - `queue.depth`
 - `inventory.remaining`
 - `inventory.sold_out_rejection`
-- `order.consistency_lag`
 
 Dashboard traffic metrics also use:
 

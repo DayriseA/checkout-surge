@@ -28,16 +28,11 @@ import {
   collectPublicRuntimePolicyViolations,
   completionOutcomeSchema,
   controlServiceTokenHeaderName,
-  dashboardEventSchema,
-  dashboardEventsPath,
-  dashboardEventsRedisChannel,
   dashboardProjectionSchema,
   dashboardProjectionSchemaName,
   dashboardProjectionSchemaVersion,
   dashboardProjectionScopeId,
-  dashboardRecoveryPath,
   dashboardRecoveryQuerySchema,
-  dashboardRecoveryResponseSchema,
   demoRunOperatorModeHeaderName,
   demoRunSnapshotSchema,
   demoRunStatusValues,
@@ -66,7 +61,6 @@ import {
   loadRunIdHeaderName,
   maximumAutomaticallyDerivedVUs,
   metricNameValues,
-  orderEventNameValues,
   orderProcessBullMqQueueName,
   orderProcessJobSchema,
   orderProcessQueueName,
@@ -1606,273 +1600,7 @@ describe("buy and dashboard contracts", () => {
     ).toBe("run_not_accepting_traffic");
   });
 
-  it("validates transport-neutral dashboard events", () => {
-    expect(dashboardEventsPath).toBe("/dashboard/events");
-    expect(dashboardRecoveryPath).toBe("/dashboard/recovery");
-    expect(dashboardEventsRedisChannel).toBe("dashboard-events");
-
-    const metrics = [
-      {
-        metricName: "traffic.scheduled_request_rate",
-        value: 42,
-        unit: "requests_per_second",
-        runId,
-      },
-      { metricName: "traffic.latency", value: 42, unit: "ms", runId },
-      { metricName: "traffic.failure_rate", value: 0.2, unit: "ratio", runId },
-      { metricName: "queue.depth", value: 4, unit: "jobs", queueName: "orders:process" },
-      { metricName: "inventory.remaining", value: 4, unit: "items", saleOfferId },
-      {
-        metricName: "inventory.sold_out_rejection",
-        value: 9,
-        unit: "rejections",
-        aggregation: "cumulative",
-        saleOfferId,
-      },
-    ];
-    for (const metric of metrics) {
-      expect(
-        dashboardEventSchema.parse({
-          type: "dashboard.metric.observed",
-          correlationId,
-          occurredAt: timestamp,
-          observedAt: timestamp,
-          ...metric,
-        }).type,
-      ).toBe("dashboard.metric.observed");
-    }
-
-    const run = {
-      runId,
-      presetId: "22222222-2222-4222-8222-222222222222",
-      presetName: "Preview 1k",
-      operatorMode: "public" as const,
-      status: "active" as const,
-      trafficStatus: "active" as const,
-      saleOfferId,
-      configSnapshot: acceptedRunSnapshot(),
-      startedAt: timestamp,
-      trafficStartedAt: timestamp,
-    };
-    expect(
-      dashboardEventSchema.parse({
-        type: "load.run.updated",
-        runId,
-        correlationId,
-        occurredAt: timestamp,
-        run,
-      }).type,
-    ).toBe("load.run.updated");
-
-    expect(
-      dashboardEventSchema.safeParse({
-        type: "dashboard.metric.observed",
-        metricName: "traffic.failure_rate",
-        value: 2,
-        unit: "ratio",
-        runId,
-        occurredAt: timestamp,
-        observedAt: timestamp,
-      }).success,
-    ).toBe(false);
-    const invalidMetricPayloads = [
-      {
-        metricName: "traffic.scheduled_request_rate",
-        value: -1,
-        unit: "requests_per_second",
-        runId,
-      },
-      { metricName: "traffic.latency", value: -1, unit: "ms", runId },
-      { metricName: "traffic.failure_rate", value: 0.2, unit: "percent", runId },
-      { metricName: "queue.depth", value: 1.5, unit: "jobs", queueName: "orders:process" },
-      { metricName: "queue.depth", value: 1, unit: "jobs" },
-      { metricName: "inventory.remaining", value: -1, unit: "items", saleOfferId },
-      { metricName: "inventory.remaining", value: 1, unit: "items" },
-      {
-        metricName: "inventory.sold_out_rejection",
-        value: 1,
-        unit: "rejections",
-        aggregation: "delta",
-        saleOfferId,
-      },
-    ];
-    for (const metric of invalidMetricPayloads) {
-      expect(
-        dashboardEventSchema.safeParse({
-          type: "dashboard.metric.observed",
-          occurredAt: timestamp,
-          observedAt: timestamp,
-          ...metric,
-        }).success,
-      ).toBe(false);
-    }
-    expect(
-      dashboardEventSchema.safeParse({
-        type: "dashboard.metric.observed",
-        metricName: "traffic.latency",
-        value: 42,
-        unit: "seconds",
-        runId,
-        occurredAt: timestamp,
-        observedAt: timestamp,
-      }).success,
-    ).toBe(false);
-
-    for (const eventName of orderEventNameValues) {
-      expect(
-        dashboardEventSchema.parse({
-          type: "business.event.recorded",
-          eventId: "77777777-7777-4777-8777-777777777777",
-          eventName,
-          correlationId,
-          occurredAt: timestamp,
-        }).type,
-      ).toBe("business.event.recorded");
-    }
-    expect(
-      dashboardEventSchema.safeParse({
-        type: "business.event.recorded",
-        eventId: "77777777-7777-4777-8777-777777777777",
-        eventName: "unknown.event",
-        correlationId,
-        occurredAt: timestamp,
-      }).success,
-    ).toBe(false);
-    expect(
-      dashboardEventSchema.safeParse({ type: "unknown.category", occurredAt: timestamp }).success,
-    ).toBe(false);
-
-    expect(
-      dashboardEventSchema.parse({
-        type: "business.outcome.snapshot",
-        runId,
-        saleOfferId,
-        correlationId,
-        occurredAt: timestamp,
-        outcome: {
-          acceptedReservations: 10,
-          soldOutRejections: 20,
-          queuedOrders: 4,
-          processingOrders: 3,
-          retryingOrders: 2,
-          confirmedOrders: 2,
-          failedOrders: 1,
-          pendingPersistenceCount: 0,
-          notificationsRecorded: 0,
-        },
-        consistencyLag: {
-          confirmedOrderCount: 2,
-          pendingConfirmationCount: 3,
-          averageLagMs: 225,
-          p95LagMs: 350,
-          maxLagMs: 375,
-          oldestPendingAgeSeconds: 12.5,
-          measuredAt: timestamp,
-        },
-      }).type,
-    ).toBe("business.outcome.snapshot");
-  });
-
-  it("strictly validates linked per-order transition and consistency-lag events", () => {
-    const statusBase = {
-      type: "order.status.updated",
-      eventId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-      runId,
-      correlationId,
-      occurredAt: timestamp,
-      orderId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-      publicOrderId: "ord-live",
-      saleOfferId,
-      attemptNumber: 2,
-      attemptsMade: 1,
-    } as const;
-    const statuses = [
-      {
-        ...statusBase,
-        eventName: "order.processing",
-        previousStatus: "queued",
-        status: "processing",
-      },
-      {
-        ...statusBase,
-        eventName: "order.confirmed",
-        previousStatus: "processing",
-        status: "confirmed",
-      },
-      {
-        ...statusBase,
-        eventName: "order.failed",
-        previousStatus: "processing",
-        status: "failed",
-      },
-    ] as const;
-    for (const status of statuses)
-      expect(dashboardEventSchema.parse(status).type).toBe("order.status.updated");
-    const confirmedStatus = statuses[1];
-    const lag = {
-      type: "dashboard.metric.observed",
-      eventId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
-      confirmedTransitionEventId: confirmedStatus.eventId,
-      runId,
-      correlationId,
-      occurredAt: timestamp,
-      metricName: "order.consistency_lag",
-      value: 125,
-      unit: "ms",
-      observedAt: timestamp,
-      orderId: confirmedStatus.orderId,
-      publicOrderId: confirmedStatus.publicOrderId,
-      saleOfferId,
-      startedAt: "2026-06-20T11:59:59.875Z",
-      confirmedAt: timestamp,
-    } as const;
-
-    expect(dashboardEventSchema.parse(lag).type).toBe("dashboard.metric.observed");
-    const zeroLag = dashboardEventSchema.parse({
-      ...lag,
-      startedAt: "2026-06-20T12:00:00.001Z",
-      value: 0,
-    });
-    if (zeroLag.type !== "dashboard.metric.observed") throw new Error("Expected metric event.");
-    expect(zeroLag.value).toBe(0);
-    const maximumLag = dashboardEventSchema.parse({
-      ...lag,
-      occurredAt: "2026-07-01T00:00:00.000Z",
-      observedAt: "2026-07-01T00:00:00.000Z",
-      confirmedAt: "2026-07-01T00:00:00.000Z",
-      startedAt: "2026-06-01T00:00:00.000Z",
-      value: 2_592_000_000,
-    });
-    if (maximumLag.type !== "dashboard.metric.observed") throw new Error("Expected metric event.");
-    expect(maximumLag.value).toBe(2_592_000_000);
-
-    const invalidEvents = [
-      omit(statuses[0], "orderId"),
-      omit(statuses[0], "publicOrderId"),
-      omit(statuses[0], "saleOfferId"),
-      omit(statuses[0], "correlationId"),
-      { ...statuses[0], eventName: "erp.attempt.failed" },
-      { ...statuses[0], eventName: "order.failed" },
-      { ...statuses[0], status: "queued" },
-      { ...statuses[0], occurredAt: "not-a-timestamp" },
-      { ...statuses[0], extra: true },
-      { ...lag, metricName: "traffic.latency" },
-      { ...lag, unit: "seconds" },
-      { ...lag, value: -1 },
-      { ...lag, value: Number.POSITIVE_INFINITY },
-      { ...lag, value: 124 },
-      { ...lag, startedAt: "not-a-timestamp" },
-      { ...lag, confirmedTransitionEventId: lag.eventId },
-      omit(lag, "orderId"),
-      omit(lag, "publicOrderId"),
-      omit(lag, "saleOfferId"),
-      omit(lag, "correlationId"),
-    ];
-    for (const invalid of invalidEvents)
-      expect(dashboardEventSchema.safeParse(invalid).success).toBe(false);
-  });
-
-  it("validates dashboard recovery projections for the operator view", () => {
+  it("validates dashboard projections for the operator view", () => {
     const runId = "11111111-1111-4111-8111-111111111111";
     const saleOfferId = "22222222-2222-4222-8222-222222222222";
     const currentRun = {
@@ -1887,7 +1615,7 @@ describe("buy and dashboard contracts", () => {
       startedAt: timestamp,
       trafficStartedAt: timestamp,
     };
-    const recovery = dashboardRecoveryResponseSchema.parse({
+    const recovery = dashboardProjectionSchema.parse({
       schema: dashboardProjectionSchemaName,
       version: dashboardProjectionSchemaVersion,
       correlationId,
@@ -1978,9 +1706,7 @@ describe("buy and dashboard contracts", () => {
     ).toBe(false);
   });
 
-  it("keeps the deprecated recovery schema as the exact projection schema", () => {
-    expect(dashboardRecoveryResponseSchema).toBe(dashboardProjectionSchema);
-
+  it("requires projection identity and revision metadata", () => {
     const idleProjection = {
       schema: dashboardProjectionSchemaName,
       version: dashboardProjectionSchemaVersion,
@@ -2004,7 +1730,6 @@ describe("buy and dashboard contracts", () => {
     for (const metadata of ["schema", "version", "scopeId", "revision"] as const) {
       const missingMetadata = omit(idleProjection, metadata);
       expect(dashboardProjectionSchema.safeParse(missingMetadata).success).toBe(false);
-      expect(dashboardRecoveryResponseSchema.safeParse(missingMetadata).success).toBe(false);
     }
   });
 
@@ -2059,7 +1784,7 @@ describe("buy and dashboard contracts", () => {
     ).toBe(false);
   });
 
-  it("rejects dashboard recovery metadata that disagrees with the selected run", () => {
+  it("rejects dashboard projection metadata that disagrees with the selected run", () => {
     const currentRun = {
       runId: "11111111-1111-4111-8111-111111111111",
       presetId: "22222222-2222-4222-8222-222222222222",
@@ -2091,7 +1816,7 @@ describe("buy and dashboard contracts", () => {
     };
 
     expect(() =>
-      dashboardRecoveryResponseSchema.parse({
+      dashboardProjectionSchema.parse({
         ...baseRecovery,
         scope: {
           runId: "44444444-4444-4444-8444-444444444444",
@@ -2099,16 +1824,16 @@ describe("buy and dashboard contracts", () => {
         },
       }),
     ).toThrow();
-    expect(() => dashboardRecoveryResponseSchema.parse({ ...baseRecovery, scope: null })).toThrow();
+    expect(() => dashboardProjectionSchema.parse({ ...baseRecovery, scope: null })).toThrow();
     expect(() =>
-      dashboardRecoveryResponseSchema.parse({
+      dashboardProjectionSchema.parse({
         ...baseRecovery,
         currentRun: null,
         scope: { runId: currentRun.runId, saleOfferId: currentRun.saleOfferId },
       }),
     ).toThrow();
     expect(() =>
-      dashboardRecoveryResponseSchema.parse({
+      dashboardProjectionSchema.parse({
         ...baseRecovery,
         scope: { runId: currentRun.runId, saleOfferId: null },
       }),

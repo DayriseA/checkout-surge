@@ -60,10 +60,7 @@ function createBullMqOrderProcessConsumer(
 function createOrderProcessJobHandler(
   dependencies: Omit<
     Parameters<typeof createProductionOrderProcessJobHandler>[0],
-    | "publishBusinessOutcomeUpdate"
-    | "notificationRecordPublisher"
-    | "recovery"
-    | "realtimePublisher"
+    "publishBusinessOutcomeUpdate" | "notificationRecordPublisher" | "recovery"
   >,
 ) {
   return createProductionOrderProcessJobHandler({
@@ -71,7 +68,6 @@ function createOrderProcessJobHandler(
     publishBusinessOutcomeUpdate: async () => undefined,
     notificationRecordPublisher: { publishForConfirmedOrder: async () => undefined },
     recovery: { handoff: async () => undefined, resolve: async () => undefined },
-    realtimePublisher: { enqueue: () => undefined },
   });
 }
 

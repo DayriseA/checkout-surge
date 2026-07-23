@@ -1,12 +1,7 @@
 import { Buffer } from "node:buffer";
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import {
-  type DashboardEvent,
-  type DashboardProjection,
-  dashboardEventSchema,
-  dashboardProjectionSchema,
-} from "@checkout-surge/contracts";
+import { type DashboardProjection, dashboardProjectionSchema } from "@checkout-surge/contracts";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { correlationIdHeaderName } from "@checkout-surge/logger";
 
@@ -16,7 +11,7 @@ export const defaultDashboardSseMaxBufferedFrames = 32;
 export const defaultDashboardSseMaxBufferedBytes = 256 * 1024;
 export const defaultDashboardSseMaxBufferedProjectionScopes = 8;
 
-export interface DashboardEventFanoutOptions {
+export interface DashboardProjectionFanoutOptions {
   logger: CheckoutSurgeLogger;
   heartbeatMs?: number;
   retryMs?: number;
@@ -54,7 +49,7 @@ type BufferedDashboardFrame =
   | { frame: string; bytes: number; kind: "fifo" }
   | { frame: string; bytes: number; kind: "projection"; scopeId: string };
 
-export class DashboardEventFanout {
+export class DashboardProjectionFanout {
   private readonly clients = new Map<string, DashboardSseClient>();
   private readonly logger: CheckoutSurgeLogger;
   private readonly heartbeatMs: number;
@@ -68,7 +63,7 @@ export class DashboardEventFanout {
   private readonly maxBufferedBytes: number;
   private readonly maxBufferedProjectionScopes: number;
 
-  constructor(options: DashboardEventFanoutOptions) {
+  constructor(options: DashboardProjectionFanoutOptions) {
     this.logger = options.logger;
     this.heartbeatMs = options.heartbeatMs ?? defaultDashboardSseHeartbeatMs;
     this.retryMs = options.retryMs ?? defaultDashboardSseRetryMs;
@@ -158,15 +153,7 @@ export class DashboardEventFanout {
     return "connected";
   }
 
-  publish(event: DashboardEvent): void {
-    const payload = formatDashboardEventFrame(event);
-
-    for (const client of [...this.clients.values()]) {
-      this.sendFrame(client, payload, "event_write_failed");
-    }
-  }
-
-  publishProjection(projection: DashboardProjection): void {
+  publish(projection: DashboardProjection): void {
     const parsed = dashboardProjectionSchema.parse(projection);
     const payload = formatDashboardProjectionFrame(parsed);
 
@@ -344,10 +331,6 @@ export class DashboardEventFanout {
 
     this.logger.debug({ dashboardConnectionId: client.id, reason }, "Dashboard SSE closed.");
   }
-}
-
-export function formatDashboardEventFrame(event: DashboardEvent): string {
-  return `data: ${JSON.stringify(dashboardEventSchema.parse(event))}\n\n`;
 }
 
 export function formatDashboardProjectionFrame(projection: DashboardProjection): string {

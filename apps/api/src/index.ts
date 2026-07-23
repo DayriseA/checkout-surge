@@ -4,7 +4,7 @@ import {
   clearErpCircuitBreakerSnapshots,
   createDatabaseConnection,
   createRedisClient,
-  createRedisDashboardEventSubscriber,
+  createRedisDashboardProjectionDirtySubscriber,
   createSqlClient,
   dbPackageName,
   deleteGeneratedRunDurable,
@@ -14,8 +14,7 @@ import {
   inspectGeneratedRunTeardown,
   markReservationPendingPersistence,
   promoteReservationIdempotencyToAccepted,
-  publishBusinessOutcomeDashboardUpdate,
-  publishDashboardEvent,
+  publishDashboardProjectionDirtySignal,
   reserveInventoryStock,
   reverseReservation,
   setRunSaleEligibility,
@@ -26,8 +25,8 @@ import { createBullMqDemoQueueMaintenance } from "./queue/bullmq-demo-queue-main
 import { createBullMqOrderProcessJobPublisher } from "./queue/bullmq-order-process-job-publisher.js";
 import { createBullMqOrderProcessQueueInspector } from "./queue/bullmq-order-process-queue-inspector.js";
 import { PostgresRunRetryPolicyResolver } from "./queue/postgres-run-retry-policy-resolver.js";
-import { DashboardEventFanout } from "./realtime/dashboard-event-fanout.js";
-import { createDashboardEventSubscriberHandlers } from "./realtime/dashboard-event-subscriber-handlers.js";
+import { createDashboardProjectionDirtySubscriberHandlers } from "./realtime/dashboard-projection-dirty-subscriber-handlers.js";
+import { DashboardProjectionFanout } from "./realtime/dashboard-projection-fanout.js";
 import { closeApiResources } from "./runtime/api-resource-cleanup.js";
 import { loadApiConfig } from "./runtime/config.js";
 import { createDashboardRecoveryOperationFactory } from "./runtime/dashboard-recovery-operation-factory.js";
@@ -43,7 +42,7 @@ import {
   DashboardProjectionService,
   PostgresDashboardBusinessOutcomeReader,
 } from "./services/dashboard-recovery-service.js";
-import { DashboardSnapshotPublicationScheduler } from "./services/dashboard-snapshot-publication-scheduler.js";
+import { DashboardSourceDirtyScheduler } from "./services/dashboard-source-dirty-scheduler.js";
 import { RedisDashboardTrafficMetricStore } from "./services/dashboard-traffic-metric-store.js";
 import { ProcessLocalDemoMaintenanceAuthority } from "./services/demo-maintenance-authority.js";
 import { DemoPresetService } from "./services/demo-preset-service.js";
@@ -89,7 +88,7 @@ const terminalInventoryReadTimeoutMs = 2_000;
 export { createBullMqDemoQueueMaintenance } from "./queue/bullmq-demo-queue-maintenance.js";
 export { createBullMqOrderProcessJobPublisher } from "./queue/bullmq-order-process-job-publisher.js";
 export { createBullMqOrderProcessQueueInspector } from "./queue/bullmq-order-process-queue-inspector.js";
-export { DashboardEventFanout } from "./realtime/dashboard-event-fanout.js";
+export { DashboardProjectionFanout } from "./realtime/dashboard-projection-fanout.js";
 export { type ApiConfig, loadApiConfig } from "./runtime/config.js";
 export { buildApiServer } from "./server.js";
 export { DashboardProjectionPublicationScheduler } from "./services/dashboard-projection-publication-scheduler.js";
@@ -101,7 +100,7 @@ export {
   PostgresDashboardRecoveryContextReader,
   PostgresDashboardTransportAttemptCountsReader,
 } from "./services/dashboard-recovery-service.js";
-export { DashboardSnapshotPublicationScheduler } from "./services/dashboard-snapshot-publication-scheduler.js";
+export { DashboardSourceDirtyScheduler } from "./services/dashboard-source-dirty-scheduler.js";
 export { DemoRunFinalizationService } from "./services/demo-run-finalization-service.js";
 export { DemoRunStartupReconciliationService } from "./services/demo-run-startup-reconciliation-service.js";
 export {
@@ -129,7 +128,7 @@ export async function startApiServer(): Promise<void> {
     lazyConnect: true,
     maxRetriesPerRequest: 3,
   });
-  const dashboardEventSubscriberRedis = createRedisClient(config.redisUrl, {
+  const dashboardProjectionDirtySubscriberRedis = createRedisClient(config.redisUrl, {
     lazyConnect: true,
     maxRetriesPerRequest: 3,
   });
@@ -163,7 +162,7 @@ export async function startApiServer(): Promise<void> {
       promoteReservationIdempotencyToAccepted(redis, input).then(() => undefined),
     reverse: (input: Parameters<typeof reverseReservation>[1]) => reverseReservation(redis, input),
   };
-  const dashboardEventFanout = new DashboardEventFanout({
+  const dashboardProjectionFanout = new DashboardProjectionFanout({
     logger,
     maxClients: config.dashboardMaxSseClients,
     maxClientsPerSource: config.dashboardMaxSseClientsPerSource,
@@ -189,14 +188,17 @@ export async function startApiServer(): Promise<void> {
     getStatus: (saleOfferId) => getInventoryStatus(redis, saleOfferId),
   });
   const orderStatusService = new OrderStatusService(connection.db);
-  const dashboardSnapshotPublications = new DashboardSnapshotPublicationScheduler({
-    readInventory: (saleOfferId) => inventoryStatusService.getStatus(saleOfferId),
+  const dashboardSourceDirtyScheduler = new DashboardSourceDirtyScheduler({
     readQueue: () => queueStatusService.getStatus(),
-    publish: (event) => publishDashboardEvent(redis, event),
+    publish: (signal) => publishDashboardProjectionDirtySignal(redis, signal),
     logger,
   });
   const businessOutcomePublications = new BusinessOutcomePublicationScheduler({
-    publish: (input) => publishBusinessOutcomeDashboardUpdate(connection.db, redis, input),
+    publish: (input) =>
+      publishDashboardProjectionDirtySignal(redis, {
+        type: "dashboard.projection.dirty",
+        ...(input.correlationId ? { correlationId: input.correlationId } : {}),
+      }),
     onError: (error, input) => {
       logger.error(
         {
@@ -237,7 +239,7 @@ export async function startApiServer(): Promise<void> {
     closeDiscovery: () => pendingPersistenceOperations.close(),
     runRetryPolicyResolver,
     idempotencyTtlSeconds: config.idempotencyTtlSeconds,
-    dashboardSnapshotPublications,
+    dashboardSourceDirtyScheduler,
     businessOutcomeUpdates: businessOutcomePublications,
     logger,
     recoveryWindowSeconds: config.pendingPersistenceRecoveryWindowSeconds,
@@ -286,7 +288,7 @@ export async function startApiServer(): Promise<void> {
       fenceRun: (runId) => trafficMetricStore.fenceRun(runId),
       hasRunState: (runId) => trafficMetricStore.hasRunState(runId),
       clearRun: async (runId) => {
-        dashboardSnapshotPublications.clearRun(runId);
+        dashboardSourceDirtyScheduler.clearRun(runId);
         businessOutcomePublications.clearRun(runId);
         await trafficMetricStore.clearRun(runId);
       },
@@ -307,14 +309,13 @@ export async function startApiServer(): Promise<void> {
   });
   const dashboardProjectionPublications = new DashboardProjectionPublicationScheduler({
     projectionService: dashboardProjectionService,
-    publish: (projection) => dashboardEventFanout.publishProjection(projection),
+    publish: (projection) => dashboardProjectionFanout.publish(projection),
     logger,
     buildTimeoutMs: config.dashboardRecoveryTimeoutMs,
   });
-  const dashboardEventSubscriber = createRedisDashboardEventSubscriber(
-    dashboardEventSubscriberRedis,
-    createDashboardEventSubscriberHandlers({
-      fanout: dashboardEventFanout,
+  const dashboardProjectionDirtySubscriber = createRedisDashboardProjectionDirtySubscriber(
+    dashboardProjectionDirtySubscriberRedis,
+    createDashboardProjectionDirtySubscriberHandlers({
       projectionPublications: dashboardProjectionPublications,
       logger,
     }),
@@ -385,8 +386,8 @@ export async function startApiServer(): Promise<void> {
     idempotencyTtlSeconds: config.idempotencyTtlSeconds,
     pendingPersistenceRetryAfterSeconds: config.pendingPersistenceRetryAfterSeconds,
     pendingPersistenceRecovery,
-    dashboardSnapshotPublications,
-    soldOutObservations: dashboardSnapshotPublications,
+    dashboardSourceDirtyScheduler,
+    soldOutObservations: dashboardSourceDirtyScheduler,
     reportPersistenceFailure: (report) => {
       logger.error(
         partialFailureLogContext(report),
@@ -445,21 +446,21 @@ export async function startApiServer(): Promise<void> {
         closePendingPersistenceRecovery: () => pendingPersistenceRecovery.close(),
         closeReadiness: () => readiness.close(),
         closeServer: async () => {
-          dashboardEventFanout.close();
+          dashboardProjectionFanout.close();
           await server?.close();
         },
         closeDashboardPublicationScheduler: async () => {
           await Promise.all([
-            dashboardSnapshotPublications.close(),
+            dashboardSourceDirtyScheduler.close(),
             dashboardProjectionPublications.close(),
           ]);
         },
         closeBusinessOutcomePublicationScheduler: () => businessOutcomePublications.close(),
-        closeDashboardEventSubscriber: async () => {
+        closeDashboardProjectionDirtySubscriber: async () => {
           try {
-            await dashboardEventSubscriber.close();
+            await dashboardProjectionDirtySubscriber.close();
           } finally {
-            dashboardEventSubscriberRedis.disconnect();
+            dashboardProjectionDirtySubscriberRedis.disconnect();
           }
         },
         closeOrderProcessJobPublisher: () => orderProcessJobPublisher.close(),
@@ -496,7 +497,7 @@ export async function startApiServer(): Promise<void> {
       config,
       logger,
       readiness,
-      dashboardEventFanout,
+      dashboardProjectionFanout,
       dashboardRecoveryService: dashboardProjectionService,
       dashboardRecoveryAdmission,
       erpStatusService,
@@ -515,7 +516,7 @@ export async function startApiServer(): Promise<void> {
       runHistoryService,
       startedAt: new Date(),
     });
-    await dashboardEventSubscriber.start();
+    await dashboardProjectionDirtySubscriber.start();
 
     process.once("SIGTERM", () => {
       void close()

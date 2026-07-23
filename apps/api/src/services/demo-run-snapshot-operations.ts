@@ -3,7 +3,7 @@ import {
   type CheckoutSurgeDatabase,
   type CheckoutSurgeRedis,
   demoRuns,
-  publishDashboardEvent,
+  publishDashboardProjectionDirtySignal,
 } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { eq } from "drizzle-orm";
@@ -21,20 +21,28 @@ export async function readDemoRunSnapshot(
   return toDemoRunSnapshot(run);
 }
 
-export async function publishDemoRunSnapshot(
+export async function publishDemoRunProjectionDirty(
   redis: CheckoutSurgeRedis,
   logger: CheckoutSurgeLogger,
-  input: { run: DemoRunSnapshot; correlationId: string; occurredAt: Date },
+  input: { run: DemoRunSnapshot; correlationId: string },
 ): Promise<void> {
   try {
-    await publishDashboardEvent(redis, {
-      type: "load.run.updated",
-      runId: input.run.runId,
+    await publishDashboardProjectionDirtySignal(redis, {
+      type: "dashboard.projection.dirty",
       correlationId: input.correlationId,
-      run: input.run,
-      occurredAt: input.occurredAt.toISOString(),
+      ...(input.run.saleOfferId
+        ? {
+            scope: {
+              runId: input.run.runId,
+              saleOfferId: input.run.saleOfferId,
+            },
+          }
+        : {}),
     });
   } catch (error) {
-    logger.warn({ err: error, runId: input.run.runId }, "Could not publish run dashboard event.");
+    logger.warn(
+      { err: error, runId: input.run.runId },
+      "Could not publish run projection dirty signal.",
+    );
   }
 }

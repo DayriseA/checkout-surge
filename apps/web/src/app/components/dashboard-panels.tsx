@@ -593,13 +593,7 @@ export function ErpHealthPanel({ recovery }: { recovery: BackendRead<DashboardPr
   );
 }
 
-export function ConsistencyLagPanel({
-  recovery,
-  latestOrderLag = null,
-}: {
-  recovery: BackendRead<DashboardProjection>;
-  latestOrderLag?: { publicOrderId: string; valueMs: number; observedAt: string } | null;
-}) {
+export function ConsistencyLagPanel({ recovery }: { recovery: BackendRead<DashboardProjection> }) {
   const lag = recoveryData(recovery)?.consistencyLag ?? null;
 
   return (
@@ -624,20 +618,6 @@ export function ConsistencyLagPanel({
           <Fact label="Oldest pending" value={formatSeconds(lag.oldestPendingAgeSeconds)} />
           <Fact label="Confirmed" value={formatNumber(lag.confirmedOrderCount)} />
           <Fact label="Measured" value={formatTime(lag.measuredAt)} />
-          {latestOrderLag ? (
-            <Fact
-              label="Latest individual order"
-              value={`${formatMilliseconds(latestOrderLag.valueMs)} · ${latestOrderLag.publicOrderId}`}
-            />
-          ) : null}
-        </dl>
-      ) : latestOrderLag ? (
-        <dl className={factGridClassName}>
-          <Fact
-            label="Latest individual order"
-            value={`${formatMilliseconds(latestOrderLag.valueMs)} · ${latestOrderLag.publicOrderId}`}
-          />
-          <Fact label="Observed" value={formatTime(latestOrderLag.observedAt)} />
         </dl>
       ) : (
         <EmptyState>No consistency-lag data.</EmptyState>
@@ -675,68 +655,6 @@ export function RunOutcomesPanel({ recovery }: { recovery: BackendRead<Dashboard
         </dl>
       ) : (
         <EmptyState>No business outcome data.</EmptyState>
-      )}
-    </section>
-  );
-}
-
-export function RecentOrderTransitionsPanel({
-  orders,
-}: {
-  orders: Array<{
-    orderId: string;
-    publicOrderId: string;
-    status: "queued" | "processing" | "confirmed" | "failed";
-    occurredAt: string;
-  }>;
-}) {
-  const recent = [...orders]
-    .sort(
-      (left, right) =>
-        Date.parse(right.occurredAt) - Date.parse(left.occurredAt) ||
-        left.orderId.localeCompare(right.orderId),
-    )
-    .slice(0, 5);
-  return (
-    <section className={panelFullClassName}>
-      <div className={panelHeaderClassName}>
-        <div>
-          <p className={eyebrowClassName}>Recent order transitions</p>
-          <h2 className={panelTitleClassName}>Completion states from the current projection</h2>
-        </div>
-        <StatusPill
-          label={recent.length > 0 ? `${formatNumber(recent.length)} shown` : "no live state"}
-          tone={recent.length > 0 ? "ok" : "idle"}
-        />
-      </div>
-      {recent.length > 0 ? (
-        <div className="grid gap-2">
-          {recent.map((order) => (
-            <div
-              className="flex items-center justify-between gap-3 border-b border-border py-2 last:border-b-0"
-              key={order.orderId}
-            >
-              <div>
-                <p className="font-semibold text-ink">{order.publicOrderId}</p>
-                <p className="text-xs text-muted">Observed {formatTime(order.occurredAt)}</p>
-              </div>
-              <StatusPill
-                label={order.status}
-                tone={
-                  order.status === "failed"
-                    ? "degraded"
-                    : order.status === "processing"
-                      ? "pending"
-                      : order.status === "confirmed"
-                        ? "ok"
-                        : "idle"
-                }
-              />
-            </div>
-          ))}
-        </div>
-      ) : (
-        <EmptyState>No recent order transitions.</EmptyState>
       )}
     </section>
   );

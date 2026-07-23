@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import {
-  type DashboardRecoveryResponse,
+  type DashboardProjection,
   dashboardProjectionSchemaName,
   dashboardProjectionSchemaVersion,
 } from "@checkout-surge/contracts";
@@ -63,7 +63,7 @@ describe("PublicDemoEntry hydration", () => {
 });
 
 function publicSurfaceFixture(): PublicDemoSurface {
-  const recovery: DashboardRecoveryResponse = {
+  const recovery: DashboardProjection = {
     schema: dashboardProjectionSchemaName,
     version: dashboardProjectionSchemaVersion,
     scopeId: "idle",

@@ -1286,7 +1286,7 @@ function redisUnavailable(): ReturnType<typeof createRedisClient> {
       throw new Error("Redis unavailable during snapshot capture.");
     },
     publish: async () => {
-      throw new Error("Redis unavailable during event publication.");
+      throw new Error("Redis unavailable during projection dirty publication.");
     },
   } as unknown as ReturnType<typeof createRedisClient>;
 }

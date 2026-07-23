@@ -4,7 +4,7 @@ import {
   type AdminPresetListItem,
   type AdminPresetListResponse,
   type AdminPublicRuntimePolicyResponse,
-  type DashboardRecoveryResponse,
+  type DashboardProjection,
   dashboardProjectionSchemaName,
   dashboardProjectionSchemaVersion,
   dashboardProjectionScopeId,
@@ -585,7 +585,7 @@ describe("admin feature controllers", () => {
   });
 });
 
-function surfaceProps(currentRun: DashboardRecoveryResponse["currentRun"]) {
+function surfaceProps(currentRun: DashboardProjection["currentRun"]) {
   return {
     initialErpChaos: available(erpFixture()),
     initialPresets: available<AdminPresetListResponse>({
@@ -630,9 +630,7 @@ function erpFixture(): ErpChaosStatus {
   };
 }
 
-function recoveryFixture(
-  currentRun: DashboardRecoveryResponse["currentRun"],
-): DashboardRecoveryResponse {
+function recoveryFixture(currentRun: DashboardProjection["currentRun"]): DashboardProjection {
   const scope = recoveryScope(currentRun);
   return {
     schema: dashboardProjectionSchemaName,
@@ -654,7 +652,7 @@ function recoveryFixture(
   };
 }
 
-function recoveryScope(currentRun: DashboardRecoveryResponse["currentRun"]) {
+function recoveryScope(currentRun: DashboardProjection["currentRun"]) {
   if (!currentRun) return null;
   if (!currentRun.saleOfferId) {
     throw new Error(`Run ${currentRun.runId} fixture requires a sale offer.`);
@@ -662,7 +660,7 @@ function recoveryScope(currentRun: DashboardRecoveryResponse["currentRun"]) {
   return { runId: currentRun.runId, saleOfferId: currentRun.saleOfferId };
 }
 
-function runFixture(): DashboardRecoveryResponse["currentRun"] {
+function runFixture(): DashboardProjection["currentRun"] {
   return {
     runId: "11111111-1111-4111-8111-111111111111",
     presetId: "22222222-2222-4222-8222-222222222222",

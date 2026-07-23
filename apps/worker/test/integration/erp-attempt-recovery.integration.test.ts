@@ -292,7 +292,6 @@ function createHandler(confirmation: OrderConfirmation, persistence: OrderTransi
     publishBusinessOutcomeUpdate: async () => undefined,
     notificationRecordPublisher: { publishForConfirmedOrder: async () => undefined },
     recovery: { handoff: async () => undefined, resolve: async () => undefined },
-    realtimePublisher: { enqueue: () => undefined },
   });
 }
 

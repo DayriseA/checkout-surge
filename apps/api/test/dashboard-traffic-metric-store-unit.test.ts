@@ -1,9 +1,6 @@
 import type { CheckoutSurgeRedis } from "@checkout-surge/db";
 import { describe, expect, it, vi } from "vitest";
-import {
-  RedisDashboardTrafficMetricStore,
-  type TrafficMetricPublishResult,
-} from "../src/services/dashboard-traffic-metric-store.js";
+import { RedisDashboardTrafficMetricStore } from "../src/services/dashboard-traffic-metric-store.js";
 
 describe("RedisDashboardTrafficMetricStore", () => {
   it("atomically appends a retained batch with a reset fence and bounded history", async () => {
@@ -39,41 +36,35 @@ describe("RedisDashboardTrafficMetricStore", () => {
     await expect(store.appendIfLive(batch("retention-failure"))).rejects.toBe(retentionError);
   });
 
-  it("maps a failed publish by payload index while later payloads remain attempted", async () => {
+  it("reports a failed aggregate dirty publication", async () => {
     const evalCommand = vi.fn(async (..._args: unknown[]) => [
-      "attempted",
-      "",
+      "failed",
       "ERR forced publish failure",
-      "",
     ]);
     const store = new RedisDashboardTrafficMetricStore({
       eval: evalCommand,
     } as unknown as CheckoutSurgeRedis);
 
-    await expect(
-      store.publishIfLive(runId, serializedEvents("indexed-outcomes").slice(0, 3)),
-    ).resolves.toEqual({
-      outcome: "attempted",
-      failures: [
-        { index: 1, error: expect.objectContaining({ message: "ERR forced publish failure" }) },
-      ],
+    await expect(store.publishDirtyIfLive(runId, dirtySignal("failed-outcome"))).resolves.toEqual({
+      outcome: "failed",
+      error: expect.objectContaining({ message: "ERR forced publish failure" }),
     });
-    expect(evalCommand.mock.calls[0]).toHaveLength(7);
+    expect(evalCommand.mock.calls[0]).toHaveLength(5);
     expect(evalCommand.mock.calls[0]?.[0]).toContain('redis.pcall("PUBLISH"');
   });
 
   it.each([
     null,
     [],
-    ["attempted"],
-    ["unexpected", ""],
-    ["attempted", 1],
+    ["published", ""],
+    ["unexpected"],
+    ["failed", 1],
   ])("rejects malformed Redis publication results %#", async (result) => {
     const store = new RedisDashboardTrafficMetricStore({
       eval: vi.fn(async () => result),
     } as unknown as CheckoutSurgeRedis);
 
-    await expect(store.publishIfLive(runId, ["event"])).rejects.toThrow(
+    await expect(store.publishDirtyIfLive(runId, dirtySignal("malformed"))).rejects.toThrow(
       "Redis returned an invalid traffic metric publication result.",
     );
   });
@@ -83,19 +74,19 @@ describe("RedisDashboardTrafficMetricStore", () => {
       eval: vi.fn(async () => ["fenced"]),
     } as unknown as CheckoutSurgeRedis);
 
-    await expect(store.publishIfLive(runId, ["event"])).resolves.toEqual({ outcome: "fenced" });
+    await expect(store.publishDirtyIfLive(runId, dirtySignal("fenced"))).resolves.toEqual({
+      outcome: "fenced",
+    });
   });
 
-  it("does not issue Redis work for an empty publication", async () => {
-    const evalCommand = vi.fn();
+  it("reports a successful single publication without indexed outcomes", async () => {
     const store = new RedisDashboardTrafficMetricStore({
-      eval: evalCommand,
+      eval: vi.fn(async () => ["published"]),
     } as unknown as CheckoutSurgeRedis);
 
-    const result: TrafficMetricPublishResult = await store.publishIfLive(runId, []);
-
-    expect(result).toEqual({ outcome: "attempted", failures: [] });
-    expect(evalCommand).not.toHaveBeenCalled();
+    await expect(store.publishDirtyIfLive(runId, dirtySignal("published"))).resolves.toEqual({
+      outcome: "published",
+    });
   });
 });
 
@@ -116,17 +107,9 @@ function batch(correlationId: string) {
   };
 }
 
-function serializedEvents(correlationId: string): string[] {
-  return batch(correlationId).samples.map((sample) =>
-    JSON.stringify({
-      type: "dashboard.metric.observed",
-      runId,
-      correlationId,
-      metricName: sample.metricName,
-      value: sample.value,
-      unit: sample.unit,
-      occurredAt: sample.timestamp,
-      observedAt: sample.timestamp,
-    }),
-  );
+function dirtySignal(correlationId: string) {
+  return {
+    type: "dashboard.projection.dirty" as const,
+    correlationId,
+  };
 }

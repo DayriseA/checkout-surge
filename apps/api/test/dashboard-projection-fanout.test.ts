@@ -1,28 +1,13 @@
 import { EventEmitter } from "node:events";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import {
-  type DashboardEvent,
-  type DashboardProjection,
-  demoRunSnapshotSchema,
-} from "@checkout-surge/contracts";
+import { type DashboardProjection, demoRunSnapshotSchema } from "@checkout-surge/contracts";
 import { correlationIdHeaderName, createSilentLogger } from "@checkout-surge/logger";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  DashboardEventFanout,
-  formatDashboardEventFrame,
+  DashboardProjectionFanout,
   formatDashboardProjectionFrame,
-} from "../src/realtime/dashboard-event-fanout.js";
+} from "../src/realtime/dashboard-projection-fanout.js";
 import { acceptedRunConfigSnapshotFixture } from "./demo-administration-test-fixtures.js";
-
-const dashboardEvent: DashboardEvent = {
-  type: "dashboard.metric.observed",
-  runId: "55555555-5555-4555-8555-555555555555",
-  metricName: "traffic.latency",
-  value: 42,
-  unit: "ms",
-  occurredAt: "2026-06-20T12:00:00.000Z",
-  observedAt: "2026-06-20T12:00:00.000Z",
-};
 
 class FakeRequest extends EventEmitter {}
 
@@ -57,7 +42,7 @@ class FakeResponse extends EventEmitter {
   }
 }
 
-describe("dashboard event fan-out", () => {
+describe("dashboard projection fan-out", () => {
   afterEach(() => {
     vi.useRealTimers();
   });
@@ -111,64 +96,78 @@ describe("dashboard event fan-out", () => {
     fanout.connect(input);
     response.writeResult = false;
 
-    fanout.publish(dashboardEvent);
+    fanout.publish(projection(1));
     vi.advanceTimersByTime(10);
-    fanout.publish({ ...dashboardEvent, value: 43 });
+    fanout.publish(projection(2));
     expect(response.chunks).toEqual([
       "retry: 3000\n: connected\n\n",
-      formatDashboardEventFrame(dashboardEvent),
+      formatDashboardProjectionFrame(projection(1)),
     ]);
 
     response.writeResult = true;
     response.emit("drain");
     expect(response.chunks).toEqual([
       "retry: 3000\n: connected\n\n",
-      formatDashboardEventFrame(dashboardEvent),
+      formatDashboardProjectionFrame(projection(1)),
       ": heartbeat 2026-07-16T12:00:00.010Z\n\n",
-      formatDashboardEventFrame({ ...dashboardEvent, value: 43 }),
+      formatDashboardProjectionFrame(projection(2)),
     ]);
     response.emit("drain");
     expect(response.chunks).toHaveLength(4);
     fanout.close();
   });
 
-  it("flushes FIFO exactly once and stops when a drained write reports backpressure again", () => {
+  it("flushes the newest same-scope projection once after repeated backpressure", () => {
     const fanout = createFanout();
     const input = connectionInput("first", "ip4:192.0.2.1");
     const response = input.response as unknown as FakeResponse;
     fanout.connect(input);
     response.writeResult = false;
-    fanout.publish(dashboardEvent);
-    fanout.publish({ ...dashboardEvent, value: 43 });
-    fanout.publish({ ...dashboardEvent, value: 44 });
+    fanout.publish(projection(1));
+    fanout.publish(projection(2));
+    fanout.publish(projection(3));
 
     response.writeResults = [false];
     response.writeResult = true;
     response.emit("drain");
-    expect(eventValues(response.chunks)).toEqual([42, 43]);
+    expect(projectionRevisions(response.chunks)).toEqual([1, 3]);
     response.emit("drain");
-    expect(eventValues(response.chunks)).toEqual([42, 43, 44]);
+    expect(projectionRevisions(response.chunks)).toEqual([1, 3]);
     response.emit("drain");
-    expect(eventValues(response.chunks)).toEqual([42, 43, 44]);
+    expect(projectionRevisions(response.chunks)).toEqual([1, 3]);
     fanout.close();
   });
 
   it("allows exact frame and UTF-8 byte boundaries and closes on the next frame", () => {
-    const frame = formatDashboardEventFrame(dashboardEvent);
+    const firstScoped = scopedProjection(
+      "55555555-5555-4555-8555-555555555555",
+      "66666666-6666-4666-8666-666666666666",
+    );
+    const secondScoped = scopedProjection(
+      "77777777-7777-4777-8777-777777777777",
+      "88888888-8888-4888-8888-888888888888",
+    );
+    const thirdScoped = scopedProjection(
+      "99999999-9999-4999-8999-999999999999",
+      "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    );
+    const exactBufferedBytes =
+      Buffer.byteLength(formatDashboardProjectionFrame(firstScoped)) +
+      Buffer.byteLength(formatDashboardProjectionFrame(secondScoped));
     for (const limits of [
-      { maxBufferedFrames: 2, maxBufferedBytes: Buffer.byteLength(frame) * 10 },
-      { maxBufferedFrames: 10, maxBufferedBytes: Buffer.byteLength(frame) * 2 },
+      { maxBufferedFrames: 2, maxBufferedBytes: exactBufferedBytes * 10 },
+      { maxBufferedFrames: 10, maxBufferedBytes: exactBufferedBytes },
     ]) {
       const fanout = createFanout(limits);
       const input = connectionInput("first", "ip4:192.0.2.1");
       const response = input.response as unknown as FakeResponse;
       fanout.connect(input);
       response.writeResult = false;
-      fanout.publish(dashboardEvent);
-      fanout.publish(dashboardEvent);
-      fanout.publish(dashboardEvent);
+      fanout.publish(projection(1));
+      fanout.publish(firstScoped);
+      fanout.publish(secondScoped);
       expect(fanout.clientCount()).toBe(1);
-      fanout.publish(dashboardEvent);
+      fanout.publish(thirdScoped);
       expect(fanout.clientCount()).toBe(0);
       expect(response.writableEnded).toBe(true);
     }
@@ -177,7 +176,8 @@ describe("dashboard event fan-out", () => {
   it("bounds an overflowing slow client and lets its reconnect start from current delivery", () => {
     let nextId = 0;
     const fanout = createFanout({
-      maxBufferedFrames: 1,
+      maxBufferedFrames: 10,
+      maxBufferedProjectionScopes: 2,
       generateConnectionId: () => `connection-${++nextId}`,
     });
     const slow = connectionInput("slow", "ip4:192.0.2.1");
@@ -186,18 +186,35 @@ describe("dashboard event fan-out", () => {
     fanout.connect(healthy);
     (slow.response as unknown as FakeResponse).writeResult = false;
 
-    fanout.publish(dashboardEvent);
-    fanout.publish({ ...dashboardEvent, value: 43 });
-    fanout.publish({ ...dashboardEvent, value: 44 });
+    fanout.publish(projection(1));
+    fanout.publish(projection(2));
+    fanout.publish(
+      scopedProjection(
+        "55555555-5555-4555-8555-555555555555",
+        "66666666-6666-4666-8666-666666666666",
+      ),
+    );
 
+    expect(fanout.clientCount()).toBe(2);
+    expect((slow.response as unknown as FakeResponse).writableEnded).toBe(false);
+    fanout.publish(
+      scopedProjection(
+        "77777777-7777-4777-8777-777777777777",
+        "88888888-8888-4888-8888-888888888888",
+      ),
+    );
     expect(fanout.clientCount()).toBe(1);
     expect((slow.response as unknown as FakeResponse).writableEnded).toBe(true);
-    expect(eventValues((healthy.response as unknown as FakeResponse).chunks)).toEqual([42, 43, 44]);
+    expect(projectionRevisions((healthy.response as unknown as FakeResponse).chunks)).toEqual([
+      1, 2, 1, 1,
+    ]);
 
     const reconnected = connectionInput("slow-reconnected", "ip4:192.0.2.1");
     expect(fanout.connect(reconnected)).toBe("connected");
-    fanout.publish({ ...dashboardEvent, value: 45 });
-    expect(eventValues((reconnected.response as unknown as FakeResponse).chunks)).toEqual([45]);
+    fanout.publish(projection(4));
+    expect(projectionRevisions((reconnected.response as unknown as FakeResponse).chunks)).toEqual([
+      4,
+    ]);
     fanout.close();
   });
 
@@ -211,9 +228,9 @@ describe("dashboard event fan-out", () => {
     fanout.connect(input);
     response.writeResult = false;
 
-    fanout.publishProjection(projection(1));
-    fanout.publishProjection(projection(2));
-    fanout.publishProjection(projection(3));
+    fanout.publish(projection(1));
+    fanout.publish(projection(2));
+    fanout.publish(projection(3));
 
     expect(fanout.clientCount()).toBe(1);
     expect(projectionRevisions(response.chunks)).toEqual([1]);
@@ -233,9 +250,9 @@ describe("dashboard event fan-out", () => {
     fanout.connect(input);
     response.writeResult = false;
 
-    fanout.publishProjection(projection(1));
-    fanout.publishProjection(projection(2));
-    fanout.publishProjection(
+    fanout.publish(projection(1));
+    fanout.publish(projection(2));
+    fanout.publish(
       scopedProjection(
         "55555555-5555-4555-8555-555555555555",
         "66666666-6666-4666-8666-666666666666",
@@ -262,13 +279,18 @@ describe("dashboard event fan-out", () => {
     if (teardown === "response") response.emit("close");
     if (teardown === "write-throw") {
       response.throwOnWrite = true;
-      fanout.publish(dashboardEvent);
+      fanout.publish(projection(1));
     }
     if (teardown === "overflow") {
       response.writeResult = false;
-      fanout.publish(dashboardEvent);
-      fanout.publish(dashboardEvent);
-      fanout.publish(dashboardEvent);
+      fanout.publish(projection(1));
+      fanout.publish(projection(2));
+      fanout.publish(
+        scopedProjection(
+          "55555555-5555-4555-8555-555555555555",
+          "66666666-6666-4666-8666-666666666666",
+        ),
+      );
     }
     if (teardown === "shutdown") fanout.close();
     const chunksAfterClose = response.chunks.length;
@@ -276,7 +298,7 @@ describe("dashboard event fan-out", () => {
     request.emit("close");
     response.emit("close");
     response.emit("drain");
-    fanout.publish(dashboardEvent);
+    fanout.publish(projection(2));
 
     expect(fanout.clientCount()).toBe(0);
     expect(request.listenerCount("close")).toBe(0);
@@ -355,14 +377,14 @@ describe("dashboard event fan-out", () => {
     const response = input.response as unknown as FakeResponse;
     response.writeResult = false;
     fanout.connect(input);
-    fanout.publish(dashboardEvent);
+    fanout.publish(projection(2));
     expect(fanout.clientCount()).toBe(1);
     expect(response.chunks).toEqual(["retry: 3000\n: connected\n\n"]);
     response.writeResult = true;
     response.emit("drain");
     expect(response.chunks).toEqual([
       "retry: 3000\n: connected\n\n",
-      formatDashboardEventFrame(dashboardEvent),
+      formatDashboardProjectionFrame(projection(2)),
     ]);
     fanout.close();
   });
@@ -389,10 +411,10 @@ describe("dashboard event fan-out", () => {
 });
 
 function createFanout(
-  options: Omit<Partial<ConstructorParameters<typeof DashboardEventFanout>[0]>, "logger"> = {},
+  options: Omit<Partial<ConstructorParameters<typeof DashboardProjectionFanout>[0]>, "logger"> = {},
 ) {
   let nextId = 0;
-  return new DashboardEventFanout({
+  return new DashboardProjectionFanout({
     logger: createSilentLogger("api"),
     ...options,
     generateConnectionId: options.generateConnectionId ?? (() => `connection-${++nextId}`),
@@ -406,15 +428,6 @@ function connectionInput(correlationId: string, sourceKey: string) {
     correlationId,
     sourceKey,
   };
-}
-
-function eventValue(chunk: string): number | undefined {
-  if (!chunk.startsWith("data: ")) return undefined;
-  return (JSON.parse(chunk.slice("data: ".length)) as { value: number }).value;
-}
-
-function eventValues(chunks: string[]): number[] {
-  return chunks.map(eventValue).filter((value): value is number => value !== undefined);
 }
 
 function projectionRevisions(chunks: string[]): number[] {

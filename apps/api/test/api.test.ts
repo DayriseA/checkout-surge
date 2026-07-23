@@ -23,10 +23,10 @@ import {
   buyOutcomeHeaderName,
   buyResponseSchema,
   controlServiceTokenHeaderName,
-  type DashboardEvent,
+  type DashboardProjection,
   type DemoRunSnapshot,
   dashboardEventsPath,
-  dashboardRecoveryResponseSchema,
+  dashboardProjectionSchema,
   demoRunOperatorModeHeaderName,
   demoRunSnapshotSchema,
   type ErpResilienceStatus,
@@ -98,7 +98,7 @@ import {
   createBullMqOrderProcessQueueInspector,
   createOrderProcessQueueInspector,
 } from "../src/queue/bullmq-order-process-queue-inspector.js";
-import { DashboardEventFanout } from "../src/realtime/dashboard-event-fanout.js";
+import { DashboardProjectionFanout } from "../src/realtime/dashboard-projection-fanout.js";
 import { loadApiConfig } from "../src/runtime/config.js";
 import { ApiHttpError } from "../src/runtime/errors.js";
 import type { ApiFastifyInstance } from "../src/runtime/fastify.js";
@@ -257,7 +257,7 @@ async function buildTestServer(options: {
   erpStatusService?: ErpStatusService;
   dashboardRecoveryService?: DashboardProjectionService;
   dashboardRecoveryAdmission?: DashboardRecoveryAdmissionController;
-  dashboardEventFanout?: DashboardEventFanout;
+  dashboardProjectionFanout?: DashboardProjectionFanout;
   presetService?: DemoPresetController;
   runtimePolicyService?: PublicRuntimePolicyController;
   demoRunLifecycleService?: DemoRunLifecycleController;
@@ -323,7 +323,8 @@ async function buildTestServer(options: {
       ],
       close: async () => undefined,
     },
-    dashboardEventFanout: options.dashboardEventFanout ?? new DashboardEventFanout({ logger }),
+    dashboardProjectionFanout:
+      options.dashboardProjectionFanout ?? new DashboardProjectionFanout({ logger }),
     dashboardRecoveryService:
       options.dashboardRecoveryService ??
       new DashboardProjectionService({
@@ -1199,7 +1200,7 @@ describe("API gateway routes", () => {
     const server = await trackedServer({ persistence: new AcceptingPersistence() });
 
     const response = await server.inject({ method: "GET", url: "/dashboard/recovery" });
-    const payload = dashboardRecoveryResponseSchema.parse(response.json());
+    const payload = dashboardProjectionSchema.parse(response.json());
 
     expect(response.statusCode).toBe(200);
     expect(payload.currentRun?.runId).toBe(fixtureIds.run);
@@ -1215,13 +1216,13 @@ describe("API gateway routes", () => {
   });
 
   it("opens the dashboard realtime SSE stream with browser reconnect guidance", async () => {
-    const dashboardEventFanout = new DashboardEventFanout({
+    const dashboardProjectionFanout = new DashboardProjectionFanout({
       logger: createSilentLogger("api"),
       retryMs: 1234,
     });
     const server = await buildTestServer({
       persistence: new AcceptingPersistence(),
-      dashboardEventFanout,
+      dashboardProjectionFanout,
     });
     await server.listen({ host: "127.0.0.1", port: 0 });
     const address = server.server.address() as AddressInfo;
@@ -1241,52 +1242,44 @@ describe("API gateway routes", () => {
       expect(response.headers.get("x-accel-buffering")).toBe("no");
       expect(initialFrame).toContain("retry: 1234");
       expect(initialFrame).toContain(": connected");
-      expect(dashboardEventFanout.clientCount()).toBe(1);
+      expect(dashboardProjectionFanout.clientCount()).toBe(1);
     } finally {
       await reader?.cancel();
-      dashboardEventFanout.close();
+      dashboardProjectionFanout.close();
       await server.close();
     }
   });
 
-  it("fans contract dashboard events to connected browser SSE clients", async () => {
-    const dashboardEventFanout = new DashboardEventFanout({
+  it("fans the complete dashboard projection to connected browser SSE clients", async () => {
+    const dashboardProjectionFanout = new DashboardProjectionFanout({
       logger: createSilentLogger("api"),
       retryMs: 1234,
     });
     const server = await buildTestServer({
       persistence: new AcceptingPersistence(),
-      dashboardEventFanout,
+      dashboardProjectionFanout,
     });
     await server.listen({ host: "127.0.0.1", port: 0 });
     const address = server.server.address() as AddressInfo;
     const response = await fetch(`http://127.0.0.1:${address.port}${dashboardEventsPath}`);
     const reader = response.body?.getReader();
-    const event: DashboardEvent = {
-      type: "business.outcome.snapshot",
-      saleOfferId: fixtureIds.saleOffer,
+    const projection: DashboardProjection = {
+      schema: "checkout-surge.dashboard-projection",
+      version: 1,
       correlationId: "corr-dashboard-event",
-      occurredAt: "2026-06-20T00:00:11.000Z",
-      outcome: {
-        acceptedReservations: 2,
-        soldOutRejections: 1,
-        queuedOrders: 1,
-        processingOrders: 0,
-        retryingOrders: 0,
-        confirmedOrders: 1,
-        failedOrders: 0,
-        pendingPersistenceCount: 0,
-        notificationsRecorded: 0,
-      },
-      consistencyLag: {
-        confirmedOrderCount: 1,
-        pendingConfirmationCount: 1,
-        averageLagMs: 180,
-        p95LagMs: 180,
-        maxLagMs: 180,
-        oldestPendingAgeSeconds: 3,
-        measuredAt: "2026-06-20T00:00:11.000Z",
-      },
+      scopeId: "idle",
+      scope: null,
+      revision: 7,
+      recoveredAt: "2026-06-20T00:00:11.000Z",
+      currentRun: null,
+      inventory: null,
+      recentMetrics: [],
+      queue: null,
+      erp: null,
+      businessOutcome: null,
+      consistencyLag: null,
+      recentCompletionOutcomes: [],
+      transportAttemptCounts: null,
     };
 
     try {
@@ -1295,15 +1288,15 @@ describe("API gateway routes", () => {
       }
 
       await readStreamUntil(reader, ": connected");
-      dashboardEventFanout.publish(event);
-      const frame = await readStreamUntil(reader, "business.outcome.snapshot");
+      dashboardProjectionFanout.publish(projection);
+      const frame = await readStreamUntil(reader, "checkout-surge.dashboard-projection");
 
-      expect(frame).toContain('"type":"business.outcome.snapshot"');
-      expect(frame).toContain('"acceptedReservations":2');
-      expect(frame).toContain('"p95LagMs":180');
+      expect(frame).toContain('"schema":"checkout-surge.dashboard-projection"');
+      expect(frame).toContain('"revision":7');
+      expect(frame).not.toContain('"type":"order.status.updated"');
     } finally {
       await reader?.cancel();
-      dashboardEventFanout.close();
+      dashboardProjectionFanout.close();
       await server.close();
     }
   });
@@ -2416,10 +2409,10 @@ describe("API gateway routes", () => {
     const warn = vi.fn();
     const metricStore = {
       appendIfLive: async () => true,
-      publishIfLive: async () => {
+      publishDirtyIfLive: async () => {
         throw publicationError;
       },
-    } satisfies Pick<RedisDashboardTrafficMetricStore, "appendIfLive" | "publishIfLive">;
+    } satisfies Pick<RedisDashboardTrafficMetricStore, "appendIfLive" | "publishDirtyIfLive">;
     const trafficMetricIngestion = new TrafficMetricIngestionService({
       db: {
         transaction: async (operation: (tx: unknown) => Promise<unknown>) =>
@@ -2470,8 +2463,12 @@ describe("API gateway routes", () => {
     expect(response.statusCode).toBe(202);
     expect(response.json()).toEqual({ accepted: true });
     expect(warn).toHaveBeenCalledWith(
-      expect.objectContaining({ err: publicationError, metricName: "traffic.latency" }),
-      "Could not publish traffic metric dashboard event.",
+      expect.objectContaining({
+        err: publicationError,
+        runId: fixtureIds.run,
+        correlationId: fixtureCorrelationId,
+      }),
+      "Could not publish traffic metric projection dirty signal.",
     );
   });
 

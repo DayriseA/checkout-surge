@@ -12,7 +12,7 @@ import {
   archiveAdminPresetRequestSchema,
   archiveAdminPresetResponseSchema,
   copyDemoPresetToCustomRequestSchema,
-  type DashboardRecoveryResponse,
+  type DashboardProjection,
   duplicateDemoPresetRequestSchema,
   type ErpChaosConfig,
   type ErpChaosStatus,
@@ -67,7 +67,7 @@ import {
 export interface AdminAuthenticatedSurfaceProps {
   initialErpChaos: BackendRead<ErpChaosStatus>;
   initialPresets: BackendRead<AdminPresetListResponse>;
-  initialRecovery: BackendRead<DashboardRecoveryResponse>;
+  initialRecovery: BackendRead<DashboardProjection>;
   initialRuntimePolicy: BackendRead<AdminPublicRuntimePolicyResponse>;
 }
 
@@ -106,7 +106,7 @@ export function AdminCurrentRunPanel({
   isPending: boolean;
   isRetryScheduled: boolean;
   onRefresh: () => Promise<void>;
-  recovery: BackendRead<DashboardRecoveryResponse>;
+  recovery: BackendRead<DashboardProjection>;
   retriesExhausted: boolean;
   retryAttempt: number;
   retryDelayMs: number | null;
@@ -245,7 +245,7 @@ export function AdminPresetController({
   recovery,
 }: {
   initialPresets: BackendRead<AdminPresetListResponse>;
-  recovery: BackendRead<DashboardRecoveryResponse>;
+  recovery: BackendRead<DashboardProjection>;
 }) {
   const router = useRouter();
   const initialPreset =
@@ -706,7 +706,7 @@ function erpDraftFromRead(read: BackendRead<ErpChaosStatus>): ErpDraft {
     : { latencyMs: "0", maxTps: "100", errorRate: "0", forcedOutage: false };
 }
 
-function isRunStartBlocked(recovery: BackendRead<DashboardRecoveryResponse>): boolean {
+function isRunStartBlocked(recovery: BackendRead<DashboardProjection>): boolean {
   if (recovery.status !== "available") return true;
   const status = recovery.data.currentRun?.status;
   return status === "starting" || status === "active" || status === "draining";

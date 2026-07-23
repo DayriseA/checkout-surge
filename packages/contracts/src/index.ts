@@ -1,7 +1,6 @@
 export const contractsPackageName = "@checkout-surge/contracts" as const;
 
 export * from "./buy.js";
-export * from "./dashboard-events.js";
 export * from "./dashboard-projection.js";
 export * from "./demo.js";
 export * from "./entities.js";

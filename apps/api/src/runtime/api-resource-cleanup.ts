@@ -4,7 +4,7 @@ export interface ApiResourceCleanupOperations {
   closeServer(): Promise<void>;
   closeDashboardPublicationScheduler(): Promise<void>;
   closeBusinessOutcomePublicationScheduler(): Promise<void>;
-  closeDashboardEventSubscriber(): Promise<void>;
+  closeDashboardProjectionDirtySubscriber(): Promise<void>;
   closeOrderProcessJobPublisher(): Promise<void>;
   closeOrderProcessQueueInspector(): Promise<void>;
   closeDemoQueueMaintenance(): Promise<void>;
@@ -125,7 +125,7 @@ export async function closeApiResources(operations: ApiResourceCleanupOperations
   }
 
   const dependencyResults = await Promise.allSettled([
-    runCleanup(operations.closeDashboardEventSubscriber),
+    runCleanup(operations.closeDashboardProjectionDirtySubscriber),
     runCleanup(operations.closeOrderProcessJobPublisher),
     runCleanup(operations.closeOrderProcessQueueInspector),
     runCleanup(operations.closeDemoQueueMaintenance),

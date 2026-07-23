@@ -4,7 +4,7 @@ import { installFastifyCorrelation } from "@checkout-surge/logger/fastify";
 import cors from "@fastify/cors";
 import { type FastifyReply, fastify } from "fastify";
 import { ZodError } from "zod";
-import type { DashboardEventFanout } from "./realtime/dashboard-event-fanout.js";
+import type { DashboardProjectionFanout } from "./realtime/dashboard-projection-fanout.js";
 import { registerAdminMaintenanceRoutes } from "./routes/admin-maintenance-routes.js";
 import { registerBuyRoutes } from "./routes/buy-routes.js";
 import { registerDashboardRoutes } from "./routes/dashboard-routes.js";
@@ -42,7 +42,7 @@ export interface BuildApiServerOptions {
   config: ApiConfig;
   logger: CheckoutSurgeLogger;
   readiness: ApiReadiness;
-  dashboardEventFanout: DashboardEventFanout;
+  dashboardProjectionFanout: DashboardProjectionFanout;
   dashboardRecoveryService: DashboardProjectionService;
   dashboardRecoveryAdmission: DashboardRecoveryAdmissionController;
   erpStatusService: ErpStatusService;
@@ -140,7 +140,7 @@ export async function buildApiServer(options: BuildApiServerOptions): Promise<Ap
     controlServiceToken: options.config.controlServiceToken,
   });
   registerDashboardRoutes(app, {
-    dashboardEventFanout: options.dashboardEventFanout,
+    dashboardProjectionFanout: options.dashboardProjectionFanout,
     dashboardRecoveryWorkflow: new DashboardRecoveryWorkflow({
       recovery: options.dashboardRecoveryService,
       admission: options.dashboardRecoveryAdmission,

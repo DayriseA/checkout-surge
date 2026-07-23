@@ -16,6 +16,8 @@ import {
 import { queueStatusSchema } from "./queue.js";
 import { transportAttemptCountsSchema } from "./traffic-transport-counts.js";
 
+export const dashboardEventsPath = "/dashboard/events" as const;
+export const dashboardRecoveryPath = "/dashboard/recovery" as const;
 export const dashboardProjectionSchemaName = "checkout-surge.dashboard-projection" as const;
 export const dashboardProjectionSchemaVersion = 1 as const;
 
@@ -175,8 +177,3 @@ export function isNewerDashboardProjectionForScope(
 ): boolean {
   return current.scopeId === candidate.scopeId && candidate.revision > current.revision;
 }
-
-/** @deprecated Task 39 removes the recovery naming alias after browser migration. */
-export const dashboardRecoveryResponseSchema = dashboardProjectionSchema;
-/** @deprecated Task 39 replaces recovery-named consumers with DashboardProjection. */
-export type DashboardRecoveryResponse = DashboardProjection;

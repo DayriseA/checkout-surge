@@ -1,21 +1,18 @@
 const maximumInvalidDashboardMetadataLength = 128;
 
-export interface InvalidDashboardEventMetadata {
+export interface InvalidDashboardDirtySignalMetadata {
   stage: "redis_subscriber_parse";
   messageLength: number;
   errorName?: string;
-  eventType?: string;
-  metricName?: string;
-  businessEventName?: string;
-  runId?: string;
+  signalType?: string;
   correlationId?: string;
 }
 
-export function invalidDashboardEventMetadata(
+export function invalidDashboardDirtySignalMetadata(
   message: string,
   error?: unknown,
-): InvalidDashboardEventMetadata {
-  const metadata: InvalidDashboardEventMetadata = {
+): InvalidDashboardDirtySignalMetadata {
+  const metadata: InvalidDashboardDirtySignalMetadata = {
     stage: "redis_subscriber_parse",
     messageLength: message.length,
     ...errorName(error),
@@ -30,28 +27,27 @@ export function invalidDashboardEventMetadata(
 
   return {
     ...metadata,
-    ...boundedStringField(candidate, "type", "eventType"),
-    ...boundedStringField(candidate, "metricName", "metricName"),
-    ...boundedStringField(candidate, "eventName", "businessEventName"),
-    ...boundedStringField(candidate, "runId", "runId"),
+    ...boundedStringField(candidate, "type", "signalType"),
     ...boundedStringField(candidate, "correlationId", "correlationId"),
   };
 }
 
-function errorName(error: unknown): Pick<InvalidDashboardEventMetadata, "errorName"> | object {
+function errorName(
+  error: unknown,
+): Pick<InvalidDashboardDirtySignalMetadata, "errorName"> | object {
   if (!(error instanceof Error) || error.name.length === 0) return {};
   return { errorName: error.name.slice(0, maximumInvalidDashboardMetadataLength) };
 }
 
-function boundedStringField<OutputKey extends keyof InvalidDashboardEventMetadata>(
+function boundedStringField<OutputKey extends keyof InvalidDashboardDirtySignalMetadata>(
   candidate: Record<string, unknown>,
   inputKey: string,
   outputKey: OutputKey,
-): Partial<Pick<InvalidDashboardEventMetadata, OutputKey>> {
+): Partial<Pick<InvalidDashboardDirtySignalMetadata, OutputKey>> {
   const value = candidate[inputKey];
   if (typeof value !== "string" || value.length === 0) return {};
   return { [outputKey]: value.slice(0, maximumInvalidDashboardMetadataLength) } as Partial<
-    Pick<InvalidDashboardEventMetadata, OutputKey>
+    Pick<InvalidDashboardDirtySignalMetadata, OutputKey>
   >;
 }
 

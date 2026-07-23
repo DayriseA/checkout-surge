@@ -40,9 +40,9 @@ function buildService(options: {
     typeof ReserveOrderService
   >[0]["scheduleBusinessOutcomeUpdate"];
   reportBusinessOutcomeUpdateFailure?: (report: BusinessOutcomeUpdateFailureReport) => void;
-  dashboardSnapshotPublications?: ConstructorParameters<
+  dashboardSourceDirtyScheduler?: ConstructorParameters<
     typeof ReserveOrderService
-  >[0]["dashboardSnapshotPublications"];
+  >[0]["dashboardSourceDirtyScheduler"];
   soldOutObservations?: ConstructorParameters<typeof ReserveOrderService>[0]["soldOutObservations"];
 }) {
   return new ReserveOrderService({
@@ -86,8 +86,8 @@ function buildService(options: {
     ...(options.reportBusinessOutcomeUpdateFailure
       ? { reportBusinessOutcomeUpdateFailure: options.reportBusinessOutcomeUpdateFailure }
       : {}),
-    ...(options.dashboardSnapshotPublications
-      ? { dashboardSnapshotPublications: options.dashboardSnapshotPublications }
+    ...(options.dashboardSourceDirtyScheduler
+      ? { dashboardSourceDirtyScheduler: options.dashboardSourceDirtyScheduler }
       : {}),
     ...(options.soldOutObservations ? { soldOutObservations: options.soldOutObservations } : {}),
   });
@@ -154,7 +154,7 @@ describe("ReserveOrderService queue handoff", () => {
       correlationId,
     });
   });
-  it("schedules full snapshot publication only for a fresh hold and successful enqueue", async () => {
+  it("schedules aggregate source dirtiness only for a fresh hold and successful enqueue", async () => {
     const scheduleInventory = vi.fn();
     const scheduleQueue = vi.fn();
     const observeSoldOut = vi.fn();
@@ -164,7 +164,7 @@ describe("ReserveOrderService queue handoff", () => {
         getPersistedBuyByReservationId: async () => null,
       },
       stockReservations: acceptingGateway(),
-      dashboardSnapshotPublications: { scheduleInventory, scheduleQueue },
+      dashboardSourceDirtyScheduler: { scheduleInventory, scheduleQueue },
       soldOutObservations: { observeSoldOut },
     });
 
@@ -190,7 +190,7 @@ describe("ReserveOrderService queue handoff", () => {
         getPersistedBuyByReservationId: async () => null,
       },
       stockReservations: acceptingGateway(),
-      dashboardSnapshotPublications: {
+      dashboardSourceDirtyScheduler: {
         scheduleInventory: () => {
           throw new Error("inventory scheduling failed");
         },
@@ -218,7 +218,7 @@ describe("ReserveOrderService queue handoff", () => {
       stockReservations: acceptingGateway({
         reserve: async () => ({ outcome: "run_not_accepting_traffic", reservation: null }),
       }),
-      dashboardSnapshotPublications: { scheduleInventory, scheduleQueue },
+      dashboardSourceDirtyScheduler: { scheduleInventory, scheduleQueue },
     });
 
     const response = await service.reserve({ request, correlationId, now });
@@ -252,7 +252,7 @@ describe("ReserveOrderService queue handoff", () => {
       stockReservations: acceptingGateway({
         reserve: async () => ({ outcome: decision, reservation: null }),
       }),
-      dashboardSnapshotPublications: { scheduleInventory, scheduleQueue },
+      dashboardSourceDirtyScheduler: { scheduleInventory, scheduleQueue },
       orderProcessJobPublisher: { enqueue },
       soldOutObservations: { observeSoldOut },
     });
@@ -498,7 +498,6 @@ describe("ReserveOrderService queue handoff", () => {
       saleOfferId: request.saleOfferId,
       runId: request.runId,
       correlationId,
-      occurredAt: now,
     });
   });
 
@@ -564,7 +563,7 @@ describe("ReserveOrderService queue handoff", () => {
         reserve: async () => ({ outcome: "idempotent_replay", reservation: hold }),
       }),
       publishBusinessOutcomeUpdate,
-      dashboardSnapshotPublications: { scheduleInventory, scheduleQueue },
+      dashboardSourceDirtyScheduler: { scheduleInventory, scheduleQueue },
       soldOutObservations: { observeSoldOut },
     });
 
@@ -622,7 +621,7 @@ describe("ReserveOrderService queue handoff", () => {
         },
       },
       reportOrderEnqueueFailure,
-      dashboardSnapshotPublications: { scheduleInventory, scheduleQueue },
+      dashboardSourceDirtyScheduler: { scheduleInventory, scheduleQueue },
     });
 
     await expect(service.reserve({ request, correlationId, now })).rejects.toBe(enqueueError);

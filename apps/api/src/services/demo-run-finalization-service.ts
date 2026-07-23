@@ -20,7 +20,7 @@ import {
   getInventoryStatus,
   orderRecoveryJobs,
   orders,
-  publishDashboardEvent,
+  publishDashboardProjectionDirtySignal,
   readBusinessOutcomeSummary,
 } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
@@ -276,7 +276,7 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
     const updatedRun = await this.readRun(runId);
 
     if (wroteSummary) {
-      await this.publishTerminalRunEvent(updatedRun, correlationId);
+      await this.publishTerminalProjectionDirty(updatedRun, correlationId);
     }
 
     return updatedRun;
@@ -426,28 +426,20 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
     return toDemoRunSnapshot(run);
   }
 
-  private async publishTerminalRunEvent(
+  private async publishTerminalProjectionDirty(
     run: DemoRunSnapshot,
     correlationId: string | undefined,
   ): Promise<void> {
-    // The terminal writer has already committed its durable transaction and the
-    // committed run has been re-read. This clock value is the post-commit event
-    // occurrence/publication time; it is not a pre-commit or database commit
-    // timestamp. The durable transition identity/time travels inside the run
-    // snapshot as finalizedAt.
-    const occurredAt = this.now();
     try {
-      await publishDashboardEvent(this.options.redis, {
-        type: "load.run.updated",
-        runId: run.runId,
+      await publishDashboardProjectionDirtySignal(this.options.redis, {
+        type: "dashboard.projection.dirty",
         ...(correlationId ? { correlationId } : {}),
-        run,
-        occurredAt: occurredAt.toISOString(),
+        ...(run.saleOfferId ? { scope: { runId: run.runId, saleOfferId: run.saleOfferId } } : {}),
       });
     } catch (error) {
       this.options.logger.warn(
         { err: error, runId: run.runId },
-        "Could not publish terminal run dashboard event.",
+        "Could not publish terminal projection dirty signal.",
       );
     }
   }

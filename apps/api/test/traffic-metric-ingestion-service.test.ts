@@ -32,25 +32,15 @@ const metricRequest = {
 };
 
 describe("TrafficMetricIngestionService", () => {
-  it("retains before canonical advisory publication", async () => {
+  it("retains before publishing one aggregate projection dirty signal", async () => {
     const order: string[] = [];
-    const publishIfLive = vi.fn(async (_runId: string, payloads: string[]) => {
+    const publishDirtyIfLive = vi.fn(async (_runId: string, signal: unknown) => {
       order.push("publish");
-      expect(payloads.map((payload) => JSON.parse(payload))).toEqual([
-        expect.objectContaining({
-          type: "dashboard.metric.observed",
-          runId: metricRequest.runId,
-          correlationId: metricRequest.correlationId,
-          metricName: "traffic.latency",
-          value: 42,
-          unit: "ms",
-          occurredAt: "2026-07-14T00:00:00.000Z",
-          observedAt: "2026-07-14T00:00:00.000Z",
-        }),
-        expect.objectContaining({ metricName: "traffic.failure_rate" }),
-        expect.objectContaining({ metricName: "traffic.scheduled_request_rate" }),
-      ]);
-      return { outcome: "attempted" as const, failures: [] };
+      expect(signal).toEqual({
+        type: "dashboard.projection.dirty",
+        correlationId: metricRequest.correlationId,
+      });
+      return { outcome: "published" as const };
     });
     const warn = vi.fn();
     const service = createService({
@@ -58,58 +48,25 @@ describe("TrafficMetricIngestionService", () => {
         order.push("append");
         return true;
       },
-      publishIfLive,
+      publishDirtyIfLive,
       warn,
     });
 
     await expect(service.ingest(metricRequest)).resolves.toBeUndefined();
 
     expect(order).toEqual(["append", "publish"]);
-    expect(publishIfLive).toHaveBeenCalledOnce();
+    expect(publishDirtyIfLive).toHaveBeenCalledOnce();
     expect(warn).not.toHaveBeenCalled();
   });
 
-  it("contains mixed event validation and transport failures without rejecting retention", async () => {
-    const transportError = new Error("pubsub unavailable");
-    const publishIfLive = vi.fn(async (_runId: string, payloads: string[]) => {
-      expect(payloads.map((payload) => JSON.parse(payload).metricName)).toEqual([
-        "traffic.latency",
-        "traffic.scheduled_request_rate",
-      ]);
-      throw transportError;
-    });
-    const warn = vi.fn();
-    const service = createService({ appendIfLive: async () => true, publishIfLive, warn });
-
-    await expect(
-      service.ingest({
-        ...metricRequest,
-        samples: metricRequest.samples.map((sample) =>
-          sample.metricName === "traffic.failure_rate" ? { ...sample, value: 2 } : sample,
-        ),
-      }),
-    ).resolves.toBeUndefined();
-
-    expect(warn).toHaveBeenCalledTimes(3);
-    expect(warn).toHaveBeenCalledWith(
-      expect.objectContaining({
-        err: transportError,
-        runId: metricRequest.runId,
-        correlationId: metricRequest.correlationId,
-        metricName: "traffic.scheduled_request_rate",
-      }),
-      "Could not publish traffic metric dashboard event.",
-    );
-  });
-
-  it("warns only for the indexed failed publication", async () => {
-    const publicationError = new Error("sample publish failed");
+  it("contains dirty-signal transport failure without rejecting retention", async () => {
+    const publicationError = new Error("dirty signal publish failed");
     const warn = vi.fn();
     const service = createService({
       appendIfLive: async () => true,
-      publishIfLive: async () => ({
-        outcome: "attempted",
-        failures: [{ index: 1, error: publicationError }],
+      publishDirtyIfLive: async () => ({
+        outcome: "failed",
+        error: publicationError,
       }),
       warn,
     });
@@ -122,9 +79,8 @@ describe("TrafficMetricIngestionService", () => {
         err: publicationError,
         runId: metricRequest.runId,
         correlationId: metricRequest.correlationId,
-        metricName: "traffic.failure_rate",
       },
-      "Could not publish traffic metric dashboard event.",
+      "Could not publish traffic metric projection dirty signal.",
     );
   });
 
@@ -134,9 +90,9 @@ describe("TrafficMetricIngestionService", () => {
     });
     const service = createService({
       appendIfLive: async () => true,
-      publishIfLive: async () => ({
-        outcome: "attempted",
-        failures: [{ index: 0, error: new Error("sample publish failed") }],
+      publishDirtyIfLive: async () => ({
+        outcome: "failed",
+        error: new Error("dirty publish failed"),
       }),
       warn,
     });
@@ -149,7 +105,7 @@ describe("TrafficMetricIngestionService", () => {
     const warn = vi.fn();
     const service = createService({
       appendIfLive: async () => true,
-      publishIfLive: async () => ({ outcome: "fenced" }),
+      publishDirtyIfLive: async () => ({ outcome: "fenced" }),
       warn,
     });
 
@@ -159,32 +115,32 @@ describe("TrafficMetricIngestionService", () => {
 
   it("propagates retention failure without publishing", async () => {
     const retentionError = new Error("retention unavailable");
-    const publishIfLive = vi.fn();
+    const publishDirtyIfLive = vi.fn();
     const service = createService({
       appendIfLive: async () => {
         throw retentionError;
       },
-      publishIfLive,
+      publishDirtyIfLive,
       warn: vi.fn(),
     });
 
     await expect(service.ingest(metricRequest)).rejects.toBe(retentionError);
-    expect(publishIfLive).not.toHaveBeenCalled();
+    expect(publishDirtyIfLive).not.toHaveBeenCalled();
   });
 
   it("rejects missing, wrong-lifecycle, and reset-fenced runs before publication", async () => {
     const appendIfLive = vi.fn(async () => true);
-    const publishIfLive = vi.fn(async () => ({ outcome: "attempted" as const, failures: [] }));
-    const missing = createService({ appendIfLive, publishIfLive, warn: vi.fn(), run: null });
+    const publishDirtyIfLive = vi.fn(async () => ({ outcome: "published" as const }));
+    const missing = createService({ appendIfLive, publishDirtyIfLive, warn: vi.fn(), run: null });
     const draining = createService({
       appendIfLive,
-      publishIfLive,
+      publishDirtyIfLive,
       warn: vi.fn(),
       run: { status: "draining", trafficStatus: "succeeded" },
     });
     const fenced = createService({
       appendIfLive: async () => false,
-      publishIfLive,
+      publishDirtyIfLive,
       warn: vi.fn(),
     });
 
@@ -201,7 +157,7 @@ describe("TrafficMetricIngestionService", () => {
       details: { runId: metricRequest.runId },
     });
     expect(appendIfLive).not.toHaveBeenCalled();
-    expect(publishIfLive).not.toHaveBeenCalled();
+    expect(publishDirtyIfLive).not.toHaveBeenCalled();
   });
 
   it("reserves bounded capacity before DB admission and runs admitted work single-flight", async () => {
@@ -228,9 +184,9 @@ describe("TrafficMetricIngestionService", () => {
       activeStoreOperations -= 1;
       return true;
     });
-    const publishIfLive = vi.fn(async () => {
+    const publishDirtyIfLive = vi.fn(async () => {
       expect(transactionOpen).toBe(true);
-      return { outcome: "attempted" as const, failures: [] };
+      return { outcome: "published" as const };
     });
     const database = databaseForRun({ status: "active", trafficStatus: "active" }, () => {
       transactionCount += 1;
@@ -241,7 +197,7 @@ describe("TrafficMetricIngestionService", () => {
     });
     const service = new TrafficMetricIngestionService({
       db: database as never,
-      store: { appendIfLive, publishIfLive },
+      store: { appendIfLive, publishDirtyIfLive },
       logger: { warn: vi.fn() },
     });
 
@@ -258,14 +214,14 @@ describe("TrafficMetricIngestionService", () => {
     await Promise.all(admitted);
     expect(transactionCount).toBe(maximumPendingTrafficMetricBatches);
     expect(appendIfLive).toHaveBeenCalledTimes(maximumPendingTrafficMetricBatches);
-    expect(publishIfLive).toHaveBeenCalledTimes(maximumPendingTrafficMetricBatches);
+    expect(publishDirtyIfLive).toHaveBeenCalledTimes(maximumPendingTrafficMetricBatches);
     expect(maximumActiveStoreOperations).toBe(1);
   });
 });
 
 function createService(options: {
   appendIfLive: Pick<DashboardTrafficMetricStore, "appendIfLive">["appendIfLive"];
-  publishIfLive: Pick<DashboardTrafficMetricStore, "publishIfLive">["publishIfLive"];
+  publishDirtyIfLive: Pick<DashboardTrafficMetricStore, "publishDirtyIfLive">["publishDirtyIfLive"];
   warn: ReturnType<typeof vi.fn>;
   run?: { status: string; trafficStatus: string } | null;
 }): TrafficMetricIngestionService {
@@ -273,7 +229,10 @@ function createService(options: {
     options.run === undefined ? { status: "active", trafficStatus: "active" } : options.run;
   return new TrafficMetricIngestionService({
     db: databaseForRun(selectedRun) as never,
-    store: { appendIfLive: options.appendIfLive, publishIfLive: options.publishIfLive },
+    store: {
+      appendIfLive: options.appendIfLive,
+      publishDirtyIfLive: options.publishDirtyIfLive,
+    },
     logger: { warn: options.warn as never },
   });
 }

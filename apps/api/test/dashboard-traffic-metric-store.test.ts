@@ -1,5 +1,4 @@
-import { dashboardEventsRedisChannel } from "@checkout-surge/contracts";
-import { createRedisClient } from "@checkout-surge/db";
+import { createRedisClient, dashboardProjectionDirtyRedisChannel } from "@checkout-surge/db";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { RedisDashboardTrafficMetricStore } from "../src/services/dashboard-traffic-metric-store.js";
 
@@ -21,16 +20,16 @@ describe("Redis dashboard traffic metric reset", () => {
 
   it("clears one run idempotently without touching another and drops late ingestion", async () => {
     await store.appendIfLive(metricBatch(runA, 10));
-    await store.publishIfLive(runA, [JSON.stringify(metricEvent(runA, 10))]);
+    await store.publishDirtyIfLive(runA, dirtySignal(10));
     await store.appendIfLive(metricBatch(runB, 20));
-    await store.publishIfLive(runB, [JSON.stringify(metricEvent(runB, 20))]);
+    await store.publishDirtyIfLive(runB, dirtySignal(20));
     const subscriber = createRedisClient(requireTestRedisUrl(), {
       lazyConnect: true,
       maxRetriesPerRequest: 3,
     });
     const messages: string[] = [];
     subscriber.on("message", (_channel, message) => messages.push(message));
-    await subscriber.subscribe(dashboardEventsRedisChannel);
+    await subscriber.subscribe(dashboardProjectionDirtyRedisChannel);
 
     await store.fenceRun(runA);
     await store.clearRun(runA);
@@ -42,7 +41,7 @@ describe("Redis dashboard traffic metric reset", () => {
     expect(await store.readRecent(runA)).toEqual([]);
     await new Promise((resolve) => setImmediate(resolve));
     expect(messages).toEqual([]);
-    await subscriber.unsubscribe(dashboardEventsRedisChannel);
+    await subscriber.unsubscribe(dashboardProjectionDirtyRedisChannel);
     subscriber.disconnect();
   });
 
@@ -63,18 +62,16 @@ describe("Redis dashboard traffic metric reset", () => {
     });
     const messages: string[] = [];
     subscriber.on("message", (_channel, message) => messages.push(message));
-    await subscriber.subscribe(dashboardEventsRedisChannel);
+    await subscriber.subscribe(dashboardProjectionDirtyRedisChannel);
     await expect(store.appendIfLive(metricBatch(runA, 50))).resolves.toBe(true);
     await store.clearRun(runA);
-    const publicationResult = await store.publishIfLive(runA, [
-      JSON.stringify(metricEvent(runA, 50)),
-    ]);
+    const publicationResult = await store.publishDirtyIfLive(runA, dirtySignal(50));
 
     await new Promise((resolve) => setImmediate(resolve));
     expect(publicationResult).toEqual({ outcome: "fenced" });
     expect(await store.readRecent(runA)).toEqual([]);
     expect(messages).toEqual([]);
-    await subscriber.unsubscribe(dashboardEventsRedisChannel);
+    await subscriber.unsubscribe(dashboardProjectionDirtyRedisChannel);
     subscriber.disconnect();
   });
 });
@@ -95,16 +92,10 @@ function metricBatch(runId: string, value: number) {
   };
 }
 
-function metricEvent(runId: string, value: number) {
+function dirtySignal(value: number) {
   return {
-    type: "dashboard.metric.observed" as const,
-    runId,
+    type: "dashboard.projection.dirty" as const,
     correlationId: `metric-${value}`,
-    metricName: "traffic.latency" as const,
-    value,
-    unit: "ms",
-    occurredAt: "2026-07-13T00:00:00.000Z",
-    observedAt: "2026-07-13T00:00:00.000Z",
   };
 }
 

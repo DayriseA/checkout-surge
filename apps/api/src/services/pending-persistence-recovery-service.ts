@@ -14,7 +14,7 @@ import {
 } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { pendingPersistenceRecoveryDefaults } from "../runtime/pending-persistence-recovery-policy.js";
-import type { DashboardSnapshotPublicationSchedulerPort } from "./dashboard-snapshot-publication-scheduler.js";
+import type { DashboardSourceDirtySchedulerPort } from "./dashboard-source-dirty-scheduler.js";
 import type { OrderProcessJobPublisher } from "./order-process-job-publisher.js";
 import type {
   BuyPersistence,
@@ -124,10 +124,7 @@ export class PendingPersistenceRecoveryService {
       runRetryPolicyResolver?: RunRetryPolicyResolver;
       idempotencyTtlSeconds: number;
       logger: CheckoutSurgeLogger;
-      dashboardSnapshotPublications?: Pick<
-        DashboardSnapshotPublicationSchedulerPort,
-        "scheduleQueue"
-      >;
+      dashboardSourceDirtyScheduler?: Pick<DashboardSourceDirtySchedulerPort, "scheduleQueue">;
       businessOutcomeUpdates?: BusinessOutcomeDirtyMarker;
       recoveryWindowSeconds?: number;
       maxAttempts?: number;
@@ -783,7 +780,7 @@ export class PendingPersistenceRecoveryService {
 
   private scheduleQueueSnapshot(reservation: SecuredReservationHold): void {
     try {
-      this.options.dashboardSnapshotPublications?.scheduleQueue({
+      this.options.dashboardSourceDirtyScheduler?.scheduleQueue({
         ...(reservation.runId ? { runId: reservation.runId } : {}),
         correlationId: reservation.correlationId,
       });

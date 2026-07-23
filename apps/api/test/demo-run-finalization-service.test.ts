@@ -10,13 +10,13 @@ import type {
   TrafficCompletionReport,
 } from "@checkout-surge/contracts";
 import {
-  dashboardEventsRedisChannel,
   emptyHttpTimingBreakdownSummary,
   trafficDeliverySummarySchema,
 } from "@checkout-surge/contracts";
 import {
   createDatabaseConnection,
   createRedisClient,
+  dashboardProjectionDirtyRedisChannel,
   deferPendingPersistenceRecord,
   demoPresets,
   demoRunFinalizations,
@@ -727,7 +727,7 @@ describe("demo run finalization service", () => {
       terminalInventoryReadTimeoutMs: 500,
     });
     const handleSubscriberMessage = (channel: string, message: string) => {
-      if (channel === dashboardEventsRedisChannel) {
+      if (channel === dashboardProjectionDirtyRedisChannel) {
         terminalEvents.push(JSON.parse(message));
       }
       if (channel === barrierChannel && message === barrierSentinel) {
@@ -738,7 +738,7 @@ describe("demo run finalization service", () => {
 
     try {
       await seedDrainingRun({ db, redis: redisClient, trafficDeliveryStatus: "complete" });
-      await subscriberRedis.subscribe(dashboardEventsRedisChannel, barrierChannel);
+      await subscriberRedis.subscribe(dashboardProjectionDirtyRedisChannel, barrierChannel);
 
       await expect(
         service.finalizeRun(ids.run, "corr-terminal-inventory-timeout"),
@@ -769,14 +769,13 @@ describe("demo run finalization service", () => {
       expect(summariesAfterRetry).toHaveLength(1);
       expect(terminalEvents).toHaveLength(1);
       expect(terminalEvents[0]).toMatchObject({
-        type: "load.run.updated",
-        runId: ids.run,
-        run: { status: "completed" },
+        type: "dashboard.projection.dirty",
+        scope: { runId: ids.run, saleOfferId: ids.saleOffer },
       });
     } finally {
       subscriberRedis.off("message", handleSubscriberMessage);
       try {
-        await subscriberRedis.unsubscribe(dashboardEventsRedisChannel, barrierChannel);
+        await subscriberRedis.unsubscribe(dashboardProjectionDirtyRedisChannel, barrierChannel);
       } finally {
         subscriberRedis.disconnect();
         await observerConnection.close();
@@ -889,7 +888,7 @@ describe("demo run finalization service", () => {
     let secondFinalization: Promise<unknown> | null = null;
     let subscribed = false;
     const handleSubscriberMessage = (channel: string, message: string) => {
-      if (channel === dashboardEventsRedisChannel) {
+      if (channel === dashboardProjectionDirtyRedisChannel) {
         terminalEvents.push(JSON.parse(message));
       }
       if (channel === barrierChannel && message === barrierSentinel) {
@@ -900,7 +899,7 @@ describe("demo run finalization service", () => {
 
     try {
       await seedDrainingRun({ db, redis: redisClient, trafficDeliveryStatus: "complete" });
-      await subscriberRedis.subscribe(dashboardEventsRedisChannel, barrierChannel);
+      await subscriberRedis.subscribe(dashboardProjectionDirtyRedisChannel, barrierChannel);
       subscribed = true;
       await lockConnection.db.transaction(async (tx) => {
         await tx.execute(
@@ -927,15 +926,14 @@ describe("demo run finalization service", () => {
       expect(writeResults.sort()).toEqual([false, true]);
       expect(terminalEvents).toHaveLength(1);
       expect(terminalEvents[0]).toMatchObject({
-        type: "load.run.updated",
-        runId: ids.run,
-        run: { status: "completed" },
+        type: "dashboard.projection.dirty",
+        scope: { runId: ids.run, saleOfferId: ids.saleOffer },
       });
     } finally {
       subscriberRedis.off("message", handleSubscriberMessage);
       try {
         if (subscribed) {
-          await subscriberRedis.unsubscribe(dashboardEventsRedisChannel, barrierChannel);
+          await subscriberRedis.unsubscribe(dashboardProjectionDirtyRedisChannel, barrierChannel);
         }
       } finally {
         try {
@@ -951,7 +949,7 @@ describe("demo run finalization service", () => {
     }
   });
 
-  it("publishes the terminal event at a post-commit time after an overlapping stale recovery", async () => {
+  it("publishes terminal projection dirtiness after commit and an overlapping stale recovery", async () => {
     const db = requireConnection(connection).db;
     const redisClient = requireRedis(redis);
     const lockConnection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
@@ -963,21 +961,17 @@ describe("demo run finalization service", () => {
     });
     const finalizationAttemptT0 = new Date("2026-06-20T00:00:10.000Z");
     const recoveryStartT1 = new Date("2026-06-20T00:00:11.000Z");
-    const postCommitEventT2 = new Date("2026-06-20T00:00:12.000Z");
     expect(recoveryStartT1.getTime()).toBeGreaterThan(finalizationAttemptT0.getTime());
-    expect(postCommitEventT2.getTime()).toBeGreaterThan(recoveryStartT1.getTime());
     const finalizationClockCalls: Date[] = [];
-    const finalizationTimes = [finalizationAttemptT0, postCommitEventT2];
     const service = createService(connection, redis, {
       now: () => {
-        const next = finalizationTimes[finalizationClockCalls.length] ?? postCommitEventT2;
-        finalizationClockCalls.push(next);
-        return next;
+        finalizationClockCalls.push(finalizationAttemptT0);
+        return finalizationAttemptT0;
       },
     });
     const terminalEvents: Record<string, unknown>[] = [];
     const handleSubscriberMessage = (channel: string, message: string) => {
-      if (channel === dashboardEventsRedisChannel) {
+      if (channel === dashboardProjectionDirtyRedisChannel) {
         terminalEvents.push(JSON.parse(message) as Record<string, unknown>);
       }
     };
@@ -986,7 +980,7 @@ describe("demo run finalization service", () => {
 
     try {
       await seedDrainingRun({ db, redis: redisClient, trafficDeliveryStatus: "complete" });
-      await subscriberRedis.subscribe(dashboardEventsRedisChannel);
+      await subscriberRedis.subscribe(dashboardProjectionDirtyRedisChannel);
       const staleRecovery = await lockConnection.db.transaction(async (tx) => {
         await tx.execute(
           sql`select pg_advisory_xact_lock(hashtext(${terminalDemoRunTransitionLockKey(ids.run)}))`,
@@ -1048,22 +1042,16 @@ describe("demo run finalization service", () => {
       expect(summaries).toHaveLength(1);
       expect(summaries[0]?.status).toBe("completed");
       expect(summaries[0]?.endedAt).toEqual(finalizationAttemptT0);
-      // The attempt saw t0; the event publication saw a fresh post-commit t2.
-      expect(finalizationClockCalls).toEqual([finalizationAttemptT0, postCommitEventT2]);
+      expect(finalizationClockCalls).toEqual([finalizationAttemptT0]);
       expect(terminalEvents).toHaveLength(1);
       expect(terminalEvents[0]).toMatchObject({
-        type: "load.run.updated",
-        runId: ids.run,
-        occurredAt: postCommitEventT2.toISOString(),
-        run: {
-          status: "completed",
-          finalizedAt: finalizationAttemptT0.toISOString(),
-        },
+        type: "dashboard.projection.dirty",
+        scope: { runId: ids.run, saleOfferId: ids.saleOffer },
       });
     } finally {
       subscriberRedis.off("message", handleSubscriberMessage);
       try {
-        await subscriberRedis.unsubscribe(dashboardEventsRedisChannel);
+        await subscriberRedis.unsubscribe(dashboardProjectionDirtyRedisChannel);
       } finally {
         subscriberRedis.disconnect();
         await Promise.all([
@@ -1708,7 +1696,7 @@ async function waitForObservedCount(values: unknown[], expectedCount: number): P
     await delay(20);
   }
 
-  throw new Error(`Timed out waiting for ${expectedCount} observed dashboard event(s).`);
+  throw new Error(`Timed out waiting for ${expectedCount} projection dirty signal(s).`);
 }
 
 function requireStartedPromise<T>(promise: Promise<T> | null, label: string): Promise<T> {

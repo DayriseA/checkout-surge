@@ -13,7 +13,7 @@ interface EventSourceLike {
 
 type EventSourceConstructor = new (url: string) => EventSourceLike;
 
-export interface UseDashboardEventsOptions {
+export interface UseDashboardProjectionsOptions {
   onProjection: (projection: DashboardProjection) => void;
   onOpen: () => void;
   onDisconnect: () => void;
@@ -21,13 +21,13 @@ export interface UseDashboardEventsOptions {
   url?: string;
 }
 
-export function useDashboardEvents({
+export function useDashboardProjections({
   onProjection,
   onOpen,
   onDisconnect,
   eventSourceConstructor,
   url = dashboardEventsUrl(),
-}: UseDashboardEventsOptions): RealtimeConnectionStatus {
+}: UseDashboardProjectionsOptions): RealtimeConnectionStatus {
   const [status, setStatus] = useState<RealtimeConnectionStatus>("connecting");
   const projectionCallbackRef = useRef(onProjection);
   const openCallbackRef = useRef(onOpen);

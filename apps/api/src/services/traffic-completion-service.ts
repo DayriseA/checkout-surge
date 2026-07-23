@@ -12,7 +12,10 @@ import {
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { and, eq, inArray } from "drizzle-orm";
 import type { DemoRunFinalizationController } from "./demo-run-finalization-service.js";
-import { publishDemoRunSnapshot, readDemoRunSnapshot } from "./demo-run-snapshot-operations.js";
+import {
+  publishDemoRunProjectionDirty,
+  readDemoRunSnapshot,
+} from "./demo-run-snapshot-operations.js";
 import { DemoRunValidationError } from "./demo-run-validation-error.js";
 import {
   findTrafficCompletionBindingMismatch,
@@ -161,10 +164,9 @@ export class TrafficCompletionService implements TrafficCompletionController {
 
     const updatedRun = await readDemoRunSnapshot(this.options.db, report.runId);
     if (completionClaim.inserted) {
-      await publishDemoRunSnapshot(this.options.redis, this.options.logger, {
+      await publishDemoRunProjectionDirty(this.options.redis, this.options.logger, {
         run: updatedRun,
         correlationId: report.correlationId,
-        occurredAt: now,
       });
     }
     return (

@@ -11,7 +11,7 @@ import {
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { type ReactNode, StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { useDashboardEvents } from "../src/app/components/realtime/use-dashboard-events.js";
+import { useDashboardProjections } from "../src/app/components/realtime/use-dashboard-projections.js";
 import { useDashboardRecovery } from "../src/app/components/realtime/use-dashboard-recovery.js";
 import type { BackendRead } from "../src/app/lib/api.js";
 
@@ -53,15 +53,15 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe("useDashboardEvents", () => {
-  it("accepts only complete projection frames and ignores transitional legacy events", () => {
+describe("useDashboardProjections", () => {
+  it("accepts only complete projection frames and rejects non-projection event data", () => {
     const firstCallback = vi.fn();
     const secondCallback = vi.fn();
     const onOpen = vi.fn();
     const onDisconnect = vi.fn();
     const { result, rerender, unmount } = renderHook(
       ({ onProjection }) =>
-        useDashboardEvents({
+        useDashboardProjections({
           eventSourceConstructor: InjectedEventSource,
           onProjection,
           onOpen,
@@ -79,7 +79,7 @@ describe("useDashboardEvents", () => {
         "message",
         new MessageEvent("message", {
           data: JSON.stringify({
-            type: "dashboard.metric.observed",
+            type: "not-a-dashboard-projection",
             occurredAt: "2026-06-20T00:00:11.000Z",
             observedAt: "2026-06-20T00:00:11.000Z",
             metricName: "queue.depth",

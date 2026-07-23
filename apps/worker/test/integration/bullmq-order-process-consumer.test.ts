@@ -329,11 +329,7 @@ describe("BullMQ order-processing boundary", () => {
           if (!databaseRestored) throw new Error("database unavailable");
           return {
             changed: true,
-            eventId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-            previousStatus: "queued",
             status: "processing",
-            occurredAt: new Date(job.queuedAt),
-            queuedAt: new Date(job.queuedAt),
           };
         },
         transitionToConfirmed: vi.fn().mockResolvedValue({ changed: false, status: "confirmed" }),
@@ -343,7 +339,6 @@ describe("BullMQ order-processing boundary", () => {
       recovery: { handoff: recoveryRecords, resolve: async () => undefined },
       publishBusinessOutcomeUpdate: async () => undefined,
       notificationRecordPublisher: { publishForConfirmedOrder: async () => undefined },
-      realtimePublisher: { enqueue: () => undefined },
     });
     consumer = createBullMqOrderProcessConsumer({
       connection: { url: testRedisUrl(), maxRetriesPerRequest: null },

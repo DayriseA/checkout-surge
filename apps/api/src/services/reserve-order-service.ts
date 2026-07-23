@@ -12,9 +12,9 @@ import {
   type StockReservationDecision,
 } from "@checkout-surge/contracts";
 import type {
-  DashboardSnapshotPublicationSchedulerPort,
+  DashboardSourceDirtySchedulerPort,
   SoldOutObservationPort,
-} from "./dashboard-snapshot-publication-scheduler.js";
+} from "./dashboard-source-dirty-scheduler.js";
 import type { OrderProcessJobPublisher } from "./order-process-job-publisher.js";
 import type { RunRetryPolicyResolver } from "./run-retry-policy-resolver.js";
 
@@ -155,7 +155,6 @@ type BusinessOutcomeUpdatePublisher = (input: {
   saleOfferId: string;
   runId?: string;
   correlationId: string;
-  occurredAt: Date;
 }) => Promise<void>;
 type BusinessOutcomeUpdateScheduler = (task: () => void) => void;
 
@@ -192,7 +191,7 @@ export class ReserveOrderService {
   private readonly reportBusinessOutcomeUpdateFailure: (
     report: BusinessOutcomeUpdateFailureReport,
   ) => void;
-  private readonly dashboardSnapshotPublications: DashboardSnapshotPublicationSchedulerPort;
+  private readonly dashboardSourceDirtyScheduler: DashboardSourceDirtySchedulerPort;
   private readonly soldOutObservations: SoldOutObservationPort;
 
   constructor(options: {
@@ -213,7 +212,7 @@ export class ReserveOrderService {
     publishBusinessOutcomeUpdate?: BusinessOutcomeUpdatePublisher;
     scheduleBusinessOutcomeUpdate?: BusinessOutcomeUpdateScheduler;
     reportBusinessOutcomeUpdateFailure?: (report: BusinessOutcomeUpdateFailureReport) => void;
-    dashboardSnapshotPublications?: DashboardSnapshotPublicationSchedulerPort;
+    dashboardSourceDirtyScheduler?: DashboardSourceDirtySchedulerPort;
     soldOutObservations?: SoldOutObservationPort;
   }) {
     this.persistence = options.persistence;
@@ -241,7 +240,7 @@ export class ReserveOrderService {
       });
     this.reportBusinessOutcomeUpdateFailure =
       options.reportBusinessOutcomeUpdateFailure ?? (() => undefined);
-    this.dashboardSnapshotPublications = options.dashboardSnapshotPublications ?? {
+    this.dashboardSourceDirtyScheduler = options.dashboardSourceDirtyScheduler ?? {
       scheduleInventory: () => undefined,
       scheduleQueue: () => undefined,
     };
@@ -361,7 +360,7 @@ export class ReserveOrderService {
     }
 
     await this.promoteWithoutHidingDurableSuccess(input.idempotencyKey, input.reservation);
-    this.scheduleBusinessOutcomeUpdateWithoutHidingDurableSuccess(input.reservation, input.now);
+    this.scheduleBusinessOutcomeUpdateWithoutHidingDurableSuccess(input.reservation);
     return this.acceptedResponse(persisted, input.correlationId);
   }
 
@@ -452,11 +451,10 @@ export class ReserveOrderService {
 
   private scheduleBusinessOutcomeUpdateWithoutHidingDurableSuccess(
     reservation: SecuredReservationHold,
-    occurredAt: Date,
   ): void {
     try {
       this.scheduleBusinessOutcomeUpdate(() => {
-        void this.publishBusinessOutcomeUpdateWithoutHidingDurableSuccess(reservation, occurredAt);
+        void this.publishBusinessOutcomeUpdateWithoutHidingDurableSuccess(reservation);
       });
     } catch (error) {
       this.reportBusinessOutcomeUpdateFailureSafely(error, reservation);
@@ -465,14 +463,12 @@ export class ReserveOrderService {
 
   private async publishBusinessOutcomeUpdateWithoutHidingDurableSuccess(
     reservation: SecuredReservationHold,
-    occurredAt: Date,
   ): Promise<void> {
     try {
       await this.publishBusinessOutcomeUpdate({
         saleOfferId: reservation.saleOfferId,
         ...(reservation.runId ? { runId: reservation.runId } : {}),
         correlationId: reservation.correlationId,
-        occurredAt,
       });
     } catch (error) {
       this.reportBusinessOutcomeUpdateFailureSafely(error, reservation);
@@ -586,7 +582,7 @@ export class ReserveOrderService {
 
   private scheduleInventorySnapshot(reservation: SecuredReservationHold): void {
     try {
-      this.dashboardSnapshotPublications.scheduleInventory({
+      this.dashboardSourceDirtyScheduler.scheduleInventory({
         saleOfferId: reservation.saleOfferId,
         ...(reservation.runId ? { runId: reservation.runId } : {}),
         correlationId: reservation.correlationId,
@@ -598,7 +594,7 @@ export class ReserveOrderService {
 
   private scheduleQueueSnapshot(reservation: SecuredReservationHold): void {
     try {
-      this.dashboardSnapshotPublications.scheduleQueue({
+      this.dashboardSourceDirtyScheduler.scheduleQueue({
         ...(reservation.runId ? { runId: reservation.runId } : {}),
         correlationId: reservation.correlationId,
       });

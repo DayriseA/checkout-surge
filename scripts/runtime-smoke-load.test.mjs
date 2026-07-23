@@ -4,17 +4,15 @@ import {
   assertBusinessCompletion,
   assertScenarioAcceptance,
   assertSseEvidence,
-  collectDashboardEvents,
+  collectDashboardProjections,
   createDashboardDeliveryMeasurement,
   extractCompleteSseFrames,
   parseDashboardProjectionSseDataFrames,
-  parseSseDataFrames,
   prepareExactRunCleanup,
   requireReadiness,
   runtimeLoadSmokeScenarios,
   selectRepresentativeDashboardProjection,
   selectTerminalSummary,
-  startRawDashboardEventCounter,
   teardownWithRetry,
   throwSmokeFailures,
   validateTeardownResponse,
@@ -108,20 +106,6 @@ test("selects the largest bounded projection sample and reports its occupancy", 
   );
 });
 
-function dashboardEvent(overrides = {}) {
-  return {
-    type: "dashboard.metric.observed",
-    runId,
-    correlationId,
-    occurredAt: "2026-07-13T00:00:00.000Z",
-    observedAt: "2026-07-13T00:00:00.000Z",
-    metricName: "traffic.latency",
-    value: 12,
-    unit: "ms",
-    ...overrides,
-  };
-}
-
 function dashboardProjection(overrides = {}) {
   return {
     schema: "checkout-surge.dashboard-projection",
@@ -186,22 +170,20 @@ function dashboardProjection(overrides = {}) {
   };
 }
 
-test("parses complete data frames and ignores invalid or partial SSE", () => {
-  const event = dashboardEvent();
-  assert.deepEqual(parseSseDataFrames(`data: ${JSON.stringify(event)}\n\ndata: {"partial":`), [
-    event,
-  ]);
+test("parses complete projections and rejects per-order delta or partial SSE", () => {
   const projection = dashboardProjection();
   assert.deepEqual(
     parseDashboardProjectionSseDataFrames(
-      `data: ${JSON.stringify(projection)}\n\ndata: {"partial":`,
+      `data: ${JSON.stringify(projection)}\n\ndata: {"type":"order.status.updated","orderId":"legacy"}\n\ndata: {"partial":`,
     ),
     [projection],
   );
 });
 
 test("collects CRLF SSE frames split across chunks and requires the event-stream content type", async () => {
-  const encoded = new TextEncoder().encode(`data: ${JSON.stringify(dashboardEvent())}\r\n\r\n`);
+  const encoded = new TextEncoder().encode(
+    `data: ${JSON.stringify(dashboardProjection())}\r\n\r\n`,
+  );
   const response = new Response(
     new ReadableStream({
       start(controller) {
@@ -213,15 +195,15 @@ test("collects CRLF SSE frames split across chunks and requires the event-stream
     { headers: { "content-type": "text/event-stream; charset=utf-8" } },
   );
   assert.deepEqual(
-    await collectDashboardEvents(
+    await collectDashboardProjections(
       "http://dashboard/events",
       async () => response,
       new AbortController().signal,
     ),
-    [dashboardEvent()],
+    [dashboardProjection()],
   );
   await assert.rejects(
-    collectDashboardEvents(
+    collectDashboardProjections(
       "http://dashboard/events",
       async () => new Response("ok", { headers: { "content-type": "text/plain" } }),
       new AbortController().signal,
@@ -230,12 +212,12 @@ test("collects CRLF SSE frames split across chunks and requires the event-stream
   );
 });
 
-test("counts completed SSE frames, data messages, and reducer updates at the delivery boundary", async () => {
-  const valid = `data: ${JSON.stringify(dashboardEvent())}\r\n\r\n`;
+test("counts completed SSE frames and projection messages at the delivery boundary", async () => {
+  const valid = `data: ${JSON.stringify(dashboardProjection())}\r\n\r\n`;
   const payload = new TextEncoder().encode(
     `retry: 3000\n: connected\n\n: heartbeat\n\n${valid}data: ${JSON.stringify(
-      dashboardProjection(),
-    )}\n\ndata: {"type":"bad"}\n\n`,
+      dashboardProjection({ revision: 2 }),
+    )}\n\ndata: {"type":"order.status.updated","orderId":"legacy"}\n\n`,
   );
   const response = new Response(
     new ReadableStream({
@@ -251,12 +233,10 @@ test("counts completed SSE frames, data messages, and reducer updates at the del
   const stats = {
     deliveredFrames: 0,
     deliveredDataMessages: 0,
-    contractValidMessages: 0,
     contractValidProjectionMessages: 0,
-    runMessageCounts: {},
     runProjectionMessageCounts: {},
   };
-  await collectDashboardEvents(
+  await collectDashboardProjections(
     "http://dashboard/events",
     async () => response,
     new AbortController().signal,
@@ -265,13 +245,7 @@ test("counts completed SSE frames, data messages, and reducer updates at the del
       recordSse(extracted) {
         stats.deliveredFrames += extracted.frameCount;
         stats.deliveredDataMessages += extracted.dataMessageCount;
-        stats.contractValidMessages += extracted.events.length;
         stats.contractValidProjectionMessages += extracted.projections.length;
-        for (const event of extracted.events) {
-          if (event.runId) {
-            stats.runMessageCounts[event.runId] = (stats.runMessageCounts[event.runId] ?? 0) + 1;
-          }
-        }
         for (const projection of extracted.projections) {
           if (projection.scope?.runId) {
             stats.runProjectionMessageCounts[projection.scope.runId] =
@@ -285,14 +259,12 @@ test("counts completed SSE frames, data messages, and reducer updates at the del
   assert.deepEqual(stats, {
     deliveredFrames: 5,
     deliveredDataMessages: 3,
-    contractValidMessages: 1,
-    contractValidProjectionMessages: 1,
-    runMessageCounts: { [runId]: 1 },
-    runProjectionMessageCounts: { [runId]: 1 },
+    contractValidProjectionMessages: 2,
+    runProjectionMessageCounts: { [runId]: 2 },
   });
 });
 
-test("uses one resettable fixed window for Redis and SSE delivery counts", async () => {
+test("uses one resettable fixed window for SSE projection delivery counts", async () => {
   let now = 100;
   const sleeps = [];
   const measurement = createDashboardDeliveryMeasurement({
@@ -303,32 +275,26 @@ test("uses one resettable fixed window for Redis and SSE delivery counts", async
     },
   });
   const delivery = extractCompleteSseFrames(
-    `: connected\n\ndata: ${JSON.stringify(dashboardEvent())}\n\n`,
+    `: connected\n\ndata: ${JSON.stringify(dashboardProjection())}\n\n`,
   );
 
-  measurement.recordRaw();
   measurement.recordScope(runId, saleOfferId);
   measurement.recordSse(delivery);
   measurement.start(30_000);
-  measurement.recordRaw();
   measurement.recordScope(runId, saleOfferId);
   measurement.recordScope(runId, saleOfferId);
   measurement.recordSse(delivery);
   now += 160;
   await measurement.waitForDeadline();
-  measurement.recordRaw();
   measurement.recordSse(delivery);
 
   assert.deepEqual(measurement.stop(), {
     durationMs: 30_000,
     activeScopeCount: 1,
-    rawRedisProducerEvents: 1,
     deliveredFrames: 2,
     deliveredDataMessages: 1,
-    contractValidMessages: 1,
-    contractValidProjectionMessages: 0,
-    runMessageCounts: { [runId]: 1 },
-    runProjectionMessageCounts: {},
+    contractValidProjectionMessages: 1,
+    runProjectionMessageCounts: { [runId]: 1 },
   });
   assert.deepEqual(sleeps, [29_840]);
 });
@@ -349,7 +315,7 @@ test("excludes the SSE establishment frame before the common measurement gate op
   });
   const now = 0;
   const measurement = createDashboardDeliveryMeasurement({ clock: () => now });
-  const collecting = collectDashboardEvents(
+  const collecting = collectDashboardProjections(
     "http://dashboard/events",
     async () => response,
     new AbortController().signal,
@@ -360,7 +326,7 @@ test("excludes the SSE establishment frame before the common measurement gate op
   await opened;
   measurement.start(30_000);
   streamController.enqueue(
-    new TextEncoder().encode(`data: ${JSON.stringify(dashboardEvent())}\n\n`),
+    new TextEncoder().encode(`data: ${JSON.stringify(dashboardProjection())}\n\n`),
   );
   streamController.close();
   await collecting;
@@ -368,62 +334,21 @@ test("excludes the SSE establishment frame before the common measurement gate op
   assert.deepEqual(measurement.stop(), {
     durationMs: 30_000,
     activeScopeCount: 0,
-    rawRedisProducerEvents: 0,
     deliveredFrames: 1,
     deliveredDataMessages: 1,
-    contractValidMessages: 1,
-    contractValidProjectionMessages: 0,
-    runMessageCounts: { [runId]: 1 },
-    runProjectionMessageCounts: {},
+    contractValidProjectionMessages: 1,
+    runProjectionMessageCounts: { [runId]: 1 },
   });
-});
-
-test("disconnects a dedicated Redis subscriber when subscribe fails and when counting stops", async () => {
-  const measurement = createDashboardDeliveryMeasurement();
-  let failedDisconnects = 0;
-  await assert.rejects(
-    startRawDashboardEventCounter("redis://failure", measurement, {
-      createRedisClient: () => ({
-        on() {},
-        off() {},
-        subscribe: async () => {
-          throw new Error("subscribe failed");
-        },
-        disconnect() {
-          failedDisconnects += 1;
-        },
-      }),
-      timeoutMs: 10,
-    }),
-    /subscribe failed/,
-  );
-  assert.equal(failedDisconnects, 1);
-
-  let disconnects = 0;
-  const counter = await startRawDashboardEventCounter("redis://success", measurement, {
-    createRedisClient: () => ({
-      on() {},
-      off() {},
-      subscribe: async () => undefined,
-      disconnect() {
-        disconnects += 1;
-      },
-    }),
-    timeoutMs: 10,
-  });
-  counter.stop();
-  counter.stop();
-  assert.equal(disconnects, 1);
 });
 
 test("keeps incomplete SSE data buffered and rejects a same-run correlation mismatch", () => {
-  const first = extractCompleteSseFrames(`data: ${JSON.stringify(dashboardEvent())}\r\n\r`);
-  assert.deepEqual(first.events, []);
+  const first = extractCompleteSseFrames(`data: ${JSON.stringify(dashboardProjection())}\r\n\r`);
+  assert.deepEqual(first.projections, []);
   const second = extractCompleteSseFrames(`${first.remainder}\n`);
-  assert.deepEqual(second.events, [dashboardEvent()]);
+  assert.deepEqual(second.projections, [dashboardProjection()]);
   assert.doesNotThrow(() =>
     assertSseEvidence(
-      [dashboardEvent({ correlationId: `${correlationId}:k6:0` })],
+      [dashboardProjection({ correlationId: `${correlationId}:k6:0` })],
       runId,
       correlationId,
     ),
@@ -431,7 +356,10 @@ test("keeps incomplete SSE data buffered and rejects a same-run correlation mism
   assert.throws(
     () =>
       assertSseEvidence(
-        [dashboardEvent(), dashboardEvent({ correlationId: "different-correlation" })],
+        [
+          dashboardProjection(),
+          dashboardProjection({ correlationId: "different-correlation", revision: 2 }),
+        ],
         runId,
         correlationId,
       ),

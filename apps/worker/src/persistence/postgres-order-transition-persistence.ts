@@ -73,21 +73,11 @@ export class PostgresOrderTransitionPersistence implements OrderTransitionPersis
         .update(orders)
         .set({ status: "processing", processingAt: occurredAt, updatedAt: occurredAt })
         .where(eq(orders.id, order.id));
-      const eventId = await appendTransitionEvent(
-        tx,
-        order,
-        "order.processing",
-        occurredAt,
-        delivery,
-      );
+      await appendTransitionEvent(tx, order, "order.processing", occurredAt, delivery);
 
       return {
         changed: true,
-        eventId,
-        previousStatus: "queued",
         status: "processing",
-        occurredAt,
-        queuedAt: order.queuedAt,
       };
     });
   }
@@ -111,21 +101,11 @@ export class PostgresOrderTransitionPersistence implements OrderTransitionPersis
         .update(orders)
         .set({ status: "confirmed", confirmedAt: occurredAt, updatedAt: occurredAt })
         .where(eq(orders.id, order.id));
-      const eventId = await appendTransitionEvent(
-        tx,
-        order,
-        "order.confirmed",
-        occurredAt,
-        delivery,
-      );
+      await appendTransitionEvent(tx, order, "order.confirmed", occurredAt, delivery);
       return {
         changed: true,
-        eventId,
-        previousStatus: "processing",
         status: "confirmed",
-        occurredAt,
         confirmedAt: occurredAt,
-        queuedAt: order.queuedAt,
       };
     });
   }
@@ -156,21 +136,10 @@ export class PostgresOrderTransitionPersistence implements OrderTransitionPersis
           updatedAt: occurredAt,
         })
         .where(eq(orders.id, order.id));
-      const eventId = await appendTransitionEvent(
-        tx,
-        order,
-        "order.failed",
-        occurredAt,
-        delivery,
-        failure,
-      );
+      await appendTransitionEvent(tx, order, "order.failed", occurredAt, delivery, failure);
       return {
         changed: true,
-        eventId,
-        previousStatus: "processing",
         status: "failed",
-        occurredAt,
-        queuedAt: order.queuedAt,
       };
     });
   }
@@ -221,7 +190,7 @@ async function appendTransitionEvent(
   occurredAt: Date,
   delivery: OrderProcessDeliveryMetadata,
   failure?: OrderFailure,
-): Promise<string> {
+): Promise<void> {
   const [inserted] = await tx
     .insert(orderEvents)
     .values({
@@ -241,5 +210,4 @@ async function appendTransitionEvent(
     })
     .returning({ id: orderEvents.id });
   if (!inserted) throw new Error("Order transition event insert returned no durable identity.");
-  return inserted.id;
 }

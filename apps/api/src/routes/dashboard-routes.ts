@@ -1,11 +1,11 @@
 import {
   dashboardEventsPath,
+  dashboardProjectionSchema,
   dashboardRecoveryPath,
   dashboardRecoveryQuerySchema,
-  dashboardRecoveryResponseSchema,
   publicVisitorIdHeaderName,
 } from "@checkout-surge/contracts";
-import type { DashboardEventFanout } from "../realtime/dashboard-event-fanout.js";
+import type { DashboardProjectionFanout } from "../realtime/dashboard-projection-fanout.js";
 import type { DashboardSourceResolver } from "../runtime/dashboard-source-identity.js";
 import { createErrorPayload } from "../runtime/errors.js";
 import type { ApiFastifyInstance } from "../runtime/fastify.js";
@@ -13,7 +13,7 @@ import { createHttpOperationLifecycle } from "../runtime/operation-lifecycle.js"
 import type { DashboardRecoveryWorkflowController } from "../services/dashboard-recovery-workflow.js";
 
 export interface RegisterDashboardRoutesOptions {
-  dashboardEventFanout: Pick<DashboardEventFanout, "connect">;
+  dashboardProjectionFanout: Pick<DashboardProjectionFanout, "connect">;
   dashboardRecoveryWorkflow: DashboardRecoveryWorkflowController;
   sourceResolver: DashboardSourceResolver;
   sseRetryAfterSeconds: number;
@@ -50,7 +50,7 @@ export function registerDashboardRoutes(
         ...(knownScope ? { knownScope } : {}),
       });
       if (result.outcome === "recovered") {
-        const response = dashboardRecoveryResponseSchema.parse(result.response);
+        const response = dashboardProjectionSchema.parse(result.response);
         return reply.status(200).send(response);
       }
       if (result.outcome === "client_disconnected") return reply;
@@ -85,7 +85,7 @@ export function registerDashboardRoutes(
   });
 
   app.get(dashboardEventsPath, (request, reply) => {
-    const admission = options.dashboardEventFanout.connect({
+    const admission = options.dashboardProjectionFanout.connect({
       request: request.raw,
       response: reply.raw,
       correlationId: request.correlationId,

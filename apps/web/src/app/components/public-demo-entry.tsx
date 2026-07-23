@@ -2,7 +2,7 @@
 
 import {
   type AcceptedRunConfigSnapshot,
-  type DashboardRecoveryResponse,
+  type DashboardProjection,
   type DemoRunConfigOverride,
   startDemoRunRequestSchema,
   startDemoRunResponseSchema,
@@ -336,7 +336,7 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
   );
 }
 
-export function isRunStartBlocked(recovery: BackendRead<DashboardRecoveryResponse>): boolean {
+export function isRunStartBlocked(recovery: BackendRead<DashboardProjection>): boolean {
   if (recovery.status !== "available") {
     return true;
   }
@@ -419,13 +419,13 @@ function fallbackDraft(): CustomDraft {
   };
 }
 
-function currentRunStatus(recovery: BackendRead<DashboardRecoveryResponse>): string {
+function currentRunStatus(recovery: BackendRead<DashboardProjection>): string {
   return recovery.status === "available"
     ? (recovery.data.currentRun?.status ?? "idle")
     : "unavailable";
 }
 
-function publicAvailabilityStatus(recovery: BackendRead<DashboardRecoveryResponse>): string {
+function publicAvailabilityStatus(recovery: BackendRead<DashboardProjection>): string {
   if (recovery.status === "unavailable") return "availability unavailable";
   return isRunStartBlocked(recovery) ? "run in progress" : "ready";
 }

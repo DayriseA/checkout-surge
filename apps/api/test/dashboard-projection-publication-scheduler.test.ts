@@ -1,8 +1,5 @@
-import {
-  type DashboardEvent,
-  type DashboardProjection,
-  demoRunSnapshotSchema,
-} from "@checkout-surge/contracts";
+import type { DashboardProjection } from "@checkout-surge/contracts";
+import type { DashboardProjectionDirtySignal } from "@checkout-surge/db";
 import { createSilentLogger } from "@checkout-surge/logger";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DashboardProjectionPublicationScheduler } from "../src/services/dashboard-projection-publication-scheduler.js";
@@ -12,14 +9,14 @@ describe("DashboardProjectionPublicationScheduler", () => {
     vi.useRealTimers();
   });
 
-  it("coalesces raw producer events and publishes by the maximum-latency cadence", async () => {
+  it("coalesces producer dirty signals and publishes by the maximum-latency cadence", async () => {
     vi.useFakeTimers();
     const build = vi.fn(async ({ correlationId }) => projection(correlationId));
     const publish = vi.fn();
     const scheduler = createScheduler({ build, publish });
 
     for (let index = 0; index < 100; index += 1) {
-      scheduler.markDirty(metricEvent(`corr-${index}`));
+      scheduler.markDirty(dirtySignal(`corr-${index}`));
     }
 
     await vi.advanceTimersByTimeAsync(999);
@@ -40,15 +37,16 @@ describe("DashboardProjectionPublicationScheduler", () => {
     );
     const scheduler = createScheduler({ build });
 
-    scheduler.markDirty(runEvent("active", "corr-active"));
+    scheduler.markDirty(exactSignal("corr-active"));
     await vi.advanceTimersByTimeAsync(0);
     await vi.waitFor(() => expect(build).toHaveBeenCalledTimes(1));
     expect(build).toHaveBeenLastCalledWith({
       correlationId: "corr-active",
       signal: expect.any(AbortSignal),
+      scope: { runId, saleOfferId },
     });
 
-    scheduler.markDirty(runEvent("completed", "corr-terminal"));
+    scheduler.markDirty(exactSignal("corr-terminal"));
     await vi.advanceTimersByTimeAsync(0);
     await vi.waitFor(() => expect(build).toHaveBeenCalledTimes(2));
     expect(build).toHaveBeenLastCalledWith({
@@ -77,10 +75,10 @@ describe("DashboardProjectionPublicationScheduler", () => {
     });
     const scheduler = createScheduler({ build });
 
-    scheduler.markDirty(metricEvent("corr-first"));
+    scheduler.markDirty(dirtySignal("corr-first"));
     await vi.advanceTimersByTimeAsync(1_000);
-    scheduler.markDirty(metricEvent("corr-middle"));
-    scheduler.markDirty(metricEvent("corr-latest"));
+    scheduler.markDirty(dirtySignal("corr-middle"));
+    scheduler.markDirty(dirtySignal("corr-latest"));
     expect(build).toHaveBeenCalledOnce();
 
     releaseFirst();
@@ -106,7 +104,7 @@ describe("DashboardProjectionPublicationScheduler", () => {
     const publish = vi.fn();
     const scheduler = createScheduler({ build, publish });
 
-    scheduler.markDirty(metricEvent("corr-final"));
+    scheduler.markDirty(dirtySignal("corr-final"));
     await vi.advanceTimersByTimeAsync(1_000);
     await vi.waitFor(() => expect(build).toHaveBeenCalledOnce());
     expect(publish).not.toHaveBeenCalled();
@@ -132,9 +130,9 @@ describe("DashboardProjectionPublicationScheduler", () => {
       .mockResolvedValueOnce(projection("corr-terminal", runId));
     const scheduler = createScheduler({ build });
 
-    scheduler.markDirty(metricEvent("corr-first"));
+    scheduler.markDirty(dirtySignal("corr-first"));
     await vi.advanceTimersByTimeAsync(1_000);
-    scheduler.markDirty(runEvent("failed", "corr-terminal"));
+    scheduler.markDirty(exactSignal("corr-terminal"));
     expect(build).toHaveBeenCalledOnce();
 
     releaseFirst();
@@ -163,8 +161,8 @@ describe("DashboardProjectionPublicationScheduler", () => {
     });
     const newerRunId = "88888888-8888-4888-8888-888888888888";
 
-    scheduler.markDirty(runEvent("completed", "corr-oldest"));
-    scheduler.markDirty(runEvent("completed", "corr-newest", { runId: newerRunId, saleOfferId }));
+    scheduler.markDirty(exactSignal("corr-oldest"));
+    scheduler.markDirty(exactSignal("corr-newest", { runId: newerRunId, saleOfferId }));
     await scheduler.flush();
 
     expect(build).toHaveBeenCalledOnce();
@@ -193,7 +191,7 @@ describe("DashboardProjectionPublicationScheduler", () => {
     const publish = vi.fn();
     const scheduler = createScheduler({ build, publish, buildTimeoutMs: 5_000 });
 
-    scheduler.markDirty(metricEvent("corr-timeout"));
+    scheduler.markDirty(dirtySignal("corr-timeout"));
     await vi.advanceTimersByTimeAsync(1_000);
     expect(build).toHaveBeenCalledOnce();
 
@@ -218,13 +216,13 @@ describe("DashboardProjectionPublicationScheduler", () => {
     });
     const scheduler = createScheduler({ build });
 
-    scheduler.markDirty(runEvent("active", "corr-close"));
+    scheduler.markDirty(exactSignal("corr-close"));
     await vi.advanceTimersByTimeAsync(0);
     expect(build).toHaveBeenCalledOnce();
 
     await expect(scheduler.close()).resolves.toBeUndefined();
     expect(signal?.aborted).toBe(true);
-    scheduler.markDirty(metricEvent("corr-after-close"));
+    scheduler.markDirty(dirtySignal("corr-after-close"));
     await vi.advanceTimersByTimeAsync(10_000);
 
     expect(build).toHaveBeenCalledOnce();
@@ -253,80 +251,21 @@ function createScheduler(options: {
   });
 }
 
-function metricEvent(correlationId: string): DashboardEvent {
+function dirtySignal(correlationId: string): DashboardProjectionDirtySignal {
   return {
-    type: "dashboard.metric.observed",
-    runId,
+    type: "dashboard.projection.dirty",
     correlationId,
-    metricName: "traffic.latency",
-    value: 12,
-    unit: "ms",
-    occurredAt: "2026-07-23T12:00:00.000Z",
-    observedAt: "2026-07-23T12:00:00.000Z",
   };
 }
 
-function runEvent(
-  status: "active" | "completed" | "failed",
+function exactSignal(
   correlationId: string,
   scope: { runId: string; saleOfferId: string } = { runId, saleOfferId },
-): DashboardEvent {
-  const run = demoRunSnapshotSchema.parse({
-    runId: scope.runId,
-    presetId: "77777777-7777-4777-8777-777777777777",
-    presetName: "Preview 1k",
-    operatorMode: "public",
-    status,
-    trafficStatus: status === "active" ? "active" : status === "completed" ? "succeeded" : "failed",
-    saleOfferId: scope.saleOfferId,
-    configSnapshot: {
-      trafficConfig: {
-        mode: "buyer-spike",
-        buyerCount: 1_000,
-        duplicateEachBuyerAttempt: false,
-        startDelaySeconds: 0,
-        maxDurationSeconds: 2,
-        quantityPerAttempt: 1,
-      },
-      inventoryConfig: {
-        startingStock: 250,
-        quantityPerCheckout: 1,
-        reservationHoldMinutes: 15,
-      },
-      erpConfig: {
-        latencyMs: 80,
-        maxTps: 250,
-        errorRate: 0,
-        forcedOutage: false,
-        requestTimeoutMs: 2_000,
-      },
-      backpressureConfig: {
-        queueName: "orders:process",
-        physicalQueueName: "orders-process",
-        orderProcessConcurrency: 5,
-        retryPolicy: { maxAttempts: 4, initialBackoffMs: 500 },
-        pendingPersistenceRetryAfterSeconds: 30,
-        circuitBreakerFailureThreshold: 5,
-        circuitBreakerResetTimeoutMs: 10_000,
-        drainTimeoutSeconds: 300,
-      },
-    },
-    startedAt: "2026-07-23T11:59:00.000Z",
-    trafficStartedAt: "2026-07-23T11:59:01.000Z",
-    ...(status === "active"
-      ? {}
-      : {
-          trafficEndedAt: "2026-07-23T12:00:00.000Z",
-          finalizedAt: "2026-07-23T12:00:00.000Z",
-          ...(status === "failed" ? { failureReason: "test failure" } : {}),
-        }),
-  });
+): DashboardProjectionDirtySignal {
   return {
-    type: "load.run.updated",
-    runId: scope.runId,
+    type: "dashboard.projection.dirty",
     correlationId,
-    occurredAt: "2026-07-23T12:00:00.000Z",
-    run,
+    scope,
   };
 }
 

@@ -4,8 +4,6 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import {
   backpressureConfigSchema,
-  type DashboardEvent,
-  dashboardEventsRedisChannel,
   publicRuntimePolicyPersistedSchema,
 } from "@checkout-surge/contracts";
 import { Redis } from "ioredis";
@@ -13,7 +11,9 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   clearErpCircuitBreakerSnapshots,
   createDatabaseConnection,
-  createRedisDashboardEventSubscriber,
+  createRedisDashboardProjectionDirtySubscriber,
+  type DashboardProjectionDirtySignal,
+  dashboardProjectionDirtyRedisChannel,
   deferPendingPersistenceRecord,
   erpCircuitBreakerSnapshotKey,
   getErpCircuitBreakerSnapshot,
@@ -25,7 +25,7 @@ import {
   isRunSaleEligible,
   markReservationPendingPersistence,
   promoteReservationIdempotencyToAccepted,
-  publishDashboardEvent,
+  publishDashboardProjectionDirtySignal,
   readPendingPersistencePage,
   reserveInventoryStock,
   reverseReservation,
@@ -58,14 +58,9 @@ const expectedDeclarativeAttributionConstraints = [
   "simulated_notifications_order_attribution_fk",
   "simulated_notifications_run_sale_context_fk",
 ].sort();
-const dashboardEvent: DashboardEvent = {
-  type: "dashboard.metric.observed",
-  runId: "55555555-5555-4555-8555-555555555555",
-  metricName: "traffic.latency",
-  value: 42,
-  unit: "ms",
-  occurredAt: "2026-06-20T12:00:00.000Z",
-  observedAt: "2026-06-20T12:00:00.000Z",
+const dashboardDirtySignal: DashboardProjectionDirtySignal = {
+  type: "dashboard.projection.dirty",
+  correlationId: "corr-dashboard-dirty",
 };
 
 type TestSql = ReturnType<typeof createDatabaseConnection>["sql"];
@@ -1557,41 +1552,41 @@ describe("database migrations, seed data, and reset behavior", () => {
     });
   });
 
-  it("publishes validated dashboard events through the shared Redis Pub/Sub channel", async () => {
+  it("publishes validated projection dirty signals through the shared Redis Pub/Sub channel", async () => {
     const subscriberRedis = new Redis(requireTestEnv("TEST_REDIS_URL"), {
       lazyConnect: true,
       maxRetriesPerRequest: 3,
     });
     await subscriberRedis.connect();
-    let resolveReceived: (event: DashboardEvent) => void = () => undefined;
+    let resolveReceived: (signal: DashboardProjectionDirtySignal) => void = () => undefined;
     let rejectReceived: (error: unknown) => void = () => undefined;
-    const receivedEvent = new Promise<DashboardEvent>((resolve, reject) => {
+    const receivedSignal = new Promise<DashboardProjectionDirtySignal>((resolve, reject) => {
       resolveReceived = resolve;
       rejectReceived = reject;
     });
-    const subscriber = createRedisDashboardEventSubscriber(subscriberRedis, {
-      onEvent: resolveReceived,
+    const subscriber = createRedisDashboardProjectionDirtySubscriber(subscriberRedis, {
+      onDirty: resolveReceived,
       onInvalidMessage: rejectReceived,
     });
 
     try {
       await subscriber.start();
-      await publishDashboardEvent(redis, dashboardEvent);
+      await publishDashboardProjectionDirtySignal(redis, dashboardDirtySignal);
       await expect(
-        withTimeout(receivedEvent, 1_000, "Timed out waiting for dashboard event."),
-      ).resolves.toEqual(dashboardEvent);
+        withTimeout(receivedSignal, 1_000, "Timed out waiting for dashboard dirty signal."),
+      ).resolves.toEqual(dashboardDirtySignal);
     } finally {
       await subscriber.close();
       subscriberRedis.disconnect();
     }
   });
 
-  it("rejects invalid dashboard events before publishing", async () => {
+  it("rejects invalid projection dirty signals before publishing", async () => {
     await expect(
-      publishDashboardEvent(redis, {
-        ...dashboardEvent,
-        eventId: "not-a-uuid",
-      } as DashboardEvent),
+      publishDashboardProjectionDirtySignal(redis, {
+        ...dashboardDirtySignal,
+        scope: { runId: "not-a-uuid", saleOfferId: seededSaleOfferId },
+      }),
     ).rejects.toThrow();
   });
 
@@ -1601,15 +1596,15 @@ describe("database migrations, seed data, and reset behavior", () => {
       maxRetriesPerRequest: 3,
     });
     await subscriberRedis.connect();
-    const delivered: DashboardEvent[] = [];
+    const delivered: DashboardProjectionDirtySignal[] = [];
     let resolveInvalidMessage: (message: { error: unknown; message: string }) => void = () =>
       undefined;
     const invalidMessage = new Promise<{ error: unknown; message: string }>((resolve) => {
       resolveInvalidMessage = resolve;
     });
-    const subscriber = createRedisDashboardEventSubscriber(subscriberRedis, {
-      onEvent: (event) => {
-        delivered.push(event);
+    const subscriber = createRedisDashboardProjectionDirtySubscriber(subscriberRedis, {
+      onDirty: (signal) => {
+        delivered.push(signal);
       },
       onInvalidMessage: (error, message) => {
         resolveInvalidMessage({ error, message });
@@ -1619,13 +1614,16 @@ describe("database migrations, seed data, and reset behavior", () => {
     try {
       await subscriber.start();
       await redis.publish(
-        dashboardEventsRedisChannel,
-        JSON.stringify({ ...dashboardEvent, eventId: "not-a-uuid" }),
+        dashboardProjectionDirtyRedisChannel,
+        JSON.stringify({
+          ...dashboardDirtySignal,
+          scope: { runId: "not-a-uuid", saleOfferId: seededSaleOfferId },
+        }),
       );
       const result = await withTimeout(
         invalidMessage,
         1_000,
-        "Timed out waiting for invalid dashboard event.",
+        "Timed out waiting for invalid dashboard dirty signal.",
       );
 
       expect(result.error).toBeTruthy();

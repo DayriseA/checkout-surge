@@ -5,10 +5,7 @@ import { pathToFileURL } from "node:url";
 import {
   adminGeneratedRunTeardownPath,
   adminGeneratedRunTeardownResponseSchema,
-  dashboardEventSchema,
-  dashboardEventsRedisChannel,
   dashboardProjectionSchema,
-  dashboardRecoveryResponseSchema,
   runHistoryListResponseSchema,
   startDemoRunResponseSchema,
   uuidSchema,
@@ -56,7 +53,6 @@ export async function runDashboardDeliveryBaseline(options = {}) {
   const fetchImpl = options.fetch ?? fetch;
   const dashboardBaseUrl = envUrl(env, "WEB_BASE_URL", "http://localhost:8080");
   const apiBaseUrl = envUrl(env, "API_BASE_URL", "http://localhost:4000");
-  const redisUrl = envUrl(env, "REDIS_URL", "redis://localhost:6379");
   const token = env.CONTROL_SERVICE_TOKEN?.trim();
   if (!token) throw new Error("CONTROL_SERVICE_TOKEN is required for runtime load smoke.");
 
@@ -66,7 +62,6 @@ export async function runDashboardDeliveryBaseline(options = {}) {
   const deadlineMs = derivedDeadlineMs(env, 2);
   let runId;
   let saleOfferId;
-  let rawCounter;
   let result;
   let primaryError;
   let cleanupError;
@@ -81,8 +76,7 @@ export async function runDashboardDeliveryBaseline(options = {}) {
   try {
     await requireReadiness(`${apiBaseUrl}/health/ready`, fetchImpl);
     await resetDemo(apiBaseUrl, token, correlationId, fetchImpl);
-    rawCounter = await startRawDashboardEventCounter(redisUrl, measurement);
-    sseResult = collectDashboardEvents(
+    sseResult = collectDashboardProjections(
       `${dashboardBaseUrl}/dashboard/events`,
       fetchImpl,
       sseAbort.signal,
@@ -151,14 +145,10 @@ export async function runDashboardDeliveryBaseline(options = {}) {
       plannedRequests: started.run.configSnapshot.trafficConfig.buyerCount,
       durationMs: snapshot.durationMs,
       activeScopeCount: snapshot.activeScopeCount,
-      rawRedisProducerEvents: snapshot.rawRedisProducerEvents,
       projectionMeasurement,
       sseClient: {
         deliveredFrames: snapshot.deliveredFrames,
         deliveredDataMessages: snapshot.deliveredDataMessages,
-        contractValidMessages: snapshot.contractValidMessages,
-        runAttributableMessages: snapshot.runMessageCounts[runId] ?? 0,
-        dashboardUpdates: snapshot.contractValidMessages,
         contractValidProjectionMessages: snapshot.contractValidProjectionMessages,
         runAttributableProjectionMessages: snapshot.runProjectionMessageCounts[runId] ?? 0,
       },
@@ -168,17 +158,14 @@ export async function runDashboardDeliveryBaseline(options = {}) {
       dashboardProjectionImmediateFrameBudget;
     if (
       result.activeScopeCount !== 1 ||
-      result.rawRedisProducerEvents === 0 ||
-      result.sseClient.runAttributableMessages === 0 ||
       result.sseClient.runAttributableProjectionMessages === 0 ||
       result.sseClient.contractValidProjectionMessages > projectionCadenceUpperBound ||
-      result.sseClient.contractValidProjectionMessages >= result.rawRedisProducerEvents
+      result.sseClient.deliveredDataMessages !== result.sseClient.contractValidProjectionMessages
     ) {
       throw new Error(
         `Dashboard baseline projection delivery did not scale with cadence and scope: ${JSON.stringify(
           {
             projectionCadenceUpperBound,
-            rawRedisProducerEvents: result.rawRedisProducerEvents,
             contractValidProjectionMessages: result.sseClient.contractValidProjectionMessages,
             runAttributableProjectionMessages: result.sseClient.runAttributableProjectionMessages,
           },
@@ -194,7 +181,6 @@ export async function runDashboardDeliveryBaseline(options = {}) {
       await stopDashboardBaselineInstrumentation({
         sseAbort,
         sseResult,
-        rawCounter,
         timeoutMs: dashboardInstrumentationTimeoutMs,
       });
     } catch (error) {
@@ -240,12 +226,12 @@ async function runRuntimeLoadScenario(input) {
   let cleanupError;
   let cleanupAllowed = false;
   const sseAbort = new AbortController();
-  const sseOutcomePromise = collectDashboardEvents(
+  const sseOutcomePromise = collectDashboardProjections(
     `${input.dashboardBaseUrl}/dashboard/events`,
     input.fetchImpl,
     sseAbort.signal,
   ).then(
-    (events) => ({ events }),
+    (projections) => ({ projections }),
     (error) => ({ error }),
   );
 
@@ -284,8 +270,8 @@ async function runRuntimeLoadScenario(input) {
     sseAbort.abort();
     const sseOutcome = await sseOutcomePromise;
     if (sseOutcome.error) throw sseOutcome.error;
-    const events = sseOutcome.events;
-    assertSseEvidence(events, runId, input.correlationId);
+    const projections = sseOutcome.projections;
+    assertSseEvidence(projections, runId, input.correlationId);
     console.log(
       `Runtime load smoke ${input.scenario.name} proof passed runId=${runId} correlationId=${input.correlationId}.`,
     );
@@ -417,48 +403,28 @@ export function throwSmokeFailures(primaryError, cleanupError) {
   if (cleanupError) throw cleanupError;
 }
 
-export function assertSseEvidence(events, runId, correlationId) {
-  const mismatched = events.find(
-    (event) =>
-      event.runId === runId &&
-      event.correlationId &&
-      !isCorrelationLineage(event.correlationId, correlationId),
+export function assertSseEvidence(projections, runId, correlationId) {
+  const mismatched = projections.find(
+    (projection) =>
+      projection.scope?.runId === runId &&
+      !isCorrelationLineage(projection.correlationId, correlationId),
   );
   if (mismatched) {
     throw new Error(
       `SSE correlation mismatch for run ${runId}: received ${mismatched.correlationId}.`,
     );
   }
-  const attributable = events.filter(
-    (event) =>
-      event.runId === runId &&
-      (!event.correlationId || isCorrelationLineage(event.correlationId, correlationId)),
+  const attributable = projections.filter(
+    (projection) =>
+      projection.scope?.runId === runId &&
+      isCorrelationLineage(projection.correlationId, correlationId),
   );
   if (attributable.length === 0)
-    throw new Error("SSE yielded no contract-valid event for this run.");
+    throw new Error("SSE yielded no contract-valid projection for this run.");
 }
 
 function isCorrelationLineage(candidate, root) {
   return candidate === root || candidate.startsWith(`${root}:`);
-}
-
-export function parseSseDataFrames(text) {
-  const events = [];
-  for (const frame of text.replaceAll("\r\n", "\n").split("\n\n")) {
-    const data = frame
-      .split("\n")
-      .filter((line) => line.startsWith("data:"))
-      .map((line) => line.slice(5).trimStart())
-      .join("\n");
-    if (!data) continue;
-    try {
-      const parsed = dashboardEventSchema.safeParse(JSON.parse(data));
-      if (parsed.success) events.push(parsed.data);
-    } catch {
-      // Incomplete/invalid frames are not business evidence.
-    }
-  }
-  return events;
 }
 
 export function parseDashboardProjectionSseDataFrames(text) {
@@ -480,7 +446,7 @@ export function parseDashboardProjectionSseDataFrames(text) {
   return projections;
 }
 
-export async function collectDashboardEvents(url, fetchImpl, signal, measurement) {
+export async function collectDashboardProjections(url, fetchImpl, signal, measurement) {
   const response = await fetchImpl(url, { headers: { accept: "text/event-stream" }, signal });
   if (!response.ok || !response.body)
     throw new Error(`Dashboard SSE failed with HTTP ${response.status}.`);
@@ -490,10 +456,10 @@ export async function collectDashboardEvents(url, fetchImpl, signal, measurement
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
-  const events = [];
+  const projections = [];
   let measurementOpened = false;
   try {
-    while (measurement || events.length < 100) {
+    while (measurement || projections.length < 100) {
       const { done, value } = await reader.read();
       if (done) {
         buffer += decoder.decode();
@@ -508,14 +474,14 @@ export async function collectDashboardEvents(url, fetchImpl, signal, measurement
           measurement.markOpen();
         }
       } else {
-        events.push(...extracted.events);
+        projections.push(...extracted.projections);
       }
       buffer = extracted.remainder;
     }
   } catch (error) {
     if (!signal.aborted) throw error;
   }
-  return events;
+  return projections;
 }
 
 export function selectRepresentativeDashboardProjection(samples) {
@@ -562,9 +528,6 @@ export function createDashboardDeliveryMeasurement(options = {}) {
       deadline = startedAt + durationMs;
       active = true;
     },
-    recordRaw() {
-      if (acceptsDelivery()) stats.rawRedisProducerEvents += 1;
-    },
     recordScope(runId, saleOfferId) {
       if (acceptsDelivery()) stats.scopeKeys[`${runId}:${saleOfferId}`] = true;
     },
@@ -572,13 +535,7 @@ export function createDashboardDeliveryMeasurement(options = {}) {
       if (!acceptsDelivery()) return;
       stats.deliveredFrames += extracted.frameCount;
       stats.deliveredDataMessages += extracted.dataMessageCount;
-      stats.contractValidMessages += extracted.events.length;
       stats.contractValidProjectionMessages += extracted.projections.length;
-      for (const event of extracted.events) {
-        if (event.runId) {
-          stats.runMessageCounts[event.runId] = (stats.runMessageCounts[event.runId] ?? 0) + 1;
-        }
-      }
       for (const projection of extracted.projections) {
         if (projection.scope?.runId) {
           stats.runProjectionMessageCounts[projection.scope.runId] =
@@ -596,12 +553,9 @@ export function createDashboardDeliveryMeasurement(options = {}) {
       return {
         durationMs: startedAt === undefined ? 0 : deadline - startedAt,
         activeScopeCount: Object.keys(stats.scopeKeys).length,
-        rawRedisProducerEvents: stats.rawRedisProducerEvents,
         deliveredFrames: stats.deliveredFrames,
         deliveredDataMessages: stats.deliveredDataMessages,
-        contractValidMessages: stats.contractValidMessages,
         contractValidProjectionMessages: stats.contractValidProjectionMessages,
-        runMessageCounts: { ...stats.runMessageCounts },
         runProjectionMessageCounts: { ...stats.runProjectionMessageCounts },
       };
     },
@@ -611,12 +565,9 @@ export function createDashboardDeliveryMeasurement(options = {}) {
 function emptyDashboardDeliveryStats() {
   return {
     scopeKeys: {},
-    rawRedisProducerEvents: 0,
     deliveredFrames: 0,
     deliveredDataMessages: 0,
-    contractValidMessages: 0,
     contractValidProjectionMessages: 0,
-    runMessageCounts: {},
     runProjectionMessageCounts: {},
   };
 }
@@ -627,7 +578,6 @@ export function extractCompleteSseFrames(buffer) {
   for (const match of buffer.matchAll(separator)) end = (match.index ?? 0) + match[0].length;
   if (end === 0) {
     return {
-      events: [],
       projections: [],
       remainder: buffer,
       frameCount: 0,
@@ -637,7 +587,6 @@ export function extractCompleteSseFrames(buffer) {
   const complete = buffer.slice(0, end).replaceAll("\r\n", "\n");
   const frames = complete.split("\n\n").filter((frame) => frame.length > 0);
   return {
-    events: parseSseDataFrames(complete),
     projections: parseDashboardProjectionSseDataFrames(complete),
     remainder: buffer.slice(end),
     frameCount: frames.length,
@@ -776,44 +725,7 @@ export async function waitForTerminalSummary({
   );
 }
 
-export async function startRawDashboardEventCounter(redisUrl, measurement, options = {}) {
-  const createRedisClient =
-    options.createRedisClient ?? (await import("../packages/db/dist/index.js")).createRedisClient;
-  const redis = createRedisClient(redisUrl);
-  const onMessage = (channel) => {
-    if (channel !== dashboardEventsRedisChannel) return;
-    measurement.recordRaw();
-  };
-  redis.on("message", onMessage);
-  try {
-    await withTimeout(
-      redis.subscribe(dashboardEventsRedisChannel),
-      options.timeoutMs ?? dashboardInstrumentationTimeoutMs,
-      "dashboard Redis subscription",
-    );
-  } catch (error) {
-    redis.off("message", onMessage);
-    redis.disconnect();
-    throw error;
-  }
-  let stopped = false;
-  return {
-    stop() {
-      if (!stopped) {
-        stopped = true;
-        redis.off("message", onMessage);
-        redis.disconnect();
-      }
-    },
-  };
-}
-
-async function stopDashboardBaselineInstrumentation({
-  sseAbort,
-  sseResult,
-  rawCounter,
-  timeoutMs,
-}) {
+async function stopDashboardBaselineInstrumentation({ sseAbort, sseResult, timeoutMs }) {
   const failures = [];
   sseAbort.abort();
   if (sseResult) {
@@ -823,14 +735,9 @@ async function stopDashboardBaselineInstrumentation({
       failures.push(error);
     }
   }
-  try {
-    rawCounter?.stop();
-  } catch (error) {
-    failures.push(error);
-  }
   if (failures.length === 1) throw failures[0];
   if (failures.length > 1) {
-    throw new AggregateError(failures, "Dashboard SSE and Redis instrumentation shutdown failed.");
+    throw new AggregateError(failures, "Dashboard SSE instrumentation shutdown failed.");
   }
 }
 
@@ -919,7 +826,7 @@ async function readRunObservation({ dashboardBaseUrl, apiBaseUrl, runId, fetchIm
 }
 
 async function readDashboardRecovery({ dashboardBaseUrl, fetchImpl }) {
-  return dashboardRecoveryResponseSchema.parse(
+  return dashboardProjectionSchema.parse(
     await requestJson(
       `${dashboardBaseUrl}/api/dashboard/recovery`,
       { method: "GET", headers: { accept: "application/json" } },

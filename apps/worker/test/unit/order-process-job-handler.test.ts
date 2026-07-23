@@ -32,28 +32,16 @@ const runScopedJob: OrderProcessJob = {
 const delivery = { attemptNumber: 3, attemptsMade: 2 };
 const processingTransition = {
   changed: true as const,
-  eventId: "66666666-6666-4666-8666-666666666666",
-  previousStatus: "queued" as const,
   status: "processing" as const,
-  occurredAt: new Date("2026-06-21T00:00:00.010Z"),
-  queuedAt: new Date(job.queuedAt),
 };
 const confirmedTransition = {
   changed: true as const,
-  eventId: "77777777-7777-4777-8777-777777777777",
-  previousStatus: "processing" as const,
   status: "confirmed" as const,
-  occurredAt: new Date("2026-06-21T00:00:00.100Z"),
   confirmedAt: new Date("2026-06-21T00:00:00.100Z"),
-  queuedAt: new Date(job.queuedAt),
 };
 const failedTransition = {
   changed: true as const,
-  eventId: "88888888-8888-4888-8888-888888888888",
-  previousStatus: "processing" as const,
   status: "failed" as const,
-  occurredAt: new Date("2026-06-21T00:00:00.100Z"),
-  queuedAt: new Date(job.queuedAt),
 };
 
 function createPersistence(
@@ -74,15 +62,12 @@ type OrderProcessJobHandlerDependencies = Parameters<
 function createOrderProcessJobHandler(
   dependencies: Omit<
     OrderProcessJobHandlerDependencies,
-    | "publishBusinessOutcomeUpdate"
-    | "notificationRecordPublisher"
-    | "recovery"
-    | "realtimePublisher"
+    "publishBusinessOutcomeUpdate" | "notificationRecordPublisher" | "recovery"
   > &
     Partial<
       Pick<
         OrderProcessJobHandlerDependencies,
-        "publishBusinessOutcomeUpdate" | "notificationRecordPublisher" | "realtimePublisher"
+        "publishBusinessOutcomeUpdate" | "notificationRecordPublisher"
       >
     > & { recovery?: Partial<OrderRecoveryHandoff> },
 ) {
@@ -90,7 +75,6 @@ function createOrderProcessJobHandler(
   return createProductionOrderProcessJobHandler({
     publishBusinessOutcomeUpdate: async () => undefined,
     notificationRecordPublisher: { publishForConfirmedOrder: async () => undefined },
-    realtimePublisher: { enqueue: () => undefined },
     ...overrides,
     recovery: {
       handoff: async () => undefined,
@@ -107,8 +91,8 @@ describe("order-process application workflow", () => {
     expect(hasRemainingAttempts({ attemptNumber: 1, attemptsMade: 0 })).toBe(false);
   });
 
-  it("enqueues durable processing plus a linked confirmation/lag pair and reuses confirmedAt for notification", async () => {
-    const enqueue = vi.fn();
+  it("publishes aggregate dirty work and reuses confirmedAt for notification", async () => {
+    const publishBusinessOutcomeUpdate = vi.fn().mockResolvedValue(undefined);
     const notificationRecordPublisher = {
       publishForConfirmedOrder: vi.fn().mockResolvedValue(undefined),
     };
@@ -116,205 +100,18 @@ describe("order-process application workflow", () => {
       confirmation: { confirm: vi.fn().mockResolvedValue(undefined) },
       persistence: createPersistence(),
       logger: createSilentLogger("worker"),
-      realtimePublisher: { enqueue },
+      publishBusinessOutcomeUpdate,
       notificationRecordPublisher,
     });
 
     await handler.handle(job, delivery);
 
-    expect(enqueue).toHaveBeenCalledTimes(2);
-    expect(enqueue.mock.calls[0]?.[0]).toEqual([
-      expect.objectContaining({
-        eventId: processingTransition.eventId,
-        eventName: "order.processing",
-        occurredAt: processingTransition.occurredAt.toISOString(),
-      }),
-    ]);
-    expect(enqueue.mock.calls[1]?.[0]).toEqual([
-      expect.objectContaining({
-        eventId: confirmedTransition.eventId,
-        eventName: "order.confirmed",
-        occurredAt: confirmedTransition.confirmedAt.toISOString(),
-      }),
-      expect.objectContaining({
-        confirmedTransitionEventId: confirmedTransition.eventId,
-        value: 100,
-        startedAt: job.queuedAt,
-        confirmedAt: confirmedTransition.confirmedAt.toISOString(),
-      }),
-    ]);
+    expect(publishBusinessOutcomeUpdate).toHaveBeenNthCalledWith(1, job, "processing");
+    expect(publishBusinessOutcomeUpdate).toHaveBeenNthCalledWith(2, job, "confirmed");
     expect(notificationRecordPublisher.publishForConfirmedOrder).toHaveBeenCalledWith(
       job,
       confirmedTransition.confirmedAt.toISOString(),
     );
-  });
-
-  it("clamps and reports a backwards durable clock while retaining a zero-valued point", async () => {
-    const backwards = {
-      ...confirmedTransition,
-      occurredAt: new Date("2026-06-20T23:59:59.000Z"),
-      confirmedAt: new Date("2026-06-20T23:59:59.000Z"),
-    };
-    const enqueue = vi.fn();
-    const reportConsistencyLagClockAnomaly = vi.fn();
-    const handler = createOrderProcessJobHandler({
-      confirmation: { confirm: vi.fn().mockResolvedValue(undefined) },
-      persistence: createPersistence({
-        transitionToConfirmed: vi.fn().mockResolvedValue(backwards),
-      }),
-      logger: createSilentLogger("worker"),
-      realtimePublisher: { enqueue },
-      reportConsistencyLagClockAnomaly,
-    });
-
-    await expect(handler.handle(job, delivery)).resolves.toBeUndefined();
-    expect(reportConsistencyLagClockAnomaly).toHaveBeenCalledWith(
-      expect.objectContaining({ rawLagMs: -1_000, clampedLagMs: 0 }),
-    );
-    expect(enqueue.mock.calls[1]?.[0]?.[1]).toEqual(expect.objectContaining({ value: 0 }));
-  });
-
-  it("emits zero for equal timestamps with a stable unique metric identity", async () => {
-    const equal = {
-      ...confirmedTransition,
-      occurredAt: new Date(job.queuedAt),
-      confirmedAt: new Date(job.queuedAt),
-    };
-    type PublishedEvent = {
-      eventId: string;
-      confirmedTransitionEventId?: string;
-      value?: number;
-    };
-    const eventGroups: Array<readonly PublishedEvent[]> = [];
-    for (let index = 0; index < 2; index += 1) {
-      const enqueue = vi.fn((events: readonly PublishedEvent[]) => eventGroups.push(events));
-      await createOrderProcessJobHandler({
-        confirmation: { confirm: vi.fn().mockResolvedValue(undefined) },
-        persistence: createPersistence({ transitionToConfirmed: vi.fn().mockResolvedValue(equal) }),
-        logger: createSilentLogger("worker"),
-        realtimePublisher: { enqueue },
-      }).handle(job, delivery);
-    }
-    const firstPair = eventGroups[1];
-    const secondPair = eventGroups[3];
-    if (!firstPair || !secondPair) throw new Error("Expected two realtime event pairs.");
-    expect(firstPair[1]).toMatchObject({ value: 0, confirmedTransitionEventId: equal.eventId });
-    expect(firstPair[1]?.eventId).not.toBe(equal.eventId);
-    expect(secondPair[1]?.eventId).toBe(firstPair[1]?.eventId);
-  });
-
-  it("contains realtime enqueue failure without changing a confirmed job outcome", async () => {
-    const handler = createOrderProcessJobHandler({
-      confirmation: { confirm: vi.fn().mockResolvedValue(undefined) },
-      persistence: createPersistence(),
-      logger: createSilentLogger("worker"),
-      realtimePublisher: {
-        enqueue: vi.fn(() => {
-          throw new Error("queue unavailable");
-        }),
-      },
-    });
-    await expect(handler.handle(job, delivery)).resolves.toBeUndefined();
-  });
-
-  it("does not enqueue realtime events when the initial transition rolls back", async () => {
-    const enqueue = vi.fn();
-    const persistenceError = new Error("transaction rolled back");
-    const handler = createOrderProcessJobHandler({
-      confirmation: { confirm: vi.fn() },
-      persistence: createPersistence({
-        transitionToProcessing: vi.fn().mockRejectedValue(persistenceError),
-      }),
-      logger: createSilentLogger("worker"),
-      realtimePublisher: { enqueue },
-    });
-
-    await expect(handler.handle(job, delivery)).rejects.toBeInstanceOf(
-      OrderProcessingPersistenceError,
-    );
-    expect(enqueue).not.toHaveBeenCalled();
-  });
-
-  it("completes after confirmed enqueue failure and terminal redelivery emits nothing", async () => {
-    const confirmation = { confirm: vi.fn().mockResolvedValue(undefined) };
-    const transitionToProcessing = vi
-      .fn()
-      .mockResolvedValueOnce(processingTransition)
-      .mockResolvedValueOnce({ changed: false, status: "confirmed" });
-    const transitionToConfirmed = vi.fn().mockResolvedValue(confirmedTransition);
-    const enqueue = vi.fn((events: readonly unknown[]) => {
-      if (events.length === 2) throw new Error("publication boundary unavailable");
-    });
-    const handler = createOrderProcessJobHandler({
-      confirmation,
-      persistence: createPersistence({ transitionToProcessing, transitionToConfirmed }),
-      logger: createSilentLogger("worker"),
-      realtimePublisher: { enqueue },
-    });
-
-    await expect(handler.handle(job, delivery)).resolves.toBeUndefined();
-    await expect(handler.handle(job, delivery)).resolves.toBeUndefined();
-    expect(confirmation.confirm).toHaveBeenCalledOnce();
-    expect(transitionToConfirmed).toHaveBeenCalledOnce();
-    expect(enqueue).toHaveBeenCalledTimes(2);
-    expect(
-      enqueue.mock.calls
-        .flatMap(([events]) => events)
-        .map((event) => (event as { eventId: string }).eventId),
-    ).toEqual([
-      processingTransition.eventId,
-      confirmedTransition.eventId,
-      expect.not.stringMatching(`^${confirmedTransition.eventId}$`),
-    ]);
-  });
-
-  it("emits exactly one failed status for a fresh terminal failure", async () => {
-    const confirmationError = new Error("ERP rejected");
-    const enqueue = vi.fn();
-    const handler = createOrderProcessJobHandler({
-      confirmation: { confirm: vi.fn().mockRejectedValue(confirmationError) },
-      persistence: createPersistence(),
-      logger: createSilentLogger("worker"),
-      realtimePublisher: { enqueue },
-    });
-    await expect(handler.handle(job, delivery)).rejects.toBe(confirmationError);
-    expect(
-      enqueue.mock.calls
-        .flatMap(([events]) => events)
-        .filter((event) => event.eventName === "order.failed"),
-    ).toHaveLength(1);
-  });
-
-  it("does not emit status for resumed retryable processing or terminal redelivery", async () => {
-    const retryError = new Error("temporary ERP failure");
-    const retryEnqueue = vi.fn();
-    await expect(
-      createOrderProcessJobHandler({
-        confirmation: { confirm: vi.fn().mockRejectedValue(retryError) },
-        persistence: createPersistence({
-          transitionToProcessing: vi
-            .fn()
-            .mockResolvedValue({ changed: false, status: "processing" }),
-        }),
-        logger: createSilentLogger("worker"),
-        realtimePublisher: { enqueue: retryEnqueue },
-        isTemporaryConfirmationFailure: () => true,
-      }).handle(job, { ...delivery, maxAttempts: 4 }),
-    ).rejects.toBe(retryError);
-    expect(retryEnqueue).not.toHaveBeenCalled();
-
-    const terminalEnqueue = vi.fn();
-    const confirmation = { confirm: vi.fn() };
-    await createOrderProcessJobHandler({
-      confirmation,
-      persistence: createPersistence({
-        transitionToProcessing: vi.fn().mockResolvedValue({ changed: false, status: "confirmed" }),
-      }),
-      logger: createSilentLogger("worker"),
-      realtimePublisher: { enqueue: terminalEnqueue },
-    }).handle(job, delivery);
-    expect(confirmation.confirm).not.toHaveBeenCalled();
-    expect(terminalEnqueue).not.toHaveBeenCalled();
   });
 
   it("classifies processing-state persistence outages before ERP and hands off the final delivery", async () => {

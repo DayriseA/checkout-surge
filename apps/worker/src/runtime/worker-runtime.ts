@@ -23,7 +23,6 @@ export function createWorkerRuntime(options: {
   closeOrderProcessJobPublisher?: () => Promise<void>;
   closeNotificationRecordPublisher?: () => Promise<void>;
   closeBusinessOutcomePublicationScheduler?: () => Promise<void>;
-  closeOrderRealtimePublisher?: () => Promise<void>;
   closePostgres: () => Promise<void>;
   closeRedis: () => Promise<void>;
   logger: CheckoutSurgeLogger;
@@ -116,9 +115,6 @@ async function closeResources(options: Parameters<typeof createWorkerRuntime>[0]
   }
   if (options.closeBusinessOutcomePublicationScheduler) {
     await close(options.closeBusinessOutcomePublicationScheduler);
-  }
-  if (options.closeOrderRealtimePublisher) {
-    await close(options.closeOrderRealtimePublisher);
   }
   await close(options.closePostgres);
   await close(options.closeRedis);

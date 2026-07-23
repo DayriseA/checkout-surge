@@ -118,11 +118,6 @@ describe("OrderStatusService", () => {
       consistencyLagMs: null,
     },
     {
-      durableStatus: "confirmed" as const,
-      terminalEventName: "order.confirmed" as const,
-      consistencyLagMs: 120_000,
-    },
-    {
       durableStatus: "failed" as const,
       terminalEventName: "order.failed" as const,
       consistencyLagMs: null,
@@ -145,7 +140,7 @@ describe("OrderStatusService", () => {
       order: {
         status: durableStatus,
         processingAt: processingAt.toISOString(),
-        confirmedAt: durableStatus === "confirmed" ? confirmedAt.toISOString() : null,
+        confirmedAt: null,
         failedAt: durableStatus === "failed" ? failedAt.toISOString() : null,
         failureCode: durableStatus === "failed" ? "erp_rejected" : null,
         failureMessage: durableStatus === "failed" ? "ERP rejected the order" : null,
@@ -172,12 +167,50 @@ describe("OrderStatusService", () => {
             {
               eventName: terminalEventName,
               label: terminalEventName,
-              occurredAt:
-                durableStatus === "confirmed" ? confirmedAt.toISOString() : failedAt.toISOString(),
+              occurredAt: failedAt.toISOString(),
             },
           ]
         : []),
     ]);
+  });
+
+  it("keeps durable confirmed status and consistency lag queryable without realtime fan-out", async () => {
+    await seedOrder("confirmed");
+    const service = new OrderStatusService(requireConnection().db);
+
+    await expect(
+      service.getStatus({
+        publicOrderId: "ord_service_test",
+        correlationId: "durable-diagnostic-lookup",
+      }),
+    ).resolves.toMatchObject({
+      correlationId: "durable-diagnostic-lookup",
+      consistencyLagMs: 120_000,
+      order: {
+        status: "confirmed",
+        processingAt: processingAt.toISOString(),
+        confirmedAt: confirmedAt.toISOString(),
+        failedAt: null,
+      },
+      timeline: [
+        {
+          eventName: "reservation.secured",
+          occurredAt: queuedAt.toISOString(),
+        },
+        {
+          eventName: "order.queued",
+          occurredAt: queuedAt.toISOString(),
+        },
+        {
+          eventName: "order.processing",
+          occurredAt: processingAt.toISOString(),
+        },
+        {
+          eventName: "order.confirmed",
+          occurredAt: confirmedAt.toISOString(),
+        },
+      ],
+    });
   });
 
   function requireConnection(): NonNullable<typeof connection> {

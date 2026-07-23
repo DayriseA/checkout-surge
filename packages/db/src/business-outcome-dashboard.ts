@@ -1,5 +1,4 @@
 import {
-  type BusinessOutcomeDashboardEvent,
   type BusinessOutcomeSummary,
   businessOutcomeSummarySchema,
   type CompletionOutcome,
@@ -9,8 +8,6 @@ import {
 } from "@checkout-surge/contracts";
 import { and, desc, eq, inArray, type SQL, sql } from "drizzle-orm";
 import type { CheckoutSurgeDatabase } from "./client.js";
-import type { CheckoutSurgeRedis } from "./redis.js";
-import { publishDashboardEvent } from "./redis-dashboard-events.js";
 import {
   demoRunSoldOutCounts,
   erpAttempts,
@@ -23,11 +20,6 @@ import {
 export interface BusinessOutcomeProjectionScope {
   saleOfferId: string;
   runId?: string;
-}
-
-export interface PublishBusinessOutcomeDashboardUpdateInput extends BusinessOutcomeProjectionScope {
-  correlationId?: string;
-  occurredAt?: Date;
 }
 
 export async function readBusinessOutcomeSummary(
@@ -239,29 +231,6 @@ export async function readRecentCompletionOutcomes(
       latestEventAt: latestEventAt.toISOString(),
     });
   });
-}
-
-export async function publishBusinessOutcomeDashboardUpdate(
-  db: CheckoutSurgeDatabase,
-  redis: CheckoutSurgeRedis,
-  input: PublishBusinessOutcomeDashboardUpdateInput,
-): Promise<number> {
-  const occurredAt = input.occurredAt ?? new Date();
-  const [outcome, consistencyLag] = await Promise.all([
-    readBusinessOutcomeSummary(db, input),
-    readConsistencyLagSummary(db, input, occurredAt),
-  ]);
-  const event: BusinessOutcomeDashboardEvent = {
-    type: "business.outcome.snapshot",
-    saleOfferId: input.saleOfferId,
-    ...(input.runId ? { runId: input.runId } : {}),
-    ...(input.correlationId ? { correlationId: input.correlationId } : {}),
-    occurredAt: occurredAt.toISOString(),
-    outcome,
-    consistencyLag,
-  };
-
-  return publishDashboardEvent(redis, event);
 }
 
 function deriveCompletionOutcomeStatus(

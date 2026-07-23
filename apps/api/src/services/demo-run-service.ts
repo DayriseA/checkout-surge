@@ -39,7 +39,10 @@ import {
   toDemoRunSnapshot,
   toRedisTerminalInventorySnapshot,
 } from "./demo-run-projections.js";
-import { publishDemoRunSnapshot, readDemoRunSnapshot } from "./demo-run-snapshot-operations.js";
+import {
+  publishDemoRunProjectionDirty,
+  readDemoRunSnapshot,
+} from "./demo-run-snapshot-operations.js";
 import { DemoRunValidationError } from "./demo-run-validation-error.js";
 import { parsePersistedAcceptedRunConfigSnapshot } from "./persisted-demo-run-state.js";
 import type {
@@ -182,10 +185,9 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
         throw error;
       }
 
-      await publishDemoRunSnapshot(this.options.redis, this.options.logger, {
+      await publishDemoRunProjectionDirty(this.options.redis, this.options.logger, {
         run: accepted.run,
         correlationId,
-        occurredAt: now,
       });
 
       let trafficResponse: TrafficExecutionStartResponse;
@@ -212,10 +214,9 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
         trafficResponse,
         now,
       );
-      await publishDemoRunSnapshot(this.options.redis, this.options.logger, {
+      await publishDemoRunProjectionDirty(this.options.redis, this.options.logger, {
         run: runAfterTrafficStart,
         correlationId,
-        occurredAt: now,
       });
 
       return startDemoRunResponseSchema.parse({
@@ -481,10 +482,9 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
           );
         });
       }
-      await publishDemoRunSnapshot(this.options.redis, this.options.logger, {
+      await publishDemoRunProjectionDirty(this.options.redis, this.options.logger, {
         run: updatedRun,
         correlationId,
-        occurredAt: now,
       });
     }
   }

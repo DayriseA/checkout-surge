@@ -1,8 +1,6 @@
 import {
-  dashboardEventSchema,
   type LoadMetricIngestRequest,
   loadMetricIngestRequestSchema,
-  type MetricSample,
 } from "@checkout-surge/contracts";
 import type { CheckoutSurgeDatabase } from "@checkout-surge/db";
 import { demoRuns } from "@checkout-surge/db";
@@ -24,7 +22,7 @@ export class TrafficMetricIngestionService implements TrafficMetricIngestionCont
   constructor(
     private readonly options: {
       db: CheckoutSurgeDatabase;
-      store: Pick<DashboardTrafficMetricStore, "appendIfLive" | "publishIfLive">;
+      store: Pick<DashboardTrafficMetricStore, "appendIfLive" | "publishDirtyIfLive">;
       logger: Pick<CheckoutSurgeLogger, "warn">;
     },
   ) {}
@@ -79,59 +77,30 @@ export class TrafficMetricIngestionService implements TrafficMetricIngestionCont
         );
       }
 
-      await this.publishAdvisoryEvents(request);
+      await this.publishProjectionDirtySignal(request);
     });
   }
 
-  private async publishAdvisoryEvents(request: LoadMetricIngestRequest): Promise<void> {
-    const publications: Array<{ metricName: MetricSample["metricName"]; payload: string }> = [];
-    for (const sample of request.samples) {
-      try {
-        const event = dashboardEventSchema.parse({
-          type: "dashboard.metric.observed",
-          runId: request.runId,
-          correlationId: request.correlationId,
-          metricName: sample.metricName,
-          value: sample.value,
-          unit: sample.unit,
-          occurredAt: sample.timestamp,
-          observedAt: sample.timestamp,
-        });
-        publications.push({ metricName: sample.metricName, payload: JSON.stringify(event) });
-      } catch (error) {
-        this.warnPublicationFailure(error, request, sample.metricName);
-      }
-    }
-
+  private async publishProjectionDirtySignal(request: LoadMetricIngestRequest): Promise<void> {
     try {
-      const result = await this.options.store.publishIfLive(
-        request.runId,
-        publications.map(({ payload }) => payload),
-      );
-      if (result.outcome === "attempted") {
-        for (const failure of result.failures) {
-          const publication = publications[failure.index];
-          if (publication) {
-            this.warnPublicationFailure(failure.error, request, publication.metricName);
-          }
-        }
-      }
+      const result = await this.options.store.publishDirtyIfLive(request.runId, {
+        type: "dashboard.projection.dirty",
+        correlationId: request.correlationId,
+      });
+      if (result.outcome === "failed") this.warnPublicationFailure(result.error, request);
     } catch (error) {
-      for (const publication of publications) {
-        this.warnPublicationFailure(error, request, publication.metricName);
-      }
+      this.warnPublicationFailure(error, request);
     }
   }
 
   private warnPublicationFailure(
     error: unknown,
     request: Pick<LoadMetricIngestRequest, "runId" | "correlationId">,
-    metricName: MetricSample["metricName"],
   ): void {
     try {
       this.options.logger.warn(
-        { err: error, runId: request.runId, correlationId: request.correlationId, metricName },
-        "Could not publish traffic metric dashboard event.",
+        { err: error, runId: request.runId, correlationId: request.correlationId },
+        "Could not publish traffic metric projection dirty signal.",
       );
     } catch {
       // Reporting an advisory publication failure must not redefine accepted retention.

@@ -1,7 +1,7 @@
 import {
   type AdminPresetListResponse,
   type AdminPublicRuntimePolicyResponse,
-  type DashboardRecoveryResponse,
+  type DashboardProjection,
   type DemoPresetContract,
   dashboardProjectionSchemaName,
   dashboardProjectionSchemaVersion,
@@ -172,9 +172,7 @@ describe("dashboard control surface", () => {
   });
 });
 
-function publicSurfaceFixture(
-  currentRun: DashboardRecoveryResponse["currentRun"],
-): PublicDemoSurface {
+function publicSurfaceFixture(currentRun: DashboardProjection["currentRun"]): PublicDemoSurface {
   return {
     presets: available(publicPresetListFixture()),
     runtimePolicy: available(publicRuntimePolicyFixture()),
@@ -255,9 +253,7 @@ function adminRuntimePolicyFixture(): AdminPublicRuntimePolicyResponse {
   };
 }
 
-function recoveryFixture(
-  currentRun: DashboardRecoveryResponse["currentRun"],
-): DashboardRecoveryResponse {
+function recoveryFixture(currentRun: DashboardProjection["currentRun"]): DashboardProjection {
   const scope = recoveryScope(currentRun);
   return {
     schema: dashboardProjectionSchemaName,
@@ -279,7 +275,7 @@ function recoveryFixture(
   };
 }
 
-function recoveryScope(currentRun: DashboardRecoveryResponse["currentRun"]) {
+function recoveryScope(currentRun: DashboardProjection["currentRun"]) {
   if (!currentRun) return null;
   if (!currentRun.saleOfferId) {
     throw new Error(`Run ${currentRun.runId} fixture requires a sale offer.`);
@@ -287,7 +283,7 @@ function recoveryScope(currentRun: DashboardRecoveryResponse["currentRun"]) {
   return { runId: currentRun.runId, saleOfferId: currentRun.saleOfferId };
 }
 
-function runFixture(status: "active" | "draining"): DashboardRecoveryResponse["currentRun"] {
+function runFixture(status: "active" | "draining"): DashboardProjection["currentRun"] {
   return demoRunSnapshotSchema.parse({
     runId: "11111111-1111-4111-8111-111111111111",
     presetId: "22222222-2222-4222-8222-222222222222",

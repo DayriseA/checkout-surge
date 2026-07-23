@@ -4,7 +4,6 @@ export interface BusinessOutcomePublicationScope {
   saleOfferId: string;
   runId?: string;
   correlationId?: string;
-  occurredAt?: Date;
 }
 
 export class BusinessOutcomePublicationScheduler {

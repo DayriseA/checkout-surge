@@ -1,9 +1,9 @@
 import {
-  type DashboardEvent,
   type DashboardProjection,
   type DashboardProjectionScope,
   dashboardProjectionScopeId,
 } from "@checkout-surge/contracts";
+import type { DashboardProjectionDirtySignal } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { normalizeCorrelationId } from "@checkout-surge/logger";
 import {
@@ -20,7 +20,7 @@ interface DirtyProjection {
   correlationId: string;
   dueAt: number;
   generation: number;
-  immediate: boolean;
+  urgent: boolean;
   scope?: DashboardProjectionScope;
 }
 
@@ -34,10 +34,9 @@ export interface DashboardProjectionPublicationSchedulerOptions {
 }
 
 /**
- * Treats existing dashboard events only as dirtiness signals. It builds at most
- * one complete projection at a time and retains one coalesced trailing build per
- * dirty scope. There is deliberately no raw-event count threshold: producer
- * aggregation already provides the useful work boundary.
+ * Builds at most one complete projection at a time and retains one coalesced
+ * trailing build per dirty scope. There is deliberately no signal-count
+ * threshold: producer aggregation already provides the useful work boundary.
  */
 export class DashboardProjectionPublicationScheduler {
   private readonly pending = new Map<string, DirtyProjection>();
@@ -62,16 +61,11 @@ export class DashboardProjectionPublicationScheduler {
     );
   }
 
-  markDirty(event: DashboardEvent): void {
+  markDirty(signal: DashboardProjectionDirtySignal): void {
     if (!this.accepting) return;
 
-    const lifecycle = event.type === "load.run.updated";
-    const terminal =
-      lifecycle && (event.run.status === "completed" || event.run.status === "failed");
-    const scope =
-      terminal && event.run.saleOfferId
-        ? { runId: event.runId, saleOfferId: event.run.saleOfferId }
-        : undefined;
+    const scope = signal.scope;
+    const urgent = scope !== undefined;
     const key = scope ? dashboardProjectionScopeId(scope) : "current";
 
     if (!this.pending.has(key) && this.pending.size >= this.maxPendingScopes) {
@@ -86,10 +80,10 @@ export class DashboardProjectionPublicationScheduler {
     const existing = this.pending.get(key);
     this.pending.set(key, {
       ...(scope ? { scope } : {}),
-      correlationId: normalizeCorrelationId(event.correlationId),
-      dueAt: lifecycle ? Date.now() : (existing?.dueAt ?? Date.now() + this.maxLatencyMs),
+      correlationId: normalizeCorrelationId(signal.correlationId),
+      dueAt: urgent ? Date.now() : (existing?.dueAt ?? Date.now() + this.maxLatencyMs),
       generation: ++this.generation,
-      immediate: lifecycle || (existing?.immediate ?? false),
+      urgent: urgent || (existing?.urgent ?? false),
     });
     this.scheduleNext();
   }
@@ -121,9 +115,7 @@ export class DashboardProjectionPublicationScheduler {
     const delayMs = Math.max(
       0,
       Math.min(
-        ...[...this.pending.values()].map((dirty) =>
-          dirty.immediate ? 0 : dirty.dueAt - Date.now(),
-        ),
+        ...[...this.pending.values()].map((dirty) => (dirty.urgent ? 0 : dirty.dueAt - Date.now())),
       ),
     );
     this.timer = setTimeout(() => {
@@ -137,7 +129,7 @@ export class DashboardProjectionPublicationScheduler {
     if (this.buildInFlight || this.pending.size === 0) return;
     this.clearTimer();
     const entry =
-      [...this.pending.entries()].find(([, dirty]) => dirty.immediate) ??
+      [...this.pending.entries()].find(([, dirty]) => dirty.urgent) ??
       this.pending.entries().next().value;
     if (!entry) return;
     const [key, dirty] = entry;
@@ -155,7 +147,7 @@ export class DashboardProjectionPublicationScheduler {
         if (!retained) {
           this.pending.set(key, {
             ...dirty,
-            immediate: false,
+            urgent: false,
             dueAt: Date.now() + this.maxLatencyMs,
           });
         }

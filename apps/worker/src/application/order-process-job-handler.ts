@@ -1,9 +1,4 @@
-import { createHash } from "node:crypto";
-import type {
-  OrderConsistencyLagDashboardEvent,
-  OrderProcessJob,
-  OrderStatusDashboardEvent,
-} from "@checkout-surge/contracts";
+import type { OrderProcessJob } from "@checkout-surge/contracts";
 import { type CheckoutSurgeLogger, childLoggerWithCorrelationId } from "@checkout-surge/logger";
 
 export interface OrderProcessDeliveryMetadata {
@@ -21,40 +16,17 @@ export interface OrderProcessJobHandler {
 
 export type ProcessingTransitionResult =
   | { changed: false; status: "processing" | "confirmed" | "failed" }
-  | {
-      changed: true;
-      eventId: string;
-      previousStatus: "queued";
-      status: "processing";
-      occurredAt: Date;
-      queuedAt: Date;
-    };
+  | { changed: true; status: "processing" };
 export type FailedTransitionResult =
   | { changed: false; status: "failed" }
-  | {
-      changed: true;
-      eventId: string;
-      previousStatus: "processing";
-      status: "failed";
-      occurredAt: Date;
-      queuedAt: Date;
-    };
+  | { changed: true; status: "failed" };
 export type ConfirmedTransitionResult =
   | { changed: false; status: "confirmed" }
   | {
       changed: true;
-      eventId: string;
-      previousStatus: "processing";
       status: "confirmed";
-      occurredAt: Date;
-      queuedAt: Date;
       confirmedAt: Date;
     };
-export type FreshOrderTransition = Extract<
-  ProcessingTransitionResult | FailedTransitionResult | ConfirmedTransitionResult,
-  { changed: true }
->;
-
 export interface OrderFailure {
   code: string;
   message: string;
@@ -74,14 +46,6 @@ export interface OrderTransitionPersistence {
     failure: OrderFailure,
     delivery: OrderProcessDeliveryMetadata,
   ): Promise<FailedTransitionResult>;
-}
-
-export interface OrderRealtimePublisher {
-  enqueue(
-    events:
-      | readonly [OrderStatusDashboardEvent]
-      | readonly [OrderStatusDashboardEvent, OrderConsistencyLagDashboardEvent],
-  ): void;
 }
 
 export interface OrderConfirmation {
@@ -182,18 +146,6 @@ export function createOrderProcessJobHandler(dependencies: {
     correlationId: string;
   }) => void;
   recovery: OrderRecoveryHandoff;
-  realtimePublisher: OrderRealtimePublisher;
-  reportConsistencyLagClockAnomaly?: (report: {
-    orderId: string;
-    publicOrderId: string;
-    saleOfferId: string;
-    runId?: string;
-    correlationId: string;
-    startedAt: string;
-    confirmedAt: string;
-    rawLagMs: number;
-    clampedLagMs: number;
-  }) => void;
 }): OrderProcessJobHandler {
   return {
     handle: async (job, delivery) => {
@@ -239,7 +191,6 @@ export function createOrderProcessJobHandler(dependencies: {
       }
 
       if (transition.changed) {
-        enqueueRealtimeEvents(dependencies, job, delivery, transition, logger);
         await publishBusinessOutcomeUpdateWithoutFailingJob(
           dependencies,
           job,
@@ -311,7 +262,6 @@ export function createOrderProcessJobHandler(dependencies: {
             delivery,
           );
           if (failedTransition.changed) {
-            enqueueRealtimeEvents(dependencies, job, delivery, failedTransition, logger);
             await publishBusinessOutcomeUpdateWithoutFailingJob(
               dependencies,
               job,
@@ -348,7 +298,6 @@ export function createOrderProcessJobHandler(dependencies: {
       try {
         confirmedTransition = await dependencies.persistence.transitionToConfirmed(job, delivery);
         if (confirmedTransition.changed) {
-          enqueueRealtimeEvents(dependencies, job, delivery, confirmedTransition, logger);
           await publishBusinessOutcomeUpdateWithoutFailingJob(
             dependencies,
             job,
@@ -392,99 +341,6 @@ export function createOrderProcessJobHandler(dependencies: {
       logger.info(logContext, "Order transitioned to confirmed.");
     },
   };
-}
-
-function enqueueRealtimeEvents(
-  dependencies: Pick<
-    Parameters<typeof createOrderProcessJobHandler>[0],
-    "realtimePublisher" | "reportConsistencyLagClockAnomaly"
-  >,
-  job: OrderProcessJob,
-  delivery: OrderProcessDeliveryMetadata,
-  transition: FreshOrderTransition,
-  logger: CheckoutSurgeLogger,
-): void {
-  const occurredAt = transition.occurredAt.toISOString();
-  const eventName = `order.${transition.status}` as OrderStatusDashboardEvent["eventName"];
-  const statusEvent: OrderStatusDashboardEvent = {
-    type: "order.status.updated",
-    eventId: transition.eventId,
-    ...(job.runId ? { runId: job.runId } : {}),
-    correlationId: job.correlationId,
-    occurredAt,
-    orderId: job.orderId,
-    publicOrderId: job.publicOrderId,
-    saleOfferId: job.saleOfferId,
-    eventName,
-    previousStatus: transition.previousStatus,
-    status: transition.status,
-    attemptNumber: delivery.attemptNumber,
-    attemptsMade: delivery.attemptsMade,
-  };
-  try {
-    if (transition.status !== "confirmed") {
-      dependencies.realtimePublisher.enqueue([statusEvent]);
-      return;
-    }
-    const startedAt = transition.queuedAt.toISOString();
-    const confirmedAt = transition.confirmedAt.toISOString();
-    const rawLagMs = transition.confirmedAt.getTime() - transition.queuedAt.getTime();
-    if (rawLagMs < 0) {
-      const report = {
-        orderId: job.orderId,
-        publicOrderId: job.publicOrderId,
-        saleOfferId: job.saleOfferId,
-        ...(job.runId ? { runId: job.runId } : {}),
-        correlationId: job.correlationId,
-        startedAt,
-        confirmedAt,
-        rawLagMs,
-        clampedLagMs: 0,
-      };
-      try {
-        dependencies.reportConsistencyLagClockAnomaly?.(report);
-      } catch {
-        // Reporting must not affect the durable transition.
-      }
-      logger.warn(report, "Confirmed order consistency lag clock anomaly was clamped to zero.");
-    }
-    dependencies.realtimePublisher.enqueue([
-      statusEvent,
-      {
-        type: "dashboard.metric.observed",
-        eventId: deriveLagEventId(transition.eventId),
-        confirmedTransitionEventId: transition.eventId,
-        ...(job.runId ? { runId: job.runId } : {}),
-        correlationId: job.correlationId,
-        occurredAt: confirmedAt,
-        metricName: "order.consistency_lag",
-        value: Math.max(0, rawLagMs),
-        unit: "ms",
-        observedAt: confirmedAt,
-        orderId: job.orderId,
-        publicOrderId: job.publicOrderId,
-        saleOfferId: job.saleOfferId,
-        startedAt,
-        confirmedAt,
-      },
-    ]);
-  } catch (error) {
-    logger.error(
-      { err: error, orderId: job.orderId, eventId: transition.eventId },
-      "Order realtime enqueue failed.",
-    );
-  }
-}
-
-function deriveLagEventId(transitionEventId: string): string {
-  const hex = createHash("sha256")
-    .update(`order.consistency_lag:${transitionEventId}`)
-    .digest("hex")
-    .slice(0, 32)
-    .split("");
-  hex[12] = "5";
-  hex[16] = ((Number.parseInt(hex[16] ?? "0", 16) & 3) | 8).toString(16);
-  return `${hex.slice(0, 8).join("")}-${hex.slice(8, 12).join("")}-${hex.slice(12, 16).join("")}-${hex.slice(16, 20).join("")}-${hex.slice(20).join("")}`;
 }
 
 async function publishNotificationRecordJobWithoutFailingOrder(

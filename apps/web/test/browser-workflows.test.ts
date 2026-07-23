@@ -4,7 +4,7 @@ import {
   type AcceptedRunConfigSnapshot,
   type AdminPresetListResponse,
   type AdminPublicRuntimePolicyResponse,
-  type DashboardRecoveryResponse,
+  type DashboardProjection,
   type DemoPresetContract,
   type DemoRunSnapshot,
   dashboardProjectionSchemaName,
@@ -657,8 +657,8 @@ function readinessFixture(): HealthResponse {
 }
 
 function dashboardRecoveryFixture(
-  overrides: Partial<DashboardRecoveryResponse> = {},
-): DashboardRecoveryResponse {
+  overrides: Partial<DashboardProjection> = {},
+): DashboardProjection {
   const currentRun = overrides.currentRun ?? null;
   const scope = recoveryScope(currentRun);
   return {
@@ -682,7 +682,7 @@ function dashboardRecoveryFixture(
   };
 }
 
-function recoveryScope(currentRun: DashboardRecoveryResponse["currentRun"]) {
+function recoveryScope(currentRun: DashboardProjection["currentRun"]) {
   if (!currentRun) return null;
   if (!currentRun.saleOfferId) {
     throw new Error(`Run ${currentRun.runId} fixture requires a sale offer.`);

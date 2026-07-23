@@ -30,7 +30,7 @@ The goal is to keep the limited-inventory checkout flow and its recovery boundar
 | Traffic delivery quality | Classify request delivery inside `trafficDeliverySummary.trafficDeliveryStatus` as `complete`, `warning`, `degraded`, or `failed` | Keeps traffic fidelity visible without adding terminal demo-run statuses beyond `completed` and `failed`. |
 | Quantity semantics | Keep `quantity` in the model, but default the limited-inventory flow to one unit per checkout | The demo is single-item focused, but the schema should not require a breaking change to support quantity later. |
 | UI status strategy | Keep canonical persistence states minimal and display the buy outcome or canonical order status directly | This avoids parallel customer/simulated status vocabularies while still supporting clear operator feedback. |
-| Realtime order presentation | The browser is aggregate-first and no longer consumes the separate per-order realtime feed; Task 40 removes that transitional server/contracts path and remaining live panel residue | Per-order live activity does not strengthen the surge demo enough to justify a second update protocol. Aggregate consistency lag remains a gold signal; focused durable diagnostics use `GET /orders/:publicOrderId/status` or protected Run History. |
+| Realtime order presentation | No separate per-order feed or recent-activity panel; the complete revisioned projection retains aggregate consistency lag and completion outcomes | Per-order live activity does not justify a second update protocol. Focused durable diagnostics use `GET /orders/:publicOrderId/status` or protected Run History. |
 
 ---
 
@@ -235,7 +235,7 @@ Notes:
 - Retry metadata is not a separate order status; it belongs in ERP-attempt history and derived UI messaging.
 - PostgreSQL requires `processingAt` for `processing`, `confirmed`, and `failed` orders, the matching terminal timestamp for `confirmed` and `failed`, and any non-null terminal timestamp to be at or after `queuedAt`. Equality is valid. These checks remain one-way implications rather than an exact-state encoding: earlier states may carry later timestamps, both terminal timestamps may coexist, and terminal timestamps are not ordered against `processingAt`.
 - `GET /orders/:publicOrderId/status` is the public mutable read model for these durable states. It exposes the public order ID, sale offer, secured reservation identity/expiry, the canonical order status, nullable lifecycle and failure fields, confirmed-order consistency lag, and the persisted event timeline while omitting the internal order UUID, reservation tokens, event payloads, and run attribution.
-- This endpoint is the retained focused diagnostic read after the separate per-order realtime presentation is removed. It does not imply a customer storefront or a general customer-tracking product.
+- This endpoint is the retained focused diagnostic read without a separate per-order realtime presentation. It does not imply a customer storefront or a general customer-tracking product.
 - `POST /buy` and its idempotent replays remain acceptance-shaped (`secured` reservation and `queued` order); consumers must not use a replay as a current-status lookup.
 
 ### 6. ErpAttempt

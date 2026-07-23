@@ -103,23 +103,16 @@ type HandlerDependencies = Parameters<typeof createProductionOrderProcessJobHand
 function createOrderProcessJobHandler(
   dependencies: Omit<
     HandlerDependencies,
-    | "publishBusinessOutcomeUpdate"
-    | "notificationRecordPublisher"
-    | "recovery"
-    | "realtimePublisher"
+    "publishBusinessOutcomeUpdate" | "notificationRecordPublisher" | "recovery"
   > &
     Partial<
-      Pick<
-        HandlerDependencies,
-        "publishBusinessOutcomeUpdate" | "notificationRecordPublisher" | "realtimePublisher"
-      >
+      Pick<HandlerDependencies, "publishBusinessOutcomeUpdate" | "notificationRecordPublisher">
     >,
 ) {
   return createProductionOrderProcessJobHandler({
     publishBusinessOutcomeUpdate: async () => undefined,
     notificationRecordPublisher: { publishForConfirmedOrder: async () => undefined },
     recovery: { handoff: async () => undefined, resolve: async () => undefined },
-    realtimePublisher: { enqueue: () => undefined },
     ...dependencies,
   });
 }
@@ -193,7 +186,6 @@ describe("PostgreSQL worker order transitions", () => {
     expect(processingTransition).toMatchObject({
       changed: true,
       status: "processing",
-      occurredAt: new Date("2026-06-21T00:00:01.000Z"),
     });
     const confirmedTransition = await persistence.transitionToConfirmed(job, {
       attemptNumber: 2,
@@ -247,11 +239,6 @@ describe("PostgreSQL worker order transitions", () => {
         payload: { attemptNumber: 2, attemptsMade: 1 },
       },
     ]);
-    expect(processingTransition.eventId).toBe(events[2]?.id);
-    expect(processingTransition.occurredAt).toEqual(events[2]?.occurredAt);
-    expect(processingTransition.occurredAt).toEqual(order?.processingAt);
-    expect(confirmedTransition.eventId).toBe(events[3]?.id);
-    expect(confirmedTransition.occurredAt).toEqual(events[3]?.occurredAt);
     expect(confirmedTransition.confirmedAt).toEqual(order?.confirmedAt);
   });
 
@@ -422,9 +409,6 @@ describe("PostgreSQL worker order transitions", () => {
     expect(failedEvents).toHaveLength(1);
     expect(replay).toEqual({ changed: false, status: "failed" });
     if (!failedTransition.changed) throw new Error("Expected a fresh failed transition.");
-    expect(failedTransition.eventId).toBe(failedEvents[0]?.id);
-    expect(failedTransition.occurredAt).toEqual(failedEvents[0]?.occurredAt);
-    expect(failedTransition.occurredAt).toEqual(order?.failedAt);
     expect(failedEvents[0]?.payload).toEqual({
       attemptNumber: 4,
       attemptsMade: 3,
