@@ -52,8 +52,8 @@ The checked-in commands support host-native development, local Dev Containers, a
 ### Browser Workflow and Deployed-Topology Characterization
 
 - Focused browser-workflow tests exercise recovery behavior with controlled backend boundaries.
-- `pnpm test:composition` starts an isolated deployed API, worker, mock ERP, load orchestrator, web app, dashboard proxy, PostgreSQL, and Redis topology. It covers wiring, SSE reconnect, sold-out and duplicate behavior, worker/ERP/notification handoffs, finalization/history, and the representative 10,000-buyer scenario.
-- `pnpm test:characterization` runs the focused browser workflow followed by the same deployed topology.
+- `pnpm test:composition` starts an isolated deployed API, worker, mock ERP, load orchestrator, web app, dashboard proxy, PostgreSQL, and Redis topology through `scripts/composition-characterization.mjs`. That implementation owns wiring, SSE reconnect, sold-out and duplicate behavior, worker/ERP/notification handoffs, finalization/history, and the representative 10,000-buyer scenario.
+- `pnpm test:characterization` runs the focused browser workflow followed by the same `scripts/composition-characterization.mjs` deployed topology.
 - `pnpm test:k6-compat` builds and runs the dedicated non-production `k6-compat` target with the same pinned k6 2.0.0 artifact as production. The production load-orchestrator image contains neither pnpm nor test source. The smoke inspects both generated executor modes and parses a real loopback `--summary-export`; it is correctness coverage, not a benchmark.
 - `pnpm test:required` is the repository merge gate: the default automated suite followed by the container-backed k6 compatibility lane. There is no checked-in hosted CI workflow, so CI or merge automation must invoke this command rather than `pnpm test` alone.
 - Composition state uses a unique Compose project and disposable volumes and is removed by default. `COMPOSITION_KEEP_RUNTIME=true` retains a failed runtime for inspection.
@@ -81,8 +81,8 @@ The repository provides these root scripts:
 - `pnpm test:infra:down` stops dedicated test services and deletes their named volumes.
 - `pnpm test:infra:reset` deletes and recreates only the dedicated test PostgreSQL/Redis services and volumes, then waits for readiness.
 - `pnpm test:db:migrate` destructively rebuilds only the approved `@checkout-surge/db` package-isolated test database from the reviewed baseline, creating it on demand. It is a focused verification aid; tests provision and rebuild their package-isolated databases automatically.
-- `pnpm test:composition` runs the slow isolated deployed-topology characterization.
-- `pnpm test:characterization` runs focused browser recovery coverage and then the deployed-topology characterization.
+- `pnpm test:composition` runs the slow isolated deployed-topology and 10,000-buyer characterization through `scripts/composition-characterization.mjs`.
+- `pnpm test:characterization` runs focused browser recovery coverage and then the same `scripts/composition-characterization.mjs` implementation.
 
 Package and app-level scripts should use the same names where applicable so Turbo can orchestrate them predictably.
 

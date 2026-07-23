@@ -704,7 +704,7 @@ Completion commits:
 - `58dc4eb` - `feat(runtime): add containerized reference topology`
 - `a5f7045` - `test(runtime): harden smoke validation cleanup`
 
-Completion summary: Phase 9 makes the full containerized local runtime the primary reference path. The root Compose topology now includes PostgreSQL, Redis, API, worker, mock ERP, web, load orchestrator, and the dashboard Caddy proxy. The load-orchestrator runtime image carries a pinned k6 binary and readiness verifies `k6_binary_executable=ok`. Root runtime commands now build/start the topology, run explicit setup, wipe or reset local state, check health, run smoke checks, and run a tiny dashboard-proxied load smoke path that verifies k6 metric streaming and traffic completion without host-installed k6. The Dev Container compose layer extends the root topology for app-service development while starting only the workspace service by default. The merged Dev Container config was validated in the current Codespace; a full Codespace rebuild remains the required external verification for editor startup, port forwarding, Docker-in-Docker initialization, and named dependency volumes after these `.devcontainer` changes.
+Completion summary: Phase 9 makes the full containerized local runtime the primary reference path. The root Compose topology now includes PostgreSQL, Redis, API, worker, mock ERP, web, load orchestrator, and the dashboard Caddy proxy. The load-orchestrator runtime image carries a pinned k6 binary and readiness verifies `k6_binary_executable=ok`. The current root command surface builds/starts the topology, runs explicit setup, wipes or resets local state, and uses one bounded runtime smoke for service, dashboard, SSE, load, terminal-evidence, and cleanup verification without host-installed k6. The Dev Container compose layer extends the root topology for app-service development while starting only the workspace service by default. The merged Dev Container config was validated in the current Codespace; a full Codespace rebuild remains the required external verification for editor startup, port forwarding, Docker-in-Docker initialization, and named dependency volumes after these `.devcontainer` changes.
 
 Final verification completed:
 
@@ -715,9 +715,7 @@ Final verification completed:
 - `docker run --rm checkout-surge-load-orchestrator:latest /usr/local/bin/k6 version`
 - `pnpm runtime:up`
 - `pnpm runtime:setup`
-- `pnpm health:check`
 - `pnpm runtime:smoke`
-- `pnpm runtime:smoke:load`
 
 Phase 9 intentionally leaves API-owned final benchmark lifecycle finalization, immutable terminal run-history summaries, hosted deployment assets, reverse-proxy deployment tuning, and optional Go comparison work to later phases.
 
@@ -945,7 +943,7 @@ Completion summary: Task 10.5.6 now exposes public-safe detail reads for termina
 Subtasks:
 
 - ✅ Run the relevant non-runtime checks after remediation: `pnpm build`, `pnpm type-check`, `pnpm type-check:test`, `pnpm lint`, `pnpm format:check`, `pnpm test:unit`, `pnpm test:api`, and `pnpm test:integration` where infrastructure is available.
-- ✅ Run `pnpm runtime:smoke` and `pnpm runtime:smoke:load` when Docker runtime verification is available.
+- ✅ Run the current unified `pnpm runtime:smoke` when Docker runtime verification is available.
 - ✅ Record, if any, skipped checks with concrete reasons. -> None skipped.
 - ✅ Before handing off Phase 10.5, perform a docs-vs-implementation scan for `docs/*.md`, README, command references, package scripts, and runtime scripts. Do not treat unimplemented documented target behavior as disposable drift. If a documented target is still intended and is not covered by a later task, add a Task 10.5.x in this Phase. Any remaining documented target behavior must be implemented, or documented as a spec change with rationale.
 

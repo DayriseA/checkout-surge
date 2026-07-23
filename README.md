@@ -108,18 +108,13 @@ Open the dashboard through the single-origin proxy:
 http://localhost:8080
 ```
 
-Verify service readiness, dashboard reachability, Compose health, the in-container k6 binary, a same-origin recovery read, and delivery of an SSE frame. These checks do not mutate durable business or run state; the recovery read does consume short-lived admission capacity and may issue a visitor cookie:
+Run the routine runtime verification against that already-started and seeded reference runtime:
 
 ```bash
-pnpm health:check
 pnpm runtime:smoke
 ```
 
-Run a small dashboard-triggered load smoke check. It first calls the API reset workflow, which may terminalize an existing recoverable run and clear that run's live projection without resetting Mock ERP chaos. It then starts and completes a public smoke run, consuming a visitor/global start-budget reservation until its fixed window expires, and deletes the smoke run's durable graph, run-scoped Redis state, and attributed queue jobs through protected teardown:
-
-```bash
-pnpm runtime:smoke:load
-```
+This one command verifies API, worker, Mock ERP, and load-orchestrator readiness (including the in-container k6 executable); dashboard health, page reachability, and a same-origin recovery read; complete same-origin SSE connection, heartbeat, nonterminal lifecycle, and terminal `DashboardProjection` delivery; and one zero-chaos 32-buyer accepted burst. It checks the completed Run History business, Redis inventory, notification, and projection evidence, then deletes only the generated smoke run through protected exact-run teardown. The preflight API reset can terminalize an existing recoverable current run, so use the smoke on a runtime where that maintenance action is acceptable.
 
 For focused host-native development, use the infra-only and `dev:*` commands documented in [docs/local_development.md](docs/local_development.md). Host-native load runs require a local `k6` binary.
 
@@ -160,7 +155,7 @@ pnpm test
 
 Some API and integration tests use isolated PostgreSQL and Redis services. The full setup and narrower test commands are documented in [docs/local_development.md](docs/local_development.md#testing-workflow).
 
-The deployed-topology characterization is intentionally opt-in because it is slow and requires Docker. Run `pnpm test:composition` or `pnpm test:characterization` only when that cross-service safety net is specifically needed.
+The deployed-topology characterization is intentionally opt-in because it is slow and requires Docker. Both `pnpm test:composition` and `pnpm test:characterization` use `scripts/composition-characterization.mjs`, which owns the repository's 10,000-buyer scenario; characterization additionally runs the focused browser workflow first. The routine runtime smoke never invokes either lane.
 
 ## Documentation
 

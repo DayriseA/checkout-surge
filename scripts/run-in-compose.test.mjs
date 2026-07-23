@@ -17,13 +17,13 @@ test("uses the host-local script when the API service is not running", () => {
   const fake = createSpawn([{ status: 0, stdout: "" }, { status: 7 }]);
 
   const status = runInCompose({
-    script: "scripts/runtime-health-check.mjs",
+    script: "scripts/runtime-smoke.mjs",
     args: ["--verbose"],
     spawn: fake.spawn,
   });
 
   assert.equal(status, 7);
-  assert.deepEqual(fake.calls[1].args, ["scripts/runtime-health-check.mjs", "--verbose"]);
+  assert.deepEqual(fake.calls[1].args, ["scripts/runtime-smoke.mjs", "--verbose"]);
   assert.equal(fake.calls[1].command, process.execPath);
 });
 

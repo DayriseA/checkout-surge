@@ -117,21 +117,23 @@ Use `/` for the public demo picker, `/admin` for operator controls, `/watch` for
 
 In Dev Containers and GitHub Codespaces, launch the forwarded `8080` `dashboard-proxy` port. API, mock ERP, load-orchestrator, and direct web ports are forwarded as debugging surfaces, not as the normal dashboard URL. In Codespaces, set `WEB_ORIGIN` to the forwarded `8080` dashboard-proxy URL shown by the Ports panel, for example `https://<codespace>-8080.app.github.dev`.
 
-Check runtime readiness (the command uses Compose-network checks for a running reference runtime and localhost checks for host-native services):
+Run the routine runtime verification (the command uses Compose-network checks for a running reference runtime and localhost checks for host-native services):
 
 ```bash
-pnpm health:check
-pnpm runtime:soak:recovery
 pnpm runtime:smoke
 ```
 
-The runtime smoke does not mutate durable business or run state. Its same-origin recovery read does increment short-lived process-local fixed-window recovery-admission counters and may issue a visitor cookie in the response. It also keeps the SSE connection open until a complete heartbeat control frame or projection data frame crosses the same-origin proxy; response headers alone are not sufficient. On an otherwise idle runtime, expect this step to complete after the first heartbeat, normally about 15 seconds after connection, within its 25-second request-plus-frame deadline.
+The smoke requires the already-started, seeded runtime and a valid `CONTROL_SERVICE_TOKEN`. It verifies every service's required readiness checks, including the load orchestrator's k6 executable; dashboard health and page reachability; a schema-valid same-origin recovery read; a complete SSE connection control frame and timestamped heartbeat; one nonterminal and one completed projection for the generated run; and the completed business, Redis inventory, and notification evidence for one zero-chaos 32-buyer accepted burst. It then performs protected exact-run teardown.
 
-Run the mutating dashboard-to-load-run smoke check when you want to prove the full control and asynchronous business path. Before creating its own runs, it calls only the protected API demo-reset endpoint; that can terminalize an existing recoverable run and clear that run's live projection, but it does not invoke the operational `runtime:reset` client's separate Mock ERP chaos reset. The smoke retains the existing eight-second low-rate steady scenario and follows it with a bounded curated-like 32-buyer burst whose stock allows all 32 requests to enter accepted admission. For each run it subscribes to SSE, verifies run-correlated realtime and reserved inventory, waits for a completed immutable summary with confirmed orders, notifications, and no asynchronous blockers, and invokes protected exact-run teardown before continuing. Each accepted start retains one visitor/global public run-budget reservation until its fixed window expires; exact-run teardown does not release accepted-start budget.
+The smoke is intentionally mutating. Its preflight protected API reset can terminalize an existing recoverable run and clear that run's live projection, but it does not invoke the operational `runtime:reset` client's separate Mock ERP chaos reset. The smoke starts its bounded scenario as an authorized admin operation so routine reruns do not consume public visitor/global start budgets. HTTP requests have 10-second deadlines; SSE connection, heartbeat, and close waits are 5, 20, and 5 seconds. One absolute run-evidence deadline begins immediately before the start request and is shared by nonterminal projection, terminal Run History, and completed-projection waits. It defaults to 330 seconds (`5` seconds traffic + `300` seconds drain + three `5`-second finalization intervals + `10` seconds allowance), and `RUNTIME_SMOKE_RUN_TIMEOUT_MS` can override it positively. If the start response is ambiguous, the already-open stream has 5 seconds to recover only a projection carrying the smoke's unique correlation lineage. Exact cleanup then has its own fresh 30-second absolute budget, including terminality preparation, any exact reset, teardown retries, and retry delays. Every failure names its stage, such as `health/worker`, `sse/terminal_projection`, or `cleanup/delete_exact_run`.
+
+The dedicated idle recovery regression remains a distinct opt-in multi-minute lane:
 
 ```bash
-pnpm runtime:smoke:load
+pnpm runtime:soak:recovery
 ```
+
+It must cover more than two configured dashboard-recovery budget windows and requires an idle runtime; it is not part of the routine smoke.
 
 For public limited-inventory surge validation, start the surge presets from the dashboard: `preview-1k`, `surge-5k`, then `surge-10k`. The seeded public preset set also includes `idempotency-check-200` for duplicate-attempt correctness and `public-custom` as the read-only base for bounded run-scoped public custom starts. Each start creates a fresh run sale offer and Redis inventory namespace. The reference runtime keeps the public 10k shape at roughly 10,000 synthetic buy attempts in 1 second. `API_LISTEN_BACKLOG` defaults to `8192` so the API listener can absorb the connection burst after the Redis-first losing path rejects sold-out traffic. If `surge-10k` still reports `connection reset by peer` on a smaller host, treat that as a host/container networking limit to document rather than lowering the public preset.
 
@@ -213,13 +215,13 @@ http://localhost:8080
 
 ## Verifying Your Setup
 
-After the reference runtime or host-native services are running, check readiness from the repo root:
+After the reference runtime or host-native services are running and seeded, run the complete routine verification from the repo root:
 
 ```bash
-pnpm health:check
+pnpm runtime:smoke
 ```
 
-The command polls the API, worker, mock ERP, load orchestrator, and dashboard, then prints a pass/fail summary. It exits with code `0` only when every service reports ready and the dashboard is reachable.
+The command exits with code `0` only after service readiness, dashboard HTTP/recovery/SSE, bounded load, terminal evidence, and exact cleanup have all passed.
 
 A healthy readiness response has this shape:
 
@@ -292,9 +294,8 @@ The worker-facing Mock ERP confirmation contract is `POST http://localhost:4100/
 | `pnpm runtime:setup` | Run migrations and seed demo baseline data, durable presets, and Redis inventory inside the compose network |
 | `pnpm runtime:wipe` | Stop the selected Compose project and delete its named PostgreSQL, Redis, and load-orchestrator journal volumes plus its orphan containers; it does not delete the host-native journal |
 | `pnpm runtime:reset` | Reset the running demo through the API and Mock ERP admin reset endpoints for recovery/local maintenance |
-| `pnpm runtime:smoke` | Check compose/service readiness, recovery, SSE, and in-container k6 without mutating durable business/run state; the recovery read consumes short-lived admission capacity and may issue a visitor cookie |
+| `pnpm runtime:smoke` | Routine verification of service readiness, dashboard HTTP/recovery/SSE, one zero-chaos 32-buyer accepted burst, terminal business/inventory/notification/projection evidence, and exact generated-run cleanup; its preflight API reset may terminalize an existing recoverable run |
 | `pnpm runtime:soak:recovery` | On an idle runtime, probe direct-web and proxy-to-web health for more than two recovery budget windows, verify `/` remains reachable, then verify two independently signed BFF recovery identities receive authoritative idle state; deterministic component tests separately prove Start controls become enabled after hydration; intentionally opt-in and multi-minute |
-| `pnpm runtime:smoke:load` | API-reset any recoverable current run, then prove and exactly tear down both the steady and bounded 32-buyer accepted-burst realtime/business paths; each start consumes a fixed-window public run-budget reservation, and the smoke does not reset Mock ERP chaos |
 | `pnpm maintenance:cleanup-runs` | Select terminal generated demo runs whose `demo_runs.created_at` is at least seven days old by default, preserving active runs, catalog-backed runs, and the latest 15 runs across the full population; for each selection, perform strict exact queue/Redis cleanup before transactional durable deletion. Override with `-- --older-than-days <days>` and/or `-- --keep-latest <count>` |
 | `pnpm dev` | Build shared packages, then run all app `dev` tasks through Turbo |
 | `pnpm dev:dashboard` | Build shared packages, then start the Next.js operator dashboard |
@@ -302,7 +303,6 @@ The worker-facing Mock ERP confirmation contract is `POST http://localhost:4100/
 | `pnpm dev:worker` | Build and start the order-processing worker |
 | `pnpm dev:mock-erp` | Build and start the mock ERP service |
 | `pnpm dev:load-orchestrator` | Build and start the load orchestrator |
-| `pnpm health:check` | Poll service readiness and dashboard reachability, then print a setup health summary |
 | `pnpm build` | Build all packages and apps through Turbo |
 | `pnpm build:shared` | Build shared packages consumed by host-native app dev commands |
 | `pnpm type-check` | Run fail-fast production TypeScript checks through Turbo, then strict root test-source compilation |
@@ -347,9 +347,9 @@ The default development suite can be run with:
 pnpm test
 ```
 
-`pnpm test` intentionally excludes deployed-topology composition coverage so routine development and agent verification remain fast. It also keeps host-native orchestrator unit tests independent of a host k6 install. Merge automation uses `pnpm test:required`, whose dedicated `test:k6-compat` step builds a non-production test target with the same pinned k6 artifact as the production load image and fails rather than skipping when k6 is unavailable or incompatible. The final load image contains no pnpm, test dependencies, or test source. The opt-in `test:composition` command is slow by nature and requires a functioning Docker daemon. It creates a uniquely named Compose project, migrates and seeds isolated PostgreSQL and Redis volumes, starts the deployed API, worker, mock ERP, load orchestrator, web, and dashboard proxy topology, runs its characterization scenarios, and removes the project and volumes afterward. Its host ports default to the `53xxx`-`58xxx` range and can be overridden with the `COMPOSITION_*_PORT` environment variables when those ports are occupied.
+`pnpm test` intentionally excludes deployed-topology composition coverage so routine development and agent verification remain fast. It also keeps host-native orchestrator unit tests independent of a host k6 install. Merge automation uses `pnpm test:required`, whose dedicated `test:k6-compat` step builds a non-production test target with the same pinned k6 artifact as the production load image and fails rather than skipping when k6 is unavailable or incompatible. The final load image contains no pnpm, test dependencies, or test source. The opt-in `test:composition` command is slow by nature and requires a functioning Docker daemon. It creates a uniquely named Compose project, migrates and seeds isolated PostgreSQL and Redis volumes, starts the deployed API, worker, mock ERP, load orchestrator, web, and dashboard proxy topology, runs `scripts/composition-characterization.mjs`, and removes the project and volumes afterward. Its host ports default to the `53xxx`-`58xxx` range and can be overridden with the `COMPOSITION_*_PORT` environment variables when those ports are occupied.
 
-Run the deployed topology only when its cross-service safety net is specifically needed, or when explicitly requested during agent-assisted work. The characterization command runs the focused browser recovery suite followed by that topology:
+Run the deployed topology only when its cross-service safety net is specifically needed, or when explicitly requested during agent-assisted work. Both commands use `scripts/composition-characterization.mjs`, which owns the 10,000-buyer scenario; `test:characterization` runs the focused browser recovery suite first:
 
 ```bash
 pnpm test:composition
@@ -409,9 +409,9 @@ The root Compose application services build independent production images. API, 
 
 The Dev Container merge explicitly replaces all five application builds with the root `development-workspace` target before pairing them with `pnpm ... dev` commands. The universal editor image, Docker-in-Docker lifecycle, named dependency volumes, and opt-in application startup remain unchanged.
 
-When API is running, `runtime:reset`, `runtime:smoke:load`, `runtime:soak:recovery`, `health:check`, and `maintenance:cleanup-runs` invoke the profile-gated `runtime-tools` service on the Compose network. If API is not running they retain their host-local Node fallback. `runtime:up` never starts `runtime-tools` or the profile-gated k6 compatibility service.
+When API is running, `runtime:reset`, `runtime:smoke`, `runtime:soak:recovery`, and `maintenance:cleanup-runs` invoke the profile-gated `runtime-tools` service on the Compose network. If API is not running they retain their host-local Node fallback. `runtime:up` never starts `runtime-tools` or the profile-gated k6 compatibility service.
 
-The tooling service receives only its internal API, worker, Mock ERP, load-orchestrator, direct-web, and dashboard-proxy URLs; the control and public-cookie credentials used by operational requests; the drain/finalization timing overrides consumed by the load smoke; and the recovery-budget-window and soak timing overrides consumed by the recovery soak. It does not receive PostgreSQL, Redis, admin-session, passphrase, origin, or unrelated application configuration.
+The tooling service receives only its internal API, worker, Mock ERP, load-orchestrator, direct-web, dashboard-proxy, and Redis URLs; the control credential used by operational requests; the drain/finalization/run timing overrides consumed by the smoke; and the recovery-budget-window and soak timing overrides consumed by the recovery soak. It does not receive PostgreSQL, admin-session, public-cookie, passphrase, origin, or unrelated application configuration.
 
 ## Configuration Reference
 
@@ -434,7 +434,7 @@ Most infrastructure URLs have local defaults, but every run/control service chan
 | `MOCK_ERP_BASE_URL` | `http://localhost:4100` | Web, worker |
 | `LOAD_ORCHESTRATOR_BASE_URL` | `http://localhost:4200` | API traffic-execution gateway |
 | `WORKER_HEALTH_BASE_URL` | `http://localhost:4300` | Web/local tooling |
-| `WEB_BASE_URL` | `http://localhost:8080` | Local tooling (`health:check`, `runtime:smoke`) dashboard reachability checks |
+| `WEB_BASE_URL` | `http://localhost:8080` | Routine runtime smoke and recovery-soak dashboard checks |
 | `PORT` | service-specific | Web `3000`, API `4000`, mock ERP `4100`, load orchestrator `4200` |
 | `HOST` | `0.0.0.0` | API, mock ERP, load orchestrator |
 | `HEALTH_HOST` | `0.0.0.0` (falls back to `HOST`) | Worker health server bind address |
@@ -494,6 +494,7 @@ Most infrastructure URLs have local defaults, but every run/control service chan
 | `DASHBOARD_RECOVERY_TIMEOUT_MS` | `5000` | End-to-end HTTP recovery and per-attempt live projection build/publication deadline, including local admission and PostgreSQL, Redis, and BullMQ projection reads |
 | `RUNTIME_RECOVERY_SOAK_SECONDS` | `2 * DASHBOARD_RECOVERY_WINDOW_SECONDS + 5` | Opt-in idle recovery soak duration; any explicit value must be strictly greater than two recovery budget windows |
 | `RUNTIME_RECOVERY_SOAK_PROBE_INTERVAL_MS` | `5000` | Interval for the opt-in direct-web and proxy-to-web health soak |
+| `RUNTIME_SMOKE_RUN_TIMEOUT_MS` | Derived as traffic duration + drain timeout + three finalization intervals + 10 seconds (330 seconds under defaults) | Positive optional override for the routine smoke's one shared lifecycle, Run History, and terminal-projection evidence deadline; exact cleanup has a separate fixed 30-second budget |
 | `API_TRUSTED_PROXY_CIDRS` | loopback and Compose Caddy `172.30.0.2/32` | Exact Caddy proxy boundary used for Fastify client-IP derivation; replace with the deployed proxy address |
 | `PUBLIC_RUN_BUDGET_GLOBAL_MAX_STARTS` | `6` | `runtime-setup` first-seed public run-budget global cap |
 | `PUBLIC_CUSTOM_MAX_TOTAL_REQUESTS` | `10000` | `runtime-setup` first-seed public custom emitted-request cap |
