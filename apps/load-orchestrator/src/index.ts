@@ -18,6 +18,12 @@ export {
   FileExecutionStore,
 } from "./application/execution-store.js";
 export {
+  defaultK6CancellationTimeoutMs,
+  K6ChildProcessSupervisor,
+  type K6ExecutionLifecycle,
+  maxK6CancellationTimeoutMs,
+} from "./application/k6-child-process-supervisor.js";
+export {
   K6RunAccumulator,
   type K6SummaryMetrics,
   type K6TrendSummary,
@@ -47,6 +53,7 @@ export async function startLoadOrchestrator(): Promise<void> {
       apiClient,
       logger,
       executionStore: new FileExecutionStore(config.stateDirectory),
+      cancellationTimeoutMs: config.k6CancellationTimeoutMs,
     }),
   );
   await trafficExecutionService.initialize();

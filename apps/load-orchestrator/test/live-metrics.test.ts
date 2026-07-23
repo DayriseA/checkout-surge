@@ -143,7 +143,6 @@ describe("MetricBatcher", () => {
       maxBatchSize: 1,
       maxBufferedSamples: 2,
       client: {
-        sendCompletion: async () => undefined,
         sendMetrics: async (batch) => {
           sent.push(batch);
           inFlight += 1;
@@ -179,7 +178,6 @@ describe("MetricBatcher", () => {
       correlationId: "corr",
       maxBatchSize: 2,
       client: {
-        sendCompletion: async () => undefined,
         sendMetrics: vi.fn(async (batch) => {
           sent.push(batch);
           if (sent.length === 1) await firstSend;
@@ -216,7 +214,6 @@ describe("MetricBatcher", () => {
       maxBufferedSamples: 2,
       onOverflow: overflow,
       client: {
-        sendCompletion: async () => undefined,
         sendMetrics: async (batch) => {
           sent.push(batch);
           if (sent.length === 1) await gate;

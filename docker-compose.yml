@@ -192,6 +192,7 @@ services:
       PORT: 4200
       HOST: 0.0.0.0
       K6_BINARY: /usr/local/bin/k6
+      K6_CANCELLATION_TIMEOUT_MS: ${K6_CANCELLATION_TIMEOUT_MS:-10000}
       BUY_ENDPOINT_PATH: /buy
       LOAD_ORCHESTRATOR_STATE_DIR: /var/lib/checkout-surge/load-orchestrator
     volumes:

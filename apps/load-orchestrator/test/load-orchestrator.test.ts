@@ -33,6 +33,10 @@ import {
   FileExecutionStore,
   withCompletion,
 } from "../src/application/execution-store.js";
+import {
+  K6ChildProcessSupervisor,
+  K6StartCancelledError,
+} from "../src/application/k6-child-process-supervisor.js";
 import { K6LiveMetricAggregator } from "../src/application/k6-live-metric-aggregator.js";
 import {
   BoundedStderrCollector,
@@ -182,12 +186,45 @@ describe("load-orchestrator configuration", () => {
   });
 
   it("accepts a deployment-specific control token", () => {
+    const config = loadLoadOrchestratorConfig({
+      NODE_ENV: "test",
+      CONTROL_SERVICE_TOKEN: "deployment-token",
+    });
+    expect(config.controlServiceToken).toBe("deployment-token");
+    expect(config.k6CancellationTimeoutMs).toBe(10_000);
+  });
+
+  it("accepts one positive end-to-end k6 cancellation timeout", () => {
     expect(
       loadLoadOrchestratorConfig({
         NODE_ENV: "test",
         CONTROL_SERVICE_TOKEN: "deployment-token",
-      }).controlServiceToken,
-    ).toBe("deployment-token");
+        K6_CANCELLATION_TIMEOUT_MS: "1250",
+      }).k6CancellationTimeoutMs,
+    ).toBe(1250);
+    expect(() =>
+      loadLoadOrchestratorConfig({
+        NODE_ENV: "test",
+        CONTROL_SERVICE_TOKEN: "deployment-token",
+        K6_CANCELLATION_TIMEOUT_MS: "0",
+      }),
+    ).toThrow(/K6_CANCELLATION_TIMEOUT_MS/);
+    expect(
+      loadLoadOrchestratorConfig({
+        NODE_ENV: "test",
+        CONTROL_SERVICE_TOKEN: "deployment-token",
+        K6_CANCELLATION_TIMEOUT_MS: "15000",
+      }).k6CancellationTimeoutMs,
+    ).toBe(15_000);
+    for (const value of ["15001", "9007199254740992"]) {
+      expect(() =>
+        loadLoadOrchestratorConfig({
+          NODE_ENV: "test",
+          CONTROL_SERVICE_TOKEN: "deployment-token",
+          K6_CANCELLATION_TIMEOUT_MS: value,
+        }),
+      ).toThrow(/no greater than 15000/);
+    }
   });
 });
 
@@ -1321,6 +1358,91 @@ describe("SpawnK6Runner completion reporting", () => {
     expect(runner.currentRunId()).toBeNull();
   });
 
+  it("publishes starting ownership before workdir setup so cancellation prevents spawn", async () => {
+    const spawnProcess = vi.fn() as unknown as typeof spawn;
+    const generated = generateK6Script(startRequest);
+    const diagnostics = await collectLoadRunDiagnostics("k6", generated.executionPlan, {
+      runCommand: async () => null,
+      readText: async () => {
+        throw new Error("missing");
+      },
+    });
+    const supervisor = new K6ChildProcessSupervisor({
+      k6Binary: "k6",
+      logger: createSilentLogger("load-orchestrator"),
+      spawnProcess,
+      cancellationTimeoutMs: 40,
+      apiClient: { sendMetrics: async () => undefined },
+    });
+
+    const starting = supervisor.start({
+      request: startRequest,
+      script: generated.contents,
+      startedAt: new Date(timestamp),
+      plannedRequests: generated.plannedRequests,
+      executionPlan: generated.executionPlan,
+      diagnostics,
+    });
+    expect(supervisor.lifecycleSnapshot()).toBe("starting");
+    expect(supervisor.currentRunId()).toBe(startRequest.runId);
+
+    await expect(supervisor.cancel(startRequest.runId)).resolves.toBe("aborted");
+    await expect(starting).rejects.toBeInstanceOf(K6StartCancelledError);
+    expect(spawnProcess).not.toHaveBeenCalled();
+    expect(supervisor.currentRunId()).toBeNull();
+    expect(supervisor.lifecycleSnapshot()).toBe("idle");
+  });
+
+  it("joins starting-state no-spawn disposition during supervisor shutdown", async () => {
+    let releaseCleanup: () => void = () => undefined;
+    const cleanupGate = new Promise<void>((resolve) => {
+      releaseCleanup = resolve;
+    });
+    let cleanupStarted = false;
+    const spawnProcess = vi.fn() as unknown as typeof spawn;
+    const generated = generateK6Script(startRequest);
+    const diagnostics = await collectLoadRunDiagnostics("k6", generated.executionPlan, {
+      runCommand: async () => null,
+      readText: async () => {
+        throw new Error("missing");
+      },
+    });
+    const supervisor = new K6ChildProcessSupervisor({
+      k6Binary: "k6",
+      logger: createSilentLogger("load-orchestrator"),
+      spawnProcess,
+      cancellationTimeoutMs: 40,
+      apiClient: { sendMetrics: async () => undefined },
+      removeWorkDir: async (workDir) => {
+        cleanupStarted = true;
+        await cleanupGate;
+        await rm(workDir, { recursive: true, force: true });
+      },
+    });
+    const starting = supervisor.start({
+      request: startRequest,
+      script: generated.contents,
+      startedAt: new Date(timestamp),
+      plannedRequests: generated.plannedRequests,
+      executionPlan: generated.executionPlan,
+      diagnostics,
+    });
+    const startResult = starting.catch((error: unknown) => error);
+    let closeSettled = false;
+    const closing = supervisor.close().then(() => {
+      closeSettled = true;
+    });
+
+    await waitForCondition(() => cleanupStarted, "starting-state workdir disposition");
+    expect(closeSettled).toBe(false);
+    expect(spawnProcess).not.toHaveBeenCalled();
+    releaseCleanup();
+
+    await expect(startResult).resolves.toBeInstanceOf(K6StartCancelledError);
+    await expect(closing).resolves.toBeUndefined();
+    expect(supervisor.currentRunId()).toBeNull();
+  });
+
   it("waits for a matching child to close and suppresses normal completion on cancellation", async () => {
     const k6Process = createK6ProcessFixture();
     const completions: TrafficCompletionReport[] = [];
@@ -1328,7 +1450,7 @@ describe("SpawnK6Runner completion reporting", () => {
       k6Binary: "k6",
       logger: createSilentLogger("load-orchestrator"),
       spawnProcess: k6Process.spawnProcess,
-      shutdownGraceMs: 100,
+      cancellationTimeoutMs: 200,
       apiClient: {
         sendMetrics: async () => undefined,
         sendCompletion: async (report) => {
@@ -1340,14 +1462,14 @@ describe("SpawnK6Runner completion reporting", () => {
     const cancellation = runner.abort(startRequest.runId);
     const duplicateCancellation = runner.abort(startRequest.runId);
     expect(duplicateCancellation).toBe(cancellation);
-    expect(k6Process.child.kill).toHaveBeenCalledWith("SIGTERM");
+    expect(k6Process.child.kill).toHaveBeenCalled();
     expect(runner.currentRunId()).toBe(startRequest.runId);
     await expect(runner.start(startRequest)).rejects.toBeInstanceOf(ExecutionSlotConflictError);
     k6Process.child.emit("close", null, "SIGTERM");
     await cancellation;
-    expect(runner.currentRunId()).toBeNull();
+    await waitForCondition(() => runner.currentRunId() === null, "cancelled execution cleanup");
     expect(completions).toEqual([]);
-    expect(k6Process.child.kill).toHaveBeenCalledTimes(1);
+    expect(k6Process.child.kill).toHaveBeenCalled();
   });
 
   it("keeps a confirmed cancellation fenced until shutdown can durably release its journal", async () => {
@@ -1373,7 +1495,7 @@ describe("SpawnK6Runner completion reporting", () => {
       executionStore: store,
       logger: createSilentLogger("load-orchestrator"),
       spawnProcess: fixture.spawnProcess,
-      shutdownGraceMs: 20,
+      cancellationTimeoutMs: 40,
       apiClient: {
         sendMetrics: async () => undefined,
         sendCompletion: async (report) => {
@@ -1414,8 +1536,7 @@ describe("SpawnK6Runner completion reporting", () => {
       executionStore: store,
       logger: createSilentLogger("load-orchestrator"),
       spawnProcess: fixture.spawnProcess,
-      shutdownGraceMs: 0,
-      shutdownKillWaitMs: 1,
+      cancellationTimeoutMs: 1,
       apiClient: {
         sendMetrics: async () => undefined,
         sendCompletion: async (report) => {
@@ -1465,7 +1586,7 @@ describe("SpawnK6Runner completion reporting", () => {
       executionStore: store,
       logger: createSilentLogger("load-orchestrator"),
       spawnProcess: fixture.spawnProcess,
-      shutdownGraceMs: 20,
+      cancellationTimeoutMs: 40,
       apiClient: { sendMetrics: async () => undefined, sendCompletion: async () => undefined },
     });
     try {
@@ -1490,7 +1611,7 @@ describe("SpawnK6Runner completion reporting", () => {
     }
   });
 
-  it("does not confirm cancellation while an already-active metric flush can still complete", async () => {
+  it("confirms stopped traffic without waiting for an already-active metric send", async () => {
     const fixture = createK6ProcessFixture();
     let releaseMetrics: () => void = () => undefined;
     const metricGate = new Promise<void>((resolve) => {
@@ -1502,7 +1623,7 @@ describe("SpawnK6Runner completion reporting", () => {
       logger: createSilentLogger("load-orchestrator"),
       spawnProcess: fixture.spawnProcess,
       metricBatchSize: 1,
-      shutdownGraceMs: 100,
+      cancellationTimeoutMs: 80,
       apiClient: { sendMetrics, sendCompletion: async () => undefined },
     });
     await runner.start(startRequest);
@@ -1513,38 +1634,193 @@ describe("SpawnK6Runner completion reporting", () => {
       `${JSON.stringify({ type: "Point", metric: "http_reqs", data: { value: 1, time: completionTimestamp } })}\n`,
     );
     await waitForCondition(() => sendMetrics.mock.calls.length === 1, "active metric flush");
-    let cancellationSettled = false;
-    const cancellation = runner.abort(startRequest.runId).then(() => {
-      cancellationSettled = true;
-    });
+    const cancellation = runner.abort(startRequest.runId);
     fixture.child.emit("close", null, "SIGTERM");
-    await Promise.resolve();
-    expect(cancellationSettled).toBe(false);
-    releaseMetrics();
-    await cancellation;
-    expect(cancellationSettled).toBe(true);
+    const cancellationResult = await Promise.race([
+      cancellation,
+      new Promise<"timed_out">((resolve) => {
+        const timeout = setTimeout(() => resolve("timed_out"), 80);
+        timeout.unref();
+      }),
+    ]);
+    expect(cancellationResult).toBe("aborted");
     expect(sendMetrics).toHaveBeenCalledTimes(1);
+    releaseMetrics();
+    await waitForCondition(() => runner.currentRunId() === null, "cancelled metric cleanup");
   });
 
-  it("lets natural close win before abort without suppressing or duplicating completion", async () => {
+  it("joins forced-stop workdir disposition on shutdown without waiting for metric send", async () => {
     const fixture = createK6ProcessFixture();
-    const completions: TrafficCompletionReport[] = [];
+    let stopRequests = 0;
+    vi.mocked(fixture.child.kill).mockImplementation(() => {
+      stopRequests += 1;
+      Object.assign(fixture.child, { killed: true });
+      if (stopRequests > 1) queueMicrotask(() => fixture.child.emit("close", 137));
+      return true;
+    });
+    let releaseMetrics: () => void = () => undefined;
+    const metricGate = new Promise<void>((resolve) => {
+      releaseMetrics = resolve;
+    });
+    const sendMetrics = vi.fn(async () => metricGate);
+    let releaseCleanup: () => void = () => undefined;
+    const cleanupGate = new Promise<void>((resolve) => {
+      releaseCleanup = resolve;
+    });
+    let cleanupStarted = false;
     const runner = new SpawnK6Runner({
       k6Binary: "k6",
       logger: createSilentLogger("load-orchestrator"),
       spawnProcess: fixture.spawnProcess,
+      metricBatchSize: 1,
+      cancellationTimeoutMs: 80,
+      apiClient: { sendMetrics, sendCompletion: async () => undefined },
+      removeWorkDir: async (workDir) => {
+        cleanupStarted = true;
+        await cleanupGate;
+        await rm(workDir, { recursive: true, force: true });
+      },
+    });
+    await runner.start(startRequest);
+    fixture.stdout.write(
+      `${JSON.stringify({ type: "Point", metric: "http_reqs", data: { value: 1, time: timestamp } })}\n`,
+    );
+    fixture.stdout.write(
+      `${JSON.stringify({ type: "Point", metric: "http_reqs", data: { value: 1, time: completionTimestamp } })}\n`,
+    );
+    await waitForCondition(() => sendMetrics.mock.calls.length === 1, "hung metric send");
+
+    await expect(runner.abort(startRequest.runId)).resolves.toBe("aborted");
+    let closeSettled = false;
+    const closing = runner.close().then(() => {
+      closeSettled = true;
+    });
+    await waitForCondition(() => cleanupStarted, "shutdown workdir disposition");
+    expect(closeSettled).toBe(false);
+
+    releaseCleanup();
+    await expect(closing).resolves.toBeUndefined();
+    expect(sendMetrics).toHaveBeenCalledTimes(1);
+    releaseMetrics();
+  });
+
+  it("lets ordinary abort observe natural close without waiting for completion work", async () => {
+    const fixture = createK6ProcessFixture();
+    const completions: TrafficCompletionReport[] = [];
+    let releaseSummary: () => void = () => undefined;
+    const summaryGate = new Promise<void>((resolve) => {
+      releaseSummary = resolve;
+    });
+    let releaseDelivery: () => void = () => undefined;
+    const deliveryGate = new Promise<void>((resolve) => {
+      releaseDelivery = resolve;
+    });
+    const runner = new SpawnK6Runner({
+      k6Binary: "k6",
+      logger: createSilentLogger("load-orchestrator"),
+      spawnProcess: fixture.spawnProcess,
+      readSummaryFile: async () => {
+        await summaryGate;
+        return "{}";
+      },
       apiClient: {
         sendMetrics: async () => undefined,
         sendCompletion: async (report) => {
           completions.push(report);
+          await deliveryGate;
         },
       },
     });
     await runner.start(startRequest);
     fixture.child.emit("close", 0);
-    await expect(runner.abort(startRequest.runId)).resolves.toBe("natural_completion");
+    const abortResult = await Promise.race([
+      runner.abort(startRequest.runId),
+      new Promise<"timed_out">((resolve) => {
+        const timeout = setTimeout(() => resolve("timed_out"), 40);
+        timeout.unref();
+      }),
+    ]);
+    expect(abortResult).toBe("natural_completion");
+    expect(completions).toHaveLength(0);
+    releaseSummary();
     await waitForCompletionReport(completions, 1);
     expect(completions).toHaveLength(1);
+    expect(fixture.child.kill).not.toHaveBeenCalled();
+    releaseDelivery();
+    await runner.close();
+  });
+
+  it("finishes natural result persistence and delivery before shutdown returns", async () => {
+    const fixture = createK6ProcessFixture();
+    const store = new InMemoryExecutionStore();
+    let markSummaryReadStarted: () => void = () => undefined;
+    const summaryReadStarted = new Promise<void>((resolve) => {
+      markSummaryReadStarted = resolve;
+    });
+    let releaseSummary: () => void = () => undefined;
+    const summaryGate = new Promise<void>((resolve) => {
+      releaseSummary = resolve;
+    });
+    let markDeliveryStarted: () => void = () => undefined;
+    const deliveryStarted = new Promise<void>((resolve) => {
+      markDeliveryStarted = resolve;
+    });
+    let releaseDelivery: () => void = () => undefined;
+    const deliveryGate = new Promise<void>((resolve) => {
+      releaseDelivery = resolve;
+    });
+    let cleanupStarted = false;
+    const runner = new SpawnK6Runner({
+      k6Binary: "k6",
+      executionStore: store,
+      logger: createSilentLogger("load-orchestrator"),
+      spawnProcess: fixture.spawnProcess,
+      readSummaryFile: async () => {
+        markSummaryReadStarted();
+        await summaryGate;
+        return "{}";
+      },
+      removeWorkDir: async (workDir) => {
+        cleanupStarted = true;
+        await rm(workDir, { recursive: true, force: true });
+      },
+      apiClient: {
+        sendMetrics: async () => undefined,
+        sendCompletion: async () => {
+          markDeliveryStarted();
+          await deliveryGate;
+        },
+      },
+    });
+    await runner.start(startRequest);
+    const workDir = path.dirname(getSingleSpawnCall(fixture).scriptPath);
+    fixture.child.emit("close", 0);
+
+    let closeSettled = false;
+    const closing = runner.close().then(() => {
+      closeSettled = true;
+    });
+    await summaryReadStarted;
+    expect(closeSettled).toBe(false);
+    expect(cleanupStarted).toBe(false);
+    expect(await pathMissing(workDir)).toBe(false);
+
+    releaseSummary();
+    await deliveryStarted;
+    expect(cleanupStarted).toBe(true);
+    expect(await pathMissing(workDir)).toBe(true);
+    expect(await store.read()).toMatchObject({
+      state: "completion_pending",
+      completion: { status: "succeeded" },
+    });
+    expect(closeSettled).toBe(false);
+
+    releaseDelivery();
+    await expect(closing).resolves.toBeUndefined();
+    expect(await store.read()).toMatchObject({
+      state: "completed",
+      completion: { status: "succeeded" },
+    });
     expect(fixture.child.kill).not.toHaveBeenCalled();
   });
 
@@ -1581,23 +1857,20 @@ describe("SpawnK6Runner completion reporting", () => {
     await cancellation;
   });
 
-  it("escalates cancellation once and retains the fence when reap is unconfirmed", async () => {
+  it("retains the execution fence when cancellation cannot confirm reap within its bound", async () => {
     const k6Process = createK6ProcessFixture();
     const runner = new SpawnK6Runner({
       k6Binary: "k6",
       logger: createSilentLogger("load-orchestrator"),
       spawnProcess: k6Process.spawnProcess,
-      shutdownGraceMs: 0,
-      shutdownKillWaitMs: 1,
+      cancellationTimeoutMs: 1,
       apiClient: { sendMetrics: async () => undefined, sendCompletion: async () => undefined },
     });
     await runner.start(startRequest);
     await expect(runner.abort(startRequest.runId)).rejects.toBeInstanceOf(
       TrafficTerminationUnconfirmedError,
     );
-    expect(k6Process.child.kill).toHaveBeenNthCalledWith(1, "SIGTERM");
-    expect(k6Process.child.kill).toHaveBeenNthCalledWith(2, "SIGKILL");
-    expect(k6Process.child.kill).toHaveBeenCalledTimes(2);
+    expect(k6Process.child.kill).toHaveBeenCalled();
     expect(runner.currentRunId()).toBe(startRequest.runId);
     await expect(
       runner.start({ ...startRequest, runId: "66666666-6666-4666-8666-666666666666" }),
@@ -1613,6 +1886,7 @@ describe("SpawnK6Runner completion reporting", () => {
       k6Binary: "k6",
       logger: createSilentLogger("load-orchestrator"),
       spawnProcess: fixture.spawnProcess,
+      cancellationTimeoutMs: 4,
       apiClient: { sendMetrics: async () => undefined, sendCompletion: async () => undefined },
     });
     await runner.start(startRequest);
@@ -1624,6 +1898,13 @@ describe("SpawnK6Runner completion reporting", () => {
 
   it("shares termination when cancellation races executing-journal publication failure", async () => {
     const fixture = createK6ProcessFixture();
+    let stopRequests = 0;
+    vi.mocked(fixture.child.kill).mockImplementation(() => {
+      stopRequests += 1;
+      Object.assign(fixture.child, { killed: true });
+      if (stopRequests > 1) queueMicrotask(() => fixture.child.emit("close", 137));
+      return true;
+    });
     let rejectExecuting: (_error: Error) => void = () => undefined;
     const executingUpdate = new Promise<never>((_resolve, reject) => {
       rejectExecuting = reject;
@@ -1641,7 +1922,7 @@ describe("SpawnK6Runner completion reporting", () => {
       logger: createSilentLogger("load-orchestrator"),
       executionStore: store,
       spawnProcess: fixture.spawnProcess,
-      shutdownGraceMs: 1,
+      cancellationTimeoutMs: 40,
       apiClient: { sendMetrics: async () => undefined, sendCompletion: async () => undefined },
     });
     const start = runner.start(startRequest);
@@ -1650,17 +1931,59 @@ describe("SpawnK6Runner completion reporting", () => {
       "spawn publication",
     );
     const cancellation = runner.abort(startRequest.runId);
+    await waitForCondition(() => stopRequests > 0, "bounded child stop");
     rejectExecuting(new Error("journal failed"));
-    await waitForCondition(
-      () => vi.mocked(fixture.child.kill).mock.calls.length >= 2,
-      "kill escalation",
-    );
-    fixture.child.emit("close", null, "SIGKILL");
     await expect(start).rejects.toThrow("journal failed");
-    await cancellation;
-    expect(fixture.child.kill).toHaveBeenNthCalledWith(1, "SIGTERM");
-    expect(fixture.child.kill).toHaveBeenNthCalledWith(2, "SIGKILL");
-    expect(fixture.child.kill).toHaveBeenCalledTimes(2);
+    await expect(cancellation).resolves.toBe("aborted");
+    await waitForCondition(() => runner.currentRunId() === null, "publication-race cleanup");
+  });
+
+  it("preserves natural completion when close wins during executing-journal publication", async () => {
+    let releaseExecuting: () => void = () => undefined;
+    const executingGate = new Promise<void>((resolve) => {
+      releaseExecuting = resolve;
+    });
+    class GatedExecutingStore extends InMemoryExecutionStore {
+      override async update(execution: DurableExecution): Promise<void> {
+        if (execution.state === "executing") await executingGate;
+        await super.update(execution);
+      }
+    }
+    const fixture = createK6ProcessFixture();
+    const reports: TrafficCompletionReport[] = [];
+    const store = new GatedExecutingStore();
+    const runner = new SpawnK6Runner({
+      k6Binary: "k6",
+      executionStore: store,
+      logger: createSilentLogger("load-orchestrator"),
+      spawnProcess: fixture.spawnProcess,
+      apiClient: {
+        sendMetrics: async () => undefined,
+        sendCompletion: async (report) => {
+          reports.push(report);
+        },
+      },
+    });
+
+    const start = runner.start(startRequest);
+    await waitForCondition(
+      () => vi.mocked(fixture.spawnProcess).mock.calls.length === 1,
+      "gated executing publication",
+    );
+    const workDir = path.dirname(getSingleSpawnCall(fixture).scriptPath);
+    fixture.child.emit("close", 0);
+    await waitForCondition(() => pathMissing(workDir), "natural-close supervisor cleanup");
+    await expect(runner.abort(startRequest.runId)).resolves.toBe("natural_completion");
+    expect(reports).toHaveLength(0);
+
+    releaseExecuting();
+    await expect(start).resolves.toMatchObject({ plannedRequests: 400 });
+    await waitForCompletionReport(reports, 1);
+    expect(reports).toHaveLength(1);
+    expect(await store.read()).toMatchObject({
+      state: "completed",
+      completion: { status: "succeeded" },
+    });
   });
 
   it("durably reports a synchronous spawn preparation failure", async () => {
@@ -1684,6 +2007,29 @@ describe("SpawnK6Runner completion reporting", () => {
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
+  });
+
+  it("attaches exit ownership before output observer setup can fail", async () => {
+    const fixture = createK6ProcessFixture();
+    vi.mocked(fixture.child.kill).mockImplementation(() => {
+      Object.assign(fixture.child, { killed: true });
+      queueMicrotask(() => fixture.child.emit("close", 143));
+      return true;
+    });
+    const runner = new SpawnK6Runner({
+      k6Binary: "k6",
+      logger: createSilentLogger("load-orchestrator"),
+      spawnProcess: fixture.spawnProcess,
+      maxStdoutTailBytes: 0,
+      cancellationTimeoutMs: 40,
+      apiClient: { sendMetrics: async () => undefined, sendCompletion: async () => undefined },
+    });
+
+    await expect(runner.start(startRequest)).rejects.toThrow(
+      "k6 stdout tail byte limit must be a positive integer",
+    );
+    expect(fixture.child.kill).toHaveBeenCalled();
+    expect(runner.currentRunId()).toBeNull();
   });
 
   it("recovers accepted state as a failed pending completion before delivery", async () => {
@@ -2081,9 +2427,9 @@ describe("SpawnK6Runner completion reporting", () => {
     const first = createK6ProcessFixture();
     const second = createK6ProcessFixture();
     Object.assign(first.child, {
-      kill: vi.fn((signal?: NodeJS.Signals | number) => {
+      kill: vi.fn(() => {
         Object.assign(first.child, { killed: true });
-        queueMicrotask(() => first.child.emit("close", signal === "SIGKILL" ? 137 : 143));
+        queueMicrotask(() => first.child.emit("close", 143));
         return true;
       }),
     });
@@ -2110,7 +2456,7 @@ describe("SpawnK6Runner completion reporting", () => {
     };
     try {
       await expect(runner.start(startRequest)).rejects.toThrow("executing publication unavailable");
-      expect(first.child.kill).toHaveBeenCalledWith("SIGTERM");
+      expect(first.child.kill).toHaveBeenCalled();
       expect(reports).toHaveLength(1);
       expect(await store.read()).toMatchObject({ state: "completed" });
 
@@ -2211,7 +2557,7 @@ describe("SpawnK6Runner completion reporting", () => {
     }
   });
 
-  it("waits for live preparation to persist its shutdown failure before closing", async () => {
+  it("cancels live preparation without waiting for its pending acceptance call", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "checkout-surge-prepare-shutdown-"));
     let releaseAcceptance: () => void = () => undefined;
     const acceptanceGate = new Promise<void>((resolve) => {
@@ -2245,13 +2591,13 @@ describe("SpawnK6Runner completion reporting", () => {
       const closing = runner.close().then(() => {
         closed = true;
       });
-      await waitForReadline();
-      expect(closed).toBe(false);
+      await waitForCondition(() => closed, "bounded preparation cancellation");
+      expect(k6Process.spawnProcess).not.toHaveBeenCalled();
       releaseAcceptance();
-      await expect(start).rejects.toThrow("began shutting down during preparation");
+      await expect(start).rejects.toThrow("cancelled during preparation");
       await expect(closing).resolves.toBeUndefined();
       expect(k6Process.spawnProcess).not.toHaveBeenCalled();
-      expect(reports).toHaveLength(1);
+      expect(reports).toHaveLength(0);
       expect(await store.read()).toMatchObject({ state: "completed" });
     } finally {
       await rm(directory, { recursive: true, force: true });
@@ -2265,8 +2611,7 @@ describe("SpawnK6Runner completion reporting", () => {
       apiClient: { sendMetrics: async () => undefined, sendCompletion: async () => undefined },
       logger: createSilentLogger("load-orchestrator"),
       spawnProcess: k6Process.spawnProcess,
-      shutdownGraceMs: 20,
-      shutdownKillWaitMs: 20,
+      cancellationTimeoutMs: 40,
     });
     await runner.start(startRequest);
     k6Process.child.kill("SIGTERM");
@@ -2280,27 +2625,27 @@ describe("SpawnK6Runner completion reporting", () => {
     await closing;
   });
 
-  it("escalates shutdown to SIGKILL and fails when reap remains unconfirmed", async () => {
+  it("fails shutdown when child exit cannot be observed within the cancellation bound", async () => {
     const k6Process = createK6ProcessFixture();
     const runner = new SpawnK6Runner({
       k6Binary: "k6",
       apiClient: { sendMetrics: async () => undefined, sendCompletion: async () => undefined },
       logger: createSilentLogger("load-orchestrator"),
       spawnProcess: k6Process.spawnProcess,
-      shutdownGraceMs: 2,
-      shutdownKillWaitMs: 2,
+      cancellationTimeoutMs: 4,
     });
     await runner.start(startRequest);
     await expect(runner.close()).rejects.toThrow("Could not confirm");
-    expect(k6Process.child.kill).toHaveBeenCalledWith("SIGTERM");
-    expect(k6Process.child.kill).toHaveBeenCalledWith("SIGKILL");
+    expect(k6Process.child.kill).toHaveBeenCalled();
   });
 
-  it("completes shutdown after SIGKILL escalation is definitively reaped", async () => {
+  it("acknowledges forced-stop reap within the bound and cleans up afterward", async () => {
     const k6Process = createK6ProcessFixture();
-    const kill = vi.fn((signal?: NodeJS.Signals | number) => {
+    let stopRequests = 0;
+    const kill = vi.fn(() => {
+      stopRequests += 1;
       Object.assign(k6Process.child, { killed: true });
-      if (signal === "SIGKILL") queueMicrotask(() => k6Process.child.emit("close", 137));
+      if (stopRequests > 1) queueMicrotask(() => k6Process.child.emit("close", 137));
       return true;
     });
     Object.assign(k6Process.child, { kill });
@@ -2309,13 +2654,15 @@ describe("SpawnK6Runner completion reporting", () => {
       apiClient: { sendMetrics: async () => undefined, sendCompletion: async () => undefined },
       logger: createSilentLogger("load-orchestrator"),
       spawnProcess: k6Process.spawnProcess,
-      shutdownGraceMs: 2,
-      shutdownKillWaitMs: 20,
+      cancellationTimeoutMs: 80,
     });
     await runner.start(startRequest);
-    await expect(runner.close()).resolves.toBeUndefined();
-    expect(kill).toHaveBeenNthCalledWith(1, "SIGTERM");
-    expect(kill).toHaveBeenNthCalledWith(2, "SIGKILL");
+    const workDir = path.dirname(getSingleSpawnCall(k6Process).scriptPath);
+    const startedAt = performance.now();
+    await expect(runner.abort(startRequest.runId)).resolves.toBe("aborted");
+    expect(performance.now() - startedAt).toBeLessThan(80);
+    await waitForCondition(() => runner.currentRunId() === null, "forced-stop cleanup");
+    expect(await pathMissing(workDir)).toBe(true);
   });
 
   it("fails shutdown while completion exists only in memory and succeeds after store recovery", async () => {
@@ -2470,7 +2817,7 @@ describe("load-orchestrator API client", () => {
     const batcher = new MetricBatcher({
       runId: startRequest.runId,
       correlationId: startRequest.correlationId,
-      client: { sendMetrics, sendCompletion: async () => undefined },
+      client: { sendMetrics },
       maxBatchSize: 1,
     });
     const add = batcher.add({
@@ -2981,6 +3328,7 @@ function createConfig(overrides: Partial<LoadOrchestratorConfig> = {}): LoadOrch
     apiBaseUrl: "http://localhost:4000",
     buyEndpointPath: "/buy",
     k6Binary: "k6",
+    k6CancellationTimeoutMs: 10_000,
     controlServiceToken: "test-token",
     stateDirectory: "/tmp/checkout-surge-test-state",
     ...overrides,

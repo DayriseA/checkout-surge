@@ -108,7 +108,7 @@ export class MetricBatcher {
     private readonly options: {
       runId: string;
       correlationId: string;
-      client: LoadApiClient;
+      client: Pick<LoadApiClient, "sendMetrics">;
       maxBatchSize?: number;
       maxBufferedSamples?: number;
       flushIntervalMs?: number;

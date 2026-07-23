@@ -1,9 +1,15 @@
+import {
+  defaultK6CancellationTimeoutMs,
+  maxK6CancellationTimeoutMs,
+} from "../application/k6-child-process-supervisor.js";
+
 export interface LoadOrchestratorConfig {
   host: string;
   port: number;
   apiBaseUrl: string;
   buyEndpointPath: string;
   k6Binary: string;
+  k6CancellationTimeoutMs: number;
   controlServiceToken: string;
   stateDirectory: string;
 }
@@ -20,6 +26,12 @@ export function loadLoadOrchestratorConfig(env: NodeJS.ProcessEnv): LoadOrchestr
     apiBaseUrl: parseUrl(env.API_BASE_URL, "API_BASE_URL", "http://localhost:4000"),
     buyEndpointPath: parsePath(env.BUY_ENDPOINT_PATH, "BUY_ENDPOINT_PATH", "/buy"),
     k6Binary: env.K6_BINARY?.trim() || "k6",
+    k6CancellationTimeoutMs: parsePositiveInteger(
+      env.K6_CANCELLATION_TIMEOUT_MS,
+      "K6_CANCELLATION_TIMEOUT_MS",
+      defaultK6CancellationTimeoutMs,
+      maxK6CancellationTimeoutMs,
+    ),
     controlServiceToken: requireEnv(env, "CONTROL_SERVICE_TOKEN"),
     stateDirectory: env.LOAD_ORCHESTRATOR_STATE_DIR?.trim() || ".checkout-surge/load-orchestrator",
   };
@@ -39,7 +51,12 @@ function requireEnv(env: NodeJS.ProcessEnv, name: string): string {
   return value;
 }
 
-function parsePositiveInteger(value: string | undefined, name: string, fallback: number): number {
+function parsePositiveInteger(
+  value: string | undefined,
+  name: string,
+  fallback: number,
+  maximum = Number.MAX_SAFE_INTEGER,
+): number {
   const raw = value?.trim();
 
   if (!raw) {
@@ -48,8 +65,8 @@ function parsePositiveInteger(value: string | undefined, name: string, fallback:
 
   const parsed = Number(raw);
 
-  if (!Number.isInteger(parsed) || parsed <= 0) {
-    throw new Error(`${name} must be a positive integer.`);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0 || parsed > maximum) {
+    throw new Error(`${name} must be a positive safe integer no greater than ${maximum}.`);
   }
 
   return parsed;

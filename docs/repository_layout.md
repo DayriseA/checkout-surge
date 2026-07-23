@@ -106,7 +106,8 @@ checkout-surge/
 
 - Owns k6 script execution, scenario parameterization, traffic execution state, and the output-parsing pipeline.
 - Persists one atomic execution journal outside PostgreSQL, including accepted/executing/completed state, and retains slot ownership until completion acknowledgement. Reads accept only the current single-slot journal and completion-report schemas; malformed state reports the durable file path and validation field instead of being migrated.
-- Owns authenticated, run-ID-fenced cancellation and retains the slot until child exit is confirmed; routes and callers never signal k6 directly.
+- Uses one focused child-process supervisor for identity, streams, close/error observation, run-ID-fenced cancellation, bounded termination/reap, and work-directory cleanup. It retains the slot until child exit is confirmed; routes own authentication and callers never signal k6 directly.
+- Keeps the supervisor's `idle | starting | running | stopping | exited` execution lifecycle separate from durable journal and API completion-delivery state. `K6_CANCELLATION_TIMEOUT_MS` is the single end-to-end stop/reap bound, defaults to 10 seconds, and is capped at 15 seconds.
 - Directly probes the configured k6 executable for readiness and attaches bounded stderr plus system, k6-version, and resolved-plan diagnostics to natural completion reports.
 - Uses the traffic-execution lifecycle `starting -> active -> succeeded | failed`.
 - Receives only an API-accepted run ID, generated sale offer, and frozen configuration; the API establishes the durable dashboard recovery baseline before delegation.

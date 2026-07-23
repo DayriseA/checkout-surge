@@ -61,6 +61,7 @@ function createConfig(overrides: Partial<LoadOrchestratorConfig> = {}): LoadOrch
     apiBaseUrl: "http://localhost:4000",
     buyEndpointPath: "/buy",
     k6Binary: "k6",
+    k6CancellationTimeoutMs: 10_000,
     controlServiceToken: "test-token",
     stateDirectory: "/tmp/checkout-surge-test-state",
     ...overrides,
