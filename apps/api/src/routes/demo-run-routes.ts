@@ -31,12 +31,14 @@ import type { DemoPresetController } from "../services/demo-preset-service.js";
 import type { DemoRunLifecycleController } from "../services/demo-run-service.js";
 import { DemoRunValidationError } from "../services/demo-run-validation-error.js";
 import type { PublicRuntimePolicyController } from "../services/public-runtime-policy-service.js";
+import type { TrafficCompletionController } from "../services/traffic-completion-service.js";
 import type { TrafficMetricIngestionController } from "../services/traffic-metric-ingestion-service.js";
 
 export interface RegisterDemoRunRoutesOptions {
   presetService: DemoPresetController;
   runtimePolicyService: PublicRuntimePolicyController;
   demoRunLifecycleService: DemoRunLifecycleController;
+  trafficCompletionService: TrafficCompletionController;
   trafficMetricIngestion: TrafficMetricIngestionController;
   controlServiceToken: string;
 }
@@ -233,7 +235,7 @@ export function registerDemoRunRoutes(
     const parsedReport = trafficCompletionReportSchema.parse(request.body);
     applyInternalBodyCorrelation(request, reply, parsedReport.correlationId);
     try {
-      await options.demoRunLifecycleService.recordTrafficCompletion(parsedReport);
+      await options.trafficCompletionService.recordTrafficCompletion(parsedReport);
       return reply.status(202).send(
         trafficCompletionAcknowledgementSchema.parse({
           runId: parsedReport.runId,

@@ -140,6 +140,7 @@ import {
   type StockReservationGateway,
 } from "../src/services/reserve-order-service.js";
 import type { RunHistoryController } from "../src/services/run-history-service.js";
+import type { TrafficCompletionController } from "../src/services/traffic-completion-service.js";
 import {
   type TrafficMetricIngestionController,
   TrafficMetricIngestionService,
@@ -259,6 +260,7 @@ async function buildTestServer(options: {
   presetService?: DemoPresetController;
   runtimePolicyService?: PublicRuntimePolicyController;
   demoRunLifecycleService?: DemoRunLifecycleController;
+  trafficCompletionService?: TrafficCompletionController;
   trafficMetricIngestion?: TrafficMetricIngestionController;
   demoMaintenanceService?: DemoMaintenanceService;
   runHistoryService?: RunHistoryController;
@@ -365,6 +367,8 @@ async function buildTestServer(options: {
     presetService: options.presetService ?? demoPresetControllerFixture(),
     runtimePolicyService: options.runtimePolicyService ?? publicRuntimePolicyControllerFixture(),
     demoRunLifecycleService: options.demoRunLifecycleService ?? demoRunLifecycleControllerFixture(),
+    trafficCompletionService:
+      options.trafficCompletionService ?? trafficCompletionControllerFixture(),
     trafficMetricIngestion: options.trafficMetricIngestion ?? { ingest: async () => undefined },
     demoMaintenanceService:
       options.demoMaintenanceService ??
@@ -588,6 +592,11 @@ function demoRunLifecycleControllerFixture(): DemoRunLifecycleController {
       correlationId,
       timestamp: "2026-06-20T00:00:10.000Z",
     }),
+  };
+}
+
+function trafficCompletionControllerFixture(): TrafficCompletionController {
+  return {
     recordTrafficCompletion: async () => demoRunSnapshotFixture(),
   };
 }
@@ -2447,8 +2456,7 @@ describe("API gateway routes", () => {
     const recordTrafficCompletion = vi.fn(async () => demoRunSnapshotFixture());
     const server = await trackedServer({
       persistence: new AcceptingPersistence(),
-      demoRunLifecycleService: {
-        ...demoRunLifecycleControllerFixture(),
+      trafficCompletionService: {
         recordTrafficCompletion,
       },
     });
@@ -2519,8 +2527,7 @@ describe("API gateway routes", () => {
   it("maps a conflicting completion to a canonical correlated 409", async () => {
     const server = await trackedServer({
       persistence: new AcceptingPersistence(),
-      demoRunLifecycleService: {
-        ...demoRunLifecycleControllerFixture(),
+      trafficCompletionService: {
         recordTrafficCompletion: async () => {
           throw new DemoRunValidationError(
             "traffic_report_rejected",

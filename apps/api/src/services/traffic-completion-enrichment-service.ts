@@ -17,7 +17,6 @@ export type TrafficCompletionEnrichmentResult = "completed" | "already_completed
 
 export interface TrafficCompletionEnrichmentController {
   completePendingEnrichment(runId: string): Promise<TrafficCompletionEnrichmentResult>;
-  reconcilePendingEnrichments(): Promise<number>;
 }
 
 /**
@@ -124,35 +123,6 @@ export class TrafficCompletionEnrichmentService implements TrafficCompletionEnri
     });
 
     return won ? "completed" : "already_completed";
-  }
-
-  async reconcilePendingEnrichments(): Promise<number> {
-    const rows = await this.options.db
-      .select({ runId: demoRuns.id })
-      .from(demoRuns)
-      .innerJoin(demoRunFinalizations, eq(demoRunFinalizations.runId, demoRuns.id))
-      .where(
-        and(
-          eq(demoRuns.status, "draining"),
-          eq(demoRunFinalizations.completionEnrichmentStatus, "pending"),
-        ),
-      );
-    let completedCount = 0;
-
-    for (const row of rows) {
-      try {
-        if ((await this.completePendingEnrichment(row.runId)) === "completed") {
-          completedCount += 1;
-        }
-      } catch (error) {
-        this.options.logger.warn(
-          { err: error, runId: row.runId },
-          "Traffic-completion enrichment remains pending for lifecycle retry.",
-        );
-      }
-    }
-
-    return completedCount;
   }
 
   private async captureInventory(

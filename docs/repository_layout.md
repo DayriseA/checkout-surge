@@ -72,9 +72,10 @@ checkout-surge/
 - Owns one bounded, per-sale pending-persistence recovery scheduler for nonterminal run scopes and active catalog offers; request replay delegates exact due work to the same owner, while startup reconciliation and finalization only observe its state.
 - Owns the browser-facing SSE transport for live event delivery to `apps/web`.
 - Subscribes once per API process to Redis Pub/Sub dashboard events and fans browser-safe updates out to connected dashboard clients.
-- Composes separate preset-administration, public-runtime-policy, and run-lifecycle application services. Demo routes receive those narrow controllers explicitly; lifecycle reads active presets and the effective policy through minimal injected readers before freezing one validated run snapshot.
+- Composes separate preset-administration, public-runtime-policy, run-lifecycle, and traffic-completion application services. Demo routes receive those narrow controllers explicitly; lifecycle reads active presets and the effective policy through minimal injected readers before freezing one validated run snapshot, while completion alone validates and persists immutable load evidence before handing a draining run to finalization.
 - Composes one focused traffic-execution HTTP gateway that owns bounded, authenticated start/status/abort calls to `apps/load-orchestrator`; run lifecycle receives only start capability and maintenance receives only exact-run abort capability.
-- Composes narrow lifecycle ports such as `TerminalDemoRunWriter` in `apps/api/src/index.ts`; start, finalization, startup-reconciliation, and reset services receive only the terminal capabilities they use.
+- Keeps background starting-intent replay and draining-run startup repair on the explicit startup reconciliation owner rather than the request-facing lifecycle service. This owner observes or delegates pending-persistence state only; `PendingPersistenceRecoveryService` remains the sole discovery, retry, and resolution authority.
+- Composes narrow lifecycle ports such as `TerminalDemoRunWriter` in `apps/api/src/index.ts`; start-failure, finalization, and reset paths receive only the terminal capabilities they use, while traffic completion receives only the finalization controller used for its explicit handoff.
 - Must never call `apps/mock-erp` directly — all ERP interaction goes through the queue.
 - Consumes `packages/contracts`, `packages/logger`, `packages/db`.
 

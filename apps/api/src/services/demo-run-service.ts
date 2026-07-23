@@ -14,22 +14,18 @@ import {
   type StartDemoRunResponse,
   startDemoRunResponseSchema,
   type TerminalInventorySnapshot,
-  type TrafficCompletionReport,
   type TrafficExecutionStartResponse,
-  trafficCompletionReportSchema,
 } from "@checkout-surge/contracts";
 import { verifyPublicVisitorCredential } from "@checkout-surge/contracts/public-visitor-credential";
 import {
   type CheckoutSurgeDatabase,
   type CheckoutSurgeRedis,
-  demoRunFinalizations,
   demoRunSaleContexts,
   demoRunSummaries,
   demoRuns,
   getInventoryStatus,
   initializeInventory,
   products,
-  publishDashboardEvent,
   saleOffers,
   setRunSaleEligibility,
 } from "@checkout-surge/db";
@@ -38,12 +34,12 @@ import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { ApiHttpError } from "../runtime/errors.js";
 import type { DashboardBusinessOutcomeReader } from "./dashboard-recovery-service.js";
 import type { ActiveDemoPresetReader } from "./demo-preset-service.js";
-import type { DemoRunFinalizationController } from "./demo-run-finalization-service.js";
 import {
   emptyBusinessOutcomeSummary,
   toDemoRunSnapshot,
   toRedisTerminalInventorySnapshot,
 } from "./demo-run-projections.js";
+import { publishDemoRunSnapshot, readDemoRunSnapshot } from "./demo-run-snapshot-operations.js";
 import { DemoRunValidationError } from "./demo-run-validation-error.js";
 import { parsePersistedAcceptedRunConfigSnapshot } from "./persisted-demo-run-state.js";
 import type {
@@ -52,12 +48,6 @@ import type {
 } from "./public-run-budget-store.js";
 import type { EffectivePublicRuntimePolicyReader } from "./public-runtime-policy-service.js";
 import type { TerminalDemoRunWriter } from "./terminal-demo-run-writer.js";
-import {
-  findTrafficCompletionBindingMismatch,
-  findTrafficCompletionRedeliveryMismatch,
-} from "./traffic-completion-binding.js";
-import type { TrafficCompletionEnrichmentController } from "./traffic-completion-enrichment-service.js";
-import { classifyTrafficDeliverySummary } from "./traffic-delivery-classifier.js";
 import { syntheticFailedTrafficSummary } from "./traffic-delivery-plan.js";
 import type { TrafficExecutionGateway } from "./traffic-execution-gateway.js";
 
@@ -67,7 +57,6 @@ const generatedRunSaleDurationMs = 24 * 60 * 60 * 1000;
 
 export interface DemoRunLifecycleController {
   startRun(request: StartDemoRunCommand, correlationId: string): Promise<StartDemoRunResponse>;
-  recordTrafficCompletion(input: TrafficCompletionReport): Promise<DemoRunSnapshot>;
 }
 
 export type StartDemoRunCommand = StartDemoRunRequest & {
@@ -111,11 +100,6 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
       runtimePolicyReader: EffectivePublicRuntimePolicyReader;
       businessOutcomeReader: DashboardBusinessOutcomeReader;
       terminalRunWriter: Pick<TerminalDemoRunWriter, "write">;
-      completionEnrichmentService: Pick<
-        TrafficCompletionEnrichmentController,
-        "completePendingEnrichment"
-      >;
-      finalizationService: DemoRunFinalizationController;
       apiBaseUrl: string;
       buyEndpointPath: string;
       logger: CheckoutSurgeLogger;
@@ -198,7 +182,11 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
         throw error;
       }
 
-      await this.publishRunEvent(accepted.run, correlationId, now);
+      await publishDemoRunSnapshot(this.options.redis, this.options.logger, {
+        run: accepted.run,
+        correlationId,
+        occurredAt: now,
+      });
 
       let trafficResponse: TrafficExecutionStartResponse;
       try {
@@ -224,7 +212,11 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
         trafficResponse,
         now,
       );
-      await this.publishRunEvent(runAfterTrafficStart, correlationId, now);
+      await publishDemoRunSnapshot(this.options.redis, this.options.logger, {
+        run: runAfterTrafficStart,
+        correlationId,
+        occurredAt: now,
+      });
 
       return startDemoRunResponseSchema.parse({
         run: runAfterTrafficStart,
@@ -245,161 +237,6 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
       }
       throw error;
     }
-  }
-
-  async reconcileStartingRuns(): Promise<number> {
-    const rows = await this.options.db
-      .select()
-      .from(demoRuns)
-      .where(eq(demoRuns.status, "starting"));
-    let reconciled = 0;
-    for (const run of rows) {
-      if (!run.saleOfferId) continue;
-      const correlationId = `traffic-reconcile-${run.id}`;
-      try {
-        const response = await this.options.trafficExecutionGateway.start({
-          runId: run.id,
-          saleOfferId: run.saleOfferId,
-          apiBaseUrl: this.options.apiBaseUrl,
-          buyEndpointPath: this.options.buyEndpointPath,
-          correlationId,
-          configSnapshot: parsePersistedAcceptedRunConfigSnapshot(
-            run.configSnapshot,
-            `demo run ${run.id} starting reconciliation`,
-          ),
-        });
-        await this.updateRunAfterTrafficStart(run.id, response, this.now());
-        reconciled += 1;
-      } catch (error) {
-        this.options.logger.warn(
-          { err: error, runId: run.id },
-          "Starting traffic intent remains pending reconciliation.",
-        );
-      }
-    }
-    return reconciled;
-  }
-
-  async recordTrafficCompletion(input: TrafficCompletionReport): Promise<DemoRunSnapshot> {
-    const report = trafficCompletionReportSchema.parse(input);
-    const classifiedTrafficDeliverySummary = classifyTrafficDeliverySummary(
-      report.trafficDeliverySummary,
-      report.transportAttemptCounts,
-    );
-    const now = this.now();
-    const completionClaim = await this.options.db.transaction(async (tx) => {
-      const [run] = await tx
-        .select()
-        .from(demoRuns)
-        .where(eq(demoRuns.id, report.runId))
-        .limit(1)
-        .for("update");
-      if (!run) {
-        throw new DemoRunValidationError("resource_not_found", "Demo run was not found.", {
-          runId: report.runId,
-        });
-      }
-      if (!run.saleOfferId) {
-        throw new DemoRunValidationError("run_conflict", "Demo run has no sale offer.", {
-          conflictReason: "sale_offer_missing",
-          runId: report.runId,
-        });
-      }
-      if (!run.startedAt) {
-        throw new Error(`Current demo run ${run.id} has no startedAt timestamp.`);
-      }
-
-      const bindingMismatch = findTrafficCompletionBindingMismatch(
-        {
-          runId: run.id,
-          configSnapshot: run.configSnapshot,
-          acceptedAt: run.startedAt,
-          trafficStartedAt: run.trafficStartedAt,
-        },
-        report,
-      );
-      if (bindingMismatch) throwCompletionMismatch(run.id, bindingMismatch);
-      const [existing] = await tx
-        .select()
-        .from(demoRunFinalizations)
-        .where(eq(demoRunFinalizations.runId, report.runId))
-        .limit(1)
-        .for("update");
-      if (existing) {
-        const redeliveryMismatch = findTrafficCompletionRedeliveryMismatch(
-          run,
-          existing,
-          report,
-          classifiedTrafficDeliverySummary,
-        );
-        if (redeliveryMismatch) throwCompletionMismatch(run.id, redeliveryMismatch);
-        return { inserted: false };
-      }
-      if (
-        !(["starting", "active"] as string[]).includes(run.status) ||
-        !(["starting", "active"] as string[]).includes(run.trafficStatus)
-      ) {
-        throw new DemoRunValidationError(
-          "traffic_report_rejected",
-          "Demo run is not eligible for traffic completion ingestion.",
-          { runId: report.runId, status: run.status, trafficStatus: run.trafficStatus },
-        );
-      }
-
-      const [inserted] = await tx
-        .insert(demoRunFinalizations)
-        .values({
-          runId: report.runId,
-          exitCode: report.exitCode ?? null,
-          errorMessage: report.errorMessage ?? null,
-          transportAttemptCounts: report.transportAttemptCounts,
-          httpSummary: report.httpSummary,
-          trafficOutcomeSummary: report.trafficOutcomeSummary,
-          trafficDeliverySummary: classifiedTrafficDeliverySummary,
-          httpTimingBreakdownSummary: report.httpTimingBreakdownSummary,
-          loadRunDiagnosticsSummary: report.loadRunDiagnosticsSummary,
-          completionEnrichmentStatus: "pending",
-          trafficSummaryReceivedAt: now,
-          createdAt: now,
-          updatedAt: now,
-        })
-        .returning({ runId: demoRunFinalizations.runId });
-      const [claimedRun] = await tx
-        .update(demoRuns)
-        .set({
-          status: "draining",
-          trafficStatus: report.status,
-          trafficStartedAt:
-            run.trafficStartedAt ?? new Date(report.loadRunDiagnosticsSummary.startedAt),
-          trafficEndedAt: new Date(report.completedAt),
-          updatedAt: now,
-        })
-        .where(
-          and(
-            eq(demoRuns.id, report.runId),
-            inArray(demoRuns.status, ["starting", "active"]),
-            inArray(demoRuns.trafficStatus, ["starting", "active"]),
-          ),
-        )
-        .returning({ id: demoRuns.id });
-      if (!inserted || !claimedRun) {
-        throw new DemoRunValidationError(
-          "traffic_report_rejected",
-          "Demo run completion could not claim the active traffic lifecycle.",
-          { runId: report.runId },
-        );
-      }
-      return { inserted: true };
-    });
-
-    await this.options.completionEnrichmentService.completePendingEnrichment(report.runId);
-
-    const updatedRun = await this.readRunSnapshot(report.runId);
-    if (completionClaim.inserted) await this.publishRunEvent(updatedRun, report.correlationId, now);
-    return (
-      (await this.options.finalizationService.finalizeRun(report.runId, report.correlationId)) ??
-      updatedRun
-    );
   }
 
   private async createAcceptedRun(
@@ -585,7 +422,7 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
       // finalization, or an admin reset has claimed the run. In that case the
       // compare-and-set intentionally loses; return the row that won the race
       // instead of applying a stale activation and resurrecting the run.
-      return this.readRunSnapshot(runId);
+      return readDemoRunSnapshot(this.options.db, runId);
     }
 
     return toDemoRunSnapshot(run);
@@ -627,7 +464,7 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
         allowedCurrentStatuses: ["starting", "active"],
         terminalTrafficStatus: "failed",
       });
-      const updatedRun = await this.readRunSnapshot(runId);
+      const updatedRun = await readDemoRunSnapshot(this.options.db, runId);
 
       if (
         (updatedRun.status === "completed" || updatedRun.status === "failed") &&
@@ -644,7 +481,11 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
           );
         });
       }
-      await this.publishRunEvent(updatedRun, correlationId, now);
+      await publishDemoRunSnapshot(this.options.redis, this.options.logger, {
+        run: updatedRun,
+        correlationId,
+        occurredAt: now,
+      });
     }
   }
 
@@ -683,39 +524,6 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
     }
   }
 
-  private async readRunSnapshot(runId: string): Promise<DemoRunSnapshot> {
-    const [run] = await this.options.db
-      .select()
-      .from(demoRuns)
-      .where(eq(demoRuns.id, runId))
-      .limit(1);
-    if (!run) {
-      throw new DemoRunValidationError("resource_not_found", "Demo run was not found.", { runId });
-    }
-    return toDemoRunSnapshot(run);
-  }
-
-  private async publishRunEvent(
-    run: DemoRunSnapshot,
-    correlationId: string,
-    occurredAt: Date,
-  ): Promise<void> {
-    try {
-      await publishDashboardEvent(this.options.redis, {
-        type: "load.run.updated",
-        runId: run.runId,
-        correlationId,
-        run,
-        occurredAt: occurredAt.toISOString(),
-      });
-    } catch (error) {
-      this.options.logger.warn(
-        { err: error, runId: run.runId },
-        "Could not publish run dashboard event.",
-      );
-    }
-  }
-
   private now(): Date {
     return this.options.now?.() ?? new Date();
   }
@@ -723,22 +531,6 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
   private generateId(): string {
     return this.options.generateId?.() ?? randomUUID();
   }
-}
-
-function throwCompletionMismatch(
-  runId: string,
-  mismatch: { field: string; expected?: unknown; actual?: unknown },
-): never {
-  throw new DemoRunValidationError(
-    "traffic_report_rejected",
-    "Traffic completion does not match the accepted demo run.",
-    {
-      runId,
-      field: mismatch.field,
-      ...(Object.hasOwn(mismatch, "expected") ? { expected: mismatch.expected } : {}),
-      ...(Object.hasOwn(mismatch, "actual") ? { actual: mismatch.actual } : {}),
-    },
-  );
 }
 
 function mergeConfigSnapshot(

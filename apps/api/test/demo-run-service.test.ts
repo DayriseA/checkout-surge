@@ -4,7 +4,6 @@ import type {
   AcceptedRunConfigSnapshot,
   BusinessOutcomeSummary,
   PublicRuntimePolicy,
-  TrafficCompletionReport,
   TrafficConfig,
   TrafficExecutionStartRequest,
 } from "@checkout-surge/contracts";
@@ -20,18 +19,13 @@ import {
   deleteGeneratedRunDurable,
   deleteGeneratedRunRedisState,
   demoPresets,
-  demoRunFinalizations,
   demoRunSaleContexts,
-  demoRunSoldOutCounts,
   demoRunSummaries,
   demoRuns,
-  getInventoryStatus,
-  inventoryKeys,
   isRunSaleEligible,
   prepareGeneratedRunTeardown,
   products,
   publicRuntimePolicies,
-  reserveInventoryStock,
   saleOffers,
 } from "@checkout-surge/db";
 import { resetTestDatabase } from "@checkout-surge/db/testing";
@@ -42,7 +36,6 @@ import { ApiHttpError } from "../src/runtime/errors.js";
 import { RedisDashboardTrafficMetricStore } from "../src/services/dashboard-traffic-metric-store.js";
 import { DemoMaintenanceService } from "../src/services/demo-maintenance-service.js";
 import { DemoPresetService } from "../src/services/demo-preset-service.js";
-import { DemoRunFinalizationService } from "../src/services/demo-run-finalization-service.js";
 import {
   DemoRunLifecycleService,
   isSingleNonTerminalRunViolation,
@@ -53,8 +46,6 @@ import { PostgresDemoResetWorkflowFence } from "../src/services/postgres-demo-re
 import { RedisPublicRunBudgetStore } from "../src/services/public-run-budget-store.js";
 import { PublicRuntimePolicyService } from "../src/services/public-runtime-policy-service.js";
 import { PostgresTerminalDemoRunSummaryWriter } from "../src/services/terminal-demo-run-transition.js";
-import { findTrafficCompletionBindingMismatch } from "../src/services/traffic-completion-binding.js";
-import { TrafficCompletionEnrichmentService } from "../src/services/traffic-completion-enrichment-service.js";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const dbPackageRoot = path.resolve(packageRoot, "../../packages/db");
@@ -101,9 +92,7 @@ describe("demo-run lifecycle validation", () => {
       trafficExecutionGateway: {} as never,
       publicRunBudgetStore: { reserve, release: vi.fn() },
       businessOutcomeReader: {} as never,
-      completionEnrichmentService: {} as never,
       terminalRunWriter: {} as never,
-      finalizationService: noOpFinalizationService(),
       apiBaseUrl: "http://api.test",
       buyEndpointPath: "/buy",
       logger: createSilentLogger("api"),
@@ -208,162 +197,6 @@ describe("demo-run lifecycle validation", () => {
         }),
       }),
     );
-  });
-
-  it("binds buyer-spike completion plan, counts, and runner start to the accepted run", () => {
-    const report = trafficCompletionFixture({
-      runId: "55555555-5555-4555-8555-555555555551",
-      status: "succeeded",
-      exitCode: 0,
-      completedAt: "2026-06-20T00:00:12.000Z",
-      plannedRequests: 10_000,
-      correlationId: "completion-binding",
-    });
-    const accepted = {
-      runId: report.runId,
-      configSnapshot: surge10kSnapshot(),
-      acceptedAt: new Date("2026-06-20T00:00:10.000Z"),
-      trafficStartedAt: new Date("2026-06-20T00:00:11.000Z"),
-    };
-
-    expect(findTrafficCompletionBindingMismatch(accepted, report)).toBeNull();
-    expect(
-      findTrafficCompletionBindingMismatch(accepted, {
-        ...report,
-        loadRunDiagnosticsSummary: {
-          ...report.loadRunDiagnosticsSummary,
-          executionPlan: {
-            trafficMode: "buyer-spike",
-            buyerCount: 9_999,
-            duplicateEachBuyerAttempt: false,
-            iterationsPerVu: 1,
-            plannedEmittedAttempts: 9_999,
-            startDelaySeconds: 0,
-            maxDurationSeconds: 2,
-          },
-        },
-        transportAttemptCounts: { ...report.transportAttemptCounts, plannedRequests: 9_999 },
-        trafficDeliverySummary: {
-          ...report.trafficDeliverySummary,
-          plannedBuyers: 9_999,
-        },
-      }),
-    ).toMatchObject({ field: "loadRunDiagnosticsSummary.executionPlan" });
-    expect(
-      findTrafficCompletionBindingMismatch(
-        { ...accepted, trafficStartedAt: new Date("2026-06-20T00:00:10.000Z") },
-        report,
-      ),
-    ).toMatchObject({ field: "loadRunDiagnosticsSummary.startedAt" });
-  });
-
-  it("rejects a fast-completion runner start before the API accepted the run", () => {
-    const report = trafficCompletionFixture({
-      runId: "55555555-5555-4555-8555-555555555551",
-      status: "succeeded",
-      exitCode: 0,
-      completedAt: "2026-06-20T00:00:12.000Z",
-      plannedRequests: 10_000,
-      correlationId: "completion-before-acceptance",
-    });
-    const staleReport = {
-      ...report,
-      loadRunDiagnosticsSummary: {
-        ...report.loadRunDiagnosticsSummary,
-        startedAt: "2026-06-20T00:00:09.999Z",
-      },
-    };
-
-    expect(
-      findTrafficCompletionBindingMismatch(
-        {
-          runId: report.runId,
-          configSnapshot: surge10kSnapshot(),
-          acceptedAt: new Date("2026-06-20T00:00:10.000Z"),
-          trafficStartedAt: null,
-        },
-        staleReport,
-      ),
-    ).toEqual({
-      field: "loadRunDiagnosticsSummary.startedAt",
-      expected: { notBefore: "2026-06-20T00:00:10.000Z" },
-      actual: "2026-06-20T00:00:09.999Z",
-    });
-  });
-
-  it("binds steady-arrival mode, rate, duration, and VU identity", () => {
-    const base = trafficCompletionFixture({
-      runId: "55555555-5555-4555-8555-555555555552",
-      status: "succeeded",
-      exitCode: 0,
-      completedAt: "2026-06-20T00:00:12.000Z",
-      plannedRequests: 20,
-      correlationId: "steady-completion-binding",
-    });
-    const report: TrafficCompletionReport = {
-      ...base,
-      loadRunDiagnosticsSummary: {
-        ...base.loadRunDiagnosticsSummary,
-        executionPlan: {
-          trafficMode: "steady-arrival-rate",
-          ratePerSecond: 5,
-          durationSeconds: 4,
-          plannedEmittedAttempts: 20,
-          startDelaySeconds: 0,
-          preAllocatedVus: 3,
-          maxVus: 6,
-        },
-      },
-      trafficDeliverySummary: {
-        ...base.trafficDeliverySummary,
-        trafficMode: "steady-arrival-rate",
-        plannedBuyers: null,
-        scheduledRatePerSecond: 5,
-        configuredDurationSeconds: 4,
-        preAllocatedVUs: 3,
-        maxVUs: 6,
-      },
-    };
-    const configSnapshot: AcceptedRunConfigSnapshot = {
-      ...surge10kSnapshot(),
-      trafficConfig: {
-        mode: "steady-arrival-rate",
-        ratePerSecond: 5,
-        durationSeconds: 4,
-        startDelaySeconds: 0,
-        quantityPerAttempt: 1,
-        k6Vus: { preAllocatedVus: 3, maxVus: 6 },
-      },
-    };
-
-    expect(
-      findTrafficCompletionBindingMismatch(
-        {
-          runId: report.runId,
-          configSnapshot,
-          acceptedAt: new Date("2026-06-20T00:00:10.000Z"),
-          trafficStartedAt: null,
-        },
-        report,
-      ),
-    ).toBeNull();
-    expect(
-      findTrafficCompletionBindingMismatch(
-        {
-          runId: report.runId,
-          configSnapshot: {
-            ...configSnapshot,
-            trafficConfig: {
-              ...configSnapshot.trafficConfig,
-              k6Vus: { preAllocatedVus: 4, maxVus: 8 },
-            },
-          },
-          acceptedAt: new Date("2026-06-20T00:00:10.000Z"),
-          trafficStartedAt: null,
-        },
-        report,
-      ),
-    ).toMatchObject({ field: "loadRunDiagnosticsSummary.executionPlan" });
   });
 });
 
@@ -532,44 +365,6 @@ describe("demo-run lifecycle start gating", () => {
       releaseAbort();
       await resetConnection.close();
     }
-  });
-
-  it("replays a durable starting intent with the same run identity and activates it", async () => {
-    const start = vi
-      .fn(async (request: TrafficExecutionStartRequest) => ({
-        runId: request.runId,
-        status: "active" as const,
-        startedAt: "2026-06-20T00:00:11.000Z",
-        correlationId: request.correlationId,
-      }))
-      .mockRejectedValueOnce(
-        new ApiHttpError({
-          statusCode: 502,
-          code: "load_orchestrator_start_ambiguous",
-          message: "ambiguous",
-        }),
-      );
-    const service = createStartService(requireConnection(connection), requireRedis(redis), {
-      trafficExecutionGateway: { start },
-    });
-    await expect(
-      service.startRun({ presetSlug: "preview-1k", operatorMode: "admin" }, "initial-start"),
-    ).rejects.toMatchObject({ code: "load_orchestrator_start_ambiguous" });
-    const [starting] = await requireConnection(connection)
-      .db.select()
-      .from(demoRuns)
-      .where(eq(demoRuns.status, "starting"));
-    const runId = starting?.id;
-    expect(runId).toBeTruthy();
-    await expect(service.reconcileStartingRuns()).resolves.toBe(1);
-    expect(start).toHaveBeenCalledWith(
-      expect.objectContaining({ runId, correlationId: `traffic-reconcile-${runId}` }),
-    );
-    const [row] = await requireConnection(connection)
-      .db.select()
-      .from(demoRuns)
-      .where(eq(demoRuns.id, runId as string));
-    expect(row).toMatchObject({ status: "active", trafficStatus: "active" });
   });
 
   it("accepts exactly one of two concurrent starts", async () => {
@@ -1254,588 +1049,6 @@ describe("demo-run lifecycle start gating", () => {
     ).resolves.toBe(false);
   });
 
-  it("returns the draining run when fast traffic completion wins activation CAS", async () => {
-    let releaseTrafficStart: (() => void) | undefined;
-    let trafficStartEntered: (() => void) | undefined;
-    const trafficStartEnteredPromise = new Promise<void>((resolve) => {
-      trafficStartEntered = resolve;
-    });
-    const trafficStartReleasePromise = new Promise<void>((resolve) => {
-      releaseTrafficStart = resolve;
-    });
-    const service = createStartService(requireConnection(connection), requireRedis(redis), {
-      trafficExecutionGateway: {
-        start: async (request) => {
-          trafficStartEntered?.();
-          await trafficStartReleasePromise;
-          return {
-            runId: request.runId,
-            status: "active",
-            startedAt: "2026-06-20T00:00:11.000Z",
-            correlationId: request.correlationId,
-          };
-        },
-      },
-    });
-
-    try {
-      const startPromise = service.startRun(
-        { presetSlug: "preview-1k", operatorMode: "admin" },
-        "corr-fast-completion-start",
-      );
-      await trafficStartEnteredPromise;
-
-      const completionRun = await service.recordTrafficCompletion({
-        runId: "77777777-7777-4777-8777-777777777777",
-        status: "succeeded",
-        transportAttemptCounts: {
-          plannedRequests: 10_000,
-          startedRequests: 0,
-          completedRequests: 0,
-          interruptedRequests: 0,
-          unstartedRequests: 10_000,
-        },
-        httpSummary: {
-          failedRequests: 0,
-          acceptedResponses: 0,
-          soldOutResponses: 0,
-          unexpectedResponses: 0,
-          failureRate: 0,
-        },
-        trafficOutcomeSummary: {},
-        trafficDeliverySummary: {
-          trafficMode: "buyer-spike",
-          plannedBuyers: 10_000,
-          scheduledRatePerSecond: null,
-          configuredDurationSeconds: null,
-          preAllocatedVUs: null,
-          maxVUs: null,
-          droppedIterations: 10_000,
-          notes: [],
-        },
-        httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
-        loadRunDiagnosticsSummary: {
-          ...runnerDiagnosticsFixture("2026-06-20T00:00:12.000Z", 10_000),
-          completedAt: "2026-06-20T00:00:12.000Z",
-        },
-        completedAt: "2026-06-20T00:00:12.000Z",
-        correlationId: "corr-fast-completion",
-      });
-      expect(completionRun).toMatchObject({
-        runId: "77777777-7777-4777-8777-777777777777",
-        status: "draining",
-        trafficStatus: "succeeded",
-        trafficEndedAt: "2026-06-20T00:00:12.000Z",
-      });
-
-      releaseTrafficStart?.();
-      const startResponse = await startPromise;
-
-      expect(startResponse.run).toMatchObject({
-        runId: "77777777-7777-4777-8777-777777777777",
-        status: "draining",
-        trafficStatus: "succeeded",
-        trafficEndedAt: "2026-06-20T00:00:12.000Z",
-      });
-      const [run] = await requireConnection(connection)
-        .db.select()
-        .from(demoRuns)
-        .where(eq(demoRuns.id, "77777777-7777-4777-8777-777777777777"));
-      const [finalization] = await requireConnection(connection)
-        .db.select()
-        .from(demoRunFinalizations)
-        .where(eq(demoRunFinalizations.runId, "77777777-7777-4777-8777-777777777777"));
-      expect(run).toMatchObject({
-        status: "draining",
-        trafficStatus: "succeeded",
-        trafficStartedAt: new Date("2026-06-20T00:00:11.000Z"),
-        trafficEndedAt: new Date("2026-06-20T00:00:12.000Z"),
-      });
-      expect(finalization).toMatchObject({
-        runId: "77777777-7777-4777-8777-777777777777",
-        trafficSummaryReceivedAt: expect.any(Date),
-      });
-      await expect(
-        isRunSaleEligible(requireRedis(redis), {
-          runId: "77777777-7777-4777-8777-777777777777",
-          saleOfferId: "77777777-7777-4777-8777-777777777778",
-        }),
-      ).resolves.toBe(false);
-    } finally {
-      releaseTrafficStart?.();
-    }
-  });
-
-  it("rejects a conflicting completion without using it to repair the first accepted report", async () => {
-    let releaseFirstEnrichment: () => void = () => undefined;
-    let firstEnrichmentEntered: () => void = () => undefined;
-    const firstEnrichmentGate = new Promise<void>((resolve) => {
-      releaseFirstEnrichment = resolve;
-    });
-    const firstEnrichmentEnteredPromise = new Promise<void>((resolve) => {
-      firstEnrichmentEntered = resolve;
-    });
-    let businessReads = 0;
-    const finalizeRun = vi.fn().mockRejectedValueOnce(new Error("finalization temporarily failed"));
-    const service = createStartService(requireConnection(connection), requireRedis(redis), {
-      businessOutcomeReader: {
-        read: async () => {
-          businessReads += 1;
-          if (businessReads === 1) {
-            firstEnrichmentEntered();
-            await firstEnrichmentGate;
-          }
-          return emptyBusinessOutcomeSummary();
-        },
-      },
-      finalizationService: { finalizeRun, finalizeReadyRuns: async () => 0 },
-    });
-    const started = await service.startRun(
-      completionStartCommand(111),
-      "corr-completion-concurrency-start",
-    );
-    const firstReport = trafficCompletionFixture({
-      runId: started.run.runId,
-      status: "succeeded",
-      exitCode: 0,
-      completedAt: "2026-06-20T00:00:12.000Z",
-      plannedRequests: 111,
-      correlationId: "corr-completion-first",
-    });
-    const conflictingReport = trafficCompletionFixture({
-      runId: started.run.runId,
-      status: "failed",
-      exitCode: 9,
-      errorMessage: "conflicting duplicate",
-      completedAt: "2026-06-20T00:00:13.000Z",
-      plannedRequests: 999,
-      correlationId: "corr-completion-conflict",
-    });
-    const saleOfferId = started.run.saleOfferId;
-    if (!saleOfferId) {
-      throw new Error("Started run did not expose its sale offer.");
-    }
-
-    const first = service.recordTrafficCompletion(firstReport);
-    await firstEnrichmentEnteredPromise;
-    await expect(
-      isRunSaleEligible(requireRedis(redis), {
-        runId: started.run.runId,
-        saleOfferId,
-      }),
-    ).resolves.toBe(false);
-    await expect(
-      reserveInventoryStock(requireRedis(redis), {
-        idempotencyKey: "completion-race-buy",
-        idempotencyTtlSeconds: 1800,
-        reservation: {
-          id: "aaaaaaaa-aaaa-4aaa-8aaa-000000000093",
-          saleOfferId,
-          runId: started.run.runId,
-          correlationId: "completion-race-buy-correlation",
-          quantity: 1,
-          reservationToken: "completion-race-buy-token",
-          securedAt: "2026-06-20T00:00:12.000Z",
-          expiresAt: "2026-06-20T00:15:12.000Z",
-        },
-      }),
-    ).resolves.toEqual({ outcome: "run_not_accepting_traffic", reservation: null });
-    const inventory = inventoryKeys(saleOfferId);
-    await requireRedis(redis).hset(inventory.state, {
-      remainingStock: "900",
-      reservedStock: "100",
-    });
-    await requireRedis(redis).hset(inventory.soldOut, "count", "17");
-    const duplicate = service.recordTrafficCompletion(conflictingReport);
-    await expect(duplicate).rejects.toMatchObject({
-      code: "traffic_report_rejected",
-    });
-    releaseFirstEnrichment();
-    await expect(first).rejects.toThrow("finalization temporarily failed");
-    await expect(service.recordTrafficCompletion(firstReport)).resolves.toMatchObject({
-      status: "draining",
-    });
-
-    const [run] = await requireConnection(connection)
-      .db.select()
-      .from(demoRuns)
-      .where(eq(demoRuns.id, started.run.runId));
-    const [finalization] = await requireConnection(connection)
-      .db.select()
-      .from(demoRunFinalizations)
-      .where(eq(demoRunFinalizations.runId, started.run.runId));
-    const [soldOutOutcome] = await requireConnection(connection)
-      .db.select()
-      .from(demoRunSoldOutCounts)
-      .where(eq(demoRunSoldOutCounts.runId, started.run.runId));
-    expect(finalizeRun).toHaveBeenCalledTimes(2);
-    expect(run).toMatchObject({
-      status: "draining",
-      trafficStatus: "succeeded",
-      trafficEndedAt: new Date(firstReport.completedAt),
-    });
-    expect(finalization).toMatchObject({
-      exitCode: 0,
-      errorMessage: null,
-      transportAttemptCounts: expect.objectContaining({ plannedRequests: 111 }),
-      completionEnrichmentStatus: "completed",
-    });
-    expect(finalization?.trafficOutcomeSummary).toMatchObject({
-      terminalInventorySnapshot: expect.objectContaining({
-        remainingStock: 1000,
-        reservedStock: 0,
-        soldOutRejections: 0,
-      }),
-      businessOutcomeAtTrafficCompletion: emptyBusinessOutcomeSummary(),
-    });
-    expect(soldOutOutcome).toMatchObject({ count: 0 });
-
-    const authoritativeOutcome = structuredClone(finalization?.trafficOutcomeSummary);
-    await requireRedis(redis).hset(inventory.state, {
-      remainingStock: "1",
-      reservedStock: "999",
-    });
-    await requireRedis(redis).hset(inventory.soldOut, "count", "99");
-    await expect(service.recordTrafficCompletion(conflictingReport)).rejects.toMatchObject({
-      code: "traffic_report_rejected",
-    });
-    const [afterRedelivery] = await requireConnection(connection)
-      .db.select()
-      .from(demoRunFinalizations)
-      .where(eq(demoRunFinalizations.runId, started.run.runId));
-    const [soldOutAfterRedelivery] = await requireConnection(connection)
-      .db.select()
-      .from(demoRunSoldOutCounts)
-      .where(eq(demoRunSoldOutCounts.runId, started.run.runId));
-    expect(afterRedelivery?.trafficOutcomeSummary).toEqual(authoritativeOutcome);
-    expect(soldOutAfterRedelivery?.count).toBe(0);
-    expect(businessReads).toBe(1);
-  });
-
-  it("keeps a claimed completion non-terminal until enrichment durably concludes", async () => {
-    const db = requireConnection(connection).db;
-    const redisClient = requireRedis(redis);
-    let releaseEnrichment: () => void = () => undefined;
-    let enrichmentEntered: () => void = () => undefined;
-    const enrichmentGate = new Promise<void>((resolve) => {
-      releaseEnrichment = resolve;
-    });
-    const enrichmentEnteredPromise = new Promise<void>((resolve) => {
-      enrichmentEntered = resolve;
-    });
-    const businessOutcomeReader = {
-      read: async () => {
-        enrichmentEntered();
-        await enrichmentGate;
-        return emptyBusinessOutcomeSummary();
-      },
-    };
-    const finalizationService = new DemoRunFinalizationService({
-      db,
-      redis: redisClient,
-      logger: createSilentLogger("api"),
-      terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db),
-      terminalInventoryRead: createTerminalInventoryRead(redisClient),
-      terminalInventoryReadTimeoutMs: 2_000,
-      drainTimeoutSeconds: 300,
-      now: () => new Date("2026-06-20T00:00:10.000Z"),
-    });
-    const service = createStartService(requireConnection(connection), redisClient, {
-      businessOutcomeReader,
-      finalizationService,
-    });
-    const started = await service.startRun(
-      completionStartCommand(10),
-      "corr-pending-enrichment-start",
-    );
-    const report: TrafficCompletionReport = {
-      ...trafficCompletionFixture({
-        runId: started.run.runId,
-        status: "succeeded",
-        exitCode: 0,
-        completedAt: "2026-06-20T00:00:12.000Z",
-        plannedRequests: 10,
-        correlationId: "corr-pending-enrichment",
-      }),
-      transportAttemptCounts: {
-        ...trafficCompletionFixture({
-          runId: started.run.runId,
-          status: "succeeded",
-          exitCode: 0,
-          completedAt: "2026-06-20T00:00:12.000Z",
-          plannedRequests: 10,
-          correlationId: "corr-pending-enrichment",
-        }).transportAttemptCounts,
-        startedRequests: 10,
-        completedRequests: 10,
-        interruptedRequests: 0,
-        unstartedRequests: 0,
-      },
-      trafficDeliverySummary: {
-        trafficMode: "buyer-spike",
-        plannedBuyers: 10,
-        scheduledRatePerSecond: null,
-        configuredDurationSeconds: null,
-        preAllocatedVUs: null,
-        maxVUs: null,
-        droppedIterations: 0,
-        notes: [],
-      },
-    };
-
-    try {
-      const completion = service.recordTrafficCompletion(report);
-      await enrichmentEnteredPromise;
-      const [pending] = await db
-        .select()
-        .from(demoRunFinalizations)
-        .where(eq(demoRunFinalizations.runId, started.run.runId));
-
-      expect(pending?.completionEnrichmentStatus).toBe("pending");
-      await expect(
-        finalizationService.finalizeRun(started.run.runId, report.correlationId),
-      ).resolves.toMatchObject({ status: "draining" });
-      expect(
-        await db
-          .select()
-          .from(demoRunSummaries)
-          .where(eq(demoRunSummaries.runId, started.run.runId)),
-      ).toHaveLength(0);
-
-      releaseEnrichment();
-      await expect(completion).resolves.toMatchObject({ status: "completed" });
-      const [concluded] = await db
-        .select()
-        .from(demoRunFinalizations)
-        .where(eq(demoRunFinalizations.runId, started.run.runId));
-      const [summary] = await db
-        .select()
-        .from(demoRunSummaries)
-        .where(eq(demoRunSummaries.runId, started.run.runId));
-
-      expect(concluded?.completionEnrichmentStatus).toBe("completed");
-      expect(summary?.terminalInventorySnapshot).toEqual(
-        (concluded?.trafficOutcomeSummary as Record<string, unknown>)?.terminalInventorySnapshot,
-      );
-    } finally {
-      releaseEnrichment();
-    }
-  });
-
-  it("repairs enrichment that failed after the durable claim on redelivery", async () => {
-    const db = requireConnection(connection).db;
-    let businessReadCount = 0;
-    const finalizeRun = vi.fn(async () => null);
-    const businessOutcomeReader = {
-      read: async () => {
-        businessReadCount += 1;
-        if (businessReadCount === 1) {
-          throw new Error("injected failure before enrichment persistence");
-        }
-        return emptyBusinessOutcomeSummary();
-      },
-    };
-    const completionEnrichmentService = new TrafficCompletionEnrichmentService({
-      db,
-      redis: requireRedis(redis),
-      businessOutcomeReader,
-      logger: createSilentLogger("api"),
-      now: () => new Date("2026-06-20T00:00:10.000Z"),
-    });
-    const service = createStartService(requireConnection(connection), requireRedis(redis), {
-      businessOutcomeReader,
-      completionEnrichmentService,
-      finalizationService: { finalizeRun, finalizeReadyRuns: async () => 0 },
-    });
-    const started = await service.startRun(
-      completionStartCommand(10),
-      "corr-enrichment-repair-start",
-    );
-    const report = trafficCompletionFixture({
-      runId: started.run.runId,
-      status: "succeeded",
-      exitCode: 0,
-      completedAt: "2026-06-20T00:00:12.000Z",
-      plannedRequests: 10,
-      correlationId: "corr-enrichment-repair",
-    });
-
-    await expect(service.recordTrafficCompletion(report)).rejects.toThrow(
-      "injected failure before enrichment persistence",
-    );
-    let [finalization] = await db
-      .select()
-      .from(demoRunFinalizations)
-      .where(eq(demoRunFinalizations.runId, started.run.runId));
-    expect(finalization?.completionEnrichmentStatus).toBe("pending");
-    expect(finalizeRun).not.toHaveBeenCalled();
-
-    await expect(service.recordTrafficCompletion(report)).resolves.toMatchObject({
-      status: "draining",
-    });
-    [finalization] = await db
-      .select()
-      .from(demoRunFinalizations)
-      .where(eq(demoRunFinalizations.runId, started.run.runId));
-    expect(finalization?.completionEnrichmentStatus).toBe("completed");
-    expect(finalizeRun).toHaveBeenCalledOnce();
-    expect(businessReadCount).toBe(2);
-  });
-
-  it("repairs abandoned pending enrichment through periodic reconciliation", async () => {
-    const db = requireConnection(connection).db;
-    let businessReadCount = 0;
-    const businessOutcomeReader = {
-      read: async () => {
-        businessReadCount += 1;
-        if (businessReadCount === 1) {
-          throw new Error("injected abandoned enrichment");
-        }
-        return emptyBusinessOutcomeSummary();
-      },
-    };
-    const completionEnrichmentService = new TrafficCompletionEnrichmentService({
-      db,
-      redis: requireRedis(redis),
-      businessOutcomeReader,
-      logger: createSilentLogger("api"),
-      now: () => new Date("2026-06-20T00:00:10.000Z"),
-    });
-    const service = createStartService(requireConnection(connection), requireRedis(redis), {
-      businessOutcomeReader,
-      completionEnrichmentService,
-      finalizationService: { finalizeRun: async () => null, finalizeReadyRuns: async () => 0 },
-    });
-    const started = await service.startRun(
-      completionStartCommand(10),
-      "corr-periodic-enrichment-start",
-    );
-    const report = trafficCompletionFixture({
-      runId: started.run.runId,
-      status: "succeeded",
-      exitCode: 0,
-      completedAt: "2026-06-20T00:00:12.000Z",
-      plannedRequests: 10,
-      correlationId: "corr-periodic-enrichment",
-    });
-
-    await expect(service.recordTrafficCompletion(report)).rejects.toThrow(
-      "injected abandoned enrichment",
-    );
-    await expect(completionEnrichmentService.reconcilePendingEnrichments()).resolves.toBe(1);
-    const [finalization] = await db
-      .select()
-      .from(demoRunFinalizations)
-      .where(eq(demoRunFinalizations.runId, started.run.runId));
-
-    expect(finalization?.completionEnrichmentStatus).toBe("completed");
-    expect(businessReadCount).toBe(2);
-  });
-
-  it("keeps a completed enrichment capture failure immutable while finalization captures terminal inventory", async () => {
-    const db = requireConnection(connection).db;
-    const redisClient = requireRedis(redis);
-    let failCapture = true;
-    let captureReadCount = 0;
-    const captureRedis = new Proxy(redisClient, {
-      get(target, property) {
-        if (property === "hgetall") {
-          return async (...args: Parameters<typeof target.hgetall>) => {
-            captureReadCount += 1;
-            if (failCapture) {
-              throw new Error("injected Redis capture failure");
-            }
-            return target.hgetall(...args);
-          };
-        }
-        const value = target[property as keyof typeof target];
-        return typeof value === "function" ? value.bind(target) : value;
-      },
-    }) as typeof redisClient;
-    const businessOutcomeReader = { read: async () => emptyBusinessOutcomeSummary() };
-    const completionEnrichmentService = new TrafficCompletionEnrichmentService({
-      db,
-      redis: captureRedis,
-      businessOutcomeReader,
-      logger: createSilentLogger("api"),
-      now: () => new Date("2026-06-20T00:00:10.000Z"),
-    });
-    const finalizationService = new DemoRunFinalizationService({
-      db,
-      redis: redisClient,
-      logger: createSilentLogger("api"),
-      terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db),
-      terminalInventoryRead: createTerminalInventoryRead(redisClient),
-      terminalInventoryReadTimeoutMs: 2_000,
-      drainTimeoutSeconds: 300,
-      now: () => new Date("2026-06-20T00:00:10.000Z"),
-    });
-    const service = createStartService(requireConnection(connection), redisClient, {
-      businessOutcomeReader,
-      completionEnrichmentService,
-      finalizationService,
-    });
-    const started = await service.startRun(completionStartCommand(10), "corr-no-snapshot-start");
-    const report: TrafficCompletionReport = {
-      ...trafficCompletionFixture({
-        runId: started.run.runId,
-        status: "succeeded",
-        exitCode: 0,
-        completedAt: "2026-06-20T00:00:12.000Z",
-        plannedRequests: 10,
-        correlationId: "corr-no-snapshot",
-      }),
-      transportAttemptCounts: {
-        ...trafficCompletionFixture({
-          runId: started.run.runId,
-          status: "succeeded",
-          exitCode: 0,
-          completedAt: "2026-06-20T00:00:12.000Z",
-          plannedRequests: 10,
-          correlationId: "corr-no-snapshot",
-        }).transportAttemptCounts,
-        startedRequests: 10,
-        completedRequests: 10,
-        interruptedRequests: 0,
-        unstartedRequests: 0,
-      },
-      trafficDeliverySummary: {
-        trafficMode: "buyer-spike",
-        plannedBuyers: 10,
-        scheduledRatePerSecond: null,
-        configuredDurationSeconds: null,
-        preAllocatedVUs: null,
-        maxVUs: null,
-        droppedIterations: 0,
-        notes: [],
-      },
-    };
-
-    await expect(service.recordTrafficCompletion(report)).resolves.toMatchObject({
-      status: "completed",
-    });
-    failCapture = false;
-    await expect(service.recordTrafficCompletion(report)).resolves.toMatchObject({
-      status: "completed",
-    });
-    const [finalization] = await db
-      .select()
-      .from(demoRunFinalizations)
-      .where(eq(demoRunFinalizations.runId, started.run.runId));
-    const [summary] = await db
-      .select()
-      .from(demoRunSummaries)
-      .where(eq(demoRunSummaries.runId, started.run.runId));
-
-    expect(finalization?.completionEnrichmentStatus).toBe("completed");
-    expect(finalization?.trafficOutcomeSummary).not.toHaveProperty("terminalInventorySnapshot");
-    expect(summary?.terminalInventorySnapshot).toMatchObject({
-      saleOfferId: started.run.saleOfferId,
-      source: "redis",
-    });
-    expect(captureReadCount).toBe(1);
-  });
-
   it("returns the reset run when a delayed orchestrator acknowledgement loses activation CAS", async () => {
     const startConnection = requireConnection(connection);
     const resetConnection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 2 });
@@ -2016,12 +1229,6 @@ function createStartService(
     businessOutcomeReader?: ConstructorParameters<
       typeof DemoRunLifecycleService
     >[0]["businessOutcomeReader"];
-    finalizationService?: ConstructorParameters<
-      typeof DemoRunLifecycleService
-    >[0]["finalizationService"];
-    completionEnrichmentService?: ConstructorParameters<
-      typeof DemoRunLifecycleService
-    >[0]["completionEnrichmentService"];
     logger?: ConstructorParameters<typeof DemoRunLifecycleService>[0]["logger"];
   } = {},
 ): DemoRunLifecycleService {
@@ -2036,16 +1243,6 @@ function createStartService(
     read: async () => emptyBusinessOutcomeSummary(),
   };
   const logger = overrides.logger ?? createSilentLogger("api");
-  const completionEnrichmentService =
-    overrides.completionEnrichmentService ??
-    new TrafficCompletionEnrichmentService({
-      db: connection.db,
-      redis,
-      businessOutcomeReader,
-      logger,
-      now: () => new Date("2026-06-20T00:00:10.000Z"),
-    });
-
   return new DemoRunLifecycleService({
     db: connection.db,
     presetReader: new DemoPresetService({ db: connection.db }),
@@ -2077,11 +1274,6 @@ function createStartService(
       release: async () => undefined,
     },
     businessOutcomeReader,
-    completionEnrichmentService,
-    finalizationService: overrides.finalizationService ?? {
-      finalizeRun: async () => null,
-      finalizeReadyRuns: async () => 0,
-    },
     apiBaseUrl: "http://api.test",
     buyEndpointPath: "/buy",
     logger,
@@ -2112,13 +1304,6 @@ function redisUnavailable(): ReturnType<typeof createRedisClient> {
       throw new Error("Redis unavailable during event publication.");
     },
   } as unknown as ReturnType<typeof createRedisClient>;
-}
-
-function noOpFinalizationService() {
-  return {
-    finalizeRun: async () => null,
-    finalizeReadyRuns: async () => 0,
-  };
 }
 
 function expectBuyerSpikeTrafficConfig(
@@ -2156,109 +1341,6 @@ function emptyBusinessOutcomeSummary(): BusinessOutcomeSummary {
     failedOrders: 0,
     pendingPersistenceCount: 0,
     notificationsRecorded: 0,
-  };
-}
-
-function completionStartCommand(plannedRequests: number) {
-  return {
-    presetSlug: "preview-1k",
-    operatorMode: "admin" as const,
-    configOverride: {
-      trafficConfig: {
-        mode: "buyer-spike" as const,
-        buyerCount: plannedRequests,
-        duplicateEachBuyerAttempt: false,
-        startDelaySeconds: 0,
-        maxDurationSeconds: 2,
-        quantityPerAttempt: 1,
-      },
-    },
-  };
-}
-
-function trafficCompletionFixture(input: {
-  runId: string;
-  status: "succeeded" | "failed";
-  exitCode: number;
-  errorMessage?: string;
-  completedAt: string;
-  plannedRequests: number;
-  correlationId: string;
-}): TrafficCompletionReport {
-  return {
-    runId: input.runId,
-    status: input.status,
-    exitCode: input.exitCode,
-    ...(input.errorMessage ? { errorMessage: input.errorMessage } : {}),
-    transportAttemptCounts: {
-      plannedRequests: input.plannedRequests,
-      startedRequests: 0,
-      completedRequests: 0,
-      interruptedRequests: 0,
-      unstartedRequests: input.plannedRequests,
-    },
-    httpSummary: {
-      failedRequests: 0,
-      acceptedResponses: 0,
-      soldOutResponses: 0,
-      unexpectedResponses: 0,
-      failureRate: 0,
-    },
-    trafficOutcomeSummary: {},
-    trafficDeliverySummary: {
-      trafficMode: "buyer-spike",
-      plannedBuyers: input.plannedRequests,
-      scheduledRatePerSecond: null,
-      configuredDurationSeconds: null,
-      preAllocatedVUs: null,
-      maxVUs: null,
-      droppedIterations: input.plannedRequests,
-      notes: [],
-    },
-    httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
-    loadRunDiagnosticsSummary: runnerDiagnosticsFixture(input.completedAt, input.plannedRequests),
-    completedAt: input.completedAt,
-    correlationId: input.correlationId,
-  };
-}
-
-function runnerDiagnosticsFixture(
-  completedAt = "2026-06-20T00:00:12.000Z",
-  plannedRequests = 10_000,
-): TrafficCompletionReport["loadRunDiagnosticsSummary"] {
-  return {
-    startedAt: "2026-06-20T00:00:11.000Z",
-    completedAt,
-    nproc: null,
-    ulimitNofile: null,
-    processMaxOpenFiles: null,
-    networkDiagnostics: null,
-    k6Version: null,
-    executionPlan: {
-      trafficMode: "buyer-spike",
-      buyerCount: plannedRequests,
-      duplicateEachBuyerAttempt: false,
-      iterationsPerVu: 1,
-      plannedEmittedAttempts: plannedRequests,
-      startDelaySeconds: 0,
-      maxDurationSeconds: 2,
-    },
-    stderrLines: [],
-    stderrLineCountObserved: 0,
-    stderrLineCountRetained: 0,
-    stderrRetainedLineLimit: 50,
-    stderrLineTruncationLength: 500,
-    stderrLineTruncatedCount: 0,
-    terminalMetricSources: {
-      startedRequests: "summary_export",
-      completedRequests: "summary_export",
-      acceptedResponses: "summary_export",
-      soldOutResponses: "summary_export",
-      unexpectedResponses: "summary_export",
-      droppedIterations: "summary_export",
-      completedIterations: "summary_export",
-    },
-    summaryExportWarnings: [],
   };
 }
 
@@ -2465,12 +1547,5 @@ function publicRuntimePolicyMutable() {
     publicRunBudget: policy.publicRunBudget,
     publicCustomDefaults: policy.publicCustomDefaults,
     publicCustomLimits: policy.publicCustomLimits,
-  };
-}
-
-function createTerminalInventoryRead(redis: ReturnType<typeof createRedisClient>) {
-  return {
-    read: ({ saleOfferId, observedAt }: { saleOfferId: string; observedAt: Date }) =>
-      getInventoryStatus(redis, saleOfferId, observedAt),
   };
 }

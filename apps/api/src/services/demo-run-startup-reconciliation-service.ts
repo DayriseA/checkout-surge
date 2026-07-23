@@ -1,6 +1,10 @@
-import type { demoRuns } from "@checkout-surge/db";
+import type { TrafficExecutionStartResponse } from "@checkout-surge/contracts";
+import { type CheckoutSurgeDatabase, demoRuns } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
+import { and, eq } from "drizzle-orm";
+import { parsePersistedAcceptedRunConfigSnapshot } from "./persisted-demo-run-state.js";
 import type { TrafficCompletionEnrichmentController } from "./traffic-completion-enrichment-service.js";
+import type { TrafficExecutionGateway } from "./traffic-execution-gateway.js";
 
 type DemoRunRow = typeof demoRuns.$inferSelect;
 
@@ -31,10 +35,48 @@ interface PerRunRecoveryResult {
   failureStages: DemoRunStartupReconciliationFailureStage[];
 }
 
+export interface StartingDemoRunReconciliationStore {
+  listStartingRuns(): Promise<DemoRunRow[]>;
+  activateStartingRun(
+    runId: string,
+    trafficResponse: TrafficExecutionStartResponse,
+    updatedAt: Date,
+  ): Promise<boolean>;
+}
+
+export class PostgresStartingDemoRunReconciliationStore
+  implements StartingDemoRunReconciliationStore
+{
+  constructor(private readonly db: CheckoutSurgeDatabase) {}
+
+  listStartingRuns(): Promise<DemoRunRow[]> {
+    return this.db.select().from(demoRuns).where(eq(demoRuns.status, "starting"));
+  }
+
+  async activateStartingRun(
+    runId: string,
+    trafficResponse: TrafficExecutionStartResponse,
+    updatedAt: Date,
+  ): Promise<boolean> {
+    const [run] = await this.db
+      .update(demoRuns)
+      .set({
+        status: "active",
+        trafficStatus: trafficResponse.status,
+        trafficStartedAt: new Date(trafficResponse.startedAt),
+        updatedAt,
+      })
+      .where(and(eq(demoRuns.id, runId), eq(demoRuns.status, "starting")))
+      .returning({ id: demoRuns.id });
+
+    return Boolean(run);
+  }
+}
+
 /**
- * Repairs API-owned projections for draining runs before the first finalizer
- * tick. Starting and active execution remain owned by the traffic orchestrator
- * and its durable completion journal.
+ * Reconciles durable starting traffic intents and repairs API-owned draining
+ * projections. Traffic execution remains owned by the load orchestrator and
+ * its durable completion journal.
  */
 export class DemoRunStartupReconciliationService {
   constructor(
@@ -44,10 +86,47 @@ export class DemoRunStartupReconciliationService {
         TrafficCompletionEnrichmentController,
         "completePendingEnrichment"
       >;
+      startingRunStore: StartingDemoRunReconciliationStore;
+      trafficExecutionGateway: Pick<TrafficExecutionGateway, "start">;
+      apiBaseUrl: string;
+      buyEndpointPath: string;
       listDrainingRuns: () => Promise<DemoRunRow[]>;
       closeRunSaleEligibility: (input: { runId: string; saleOfferId: string }) => Promise<boolean>;
+      now?: () => Date;
     },
   ) {}
+
+  async reconcileStartingRuns(): Promise<number> {
+    const runs = await this.options.startingRunStore.listStartingRuns();
+    let reconciledCount = 0;
+
+    for (const run of runs) {
+      if (!run.saleOfferId) continue;
+      const correlationId = `traffic-reconcile-${run.id}`;
+      try {
+        const response = await this.options.trafficExecutionGateway.start({
+          runId: run.id,
+          saleOfferId: run.saleOfferId,
+          apiBaseUrl: this.options.apiBaseUrl,
+          buyEndpointPath: this.options.buyEndpointPath,
+          correlationId,
+          configSnapshot: parsePersistedAcceptedRunConfigSnapshot(
+            run.configSnapshot,
+            `demo run ${run.id} starting reconciliation`,
+          ),
+        });
+        await this.options.startingRunStore.activateStartingRun(run.id, response, this.now());
+        reconciledCount += 1;
+      } catch (error) {
+        this.options.logger.warn(
+          { err: error, runId: run.id },
+          "Starting traffic intent remains pending reconciliation.",
+        );
+      }
+    }
+
+    return reconciledCount;
+  }
 
   async reconcile(): Promise<DemoRunStartupReconciliationSummary> {
     // A list failure is startup-wide. Once discovery succeeds, every candidate
@@ -149,5 +228,9 @@ export class DemoRunStartupReconciliationService {
       { err: error, runId: run.id, saleOfferId: run.saleOfferId, stage },
       "Demo-run startup recovery stage failed and remains retryable.",
     );
+  }
+
+  private now(): Date {
+    return this.options.now?.() ?? new Date();
   }
 }

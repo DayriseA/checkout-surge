@@ -51,7 +51,10 @@ import { DemoMaintenanceService } from "./services/demo-maintenance-service.js";
 import { DemoPresetService } from "./services/demo-preset-service.js";
 import { DemoRunFinalizationService } from "./services/demo-run-finalization-service.js";
 import { DemoRunLifecycleService } from "./services/demo-run-service.js";
-import { DemoRunStartupReconciliationService } from "./services/demo-run-startup-reconciliation-service.js";
+import {
+  DemoRunStartupReconciliationService,
+  PostgresStartingDemoRunReconciliationStore,
+} from "./services/demo-run-startup-reconciliation-service.js";
 import {
   ErpStatusService,
   PostgresActiveErpRunReader,
@@ -75,6 +78,7 @@ import {
 import { RunHistoryService } from "./services/run-history-service.js";
 import { PostgresTerminalDemoRunSummaryWriter } from "./services/terminal-demo-run-transition.js";
 import { TrafficCompletionEnrichmentService } from "./services/traffic-completion-enrichment-service.js";
+import { TrafficCompletionService } from "./services/traffic-completion-service.js";
 import { HttpTrafficExecutionGateway } from "./services/traffic-execution-gateway.js";
 import { TrafficMetricIngestionService } from "./services/traffic-metric-ingestion-service.js";
 
@@ -114,6 +118,7 @@ export { QueueStatusService } from "./services/queue-status-service.js";
 export { ReserveOrderService } from "./services/reserve-order-service.js";
 export { RunHistoryService } from "./services/run-history-service.js";
 export { TrafficCompletionEnrichmentService } from "./services/traffic-completion-enrichment-service.js";
+export { TrafficCompletionService } from "./services/traffic-completion-service.js";
 
 export async function startApiServer(): Promise<void> {
   const config = loadApiConfig(process.env);
@@ -505,6 +510,10 @@ export async function startApiServer(): Promise<void> {
   const demoRunStartupReconciliationService = new DemoRunStartupReconciliationService({
     logger,
     completionEnrichmentService: trafficCompletionEnrichmentService,
+    startingRunStore: new PostgresStartingDemoRunReconciliationStore(connection.db),
+    trafficExecutionGateway,
+    apiBaseUrl: config.apiBaseUrl,
+    buyEndpointPath: "/buy",
     listDrainingRuns: () =>
       connection.db.select().from(demoRuns).where(eq(demoRuns.status, "draining")),
     closeRunSaleEligibility: ({ runId, saleOfferId }) =>
@@ -523,13 +532,18 @@ export async function startApiServer(): Promise<void> {
     trafficExecutionGateway,
     publicRunBudgetStore: new RedisPublicRunBudgetStore(redis),
     businessOutcomeReader,
-    completionEnrichmentService: trafficCompletionEnrichmentService,
     terminalRunWriter,
-    finalizationService: demoRunFinalizationService,
     apiBaseUrl: config.apiBaseUrl,
     buyEndpointPath: "/buy",
     logger,
     publicClientCookieSecret: config.publicClientCookieSecret,
+  });
+  const trafficCompletionService = new TrafficCompletionService({
+    db: connection.db,
+    redis,
+    completionEnrichmentService: trafficCompletionEnrichmentService,
+    finalizationService: demoRunFinalizationService,
+    logger,
   });
   const reserveOrderService = new ReserveOrderService({
     persistence,
@@ -627,13 +641,10 @@ export async function startApiServer(): Promise<void> {
     }
 
     finalizationPoller = setInterval(() => {
-      void demoRunLifecycleService.reconcileStartingRuns().catch((error: unknown) => {
+      void demoRunStartupReconciliationService.reconcileStartingRuns().catch((error: unknown) => {
         logger.error({ err: error }, "Demo run traffic-start reconciliation failed.");
       });
-      void (async () => {
-        await trafficCompletionEnrichmentService.reconcilePendingEnrichments();
-        await demoRunFinalizationService.finalizeReadyRuns();
-      })().catch((error: unknown) => {
+      void demoRunFinalizationService.finalizeReadyRuns().catch((error: unknown) => {
         logger.error({ err: error }, "Demo run completion lifecycle poll failed.");
       });
     }, config.demoRunFinalizationPollIntervalSeconds * 1000);
@@ -716,6 +727,7 @@ export async function startApiServer(): Promise<void> {
       presetService,
       runtimePolicyService,
       demoRunLifecycleService,
+      trafficCompletionService,
       trafficMetricIngestion,
       demoMaintenanceService,
       runHistoryService,

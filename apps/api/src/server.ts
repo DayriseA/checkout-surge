@@ -33,6 +33,7 @@ import type { PublicRuntimePolicyController } from "./services/public-runtime-po
 import type { QueueStatusService } from "./services/queue-status-service.js";
 import type { ReserveOrderService } from "./services/reserve-order-service.js";
 import type { RunHistoryController } from "./services/run-history-service.js";
+import type { TrafficCompletionController } from "./services/traffic-completion-service.js";
 import type { TrafficMetricIngestionController } from "./services/traffic-metric-ingestion-service.js";
 
 export interface BuildApiServerOptions {
@@ -50,6 +51,7 @@ export interface BuildApiServerOptions {
   presetService: DemoPresetController;
   runtimePolicyService: PublicRuntimePolicyController;
   demoRunLifecycleService: DemoRunLifecycleController;
+  trafficCompletionService: TrafficCompletionController;
   trafficMetricIngestion: TrafficMetricIngestionController;
   demoMaintenanceService: DemoMaintenanceService;
   runHistoryService: RunHistoryController;
@@ -119,6 +121,7 @@ export async function buildApiServer(options: BuildApiServerOptions): Promise<Ap
     presetService: options.presetService,
     runtimePolicyService: options.runtimePolicyService,
     demoRunLifecycleService: options.demoRunLifecycleService,
+    trafficCompletionService: options.trafficCompletionService,
     trafficMetricIngestion: options.trafficMetricIngestion,
     controlServiceToken: options.config.controlServiceToken,
   });

@@ -37,13 +37,13 @@ Leave one focused run-lifecycle owner for creating and starting the single curre
 
 ## Acceptance criteria
 
-- [ ] The run-lifecycle owner starts and reports runs but does not parse or persist completion reports.
-- [ ] One completion owner accepts immutable load evidence and hands draining runs to one finalization owner.
-- [ ] Completion enrichment is limited to ordinary completion acceptance; no completion, finalization, startup, worker, or maintenance component becomes a second pending-persistence discovery or repair scheduler.
-- [ ] Startup reconciliation is owned outside the request-facing lifecycle service.
-- [ ] Duplicate completion delivery is idempotent and conflicting evidence still fails before mutation.
-- [ ] Terminal summaries remain fenced, atomic, and delayed until business work settles.
-- [ ] The old orchestration block and forwarding methods are deleted.
+- [x] The run-lifecycle owner starts and reports runs but does not parse or persist completion reports.
+- [x] One completion owner accepts immutable load evidence and hands draining runs to one finalization owner.
+- [x] Completion enrichment is limited to ordinary completion acceptance; no completion, finalization, startup, worker, or maintenance component becomes a second pending-persistence discovery or repair scheduler.
+- [x] Startup reconciliation is owned outside the request-facing lifecycle service.
+- [x] Duplicate completion delivery is idempotent and conflicting evidence still fails before mutation.
+- [x] Terminal summaries remain fenced, atomic, and delayed until business work settles.
+- [x] The old orchestration block and forwarding methods are deleted.
 
 ## Verification
 
@@ -54,8 +54,8 @@ Leave one focused run-lifecycle owner for creating and starting the single curre
 
 ## Working record
 
-- **Status:** pending
-- **Completed scope:** none
-- **Material decisions or deviations:** none
-- **Verification performed:** not run
+- **Status:** complete
+- **Completed scope:** Extracted immutable traffic-completion validation, binding, transactional acceptance, semantic redelivery, draining claim, enrichment/admission handoff, dashboard update, and finalization request into `TrafficCompletionService`. Narrowed demo routes, server composition, and `DemoRunLifecycleController` so lifecycle owns starts only. Centralized the two owners' identical nonterminal snapshot read and dashboard-update publication behavior in focused demo-run snapshot operations without changing finalization's terminal publication semantics. Moved periodic starting-intent replay into `DemoRunStartupReconciliationService` with a focused PostgreSQL starting-run store, while retaining its startup-only draining projection repair. Split completion, binding, and starting-reconciliation coverage out of the lifecycle suite and removed obsolete lifecycle fixtures. Added PostgreSQL regressions for pre-mutation binding rejection, acceptance-transaction rollback, restart convergence of a durable pending enrichment, and immutable traffic-boundary capture failure followed by normal terminal inventory capture. Updated the directly affected API ownership documentation.
+- **Material decisions or deviations:** Extended the existing explicit startup reconciliation owner rather than adding another service or loop. Deleted the periodic completion-enrichment scanner: exact durable completion redelivery and the one startup reconciliation pass already re-drive incomplete ordinary enrichment, while `PendingPersistenceRecoveryService` remains the sole owner of pending-persistence discovery, retry scheduling, and resolution. Reused the existing enrichment, binding, finalization, and terminal writer/transition boundaries without changing their transaction or terminal precedence behavior.
+- **Verification performed:** Focused API/PostgreSQL matrix passed from `apps/api`: `node ../../scripts/run-with-test-env.mjs pnpm exec vitest run --config vitest.api.config.ts test/traffic-completion-binding.test.ts test/traffic-completion-service.test.ts test/demo-run-service.test.ts test/demo-run-startup-reconciliation-service.test.ts test/demo-run-finalization-service.test.ts test/demo-maintenance-service.test.ts test/api.test.ts` (7 files, 200 tests). After consolidating the shared snapshot operations, the directly affected `test/traffic-completion-service.test.ts test/demo-run-service.test.ts` rerun passed (2 files, 42 tests). `pnpm --filter api type-check`, `pnpm type-check`, focused `pnpm exec biome lint` for all changed API source/tests, and `git diff --check` passed. Test PostgreSQL/Redis were started with `pnpm test:infra:up` and stopped after verification.
 - **Remaining blockers or follow-up:** none
