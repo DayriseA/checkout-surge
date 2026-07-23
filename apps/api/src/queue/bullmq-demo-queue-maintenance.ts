@@ -13,8 +13,6 @@ import {
   type QueueCleanupSummary,
 } from "../services/demo-queue-maintenance.js";
 
-const cleanedJobGraceMs = 0;
-const cleanedJobLimit = 10_000;
 const targetedStates = [
   "waiting",
   "delayed",
@@ -37,8 +35,6 @@ export interface TargetQueueBoundary {
   isPaused(): Promise<boolean>;
   pause(): Promise<void>;
   resume(): Promise<void>;
-  drain(delayed?: boolean): Promise<void>;
-  clean(grace: number, limit: number, state: "completed" | "failed"): Promise<string[]>;
   getJobs(states: string[]): Promise<TargetQueueJob[]>;
   close(): Promise<void>;
 }
@@ -63,119 +59,55 @@ export function createBullMqDemoQueueMaintenance(
 export function createDemoQueueMaintenance(
   queues: TargetQueueBoundary[],
 ): DemoQueueMaintenance & { close(): Promise<void> } {
-  const queuesNeedingResume = new Set<TargetQueueBoundary>();
-  let activeLeaseDone: Promise<void> | undefined;
   let closePromise: Promise<void> | undefined;
+  const maintenancePausedQueues = new Set<TargetQueueBoundary>();
   return {
-    async cleanResetOwnedQueues(): Promise<QueueCleanupSummary> {
-      let cleanedJobCount = 0;
-      for (const queue of queues) {
-        await queue.drain(true);
-        for (const status of ["completed", "failed"] as const) {
-          cleanedJobCount += (await queue.clean(cleanedJobGraceMs, cleanedJobLimit, status)).length;
-        }
-      }
-      return { cleanedQueueCount: queues.length, cleanedJobCount };
-    },
-
-    async acquireGeneratedRunQuiescence(_runId) {
+    async cleanRuns(runIds): Promise<QueueCleanupSummary> {
+      const targets = new Set(runIds);
+      if (targets.size === 0) return { cleanedQueueCount: 0, cleanedJobCount: 0 };
       if (closePromise) {
-        throw new Error("Queue maintenance is closing and cannot acquire quiescence.");
+        throw new Error("Queue maintenance is closing and cannot clean generated runs.");
       }
-      if (activeLeaseDone) {
-        throw new Error("Queue maintenance already has an active quiescence lease.");
-      }
-
-      let finishActiveLease!: () => void;
-      activeLeaseDone = new Promise<void>((resolve) => {
-        finishActiveLease = () => {
-          activeLeaseDone = undefined;
-          resolve();
-        };
-      });
 
       const queuesToResume = new Set<TargetQueueBoundary>();
+      let result: QueueCleanupSummary | undefined;
+      let primaryError: unknown;
       try {
         for (const queue of queues) {
-          if (queuesNeedingResume.has(queue)) {
+          if (maintenancePausedQueues.has(queue)) {
             queuesToResume.add(queue);
             if (!(await queue.isPaused())) await queue.pause();
             continue;
           }
           if (await queue.isPaused()) continue;
+          maintenancePausedQueues.add(queue);
           queuesToResume.add(queue);
-          queuesNeedingResume.add(queue);
           await queue.pause();
         }
+        result = await cleanExactJobs(queues, targets);
       } catch (error) {
-        const rollbackErrors = await resumeQueues(queuesToResume, queuesNeedingResume);
-        finishActiveLease();
-        if (rollbackErrors.length > 0) {
-          throw new AggregateError(
-            [error, ...rollbackErrors],
-            "Could not acquire queue quiescence and could not fully restore queue state.",
-          );
-        }
-        throw error;
-      }
-
-      let released = false;
-      return {
-        async release() {
-          if (released) return;
-          released = true;
-          try {
-            const errors = await resumeQueues(queuesToResume, queuesNeedingResume);
-            if (errors.length > 0) {
-              throw new AggregateError(errors, "Could not fully restore queue pause state.");
-            }
-          } finally {
-            finishActiveLease();
-          }
-        },
-      };
-    },
-
-    async preflightGeneratedRun(runId: string): Promise<void> {
-      await assertNoConflictingJobs(queues, runId, ["active"]);
-    },
-
-    async cleanGeneratedRun(runId: string): Promise<{ deletedJobCount: number }> {
-      const removed = new Set<string>();
-      for (let pass = 0; pass < 3; pass += 1) {
-        await assertNoConflictingJobs(queues, runId, ["active"]);
-        let found = false;
-        for (const queue of queues) {
-          for (const job of await queue.getJobs([...targetedStates])) {
-            const attribution = classifyJob(queue, job, runId);
-            if (attribution === "malformed_target") throw malformedJobError(runId, queue, job);
-            if (attribution !== "target") continue;
-            found = true;
-            try {
-              await job.remove();
-              removed.add(`${queue.semanticName}:${job.id ?? job.name}`);
-            } catch {
-              // The rescan decides whether a state change is safely retryable.
-            }
-          }
-        }
-        await assertNoConflictingJobs(queues, runId, ["active"]);
-        if (!found || !(await hasTargetedJobs(queues, runId))) {
-          return { deletedJobCount: removed.size };
+        primaryError = error;
+      } finally {
+        const resumeErrors = await resumeQueues(queuesToResume, maintenancePausedQueues);
+        if (resumeErrors.length > 0) {
+          primaryError = primaryError
+            ? new AggregateError(
+                [primaryError, ...resumeErrors],
+                "Queue maintenance failed and could not fully restore queue availability.",
+              )
+            : new AggregateError(
+                resumeErrors,
+                "Queue maintenance could not fully restore queue availability.",
+              );
         }
       }
-      throw new DemoQueueMaintenanceConflict(
-        "not_quiescent",
-        "Run-owned queue jobs changed state during teardown; retry after workers settle.",
-      );
+      if (primaryError) throw primaryError;
+      if (!result) throw new Error("Queue maintenance completed without a cleanup result.");
+      return result;
     },
 
     close() {
-      const leaseDone = activeLeaseDone;
-      closePromise ??= (async () => {
-        await leaseDone;
-        await closeQueues(queues, queuesNeedingResume);
-      })();
+      closePromise ??= closeQueues(queues, maintenancePausedQueues);
       return closePromise;
     },
   };
@@ -192,8 +124,6 @@ function bullMqBoundary(
     isPaused: () => queue.isPaused(),
     pause: () => queue.pause(),
     resume: () => queue.resume(),
-    drain: (delayed) => queue.drain(delayed),
-    clean: (grace, limit, state) => queue.clean(grace, limit, state),
     getJobs: (states) => queue.getJobs(states as Parameters<Queue["getJobs"]>[0], 0, -1, true),
     close: () => queue.close(),
   };
@@ -201,77 +131,98 @@ function bullMqBoundary(
 
 async function resumeQueues(
   queues: Iterable<TargetQueueBoundary>,
-  queuesNeedingResume: Set<TargetQueueBoundary>,
+  maintenancePausedQueues: Set<TargetQueueBoundary>,
 ): Promise<unknown[]> {
   const attempted = [...queues];
   const results = await Promise.allSettled(attempted.map((queue) => queue.resume()));
-  const errors: unknown[] = [];
-  results.forEach((result, index) => {
+  const failed = results.flatMap((result, index) => {
     const queue = attempted[index];
-    if (!queue) return;
-    if (result.status === "fulfilled") queuesNeedingResume.delete(queue);
-    else errors.push(result.reason);
+    if (!queue) return [];
+    if (result.status === "rejected") return [{ queue, error: result.reason }];
+    maintenancePausedQueues.delete(queue);
+    return [];
   });
-  return errors;
+  const retryResults = await Promise.allSettled(failed.map(({ queue }) => queue.resume()));
+  for (const [index, result] of retryResults.entries()) {
+    if (result.status === "fulfilled") {
+      const queue = failed[index]?.queue;
+      if (queue) maintenancePausedQueues.delete(queue);
+    }
+  }
+  return [
+    ...failed.map(({ error }) => error),
+    ...retryResults.flatMap((result) => (result.status === "rejected" ? [result.reason] : [])),
+  ];
 }
 
 async function closeQueues(
   queues: TargetQueueBoundary[],
-  queuesNeedingResume: Set<TargetQueueBoundary>,
+  maintenancePausedQueues: Set<TargetQueueBoundary>,
 ): Promise<void> {
-  const resumeErrors = await resumeQueues(queuesNeedingResume, queuesNeedingResume);
+  const resumeErrors = await resumeQueues(maintenancePausedQueues, maintenancePausedQueues);
   const closeResults = await Promise.allSettled(queues.map((queue) => queue.close()));
   const errors = [
     ...resumeErrors,
     ...closeResults.flatMap((result) => (result.status === "rejected" ? [result.reason] : [])),
   ];
   if (errors.length > 0) {
-    throw new AggregateError(errors, "Could not fully restore and close queue maintenance.");
+    throw new AggregateError(errors, "Could not fully close queue maintenance.");
   }
 }
 
-async function assertNoConflictingJobs(
+async function cleanExactJobs(
   queues: TargetQueueBoundary[],
-  runId: string,
-  states: string[],
-): Promise<void> {
+  runIds: ReadonlySet<string>,
+): Promise<QueueCleanupSummary> {
+  const jobsToRemove: Array<{ queue: TargetQueueBoundary; job: TargetQueueJob; runId: string }> =
+    [];
   for (const queue of queues) {
-    for (const job of await queue.getJobs(states)) {
-      const attribution = classifyJob(queue, job, runId);
-      if (attribution === "malformed_target") throw malformedJobError(runId, queue, job);
-      if (attribution === "target") {
+    for (const job of await queue.getJobs(["active"])) {
+      const attribution = classifyJob(queue, job, runIds);
+      if (attribution.kind === "malformed_target")
+        throw malformedJobError(attribution.runId, queue, job);
+      if (attribution.kind === "target") {
         throw new DemoQueueMaintenanceConflict(
           "active_job",
-          `Run ${runId} has active work on ${queue.semanticName}; retry after it settles.`,
+          `Run ${attribution.runId} has active work on ${queue.semanticName}; retry after it settles.`,
         );
       }
     }
+    for (const job of await queue.getJobs([...targetedStates])) {
+      const attribution = classifyJob(queue, job, runIds);
+      if (attribution.kind === "malformed_target")
+        throw malformedJobError(attribution.runId, queue, job);
+      if (attribution.kind === "target") {
+        jobsToRemove.push({ queue, job, runId: attribution.runId });
+      }
+    }
   }
+
+  for (const { job } of jobsToRemove) {
+    await job.remove();
+  }
+  return { cleanedQueueCount: queues.length, cleanedJobCount: jobsToRemove.length };
 }
 
-type JobAttribution = "target" | "other" | "malformed_target";
+type JobAttribution =
+  | { kind: "target"; runId: string }
+  | { kind: "other" }
+  | { kind: "malformed_target"; runId: string };
 
 function classifyJob(
   queue: TargetQueueBoundary,
   job: Pick<TargetQueueJob, "data">,
-  runId: string,
+  runIds: ReadonlySet<string>,
 ): JobAttribution {
   try {
-    return queue.parse(job.data).runId === runId ? "target" : "other";
+    const runId = queue.parse(job.data).runId;
+    return runId && runIds.has(runId) ? { kind: "target", runId } : { kind: "other" };
   } catch {
-    return (job.data as { runId?: unknown } | null)?.runId === runId ? "malformed_target" : "other";
+    const runId = (job.data as { runId?: unknown } | null)?.runId;
+    return typeof runId === "string" && runIds.has(runId)
+      ? { kind: "malformed_target", runId }
+      : { kind: "other" };
   }
-}
-
-async function hasTargetedJobs(queues: TargetQueueBoundary[], runId: string): Promise<boolean> {
-  for (const queue of queues) {
-    for (const job of await queue.getJobs([...targetedStates, "active"])) {
-      const attribution = classifyJob(queue, job, runId);
-      if (attribution === "malformed_target") throw malformedJobError(runId, queue, job);
-      if (attribution === "target") return true;
-    }
-  }
-  return false;
 }
 
 function malformedJobError(

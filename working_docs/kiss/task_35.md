@@ -37,14 +37,14 @@ Use one small, process-local, serialized queue maintenance boundary for reset an
 
 ## Acceptance criteria
 
-- [ ] One local coordinator serializes all queue maintenance used by reset and generated-run teardown.
-- [ ] The protocol has one pause/clean/resume lifecycle with a guaranteed finally path.
-- [ ] Only exact-run attributable jobs and durable/Redis state can be removed.
-- [ ] Retrying after any exposed partial failure is safe and cannot affect a successor or another run.
-- [ ] Focused concurrent and partial-failure measurements prove the local pause/clean/resume workflow deterministic, exactly attributable, and safe to retry before obsolete coordination machinery is deleted.
-- [ ] Replica-compensation convergence rescans are removed, or a retained rescan has a documented local recovery case and focused regression coverage.
-- [ ] Cross-replica ownership, duplicate leases/protocols, unnecessary receipts, error codes, tests, and docs are deleted.
-- [ ] Durable queue dispatch recovery and normal worker processing remain intact.
+- [x] One local coordinator serializes all queue maintenance used by reset and generated-run teardown.
+- [x] The protocol has one pause/clean/resume lifecycle with a guaranteed finally path.
+- [x] Only exact-run attributable jobs and durable/Redis state can be removed.
+- [x] Retrying after any exposed partial failure is safe and cannot affect a successor or another run.
+- [x] Focused concurrent and partial-failure measurements prove the local pause/clean/resume workflow deterministic, exactly attributable, and safe to retry before obsolete coordination machinery is deleted.
+- [x] Replica-compensation convergence rescans are removed, or a retained rescan has a documented local recovery case and focused regression coverage.
+- [x] Cross-replica ownership, duplicate leases/protocols, unnecessary receipts, error codes, tests, and docs are deleted.
+- [x] Durable queue dispatch recovery and normal worker processing remain intact.
 
 ## Verification
 
@@ -55,8 +55,10 @@ Use one small, process-local, serialized queue maintenance boundary for reset an
 
 ## Working record
 
-- **Status:** pending
-- **Completed scope:** none
-- **Material decisions or deviations:** none
-- **Verification performed:** not run
+- **Status:** implemented; verification complete
+- **Completed scope:** `ProcessLocalDemoMaintenanceAuthority` remains the sole serializer for reset, retention, and direct teardown. Reset and teardown now share one `cleanRuns(runIds)` BullMQ protocol: skip an empty selection, pause only the order/notification queues not already paused, validate all selected active and removable-state jobs before mutation, fail closed on malformed selected payloads, remove only exact selected-run jobs, and attempt every locally introduced resume in `finally`. Admin reset passes exactly its fenced run IDs and no longer drains or cleans whole queues, so terminal/other generated runs and catalog/unscoped jobs survive. Removed the reset-specific cleaner, generated-run quiescence lease, separate preflight/clean wrappers, adapter active-lease/shutdown waiting, three-pass convergence rescan, `not_quiescent` state, broad `drain`/`clean` boundary methods, reset pending-count workaround, and their mechanism-specific tests. The adapter retains only a tiny process-local set of maintenance-introduced pauses whose resume is still failing; it clears entries only after a successful resume, retries them on an exact `cleanRuns` retry and during close, aggregates close/restoration errors, and does not touch genuine pre-existing pauses.
+- **Teardown and receipt decision:** Exact teardown now orders work as terminal/generated identity inspection, exact queue pause/clean/resume, exact Redis deletion, and finally transactional durable identity revalidation plus graph deletion. No database transaction spans BullMQ or Redis calls. Queue, resume, Redis, and database failures surface while the run/sale-offer identity still exists, so repeating the same request is idempotent and cannot resolve against a successor. Successful durable deletion has no remaining external step; therefore `demo_run_teardown_receipts`, its schema/types/exports/index/baseline/snapshot state, receipt completion path, and receipt recovery tests were removed.
+- **Rescan decision and concrete producer race:** No queue convergence rescan remains. The concrete local late-producer race was the worker's order-dispatch/order-recovery or notification scanner selecting a candidate before admin reset terminalized the run and publishing it after exact cleanup. Every generated-run publisher now enters a focused PostgreSQL publication fence using the same lock key as terminal transition: it holds a shared session advisory lock across fresh nonterminal run/sale identity and immutable-config validation and the awaited BullMQ add, while terminal/reset transition takes the exclusive lock. The two producer Queue connections have finite Redis request retries, so a producer outage releases the fence through a visible error and delegates safe retry to durable order/notification recovery; Worker/consumer connections retain their required blocking configuration. Add therefore completes before terminal cleanup or is refused after terminalization, and an abandoned add cannot execute after the fence is released. `PostgresRunConfigReader.read()` retains its prior broader semantics for non-publication consumers. Real PostgreSQL gated race tests prove both concurrent lock orderings; focused unit tests prove order recovery and notification paths delegate the add through the fence.
+- **Focused verification:** Real PostgreSQL/Redis/BullMQ API maintenance coverage passed 3 files / 43 tests (`bullmq-demo-queue-maintenance`, focused reset/teardown/retention workflows, and API resource cleanup), including exact reset IDs, persistent restoration retry, final durable revalidation, and malformed ownership. Worker unit coverage passed 15 files / 96 tests. The complete worker integration boundary passed 7 files / 49 tests; its focused real PostgreSQL publication/config-reader cases include add-before-terminal-cleanup, terminal-before-add refusal, sale-identity/config rejection, and the generated notification-recovery path using the production fence. The earlier broader API and database migration/baseline verification remains applicable to unchanged portions.
+- **Static verification:** Full `pnpm type-check` passed for all production packages plus strict test sources. API, worker, and DB package lint passed. Focused Biome check/write passed for all changed TypeScript and generated JSON files, and `git diff --check` passed. The repository-wide format check was also attempted; its only remaining error is a pre-existing import-order issue in unchanged `apps/api/src/runtime/pending-persistence-operation-factory.ts`, which this task did not alter. `pnpm test:infra:down` then removed the isolated PostgreSQL/Redis containers, network, and test volumes; temporary migration-generation directories were removed.
 - **Remaining blockers or follow-up:** none

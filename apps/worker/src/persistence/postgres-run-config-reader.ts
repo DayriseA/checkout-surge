@@ -20,13 +20,20 @@ export class PostgresRunConfigReader implements RunConfigReader {
       return null;
     }
 
-    const parsed = materializedAcceptedRunConfigSnapshotSchema.safeParse(row.configSnapshot);
-    if (!parsed.success) {
-      throw new PersistedRunConfigCorruptionError(runId, parsed.error);
-    }
-
-    return parsed.data;
+    return parsePersistedRunConfig(runId, row.configSnapshot);
   }
+}
+
+export function parsePersistedRunConfig(
+  runId: string,
+  configSnapshot: unknown,
+): AcceptedRunConfigSnapshot {
+  const parsed = materializedAcceptedRunConfigSnapshotSchema.safeParse(configSnapshot);
+  if (!parsed.success) {
+    throw new PersistedRunConfigCorruptionError(runId, parsed.error);
+  }
+
+  return parsed.data;
 }
 
 export class PersistedRunConfigCorruptionError extends Error {

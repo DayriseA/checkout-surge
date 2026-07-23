@@ -1,5 +1,5 @@
 {
-  "id": "52e08f1c-5546-4c35-abcf-cca925d72ba4",
+  "id": "e4b7b33a-b0d6-4c68-a05e-3d4259479fe6",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -622,66 +622,6 @@
           "value": "\"demo_run_summaries\".\"status\" IN ('completed', 'failed')"
         }
       },
-      "isRLSEnabled": false
-    },
-    "public.demo_run_teardown_receipts": {
-      "name": "demo_run_teardown_receipts",
-      "schema": "",
-      "columns": {
-        "run_id": {
-          "name": "run_id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "sale_offer_id": {
-          "name": "sale_offer_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "preset_name": {
-          "name": "preset_name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "durable_deleted_at": {
-          "name": "durable_deleted_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "demo_run_teardown_receipts_sale_offer_id_idx": {
-          "name": "demo_run_teardown_receipts_sale_offer_id_idx",
-          "columns": [
-            {
-              "expression": "sale_offer_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
       "isRLSEnabled": false
     },
     "public.demo_runs": {

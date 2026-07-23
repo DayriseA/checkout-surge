@@ -16,6 +16,7 @@ import {
 } from "../src/queue/bullmq-demo-queue-maintenance.js";
 
 const runId = "55555555-5555-4555-8555-555555555554";
+const secondRunId = "55555555-5555-4555-8555-555555555553";
 const otherRunId = "55555555-5555-4555-8555-555555555555";
 const connection = { url: process.env.TEST_REDIS_URL ?? "redis://localhost:6380" };
 const resources: Array<{ close(): Promise<void> }> = [];
@@ -24,8 +25,8 @@ afterEach(async () => {
   await Promise.all(resources.splice(0).map((resource) => resource.close()));
 });
 
-describe("BullMQ generated-run maintenance", () => {
-  it("removes only matching non-active jobs from both physical queues", async () => {
+describe("BullMQ exact-run maintenance", () => {
+  it("pauses both physical queues and removes only selected run jobs", async () => {
     const orders = new Queue(orderProcessBullMqQueueName, { connection });
     const notifications = new Queue(notificationRecordBullMqQueueName, { connection });
     await Promise.all([
@@ -36,19 +37,25 @@ describe("BullMQ generated-run maintenance", () => {
     resources.push(maintenance, orders, notifications);
     await orders.add(orderProcessJobName, orderJob(runId));
     await orders.add(orderProcessJobName, orderJob(otherRunId));
+    await orders.add(orderProcessJobName, orderJob(undefined));
     await notifications.add(notificationRecordJobName, notificationJob(runId), { delay: 60_000 });
     await notifications.add(notificationRecordJobName, notificationJob(otherRunId));
 
-    await expect(maintenance.cleanGeneratedRun?.(runId)).resolves.toEqual({ deletedJobCount: 2 });
-    expect((await orders.getJobs(["waiting", "delayed"])).map((job) => job.data.runId)).toEqual([
-      otherRunId,
-    ]);
+    await expect(maintenance.cleanRuns([runId])).resolves.toEqual({
+      cleanedQueueCount: 2,
+      cleanedJobCount: 2,
+    });
+    expect((await orders.getJobs(["waiting", "delayed"])).map((job) => job.data.runId)).toEqual(
+      expect.arrayContaining([otherRunId, undefined]),
+    );
     expect(
       (await notifications.getJobs(["waiting", "delayed"])).map((job) => job.data.runId),
     ).toEqual([otherRunId]);
+    expect(await orders.isPaused()).toBe(false);
+    expect(await notifications.isPaused()).toBe(false);
   });
 
-  it("rejects a matching active job without broad deletion", async () => {
+  it("rejects an active selected job without deleting other selected jobs", async () => {
     const orders = new Queue(orderProcessBullMqQueueName, { connection });
     await orders.obliterate({ force: true });
     let release: () => void = () => undefined;
@@ -59,35 +66,19 @@ describe("BullMQ generated-run maintenance", () => {
     const maintenance = createBullMqDemoQueueMaintenance(connection);
     resources.push(maintenance, orders, worker);
     await orders.add(orderProcessJobName, orderJob(runId));
+    await orders.add(orderProcessJobName, orderJob(secondRunId));
     for (let index = 0; index < 50 && (await orders.getActiveCount()) === 0; index += 1)
       await new Promise((resolve) => setTimeout(resolve, 20));
-    await expect(maintenance.preflightGeneratedRun?.(runId)).rejects.toMatchObject({
+
+    await expect(maintenance.cleanRuns([runId, secondRunId])).rejects.toMatchObject({
       code: "active_job",
     });
-    expect(await orders.getActiveCount()).toBe(1);
+    expect(await orders.getWaitingCount()).toBe(1);
+    expect(await orders.isPaused()).toBe(false);
     release();
   });
 
-  it("pauses and resumes both physical queues", async () => {
-    const orders = new Queue(orderProcessBullMqQueueName, { connection });
-    const notifications = new Queue(notificationRecordBullMqQueueName, { connection });
-    await Promise.all([
-      orders.obliterate({ force: true }),
-      notifications.obliterate({ force: true }),
-    ]);
-    const maintenance = createBullMqDemoQueueMaintenance(connection);
-    resources.push(maintenance, orders, notifications);
-
-    const lease = await maintenance.acquireGeneratedRunQuiescence(runId);
-    expect(await orders.isPaused()).toBe(true);
-    expect(await notifications.isPaused()).toBe(true);
-
-    await lease.release();
-    expect(await orders.isPaused()).toBe(false);
-    expect(await notifications.isPaused()).toBe(false);
-  });
-
-  it("removes every supported exact-run state across both queues and preserves foreign/catalog jobs", async () => {
+  it("removes every supported state for multiple runs and preserves other/catalog jobs", async () => {
     const states = ["waiting", "delayed", "prioritized", "paused", "failed", "completed"];
     const orders = new FakeQueue("orders:process", (data) => orderProcessJobSchema.parse(data));
     const notifications = new FakeQueue("notifications:record", (data) =>
@@ -95,42 +86,39 @@ describe("BullMQ generated-run maintenance", () => {
     );
     for (const state of states) {
       orders.add(state, orderJob(runId));
-      notifications.add(state, notificationJob(runId));
+      notifications.add(state, notificationJob(secondRunId));
     }
     orders.add("waiting", orderJob(otherRunId));
     notifications.add("completed", notificationJob(undefined));
     const maintenance = createDemoQueueMaintenance([orders, notifications]);
 
-    await expect(maintenance.cleanGeneratedRun?.(runId)).resolves.toEqual({ deletedJobCount: 12 });
+    await expect(maintenance.cleanRuns([runId, secondRunId])).resolves.toEqual({
+      cleanedQueueCount: 2,
+      cleanedJobCount: 12,
+    });
     expect(orders.remainingRunIds()).toEqual([otherRunId]);
     expect(notifications.remainingRunIds()).toEqual([undefined]);
+    expect(orders.pauseCalls).toBe(1);
+    expect(notifications.pauseCalls).toBe(1);
+    expect(orders.resumeCalls).toBe(1);
+    expect(notifications.resumeCalls).toBe(1);
   });
 
-  it("preserves malformed claimed-target jobs and reports a conflict", async () => {
+  it("fails closed on a malformed selected job before removing valid selected jobs", async () => {
     const orders = new FakeQueue("orders:process", (data) => orderProcessJobSchema.parse(data));
+    const valid = orders.add("waiting", orderJob(runId));
     const malformed = orders.add("waiting", { runId });
     const maintenance = createDemoQueueMaintenance([orders]);
-    await expect(maintenance.cleanGeneratedRun?.(runId)).rejects.toMatchObject({
+
+    await expect(maintenance.cleanRuns([runId])).rejects.toMatchObject({
       code: "malformed_claimed_job",
     });
+    expect(valid.removed).toBe(false);
     expect(malformed.removed).toBe(false);
+    expect(orders.paused).toBe(false);
   });
 
-  it("reports a state-change-to-active conflict and preserves the job", async () => {
-    const orders = new FakeQueue("orders:process", (data) => orderProcessJobSchema.parse(data));
-    const job = orders.add("waiting", orderJob(runId));
-    job.removeBehavior = async () => {
-      orders.move(job, "active");
-      throw new Error("claimed");
-    };
-    const maintenance = createDemoQueueMaintenance([orders]);
-    await expect(maintenance.cleanGeneratedRun?.(runId)).rejects.toMatchObject({
-      code: "active_job",
-    });
-    expect(job.removed).toBe(false);
-  });
-
-  it("restores only queues paused by the lease and preserves a pre-paused queue", async () => {
+  it("preserves a genuinely pre-paused queue", async () => {
     const prePaused = new FakeQueue(
       "orders:process",
       (data) => orderProcessJobSchema.parse(data),
@@ -140,93 +128,125 @@ describe("BullMQ generated-run maintenance", () => {
       notificationRecordJobSchema.parse(data),
     );
     const maintenance = createDemoQueueMaintenance([prePaused, changed]);
-    const lease = await maintenance.acquireGeneratedRunQuiescence?.(runId);
-    expect(prePaused.pauseCalls).toBe(0);
-    expect(changed.paused).toBe(true);
-    await lease?.release();
+
+    await maintenance.cleanRuns([runId]);
     expect(prePaused.paused).toBe(true);
+    expect(prePaused.pauseCalls).toBe(0);
     expect(prePaused.resumeCalls).toBe(0);
     expect(changed.paused).toBe(false);
+    expect(changed.resumeCalls).toBe(1);
   });
 
-  it("reports resume failures after attempting every maintenance-owned queue", async () => {
-    const prePaused = new FakeQueue(
-      "orders:process",
-      (data) => orderProcessJobSchema.parse(data),
-      true,
-    );
-    const owned = new FakeQueue("notifications:record", (data) =>
-      notificationRecordJobSchema.parse(data),
-    );
-    const maintenance = createDemoQueueMaintenance([prePaused, owned]);
-    const firstLease = await maintenance.acquireGeneratedRunQuiescence?.(runId);
-    owned.resumeError = new Error("resume unavailable");
-    await expect(firstLease?.release()).rejects.toThrow("Could not fully restore");
-    expect(owned.paused).toBe(true);
-    expect(owned.resumeCalls).toBe(1);
-    expect(prePaused.resumeCalls).toBe(0);
-
-    delete owned.resumeError;
-    const retryLease = await maintenance.acquireGeneratedRunQuiescence(runId);
-    await retryLease.release();
-    expect(owned.paused).toBe(false);
-    expect(owned.pauseCalls).toBe(1);
-    expect(owned.resumeCalls).toBe(2);
-    expect(prePaused.paused).toBe(true);
-    expect(prePaused.resumeCalls).toBe(0);
-  });
-
-  it("rolls back partial pause acquisition and attempts every restoration", async () => {
+  it("attempts every introduced resume after pause, clean, and resume failures", async () => {
     const first = new FakeQueue("orders:process", (data) => orderProcessJobSchema.parse(data));
     const second = new FakeQueue("notifications:record", (data) =>
       notificationRecordJobSchema.parse(data),
     );
     second.pauseError = new Error("pause failed");
-    const maintenance = createDemoQueueMaintenance([first, second]);
-    await expect(maintenance.acquireGeneratedRunQuiescence?.(runId)).rejects.toThrow(
+    await expect(createDemoQueueMaintenance([first, second]).cleanRuns([runId])).rejects.toThrow(
       "pause failed",
     );
-    expect(first.paused).toBe(false);
     expect(first.resumeCalls).toBe(1);
-    expect(second.paused).toBe(false);
     expect(second.resumeCalls).toBe(1);
-    delete second.pauseError;
-    const retryLease = await maintenance.acquireGeneratedRunQuiescence?.(runId);
-    await retryLease?.release();
-    expect(first.paused).toBe(false);
-    expect(second.paused).toBe(false);
 
-    const third = new FakeQueue("third", (data) => orderProcessJobSchema.parse(data));
-    const fourth = new FakeQueue("fourth", (data) => orderProcessJobSchema.parse(data));
-    const releaseMaintenance = createDemoQueueMaintenance([third, fourth]);
-    const lease = await releaseMaintenance.acquireGeneratedRunQuiescence?.(runId);
-    third.resumeError = new Error("resume third");
-    fourth.resumeError = new Error("resume fourth");
-    await expect(lease?.release()).rejects.toMatchObject({
-      errors: expect.arrayContaining([third.resumeError, fourth.resumeError]),
+    delete second.pauseError;
+    first.add("waiting", orderJob(runId)).removeError = new Error("remove failed");
+    await expect(createDemoQueueMaintenance([first, second]).cleanRuns([runId])).rejects.toThrow(
+      "remove failed",
+    );
+    expect(first.resumeCalls).toBe(2);
+    expect(second.resumeCalls).toBe(2);
+
+    first.resumeError = new Error("resume first");
+    second.resumeError = new Error("resume second");
+    await expect(
+      createDemoQueueMaintenance([first, second]).cleanRuns([runId]),
+    ).rejects.toMatchObject({
+      errors: expect.arrayContaining([first.resumeError, second.resumeError]),
     });
-    expect(third.resumeCalls).toBe(1);
-    expect(fourth.resumeCalls).toBe(1);
+    expect(first.resumeCalls).toBe(4);
+    expect(second.resumeCalls).toBe(4);
   });
 
-  it("waits for an active lease before closing and rejects later acquisitions", async () => {
+  it("restores a transient resume failure before surfacing it, making an exact retry safe", async () => {
     const queue = new FakeQueue("orders:process", (data) => orderProcessJobSchema.parse(data));
+    queue.add("waiting", orderJob(runId));
+    queue.resumeFailuresRemaining = 1;
     const maintenance = createDemoQueueMaintenance([queue]);
-    const lease = await maintenance.acquireGeneratedRunQuiescence(runId);
-    let closed = false;
-    const closing = maintenance.close().then(() => {
-      closed = true;
-    });
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    expect(closed).toBe(false);
-    expect(queue.closeCalls).toBe(0);
-    await expect(maintenance.acquireGeneratedRunQuiescence?.(runId)).rejects.toThrow(
-      "Queue maintenance is closing",
-    );
 
-    await lease.release();
-    await closing;
-    expect(closed).toBe(true);
+    await expect(maintenance.cleanRuns([runId])).rejects.toMatchObject({
+      errors: [expect.objectContaining({ message: "transient resume failure" })],
+    });
+    expect(queue.paused).toBe(false);
+    expect(queue.resumeCalls).toBe(2);
+    await expect(maintenance.cleanRuns([runId])).resolves.toEqual({
+      cleanedQueueCount: 1,
+      cleanedJobCount: 0,
+    });
+    expect(queue.paused).toBe(false);
+  });
+
+  it("retains a persistently failed restoration until an exact retry can restore it", async () => {
+    const queue = new FakeQueue("orders:process", (data) => orderProcessJobSchema.parse(data));
+    queue.add("waiting", orderJob(runId));
+    queue.resumeError = new Error("persistent resume failure");
+    const maintenance = createDemoQueueMaintenance([queue]);
+
+    await expect(maintenance.cleanRuns([runId])).rejects.toMatchObject({
+      errors: expect.arrayContaining([queue.resumeError]),
+    });
+    expect(queue.paused).toBe(true);
+    expect(queue.resumeCalls).toBe(2);
+
+    delete queue.resumeError;
+    await expect(maintenance.cleanRuns([runId])).resolves.toEqual({
+      cleanedQueueCount: 1,
+      cleanedJobCount: 0,
+    });
+    expect(queue.paused).toBe(false);
+    expect(queue.pauseCalls).toBe(1);
+    expect(queue.resumeCalls).toBe(3);
+  });
+
+  it("returns a zero summary without pausing when no run is selected", async () => {
+    const queue = new FakeQueue("orders:process", (data) => orderProcessJobSchema.parse(data));
+    await expect(createDemoQueueMaintenance([queue]).cleanRuns([])).resolves.toEqual({
+      cleanedQueueCount: 0,
+      cleanedJobCount: 0,
+    });
+    expect(queue.pauseCalls).toBe(0);
+  });
+
+  it("closes every queue and reports aggregate resource cleanup failures", async () => {
+    const first = new FakeQueue("orders:process", (data) => orderProcessJobSchema.parse(data));
+    const second = new FakeQueue("notifications:record", (data) =>
+      notificationRecordJobSchema.parse(data),
+    );
+    first.closeError = new Error("close first");
+    second.closeError = new Error("close second");
+    const maintenance = createDemoQueueMaintenance([first, second]);
+
+    await expect(maintenance.close()).rejects.toMatchObject({
+      errors: expect.arrayContaining([first.closeError, second.closeError]),
+    });
+    expect(first.closeCalls).toBe(1);
+    expect(second.closeCalls).toBe(1);
+    await expect(maintenance.cleanRuns([runId])).rejects.toThrow("closing");
+  });
+
+  it("retries outstanding restoration during close and aggregates restoration and close failures", async () => {
+    const queue = new FakeQueue("orders:process", (data) => orderProcessJobSchema.parse(data));
+    queue.resumeError = new Error("persistent resume failure");
+    queue.closeError = new Error("close failure");
+    const maintenance = createDemoQueueMaintenance([queue]);
+
+    await expect(maintenance.cleanRuns([runId])).rejects.toMatchObject({
+      errors: expect.arrayContaining([queue.resumeError]),
+    });
+    await expect(maintenance.close()).rejects.toMatchObject({
+      errors: expect.arrayContaining([queue.resumeError, queue.closeError]),
+    });
+    expect(queue.resumeCalls).toBe(4);
     expect(queue.closeCalls).toBe(1);
   });
 });
@@ -238,17 +258,18 @@ function orderJob(attributedRunId?: string) {
     reservationId: crypto.randomUUID(),
     saleOfferId: crypto.randomUUID(),
     correlationId: "corr-queue",
-    runId: attributedRunId,
+    ...(attributedRunId ? { runId: attributedRunId } : {}),
     quantity: 1,
     queuedAt: new Date().toISOString(),
   };
 }
+
 function notificationJob(attributedRunId?: string) {
   return {
     orderId: crypto.randomUUID(),
     saleOfferId: crypto.randomUUID(),
     correlationId: "corr-queue",
-    runId: attributedRunId,
+    ...(attributedRunId ? { runId: attributedRunId } : {}),
     recipientPlaceholder: "buyer@example.invalid",
     confirmedAt: new Date().toISOString(),
   };
@@ -258,13 +279,13 @@ class FakeJob implements TargetQueueJob {
   readonly id = crypto.randomUUID();
   readonly name = "fake";
   removed = false;
-  removeBehavior?: () => Promise<void>;
+  removeError?: Error;
   constructor(
     readonly data: unknown,
     private readonly owner: FakeQueue,
   ) {}
   async remove() {
-    if (this.removeBehavior) return this.removeBehavior();
+    if (this.removeError) throw this.removeError;
     this.removed = true;
     this.owner.remove(this);
   }
@@ -276,6 +297,8 @@ class FakeQueue implements TargetQueueBoundary {
   resumeCalls = 0;
   pauseError?: Error;
   resumeError?: Error;
+  resumeFailuresRemaining = 0;
+  closeError?: Error;
   closeCalls = 0;
   private readonly jobs = new Map<string, FakeJob[]>();
   constructor(
@@ -289,10 +312,6 @@ class FakeQueue implements TargetQueueBoundary {
     const job = new FakeJob(data, this);
     this.jobs.set(state, [...(this.jobs.get(state) ?? []), job]);
     return job;
-  }
-  move(job: FakeJob, state: string) {
-    this.remove(job);
-    this.jobs.set(state, [...(this.jobs.get(state) ?? []), job]);
   }
   remove(job: FakeJob) {
     for (const [state, jobs] of this.jobs)
@@ -314,19 +333,18 @@ class FakeQueue implements TargetQueueBoundary {
   }
   async resume() {
     this.resumeCalls += 1;
+    if (this.resumeFailuresRemaining > 0) {
+      this.resumeFailuresRemaining -= 1;
+      throw new Error("transient resume failure");
+    }
     if (this.resumeError) throw this.resumeError;
     this.paused = false;
-  }
-  async drain() {
-    this.jobs.clear();
-  }
-  async clean() {
-    return [];
   }
   async getJobs(states: string[]) {
     return states.flatMap((state) => this.jobs.get(state) ?? []);
   }
   async close() {
     this.closeCalls += 1;
+    if (this.closeError) throw this.closeError;
   }
 }

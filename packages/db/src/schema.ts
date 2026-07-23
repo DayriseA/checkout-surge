@@ -660,19 +660,6 @@ export const demoRunSummaries = pgTable(
   ],
 );
 
-/** Durable retry coordinates retained only while external teardown is incomplete. */
-export const demoRunTeardownReceipts = pgTable(
-  "demo_run_teardown_receipts",
-  {
-    runId: uuid("run_id").primaryKey(),
-    saleOfferId: uuid("sale_offer_id").notNull(),
-    presetName: text("preset_name").notNull(),
-    durableDeletedAt: timestamp("durable_deleted_at", { withTimezone: true }).notNull(),
-    createdAt: createdAt(),
-  },
-  (table) => [index("demo_run_teardown_receipts_sale_offer_id_idx").on(table.saleOfferId)],
-);
-
 export const publicRuntimePolicies = pgTable(
   "public_runtime_policies",
   {
@@ -886,6 +873,5 @@ export type DemoRunFinalization = typeof demoRunFinalizations.$inferSelect;
 export type NewDemoRunFinalization = typeof demoRunFinalizations.$inferInsert;
 export type DemoRunSummary = typeof demoRunSummaries.$inferSelect;
 export type NewDemoRunSummary = typeof demoRunSummaries.$inferInsert;
-export type DemoRunTeardownReceipt = typeof demoRunTeardownReceipts.$inferSelect;
 export type PublicRuntimePolicy = typeof publicRuntimePolicies.$inferSelect;
 export type NewPublicRuntimePolicy = typeof publicRuntimePolicies.$inferInsert;

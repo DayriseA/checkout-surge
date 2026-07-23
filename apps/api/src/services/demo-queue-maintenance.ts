@@ -3,27 +3,13 @@ export interface QueueCleanupSummary {
   cleanedJobCount: number;
 }
 
-export interface ResetQueueMaintenance {
-  cleanResetOwnedQueues(): Promise<QueueCleanupSummary>;
+export interface ExactRunQueueMaintenance {
+  cleanRuns(runIds: readonly string[]): Promise<QueueCleanupSummary>;
 }
 
-export interface DemoQueueQuiescenceLease {
-  /** Restores every queue pause introduced by this maintenance operation. */
-  release(): Promise<void>;
-}
+export type DemoQueueMaintenance = ExactRunQueueMaintenance;
 
-export interface GeneratedRunQueueMaintenance {
-  acquireGeneratedRunQuiescence(runId: string): Promise<DemoQueueQuiescenceLease>;
-  preflightGeneratedRun(runId: string): Promise<void>;
-  cleanGeneratedRun(runId: string): Promise<{ deletedJobCount: number }>;
-}
-
-export type DemoQueueMaintenance = ResetQueueMaintenance & GeneratedRunQueueMaintenance;
-
-export type DemoQueueMaintenanceConflictCode =
-  | "active_job"
-  | "malformed_claimed_job"
-  | "not_quiescent";
+export type DemoQueueMaintenanceConflictCode = "active_job" | "malformed_claimed_job";
 
 export class DemoQueueMaintenanceConflict extends Error {
   constructor(

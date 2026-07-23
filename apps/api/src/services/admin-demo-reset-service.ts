@@ -26,7 +26,7 @@ import {
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { and, eq, inArray, isNull, or } from "drizzle-orm";
 import type { DemoMaintenanceAuthority } from "./demo-maintenance-authority.js";
-import type { ResetQueueMaintenance } from "./demo-queue-maintenance.js";
+import type { ExactRunQueueMaintenance } from "./demo-queue-maintenance.js";
 import { emptyBusinessOutcomeSummary } from "./demo-run-projections.js";
 import { parsePersistedAcceptedRunConfigSnapshot } from "./persisted-demo-run-state.js";
 import type { DemoResetWorkflowFence } from "./postgres-demo-reset-workflow-fence.js";
@@ -60,13 +60,11 @@ export interface AdminDemoResetWorkflow {
 }
 
 export class AdminDemoResetService implements AdminDemoResetWorkflow {
-  private resetPendingCount = 0;
-
   constructor(
     private readonly options: {
       db: CheckoutSurgeDatabase;
       redis: CheckoutSurgeRedis;
-      queueMaintenance: ResetQueueMaintenance;
+      queueMaintenance: ExactRunQueueMaintenance;
       terminalRunWriter: Pick<
         TerminalDemoRunWriter,
         "claimTerminalRun" | "writeAfterTerminalClaims"
@@ -82,21 +80,15 @@ export class AdminDemoResetService implements AdminDemoResetWorkflow {
   ) {}
 
   async reset(correlationId: string): Promise<AdminDemoResetResponse> {
-    const arrivedDuringReset = this.resetPendingCount > 0;
-    this.resetPendingCount += 1;
-    const operation = this.options.maintenanceAuthority.runExclusive(() =>
+    return this.options.maintenanceAuthority.runExclusive(() =>
       this.options.resetWorkflowFence.runExclusive(() =>
-        this.resetWithoutConcurrentReset(correlationId, arrivedDuringReset),
+        this.resetWithoutConcurrentReset(correlationId),
       ),
     );
-    return operation.finally(() => {
-      this.resetPendingCount -= 1;
-    });
   }
 
   private async resetWithoutConcurrentReset(
     correlationId: string,
-    arrivedDuringReset: boolean,
   ): Promise<AdminDemoResetResponse> {
     const now = this.now();
     const resetCandidates = await this.options.db
@@ -212,8 +204,8 @@ export class AdminDemoResetService implements AdminDemoResetWorkflow {
     }
 
     const queueCleanup =
-      fencedRuns.length > 0 || !arrivedDuringReset
-        ? await this.options.queueMaintenance.cleanResetOwnedQueues()
+      fencedRuns.length > 0
+        ? await this.options.queueMaintenance.cleanRuns(fencedRuns.map(({ run }) => run.id))
         : { cleanedQueueCount: 0, cleanedJobCount: 0 };
 
     const summaryInputs: TerminalDemoRunSummaryInput[] = [];

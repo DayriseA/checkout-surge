@@ -1,16 +1,17 @@
 import {
+  type AcceptedRunConfigSnapshot,
   type OrderProcessJob,
   orderProcessBullMqQueueName,
   orderProcessJobName,
   orderProcessJobSchema,
 } from "@checkout-surge/contracts";
 import { type ConnectionOptions, Queue } from "bullmq";
+import type { GeneratedRunPublicationFence } from "../application/generated-run-publication-fence.js";
 import type { OrderDispatchPublisher } from "../application/order-dispatch-scanner.js";
 import type {
   FailedOrderJobReader,
   RecoveryJobPublisher,
 } from "../application/order-recovery-scanner.js";
-import type { RunConfigReader } from "../application/run-config.js";
 import {
   deadLetterFailureMarker,
   recoverableFailureMarker,
@@ -57,14 +58,14 @@ export function createBullMqOrderProcessJobPublisher(
     maxAttempts: 4,
     backoffBaseMs: 500,
   },
-  runConfigReader?: RunConfigReader,
+  publicationFence?: GeneratedRunPublicationFence,
 ): WorkerOrderProcessJobPublisher {
   const queue = new Queue<OrderProcessJob, void, typeof orderProcessJobName>(
     orderProcessBullMqQueueName,
     { connection },
   );
 
-  return createOrderProcessJobPublisher(queue, retryOptions, runConfigReader);
+  return createOrderProcessJobPublisher(queue, retryOptions, publicationFence);
 }
 
 export function createOrderProcessJobPublisher(
@@ -73,24 +74,36 @@ export function createOrderProcessJobPublisher(
     maxAttempts: 4,
     backoffBaseMs: 500,
   },
-  runConfigReader?: RunConfigReader,
+  publicationFence?: GeneratedRunPublicationFence,
 ): WorkerOrderProcessJobPublisher {
   return {
     async enqueue(input, options?: { jobId?: string; attempts?: number }) {
       const job = orderProcessJobSchema.parse(input);
-      const snapshot =
-        job.runId && !options?.attempts ? await runConfigReader?.read(job.runId) : null;
-      if (job.runId && !options?.attempts && !snapshot) {
-        throw new Error(`Accepted run snapshot was not found for order job run ${job.runId}.`);
+      const add = async (snapshot?: AcceptedRunConfigSnapshot) => {
+        const retryPolicy = options?.attempts
+          ? undefined
+          : snapshot?.backpressureConfig.retryPolicy;
+        await queue.add(orderProcessJobName, job, {
+          attempts: options?.attempts ?? retryPolicy?.maxAttempts ?? retryOptions.maxAttempts,
+          backoff: {
+            type: "exponential",
+            delay: retryPolicy?.initialBackoffMs ?? retryOptions.backoffBaseMs,
+          },
+          jobId: options?.jobId ?? job.orderId,
+        });
+      };
+
+      if (!job.runId) {
+        await add();
+        return;
       }
-      const retryPolicy = snapshot?.backpressureConfig.retryPolicy;
-      await queue.add(orderProcessJobName, job, {
-        attempts: options?.attempts ?? retryPolicy?.maxAttempts ?? retryOptions.maxAttempts,
-        backoff: {
-          type: "exponential",
-          delay: retryPolicy?.initialBackoffMs ?? retryOptions.backoffBaseMs,
-        },
-        jobId: options?.jobId ?? job.orderId,
+      if (!publicationFence) {
+        throw new Error("Generated-run order publication requires a PostgreSQL publication fence.");
+      }
+      await publicationFence.publish({
+        runId: job.runId,
+        saleOfferId: job.saleOfferId,
+        operation: add,
       });
     },
     async findFailedOrderJobs(limit) {

@@ -81,14 +81,6 @@ CREATE TABLE "demo_run_summaries" (
 	CONSTRAINT "demo_run_summaries_terminal_status" CHECK ("demo_run_summaries"."status" IN ('completed', 'failed'))
 );
 --> statement-breakpoint
-CREATE TABLE "demo_run_teardown_receipts" (
-	"run_id" uuid PRIMARY KEY NOT NULL,
-	"sale_offer_id" uuid NOT NULL,
-	"preset_name" text NOT NULL,
-	"durable_deleted_at" timestamp with time zone NOT NULL,
-	"created_at" timestamp with time zone DEFAULT now() NOT NULL
-);
---> statement-breakpoint
 CREATE TABLE "demo_runs" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"preset_id" uuid NOT NULL,
@@ -318,7 +310,6 @@ CREATE INDEX "demo_run_finalizations_run_id_idx" ON "demo_run_finalizations" USI
 CREATE UNIQUE INDEX "demo_run_sale_contexts_sale_offer_id_unique" ON "demo_run_sale_contexts" USING btree ("sale_offer_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "demo_run_summaries_run_id_unique" ON "demo_run_summaries" USING btree ("run_id");--> statement-breakpoint
 CREATE INDEX "demo_run_summaries_captured_at_idx" ON "demo_run_summaries" USING btree ("captured_at");--> statement-breakpoint
-CREATE INDEX "demo_run_teardown_receipts_sale_offer_id_idx" ON "demo_run_teardown_receipts" USING btree ("sale_offer_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "demo_runs_sale_offer_id_unique" ON "demo_runs" USING btree ("sale_offer_id");--> statement-breakpoint
 CREATE INDEX "demo_runs_preset_id_idx" ON "demo_runs" USING btree ("preset_id");--> statement-breakpoint
 CREATE INDEX "demo_runs_status_idx" ON "demo_runs" USING btree ("status");--> statement-breakpoint

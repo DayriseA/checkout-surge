@@ -125,7 +125,7 @@ For focused host-native development, use the infra-only and `dev:*` commands doc
 
 Run API/web/load flows from the dashboard or call the owning services directly while developing. The public start path also uses the private control-service channel plus the server-issued visitor credential; public mode is not trusted from a browser-supplied header or body.
 
-While the API and Mock ERP are still running, optional local recovery and maintenance commands are available. `runtime:reset` terminalizes a recoverable current run as failed, writes its immutable summary, clears only its live traffic projection, and restores Mock ERP chaos defaults; it does not delete history or flush Redis. `maintenance:cleanup-runs` defaults to deleting eligible terminal generated runs created at least seven days ago, while preserving active runs, catalog-backed runs, and the latest 15 runs across the full run population, then attempts best-effort related Redis cleanup:
+While the API and Mock ERP are still running, optional local recovery and maintenance commands are available. `runtime:reset` terminalizes a recoverable current run as failed, removes only its exactly attributed queue jobs, writes its immutable summary, clears only its live traffic projection, and restores Mock ERP chaos defaults; it does not delete history or flush Redis. `maintenance:cleanup-runs` defaults to selecting eligible terminal generated runs created at least seven days ago while preserving active runs, catalog-backed runs, and the latest 15 runs across the full run population; each selected run uses strict exact queue/Redis cleanup before transactional durable deletion:
 
 ```bash
 pnpm runtime:reset

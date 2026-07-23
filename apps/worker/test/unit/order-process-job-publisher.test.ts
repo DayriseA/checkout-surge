@@ -98,9 +98,11 @@ describe("worker order-processing job publisher", () => {
       { add, close: vi.fn() },
       { maxAttempts: 9, backoffBaseMs: 999 },
       {
-        read: vi.fn().mockResolvedValue({
-          backpressureConfig: { retryPolicy: { maxAttempts: 6, initialBackoffMs: 250 } },
-        }),
+        publish: vi.fn(async ({ operation }) =>
+          operation({
+            backpressureConfig: { retryPolicy: { maxAttempts: 6, initialBackoffMs: 250 } },
+          } as never),
+        ),
       },
     );
     await publisher.enqueue(runJob);
@@ -109,6 +111,23 @@ describe("worker order-processing job publisher", () => {
       backoff: { type: "exponential", delay: 250 },
       jobId: job.orderId,
     });
+  });
+
+  it("refuses recovery publication after a generated run becomes terminal", async () => {
+    const add = vi.fn().mockResolvedValue(undefined);
+    const runJob = { ...job, runId: "55555555-5555-4555-8555-555555555555" };
+    const publish = vi.fn().mockRejectedValue(new Error("generated run is terminal"));
+    const publisher = createOrderProcessJobPublisher({ add, close: vi.fn() }, undefined, {
+      publish,
+    });
+
+    await expect(
+      publisher.enqueue(runJob, { jobId: "recovery-terminal-run", attempts: 1 }),
+    ).rejects.toThrow("generated run is terminal");
+    expect(publish).toHaveBeenCalledWith(
+      expect.objectContaining({ runId: runJob.runId, saleOfferId: runJob.saleOfferId }),
+    );
+    expect(add).not.toHaveBeenCalled();
   });
 
   it("recovers from the stable failedReason marker when progress was not persisted", async () => {

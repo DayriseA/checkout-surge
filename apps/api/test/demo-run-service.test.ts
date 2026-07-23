@@ -287,7 +287,7 @@ describe("demo-run lifecycle start gating", () => {
       redis: redisClient,
       terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(resetConnection.db),
       queueMaintenance: {
-        cleanResetOwnedQueues: queueCleanup,
+        cleanRuns: queueCleanup,
       },
       clearErpCircuitBreakerState: async () => undefined,
       trafficAborter: {
@@ -1071,7 +1071,7 @@ describe("demo-run lifecycle start gating", () => {
       terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(resetConnection.db),
       redis: requireRedis(redis),
       queueMaintenance: {
-        cleanResetOwnedQueues: async () => ({ cleanedQueueCount: 0, cleanedJobCount: 0 }),
+        cleanRuns: async () => ({ cleanedQueueCount: 0, cleanedJobCount: 0 }),
       },
       clearErpCircuitBreakerState: async () => undefined,
       trafficAborter: { abortCurrent: async () => ({ outcome: "no_current_run" }) },

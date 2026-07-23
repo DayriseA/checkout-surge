@@ -30,6 +30,7 @@ import {
 } from "./application/order-recovery-scanner.js";
 import { RunScopedBackpressureOrderConfirmation } from "./application/run-backpressure.js";
 import { PostgresErpAttemptPersistence } from "./persistence/postgres-erp-attempt-persistence.js";
+import { PostgresGeneratedRunPublicationFence } from "./persistence/postgres-generated-run-publication-fence.js";
 import { PostgresNotificationRecordPersistence } from "./persistence/postgres-notification-record-persistence.js";
 import { PostgresNotificationRecoveryPersistence } from "./persistence/postgres-notification-recovery-persistence.js";
 import { PostgresOrderDispatchPersistence } from "./persistence/postgres-order-dispatch-persistence.js";
@@ -76,6 +77,7 @@ export {
   isTemporaryErpDependencyError,
   type ReusableErpConfirmationAttempt,
 } from "./application/erp-confirmation-client.js";
+export type { GeneratedRunPublicationFence } from "./application/generated-run-publication-fence.js";
 export {
   createNotificationRecordJobHandler,
   type NotificationRecordJobHandler,
@@ -113,6 +115,10 @@ export {
 export { RunScopedBackpressureOrderConfirmation } from "./application/run-backpressure.js";
 export type { RunConfigReader } from "./application/run-config.js";
 export { PostgresErpAttemptPersistence } from "./persistence/postgres-erp-attempt-persistence.js";
+export {
+  GeneratedRunPublicationRejectedError,
+  PostgresGeneratedRunPublicationFence,
+} from "./persistence/postgres-generated-run-publication-fence.js";
 export {
   NotificationBeforeConfirmationError,
   NotificationOrderIdentityMismatchError,
@@ -158,6 +164,7 @@ export async function startWorker(): Promise<void> {
     maxRetriesPerRequest: 3,
   });
   const runConfigReader = new PostgresRunConfigReader(database.db);
+  const publicationFence = new PostgresGeneratedRunPublicationFence(database.db);
   const erpAttemptPersistence = new PostgresErpAttemptPersistence(database.db);
   const businessOutcomePublications = new BusinessOutcomePublicationScheduler({
     publish: (input) => publishBusinessOutcomeDashboardUpdate(database.db, redis, input),
@@ -199,16 +206,17 @@ export async function startWorker(): Promise<void> {
   const notificationRecordPublisher = createBullMqNotificationRecordPublisher({
     connection: {
       url: config.redisUrl,
-      maxRetriesPerRequest: null,
+      maxRetriesPerRequest: 3,
     },
+    publicationFence,
   });
   const orderProcessJobPublisher = createBullMqOrderProcessJobPublisher(
     {
       url: config.redisUrl,
-      maxRetriesPerRequest: null,
+      maxRetriesPerRequest: 3,
     },
     undefined,
-    runConfigReader,
+    publicationFence,
   );
   const orderRecoveryPersistence = new PostgresOrderRecoveryPersistence(database.db);
   const orderRecoveryScanner = createOrderRecoveryScanner({

@@ -53,6 +53,7 @@ import {
   type OrderConfirmation,
 } from "../../src/application/order-process-job-handler.js";
 import { PostgresErpAttemptPersistence } from "../../src/persistence/postgres-erp-attempt-persistence.js";
+import { PostgresGeneratedRunPublicationFence } from "../../src/persistence/postgres-generated-run-publication-fence.js";
 import {
   NotificationBeforeConfirmationError,
   PostgresNotificationRecordPersistence,
@@ -669,6 +670,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
     const notificationRecordPublisher = createBullMqNotificationRecordPublisher({
       connection: { url: redisUrl, maxRetriesPerRequest: null },
       attempts: 1,
+      publicationFence: new PostgresGeneratedRunPublicationFence(connection.db),
     });
     const notificationQueue = new Queue<
       NotificationRecordJob,

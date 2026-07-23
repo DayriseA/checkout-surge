@@ -7,7 +7,6 @@ import {
   demoRunSoldOutCounts,
   demoRunSummaries,
   demoRuns,
-  demoRunTeardownReceipts,
   erpAttempts,
   orderEvents,
   orders,
@@ -22,7 +21,7 @@ export interface GeneratedRunIdentity {
   saleOfferId: string;
 }
 
-export type PrepareGeneratedRunTeardownResult =
+export type InspectGeneratedRunTeardownResult =
   | { outcome: "absent" }
   | { outcome: "non_terminal" }
   | { outcome: "ownership_mismatch" }
@@ -30,89 +29,88 @@ export type PrepareGeneratedRunTeardownResult =
       outcome: "ready";
       runId: string;
       saleOfferId: string;
-      presetName: string;
-      durableDeleted: boolean;
     };
 
-/**
- * Atomically establishes durable retry coordinates and deletes a terminal,
- * generated-owned run graph. An existing receipt resumes a post-commit retry.
- */
-export async function prepareGeneratedRunTeardown(
+/** Reads the terminal generated-run identity used for exact external cleanup. */
+export async function inspectGeneratedRunTeardown(
   db: CheckoutSurgeDatabase,
   requestedRunId: string,
-  now: Date = new Date(),
-): Promise<PrepareGeneratedRunTeardownResult> {
+): Promise<InspectGeneratedRunTeardownResult> {
   const runId = uuidSchema.parse(requestedRunId);
-  return db.transaction(async (tx) => {
-    const [receipt] = await tx
-      .select()
-      .from(demoRunTeardownReceipts)
-      .where(eq(demoRunTeardownReceipts.runId, runId))
-      .for("update");
-    if (receipt) {
-      return { outcome: "ready", ...receipt, durableDeleted: false };
-    }
+  return db.transaction((tx) =>
+    inspectLockedGeneratedRunTeardown(tx as CheckoutSurgeDatabase, runId),
+  );
+}
 
-    const [run] = await tx
-      .select({
-        runId: demoRuns.id,
-        saleOfferId: demoRuns.saleOfferId,
-        presetName: demoRuns.presetName,
-        status: demoRuns.status,
-      })
-      .from(demoRuns)
-      .where(eq(demoRuns.id, runId))
-      .for("update");
-    if (!run) {
-      const [committedReceipt] = await tx
-        .select()
-        .from(demoRunTeardownReceipts)
-        .where(eq(demoRunTeardownReceipts.runId, runId))
-        .for("update");
-      return committedReceipt
-        ? { outcome: "ready", ...committedReceipt, durableDeleted: false }
-        : { outcome: "absent" };
-    }
-    if (!(["completed", "failed"] as string[]).includes(run.status)) {
-      return { outcome: "non_terminal" };
-    }
-    const [ownership] = await tx
-      .select({
-        contextSaleOfferId: demoRunSaleContexts.saleOfferId,
-        offerPurpose: saleOffers.purpose,
-      })
-      .from(demoRunSaleContexts)
-      .innerJoin(saleOffers, eq(saleOffers.id, demoRunSaleContexts.saleOfferId))
-      .where(eq(demoRunSaleContexts.runId, runId))
-      .for("update");
-    if (
-      !run.saleOfferId ||
-      ownership?.contextSaleOfferId !== run.saleOfferId ||
-      ownership.offerPurpose !== "generated_run"
-    ) {
+export type DeleteGeneratedRunDurableResult =
+  | { outcome: "deleted" }
+  | Exclude<InspectGeneratedRunTeardownResult, { outcome: "ready" }>;
+
+/**
+ * Revalidates terminal generated ownership and transactionally deletes exactly
+ * the identity whose queue and Redis state was already cleaned.
+ */
+export async function deleteGeneratedRunDurable(
+  db: CheckoutSurgeDatabase,
+  requestedIdentity: GeneratedRunIdentity,
+): Promise<DeleteGeneratedRunDurableResult> {
+  const identity = {
+    runId: uuidSchema.parse(requestedIdentity.runId),
+    saleOfferId: uuidSchema.parse(requestedIdentity.saleOfferId),
+  };
+  return db.transaction(async (tx) => {
+    const inspected = await inspectLockedGeneratedRunTeardown(
+      tx as CheckoutSurgeDatabase,
+      identity.runId,
+    );
+    if (inspected.outcome !== "ready") return inspected;
+    if (inspected.saleOfferId !== identity.saleOfferId) {
       return { outcome: "ownership_mismatch" };
     }
-
-    const identity = {
-      runId,
-      saleOfferId: run.saleOfferId,
-      presetName: run.presetName,
-      durableDeletedAt: now,
-    };
-    await tx.insert(demoRunTeardownReceipts).values(identity);
     await deleteGeneratedRunRows(tx as CheckoutSurgeDatabase, identity);
-    return { outcome: "ready", ...identity, durableDeleted: true };
+    return { outcome: "deleted" };
   });
 }
 
-export async function completeGeneratedRunTeardown(
+async function inspectLockedGeneratedRunTeardown(
   db: CheckoutSurgeDatabase,
   runId: string,
-): Promise<void> {
-  await db
-    .delete(demoRunTeardownReceipts)
-    .where(eq(demoRunTeardownReceipts.runId, uuidSchema.parse(runId)));
+): Promise<InspectGeneratedRunTeardownResult> {
+  const [run] = await db
+    .select({
+      runId: demoRuns.id,
+      saleOfferId: demoRuns.saleOfferId,
+      status: demoRuns.status,
+    })
+    .from(demoRuns)
+    .where(eq(demoRuns.id, runId))
+    .for("update");
+  if (!run) return { outcome: "absent" };
+  if (!(["completed", "failed"] as string[]).includes(run.status)) {
+    return { outcome: "non_terminal" };
+  }
+  const [ownership] = await db
+    .select({
+      contextSaleOfferId: demoRunSaleContexts.saleOfferId,
+      offerPurpose: saleOffers.purpose,
+    })
+    .from(demoRunSaleContexts)
+    .innerJoin(saleOffers, eq(saleOffers.id, demoRunSaleContexts.saleOfferId))
+    .where(eq(demoRunSaleContexts.runId, runId))
+    .for("update");
+  if (
+    !run.saleOfferId ||
+    ownership?.contextSaleOfferId !== run.saleOfferId ||
+    ownership.offerPurpose !== "generated_run"
+  ) {
+    return { outcome: "ownership_mismatch" };
+  }
+
+  return {
+    outcome: "ready",
+    runId,
+    saleOfferId: run.saleOfferId,
+  };
 }
 
 async function deleteGeneratedRunRows(

@@ -4,7 +4,7 @@ import {
   transportAttemptCountsSchema,
 } from "@checkout-surge/contracts";
 import type { CheckoutSurgeDatabase } from "@checkout-surge/db";
-import { demoRunSummaries, demoRuns } from "@checkout-surge/db";
+import { demoRunSummaries, demoRuns, terminalDemoRunTransitionLockKey } from "@checkout-surge/db";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import type {
   TerminalDemoRunStatus,
@@ -17,9 +17,7 @@ type TerminalDemoRunTransitionTransaction = Parameters<
   Parameters<CheckoutSurgeDatabase["transaction"]>[0]
 >[0];
 
-export function terminalDemoRunTransitionLockKey(runId: string): string {
-  return `demo_run_finalize:${runId}`;
-}
+export { terminalDemoRunTransitionLockKey } from "@checkout-surge/db";
 
 export class PostgresTerminalDemoRunSummaryWriter implements TerminalDemoRunWriter {
   constructor(private readonly db: CheckoutSurgeDatabase) {}
