@@ -5,12 +5,14 @@ import {
   assertScenarioAcceptance,
   assertSseEvidence,
   collectDashboardEvents,
+  createDashboardDeliveryMeasurement,
   extractCompleteSseFrames,
   parseSseDataFrames,
   prepareExactRunCleanup,
   requireReadiness,
   runtimeLoadSmokeScenarios,
   selectTerminalSummary,
+  startRawDashboardEventCounter,
   teardownWithRetry,
   throwSmokeFailures,
   validateTeardownResponse,
@@ -107,6 +109,175 @@ test("collects CRLF SSE frames split across chunks and requires the event-stream
     ),
     /did not use text\/event-stream/,
   );
+});
+
+test("counts completed SSE frames, data messages, and reducer updates at the delivery boundary", async () => {
+  const valid = `data: ${JSON.stringify(dashboardEvent())}\r\n\r\n`;
+  const payload = new TextEncoder().encode(
+    `retry: 3000\n: connected\n\n: heartbeat\n\n${valid}data: {"type":"bad"}\n\n`,
+  );
+  const response = new Response(
+    new ReadableStream({
+      start(controller) {
+        controller.enqueue(payload.slice(0, payload.length - 5));
+        controller.enqueue(payload.slice(payload.length - 5));
+        controller.close();
+      },
+    }),
+    { headers: { "content-type": "text/event-stream; charset=utf-8" } },
+  );
+
+  const stats = {
+    deliveredFrames: 0,
+    deliveredDataMessages: 0,
+    contractValidMessages: 0,
+    runMessageCounts: {},
+  };
+  await collectDashboardEvents(
+    "http://dashboard/events",
+    async () => response,
+    new AbortController().signal,
+    {
+      markOpen() {},
+      recordSse(extracted) {
+        stats.deliveredFrames += extracted.frameCount;
+        stats.deliveredDataMessages += extracted.dataMessageCount;
+        stats.contractValidMessages += extracted.events.length;
+        for (const event of extracted.events) {
+          if (event.runId) {
+            stats.runMessageCounts[event.runId] = (stats.runMessageCounts[event.runId] ?? 0) + 1;
+          }
+        }
+      },
+    },
+  );
+
+  assert.deepEqual(stats, {
+    deliveredFrames: 4,
+    deliveredDataMessages: 2,
+    contractValidMessages: 1,
+    runMessageCounts: { [runId]: 1 },
+  });
+});
+
+test("uses one resettable fixed window for Redis and SSE delivery counts", async () => {
+  let now = 100;
+  const sleeps = [];
+  const measurement = createDashboardDeliveryMeasurement({
+    clock: () => now,
+    sleep: async (durationMs) => {
+      sleeps.push(durationMs);
+      now += durationMs;
+    },
+  });
+  const delivery = extractCompleteSseFrames(
+    `: connected\n\ndata: ${JSON.stringify(dashboardEvent())}\n\n`,
+  );
+
+  measurement.recordRaw();
+  measurement.recordScope(runId, saleOfferId);
+  measurement.recordSse(delivery);
+  measurement.start(30_000);
+  measurement.recordRaw();
+  measurement.recordScope(runId, saleOfferId);
+  measurement.recordScope(runId, saleOfferId);
+  measurement.recordSse(delivery);
+  now += 160;
+  await measurement.waitForDeadline();
+  measurement.recordRaw();
+  measurement.recordSse(delivery);
+
+  assert.deepEqual(measurement.stop(), {
+    durationMs: 30_000,
+    activeScopeCount: 1,
+    rawRedisProducerEvents: 1,
+    deliveredFrames: 2,
+    deliveredDataMessages: 1,
+    contractValidMessages: 1,
+    runMessageCounts: { [runId]: 1 },
+  });
+  assert.deepEqual(sleeps, [29_840]);
+});
+
+test("excludes the SSE establishment frame before the common measurement gate opens", async () => {
+  let streamController;
+  const response = new Response(
+    new ReadableStream({
+      start(controller) {
+        streamController = controller;
+      },
+    }),
+    { headers: { "content-type": "text/event-stream" } },
+  );
+  let markOpen;
+  const opened = new Promise((resolve) => {
+    markOpen = resolve;
+  });
+  const now = 0;
+  const measurement = createDashboardDeliveryMeasurement({ clock: () => now });
+  const collecting = collectDashboardEvents(
+    "http://dashboard/events",
+    async () => response,
+    new AbortController().signal,
+    { markOpen, recordSse: measurement.recordSse },
+  );
+
+  streamController.enqueue(new TextEncoder().encode(": connected\n\n"));
+  await opened;
+  measurement.start(30_000);
+  streamController.enqueue(
+    new TextEncoder().encode(`data: ${JSON.stringify(dashboardEvent())}\n\n`),
+  );
+  streamController.close();
+  await collecting;
+
+  assert.deepEqual(measurement.stop(), {
+    durationMs: 30_000,
+    activeScopeCount: 0,
+    rawRedisProducerEvents: 0,
+    deliveredFrames: 1,
+    deliveredDataMessages: 1,
+    contractValidMessages: 1,
+    runMessageCounts: { [runId]: 1 },
+  });
+});
+
+test("disconnects a dedicated Redis subscriber when subscribe fails and when counting stops", async () => {
+  const measurement = createDashboardDeliveryMeasurement();
+  let failedDisconnects = 0;
+  await assert.rejects(
+    startRawDashboardEventCounter("redis://failure", measurement, {
+      createRedisClient: () => ({
+        on() {},
+        off() {},
+        subscribe: async () => {
+          throw new Error("subscribe failed");
+        },
+        disconnect() {
+          failedDisconnects += 1;
+        },
+      }),
+      timeoutMs: 10,
+    }),
+    /subscribe failed/,
+  );
+  assert.equal(failedDisconnects, 1);
+
+  let disconnects = 0;
+  const counter = await startRawDashboardEventCounter("redis://success", measurement, {
+    createRedisClient: () => ({
+      on() {},
+      off() {},
+      subscribe: async () => undefined,
+      disconnect() {
+        disconnects += 1;
+      },
+    }),
+    timeoutMs: 10,
+  });
+  counter.stop();
+  counter.stop();
+  assert.equal(disconnects, 1);
 });
 
 test("keeps incomplete SSE data buffered and rejects a same-run correlation mismatch", () => {

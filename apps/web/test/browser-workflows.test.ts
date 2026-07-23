@@ -303,6 +303,34 @@ describe("admin browser workflows", () => {
 });
 
 describe("watch browser recovery", () => {
+  it("reads the authoritative latest state when a dropped slow stream reconnects", async () => {
+    const terminalRecovery = dashboardRecoveryFixture({
+      currentRun: demoRunFixture({ status: "completed", trafficStatus: "succeeded" }),
+      recoveredAt: "2026-06-20T00:00:12.000Z",
+    });
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(terminalRecovery));
+    vi.stubGlobal("EventSource", FakeEventSource);
+    vi.stubGlobal("fetch", fetchMock);
+    const snapshot = dashboardSnapshotFixture();
+    snapshot.recovery = available(
+      dashboardRecoveryFixture({ currentRun: demoRunFixture({ status: "active" }) }),
+    );
+
+    render(createElement(OperatorDashboard, { snapshot }));
+    await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
+    act(() => FakeEventSource.instances[0]?.emit("error", new Event("error")));
+    expect(screen.getByText("disconnected")).toBeTruthy();
+
+    act(() => FakeEventSource.instances[0]?.emit("open", new Event("open")));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    await waitFor(() => expect(screen.getByText("completed")).toBeTruthy());
+    expect(screen.getByText("Preview 1k")).toBeTruthy();
+    expect(fetchMock.mock.calls.map((call) => String(call[0]))).toEqual([
+      dashboardRecoveryProxyPath,
+    ]);
+  });
+
   it("requests one follow-up when a terminal SSE event races a stale refresh", async () => {
     const firstRecovery = deferred<Response>();
     const fetchMock = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) => {

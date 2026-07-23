@@ -168,7 +168,7 @@ describe("dashboard event fan-out", () => {
     }
   });
 
-  it("drops only an overflowing slow client while healthy clients continue", () => {
+  it("bounds an overflowing slow client and lets its reconnect start from current delivery", () => {
     let nextId = 0;
     const fanout = createFanout({
       maxBufferedFrames: 1,
@@ -187,6 +187,11 @@ describe("dashboard event fan-out", () => {
     expect(fanout.clientCount()).toBe(1);
     expect((slow.response as unknown as FakeResponse).writableEnded).toBe(true);
     expect(eventValues((healthy.response as unknown as FakeResponse).chunks)).toEqual([42, 43, 44]);
+
+    const reconnected = connectionInput("slow-reconnected", "ip4:192.0.2.1");
+    expect(fanout.connect(reconnected)).toBe("connected");
+    fanout.publish({ ...dashboardEvent, value: 45 });
+    expect(eventValues((reconnected.response as unknown as FakeResponse).chunks)).toEqual([45]);
     fanout.close();
   });
 

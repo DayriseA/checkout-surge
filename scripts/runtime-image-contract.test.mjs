@@ -85,6 +85,7 @@ test("Compose separates production, development, tooling, and k6-test images", (
     "MOCK_ERP_BASE_URL",
     "NODE_ENV",
     "PUBLIC_CLIENT_COOKIE_SECRET",
+    "REDIS_URL",
     "RUNTIME_RECOVERY_SOAK_PROBE_INTERVAL_MS",
     "RUNTIME_RECOVERY_SOAK_SECONDS",
     "WEB_BASE_URL",

@@ -6,10 +6,15 @@ import {
   adminGeneratedRunTeardownPath,
   adminGeneratedRunTeardownResponseSchema,
   dashboardEventSchema,
+  dashboardEventsRedisChannel,
+  dashboardRecoveryResponseSchema,
   runHistoryListResponseSchema,
   startDemoRunResponseSchema,
   uuidSchema,
 } from "../packages/contracts/dist/index.js";
+
+const dashboardBaselineFlag = "--dashboard-delivery-baseline";
+const dashboardInstrumentationTimeoutMs = 10_000;
 
 export async function runRuntimeLoadSmoke(options = {}) {
   const env = options.env ?? process.env;
@@ -39,6 +44,151 @@ export async function runRuntimeLoadSmoke(options = {}) {
     );
   }
   return { correlationId: rootCorrelationId, scenarios: results };
+}
+
+export async function runDashboardDeliveryBaseline(options = {}) {
+  const env = options.env ?? process.env;
+  const fetchImpl = options.fetch ?? fetch;
+  const dashboardBaseUrl = envUrl(env, "WEB_BASE_URL", "http://localhost:8080");
+  const apiBaseUrl = envUrl(env, "API_BASE_URL", "http://localhost:4000");
+  const redisUrl = envUrl(env, "REDIS_URL", "redis://localhost:6379");
+  const token = env.CONTROL_SERVICE_TOKEN?.trim();
+  if (!token) throw new Error("CONTROL_SERVICE_TOKEN is required for runtime load smoke.");
+
+  const presetSlug = "preview-1k";
+  const correlationId = `runtime-dashboard-baseline-${randomUUID()}`;
+  const measurementDurationMs = 30_000;
+  const deadlineMs = derivedDeadlineMs(env, 2);
+  let runId;
+  let saleOfferId;
+  let rawCounter;
+  let result;
+  let primaryError;
+  let cleanupError;
+  const sseAbort = new AbortController();
+  let sseResult;
+  let markSseOpen;
+  const sseOpened = new Promise((resolve) => {
+    markSseOpen = resolve;
+  });
+  const measurement = createDashboardDeliveryMeasurement();
+
+  try {
+    await requireReadiness(`${apiBaseUrl}/health/ready`, fetchImpl);
+    await resetDemo(apiBaseUrl, token, correlationId, fetchImpl);
+    rawCounter = await startRawDashboardEventCounter(redisUrl, measurement);
+    sseResult = collectDashboardEvents(
+      `${dashboardBaseUrl}/dashboard/events`,
+      fetchImpl,
+      sseAbort.signal,
+      { markOpen: markSseOpen, recordSse: measurement.recordSse },
+    );
+    await withTimeout(
+      Promise.race([
+        sseOpened,
+        sseResult.then(() => {
+          throw new Error("Dashboard SSE ended before its first complete frame.");
+        }),
+      ]),
+      dashboardInstrumentationTimeoutMs,
+      "dashboard SSE establishment",
+    );
+    measurement.start(measurementDurationMs);
+    const started = await startRun({
+      dashboardBaseUrl,
+      correlationId,
+      presetSlug,
+      env,
+      fetchImpl,
+    });
+    runId = uuidSchema.parse(started.run.runId);
+    saleOfferId = uuidSchema.parse(started.run.saleOfferId);
+    measurement.recordScope(runId, saleOfferId);
+    await measurement.waitForDeadline();
+    const snapshot = measurement.stop();
+    const observation = await readRunObservation({
+      dashboardBaseUrl,
+      apiBaseUrl,
+      runId,
+      fetchImpl,
+    });
+    const scope = observation.recovery.scope;
+    if (scope && (scope.runId !== runId || scope.saleOfferId !== saleOfferId)) {
+      throw new Error("Dashboard baseline observed a foreign active scope.");
+    }
+    const measuredRunSummary = observation.summaries.find((summary) => summary.runId === runId);
+    if (!scope && !measuredRunSummary) {
+      throw new Error("Dashboard baseline found no authoritative evidence for the measured run.");
+    }
+    result = {
+      presetSlug,
+      runId,
+      saleOfferId,
+      plannedRequests: started.run.configSnapshot.trafficConfig.buyerCount,
+      durationMs: snapshot.durationMs,
+      activeScopeCount: snapshot.activeScopeCount,
+      rawRedisProducerEvents: snapshot.rawRedisProducerEvents,
+      sseClient: {
+        deliveredFrames: snapshot.deliveredFrames,
+        deliveredDataMessages: snapshot.deliveredDataMessages,
+        contractValidMessages: snapshot.contractValidMessages,
+        runAttributableMessages: snapshot.runMessageCounts[runId] ?? 0,
+        dashboardUpdates: snapshot.contractValidMessages,
+      },
+    };
+    if (
+      result.activeScopeCount !== 1 ||
+      result.rawRedisProducerEvents === 0 ||
+      result.sseClient.runAttributableMessages === 0
+    ) {
+      throw new Error("Dashboard baseline received no attributable delivery evidence.");
+    }
+    console.log(`Dashboard delivery baseline ${JSON.stringify(result)}`);
+  } catch (error) {
+    primaryError = error;
+  } finally {
+    measurement.stop();
+    try {
+      await stopDashboardBaselineInstrumentation({
+        sseAbort,
+        sseResult,
+        rawCounter,
+        timeoutMs: dashboardInstrumentationTimeoutMs,
+      });
+    } catch (error) {
+      primaryError = primaryError
+        ? new AggregateError(
+            [primaryError, error],
+            `Dashboard baseline failed and instrumentation shutdown also failed: ${message(primaryError)}; ${message(error)}`,
+          )
+        : error;
+    }
+    if (runId) {
+      try {
+        await prepareExactRunCleanup({
+          dashboardBaseUrl,
+          apiBaseUrl,
+          token,
+          correlationId,
+          runId,
+          deadlineMs,
+          fetchImpl,
+        });
+        await teardownWithRetry({
+          apiBaseUrl,
+          token,
+          runId,
+          saleOfferId,
+          correlationId,
+          fetchImpl,
+        });
+      } catch (error) {
+        cleanupError = error;
+      }
+    }
+  }
+  throwSmokeFailures(primaryError, cleanupError);
+  return result;
 }
 
 async function runRuntimeLoadScenario(input) {
@@ -269,7 +419,7 @@ export function parseSseDataFrames(text) {
   return events;
 }
 
-export async function collectDashboardEvents(url, fetchImpl, signal) {
+export async function collectDashboardEvents(url, fetchImpl, signal, measurement) {
   const response = await fetchImpl(url, { headers: { accept: "text/event-stream" }, signal });
   if (!response.ok || !response.body)
     throw new Error(`Dashboard SSE failed with HTTP ${response.status}.`);
@@ -280,8 +430,9 @@ export async function collectDashboardEvents(url, fetchImpl, signal) {
   const decoder = new TextDecoder();
   let buffer = "";
   const events = [];
+  let measurementOpened = false;
   try {
-    while (events.length < 100) {
+    while (measurement || events.length < 100) {
       const { done, value } = await reader.read();
       if (done) {
         buffer += decoder.decode();
@@ -289,7 +440,15 @@ export async function collectDashboardEvents(url, fetchImpl, signal) {
       }
       buffer += decoder.decode(value, { stream: true });
       const extracted = extractCompleteSseFrames(buffer);
-      events.push(...extracted.events);
+      if (measurement) {
+        measurement.recordSse(extracted);
+        if (!measurementOpened && extracted.frameCount > 0) {
+          measurementOpened = true;
+          measurement.markOpen();
+        }
+      } else {
+        events.push(...extracted.events);
+      }
       buffer = extracted.remainder;
     }
   } catch (error) {
@@ -298,13 +457,87 @@ export async function collectDashboardEvents(url, fetchImpl, signal) {
   return events;
 }
 
+export function createDashboardDeliveryMeasurement(options = {}) {
+  const clock = options.clock ?? Date.now;
+  const sleepImpl = options.sleep ?? sleep;
+  let active = false;
+  let startedAt;
+  let deadline;
+  let stats = emptyDashboardDeliveryStats();
+
+  const acceptsDelivery = () => active && clock() < deadline;
+  return {
+    start(durationMs) {
+      stats = emptyDashboardDeliveryStats();
+      startedAt = clock();
+      deadline = startedAt + durationMs;
+      active = true;
+    },
+    recordRaw() {
+      if (acceptsDelivery()) stats.rawRedisProducerEvents += 1;
+    },
+    recordScope(runId, saleOfferId) {
+      if (acceptsDelivery()) stats.scopeKeys[`${runId}:${saleOfferId}`] = true;
+    },
+    recordSse(extracted) {
+      if (!acceptsDelivery()) return;
+      stats.deliveredFrames += extracted.frameCount;
+      stats.deliveredDataMessages += extracted.dataMessageCount;
+      stats.contractValidMessages += extracted.events.length;
+      for (const event of extracted.events) {
+        if (event.runId) {
+          stats.runMessageCounts[event.runId] = (stats.runMessageCounts[event.runId] ?? 0) + 1;
+        }
+      }
+    },
+    async waitForDeadline() {
+      while (active && clock() < deadline) {
+        await sleepImpl(deadline - clock());
+      }
+    },
+    stop() {
+      active = false;
+      return {
+        durationMs: startedAt === undefined ? 0 : deadline - startedAt,
+        activeScopeCount: Object.keys(stats.scopeKeys).length,
+        rawRedisProducerEvents: stats.rawRedisProducerEvents,
+        deliveredFrames: stats.deliveredFrames,
+        deliveredDataMessages: stats.deliveredDataMessages,
+        contractValidMessages: stats.contractValidMessages,
+        runMessageCounts: { ...stats.runMessageCounts },
+      };
+    },
+  };
+}
+
+function emptyDashboardDeliveryStats() {
+  return {
+    scopeKeys: {},
+    rawRedisProducerEvents: 0,
+    deliveredFrames: 0,
+    deliveredDataMessages: 0,
+    contractValidMessages: 0,
+    runMessageCounts: {},
+  };
+}
+
 export function extractCompleteSseFrames(buffer) {
   let end = 0;
   const separator = /\r?\n\r?\n/g;
   for (const match of buffer.matchAll(separator)) end = (match.index ?? 0) + match[0].length;
-  return end === 0
-    ? { events: [], remainder: buffer }
-    : { events: parseSseDataFrames(buffer.slice(0, end)), remainder: buffer.slice(end) };
+  if (end === 0) {
+    return { events: [], remainder: buffer, frameCount: 0, dataMessageCount: 0 };
+  }
+  const complete = buffer.slice(0, end).replaceAll("\r\n", "\n");
+  const frames = complete.split("\n\n").filter((frame) => frame.length > 0);
+  return {
+    events: parseSseDataFrames(complete),
+    remainder: buffer.slice(end),
+    frameCount: frames.length,
+    dataMessageCount: frames.filter((frame) =>
+      frame.split("\n").some((line) => line.startsWith("data:")),
+    ).length,
+  };
 }
 
 export async function teardownWithRetry(input) {
@@ -379,7 +612,14 @@ async function resetDemo(baseUrl, token, correlationId, fetchImpl) {
   );
 }
 
-async function startRun({ dashboardBaseUrl, correlationId, scenario, env, fetchImpl }) {
+async function startRun({
+  dashboardBaseUrl,
+  correlationId,
+  scenario,
+  presetSlug = "public-custom",
+  env,
+  fetchImpl,
+}) {
   const response = await requestJson(
     `${dashboardBaseUrl}/api/demo/runs/start`,
     {
@@ -390,9 +630,9 @@ async function startRun({ dashboardBaseUrl, correlationId, scenario, env, fetchI
         cookie: signedVisitorCookie(env),
       },
       body: JSON.stringify({
-        presetSlug: "public-custom",
+        presetSlug,
         correlationId,
-        configOverride: scenario.configOverride,
+        ...(scenario ? { configOverride: scenario.configOverride } : {}),
       }),
     },
     fetchImpl,
@@ -427,6 +667,64 @@ export async function waitForTerminalSummary({
   throw new Error(
     `Timed out waiting for terminal summary: ${JSON.stringify(last)}${lastRequestError ? `; lastRequestError=${message(lastRequestError)}` : ""}`,
   );
+}
+
+export async function startRawDashboardEventCounter(redisUrl, measurement, options = {}) {
+  const createRedisClient =
+    options.createRedisClient ?? (await import("../packages/db/dist/index.js")).createRedisClient;
+  const redis = createRedisClient(redisUrl);
+  const onMessage = (channel) => {
+    if (channel !== dashboardEventsRedisChannel) return;
+    measurement.recordRaw();
+  };
+  redis.on("message", onMessage);
+  try {
+    await withTimeout(
+      redis.subscribe(dashboardEventsRedisChannel),
+      options.timeoutMs ?? dashboardInstrumentationTimeoutMs,
+      "dashboard Redis subscription",
+    );
+  } catch (error) {
+    redis.off("message", onMessage);
+    redis.disconnect();
+    throw error;
+  }
+  let stopped = false;
+  return {
+    stop() {
+      if (!stopped) {
+        stopped = true;
+        redis.off("message", onMessage);
+        redis.disconnect();
+      }
+    },
+  };
+}
+
+async function stopDashboardBaselineInstrumentation({
+  sseAbort,
+  sseResult,
+  rawCounter,
+  timeoutMs,
+}) {
+  const failures = [];
+  sseAbort.abort();
+  if (sseResult) {
+    try {
+      await withTimeout(sseResult, timeoutMs, "dashboard SSE shutdown");
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+  try {
+    rawCounter?.stop();
+  } catch (error) {
+    failures.push(error);
+  }
+  if (failures.length === 1) throw failures[0];
+  if (failures.length > 1) {
+    throw new AggregateError(failures, "Dashboard SSE and Redis instrumentation shutdown failed.");
+  }
 }
 
 export function selectTerminalSummary(recovery, summaries, runId) {
@@ -502,10 +800,12 @@ export async function prepareExactRunCleanup(input) {
 }
 
 async function readRunObservation({ dashboardBaseUrl, apiBaseUrl, runId, fetchImpl }) {
-  const recovery = await requestJson(
-    `${dashboardBaseUrl}/api/dashboard/recovery`,
-    { method: "GET", headers: { accept: "application/json" } },
-    fetchImpl,
+  const recovery = dashboardRecoveryResponseSchema.parse(
+    await requestJson(
+      `${dashboardBaseUrl}/api/dashboard/recovery`,
+      { method: "GET", headers: { accept: "application/json" } },
+      fetchImpl,
+    ),
   );
   const history = runHistoryListResponseSchema.parse(
     await requestJson(
@@ -576,6 +876,20 @@ async function fetchWithTimeout(url, init, fetchImpl) {
   }
 }
 
+async function withTimeout(operation, timeoutMs, label) {
+  let timeout;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise((_, reject) => {
+        timeout = setTimeout(() => reject(new Error(`Timed out waiting for ${label}.`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function pollUntil(deadline, operation, label) {
   let lastError;
   while (Date.now() < deadline) {
@@ -620,7 +934,10 @@ function message(error) {
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
-  runRuntimeLoadSmoke().catch((error) => {
+  const operation = process.argv.slice(2).includes(dashboardBaselineFlag)
+    ? runDashboardDeliveryBaseline()
+    : runRuntimeLoadSmoke();
+  operation.catch((error) => {
     console.error(error);
     process.exitCode = 1;
   });
