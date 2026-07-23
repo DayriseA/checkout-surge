@@ -452,7 +452,7 @@ Most infrastructure URLs have local defaults, but every run/control service chan
 | `ORDER_PROCESS_BACKOFF_BASE_MS` | `500` | API default/backfill for frozen exponential retry backoff |
 | `API_LISTEN_BACKLOG` | `8192` | API listener accept backlog for one-second public spike validation |
 | `API_POSTGRES_POOL_MAX` | `10` | Long-lived API application/data-path PostgreSQL pool maximum; control-plane pools described below are separate |
-| `API_READINESS_TIMEOUT_MS` | `2000` | End-to-end API readiness deadline in milliseconds; must remain below the Compose healthcheck's 3-second timeout. Readiness is single-flight per API process and can open at most one separate, short-lived PostgreSQL connection. |
+| `API_READINESS_TIMEOUT_MS` | `2000` | End-to-end API readiness deadline in milliseconds; must remain below the Compose healthcheck's 3-second timeout. Readiness is single-flight per API process, can open at most one separate short-lived PostgreSQL connection, and closes its PostgreSQL/Redis/BullMQ probe resources on completion, deadline, or API shutdown. |
 | `WORKER_POSTGRES_POOL_MAX` | `10` | Worker PostgreSQL connection pool maximum |
 | `HEALTH_PORT` | `4300` | Worker health server |
 | `ERP_REQUEST_TIMEOUT_MS` | `2000` | Worker ERP client default; run snapshots can supply the active demonstration policy |

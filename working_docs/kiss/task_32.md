@@ -51,8 +51,8 @@ Place concrete bounded readiness checks in apps/api/src/runtime/readiness.ts or 
 
 ## Working record
 
-- **Status:** pending
-- **Completed scope:** none
-- **Material decisions or deviations:** none
-- **Verification performed:** not run
+- **Status:** implemented; verification complete
+- **Completed scope:** Moved PostgreSQL, Redis, and BullMQ connectivity construction, execution, stable failure mapping, shared deadline, single-flight coordination, and operation cleanup into `apps/api/src/runtime/readiness.ts`. The composition root now supplies only readiness configuration, injects one closeable `ApiReadiness`, and drains it during API shutdown before Fastify closes. Runtime tests now own success, rejection, deadline/hung cleanup, concurrent sharing, fresh recovery, construction failure, and shutdown behavior; health route coverage remains focused on HTTP status, contracts, and correlation.
+- **Material decisions or deviations:** Retained process-local single-flight because the accepted topology has one API process and concurrent Compose/operator probes should not multiply control-plane connections. Removed the caller-owned compatibility readiness constructor because production never used that resource-ownership mode. Failure responses now use fixed dependency-specific messages so infrastructure URLs, credentials, cleanup failures, and driver text cannot reach health payloads. No Compose configuration changed.
+- **Verification performed:** `pnpm --filter api lint` (pass, 119 files); `pnpm --filter api type-check` (pass); `pnpm type-check` including the root test-source gate (pass); focused Vitest run for readiness, operation lifecycle/factories, and API resource cleanup (20 tests pass, including real isolated PostgreSQL/Redis/BullMQ adapters); focused API health route run (2 tests pass, 87 skipped by name filter); focused `@checkout-surge/db` abortable-client integration test (1 test pass, covering active and pool-queued PostgreSQL cancellation plus later-pool recovery). The first root type-check found one new test-helper inference error; it was corrected before the passing rerun. Dedicated test infrastructure was started for the adapter/integration checks and removed afterward. Compose configuration did not change, so `docker compose config` was not required.
 - **Remaining blockers or follow-up:** none

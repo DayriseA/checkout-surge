@@ -48,9 +48,15 @@ describe("API resource cleanup", () => {
     const closePendingPersistenceRecovery = vi.fn(async () => {
       recoveryClosed = true;
     });
+    let readinessClosed = false;
+    const closeReadiness = vi.fn(async () => {
+      expect(recoveryClosed).toBe(true);
+      readinessClosed = true;
+    });
     let serverClosed = false;
     const closeServer = vi.fn(async () => {
       expect(recoveryClosed).toBe(true);
+      expect(readinessClosed).toBe(true);
       await Promise.resolve();
       serverClosed = true;
     });
@@ -79,6 +85,7 @@ describe("API resource cleanup", () => {
 
     await closeApiResources({
       closePendingPersistenceRecovery,
+      closeReadiness,
       closeServer,
       closeDashboardPublicationScheduler,
       closeBusinessOutcomePublicationScheduler,
@@ -91,6 +98,7 @@ describe("API resource cleanup", () => {
     });
 
     expect(closePendingPersistenceRecovery).toHaveBeenCalledOnce();
+    expect(closeReadiness).toHaveBeenCalledOnce();
     expect(closeServer).toHaveBeenCalledOnce();
     expect(closeDashboardPublicationScheduler).toHaveBeenCalledOnce();
     expect(closeBusinessOutcomePublicationScheduler).toHaveBeenCalledOnce();
@@ -114,6 +122,8 @@ describe("API resource cleanup", () => {
     const databaseError = new Error("database close failed");
     const closeServer = vi.fn().mockRejectedValue(serverError);
     const closePendingPersistenceRecovery = vi.fn().mockRejectedValue(pendingRecoveryError);
+    const readinessError = new Error("readiness close failed");
+    const closeReadiness = vi.fn().mockRejectedValue(readinessError);
     const closeDashboardEventSubscriber = vi.fn().mockRejectedValue(subscriberError);
     const closeDashboardPublicationScheduler = vi.fn().mockRejectedValue(schedulerError);
     const closeBusinessOutcomePublicationScheduler = vi.fn(async () => undefined);
@@ -129,6 +139,7 @@ describe("API resource cleanup", () => {
     try {
       await closeApiResources({
         closePendingPersistenceRecovery,
+        closeReadiness,
         closeServer,
         closeDashboardPublicationScheduler,
         closeBusinessOutcomePublicationScheduler,
@@ -146,6 +157,7 @@ describe("API resource cleanup", () => {
     expect(cleanupError).toBeInstanceOf(AggregateError);
     expect((cleanupError as AggregateError).errors).toEqual([
       pendingRecoveryError,
+      readinessError,
       serverError,
       schedulerError,
       subscriberError,
@@ -156,6 +168,7 @@ describe("API resource cleanup", () => {
       databaseError,
     ]);
     expect(closePendingPersistenceRecovery).toHaveBeenCalledOnce();
+    expect(closeReadiness).toHaveBeenCalledOnce();
     expect(closeServer).toHaveBeenCalledOnce();
     expect(closeDashboardPublicationScheduler).toHaveBeenCalledOnce();
     expect(closeDashboardEventSubscriber).toHaveBeenCalledOnce();

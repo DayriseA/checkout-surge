@@ -102,7 +102,6 @@ import { DashboardEventFanout } from "../src/realtime/dashboard-event-fanout.js"
 import { loadApiConfig } from "../src/runtime/config.js";
 import { ApiHttpError } from "../src/runtime/errors.js";
 import type { ApiFastifyInstance } from "../src/runtime/fastify.js";
-import { createInfrastructureReadinessCheck } from "../src/runtime/readiness.js";
 import { buildApiServer } from "../src/server.js";
 import type { AdminDemoResetWorkflow } from "../src/services/admin-demo-reset-service.js";
 import type { DashboardRecoveryAdmissionController } from "../src/services/dashboard-recovery-admission.js";
@@ -322,6 +321,7 @@ async function buildTestServer(options: {
           status: "ok",
         },
       ],
+      close: async () => undefined,
     },
     dashboardEventFanout: options.dashboardEventFanout ?? new DashboardEventFanout({ logger }),
     dashboardRecoveryService:
@@ -1075,12 +1075,22 @@ describe("API gateway routes", () => {
   it("returns contract-valid liveness and readiness responses", async () => {
     const server = await trackedServer({ persistence: new AcceptingPersistence() });
 
-    const live = await server.inject({ method: "GET", url: "/health/live" });
-    const ready = await server.inject({ method: "GET", url: "/health/ready" });
+    const live = await server.inject({
+      method: "GET",
+      url: "/health/live",
+      headers: { [correlationIdHeaderName]: "live-health-correlation" },
+    });
+    const ready = await server.inject({
+      method: "GET",
+      url: "/health/ready",
+      headers: { [correlationIdHeaderName]: "ready-health-correlation" },
+    });
 
     expect(live.statusCode).toBe(200);
+    expect(live.headers[correlationIdHeaderName]).toBe("live-health-correlation");
     expect(() => livenessResponseSchema.parse(live.json())).not.toThrow();
     expect(ready.statusCode).toBe(200);
+    expect(ready.headers[correlationIdHeaderName]).toBe("ready-health-correlation");
     expect(() => healthResponseSchema.parse(ready.json())).not.toThrow();
   });
 
@@ -1090,10 +1100,15 @@ describe("API gateway routes", () => {
       readiness: "unavailable",
     });
 
-    const ready = await server.inject({ method: "GET", url: "/health/ready" });
+    const ready = await server.inject({
+      method: "GET",
+      url: "/health/ready",
+      headers: { [correlationIdHeaderName]: "unavailable-health-correlation" },
+    });
     const payload = healthResponseSchema.parse(ready.json());
 
     expect(ready.statusCode).toBe(503);
+    expect(ready.headers[correlationIdHeaderName]).toBe("unavailable-health-correlation");
     expect(payload.status).toBe("unavailable");
     expect(payload.checks).toContainEqual({
       name: "database_reachable",
@@ -4214,47 +4229,6 @@ describe("API buy persistence", () => {
     } finally {
       await server.close();
     }
-  });
-
-  it("checks reachable and unavailable Redis readiness directly", async () => {
-    if (!connection || !redis) {
-      throw new Error("Test infrastructure was not initialized.");
-    }
-
-    const reachableChecks = await createInfrastructureReadinessCheck(connection.sql, redis, {
-      checkConnectivity: async () => undefined,
-    }).checks();
-    const unavailableRedis = redis.duplicate({ lazyConnect: true });
-    await unavailableRedis.connect();
-    await unavailableRedis.quit();
-    const unavailableChecks = await createInfrastructureReadinessCheck(
-      connection.sql,
-      unavailableRedis,
-      { checkConnectivity: async () => undefined },
-    ).checks();
-    const unavailableRedisCheck = unavailableChecks.find(
-      (check) => check.name === "redis_reachable",
-    );
-    const unavailableQueueChecks = await createInfrastructureReadinessCheck(connection.sql, redis, {
-      checkConnectivity: async () => Promise.reject(new Error("BullMQ command failed")),
-    }).checks();
-
-    expect(reachableChecks).toContainEqual({ name: "redis_reachable", status: "ok" });
-    expect(reachableChecks).toContainEqual({
-      name: "order_process_queue_reachable",
-      status: "ok",
-    });
-    expect(unavailableRedisCheck).toEqual({
-      name: "redis_reachable",
-      status: "unavailable",
-      message: expect.any(String),
-    });
-    expect(unavailableRedisCheck?.message).not.toHaveLength(0);
-    expect(unavailableQueueChecks).toContainEqual({
-      name: "order_process_queue_reachable",
-      status: "unavailable",
-      message: "BullMQ command failed",
-    });
   });
 
   it("rejects uninitialized inventory without PostgreSQL writes", async () => {

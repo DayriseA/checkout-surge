@@ -3,7 +3,6 @@ import {
   BusinessOutcomePublicationScheduler,
   clearErpCircuitBreakerSnapshots,
   completeGeneratedRunTeardown,
-  createAbortableDatabaseConnection,
   createDatabaseConnection,
   createRedisClient,
   createRedisDashboardEventSubscriber,
@@ -34,7 +33,7 @@ import { loadApiConfig } from "./runtime/config.js";
 import { createDashboardRecoveryOperationFactory } from "./runtime/dashboard-recovery-operation-factory.js";
 import type { ApiFastifyInstance } from "./runtime/fastify.js";
 import { createPendingPersistenceRecoveryOperations } from "./runtime/pending-persistence-operation-factory.js";
-import { createBoundedInfrastructureReadinessCheck } from "./runtime/readiness.js";
+import { createApiReadiness } from "./runtime/readiness.js";
 import { createTerminalInventoryReadOperation } from "./runtime/terminal-inventory-read-operation.js";
 import { buildApiServer } from "./server.js";
 import { AdminDemoResetService } from "./services/admin-demo-reset-service.js";
@@ -432,6 +431,11 @@ export async function startApiServer(): Promise<void> {
   let server: ApiFastifyInstance | null = null;
   let closePromise: Promise<void> | null = null;
   let finalizationPoller: ReturnType<typeof setInterval> | null = null;
+  const readiness = createApiReadiness({
+    databaseUrl: config.databaseUrl,
+    redisUrl: config.redisUrl,
+    timeoutMs: config.readinessTimeoutMs,
+  });
   const close = () => {
     closePromise ??= (async () => {
       logger.info("Closing API server.");
@@ -440,6 +444,7 @@ export async function startApiServer(): Promise<void> {
       }
       await closeApiResources({
         closePendingPersistenceRecovery: () => pendingPersistenceRecovery.close(),
+        closeReadiness: () => readiness.close(),
         closeServer: async () => {
           dashboardEventFanout.close();
           await server?.close();
@@ -486,69 +491,7 @@ export async function startApiServer(): Promise<void> {
     server = await buildApiServer({
       config,
       logger,
-      readiness: createBoundedInfrastructureReadinessCheck(
-        [
-          {
-            name: "database_reachable",
-            check: async (signal) => {
-              const readinessDatabase = createAbortableDatabaseConnection(
-                config.databaseUrl,
-                signal,
-                {
-                  max: 1,
-                  connect_timeout: Math.ceil(config.readinessTimeoutMs / 1_000),
-                },
-              );
-              try {
-                await readinessDatabase.sql`SELECT 1`;
-              } finally {
-                await readinessDatabase.close();
-              }
-            },
-          },
-          {
-            name: "redis_reachable",
-            check: async (signal) => {
-              const readinessRedis = createRedisClient(config.redisUrl, {
-                lazyConnect: true,
-                maxRetriesPerRequest: 0,
-                commandTimeout: config.readinessTimeoutMs,
-              });
-              const disconnect = () => readinessRedis.disconnect();
-              signal.addEventListener("abort", disconnect, { once: true });
-              try {
-                await readinessRedis.ping();
-              } finally {
-                signal.removeEventListener("abort", disconnect);
-                disconnect();
-              }
-            },
-          },
-          {
-            name: "order_process_queue_reachable",
-            check: async (signal) => {
-              const readinessQueue = createBullMqOrderProcessQueueInspector({
-                url: config.redisUrl,
-                maxRetriesPerRequest: 0,
-                commandTimeout: config.readinessTimeoutMs,
-              });
-              let disconnectPromise: Promise<void> | undefined;
-              const disconnect = () => {
-                disconnectPromise ??= readinessQueue.disconnect();
-              };
-              signal.addEventListener("abort", disconnect, { once: true });
-              try {
-                await readinessQueue.checkConnectivity();
-              } finally {
-                signal.removeEventListener("abort", disconnect);
-                disconnect();
-                await disconnectPromise;
-              }
-            },
-          },
-        ],
-        config.readinessTimeoutMs,
-      ),
+      readiness,
       dashboardEventFanout,
       dashboardRecoveryService,
       dashboardRecoveryAdmission,
