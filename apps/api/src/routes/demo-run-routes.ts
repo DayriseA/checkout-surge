@@ -27,12 +27,16 @@ import { replaceFastifyCorrelation } from "@checkout-surge/logger/fastify";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { ApiHttpError, createErrorPayload } from "../runtime/errors.js";
 import type { ApiFastifyInstance } from "../runtime/fastify.js";
-import type { DemoRunController } from "../services/demo-run-service.js";
+import type { DemoPresetController } from "../services/demo-preset-service.js";
+import type { DemoRunLifecycleController } from "../services/demo-run-service.js";
 import { DemoRunValidationError } from "../services/demo-run-validation-error.js";
+import type { PublicRuntimePolicyController } from "../services/public-runtime-policy-service.js";
 import type { TrafficMetricIngestionController } from "../services/traffic-metric-ingestion-service.js";
 
 export interface RegisterDemoRunRoutesOptions {
-  demoRunService: DemoRunController;
+  presetService: DemoPresetController;
+  runtimePolicyService: PublicRuntimePolicyController;
+  demoRunLifecycleService: DemoRunLifecycleController;
   trafficMetricIngestion: TrafficMetricIngestionController;
   controlServiceToken: string;
 }
@@ -42,12 +46,12 @@ export function registerDemoRunRoutes(
   options: RegisterDemoRunRoutesOptions,
 ): void {
   app.get(publicPresetListPath, async (_request, reply) => {
-    return reply.status(200).send(await options.demoRunService.listPublicPresets());
+    return reply.status(200).send(await options.presetService.listPublicPresets());
   });
 
   app.get(publicRuntimePolicyPath, async (_request, reply) => {
     try {
-      return reply.status(200).send(await options.demoRunService.getPublicRuntimePolicy());
+      return reply.status(200).send(await options.runtimePolicyService.getPublicRuntimePolicy());
     } catch (error) {
       throw mapDemoRunError(error);
     }
@@ -62,7 +66,9 @@ export function registerDemoRunRoutes(
     try {
       return reply
         .status(200)
-        .send(await options.demoRunService.getAdminPublicRuntimePolicy(request.correlationId));
+        .send(
+          await options.runtimePolicyService.getAdminPublicRuntimePolicy(request.correlationId),
+        );
     } catch (error) {
       throw mapDemoRunError(error);
     }
@@ -85,7 +91,10 @@ export function registerDemoRunRoutes(
       return reply
         .status(200)
         .send(
-          await options.demoRunService.updateAdminPublicRuntimePolicy(parsedRequest, correlationId),
+          await options.runtimePolicyService.updateAdminPublicRuntimePolicy(
+            parsedRequest,
+            correlationId,
+          ),
         );
     } catch (error) {
       throw mapDemoRunError(error);
@@ -98,7 +107,7 @@ export function registerDemoRunRoutes(
       return unauthorized;
     }
 
-    return reply.status(200).send(await options.demoRunService.listAdminPresets());
+    return reply.status(200).send(await options.presetService.listAdminPresets());
   });
 
   app.delete(adminPresetListPath, async (request, reply) => {
@@ -108,7 +117,7 @@ export function registerDemoRunRoutes(
     }
 
     try {
-      const response = await options.demoRunService.archiveAdminPreset(
+      const response = await options.presetService.archiveAdminPreset(
         archiveAdminPresetRequestSchema.parse(request.body),
       );
       return reply.status(200).send(response);
@@ -127,7 +136,7 @@ export function registerDemoRunRoutes(
       return reply
         .status(200)
         .send(
-          await options.demoRunService.saveAdminPreset(
+          await options.presetService.saveAdminPreset(
             saveDemoPresetRequestSchema.parse(request.body),
           ),
         );
@@ -146,7 +155,7 @@ export function registerDemoRunRoutes(
       return reply
         .status(201)
         .send(
-          await options.demoRunService.duplicatePreset(
+          await options.presetService.duplicatePreset(
             duplicateDemoPresetRequestSchema.parse(request.body),
           ),
         );
@@ -165,7 +174,7 @@ export function registerDemoRunRoutes(
       return reply
         .status(200)
         .send(
-          await options.demoRunService.copyPresetToCustom(
+          await options.presetService.copyPresetToCustom(
             copyDemoPresetToCustomRequestSchema.parse(request.body),
           ),
         );
@@ -186,7 +195,7 @@ export function registerDemoRunRoutes(
 
     try {
       return reply.status(202).send(
-        await options.demoRunService.startRun(
+        await options.demoRunLifecycleService.startRun(
           {
             ...parsedRequest,
             ...deriveRunStartPrincipal(request),
@@ -224,7 +233,7 @@ export function registerDemoRunRoutes(
     const parsedReport = trafficCompletionReportSchema.parse(request.body);
     applyInternalBodyCorrelation(request, reply, parsedReport.correlationId);
     try {
-      await options.demoRunService.recordTrafficCompletion(parsedReport);
+      await options.demoRunLifecycleService.recordTrafficCompletion(parsedReport);
       return reply.status(202).send(
         trafficCompletionAcknowledgementSchema.parse({
           runId: parsedReport.runId,

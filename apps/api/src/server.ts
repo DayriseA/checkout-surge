@@ -24,10 +24,12 @@ import type { DashboardRecoveryAdmissionController } from "./services/dashboard-
 import type { DashboardRecoveryService } from "./services/dashboard-recovery-service.js";
 import { DashboardRecoveryWorkflow } from "./services/dashboard-recovery-workflow.js";
 import type { DemoMaintenanceService } from "./services/demo-maintenance-service.js";
-import type { DemoRunController } from "./services/demo-run-service.js";
+import type { DemoPresetController } from "./services/demo-preset-service.js";
+import type { DemoRunLifecycleController } from "./services/demo-run-service.js";
 import type { ErpStatusService } from "./services/erp-status-service.js";
 import type { InventoryStatusService } from "./services/inventory-status-service.js";
 import type { OrderStatusController } from "./services/order-status-service.js";
+import type { PublicRuntimePolicyController } from "./services/public-runtime-policy-service.js";
 import type { QueueStatusService } from "./services/queue-status-service.js";
 import type { ReserveOrderService } from "./services/reserve-order-service.js";
 import type { RunHistoryController } from "./services/run-history-service.js";
@@ -45,7 +47,9 @@ export interface BuildApiServerOptions {
   orderStatusService: OrderStatusController;
   queueStatusService: QueueStatusService;
   reserveOrderService: ReserveOrderService;
-  demoRunService: DemoRunController;
+  presetService: DemoPresetController;
+  runtimePolicyService: PublicRuntimePolicyController;
+  demoRunLifecycleService: DemoRunLifecycleController;
   trafficMetricIngestion: TrafficMetricIngestionController;
   demoMaintenanceService: DemoMaintenanceService;
   runHistoryService: RunHistoryController;
@@ -112,7 +116,9 @@ export async function buildApiServer(options: BuildApiServerOptions): Promise<Ap
   registerOrderStatusRoutes(app, { orderStatusService: options.orderStatusService });
   registerQueueRoutes(app, { queueStatusService: options.queueStatusService });
   registerDemoRunRoutes(app, {
-    demoRunService: options.demoRunService,
+    presetService: options.presetService,
+    runtimePolicyService: options.runtimePolicyService,
+    demoRunLifecycleService: options.demoRunLifecycleService,
     trafficMetricIngestion: options.trafficMetricIngestion,
     controlServiceToken: options.config.controlServiceToken,
   });

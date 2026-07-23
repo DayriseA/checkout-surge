@@ -34,11 +34,11 @@ Create focused application owners for preset administration and runtime-policy a
 
 ## Acceptance criteria
 
-- [ ] Run lifecycle code no longer implements preset CRUD/listing or runtime-policy persistence.
-- [ ] Preset and policy routes depend on narrow explicit application interfaces and stay thin.
-- [ ] Accepted run snapshots still contain the exact validated configuration and hard caps remain environment-authoritative.
-- [ ] Public/admin visibility, archival safeguards, policy mutation, and concurrency behavior remain covered at their new owners.
-- [ ] Moved helpers and obsolete DemoRunController methods are deleted rather than forwarded indefinitely.
+- [x] Run lifecycle code no longer implements preset CRUD/listing or runtime-policy persistence.
+- [x] Preset and policy routes depend on narrow explicit application interfaces and stay thin.
+- [x] Accepted run snapshots still contain the exact validated configuration and hard caps remain environment-authoritative.
+- [x] Public/admin visibility, archival safeguards, policy mutation, and concurrency behavior remain covered at their new owners.
+- [x] Moved helpers and obsolete DemoRunController methods are deleted rather than forwarded indefinitely.
 
 ## Verification
 
@@ -49,8 +49,8 @@ Create focused application owners for preset administration and runtime-policy a
 
 ## Working record
 
-- **Status:** pending
-- **Completed scope:** none
-- **Material decisions or deviations:** none
-- **Verification performed:** not run
-- **Remaining blockers or follow-up:** none
+- **Status:** complete
+- **Completed scope:** Extracted preset catalog reads and administration into `DemoPresetService`, including active lookup, DTO mapping, slug normalization, editable/immutable rules, duplication/copy behavior, soft archival, and guarded archive concurrency. Extracted public runtime-policy reads, effective-policy hydration, DTO mapping, mutation validation/persistence, and startup validation into `PublicRuntimePolicyService`. Renamed and narrowed the remaining route-facing lifecycle boundary to `DemoRunLifecycleController`/`DemoRunLifecycleService`; lifecycle now receives only active-preset and effective-policy readers, while retaining visibility/override rules, public budgets, accepted snapshot assembly/validation, persistence, traffic completion, and reconciliation. Split route/server/composition dependencies into explicit preset, policy, and lifecycle owners. Refocused lifecycle tests and added owner-specific preset and policy suites plus three narrow route fixtures. Updated durable ownership documentation in `docs/repository_layout.md` and `docs/core_business_entities.md`.
+- **Material decisions or deviations:** Kept accepted snapshot assembly and public/admin start rules in the lifecycle service because they are run-start decisions; the extracted services expose only the two minimal read capabilities needed there. Kept traffic-completion acceptance/finalization/reconciliation in the existing lifecycle owner to avoid Task 29. Shared wire DTOs were unchanged. Ran the existing contracts suite as regression evidence despite no schema change. No compatibility layer, generic repository/service framework, or forwarding methods were retained.
+- **Verification performed:** Started and later removed dedicated test infrastructure with `pnpm test:infra:up` / `pnpm test:infra:down`. Passed `pnpm --filter api test:api test/demo-preset-service.test.ts --reporter=dot --silent=passed-only` (10 tests, including ordered active public/admin visibility, archived-list exclusion, repeat-archive rejection, and guarded archive races), `pnpm --filter api test:api test/public-runtime-policy-service.test.ts --reporter=dot --silent=passed-only` (8 tests, including automatic steady-arrival derived-VU cap rejection with unchanged persistence), `pnpm --filter api test:api test/demo-run-service.test.ts --silent=passed-only` (45 tests), and `pnpm --filter api test:api test/api.test.ts -t "demo|preset|runtime policy|traffic completion" --silent=passed-only` (14 focused route tests; 76 unrelated tests skipped). Passed `pnpm --filter @checkout-surge/contracts test` (109 tests), `pnpm --filter api type-check`, `pnpm --filter @checkout-surge/contracts type-check`, and `pnpm type-check` (all 11 workspace tasks plus test-source type-check). Passed focused `pnpm exec biome check` across all 11 changed supported TypeScript files and `git diff --check`.
+- **Remaining blockers or follow-up:** None. Traffic-completion extraction/finalization ownership remains intentionally deferred to Task 29.

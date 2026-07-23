@@ -111,7 +111,8 @@ import {
 } from "../src/services/dashboard-recovery-service.js";
 import type { RedisDashboardTrafficMetricStore } from "../src/services/dashboard-traffic-metric-store.js";
 import type { DemoMaintenanceService } from "../src/services/demo-maintenance-service.js";
-import type { DemoRunController } from "../src/services/demo-run-service.js";
+import type { DemoPresetController } from "../src/services/demo-preset-service.js";
+import type { DemoRunLifecycleController } from "../src/services/demo-run-service.js";
 import { DemoRunValidationError } from "../src/services/demo-run-validation-error.js";
 import type { ErpStatusService } from "../src/services/erp-status-service.js";
 import {
@@ -125,6 +126,7 @@ import {
 } from "../src/services/order-status-service.js";
 import { PendingPersistenceRecoveryService } from "../src/services/pending-persistence-recovery-service.js";
 import { PostgresBuyPersistence } from "../src/services/postgres-buy-persistence.js";
+import type { PublicRuntimePolicyController } from "../src/services/public-runtime-policy-service.js";
 import {
   type OrderProcessQueueInspector,
   QueueStatusService,
@@ -254,7 +256,9 @@ async function buildTestServer(options: {
   dashboardRecoveryService?: DashboardRecoveryService;
   dashboardRecoveryAdmission?: DashboardRecoveryAdmissionController;
   dashboardEventFanout?: DashboardEventFanout;
-  demoRunService?: DemoRunController;
+  presetService?: DemoPresetController;
+  runtimePolicyService?: PublicRuntimePolicyController;
+  demoRunLifecycleService?: DemoRunLifecycleController;
   trafficMetricIngestion?: TrafficMetricIngestionController;
   demoMaintenanceService?: DemoMaintenanceService;
   runHistoryService?: RunHistoryController;
@@ -358,7 +362,9 @@ async function buildTestServer(options: {
         ? { reportPersistenceFailure: options.reportPersistenceFailure }
         : {}),
     }),
-    demoRunService: options.demoRunService ?? demoRunControllerFixture(),
+    presetService: options.presetService ?? demoPresetControllerFixture(),
+    runtimePolicyService: options.runtimePolicyService ?? publicRuntimePolicyControllerFixture(),
+    demoRunLifecycleService: options.demoRunLifecycleService ?? demoRunLifecycleControllerFixture(),
     trafficMetricIngestion: options.trafficMetricIngestion ?? { ingest: async () => undefined },
     demoMaintenanceService:
       options.demoMaintenanceService ??
@@ -520,7 +526,7 @@ function demoPresetFixture(slug: string) {
   };
 }
 
-function demoRunControllerFixture(): DemoRunController {
+function demoPresetControllerFixture(): DemoPresetController {
   return {
     listPublicPresets: async () => ({
       presets: [],
@@ -547,6 +553,11 @@ function demoRunControllerFixture(): DemoRunController {
       archivedAt: "2026-06-20T00:00:10.000Z",
       timestamp: "2026-06-20T00:00:10.000Z",
     }),
+  };
+}
+
+function publicRuntimePolicyControllerFixture(): PublicRuntimePolicyController {
+  return {
     getPublicRuntimePolicy: async () => ({
       id: "active",
       policy: publicRuntimePolicyFixture(),
@@ -566,6 +577,11 @@ function demoRunControllerFixture(): DemoRunController {
       correlationId,
       timestamp: "2026-06-20T00:00:10.000Z",
     }),
+  };
+}
+
+function demoRunLifecycleControllerFixture(): DemoRunLifecycleController {
+  return {
     startRun: async (_request, correlationId) => ({
       run: demoRunSnapshotFixture(),
       recovery: { establishedAt: "2026-06-20T00:00:10.000Z" },
@@ -1014,7 +1030,9 @@ describe("API gateway routes", () => {
     orderStatusService?: OrderStatusController;
     queueInspector?: OrderProcessQueueInspector;
     erpStatusService?: ErpStatusService;
-    demoRunService?: DemoRunController;
+    presetService?: DemoPresetController;
+    runtimePolicyService?: PublicRuntimePolicyController;
+    demoRunLifecycleService?: DemoRunLifecycleController;
     trafficMetricIngestion?: TrafficMetricIngestionController;
     demoMaintenanceService?: DemoMaintenanceService;
     runHistoryService?: RunHistoryController;
@@ -1302,8 +1320,8 @@ describe("API gateway routes", () => {
   it("returns public demo presets and runtime policy through shared contracts", async () => {
     const server = await trackedServer({
       persistence: new AcceptingPersistence(),
-      demoRunService: {
-        ...demoRunControllerFixture(),
+      presetService: {
+        ...demoPresetControllerFixture(),
         listPublicPresets: async () => ({
           presets: [
             {
@@ -1342,8 +1360,8 @@ describe("API gateway routes", () => {
   it("maps a missing public runtime policy through the canonical error boundary", async () => {
     const server = await trackedServer({
       persistence: new AcceptingPersistence(),
-      demoRunService: {
-        ...demoRunControllerFixture(),
+      runtimePolicyService: {
+        ...publicRuntimePolicyControllerFixture(),
         getPublicRuntimePolicy: async () => {
           throw new DemoRunValidationError(
             "resource_not_found",
@@ -1371,15 +1389,15 @@ describe("API gateway routes", () => {
 
   it("protects admin public runtime policy reads and updates", async () => {
     const getAdminPublicRuntimePolicy = vi.fn(
-      demoRunControllerFixture().getAdminPublicRuntimePolicy,
+      publicRuntimePolicyControllerFixture().getAdminPublicRuntimePolicy,
     );
     const updateAdminPublicRuntimePolicy = vi.fn(
-      demoRunControllerFixture().updateAdminPublicRuntimePolicy,
+      publicRuntimePolicyControllerFixture().updateAdminPublicRuntimePolicy,
     );
     const server = await trackedServer({
       persistence: new AcceptingPersistence(),
-      demoRunService: {
-        ...demoRunControllerFixture(),
+      runtimePolicyService: {
+        ...publicRuntimePolicyControllerFixture(),
         getAdminPublicRuntimePolicy,
         updateAdminPublicRuntimePolicy,
       },
@@ -1615,11 +1633,11 @@ describe("API gateway routes", () => {
   });
 
   it("starts a demo run through the API run lifecycle and propagates correlation IDs", async () => {
-    const startRun = vi.fn(demoRunControllerFixture().startRun);
+    const startRun = vi.fn(demoRunLifecycleControllerFixture().startRun);
     const server = await trackedServer({
       persistence: new AcceptingPersistence(),
-      demoRunService: {
-        ...demoRunControllerFixture(),
+      demoRunLifecycleService: {
+        ...demoRunLifecycleControllerFixture(),
         startRun,
       },
     });
@@ -1652,11 +1670,11 @@ describe("API gateway routes", () => {
   });
 
   it("derives admin demo-run authority only from trusted headers", async () => {
-    const startRun = vi.fn(demoRunControllerFixture().startRun);
+    const startRun = vi.fn(demoRunLifecycleControllerFixture().startRun);
     const server = await trackedServer({
       persistence: new AcceptingPersistence(),
-      demoRunService: {
-        ...demoRunControllerFixture(),
+      demoRunLifecycleService: {
+        ...demoRunLifecycleControllerFixture(),
         startRun,
       },
     });
@@ -1936,14 +1954,14 @@ describe("API gateway routes", () => {
   });
 
   it("protects and delegates admin preset management endpoints", async () => {
-    const listAdminPresets = vi.fn(demoRunControllerFixture().listAdminPresets);
-    const saveAdminPreset = vi.fn(demoRunControllerFixture().saveAdminPreset);
-    const duplicatePreset = vi.fn(demoRunControllerFixture().duplicatePreset);
-    const copyPresetToCustom = vi.fn(demoRunControllerFixture().copyPresetToCustom);
+    const listAdminPresets = vi.fn(demoPresetControllerFixture().listAdminPresets);
+    const saveAdminPreset = vi.fn(demoPresetControllerFixture().saveAdminPreset);
+    const duplicatePreset = vi.fn(demoPresetControllerFixture().duplicatePreset);
+    const copyPresetToCustom = vi.fn(demoPresetControllerFixture().copyPresetToCustom);
     const server = await trackedServer({
       persistence: new AcceptingPersistence(),
-      demoRunService: {
-        ...demoRunControllerFixture(),
+      presetService: {
+        ...demoPresetControllerFixture(),
         listAdminPresets,
         saveAdminPreset,
         duplicatePreset,
@@ -2042,8 +2060,8 @@ describe("API gateway routes", () => {
     };
     const server = await trackedServer({
       persistence: new AcceptingPersistence(),
-      demoRunService: {
-        ...demoRunControllerFixture(),
+      presetService: {
+        ...demoPresetControllerFixture(),
         ...(operation === "save" ? { saveAdminPreset: fail } : {}),
         ...(operation === "duplicate" ? { duplicatePreset: fail } : {}),
         ...(operation === "copy" ? { copyPresetToCustom: fail } : {}),
@@ -2092,11 +2110,11 @@ describe("API gateway routes", () => {
   });
 
   it("protects and delegates admin preset archival through the DELETE route", async () => {
-    const archiveAdminPreset = vi.fn(demoRunControllerFixture().archiveAdminPreset);
+    const archiveAdminPreset = vi.fn(demoPresetControllerFixture().archiveAdminPreset);
     const server = await trackedServer({
       persistence: new AcceptingPersistence(),
-      demoRunService: {
-        ...demoRunControllerFixture(),
+      presetService: {
+        ...demoPresetControllerFixture(),
         archiveAdminPreset,
       },
     });
@@ -2145,8 +2163,8 @@ describe("API gateway routes", () => {
     });
     const server = await trackedServer({
       persistence: new AcceptingPersistence(),
-      demoRunService: {
-        ...demoRunControllerFixture(),
+      presetService: {
+        ...demoPresetControllerFixture(),
         archiveAdminPreset,
       },
     });
@@ -2161,11 +2179,11 @@ describe("API gateway routes", () => {
   });
 
   it("rejects tokenless visitor assertions and forwards only authenticated proxy assertions", async () => {
-    const startRun = vi.fn(demoRunControllerFixture().startRun);
+    const startRun = vi.fn(demoRunLifecycleControllerFixture().startRun);
     const server = await trackedServer({
       persistence: new AcceptingPersistence(),
-      demoRunService: {
-        ...demoRunControllerFixture(),
+      demoRunLifecycleService: {
+        ...demoRunLifecycleControllerFixture(),
         startRun,
       },
     });
@@ -2211,7 +2229,7 @@ describe("API gateway routes", () => {
     });
     const server = await trackedServer({
       persistence: new AcceptingPersistence(),
-      demoRunService: { ...demoRunControllerFixture(), startRun },
+      demoRunLifecycleService: { ...demoRunLifecycleControllerFixture(), startRun },
     });
     const response = await server.inject({
       method: "POST",
@@ -2243,7 +2261,7 @@ describe("API gateway routes", () => {
     });
     const server = await trackedServer({
       persistence: new AcceptingPersistence(),
-      demoRunService: { ...demoRunControllerFixture(), startRun },
+      demoRunLifecycleService: { ...demoRunLifecycleControllerFixture(), startRun },
     });
     const correlationId = "corr-public-budget-exhausted";
     const response = await server.inject({
@@ -2429,8 +2447,8 @@ describe("API gateway routes", () => {
     const recordTrafficCompletion = vi.fn(async () => demoRunSnapshotFixture());
     const server = await trackedServer({
       persistence: new AcceptingPersistence(),
-      demoRunService: {
-        ...demoRunControllerFixture(),
+      demoRunLifecycleService: {
+        ...demoRunLifecycleControllerFixture(),
         recordTrafficCompletion,
       },
     });
@@ -2501,8 +2519,8 @@ describe("API gateway routes", () => {
   it("maps a conflicting completion to a canonical correlated 409", async () => {
     const server = await trackedServer({
       persistence: new AcceptingPersistence(),
-      demoRunService: {
-        ...demoRunControllerFixture(),
+      demoRunLifecycleService: {
+        ...demoRunLifecycleControllerFixture(),
         recordTrafficCompletion: async () => {
           throw new DemoRunValidationError(
             "traffic_report_rejected",

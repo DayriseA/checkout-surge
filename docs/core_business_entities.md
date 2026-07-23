@@ -390,6 +390,7 @@ Notes:
 - Public presets such as `preview-1k`, `surge-5k`, `surge-10k`, `idempotency-check-200`, and `public-custom` are durable but read-only.
 - The Drizzle declarations type preset display/config JSON directly from shared contracts. This is a compile-time write/select boundary; PostgreSQL still stores `jsonb`, so runtime readers validate data according to the schema owned by their specific boundary. Task 13's strict materialized-state work applies to accepted demo-run snapshots and finalization/history evidence, not preset or runtime-policy persistence.
 - Admin operators can save editable admin presets, duplicate public presets into admin copies, or copy a preset into `Custom`.
+- `DemoPresetService` owns active preset lookup, DTO mapping, list/save/duplicate/copy/archive rules, and guarded soft archival. Run lifecycle receives only its active-preset reader capability; it does not implement preset administration.
 - `isSystem` marks seeded/reserved canonical slugs so operator duplicates can be distinguished from system presets. Only operator-created (non-system), editable, non-custom, active admin presets are archivable; public presets, `public-custom`, the persisted `Custom` scratch preset, and all seeded/system admin presets are never archivable.
 - Archival is a soft delete: it sets `archivedAt` but keeps the row intact. Active preset lists and lookups exclude rows where `archivedAt` is not null, so an archived preset can no longer be saved, copied, duplicated, or started. The global unique slug index still reserves archived slugs, so they cannot be reused. `DemoRun.presetId` references (`ON DELETE RESTRICT`) remain valid because the preset row is retained, preserving historical run integrity.
 
@@ -622,7 +623,7 @@ Notes:
 - The singleton row uses the stable id `active`.
 - An explicit seed/setup validates the mutable policy's intrinsic relationships and defaults, then inserts it only when the active singleton is absent. It does not read or store API-owned deployment caps. Rerunning setup preserves admin-edited values; a fresh database is required to bootstrap from changed setup defaults.
 - The migration runner validates an existing active singleton against the current strict mutable structural and intrinsic semantic contract without translating older or cap-bearing shapes. Incompatible pre-release state is rebuilt through the documented selected-project wipe workflow.
-- Admin-protected controls may update this row. API startup configuration is the sole owner of deployment hard caps. One API effective-policy construction boundary combines the strict mutable row and caps, preserving effective response DTOs while rejecting updates or startup when mutable values exceed current caps.
+- Admin-protected controls may update this row. API startup configuration is the sole owner of deployment hard caps. `PublicRuntimePolicyService` is the one effective-policy construction boundary: it combines the strict mutable row and caps, owns public/admin DTO mapping and mutation validation, and rejects incompatible policy at update or startup. Run lifecycle receives only its effective-policy reader capability.
 - Public runtime policy changes do not mutate public preset definitions; they control public custom-run bounds and public budget behavior.
 
 ---

@@ -48,11 +48,9 @@ import {
 import { DashboardSnapshotPublicationScheduler } from "./services/dashboard-snapshot-publication-scheduler.js";
 import { RedisDashboardTrafficMetricStore } from "./services/dashboard-traffic-metric-store.js";
 import { DemoMaintenanceService } from "./services/demo-maintenance-service.js";
+import { DemoPresetService } from "./services/demo-preset-service.js";
 import { DemoRunFinalizationService } from "./services/demo-run-finalization-service.js";
-import {
-  DemoRunService,
-  validateActivePublicRuntimePolicyAtStartup,
-} from "./services/demo-run-service.js";
+import { DemoRunLifecycleService } from "./services/demo-run-service.js";
 import { DemoRunStartupReconciliationService } from "./services/demo-run-startup-reconciliation-service.js";
 import {
   ErpStatusService,
@@ -66,6 +64,7 @@ import { PendingPersistenceRecoveryService } from "./services/pending-persistenc
 import { PostgresBuyPersistence } from "./services/postgres-buy-persistence.js";
 import { PostgresDemoResetWorkflowFence } from "./services/postgres-demo-reset-workflow-fence.js";
 import { RedisPublicRunBudgetStore } from "./services/public-run-budget-store.js";
+import { PublicRuntimePolicyService } from "./services/public-runtime-policy-service.js";
 import { QueueStatusService } from "./services/queue-status-service.js";
 import {
   type BusinessOutcomeUpdateFailureReport,
@@ -511,9 +510,16 @@ export async function startApiServer(): Promise<void> {
     closeRunSaleEligibility: ({ runId, saleOfferId }) =>
       setRunSaleEligibility(redis, { runId, saleOfferId, status: "closed" }),
   });
-  const demoRunService = new DemoRunService({
+  const presetService = new DemoPresetService({ db: connection.db });
+  const runtimePolicyService = new PublicRuntimePolicyService({
+    db: connection.db,
+    deploymentHardCaps: config.deploymentHardCaps,
+  });
+  const demoRunLifecycleService = new DemoRunLifecycleService({
     db: connection.db,
     redis,
+    presetReader: presetService,
+    runtimePolicyReader: runtimePolicyService,
     trafficExecutionGateway,
     publicRunBudgetStore: new RedisPublicRunBudgetStore(redis),
     businessOutcomeReader,
@@ -524,7 +530,6 @@ export async function startApiServer(): Promise<void> {
     buyEndpointPath: "/buy",
     logger,
     publicClientCookieSecret: config.publicClientCookieSecret,
-    deploymentHardCaps: config.deploymentHardCaps,
   });
   const reserveOrderService = new ReserveOrderService({
     persistence,
@@ -614,7 +619,7 @@ export async function startApiServer(): Promise<void> {
   };
 
   try {
-    await validateActivePublicRuntimePolicyAtStartup(connection.db, config.deploymentHardCaps);
+    await runtimePolicyService.validateActivePolicyAtStartup();
     const startupReconciliation = await demoRunStartupReconciliationService.reconcile();
     pendingPersistenceRecovery.start();
     if (startupReconciliation.discoveredRunCount > 0) {
@@ -622,7 +627,7 @@ export async function startApiServer(): Promise<void> {
     }
 
     finalizationPoller = setInterval(() => {
-      void demoRunService.reconcileStartingRuns().catch((error: unknown) => {
+      void demoRunLifecycleService.reconcileStartingRuns().catch((error: unknown) => {
         logger.error({ err: error }, "Demo run traffic-start reconciliation failed.");
       });
       void (async () => {
@@ -708,7 +713,9 @@ export async function startApiServer(): Promise<void> {
       orderStatusService,
       queueStatusService,
       reserveOrderService,
-      demoRunService,
+      presetService,
+      runtimePolicyService,
+      demoRunLifecycleService,
       trafficMetricIngestion,
       demoMaintenanceService,
       runHistoryService,

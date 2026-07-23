@@ -1,38 +1,15 @@
 import { randomUUID } from "node:crypto";
 import {
   type AcceptedRunConfigSnapshot,
-  type AdminPresetListItem,
-  type AdminPresetListResponse,
-  type AdminPresetMutationResponse,
-  type AdminPublicRuntimePolicyResponse,
-  type AdminPublicRuntimePolicyUpdateRequest,
-  type ArchiveAdminPresetRequest,
-  type ArchiveAdminPresetResponse,
   acceptedRunConfigSnapshotSchema,
-  adminPresetListItemSchema,
-  adminPresetListResponseSchema,
-  adminPresetMutationResponseSchema,
-  adminPublicRuntimePolicyResponseSchema,
-  archiveAdminPresetResponseSchema,
   type BusinessOutcomeSummary,
-  type CopyDemoPresetToCustomRequest,
   collectAcceptedRunConfigSnapshotViolations,
   type DemoPresetContract,
   type DemoRunConfigOverride,
   type DemoRunSnapshot,
-  type DeploymentHardCaps,
-  type DuplicateDemoPresetRequest,
-  demoPresetContractSchema,
   emptyHttpTimingBreakdownSummary,
   type OperatorMode,
-  type PublicPresetListResponse,
   type PublicRuntimePolicy,
-  type PublicRuntimePolicyResponse,
-  publicPresetListResponseSchema,
-  publicRuntimePolicyMutableSchema,
-  publicRuntimePolicyResponseSchema,
-  publicRuntimePolicySchema,
-  type SaveDemoPresetRequest,
   type StartDemoRunRequest,
   type StartDemoRunResponse,
   startDemoRunResponseSchema,
@@ -45,7 +22,6 @@ import { verifyPublicVisitorCredential } from "@checkout-surge/contracts/public-
 import {
   type CheckoutSurgeDatabase,
   type CheckoutSurgeRedis,
-  demoPresets,
   demoRunFinalizations,
   demoRunSaleContexts,
   demoRunSummaries,
@@ -53,16 +29,15 @@ import {
   getInventoryStatus,
   initializeInventory,
   products,
-  publicRuntimePolicies,
   publishDashboardEvent,
   saleOffers,
   setRunSaleEligibility,
 } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
-import { ZodError } from "zod";
 import { ApiHttpError } from "../runtime/errors.js";
 import type { DashboardBusinessOutcomeReader } from "./dashboard-recovery-service.js";
+import type { ActiveDemoPresetReader } from "./demo-preset-service.js";
 import type { DemoRunFinalizationController } from "./demo-run-finalization-service.js";
 import {
   emptyBusinessOutcomeSummary,
@@ -75,6 +50,7 @@ import type {
   PublicRunBudgetReservation,
   PublicRunBudgetStore,
 } from "./public-run-budget-store.js";
+import type { EffectivePublicRuntimePolicyReader } from "./public-runtime-policy-service.js";
 import type { TerminalDemoRunWriter } from "./terminal-demo-run-writer.js";
 import {
   findTrafficCompletionBindingMismatch,
@@ -89,19 +65,7 @@ export const demoRunStartLockKey = "checkout_surge_demo_run_start";
 const singleNonTerminalRunIndexName = "demo_runs_single_non_terminal_idx";
 const generatedRunSaleDurationMs = 24 * 60 * 60 * 1000;
 
-export interface DemoRunController {
-  listPublicPresets(): Promise<PublicPresetListResponse>;
-  listAdminPresets(): Promise<AdminPresetListResponse>;
-  saveAdminPreset(request: SaveDemoPresetRequest): Promise<AdminPresetMutationResponse>;
-  duplicatePreset(request: DuplicateDemoPresetRequest): Promise<AdminPresetMutationResponse>;
-  copyPresetToCustom(request: CopyDemoPresetToCustomRequest): Promise<AdminPresetMutationResponse>;
-  archiveAdminPreset(request: ArchiveAdminPresetRequest): Promise<ArchiveAdminPresetResponse>;
-  getPublicRuntimePolicy(): Promise<PublicRuntimePolicyResponse>;
-  getAdminPublicRuntimePolicy(correlationId: string): Promise<AdminPublicRuntimePolicyResponse>;
-  updateAdminPublicRuntimePolicy(
-    request: AdminPublicRuntimePolicyUpdateRequest,
-    correlationId: string,
-  ): Promise<AdminPublicRuntimePolicyResponse>;
+export interface DemoRunLifecycleController {
   startRun(request: StartDemoRunCommand, correlationId: string): Promise<StartDemoRunResponse>;
   recordTrafficCompletion(input: TrafficCompletionReport): Promise<DemoRunSnapshot>;
 }
@@ -136,13 +100,15 @@ export function isSingleNonTerminalRunViolation(error: unknown): boolean {
   return false;
 }
 
-export class DemoRunService implements DemoRunController {
+export class DemoRunLifecycleService implements DemoRunLifecycleController {
   constructor(
     private readonly options: {
       db: CheckoutSurgeDatabase;
       redis: CheckoutSurgeRedis;
       trafficExecutionGateway: TrafficExecutionGateway;
       publicRunBudgetStore: PublicRunBudgetStore;
+      presetReader: ActiveDemoPresetReader;
+      runtimePolicyReader: EffectivePublicRuntimePolicyReader;
       businessOutcomeReader: DashboardBusinessOutcomeReader;
       terminalRunWriter: Pick<TerminalDemoRunWriter, "write">;
       completionEnrichmentService: Pick<
@@ -154,267 +120,10 @@ export class DemoRunService implements DemoRunController {
       buyEndpointPath: string;
       logger: CheckoutSurgeLogger;
       publicClientCookieSecret: string;
-      deploymentHardCaps: DeploymentHardCaps;
       now?: () => Date;
       generateId?: () => string;
     },
   ) {}
-
-  async listPublicPresets(): Promise<PublicPresetListResponse> {
-    const rows = await this.options.db
-      .select()
-      .from(demoPresets)
-      .where(and(eq(demoPresets.visibility, "public"), isNull(demoPresets.archivedAt)))
-      .orderBy(sql`(${demoPresets.display}->>'sortOrder')::int`);
-
-    return publicPresetListResponseSchema.parse({
-      presets: rows.map(toDemoPresetContract),
-      timestamp: this.now().toISOString(),
-    });
-  }
-
-  async listAdminPresets(): Promise<AdminPresetListResponse> {
-    const rows = await this.options.db
-      .select()
-      .from(demoPresets)
-      .where(isNull(demoPresets.archivedAt))
-      .orderBy(sql`(${demoPresets.display}->>'sortOrder')::int`, demoPresets.slug);
-
-    return adminPresetListResponseSchema.parse({
-      presets: rows.map(toAdminPresetListItem),
-      timestamp: this.now().toISOString(),
-    });
-  }
-
-  async saveAdminPreset(request: SaveDemoPresetRequest): Promise<AdminPresetMutationResponse> {
-    const now = this.now();
-    const preset = await this.readPreset(request.slug);
-    ensureEditableAdminPreset(preset);
-
-    const [updated] = await this.options.db
-      .update(demoPresets)
-      .set({
-        display: request.display,
-        trafficConfig: request.trafficConfig,
-        inventoryConfig: request.inventoryConfig,
-        erpConfig: request.erpConfig,
-        backpressureConfig: request.backpressureConfig,
-        updatedAt: now,
-      })
-      .where(eq(demoPresets.slug, request.slug))
-      .returning();
-
-    return adminPresetMutationResponseSchema.parse({
-      preset: toDemoPresetContract(requirePresetRow(updated, request.slug)),
-      timestamp: now.toISOString(),
-    });
-  }
-
-  async duplicatePreset(request: DuplicateDemoPresetRequest): Promise<AdminPresetMutationResponse> {
-    const now = this.now();
-    const source = await this.readPreset(request.sourceSlug);
-    const targetSlug = normalizeSlug(request.targetSlug);
-    const [existingTarget] = await this.options.db
-      .select({ id: demoPresets.id })
-      .from(demoPresets)
-      .where(eq(demoPresets.slug, targetSlug))
-      .limit(1);
-
-    if (existingTarget) {
-      throw new DemoRunValidationError("preset_conflict", "A preset already uses that slug.", {
-        conflictReason: "slug_in_use",
-        slug: targetSlug,
-      });
-    }
-
-    if (source.slug === "public-custom") {
-      throw new DemoRunValidationError(
-        "preset_operation_not_allowed",
-        "The public custom base preset cannot be duplicated.",
-      );
-    }
-
-    const [inserted] = await this.options.db
-      .insert(demoPresets)
-      .values({
-        id: this.generateId(),
-        slug: targetSlug,
-        visibility: "admin",
-        isEditable: true,
-        isCustom: false,
-        isSystem: false,
-        display: {
-          ...source.display,
-          name: request.displayName ?? `${source.display.name} Copy`,
-        },
-        trafficConfig: source.trafficConfig,
-        inventoryConfig: source.inventoryConfig,
-        erpConfig: source.erpConfig,
-        backpressureConfig: source.backpressureConfig,
-        createdAt: now,
-        updatedAt: now,
-      })
-      .returning();
-
-    return adminPresetMutationResponseSchema.parse({
-      preset: toDemoPresetContract(requirePresetRow(inserted, targetSlug)),
-      timestamp: now.toISOString(),
-    });
-  }
-
-  async copyPresetToCustom(
-    request: CopyDemoPresetToCustomRequest,
-  ): Promise<AdminPresetMutationResponse> {
-    const now = this.now();
-    const source = await this.readPreset(request.sourceSlug);
-    const custom = await this.readPreset("custom");
-    ensureEditableAdminPreset(custom);
-
-    const [updated] = await this.options.db
-      .update(demoPresets)
-      .set({
-        display: {
-          ...custom.display,
-          description: `Scratch copy of ${source.display.name}.`,
-        },
-        trafficConfig: source.trafficConfig,
-        inventoryConfig: source.inventoryConfig,
-        erpConfig: source.erpConfig,
-        backpressureConfig: source.backpressureConfig,
-        updatedAt: now,
-      })
-      .where(eq(demoPresets.slug, "custom"))
-      .returning();
-
-    return adminPresetMutationResponseSchema.parse({
-      preset: toDemoPresetContract(requirePresetRow(updated, "custom")),
-      timestamp: now.toISOString(),
-    });
-  }
-
-  async archiveAdminPreset(
-    request: ArchiveAdminPresetRequest,
-  ): Promise<ArchiveAdminPresetResponse> {
-    const now = this.now();
-    const slug = request.slug;
-
-    const [row] = await this.options.db
-      .select()
-      .from(demoPresets)
-      .where(eq(demoPresets.slug, slug))
-      .limit(1);
-
-    if (!row || row.archivedAt !== null) {
-      throw new DemoRunValidationError("resource_not_found", "Demo preset was not found.", {
-        slug,
-      });
-    }
-
-    if (!isPresetRowArchivable(row)) {
-      throw new DemoRunValidationError(
-        "preset_conflict",
-        "Only operator-created admin presets can be archived.",
-        { conflictReason: "not_archivable", slug },
-      );
-    }
-
-    // Recheck every persisted eligibility dimension in the write itself. The
-    // loaded ID anchors the update to the row that passed the service guard,
-    // while the remaining conditions prevent a concurrent protection change
-    // (for example, a seed repair setting isSystem) from being overwritten.
-    const [updated] = await this.options.db
-      .update(demoPresets)
-      .set({ archivedAt: now, updatedAt: now })
-      .where(archivablePresetRowCondition(row.id))
-      .returning();
-
-    if (!updated?.archivedAt) {
-      const [current] = await this.options.db
-        .select()
-        .from(demoPresets)
-        .where(eq(demoPresets.id, row.id))
-        .limit(1);
-
-      if (!current || current.archivedAt !== null) {
-        throw new DemoRunValidationError("resource_not_found", "Demo preset was not found.", {
-          slug,
-        });
-      }
-
-      throw new DemoRunValidationError(
-        "preset_conflict",
-        "Only operator-created admin presets can be archived.",
-        { conflictReason: "not_archivable", slug },
-      );
-    }
-
-    return archiveAdminPresetResponseSchema.parse({
-      slug: updated.slug,
-      archivedAt: updated.archivedAt.toISOString(),
-      timestamp: now.toISOString(),
-    });
-  }
-
-  async getPublicRuntimePolicy(): Promise<PublicRuntimePolicyResponse> {
-    const row = await this.readPublicRuntimePolicyRow();
-    return publicRuntimePolicyResponseSchema.parse({
-      id: row.id,
-      policy: row.policy,
-      updatedAt: row.updatedAt.toISOString(),
-    });
-  }
-
-  async getAdminPublicRuntimePolicy(
-    correlationId: string,
-  ): Promise<AdminPublicRuntimePolicyResponse> {
-    return toAdminPublicRuntimePolicyResponse(
-      await this.readPublicRuntimePolicyRow(),
-      correlationId,
-      this.now(),
-    );
-  }
-
-  async updateAdminPublicRuntimePolicy(
-    request: AdminPublicRuntimePolicyUpdateRequest,
-    correlationId: string,
-  ): Promise<AdminPublicRuntimePolicyResponse> {
-    const now = this.now();
-    const mutablePolicy = publicRuntimePolicyMutableSchema.parse(request.policy);
-    let effectivePolicy: PublicRuntimePolicy;
-    try {
-      effectivePolicy = resolveEffectivePublicRuntimePolicy(
-        mutablePolicy,
-        this.options.deploymentHardCaps,
-      );
-    } catch (error) {
-      throwPublicRuntimePolicyUpdateError(error);
-    }
-
-    const [updated] = await this.options.db
-      .update(publicRuntimePolicies)
-      .set({
-        policy: mutablePolicy,
-        updatedAt: now,
-      })
-      .where(eq(publicRuntimePolicies.id, "active"))
-      .returning();
-
-    if (!updated) {
-      throw new DemoRunValidationError(
-        "resource_not_found",
-        "Public runtime policy is not configured.",
-      );
-    }
-
-    return toAdminPublicRuntimePolicyResponse(
-      {
-        ...updated,
-        policy: effectivePolicy,
-      },
-      correlationId,
-      now,
-    );
-  }
 
   async startRun(
     request: StartDemoRunCommand,
@@ -434,8 +143,7 @@ export class DemoRunService implements DemoRunController {
         "A valid public visitor credential is required.",
       );
     }
-    const policyRow = await this.readPublicRuntimePolicyRow();
-    const policy = policyRow.policy;
+    const policy = await this.options.runtimePolicyReader.readEffectivePolicy();
     const acceptedConfig = await this.resolveAcceptedConfig(request, policy);
     validateAcceptedRunSnapshot(acceptedConfig.snapshot, policy, {
       operatorMode: request.operatorMode,
@@ -822,7 +530,7 @@ export class DemoRunService implements DemoRunController {
     request: StartDemoRunCommand,
     policy: PublicRuntimePolicy,
   ): Promise<{ preset: DemoPresetContract; snapshot: AcceptedRunConfigSnapshot }> {
-    const preset = await this.readPreset(request.presetSlug);
+    const preset = await this.options.presetReader.readActivePreset(request.presetSlug);
 
     if (request.operatorMode === "public" && preset.visibility !== "public") {
       throw new DemoRunValidationError(
@@ -853,44 +561,6 @@ export class DemoRunService implements DemoRunController {
       snapshot: acceptedRunConfigSnapshotSchema.parse(
         mergeConfigSnapshot(base, request.configOverride),
       ),
-    };
-  }
-
-  private async readPreset(slug: string): Promise<DemoPresetContract> {
-    const [preset] = await this.options.db
-      .select()
-      .from(demoPresets)
-      .where(and(eq(demoPresets.slug, slug), isNull(demoPresets.archivedAt)))
-      .limit(1);
-
-    if (!preset) {
-      throw new DemoRunValidationError("resource_not_found", "Demo preset was not found.", {
-        slug,
-      });
-    }
-
-    return toDemoPresetContract(preset);
-  }
-
-  private async readPublicRuntimePolicyRow(): Promise<
-    Omit<typeof publicRuntimePolicies.$inferSelect, "policy"> & { policy: PublicRuntimePolicy }
-  > {
-    const [row] = await this.options.db
-      .select()
-      .from(publicRuntimePolicies)
-      .where(eq(publicRuntimePolicies.id, "active"))
-      .limit(1);
-
-    if (!row) {
-      throw new DemoRunValidationError(
-        "resource_not_found",
-        "Public runtime policy is not configured.",
-      );
-    }
-
-    return {
-      ...row,
-      policy: resolveEffectivePublicRuntimePolicy(row.policy, this.options.deploymentHardCaps),
     };
   }
 
@@ -1071,102 +741,6 @@ function throwCompletionMismatch(
   );
 }
 
-function toDemoPresetContract(preset: typeof demoPresets.$inferSelect): DemoPresetContract {
-  return demoPresetContractSchema.parse({
-    id: preset.id,
-    slug: preset.slug,
-    visibility: preset.visibility,
-    isEditable: preset.isEditable,
-    isCustom: preset.isCustom,
-    display: preset.display,
-    trafficConfig: preset.trafficConfig,
-    inventoryConfig: preset.inventoryConfig,
-    erpConfig: preset.erpConfig,
-    backpressureConfig: preset.backpressureConfig,
-    createdAt: preset.createdAt.toISOString(),
-    updatedAt: preset.updatedAt.toISOString(),
-  });
-}
-
-/**
- * Centralized archive eligibility predicate. Used both to compute the admin-list
- * `canArchive` capability and to enforce archival, so the two cannot drift.
- * Only an operator-created (non-system), editable, non-custom, active admin
- * preset may be archived.
- */
-function isPresetRowArchivable(row: typeof demoPresets.$inferSelect): boolean {
-  return (
-    row.visibility === archivablePresetProperties.visibility &&
-    row.isEditable === archivablePresetProperties.isEditable &&
-    row.isCustom === archivablePresetProperties.isCustom &&
-    row.isSystem === archivablePresetProperties.isSystem &&
-    row.archivedAt === null
-  );
-}
-
-const archivablePresetProperties = {
-  visibility: "admin",
-  isEditable: true,
-  isCustom: false,
-  isSystem: false,
-} as const;
-
-function archivablePresetRowCondition(presetId: string) {
-  return and(
-    eq(demoPresets.id, presetId),
-    eq(demoPresets.visibility, archivablePresetProperties.visibility),
-    eq(demoPresets.isEditable, archivablePresetProperties.isEditable),
-    eq(demoPresets.isCustom, archivablePresetProperties.isCustom),
-    eq(demoPresets.isSystem, archivablePresetProperties.isSystem),
-    isNull(demoPresets.archivedAt),
-  );
-}
-
-function toAdminPresetListItem(row: typeof demoPresets.$inferSelect): AdminPresetListItem {
-  return adminPresetListItemSchema.parse({
-    ...toDemoPresetContract(row),
-    canArchive: isPresetRowArchivable(row),
-  });
-}
-
-function ensureEditableAdminPreset(preset: DemoPresetContract): void {
-  if (preset.visibility !== "admin" || !preset.isEditable) {
-    throw new DemoRunValidationError(
-      "preset_operation_not_allowed",
-      "Only editable admin presets can be changed.",
-      { slug: preset.slug },
-    );
-  }
-}
-
-function normalizeSlug(slug: string): string {
-  const normalized = slug
-    .trim()
-    .toLowerCase()
-    .replaceAll(/[^a-z0-9]+/g, "-")
-    .replaceAll(/^-+|-+$/g, "");
-
-  if (!normalized) {
-    throw new DemoRunValidationError(
-      "invalid_request",
-      "Preset slug must contain a letter or number.",
-    );
-  }
-
-  return normalized;
-}
-
-function requirePresetRow(
-  preset: typeof demoPresets.$inferSelect | undefined,
-  slug: string,
-): typeof demoPresets.$inferSelect {
-  if (!preset) {
-    throw new DemoRunValidationError("resource_not_found", "Demo preset was not found.", { slug });
-  }
-
-  return preset;
-}
-
 function mergeConfigSnapshot(
   base: AcceptedRunConfigSnapshot,
   override: DemoRunConfigOverride | undefined,
@@ -1196,98 +770,6 @@ export function validateAcceptedRunSnapshot(
       ...violation.details,
     });
   }
-}
-
-/**
- * The single boundary that validates strict persisted mutable JSON and combines
- * it with the API process's environment-owned deployment caps.
- */
-export function resolveEffectivePublicRuntimePolicy(
-  persistedMutablePolicy: unknown,
-  deploymentHardCaps: DeploymentHardCaps,
-): PublicRuntimePolicy {
-  const mutablePolicy = publicRuntimePolicyMutableSchema.parse(persistedMutablePolicy);
-  return publicRuntimePolicySchema.parse({
-    ...mutablePolicy,
-    deploymentHardCaps,
-  });
-}
-
-export async function validateActivePublicRuntimePolicyAtStartup(
-  db: CheckoutSurgeDatabase,
-  deploymentHardCaps: DeploymentHardCaps,
-): Promise<void> {
-  const [row] = await db
-    .select({ policy: publicRuntimePolicies.policy })
-    .from(publicRuntimePolicies)
-    .where(eq(publicRuntimePolicies.id, "active"))
-    .limit(1);
-
-  if (!row) {
-    throw new Error('Active public runtime policy "active" is missing.');
-  }
-
-  try {
-    resolveEffectivePublicRuntimePolicy(row.policy, deploymentHardCaps);
-  } catch (error) {
-    if (!(error instanceof ZodError)) throw error;
-    const diagnostics = error.issues.map((issue) => {
-      const path = issue.path.length > 0 ? issue.path.join(".") : "policy";
-      const params = "params" in issue ? issue.params : undefined;
-      const violationCode =
-        params &&
-        typeof params === "object" &&
-        "violationCode" in params &&
-        typeof params.violationCode === "string"
-          ? ` (${params.violationCode})`
-          : "";
-      return `${path}${violationCode}: ${issue.message}`;
-    });
-    throw new Error(`Active public runtime policy is invalid: ${diagnostics.join("; ")}`);
-  }
-}
-
-function throwPublicRuntimePolicyUpdateError(error: unknown): never {
-  if (!(error instanceof ZodError)) throw error;
-  const issue = error.issues[0];
-  const params = issue && "params" in issue ? issue.params : undefined;
-  if (
-    issue &&
-    params &&
-    typeof params === "object" &&
-    "violationCode" in params &&
-    typeof params.violationCode === "string"
-  ) {
-    const details =
-      "details" in params &&
-      params.details &&
-      typeof params.details === "object" &&
-      !Array.isArray(params.details)
-        ? (params.details as Record<string, unknown>)
-        : undefined;
-    throw new DemoRunValidationError("invalid_runtime_policy", issue.message, {
-      violationCode: params.violationCode,
-      path: issue.path,
-      ...details,
-    });
-  }
-  throw error;
-}
-
-function toAdminPublicRuntimePolicyResponse(
-  row: Omit<typeof publicRuntimePolicies.$inferSelect, "policy"> & {
-    policy: PublicRuntimePolicy;
-  },
-  correlationId: string,
-  timestamp: Date,
-): AdminPublicRuntimePolicyResponse {
-  return adminPublicRuntimePolicyResponseSchema.parse({
-    id: row.id,
-    policy: row.policy,
-    updatedAt: row.updatedAt.toISOString(),
-    correlationId,
-    timestamp: timestamp.toISOString(),
-  });
 }
 
 function requireRunSaleOfferId(run: DemoRunSnapshot): string {

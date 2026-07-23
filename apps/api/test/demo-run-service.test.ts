@@ -4,7 +4,6 @@ import type {
   AcceptedRunConfigSnapshot,
   BusinessOutcomeSummary,
   PublicRuntimePolicy,
-  PublicRuntimePolicyMutable,
   TrafficCompletionReport,
   TrafficConfig,
   TrafficExecutionStartRequest,
@@ -37,22 +36,22 @@ import {
 } from "@checkout-surge/db";
 import { resetTestDatabase } from "@checkout-surge/db/testing";
 import { createSilentLogger } from "@checkout-surge/logger";
-import { eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiHttpError } from "../src/runtime/errors.js";
 import { RedisDashboardTrafficMetricStore } from "../src/services/dashboard-traffic-metric-store.js";
 import { DemoMaintenanceService } from "../src/services/demo-maintenance-service.js";
+import { DemoPresetService } from "../src/services/demo-preset-service.js";
 import { DemoRunFinalizationService } from "../src/services/demo-run-finalization-service.js";
 import {
-  DemoRunService,
+  DemoRunLifecycleService,
   isSingleNonTerminalRunViolation,
-  resolveEffectivePublicRuntimePolicy,
   validateAcceptedRunSnapshot,
-  validateActivePublicRuntimePolicyAtStartup,
 } from "../src/services/demo-run-service.js";
 import { DemoRunValidationError } from "../src/services/demo-run-validation-error.js";
 import { PostgresDemoResetWorkflowFence } from "../src/services/postgres-demo-reset-workflow-fence.js";
 import { RedisPublicRunBudgetStore } from "../src/services/public-run-budget-store.js";
+import { PublicRuntimePolicyService } from "../src/services/public-runtime-policy-service.js";
 import { PostgresTerminalDemoRunSummaryWriter } from "../src/services/terminal-demo-run-transition.js";
 import { findTrafficCompletionBindingMismatch } from "../src/services/traffic-completion-binding.js";
 import { TrafficCompletionEnrichmentService } from "../src/services/traffic-completion-enrichment-service.js";
@@ -67,7 +66,7 @@ const signedVisitor = (visitorId: string) => {
   return credential;
 };
 
-describe("demo-run service validation", () => {
+describe("demo-run lifecycle validation", () => {
   it.each([
     ["missing", undefined],
     ["raw", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"],
@@ -86,9 +85,19 @@ describe("demo-run service validation", () => {
       throw new Error("Database must not be read.");
     });
     const reserve = vi.fn();
-    const service = new DemoRunService({
+    const service = new DemoRunLifecycleService({
       db: { select } as never,
       redis: {} as never,
+      presetReader: {
+        readActivePreset: async () => {
+          throw new Error("Preset must not be read.");
+        },
+      },
+      runtimePolicyReader: {
+        readEffectivePolicy: async () => {
+          throw new Error("Policy must not be read.");
+        },
+      },
       trafficExecutionGateway: {} as never,
       publicRunBudgetStore: { reserve, release: vi.fn() },
       businessOutcomeReader: {} as never,
@@ -99,7 +108,6 @@ describe("demo-run service validation", () => {
       buyEndpointPath: "/buy",
       logger: createSilentLogger("api"),
       publicClientCookieSecret: publicCookieSecret,
-      deploymentHardCaps: publicRuntimePolicy().deploymentHardCaps,
     });
     await expect(
       service.startRun(
@@ -357,556 +365,6 @@ describe("demo-run service validation", () => {
       ),
     ).toMatchObject({ field: "loadRunDiagnosticsSummary.executionPlan" });
   });
-
-  it("constructs effective policy from strict mutable persistence and current caps", () => {
-    const effectiveFixture = publicRuntimePolicy();
-    const persisted = publicRuntimePolicyMutable();
-    const currentCaps = { ...effectiveFixture.deploymentHardCaps, maxBuyers: 20_000 };
-
-    const effective = resolveEffectivePublicRuntimePolicy(persisted, currentCaps);
-
-    expect(effective.deploymentHardCaps.maxBuyers).toBe(20_000);
-    expect(persisted).not.toHaveProperty("deploymentHardCaps");
-    expect(() =>
-      resolveEffectivePublicRuntimePolicy(
-        { ...persisted, deploymentHardCaps: effectiveFixture.deploymentHardCaps },
-        currentCaps,
-      ),
-    ).toThrow(/Unrecognized key.*deploymentHardCaps/i);
-  });
-});
-
-describe("demo-run preset management", () => {
-  let connection: ReturnType<typeof createDatabaseConnection> | null = null;
-
-  beforeEach(async () => {
-    await connection?.close();
-    connection = null;
-    await resetTestDatabase({ databaseUrl: requireTestDatabaseUrl(), migrationsFolder });
-    connection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
-    await seedPresetFixtures(connection);
-  });
-
-  afterAll(async () => {
-    await connection?.close();
-  });
-
-  it("lists all presets while public listing remains scoped to public presets", async () => {
-    const service = createPresetManagementService(requireConnection(connection));
-
-    const publicPresets = await service.listPublicPresets();
-    const adminPresets = await service.listAdminPresets();
-
-    expect(publicPresets.presets.map((preset) => preset.slug)).toEqual([
-      "preview-1k",
-      "public-custom",
-    ]);
-    expect(adminPresets.presets.map((preset) => preset.slug)).toEqual([
-      "preview-1k",
-      "public-custom",
-      "custom",
-    ]);
-  });
-
-  it("saves only editable admin presets", async () => {
-    const service = createPresetManagementService(requireConnection(connection));
-    const snapshot = surge10kSnapshot();
-
-    const updated = await service.saveAdminPreset({
-      slug: "custom",
-      display: {
-        name: "Custom Saved",
-        description: "Updated scratch preset.",
-        sortOrder: 125,
-        outcomeFocus: ["failure_path"],
-      },
-      ...snapshot,
-    });
-
-    await expect(
-      service.saveAdminPreset({
-        slug: "preview-1k",
-        display: {
-          name: "Preview Edited",
-          description: "Should not persist.",
-          sortOrder: 10,
-          outcomeFocus: [],
-        },
-        ...snapshot,
-      }),
-    ).rejects.toMatchObject({ code: "preset_operation_not_allowed" });
-    expect(updated.preset.slug).toBe("custom");
-    expect(updated.preset.display.name).toBe("Custom Saved");
-    expect(expectBuyerSpikeTrafficConfig(updated.preset.trafficConfig)).toMatchObject({
-      buyerCount: 10_000,
-    });
-  });
-
-  it("duplicates presets as editable admin copies and rejects duplicate slugs", async () => {
-    const service = createPresetManagementService(requireConnection(connection));
-
-    const created = await service.duplicatePreset({
-      sourceSlug: "preview-1k",
-      targetSlug: "Preview Copy",
-      displayName: "Preview Copy",
-    });
-
-    await expect(
-      service.duplicatePreset({
-        sourceSlug: "preview-1k",
-        targetSlug: "preview-copy",
-      }),
-    ).rejects.toMatchObject({
-      code: "preset_conflict",
-      details: { conflictReason: "slug_in_use", slug: "preview-copy" },
-    });
-    await expect(
-      service.duplicatePreset({
-        sourceSlug: "public-custom",
-        targetSlug: "public-custom-copy",
-      }),
-    ).rejects.toMatchObject({ code: "preset_operation_not_allowed" });
-    expect(created.preset.slug).toBe("preview-copy");
-    expect(created.preset.visibility).toBe("admin");
-    expect(created.preset.isEditable).toBe(true);
-    expect(created.preset.isCustom).toBe(false);
-    expect(created.preset.display.name).toBe("Preview Copy");
-  });
-
-  it("copies any source preset into the editable admin custom preset", async () => {
-    const service = createPresetManagementService(requireConnection(connection));
-
-    const copied = await service.copyPresetToCustom({ sourceSlug: "preview-1k" });
-
-    expect(copied.preset.slug).toBe("custom");
-    expect(copied.preset.visibility).toBe("admin");
-    expect(copied.preset.isCustom).toBe(true);
-    expect(copied.preset.display.name).toBe("Custom");
-    expect(copied.preset.display.description).toBe("Scratch copy of Preview 1k.");
-    expect(expectBuyerSpikeTrafficConfig(copied.preset.trafficConfig)).toMatchObject({
-      buyerCount: 10_000,
-    });
-  });
-
-  it("reports an operator duplicate as archivable, archives it, and keeps the row soft-archived", async () => {
-    const service = createPresetManagementService(requireConnection(connection));
-    const created = await service.duplicatePreset({
-      sourceSlug: "preview-1k",
-      targetSlug: "operator-duplicate",
-      displayName: "Operator Duplicate",
-    });
-
-    const beforeArchive = await service.listAdminPresets();
-    const archivable = beforeArchive.presets.find((preset) => preset.slug === "operator-duplicate");
-    expect(archivable?.canArchive).toBe(true);
-
-    const archived = await service.archiveAdminPreset({ slug: "operator-duplicate" });
-    expect(archived.slug).toBe("operator-duplicate");
-    expect(archived.archivedAt).toBe("2026-06-20T00:00:10.000Z");
-    expect(archived.timestamp).toBe("2026-06-20T00:00:10.000Z");
-
-    const afterArchive = await service.listAdminPresets();
-    expect(afterArchive.presets.map((preset) => preset.slug)).not.toContain("operator-duplicate");
-
-    // Archived presets disappear from normal active lookup, so they can no
-    // longer be saved, copied, duplicated, or started.
-    await expect(service.saveAdminPreset(created.preset)).rejects.toMatchObject({
-      code: "resource_not_found",
-    });
-    await expect(
-      service.copyPresetToCustom({ sourceSlug: "operator-duplicate" }),
-    ).rejects.toMatchObject({ code: "resource_not_found" });
-    await expect(
-      service.duplicatePreset({ sourceSlug: "operator-duplicate", targetSlug: "another-copy" }),
-    ).rejects.toMatchObject({ code: "resource_not_found" });
-
-    // Admin start reaches the preset lookup after the runtime policy read; an
-    // archived slug is rejected as resource_not_found before any run is created.
-    await requireConnection(connection)
-      .db.insert(publicRuntimePolicies)
-      .values({
-        id: "active",
-        policy: publicRuntimePolicyMutable(),
-        createdAt: new Date("2026-06-20T00:00:00.000Z"),
-        updatedAt: new Date("2026-06-20T00:00:00.000Z"),
-      });
-    await expect(
-      service.startRun(
-        { presetSlug: "operator-duplicate", operatorMode: "admin" },
-        "corr-archived-start",
-      ),
-    ).rejects.toMatchObject({ code: "resource_not_found" });
-
-    const [row] = await requireConnection(connection)
-      .db.select()
-      .from(demoPresets)
-      .where(eq(demoPresets.slug, "operator-duplicate"));
-    expect(row).toBeTruthy();
-    expect(row?.archivedAt).toEqual(new Date("2026-06-20T00:00:10.000Z"));
-  });
-
-  it("archives a duplicated preset that is referenced by a run while keeping the run intact", async () => {
-    const service = createPresetManagementService(requireConnection(connection));
-    const created = await service.duplicatePreset({
-      sourceSlug: "preview-1k",
-      targetSlug: "linked-duplicate",
-    });
-
-    await requireConnection(connection)
-      .db.insert(demoRuns)
-      .values({
-        id: "55555555-5555-4555-8555-555555555570",
-        presetId: created.preset.id,
-        presetName: "Linked Duplicate",
-        operatorMode: "admin",
-        status: "completed",
-        trafficStatus: "succeeded",
-        configSnapshot: surge10kSnapshot(),
-        startedAt: new Date("2026-06-20T00:00:00.000Z"),
-        trafficStartedAt: new Date("2026-06-20T00:00:01.000Z"),
-        trafficEndedAt: new Date("2026-06-20T00:00:05.000Z"),
-        finalizedAt: new Date("2026-06-20T00:00:06.000Z"),
-        createdAt: new Date("2026-06-20T00:00:00.000Z"),
-        updatedAt: new Date("2026-06-20T00:00:06.000Z"),
-      });
-
-    // Soft archive must succeed even though demo_runs.preset_id ON DELETE
-    // RESTRICT would block a hard delete.
-    const archived = await service.archiveAdminPreset({ slug: "linked-duplicate" });
-    expect(archived.slug).toBe("linked-duplicate");
-
-    const runs = await requireConnection(connection)
-      .db.select()
-      .from(demoRuns)
-      .where(eq(demoRuns.presetId, created.preset.id));
-    expect(runs).toHaveLength(1);
-    expect(runs[0]?.status).toBe("completed");
-  });
-
-  it("refuses to archive protected public, custom, and system admin presets", async () => {
-    const service = createPresetManagementService(requireConnection(connection));
-    await requireConnection(connection)
-      .db.insert(demoPresets)
-      .values({
-        id: "44444444-4444-4444-8444-444444444450",
-        slug: "system-admin-preset",
-        visibility: "admin",
-        isEditable: true,
-        isCustom: false,
-        isSystem: true,
-        display: { name: "System Admin", description: "Seeded", sortOrder: 90, outcomeFocus: [] },
-        ...surge10kSnapshot(),
-        createdAt: new Date("2026-06-20T00:00:00.000Z"),
-        updatedAt: new Date("2026-06-20T00:00:00.000Z"),
-      });
-
-    await expect(service.archiveAdminPreset({ slug: "preview-1k" })).rejects.toMatchObject({
-      code: "preset_conflict",
-      details: { conflictReason: "not_archivable", slug: "preview-1k" },
-    });
-    await expect(service.archiveAdminPreset({ slug: "public-custom" })).rejects.toMatchObject({
-      code: "preset_conflict",
-    });
-    await expect(service.archiveAdminPreset({ slug: "custom" })).rejects.toMatchObject({
-      code: "preset_conflict",
-    });
-    await expect(service.archiveAdminPreset({ slug: "system-admin-preset" })).rejects.toMatchObject(
-      {
-        code: "preset_conflict",
-      },
-    );
-
-    const adminList = await service.listAdminPresets();
-    expect(
-      adminList.presets.find((preset) => preset.slug === "system-admin-preset")?.canArchive,
-    ).toBe(false);
-    expect(adminList.presets.find((preset) => preset.slug === "custom")?.canArchive).toBe(false);
-  });
-
-  it("reports resource_not_found for unknown and already-archived slugs", async () => {
-    const service = createPresetManagementService(requireConnection(connection));
-    await service.duplicatePreset({ sourceSlug: "preview-1k", targetSlug: "archive-once" });
-    await service.archiveAdminPreset({ slug: "archive-once" });
-
-    await expect(service.archiveAdminPreset({ slug: "never-seeded" })).rejects.toMatchObject({
-      code: "resource_not_found",
-      details: { slug: "never-seeded" },
-    });
-    await expect(service.archiveAdminPreset({ slug: "archive-once" })).rejects.toMatchObject({
-      code: "resource_not_found",
-    });
-  });
-
-  it("does not archive a preset that becomes system-protected after eligibility is read", async () => {
-    const activeConnection = requireConnection(connection);
-    const setupService = createPresetManagementService(activeConnection);
-    const created = await setupService.duplicatePreset({
-      sourceSlug: "preview-1k",
-      targetSlug: "concurrently-protected",
-    });
-    const racingDatabase = interceptNextSelectResult(activeConnection.db, async () => {
-      await activeConnection.db
-        .update(demoPresets)
-        .set({ isSystem: true })
-        .where(eq(demoPresets.id, created.preset.id));
-    });
-    const service = createPresetManagementService(activeConnection, undefined, racingDatabase);
-
-    await expect(
-      service.archiveAdminPreset({ slug: "concurrently-protected" }),
-    ).rejects.toMatchObject({
-      code: "preset_conflict",
-      details: { slug: "concurrently-protected" },
-    });
-
-    const [row] = await activeConnection.db
-      .select()
-      .from(demoPresets)
-      .where(eq(demoPresets.id, created.preset.id));
-    expect(row).toMatchObject({ isSystem: true, archivedAt: null });
-  });
-
-  it("reports resource_not_found when another archive wins after eligibility is read", async () => {
-    const activeConnection = requireConnection(connection);
-    const setupService = createPresetManagementService(activeConnection);
-    const created = await setupService.duplicatePreset({
-      sourceSlug: "preview-1k",
-      targetSlug: "concurrently-archived",
-    });
-    const concurrentlyArchivedAt = new Date("2026-06-20T00:00:09.000Z");
-    const racingDatabase = interceptNextSelectResult(activeConnection.db, async () => {
-      await activeConnection.db
-        .update(demoPresets)
-        .set({ archivedAt: concurrentlyArchivedAt })
-        .where(eq(demoPresets.id, created.preset.id));
-    });
-    const service = createPresetManagementService(activeConnection, undefined, racingDatabase);
-
-    await expect(
-      service.archiveAdminPreset({ slug: "concurrently-archived" }),
-    ).rejects.toMatchObject({
-      code: "resource_not_found",
-      details: { slug: "concurrently-archived" },
-    });
-
-    const [row] = await activeConnection.db
-      .select()
-      .from(demoPresets)
-      .where(eq(demoPresets.id, created.preset.id));
-    expect(row?.archivedAt).toEqual(concurrentlyArchivedAt);
-  });
-
-  it("still blocks reusing an archived slug as a duplicate target", async () => {
-    const service = createPresetManagementService(requireConnection(connection));
-    await service.duplicatePreset({ sourceSlug: "preview-1k", targetSlug: "reused-slug" });
-    await service.archiveAdminPreset({ slug: "reused-slug" });
-
-    await expect(
-      service.duplicatePreset({ sourceSlug: "preview-1k", targetSlug: "reused-slug" }),
-    ).rejects.toMatchObject({
-      code: "preset_conflict",
-      details: { conflictReason: "slug_in_use", slug: "reused-slug" },
-    });
-  });
-});
-
-describe("demo-run public runtime policy management", () => {
-  let connection: ReturnType<typeof createDatabaseConnection> | null = null;
-
-  beforeEach(async () => {
-    await connection?.close();
-    connection = null;
-    await resetTestDatabase({ databaseUrl: requireTestDatabaseUrl(), migrationsFolder });
-    connection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
-    await seedStartFixtures(connection);
-  });
-
-  afterAll(async () => {
-    await connection?.close();
-  });
-
-  it("persists public budget, default, and limit updates while preserving deployment hard caps", async () => {
-    const service = createPresetManagementService(requireConnection(connection));
-    const policy = publicRuntimePolicyMutable();
-    policy.publicRunBudget = {
-      windowSeconds: 60,
-      perVisitorMaxStarts: 1,
-      globalMaxStarts: 2,
-    };
-    policy.publicCustomDefaults = {
-      ...policy.publicCustomDefaults,
-      trafficConfig: {
-        mode: "buyer-spike",
-        buyerCount: 250,
-        duplicateEachBuyerAttempt: false,
-        startDelaySeconds: 0,
-        maxDurationSeconds: 5,
-        quantityPerAttempt: 1,
-      },
-      inventoryConfig: {
-        startingStock: 75,
-        quantityPerCheckout: 1,
-        reservationHoldMinutes: 15,
-      },
-    };
-    policy.publicCustomLimits = {
-      ...policy.publicCustomLimits,
-      maxBuyers: 500,
-      maxStartingStock: 100,
-    };
-
-    const response = await service.updateAdminPublicRuntimePolicy(
-      { policy, correlationId: "corr-policy-save" },
-      "corr-policy-save",
-    );
-    const [row] = await requireConnection(connection).db.select().from(publicRuntimePolicies);
-    const persistedPolicy = row?.policy as PublicRuntimePolicyMutable | undefined;
-
-    expect(response.correlationId).toBe("corr-policy-save");
-    expect(response.policy.publicRunBudget.perVisitorMaxStarts).toBe(1);
-    expect(response.policy.publicCustomDefaults.inventoryConfig.startingStock).toBe(75);
-    expect(response.policy.publicCustomLimits.maxBuyers).toBe(500);
-    expect(response.policy.deploymentHardCaps.maxBuyers).toBe(100_000);
-    expect(persistedPolicy?.publicRunBudget.globalMaxStarts).toBe(2);
-    expect(persistedPolicy).not.toHaveProperty("deploymentHardCaps");
-  });
-
-  it("prioritizes deployment-cap update errors when multiple policy rules fail", async () => {
-    const effectiveFixture = publicRuntimePolicy();
-    const service = createPresetManagementService(requireConnection(connection), {
-      ...effectiveFixture.deploymentHardCaps,
-      maxBuyers: 450,
-    });
-    const policy = publicRuntimePolicyMutable();
-    policy.publicCustomLimits.maxTotalRequests = 100_001;
-    policy.publicCustomLimits.maxPreAllocatedVus = 1001;
-    policy.publicCustomLimits.maxBuyers = 400;
-
-    await expect(
-      service.updateAdminPublicRuntimePolicy({ policy }, "corr-policy-reject"),
-    ).rejects.toMatchObject({
-      code: "invalid_runtime_policy",
-      details: {
-        value: 100_001,
-        cap: 100_000,
-        violationCode: "public_limit_total_requests_exceeds_deployment_cap",
-      },
-    });
-
-    const [row] = await requireConnection(connection).db.select().from(publicRuntimePolicies);
-    const persistedPolicy = row?.policy as PublicRuntimePolicyMutable | undefined;
-    expect(persistedPolicy?.publicCustomLimits.maxTotalRequests).toBe(10_000);
-  });
-
-  it("rejects automatic default VUs above deployment caps without changing the stored row", async () => {
-    const effectiveFixture = publicRuntimePolicy();
-    const service = createPresetManagementService(requireConnection(connection), {
-      ...effectiveFixture.deploymentHardCaps,
-      maxPreAllocatedVus: 10,
-      maxVus: 10,
-    });
-    const policy = publicRuntimePolicyMutable();
-    policy.publicCustomLimits.maxPreAllocatedVus = 10;
-    policy.publicCustomLimits.maxVus = 10;
-    policy.publicCustomDefaults.trafficConfig = {
-      mode: "steady-arrival-rate",
-      ratePerSecond: 6,
-      startDelaySeconds: 0,
-      durationSeconds: 1,
-      quantityPerAttempt: 1,
-    };
-
-    await expect(
-      service.updateAdminPublicRuntimePolicy({ policy }, "corr-policy-default-vus-reject"),
-    ).rejects.toMatchObject({
-      code: "invalid_runtime_policy",
-      details: {
-        value: 12,
-        cap: 10,
-        violationCode: "public_custom_default_deployment_max_vus_exceeded",
-      },
-    });
-
-    const [row] = await requireConnection(connection).db.select().from(publicRuntimePolicies);
-    expect(row?.policy.publicCustomDefaults.trafficConfig.mode).toBe("buyer-spike");
-  });
-
-  it("rejects startup when current deployment caps are below the durable public policy", async () => {
-    const policy = publicRuntimePolicy();
-    await expect(
-      validateActivePublicRuntimePolicyAtStartup(requireConnection(connection).db, {
-        ...policy.deploymentHardCaps,
-        maxBuyers: policy.publicCustomLimits.maxBuyers - 1,
-      }),
-    ).rejects.toThrow(/publicCustomLimits\.maxBuyers.*public_limit_buyers_exceeds_deployment_cap/);
-  });
-
-  it("accepts current mutable policy at startup", async () => {
-    const policy = publicRuntimePolicy();
-    const mutablePolicy = publicRuntimePolicyMutable();
-    mutablePolicy.publicCustomDefaults.erpConfig.maxTps = 150;
-    mutablePolicy.publicCustomLimits.maxErpMaxTps = 150;
-    const db = requireConnection(connection).db;
-    await db
-      .update(publicRuntimePolicies)
-      .set({ policy: mutablePolicy })
-      .where(eq(publicRuntimePolicies.id, "active"));
-
-    await expect(
-      validateActivePublicRuntimePolicyAtStartup(db, policy.deploymentHardCaps),
-    ).resolves.toBeUndefined();
-  });
-
-  it("rejects obsolete cap-bearing persisted policy at startup", async () => {
-    const db = requireConnection(connection).db;
-    const policy = publicRuntimePolicy();
-    await db.execute(sql`
-      UPDATE ${publicRuntimePolicies}
-      SET policy = policy || ${JSON.stringify({
-        deploymentHardCaps: policy.deploymentHardCaps,
-      })}::jsonb
-      WHERE id = 'active'
-    `);
-
-    await expect(
-      validateActivePublicRuntimePolicyAtStartup(db, policy.deploymentHardCaps),
-    ).rejects.toThrow(/Unrecognized key.*deploymentHardCaps/i);
-  });
-
-  it("changes effective hard caps between service boots without reseeding", async () => {
-    const stored = publicRuntimePolicy();
-    const first = createPresetManagementService(requireConnection(connection), {
-      ...stored.deploymentHardCaps,
-      maxBuyers: 20_000,
-    });
-    const second = createPresetManagementService(requireConnection(connection), {
-      ...stored.deploymentHardCaps,
-      maxBuyers: 30_000,
-    });
-
-    expect((await first.getPublicRuntimePolicy()).policy.deploymentHardCaps.maxBuyers).toBe(20_000);
-    expect((await second.getPublicRuntimePolicy()).policy.deploymentHardCaps.maxBuyers).toBe(
-      30_000,
-    );
-  });
-
-  it("reports missing and malformed active policy rows before startup", async () => {
-    const db = requireConnection(connection).db;
-    const caps = publicRuntimePolicy().deploymentHardCaps;
-    await db.delete(publicRuntimePolicies);
-
-    await expect(validateActivePublicRuntimePolicyAtStartup(db, caps)).rejects.toThrow(
-      /policy "active" is missing/,
-    );
-
-    await db.execute(
-      sql`INSERT INTO ${publicRuntimePolicies} (id, policy)
-          VALUES ('active', ${JSON.stringify({ malformed: true })}::jsonb)`,
-    );
-    await expect(validateActivePublicRuntimePolicyAtStartup(db, caps)).rejects.toThrow(
-      /publicRunBudget|publicCustomDefaults/,
-    );
-  });
 });
 
 describe("demo-run lifecycle start gating", () => {
@@ -935,6 +393,29 @@ describe("demo-run lifecycle start gating", () => {
       await redis.flushdb();
       redis.disconnect();
     }
+  });
+
+  it("rejects an archived preset before creating a run", async () => {
+    const activeConnection = requireConnection(connection);
+    const presetService = new DemoPresetService({
+      db: activeConnection.db,
+      now: () => new Date("2026-06-20T00:00:10.000Z"),
+      generateId: () => "66666666-6666-4666-8666-666666666666",
+    });
+    await presetService.duplicatePreset({
+      sourceSlug: "preview-1k",
+      targetSlug: "archived-before-start",
+    });
+    await presetService.archiveAdminPreset({ slug: "archived-before-start" });
+
+    const service = createStartService(activeConnection, requireRedis(redis));
+    await expect(
+      service.startRun(
+        { presetSlug: "archived-before-start", operatorMode: "admin" },
+        "corr-archived-start",
+      ),
+    ).rejects.toMatchObject({ code: "resource_not_found" });
+    expect(await activeConnection.db.select().from(demoRuns)).toHaveLength(0);
   });
 
   it.each([
@@ -1309,7 +790,11 @@ describe("demo-run lifecycle start gating", () => {
   });
 
   it("uses updated persisted public custom defaults for the next public custom start", async () => {
-    const managementService = createPresetManagementService(requireConnection(connection));
+    const managementService = new PublicRuntimePolicyService({
+      db: requireConnection(connection).db,
+      deploymentHardCaps: publicRuntimePolicy().deploymentHardCaps,
+      now: () => new Date("2026-06-20T00:00:10.000Z"),
+    });
     const policy = publicRuntimePolicyMutable();
     policy.publicCustomDefaults = {
       ...policy.publicCustomDefaults,
@@ -2515,118 +2000,31 @@ function requireRedis(
   return redis;
 }
 
-function createPresetManagementService(
-  connection: ReturnType<typeof createDatabaseConnection>,
-  deploymentHardCaps = publicRuntimePolicy().deploymentHardCaps,
-  database = connection.db,
-): DemoRunService {
-  return new DemoRunService({
-    db: database,
-    terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(connection.db),
-    redis: {} as never,
-    trafficExecutionGateway: {
-      start: async () => ({
-        runId: "unused",
-        status: "active",
-        startedAt: "unused",
-        correlationId: "unused",
-      }),
-    },
-    publicRunBudgetStore: {
-      reserve: async () => ({
-        outcome: "allowed",
-        reservation: {
-          reservationId: "unused",
-          globalKey: "g",
-          visitorKey: "v",
-          reservationKey: "r",
-        },
-      }),
-      release: async () => undefined,
-    },
-    businessOutcomeReader: { read: async () => emptyBusinessOutcomeSummary() },
-    completionEnrichmentService: { completePendingEnrichment: async () => "not_found" },
-    finalizationService: noOpFinalizationService(),
-    apiBaseUrl: "http://api.test",
-    buyEndpointPath: "/buy",
-    logger: createSilentLogger("api"),
-    publicClientCookieSecret: publicCookieSecret,
-    deploymentHardCaps,
-    now: () => new Date("2026-06-20T00:00:10.000Z"),
-    generateId: () => "66666666-6666-4666-8666-666666666666",
-  });
-}
-
-function interceptNextSelectResult(
-  database: ReturnType<typeof createDatabaseConnection>["db"],
-  afterSelect: () => Promise<void>,
-): ReturnType<typeof createDatabaseConnection>["db"] {
-  let shouldIntercept = true;
-
-  function wrapQueryBuilder<T extends object>(builder: T): T {
-    return new Proxy(builder, {
-      get(target, property) {
-        if (property === "then") {
-          return (
-            onFulfilled?: (value: unknown) => unknown,
-            onRejected?: (reason: unknown) => unknown,
-          ) =>
-            Promise.resolve(target)
-              .then(async (result) => {
-                if (shouldIntercept) {
-                  shouldIntercept = false;
-                  await afterSelect();
-                }
-                return result;
-              })
-              .then(onFulfilled, onRejected);
-        }
-
-        const value = Reflect.get(target, property, target);
-        if (typeof value !== "function") return value;
-
-        return (...args: unknown[]) => {
-          const result = Reflect.apply(value, target, args) as unknown;
-          return typeof result === "object" && result !== null ? wrapQueryBuilder(result) : result;
-        };
-      },
-    });
-  }
-
-  return new Proxy(database, {
-    get(target, property) {
-      if (property === "select") {
-        return (...args: unknown[]) =>
-          wrapQueryBuilder(
-            Reflect.apply(target.select, target, args) as ReturnType<typeof target.select>,
-          );
-      }
-
-      const value = Reflect.get(target, property, target);
-      return typeof value === "function" ? value.bind(target) : value;
-    },
-  });
-}
-
 function createStartService(
   connection: ReturnType<typeof createDatabaseConnection>,
   redis: ReturnType<typeof createRedisClient>,
   overrides: {
     trafficExecutionGateway?: ConstructorParameters<
-      typeof DemoRunService
+      typeof DemoRunLifecycleService
     >[0]["trafficExecutionGateway"];
-    publicRunBudgetStore?: ConstructorParameters<typeof DemoRunService>[0]["publicRunBudgetStore"];
-    terminalRunWriter?: ConstructorParameters<typeof DemoRunService>[0]["terminalRunWriter"];
+    publicRunBudgetStore?: ConstructorParameters<
+      typeof DemoRunLifecycleService
+    >[0]["publicRunBudgetStore"];
+    terminalRunWriter?: ConstructorParameters<
+      typeof DemoRunLifecycleService
+    >[0]["terminalRunWriter"];
     businessOutcomeReader?: ConstructorParameters<
-      typeof DemoRunService
+      typeof DemoRunLifecycleService
     >[0]["businessOutcomeReader"];
-    finalizationService?: ConstructorParameters<typeof DemoRunService>[0]["finalizationService"];
+    finalizationService?: ConstructorParameters<
+      typeof DemoRunLifecycleService
+    >[0]["finalizationService"];
     completionEnrichmentService?: ConstructorParameters<
-      typeof DemoRunService
+      typeof DemoRunLifecycleService
     >[0]["completionEnrichmentService"];
-    logger?: ConstructorParameters<typeof DemoRunService>[0]["logger"];
+    logger?: ConstructorParameters<typeof DemoRunLifecycleService>[0]["logger"];
   } = {},
-): DemoRunService {
+): DemoRunLifecycleService {
   const ids = [
     "77777777-7777-4777-8777-777777777777",
     "77777777-7777-4777-8777-777777777778",
@@ -2648,8 +2046,13 @@ function createStartService(
       now: () => new Date("2026-06-20T00:00:10.000Z"),
     });
 
-  return new DemoRunService({
+  return new DemoRunLifecycleService({
     db: connection.db,
+    presetReader: new DemoPresetService({ db: connection.db }),
+    runtimePolicyReader: new PublicRuntimePolicyService({
+      db: connection.db,
+      deploymentHardCaps: publicRuntimePolicy().deploymentHardCaps,
+    }),
     terminalRunWriter:
       overrides.terminalRunWriter ?? new PostgresTerminalDemoRunSummaryWriter(connection.db),
     redis,
@@ -2683,7 +2086,6 @@ function createStartService(
     buyEndpointPath: "/buy",
     logger,
     publicClientCookieSecret: publicCookieSecret,
-    deploymentHardCaps: publicRuntimePolicy().deploymentHardCaps,
     now: () => new Date("2026-06-20T00:00:10.000Z"),
     generateId: () => {
       const id = ids.shift();
