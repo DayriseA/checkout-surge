@@ -22,11 +22,6 @@ export interface GeneratedRunIdentity {
   saleOfferId: string;
 }
 
-export interface DeleteGeneratedRunResult {
-  deletedRunCount: number;
-  deletedSaleOfferCount: number;
-}
-
 export type PrepareGeneratedRunTeardownResult =
   | { outcome: "absent" }
   | { outcome: "non_terminal" }
@@ -118,52 +113,6 @@ export async function completeGeneratedRunTeardown(
   await db
     .delete(demoRunTeardownReceipts)
     .where(eq(demoRunTeardownReceipts.runId, uuidSchema.parse(runId)));
-}
-
-/**
- * Deletes one terminal generated run and its durable subtree atomically.
- *
- * The ownership row is locked and revalidated inside the transaction so a
- * stale maintenance candidate cannot delete a catalog-backed or non-terminal
- * run. A failed revalidation is an idempotent skip.
- */
-export async function deleteGeneratedRunDurable(
-  db: CheckoutSurgeDatabase,
-  identity: GeneratedRunIdentity,
-): Promise<DeleteGeneratedRunResult> {
-  const runId = uuidSchema.parse(identity.runId);
-  const saleOfferId = uuidSchema.parse(identity.saleOfferId);
-
-  return db.transaction(async (tx) => {
-    const [ownedRun] = await tx
-      .select({ runId: demoRuns.id })
-      .from(demoRuns)
-      .innerJoin(
-        demoRunSaleContexts,
-        and(
-          eq(demoRunSaleContexts.runId, demoRuns.id),
-          eq(demoRunSaleContexts.saleOfferId, demoRuns.saleOfferId),
-        ),
-      )
-      .innerJoin(saleOffers, eq(saleOffers.id, demoRunSaleContexts.saleOfferId))
-      .where(
-        and(
-          eq(demoRuns.id, runId),
-          eq(demoRuns.saleOfferId, saleOfferId),
-          inArray(demoRuns.status, ["completed", "failed"]),
-          eq(saleOffers.purpose, "generated_run"),
-        ),
-      )
-      .for("update");
-
-    if (!ownedRun) {
-      return { deletedRunCount: 0, deletedSaleOfferCount: 0 };
-    }
-
-    await deleteGeneratedRunRows(tx as CheckoutSurgeDatabase, { runId, saleOfferId });
-
-    return { deletedRunCount: 1, deletedSaleOfferCount: 1 };
-  });
 }
 
 async function deleteGeneratedRunRows(

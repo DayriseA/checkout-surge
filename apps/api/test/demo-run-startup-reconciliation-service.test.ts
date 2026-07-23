@@ -196,6 +196,11 @@ describe("DemoRunStartupReconciliationService restart recovery", () => {
 
 function unusedStartingRunOptions() {
   return {
+    listDrainingRuns: async () => [],
+    closeRunSaleEligibility: async () => false,
+    completionEnrichmentService: {
+      completePendingEnrichment: async () => "already_completed" as const,
+    },
     startingRunStore: {
       listStartingRuns: async () => [],
       activateStartingRun: async () => false,
@@ -369,8 +374,8 @@ function restartDiagnostics() {
     stderrLines: [],
     stderrLineCountObserved: 0,
     stderrLineCountRetained: 0,
-    stderrRetainedLineLimit: 50,
-    stderrLineTruncationLength: 500,
+    stderrRetainedLineLimit: 50 as const,
+    stderrLineTruncationLength: 500 as const,
     stderrLineTruncatedCount: 0,
     terminalMetricSources: {
       startedRequests: "summary_export" as const,

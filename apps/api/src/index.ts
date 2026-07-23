@@ -9,7 +9,6 @@ import {
   createRedisDashboardEventSubscriber,
   createSqlClient,
   dbPackageName,
-  deleteGeneratedRunDurable,
   deleteGeneratedRunRedisState,
   demoRuns,
   getInventoryStatus,
@@ -36,6 +35,7 @@ import { loadApiConfig } from "./runtime/config.js";
 import type { ApiFastifyInstance } from "./runtime/fastify.js";
 import { createBoundedInfrastructureReadinessCheck } from "./runtime/readiness.js";
 import { buildApiServer } from "./server.js";
+import { AdminDemoResetService } from "./services/admin-demo-reset-service.js";
 import { DashboardRecoveryAdmissionService } from "./services/dashboard-recovery-admission.js";
 import {
   DashboardRecoveryService,
@@ -47,7 +47,7 @@ import {
 } from "./services/dashboard-recovery-service.js";
 import { DashboardSnapshotPublicationScheduler } from "./services/dashboard-snapshot-publication-scheduler.js";
 import { RedisDashboardTrafficMetricStore } from "./services/dashboard-traffic-metric-store.js";
-import { DemoMaintenanceService } from "./services/demo-maintenance-service.js";
+import { ProcessLocalDemoMaintenanceAuthority } from "./services/demo-maintenance-authority.js";
 import { DemoPresetService } from "./services/demo-preset-service.js";
 import { DemoRunFinalizationService } from "./services/demo-run-finalization-service.js";
 import { DemoRunLifecycleService } from "./services/demo-run-service.js";
@@ -61,6 +61,8 @@ import {
   PostgresErpAttemptStatusReader,
   RedisErpCircuitBreakerStateReader,
 } from "./services/erp-status-service.js";
+import { GeneratedRunRetentionService } from "./services/generated-run-retention-service.js";
+import { GeneratedRunTeardownService } from "./services/generated-run-teardown-service.js";
 import { InventoryStatusService } from "./services/inventory-status-service.js";
 import { OrderStatusService } from "./services/order-status-service.js";
 import { PendingPersistenceRecoveryService } from "./services/pending-persistence-recovery-service.js";
@@ -101,7 +103,6 @@ export {
   PostgresDashboardTransportAttemptCountsReader,
 } from "./services/dashboard-recovery-service.js";
 export { DashboardSnapshotPublicationScheduler } from "./services/dashboard-snapshot-publication-scheduler.js";
-export { DemoMaintenanceService } from "./services/demo-maintenance-service.js";
 export { DemoRunFinalizationService } from "./services/demo-run-finalization-service.js";
 export { DemoRunStartupReconciliationService } from "./services/demo-run-startup-reconciliation-service.js";
 export {
@@ -379,14 +380,26 @@ export async function startApiServer(): Promise<void> {
     controlServiceToken: config.controlServiceToken,
   });
   const terminalRunWriter = new PostgresTerminalDemoRunSummaryWriter(connection.db);
-  const demoMaintenanceService = new DemoMaintenanceService({
+  const maintenanceAuthority = new ProcessLocalDemoMaintenanceAuthority();
+  const generatedRunTeardown = new GeneratedRunTeardownService({
     db: connection.db,
     redis,
-    clearErpCircuitBreakerState: () => clearErpCircuitBreakerSnapshots(redis),
-    deleteGeneratedRunDurable,
     deleteGeneratedRunRedisState,
     prepareGeneratedRunTeardown,
     completeGeneratedRunTeardown,
+    queueMaintenance: demoQueueMaintenance,
+    maintenanceAuthority,
+    logger,
+  });
+  const generatedRunRetention = new GeneratedRunRetentionService({
+    db: connection.db,
+    generatedRunTeardown,
+    maintenanceAuthority,
+  });
+  const adminDemoReset = new AdminDemoResetService({
+    db: connection.db,
+    redis,
+    clearErpCircuitBreakerState: () => clearErpCircuitBreakerSnapshots(redis),
     queueMaintenance: demoQueueMaintenance,
     terminalRunWriter,
     trafficAborter: trafficExecutionGateway,
@@ -400,6 +413,7 @@ export async function startApiServer(): Promise<void> {
       },
     },
     resetWorkflowFence: new PostgresDemoResetWorkflowFence(resetWorkflowSql),
+    maintenanceAuthority,
     logger,
   });
   const runHistoryService = new RunHistoryService({ db: connection.db });
@@ -729,7 +743,9 @@ export async function startApiServer(): Promise<void> {
       demoRunLifecycleService,
       trafficCompletionService,
       trafficMetricIngestion,
-      demoMaintenanceService,
+      adminDemoReset,
+      generatedRunRetention,
+      generatedRunTeardown,
       runHistoryService,
       startedAt: new Date(),
     });

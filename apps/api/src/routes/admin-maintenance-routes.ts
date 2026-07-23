@@ -10,10 +10,14 @@ import { replaceFastifyCorrelation } from "@checkout-surge/logger/fastify";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { createErrorPayload } from "../runtime/errors.js";
 import type { ApiFastifyInstance } from "../runtime/fastify.js";
-import type { DemoMaintenanceService } from "../services/demo-maintenance-service.js";
+import type { AdminDemoResetWorkflow } from "../services/admin-demo-reset-service.js";
+import type { GeneratedRunRetentionWorkflow } from "../services/generated-run-retention-service.js";
+import type { GeneratedRunTeardownWorkflow } from "../services/generated-run-teardown-service.js";
 
 export interface RegisterAdminMaintenanceRoutesOptions {
-  demoMaintenanceService: DemoMaintenanceService;
+  adminDemoReset: AdminDemoResetWorkflow;
+  generatedRunRetention: GeneratedRunRetentionWorkflow;
+  generatedRunTeardown: GeneratedRunTeardownWorkflow;
   controlServiceToken: string;
 }
 
@@ -27,9 +31,7 @@ export function registerAdminMaintenanceRoutes(
       return unauthorized;
     }
 
-    return reply
-      .status(200)
-      .send(await options.demoMaintenanceService.reset(request.correlationId));
+    return reply.status(200).send(await options.adminDemoReset.reset(request.correlationId));
   });
 
   app.post(adminMaintenanceCleanupRunsPath, async (request, reply) => {
@@ -46,7 +48,7 @@ export function registerAdminMaintenanceRoutes(
     );
 
     return reply.status(200).send(
-      await options.demoMaintenanceService.cleanupOldRuns({
+      await options.generatedRunRetention.cleanupOldRuns({
         keepLatest: parsed.keepLatest,
         olderThanDays: parsed.olderThanDays,
         correlationId,
@@ -61,7 +63,7 @@ export function registerAdminMaintenanceRoutes(
     const correlationId = replaceFastifyCorrelation(request, reply, request.correlationId);
     return reply
       .status(200)
-      .send(await options.demoMaintenanceService.teardownGeneratedRun({ runId, correlationId }));
+      .send(await options.generatedRunTeardown.teardownGeneratedRun({ runId, correlationId }));
   });
 }
 

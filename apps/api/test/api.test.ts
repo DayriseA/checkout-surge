@@ -104,17 +104,19 @@ import { ApiHttpError } from "../src/runtime/errors.js";
 import type { ApiFastifyInstance } from "../src/runtime/fastify.js";
 import { createInfrastructureReadinessCheck } from "../src/runtime/readiness.js";
 import { buildApiServer } from "../src/server.js";
+import type { AdminDemoResetWorkflow } from "../src/services/admin-demo-reset-service.js";
 import type { DashboardRecoveryAdmissionController } from "../src/services/dashboard-recovery-admission.js";
 import {
   type DashboardRecoveryContextReader,
   DashboardRecoveryService,
 } from "../src/services/dashboard-recovery-service.js";
 import type { RedisDashboardTrafficMetricStore } from "../src/services/dashboard-traffic-metric-store.js";
-import type { DemoMaintenanceService } from "../src/services/demo-maintenance-service.js";
 import type { DemoPresetController } from "../src/services/demo-preset-service.js";
 import type { DemoRunLifecycleController } from "../src/services/demo-run-service.js";
 import { DemoRunValidationError } from "../src/services/demo-run-validation-error.js";
 import type { ErpStatusService } from "../src/services/erp-status-service.js";
+import type { GeneratedRunRetentionWorkflow } from "../src/services/generated-run-retention-service.js";
+import type { GeneratedRunTeardownWorkflow } from "../src/services/generated-run-teardown-service.js";
 import {
   type InventoryStatusReader,
   InventoryStatusService,
@@ -262,7 +264,9 @@ async function buildTestServer(options: {
   demoRunLifecycleService?: DemoRunLifecycleController;
   trafficCompletionService?: TrafficCompletionController;
   trafficMetricIngestion?: TrafficMetricIngestionController;
-  demoMaintenanceService?: DemoMaintenanceService;
+  adminDemoReset?: AdminDemoResetWorkflow;
+  generatedRunRetention?: GeneratedRunRetentionWorkflow;
+  generatedRunTeardown?: GeneratedRunTeardownWorkflow;
   runHistoryService?: RunHistoryController;
   logger?: CheckoutSurgeLogger;
   reportPersistenceFailure?: (report: ReservationPartialFailureReport) => void;
@@ -370,8 +374,8 @@ async function buildTestServer(options: {
     trafficCompletionService:
       options.trafficCompletionService ?? trafficCompletionControllerFixture(),
     trafficMetricIngestion: options.trafficMetricIngestion ?? { ingest: async () => undefined },
-    demoMaintenanceService:
-      options.demoMaintenanceService ??
+    adminDemoReset:
+      options.adminDemoReset ??
       ({
         reset: async (correlationId: string) => ({
           failedRunCount: 0,
@@ -381,7 +385,11 @@ async function buildTestServer(options: {
           resetAt: "2026-06-20T00:00:10.000Z",
           correlationId,
         }),
-        cleanupOldRuns: async ({ correlationId }: { correlationId: string }) => ({
+      } as AdminDemoResetWorkflow),
+    generatedRunRetention:
+      options.generatedRunRetention ??
+      ({
+        cleanupOldRuns: async ({ correlationId }) => ({
           deletedRunCount: 0,
           deletedSaleOfferCount: 0,
           preservedLatestCount: 0,
@@ -390,7 +398,17 @@ async function buildTestServer(options: {
           cleanedAt: "2026-06-20T00:00:10.000Z",
           correlationId,
         }),
-      } as never),
+      } as GeneratedRunRetentionWorkflow),
+    generatedRunTeardown:
+      options.generatedRunTeardown ??
+      ({
+        teardownGeneratedRun: async (input) => ({
+          outcome: "already_absent" as const,
+          runId: input.runId,
+          cleanedAt: "2026-06-20T00:00:10.000Z",
+          correlationId: input.correlationId,
+        }),
+      } as GeneratedRunTeardownWorkflow),
     runHistoryService: options.runHistoryService ?? runHistoryControllerFixture(),
     startedAt: new Date("2026-06-20T00:00:00.000Z"),
   });
@@ -1042,8 +1060,11 @@ describe("API gateway routes", () => {
     presetService?: DemoPresetController;
     runtimePolicyService?: PublicRuntimePolicyController;
     demoRunLifecycleService?: DemoRunLifecycleController;
+    trafficCompletionService?: TrafficCompletionController;
     trafficMetricIngestion?: TrafficMetricIngestionController;
-    demoMaintenanceService?: DemoMaintenanceService;
+    adminDemoReset?: AdminDemoResetWorkflow;
+    generatedRunRetention?: GeneratedRunRetentionWorkflow;
+    generatedRunTeardown?: GeneratedRunTeardownWorkflow;
     runHistoryService?: RunHistoryController;
   }) {
     const server = await buildTestServer(options);
@@ -1779,10 +1800,7 @@ describe("API gateway routes", () => {
     }));
     const server = await trackedServer({
       persistence: new AcceptingPersistence(),
-      demoMaintenanceService: {
-        reset,
-        cleanupOldRuns: vi.fn(),
-      } as never,
+      adminDemoReset: { reset },
     });
 
     const unauthorized = await server.inject({ method: "POST", url: adminDemoResetPath });
@@ -1815,10 +1833,7 @@ describe("API gateway routes", () => {
     }));
     const server = await trackedServer({
       persistence: new AcceptingPersistence(),
-      demoMaintenanceService: {
-        reset: vi.fn(),
-        cleanupOldRuns,
-      } as never,
+      generatedRunRetention: { cleanupOldRuns } as never,
     });
 
     const response = await server.inject({
@@ -1858,11 +1873,7 @@ describe("API gateway routes", () => {
     }));
     const server = await trackedServer({
       persistence: new AcceptingPersistence(),
-      demoMaintenanceService: {
-        reset: vi.fn(),
-        cleanupOldRuns: vi.fn(),
-        teardownGeneratedRun,
-      } as never,
+      generatedRunTeardown: { teardownGeneratedRun },
     });
     expect(
       (await server.inject({ method: "DELETE", url: adminGeneratedRunTeardownPath(runId) }))
@@ -1912,13 +1923,11 @@ describe("API gateway routes", () => {
     const runId = randomUUID();
     const server = await trackedServer({
       persistence: new AcceptingPersistence(),
-      demoMaintenanceService: {
-        reset: vi.fn(),
-        cleanupOldRuns: vi.fn(),
+      generatedRunTeardown: {
         teardownGeneratedRun: vi.fn(async () => {
           throw new ApiHttpError({ statusCode: 409, code, message: "retry later" });
         }),
-      } as never,
+      },
     });
     const response = await server.inject({
       method: "DELETE",
@@ -1937,13 +1946,11 @@ describe("API gateway routes", () => {
     const runId = randomUUID();
     const server = await trackedServer({
       persistence: new AcceptingPersistence(),
-      demoMaintenanceService: {
-        reset: vi.fn(),
-        cleanupOldRuns: vi.fn(),
+      generatedRunTeardown: {
         teardownGeneratedRun: vi.fn(async () => {
           throw new Error("redis unavailable");
         }),
-      } as never,
+      },
     });
     const response = await server.inject({
       method: "DELETE",

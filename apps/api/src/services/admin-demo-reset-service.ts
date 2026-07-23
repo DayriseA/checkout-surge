@@ -1,10 +1,6 @@
 import {
   type AdminDemoResetResponse,
-  type AdminGeneratedRunTeardownResponse,
-  type AdminMaintenanceCleanupRunsResponse,
   adminDemoResetResponseSchema,
-  adminGeneratedRunTeardownResponseSchema,
-  adminMaintenanceCleanupRunsResponseSchema,
   type BusinessOutcomeSummary,
   emptyHttpTimingBreakdownSummary,
   httpTimingBreakdownSummarySchema,
@@ -18,24 +14,19 @@ import {
 import {
   type CheckoutSurgeDatabase,
   type CheckoutSurgeRedis,
-  type completeGeneratedRunTeardown,
-  type deleteGeneratedRunDurable,
-  type deleteGeneratedRunRedisState,
   demoRunFinalizations,
-  demoRunSaleContexts,
   demoRunSoldOutCounts,
   demoRunSummaries,
   demoRuns,
   getInventoryStatus,
   InventoryNotInitializedError,
-  type prepareGeneratedRunTeardown,
   readBusinessOutcomeSummary,
-  saleOffers,
   setRunSaleEligibility,
 } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
-import { and, asc, desc, eq, inArray, isNull, lt, notInArray, or } from "drizzle-orm";
-import { ApiHttpError } from "../runtime/errors.js";
+import { and, eq, inArray, isNull, or } from "drizzle-orm";
+import type { DemoMaintenanceAuthority } from "./demo-maintenance-authority.js";
+import type { ResetQueueMaintenance } from "./demo-queue-maintenance.js";
 import { emptyBusinessOutcomeSummary } from "./demo-run-projections.js";
 import { parsePersistedAcceptedRunConfigSnapshot } from "./persisted-demo-run-state.js";
 import type { DemoResetWorkflowFence } from "./postgres-demo-reset-workflow-fence.js";
@@ -49,38 +40,6 @@ import {
 } from "./traffic-delivery-classifier.js";
 import { syntheticFailedTrafficSummary } from "./traffic-delivery-plan.js";
 import type { TrafficAbortGateway } from "./traffic-execution-gateway.js";
-
-export interface QueueCleanupSummary {
-  cleanedQueueCount: number;
-  cleanedJobCount: number;
-}
-
-export interface DemoQueueQuiescenceLease {
-  /** Restores every queue pause introduced by this maintenance operation. */
-  release(): Promise<void>;
-}
-
-export interface DemoQueueMaintenance {
-  cleanResetOwnedQueues(): Promise<QueueCleanupSummary>;
-  acquireGeneratedRunQuiescence(runId: string): Promise<DemoQueueQuiescenceLease>;
-  preflightGeneratedRun(runId: string): Promise<void>;
-  cleanGeneratedRun(runId: string): Promise<{ deletedJobCount: number }>;
-}
-
-export type DemoQueueMaintenanceConflictCode =
-  | "active_job"
-  | "malformed_claimed_job"
-  | "not_quiescent";
-
-export class DemoQueueMaintenanceConflict extends Error {
-  constructor(
-    readonly code: DemoQueueMaintenanceConflictCode,
-    message: string,
-  ) {
-    super(message);
-    this.name = "DemoQueueMaintenanceConflict";
-  }
-}
 
 type FencedResetRun = {
   run: typeof demoRuns.$inferSelect;
@@ -96,28 +55,28 @@ export interface DashboardLiveStateReset {
   hasRunState(runId: string): Promise<boolean>;
 }
 
-export class DemoMaintenanceService {
-  private maintenanceTail: Promise<void> = Promise.resolve();
+export interface AdminDemoResetWorkflow {
+  reset(correlationId: string): Promise<AdminDemoResetResponse>;
+}
+
+export class AdminDemoResetService implements AdminDemoResetWorkflow {
   private resetPendingCount = 0;
 
   constructor(
     private readonly options: {
       db: CheckoutSurgeDatabase;
       redis: CheckoutSurgeRedis;
-      queueMaintenance: DemoQueueMaintenance;
+      queueMaintenance: ResetQueueMaintenance;
       terminalRunWriter: Pick<
         TerminalDemoRunWriter,
         "claimTerminalRun" | "writeAfterTerminalClaims"
       >;
       logger: CheckoutSurgeLogger;
-      deleteGeneratedRunDurable: typeof deleteGeneratedRunDurable;
-      deleteGeneratedRunRedisState: typeof deleteGeneratedRunRedisState;
-      prepareGeneratedRunTeardown: typeof prepareGeneratedRunTeardown;
-      completeGeneratedRunTeardown: typeof completeGeneratedRunTeardown;
       clearErpCircuitBreakerState: () => Promise<void>;
       trafficAborter: TrafficAbortGateway;
       dashboardLiveStateReset: DashboardLiveStateReset;
       resetWorkflowFence: DemoResetWorkflowFence;
+      maintenanceAuthority: DemoMaintenanceAuthority;
       now?: () => Date;
     },
   ) {}
@@ -125,7 +84,7 @@ export class DemoMaintenanceService {
   async reset(correlationId: string): Promise<AdminDemoResetResponse> {
     const arrivedDuringReset = this.resetPendingCount > 0;
     this.resetPendingCount += 1;
-    const operation = this.runSerializedMaintenance(() =>
+    const operation = this.options.maintenanceAuthority.runExclusive(() =>
       this.options.resetWorkflowFence.runExclusive(() =>
         this.resetWithoutConcurrentReset(correlationId, arrivedDuringReset),
       ),
@@ -339,255 +298,8 @@ export class DemoMaintenanceService {
     });
   }
 
-  async cleanupOldRuns(input: {
-    keepLatest: number;
-    olderThanDays: number;
-    correlationId: string;
-  }): Promise<AdminMaintenanceCleanupRunsResponse> {
-    return this.runSerializedMaintenance(() => this.cleanupOldRunsSerialized(input));
-  }
-
-  private async cleanupOldRunsSerialized(input: {
-    keepLatest: number;
-    olderThanDays: number;
-    correlationId: string;
-  }): Promise<AdminMaintenanceCleanupRunsResponse> {
-    const now = this.now();
-    const cutoffBefore = new Date(now.getTime() - input.olderThanDays * 24 * 60 * 60 * 1000);
-    const latestRows = await this.options.db
-      .select({ id: demoRuns.id })
-      .from(demoRuns)
-      .orderBy(desc(demoRuns.createdAt))
-      .limit(input.keepLatest);
-    const latestRunIds = latestRows.map((row) => row.id);
-    const activeRows = await this.options.db
-      .select({ id: demoRuns.id })
-      .from(demoRuns)
-      .where(inArray(demoRuns.status, ["starting", "active", "draining"]));
-    const activeRunIds = activeRows.map((row) => row.id);
-
-    const filters = [
-      inArray(demoRuns.status, ["completed", "failed"]),
-      lt(demoRuns.createdAt, cutoffBefore),
-      ...(latestRunIds.length > 0 ? [notInArray(demoRuns.id, latestRunIds)] : []),
-      ...(activeRunIds.length > 0 ? [notInArray(demoRuns.id, activeRunIds)] : []),
-    ];
-    const generatedRunCandidates = await this.options.db
-      .select({ runId: demoRuns.id, saleOfferId: demoRunSaleContexts.saleOfferId })
-      .from(demoRuns)
-      .innerJoin(
-        demoRunSaleContexts,
-        and(
-          eq(demoRunSaleContexts.runId, demoRuns.id),
-          eq(demoRunSaleContexts.saleOfferId, demoRuns.saleOfferId),
-        ),
-      )
-      .innerJoin(saleOffers, eq(saleOffers.id, demoRunSaleContexts.saleOfferId))
-      .where(and(...filters, eq(saleOffers.purpose, "generated_run")))
-      .orderBy(asc(demoRuns.createdAt));
-
-    let deletedRunCount = 0;
-    let deletedSaleOfferCount = 0;
-    for (const candidate of generatedRunCandidates) {
-      const result = await this.options.deleteGeneratedRunDurable(this.options.db, candidate);
-      deletedRunCount += result.deletedRunCount;
-      deletedSaleOfferCount += result.deletedSaleOfferCount;
-
-      if (result.deletedRunCount === 0) {
-        continue;
-      }
-
-      try {
-        await this.options.deleteGeneratedRunRedisState(this.options.redis, candidate);
-      } catch (error) {
-        this.options.logger.warn(
-          {
-            err: error,
-            runId: candidate.runId,
-            saleOfferId: candidate.saleOfferId,
-            correlationId: input.correlationId,
-          },
-          "Could not remove generated-run Redis state after durable cleanup.",
-        );
-      }
-    }
-
-    return adminMaintenanceCleanupRunsResponseSchema.parse({
-      deletedRunCount,
-      deletedSaleOfferCount,
-      preservedLatestCount: latestRunIds.length,
-      preservedActiveRunCount: activeRunIds.length,
-      cutoffBefore: cutoffBefore.toISOString(),
-      cleanedAt: now.toISOString(),
-      correlationId: input.correlationId,
-    });
-  }
-
-  async teardownGeneratedRun(input: {
-    runId: string;
-    correlationId: string;
-  }): Promise<AdminGeneratedRunTeardownResponse> {
-    return this.runSerializedMaintenance(() => this.teardownGeneratedRunSerialized(input));
-  }
-
-  private async teardownGeneratedRunSerialized(input: {
-    runId: string;
-    correlationId: string;
-  }): Promise<AdminGeneratedRunTeardownResponse> {
-    const targeted = this.options.queueMaintenance;
-    let lease: Awaited<ReturnType<typeof targeted.acquireGeneratedRunQuiescence>> | undefined;
-    let result: AdminGeneratedRunTeardownResponse | undefined;
-    let primaryError: unknown;
-    try {
-      lease = await targeted.acquireGeneratedRunQuiescence(input.runId);
-      result = await this.teardownQuiescedGeneratedRun(input, targeted);
-    } catch (error) {
-      primaryError = mapQueueMaintenanceError(error);
-      if (primaryError instanceof ApiHttpError && primaryError.statusCode === 409) {
-        this.options.logger.warn(
-          {
-            runId: input.runId,
-            correlationId: input.correlationId,
-            code: primaryError.code,
-          },
-          "Generated demo run teardown was refused.",
-        );
-      }
-    } finally {
-      if (lease) {
-        try {
-          await lease.release();
-        } catch (error) {
-          this.options.logger.warn(
-            { err: error, runId: input.runId, correlationId: input.correlationId },
-            "Generated-run teardown could not restore queue availability; retry the same cleanup request.",
-          );
-          primaryError = primaryError
-            ? new AggregateError(
-                [primaryError, error],
-                `Generated-run teardown failed and queue state restoration also failed: ${messageOf(primaryError)}`,
-              )
-            : error;
-        }
-      }
-    }
-    if (primaryError) throw primaryError;
-    if (!result) throw new Error("Generated-run teardown completed without a response.");
-    if (result.outcome === "deleted") {
-      try {
-        await this.options.completeGeneratedRunTeardown(this.options.db, input.runId);
-      } catch (error) {
-        this.options.logger.warn(
-          {
-            err: error,
-            runId: input.runId,
-            saleOfferId: result.saleOfferId,
-            correlationId: input.correlationId,
-          },
-          "Generated-run external cleanup succeeded but receipt completion requires retry.",
-        );
-        throw error;
-      }
-      this.options.logger.info(result, "Generated demo run teardown completed.");
-    } else {
-      this.options.logger.info(result, "Generated demo run teardown was already absent.");
-    }
-    return result;
-  }
-
-  private async teardownQuiescedGeneratedRun(
-    input: {
-      runId: string;
-      correlationId: string;
-    },
-    targeted: DemoQueueMaintenance,
-  ): Promise<AdminGeneratedRunTeardownResponse> {
-    const now = this.now();
-    await targeted.preflightGeneratedRun(input.runId);
-
-    const prepared = await this.options.prepareGeneratedRunTeardown(
-      this.options.db,
-      input.runId,
-      now,
-    );
-    if (prepared.outcome === "absent") {
-      return adminGeneratedRunTeardownResponseSchema.parse({
-        outcome: "already_absent",
-        runId: input.runId,
-        cleanedAt: now.toISOString(),
-        correlationId: input.correlationId,
-      });
-    }
-    if (prepared.outcome !== "ready") {
-      throw new ApiHttpError({
-        statusCode: 409,
-        code: "run_cleanup_conflict",
-        message:
-          prepared.outcome === "non_terminal"
-            ? "The generated run must be terminal before teardown."
-            : "The run is not owned by a matching generated sale offer.",
-        details: { conflictReason: prepared.outcome },
-      });
-    }
-
-    let queueCleanup: Awaited<ReturnType<DemoQueueMaintenance["cleanGeneratedRun"]>>;
-    try {
-      queueCleanup = await targeted.cleanGeneratedRun(input.runId);
-    } catch (error) {
-      this.options.logger.warn(
-        {
-          err: error,
-          runId: input.runId,
-          saleOfferId: prepared.saleOfferId,
-          correlationId: input.correlationId,
-          queueResumeWillBeAttempted: true,
-        },
-        "Generated-run queue convergence failed after durable deletion; queue availability will be restored before returning the retryable failure.",
-      );
-      throw error;
-    }
-
-    try {
-      const redisCleanup = await this.options.deleteGeneratedRunRedisState(
-        this.options.redis,
-        prepared,
-      );
-      return adminGeneratedRunTeardownResponseSchema.parse({
-        outcome: "deleted",
-        runId: input.runId,
-        saleOfferId: prepared.saleOfferId,
-        cleanup: {
-          redisKeysDeleted: redisCleanup.deletedKeyCount,
-          queueJobsDeleted: queueCleanup.deletedJobCount,
-        },
-        cleanedAt: now.toISOString(),
-        correlationId: input.correlationId,
-      });
-    } catch (error) {
-      this.options.logger.warn(
-        {
-          err: error,
-          runId: input.runId,
-          saleOfferId: prepared.saleOfferId,
-          correlationId: input.correlationId,
-        },
-        "Generated demo run teardown requires retry after durable deletion.",
-      );
-      throw error;
-    }
-  }
-
   private now(): Date {
     return this.options.now?.() ?? new Date();
-  }
-
-  private runSerializedMaintenance<T>(operation: () => Promise<T>): Promise<T> {
-    const result = this.maintenanceTail.then(operation);
-    this.maintenanceTail = result.then(
-      () => undefined,
-      () => undefined,
-    );
-    return result;
   }
 
   private async readResetRun(runId: string): Promise<{
@@ -664,20 +376,6 @@ export class DemoMaintenanceService {
 
     return row?.count ?? inventory.soldOutPressure.rejectionCount;
   }
-}
-
-function mapQueueMaintenanceError(error: unknown): unknown {
-  if (!(error instanceof DemoQueueMaintenanceConflict)) return error;
-  return new ApiHttpError({
-    statusCode: 409,
-    code: "run_cleanup_conflict",
-    message: error.message,
-    details: { conflictReason: error.code },
-  });
-}
-
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 function adminResetTrafficSummary(

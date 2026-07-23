@@ -15,12 +15,9 @@ import {
   trafficDeliverySummarySchema,
 } from "@checkout-surge/contracts";
 import {
-  completeGeneratedRunTeardown,
   createDatabaseConnection,
   createRedisClient,
   deferPendingPersistenceRecord,
-  deleteGeneratedRunDurable,
-  deleteGeneratedRunRedisState,
   demoPresets,
   demoRunFinalizations,
   demoRunSaleContexts,
@@ -33,7 +30,6 @@ import {
   inventoryKeys,
   orderRecoveryJobs,
   orders,
-  prepareGeneratedRunTeardown,
   products,
   reservationPendingPersistence,
   reservations,
@@ -46,11 +42,12 @@ import { createSilentLogger } from "@checkout-surge/logger";
 import { count, eq, sql } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { OperationDeadlineExceededError } from "../src/runtime/operation-lifecycle.js";
+import { AdminDemoResetService } from "../src/services/admin-demo-reset-service.js";
 import {
   DashboardRecoveryService,
   PostgresDashboardRecoveryContextReader,
 } from "../src/services/dashboard-recovery-service.js";
-import { DemoMaintenanceService } from "../src/services/demo-maintenance-service.js";
+import { ProcessLocalDemoMaintenanceAuthority } from "../src/services/demo-maintenance-authority.js";
 import { DemoRunFinalizationService } from "../src/services/demo-run-finalization-service.js";
 import {
   PostgresTerminalDemoRunSummaryWriter,
@@ -793,20 +790,13 @@ describe("demo run finalization service", () => {
     const finalizationService = createService(connection, redis);
     const lockConnection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
     const resetConnection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
-    const resetService = new DemoMaintenanceService({
+    const resetService = new AdminDemoResetService({
       db: resetConnection.db,
       terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(resetConnection.db),
       redis: redisClient,
       queueMaintenance: {
         cleanResetOwnedQueues: async () => ({ cleanedQueueCount: 0, cleanedJobCount: 0 }),
-        acquireGeneratedRunQuiescence: async () => ({ release: async () => undefined }),
-        preflightGeneratedRun: async () => undefined,
-        cleanGeneratedRun: async () => ({ deletedJobCount: 0 }),
       },
-      deleteGeneratedRunDurable,
-      deleteGeneratedRunRedisState,
-      prepareGeneratedRunTeardown,
-      completeGeneratedRunTeardown,
       clearErpCircuitBreakerState: async () => undefined,
       trafficAborter: { abortCurrent: async () => ({ outcome: "no_current_run" }) },
       dashboardLiveStateReset: {
@@ -815,6 +805,7 @@ describe("demo run finalization service", () => {
         hasRunState: async () => false,
       },
       resetWorkflowFence: { runExclusive: async (operation) => operation() },
+      maintenanceAuthority: new ProcessLocalDemoMaintenanceAuthority(),
       logger: createSilentLogger("api"),
       now: () => new Date("2026-06-20T00:00:11.000Z"),
     });

@@ -11,7 +11,7 @@ import {
   type DemoQueueMaintenance,
   DemoQueueMaintenanceConflict,
   type QueueCleanupSummary,
-} from "../services/demo-maintenance-service.js";
+} from "../services/demo-queue-maintenance.js";
 
 const cleanedJobGraceMs = 0;
 const cleanedJobLimit = 10_000;

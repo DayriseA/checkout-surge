@@ -13,17 +13,13 @@ import {
 } from "@checkout-surge/contracts";
 import { signPublicVisitorCredential } from "@checkout-surge/contracts/public-visitor-credential";
 import {
-  completeGeneratedRunTeardown,
   createDatabaseConnection,
   createRedisClient,
-  deleteGeneratedRunDurable,
-  deleteGeneratedRunRedisState,
   demoPresets,
   demoRunSaleContexts,
   demoRunSummaries,
   demoRuns,
   isRunSaleEligible,
-  prepareGeneratedRunTeardown,
   products,
   publicRuntimePolicies,
   saleOffers,
@@ -33,8 +29,9 @@ import { createSilentLogger } from "@checkout-surge/logger";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiHttpError } from "../src/runtime/errors.js";
+import { AdminDemoResetService } from "../src/services/admin-demo-reset-service.js";
 import { RedisDashboardTrafficMetricStore } from "../src/services/dashboard-traffic-metric-store.js";
-import { DemoMaintenanceService } from "../src/services/demo-maintenance-service.js";
+import { ProcessLocalDemoMaintenanceAuthority } from "../src/services/demo-maintenance-authority.js";
 import { DemoPresetService } from "../src/services/demo-preset-service.js";
 import {
   DemoRunLifecycleService,
@@ -285,20 +282,13 @@ describe("demo-run lifecycle start gating", () => {
     });
     let abortAttempt = 0;
     const queueCleanup = vi.fn(async () => ({ cleanedQueueCount: 0, cleanedJobCount: 0 }));
-    const resetService = new DemoMaintenanceService({
+    const resetService = new AdminDemoResetService({
       db: resetConnection.db,
       redis: redisClient,
       terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(resetConnection.db),
       queueMaintenance: {
         cleanResetOwnedQueues: queueCleanup,
-        acquireGeneratedRunQuiescence: async () => ({ release: async () => undefined }),
-        preflightGeneratedRun: async () => undefined,
-        cleanGeneratedRun: async () => ({ deletedJobCount: 0 }),
       },
-      deleteGeneratedRunDurable,
-      deleteGeneratedRunRedisState,
-      prepareGeneratedRunTeardown,
-      completeGeneratedRunTeardown,
       clearErpCircuitBreakerState: async () => undefined,
       trafficAborter: {
         abortCurrent: async () => {
@@ -317,6 +307,7 @@ describe("demo-run lifecycle start gating", () => {
       },
       dashboardLiveStateReset: new RedisDashboardTrafficMetricStore(redisClient),
       resetWorkflowFence: new PostgresDemoResetWorkflowFence(resetConnection.sql),
+      maintenanceAuthority: new ProcessLocalDemoMaintenanceAuthority(),
       logger: createSilentLogger("api"),
     });
     const start = vi.fn(async (request: TrafficExecutionStartRequest) => ({
@@ -1075,24 +1066,18 @@ describe("demo-run lifecycle start gating", () => {
         },
       },
     });
-    const resetService = new DemoMaintenanceService({
+    const resetService = new AdminDemoResetService({
       db: resetConnection.db,
       terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(resetConnection.db),
       redis: requireRedis(redis),
       queueMaintenance: {
         cleanResetOwnedQueues: async () => ({ cleanedQueueCount: 0, cleanedJobCount: 0 }),
-        acquireGeneratedRunQuiescence: async () => ({ release: async () => undefined }),
-        preflightGeneratedRun: async () => undefined,
-        cleanGeneratedRun: async () => ({ deletedJobCount: 0 }),
       },
-      deleteGeneratedRunDurable,
-      deleteGeneratedRunRedisState,
-      prepareGeneratedRunTeardown,
-      completeGeneratedRunTeardown,
       clearErpCircuitBreakerState: async () => undefined,
       trafficAborter: { abortCurrent: async () => ({ outcome: "no_current_run" }) },
       dashboardLiveStateReset: new RedisDashboardTrafficMetricStore(requireRedis(redis)),
       resetWorkflowFence: new PostgresDemoResetWorkflowFence(resetConnection.sql),
+      maintenanceAuthority: new ProcessLocalDemoMaintenanceAuthority(),
       logger: createSilentLogger("api"),
       now: () => new Date("2026-06-20T00:00:20.000Z"),
     });

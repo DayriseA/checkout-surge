@@ -157,6 +157,10 @@ describe("TrafficCompletionService", () => {
       logger: createSilentLogger("api"),
     });
     const report = completionReport();
+    const executionPlan = report.loadRunDiagnosticsSummary.executionPlan;
+    if (executionPlan.trafficMode !== "buyer-spike") {
+      throw new Error("Expected the buyer-spike completion fixture.");
+    }
 
     await expect(
       service.recordTrafficCompletion({
@@ -164,7 +168,7 @@ describe("TrafficCompletionService", () => {
         loadRunDiagnosticsSummary: {
           ...report.loadRunDiagnosticsSummary,
           executionPlan: {
-            ...report.loadRunDiagnosticsSummary.executionPlan,
+            ...executionPlan,
             maxDurationSeconds: 6,
           },
         },

@@ -20,13 +20,15 @@ import { createDashboardSourceResolver } from "./runtime/dashboard-source-identi
 import { ApiHttpError, createErrorPayload } from "./runtime/errors.js";
 import type { ApiFastifyInstance } from "./runtime/fastify.js";
 import type { ApiReadiness } from "./runtime/readiness.js";
+import type { AdminDemoResetWorkflow } from "./services/admin-demo-reset-service.js";
 import type { DashboardRecoveryAdmissionController } from "./services/dashboard-recovery-admission.js";
 import type { DashboardRecoveryService } from "./services/dashboard-recovery-service.js";
 import { DashboardRecoveryWorkflow } from "./services/dashboard-recovery-workflow.js";
-import type { DemoMaintenanceService } from "./services/demo-maintenance-service.js";
 import type { DemoPresetController } from "./services/demo-preset-service.js";
 import type { DemoRunLifecycleController } from "./services/demo-run-service.js";
 import type { ErpStatusService } from "./services/erp-status-service.js";
+import type { GeneratedRunRetentionWorkflow } from "./services/generated-run-retention-service.js";
+import type { GeneratedRunTeardownWorkflow } from "./services/generated-run-teardown-service.js";
 import type { InventoryStatusService } from "./services/inventory-status-service.js";
 import type { OrderStatusController } from "./services/order-status-service.js";
 import type { PublicRuntimePolicyController } from "./services/public-runtime-policy-service.js";
@@ -53,7 +55,9 @@ export interface BuildApiServerOptions {
   demoRunLifecycleService: DemoRunLifecycleController;
   trafficCompletionService: TrafficCompletionController;
   trafficMetricIngestion: TrafficMetricIngestionController;
-  demoMaintenanceService: DemoMaintenanceService;
+  adminDemoReset: AdminDemoResetWorkflow;
+  generatedRunRetention: GeneratedRunRetentionWorkflow;
+  generatedRunTeardown: GeneratedRunTeardownWorkflow;
   runHistoryService: RunHistoryController;
   startedAt?: Date;
 }
@@ -126,7 +130,9 @@ export async function buildApiServer(options: BuildApiServerOptions): Promise<Ap
     controlServiceToken: options.config.controlServiceToken,
   });
   registerAdminMaintenanceRoutes(app, {
-    demoMaintenanceService: options.demoMaintenanceService,
+    adminDemoReset: options.adminDemoReset,
+    generatedRunRetention: options.generatedRunRetention,
+    generatedRunTeardown: options.generatedRunTeardown,
     controlServiceToken: options.config.controlServiceToken,
   });
   registerRunHistoryRoutes(app, {
