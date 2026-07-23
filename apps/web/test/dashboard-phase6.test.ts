@@ -183,7 +183,7 @@ describe("Phase 6 dashboard behavior", () => {
       renderToStaticMarkup(
         createElement(RecentOrderTransitionsPanel, { orders: state.recentOrderStates }),
       ),
-    ).toContain("Reconciled workflow state with realtime updates");
+    ).toContain("Completion states from the current projection");
   });
 
   it("uses exact recovered status timestamps and retains the newest 20 actual transitions", () => {
@@ -449,7 +449,7 @@ describe("Phase 6 dashboard behavior", () => {
     });
 
     const traffic = renderToStaticMarkup(
-      createElement(RequestSurgePanel, { recovery, liveEventCount: 3 }),
+      createElement(RequestSurgePanel, { recovery, liveProjectionCount: 3 }),
     );
     const inventory = renderToStaticMarkup(createElement(InventoryDrainPanel, { recovery }));
     const queue = renderToStaticMarkup(createElement(QueuePressurePanel, { recovery }));
@@ -494,7 +494,7 @@ describe("Phase 6 dashboard behavior", () => {
     });
 
     const traffic = renderToStaticMarkup(
-      createElement(RequestSurgePanel, { recovery, liveEventCount: 0 }),
+      createElement(RequestSurgePanel, { recovery, liveProjectionCount: 0 }),
     );
 
     expect(traffic).toContain("Observed HTTP request rate");

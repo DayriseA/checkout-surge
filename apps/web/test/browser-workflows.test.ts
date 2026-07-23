@@ -4,7 +4,6 @@ import {
   type AcceptedRunConfigSnapshot,
   type AdminPresetListResponse,
   type AdminPublicRuntimePolicyResponse,
-  type DashboardEvent,
   type DashboardRecoveryResponse,
   type DemoPresetContract,
   type DemoRunSnapshot,
@@ -306,12 +305,15 @@ describe("admin browser workflows", () => {
 });
 
 describe("watch browser recovery", () => {
-  it("reads the authoritative latest state when a dropped slow stream reconnects", async () => {
-    const terminalRecovery = dashboardRecoveryFixture({
-      currentRun: demoRunFixture({ status: "completed", trafficStatus: "succeeded" }),
-      recoveredAt: "2026-06-20T00:00:12.000Z",
-    });
-    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(terminalRecovery));
+  it("requests one recovery per stream lifecycle transition and coalesces simultaneous triggers", async () => {
+    const initialOpenRecovery = deferred<Response>();
+    const disconnectRecovery = deferred<Response>();
+    const reconnectRecovery = deferred<Response>();
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(() => initialOpenRecovery.promise)
+      .mockImplementationOnce(() => disconnectRecovery.promise)
+      .mockImplementationOnce(() => reconnectRecovery.promise);
     vi.stubGlobal("EventSource", FakeEventSource);
     vi.stubGlobal("fetch", fetchMock);
     const snapshot = dashboardSnapshotFixture();
@@ -321,33 +323,71 @@ describe("watch browser recovery", () => {
 
     render(createElement(OperatorDashboard, { snapshot }));
     await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
-    act(() => FakeEventSource.instances[0]?.emit("error", new Event("error")));
-    expect(screen.getByText("disconnected")).toBeTruthy();
+    const source = FakeEventSource.instances[0];
 
-    act(() => FakeEventSource.instances[0]?.emit("open", new Event("open")));
-
+    act(() => source?.emit("open", new Event("open")));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
-    await waitFor(() => expect(screen.getByText("completed")).toBeTruthy());
-    expect(screen.getByText("Preview 1k")).toBeTruthy();
-    expect(fetchMock.mock.calls.map((call) => String(call[0]))).toEqual([
-      dashboardRecoveryProxyPath,
-    ]);
+    initialOpenRecovery.resolve(
+      jsonResponse(
+        dashboardRecoveryFixture({
+          currentRun: demoRunFixture({ status: "active" }),
+          recoveredAt: "2026-06-20T00:00:11.000Z",
+          revision: 2,
+        }),
+      ),
+    );
+    await screen.findByText("12:00:11 AM UTC");
+
+    act(() => source?.emit("error", new Event("error")));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    disconnectRecovery.resolve(
+      jsonResponse(
+        dashboardRecoveryFixture({
+          currentRun: demoRunFixture({ status: "active" }),
+          recoveredAt: "2026-06-20T00:00:12.000Z",
+          revision: 3,
+        }),
+      ),
+    );
+    await screen.findByText("12:00:12 AM UTC");
+
+    act(() => {
+      source?.emit("error", new Event("error"));
+      source?.emit("error", new Event("error"));
+    });
+    await act(async () => Promise.resolve());
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    act(() => source?.emit("open", new Event("open")));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    act(() => source?.emit("error", new Event("error")));
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    reconnectRecovery.resolve(
+      jsonResponse(
+        dashboardRecoveryFixture({
+          currentRun: demoRunFixture({ status: "active" }),
+          recoveredAt: "2026-06-20T00:00:13.000Z",
+          revision: 4,
+        }),
+      ),
+    );
+    await screen.findByText("12:00:13 AM UTC");
+
+    expect(FakeEventSource.instances).toHaveLength(1);
+    expect(fetchMock.mock.calls.map((call) => String(call[0]))).toEqual(
+      Array.from(
+        { length: 3 },
+        () =>
+          `${dashboardRecoveryProxyPath}?knownRunId=55555555-5555-4555-8555-555555555555&knownSaleOfferId=22222222-2222-4222-8222-222222222222`,
+      ),
+    );
   });
 
-  it("requests one follow-up when a terminal SSE event races a stale refresh", async () => {
+  it("keeps an immediate terminal projection when a stale HTTP read races it", async () => {
     const firstRecovery = deferred<Response>();
-    const fetchMock = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) => {
-      if (fetchMock.mock.calls.length === 1) {
-        return firstRecovery.promise;
-      }
-
-      return jsonResponse(
-        dashboardRecoveryFixture({
-          currentRun: demoRunFixture({ status: "completed", trafficStatus: "succeeded" }),
-          recoveredAt: "2026-06-20T00:00:12.000Z",
-        }),
-      );
-    });
+    const fetchMock = vi.fn(
+      (_input: string | URL | Request, _init?: RequestInit) => firstRecovery.promise,
+    );
     vi.stubGlobal("EventSource", FakeEventSource);
     vi.stubGlobal("fetch", fetchMock);
 
@@ -367,26 +407,34 @@ describe("watch browser recovery", () => {
       FakeEventSource.instances[0]?.emit(
         "message",
         new MessageEvent("message", {
-          data: JSON.stringify(runCompletedEventFixture()),
+          data: JSON.stringify(
+            dashboardRecoveryFixture({
+              currentRun: demoRunFixture({ status: "completed", trafficStatus: "succeeded" }),
+              recoveredAt: "2026-06-20T00:00:12.000Z",
+              revision: 3,
+            }),
+          ),
         }),
       );
     });
+    expect(screen.getByText("completed")).toBeTruthy();
     await act(async () => {
       firstRecovery.resolve(
         jsonResponse(
           dashboardRecoveryFixture({
             currentRun: demoRunFixture({ status: "draining", trafficStatus: "succeeded" }),
             recoveredAt: "2026-06-20T00:00:11.000Z",
+            revision: 2,
           }),
         ),
       );
       await firstRecovery.promise;
     });
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    expect(screen.getByText("completed")).toBeTruthy();
     expect(fetchMock.mock.calls.map((call) => String(call[0]))).toEqual([
-      dashboardRecoveryProxyPath,
-      dashboardRecoveryProxyPath,
+      `${dashboardRecoveryProxyPath}?knownRunId=55555555-5555-4555-8555-555555555555&knownSaleOfferId=22222222-2222-4222-8222-222222222222`,
     ]);
   });
 
@@ -416,7 +464,7 @@ describe("watch browser recovery", () => {
     act(() => FakeEventSource.instances[0]?.emit("open", new Event("open")));
 
     await screen.findByText("Recovery temporarily unavailable.");
-    expect(screen.getAllByText("Live sync issue")).toHaveLength(1);
+    expect(screen.getAllByText("Last-known-good projection")).toHaveLength(1);
     expect(screen.getByText("Preview 1k")).toBeTruthy();
     expect(screen.queryAllByText("Unavailable")).toHaveLength(0);
     expect(screen.getAllByText("Correlation watch-refresh-failed")).toHaveLength(1);
@@ -804,16 +852,6 @@ function demoRunFixture(overrides: Partial<DemoRunSnapshot> = {}): DemoRunSnapsh
     ...(status === "failed" ? { failureReason: "traffic_failed" } : {}),
     ...overrides,
   });
-}
-
-function runCompletedEventFixture(): DashboardEvent {
-  return {
-    type: "load.run.updated",
-    runId: "55555555-5555-4555-8555-555555555555",
-    correlationId: "corr-run-completed",
-    occurredAt: "2026-06-20T00:00:11.000Z",
-    run: demoRunFixture({ status: "completed", trafficStatus: "succeeded" }),
-  };
 }
 
 function runHistoryListFixture(): RunHistoryListResponse {

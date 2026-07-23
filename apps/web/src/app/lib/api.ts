@@ -3,7 +3,7 @@ import {
   adminRunHistoryDetailPath,
   adminRunHistoryDetailResponseSchema,
   controlServiceTokenHeaderName,
-  type DashboardRecoveryResponse,
+  type DashboardProjection,
   type HealthResponse,
   healthResponseSchema,
   type LivenessResponse,
@@ -29,13 +29,13 @@ export type { BackendRead } from "./backend-read";
 export interface DashboardBackendSnapshot {
   liveness: BackendRead<LivenessResponse>;
   readiness: BackendRead<HealthResponse>;
-  recovery: BackendRead<DashboardRecoveryResponse>;
+  recovery: BackendRead<DashboardProjection>;
 }
 
 export interface PublicDemoSurface {
   presets: BackendRead<PublicPresetListResponse>;
   runtimePolicy: BackendRead<PublicRuntimePolicyResponse>;
-  recovery: BackendRead<DashboardRecoveryResponse>;
+  recovery: BackendRead<DashboardProjection>;
 }
 
 function apiBaseUrl(): string {
@@ -71,7 +71,7 @@ async function readJson<T>(
   });
 }
 
-export function pendingDashboardRecovery(): BackendRead<DashboardRecoveryResponse> {
+export function pendingDashboardRecovery(): BackendRead<DashboardProjection> {
   return {
     status: "unavailable",
     reason: "Authoritative run state is loading.",

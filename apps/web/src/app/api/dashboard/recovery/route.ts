@@ -1,7 +1,7 @@
 import {
+  dashboardProjectionSchema,
   dashboardRecoveryPath,
   dashboardRecoveryQuerySchema,
-  dashboardRecoveryResponseSchema,
   publicVisitorIdHeaderName,
 } from "@checkout-surge/contracts";
 import {
@@ -40,7 +40,7 @@ export async function GET(
     ctx,
     url: `${apiBaseUrl()}${dashboardRecoveryPath}${upstreamQuery.size > 0 ? `?${upstreamQuery}` : ""}`,
     method: "GET",
-    schema: dashboardRecoveryResponseSchema,
+    schema: dashboardProjectionSchema,
     headers: { [publicVisitorIdHeaderName]: visitor.credential },
   });
   if (visitor.setCookie) response.headers.append("set-cookie", visitor.setCookie);

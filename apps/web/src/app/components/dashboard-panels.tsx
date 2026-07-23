@@ -2,7 +2,7 @@ import type {
   BusinessOutcomeSummary,
   CompletionOutcome,
   CompletionOutcomeStatus,
-  DashboardRecoveryResponse,
+  DashboardProjection,
   HealthStatus,
   InventoryStatus,
   QueueStatus,
@@ -95,9 +95,7 @@ function formatObservedRequestRate(value: number): string {
   return formatRate(value, "requests/s");
 }
 
-function recoveryData(
-  recovery: BackendRead<DashboardRecoveryResponse>,
-): DashboardRecoveryResponse | null {
+function recoveryData(recovery: BackendRead<DashboardProjection>): DashboardProjection | null {
   return recovery.status === "available" ? recovery.data : null;
 }
 
@@ -253,7 +251,7 @@ export function ApiStatusPanel({ snapshot }: { snapshot: DashboardBackendSnapsho
 export function RecoveryStatusPanel({
   recovery,
   realtimeStatus,
-  liveEventCount,
+  liveProjectionCount,
   isRefreshing = false,
   isRetryScheduled = false,
   retryAttempt = 0,
@@ -262,19 +260,20 @@ export function RecoveryStatusPanel({
   syncIssue = null,
   onRefresh,
 }: {
-  recovery: BackendRead<DashboardRecoveryResponse>;
+  recovery: BackendRead<DashboardProjection>;
   realtimeStatus: RealtimeConnectionStatus;
-  liveEventCount: number;
+  liveProjectionCount: number;
   isRefreshing?: boolean;
   isRetryScheduled?: boolean;
   retryAttempt?: number;
   retryDelayMs?: number | null;
   hasSyncIssue?: boolean;
-  syncIssue?: Extract<BackendRead<DashboardRecoveryResponse>, { status: "unavailable" }> | null;
+  syncIssue?: Extract<BackendRead<DashboardProjection>, { status: "unavailable" }> | null;
   onRefresh?: () => void;
 }) {
   const data = recoveryData(recovery);
   const run = data?.currentRun ?? null;
+  const hasLastKnownGoodSyncIssue = data !== null && hasSyncIssue;
 
   return (
     <section className={panelNarrowClassName}>
@@ -297,9 +296,9 @@ export function RecoveryStatusPanel({
           <StatusPill label={run?.status ?? "idle"} tone={run ? "pending" : "idle"} />
         </div>
       </div>
-      {hasSyncIssue ? (
+      {hasLastKnownGoodSyncIssue ? (
         <div className="mb-3 grid gap-1 rounded-lg border border-[#f7b4ad] bg-danger-soft p-3 leading-6 text-danger">
-          <strong>Live sync issue</strong>
+          <strong>Last-known-good projection</strong>
           <span>
             {isRefreshing
               ? "Refreshing authoritative snapshot now."
@@ -318,7 +317,7 @@ export function RecoveryStatusPanel({
           <Fact label="Traffic" value={run?.trafficStatus ?? "Not active"} />
           <Fact label="Recovered at" value={formatTime(data.recoveredAt)} />
           <Fact label="Live stream" value={realtimeStatus} />
-          <Fact label="Events applied" value={formatNumber(liveEventCount)} />
+          <Fact label="Live projections applied" value={formatNumber(liveProjectionCount)} />
         </dl>
       ) : (
         <UnavailableState read={recovery} />
@@ -329,10 +328,10 @@ export function RecoveryStatusPanel({
 
 export function RequestSurgePanel({
   recovery,
-  liveEventCount,
+  liveProjectionCount,
 }: {
-  recovery: BackendRead<DashboardRecoveryResponse>;
-  liveEventCount: number;
+  recovery: BackendRead<DashboardProjection>;
+  liveProjectionCount: number;
 }) {
   const data = recoveryData(recovery);
   const inventory = data?.inventory ?? null;
@@ -400,7 +399,7 @@ export function RequestSurgePanel({
               label="Sold-out pressure"
               value={formatNumber(inventory?.soldOutPressure.rejectionCount ?? 0)}
             />
-            <Fact label="Live events" value={formatNumber(liveEventCount)} />
+            <Fact label="Live projections" value={formatNumber(liveProjectionCount)} />
             <Fact
               label="Latest metric"
               value={
@@ -447,9 +446,9 @@ export function RequestSurgePanel({
 }
 
 function findLatestMetric(
-  metrics: DashboardRecoveryResponse["recentMetrics"],
+  metrics: DashboardProjection["recentMetrics"],
   predicate: (metricName: string, unit: string) => boolean,
-): DashboardRecoveryResponse["recentMetrics"][number] | null {
+): DashboardProjection["recentMetrics"][number] | null {
   for (let index = metrics.length - 1; index >= 0; index -= 1) {
     const metric = metrics[index];
 
@@ -461,11 +460,7 @@ function findLatestMetric(
   return null;
 }
 
-export function InventoryDrainPanel({
-  recovery,
-}: {
-  recovery: BackendRead<DashboardRecoveryResponse>;
-}) {
+export function InventoryDrainPanel({ recovery }: { recovery: BackendRead<DashboardProjection> }) {
   const inventory = recoveryData(recovery)?.inventory ?? null;
   const percentRemaining =
     inventory && inventory.allocatedStock > 0
@@ -513,11 +508,7 @@ export function InventoryDrainPanel({
   );
 }
 
-export function QueuePressurePanel({
-  recovery,
-}: {
-  recovery: BackendRead<DashboardRecoveryResponse>;
-}) {
+export function QueuePressurePanel({ recovery }: { recovery: BackendRead<DashboardProjection> }) {
   const queue = recoveryData(recovery)?.queue ?? null;
 
   return (
@@ -555,7 +546,7 @@ export function QueuePressurePanel({
   );
 }
 
-export function ErpHealthPanel({ recovery }: { recovery: BackendRead<DashboardRecoveryResponse> }) {
+export function ErpHealthPanel({ recovery }: { recovery: BackendRead<DashboardProjection> }) {
   const erp = recoveryData(recovery)?.erp ?? null;
 
   return (
@@ -606,7 +597,7 @@ export function ConsistencyLagPanel({
   recovery,
   latestOrderLag = null,
 }: {
-  recovery: BackendRead<DashboardRecoveryResponse>;
+  recovery: BackendRead<DashboardProjection>;
   latestOrderLag?: { publicOrderId: string; valueMs: number; observedAt: string } | null;
 }) {
   const lag = recoveryData(recovery)?.consistencyLag ?? null;
@@ -655,11 +646,7 @@ export function ConsistencyLagPanel({
   );
 }
 
-export function RunOutcomesPanel({
-  recovery,
-}: {
-  recovery: BackendRead<DashboardRecoveryResponse>;
-}) {
+export function RunOutcomesPanel({ recovery }: { recovery: BackendRead<DashboardProjection> }) {
   const outcome = recoveryData(recovery)?.businessOutcome ?? null;
 
   return (
@@ -715,7 +702,7 @@ export function RecentOrderTransitionsPanel({
       <div className={panelHeaderClassName}>
         <div>
           <p className={eyebrowClassName}>Recent order transitions</p>
-          <h2 className={panelTitleClassName}>Reconciled workflow state with realtime updates</h2>
+          <h2 className={panelTitleClassName}>Completion states from the current projection</h2>
         </div>
         <StatusPill
           label={recent.length > 0 ? `${formatNumber(recent.length)} shown` : "no live state"}
@@ -758,7 +745,7 @@ export function RecentOrderTransitionsPanel({
 export function CompletionOutcomesPanel({
   recovery,
 }: {
-  recovery: BackendRead<DashboardRecoveryResponse>;
+  recovery: BackendRead<DashboardProjection>;
 }) {
   const outcomes = recoveryData(recovery)?.recentCompletionOutcomes ?? [];
 

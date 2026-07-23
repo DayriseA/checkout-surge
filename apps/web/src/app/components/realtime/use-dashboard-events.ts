@@ -1,6 +1,6 @@
 "use client";
 
-import { type DashboardEvent, dashboardEventSchema } from "@checkout-surge/contracts";
+import { type DashboardProjection, dashboardProjectionSchema } from "@checkout-surge/contracts";
 import { useEffect, useRef, useState } from "react";
 import { dashboardEventsUrl } from "../../lib/realtime";
 import type { RealtimeConnectionStatus } from "../dashboard-panels";
@@ -14,23 +14,27 @@ interface EventSourceLike {
 type EventSourceConstructor = new (url: string) => EventSourceLike;
 
 export interface UseDashboardEventsOptions {
-  onEvent: (event: DashboardEvent) => void;
+  onProjection: (projection: DashboardProjection) => void;
   onOpen: () => void;
+  onDisconnect: () => void;
   eventSourceConstructor?: EventSourceConstructor;
   url?: string;
 }
 
 export function useDashboardEvents({
-  onEvent,
+  onProjection,
   onOpen,
+  onDisconnect,
   eventSourceConstructor,
   url = dashboardEventsUrl(),
 }: UseDashboardEventsOptions): RealtimeConnectionStatus {
   const [status, setStatus] = useState<RealtimeConnectionStatus>("connecting");
-  const eventCallbackRef = useRef(onEvent);
+  const projectionCallbackRef = useRef(onProjection);
   const openCallbackRef = useRef(onOpen);
-  eventCallbackRef.current = onEvent;
+  const disconnectCallbackRef = useRef(onDisconnect);
+  projectionCallbackRef.current = onProjection;
   openCallbackRef.current = onOpen;
+  disconnectCallbackRef.current = onDisconnect;
 
   useEffect(() => {
     const Constructor = eventSourceConstructor ?? globalThis.EventSource;
@@ -40,11 +44,19 @@ export function useDashboardEvents({
     }
 
     const source = new Constructor(url) as EventSourceLike;
+    let connectionState: RealtimeConnectionStatus = "connecting";
     const handleOpen: EventListener = () => {
+      if (connectionState === "connected") return;
+      connectionState = "connected";
       setStatus("connected");
       openCallbackRef.current();
     };
-    const handleError: EventListener = () => setStatus("disconnected");
+    const handleError: EventListener = () => {
+      if (connectionState === "disconnected") return;
+      connectionState = "disconnected";
+      setStatus("disconnected");
+      disconnectCallbackRef.current();
+    };
     const handleMessage: EventListener = (rawEvent) => {
       const message = rawEvent as MessageEvent<unknown>;
       if (typeof message.data !== "string") return;
@@ -54,8 +66,8 @@ export function useDashboardEvents({
       } catch {
         return;
       }
-      const parsed = dashboardEventSchema.safeParse(payload);
-      if (parsed.success) eventCallbackRef.current(parsed.data);
+      const parsed = dashboardProjectionSchema.safeParse(payload);
+      if (parsed.success) projectionCallbackRef.current(parsed.data);
     };
 
     source.addEventListener("open", handleOpen);

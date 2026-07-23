@@ -30,7 +30,7 @@ The goal is to keep the limited-inventory checkout flow and its recovery boundar
 | Traffic delivery quality | Classify request delivery inside `trafficDeliverySummary.trafficDeliveryStatus` as `complete`, `warning`, `degraded`, or `failed` | Keeps traffic fidelity visible without adding terminal demo-run statuses beyond `completed` and `failed`. |
 | Quantity semantics | Keep `quantity` in the model, but default the limited-inventory flow to one unit per checkout | The demo is single-item focused, but the schema should not require a breaking change to support quantity later. |
 | UI status strategy | Keep canonical persistence states minimal and display the buy outcome or canonical order status directly | This avoids parallel customer/simulated status vocabularies while still supporting clear operator feedback. |
-| Realtime order presentation | Make the live dashboard aggregate-first and remove its separate per-order realtime feed and panels during the later revisioned-projection migration | Per-order live activity does not strengthen the surge demo enough to justify a second update protocol. Aggregate consistency lag remains a gold signal; focused durable diagnostics use `GET /orders/:publicOrderId/status` or protected Run History. |
+| Realtime order presentation | The browser is aggregate-first and no longer consumes the separate per-order realtime feed; Task 40 removes that transitional server/contracts path and remaining live panel residue | Per-order live activity does not strengthen the surge demo enough to justify a second update protocol. Aggregate consistency lag remains a gold signal; focused durable diagnostics use `GET /orders/:publicOrderId/status` or protected Run History. |
 
 ---
 
@@ -732,7 +732,7 @@ The UI projection layer may combine:
 - PostgreSQL order and event history,
 - Redis inventory counters,
 - in-flight queue metrics,
-- and live dashboard realtime events delivered over SSE.
+- and complete revisioned dashboard projections delivered over SSE.
 
 ---
 

@@ -1,5 +1,6 @@
 "use client";
 
+import type { DashboardProjection } from "@checkout-surge/contracts";
 import { useCallback, useMemo } from "react";
 import type { DashboardBackendSnapshot } from "../lib/api";
 import {
@@ -30,18 +31,24 @@ export function OperatorDashboard({ snapshot }: OperatorDashboardProps) {
     retryDelayMs,
     hasSyncIssue,
     syncIssue,
-    liveEventCount,
-    recentOrderStates,
-    recentOrderLagSamples,
+    liveProjectionCount,
     refresh,
     retryNow,
-    applyEvent,
+    applyProjection,
   } = useDashboardRecovery(snapshot.recovery, { preserveAvailableRecoveryOnFailure: true });
   const handleOpen = useCallback(() => {
     void refresh();
   }, [refresh]);
-  const realtimeStatus = useDashboardEvents({ onEvent: applyEvent, onOpen: handleOpen });
+  const realtimeStatus = useDashboardEvents({
+    onProjection: applyProjection,
+    onOpen: handleOpen,
+    onDisconnect: handleOpen,
+  });
   const liveSnapshot = useMemo(() => ({ ...snapshot, recovery }), [snapshot, recovery]);
+  const recentOrderStates = useMemo(
+    () => (recovery.status === "available" ? recentOrderStatesForProjection(recovery.data) : []),
+    [recovery],
+  );
 
   return (
     <div className="grid grid-cols-12 gap-4">
@@ -55,22 +62,42 @@ export function OperatorDashboard({ snapshot }: OperatorDashboardProps) {
         hasSyncIssue={hasSyncIssue}
         syncIssue={syncIssue}
         realtimeStatus={realtimeStatus}
-        liveEventCount={liveEventCount}
+        liveProjectionCount={liveProjectionCount}
         onRefresh={() => {
           void retryNow();
         }}
       />
-      <RequestSurgePanel recovery={recovery} liveEventCount={liveEventCount} />
+      <RequestSurgePanel recovery={recovery} liveProjectionCount={liveProjectionCount} />
       <InventoryDrainPanel recovery={recovery} />
       <QueuePressurePanel recovery={recovery} />
       <ErpHealthPanel recovery={recovery} />
-      <ConsistencyLagPanel
-        recovery={recovery}
-        latestOrderLag={recentOrderLagSamples.at(-1) ?? null}
-      />
+      <ConsistencyLagPanel recovery={recovery} />
       <RecentOrderTransitionsPanel orders={recentOrderStates} />
       <RunOutcomesPanel recovery={recovery} />
       <CompletionOutcomesPanel recovery={recovery} />
     </div>
   );
+}
+
+function recentOrderStatesForProjection(projection: DashboardProjection) {
+  return projection.recentCompletionOutcomes.flatMap((outcome) => {
+    const occurredAt =
+      outcome.orderStatus === "confirmed"
+        ? outcome.confirmedAt
+        : outcome.orderStatus === "failed"
+          ? outcome.failedAt
+          : outcome.orderStatus === "processing"
+            ? outcome.processingAt
+            : outcome.queuedAt;
+    return occurredAt
+      ? [
+          {
+            orderId: outcome.orderId,
+            publicOrderId: outcome.publicOrderId,
+            status: outcome.orderStatus,
+            occurredAt,
+          },
+        ]
+      : [];
+  });
 }

@@ -148,6 +148,7 @@ describe("admin feature controllers", () => {
   });
 
   it("reconciles reset recovery into current-run and preset start gating", async () => {
+    const knownRecoveryPath = `${dashboardRecoveryProxyPath}?knownRunId=11111111-1111-4111-8111-111111111111&knownSaleOfferId=33333333-3333-4333-8333-333333333333`;
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       if (String(input) === adminDemoResetProxyPath) {
         return jsonResponse({
@@ -159,7 +160,13 @@ describe("admin feature controllers", () => {
           resetAt: "2026-06-20T00:00:12.000Z",
         });
       }
-      if (String(input) === dashboardRecoveryProxyPath) return jsonResponse(recoveryFixture(null));
+      if (String(input) === knownRecoveryPath) {
+        return jsonResponse({
+          ...recoveryFixture(null),
+          revision: 2,
+          recoveredAt: "2026-06-20T00:00:12.000Z",
+        });
+      }
       throw new Error(`Unexpected fetch: ${String(input)}`);
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -177,16 +184,23 @@ describe("admin feature controllers", () => {
     );
     expect(fetchMock.mock.calls.map(([input]) => String(input))).toEqual([
       adminDemoResetProxyPath,
-      dashboardRecoveryProxyPath,
+      knownRecoveryPath,
     ]);
   });
 
   it("reconciles recovery even when the reset response is unavailable", async () => {
+    const knownRecoveryPath = `${dashboardRecoveryProxyPath}?knownRunId=11111111-1111-4111-8111-111111111111&knownSaleOfferId=33333333-3333-4333-8333-333333333333`;
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       if (String(input) === adminDemoResetProxyPath) {
         return canonicalErrorResponse("Reset outcome is uncertain.", 503);
       }
-      if (String(input) === dashboardRecoveryProxyPath) return jsonResponse(recoveryFixture(null));
+      if (String(input) === knownRecoveryPath) {
+        return jsonResponse({
+          ...recoveryFixture(null),
+          revision: 2,
+          recoveredAt: "2026-06-20T00:00:12.000Z",
+        });
+      }
       throw new Error(`Unexpected fetch: ${String(input)}`);
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -203,7 +217,7 @@ describe("admin feature controllers", () => {
     expect(await screen.findByText("Reset outcome is uncertain.")).toBeTruthy();
     expect(fetchMock.mock.calls.map(([input]) => String(input))).toEqual([
       adminDemoResetProxyPath,
-      dashboardRecoveryProxyPath,
+      knownRecoveryPath,
     ]);
   });
 

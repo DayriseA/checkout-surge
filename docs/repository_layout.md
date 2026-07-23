@@ -63,15 +63,15 @@ checkout-surge/
 - Consumes `packages/contracts` for API request/response types.
 - Communicates with `apps/api` over same-origin HTTP routes and the live SSE stream at `/dashboard/events`.
 - Proxies `apps/mock-erp` admin-only chaos endpoints server-side so the API gateway does not couple itself to ERP control behavior.
-- Keeps watch event reconciliation in a pure state module, EventSource and recovery coordination in focused hooks, and the watch component as panel composition.
+- Keeps atomic projection comparison in one small pure state module, EventSource and single-flight current-read recovery coordination in focused hooks, and the watch component as panel composition. The unused legacy incremental reducer remains quarantined only for Task 40 deletion.
 - Uses a server-side admin session gate and protected read helpers, then composes independent current-run, policy, preset/start, maintenance, and ERP client controllers.
 
 ### `apps/api`
 
 - Owns the buy flow: validates requests, runs the Redis atomic reservation, enqueues BullMQ jobs.
 - Owns one bounded, per-sale pending-persistence recovery scheduler for nonterminal run scopes and active catalog offers; request replay delegates exact due work to the same owner, while startup reconciliation and finalization only observe its state.
-- Owns the browser-facing SSE transport for live event delivery to `apps/web`.
-- Subscribes once per API process to Redis Pub/Sub dashboard events and fans browser-safe updates out to connected dashboard clients.
+- Owns the browser-facing SSE transport for complete revisioned projection delivery to `apps/web`.
+- Subscribes once per API process to Redis Pub/Sub dashboard signals, builds bounded complete projections, and fans them out to connected dashboard clients. Transitional legacy frames remain on the wire only until Task 40.
 - Composes separate preset-administration, public-runtime-policy, run-lifecycle, and traffic-completion application services. Demo routes receive those narrow controllers explicitly; lifecycle reads active presets and the effective policy through minimal injected readers before freezing one validated run snapshot, while completion alone validates and persists immutable load evidence before handing a draining run to finalization.
 - Composes one focused traffic-execution HTTP gateway that owns bounded, authenticated start/status/abort calls to `apps/load-orchestrator`; run lifecycle receives only start capability and maintenance receives only exact-run abort capability.
 - Composes separate admin-reset, old generated-run retention-selection, and exact generated-run teardown workflows behind one process-local maintenance authority. Reset and teardown share one exact-run BullMQ pause/clean/resume boundary; retention owns only eligibility selection and delegates every candidate to the same exact teardown workflow. Teardown completes queue and Redis cleanup before transactional durable deletion, so no receipt table or post-commit cleanup protocol remains. Admin routes receive only the workflow for their endpoint.
@@ -88,8 +88,8 @@ checkout-surge/
 - Resolves frozen run retry policy, applies bounded process-local per-run admission below BullMQ's process-wide concurrency ceiling, and selects run-scoped circuit breakers around ERP calls.
 - Runs autonomous scanners for committed-but-undispatched queued orders, durable ERP-result recovery, and missing simulated-notification jobs.
 - Persists poison order-job audit records and recovery/escalation state through `packages/db` adapters.
-- Publishes transport-neutral dashboard realtime events through Redis Pub/Sub without importing or hosting the browser-facing SSE runtime.
-- Owns a bounded single-flight per-order realtime publisher for committed processing/confirmed/failed transitions and per-confirmation lag points; aggregate business-outcome snapshots remain on the separate coalescing scheduler.
+- Publishes transport-neutral dashboard dirty signals through Redis Pub/Sub without importing or hosting the browser-facing SSE runtime.
+- Transitionally owns a bounded single-flight per-order realtime publisher for committed processing/confirmed/failed transitions and per-confirmation lag points; the browser ignores those frames and Task 40 removes the publisher and its protocol. Aggregate business-outcome snapshots remain on the separate coalescing scheduler.
 - Consumes `packages/contracts`, `packages/logger`, `packages/db`.
 
 ### `apps/mock-erp`
