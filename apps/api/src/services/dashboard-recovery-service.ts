@@ -18,6 +18,7 @@ import {
 } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { desc, eq, inArray } from "drizzle-orm";
+import { runWithResourceCleanup } from "../runtime/api-resource-cleanup.js";
 import { abortReason, settleWithAbort } from "../runtime/operation-lifecycle.js";
 import type { DashboardTrafficMetricReader } from "./dashboard-traffic-metric-store.js";
 import { toDemoRunSnapshot } from "./demo-run-projections.js";
@@ -156,11 +157,11 @@ export class DashboardRecoveryService {
     if (signal.aborted) throw abortReason(signal);
     const operation = await this.options.openOperation(signal);
 
-    try {
-      return await this.assembleRecovery(input.correlationId, signal, operation.dependencies);
-    } finally {
-      await operation.close();
-    }
+    return await runWithResourceCleanup(
+      () => this.assembleRecovery(input.correlationId, signal, operation.dependencies),
+      () => operation.close(),
+      "Dashboard recovery operation and cleanup failed.",
+    );
   }
 
   private async assembleRecovery(

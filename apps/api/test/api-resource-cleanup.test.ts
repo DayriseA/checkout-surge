@@ -1,7 +1,48 @@
 import { describe, expect, it, vi } from "vitest";
-import { closeApiResources } from "../src/runtime/api-resource-cleanup.js";
+import {
+  closeApiResources,
+  createOperationResourceCleanup,
+  runWithResourceCleanup,
+} from "../src/runtime/api-resource-cleanup.js";
 
 describe("API resource cleanup", () => {
+  it("runs abort-triggered operation cleanup once and aggregates every failure", async () => {
+    const firstError = new Error("first close failed");
+    const secondError = new Error("second close failed");
+    const first = vi.fn().mockRejectedValue(firstError);
+    const second = vi.fn().mockRejectedValue(secondError);
+    const controller = new AbortController();
+    const close = createOperationResourceCleanup({
+      signal: controller.signal,
+      operations: [first, second],
+      failureMessage: "Operation cleanup failed.",
+    });
+
+    controller.abort(new Error("timed out"));
+
+    await expect(close()).rejects.toMatchObject({ errors: [firstError, secondError] });
+    await expect(close()).rejects.toMatchObject({ errors: [firstError, secondError] });
+    expect(first).toHaveBeenCalledOnce();
+    expect(second).toHaveBeenCalledOnce();
+  });
+
+  it("preserves both operation and cleanup failures", async () => {
+    const operationError = new Error("operation failed");
+    const cleanupError = new Error("cleanup failed");
+
+    await expect(
+      runWithResourceCleanup(
+        async () => {
+          throw operationError;
+        },
+        async () => {
+          throw cleanupError;
+        },
+        "Operation and cleanup failed.",
+      ),
+    ).rejects.toMatchObject({ errors: [operationError, cleanupError] });
+  });
+
   it("closes recovery admission, then drains the server before request dependencies", async () => {
     let recoveryClosed = false;
     const closePendingPersistenceRecovery = vi.fn(async () => {

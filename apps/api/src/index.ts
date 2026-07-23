@@ -19,11 +19,10 @@ import {
   publishDashboardEvent,
   reserveInventoryStock,
   reverseReservation,
-  saleOffers,
   setRunSaleEligibility,
 } from "@checkout-surge/db";
 import { createServiceLogger, loggerPackageName } from "@checkout-surge/logger";
-import { and, eq, inArray } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { createBullMqDemoQueueMaintenance } from "./queue/bullmq-demo-queue-maintenance.js";
 import { createBullMqOrderProcessJobPublisher } from "./queue/bullmq-order-process-job-publisher.js";
 import { createBullMqOrderProcessQueueInspector } from "./queue/bullmq-order-process-queue-inspector.js";
@@ -32,18 +31,17 @@ import { DashboardEventFanout } from "./realtime/dashboard-event-fanout.js";
 import { invalidDashboardEventMetadata } from "./realtime/invalid-dashboard-event-metadata.js";
 import { closeApiResources } from "./runtime/api-resource-cleanup.js";
 import { loadApiConfig } from "./runtime/config.js";
+import { createDashboardRecoveryOperationFactory } from "./runtime/dashboard-recovery-operation-factory.js";
 import type { ApiFastifyInstance } from "./runtime/fastify.js";
+import { createPendingPersistenceRecoveryOperations } from "./runtime/pending-persistence-operation-factory.js";
 import { createBoundedInfrastructureReadinessCheck } from "./runtime/readiness.js";
+import { createTerminalInventoryReadOperation } from "./runtime/terminal-inventory-read-operation.js";
 import { buildApiServer } from "./server.js";
 import { AdminDemoResetService } from "./services/admin-demo-reset-service.js";
 import { DashboardRecoveryAdmissionService } from "./services/dashboard-recovery-admission.js";
 import {
   DashboardRecoveryService,
   PostgresDashboardBusinessOutcomeReader,
-  PostgresDashboardCompletionOutcomeReader,
-  PostgresDashboardConsistencyLagReader,
-  PostgresDashboardRecoveryContextReader,
-  PostgresDashboardTransportAttemptCountsReader,
 } from "./services/dashboard-recovery-service.js";
 import { DashboardSnapshotPublicationScheduler } from "./services/dashboard-snapshot-publication-scheduler.js";
 import { RedisDashboardTrafficMetricStore } from "./services/dashboard-traffic-metric-store.js";
@@ -129,11 +127,6 @@ export async function startApiServer(): Promise<void> {
   const redis = createRedisClient(config.redisUrl, {
     lazyConnect: true,
     maxRetriesPerRequest: 3,
-  });
-  const pendingPersistenceDiscoveryRedis = createRedisClient(config.redisUrl, {
-    lazyConnect: true,
-    maxRetriesPerRequest: 0,
-    commandTimeout: config.pendingPersistenceRecoveryDiscoveryTimeoutMs,
   });
   const dashboardEventSubscriberRedis = createRedisClient(config.redisUrl, {
     lazyConnect: true,
@@ -237,8 +230,15 @@ export async function startApiServer(): Promise<void> {
       );
     },
   });
+  const pendingPersistenceOperations = createPendingPersistenceRecoveryOperations({
+    databaseUrl: config.databaseUrl,
+    redisUrl: config.redisUrl,
+    discoveryTimeoutMs: config.pendingPersistenceRecoveryDiscoveryTimeoutMs,
+    orderProcessMaxAttempts: config.orderProcessMaxAttempts,
+    orderProcessBackoffBaseMs: config.orderProcessBackoffBaseMs,
+  });
   const pendingPersistenceRecovery = new PendingPersistenceRecoveryService({
-    redis: pendingPersistenceDiscoveryRedis,
+    redis: pendingPersistenceOperations.redis,
     persistence,
     audit: {
       recordAttempt: (input) => persistence.recordPendingPersistenceAttempt(input),
@@ -247,115 +247,10 @@ export async function startApiServer(): Promise<void> {
     },
     stockReservations: stockReservationGateway,
     orderProcessJobPublisher,
-    openDiscoveryScope: async (signal) => {
-      const operationRedis = createRedisClient(config.redisUrl, {
-        lazyConnect: true,
-        maxRetriesPerRequest: 0,
-        commandTimeout: config.pendingPersistenceRecoveryDiscoveryTimeoutMs,
-      });
-      const disconnect = () => operationRedis.disconnect();
-      signal.addEventListener("abort", disconnect, { once: true });
-      if (signal.aborted) disconnect();
-      return {
-        redis: operationRedis,
-        close: async () => {
-          signal.removeEventListener("abort", disconnect);
-          disconnect();
-        },
-      };
-    },
-    listRunScopes: async (signal) => {
-      const operationDatabase = createAbortableDatabaseConnection(config.databaseUrl, signal, {
-        max: 1,
-        connect_timeout: Math.ceil(config.pendingPersistenceRecoveryDiscoveryTimeoutMs / 1_000),
-      });
-      try {
-        const [runRows, catalogRows] = await Promise.all([
-          operationDatabase.db
-            .select({ runId: demoRuns.id, saleOfferId: demoRuns.saleOfferId })
-            .from(demoRuns)
-            .where(inArray(demoRuns.status, ["starting", "active", "draining"])),
-          operationDatabase.db
-            .select({ saleOfferId: saleOffers.id })
-            .from(saleOffers)
-            .where(and(eq(saleOffers.purpose, "catalog"), eq(saleOffers.isActive, true))),
-        ]);
-        return [
-          ...runRows.flatMap((row) =>
-            row.saleOfferId ? [{ runId: row.runId, saleOfferId: row.saleOfferId }] : [],
-          ),
-          ...catalogRows,
-        ];
-      } finally {
-        await operationDatabase.close();
-      }
-    },
-    openAttemptScope: async ({ signal, timeoutMs }) => {
-      const operationDatabase = createAbortableDatabaseConnection(config.databaseUrl, signal, {
-        max: 1,
-        connect_timeout: Math.ceil(timeoutMs / 1_000),
-      });
-      const operationRedis = createRedisClient(config.redisUrl, {
-        lazyConnect: true,
-        maxRetriesPerRequest: 0,
-        commandTimeout: timeoutMs,
-      });
-      const operationPublisher = createBullMqOrderProcessJobPublisher(
-        {
-          url: config.redisUrl,
-          maxRetriesPerRequest: 0,
-          commandTimeout: timeoutMs,
-        },
-        {
-          maxAttempts: config.orderProcessMaxAttempts,
-          backoffBaseMs: config.orderProcessBackoffBaseMs,
-        },
-      );
-      const operationPersistence = new PostgresBuyPersistence(operationDatabase.db, signal);
-      let publisherAbortPromise: Promise<void> | undefined;
-      const abort = () => {
-        operationRedis.disconnect();
-        publisherAbortPromise ??= operationPublisher.abort();
-        void publisherAbortPromise.catch((error: unknown) => {
-          logger.warn({ err: error }, "Pending-persistence recovery queue disconnect failed.");
-        });
-      };
-      signal.addEventListener("abort", abort, { once: true });
-      if (signal.aborted) abort();
-
-      return {
-        persistence: operationPersistence,
-        audit: {
-          recordAttempt: (input) => operationPersistence.recordPendingPersistenceAttempt(input),
-          markResolved: (input) => operationPersistence.markPendingPersistenceResolved(input),
-          markExhausted: (input) => operationPersistence.markPendingPersistenceExhausted(input),
-        },
-        stockReservations: {
-          promoteAccepted: (input) =>
-            promoteReservationIdempotencyToAccepted(operationRedis, input).then(() => undefined),
-        },
-        orderProcessJobPublisher: operationPublisher,
-        runRetryPolicyResolver: new PostgresRunRetryPolicyResolver(operationDatabase.db),
-        close: async () => {
-          signal.removeEventListener("abort", abort);
-          abort();
-          const cleanup = await Promise.allSettled([
-            operationDatabase.close(),
-            publisherAbortPromise,
-          ]);
-          const errors = cleanup.flatMap((result) =>
-            result.status === "rejected" ? [result.reason] : [],
-          );
-          if (errors.length > 0) {
-            throw new AggregateError(
-              errors,
-              "Pending-persistence recovery resource cleanup failed.",
-            );
-          }
-        },
-      };
-    },
-    closeDiscovery: async () => pendingPersistenceDiscoveryRedis.disconnect(),
+    openDiscoveryScope: (signal) => pendingPersistenceOperations.openDiscoveryScope(signal),
+    listRunScopes: (signal) => pendingPersistenceOperations.listRunScopes(signal),
+    openAttemptScope: (input) => pendingPersistenceOperations.openAttemptScope(input),
+    closeDiscovery: () => pendingPersistenceOperations.close(),
     runRetryPolicyResolver,
     idempotencyTtlSeconds: config.idempotencyTtlSeconds,
     dashboardSnapshotPublications,
@@ -418,73 +313,12 @@ export async function startApiServer(): Promise<void> {
   });
   const runHistoryService = new RunHistoryService({ db: connection.db });
   const dashboardRecoveryService = new DashboardRecoveryService({
-    openOperation: (signal) => {
-      const operationRedis = createRedisClient(config.redisUrl, {
-        lazyConnect: true,
-        maxRetriesPerRequest: 0,
-        commandTimeout: config.dashboardRecoveryTimeoutMs,
-      });
-      const operationQueueInspector = createBullMqOrderProcessQueueInspector({
-        url: config.redisUrl,
-        maxRetriesPerRequest: 0,
-        commandTimeout: config.dashboardRecoveryTimeoutMs,
-      });
-      const operationDatabase = createAbortableDatabaseConnection(config.databaseUrl, signal, {
-        max: 1,
-        connect_timeout: Math.ceil(config.dashboardRecoveryTimeoutMs / 1_000),
-      });
-      const operationQueueStatusService = new QueueStatusService(operationQueueInspector, logger);
-      const operationErpStatusService = new ErpStatusService({
-        circuitBreakerStateReader: new RedisErpCircuitBreakerStateReader(operationRedis),
-        attemptStatusReader: new PostgresErpAttemptStatusReader(operationDatabase.db),
-        queueStatusService: operationQueueStatusService,
-        logger,
-        activeRunReader: new PostgresActiveErpRunReader(operationDatabase.db),
-      });
-      let queueDisconnectPromise: Promise<void> | undefined;
-      const disconnect = () => {
-        operationRedis.disconnect();
-        queueDisconnectPromise ??= operationQueueInspector.disconnect().catch((error: unknown) => {
-          logger.warn({ err: error }, "Dashboard recovery queue disconnect failed.");
-        });
-      };
-      signal.addEventListener("abort", disconnect, { once: true });
-      if (signal.aborted) disconnect();
-
-      return {
-        dependencies: {
-          contextReader: new PostgresDashboardRecoveryContextReader(operationDatabase.db),
-          businessOutcomeReader: new PostgresDashboardBusinessOutcomeReader(operationDatabase.db),
-          consistencyLagReader: new PostgresDashboardConsistencyLagReader(operationDatabase.db),
-          completionOutcomeReader: new PostgresDashboardCompletionOutcomeReader(
-            operationDatabase.db,
-          ),
-          inventoryStatusService: new InventoryStatusService({
-            getStatus: (saleOfferId) => getInventoryStatus(operationRedis, saleOfferId),
-          }),
-          queueStatusService: operationQueueStatusService,
-          erpStatusService: operationErpStatusService,
-          trafficMetricReader: new RedisDashboardTrafficMetricStore(operationRedis),
-          transportAttemptCountsReader: new PostgresDashboardTransportAttemptCountsReader(
-            operationDatabase.db,
-          ),
-        },
-        close: async () => {
-          signal.removeEventListener("abort", disconnect);
-          disconnect();
-          const cleanup = await Promise.allSettled([
-            operationDatabase.close(),
-            queueDisconnectPromise,
-          ]);
-          const errors = cleanup.flatMap((result) =>
-            result.status === "rejected" ? [result.reason] : [],
-          );
-          if (errors.length > 0) {
-            throw new AggregateError(errors, "Dashboard recovery resource cleanup failed.");
-          }
-        },
-      };
-    },
+    openOperation: createDashboardRecoveryOperationFactory({
+      databaseUrl: config.databaseUrl,
+      redisUrl: config.redisUrl,
+      timeoutMs: config.dashboardRecoveryTimeoutMs,
+      logger,
+    }),
     logger,
   });
   const businessOutcomeReader = new PostgresDashboardBusinessOutcomeReader(connection.db);
@@ -499,25 +333,10 @@ export async function startApiServer(): Promise<void> {
     redis,
     logger,
     terminalRunWriter,
-    terminalInventoryRead: {
-      read: async ({ saleOfferId, observedAt, signal }) => {
-        const operationRedis = createRedisClient(config.redisUrl, {
-          lazyConnect: true,
-          maxRetriesPerRequest: 0,
-          commandTimeout: terminalInventoryReadTimeoutMs,
-        });
-        const disconnect = () => operationRedis.disconnect();
-        signal.addEventListener("abort", disconnect, { once: true });
-        if (signal.aborted) disconnect();
-
-        try {
-          return await getInventoryStatus(operationRedis, saleOfferId, observedAt);
-        } finally {
-          signal.removeEventListener("abort", disconnect);
-          disconnect();
-        }
-      },
-    },
+    terminalInventoryRead: createTerminalInventoryReadOperation({
+      redisUrl: config.redisUrl,
+      timeoutMs: terminalInventoryReadTimeoutMs,
+    }),
     terminalInventoryReadTimeoutMs,
     drainTimeoutSeconds: config.demoRunDrainTimeoutSeconds,
   });
