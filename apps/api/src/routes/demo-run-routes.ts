@@ -27,10 +27,13 @@ import { replaceFastifyCorrelation } from "@checkout-surge/logger/fastify";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { ApiHttpError, createErrorPayload } from "../runtime/errors.js";
 import type { ApiFastifyInstance } from "../runtime/fastify.js";
-import { type DemoRunController, DemoRunValidationError } from "../services/demo-run-service.js";
+import type { DemoRunController } from "../services/demo-run-service.js";
+import { DemoRunValidationError } from "../services/demo-run-validation-error.js";
+import type { TrafficMetricIngestionController } from "../services/traffic-metric-ingestion-service.js";
 
 export interface RegisterDemoRunRoutesOptions {
   demoRunService: DemoRunController;
+  trafficMetricIngestion: TrafficMetricIngestionController;
   controlServiceToken: string;
 }
 
@@ -205,7 +208,7 @@ export function registerDemoRunRoutes(
     const parsedRequest = loadMetricIngestRequestSchema.parse(request.body);
     applyInternalBodyCorrelation(request, reply, parsedRequest.correlationId);
     try {
-      await options.demoRunService.ingestMetrics(parsedRequest);
+      await options.trafficMetricIngestion.ingest(parsedRequest);
       return reply.status(202).send({ accepted: true });
     } catch (error) {
       throw mapDemoRunError(error);

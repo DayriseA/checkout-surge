@@ -43,12 +43,12 @@ The run lifecycle service should depend on narrow interfaces where it needs to i
 
 ## Acceptance criteria
 
-- [ ] demo-run-service.ts contains no Redis traffic-metric storage implementation or metric-ingestion workflow.
-- [ ] One focused store owns append/read/fence/clear behavior and one focused service owns ingestion decisions.
-- [ ] The internal HTTP route parses and delegates without Redis or lifecycle orchestration.
-- [ ] Redis clients and concrete schedulers are supplied by the API composition root.
-- [ ] Existing bounds, attribution checks, publication behavior, and cleanup semantics remain covered.
-- [ ] The replaced code and mechanism-specific duplicate tests are deleted rather than retained as a fallback.
+- [x] demo-run-service.ts contains no Redis traffic-metric storage implementation or metric-ingestion workflow.
+- [x] One focused store owns append/read/fence/clear behavior and one focused service owns ingestion decisions.
+- [x] The internal HTTP route parses and delegates without Redis or lifecycle orchestration.
+- [x] Redis clients and concrete schedulers are supplied by the API composition root.
+- [x] Existing bounds, attribution checks, publication behavior, and cleanup semantics remain covered.
+- [x] The replaced code and mechanism-specific duplicate tests are deleted rather than retained as a fallback.
 
 ## Verification
 
@@ -59,8 +59,8 @@ The run lifecycle service should depend on narrow interfaces where it needs to i
 
 ## Working record
 
-- **Status:** pending
-- **Completed scope:** none
-- **Material decisions or deviations:** none
-- **Verification performed:** not run
+- **Status:** complete
+- **Completed scope:** Extracted the Redis-backed dashboard traffic projection into `dashboard-traffic-metric-store.ts`; extracted validation, durable lifecycle admission, bounded single-flight ingestion, event construction, warning containment, retention/publication ordering, and reset-fence handling into `traffic-metric-ingestion-service.ts`; routed `/internal/load/metrics` directly to the ingestion controller; composed both owners in `index.ts`; moved recovery reader imports; removed metric ingestion/storage dependencies and exports from `DemoRunService`; relocated and simplified tests at the new service and Redis boundaries; updated architecture and load-metric ownership documentation.
+- **Material decisions or deviations:** The ingestion service owns its small ten-batch process-local queue directly rather than introducing a separate scheduler abstraction. The shared `DemoRunValidationError` moved to a focused module so ingestion does not load or depend on the run-orchestration implementation. The metric wire contract remains run-scoped and unchanged; no `saleOfferId` field or protocol fallback was added.
+- **Verification performed:** Started approved PostgreSQL/Redis test infrastructure with `pnpm test:infra:up`. Passed 22 focused store/ingestion tests, including real Redis reset races; passed four focused internal metric-route tests; passed the full `demo-run-service.test.ts` suite; passed `pnpm --filter api type-check`; passed `pnpm type-check` including all package and test-source type checks; passed focused Biome check for all changed TypeScript source/tests; passed `git diff --check`.
 - **Remaining blockers or follow-up:** none

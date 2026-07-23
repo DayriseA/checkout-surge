@@ -46,12 +46,12 @@ import {
   PostgresDashboardTransportAttemptCountsReader,
 } from "./services/dashboard-recovery-service.js";
 import { DashboardSnapshotPublicationScheduler } from "./services/dashboard-snapshot-publication-scheduler.js";
+import { RedisDashboardTrafficMetricStore } from "./services/dashboard-traffic-metric-store.js";
 import { DemoMaintenanceService } from "./services/demo-maintenance-service.js";
 import { DemoRunFinalizationService } from "./services/demo-run-finalization-service.js";
 import {
   DemoRunService,
   HttpTrafficExecutionGateway,
-  RedisDashboardTrafficMetricStore,
   validateActivePublicRuntimePolicyAtStartup,
 } from "./services/demo-run-service.js";
 import { DemoRunStartupReconciliationService } from "./services/demo-run-startup-reconciliation-service.js";
@@ -77,6 +77,7 @@ import {
 import { RunHistoryService } from "./services/run-history-service.js";
 import { PostgresTerminalDemoRunSummaryWriter } from "./services/terminal-demo-run-transition.js";
 import { TrafficCompletionEnrichmentService } from "./services/traffic-completion-enrichment-service.js";
+import { TrafficMetricIngestionService } from "./services/traffic-metric-ingestion-service.js";
 
 export const apiAppName = "api" as const;
 export const apiAppDependencies = [contractsPackageName, dbPackageName, loggerPackageName] as const;
@@ -364,6 +365,11 @@ export async function startApiServer(): Promise<void> {
     maxConcurrentDirectAttempts: config.pendingPersistenceRecoveryMaxConcurrentDirectAttempts,
   });
   const trafficMetricStore = new RedisDashboardTrafficMetricStore(redis);
+  const trafficMetricIngestion = new TrafficMetricIngestionService({
+    db: connection.db,
+    store: trafficMetricStore,
+    logger,
+  });
   const trafficExecutionGateway = new HttpTrafficExecutionGateway({
     loadOrchestratorBaseUrl: config.loadOrchestratorBaseUrl,
     controlServiceToken: config.controlServiceToken,
@@ -510,7 +516,6 @@ export async function startApiServer(): Promise<void> {
     redis,
     trafficExecutionGateway,
     publicRunBudgetStore: new RedisPublicRunBudgetStore(redis),
-    trafficMetricStore,
     businessOutcomeReader,
     completionEnrichmentService: trafficCompletionEnrichmentService,
     terminalRunWriter,
@@ -704,6 +709,7 @@ export async function startApiServer(): Promise<void> {
       queueStatusService,
       reserveOrderService,
       demoRunService,
+      trafficMetricIngestion,
       demoMaintenanceService,
       runHistoryService,
       startedAt: new Date(),

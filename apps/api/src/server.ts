@@ -31,6 +31,7 @@ import type { OrderStatusController } from "./services/order-status-service.js";
 import type { QueueStatusService } from "./services/queue-status-service.js";
 import type { ReserveOrderService } from "./services/reserve-order-service.js";
 import type { RunHistoryController } from "./services/run-history-service.js";
+import type { TrafficMetricIngestionController } from "./services/traffic-metric-ingestion-service.js";
 
 export interface BuildApiServerOptions {
   config: ApiConfig;
@@ -45,6 +46,7 @@ export interface BuildApiServerOptions {
   queueStatusService: QueueStatusService;
   reserveOrderService: ReserveOrderService;
   demoRunService: DemoRunController;
+  trafficMetricIngestion: TrafficMetricIngestionController;
   demoMaintenanceService: DemoMaintenanceService;
   runHistoryService: RunHistoryController;
   startedAt?: Date;
@@ -111,6 +113,7 @@ export async function buildApiServer(options: BuildApiServerOptions): Promise<Ap
   registerQueueRoutes(app, { queueStatusService: options.queueStatusService });
   registerDemoRunRoutes(app, {
     demoRunService: options.demoRunService,
+    trafficMetricIngestion: options.trafficMetricIngestion,
     controlServiceToken: options.config.controlServiceToken,
   });
   registerAdminMaintenanceRoutes(app, {

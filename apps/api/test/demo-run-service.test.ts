@@ -42,19 +42,18 @@ import { correlationIdHeaderName, createSilentLogger } from "@checkout-surge/log
 import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiHttpError } from "../src/runtime/errors.js";
+import { RedisDashboardTrafficMetricStore } from "../src/services/dashboard-traffic-metric-store.js";
 import { DemoMaintenanceService } from "../src/services/demo-maintenance-service.js";
 import { DemoRunFinalizationService } from "../src/services/demo-run-finalization-service.js";
 import {
   DemoRunService,
-  DemoRunValidationError,
   HttpTrafficExecutionGateway,
   isSingleNonTerminalRunViolation,
-  maximumPendingMetricBatches,
-  RedisDashboardTrafficMetricStore,
   resolveEffectivePublicRuntimePolicy,
   validateAcceptedRunSnapshot,
   validateActivePublicRuntimePolicyAtStartup,
 } from "../src/services/demo-run-service.js";
+import { DemoRunValidationError } from "../src/services/demo-run-validation-error.js";
 import { PostgresDemoResetWorkflowFence } from "../src/services/postgres-demo-reset-workflow-fence.js";
 import { RedisPublicRunBudgetStore } from "../src/services/public-run-budget-store.js";
 import { PostgresTerminalDemoRunSummaryWriter } from "../src/services/terminal-demo-run-transition.js";
@@ -95,7 +94,6 @@ describe("demo-run service validation", () => {
       redis: {} as never,
       trafficExecutionGateway: {} as never,
       publicRunBudgetStore: { reserve, release: vi.fn() },
-      trafficMetricStore: {} as never,
       businessOutcomeReader: {} as never,
       completionEnrichmentService: {} as never,
       terminalRunWriter: {} as never,
@@ -378,324 +376,6 @@ describe("demo-run service validation", () => {
         currentCaps,
       ),
     ).toThrow(/Unrecognized key.*deploymentHardCaps/i);
-  });
-});
-
-describe("demo-run metric ingestion acceptance", () => {
-  type PublishAccepted = Parameters<RedisDashboardTrafficMetricStore["appendAndPublishIfLive"]>[1];
-  type WithAdmission = NonNullable<
-    Parameters<RedisDashboardTrafficMetricStore["appendAndPublishIfLive"]>[2]
-  >;
-  const metricRequest = {
-    runId: "55555555-5555-4555-8555-555555555551",
-    correlationId: "metric-correlation",
-    samples: [
-      {
-        metricName: "traffic.latency" as const,
-        value: 42,
-        unit: "ms",
-        timestamp: "2026-07-14T00:00:00.000Z",
-      },
-      {
-        metricName: "traffic.failure_rate" as const,
-        value: 0.1,
-        unit: "ratio",
-        timestamp: "2026-07-14T00:00:01.000Z",
-      },
-      {
-        metricName: "traffic.scheduled_request_rate" as const,
-        value: 100,
-        unit: "requests_per_second",
-        timestamp: "2026-07-14T00:00:02.000Z",
-      },
-    ],
-    observedAt: "2026-07-14T00:00:02.000Z",
-  };
-
-  it("retains before canonical publication and does not warn on success", async () => {
-    const order: string[] = [];
-    const publishedPayloads: string[][] = [];
-    const warn = vi.fn();
-    const appendAndPublishIfLive = vi.fn(
-      async (_request: unknown, publishAccepted: PublishAccepted, withAdmission: WithAdmission) =>
-        withAdmission(async () => {
-          order.push("append");
-          await publishAccepted(async (payloads) => {
-            order.push("publish");
-            publishedPayloads.push(payloads);
-            return { outcome: "attempted", failures: [] };
-          });
-          return "accepted" as const;
-        }),
-    );
-    const service = createMetricIngestionService({
-      appendAndPublishIfLive,
-      warn,
-    });
-
-    await expect(service.ingestMetrics(metricRequest)).resolves.toBeUndefined();
-
-    expect(appendAndPublishIfLive).toHaveBeenCalledOnce();
-    expect(order).toEqual(["append", "publish"]);
-    expect(publishedPayloads).toHaveLength(1);
-    expect(publishedPayloads[0]?.map((payload) => JSON.parse(payload))).toEqual([
-      expect.objectContaining({
-        type: "dashboard.metric.observed",
-        runId: metricRequest.runId,
-        correlationId: metricRequest.correlationId,
-        metricName: "traffic.latency",
-        value: 42,
-        unit: "ms",
-        occurredAt: "2026-07-14T00:00:00.000Z",
-        observedAt: "2026-07-14T00:00:00.000Z",
-      }),
-      expect.objectContaining({ metricName: "traffic.failure_rate" }),
-      expect.objectContaining({ metricName: "traffic.scheduled_request_rate" }),
-    ]);
-    expect(warn).not.toHaveBeenCalled();
-  });
-
-  it("contains mixed validation and transport failures and continues later samples", async () => {
-    const transportError = new Error("pubsub unavailable");
-    const publishedPayloads: string[][] = [];
-    const warn = vi.fn();
-    const appendAndPublishIfLive = vi.fn(
-      async (_request: unknown, publishAccepted: PublishAccepted, withAdmission: WithAdmission) =>
-        withAdmission(async () => {
-          await publishAccepted(async (payloads) => {
-            publishedPayloads.push(payloads);
-            throw transportError;
-          });
-          return "accepted" as const;
-        }),
-    );
-    const service = createMetricIngestionService({
-      appendAndPublishIfLive,
-      warn,
-    });
-
-    await expect(
-      service.ingestMetrics({
-        ...metricRequest,
-        samples: metricRequest.samples.map((sample) =>
-          sample.metricName === "traffic.failure_rate" ? { ...sample, value: 2 } : sample,
-        ),
-      }),
-    ).resolves.toBeUndefined();
-
-    expect(publishedPayloads).toHaveLength(1);
-    expect(publishedPayloads[0]?.map((payload) => JSON.parse(payload).metricName)).toEqual([
-      "traffic.latency",
-      "traffic.scheduled_request_rate",
-    ]);
-    expect(warn).toHaveBeenCalledTimes(3);
-    expect(warn).toHaveBeenCalledWith(
-      expect.objectContaining({
-        err: transportError,
-        runId: metricRequest.runId,
-        correlationId: metricRequest.correlationId,
-        metricName: "traffic.scheduled_request_rate",
-      }),
-      "Could not publish traffic metric dashboard event.",
-    );
-  });
-
-  it("warns only for a failed sample publication and still attempts the later sample", async () => {
-    const samplePublicationError = new Error("sample publish failed");
-    const publishedPayloads: string[][] = [];
-    const warn = vi.fn();
-    const appendAndPublishIfLive = vi.fn(
-      async (_request: unknown, publishAccepted: PublishAccepted, withAdmission: WithAdmission) =>
-        withAdmission(async () => {
-          await publishAccepted(async (payloads) => {
-            publishedPayloads.push(payloads);
-            return {
-              outcome: "attempted",
-              failures: [{ index: 1, error: samplePublicationError }],
-            };
-          });
-          return "accepted" as const;
-        }),
-    );
-    const service = createMetricIngestionService({
-      appendAndPublishIfLive,
-      warn,
-    });
-
-    await expect(service.ingestMetrics(metricRequest)).resolves.toBeUndefined();
-
-    expect(publishedPayloads[0]?.map((payload) => JSON.parse(payload).metricName)).toEqual([
-      "traffic.latency",
-      "traffic.failure_rate",
-      "traffic.scheduled_request_rate",
-    ]);
-    expect(warn).toHaveBeenCalledOnce();
-    expect(warn).toHaveBeenCalledWith(
-      {
-        err: samplePublicationError,
-        runId: metricRequest.runId,
-        correlationId: metricRequest.correlationId,
-        metricName: "traffic.failure_rate",
-      },
-      "Could not publish traffic metric dashboard event.",
-    );
-  });
-
-  it("does not let a throwing warning logger redefine accepted retention", async () => {
-    const appendAndPublishIfLive = vi.fn(
-      async (_request: unknown, publishAccepted: PublishAccepted, withAdmission: WithAdmission) =>
-        withAdmission(async () => {
-          await publishAccepted(async () => ({
-            outcome: "attempted",
-            failures: [{ index: 0, error: new Error("sample publish failed") }],
-          }));
-          return "accepted" as const;
-        }),
-    );
-    const warn = vi.fn(() => {
-      throw new Error("logger unavailable");
-    });
-    const service = createMetricIngestionService({
-      appendAndPublishIfLive,
-      warn,
-    });
-
-    await expect(service.ingestMetrics(metricRequest)).resolves.toBeUndefined();
-    expect(warn).toHaveBeenCalledOnce();
-  });
-
-  it("propagates retention failure without publishing events", async () => {
-    const retentionError = new Error("retention unavailable");
-    const publishAccepted = vi.fn();
-    const appendAndPublishIfLive = vi.fn(
-      async (_request: unknown, callback: PublishAccepted, withAdmission: WithAdmission) =>
-        withAdmission(async () => {
-          publishAccepted.mockImplementation(callback);
-          throw retentionError;
-        }),
-    );
-    const service = createMetricIngestionService({
-      appendAndPublishIfLive,
-      warn: vi.fn(),
-    });
-
-    await expect(service.ingestMetrics(metricRequest)).rejects.toBe(retentionError);
-    expect(publishAccepted).not.toHaveBeenCalled();
-  });
-
-  it("rejects missing and wrong-lifecycle runs before executing admitted Redis work", async () => {
-    const redisOperation = vi.fn(async () => "accepted" as const);
-    const appendAndPublishIfLive = vi.fn(
-      async (_request: unknown, _callback: PublishAccepted, withAdmission: WithAdmission) =>
-        withAdmission(redisOperation),
-    );
-    const missing = createMetricIngestionService({
-      appendAndPublishIfLive,
-      warn: vi.fn(),
-      run: null,
-    });
-    const draining = createMetricIngestionService({
-      appendAndPublishIfLive,
-      warn: vi.fn(),
-      run: { status: "draining", trafficStatus: "succeeded" },
-    });
-
-    await expect(missing.ingestMetrics(metricRequest)).rejects.toMatchObject({
-      code: "resource_not_found",
-      details: { runId: metricRequest.runId },
-    });
-    await expect(draining.ingestMetrics(metricRequest)).rejects.toMatchObject({
-      code: "traffic_report_rejected",
-      details: {
-        runId: metricRequest.runId,
-        status: "draining",
-        trafficStatus: "succeeded",
-      },
-    });
-    expect(appendAndPublishIfLive).toHaveBeenCalledTimes(2);
-    expect(redisOperation).not.toHaveBeenCalled();
-  });
-
-  it("reserves bounded queue capacity before DB admission and holds admission around Redis", async () => {
-    let releaseFirstRetention: (() => void) | undefined;
-    let markFirstRetentionEntered: (() => void) | undefined;
-    const firstRetentionGate = new Promise<void>((resolve) => {
-      releaseFirstRetention = resolve;
-    });
-    const firstRetentionEntered = new Promise<void>((resolve) => {
-      markFirstRetentionEntered = resolve;
-    });
-    let transactionCount = 0;
-    let transactionOpen = false;
-    const redisObservedTransaction: boolean[] = [];
-    const evalCommand = vi.fn(async (script: string) => {
-      redisObservedTransaction.push(transactionOpen);
-      if (script.includes("RPUSH")) {
-        if (evalCommand.mock.calls.length === 1) {
-          markFirstRetentionEntered?.();
-          await firstRetentionGate;
-        }
-        return 1;
-      }
-      return ["attempted", "", "", ""];
-    });
-    const database: Record<string, unknown> = {
-      select: () => ({
-        from: () => ({
-          where: () => ({
-            limit: () => ({
-              for: async () => [{ status: "active", trafficStatus: "active" }],
-            }),
-          }),
-        }),
-      }),
-    };
-    database.transaction = async (operation: (tx: typeof database) => Promise<unknown>) => {
-      transactionCount += 1;
-      transactionOpen = true;
-      try {
-        return await operation(database);
-      } finally {
-        transactionOpen = false;
-      }
-    };
-    const trafficMetricStore = new RedisDashboardTrafficMetricStore({
-      eval: evalCommand,
-    } as never);
-    const service = new DemoRunService({
-      db: database as never,
-      redis: {} as never,
-      trafficExecutionGateway: {} as never,
-      publicRunBudgetStore: {} as never,
-      trafficMetricStore,
-      businessOutcomeReader: {} as never,
-      completionEnrichmentService: {} as never,
-      terminalRunWriter: {} as never,
-      finalizationService: noOpFinalizationService(),
-      apiBaseUrl: "http://api.test",
-      buyEndpointPath: "/buy",
-      logger: { warn: vi.fn() } as never,
-      publicClientCookieSecret: publicCookieSecret,
-      deploymentHardCaps: publicRuntimePolicy().deploymentHardCaps,
-    });
-
-    const admitted = Array.from({ length: maximumPendingMetricBatches }, (_, index) =>
-      service.ingestMetrics({ ...metricRequest, correlationId: `metric-admitted-${index}` }),
-    );
-    await firstRetentionEntered;
-    await expect(
-      service.ingestMetrics({ ...metricRequest, correlationId: "metric-overflow" }),
-    ).resolves.toBeUndefined();
-
-    expect(transactionCount).toBe(1);
-    releaseFirstRetention?.();
-    await expect(Promise.all(admitted)).resolves.toEqual(
-      Array.from({ length: maximumPendingMetricBatches }, () => undefined),
-    );
-    expect(transactionCount).toBe(maximumPendingMetricBatches);
-    expect(redisObservedTransaction).toEqual(
-      Array.from({ length: maximumPendingMetricBatches * 2 }, () => true),
-    );
   });
 });
 
@@ -1422,45 +1102,6 @@ describe("demo-run lifecycle start gating", () => {
       releaseAbort();
       await resetConnection.close();
     }
-  });
-
-  it("rejects terminal or reset-fenced metric batches without SSE projection", async () => {
-    const db = requireConnection(connection).db;
-    const redisClient = requireRedis(redis);
-    const runId = existingRunId("active");
-    await seedExistingRun(requireConnection(connection), { runId, status: "active" });
-    const trafficMetricStore = new RedisDashboardTrafficMetricStore(redisClient);
-    const service = createStartService(requireConnection(connection), redisClient, {
-      trafficMetricStore,
-    });
-    const batch = {
-      runId,
-      correlationId: "metric-ingest",
-      samples: [
-        {
-          metricName: "traffic.latency" as const,
-          value: 12,
-          unit: "ms",
-          timestamp: "2026-07-13T00:00:00.000Z",
-        },
-      ],
-      observedAt: "2026-07-13T00:00:00.000Z",
-    };
-
-    await service.ingestMetrics(batch);
-    expect(await trafficMetricStore.readRecent(runId)).toHaveLength(1);
-
-    await trafficMetricStore.clearRun(runId);
-    await expect(service.ingestMetrics(batch)).rejects.toMatchObject({
-      code: "traffic_report_rejected",
-    });
-    expect(await trafficMetricStore.readRecent(runId)).toEqual([]);
-
-    await db.update(demoRuns).set({ status: "failed" }).where(eq(demoRuns.id, runId));
-    await expect(service.ingestMetrics(batch)).rejects.toMatchObject({
-      code: "traffic_report_rejected",
-    });
-    expect(await trafficMetricStore.readRecent(runId)).toEqual([]);
   });
 
   it("replays a durable starting intent with the same run identity and activates it", async () => {
@@ -2954,7 +2595,6 @@ function createPresetManagementService(
       }),
       release: async () => undefined,
     },
-    trafficMetricStore: {} as never,
     businessOutcomeReader: { read: async () => emptyBusinessOutcomeSummary() },
     completionEnrichmentService: { completePendingEnrichment: async () => "not_found" },
     finalizationService: noOpFinalizationService(),
@@ -2965,47 +2605,6 @@ function createPresetManagementService(
     deploymentHardCaps,
     now: () => new Date("2026-06-20T00:00:10.000Z"),
     generateId: () => "66666666-6666-4666-8666-666666666666",
-  });
-}
-
-function createMetricIngestionService(options: {
-  appendAndPublishIfLive: RedisDashboardTrafficMetricStore["appendAndPublishIfLive"];
-  warn: ReturnType<typeof vi.fn>;
-  run?: { status: string; trafficStatus: string } | null;
-}): DemoRunService {
-  const selectedRun =
-    options.run === undefined ? { status: "active", trafficStatus: "active" } : options.run;
-  const database: Record<string, unknown> = {
-    select: () => ({
-      from: () => ({
-        where: () => ({
-          limit: () => ({
-            for: async () => (selectedRun ? [selectedRun] : []),
-          }),
-        }),
-      }),
-    }),
-  };
-  database.transaction = async (operation: (tx: typeof database) => Promise<unknown>) =>
-    operation(database);
-
-  return new DemoRunService({
-    db: database as never,
-    redis: {} as never,
-    trafficExecutionGateway: {} as never,
-    publicRunBudgetStore: {} as never,
-    trafficMetricStore: {
-      appendAndPublishIfLive: options.appendAndPublishIfLive,
-    } as RedisDashboardTrafficMetricStore,
-    businessOutcomeReader: {} as never,
-    completionEnrichmentService: {} as never,
-    terminalRunWriter: {} as never,
-    finalizationService: noOpFinalizationService(),
-    apiBaseUrl: "http://api.test",
-    buyEndpointPath: "/buy",
-    logger: { warn: options.warn } as never,
-    publicClientCookieSecret: publicCookieSecret,
-    deploymentHardCaps: publicRuntimePolicy().deploymentHardCaps,
   });
 }
 
@@ -3077,7 +2676,6 @@ function createStartService(
       typeof DemoRunService
     >[0]["completionEnrichmentService"];
     logger?: ConstructorParameters<typeof DemoRunService>[0]["logger"];
-    trafficMetricStore?: ConstructorParameters<typeof DemoRunService>[0]["trafficMetricStore"];
   } = {},
 ): DemoRunService {
   const ids = [
@@ -3126,7 +2724,6 @@ function createStartService(
       }),
       release: async () => undefined,
     },
-    trafficMetricStore: overrides.trafficMetricStore ?? ({} as never),
     businessOutcomeReader,
     completionEnrichmentService,
     finalizationService: overrides.finalizationService ?? {

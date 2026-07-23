@@ -109,13 +109,10 @@ import {
   type DashboardRecoveryContextReader,
   DashboardRecoveryService,
 } from "../src/services/dashboard-recovery-service.js";
+import type { RedisDashboardTrafficMetricStore } from "../src/services/dashboard-traffic-metric-store.js";
 import type { DemoMaintenanceService } from "../src/services/demo-maintenance-service.js";
-import {
-  type DemoRunController,
-  DemoRunService,
-  DemoRunValidationError,
-  type RedisDashboardTrafficMetricStore,
-} from "../src/services/demo-run-service.js";
+import type { DemoRunController } from "../src/services/demo-run-service.js";
+import { DemoRunValidationError } from "../src/services/demo-run-validation-error.js";
 import type { ErpStatusService } from "../src/services/erp-status-service.js";
 import {
   type InventoryStatusReader,
@@ -141,6 +138,10 @@ import {
   type StockReservationGateway,
 } from "../src/services/reserve-order-service.js";
 import type { RunHistoryController } from "../src/services/run-history-service.js";
+import {
+  type TrafficMetricIngestionController,
+  TrafficMetricIngestionService,
+} from "../src/services/traffic-metric-ingestion-service.js";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const dbPackageRoot = path.resolve(packageRoot, "../../packages/db");
@@ -254,6 +255,7 @@ async function buildTestServer(options: {
   dashboardRecoveryAdmission?: DashboardRecoveryAdmissionController;
   dashboardEventFanout?: DashboardEventFanout;
   demoRunService?: DemoRunController;
+  trafficMetricIngestion?: TrafficMetricIngestionController;
   demoMaintenanceService?: DemoMaintenanceService;
   runHistoryService?: RunHistoryController;
   logger?: CheckoutSurgeLogger;
@@ -357,6 +359,7 @@ async function buildTestServer(options: {
         : {}),
     }),
     demoRunService: options.demoRunService ?? demoRunControllerFixture(),
+    trafficMetricIngestion: options.trafficMetricIngestion ?? { ingest: async () => undefined },
     demoMaintenanceService:
       options.demoMaintenanceService ??
       ({
@@ -569,7 +572,6 @@ function demoRunControllerFixture(): DemoRunController {
       correlationId,
       timestamp: "2026-06-20T00:00:10.000Z",
     }),
-    ingestMetrics: async () => undefined,
     recordTrafficCompletion: async () => demoRunSnapshotFixture(),
   };
 }
@@ -1013,6 +1015,7 @@ describe("API gateway routes", () => {
     queueInspector?: OrderProcessQueueInspector;
     erpStatusService?: ErpStatusService;
     demoRunService?: DemoRunController;
+    trafficMetricIngestion?: TrafficMetricIngestionController;
     demoMaintenanceService?: DemoMaintenanceService;
     runHistoryService?: RunHistoryController;
   }) {
@@ -2266,13 +2269,10 @@ describe("API gateway routes", () => {
   });
 
   it("protects internal load metric ingestion with the control service token", async () => {
-    const ingestMetrics = vi.fn();
+    const ingest = vi.fn();
     const server = await trackedServer({
       persistence: new AcceptingPersistence(),
-      demoRunService: {
-        ...demoRunControllerFixture(),
-        ingestMetrics,
-      },
+      trafficMetricIngestion: { ingest },
     });
 
     const unauthorized = await server.inject({
@@ -2314,7 +2314,7 @@ describe("API gateway routes", () => {
     expect(unauthorized.statusCode).toBe(401);
     expect(accepted.statusCode).toBe(202);
     expect(accepted.headers[correlationIdHeaderName]).toBe(fixtureCorrelationId);
-    expect(ingestMetrics).toHaveBeenCalledWith(
+    expect(ingest).toHaveBeenCalledWith(
       expect.objectContaining({ correlationId: fixtureCorrelationId }),
     );
   });
@@ -2325,9 +2325,8 @@ describe("API gateway routes", () => {
   ] as const)("maps metric admission %s with body correlation", async (code, statusCode) => {
     const server = await trackedServer({
       persistence: new AcceptingPersistence(),
-      demoRunService: {
-        ...demoRunControllerFixture(),
-        ingestMetrics: async () => {
+      trafficMetricIngestion: {
+        ingest: async () => {
           throw new DemoRunValidationError(code, "Metric ingestion rejected.", {
             runId: fixtureIds.run,
           });
@@ -2366,21 +2365,12 @@ describe("API gateway routes", () => {
     const publicationError = new Error("pubsub unavailable");
     const warn = vi.fn();
     const metricStore = {
-      appendAndPublishIfLive: async (
-        _request: unknown,
-        publishAccepted: Parameters<RedisDashboardTrafficMetricStore["appendAndPublishIfLive"]>[1],
-        withAdmission: NonNullable<
-          Parameters<RedisDashboardTrafficMetricStore["appendAndPublishIfLive"]>[2]
-        >,
-      ) =>
-        withAdmission(async () => {
-          await publishAccepted(async () => {
-            throw publicationError;
-          });
-          return "accepted" as const;
-        }),
-    } as RedisDashboardTrafficMetricStore;
-    const demoRunService = new DemoRunService({
+      appendIfLive: async () => true,
+      publishIfLive: async () => {
+        throw publicationError;
+      },
+    } satisfies Pick<RedisDashboardTrafficMetricStore, "appendIfLive" | "publishIfLive">;
+    const trafficMetricIngestion = new TrafficMetricIngestionService({
       db: {
         transaction: async (operation: (tx: unknown) => Promise<unknown>) =>
           operation({
@@ -2400,24 +2390,12 @@ describe("API gateway routes", () => {
           }),
         }),
       } as never,
-      redis: {} as never,
-      trafficExecutionGateway: {} as never,
-      publicRunBudgetStore: {} as never,
-      trafficMetricStore: metricStore,
-      businessOutcomeReader: {} as never,
-      terminalRunWriter: {} as never,
-      completionEnrichmentService: {} as never,
-      finalizationService: { finalizeRun: async () => null, finalizeReadyRuns: async () => 0 },
-      apiBaseUrl: "http://api.test",
-      buyEndpointPath: "/buy",
+      store: metricStore,
       logger: { warn } as never,
-      publicClientCookieSecret: "test-public-cookie-secret",
-      deploymentHardCaps: publicRuntimePolicyFixture().deploymentHardCaps,
-      generateId: () => "77777777-7777-4777-8777-777777777777",
     });
     const server = await trackedServer({
       persistence: new AcceptingPersistence(),
-      demoRunService,
+      trafficMetricIngestion,
     });
 
     const response = await server.inject({

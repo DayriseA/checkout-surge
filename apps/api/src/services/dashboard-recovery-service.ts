@@ -19,8 +19,8 @@ import {
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { desc, eq, inArray } from "drizzle-orm";
 import { abortReason, settleWithAbort } from "../runtime/operation-lifecycle.js";
+import type { DashboardTrafficMetricReader } from "./dashboard-traffic-metric-store.js";
 import { toDemoRunSnapshot } from "./demo-run-projections.js";
-import type { DashboardTrafficMetricReader } from "./demo-run-service.js";
 import type { ErpStatusService } from "./erp-status-service.js";
 import type { InventoryStatusService } from "./inventory-status-service.js";
 import type { QueueStatusService } from "./queue-status-service.js";

@@ -23,14 +23,8 @@ import {
   type DemoRunSnapshot,
   type DeploymentHardCaps,
   type DuplicateDemoPresetRequest,
-  dashboardEventSchema,
-  dashboardEventsRedisChannel,
   demoPresetContractSchema,
-  type ErrorPayloadCode,
   emptyHttpTimingBreakdownSummary,
-  type LoadMetricIngestRequest,
-  loadMetricIngestRequestSchema,
-  type MetricSample,
   type OperatorMode,
   type PublicPresetListResponse,
   type PublicRuntimePolicy,
@@ -86,6 +80,7 @@ import {
   toDemoRunSnapshot,
   toRedisTerminalInventorySnapshot,
 } from "./demo-run-projections.js";
+import { DemoRunValidationError } from "./demo-run-validation-error.js";
 import { parsePersistedAcceptedRunConfigSnapshot } from "./persisted-demo-run-state.js";
 import type {
   PublicRunBudgetReservation,
@@ -103,17 +98,6 @@ import { syntheticFailedTrafficSummary } from "./traffic-delivery-plan.js";
 export const demoRunStartLockKey = "checkout_surge_demo_run_start";
 const singleNonTerminalRunIndexName = "demo_runs_single_non_terminal_idx";
 const generatedRunSaleDurationMs = 24 * 60 * 60 * 1000;
-const recentMetricLimit = 50;
-export const maximumPendingMetricBatches = 10;
-export type TrafficMetricIngestOutcome = "accepted" | "at_capacity" | "fenced";
-export type TrafficMetricAdmissionWrapper = <T>(operation: () => Promise<T>) => Promise<T>;
-
-export type TrafficMetricPublishResult =
-  | { outcome: "fenced" }
-  | {
-      outcome: "attempted";
-      failures: Array<{ index: number; error: Error }>;
-    };
 
 export interface TrafficExecutionGateway {
   start(request: TrafficExecutionStartRequest): Promise<TrafficExecutionStartResponse>;
@@ -125,10 +109,6 @@ export interface TrafficAbortGateway {
     reason: string;
     correlationId: string;
   }): Promise<TrafficExecutionAbortResponse>;
-}
-
-export interface DashboardTrafficMetricReader {
-  readRecent(runId: string | null): Promise<MetricSample[]>;
 }
 
 export interface DemoRunController {
@@ -145,7 +125,6 @@ export interface DemoRunController {
     correlationId: string,
   ): Promise<AdminPublicRuntimePolicyResponse>;
   startRun(request: StartDemoRunCommand, correlationId: string): Promise<StartDemoRunResponse>;
-  ingestMetrics(input: LoadMetricIngestRequest): Promise<void>;
   recordTrafficCompletion(input: TrafficCompletionReport): Promise<DemoRunSnapshot>;
 }
 
@@ -153,120 +132,6 @@ export type StartDemoRunCommand = StartDemoRunRequest & {
   operatorMode: OperatorMode;
   publicVisitorCredential?: string;
 };
-
-export class RedisDashboardTrafficMetricStore implements DashboardTrafficMetricReader {
-  private operationTail: Promise<void> = Promise.resolve();
-  private pendingOperationCount = 0;
-
-  constructor(private readonly redis: CheckoutSurgeRedis) {}
-
-  /**
-   * Reserves bounded process capacity before invoking the admission wrapper, then
-   * serializes each accepted batch across retention and advisory publication. The
-   * second fence check prevents publication after a reset that wins between them.
-   */
-  async appendAndPublishIfLive(
-    input: LoadMetricIngestRequest,
-    publishAccepted: (
-      publishIfLive: (eventPayloads: string[]) => Promise<TrafficMetricPublishResult>,
-    ) => Promise<void>,
-    withAdmission: TrafficMetricAdmissionWrapper = async (operation) => operation(),
-  ): Promise<TrafficMetricIngestOutcome> {
-    if (this.pendingOperationCount >= maximumPendingMetricBatches) return "at_capacity";
-    this.pendingOperationCount += 1;
-    const operation = this.operationTail
-      .then(() =>
-        withAdmission(async () => {
-          const retained = await this.appendIfLiveAtomic(input);
-          if (!retained) return "fenced" as const;
-          await publishAccepted((eventPayloads) =>
-            this.publishIfLiveAtomic(input.runId, eventPayloads),
-          );
-          return "accepted" as const;
-        }),
-      )
-      .finally(() => {
-        this.pendingOperationCount -= 1;
-      });
-    this.operationTail = operation.then(
-      () => undefined,
-      () => undefined,
-    );
-    return operation;
-  }
-
-  private async appendIfLiveAtomic(input: LoadMetricIngestRequest): Promise<boolean> {
-    const samplePayloads = input.samples.map((sample) => JSON.stringify(sample));
-    const result = await this.redis.eval(
-      `
-        if redis.call("EXISTS", KEYS[2]) == 1 then return 0 end
-        redis.call("RPUSH", KEYS[1], unpack(ARGV))
-        redis.call("LTRIM", KEYS[1], -${recentMetricLimit}, -1)
-        redis.call("EXPIRE", KEYS[1], 86400)
-        return 1
-      `,
-      2,
-      trafficMetricKey(input.runId),
-      trafficMetricFenceKey(input.runId),
-      ...samplePayloads,
-    );
-    return result === 1;
-  }
-
-  private async publishIfLiveAtomic(
-    runId: string,
-    eventPayloads: string[],
-  ): Promise<TrafficMetricPublishResult> {
-    if (eventPayloads.length === 0) return { outcome: "attempted", failures: [] };
-    const result = await this.redis.eval(
-      `
-        if redis.call("EXISTS", KEYS[1]) == 1 then return { "fenced" } end
-        local outcomes = { "attempted" }
-        for i = 1, #ARGV do
-          local publishResult = redis.pcall("PUBLISH", KEYS[2], ARGV[i])
-          if type(publishResult) == "table" and publishResult.err then
-            table.insert(outcomes, publishResult.err)
-          else
-            table.insert(outcomes, "")
-          end
-        end
-        return outcomes
-      `,
-      2,
-      trafficMetricFenceKey(runId),
-      dashboardEventsRedisChannel,
-      ...eventPayloads,
-    );
-    return parseTrafficMetricPublishResult(result, eventPayloads.length);
-  }
-
-  async fenceRun(runId: string): Promise<void> {
-    await this.redis.set(trafficMetricFenceKey(runId), "reset", "EX", 24 * 60 * 60);
-  }
-
-  async clearRun(runId: string): Promise<void> {
-    await this.redis
-      .multi()
-      .set(trafficMetricFenceKey(runId), "reset", "EX", 24 * 60 * 60)
-      .del(trafficMetricKey(runId))
-      .exec();
-  }
-
-  async hasRunState(runId: string): Promise<boolean> {
-    return (await this.redis.exists(trafficMetricKey(runId))) === 1;
-  }
-
-  async readRecent(runId: string | null): Promise<MetricSample[]> {
-    if (!runId) {
-      return [];
-    }
-
-    const rawSamples = await this.redis.lrange(trafficMetricKey(runId), -20, -1);
-    return rawSamples.map((raw) =>
-      loadMetricIngestRequestSchema.shape.samples.element.parse(JSON.parse(raw)),
-    );
-  }
-}
 
 export class HttpTrafficExecutionGateway implements TrafficExecutionGateway, TrafficAbortGateway {
   constructor(
@@ -455,17 +320,6 @@ export class HttpTrafficExecutionGateway implements TrafficExecutionGateway, Tra
   }
 }
 
-export class DemoRunValidationError extends Error {
-  constructor(
-    readonly code: ErrorPayloadCode,
-    message: string,
-    readonly details?: Record<string, unknown>,
-  ) {
-    super(message);
-    this.name = "DemoRunValidationError";
-  }
-}
-
 export function isSingleNonTerminalRunViolation(error: unknown): boolean {
   let candidate: unknown = error;
 
@@ -498,7 +352,6 @@ export class DemoRunService implements DemoRunController {
       redis: CheckoutSurgeRedis;
       trafficExecutionGateway: TrafficExecutionGateway;
       publicRunBudgetStore: PublicRunBudgetStore;
-      trafficMetricStore: RedisDashboardTrafficMetricStore;
       businessOutcomeReader: DashboardBusinessOutcomeReader;
       terminalRunWriter: Pick<TerminalDemoRunWriter, "write">;
       completionEnrichmentService: Pick<
@@ -892,105 +745,6 @@ export class DemoRunService implements DemoRunController {
         }
       }
       throw error;
-    }
-  }
-
-  async ingestMetrics(input: LoadMetricIngestRequest): Promise<void> {
-    const request = loadMetricIngestRequestSchema.parse(input);
-    await this.options.trafficMetricStore.appendAndPublishIfLive(
-      request,
-      async (publishIfLive) => {
-        const publications: Array<{
-          metricName: MetricSample["metricName"];
-          payload: string;
-        }> = [];
-        for (const sample of request.samples) {
-          try {
-            const event = dashboardEventSchema.parse({
-              type: "dashboard.metric.observed",
-              runId: request.runId,
-              correlationId: request.correlationId,
-              metricName: sample.metricName,
-              value: sample.value,
-              unit: sample.unit,
-              occurredAt: sample.timestamp,
-              observedAt: sample.timestamp,
-            });
-            publications.push({ metricName: sample.metricName, payload: JSON.stringify(event) });
-          } catch (error) {
-            this.warnTrafficMetricPublicationFailure(error, request, sample.metricName);
-          }
-        }
-
-        try {
-          const result = await publishIfLive(publications.map(({ payload }) => payload));
-          if (result.outcome === "attempted") {
-            for (const failure of result.failures) {
-              const publication = publications[failure.index];
-              if (publication) {
-                this.warnTrafficMetricPublicationFailure(
-                  failure.error,
-                  request,
-                  publication.metricName,
-                );
-              }
-            }
-          }
-        } catch (error) {
-          for (const publication of publications) {
-            this.warnTrafficMetricPublicationFailure(error, request, publication.metricName);
-          }
-        }
-      },
-      async (retainAndPublish) =>
-        this.options.db.transaction(async (tx) => {
-          const [run] = await tx
-            .select({ status: demoRuns.status, trafficStatus: demoRuns.trafficStatus })
-            .from(demoRuns)
-            .where(eq(demoRuns.id, request.runId))
-            .limit(1)
-            .for("update");
-          if (!run) {
-            throw new DemoRunValidationError("resource_not_found", "Demo run was not found.", {
-              runId: request.runId,
-            });
-          }
-          if (
-            !(["starting", "active"] as string[]).includes(run.status) ||
-            !(["starting", "active"] as string[]).includes(run.trafficStatus)
-          ) {
-            throw new DemoRunValidationError(
-              "traffic_report_rejected",
-              "Demo run is not eligible for traffic metric ingestion.",
-              { runId: request.runId, status: run.status, trafficStatus: run.trafficStatus },
-            );
-          }
-
-          const outcome = await retainAndPublish();
-          if (outcome === "fenced") {
-            throw new DemoRunValidationError(
-              "traffic_report_rejected",
-              "Demo run traffic metrics have been fenced.",
-              { runId: request.runId, status: run.status, trafficStatus: run.trafficStatus },
-            );
-          }
-          return outcome;
-        }),
-    );
-  }
-
-  private warnTrafficMetricPublicationFailure(
-    error: unknown,
-    request: Pick<LoadMetricIngestRequest, "runId" | "correlationId">,
-    metricName: MetricSample["metricName"],
-  ): void {
-    try {
-      this.options.logger.warn(
-        { err: error, runId: request.runId, correlationId: request.correlationId, metricName },
-        "Could not publish traffic metric dashboard event.",
-      );
-    } catch {
-      // Reporting an advisory publication failure must not redefine accepted retention.
     }
   }
 
@@ -1727,37 +1481,6 @@ function throwPublicRuntimePolicyUpdateError(error: unknown): never {
     });
   }
   throw error;
-}
-
-function trafficMetricKey(runId: string): string {
-  return `demo-run:${runId}:traffic-metrics`;
-}
-
-function trafficMetricFenceKey(runId: string): string {
-  return `demo-run:${runId}:traffic-metrics-reset-fence`;
-}
-
-function parseTrafficMetricPublishResult(
-  value: unknown,
-  expectedOutcomeCount: number,
-): TrafficMetricPublishResult {
-  if (!Array.isArray(value) || value.length === 0 || typeof value[0] !== "string") {
-    throw new Error("Redis returned an invalid traffic metric publication result.");
-  }
-  if (value[0] === "fenced" && value.length === 1) return { outcome: "fenced" };
-  if (value[0] !== "attempted" || value.length !== expectedOutcomeCount + 1) {
-    throw new Error("Redis returned an invalid traffic metric publication result.");
-  }
-
-  const failures: Array<{ index: number; error: Error }> = [];
-  for (let index = 0; index < expectedOutcomeCount; index += 1) {
-    const outcome = value[index + 1];
-    if (typeof outcome !== "string") {
-      throw new Error("Redis returned an invalid traffic metric publication result.");
-    }
-    if (outcome.length > 0) failures.push({ index, error: new Error(outcome) });
-  }
-  return { outcome: "attempted", failures };
 }
 
 function positiveTimeout(value: number, name: string): number {
