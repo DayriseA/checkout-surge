@@ -193,6 +193,7 @@ services:
       HOST: 0.0.0.0
       K6_BINARY: /usr/local/bin/k6
       K6_CANCELLATION_TIMEOUT_MS: ${K6_CANCELLATION_TIMEOUT_MS:-10000}
+      COMPLETION_DELIVERY_RETRY_INTERVAL_MS: ${COMPLETION_DELIVERY_RETRY_INTERVAL_MS:-5000}
       BUY_ENDPOINT_PATH: /buy
       LOAD_ORCHESTRATOR_STATE_DIR: /var/lib/checkout-surge/load-orchestrator
     volumes:

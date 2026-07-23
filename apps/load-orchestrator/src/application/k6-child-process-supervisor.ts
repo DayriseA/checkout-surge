@@ -40,6 +40,7 @@ interface ActiveExecution {
   cancellation: Promise<"aborted" | "natural_completion"> | null;
   termination: Promise<void> | null;
   cancellationAccepted: boolean;
+  deferDisposition: boolean;
   cancellationDeadlineAt: number | null;
   setupSettled: Promise<void>;
   resolveSetupSettled: () => void;
@@ -111,6 +112,7 @@ export class K6ChildProcessSupervisor {
       cancellation: null,
       termination: null,
       cancellationAccepted: false,
+      deferDisposition: false,
       cancellationDeadlineAt: null,
       setupSettled,
       resolveSetupSettled,
@@ -149,8 +151,8 @@ export class K6ChildProcessSupervisor {
         }
         await this.terminateAndObserveExit(active);
       }
-      await this.dispose(active);
       if (active.cancellationAccepted) {
+        await this.dispose(active);
         this.lastSettled = { runId: active.runId, outcome: "aborted" };
       }
       if (active.cancellationAccepted) throw new K6StartCancelledError();
@@ -183,6 +185,18 @@ export class K6ChildProcessSupervisor {
     return operation;
   }
 
+  stopForPreparationFailure(runId: string): Promise<"aborted" | "natural_completion"> {
+    const active = this.active;
+    if (active?.runId === runId) {
+      active.deferDisposition = true;
+      if (this.lifecycle === "exited") {
+        active.cancellationAccepted = true;
+        return Promise.resolve("aborted");
+      }
+    }
+    return this.cancel(runId);
+  }
+
   async close(): Promise<void> {
     const active = this.active;
     if (!active) return;
@@ -191,6 +205,16 @@ export class K6ChildProcessSupervisor {
       await active.completion;
       return;
     }
+    await this.dispose(active);
+  }
+
+  /**
+   * Releases streams and the work directory after the caller has durably published
+   * a naturally produced result. Cleanup remains owned and performed here.
+   */
+  async release(runId: string): Promise<void> {
+    const active = this.active;
+    if (!active || active.runId !== runId) return;
     await this.dispose(active);
   }
 
@@ -318,55 +342,52 @@ export class K6ChildProcessSupervisor {
       stderrCollector: BoundedStderrCollector;
     },
   ): Promise<K6ChildProcessResult> {
-    try {
-      const { exitCode, processError } = await active.exit;
-      input.stderrCollector.finish();
-      if (active.cancellationAccepted) {
-        input.stdout?.destroy();
-        input.stderr?.destroy();
-        void input.stdoutDrain;
-        void input.batcher.discard().catch((error) => {
-          this.options.logger.warn(
-            { err: error, runId: input.request.runId },
-            "Could not discard cancelled k6 metric work.",
-          );
-        });
-        return { outcome: "cancelled" };
-      }
-
-      try {
-        await input.stdoutDrain;
-        for (const sample of input.liveMetrics.flush()) await input.batcher.add(sample);
-        await input.batcher.close();
-      } catch (error) {
-        this.options.logger.warn({ err: error }, "Could not flush final k6 metric batch.");
-      }
-      const summary = await readK6SummaryExport(
-        input.summaryPath,
-        input.stdoutTail.toString(),
-        this.options.readSummaryFile,
-      );
-      const succeeded = !processError && exitCode === 0;
-      return {
-        outcome: "completed",
-        report: input.accumulator.completionReport({
-          status: succeeded ? "succeeded" : "failed",
-          ...(!processError && exitCode !== null ? { exitCode } : {}),
-          ...(!succeeded
-            ? {
-                errorMessage: processError
-                  ? processError.message
-                  : `k6 exited with code ${exitCode ?? "unknown"}.`,
-              }
-            : {}),
-          completedAt: this.options.now?.() ?? new Date(),
-          ...(summary.metrics ? { summaryMetrics: summary.metrics } : {}),
-          ...(summary.warning ? { summaryExportWarning: summary.warning } : {}),
-        }),
-      };
-    } finally {
-      await this.dispose(active);
+    const { exitCode, processError } = await active.exit;
+    input.stderrCollector.finish();
+    if (active.cancellationAccepted) {
+      input.stdout?.destroy();
+      input.stderr?.destroy();
+      void input.stdoutDrain;
+      void input.batcher.discard().catch((error) => {
+        this.options.logger.warn(
+          { err: error, runId: input.request.runId },
+          "Could not discard cancelled k6 metric work.",
+        );
+      });
+      if (!active.deferDisposition) await this.dispose(active);
+      return { outcome: "cancelled" };
     }
+
+    try {
+      await input.stdoutDrain;
+      for (const sample of input.liveMetrics.flush()) await input.batcher.add(sample);
+      await input.batcher.close();
+    } catch (error) {
+      this.options.logger.warn({ err: error }, "Could not flush final k6 metric batch.");
+    }
+    const summary = await readK6SummaryExport(
+      input.summaryPath,
+      input.stdoutTail.toString(),
+      this.options.readSummaryFile,
+    );
+    const succeeded = !processError && exitCode === 0;
+    return {
+      outcome: "completed",
+      report: input.accumulator.completionReport({
+        status: succeeded ? "succeeded" : "failed",
+        ...(!processError && exitCode !== null ? { exitCode } : {}),
+        ...(!succeeded
+          ? {
+              errorMessage: processError
+                ? processError.message
+                : `k6 exited with code ${exitCode ?? "unknown"}.`,
+            }
+          : {}),
+        completedAt: this.options.now?.() ?? new Date(),
+        ...(summary.metrics ? { summaryMetrics: summary.metrics } : {}),
+        ...(summary.warning ? { summaryExportWarning: summary.warning } : {}),
+      }),
+    };
   }
 
   private attachChildExitObservation(active: ActiveExecution): void {

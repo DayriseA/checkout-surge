@@ -36,12 +36,12 @@ Use one durable completion record and one delivery loop/coordinator from persist
 
 ## Acceptance criteria
 
-- [ ] Exactly one component owns durable completion redelivery end to end.
-- [ ] The completion is persisted before first send and survives process restart.
-- [ ] Identical retry is idempotently accepted and cannot create two summaries or terminal transitions.
-- [ ] The in-process runner retry loop, memory fallback, and their configuration/tests are deleted, and no legacy journal migration has returned.
-- [ ] Journal state and process execution state are separate, small, and documented.
-- [ ] Startup and shutdown cannot start competing delivery attempts.
+- [x] Exactly one component owns durable completion redelivery end to end.
+- [x] The completion is persisted before first send and survives process restart.
+- [x] Identical retry is idempotently accepted and cannot create two summaries or terminal transitions.
+- [x] The in-process runner retry loop, memory fallback, and their configuration/tests are deleted, and no legacy journal migration has returned.
+- [x] Journal state and process execution state are separate, small, and documented.
+- [x] Startup and shutdown cannot start competing delivery attempts.
 
 ## Verification
 
@@ -52,8 +52,8 @@ Use one durable completion record and one delivery loop/coordinator from persist
 
 ## Working record
 
-- **Status:** pending
-- **Completed scope:** none
-- **Material decisions or deviations:** none
-- **Verification performed:** not run
-- **Remaining blockers or follow-up:** none
+- **Status:** complete; fresh review verified
+- **Completed scope:** Added one focused completion-delivery coordinator as the sole owner from strict `completion_pending` persistence through matching API acknowledgement; serialized normal/startup retries; made natural, preparation-failure, and restart-produced reports durable before first send and before supervisor-owned work-directory cleanup; retained the atomic fsynced/renamed single-slot journal and Task 33 child supervisor; removed runner retry/backoff, periodic delivery, duplicate attempt state, and memory-only completion fallback. Review 1 moved report publication and acknowledged completion into serialized conditional store mutations, preventing stale acknowledgement or conflicting persistence from overwriting newer evidence, and made runner initialization single-flight.
+- **Material decisions or deviations:** The coordinator uses one fixed bounded retry interval rather than configurable attempt counts and multipliers: `COMPLETION_DELIVERY_RETRY_INTERVAL_MS`, 5 seconds by default and at most 60 seconds. Per-attempt HTTP timeout remains five seconds. A journal persistence failure is surfaced and fences the execution/work directory; there is deliberately no second fallback mode. Startup converts an orphan `accepted` or `executing` record into one failed completion and hands it to the same coordinator.
+- **Verification performed:** Initial implementation: load-orchestrator unit tests passed (5 files, 136 tests); focused API traffic-completion idempotency/binding tests passed (2 files, 12 tests) against the isolated test PostgreSQL service, which was removed with its volumes afterward; load-orchestrator, API, and full repository type checks, load lint/focused Biome, Compose validation, and `git diff --check` passed. Review 1 fix verification also passed: load-orchestrator unit tests with stale-acknowledgement, conflicting-publication, strict-state, and initialization-concurrency coverage (5 files, 142 tests), focused load-orchestrator type-check, load-orchestrator lint, focused Biome check, and `git diff --check`. Fresh review independently passed the 142 load-orchestrator unit tests, load-orchestrator and full repository/test-source type checks, load lint and focused Biome, focused API completion-binding tests, Compose validation, and `git diff --check`. Composition and characterization suites were not run.
+- **Remaining blockers or follow-up:** Host k6 compatibility was skipped because `k6` is not installed in this workspace. If the first report-persistence call fails, no memory fallback, API send, or supervisor cleanup occurs. Because failure can occur after atomic rename but during the later directory-open/fsync step, restart may read either the prior `accepted`/`executing` fence and emit the generic interrupted failure, or the already-materialized canonical `completion_pending` report and deliver it. Startup does not reconstruct or clean the retained work directory in either outcome. No implementation blocker.

@@ -1,4 +1,8 @@
 import {
+  defaultCompletionDeliveryRetryIntervalMs,
+  maxCompletionDeliveryRetryIntervalMs,
+} from "../application/completion-delivery-coordinator.js";
+import {
   defaultK6CancellationTimeoutMs,
   maxK6CancellationTimeoutMs,
 } from "../application/k6-child-process-supervisor.js";
@@ -10,6 +14,7 @@ export interface LoadOrchestratorConfig {
   buyEndpointPath: string;
   k6Binary: string;
   k6CancellationTimeoutMs: number;
+  completionDeliveryRetryIntervalMs: number;
   controlServiceToken: string;
   stateDirectory: string;
 }
@@ -31,6 +36,12 @@ export function loadLoadOrchestratorConfig(env: NodeJS.ProcessEnv): LoadOrchestr
       "K6_CANCELLATION_TIMEOUT_MS",
       defaultK6CancellationTimeoutMs,
       maxK6CancellationTimeoutMs,
+    ),
+    completionDeliveryRetryIntervalMs: parsePositiveInteger(
+      env.COMPLETION_DELIVERY_RETRY_INTERVAL_MS,
+      "COMPLETION_DELIVERY_RETRY_INTERVAL_MS",
+      defaultCompletionDeliveryRetryIntervalMs,
+      maxCompletionDeliveryRetryIntervalMs,
     ),
     controlServiceToken: requireEnv(env, "CONTROL_SERVICE_TOKEN"),
     stateDirectory: env.LOAD_ORCHESTRATOR_STATE_DIR?.trim() || ".checkout-surge/load-orchestrator",

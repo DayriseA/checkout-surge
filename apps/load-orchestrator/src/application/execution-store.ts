@@ -9,16 +9,44 @@ import {
 } from "@checkout-surge/contracts";
 import { z } from "zod";
 
-const durableExecutionSchema = z
-  .object({
-    request: materializedTrafficExecutionStartRequestSchema,
-    state: z.enum(["accepted", "executing", "completion_pending", "completed"]),
-    acceptedAt: z.string().datetime({ offset: true }),
-    completion: materializedTrafficCompletionReportSchema.optional(),
-  })
-  .strict();
+const durableExecutionBaseSchema = z.object({
+  request: materializedTrafficExecutionStartRequestSchema,
+  acceptedAt: z.string().datetime({ offset: true }),
+});
+
+const durableExecutionSchema = z.discriminatedUnion("state", [
+  durableExecutionBaseSchema
+    .extend({
+      state: z.literal("accepted"),
+      completion: z.undefined().optional(),
+    })
+    .strict(),
+  durableExecutionBaseSchema
+    .extend({
+      state: z.literal("executing"),
+      completion: z.undefined().optional(),
+    })
+    .strict(),
+  durableExecutionBaseSchema
+    .extend({
+      state: z.literal("completion_pending"),
+      completion: materializedTrafficCompletionReportSchema,
+    })
+    .strict(),
+  durableExecutionBaseSchema
+    .extend({
+      state: z.literal("completed"),
+      completion: materializedTrafficCompletionReportSchema.optional(),
+    })
+    .strict(),
+]);
 
 export type DurableExecution = z.infer<typeof durableExecutionSchema>;
+export type CompletionPublishOutcome =
+  | "published"
+  | "already_published"
+  | "execution_mismatch"
+  | "completion_conflict";
 
 export interface ExecutionStore {
   read(): Promise<DurableExecution | null>;
@@ -27,13 +55,14 @@ export interface ExecutionStore {
     acceptedAt: Date,
   ): Promise<{ execution: DurableExecution; created: boolean }>;
   update(execution: DurableExecution): Promise<void>;
+  publishCompletion(completion: TrafficCompletionReport): Promise<CompletionPublishOutcome>;
+  acknowledgeCompletion(completion: TrafficCompletionReport): Promise<boolean>;
 }
 
 /** Atomic single-slot journal. The orchestrator deliberately owns at most one execution. */
 export class FileExecutionStore implements ExecutionStore {
   private readonly filePath: string;
-  private writeChain = Promise.resolve();
-  private acceptChain = Promise.resolve();
+  private mutationChain = Promise.resolve();
 
   constructor(directory: string) {
     this.filePath = path.join(directory, "execution.json");
@@ -52,12 +81,7 @@ export class FileExecutionStore implements ExecutionStore {
     request: TrafficExecutionStartRequest,
     acceptedAt: Date,
   ): Promise<{ execution: DurableExecution; created: boolean }> {
-    const operation = this.acceptChain.then(() => this.acceptOnce(request, acceptedAt));
-    this.acceptChain = operation.then(
-      () => undefined,
-      () => undefined,
-    );
-    return operation;
+    return this.serializeMutation(() => this.acceptOnce(request, acceptedAt));
   }
 
   private async acceptOnce(
@@ -79,30 +103,70 @@ export class FileExecutionStore implements ExecutionStore {
   }
 
   async update(execution: DurableExecution): Promise<void> {
-    await this.write(durableExecutionSchema.parse(execution));
+    const parsed = durableExecutionSchema.parse(execution);
+    await this.serializeMutation(() => this.write(parsed));
+  }
+
+  async publishCompletion(completion: TrafficCompletionReport): Promise<CompletionPublishOutcome> {
+    const parsedCompletion = materializedTrafficCompletionReportSchema.parse(completion);
+    return this.serializeMutation(async () => {
+      const current = await this.read();
+      if (!current || current.request.runId !== parsedCompletion.runId) {
+        return "execution_mismatch";
+      }
+      if (current.completion) {
+        return sameCompletion(current.completion, parsedCompletion)
+          ? "already_published"
+          : "completion_conflict";
+      }
+      if (current.state === "completed") return "completion_conflict";
+      await this.write(withCompletion(current, parsedCompletion));
+      return "published";
+    });
+  }
+
+  async acknowledgeCompletion(completion: TrafficCompletionReport): Promise<boolean> {
+    const parsedCompletion = materializedTrafficCompletionReportSchema.parse(completion);
+    return this.serializeMutation(async () => {
+      const current = await this.read();
+      if (
+        current?.state !== "completion_pending" ||
+        current.request.runId !== parsedCompletion.runId ||
+        !sameCompletion(current.completion, parsedCompletion)
+      ) {
+        return false;
+      }
+      await this.write({ ...current, state: "completed" });
+      return true;
+    });
+  }
+
+  private serializeMutation<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.mutationChain.then(operation);
+    this.mutationChain = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
   }
 
   private async write(execution: DurableExecution): Promise<void> {
-    const operation = this.writeChain.then(async () => {
-      await mkdir(path.dirname(this.filePath), { recursive: true });
-      const temporaryPath = `${this.filePath}.${process.pid}.${randomUUID()}.tmp`;
-      await writeFile(temporaryPath, `${JSON.stringify(execution)}\n`, "utf8");
-      const temporaryFile = await open(temporaryPath, "r");
-      try {
-        await temporaryFile.sync();
-      } finally {
-        await temporaryFile.close();
-      }
-      await rename(temporaryPath, this.filePath);
-      const directory = await open(path.dirname(this.filePath), "r");
-      try {
-        await directory.sync();
-      } finally {
-        await directory.close();
-      }
-    });
-    this.writeChain = operation.catch(() => undefined);
-    await operation;
+    await mkdir(path.dirname(this.filePath), { recursive: true });
+    const temporaryPath = `${this.filePath}.${process.pid}.${randomUUID()}.tmp`;
+    await writeFile(temporaryPath, `${JSON.stringify(execution)}\n`, "utf8");
+    const temporaryFile = await open(temporaryPath, "r");
+    try {
+      await temporaryFile.sync();
+    } finally {
+      await temporaryFile.close();
+    }
+    await rename(temporaryPath, this.filePath);
+    const directory = await open(path.dirname(this.filePath), "r");
+    try {
+      await directory.sync();
+    } finally {
+      await directory.close();
+    }
   }
 }
 
@@ -140,4 +204,8 @@ export function withCompletion(
     state: "completion_pending",
     completion: materializedTrafficCompletionReportSchema.parse(completion),
   };
+}
+
+function sameCompletion(left: TrafficCompletionReport, right: TrafficCompletionReport): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
 }

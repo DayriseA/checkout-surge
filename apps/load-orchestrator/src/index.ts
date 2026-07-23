@@ -1,6 +1,7 @@
 import { contractsPackageName } from "@checkout-surge/contracts";
 import { createServiceLogger, loggerPackageName } from "@checkout-surge/logger";
 import { HttpLoadApiClient } from "./application/api-client.js";
+import { CompletionDeliveryCoordinator } from "./application/completion-delivery-coordinator.js";
 import { FileExecutionStore } from "./application/execution-store.js";
 import { SpawnK6Runner } from "./application/k6-runner.js";
 import { TrafficExecutionService } from "./application/traffic-execution-service.js";
@@ -12,6 +13,12 @@ export const loadOrchestratorAppName = "load-orchestrator" as const;
 export const loadOrchestratorAppDependencies = [contractsPackageName, loggerPackageName] as const;
 
 export { HttpLoadApiClient, MetricBatcher } from "./application/api-client.js";
+export {
+  CompletionDeliveryCoordinator,
+  CompletionPersistenceError,
+  defaultCompletionDeliveryRetryIntervalMs,
+  maxCompletionDeliveryRetryIntervalMs,
+} from "./application/completion-delivery-coordinator.js";
 export {
   ExecutionConflictError,
   type ExecutionStore,
@@ -47,12 +54,20 @@ export async function startLoadOrchestrator(): Promise<void> {
     apiBaseUrl: config.apiBaseUrl,
     controlServiceToken: config.controlServiceToken,
   });
+  const executionStore = new FileExecutionStore(config.stateDirectory);
+  const completionDelivery = new CompletionDeliveryCoordinator({
+    executionStore,
+    apiClient,
+    logger,
+    retryIntervalMs: config.completionDeliveryRetryIntervalMs,
+  });
   const trafficExecutionService = new TrafficExecutionService(
     new SpawnK6Runner({
       k6Binary: config.k6Binary,
       apiClient,
+      completionDelivery,
       logger,
-      executionStore: new FileExecutionStore(config.stateDirectory),
+      executionStore,
       cancellationTimeoutMs: config.k6CancellationTimeoutMs,
     }),
   );

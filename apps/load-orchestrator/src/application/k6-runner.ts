@@ -1,10 +1,8 @@
-import type {
-  TrafficCompletionReport,
-  TrafficExecutionStartRequest,
-} from "@checkout-surge/contracts";
+import type { TrafficExecutionStartRequest } from "@checkout-surge/contracts";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import type { LoadApiClient } from "./api-client.js";
-import { type DurableExecution, type ExecutionStore, withCompletion } from "./execution-store.js";
+import type { CompletionDelivery } from "./completion-delivery-coordinator.js";
+import type { DurableExecution, ExecutionStore } from "./execution-store.js";
 import {
   BoundedStdoutTail,
   K6ChildProcessSupervisor,
@@ -37,35 +35,14 @@ export interface K6Runner {
   close(): Promise<void>;
 }
 
-type CompletionRetrySleep = (delayMs: number) => Promise<void>;
-
-interface CompletionRetryConfig {
-  maxAttempts?: number;
-  initialBackoffMs?: number;
-  backoffMultiplier?: number;
-  sleep?: CompletionRetrySleep;
-}
-
-interface ResolvedCompletionRetryConfig {
-  maxAttempts: number;
-  initialBackoffMs: number;
-  backoffMultiplier: number;
-  sleep: CompletionRetrySleep;
-}
-
-const defaultCompletionRetryMaxAttempts = 5;
-const defaultCompletionRetryInitialBackoffMs = 1000;
-const defaultCompletionRetryBackoffMultiplier = 2;
-
 type SpawnK6RunnerOptions = {
   k6Binary: string;
   apiClient: LoadApiClient;
+  completionDelivery: CompletionDelivery;
   logger: CheckoutSurgeLogger;
   now?: () => Date;
   spawnProcess?: ConstructorParameters<typeof K6ChildProcessSupervisor>[0]["spawnProcess"];
-  completionRetry?: CompletionRetryConfig;
   executionStore: ExecutionStore;
-  retryIntervalMs?: number;
   cancellationTimeoutMs?: number;
   liveMetricWindowMs?: number;
   maxK6OutputLineLength?: number;
@@ -84,14 +61,13 @@ export class SpawnK6Runner implements K6Runner {
     promise: Promise<K6ExecutionStart>;
     cancelRequested: boolean;
   } | null = null;
-  private retryTimer: NodeJS.Timeout | null = null;
   private closing = false;
   private cancellingRunId: string | null = null;
   private cancellationRequiresJournalRelease = false;
   private cancellationOperation: Promise<"aborted" | "natural_completion"> | null = null;
   private readonly completionTasks = new Set<Promise<void>>();
-  private deliveryAttempt: Promise<void> | null = null;
-  private pendingPersistence: TrafficCompletionReport | null = null;
+  private completionFailure: unknown = null;
+  private initializationOperation: Promise<void> | null = null;
 
   constructor(private readonly options: SpawnK6RunnerOptions) {
     this.supervisor = new K6ChildProcessSupervisor({
@@ -123,7 +99,21 @@ export class SpawnK6Runner implements K6Runner {
     });
   }
 
-  async initialize(): Promise<void> {
+  initialize(): Promise<void> {
+    if (this.closing) {
+      return Promise.reject(new Error("Traffic execution owner is shutting down."));
+    }
+    if (!this.initializationOperation) {
+      const initialization = this.performInitialization().catch((error) => {
+        if (this.initializationOperation === initialization) this.initializationOperation = null;
+        throw error;
+      });
+      this.initializationOperation = initialization;
+    }
+    return this.initializationOperation;
+  }
+
+  private async performInitialization(): Promise<void> {
     const execution = await this.options.executionStore.read();
     if (execution?.state === "accepted" || execution?.state === "executing") {
       const generated = generateK6Script(execution.request);
@@ -134,23 +124,15 @@ export class SpawnK6Runner implements K6Runner {
         startedAt: new Date(execution.acceptedAt),
         executionPlan: generated.executionPlan,
       });
-      await this.options.executionStore.update(
-        withCompletion(
-          execution,
-          accumulator.completionReport({
-            status: "failed",
-            errorMessage: "load_orchestrator_restarted_before_k6_completion",
-            completedAt: this.now(),
-          }),
-        ),
+      await this.options.completionDelivery.persist(
+        accumulator.completionReport({
+          status: "failed",
+          errorMessage: "load_orchestrator_restarted_before_k6_completion",
+          completedAt: this.now(),
+        }),
       );
     }
-    await this.deliverPending();
-    this.retryTimer = setInterval(
-      () => void this.deliverPending(),
-      this.options.retryIntervalMs ?? 5_000,
-    );
-    this.retryTimer.unref();
+    await this.options.completionDelivery.start();
   }
 
   async statusSnapshot(
@@ -229,7 +211,17 @@ export class SpawnK6Runner implements K6Runner {
 
   async close(): Promise<void> {
     this.closing = true;
-    if (this.retryTimer) clearInterval(this.retryTimer);
+    if (this.initializationOperation) {
+      try {
+        await this.initializationOperation;
+      } catch (error) {
+        this.completionFailure ??= error;
+      }
+    }
+    if (this.completionFailure) {
+      await this.options.completionDelivery.close();
+      throw this.completionFailure;
+    }
 
     const preparation = this.currentPreparation?.promise;
     const runId =
@@ -245,14 +237,13 @@ export class SpawnK6Runner implements K6Runner {
       await Promise.allSettled([preparation]);
     }
     await Promise.allSettled([...this.completionTasks]);
-    await this.deliverPending();
-    if (this.pendingPersistence) {
-      throw new Error("Traffic completion could not be made durable during shutdown.");
-    }
+    await this.options.completionDelivery.close();
+    if (this.completionFailure) throw this.completionFailure;
   }
 
   async start(input: TrafficExecutionStartRequest): Promise<K6ExecutionStart> {
     if (this.closing) throw new Error("Traffic execution owner is shutting down.");
+    if (this.completionFailure) throw this.completionFailure;
     if (this.cancellingRunId) throw new ExecutionSlotConflictError(this.cancellingRunId);
     if (this.currentPreparation) {
       if (this.currentPreparation.runId === input.runId) return this.currentPreparation.promise;
@@ -290,11 +281,6 @@ export class SpawnK6Runner implements K6Runner {
         plannedRequests: generateK6Script(input).plannedRequests,
       };
     }
-    if (this.pendingPersistence?.runId === input.runId) {
-      await this.deliverPending();
-      throw new Error("A previous preparation failure is still being reconciled.");
-    }
-
     const generated = generateK6Script(input);
     const diagnostics = await collectLoadRunDiagnostics(
       this.options.k6Binary,
@@ -317,13 +303,18 @@ export class SpawnK6Runner implements K6Runner {
       });
       spawned = true;
       try {
-        await this.options.executionStore.update({ ...accepted, state: "executing" });
+        const { completion: _completion, ...acceptedWithoutCompletion } = accepted;
+        await this.options.executionStore.update({
+          ...acceptedWithoutCompletion,
+          state: "executing",
+        });
       } catch (error) {
-        await this.supervisor.cancel(input.runId);
-        if (!this.preparationCancelled(input.runId)) {
+        if (this.preparationCancelled(input.runId)) {
+          await this.supervisor.cancel(input.runId);
+        } else {
+          await this.supervisor.stopForPreparationFailure(input.runId);
           await this.persistPreparationFailure(
             input,
-            accepted,
             generated.plannedRequests,
             generated.executionPlan,
             diagnostics,
@@ -337,11 +328,23 @@ export class SpawnK6Runner implements K6Runner {
         await this.completeCancelledJournal(accepted);
         throw new CancellationRequestedError();
       }
-      const completionTask = execution.completion.then((result) =>
-        result.outcome === "completed" ? this.reportCompletion(result.report) : undefined,
-      );
+      const completionTask = execution.completion.then(async (result) => {
+        if (result.outcome !== "completed") return;
+        await this.options.completionDelivery.persist(result.report);
+        await this.supervisor.release(input.runId);
+      });
       this.completionTasks.add(completionTask);
-      void completionTask.finally(() => this.completionTasks.delete(completionTask));
+      void completionTask.then(
+        () => this.completionTasks.delete(completionTask),
+        (error) => {
+          this.completionTasks.delete(completionTask);
+          this.completionFailure = error;
+          this.options.logger.error(
+            { err: error, runId: input.runId },
+            "Could not make the produced traffic completion durable.",
+          );
+        },
+      );
     } catch (error) {
       if (
         !spawned &&
@@ -350,7 +353,6 @@ export class SpawnK6Runner implements K6Runner {
       ) {
         await this.persistPreparationFailure(
           input,
-          accepted,
           generated.plannedRequests,
           generated.executionPlan,
           diagnostics,
@@ -388,7 +390,6 @@ export class SpawnK6Runner implements K6Runner {
 
   private async persistPreparationFailure(
     input: TrafficExecutionStartRequest,
-    execution: DurableExecution,
     plannedRequests: number,
     executionPlan: ReturnType<typeof generateK6Script>["executionPlan"],
     diagnostics: Awaited<ReturnType<typeof collectLoadRunDiagnostics>>,
@@ -409,117 +410,12 @@ export class SpawnK6Runner implements K6Runner {
       completedAt: this.now(),
     });
     try {
-      await this.options.executionStore.update(withCompletion(execution, report));
-      await this.deliverPending();
+      await this.options.completionDelivery.persist(report);
+      await this.supervisor.release(input.runId);
     } catch (persistenceError) {
-      this.pendingPersistence = report;
-      this.options.logger.error(
-        { err: persistenceError, runId: report.runId },
-        "Preparation failure remains owned in memory until it can be made durable.",
-      );
+      this.completionFailure = persistenceError;
+      throw persistenceError;
     }
-  }
-
-  private async reportCompletion(report: TrafficCompletionReport): Promise<void> {
-    let completionPersisted = false;
-    try {
-      const execution = await this.options.executionStore.read();
-      if (execution?.request.runId !== report.runId) {
-        throw new Error("The durable execution journal no longer matches the completed child.");
-      }
-      await this.options.executionStore.update(withCompletion(execution, report));
-      completionPersisted = true;
-      await this.sendCompletionWithRetry(report);
-      const delivered = await this.options.executionStore.read();
-      if (delivered?.request.runId === report.runId) {
-        await this.options.executionStore.update({ ...delivered, state: "completed" });
-      }
-    } catch (error) {
-      if (!completionPersisted) this.pendingPersistence = report;
-      this.options.logger.error(
-        {
-          err: error,
-          runId: report.runId,
-          maxAttempts: this.resolveCompletionRetryConfig().maxAttempts,
-        },
-        "Could not report k6 traffic completion to API.",
-      );
-    }
-  }
-
-  private async deliverPending(): Promise<void> {
-    if (this.deliveryAttempt) return this.deliveryAttempt;
-    this.deliveryAttempt = this.attemptPendingDelivery().finally(() => {
-      this.deliveryAttempt = null;
-    });
-    return this.deliveryAttempt;
-  }
-
-  private async attemptPendingDelivery(): Promise<void> {
-    try {
-      if (this.pendingPersistence) {
-        const execution = await this.options.executionStore.read();
-        if (execution?.request.runId === this.pendingPersistence.runId) {
-          await this.options.executionStore.update(
-            withCompletion(execution, this.pendingPersistence),
-          );
-          this.pendingPersistence = null;
-        }
-      }
-      const execution = await this.options.executionStore.read();
-      if (execution?.state !== "completion_pending" || !execution.completion) return;
-      await this.options.apiClient.sendCompletion(execution.completion);
-      await this.options.executionStore.update({ ...execution, state: "completed" });
-    } catch (error) {
-      this.options.logger.warn(
-        { err: error },
-        "Pending traffic completion remains durably queued.",
-      );
-    }
-  }
-
-  private async sendCompletionWithRetry(report: TrafficCompletionReport): Promise<void> {
-    const retry = this.resolveCompletionRetryConfig();
-    let nextBackoffMs = retry.initialBackoffMs;
-    let lastError: unknown;
-    for (let attempt = 1; attempt <= retry.maxAttempts; attempt += 1) {
-      try {
-        await this.options.apiClient.sendCompletion(report);
-        return;
-      } catch (error) {
-        lastError = error;
-        if (attempt >= retry.maxAttempts) break;
-        this.options.logger.warn(
-          {
-            err: error,
-            runId: report.runId,
-            attempt,
-            maxAttempts: retry.maxAttempts,
-            retryInMs: nextBackoffMs,
-          },
-          "Could not report k6 traffic completion to API. Retrying.",
-        );
-        await retry.sleep(nextBackoffMs);
-        nextBackoffMs = Math.round(nextBackoffMs * retry.backoffMultiplier);
-      }
-    }
-    throw lastError ?? new Error("Traffic completion reporting failed.");
-  }
-
-  private resolveCompletionRetryConfig(): ResolvedCompletionRetryConfig {
-    const retry = this.options.completionRetry;
-    return {
-      maxAttempts: positiveIntegerOrDefault(retry?.maxAttempts, defaultCompletionRetryMaxAttempts),
-      initialBackoffMs: nonnegativeNumberOrDefault(
-        retry?.initialBackoffMs,
-        defaultCompletionRetryInitialBackoffMs,
-      ),
-      backoffMultiplier: positiveNumberOrDefault(
-        retry?.backoffMultiplier,
-        defaultCompletionRetryBackoffMultiplier,
-      ),
-      sleep: retry?.sleep ?? defaultSleep,
-    };
   }
 
   private now(): Date {
@@ -537,22 +433,4 @@ export class ExecutionSlotConflictError extends Error {
   constructor(readonly currentRunId: string) {
     super(`Traffic execution ${currentRunId} still owns the execution slot.`);
   }
-}
-
-function defaultSleep(delayMs: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, delayMs));
-}
-
-function positiveIntegerOrDefault(value: number | undefined, fallback: number): number {
-  return typeof value === "number" && Number.isFinite(value) && value >= 1
-    ? Math.trunc(value)
-    : fallback;
-}
-
-function nonnegativeNumberOrDefault(value: number | undefined, fallback: number): number {
-  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : fallback;
-}
-
-function positiveNumberOrDefault(value: number | undefined, fallback: number): number {
-  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback;
 }

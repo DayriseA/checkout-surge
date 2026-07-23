@@ -26,7 +26,9 @@ import {
   type LoadApiClient,
   MetricBatcher,
 } from "../src/application/api-client.js";
+import { CompletionDeliveryCoordinator } from "../src/application/completion-delivery-coordinator.js";
 import {
+  type CompletionPublishOutcome,
   type DurableExecution,
   ExecutionConflictError,
   type ExecutionStore,
@@ -103,6 +105,7 @@ const startRequest: TrafficExecutionStartRequest = {
 
 class InMemoryExecutionStore implements ExecutionStore {
   private execution: DurableExecution | null = null;
+  private mutationChain = Promise.resolve();
 
   async read(): Promise<DurableExecution | null> {
     return this.execution;
@@ -112,22 +115,64 @@ class InMemoryExecutionStore implements ExecutionStore {
     request: TrafficExecutionStartRequest,
     acceptedAt: Date,
   ): Promise<{ execution: DurableExecution; created: boolean }> {
-    if (this.execution && this.execution.state !== "completed") {
-      if (this.execution.request.runId === request.runId) {
-        return { execution: this.execution, created: false };
+    return this.mutate(async () => {
+      if (this.execution && this.execution.state !== "completed") {
+        if (this.execution.request.runId === request.runId) {
+          return { execution: this.execution, created: false };
+        }
+        throw new ExecutionConflictError(this.execution.request.runId);
       }
-      throw new ExecutionConflictError(this.execution.request.runId);
-    }
-    this.execution = {
-      request,
-      state: "accepted",
-      acceptedAt: acceptedAt.toISOString(),
-    };
-    return { execution: this.execution, created: true };
+      this.execution = {
+        request,
+        state: "accepted",
+        acceptedAt: acceptedAt.toISOString(),
+      };
+      return { execution: this.execution, created: true };
+    });
   }
 
   async update(execution: DurableExecution): Promise<void> {
-    this.execution = execution;
+    await this.mutate(async () => {
+      this.execution = execution;
+    });
+  }
+
+  async publishCompletion(report: TrafficCompletionReport): Promise<CompletionPublishOutcome> {
+    return this.mutate(async () => {
+      if (!this.execution || this.execution.request.runId !== report.runId) {
+        return "execution_mismatch";
+      }
+      if (this.execution.completion) {
+        return JSON.stringify(this.execution.completion) === JSON.stringify(report)
+          ? "already_published"
+          : "completion_conflict";
+      }
+      if (this.execution.state === "completed") return "completion_conflict";
+      this.execution = withCompletion(this.execution, report);
+      return "published";
+    });
+  }
+
+  async acknowledgeCompletion(report: TrafficCompletionReport): Promise<boolean> {
+    return this.mutate(async () => {
+      if (
+        this.execution?.state !== "completion_pending" ||
+        JSON.stringify(this.execution.completion) !== JSON.stringify(report)
+      ) {
+        return false;
+      }
+      this.execution = { ...this.execution, state: "completed" };
+      return true;
+    });
+  }
+
+  private mutate<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.mutationChain.then(operation);
+    this.mutationChain = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
   }
 }
 
@@ -135,10 +180,26 @@ type SpawnK6RunnerOptions = ConstructorParameters<typeof ProductionSpawnK6Runner
 
 class SpawnK6Runner extends ProductionSpawnK6Runner {
   constructor(
-    options: Omit<SpawnK6RunnerOptions, "executionStore"> &
-      Partial<Pick<SpawnK6RunnerOptions, "executionStore">>,
+    options: Omit<SpawnK6RunnerOptions, "completionDelivery" | "executionStore"> &
+      Partial<Pick<SpawnK6RunnerOptions, "completionDelivery" | "executionStore">> & {
+        completionDeliveryRetryIntervalMs?: number;
+      },
   ) {
-    super({ executionStore: new InMemoryExecutionStore(), ...options });
+    const {
+      completionDeliveryRetryIntervalMs,
+      executionStore = new InMemoryExecutionStore(),
+      completionDelivery = new CompletionDeliveryCoordinator({
+        executionStore,
+        apiClient: options.apiClient,
+        logger: options.logger,
+        ...(completionDeliveryRetryIntervalMs === undefined
+          ? {}
+          : { retryIntervalMs: completionDeliveryRetryIntervalMs }),
+      }),
+      ...runnerOptions
+    } = options;
+    void completionDelivery.start();
+    super({ ...runnerOptions, executionStore, completionDelivery });
   }
 }
 
@@ -192,6 +253,7 @@ describe("load-orchestrator configuration", () => {
     });
     expect(config.controlServiceToken).toBe("deployment-token");
     expect(config.k6CancellationTimeoutMs).toBe(10_000);
+    expect(config.completionDeliveryRetryIntervalMs).toBe(5_000);
   });
 
   it("accepts one positive end-to-end k6 cancellation timeout", () => {
@@ -226,9 +288,139 @@ describe("load-orchestrator configuration", () => {
       ).toThrow(/no greater than 15000/);
     }
   });
+
+  it("bounds the single completion delivery retry interval", () => {
+    expect(
+      loadLoadOrchestratorConfig({
+        NODE_ENV: "test",
+        CONTROL_SERVICE_TOKEN: "deployment-token",
+        COMPLETION_DELIVERY_RETRY_INTERVAL_MS: "250",
+      }).completionDeliveryRetryIntervalMs,
+    ).toBe(250);
+    for (const value of ["0", "60001"]) {
+      expect(() =>
+        loadLoadOrchestratorConfig({
+          NODE_ENV: "test",
+          CONTROL_SERVICE_TOKEN: "deployment-token",
+          COMPLETION_DELIVERY_RETRY_INTERVAL_MS: value,
+        }),
+      ).toThrow(/COMPLETION_DELIVERY_RETRY_INTERVAL_MS/);
+    }
+  });
 });
 
 describe("durable execution ownership", () => {
+  it("enforces completion presence by durable execution state", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "checkout-surge-state-journal-"));
+    const journalPath = path.join(directory, "execution.json");
+    const report = new K6RunAccumulator({
+      runId: startRequest.runId,
+      correlationId: startRequest.correlationId,
+      plannedRequests: 400,
+      startedAt: new Date(timestamp),
+      executionPlan: generateK6Script(startRequest).executionPlan,
+    }).completionReport({ status: "succeeded", completedAt: new Date(completionTimestamp) });
+    const store = new FileExecutionStore(directory);
+    try {
+      for (const state of ["accepted", "executing"] as const) {
+        await writeFile(
+          journalPath,
+          JSON.stringify({
+            request: startRequest,
+            state,
+            acceptedAt: timestamp,
+            completion: report,
+          }),
+        );
+        await expect(store.read()).rejects.toThrow(/execution\.json.*completion/);
+      }
+
+      await writeFile(
+        journalPath,
+        JSON.stringify({
+          request: startRequest,
+          state: "completion_pending",
+          acceptedAt: timestamp,
+        }),
+      );
+      await expect(store.read()).rejects.toThrow(/execution\.json.*completion/);
+
+      await writeFile(
+        journalPath,
+        JSON.stringify({
+          request: startRequest,
+          state: "completed",
+          acceptedAt: timestamp,
+        }),
+      );
+      const cancelled = await store.read();
+      expect(cancelled).toMatchObject({ state: "completed" });
+      expect(cancelled?.completion).toBeUndefined();
+
+      await writeFile(
+        journalPath,
+        JSON.stringify({
+          request: startRequest,
+          state: "completed",
+          acceptedAt: timestamp,
+          completion: report,
+        }),
+      );
+      await expect(store.read()).resolves.toMatchObject({
+        state: "completed",
+        completion: report,
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("atomically publishes one report and conditionally records its acknowledgement", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "checkout-surge-atomic-journal-"));
+    const store = new FileExecutionStore(directory);
+    const generated = generateK6Script(startRequest);
+    const first = new K6RunAccumulator({
+      runId: startRequest.runId,
+      correlationId: startRequest.correlationId,
+      plannedRequests: generated.plannedRequests,
+      startedAt: new Date(timestamp),
+      executionPlan: generated.executionPlan,
+    }).completionReport({ status: "succeeded", completedAt: new Date(completionTimestamp) });
+    const conflicting: TrafficCompletionReport = {
+      ...first,
+      status: "failed",
+      errorMessage: "conflicting completion",
+    };
+    try {
+      await store.accept(startRequest, new Date(timestamp));
+      await expect(
+        Promise.all([store.publishCompletion(first), store.publishCompletion(conflicting)]),
+      ).resolves.toEqual(["published", "completion_conflict"]);
+      expect(await store.read()).toMatchObject({
+        state: "completion_pending",
+        completion: first,
+      });
+
+      const successor: DurableExecution = {
+        request: {
+          ...startRequest,
+          runId: "66666666-6666-4666-8666-666666666666",
+        },
+        state: "accepted",
+        acceptedAt: completionTimestamp,
+      };
+      const [, acknowledged] = await Promise.all([
+        store.update(successor),
+        store.acknowledgeCompletion(first),
+      ]);
+
+      expect(acknowledged).toBe(false);
+      expect(await store.read()).toEqual(successor);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("rejects journals whose stored request relies on a wire default", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "checkout-surge-incomplete-journal-"));
     try {
@@ -1212,7 +1404,7 @@ describe("SpawnK6Runner completion reporting", () => {
           },
         });
       },
-      completionRetry: { maxAttempts: 2, initialBackoffMs: 0, sleep: async () => undefined },
+      completionDeliveryRetryIntervalMs: 1,
       apiClient: {
         sendMetrics: async () => undefined,
         sendCompletion: async (report) => {
@@ -1807,7 +1999,7 @@ describe("SpawnK6Runner completion reporting", () => {
 
     releaseSummary();
     await deliveryStarted;
-    expect(cleanupStarted).toBe(true);
+    await waitForCondition(() => cleanupStarted, "durable completion workdir cleanup");
     expect(await pathMissing(workDir)).toBe(true);
     expect(await store.read()).toMatchObject({
       state: "completion_pending",
@@ -1972,13 +2164,14 @@ describe("SpawnK6Runner completion reporting", () => {
     );
     const workDir = path.dirname(getSingleSpawnCall(fixture).scriptPath);
     fixture.child.emit("close", 0);
-    await waitForCondition(() => pathMissing(workDir), "natural-close supervisor cleanup");
     await expect(runner.abort(startRequest.runId)).resolves.toBe("natural_completion");
     expect(reports).toHaveLength(0);
+    expect(await pathMissing(workDir)).toBe(false);
 
     releaseExecuting();
     await expect(start).resolves.toMatchObject({ plannedRequests: 400 });
     await waitForCompletionReport(reports, 1);
+    await waitForCondition(() => pathMissing(workDir), "post-persistence supervisor cleanup");
     expect(reports).toHaveLength(1);
     expect(await store.read()).toMatchObject({
       state: "completed",
@@ -2000,6 +2193,10 @@ describe("SpawnK6Runner completion reporting", () => {
     });
     try {
       await expect(runner.start(startRequest)).rejects.toThrow("synchronous spawn failure");
+      await waitForCondition(
+        async () => (await store.read())?.state === "completed",
+        "preparation completion acknowledgement",
+      );
       expect(await store.read()).toMatchObject({
         state: "completed",
         completion: { status: "failed", errorMessage: "synchronous spawn failure" },
@@ -2040,7 +2237,7 @@ describe("SpawnK6Runner completion reporting", () => {
     const runner = new SpawnK6Runner({
       k6Binary: "k6",
       executionStore: store,
-      retryIntervalMs: 60_000,
+      completionDeliveryRetryIntervalMs: 60_000,
       logger: createSilentLogger("load-orchestrator"),
       apiClient: {
         sendMetrics: async () => undefined,
@@ -2051,6 +2248,10 @@ describe("SpawnK6Runner completion reporting", () => {
     });
     try {
       await runner.initialize();
+      await waitForCondition(
+        async () => (await store.read())?.state === "completed",
+        "startup recovery acknowledgement",
+      );
       expect(stateDuringDelivery).toBe("completion_pending");
       expect(await store.read()).toMatchObject({
         state: "completed",
@@ -2065,6 +2266,92 @@ describe("SpawnK6Runner completion reporting", () => {
     }
   });
 
+  it("shares repeated and concurrent startup reconciliation", async () => {
+    const store = new InMemoryExecutionStore();
+    await store.accept(startRequest, new Date(timestamp));
+    const sendCompletion = vi.fn(async () => undefined);
+    const logger = createSilentLogger("load-orchestrator");
+    const completionDelivery = new CompletionDeliveryCoordinator({
+      executionStore: store,
+      logger,
+      apiClient: { sendCompletion },
+    });
+    const now = vi.fn(() => new Date(completionTimestamp));
+    const runner = new ProductionSpawnK6Runner({
+      k6Binary: "k6",
+      executionStore: store,
+      completionDelivery,
+      logger,
+      now,
+      apiClient: { sendMetrics: async () => undefined, sendCompletion },
+    });
+
+    const first = runner.initialize();
+    const concurrent = runner.initialize();
+    expect(concurrent).toBe(first);
+    await Promise.all([first, concurrent]);
+    await runner.initialize();
+
+    expect(now).toHaveBeenCalledTimes(1);
+    expect(sendCompletion).toHaveBeenCalledTimes(1);
+    expect(await store.read()).toMatchObject({
+      state: "completed",
+      completion: {
+        errorMessage: "load_orchestrator_restarted_before_k6_completion",
+      },
+    });
+    await runner.close();
+  });
+
+  it("joins startup delivery before close without creating another attempt", async () => {
+    const store = new InMemoryExecutionStore();
+    await store.accept(startRequest, new Date(timestamp));
+    let releaseDelivery: () => void = () => undefined;
+    const deliveryGate = new Promise<void>((resolve) => {
+      releaseDelivery = resolve;
+    });
+    let markDeliveryStarted: () => void = () => undefined;
+    const deliveryStarted = new Promise<void>((resolve) => {
+      markDeliveryStarted = resolve;
+    });
+    const sendCompletion = vi.fn(async () => {
+      markDeliveryStarted();
+      await deliveryGate;
+    });
+    const logger = createSilentLogger("load-orchestrator");
+    const completionDelivery = new CompletionDeliveryCoordinator({
+      executionStore: store,
+      logger,
+      apiClient: { sendCompletion },
+      retryIntervalMs: 5,
+    });
+    const runner = new ProductionSpawnK6Runner({
+      k6Binary: "k6",
+      executionStore: store,
+      completionDelivery,
+      logger,
+      now: () => new Date(completionTimestamp),
+      apiClient: { sendMetrics: async () => undefined, sendCompletion },
+    });
+
+    const initialization = runner.initialize();
+    await deliveryStarted;
+    let closed = false;
+    const closing = runner.close().then(() => {
+      closed = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 2));
+    expect(closed).toBe(false);
+    expect(sendCompletion).toHaveBeenCalledTimes(1);
+
+    releaseDelivery();
+    await Promise.all([initialization, closing]);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(sendCompletion).toHaveBeenCalledTimes(1);
+    expect(await store.read()).toMatchObject({ state: "completed" });
+    await expect(runner.initialize()).rejects.toThrow("shutting down");
+  });
+
   it("retains pending recovery delivery after failure and completes on periodic retry", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "checkout-surge-retry-"));
     const store = new FileExecutionStore(directory);
@@ -2073,7 +2360,7 @@ describe("SpawnK6Runner completion reporting", () => {
     const runner = new SpawnK6Runner({
       k6Binary: "k6",
       executionStore: store,
-      retryIntervalMs: 5,
+      completionDeliveryRetryIntervalMs: 5,
       logger: createSilentLogger("load-orchestrator"),
       apiClient: {
         sendMetrics: async () => undefined,
@@ -2388,7 +2675,6 @@ describe("SpawnK6Runner completion reporting", () => {
       logger: createSilentLogger("load-orchestrator"),
       spawnProcess: k6Process.spawnProcess,
       executionStore: new FileExecutionStore(directory),
-      completionRetry: { maxAttempts: 1 },
     });
     try {
       await runner.start(startRequest);
@@ -2457,7 +2743,11 @@ describe("SpawnK6Runner completion reporting", () => {
     try {
       await expect(runner.start(startRequest)).rejects.toThrow("executing publication unavailable");
       expect(first.child.kill).toHaveBeenCalled();
-      expect(reports).toHaveLength(1);
+      await waitForCompletionReport(reports, 1);
+      await waitForCondition(
+        async () => (await store.read())?.state === "completed",
+        "publication-failure completion acknowledgement",
+      );
       expect(await store.read()).toMatchObject({ state: "completed" });
 
       await expect(runner.start(successor)).resolves.toMatchObject({ plannedRequests: 400 });
@@ -2509,15 +2799,15 @@ describe("SpawnK6Runner completion reporting", () => {
     }
   });
 
-  it("reconciles an orphan accepted state after preparation-failure storage recovers", async () => {
+  it("leaves failed preparation persistence visible for startup reconciliation", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "checkout-surge-prepare-replay-"));
     class FailingCompletionStore extends FileExecutionStore {
       failCompletionUpdates = true;
-      override async update(execution: Parameters<FileExecutionStore["update"]>[0]) {
-        if (execution.state === "completion_pending" && this.failCompletionUpdates) {
-          throw new Error("completion journal unavailable");
-        }
-        return super.update(execution);
+      override async publishCompletion(
+        report: Parameters<FileExecutionStore["publishCompletion"]>[0],
+      ) {
+        if (this.failCompletionUpdates) throw new Error("completion journal unavailable");
+        return super.publishCompletion(report);
       }
     }
     const store = new FailingCompletionStore(directory);
@@ -2538,20 +2828,42 @@ describe("SpawnK6Runner completion reporting", () => {
       },
     });
     try {
-      await expect(runner.start(startRequest)).rejects.toThrow("synchronous preparation failure");
+      await expect(runner.start(startRequest)).rejects.toThrow("completion journal unavailable");
       expect(await store.read()).toMatchObject({ state: "accepted" });
-      await expect(runner.start(startRequest)).rejects.toThrow("still being reconciled");
+      await expect(runner.start(startRequest)).rejects.toThrow("completion journal unavailable");
       expect(spawnProcess).toHaveBeenCalledTimes(1);
+      expect(reports).toHaveLength(0);
+      await expect(runner.close()).rejects.toThrow("completion journal unavailable");
 
       store.failCompletionUpdates = false;
-      await expect(runner.start(startRequest)).rejects.toThrow("still being reconciled");
+      const restarted = new SpawnK6Runner({
+        k6Binary: "k6",
+        executionStore: store,
+        logger: createSilentLogger("load-orchestrator"),
+        spawnProcess,
+        apiClient: {
+          sendMetrics: async () => undefined,
+          sendCompletion: async (report) => {
+            reports.push(report);
+          },
+        },
+      });
+      await restarted.initialize();
+      await waitForCompletionReport(reports, 1);
+      await waitForCondition(
+        async () => (await store.read())?.state === "completed",
+        "restart-produced preparation completion",
+      );
       expect(spawnProcess).toHaveBeenCalledTimes(1);
       expect(reports).toHaveLength(1);
       expect(await store.read()).toMatchObject({
         state: "completed",
-        completion: { status: "failed", errorMessage: "synchronous preparation failure" },
+        completion: {
+          status: "failed",
+          errorMessage: "load_orchestrator_restarted_before_k6_completion",
+        },
       });
-      await expect(runner.close()).resolves.toBeUndefined();
+      await expect(restarted.close()).resolves.toBeUndefined();
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
@@ -2665,34 +2977,37 @@ describe("SpawnK6Runner completion reporting", () => {
     expect(await pathMissing(workDir)).toBe(true);
   });
 
-  it("fails shutdown while completion exists only in memory and succeeds after store recovery", async () => {
+  it("keeps persistence failure visible without an in-memory fallback or workdir cleanup", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "checkout-surge-store-recovery-"));
     class FailingStore extends FileExecutionStore {
       failUpdates = false;
-      override async update(execution: Parameters<FileExecutionStore["update"]>[0]) {
+      override async publishCompletion(
+        report: Parameters<FileExecutionStore["publishCompletion"]>[0],
+      ) {
         if (this.failUpdates) throw new Error("store unavailable");
-        return super.update(execution);
+        return super.publishCompletion(report);
       }
     }
     const store = new FailingStore(directory);
     const k6Process = createK6ProcessFixture();
+    const sendCompletion = vi.fn(async () => undefined);
     const runner = new SpawnK6Runner({
       k6Binary: "k6",
       executionStore: store,
       logger: createSilentLogger("load-orchestrator"),
       spawnProcess: k6Process.spawnProcess,
-      completionRetry: { maxAttempts: 1 },
-      apiClient: { sendMetrics: async () => undefined, sendCompletion: async () => undefined },
+      apiClient: { sendMetrics: async () => undefined, sendCompletion },
     });
     try {
       await runner.start(startRequest);
+      const workDir = path.dirname(getSingleSpawnCall(k6Process).scriptPath);
       store.failUpdates = true;
       k6Process.child.emit("close", 0);
       await new Promise((resolve) => setTimeout(resolve, 5));
-      await expect(runner.close()).rejects.toThrow("could not be made durable");
-      store.failUpdates = false;
-      await expect(runner.close()).resolves.toBeUndefined();
-      expect(await store.read()).toMatchObject({ state: "completed" });
+      await expect(runner.close()).rejects.toThrow("store unavailable");
+      expect(await store.read()).toMatchObject({ state: "executing" });
+      expect(sendCompletion).not.toHaveBeenCalled();
+      expect(await pathMissing(workDir)).toBe(false);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
@@ -2701,7 +3016,6 @@ describe("SpawnK6Runner completion reporting", () => {
   it("retries completion delivery when the API fails once", async () => {
     const k6Process = createK6ProcessFixture();
     const reports: TrafficCompletionReport[] = [];
-    const retryDelays: number[] = [];
     let completionAccepted: () => void = () => undefined;
     const completionAcceptedPromise = new Promise<void>((resolve) => {
       completionAccepted = resolve;
@@ -2723,13 +3037,7 @@ describe("SpawnK6Runner completion reporting", () => {
       logger: createSilentLogger("load-orchestrator"),
       now: () => new Date(timestamp),
       spawnProcess: k6Process.spawnProcess,
-      completionRetry: {
-        maxAttempts: 2,
-        initialBackoffMs: 25,
-        sleep: async (delayMs) => {
-          retryDelays.push(delayMs);
-        },
-      },
+      completionDeliveryRetryIntervalMs: 5,
     });
 
     await runner.start(startRequest);
@@ -2745,7 +3053,6 @@ describe("SpawnK6Runner completion reporting", () => {
     await completionAcceptedPromise;
 
     expect(apiClient.sendCompletion).toHaveBeenCalledTimes(2);
-    expect(retryDelays).toEqual([25]);
     expect(reports).toHaveLength(2);
     expect(reports[1]).toBe(reports[0]);
     expect(reports[1]).toMatchObject({
@@ -2791,7 +3098,7 @@ describe("SpawnK6Runner completion reporting", () => {
         requestTimeoutMs: 5,
         fetch: fetchMock,
       }),
-      completionRetry: { maxAttempts: 2, initialBackoffMs: 0, sleep: async () => undefined },
+      completionDeliveryRetryIntervalMs: 1,
     });
 
     await runner.start(startRequest);
@@ -3329,6 +3636,7 @@ function createConfig(overrides: Partial<LoadOrchestratorConfig> = {}): LoadOrch
     buyEndpointPath: "/buy",
     k6Binary: "k6",
     k6CancellationTimeoutMs: 10_000,
+    completionDeliveryRetryIntervalMs: 5_000,
     controlServiceToken: "test-token",
     stateDirectory: "/tmp/checkout-surge-test-state",
     ...overrides,

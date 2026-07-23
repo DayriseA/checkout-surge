@@ -510,6 +510,7 @@ Most infrastructure URLs have local defaults, but every run/control service chan
 | `PUBLIC_CUSTOM_MAX_ERP_ERROR_RATE` | `0.25` | `runtime-setup` first-seed public custom ERP error-rate cap |
 | `K6_BINARY` | `k6` host-native; `/usr/local/bin/k6` in compose | Load orchestrator |
 | `K6_CANCELLATION_TIMEOUT_MS` | `10000` (maximum `15000`) | End-to-end load-orchestrator bound from accepted exact-run cancellation through observed k6 child exit/reap |
+| `COMPLETION_DELIVERY_RETRY_INTERVAL_MS` | `5000` (maximum `60000`) | Fixed bounded interval between serialized retries of the one durable `completion_pending` report; each HTTP attempt retains its five-second deadline |
 | `LOAD_ORCHESTRATOR_STATE_DIR` | `.checkout-surge/load-orchestrator` host-native; named-volume path in Compose | Durable single-slot traffic execution journal |
 | `BUY_ENDPOINT_PATH` | `/buy` | Load orchestrator |
 | `LOG_LEVEL` | `info` | Shared logger |
