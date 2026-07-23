@@ -1,4 +1,4 @@
-import type { DashboardProjection } from "@checkout-surge/contracts";
+import type { DashboardProjection, DashboardProjectionScope } from "@checkout-surge/contracts";
 import { OperationDeadlineExceededError, settleWithAbort } from "../runtime/operation-lifecycle.js";
 import type { DashboardRecoveryAdmissionController } from "./dashboard-recovery-admission.js";
 import type { DashboardProjectionService } from "./dashboard-recovery-service.js";
@@ -13,6 +13,7 @@ export interface DashboardRecoveryWorkflowController {
     sourceKey: string;
     correlationId: string;
     signal: AbortSignal;
+    knownScope?: DashboardProjectionScope;
   }): Promise<DashboardRecoveryWorkflowResult>;
 }
 
@@ -28,6 +29,7 @@ export class DashboardRecoveryWorkflow implements DashboardRecoveryWorkflowContr
     sourceKey: string;
     correlationId: string;
     signal: AbortSignal;
+    knownScope?: DashboardProjectionScope;
   }): Promise<DashboardRecoveryWorkflowResult> {
     try {
       const admission = await this.options.admission.admit(input.sourceKey, input.signal);
@@ -40,6 +42,7 @@ export class DashboardRecoveryWorkflow implements DashboardRecoveryWorkflowContr
           this.options.recovery.getRecovery({
             correlationId: input.correlationId,
             signal: input.signal,
+            ...(input.knownScope ? { knownScope: input.knownScope } : {}),
           }),
           input.signal,
         );

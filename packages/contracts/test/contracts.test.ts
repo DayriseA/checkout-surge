@@ -36,6 +36,7 @@ import {
   dashboardProjectionSchemaVersion,
   dashboardProjectionScopeId,
   dashboardRecoveryPath,
+  dashboardRecoveryQuerySchema,
   dashboardRecoveryResponseSchema,
   demoRunOperatorModeHeaderName,
   demoRunSnapshotSchema,
@@ -1956,6 +1957,23 @@ describe("buy and dashboard contracts", () => {
         recentCompletionOutcomes: recovery.recentCompletionOutcomes.map((outcome) =>
           omit(outcome, "runId"),
         ),
+      }).success,
+    ).toBe(false);
+  });
+
+  it("requires a complete optional known scope for dashboard recovery", () => {
+    const knownScope = {
+      knownRunId: "11111111-1111-4111-8111-111111111111",
+      knownSaleOfferId: "22222222-2222-4222-8222-222222222222",
+    };
+    expect(dashboardRecoveryQuerySchema.parse({})).toEqual({});
+    expect(dashboardRecoveryQuerySchema.parse(knownScope)).toEqual(knownScope);
+    expect(
+      dashboardRecoveryQuerySchema.safeParse({ knownRunId: knownScope.knownRunId }).success,
+    ).toBe(false);
+    expect(
+      dashboardRecoveryQuerySchema.safeParse({
+        knownSaleOfferId: knownScope.knownSaleOfferId,
       }).success,
     ).toBe(false);
   });

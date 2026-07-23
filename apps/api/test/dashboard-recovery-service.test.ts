@@ -262,6 +262,92 @@ describe("PostgresDashboardRecoveryContextReader", () => {
     ]);
   });
 
+  it("prefers the current nonterminal run over a requested known terminal fallback", async () => {
+    const knownRunId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const knownTerminal = databaseRun({
+      id: knownRunId,
+      status: "completed",
+      trafficStatus: "succeeded",
+      trafficEndedAt: now,
+      finalizedAt: now,
+    });
+    const current = databaseRun();
+    const database = controlledDatabase([knownTerminal, current]);
+
+    const context = await new PostgresDashboardRecoveryContextReader(database.db).readContext(
+      undefined,
+      { runId: knownRunId, saleOfferId },
+    );
+
+    expect(context.currentRun?.runId).toBe(runId);
+    expect(database.select).toHaveBeenCalledOnce();
+  });
+
+  it("prefers a current run when a known hint reuses its run ID with the wrong sale offer", async () => {
+    const current = databaseRun();
+    const database = controlledDatabase([current]);
+
+    const context = await new PostgresDashboardRecoveryContextReader(database.db).readContext(
+      undefined,
+      {
+        runId,
+        saleOfferId: "99999999-9999-4999-8999-999999999999",
+      },
+    );
+
+    expect(context.currentRun?.runId).toBe(runId);
+    expect(context.saleOfferId).toBe(saleOfferId);
+    expect(database.select).toHaveBeenCalledOnce();
+  });
+
+  it("falls back to only the explicitly known terminal run without promoting other history", async () => {
+    const knownRunId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const knownTerminal = databaseRun({
+      id: knownRunId,
+      status: "failed",
+      trafficStatus: "failed",
+      trafficEndedAt: now,
+      finalizedAt: now,
+      failureReason: "terminal test",
+    });
+    const database = controlledDatabase([knownTerminal]);
+
+    const context = await new PostgresDashboardRecoveryContextReader(database.db).readContext(
+      undefined,
+      { runId: knownRunId, saleOfferId },
+    );
+
+    expect(context.currentRun).toMatchObject({ runId: knownRunId, status: "failed" });
+    expect(context.saleOfferId).toBe(saleOfferId);
+    const dialect = new PgDialect();
+    const selectionQuery = dialect.sqlToQuery(database.where.mock.calls[0]?.[0] as SQL);
+    expect(selectionQuery.sql).toContain('"demo_runs"."id" =');
+    expect(selectionQuery.sql).toContain('"demo_runs"."sale_offer_id" =');
+    expect(selectionQuery.params).toContain(knownRunId);
+    expect(selectionQuery.params).toContain(saleOfferId);
+    expect(database.select).toHaveBeenCalledOnce();
+  });
+
+  it("treats a mismatched known terminal run and sale-offer pair as an idle advisory hint", async () => {
+    const knownRunId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const mismatchedTerminal = databaseRun({
+      id: knownRunId,
+      status: "completed",
+      trafficStatus: "succeeded",
+      trafficEndedAt: now,
+      finalizedAt: now,
+    });
+    const database = controlledDatabase([mismatchedTerminal]);
+
+    await expect(
+      new PostgresDashboardRecoveryContextReader(database.db).readContext(undefined, {
+        runId: knownRunId,
+        saleOfferId: "99999999-9999-4999-8999-999999999999",
+      }),
+    ).resolves.toEqual({ currentRun: null, saleOfferId: null });
+    expect(database.select).toHaveBeenCalledOnce();
+  });
+
   it.each([
     ["startedAt", { startedAt: null }],
     ["saleOfferId", { saleOfferId: null }],
@@ -367,6 +453,30 @@ describe("DashboardProjectionService", () => {
       finalizedAt: now.toISOString(),
     });
     expect(projection.scopeId).toBe(dashboardProjectionScopeId({ runId, saleOfferId }));
+  });
+
+  it("passes a known recovery scope as a fallback rather than an exact live selection", async () => {
+    const readContext = vi.fn(async () => ({
+      currentRun: runSnapshot({
+        status: "completed",
+        trafficStatus: "succeeded",
+        trafficEndedAt: now.toISOString(),
+        finalizedAt: now.toISOString(),
+      }),
+      saleOfferId,
+    }));
+    const harness = serviceHarness({ currentRun: null, saleOfferId: null }, undefined, {
+      contextReader: readContext,
+    });
+    const knownScope = { runId, saleOfferId };
+
+    const projection = await harness.service.getRecovery({
+      correlationId: "corr-known-terminal",
+      knownScope,
+    });
+
+    expect(readContext).toHaveBeenCalledWith(undefined, knownScope);
+    expect(projection.currentRun?.status).toBe("completed");
   });
 
   it("rejects context failure, closes resources, and does not allocate a revision", async () => {
@@ -542,15 +652,59 @@ describe("DashboardProjectionService", () => {
     await expect(recovery).rejects.toThrow("client disconnected");
     expect(close).toHaveBeenCalledOnce();
   });
+
+  it("settles an aborted caller while keeping later assembly behind actual cleanup", async () => {
+    const controller = new AbortController();
+    let releaseCleanup!: () => void;
+    const cleanupGate = new Promise<void>((resolve) => {
+      releaseCleanup = resolve;
+    });
+    let operationCount = 0;
+    const service = new DashboardProjectionService({
+      openOperation: async () => {
+        operationCount += 1;
+        return {
+          dependencies: projectionDependencies({
+            readContext:
+              operationCount === 1
+                ? async () => await new Promise<never>(() => undefined)
+                : async () => ({ currentRun: null, saleOfferId: null }),
+          }),
+          close: operationCount === 1 ? async () => await cleanupGate : vi.fn(),
+        };
+      },
+      logger: { warn: vi.fn() } as never,
+      now: () => now,
+    });
+    const first = service.getRecovery({
+      correlationId: "corr-abandoned-cleanup",
+      signal: controller.signal,
+    });
+    await vi.waitFor(() => expect(operationCount).toBe(1));
+
+    controller.abort(new Error("publication deadline"));
+    await expect(first).rejects.toThrow("publication deadline");
+
+    const second = service.getRecovery({ correlationId: "corr-after-abort" });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(operationCount).toBe(1);
+
+    releaseCleanup();
+    await expect(second).resolves.toMatchObject({
+      correlationId: "corr-after-abort",
+      scope: null,
+    });
+    expect(operationCount).toBe(2);
+  });
 });
 
 function controlledDatabase(rows: unknown[]) {
   const limit = vi.fn(async () => rows);
   const orderBy = vi.fn((..._expressions: SQL[]) => ({ limit }));
-  const where = vi.fn(() => ({ orderBy }));
+  const where = vi.fn((_expression: SQL) => ({ orderBy }));
   const from = vi.fn(() => ({ where }));
   const select = vi.fn(() => ({ from }));
-  return { db: { select } as unknown as CheckoutSurgeDatabase, select, orderBy };
+  return { db: { select } as unknown as CheckoutSurgeDatabase, select, where, orderBy };
 }
 
 function databaseRun(overrides: Partial<Record<string, unknown>> = {}) {
@@ -571,6 +725,26 @@ function databaseRun(overrides: Partial<Record<string, unknown>> = {}) {
     createdAt: now,
     updatedAt: now,
     ...overrides,
+  };
+}
+
+function projectionDependencies(options: {
+  readContext: () => Promise<{
+    currentRun: DemoRunSnapshot | null;
+    saleOfferId: string | null;
+  }>;
+}) {
+  return {
+    contextReader: { readContext: options.readContext },
+    businessOutcomeReader: { read: async () => businessOutcomeFixture() },
+    consistencyLagReader: { read: async () => consistencyLagFixture() },
+    completionOutcomeReader: { read: async () => [] },
+    inventoryStatusService: { getStatus: async () => inventoryStatusFixture() },
+    queueStatusService: { getStatus: async () => queueStatusFixture() },
+    erpStatusService: { getStatus: async () => erpStatusFixture() },
+    trafficMetricReader: { readRecent: async () => [] },
+    transportAttemptCountsReader: { read: async () => null },
+    revisionAllocator: { allocate: async () => 1 },
   };
 }
 

@@ -7,7 +7,11 @@ import {
   adminPresetSavePath,
   adminPublicRuntimePolicyPath,
   controlServiceTokenHeaderName,
+  dashboardProjectionSchemaName,
+  dashboardProjectionSchemaVersion,
+  dashboardProjectionScopeId,
   demoRunOperatorModeHeaderName,
+  errorPayloadSchema,
   publicVisitorIdHeaderName,
   runHistoryPath,
   startDemoRunPath,
@@ -155,6 +159,52 @@ describe("dashboard control proxy routes", () => {
     expect(payload.currentRun).toBeNull();
     expect(forwardedCredentials[1]).toBe(forwardedCredentials[0]);
     expect(forwardedCredentials[2]).not.toBe(forwardedCredentials[0]);
+  });
+
+  it("forwards only a validated complete known recovery scope", async () => {
+    process.env.API_BASE_URL = "http://api.internal";
+    process.env.PUBLIC_CLIENT_COOKIE_SECRET = "public-cookie-secret";
+    const knownRunId = "11111111-1111-4111-8111-111111111111";
+    const knownSaleOfferId = "22222222-2222-4222-8222-222222222222";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request) => {
+        expect(String(input)).toBe(
+          `http://api.internal/dashboard/recovery?knownRunId=${knownRunId}&knownSaleOfferId=${knownSaleOfferId}`,
+        );
+        return jsonResponse(dashboardRecoveryPayload("corr-known-scope"));
+      }),
+    );
+
+    const response = await getDashboardRecovery(
+      new Request(
+        `http://dashboard.local/api/dashboard/recovery?knownRunId=${knownRunId}&knownSaleOfferId=${knownSaleOfferId}`,
+      ),
+    );
+
+    expect(response.status).toBe(200);
+  });
+
+  it.each([
+    ["partial", "?knownRunId=11111111-1111-4111-8111-111111111111"],
+    ["malformed", "?knownRunId=not-a-uuid&knownSaleOfferId=22222222-2222-4222-8222-222222222222"],
+    ["unknown", "?unexpected=value"],
+  ])("rejects %s dashboard recovery query input without calling upstream", async (_case, query) => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await getDashboardRecovery(
+      new Request(`http://dashboard.local/api/dashboard/recovery${query}`, {
+        headers: { [correlationIdHeaderName]: "corr-invalid-recovery-query" },
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(errorPayloadSchema.parse(await response.json())).toMatchObject({
+      code: "invalid_request",
+      correlationId: "corr-invalid-recovery-query",
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("proxies public demo run starts through the API lifecycle", async () => {
@@ -892,7 +942,11 @@ function erpChaosStatusPayload() {
 
 function dashboardRecoveryPayload(correlationId = "corr-recovery") {
   return {
+    schema: dashboardProjectionSchemaName,
+    version: dashboardProjectionSchemaVersion,
     correlationId,
+    scopeId: dashboardProjectionScopeId(null),
+    revision: 1,
     scope: null,
     currentRun: null,
     inventory: null,

@@ -486,12 +486,12 @@ Most infrastructure URLs have local defaults, but every run/control service chan
 | `PUBLIC_RUN_BUDGET_WINDOW_SECONDS` | `300` | `runtime-setup` first-seed public run-budget window |
 | `PUBLIC_RUN_BUDGET_PER_VISITOR_MAX_STARTS` | `2` | `runtime-setup` first-seed public run-budget per-visitor cap |
 | `DASHBOARD_MAX_SSE_CLIENTS` / `DASHBOARD_MAX_SSE_CLIENTS_PER_SOURCE` | `80` / `6` | Realtime connection caps for the single supported API process |
-| `DASHBOARD_SSE_MAX_BUFFERED_FRAMES` / `DASHBOARD_SSE_MAX_BUFFERED_BYTES` | `32` / `262144` | Positive per-client limits for complete SSE frames queued after socket backpressure; crossing either limit disconnects only that client so native EventSource reconnect can recover |
+| `DASHBOARD_SSE_MAX_BUFFERED_FRAMES` / `DASHBOARD_SSE_MAX_BUFFERED_BYTES` | `32` / `262144` | Positive per-client limits for complete SSE frames queued after socket backpressure; projection frames replace an older pending frame for the same scope and are additionally fixed at eight pending scopes per client, while crossing any frame/scope/byte bound disconnects only that client so recovery can read the latest projection |
 | `DASHBOARD_SSE_RETRY_AFTER_SECONDS` | `10` | Retry guidance for rejected realtime connections |
 | `DASHBOARD_RECOVERY_MAX_CONCURRENT` | `3` | Per-process recovery builds. Each admitted build owns a short-lived PostgreSQL pool capped at one connection, separately from `API_POSTGRES_POOL_MAX`. |
 | `DASHBOARD_RECOVERY_GLOBAL_MAX_REQUESTS` / `DASHBOARD_RECOVERY_PER_SOURCE_MAX_REQUESTS` | `60` / `12` per 60 seconds | Process-local global/per-source recovery budgets; admitted source entries are bounded by the global cap |
 | `DASHBOARD_RECOVERY_WINDOW_SECONDS` / `DASHBOARD_RECOVERY_RETRY_AFTER_SECONDS` | `60` / `10` | Fixed-window duration and rejection retry guidance |
-| `DASHBOARD_RECOVERY_TIMEOUT_MS` | `5000` | End-to-end recovery deadline, including local admission and every PostgreSQL, Redis, and BullMQ projection read |
+| `DASHBOARD_RECOVERY_TIMEOUT_MS` | `5000` | End-to-end HTTP recovery and per-attempt live projection build/publication deadline, including local admission and PostgreSQL, Redis, and BullMQ projection reads |
 | `RUNTIME_RECOVERY_SOAK_SECONDS` | `2 * DASHBOARD_RECOVERY_WINDOW_SECONDS + 5` | Opt-in idle recovery soak duration; any explicit value must be strictly greater than two recovery budget windows |
 | `RUNTIME_RECOVERY_SOAK_PROBE_INTERVAL_MS` | `5000` | Interval for the opt-in direct-web and proxy-to-web health soak |
 | `API_TRUSTED_PROXY_CIDRS` | loopback and Compose Caddy `172.30.0.2/32` | Exact Caddy proxy boundary used for Fastify client-IP derivation; replace with the deployed proxy address |

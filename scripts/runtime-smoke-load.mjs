@@ -7,6 +7,7 @@ import {
   adminGeneratedRunTeardownResponseSchema,
   dashboardEventSchema,
   dashboardEventsRedisChannel,
+  dashboardProjectionSchema,
   dashboardRecoveryResponseSchema,
   runHistoryListResponseSchema,
   startDemoRunResponseSchema,
@@ -17,6 +18,8 @@ const dashboardBaselineFlag = "--dashboard-delivery-baseline";
 const dashboardInstrumentationTimeoutMs = 10_000;
 const dashboardProjectionSampleLimit = 6;
 const dashboardProjectionSampleIntervalMs = 500;
+const dashboardProjectionMaxLatencyMs = 1_000;
+const dashboardProjectionImmediateFrameBudget = 8;
 
 export async function runRuntimeLoadSmoke(options = {}) {
   const env = options.env ?? process.env;
@@ -156,14 +159,31 @@ export async function runDashboardDeliveryBaseline(options = {}) {
         contractValidMessages: snapshot.contractValidMessages,
         runAttributableMessages: snapshot.runMessageCounts[runId] ?? 0,
         dashboardUpdates: snapshot.contractValidMessages,
+        contractValidProjectionMessages: snapshot.contractValidProjectionMessages,
+        runAttributableProjectionMessages: snapshot.runProjectionMessageCounts[runId] ?? 0,
       },
     };
+    const projectionCadenceUpperBound =
+      Math.ceil(result.durationMs / dashboardProjectionMaxLatencyMs) * result.activeScopeCount +
+      dashboardProjectionImmediateFrameBudget;
     if (
       result.activeScopeCount !== 1 ||
       result.rawRedisProducerEvents === 0 ||
-      result.sseClient.runAttributableMessages === 0
+      result.sseClient.runAttributableMessages === 0 ||
+      result.sseClient.runAttributableProjectionMessages === 0 ||
+      result.sseClient.contractValidProjectionMessages > projectionCadenceUpperBound ||
+      result.sseClient.contractValidProjectionMessages >= result.rawRedisProducerEvents
     ) {
-      throw new Error("Dashboard baseline received no attributable delivery evidence.");
+      throw new Error(
+        `Dashboard baseline projection delivery did not scale with cadence and scope: ${JSON.stringify(
+          {
+            projectionCadenceUpperBound,
+            rawRedisProducerEvents: result.rawRedisProducerEvents,
+            contractValidProjectionMessages: result.sseClient.contractValidProjectionMessages,
+            runAttributableProjectionMessages: result.sseClient.runAttributableProjectionMessages,
+          },
+        )}`,
+      );
     }
     console.log(`Dashboard delivery baseline ${JSON.stringify(result)}`);
   } catch (error) {
@@ -441,6 +461,25 @@ export function parseSseDataFrames(text) {
   return events;
 }
 
+export function parseDashboardProjectionSseDataFrames(text) {
+  const projections = [];
+  for (const frame of text.replaceAll("\r\n", "\n").split("\n\n")) {
+    const data = frame
+      .split("\n")
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5).trimStart())
+      .join("\n");
+    if (!data) continue;
+    try {
+      const parsed = dashboardProjectionSchema.safeParse(JSON.parse(data));
+      if (parsed.success) projections.push(parsed.data);
+    } catch {
+      // Incomplete/invalid frames are not projection evidence.
+    }
+  }
+  return projections;
+}
+
 export async function collectDashboardEvents(url, fetchImpl, signal, measurement) {
   const response = await fetchImpl(url, { headers: { accept: "text/event-stream" }, signal });
   if (!response.ok || !response.body)
@@ -534,9 +573,16 @@ export function createDashboardDeliveryMeasurement(options = {}) {
       stats.deliveredFrames += extracted.frameCount;
       stats.deliveredDataMessages += extracted.dataMessageCount;
       stats.contractValidMessages += extracted.events.length;
+      stats.contractValidProjectionMessages += extracted.projections.length;
       for (const event of extracted.events) {
         if (event.runId) {
           stats.runMessageCounts[event.runId] = (stats.runMessageCounts[event.runId] ?? 0) + 1;
+        }
+      }
+      for (const projection of extracted.projections) {
+        if (projection.scope?.runId) {
+          stats.runProjectionMessageCounts[projection.scope.runId] =
+            (stats.runProjectionMessageCounts[projection.scope.runId] ?? 0) + 1;
         }
       }
     },
@@ -554,7 +600,9 @@ export function createDashboardDeliveryMeasurement(options = {}) {
         deliveredFrames: stats.deliveredFrames,
         deliveredDataMessages: stats.deliveredDataMessages,
         contractValidMessages: stats.contractValidMessages,
+        contractValidProjectionMessages: stats.contractValidProjectionMessages,
         runMessageCounts: { ...stats.runMessageCounts },
+        runProjectionMessageCounts: { ...stats.runProjectionMessageCounts },
       };
     },
   };
@@ -567,7 +615,9 @@ function emptyDashboardDeliveryStats() {
     deliveredFrames: 0,
     deliveredDataMessages: 0,
     contractValidMessages: 0,
+    contractValidProjectionMessages: 0,
     runMessageCounts: {},
+    runProjectionMessageCounts: {},
   };
 }
 
@@ -576,12 +626,19 @@ export function extractCompleteSseFrames(buffer) {
   const separator = /\r?\n\r?\n/g;
   for (const match of buffer.matchAll(separator)) end = (match.index ?? 0) + match[0].length;
   if (end === 0) {
-    return { events: [], remainder: buffer, frameCount: 0, dataMessageCount: 0 };
+    return {
+      events: [],
+      projections: [],
+      remainder: buffer,
+      frameCount: 0,
+      dataMessageCount: 0,
+    };
   }
   const complete = buffer.slice(0, end).replaceAll("\r\n", "\n");
   const frames = complete.split("\n\n").filter((frame) => frame.length > 0);
   return {
     events: parseSseDataFrames(complete),
+    projections: parseDashboardProjectionSseDataFrames(complete),
     remainder: buffer.slice(end),
     frameCount: frames.length,
     dataMessageCount: frames.filter((frame) =>

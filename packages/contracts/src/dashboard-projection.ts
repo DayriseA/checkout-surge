@@ -45,6 +45,22 @@ const dashboardRunScopeSchema = z
   .strict();
 export type DashboardProjectionScope = z.infer<typeof dashboardRunScopeSchema>;
 
+export const dashboardRecoveryQuerySchema = z
+  .object({
+    knownRunId: uuidSchema.optional(),
+    knownSaleOfferId: uuidSchema.optional(),
+  })
+  .strict()
+  .superRefine((query, context) => {
+    if ((query.knownRunId === undefined) !== (query.knownSaleOfferId === undefined)) {
+      context.addIssue({
+        code: "custom",
+        message: "Known dashboard recovery scope requires both run and sale-offer IDs.",
+      });
+    }
+  });
+export type DashboardRecoveryQuery = z.infer<typeof dashboardRecoveryQuerySchema>;
+
 export const dashboardProjectionSchema = z
   .object({
     schema: z.literal(dashboardProjectionSchemaName),

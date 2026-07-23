@@ -1,6 +1,7 @@
 import {
   dashboardEventsPath,
   dashboardRecoveryPath,
+  dashboardRecoveryQuerySchema,
   dashboardRecoveryResponseSchema,
   publicVisitorIdHeaderName,
 } from "@checkout-surge/contracts";
@@ -25,6 +26,11 @@ export function registerDashboardRoutes(
   options: RegisterDashboardRoutesOptions,
 ): void {
   app.get(dashboardRecoveryPath, async (request, reply) => {
+    const query = dashboardRecoveryQuerySchema.parse(request.query);
+    const knownScope =
+      query.knownRunId && query.knownSaleOfferId
+        ? { runId: query.knownRunId, saleOfferId: query.knownSaleOfferId }
+        : undefined;
     const rawCredential = request.headers[publicVisitorIdHeaderName];
     const visitorCredential = Array.isArray(rawCredential) ? rawCredential[0] : rawCredential;
     const sourceKey = options.sourceResolver.resolveRecovery({
@@ -41,6 +47,7 @@ export function registerDashboardRoutes(
         sourceKey,
         correlationId: request.correlationId,
         signal: lifecycle.signal,
+        ...(knownScope ? { knownScope } : {}),
       });
       if (result.outcome === "recovered") {
         const response = dashboardRecoveryResponseSchema.parse(result.response);

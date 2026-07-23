@@ -1,7 +1,12 @@
 import { Buffer } from "node:buffer";
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { type DashboardEvent, dashboardEventSchema } from "@checkout-surge/contracts";
+import {
+  type DashboardEvent,
+  type DashboardProjection,
+  dashboardEventSchema,
+  dashboardProjectionSchema,
+} from "@checkout-surge/contracts";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { correlationIdHeaderName } from "@checkout-surge/logger";
 
@@ -9,6 +14,7 @@ export const defaultDashboardSseHeartbeatMs = 15_000;
 export const defaultDashboardSseRetryMs = 3_000;
 export const defaultDashboardSseMaxBufferedFrames = 32;
 export const defaultDashboardSseMaxBufferedBytes = 256 * 1024;
+export const defaultDashboardSseMaxBufferedProjectionScopes = 8;
 
 export interface DashboardEventFanoutOptions {
   logger: CheckoutSurgeLogger;
@@ -19,6 +25,7 @@ export interface DashboardEventFanoutOptions {
   maxClientsPerSource?: number;
   maxBufferedFrames?: number;
   maxBufferedBytes?: number;
+  maxBufferedProjectionScopes?: number;
 }
 
 export interface DashboardSseConnectionInput {
@@ -39,9 +46,13 @@ interface DashboardSseClient {
   drain: () => void;
   sourceKey: string;
   backpressured: boolean;
-  bufferedFrames: string[];
+  bufferedFrames: BufferedDashboardFrame[];
   bufferedBytes: number;
 }
+
+type BufferedDashboardFrame =
+  | { frame: string; bytes: number; kind: "fifo" }
+  | { frame: string; bytes: number; kind: "projection"; scopeId: string };
 
 export class DashboardEventFanout {
   private readonly clients = new Map<string, DashboardSseClient>();
@@ -55,6 +66,7 @@ export class DashboardEventFanout {
   private readonly maxClientsPerSource: number;
   private readonly maxBufferedFrames: number;
   private readonly maxBufferedBytes: number;
+  private readonly maxBufferedProjectionScopes: number;
 
   constructor(options: DashboardEventFanoutOptions) {
     this.logger = options.logger;
@@ -70,6 +82,10 @@ export class DashboardEventFanout {
     this.maxBufferedBytes = requirePositiveSafeInteger(
       options.maxBufferedBytes ?? defaultDashboardSseMaxBufferedBytes,
       "maxBufferedBytes",
+    );
+    this.maxBufferedProjectionScopes = requirePositiveSafeInteger(
+      options.maxBufferedProjectionScopes ?? defaultDashboardSseMaxBufferedProjectionScopes,
+      "maxBufferedProjectionScopes",
     );
   }
 
@@ -150,6 +166,15 @@ export class DashboardEventFanout {
     }
   }
 
+  publishProjection(projection: DashboardProjection): void {
+    const parsed = dashboardProjectionSchema.parse(projection);
+    const payload = formatDashboardProjectionFrame(parsed);
+
+    for (const client of [...this.clients.values()]) {
+      this.sendFrame(client, payload, "projection_write_failed", parsed.scopeId);
+    }
+  }
+
   close(): void {
     for (const client of [...this.clients.values()]) {
       this.closeClient(client, "server_shutdown");
@@ -185,13 +210,18 @@ export class DashboardEventFanout {
     this.heartbeatTimer = null;
   }
 
-  private sendFrame(client: DashboardSseClient, frame: string, failureReason: string): void {
+  private sendFrame(
+    client: DashboardSseClient,
+    frame: string,
+    failureReason: string,
+    projectionScopeId?: string,
+  ): void {
     if (this.clients.get(client.id) !== client) {
       return;
     }
 
     if (client.backpressured) {
-      this.enqueueFrame(client, frame);
+      this.enqueueFrame(client, frame, projectionScopeId);
       return;
     }
 
@@ -209,17 +239,59 @@ export class DashboardEventFanout {
     }
   }
 
-  private enqueueFrame(client: DashboardSseClient, frame: string): void {
+  private enqueueFrame(
+    client: DashboardSseClient,
+    frame: string,
+    projectionScopeId?: string,
+  ): void {
     const frameBytes = Buffer.byteLength(frame, "utf8");
+    if (projectionScopeId !== undefined) {
+      const replaceableIndex = client.bufferedFrames.findIndex(
+        (pending) => pending.kind === "projection" && pending.scopeId === projectionScopeId,
+      );
+      if (replaceableIndex >= 0) {
+        const replaced = client.bufferedFrames[replaceableIndex];
+        if (!replaced) return;
+        const nextBufferedBytes = client.bufferedBytes - replaced.bytes + frameBytes;
+        if (nextBufferedBytes > this.maxBufferedBytes) {
+          this.closeClient(client, "buffer_overflow");
+          return;
+        }
+        client.bufferedFrames[replaceableIndex] = {
+          kind: "projection",
+          scopeId: projectionScopeId,
+          frame,
+          bytes: frameBytes,
+        };
+        client.bufferedBytes = nextBufferedBytes;
+        return;
+      }
+    }
+
+    const pendingProjectionScopeCount = client.bufferedFrames.reduce(
+      (count, pending) => count + (pending.kind === "projection" ? 1 : 0),
+      0,
+    );
     if (
       client.bufferedFrames.length >= this.maxBufferedFrames ||
+      (projectionScopeId !== undefined &&
+        pendingProjectionScopeCount >= this.maxBufferedProjectionScopes) ||
       frameBytes > this.maxBufferedBytes - client.bufferedBytes
     ) {
       this.closeClient(client, "buffer_overflow");
       return;
     }
 
-    client.bufferedFrames.push(frame);
+    client.bufferedFrames.push(
+      projectionScopeId === undefined
+        ? { kind: "fifo", frame, bytes: frameBytes }
+        : {
+            kind: "projection",
+            scopeId: projectionScopeId,
+            frame,
+            bytes: frameBytes,
+          },
+    );
     client.bufferedBytes += frameBytes;
   }
 
@@ -230,12 +302,17 @@ export class DashboardEventFanout {
 
     client.backpressured = false;
     while (client.bufferedFrames.length > 0) {
-      const frame = client.bufferedFrames.shift();
-      if (frame === undefined) {
+      const pending = client.bufferedFrames.shift();
+      if (pending === undefined) {
         return;
       }
-      client.bufferedBytes -= Buffer.byteLength(frame, "utf8");
-      this.sendFrame(client, frame, "drain_write_failed");
+      client.bufferedBytes -= pending.bytes;
+      this.sendFrame(
+        client,
+        pending.frame,
+        "drain_write_failed",
+        pending.kind === "projection" ? pending.scopeId : undefined,
+      );
       if (client.backpressured || this.clients.get(client.id) !== client) {
         return;
       }
@@ -271,6 +348,10 @@ export class DashboardEventFanout {
 
 export function formatDashboardEventFrame(event: DashboardEvent): string {
   return `data: ${JSON.stringify(dashboardEventSchema.parse(event))}\n\n`;
+}
+
+export function formatDashboardProjectionFrame(projection: DashboardProjection): string {
+  return `data: ${JSON.stringify(dashboardProjectionSchema.parse(projection))}\n\n`;
 }
 
 function requirePositiveSafeInteger(value: number, name: string): number {

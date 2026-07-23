@@ -1,12 +1,18 @@
 import { EventEmitter } from "node:events";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { DashboardEvent } from "@checkout-surge/contracts";
+import {
+  type DashboardEvent,
+  type DashboardProjection,
+  demoRunSnapshotSchema,
+} from "@checkout-surge/contracts";
 import { correlationIdHeaderName, createSilentLogger } from "@checkout-surge/logger";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   DashboardEventFanout,
   formatDashboardEventFrame,
+  formatDashboardProjectionFrame,
 } from "../src/realtime/dashboard-event-fanout.js";
+import { acceptedRunConfigSnapshotFixture } from "./demo-administration-test-fixtures.js";
 
 const dashboardEvent: DashboardEvent = {
   type: "dashboard.metric.observed",
@@ -195,6 +201,51 @@ describe("dashboard event fan-out", () => {
     fanout.close();
   });
 
+  it("keeps only the newest pending replaceable projection for a slow client scope", () => {
+    const fanout = createFanout({
+      maxBufferedFrames: 1,
+      maxBufferedProjectionScopes: 1,
+    });
+    const input = connectionInput("slow", "ip4:192.0.2.1");
+    const response = input.response as unknown as FakeResponse;
+    fanout.connect(input);
+    response.writeResult = false;
+
+    fanout.publishProjection(projection(1));
+    fanout.publishProjection(projection(2));
+    fanout.publishProjection(projection(3));
+
+    expect(fanout.clientCount()).toBe(1);
+    expect(projectionRevisions(response.chunks)).toEqual([1]);
+    response.writeResult = true;
+    response.emit("drain");
+    expect(projectionRevisions(response.chunks)).toEqual([1, 3]);
+    fanout.close();
+  });
+
+  it("disconnects only the slow client when pending projection scopes exceed capacity", () => {
+    const fanout = createFanout({
+      maxBufferedFrames: 10,
+      maxBufferedProjectionScopes: 1,
+    });
+    const input = connectionInput("slow", "ip4:192.0.2.1");
+    const response = input.response as unknown as FakeResponse;
+    fanout.connect(input);
+    response.writeResult = false;
+
+    fanout.publishProjection(projection(1));
+    fanout.publishProjection(projection(2));
+    fanout.publishProjection(
+      scopedProjection(
+        "55555555-5555-4555-8555-555555555555",
+        "66666666-6666-4666-8666-666666666666",
+      ),
+    );
+
+    expect(fanout.clientCount()).toBe(0);
+    expect(response.writableEnded).toBe(true);
+  });
+
   it.each([
     "request",
     "response",
@@ -325,6 +376,15 @@ describe("dashboard event fan-out", () => {
   ])("rejects invalid or zero queue bounds (%s)", (value) => {
     expect(() => createFanout({ maxBufferedFrames: value })).toThrow(/maxBufferedFrames/);
     expect(() => createFanout({ maxBufferedBytes: value })).toThrow(/maxBufferedBytes/);
+    expect(() => createFanout({ maxBufferedProjectionScopes: value })).toThrow(
+      /maxBufferedProjectionScopes/,
+    );
+  });
+
+  it("formats projection frames through the exact public schema", () => {
+    const frame = formatDashboardProjectionFrame(projection(7));
+    expect(frame.endsWith("\n\n")).toBe(true);
+    expect(JSON.parse(frame.slice("data: ".length))).toEqual(projection(7));
   });
 });
 
@@ -355,4 +415,60 @@ function eventValue(chunk: string): number | undefined {
 
 function eventValues(chunks: string[]): number[] {
   return chunks.map(eventValue).filter((value): value is number => value !== undefined);
+}
+
+function projectionRevisions(chunks: string[]): number[] {
+  return chunks.flatMap((chunk) => {
+    if (!chunk.startsWith("data: ")) return [];
+    const payload = JSON.parse(chunk.slice("data: ".length)) as {
+      schema?: string;
+      revision?: number;
+    };
+    return payload.schema === "checkout-surge.dashboard-projection" &&
+      payload.revision !== undefined
+      ? [payload.revision]
+      : [];
+  });
+}
+
+function projection(revision: number): DashboardProjection {
+  return {
+    schema: "checkout-surge.dashboard-projection",
+    version: 1,
+    correlationId: `projection-${revision}`,
+    scopeId: "idle",
+    revision,
+    scope: null,
+    recoveredAt: "2026-07-23T12:00:00.000Z",
+    currentRun: null,
+    inventory: null,
+    recentMetrics: [],
+    queue: null,
+    erp: null,
+    businessOutcome: null,
+    consistencyLag: null,
+    recentCompletionOutcomes: [],
+    transportAttemptCounts: null,
+  };
+}
+
+function scopedProjection(runId: string, saleOfferId: string): DashboardProjection {
+  const currentRun = demoRunSnapshotSchema.parse({
+    runId,
+    presetId: "77777777-7777-4777-8777-777777777777",
+    presetName: "Preview 1k",
+    operatorMode: "public",
+    status: "active",
+    trafficStatus: "active",
+    saleOfferId,
+    configSnapshot: acceptedRunConfigSnapshotFixture(),
+    startedAt: "2026-07-23T11:59:00.000Z",
+    trafficStartedAt: "2026-07-23T11:59:01.000Z",
+  });
+  return {
+    ...projection(1),
+    scopeId: `run/${runId}/sale-offer/${saleOfferId}`,
+    scope: { runId, saleOfferId },
+    currentRun,
+  };
 }

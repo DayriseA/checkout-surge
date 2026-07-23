@@ -24,7 +24,7 @@ import {
   readRecentCompletionOutcomes,
 } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
-import { desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, or } from "drizzle-orm";
 import { runWithResourceCleanup } from "../runtime/api-resource-cleanup.js";
 import { abortReason, settleWithAbort } from "../runtime/operation-lifecycle.js";
 import type { DashboardTrafficMetricReader } from "./dashboard-traffic-metric-store.js";
@@ -40,7 +40,10 @@ export interface DashboardRecoveryContext {
 }
 
 export interface DashboardRecoveryContextReader {
-  readContext(scope?: DashboardProjectionScope): Promise<DashboardRecoveryContext>;
+  readContext(
+    scope?: DashboardProjectionScope,
+    knownScope?: DashboardProjectionScope,
+  ): Promise<DashboardRecoveryContext>;
 }
 
 export interface DashboardBusinessOutcomeReader {
@@ -90,17 +93,37 @@ export class PostgresDashboardTransportAttemptCountsReader
 export class PostgresDashboardRecoveryContextReader implements DashboardRecoveryContextReader {
   constructor(private readonly db: CheckoutSurgeDatabase) {}
 
-  async readContext(scope?: DashboardProjectionScope): Promise<DashboardRecoveryContext> {
-    const [currentRunRow] = await this.db
+  async readContext(
+    scope?: DashboardProjectionScope,
+    knownScope?: DashboardProjectionScope,
+  ): Promise<DashboardRecoveryContext> {
+    if (scope && knownScope) {
+      throw new Error("Dashboard context cannot select an exact and fallback scope together.");
+    }
+    const rows = await this.db
       .select()
       .from(demoRuns)
       .where(
         scope
           ? eq(demoRuns.id, scope.runId)
-          : inArray(demoRuns.status, ["starting", "active", "draining"]),
+          : knownScope
+            ? or(
+                inArray(demoRuns.status, ["starting", "active", "draining"]),
+                and(
+                  eq(demoRuns.id, knownScope.runId),
+                  eq(demoRuns.saleOfferId, knownScope.saleOfferId),
+                ),
+              )
+            : inArray(demoRuns.status, ["starting", "active", "draining"]),
       )
       .orderBy(desc(demoRuns.startedAt), desc(demoRuns.createdAt), desc(demoRuns.id))
-      .limit(1);
+      .limit(knownScope ? 2 : 1);
+    const currentRunRow = knownScope
+      ? (rows.find((row) => ["starting", "active", "draining"].includes(row.status)) ??
+        rows.find(
+          (row) => row.id === knownScope.runId && row.saleOfferId === knownScope.saleOfferId,
+        ))
+      : rows[0];
 
     if (currentRunRow) {
       if (!currentRunRow.startedAt) {
@@ -186,7 +209,13 @@ export class DashboardProjectionService {
     correlationId: string;
     signal?: AbortSignal;
     scope?: DashboardProjectionScope;
+    knownScope?: DashboardProjectionScope;
   }): Promise<DashboardProjection> {
+    if (input.scope && input.knownScope) {
+      return Promise.reject(
+        new Error("Dashboard projection cannot select an exact and fallback scope together."),
+      );
+    }
     const signal = input.signal ?? new AbortController().signal;
     const queuedBuild = this.buildTail.then(async () => {
       if (signal.aborted) throw abortReason(signal);
@@ -194,22 +223,30 @@ export class DashboardProjectionService {
 
       return await runWithResourceCleanup(
         () =>
-          this.assembleProjection(input.correlationId, signal, operation.dependencies, input.scope),
+          this.assembleProjection(
+            input.correlationId,
+            signal,
+            operation.dependencies,
+            input.scope,
+            input.knownScope,
+          ),
         () => operation.close(),
         "Dashboard projection operation and cleanup failed.",
       );
     });
+    const settledBuild = settleWithAbort(queuedBuild, signal);
     this.buildTail = queuedBuild.then(
       () => undefined,
       () => undefined,
     );
-    return settleWithAbort(queuedBuild, signal);
+    return settledBuild;
   }
 
   /** Current recovery adapter; Task 38 live publication calls `build` directly. */
   getRecovery(input: {
     correlationId: string;
     signal?: AbortSignal;
+    knownScope?: DashboardProjectionScope;
   }): Promise<DashboardProjection> {
     return this.build(input);
   }
@@ -219,10 +256,11 @@ export class DashboardProjectionService {
     signal: AbortSignal,
     dependencies: DashboardRecoveryDependencies,
     requestedScope?: DashboardProjectionScope,
+    knownScope?: DashboardProjectionScope,
   ): Promise<DashboardProjection> {
     const now = this.options.now?.() ?? new Date();
     const context = await settleWithAbort(
-      dependencies.contextReader.readContext(requestedScope),
+      dependencies.contextReader.readContext(requestedScope, knownScope),
       signal,
     );
     if ((context.currentRun === null) !== (context.saleOfferId === null)) {

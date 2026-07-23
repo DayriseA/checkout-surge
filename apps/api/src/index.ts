@@ -27,7 +27,7 @@ import { createBullMqOrderProcessJobPublisher } from "./queue/bullmq-order-proce
 import { createBullMqOrderProcessQueueInspector } from "./queue/bullmq-order-process-queue-inspector.js";
 import { PostgresRunRetryPolicyResolver } from "./queue/postgres-run-retry-policy-resolver.js";
 import { DashboardEventFanout } from "./realtime/dashboard-event-fanout.js";
-import { invalidDashboardEventMetadata } from "./realtime/invalid-dashboard-event-metadata.js";
+import { createDashboardEventSubscriberHandlers } from "./realtime/dashboard-event-subscriber-handlers.js";
 import { closeApiResources } from "./runtime/api-resource-cleanup.js";
 import { loadApiConfig } from "./runtime/config.js";
 import { createDashboardRecoveryOperationFactory } from "./runtime/dashboard-recovery-operation-factory.js";
@@ -37,6 +37,7 @@ import { createApiReadiness } from "./runtime/readiness.js";
 import { createTerminalInventoryReadOperation } from "./runtime/terminal-inventory-read-operation.js";
 import { buildApiServer } from "./server.js";
 import { AdminDemoResetService } from "./services/admin-demo-reset-service.js";
+import { DashboardProjectionPublicationScheduler } from "./services/dashboard-projection-publication-scheduler.js";
 import { DashboardRecoveryAdmissionService } from "./services/dashboard-recovery-admission.js";
 import {
   DashboardProjectionService,
@@ -91,6 +92,7 @@ export { createBullMqOrderProcessQueueInspector } from "./queue/bullmq-order-pro
 export { DashboardEventFanout } from "./realtime/dashboard-event-fanout.js";
 export { type ApiConfig, loadApiConfig } from "./runtime/config.js";
 export { buildApiServer } from "./server.js";
+export { DashboardProjectionPublicationScheduler } from "./services/dashboard-projection-publication-scheduler.js";
 export {
   DashboardProjectionService,
   PostgresDashboardBusinessOutcomeReader,
@@ -175,23 +177,6 @@ export async function startApiServer(): Promise<void> {
     windowSeconds: config.dashboardRecoveryWindowSeconds,
     logger,
   });
-  const dashboardEventSubscriber = createRedisDashboardEventSubscriber(
-    dashboardEventSubscriberRedis,
-    {
-      onEvent: (event) => {
-        dashboardEventFanout.publish(event);
-      },
-      onHandlerError: (error) => {
-        logger.error({ err: error }, "Dashboard event fan-out failed.");
-      },
-      onInvalidMessage: (error, message) => {
-        logger.warn(
-          invalidDashboardEventMetadata(message, error),
-          "Ignored invalid dashboard realtime event from Redis Pub/Sub.",
-        );
-      },
-    },
-  );
   const queueStatusService = new QueueStatusService(orderProcessQueueInspector, logger);
   const erpStatusService = new ErpStatusService({
     circuitBreakerStateReader: new RedisErpCircuitBreakerStateReader(redis),
@@ -320,6 +305,20 @@ export async function startApiServer(): Promise<void> {
     }),
     logger,
   });
+  const dashboardProjectionPublications = new DashboardProjectionPublicationScheduler({
+    projectionService: dashboardProjectionService,
+    publish: (projection) => dashboardEventFanout.publishProjection(projection),
+    logger,
+    buildTimeoutMs: config.dashboardRecoveryTimeoutMs,
+  });
+  const dashboardEventSubscriber = createRedisDashboardEventSubscriber(
+    dashboardEventSubscriberRedis,
+    createDashboardEventSubscriberHandlers({
+      fanout: dashboardEventFanout,
+      projectionPublications: dashboardProjectionPublications,
+      logger,
+    }),
+  );
   const businessOutcomeReader = new PostgresDashboardBusinessOutcomeReader(connection.db);
   const trafficCompletionEnrichmentService = new TrafficCompletionEnrichmentService({
     db: connection.db,
@@ -449,7 +448,12 @@ export async function startApiServer(): Promise<void> {
           dashboardEventFanout.close();
           await server?.close();
         },
-        closeDashboardPublicationScheduler: () => dashboardSnapshotPublications.close(),
+        closeDashboardPublicationScheduler: async () => {
+          await Promise.all([
+            dashboardSnapshotPublications.close(),
+            dashboardProjectionPublications.close(),
+          ]);
+        },
         closeBusinessOutcomePublicationScheduler: () => businessOutcomePublications.close(),
         closeDashboardEventSubscriber: async () => {
           try {

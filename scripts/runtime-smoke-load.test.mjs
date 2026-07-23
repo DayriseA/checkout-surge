@@ -7,6 +7,7 @@ import {
   collectDashboardEvents,
   createDashboardDeliveryMeasurement,
   extractCompleteSseFrames,
+  parseDashboardProjectionSseDataFrames,
   parseSseDataFrames,
   prepareExactRunCleanup,
   requireReadiness,
@@ -121,11 +122,82 @@ function dashboardEvent(overrides = {}) {
   };
 }
 
+function dashboardProjection(overrides = {}) {
+  return {
+    schema: "checkout-surge.dashboard-projection",
+    version: 1,
+    correlationId,
+    scopeId: `run/${runId}/sale-offer/${saleOfferId}`,
+    revision: 1,
+    scope: { runId, saleOfferId },
+    recoveredAt: "2026-07-13T00:00:00.000Z",
+    currentRun: {
+      runId,
+      presetId: "77777777-7777-4777-8777-777777777777",
+      presetName: "Preview 1k",
+      operatorMode: "public",
+      status: "active",
+      trafficStatus: "active",
+      saleOfferId,
+      configSnapshot: {
+        trafficConfig: {
+          mode: "buyer-spike",
+          buyerCount: 1_000,
+          duplicateEachBuyerAttempt: false,
+          startDelaySeconds: 0,
+          maxDurationSeconds: 2,
+          quantityPerAttempt: 1,
+        },
+        inventoryConfig: {
+          startingStock: 250,
+          quantityPerCheckout: 1,
+          reservationHoldMinutes: 15,
+        },
+        erpConfig: {
+          latencyMs: 80,
+          maxTps: 250,
+          errorRate: 0,
+          forcedOutage: false,
+          requestTimeoutMs: 2_000,
+        },
+        backpressureConfig: {
+          queueName: "orders:process",
+          physicalQueueName: "orders-process",
+          orderProcessConcurrency: 5,
+          retryPolicy: { maxAttempts: 4, initialBackoffMs: 500 },
+          pendingPersistenceRetryAfterSeconds: 30,
+          circuitBreakerFailureThreshold: 5,
+          circuitBreakerResetTimeoutMs: 10_000,
+          drainTimeoutSeconds: 300,
+        },
+      },
+      startedAt: "2026-07-13T00:00:00.000Z",
+      trafficStartedAt: "2026-07-13T00:00:00.000Z",
+    },
+    inventory: null,
+    recentMetrics: [],
+    queue: null,
+    erp: null,
+    businessOutcome: null,
+    consistencyLag: null,
+    recentCompletionOutcomes: [],
+    transportAttemptCounts: null,
+    ...overrides,
+  };
+}
+
 test("parses complete data frames and ignores invalid or partial SSE", () => {
   const event = dashboardEvent();
   assert.deepEqual(parseSseDataFrames(`data: ${JSON.stringify(event)}\n\ndata: {"partial":`), [
     event,
   ]);
+  const projection = dashboardProjection();
+  assert.deepEqual(
+    parseDashboardProjectionSseDataFrames(
+      `data: ${JSON.stringify(projection)}\n\ndata: {"partial":`,
+    ),
+    [projection],
+  );
 });
 
 test("collects CRLF SSE frames split across chunks and requires the event-stream content type", async () => {
@@ -161,7 +233,9 @@ test("collects CRLF SSE frames split across chunks and requires the event-stream
 test("counts completed SSE frames, data messages, and reducer updates at the delivery boundary", async () => {
   const valid = `data: ${JSON.stringify(dashboardEvent())}\r\n\r\n`;
   const payload = new TextEncoder().encode(
-    `retry: 3000\n: connected\n\n: heartbeat\n\n${valid}data: {"type":"bad"}\n\n`,
+    `retry: 3000\n: connected\n\n: heartbeat\n\n${valid}data: ${JSON.stringify(
+      dashboardProjection(),
+    )}\n\ndata: {"type":"bad"}\n\n`,
   );
   const response = new Response(
     new ReadableStream({
@@ -178,7 +252,9 @@ test("counts completed SSE frames, data messages, and reducer updates at the del
     deliveredFrames: 0,
     deliveredDataMessages: 0,
     contractValidMessages: 0,
+    contractValidProjectionMessages: 0,
     runMessageCounts: {},
+    runProjectionMessageCounts: {},
   };
   await collectDashboardEvents(
     "http://dashboard/events",
@@ -190,9 +266,16 @@ test("counts completed SSE frames, data messages, and reducer updates at the del
         stats.deliveredFrames += extracted.frameCount;
         stats.deliveredDataMessages += extracted.dataMessageCount;
         stats.contractValidMessages += extracted.events.length;
+        stats.contractValidProjectionMessages += extracted.projections.length;
         for (const event of extracted.events) {
           if (event.runId) {
             stats.runMessageCounts[event.runId] = (stats.runMessageCounts[event.runId] ?? 0) + 1;
+          }
+        }
+        for (const projection of extracted.projections) {
+          if (projection.scope?.runId) {
+            stats.runProjectionMessageCounts[projection.scope.runId] =
+              (stats.runProjectionMessageCounts[projection.scope.runId] ?? 0) + 1;
           }
         }
       },
@@ -200,10 +283,12 @@ test("counts completed SSE frames, data messages, and reducer updates at the del
   );
 
   assert.deepEqual(stats, {
-    deliveredFrames: 4,
-    deliveredDataMessages: 2,
+    deliveredFrames: 5,
+    deliveredDataMessages: 3,
     contractValidMessages: 1,
+    contractValidProjectionMessages: 1,
     runMessageCounts: { [runId]: 1 },
+    runProjectionMessageCounts: { [runId]: 1 },
   });
 });
 
@@ -241,7 +326,9 @@ test("uses one resettable fixed window for Redis and SSE delivery counts", async
     deliveredFrames: 2,
     deliveredDataMessages: 1,
     contractValidMessages: 1,
+    contractValidProjectionMessages: 0,
     runMessageCounts: { [runId]: 1 },
+    runProjectionMessageCounts: {},
   });
   assert.deepEqual(sleeps, [29_840]);
 });
@@ -285,7 +372,9 @@ test("excludes the SSE establishment frame before the common measurement gate op
     deliveredFrames: 1,
     deliveredDataMessages: 1,
     contractValidMessages: 1,
+    contractValidProjectionMessages: 0,
     runMessageCounts: { [runId]: 1 },
+    runProjectionMessageCounts: {},
   });
 });
 

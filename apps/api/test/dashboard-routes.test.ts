@@ -8,6 +8,7 @@ import { correlationIdHeaderName, createSilentLogger } from "@checkout-surge/log
 import { installFastifyCorrelation } from "@checkout-surge/logger/fastify";
 import { fastify } from "fastify";
 import { describe, expect, it, vi } from "vitest";
+import { ZodError } from "zod";
 import type { DashboardSseAdmission } from "../src/realtime/dashboard-event-fanout.js";
 import { registerDashboardRoutes } from "../src/routes/dashboard-routes.js";
 import type { ApiFastifyInstance } from "../src/runtime/fastify.js";
@@ -95,6 +96,42 @@ describe("dashboard route admission", () => {
     await server.close();
   });
 
+  it("passes a complete known scope through one recovery workflow call", async () => {
+    const getRecovery = vi.fn().mockResolvedValue(recoveryFixture());
+    const server = buildServer({ getRecovery });
+    const knownRunId = "11111111-1111-4111-8111-111111111111";
+    const knownSaleOfferId = "22222222-2222-4222-8222-222222222222";
+
+    const response = await server.inject({
+      method: "GET",
+      url: `/dashboard/recovery?knownRunId=${knownRunId}&knownSaleOfferId=${knownSaleOfferId}`,
+      headers: correlationHeader,
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(getRecovery).toHaveBeenCalledWith({
+      correlationId: "route-correlation",
+      signal: expect.any(AbortSignal),
+      knownScope: { runId: knownRunId, saleOfferId: knownSaleOfferId },
+    });
+    await server.close();
+  });
+
+  it("rejects an incomplete known recovery scope before workflow admission", async () => {
+    const getRecovery = vi.fn();
+    const server = buildServer({ getRecovery });
+
+    const response = await server.inject({
+      method: "GET",
+      url: "/dashboard/recovery?knownRunId=11111111-1111-4111-8111-111111111111",
+      headers: correlationHeader,
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(getRecovery).not.toHaveBeenCalled();
+    await server.close();
+  });
+
   it("returns the stable contract-valid timeout error", async () => {
     const server = buildServer({ workflowOutcome: { outcome: "timed_out" } });
 
@@ -125,10 +162,10 @@ function buildServer(options: {
 }) {
   const app = fastify({ loggerInstance: createSilentLogger("api") }) as ApiFastifyInstance;
   installFastifyCorrelation(app);
-  app.setErrorHandler((_error, request, reply) =>
-    reply.status(500).send(
+  app.setErrorHandler((error, request, reply) =>
+    reply.status(error instanceof ZodError ? 400 : 500).send(
       errorPayloadSchema.parse({
-        code: "internal_error",
+        code: error instanceof ZodError ? "invalid_request" : "internal_error",
         message: "Dashboard route test failure.",
         correlationId: request.correlationId,
         timestamp: new Date().toISOString(),
