@@ -1,7 +1,13 @@
-import type { TrafficExecutionStartRequest } from "@checkout-surge/contracts";
+import {
+  controlServiceTokenHeaderName,
+  type TrafficExecutionStartRequest,
+  trafficExecutionStartPath,
+  trafficExecutionStatusPath,
+} from "@checkout-surge/contracts";
+import { correlationIdHeaderName } from "@checkout-surge/logger";
 import { describe, expect, it, vi } from "vitest";
 import { ApiHttpError } from "../src/runtime/errors.js";
-import { HttpTrafficExecutionGateway } from "../src/services/demo-run-service.js";
+import { HttpTrafficExecutionGateway } from "../src/services/traffic-execution-gateway.js";
 
 const request: TrafficExecutionStartRequest = {
   runId: "55555555-5555-4555-8555-555555555555",
@@ -39,6 +45,208 @@ const request: TrafficExecutionStartRequest = {
   },
 };
 
+function successfulStartResponse(
+  overrides: Partial<{
+    runId: string;
+    status: "starting" | "active";
+    startedAt: string;
+    correlationId: string;
+  }> = {},
+): Response {
+  return Response.json(
+    {
+      runId: request.runId,
+      status: "active",
+      startedAt: "2026-06-20T00:00:11.000Z",
+      correlationId: request.correlationId,
+      ...overrides,
+    },
+    { status: 202 },
+  );
+}
+
+function unknownStatusResponse(): Response {
+  return Response.json({
+    runId: request.runId,
+    state: "unknown",
+    observedAt: "2026-06-20T00:00:09.000Z",
+    correlationId: request.correlationId,
+  });
+}
+
+function acceptedStatusResponse(): Response {
+  return Response.json({
+    runId: request.runId,
+    state: "accepted",
+    acceptedAt: "2026-06-20T00:00:01.000Z",
+    observedAt: "2026-06-20T00:00:09.000Z",
+    correlationId: request.correlationId,
+  });
+}
+
+describe("HttpTrafficExecutionGateway start", () => {
+  it("sends the validated request with service authentication and canonical correlation", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(successfulStartResponse());
+    const gateway = new HttpTrafficExecutionGateway({
+      loadOrchestratorBaseUrl: "http://load.test/",
+      controlServiceToken: "control-token",
+      fetch: fetchMock,
+    });
+
+    await expect(gateway.start(request)).resolves.toMatchObject({
+      runId: request.runId,
+      correlationId: request.correlationId,
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      `http://load.test${trafficExecutionStartPath}`,
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({
+          [correlationIdHeaderName]: request.correlationId,
+          [controlServiceTokenHeaderName]: "control-token",
+          "content-type": "application/json",
+        }),
+        body: JSON.stringify(request),
+      }),
+    );
+  });
+
+  it.each([
+    ["run ID", { runId: "66666666-6666-4666-8666-666666666666" }],
+    ["correlation ID", { correlationId: "different-correlation" }],
+  ])("rejects a start confirmation bound to a different %s", async (_field, overrides) => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(successfulStartResponse(overrides))
+      .mockResolvedValueOnce(unknownStatusResponse());
+    const gateway = new HttpTrafficExecutionGateway({
+      loadOrchestratorBaseUrl: "http://load.test",
+      controlServiceToken: "control-token",
+      fetch: fetchMock,
+    });
+
+    await expect(gateway.start(request)).rejects.toMatchObject({
+      code: "load_orchestrator_start_ambiguous",
+    });
+  });
+
+  it("recovers a malformed successful start response only through exact durable status", async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json({}))
+      .mockResolvedValueOnce(unknownStatusResponse());
+    const gateway = new HttpTrafficExecutionGateway({
+      loadOrchestratorBaseUrl: "http://load.test",
+      controlServiceToken: "control-token",
+      fetch: fetchMock,
+    });
+
+    await expect(gateway.start(request)).rejects.toMatchObject({
+      code: "load_orchestrator_start_ambiguous",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("recovers a server-side start failure from exact durable accepted status", async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json({ code: "internal_error" }, { status: 500 }))
+      .mockResolvedValueOnce(acceptedStatusResponse());
+    const gateway = new HttpTrafficExecutionGateway({
+      loadOrchestratorBaseUrl: "http://load.test",
+      controlServiceToken: "control-token",
+      fetch: fetchMock,
+    });
+
+    await expect(gateway.start(request)).resolves.toMatchObject({
+      runId: request.runId,
+      status: "starting",
+      correlationId: request.correlationId,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps an unconfirmed server-side start failure ambiguous", async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json({ code: "internal_error" }, { status: 503 }))
+      .mockResolvedValueOnce(unknownStatusResponse());
+    const gateway = new HttpTrafficExecutionGateway({
+      loadOrchestratorBaseUrl: "http://load.test",
+      controlServiceToken: "control-token",
+      fetch: fetchMock,
+    });
+
+    await expect(gateway.start(request)).rejects.toMatchObject({
+      code: "load_orchestrator_start_ambiguous",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps a definitive client-side start rejection unavailable", async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        Response.json({ code: "traffic_execution_conflict" }, { status: 409 }),
+      );
+    const gateway = new HttpTrafficExecutionGateway({
+      loadOrchestratorBaseUrl: "http://load.test",
+      controlServiceToken: "control-token",
+      fetch: fetchMock,
+    });
+
+    await expect(gateway.start(request)).rejects.toMatchObject({
+      code: "load_orchestrator_unavailable",
+      details: { statusCode: 409 },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("bounds successful start response parsing before status recovery", async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(
+          new ReadableStream({
+            start() {
+              // Headers arrive, but the successful response body intentionally never closes.
+            },
+          }),
+          { status: 202 },
+        ),
+      )
+      .mockResolvedValueOnce(unknownStatusResponse());
+    const gateway = new HttpTrafficExecutionGateway({
+      loadOrchestratorBaseUrl: "http://load.test",
+      controlServiceToken: "control-token",
+      requestTimeoutMs: 2,
+      fetch: fetchMock,
+    });
+
+    await expect(gateway.start(request)).rejects.toMatchObject({
+      code: "load_orchestrator_start_ambiguous",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    0,
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+  ])("rejects invalid start timeout %s", async (requestTimeoutMs) => {
+    const fetchMock = vi.fn<typeof fetch>();
+    const gateway = new HttpTrafficExecutionGateway({
+      loadOrchestratorBaseUrl: "http://load.test",
+      controlServiceToken: "control-token",
+      requestTimeoutMs,
+      fetch: fetchMock,
+    });
+
+    await expect(gateway.start(request)).rejects.toThrow(/finite positive number/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
 describe("HttpTrafficExecutionGateway ambiguity recovery", () => {
   it("recovers a timed-out start from durable accepted status and preserves acceptedAt", async () => {
     const fetchMock = vi
@@ -73,6 +281,16 @@ describe("HttpTrafficExecutionGateway ambiguity recovery", () => {
       status: "starting",
       startedAt: "2026-06-20T00:00:01.000Z",
     });
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      `http://load.test${trafficExecutionStatusPath.replace(":runId", request.runId)}`,
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          [correlationIdHeaderName]: request.correlationId,
+          [controlServiceTokenHeaderName]: "token",
+        }),
+      }),
+    );
   });
 
   it("keeps a reachable unknown status ambiguous", async () => {
@@ -100,7 +318,7 @@ describe("HttpTrafficExecutionGateway ambiguity recovery", () => {
     });
   });
 
-  it("bounds the status lookup and rejects malformed recovery safely", async () => {
+  it("rejects malformed recovery safely", async () => {
     const fetchMock = vi
       .fn<typeof fetch>()
       .mockRejectedValueOnce(new Error("network"))
@@ -112,6 +330,59 @@ describe("HttpTrafficExecutionGateway ambiguity recovery", () => {
       fetch: fetchMock,
     });
     await expect(gateway.start(request)).rejects.toBeInstanceOf(ApiHttpError);
+  });
+
+  it.each([
+    ["run ID", { runId: "66666666-6666-4666-8666-666666666666" }],
+    ["correlation ID", { correlationId: "different-correlation" }],
+  ])("rejects durable status bound to a different %s", async (_field, overrides) => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockRejectedValueOnce(new Error("network"))
+      .mockResolvedValueOnce(
+        Response.json({
+          runId: request.runId,
+          state: "accepted",
+          acceptedAt: "2026-06-20T00:00:01.000Z",
+          observedAt: "2026-06-20T00:00:09.000Z",
+          correlationId: request.correlationId,
+          ...overrides,
+        }),
+      );
+    const gateway = new HttpTrafficExecutionGateway({
+      loadOrchestratorBaseUrl: "http://load.test",
+      controlServiceToken: "token",
+      fetch: fetchMock,
+    });
+
+    await expect(gateway.start(request)).rejects.toMatchObject({
+      code: "load_orchestrator_start_ambiguous",
+    });
+  });
+
+  it("bounds durable status response parsing", async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockRejectedValueOnce(new Error("network"))
+      .mockResolvedValueOnce(
+        new Response(
+          new ReadableStream({
+            start() {
+              // Headers arrive, but the status body intentionally never closes.
+            },
+          }),
+        ),
+      );
+    const gateway = new HttpTrafficExecutionGateway({
+      loadOrchestratorBaseUrl: "http://load.test",
+      controlServiceToken: "token",
+      requestTimeoutMs: 2,
+      fetch: fetchMock,
+    });
+
+    await expect(gateway.start(request)).rejects.toMatchObject({
+      code: "load_orchestrator_start_ambiguous",
+    });
   });
 });
 

@@ -1,0 +1,324 @@
+import {
+  controlServiceTokenHeaderName,
+  type TrafficExecutionAbortResponse,
+  type TrafficExecutionStartRequest,
+  type TrafficExecutionStartResponse,
+  trafficExecutionAbortPath,
+  trafficExecutionAbortRequestSchema,
+  trafficExecutionAbortResponseSchema,
+  trafficExecutionStartPath,
+  trafficExecutionStartRequestSchema,
+  trafficExecutionStartResponseSchema,
+  trafficExecutionStatusPath,
+  trafficExecutionStatusResponseSchema,
+} from "@checkout-surge/contracts";
+import { correlationIdHeaderName } from "@checkout-surge/logger";
+import { ApiHttpError } from "../runtime/errors.js";
+
+const defaultStartRequestTimeoutMs = 5_000;
+const defaultAbortRequestTimeoutMs = 20_000;
+
+export interface TrafficExecutionGateway {
+  start(request: TrafficExecutionStartRequest): Promise<TrafficExecutionStartResponse>;
+}
+
+export interface TrafficAbortGateway {
+  abortCurrent(input: {
+    runId: string;
+    reason: string;
+    correlationId: string;
+  }): Promise<Pick<TrafficExecutionAbortResponse, "outcome">>;
+}
+
+export class HttpTrafficExecutionGateway implements TrafficExecutionGateway, TrafficAbortGateway {
+  constructor(
+    private readonly options: {
+      loadOrchestratorBaseUrl: string;
+      controlServiceToken: string;
+      requestTimeoutMs?: number;
+      abortRequestTimeoutMs?: number;
+      fetch?: typeof fetch;
+    },
+  ) {}
+
+  async start(request: TrafficExecutionStartRequest): Promise<TrafficExecutionStartResponse> {
+    const startRequest = trafficExecutionStartRequestSchema.parse(request);
+    const requestTimeoutMs = positiveTimeout(
+      this.options.requestTimeoutMs ?? defaultStartRequestTimeoutMs,
+      "requestTimeoutMs",
+    );
+    let receivedResponse: Response | undefined;
+
+    try {
+      const result = await runBoundedTrafficRequest(
+        requestTimeoutMs,
+        () => new TrafficStartTimeoutError(),
+        async (signal) => {
+          receivedResponse = await this.fetch(
+            trafficExecutionUrl(this.options.loadOrchestratorBaseUrl, trafficExecutionStartPath),
+            {
+              method: "POST",
+              headers: {
+                accept: "application/json",
+                "content-type": "application/json",
+                [correlationIdHeaderName]: startRequest.correlationId,
+                [controlServiceTokenHeaderName]: this.options.controlServiceToken,
+              },
+              body: JSON.stringify(startRequest),
+              signal,
+            },
+          );
+          const payload = await receivedResponse.json().catch(() => null);
+          if (!receivedResponse.ok) {
+            return {
+              outcome: "rejected",
+              statusCode: receivedResponse.status,
+              payload,
+            } as const;
+          }
+
+          const confirmation = parseStartConfirmation(payload, startRequest);
+          return { outcome: "accepted", confirmation } as const;
+        },
+      );
+
+      if (result.outcome === "rejected") {
+        if (isDefinitiveStartRejection(result.statusCode)) {
+          throw loadOrchestratorStartRejected(result.statusCode, result.payload);
+        }
+        throw new TrafficStartNonDefinitiveResponseError();
+      }
+      return result.confirmation;
+    } catch (error) {
+      if (error instanceof ApiHttpError) throw error;
+      if (
+        receivedResponse &&
+        !receivedResponse.ok &&
+        isDefinitiveStartRejection(receivedResponse.status)
+      ) {
+        throw loadOrchestratorStartRejected(receivedResponse.status, null);
+      }
+
+      const recovered = await this.recoverAmbiguousStart(startRequest, requestTimeoutMs).catch(
+        () => null,
+      );
+      if (recovered) return recovered;
+      throw new ApiHttpError({
+        statusCode: 502,
+        code: "load_orchestrator_start_ambiguous",
+        message: "The load orchestrator start outcome could not be confirmed.",
+      });
+    }
+  }
+
+  async abortCurrent(input: {
+    runId: string;
+    reason: string;
+    correlationId: string;
+  }): Promise<TrafficExecutionAbortResponse> {
+    const request = trafficExecutionAbortRequestSchema.parse(input);
+    const abortTimeoutMs = positiveTimeout(
+      this.options.abortRequestTimeoutMs ?? defaultAbortRequestTimeoutMs,
+      "abortRequestTimeoutMs",
+    );
+    let result: { response: Response; confirmation?: TrafficExecutionAbortResponse };
+
+    try {
+      result = await runBoundedTrafficRequest(
+        abortTimeoutMs,
+        () => new TrafficAbortTimeoutError(),
+        async (signal) => {
+          const response = await this.fetch(
+            trafficExecutionUrl(this.options.loadOrchestratorBaseUrl, trafficExecutionAbortPath),
+            {
+              method: "POST",
+              headers: {
+                accept: "application/json",
+                "content-type": "application/json",
+                [correlationIdHeaderName]: request.correlationId ?? input.correlationId,
+                [controlServiceTokenHeaderName]: this.options.controlServiceToken,
+              },
+              body: JSON.stringify(request),
+              signal,
+            },
+          );
+          if (!response.ok) return { response };
+          try {
+            return {
+              response,
+              confirmation: trafficExecutionAbortResponseSchema.parse(await response.json()),
+            };
+          } catch {
+            throw new TrafficAbortInvalidResponseError();
+          }
+        },
+      );
+    } catch (error) {
+      if (error instanceof TrafficAbortInvalidResponseError) {
+        throw new ApiHttpError({
+          statusCode: 502,
+          code: "load_orchestrator_unavailable",
+          message: "The load orchestrator returned an invalid abort confirmation.",
+        });
+      }
+      throw new ApiHttpError({
+        statusCode: 502,
+        code: "load_orchestrator_abort_unconfirmed",
+        message: "Traffic termination could not be confirmed.",
+      });
+    }
+
+    if (!result.response.ok) {
+      if (result.response.status === 409) {
+        throw new ApiHttpError({
+          statusCode: 409,
+          code: "load_orchestrator_run_mismatch",
+          message: "The load orchestrator is running a different demo run.",
+        });
+      }
+      throw new ApiHttpError({
+        statusCode: 502,
+        code: "load_orchestrator_abort_unconfirmed",
+        message: "Traffic termination could not be confirmed.",
+      });
+    }
+
+    const confirmation = result.confirmation;
+    if (
+      !confirmation ||
+      confirmation.requestedRunId !== input.runId ||
+      confirmation.correlationId !== input.correlationId
+    ) {
+      throw new ApiHttpError({
+        statusCode: 502,
+        code: "load_orchestrator_unavailable",
+        message: "The load orchestrator returned an invalid abort confirmation.",
+      });
+    }
+    return confirmation;
+  }
+
+  private async recoverAmbiguousStart(
+    request: TrafficExecutionStartRequest,
+    requestTimeoutMs: number,
+  ): Promise<TrafficExecutionStartResponse | null> {
+    return runBoundedTrafficRequest(
+      requestTimeoutMs,
+      () => new TrafficStatusTimeoutError(),
+      async (signal) => {
+        const statusPath = trafficExecutionStatusPath.replace(":runId", request.runId);
+        const response = await this.fetch(
+          trafficExecutionUrl(this.options.loadOrchestratorBaseUrl, statusPath),
+          {
+            headers: {
+              accept: "application/json",
+              [correlationIdHeaderName]: request.correlationId,
+              [controlServiceTokenHeaderName]: this.options.controlServiceToken,
+            },
+            signal,
+          },
+        );
+        if (!response.ok) return null;
+
+        let status: ReturnType<typeof trafficExecutionStatusResponseSchema.parse>;
+        try {
+          status = trafficExecutionStatusResponseSchema.parse(await response.json());
+        } catch {
+          throw new TrafficStatusInvalidResponseError();
+        }
+        if (status.runId !== request.runId || status.correlationId !== request.correlationId) {
+          throw new TrafficStatusInvalidResponseError();
+        }
+        if (status.state === "unknown" || !status.acceptedAt) return null;
+        return trafficExecutionStartResponseSchema.parse({
+          runId: request.runId,
+          status: status.state === "accepted" ? "starting" : "active",
+          startedAt: status.acceptedAt,
+          correlationId: request.correlationId,
+        });
+      },
+    );
+  }
+
+  private fetch(input: string, init: RequestInit): Promise<Response> {
+    return (this.options.fetch ?? fetch)(input, init);
+  }
+}
+
+function parseStartConfirmation(
+  payload: unknown,
+  request: TrafficExecutionStartRequest,
+): TrafficExecutionStartResponse {
+  let confirmation: TrafficExecutionStartResponse;
+  try {
+    confirmation = trafficExecutionStartResponseSchema.parse(payload);
+  } catch {
+    throw new TrafficStartInvalidResponseError();
+  }
+  if (
+    confirmation.runId !== request.runId ||
+    confirmation.correlationId !== request.correlationId
+  ) {
+    throw new TrafficStartInvalidResponseError();
+  }
+  return confirmation;
+}
+
+function loadOrchestratorStartRejected(statusCode: number, payload: unknown): ApiHttpError {
+  return new ApiHttpError({
+    statusCode: 502,
+    code: "load_orchestrator_unavailable",
+    message: "The load orchestrator rejected the run start.",
+    details: {
+      statusCode,
+      payload: payload && typeof payload === "object" ? payload : {},
+    },
+  });
+}
+
+function isDefinitiveStartRejection(statusCode: number): boolean {
+  return statusCode >= 400 && statusCode < 500;
+}
+
+async function runBoundedTrafficRequest<T>(
+  timeoutMs: number,
+  timeoutError: () => Error,
+  operation: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const controller = new AbortController();
+  let rejectTimeout: (reason: Error) => void = () => undefined;
+  const timeoutFailure = new Promise<never>((_resolve, reject) => {
+    rejectTimeout = reject;
+  });
+  const timeout = setTimeout(() => {
+    controller.abort();
+    rejectTimeout(timeoutError());
+  }, timeoutMs);
+  const request = operation(controller.signal);
+  void request.catch(() => undefined);
+
+  try {
+    return await Promise.race([request, timeoutFailure]);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function trafficExecutionUrl(baseUrl: string, path: string): string {
+  return `${baseUrl.replace(/\/+$/, "")}${path}`;
+}
+
+function positiveTimeout(value: number, name: string): number {
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(`${name} must be a finite positive number.`);
+  }
+  return value;
+}
+
+class TrafficStartTimeoutError extends Error {}
+class TrafficStartInvalidResponseError extends Error {}
+class TrafficStartNonDefinitiveResponseError extends Error {}
+class TrafficStatusTimeoutError extends Error {}
+class TrafficStatusInvalidResponseError extends Error {}
+class TrafficAbortTimeoutError extends Error {}
+class TrafficAbortInvalidResponseError extends Error {}

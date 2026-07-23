@@ -51,7 +51,6 @@ import { DemoMaintenanceService } from "./services/demo-maintenance-service.js";
 import { DemoRunFinalizationService } from "./services/demo-run-finalization-service.js";
 import {
   DemoRunService,
-  HttpTrafficExecutionGateway,
   validateActivePublicRuntimePolicyAtStartup,
 } from "./services/demo-run-service.js";
 import { DemoRunStartupReconciliationService } from "./services/demo-run-startup-reconciliation-service.js";
@@ -77,6 +76,7 @@ import {
 import { RunHistoryService } from "./services/run-history-service.js";
 import { PostgresTerminalDemoRunSummaryWriter } from "./services/terminal-demo-run-transition.js";
 import { TrafficCompletionEnrichmentService } from "./services/traffic-completion-enrichment-service.js";
+import { HttpTrafficExecutionGateway } from "./services/traffic-execution-gateway.js";
 import { TrafficMetricIngestionService } from "./services/traffic-metric-ingestion-service.js";
 
 export const apiAppName = "api" as const;

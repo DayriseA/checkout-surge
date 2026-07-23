@@ -48,6 +48,7 @@ import {
   parsePersistedTrafficHttpSummary,
 } from "./traffic-delivery-classifier.js";
 import { syntheticFailedTrafficSummary } from "./traffic-delivery-plan.js";
+import type { TrafficAbortGateway } from "./traffic-execution-gateway.js";
 
 export interface QueueCleanupSummary {
   cleanedQueueCount: number;
@@ -89,14 +90,6 @@ type FencedResetRun = {
   previousTrafficStatus?: typeof demoRuns.$inferSelect.trafficStatus;
 };
 
-export interface DemoRunTrafficAborter {
-  abortCurrent(input: {
-    runId: string;
-    reason: string;
-    correlationId: string;
-  }): Promise<{ outcome: "no_current_run" | "current_run_aborted" }>;
-}
-
 export interface DashboardLiveStateReset {
   fenceRun(runId: string): Promise<void>;
   clearRun(runId: string): Promise<void>;
@@ -122,7 +115,7 @@ export class DemoMaintenanceService {
       prepareGeneratedRunTeardown: typeof prepareGeneratedRunTeardown;
       completeGeneratedRunTeardown: typeof completeGeneratedRunTeardown;
       clearErpCircuitBreakerState: () => Promise<void>;
-      trafficAborter: DemoRunTrafficAborter;
+      trafficAborter: TrafficAbortGateway;
       dashboardLiveStateReset: DashboardLiveStateReset;
       resetWorkflowFence: DemoResetWorkflowFence;
       now?: () => Date;

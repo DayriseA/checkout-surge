@@ -17,7 +17,6 @@ import {
   type BusinessOutcomeSummary,
   type CopyDemoPresetToCustomRequest,
   collectAcceptedRunConfigSnapshotViolations,
-  controlServiceTokenHeaderName,
   type DemoPresetContract,
   type DemoRunConfigOverride,
   type DemoRunSnapshot,
@@ -39,18 +38,8 @@ import {
   startDemoRunResponseSchema,
   type TerminalInventorySnapshot,
   type TrafficCompletionReport,
-  type TrafficExecutionAbortResponse,
-  type TrafficExecutionStartRequest,
   type TrafficExecutionStartResponse,
   trafficCompletionReportSchema,
-  trafficExecutionAbortPath,
-  trafficExecutionAbortRequestSchema,
-  trafficExecutionAbortResponseSchema,
-  trafficExecutionStartPath,
-  trafficExecutionStartRequestSchema,
-  trafficExecutionStartResponseSchema,
-  trafficExecutionStatusPath,
-  trafficExecutionStatusResponseSchema,
 } from "@checkout-surge/contracts";
 import { verifyPublicVisitorCredential } from "@checkout-surge/contracts/public-visitor-credential";
 import {
@@ -69,7 +58,7 @@ import {
   saleOffers,
   setRunSaleEligibility,
 } from "@checkout-surge/db";
-import { type CheckoutSurgeLogger, correlationIdHeaderName } from "@checkout-surge/logger";
+import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { ZodError } from "zod";
 import { ApiHttpError } from "../runtime/errors.js";
@@ -94,22 +83,11 @@ import {
 import type { TrafficCompletionEnrichmentController } from "./traffic-completion-enrichment-service.js";
 import { classifyTrafficDeliverySummary } from "./traffic-delivery-classifier.js";
 import { syntheticFailedTrafficSummary } from "./traffic-delivery-plan.js";
+import type { TrafficExecutionGateway } from "./traffic-execution-gateway.js";
 
 export const demoRunStartLockKey = "checkout_surge_demo_run_start";
 const singleNonTerminalRunIndexName = "demo_runs_single_non_terminal_idx";
 const generatedRunSaleDurationMs = 24 * 60 * 60 * 1000;
-
-export interface TrafficExecutionGateway {
-  start(request: TrafficExecutionStartRequest): Promise<TrafficExecutionStartResponse>;
-}
-
-export interface TrafficAbortGateway {
-  abortCurrent(input: {
-    runId: string;
-    reason: string;
-    correlationId: string;
-  }): Promise<TrafficExecutionAbortResponse>;
-}
 
 export interface DemoRunController {
   listPublicPresets(): Promise<PublicPresetListResponse>;
@@ -132,193 +110,6 @@ export type StartDemoRunCommand = StartDemoRunRequest & {
   operatorMode: OperatorMode;
   publicVisitorCredential?: string;
 };
-
-export class HttpTrafficExecutionGateway implements TrafficExecutionGateway, TrafficAbortGateway {
-  constructor(
-    private readonly options: {
-      loadOrchestratorBaseUrl: string;
-      controlServiceToken: string;
-      requestTimeoutMs?: number;
-      abortRequestTimeoutMs?: number;
-      fetch?: typeof fetch;
-    },
-  ) {}
-
-  async start(request: TrafficExecutionStartRequest): Promise<TrafficExecutionStartResponse> {
-    const startRequest = trafficExecutionStartRequestSchema.parse(request);
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.options.requestTimeoutMs ?? 5_000);
-    let response: Response;
-    try {
-      response = await (this.options.fetch ?? fetch)(
-        `${this.options.loadOrchestratorBaseUrl}${trafficExecutionStartPath}`,
-        {
-          method: "POST",
-          headers: {
-            accept: "application/json",
-            "content-type": "application/json",
-            [correlationIdHeaderName]: startRequest.correlationId,
-            [controlServiceTokenHeaderName]: this.options.controlServiceToken,
-          },
-          body: JSON.stringify(startRequest),
-          signal: controller.signal,
-        },
-      );
-    } catch {
-      const recovered = await this.recoverAmbiguousStart(startRequest).catch(() => null);
-      if (recovered) return recovered;
-      throw new ApiHttpError({
-        statusCode: 502,
-        code: "load_orchestrator_start_ambiguous",
-        message: "The load orchestrator start outcome could not be confirmed.",
-      });
-    } finally {
-      clearTimeout(timeout);
-    }
-
-    const payload = await response.json().catch(() => null);
-    if (!response.ok) {
-      throw new ApiHttpError({
-        statusCode: 502,
-        code: "load_orchestrator_unavailable",
-        message: "The load orchestrator rejected the run start.",
-        details: {
-          statusCode: response.status,
-          payload: payload && typeof payload === "object" ? payload : {},
-        },
-      });
-    }
-
-    return trafficExecutionStartResponseSchema.parse(payload);
-  }
-
-  async abortCurrent(input: {
-    runId: string;
-    reason: string;
-    correlationId: string;
-  }): Promise<TrafficExecutionAbortResponse> {
-    const request = trafficExecutionAbortRequestSchema.parse(input);
-    const controller = new AbortController();
-    const abortTimeoutMs = positiveTimeout(
-      this.options.abortRequestTimeoutMs ?? 20_000,
-      "abortRequestTimeoutMs",
-    );
-    let rejectTimeout: (reason: TrafficAbortTimeoutError) => void = () => undefined;
-    const timeoutFailure = new Promise<never>((_resolve, reject) => {
-      rejectTimeout = reject;
-    });
-    const timeout = setTimeout(() => {
-      controller.abort();
-      rejectTimeout(new TrafficAbortTimeoutError());
-    }, abortTimeoutMs);
-    const abortOperation = (async () => {
-      const response = await (this.options.fetch ?? fetch)(
-        `${this.options.loadOrchestratorBaseUrl.replace(/\/+$/, "")}${trafficExecutionAbortPath}`,
-        {
-          method: "POST",
-          headers: {
-            accept: "application/json",
-            "content-type": "application/json",
-            [correlationIdHeaderName]: request.correlationId ?? input.correlationId,
-            [controlServiceTokenHeaderName]: this.options.controlServiceToken,
-          },
-          body: JSON.stringify(request),
-          signal: controller.signal,
-        },
-      );
-      if (!response.ok) return { response };
-      try {
-        return {
-          response,
-          confirmation: trafficExecutionAbortResponseSchema.parse(await response.json()),
-        };
-      } catch {
-        throw new TrafficAbortInvalidResponseError();
-      }
-    })();
-    void abortOperation.catch(() => undefined);
-    let result: Awaited<typeof abortOperation>;
-    try {
-      result = await Promise.race([abortOperation, timeoutFailure]);
-    } catch (error) {
-      if (error instanceof TrafficAbortInvalidResponseError) {
-        throw new ApiHttpError({
-          statusCode: 502,
-          code: "load_orchestrator_unavailable",
-          message: "The load orchestrator returned an invalid abort confirmation.",
-        });
-      }
-      throw new ApiHttpError({
-        statusCode: 502,
-        code: "load_orchestrator_abort_unconfirmed",
-        message: "Traffic termination could not be confirmed.",
-      });
-    } finally {
-      clearTimeout(timeout);
-    }
-
-    if (!result.response.ok) {
-      if (result.response.status === 409) {
-        throw new ApiHttpError({
-          statusCode: 409,
-          code: "load_orchestrator_run_mismatch",
-          message: "The load orchestrator is running a different demo run.",
-        });
-      }
-      throw new ApiHttpError({
-        statusCode: 502,
-        code: "load_orchestrator_abort_unconfirmed",
-        message: "Traffic termination could not be confirmed.",
-      });
-    }
-
-    const confirmation = result.confirmation;
-    if (
-      !confirmation ||
-      confirmation.requestedRunId !== input.runId ||
-      confirmation.correlationId !== input.correlationId
-    ) {
-      throw new ApiHttpError({
-        statusCode: 502,
-        code: "load_orchestrator_unavailable",
-        message: "The load orchestrator returned an invalid abort confirmation.",
-      });
-    }
-    return confirmation;
-  }
-
-  private async recoverAmbiguousStart(
-    request: TrafficExecutionStartRequest,
-  ): Promise<TrafficExecutionStartResponse | null> {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.options.requestTimeoutMs ?? 5_000);
-    try {
-      const statusPath = trafficExecutionStatusPath.replace(":runId", request.runId);
-      const response = await (this.options.fetch ?? fetch)(
-        `${this.options.loadOrchestratorBaseUrl}${statusPath}`,
-        {
-          headers: {
-            accept: "application/json",
-            [correlationIdHeaderName]: request.correlationId,
-            [controlServiceTokenHeaderName]: this.options.controlServiceToken,
-          },
-          signal: controller.signal,
-        },
-      );
-      if (!response.ok) return null;
-      const status = trafficExecutionStatusResponseSchema.parse(await response.json());
-      if (status.state === "unknown" || !status.acceptedAt) return null;
-      return trafficExecutionStartResponseSchema.parse({
-        runId: request.runId,
-        status: status.state === "accepted" ? "starting" : "active",
-        startedAt: status.acceptedAt,
-        correlationId: request.correlationId,
-      });
-    } finally {
-      clearTimeout(timeout);
-    }
-  }
-}
 
 export function isSingleNonTerminalRunViolation(error: unknown): boolean {
   let candidate: unknown = error;
@@ -1482,16 +1273,6 @@ function throwPublicRuntimePolicyUpdateError(error: unknown): never {
   }
   throw error;
 }
-
-function positiveTimeout(value: number, name: string): number {
-  if (!Number.isFinite(value) || value <= 0) {
-    throw new Error(`${name} must be a finite positive number.`);
-  }
-  return value;
-}
-
-class TrafficAbortTimeoutError extends Error {}
-class TrafficAbortInvalidResponseError extends Error {}
 
 function toAdminPublicRuntimePolicyResponse(
   row: Omit<typeof publicRuntimePolicies.$inferSelect, "policy"> & {

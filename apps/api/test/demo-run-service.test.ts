@@ -10,10 +10,8 @@ import type {
   TrafficExecutionStartRequest,
 } from "@checkout-surge/contracts";
 import {
-  controlServiceTokenHeaderName,
   emptyHttpTimingBreakdownSummary,
   trafficDeliverySummarySchema,
-  trafficExecutionStartPath,
 } from "@checkout-surge/contracts";
 import { signPublicVisitorCredential } from "@checkout-surge/contracts/public-visitor-credential";
 import {
@@ -38,7 +36,7 @@ import {
   saleOffers,
 } from "@checkout-surge/db";
 import { resetTestDatabase } from "@checkout-surge/db/testing";
-import { correlationIdHeaderName, createSilentLogger } from "@checkout-surge/logger";
+import { createSilentLogger } from "@checkout-surge/logger";
 import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiHttpError } from "../src/runtime/errors.js";
@@ -47,7 +45,6 @@ import { DemoMaintenanceService } from "../src/services/demo-maintenance-service
 import { DemoRunFinalizationService } from "../src/services/demo-run-finalization-service.js";
 import {
   DemoRunService,
-  HttpTrafficExecutionGateway,
   isSingleNonTerminalRunViolation,
   resolveEffectivePublicRuntimePolicy,
   validateAcceptedRunSnapshot,
@@ -376,54 +373,6 @@ describe("demo-run service validation", () => {
         currentCaps,
       ),
     ).toThrow(/Unrecognized key.*deploymentHardCaps/i);
-  });
-});
-
-describe("HTTP traffic execution gateway", () => {
-  it("sends the validated start correlation ID in the load-orchestrator header", async () => {
-    const fetchMock = vi.fn<typeof globalThis.fetch>().mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          runId: "55555555-5555-4555-8555-555555555555",
-          status: "active",
-          startedAt: "2026-06-20T00:00:11.000Z",
-          correlationId: "corr-start-delegation",
-        }),
-        { status: 202, headers: { "content-type": "application/json" } },
-      ),
-    );
-    vi.stubGlobal("fetch", fetchMock);
-    const gateway = new HttpTrafficExecutionGateway({
-      loadOrchestratorBaseUrl: "http://load.test",
-      controlServiceToken: "test-token",
-    });
-
-    try {
-      const response = await gateway.start({
-        runId: "55555555-5555-4555-8555-555555555555",
-        saleOfferId: "22222222-2222-4222-8222-222222222222",
-        apiBaseUrl: "http://api.test",
-        buyEndpointPath: "/buy",
-        correlationId: "corr-start-delegation",
-        configSnapshot: surge10kSnapshot(),
-      });
-
-      expect(response.correlationId).toBe("corr-start-delegation");
-      expect(fetchMock).toHaveBeenCalledWith(
-        `http://load.test${trafficExecutionStartPath}`,
-        expect.objectContaining({
-          headers: expect.objectContaining({
-            [correlationIdHeaderName]: "corr-start-delegation",
-            [controlServiceTokenHeaderName]: "test-token",
-          }),
-        }),
-      );
-      expect(JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string)).toMatchObject({
-        correlationId: "corr-start-delegation",
-      });
-    } finally {
-      vi.unstubAllGlobals();
-    }
   });
 });
 

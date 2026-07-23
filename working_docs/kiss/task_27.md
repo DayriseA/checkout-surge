@@ -34,11 +34,11 @@ Move the load-orchestrator client into a focused traffic-execution gateway modul
 
 ## Acceptance criteria
 
-- [ ] demo-run-service.ts contains no fetch, load-orchestrator URL, HTTP timeout, or traffic-response parsing logic.
-- [ ] Start and abort consumers depend on explicit, minimal gateway interfaces.
-- [ ] The concrete gateway is built once in API composition and validates all responses with shared contracts.
-- [ ] Exact-run mismatch, timeout, malformed response, correlation propagation, and idempotent no-current-run behavior remain tested.
-- [ ] Old gateway definitions and duplicate test paths are removed.
+- [x] demo-run-service.ts contains no fetch, load-orchestrator URL, HTTP timeout, or traffic-response parsing logic.
+- [x] Start and abort consumers depend on explicit, minimal gateway interfaces.
+- [x] The concrete gateway is built once in API composition and validates all responses with shared contracts.
+- [x] Exact-run mismatch, timeout, malformed response, correlation propagation, and idempotent no-current-run behavior remain tested.
+- [x] Old gateway definitions and duplicate test paths are removed.
 
 ## Verification
 
@@ -49,8 +49,8 @@ Move the load-orchestrator client into a focused traffic-execution gateway modul
 
 ## Working record
 
-- **Status:** pending
-- **Completed scope:** none
-- **Material decisions or deviations:** none
-- **Verification performed:** not run
+- **Status:** complete
+- **Completed scope:** Extracted `TrafficExecutionGateway`, `TrafficAbortGateway`, and `HttpTrafficExecutionGateway` into `apps/api/src/services/traffic-execution-gateway.ts`; moved all load-orchestrator URLs, service-token/correlation headers, start/status/abort request deadlines, response reading and parsing, and adapter-local errors/helpers with them. `DemoRunService` now imports only the start capability, `DemoMaintenanceService` imports only the exact-run abort capability, and `apps/api/src/index.ts` constructs the one HTTP gateway and injects it into both consumers. Consolidated HTTP adapter coverage in `apps/api/test/traffic-execution-gateway.test.ts` and removed the duplicate HTTP fixture/path from `demo-run-service.test.ts`. Updated architecture, repository ownership, and load-generation documentation.
+- **Material decisions or deviations:** Ordinary start and ambiguous-status responses now require both the requested run ID and canonical correlation ID after shared-contract validation. The complete successful response body is covered by the request deadline; malformed, identity-mismatched, incomplete, and server-failed starts use exact durable-status recovery and otherwise preserve `load_orchestrator_start_ambiguous`, so the API does not falsely fail a run that may own traffic. Clearly definitive request/auth/conflict 4xx responses remain `load_orchestrator_unavailable` without status recovery. Abort preserves its distinct idempotent `no_current_run`, exact current-run success, and conflicting-current-run paths. The shared abort capability exposes only the outcome needed by maintenance, while the concrete adapter still returns the complete validated contract response. No load-orchestrator lifecycle, supervision, completion-redelivery, or run-transition code changed.
+- **Verification performed:** `pnpm --filter api test:api test/traffic-execution-gateway.test.ts test/demo-run-service.test.ts test/demo-maintenance-service.test.ts` (passed: 3 files, 119 tests); after review correction, `pnpm --filter api test:api test/traffic-execution-gateway.test.ts` (passed: 1 file, 28 tests); `pnpm --filter api type-check` (passed); `pnpm type-check` (passed, including all eight workspace packages and test-source type-check); `pnpm exec biome check apps/api/src/index.ts apps/api/src/services/demo-maintenance-service.ts apps/api/src/services/demo-run-service.ts apps/api/src/services/traffic-execution-gateway.ts apps/api/test/demo-run-service.test.ts apps/api/test/traffic-execution-gateway.test.ts` (passed); focused post-review Biome on the gateway source/test (passed); `git diff --check` (passed). Composition and characterization suites were not run, as required.
 - **Remaining blockers or follow-up:** none
