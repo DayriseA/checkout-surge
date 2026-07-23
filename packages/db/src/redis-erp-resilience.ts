@@ -32,7 +32,6 @@ export async function setErpCircuitBreakerSnapshot(
     "EX",
     getErpCircuitBreakerSnapshotTtlSeconds(snapshot),
   );
-  await redis.del(erpCircuitBreakerSnapshotKey);
 }
 
 export function getErpCircuitBreakerSnapshotTtlSeconds(
@@ -70,5 +69,4 @@ export async function clearErpCircuitBreakerSnapshots(redis: CheckoutSurgeRedis)
     cursor = nextCursor;
     if (keys.length > 0) await redis.del(...keys);
   } while (cursor !== "0");
-  await redis.del(erpCircuitBreakerSnapshotKey);
 }

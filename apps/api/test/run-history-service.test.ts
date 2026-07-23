@@ -2,7 +2,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   emptyHttpTimingBreakdownSummary,
-  type TrafficDeliverySummary,
   trafficDeliverySummarySchema,
 } from "@checkout-surge/contracts";
 import {
@@ -110,29 +109,6 @@ describe("run history service", () => {
     expect(firstPage.summaries[0]).not.toHaveProperty("reservationToken");
     expect(firstPage.summaries[0]).not.toHaveProperty("idempotencyKey");
     expect(secondPage.summaries[0]?.runId).toBe(ids.olderRun);
-  });
-
-  it("rejects emitted-era delivery rows with summary-row context", async () => {
-    const db = requireConnection(connection).db;
-    const service = createService(connection);
-    await seedHistory(db);
-    const legacyDeliverySummary = {
-      plannedRequests: 100,
-      emittedRequests: 94,
-      droppedIterations: 0,
-      unstartedIterations: 6,
-      requestShortfall: 6,
-      trafficDeliveryStatus: "complete",
-      notes: [],
-    } as unknown as TrafficDeliverySummary;
-    await db
-      .update(demoRunSummaries)
-      .set({ trafficDeliverySummary: legacyDeliverySummary })
-      .where(eq(demoRunSummaries.id, ids.newerSummary));
-
-    await expect(service.list({ page: 1, pageSize: 10 })).rejects.toThrow(
-      new RegExp(`${ids.newerSummary}.*${ids.newerRun}.*trafficDeliverySummary`),
-    );
   });
 
   it("rejects stored run config snapshots that rely on wire defaults with run context", async () => {

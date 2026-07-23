@@ -88,6 +88,8 @@ Package and app-level scripts should use the same names where applicable so Turb
 
 Tier membership lives in package manifests. Root unit, API, integration, watch, and coverage commands use unfiltered Turbo discovery; absence of a package-local tier script means non-membership. Watch is persistent and includes unit owners only. API, integration, watch, and coverage tasks are not cached.
 
+The repository does not maintain a separate test that parses package manifests and asserts the command graph as text. The commands themselves, package-local Vitest configurations, root type-check, and focused script tests are the authoritative evidence; this avoids turning test-runner wiring into a second mechanically synchronized product.
+
 Coverage uses V8 and the shared policy in `vitest.coverage.config.ts`. Every lane explicitly includes all production `src/**/*.ts` and `src/**/*.tsx` files and excludes only source declaration files, so unexecuted production modules count against the initial 10% statements, branches, functions, and lines floor and named high-risk paths remain visible. The floors are evaluated independently for each package/tier lane, not against a globally merged repository report. Every lane writes text output and `coverage-summary.json` to its unique `coverage/<owner>-<tier>` directory, including reports from failed test runs where Vitest permits. A future CI caller should provision and clean up test infrastructure around the same root command and retain those directories; this repository does not currently claim a hosted CI coverage gate.
 
 ---

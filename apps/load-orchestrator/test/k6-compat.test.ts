@@ -168,14 +168,7 @@ export default function () { http.get("http://127.0.0.1:${address.port}/"); }
         ...(summaryMetrics ? { summaryMetrics } : {}),
       });
 
-      expect(report.httpSummary).toMatchObject({
-        plannedRequests: 1,
-        startedRequests: 1,
-        completedRequests: 0,
-        interruptedRequests: 1,
-        unstartedRequests: 0,
-      });
-      expect(report.trafficDeliverySummary).toMatchObject({
+      expect(report.transportAttemptCounts).toEqual({
         plannedRequests: 1,
         startedRequests: 1,
         completedRequests: 0,

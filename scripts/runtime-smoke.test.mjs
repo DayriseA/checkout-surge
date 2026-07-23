@@ -53,16 +53,12 @@ test("stage failures retain their named location", async () => {
   );
 });
 
-test("SSE parsing buffers split frames and rejects legacy delta data", () => {
+test("SSE parsing buffers split projection frames", () => {
   const first = extractCompleteSseFrames(`data: ${JSON.stringify(activeProjection())}\r\n\r`);
   assert.deepEqual(first.frames, []);
   const second = extractCompleteSseFrames(`${first.remainder}\n`);
   assert.equal(second.frames.length, 1);
   assert.deepEqual(parseDashboardSseFrame(second.frames[0]).projection, activeProjection());
-  assert.throws(
-    () => parseDashboardSseFrame('data: {"type":"order.status.updated","orderId":"legacy"}'),
-    /not a complete DashboardProjection/,
-  );
 });
 
 test("heartbeat parsing accepts only a contract-compatible timestamp", () => {

@@ -63,22 +63,6 @@ describe.skipIf(!databaseUrl)("PostgresRunConfigReader", () => {
     );
   });
 
-  it("rejects malformed legacy JSON with an identifiable corruption error", async () => {
-    await connection.db.execute(
-      sql`UPDATE ${demoRuns}
-          SET config_snapshot = ${JSON.stringify({ trafficConfig: { mode: "legacy" } })}::jsonb
-          WHERE ${demoRuns.id} = ${runId}`,
-    );
-
-    await expect(new PostgresRunConfigReader(connection.db).read(runId)).rejects.toMatchObject({
-      name: "PersistedRunConfigCorruptionError",
-      code: "persisted_run_config_invalid",
-      runId,
-      message: expect.stringMatching(new RegExp(`${runId}.*configSnapshot\\.trafficConfig`)),
-      cause: expect.any(Error),
-    } satisfies Partial<PersistedRunConfigCorruptionError>);
-  });
-
   it("rejects a stored snapshot that relies on a wire default", async () => {
     const snapshot = configSnapshotFixture();
     const { quantityPerCheckout: _defaulted, ...incompleteInventoryConfig } =
@@ -124,9 +108,13 @@ describe.skipIf(!databaseUrl)("PostgresRunConfigReader", () => {
   });
 
   it("validates the immutable run configuration inside the publication fence", async () => {
+    const snapshot = configSnapshotFixture();
     await connection.db.execute(
       sql`UPDATE ${demoRuns}
-          SET config_snapshot = ${JSON.stringify({ trafficConfig: { mode: "legacy" } })}::jsonb
+          SET config_snapshot = ${JSON.stringify({
+            ...snapshot,
+            inventoryConfig: { ...snapshot.inventoryConfig, quantityPerCheckout: 0 },
+          })}::jsonb
           WHERE ${demoRuns.id} = ${runId}`,
     );
     const add = vi.fn();

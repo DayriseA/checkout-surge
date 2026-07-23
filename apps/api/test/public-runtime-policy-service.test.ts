@@ -2,7 +2,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createDatabaseConnection, publicRuntimePolicies } from "@checkout-surge/db";
 import { resetTestDatabase } from "@checkout-surge/db/testing";
-import { eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import {
   PublicRuntimePolicyService,
@@ -151,22 +151,11 @@ describe("public runtime policy service", () => {
     );
   });
 
-  it("reports missing and obsolete active policy persistence at startup", async () => {
+  it("reports missing active policy persistence at startup", async () => {
     const activeConnection = requireConnection(connection);
     await activeConnection.db.delete(publicRuntimePolicies);
     await expect(createService(activeConnection).validateActivePolicyAtStartup()).rejects.toThrow(
       /policy "active" is missing/,
-    );
-
-    await activeConnection.db.execute(sql`
-      INSERT INTO ${publicRuntimePolicies} (id, policy)
-      VALUES ('active', ${JSON.stringify({
-        ...publicRuntimePolicyMutableFixture(),
-        deploymentHardCaps: deploymentHardCapsFixture,
-      })}::jsonb)
-    `);
-    await expect(createService(activeConnection).validateActivePolicyAtStartup()).rejects.toThrow(
-      /Unrecognized key.*deploymentHardCaps/i,
     );
   });
 

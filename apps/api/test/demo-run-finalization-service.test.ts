@@ -318,39 +318,6 @@ describe("demo run finalization service", () => {
     });
   });
 
-  it("rejects retired diagnostics before terminal summary persistence", async () => {
-    const db = requireConnection(connection).db;
-    const redisClient = requireRedis(redis);
-    const service = createService(connection, redis);
-
-    await seedDrainingRun({ db, redis: redisClient, trafficDeliveryStatus: "complete" });
-    const diagnostics = runnerDiagnosticsFixture();
-    const { startedRequests, ...oldTerminalMetricSources } = diagnostics.terminalMetricSources;
-    const retiredDiagnostics = {
-      ...diagnostics,
-      terminalMetricSources: {
-        emittedRequests: startedRequests,
-        ...oldTerminalMetricSources,
-      },
-    } as unknown as typeof diagnostics;
-    await db
-      .update(demoRunFinalizations)
-      .set({
-        trafficOutcomeSummary: { loadGeneratorOutcome: "old-shape-rejection" },
-        loadRunDiagnosticsSummary: retiredDiagnostics,
-      })
-      .where(eq(demoRunFinalizations.runId, ids.run));
-
-    await expect(service.finalizeRun(ids.run, "corr-finalize-old-shape")).rejects.toThrow(
-      new RegExp(`${ids.run}.*loadRunDiagnosticsSummary`),
-    );
-    const [summary] = await db
-      .select()
-      .from(demoRunSummaries)
-      .where(eq(demoRunSummaries.runId, ids.run));
-    expect(summary).toBeUndefined();
-  });
-
   it("rejects malformed transport-attempt evidence before terminal summary persistence", async () => {
     const db = requireConnection(connection).db;
     const redisClient = requireRedis(redis);

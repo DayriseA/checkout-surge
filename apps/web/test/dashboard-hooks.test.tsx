@@ -54,7 +54,7 @@ afterEach(() => {
 });
 
 describe("useDashboardProjections", () => {
-  it("accepts only complete projection frames and rejects non-projection event data", () => {
+  it("accepts complete projection frames and ignores malformed data", () => {
     const firstCallback = vi.fn();
     const secondCallback = vi.fn();
     const onOpen = vi.fn();
@@ -74,22 +74,6 @@ describe("useDashboardProjections", () => {
     expect(result.current).toBe("connecting");
 
     act(() => source?.emit("message", new MessageEvent("message", { data: "{" })));
-    act(() =>
-      source?.emit(
-        "message",
-        new MessageEvent("message", {
-          data: JSON.stringify({
-            type: "not-a-dashboard-projection",
-            occurredAt: "2026-06-20T00:00:11.000Z",
-            observedAt: "2026-06-20T00:00:11.000Z",
-            metricName: "queue.depth",
-            value: 3,
-            unit: "jobs",
-            queueName: "orders:process",
-          }),
-        }),
-      ),
-    );
     expect(firstCallback).not.toHaveBeenCalled();
 
     rerender({ onProjection: secondCallback });

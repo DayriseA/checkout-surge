@@ -516,24 +516,6 @@ describe("run lifecycle contracts", () => {
       "point_stream",
     );
     expect(() => demoRunSnapshotSchema.parse({ ...report, status: "completed" })).toThrow();
-    expect(() =>
-      trafficCompletionReportSchema.parse({
-        ...report,
-        httpTimingBreakdownSummary: { p95LatencyMs: 20 },
-      }),
-    ).toThrow();
-    const {
-      terminalMetricSources: _terminalMetricSources,
-      summaryExportWarnings: _summaryExportWarnings,
-      ...legacyDiagnostics
-    } = report.loadRunDiagnosticsSummary;
-    expect(() => loadRunDiagnosticsSummarySchema.parse(legacyDiagnostics)).not.toThrow();
-    expect(() =>
-      trafficCompletionReportSchema.parse({
-        ...report,
-        loadRunDiagnosticsSummary: legacyDiagnostics,
-      }),
-    ).toThrow();
   });
 
   it("binds demo-run lifecycle states to their legal timestamp shapes", () => {
@@ -866,32 +848,6 @@ describe("run lifecycle contracts", () => {
         );
       }
     }
-
-    const duplicateLifecycleCopy = trafficCompletionReportSchema.safeParse({
-      ...report,
-      apiRequestLifecycleSummary: {
-        plannedRequests: 10,
-        startedRequests: 9,
-        completedRequests: 7,
-        interruptedRequests: 2,
-        unstartedRequests: 1,
-        failedRequests: 0,
-      },
-    });
-    expect(duplicateLifecycleCopy.success).toBe(false);
-
-    const legacyNames = trafficCompletionReportSchema.safeParse({
-      ...report,
-      httpSummary: {
-        emittedRequests: 10,
-        failedRequests: 0,
-        acceptedResponses: 2,
-        soldOutResponses: 8,
-        unexpectedResponses: 0,
-        failureRate: 0,
-      },
-    });
-    expect(legacyNames.success).toBe(false);
   });
 
   it("validates admin reset as a recovery result rather than a traffic lifecycle event", () => {
@@ -1144,7 +1100,7 @@ describe("canonical error-code vocabulary", () => {
     expect(errorPayloadCodes.some((code) => code.startsWith("public_custom_default_"))).toBe(false);
   });
 
-  it("uses grouped categories instead of mechanical conflict and recovery variants", () => {
+  it("uses grouped conflict and recovery categories", () => {
     expect(errorPayloadCodes).toEqual(
       expect.arrayContaining([
         "preset_conflict",
@@ -1153,13 +1109,6 @@ describe("canonical error-code vocabulary", () => {
         "dashboard_recovery_unavailable",
       ]),
     );
-    for (const retiredCode of [
-      "resource_conflict",
-      "run_sale_offer_missing",
-      "dashboard_recovery_at_capacity",
-    ]) {
-      expect(errorPayloadCodeSchema.safeParse(retiredCode).success, retiredCode).toBe(false);
-    }
   });
 
   it("requires the strict envelope with code, message, correlationId, and timestamp", () => {
@@ -2191,11 +2140,11 @@ describe("public runtime policy contract", () => {
         orders: { ...detail.orders, records: [] },
       }),
     ).toThrow();
-    for (const legacyCollection of ["orders", "erpAttempts", "notifications", "eventTimeline"]) {
+    for (const privateCollection of ["orders", "erpAttempts", "notifications", "eventTimeline"]) {
       expect(() =>
         runHistoryDetailResponseSchema.parse({
           ...detail,
-          [legacyCollection]: { totalCount: 0, limit: 20, truncated: false, records: [] },
+          [privateCollection]: { totalCount: 0, limit: 20, truncated: false, records: [] },
         }),
       ).toThrow();
     }

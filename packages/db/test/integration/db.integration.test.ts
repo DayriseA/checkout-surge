@@ -15,7 +15,6 @@ import {
   type DashboardProjectionDirtySignal,
   dashboardProjectionDirtyRedisChannel,
   deferPendingPersistenceRecord,
-  erpCircuitBreakerSnapshotKey,
   getErpCircuitBreakerSnapshot,
   getErpCircuitBreakerSnapshotKey,
   getInventoryStatus,
@@ -725,7 +724,7 @@ describe("database migrations, seed data, and reset behavior", () => {
     });
   });
 
-  it("isolates scoped ERP circuit snapshots, applies TTL, and clears scoped and legacy state", async () => {
+  it("isolates scoped ERP circuit snapshots, applies TTL, and clears scoped state", async () => {
     const base = {
       state: "closed" as const,
       consecutiveFailureCount: 0,
@@ -738,7 +737,6 @@ describe("database migrations, seed data, and reset behavior", () => {
     };
     const runA = { type: "run" as const, runId: "55555555-5555-4555-8555-555555555555" };
     const runB = { type: "run" as const, runId: "66666666-6666-4666-8666-666666666666" };
-    await redis.set(erpCircuitBreakerSnapshotKey, JSON.stringify({ ...base, state: "open" }));
     await setErpCircuitBreakerSnapshot(redis, { ...base, failureThreshold: 2 }, runA);
     await setErpCircuitBreakerSnapshot(
       redis,
@@ -758,14 +756,11 @@ describe("database migrations, seed data, and reset behavior", () => {
     });
     expect(await redis.ttl(getErpCircuitBreakerSnapshotKey(runA))).toBeGreaterThan(86_300);
     expect(await redis.ttl(getErpCircuitBreakerSnapshotKey(runB))).toBeGreaterThan(345_500);
-    expect(await redis.get(erpCircuitBreakerSnapshotKey)).toBeNull();
 
-    await redis.set(erpCircuitBreakerSnapshotKey, JSON.stringify(base));
     await clearErpCircuitBreakerSnapshots(redis);
     await expect(getErpCircuitBreakerSnapshot(redis, runA)).resolves.toBeNull();
     await expect(getErpCircuitBreakerSnapshot(redis, runB)).resolves.toBeNull();
     await expect(getErpCircuitBreakerSnapshot(redis, { type: "catalog" })).resolves.toBeNull();
-    expect(await redis.get(erpCircuitBreakerSnapshotKey)).toBeNull();
   });
 
   it("enforces one non-terminal demo run across direct and concurrent writers", async () => {
@@ -1094,7 +1089,7 @@ describe("database migrations, seed data, and reset behavior", () => {
     expect(policy).not.toHaveProperty("deploymentHardCaps");
   });
 
-  it("backfills legacy preset breaker defaults while preserving runtime policy JSON", async () => {
+  it("fills missing system-preset breaker defaults without rewriting other JSON", async () => {
     await runSeedScript();
     await withDatabase(async (sql) => {
       await sql`

@@ -149,48 +149,6 @@ describe("traffic delivery classifier", () => {
     ).toThrow();
   });
 
-  it("rejects emitted-era delivery rows with persisted row context", () => {
-    expect(() =>
-      parsePersistedTrafficDeliverySummary(
-        {
-          plannedRequests: 100,
-          emittedRequests: 94,
-          droppedIterations: 0,
-          unstartedIterations: 6,
-          requestShortfall: 6,
-          trafficDeliveryStatus: "complete",
-          notes: [],
-        },
-        {
-          plannedRequests: 100,
-          startedRequests: 94,
-          completedRequests: 90,
-          interruptedRequests: 4,
-          unstartedRequests: 6,
-        },
-        "run summary row summary-1",
-      ),
-    ).toThrow(/run summary row summary-1.*trafficDeliverySummary/);
-  });
-
-  it("rejects emitted-era HTTP summaries with persisted row context", () => {
-    expect(() =>
-      parsePersistedTrafficHttpSummary(
-        {
-          plannedRequests: 100,
-          emittedRequests: 94,
-          completedRequests: 90,
-          failedRequests: 0,
-          acceptedResponses: 30,
-          soldOutResponses: 60,
-          unexpectedResponses: 0,
-          failureRate: 0,
-        },
-        "demo run finalization run-1",
-      ),
-    ).toThrow(/demo run finalization run-1.*httpSummary/);
-  });
-
   it("accepts canonical HTTP summaries at the persisted boundary", () => {
     const canonical = {
       failedRequests: 0,

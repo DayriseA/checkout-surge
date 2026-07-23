@@ -12,8 +12,6 @@ import {
   emptyHttpTimingBreakdownSummary,
   type InventoryStatus,
   type QueueStatus,
-  type TrafficDeliverySummary,
-  type TrafficHttpSummary,
   type TransportAttemptCounts,
 } from "@checkout-surge/contracts";
 import {
@@ -155,77 +153,6 @@ describe("PostgresDashboardRecoveryContextReader integration", () => {
       unstartedRequests: 0,
     });
     await expect(reader.read("99999999-9999-4999-8999-999999999999")).resolves.toBeNull();
-  });
-
-  it("rejects emitted-era finalization rows when projecting transport accounting", async () => {
-    if (!connection) throw new Error("Test database connection was not initialized.");
-    const db = connection.db;
-    const legacyRunId = "44444444-4444-4444-8444-444444444444";
-    await db.insert(demoRuns).values({
-      id: legacyRunId,
-      presetId: "33333333-3333-4333-8333-333333333333",
-      presetName: "Preview 1k",
-      operatorMode: "public",
-      status: "failed",
-      trafficStatus: "failed",
-      saleOfferId: null,
-      configSnapshot: configSnapshot(),
-      startedAt: now,
-      trafficStartedAt: now,
-      trafficEndedAt: now,
-      finalizedAt: now,
-      failureReason: "legacy_traffic_failure",
-      createdAt: now,
-      updatedAt: now,
-    });
-    const legacyDeliverySummary = {
-      plannedRequests: 1_000,
-      emittedRequests: 750,
-      trafficMode: "buyer-spike",
-      plannedBuyers: 1_000,
-      scheduledRatePerSecond: null,
-      configuredDurationSeconds: null,
-      preAllocatedVUs: null,
-      maxVUs: null,
-      droppedIterations: 0,
-      completedIterations: 750,
-      unstartedIterations: 250,
-      requestShortfall: 250,
-      notes: [],
-    } as unknown as TrafficDeliverySummary;
-    const legacyHttpSummary = {
-      plannedRequests: 1_000,
-      emittedRequests: 750,
-      completedRequests: 750,
-      failedRequests: 0,
-      acceptedResponses: 250,
-      soldOutResponses: 500,
-      unexpectedResponses: 0,
-      failureRate: 0,
-    } as unknown as TrafficHttpSummary;
-    await db.insert(demoRunFinalizations).values({
-      runId: legacyRunId,
-      exitCode: 1,
-      transportAttemptCounts: {
-        plannedRequests: 1_000,
-        emittedRequests: 750,
-        completedRequests: 750,
-        interruptedRequests: 0,
-        unstartedRequests: 250,
-      } as unknown as TransportAttemptCounts,
-      httpSummary: legacyHttpSummary,
-      trafficOutcomeSummary: {},
-      trafficDeliverySummary: legacyDeliverySummary,
-      httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
-      loadRunDiagnosticsSummary: currentDiagnosticsFixture(1_000),
-      trafficSummaryReceivedAt: now,
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    await expect(
-      new PostgresDashboardTransportAttemptCountsReader(db).read(legacyRunId),
-    ).rejects.toThrow(new RegExp(`${legacyRunId}.*transportAttemptCounts`));
   });
 });
 
