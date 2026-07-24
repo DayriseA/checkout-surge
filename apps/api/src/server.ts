@@ -26,6 +26,7 @@ import type { DashboardProjectionService } from "./services/dashboard-recovery-s
 import { DashboardRecoveryWorkflow } from "./services/dashboard-recovery-workflow.js";
 import type { DemoPresetController } from "./services/demo-preset-service.js";
 import type { DemoRunLifecycleController } from "./services/demo-run-service.js";
+import { DemoRunValidationError } from "./services/demo-run-validation-error.js";
 import type { ErpStatusService } from "./services/erp-status-service.js";
 import type { GeneratedRunRetentionWorkflow } from "./services/generated-run-retention-service.js";
 import type { GeneratedRunTeardownWorkflow } from "./services/generated-run-teardown-service.js";
@@ -79,6 +80,15 @@ export async function buildApiServer(options: BuildApiServerOptions): Promise<Ap
 
     if (error instanceof ApiHttpError) {
       return sendError(reply, error.statusCode, {
+        code: error.code,
+        message: error.message,
+        correlationId,
+        ...(error.details ? { details: error.details } : {}),
+      });
+    }
+
+    if (error instanceof DemoRunValidationError) {
+      return sendError(reply, demoRunValidationStatus(error.code), {
         code: error.code,
         message: error.message,
         correlationId,
@@ -152,6 +162,14 @@ export async function buildApiServer(options: BuildApiServerOptions): Promise<Ap
   });
 
   return app;
+}
+
+function demoRunValidationStatus(code: DemoRunValidationError["code"]): number {
+  if (code === "public_visitor_forbidden") return 403;
+  if (code === "public_run_budget_exceeded") return 429;
+  if (code === "resource_not_found") return 404;
+  if (["run_conflict", "preset_conflict", "traffic_report_rejected"].includes(code)) return 409;
+  return 400;
 }
 
 function isBadRequestError(error: unknown): error is Error & { statusCode: 400 } {

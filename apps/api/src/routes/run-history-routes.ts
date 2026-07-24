@@ -2,7 +2,6 @@ import {
   adminDeleteRunHistoryRequestSchema,
   adminRunHistoryDetailPathTemplate,
   adminRunHistoryDetailResponseSchema,
-  controlServiceTokenHeaderName,
   publicRunHistoryDetailResponseSchema,
   runHistoryDetailParamsSchema,
   runHistoryDetailPathTemplate,
@@ -10,10 +9,10 @@ import {
   runHistoryPath,
 } from "@checkout-surge/contracts";
 import { replaceFastifyCorrelation } from "@checkout-surge/logger/fastify";
-import type { FastifyReply, FastifyRequest } from "fastify";
-import { ApiHttpError, createErrorPayload } from "../runtime/errors.js";
+import { ApiHttpError } from "../runtime/errors.js";
 import type { ApiFastifyInstance } from "../runtime/fastify.js";
 import type { RunHistoryController } from "../services/run-history-service.js";
+import { requireControlServiceToken } from "./control-service-token.js";
 
 export interface RegisterRunHistoryRoutesOptions {
   runHistoryService: RunHistoryController;
@@ -94,25 +93,4 @@ export function registerRunHistoryRoutes(
 
     return reply.status(200).send(await options.runHistoryService.delete(parsed, correlationId));
   });
-}
-
-function requireControlServiceToken(
-  request: FastifyRequest,
-  reply: FastifyReply,
-  expectedToken: string,
-): FastifyReply | null {
-  const suppliedToken = request.headers[controlServiceTokenHeaderName];
-  const token = Array.isArray(suppliedToken) ? suppliedToken[0] : suppliedToken;
-
-  if (token === expectedToken) {
-    return null;
-  }
-
-  return reply.status(401).send(
-    createErrorPayload({
-      code: "control_token_required",
-      message: "A valid control service token is required.",
-      correlationId: request.correlationId,
-    }),
-  );
 }

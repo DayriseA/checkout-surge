@@ -4430,6 +4430,40 @@ function runnerDiagnosticsFixture() {
 }
 
 describe("API correlation and canonical error boundary", () => {
+  it("handles demo-run validation errors without the unhandled-error path", async () => {
+    const lines: string[] = [];
+    const logger = createServiceLogger({
+      service: "api",
+      level: "info",
+      destination: { write: (line) => void lines.push(line) },
+    });
+    const server = await buildTestServer({ persistence: new AcceptingPersistence(), logger });
+    server.get("/test-demo-run-validation-error", async () => {
+      throw new DemoRunValidationError("run_conflict", "Demo run conflict.", {
+        runId: fixtureIds.run,
+      });
+    });
+
+    try {
+      const response = await server.inject({
+        method: "GET",
+        url: "/test-demo-run-validation-error",
+        headers: { [correlationIdHeaderName]: "demo-run-validation-correlation" },
+      });
+
+      expect(response.statusCode).toBe(409);
+      expect(response.json()).toMatchObject({
+        code: "run_conflict",
+        message: "Demo run conflict.",
+        correlationId: "demo-run-validation-correlation",
+        details: { runId: fixtureIds.run },
+      });
+      expect(lines.some((line) => line.includes("Unhandled API error."))).toBe(false);
+    } finally {
+      await server.close();
+    }
+  });
+
   it("binds the inbound id into the response header, canonical error body, and routine request logs", async () => {
     const lines: string[] = [];
     const logger = createServiceLogger({
