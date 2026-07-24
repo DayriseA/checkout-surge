@@ -1,6 +1,7 @@
 import {
   type BackpressureConfig,
   type DemoPresetDisplay,
+  type DemoPresetVisibility,
   type ErpRunConfig,
   type InventoryConfig,
   type PublicRuntimePolicyMutable,
@@ -11,13 +12,7 @@ import { eq, sql } from "drizzle-orm";
 import { createDatabaseConnection } from "../client.js";
 import { createRedisClient } from "../redis.js";
 import { initializeInventory } from "../redis-inventory.js";
-import {
-  type DemoPresetVisibility,
-  demoPresets,
-  products,
-  publicRuntimePolicies,
-  saleOffers,
-} from "../schema.js";
+import { demoPresets, products, publicRuntimePolicies, saleOffers } from "../schema.js";
 import { optionalIntegerEnv, optionalNumberEnv, requireEnv } from "./env.js";
 
 const seedIds = {

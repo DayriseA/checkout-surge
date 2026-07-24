@@ -2,26 +2,15 @@ import type {
   AcceptedRunConfigSnapshot,
   BackpressureConfig,
   BusinessOutcomeSummary,
-  DemoPresetVisibility as ContractDemoPresetVisibility,
-  DemoRunStatus as ContractDemoRunStatus,
-  ErpAttemptStatus as ContractErpAttemptStatus,
-  OrderEventName as ContractOrderEventName,
-  OrderStatus as ContractOrderStatus,
-  RecoveryJobStatus as ContractRecoveryJobStatus,
-  ReservationPendingPersistenceStatus as ContractReservationPendingPersistenceStatus,
-  SaleOfferPurpose as ContractSaleOfferPurpose,
-  TrafficCompletionEnrichmentStatus as ContractTrafficCompletionEnrichmentStatus,
   DemoPresetDisplay,
   ErpRunConfig,
   HttpTimingBreakdownSummary,
   InventoryConfig,
-  OperatorMode,
   PublicRuntimePolicyMutable as PublicRuntimePolicyMutableContract,
   RealLoadRunDiagnosticsSummary,
   TerminalInventorySnapshot,
   TrafficConfig,
   TrafficDeliverySummary,
-  TrafficExecutionStatus,
   TrafficHttpSummary,
   TransportAttemptCounts,
 } from "@checkout-surge/contracts";
@@ -61,60 +50,35 @@ import {
 export type JsonRecord = Record<string, unknown>;
 export type JsonValue = JsonRecord | JsonValue[] | string | number | boolean | null;
 
-export {
-  demoPresetVisibilityValues,
-  demoRunStatusValues,
-  erpAttemptStatusValues,
-  orderEventNameValues,
-  orderStatusValues,
-  recoveryJobStatusValues,
-  reservationPendingPersistenceStatusValues,
-  saleOfferPurposeValues,
-  trafficCompletionEnrichmentStatusValues,
-};
-
-export type SaleOfferPurpose = ContractSaleOfferPurpose;
 export const saleOfferPurposeEnum = pgEnum("sale_offer_purpose", saleOfferPurposeValues);
 
-export type OrderStatus = ContractOrderStatus;
 export const orderStatusEnum = pgEnum("order_status", orderStatusValues);
 
-export type ErpAttemptStatus = ContractErpAttemptStatus;
 export const erpAttemptStatusEnum = pgEnum("erp_attempt_status", erpAttemptStatusValues);
 
-export type RecoveryJobStatus = ContractRecoveryJobStatus;
 export const recoveryJobStatusEnum = pgEnum("recovery_job_status", recoveryJobStatusValues);
 
-export type OrderEventName = ContractOrderEventName;
 export const orderEventNameEnum = pgEnum("order_event_name", orderEventNameValues);
 
-export type DemoPresetVisibility = ContractDemoPresetVisibility;
 export const demoPresetVisibilityEnum = pgEnum(
   "demo_preset_visibility",
   demoPresetVisibilityValues,
 );
 
-export const demoRunOperatorModeValues = operatorModeValues;
-export type DemoRunOperatorMode = OperatorMode;
-export const demoRunOperatorModeEnum = pgEnum("demo_run_operator_mode", demoRunOperatorModeValues);
+export const demoRunOperatorModeEnum = pgEnum("demo_run_operator_mode", operatorModeValues);
 
-export type DemoRunStatus = ContractDemoRunStatus;
 export const demoRunStatusEnum = pgEnum("demo_run_status", demoRunStatusValues);
 
-export const demoRunTrafficStatusValues = trafficExecutionStatusValues;
-export type DemoRunTrafficStatus = TrafficExecutionStatus;
 export const demoRunTrafficStatusEnum = pgEnum(
   "demo_run_traffic_status",
-  demoRunTrafficStatusValues,
+  trafficExecutionStatusValues,
 );
 
-export type TrafficCompletionEnrichmentStatus = ContractTrafficCompletionEnrichmentStatus;
 export const trafficCompletionEnrichmentStatusEnum = pgEnum(
   "traffic_completion_enrichment_status",
   trafficCompletionEnrichmentStatusValues,
 );
 
-export type ReservationPendingPersistenceStatus = ContractReservationPendingPersistenceStatus;
 export const reservationPendingPersistenceStatusEnum = pgEnum(
   "reservation_pending_persistence_status",
   reservationPendingPersistenceStatusValues,
@@ -840,38 +804,3 @@ export const demoRunSummariesRelations = relations(demoRunSummaries, ({ one }) =
     references: [demoRuns.id],
   }),
 }));
-
-export type Product = typeof products.$inferSelect;
-export type NewProduct = typeof products.$inferInsert;
-export type SaleOffer = typeof saleOffers.$inferSelect;
-export type NewSaleOffer = typeof saleOffers.$inferInsert;
-export type DemoPreset = typeof demoPresets.$inferSelect;
-export type NewDemoPreset = typeof demoPresets.$inferInsert;
-export type DemoRun = typeof demoRuns.$inferSelect;
-export type NewDemoRun = typeof demoRuns.$inferInsert;
-export type DemoRunSaleContext = typeof demoRunSaleContexts.$inferSelect;
-export type NewDemoRunSaleContext = typeof demoRunSaleContexts.$inferInsert;
-export type Reservation = typeof reservations.$inferSelect;
-export type NewReservation = typeof reservations.$inferInsert;
-export type Order = typeof orders.$inferSelect;
-export type NewOrder = typeof orders.$inferInsert;
-export type ErpAttempt = typeof erpAttempts.$inferSelect;
-export type NewErpAttempt = typeof erpAttempts.$inferInsert;
-export type OrderRecoveryJob = typeof orderRecoveryJobs.$inferSelect;
-export type NewOrderRecoveryJob = typeof orderRecoveryJobs.$inferInsert;
-export type OrderDeadLetter = typeof orderDeadLetters.$inferSelect;
-export type NewOrderDeadLetter = typeof orderDeadLetters.$inferInsert;
-export type OrderEvent = typeof orderEvents.$inferSelect;
-export type NewOrderEvent = typeof orderEvents.$inferInsert;
-export type ReservationPendingPersistence = typeof reservationPendingPersistence.$inferSelect;
-export type NewReservationPendingPersistence = typeof reservationPendingPersistence.$inferInsert;
-export type SimulatedNotification = typeof simulatedNotifications.$inferSelect;
-export type NewSimulatedNotification = typeof simulatedNotifications.$inferInsert;
-export type DemoRunSoldOutCount = typeof demoRunSoldOutCounts.$inferSelect;
-export type NewDemoRunSoldOutCount = typeof demoRunSoldOutCounts.$inferInsert;
-export type DemoRunFinalization = typeof demoRunFinalizations.$inferSelect;
-export type NewDemoRunFinalization = typeof demoRunFinalizations.$inferInsert;
-export type DemoRunSummary = typeof demoRunSummaries.$inferSelect;
-export type NewDemoRunSummary = typeof demoRunSummaries.$inferInsert;
-export type PublicRuntimePolicy = typeof publicRuntimePolicies.$inferSelect;
-export type NewPublicRuntimePolicy = typeof publicRuntimePolicies.$inferInsert;

@@ -1,16 +1,13 @@
 import type {
   BusinessOutcomeSummary,
+  DemoRunStatus,
   TerminalInventorySnapshot,
   TrafficDeliverySummary,
+  TrafficExecutionStatus,
   TrafficHttpSummary,
   TransportAttemptCounts,
 } from "@checkout-surge/contracts";
-import type {
-  CheckoutSurgeDatabase,
-  DemoRunStatus,
-  DemoRunTrafficStatus,
-  demoRuns,
-} from "@checkout-surge/db";
+import type { CheckoutSurgeDatabase, demoRuns } from "@checkout-surge/db";
 
 export type TerminalDemoRunStatus = "completed" | "failed";
 
@@ -20,7 +17,7 @@ export interface TerminalDemoRunTransitionInput {
   failureReason: string | null;
   finalizedAt: Date;
   allowedCurrentStatuses: DemoRunStatus[];
-  terminalTrafficStatus?: DemoRunTrafficStatus;
+  terminalTrafficStatus?: TrafficExecutionStatus;
 }
 
 export interface TerminalDemoRunSummaryInput {
@@ -37,7 +34,7 @@ export interface TerminalDemoRunSummaryInput {
   businessOutcome: BusinessOutcomeSummary;
   terminalInventorySnapshot: TerminalInventorySnapshot | null;
   allowedCurrentStatuses: DemoRunStatus[];
-  terminalTrafficStatus?: DemoRunTrafficStatus;
+  terminalTrafficStatus?: TrafficExecutionStatus;
 }
 
 export interface TerminalDemoRunWriter {

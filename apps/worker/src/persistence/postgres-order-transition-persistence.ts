@@ -1,10 +1,5 @@
-import type { OrderProcessJob } from "@checkout-surge/contracts";
-import {
-  type CheckoutSurgeDatabase,
-  type OrderStatus,
-  orderEvents,
-  orders,
-} from "@checkout-surge/db";
+import type { OrderProcessJob, OrderStatus } from "@checkout-surge/contracts";
+import { type CheckoutSurgeDatabase, orderEvents, orders } from "@checkout-surge/db";
 import { eq } from "drizzle-orm";
 import type {
   ConfirmedTransitionResult,

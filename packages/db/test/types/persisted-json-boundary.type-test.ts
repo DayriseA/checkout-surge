@@ -13,17 +13,23 @@ import type {
   TransportAttemptCounts,
 } from "@checkout-surge/contracts";
 import type {
-  DemoPreset,
-  DemoRun,
-  DemoRunFinalization,
-  DemoRunSummary,
-  NewDemoPreset,
-  NewDemoRun,
-  NewDemoRunFinalization,
-  NewDemoRunSummary,
-  NewPublicRuntimePolicy,
-  PublicRuntimePolicy,
+  demoPresets,
+  demoRunFinalizations,
+  demoRuns,
+  demoRunSummaries,
+  publicRuntimePolicies,
 } from "../../src/schema.js";
+
+type DemoPreset = typeof demoPresets.$inferSelect;
+type NewDemoPreset = typeof demoPresets.$inferInsert;
+type DemoRun = typeof demoRuns.$inferSelect;
+type NewDemoRun = typeof demoRuns.$inferInsert;
+type DemoRunFinalization = typeof demoRunFinalizations.$inferSelect;
+type NewDemoRunFinalization = typeof demoRunFinalizations.$inferInsert;
+type DemoRunSummary = typeof demoRunSummaries.$inferSelect;
+type NewDemoRunSummary = typeof demoRunSummaries.$inferInsert;
+type PublicRuntimePolicy = typeof publicRuntimePolicies.$inferSelect;
+type NewPublicRuntimePolicy = typeof publicRuntimePolicies.$inferInsert;
 
 type Equal<Left, Right> =
   (<Value>() => Value extends Left ? 1 : 2) extends <Value>() => Value extends Right ? 1 : 2
