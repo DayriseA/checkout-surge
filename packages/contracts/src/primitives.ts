@@ -26,6 +26,4 @@ export const percentageSchema = z.number().min(0).max(1);
 
 export const jsonObjectSchema = z.record(z.string(), z.unknown());
 
-export const optionalJsonObjectSchema = jsonObjectSchema.optional();
-
 export type JsonObject = z.infer<typeof jsonObjectSchema>;

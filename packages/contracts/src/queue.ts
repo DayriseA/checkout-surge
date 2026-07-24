@@ -50,7 +50,6 @@ export const queueFailedJobSummarySchema = z
     failedAt: isoTimestampSchema.nullable(),
   })
   .strict();
-export type QueueFailedJobSummary = z.infer<typeof queueFailedJobSummarySchema>;
 
 export const queueStatusSchema = z
   .object({

@@ -30,7 +30,6 @@ export const buyerSpikeTrafficConfigSchema = z
     quantityPerAttempt: positiveIntegerSchema.default(1),
   })
   .strict();
-export type BuyerSpikeTrafficConfig = z.infer<typeof buyerSpikeTrafficConfigSchema>;
 
 const k6VusSchema = z
   .object({
@@ -266,7 +265,6 @@ export const trafficExecutionStatusResponseSchema = z
     observedAt: isoTimestampSchema,
   })
   .strict();
-export type TrafficExecutionStatusResponse = z.infer<typeof trafficExecutionStatusResponseSchema>;
 
 export const trafficCompletionAcknowledgementSchema = z
   .object({
@@ -275,9 +273,6 @@ export const trafficCompletionAcknowledgementSchema = z
     correlationId: correlationIdSchema,
   })
   .strict();
-export type TrafficCompletionAcknowledgement = z.infer<
-  typeof trafficCompletionAcknowledgementSchema
->;
 
 export const trafficHttpSummarySchema = z
   .object({
@@ -415,7 +410,6 @@ export const httpTimingPhaseSummarySchema = z
     p95Ms: nonnegativeNumberSchema.nullable(),
   })
   .strict();
-export type HttpTimingPhaseSummary = z.infer<typeof httpTimingPhaseSummarySchema>;
 
 export const httpTimingBreakdownSummarySchema = z
   .object({

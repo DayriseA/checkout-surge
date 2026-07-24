@@ -18,7 +18,6 @@ export const reservationThroughputSchema = z
     measuredAt: isoTimestampSchema,
   })
   .strict();
-export type ReservationThroughput = z.infer<typeof reservationThroughputSchema>;
 
 export const soldOutPressureSchema = z
   .object({
@@ -26,7 +25,6 @@ export const soldOutPressureSchema = z
     latestObservedAt: isoTimestampSchema.nullable(),
   })
   .strict();
-export type SoldOutPressure = z.infer<typeof soldOutPressureSchema>;
 
 export const inventoryStatusSchema = z
   .object({
@@ -91,7 +89,6 @@ export const inventoryUpdatedEventPayloadSchema = z
       });
     }
   });
-export type InventoryUpdatedEventPayload = z.infer<typeof inventoryUpdatedEventPayloadSchema>;
 
 export const securedReservationHoldSchema = z
   .object({

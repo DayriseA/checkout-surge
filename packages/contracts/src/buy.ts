@@ -16,7 +16,6 @@ export const loadRunIdHeaderName = "x-load-run-id" as const;
 export const buyOutcomeHeaderName = "x-checkout-outcome" as const;
 
 export const buyOutcomeHeaderValueSchema = z.enum(publicBuyOutcomeValues);
-export type BuyOutcomeHeaderValue = z.infer<typeof buyOutcomeHeaderValueSchema>;
 
 export const buyRequestSchema = z
   .object({
@@ -34,12 +33,10 @@ export const orderStatusParamsSchema = z
     publicOrderId: z.string().trim().min(1),
   })
   .strict();
-export type OrderStatusParams = z.infer<typeof orderStatusParamsSchema>;
 
 export const orderStatusRequestSchema = orderStatusParamsSchema
   .extend({ correlationId: correlationIdSchema.optional() })
   .strict();
-export type OrderStatusRequest = z.infer<typeof orderStatusRequestSchema>;
 
 export const orderTimelineEntrySchema = z
   .object({
@@ -48,7 +45,6 @@ export const orderTimelineEntrySchema = z
     occurredAt: isoTimestampSchema,
   })
   .strict();
-export type OrderTimelineEntry = z.infer<typeof orderTimelineEntrySchema>;
 
 export const orderStatusResponseSchema = z
   .object({
@@ -101,7 +97,6 @@ export const reservationAcceptedResponseSchema = z
     order: acceptedOrderSummarySchema,
   })
   .strict();
-export type ReservationAcceptedResponse = z.infer<typeof reservationAcceptedResponseSchema>;
 
 export const reservationPendingPersistenceResponseSchema = z
   .object({
@@ -113,9 +108,6 @@ export const reservationPendingPersistenceResponseSchema = z
     retryAfterSeconds: positiveIntegerSchema,
   })
   .strict();
-export type ReservationPendingPersistenceResponse = z.infer<
-  typeof reservationPendingPersistenceResponseSchema
->;
 
 const rejectedResponseBaseShape = {
   correlationId: correlationIdSchema,

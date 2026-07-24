@@ -370,7 +370,6 @@ export const runHistoryDetailParamsSchema = z
     runId: uuidSchema,
   })
   .strict();
-export type RunHistoryDetailParams = z.infer<typeof runHistoryDetailParamsSchema>;
 
 export const runHistoryOrderOutcomeSchema = z
   .object({
@@ -577,7 +576,6 @@ export const publicCustomLimitsSchema = z
       .min(1),
   })
   .strict();
-export type PublicCustomLimits = z.infer<typeof publicCustomLimitsSchema>;
 
 export const deploymentHardCapsSchema = z
   .object({
@@ -785,9 +783,6 @@ export const adminMaintenanceCleanupRunsRequestSchema = z
     correlationId: correlationIdSchema.optional(),
   })
   .strict();
-export type AdminMaintenanceCleanupRunsRequest = z.infer<
-  typeof adminMaintenanceCleanupRunsRequestSchema
->;
 
 export const adminMaintenanceCleanupRunsResponseSchema = z
   .object({
@@ -805,7 +800,6 @@ export type AdminMaintenanceCleanupRunsResponse = z.infer<
 >;
 
 export const adminGeneratedRunTeardownParamsSchema = z.object({ runId: uuidSchema }).strict();
-export type AdminGeneratedRunTeardownParams = z.infer<typeof adminGeneratedRunTeardownParamsSchema>;
 
 const generatedRunTeardownCleanupSchema = z
   .object({
@@ -844,4 +838,3 @@ export const trafficDeliveryStatusSummarySchema = z
     summary: trafficDeliverySummarySchema,
   })
   .strict();
-export type TrafficDeliveryStatusSummary = z.infer<typeof trafficDeliveryStatusSummarySchema>;

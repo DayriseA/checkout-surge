@@ -41,10 +41,6 @@ export const erpConfirmationRequestSchema = z
   .strict();
 export type ErpConfirmationRequest = z.infer<typeof erpConfirmationRequestSchema>;
 
-export const erpConfirmationResponseStatusValues = ["succeeded", "failed"] as const;
-export const erpConfirmationResponseStatusSchema = z.enum(erpConfirmationResponseStatusValues);
-export type ErpConfirmationResponseStatus = z.infer<typeof erpConfirmationResponseStatusSchema>;
-
 const erpConfirmationResponseBaseShape = {
   latencyMs: nonnegativeNumberSchema,
   timestamp: isoTimestampSchema,
@@ -101,7 +97,6 @@ export type ErpCircuitBreakerSnapshot = z.infer<typeof erpCircuitBreakerSnapshot
 
 export const erpDependencyStatusValues = ["healthy", "degraded", "unavailable"] as const;
 export const erpDependencyStatusSchema = z.enum(erpDependencyStatusValues);
-export type ErpDependencyStatus = z.infer<typeof erpDependencyStatusSchema>;
 
 export const erpRetryPressureSchema = z
   .object({
@@ -112,7 +107,6 @@ export const erpRetryPressureSchema = z
     inspectionTruncated: z.boolean(),
   })
   .strict();
-export type ErpRetryPressure = z.infer<typeof erpRetryPressureSchema>;
 
 export const erpLatestAttemptSummarySchema = z
   .object({

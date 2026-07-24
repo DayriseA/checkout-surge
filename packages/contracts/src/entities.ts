@@ -55,7 +55,6 @@ export const reservationSummarySchema = z
     securedAt: isoTimestampSchema,
   })
   .strict();
-export type ReservationSummary = z.infer<typeof reservationSummarySchema>;
 
 export const orderSummarySchema = z
   .object({
@@ -75,7 +74,6 @@ export const orderSummarySchema = z
     failedAt: isoTimestampSchema.optional(),
   })
   .strict();
-export type OrderSummary = z.infer<typeof orderSummarySchema>;
 
 export const demoPresetDisplaySchema = z
   .object({
@@ -122,4 +120,3 @@ export const demoRunSummaryShapeSchema = z
     capturedAt: isoTimestampSchema,
   })
   .strict();
-export type DemoRunSummaryShape = z.infer<typeof demoRunSummaryShapeSchema>;

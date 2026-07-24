@@ -61,7 +61,6 @@ export const dashboardRecoveryQuerySchema = z
       });
     }
   });
-export type DashboardRecoveryQuery = z.infer<typeof dashboardRecoveryQuerySchema>;
 
 export const dashboardProjectionSchema = z
   .object({
