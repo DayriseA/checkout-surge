@@ -207,7 +207,7 @@ The seeded public presets are `preview-1k`, `surge-5k`, `surge-10k`, `idempotenc
 
 Local laptop, Dev Container, and Codespaces runs are not hosted benchmark runs. They share CPU, memory, and Docker daemon capacity with the development workspace. If the environment is constrained, lower admin preset `buyerCount` for buyer-spike checks or `ratePerSecond` for steady-arrival checks, lengthen steady-arrival `durationSeconds` when useful, and treat dashboard behavior, queue pressure, and k6 metric streaming as the local verification target. Lower local validation parameters are a developer-workstation compromise, not a change to the public demo target. Hosted benchmark isolation, horizontal scaling, reverse-proxy settings, and infrastructure tuning belong to hosted deployment.
 
-The live evidence qualification and its review trigger are tracked in [Scope and Caveats](scope_and_caveats.md#live-caveats); this section remains authoritative for the local validation workflow.
+This evidence limitation is listed in [Scope and Caveats](scope_and_caveats.md#current-caveats); this section remains authoritative for the local validation workflow.
 
 Public, watch, and admin server rendering intentionally does not call dashboard recovery. It bootstraps authoritative run availability as pending, and the mounted browser converges through the same-origin `/api/dashboard/recovery` BFF. That BFF mints or reuses the HttpOnly signed visitor cookie and forwards only the verified credential, so separate visitors receive separate API per-source budget identities rather than sharing the web container's network identity. Caller-supplied visitor headers are ignored.
 

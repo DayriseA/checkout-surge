@@ -784,7 +784,7 @@ The implemented schema, Redis keys, and public contracts are now concrete. The c
 - payment authorization, cancellation, and automatic reservation expiry/release,
 - external notification-provider integration.
 
-Any implementation in those areas must preserve the existing reservation/order distinction, durable recovery boundaries, and accepted compatibility boundary. Their classification and decision triggers are tracked in [Scope and Caveats](scope_and_caveats.md); this section remains authoritative for the domain constraints.
+Any implementation in those areas must preserve the existing reservation/order distinction, durable recovery boundaries, and accepted compatibility boundary. Their classification is recorded in [Scope and Caveats](scope_and_caveats.md); this section remains authoritative for the domain constraints.
 
 ---
 

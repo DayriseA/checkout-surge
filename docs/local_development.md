@@ -203,7 +203,7 @@ caddy run --config infra/caddy/Caddyfile.host-native --adapter caddyfile
 
 `pnpm dev:load-orchestrator` starts the project-owned wrapper service, then that service invokes the configured `K6_BINARY` when a dashboard or API request starts a load run. In the host-native workflow, `K6_BINARY` defaults to `k6` on the local PATH.
 
-The status and expiry trigger for this host-native prerequisite are tracked in [Scope and Caveats](scope_and_caveats.md#live-caveats); this section remains authoritative for the setup steps.
+This host-native prerequisite is listed as a current caveat in [Scope and Caveats](scope_and_caveats.md#current-caveats); this section remains authoritative for the setup steps.
 
 Caddy provides the same single-origin edge route used by the compose runtime: the exact `/dashboard/events` path goes to the API on `4000` with immediate streaming, while all other dashboard traffic goes to the web app on `3000`. Run Caddy from the same host or Dev Container network namespace as the app services so it can reach those local ports. When Caddy is bypassed by opening the web app on `3000`, Next.js proxies the same-origin stream through the server-only `API_BASE_URL`.
 
