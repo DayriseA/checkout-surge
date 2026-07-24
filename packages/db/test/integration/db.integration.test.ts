@@ -1810,20 +1810,19 @@ describe("database migrations, seed data, and reset behavior", () => {
     });
   });
 
-  it("keeps pre-scope seeded inventory compatible as catalog inventory", async () => {
+  it("rejects inventory state without the current scope field", async () => {
     const saleOfferId = "10000000-0000-4000-8000-000000000017";
     const keys = inventoryKeys(saleOfferId);
     const input = buildReservationInput({ saleOfferId, sequence: 17 });
     await initializeInventory(redis, { saleOfferId, allocatedStock: 1 });
     await redis.hdel(keys.state, "inventoryScope");
 
-    expect(await reserveInventoryStock(redis, input)).toEqual({
-      outcome: "reservation_secured",
-      reservation: input.reservation,
-    });
+    await expect(reserveInventoryStock(redis, input)).rejects.toThrow(
+      "Inventory scope must be catalog or generated_run",
+    );
     expect(await redis.hgetall(keys.state)).toMatchObject({
-      remainingStock: "0",
-      reservedStock: "1",
+      remainingStock: "1",
+      reservedStock: "0",
     });
   });
 

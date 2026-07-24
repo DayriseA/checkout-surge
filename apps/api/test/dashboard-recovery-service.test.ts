@@ -314,7 +314,7 @@ describe("DashboardProjectionService", () => {
   it("skips every run-owned port without a current run while retaining global health", async () => {
     const harness = serviceHarness({ currentRun: null, saleOfferId: null });
 
-    const recovery = await harness.service.getRecovery({ correlationId: "corr-no-run" });
+    const recovery = await harness.service.build({ correlationId: "corr-no-run" });
 
     expect(recovery).toMatchObject({
       schema: dashboardProjectionSchemaName,
@@ -346,7 +346,7 @@ describe("DashboardProjectionService", () => {
     const currentRun = runSnapshot();
     const harness = serviceHarness({ currentRun, saleOfferId });
 
-    const recovery = await harness.service.getRecovery({ correlationId: "corr-scoped" });
+    const recovery = await harness.service.build({ correlationId: "corr-scoped" });
 
     const expectedScope = { runId, saleOfferId };
     expect(recovery.scope).toEqual(expectedScope);
@@ -398,7 +398,7 @@ describe("DashboardProjectionService", () => {
     });
     const knownScope = { runId, saleOfferId };
 
-    const projection = await harness.service.getRecovery({
+    const projection = await harness.service.build({
       correlationId: "corr-known-terminal",
       knownScope,
     });
@@ -412,7 +412,7 @@ describe("DashboardProjectionService", () => {
     const harness = serviceHarness(null, contextError);
 
     await expect(
-      harness.service.getRecovery({ correlationId: "corr-context-failure" }),
+      harness.service.build({ correlationId: "corr-context-failure" }),
     ).rejects.toBe(contextError);
 
     expect(harness.inventory).not.toHaveBeenCalled();
@@ -432,7 +432,7 @@ describe("DashboardProjectionService", () => {
     const harness = serviceHarness({ currentRun: runSnapshot(), saleOfferId: null });
 
     await expect(
-      harness.service.getRecovery({ correlationId: "corr-incoherent-context" }),
+      harness.service.build({ correlationId: "corr-incoherent-context" }),
     ).rejects.toThrow(/context must select a run and sale offer together/i);
 
     expect(harness.inventory).not.toHaveBeenCalled();
@@ -447,7 +447,7 @@ describe("DashboardProjectionService", () => {
       lagError: projectionError,
     });
 
-    const recovery = await harness.service.getRecovery({ correlationId: "corr-lag-failure" });
+    const recovery = await harness.service.build({ correlationId: "corr-lag-failure" });
 
     expect(recovery.scope).toEqual({ runId, saleOfferId });
     expect(recovery.currentRun?.runId).toBe(runId);
@@ -471,7 +471,7 @@ describe("DashboardProjectionService", () => {
       transportAttemptCounts: counts,
     });
 
-    const recovery = await harness.service.getRecovery({ correlationId: "corr-draining" });
+    const recovery = await harness.service.build({ correlationId: "corr-draining" });
 
     expect(harness.transportAttemptCounts).toHaveBeenCalledWith(runId);
     expect(recovery.transportAttemptCounts).toEqual(counts);
@@ -482,7 +482,7 @@ describe("DashboardProjectionService", () => {
       transportAttemptCounts: null,
     });
 
-    const recovery = await harness.service.getRecovery({ correlationId: "corr-active" });
+    const recovery = await harness.service.build({ correlationId: "corr-active" });
 
     expect(harness.transportAttemptCounts).toHaveBeenCalledWith(runId);
     expect(recovery.transportAttemptCounts).toBeNull();
@@ -494,7 +494,7 @@ describe("DashboardProjectionService", () => {
       transportAttemptCountsError: projectionError,
     });
 
-    const recovery = await harness.service.getRecovery({ correlationId: "corr-ta-failure" });
+    const recovery = await harness.service.build({ correlationId: "corr-ta-failure" });
 
     expect(recovery.scope).toEqual({ runId, saleOfferId });
     expect(recovery.transportAttemptCounts).toBeNull();
@@ -569,7 +569,7 @@ describe("DashboardProjectionService", () => {
       },
       logger: { warn: vi.fn() } as never,
     });
-    const recovery = service.getRecovery({
+    const recovery = service.build({
       correlationId: "corr-abandoned",
       signal: controller.signal,
     });
@@ -604,7 +604,7 @@ describe("DashboardProjectionService", () => {
       logger: { warn: vi.fn() } as never,
       now: () => now,
     });
-    const first = service.getRecovery({
+    const first = service.build({
       correlationId: "corr-abandoned-cleanup",
       signal: controller.signal,
     });
@@ -613,7 +613,7 @@ describe("DashboardProjectionService", () => {
     controller.abort(new Error("publication deadline"));
     await expect(first).rejects.toThrow("publication deadline");
 
-    const second = service.getRecovery({ correlationId: "corr-after-abort" });
+    const second = service.build({ correlationId: "corr-after-abort" });
     await new Promise((resolve) => setImmediate(resolve));
     expect(operationCount).toBe(1);
 

@@ -43,7 +43,7 @@ describe("dashboard projection revision restart ordering", () => {
 
   it("uses one schema and allocates a newer revision from a fresh service and Redis client", async () => {
     const firstService = projectionService();
-    const recoveryProjection = await firstService.getRecovery({ correlationId: "recovery-1" });
+    const recoveryProjection = await firstService.build({ correlationId: "recovery-1" });
 
     const restartedService = projectionService();
     const liveProjection = await restartedService.build({

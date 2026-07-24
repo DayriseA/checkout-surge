@@ -79,10 +79,10 @@ import {
   reservationDecisionValues,
   reservationRejectedResponseSchema,
   resolveSteadyArrivalVus,
+  publicRunHistoryDetailResponseSchema,
   runHistoryDetailParamsSchema,
   runHistoryDetailPath,
   runHistoryDetailPathTemplate,
-  runHistoryDetailResponseSchema,
   runHistoryListQuerySchema,
   runHistoryListResponseSchema,
   runHistoryPath,
@@ -1992,7 +1992,7 @@ describe("public runtime policy contract", () => {
       : undefined;
     const { notes: _deliveryNotes, ...publicDeliverySummary } =
       publicSummary.trafficDeliverySummary;
-    const detail = runHistoryDetailResponseSchema.parse({
+    const detail = publicRunHistoryDetailResponseSchema.parse({
       summary: {
         ...publicSummary,
         trafficDeliverySummary: publicDeliverySummary,
@@ -2135,14 +2135,14 @@ describe("public runtime policy contract", () => {
       }),
     ).not.toThrow();
     expect(() =>
-      runHistoryDetailResponseSchema.parse({
+      publicRunHistoryDetailResponseSchema.parse({
         ...detail,
         orders: { ...detail.orders, records: [] },
       }),
     ).toThrow();
     for (const privateCollection of ["orders", "erpAttempts", "notifications", "eventTimeline"]) {
       expect(() =>
-        runHistoryDetailResponseSchema.parse({
+        publicRunHistoryDetailResponseSchema.parse({
           ...detail,
           [privateCollection]: { totalCount: 0, limit: 20, truncated: false, records: [] },
         }),
@@ -2159,14 +2159,14 @@ describe("public runtime policy contract", () => {
       ["events", "source"],
     ] as const) {
       expect(() =>
-        runHistoryDetailResponseSchema.parse({
+        publicRunHistoryDetailResponseSchema.parse({
           ...detail,
           [aggregate]: { ...detail[aggregate], [deniedField]: "private-marker" },
         }),
       ).toThrow();
     }
     expect(() =>
-      runHistoryDetailResponseSchema.parse({
+      publicRunHistoryDetailResponseSchema.parse({
         ...detail,
         summary: {
           ...detail.summary,
@@ -2178,7 +2178,7 @@ describe("public runtime policy contract", () => {
       }),
     ).toThrow();
     expect(
-      runHistoryDetailResponseSchema.parse({
+      publicRunHistoryDetailResponseSchema.parse({
         ...detail,
         orders: { totalCount: 0, byStatus: { queued: 0, processing: 0, confirmed: 0, failed: 0 } },
         erpAttempts: {
@@ -2192,7 +2192,7 @@ describe("public runtime policy contract", () => {
       }).erpAttempts.p95LatencyMs,
     ).toBeNull();
     expect(() =>
-      runHistoryDetailResponseSchema.parse({
+      publicRunHistoryDetailResponseSchema.parse({
         ...detail,
         run: { ...detail.run, saleOfferId },
       }),

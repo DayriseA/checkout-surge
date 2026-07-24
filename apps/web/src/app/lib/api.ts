@@ -9,15 +9,15 @@ import {
   type LivenessResponse,
   livenessResponseSchema,
   type PublicPresetListResponse,
+  type PublicRunHistoryDetailResponse,
   type PublicRuntimePolicyResponse,
   publicPresetListPath,
   publicPresetListResponseSchema,
+  publicRunHistoryDetailResponseSchema,
   publicRuntimePolicyPath,
   publicRuntimePolicyResponseSchema,
-  type RunHistoryDetailResponse,
   type RunHistoryListResponse,
   runHistoryDetailPath,
-  runHistoryDetailResponseSchema,
   runHistoryListResponseSchema,
   runHistoryPath,
 } from "@checkout-surge/contracts";
@@ -115,8 +115,11 @@ export async function getRunHistoryPage(
 
 export async function getRunHistoryDetail(
   runId: string,
-): Promise<BackendRead<RunHistoryDetailResponse>> {
-  return readJson(`${apiBaseUrl()}${runHistoryDetailPath(runId)}`, runHistoryDetailResponseSchema);
+): Promise<BackendRead<PublicRunHistoryDetailResponse>> {
+  return readJson(
+    `${apiBaseUrl()}${runHistoryDetailPath(runId)}`,
+    publicRunHistoryDetailResponseSchema,
+  );
 }
 
 export async function getAdminRunHistoryDetail(

@@ -39,7 +39,7 @@ export class DashboardRecoveryWorkflow implements DashboardRecoveryWorkflowContr
 
       try {
         const response = await settleWithAbort(
-          this.options.recovery.getRecovery({
+          this.options.recovery.build({
             correlationId: input.correlationId,
             signal: input.signal,
             ...(input.knownScope ? { knownScope: input.knownScope } : {}),

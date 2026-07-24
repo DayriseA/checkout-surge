@@ -45,8 +45,8 @@ describe("dashboard route admission", () => {
     ["rate_limited", 429, "dashboard_recovery_rate_limited", undefined],
     ["at_capacity", 503, "dashboard_recovery_unavailable", "at_capacity"],
   ] as const)("rejects recovery %s before service work", async (outcome, status, code, reason) => {
-    const getRecovery = vi.fn();
-    const server = buildServer({ recoveryOutcome: outcome, getRecovery });
+    const buildProjection = vi.fn();
+    const server = buildServer({ recoveryOutcome: outcome, buildProjection });
     const response = await server.inject({
       method: "GET",
       url: "/dashboard/recovery",
@@ -60,17 +60,17 @@ describe("dashboard route admission", () => {
     });
     expect(response.headers[correlationIdHeaderName]).toBe("route-correlation");
     expect(response.headers["retry-after"]).toBe("11");
-    expect(getRecovery).not.toHaveBeenCalled();
+    expect(buildProjection).not.toHaveBeenCalled();
     await server.close();
   });
 
   it("preserves the successful recovery contract and releases after success and throw", async () => {
     const release = vi.fn();
-    const getRecovery = vi
+    const buildProjection = vi
       .fn()
       .mockResolvedValueOnce(recoveryFixture())
       .mockRejectedValueOnce(new Error("projection failed"));
-    const server = buildServer({ getRecovery, release });
+    const server = buildServer({ buildProjection, release });
     const success = await server.inject({
       method: "GET",
       url: "/dashboard/recovery",
@@ -79,7 +79,7 @@ describe("dashboard route admission", () => {
     expect(success.statusCode).toBe(200);
     expect(dashboardProjectionSchema.parse(success.json()).correlationId).toBe("route-correlation");
     expect(success.headers[correlationIdHeaderName]).toBe("route-correlation");
-    expect(getRecovery).toHaveBeenCalledWith({
+    expect(buildProjection).toHaveBeenCalledWith({
       correlationId: "route-correlation",
       signal: expect.any(AbortSignal),
     });
@@ -95,8 +95,8 @@ describe("dashboard route admission", () => {
   });
 
   it("passes a complete known scope through one recovery workflow call", async () => {
-    const getRecovery = vi.fn().mockResolvedValue(recoveryFixture());
-    const server = buildServer({ getRecovery });
+    const buildProjection = vi.fn().mockResolvedValue(recoveryFixture());
+    const server = buildServer({ buildProjection });
     const knownRunId = "11111111-1111-4111-8111-111111111111";
     const knownSaleOfferId = "22222222-2222-4222-8222-222222222222";
 
@@ -107,7 +107,7 @@ describe("dashboard route admission", () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(getRecovery).toHaveBeenCalledWith({
+    expect(buildProjection).toHaveBeenCalledWith({
       correlationId: "route-correlation",
       signal: expect.any(AbortSignal),
       knownScope: { runId: knownRunId, saleOfferId: knownSaleOfferId },
@@ -116,8 +116,8 @@ describe("dashboard route admission", () => {
   });
 
   it("rejects an incomplete known recovery scope before workflow admission", async () => {
-    const getRecovery = vi.fn();
-    const server = buildServer({ getRecovery });
+    const buildProjection = vi.fn();
+    const server = buildServer({ buildProjection });
 
     const response = await server.inject({
       method: "GET",
@@ -126,7 +126,7 @@ describe("dashboard route admission", () => {
     });
 
     expect(response.statusCode).toBe(400);
-    expect(getRecovery).not.toHaveBeenCalled();
+    expect(buildProjection).not.toHaveBeenCalled();
     await server.close();
   });
 
@@ -154,7 +154,7 @@ describe("dashboard route admission", () => {
 function buildServer(options: {
   sseOutcome?: DashboardSseAdmission;
   recoveryOutcome?: "rate_limited" | "at_capacity";
-  getRecovery?: DashboardProjectionService["getRecovery"];
+  buildProjection?: DashboardProjectionService["build"];
   release?: () => void;
   workflowOutcome?: DashboardRecoveryWorkflowResult;
 }) {
@@ -184,7 +184,7 @@ function buildServer(options: {
       ? { recover: async () => options.workflowOutcome as DashboardRecoveryWorkflowResult }
       : new DashboardRecoveryWorkflow({
           recovery: {
-            getRecovery: options.getRecovery ?? vi.fn().mockResolvedValue(recoveryFixture()),
+            build: options.buildProjection ?? vi.fn().mockResolvedValue(recoveryFixture()),
           } as unknown as DashboardProjectionService,
           admission,
         }),

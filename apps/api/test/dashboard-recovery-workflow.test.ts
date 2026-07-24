@@ -12,7 +12,7 @@ import { DashboardRecoveryWorkflow } from "../src/services/dashboard-recovery-wo
 describe("dashboard recovery workflow cancellation", () => {
   it("returns a deadline that expires before local admission without consuming its budget", async () => {
     const admission = createAdmission();
-    const recovery = { getRecovery: vi.fn() } as unknown as DashboardProjectionService;
+    const recovery = { build: vi.fn() } as unknown as DashboardProjectionService;
     const workflow = new DashboardRecoveryWorkflow({ admission, recovery });
     const controller = new AbortController();
     controller.abort(new OperationDeadlineExceededError(50));
@@ -20,7 +20,7 @@ describe("dashboard recovery workflow cancellation", () => {
     await expect(workflow.recover(input(controller.signal))).resolves.toEqual({
       outcome: "timed_out",
     });
-    expect(recovery.getRecovery).not.toHaveBeenCalled();
+    expect(recovery.build).not.toHaveBeenCalled();
     await expect(admission.admit("later")).resolves.toMatchObject({ outcome: "admitted" });
   });
 
@@ -28,21 +28,21 @@ describe("dashboard recovery workflow cancellation", () => {
     const admission = createAdmission();
     const pending = new Promise<never>(() => undefined);
     const healthyResponse = recoveryFixture();
-    const getRecovery = vi
-      .fn<DashboardProjectionService["getRecovery"]>()
+    const buildProjection = vi
+      .fn<DashboardProjectionService["build"]>()
       .mockImplementationOnce(async () => pending)
       .mockImplementationOnce(async () => pending)
       .mockImplementationOnce(async () => pending)
       .mockResolvedValueOnce(healthyResponse);
     const workflow = new DashboardRecoveryWorkflow({
       admission,
-      recovery: { getRecovery } as unknown as DashboardProjectionService,
+      recovery: { build: buildProjection } as unknown as DashboardProjectionService,
     });
     const controllers = Array.from({ length: 3 }, () => new AbortController());
     const abandoned = controllers.map((controller, index) =>
       workflow.recover(input(controller.signal, `source-${index}`)),
     );
-    await vi.waitFor(() => expect(getRecovery).toHaveBeenCalledTimes(3));
+    await vi.waitFor(() => expect(buildProjection).toHaveBeenCalledTimes(3));
 
     await expect(
       workflow.recover(input(new AbortController().signal, "at-capacity")),
@@ -66,7 +66,7 @@ describe("dashboard recovery workflow cancellation", () => {
     const workflow = new DashboardRecoveryWorkflow({
       admission,
       recovery: {
-        getRecovery: async () => await new Promise<never>(() => undefined),
+        build: async () => await new Promise<never>(() => undefined),
       } as unknown as DashboardProjectionService,
     });
     const controller = new AbortController();
@@ -90,7 +90,7 @@ describe("dashboard recovery workflow cancellation", () => {
     const workflow = new DashboardRecoveryWorkflow({
       admission,
       recovery: {
-        getRecovery: async () => recoveryPromise,
+        build: async () => recoveryPromise,
       } as unknown as DashboardProjectionService,
     });
     const controller = new AbortController();

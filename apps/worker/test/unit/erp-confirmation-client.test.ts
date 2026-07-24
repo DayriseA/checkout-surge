@@ -577,7 +577,7 @@ describe("HTTP ERP order confirmation", () => {
 function createAttemptPersistence(): ErpAttemptPersistence {
   return {
     findSuccessfulAttempt: vi.fn().mockResolvedValue(null),
-    recordAttempt: vi.fn().mockResolvedValue(undefined),
+    recordAttempt: vi.fn().mockResolvedValue(true),
   };
 }
 

@@ -704,7 +704,7 @@ Redis owns the fast-changing operational state required for the limited-inventor
 - reservation hold tokens and expiry data
 - queue state
 - near-real-time counters used for dashboards
-- Redis Pub/Sub fan-out for ephemeral dashboard realtime events
+- Redis Pub/Sub projection-dirty signals consumed by the API's bounded latest-projection fan-out
 
 Redis is intentionally not the final historical source for:
 

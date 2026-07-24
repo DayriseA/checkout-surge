@@ -242,15 +242,6 @@ export class DashboardProjectionService {
     return settledBuild;
   }
 
-  /** Current recovery adapter; Task 38 live publication calls `build` directly. */
-  getRecovery(input: {
-    correlationId: string;
-    signal?: AbortSignal;
-    knownScope?: DashboardProjectionScope;
-  }): Promise<DashboardProjection> {
-    return this.build(input);
-  }
-
   private async assembleProjection(
     correlationId: string,
     signal: AbortSignal,

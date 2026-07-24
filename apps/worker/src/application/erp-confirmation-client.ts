@@ -36,8 +36,7 @@ export interface ReusableErpConfirmationAttempt {
 
 export interface ErpAttemptPersistence {
   findSuccessfulAttempt(job: OrderProcessJob): Promise<ReusableErpConfirmationAttempt | null>;
-  // biome-ignore lint/suspicious/noConfusingVoidType: void keeps existing adapters/test doubles source-compatible while boolean reports freshness.
-  recordAttempt(record: ErpAttemptRecord): Promise<boolean | void>;
+  recordAttempt(record: ErpAttemptRecord): Promise<boolean>;
 }
 
 export class ErpConfirmationFailedError extends Error {
@@ -271,7 +270,7 @@ export class HttpErpOrderConfirmation implements OrderConfirmation {
 
   private async recordAttempt(record: ErpAttemptRecord): Promise<boolean> {
     try {
-      return (await this.attemptPersistence.recordAttempt(record)) !== false;
+      return await this.attemptPersistence.recordAttempt(record);
     } catch (error) {
       if (record.status === "succeeded") {
         throw new ErpAcceptedConfirmationPersistenceError(error, record);

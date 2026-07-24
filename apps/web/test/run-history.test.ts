@@ -1,6 +1,6 @@
 import type {
   AdminRunHistoryDetailResponse,
-  RunHistoryDetailResponse,
+  PublicRunHistoryDetailResponse,
   RunHistoryListResponse,
 } from "@checkout-surge/contracts";
 import { createElement } from "react";
@@ -254,7 +254,7 @@ function runHistoryFixture(): RunHistoryListResponse {
   };
 }
 
-function runHistoryDetailFixture(): RunHistoryDetailResponse {
+function runHistoryDetailFixture(): PublicRunHistoryDetailResponse {
   const admin = adminRunHistoryDetailFixture();
   const { id: _id, terminalInventorySnapshot, ...summary } = admin.summary;
   const { presetId: _presetId, saleOfferId: _saleOfferId, ...run } = admin.run;

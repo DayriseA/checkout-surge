@@ -987,7 +987,7 @@ describe("demo run finalization service", () => {
           logger: createSilentLogger("api"),
           now: () => recoveryStartT1,
         });
-        const recovery = await recoveryService.getRecovery({
+        const recovery = await recoveryService.build({
           correlationId: "corr-recovery-overlap",
         });
         // The terminal writer has not committed, so nothing may be published yet.

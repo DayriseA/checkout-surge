@@ -306,7 +306,7 @@ local reservation = cjson.decode(ARGV[2])
 if redis.call("HGET", KEYS[1], "saleOfferId") ~= reservation.saleOfferId then
   return redis.error_reply("Inventory state sale offer ID must match the reservation")
 end
-local inventoryScope = redis.call("HGET", KEYS[1], "inventoryScope") or "catalog"
+local inventoryScope = redis.call("HGET", KEYS[1], "inventoryScope")
 if inventoryScope == "catalog" then
   if reservation.runId then
     return cjson.encode({ outcome = "run_not_accepting_traffic", reservation = cjson.null })

@@ -3,9 +3,9 @@ import {
   adminRunHistoryDetailPathTemplate,
   adminRunHistoryDetailResponseSchema,
   controlServiceTokenHeaderName,
+  publicRunHistoryDetailResponseSchema,
   runHistoryDetailParamsSchema,
   runHistoryDetailPathTemplate,
-  runHistoryDetailResponseSchema,
   runHistoryListQuerySchema,
   runHistoryPath,
 } from "@checkout-surge/contracts";
@@ -43,7 +43,7 @@ export function registerRunHistoryRoutes(
       });
     }
 
-    const response = runHistoryDetailResponseSchema.safeParse(detail);
+    const response = publicRunHistoryDetailResponseSchema.safeParse(detail);
     if (!response.success) {
       throw new ApiHttpError({
         statusCode: 500,

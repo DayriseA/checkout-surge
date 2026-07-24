@@ -50,10 +50,10 @@ import {
   publicVisitorIdHeaderName,
   type QueueStatus,
   queueStatusSchema,
-  type RunHistoryDetailResponse,
+  type PublicRunHistoryDetailResponse,
   type RunHistoryListResponse,
+  publicRunHistoryDetailResponseSchema,
   runHistoryDetailPath,
-  runHistoryDetailResponseSchema,
   runHistoryListResponseSchema,
   runHistoryPath,
   startDemoRunPath,
@@ -763,7 +763,7 @@ function runHistoryControllerFixture(): RunHistoryController {
   };
 }
 
-function publicRunHistoryDetailResponseFixture(): RunHistoryDetailResponse {
+function publicRunHistoryDetailResponseFixture(): PublicRunHistoryDetailResponse {
   const admin = adminRunHistoryDetailResponseFixture();
   const {
     id: _id,
@@ -1486,7 +1486,7 @@ describe("API gateway routes", () => {
       method: "GET",
       url: runHistoryDetailPath("ffffffff-ffff-4fff-8fff-ffffffffffff"),
     });
-    const payload = runHistoryDetailResponseSchema.parse(response.json());
+    const payload = publicRunHistoryDetailResponseSchema.parse(response.json());
     const missingPayload = errorPayloadSchema.parse(missing.json());
 
     expect(response.statusCode).toBe(200);

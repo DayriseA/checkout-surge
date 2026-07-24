@@ -15,9 +15,9 @@ import {
   type HealthResponse,
   type LivenessResponse,
   type PublicPresetListResponse,
+  type PublicRunHistoryDetailResponse,
   type PublicRuntimePolicy,
   type PublicRuntimePolicyResponse,
-  type RunHistoryDetailResponse,
   type RunHistoryListResponse,
   type RunHistorySummary,
 } from "@checkout-surge/contracts";
@@ -898,7 +898,7 @@ function runHistorySummaryFixture(
   };
 }
 
-function runHistoryDetailFixture(): RunHistoryDetailResponse {
+function runHistoryDetailFixture(): PublicRunHistoryDetailResponse {
   const summary = runHistorySummaryFixture();
   const { id: _id, terminalInventorySnapshot, ...publicSummary } = summary;
   const sanitizedInventory = terminalInventorySnapshot

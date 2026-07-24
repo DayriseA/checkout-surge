@@ -209,9 +209,8 @@ function readDeadLetterDisposition(
         };
       }
     } catch {
-      // Preserve a non-JSON legacy marker as a diagnostic reason.
+      // Invalid failedReason metadata is not a dead-letter disposition.
     }
-    return { reason: envelope || "dead_letter_required" };
   }
   if (
     typeof progress !== "object" ||

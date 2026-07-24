@@ -163,6 +163,13 @@ describe("worker order-processing job publisher", () => {
           opts: { attempts: 4 },
           failedReason: "database unavailable",
         },
+        {
+          id: "old-dead-letter-marker",
+          data: job,
+          attemptsMade: 4,
+          opts: { attempts: 4 },
+          failedReason: `${deadLetterFailureMarker} order_identity_mismatch`,
+        },
       ]),
     });
 

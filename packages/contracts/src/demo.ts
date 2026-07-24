@@ -548,10 +548,6 @@ export const publicRunHistoryDetailResponseSchema = z
   .strict();
 export type PublicRunHistoryDetailResponse = z.infer<typeof publicRunHistoryDetailResponseSchema>;
 
-// Compatibility aliases deliberately point at the narrowed anonymous DTO.
-export const runHistoryDetailResponseSchema = publicRunHistoryDetailResponseSchema;
-export type RunHistoryDetailResponse = PublicRunHistoryDetailResponse;
-
 export const publicRunBudgetSchema = z
   .object({
     windowSeconds: positiveIntegerSchema,
