@@ -4,7 +4,7 @@ import {
 } from "@checkout-surge/contracts";
 import { describe, expect, it } from "vitest";
 import { K6RunAccumulator, parseK6SummaryMetrics } from "../src/application/k6-output-parser.js";
-import { BoundedStdoutTail, readK6SummaryExport } from "../src/application/k6-runner.js";
+import { readK6SummaryExport } from "../src/application/k6-runner.js";
 import { generateK6Script } from "../src/application/k6-script.js";
 
 const startedAt = new Date("2026-06-20T12:00:00.000Z");
@@ -131,13 +131,13 @@ describe("parseK6SummaryMetrics", () => {
     });
   });
 
-  it("scans arbitrary malformed text and returns the last supported balanced object", () => {
-    const parsed = parseK6SummaryMetrics(
-      'log { malformed\n{"metrics":{"http_reqs":{"count":1}}}\n' +
-        `${JSON.stringify({ message: 'brace } and escaped " { text' })}\n` +
-        '{"metrics":{"http_reqs":{"count":0}}}',
-    );
-    expect(parsed?.httpRequests).toBe(0);
+  it("requires one supported JSON summary document", () => {
+    expect(parseK6SummaryMetrics('log noise\n{"metrics":{"http_reqs":{"count":1}}}')).toBeNull();
+    expect(
+      parseK6SummaryMetrics(
+        '{"metrics":{"http_reqs":{"count":1}}}{"metrics":{"http_reqs":{"count":0}}}',
+      ),
+    ).toBeNull();
     expect(parseK6SummaryMetrics('{"metrics":{"unknown":{"count":1}}}')).toBeNull();
     expect(parseK6SummaryMetrics("not json\n{broken")).toBeNull();
   });
@@ -433,36 +433,22 @@ describe("K6RunAccumulator transport-attempt reconciliation", () => {
   });
 });
 
-describe("summary export fallback", () => {
+describe("summary export reading", () => {
   it.each([
     [Object.assign(new Error("missing"), { code: "ENOENT" }), "summary_export_missing"],
     [new Error("permission denied"), "summary_export_read_failed"],
-  ])("distinguishes read failures and parses the bounded stdout fallback", async (error, warning) => {
-    const result = await readK6SummaryExport(
-      "/tmp/summary.json",
-      'point noise {"metrics":{"http_reqs":{"count":3}}}',
-      async () => {
-        throw error;
-      },
-    );
-    expect(result).toEqual({ metrics: { httpRequests: 3, timingPhases: {} }, warning });
+  ])("distinguishes read failures", async (error, warning) => {
+    const result = await readK6SummaryExport("/tmp/summary.json", async () => {
+      throw error;
+    });
+    expect(result).toEqual({ metrics: null, warning });
   });
 
   it("distinguishes an invalid export", async () => {
-    expect(await readK6SummaryExport("/tmp/summary.json", "no fallback", async () => "{}")).toEqual(
-      { metrics: null, warning: "summary_export_invalid" },
-    );
-  });
-
-  it("retains a strict byte-bounded tail", () => {
-    const tail = new BoundedStdoutTail(8);
-    tail.push("12345");
-    tail.push("67890");
-    expect(tail.byteLength()).toBe(8);
-    expect(tail.toString()).toBe("34567890");
-    tail.push("abcdefghijkl");
-    expect(tail.byteLength()).toBe(8);
-    expect(tail.toString()).toBe("efghijkl");
+    expect(await readK6SummaryExport("/tmp/summary.json", async () => "{}")).toEqual({
+      metrics: null,
+      warning: "summary_export_invalid",
+    });
   });
 });
 

@@ -58,7 +58,6 @@ export class K6ChildProcessSupervisor {
       now?: () => Date;
       liveMetricWindowMs?: number;
       maxK6OutputLineLength?: number;
-      maxStdoutTailBytes?: number;
       readSummaryFile?: (summaryPath: string) => Promise<string>;
       metricBatchSize?: number;
       maxBufferedMetricSamples?: number;
@@ -279,7 +278,6 @@ export class K6ChildProcessSupervisor {
         ? {}
         : { windowMs: this.options.liveMetricWindowMs },
     );
-    const stdoutTail = new BoundedStdoutTail(this.options.maxStdoutTailBytes);
     const child = active.child;
     if (!child) throw new Error("Cannot consume k6 output before spawn.");
     const stdout = child.stdout;
@@ -293,7 +291,6 @@ export class K6ChildProcessSupervisor {
           accumulator,
           liveMetrics,
           batcher,
-          stdoutTail,
           acceptPoint: () => !active.cancellationAccepted,
           ...(this.options.maxK6OutputLineLength === undefined
             ? {}
@@ -319,7 +316,6 @@ export class K6ChildProcessSupervisor {
       accumulator,
       batcher,
       liveMetrics,
-      stdoutTail,
       stdoutDrain,
       stdout,
       stderr,
@@ -335,7 +331,6 @@ export class K6ChildProcessSupervisor {
       accumulator: K6RunAccumulator;
       batcher: MetricBatcher;
       liveMetrics: K6LiveMetricAggregator;
-      stdoutTail: BoundedStdoutTail;
       stdoutDrain: Promise<void>;
       stdout: ReturnType<typeof spawn>["stdout"];
       stderr: ReturnType<typeof spawn>["stderr"];
@@ -365,11 +360,7 @@ export class K6ChildProcessSupervisor {
     } catch (error) {
       this.options.logger.warn({ err: error }, "Could not flush final k6 metric batch.");
     }
-    const summary = await readK6SummaryExport(
-      input.summaryPath,
-      input.stdoutTail.toString(),
-      this.options.readSummaryFile,
-    );
+    const summary = await readK6SummaryExport(input.summaryPath, this.options.readSummaryFile);
     const succeeded = !processError && exitCode === 0;
     return {
       outcome: "completed",
@@ -519,7 +510,6 @@ async function consumeK6Stdout(input: {
   accumulator: K6RunAccumulator;
   liveMetrics: K6LiveMetricAggregator;
   batcher: MetricBatcher;
-  stdoutTail: BoundedStdoutTail;
   maxLineLength?: number;
   acceptPoint: () => boolean;
 }): Promise<void> {
@@ -529,7 +519,6 @@ async function consumeK6Stdout(input: {
   input.stdout.setEncoding("utf8");
   for await (const chunk of input.stdout) {
     const text = String(chunk);
-    input.stdoutTail.push(text);
     for (const line of framer.push(text)) {
       if (input.acceptPoint()) await consumeK6Line(line, input);
     }
@@ -553,42 +542,8 @@ async function consumeK6Line(
   for (const sample of input.liveMetrics.observe(point)) await input.batcher.add(sample);
 }
 
-export class BoundedStdoutTail {
-  private retained = Buffer.alloc(0);
-  private readonly maxBytes: number;
-
-  constructor(maxBytes = 256 * 1024) {
-    if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
-      throw new Error("k6 stdout tail byte limit must be a positive integer.");
-    }
-    this.maxBytes = maxBytes;
-  }
-
-  push(chunk: string | Buffer): void {
-    const next = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    if (next.byteLength >= this.maxBytes) {
-      this.retained = Buffer.from(next.subarray(next.byteLength - this.maxBytes));
-      return;
-    }
-    const combined = Buffer.concat([this.retained, next]);
-    this.retained =
-      combined.byteLength <= this.maxBytes
-        ? combined
-        : Buffer.from(combined.subarray(combined.byteLength - this.maxBytes));
-  }
-
-  toString(): string {
-    return this.retained.toString("utf8");
-  }
-
-  byteLength(): number {
-    return this.retained.byteLength;
-  }
-}
-
 export async function readK6SummaryExport(
   summaryPath: string,
-  stdoutTail: string,
   reader: (summaryPath: string) => Promise<string> = (filePath) => readFile(filePath, "utf8"),
 ): Promise<{
   metrics: K6SummaryMetrics | null;
@@ -597,13 +552,13 @@ export async function readK6SummaryExport(
   try {
     const exported = parseK6SummaryMetrics(await reader(summaryPath));
     if (exported) return { metrics: exported };
-    return { metrics: parseK6SummaryMetrics(stdoutTail), warning: "summary_export_invalid" };
+    return { metrics: null, warning: "summary_export_invalid" };
   } catch (error) {
     const warning =
       (error as NodeJS.ErrnoException).code === "ENOENT"
         ? "summary_export_missing"
         : "summary_export_read_failed";
-    return { metrics: parseK6SummaryMetrics(stdoutTail), warning };
+    return { metrics: null, warning };
   }
 }
 

@@ -4,7 +4,6 @@ import type { LoadApiClient } from "./api-client.js";
 import type { CompletionDelivery } from "./completion-delivery-coordinator.js";
 import type { DurableExecution, ExecutionStore } from "./execution-store.js";
 import {
-  BoundedStdoutTail,
   K6ChildProcessSupervisor,
   K6StartCancelledError,
   readK6SummaryExport,
@@ -14,7 +13,7 @@ import { K6RunAccumulator } from "./k6-output-parser.js";
 import { generateK6Script } from "./k6-script.js";
 import { collectLoadRunDiagnostics, type DiagnosticsDependencies } from "./load-run-diagnostics.js";
 
-export { BoundedStdoutTail, readK6SummaryExport, TrafficTerminationUnconfirmedError };
+export { readK6SummaryExport, TrafficTerminationUnconfirmedError };
 
 export interface K6ExecutionStart {
   startedAt: Date;
@@ -46,7 +45,6 @@ type SpawnK6RunnerOptions = {
   cancellationTimeoutMs?: number;
   liveMetricWindowMs?: number;
   maxK6OutputLineLength?: number;
-  maxStdoutTailBytes?: number;
   readSummaryFile?: (summaryPath: string) => Promise<string>;
   metricBatchSize?: number;
   maxBufferedMetricSamples?: number;
@@ -85,9 +83,6 @@ export class SpawnK6Runner implements K6Runner {
       ...(options.maxK6OutputLineLength === undefined
         ? {}
         : { maxK6OutputLineLength: options.maxK6OutputLineLength }),
-      ...(options.maxStdoutTailBytes === undefined
-        ? {}
-        : { maxStdoutTailBytes: options.maxStdoutTailBytes }),
       ...(options.readSummaryFile ? { readSummaryFile: options.readSummaryFile } : {}),
       ...(options.metricBatchSize === undefined
         ? {}

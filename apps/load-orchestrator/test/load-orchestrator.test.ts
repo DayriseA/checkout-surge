@@ -1919,6 +1919,7 @@ describe("SpawnK6Runner completion reporting", () => {
 
   it("attaches exit ownership before output observer setup can fail", async () => {
     const fixture = createK6ProcessFixture();
+    Object.assign(fixture.child, { stdout: null });
     vi.mocked(fixture.child.kill).mockImplementation(() => {
       Object.assign(fixture.child, { killed: true });
       queueMicrotask(() => fixture.child.emit("close", 143));
@@ -1928,13 +1929,12 @@ describe("SpawnK6Runner completion reporting", () => {
       k6Binary: "k6",
       logger: createSilentLogger("load-orchestrator"),
       spawnProcess: fixture.spawnProcess,
-      maxStdoutTailBytes: 0,
       cancellationTimeoutMs: 40,
       apiClient: { sendMetrics: async () => undefined, sendCompletion: async () => undefined },
     });
 
     await expect(runner.start(startRequest)).rejects.toThrow(
-      "k6 stdout tail byte limit must be a positive integer",
+      "k6 process did not expose stdout and stderr pipes",
     );
     expect(fixture.child.kill).toHaveBeenCalled();
     expect(runner.currentRunId()).toBeNull();
