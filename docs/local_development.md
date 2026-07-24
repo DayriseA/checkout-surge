@@ -21,6 +21,8 @@ cp .env.example .env
 
 Local `dev`, database migration, and seed commands should load `.env` automatically through `scripts/run-with-env.mjs`, so the setup works from Bash, PowerShell, cmd, Git Bash, and WSL. Real shell environment variables take precedence over file values. Optional `.env.local` files override `.env`, and app-specific `.env` / `.env.local` files can override root values for that service.
 
+When loaded through `scripts/run-with-env.mjs`, environment files follow Node.js dotenv syntax. An unquoted `#` starts a comment, so quote values that contain `#`.
+
 The root `.env.example` contains host-native shared infrastructure URLs and control secrets. Per-app `.env.example` files document service-specific defaults and optional knobs.
 
 The checked-in secret values are intentionally blank. Before `pnpm runtime:up`, set private, distinct values for:

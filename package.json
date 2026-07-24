@@ -21,7 +21,7 @@
     "test:required": "pnpm test && pnpm test:k6-compat",
     "test:k6-compat": "docker compose --profile test-tools build k6-compat && docker compose --profile test-tools run --rm --no-deps k6-compat",
     "test:unit": "node --test scripts/test-environment-safety.test.mjs && pnpm test:scripts && turbo run test:unit",
-    "test:scripts": "pnpm --filter @checkout-surge/contracts build && node --test scripts/run-in-compose.test.mjs scripts/runtime-image-contract.test.mjs scripts/runtime-recovery-soak.test.mjs scripts/runtime-smoke.test.mjs scripts/runtime-reset-client.test.mjs",
+    "test:scripts": "pnpm --filter @checkout-surge/contracts build && node --test scripts/env-utils.test.mjs scripts/maintenance-cleanup-runs.test.mjs scripts/run-in-compose.test.mjs scripts/runtime-image-contract.test.mjs scripts/runtime-recovery-soak.test.mjs scripts/runtime-smoke.test.mjs scripts/runtime-reset-client.test.mjs",
     "test:integration": "turbo run test:integration",
     "test:api": "turbo run test:api",
     "test:characterization": "pnpm build:shared && pnpm --filter web exec node ../../scripts/run-with-test-env.mjs vitest run --config vitest.config.ts test/browser-workflows.test.ts && node scripts/run-with-env.mjs node scripts/composition-characterization.mjs",

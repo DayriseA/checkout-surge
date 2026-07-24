@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseEnv } from "node:util";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 
@@ -50,7 +51,7 @@ export function mergeEnvFiles(filePaths, baseEnv = process.env) {
       continue;
     }
 
-    Object.assign(fileEnv, parseEnvFile(filePath));
+    Object.assign(fileEnv, parseEnv(readFileSync(filePath, "utf8")));
   }
 
   return { ...fileEnv, ...baseEnv };
@@ -85,54 +86,6 @@ export function runCommand(commandArgs, env) {
 
     process.exitCode = code ?? 1;
   });
-}
-
-function parseEnvFile(filePath) {
-  const values = {};
-  const content = readFileSync(filePath, "utf8");
-
-  for (const line of content.split(/\r?\n/)) {
-    const trimmed = line.trim();
-
-    if (!trimmed || trimmed.startsWith("#")) {
-      continue;
-    }
-
-    const assignment = trimmed.startsWith("export ") ? trimmed.slice(7).trimStart() : trimmed;
-    const equalsIndex = assignment.indexOf("=");
-
-    if (equalsIndex === -1) {
-      continue;
-    }
-
-    const key = assignment.slice(0, equalsIndex).trim();
-
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
-      continue;
-    }
-
-    values[key] = parseEnvValue(assignment.slice(equalsIndex + 1).trim());
-  }
-
-  return values;
-}
-
-function parseEnvValue(rawValue) {
-  if (rawValue.startsWith('"') && rawValue.endsWith('"')) {
-    return rawValue
-      .slice(1, -1)
-      .replace(/\\n/g, "\n")
-      .replace(/\\r/g, "\r")
-      .replace(/\\t/g, "\t")
-      .replace(/\\"/g, '"')
-      .replace(/\\\\/g, "\\");
-  }
-
-  if (rawValue.startsWith("'") && rawValue.endsWith("'")) {
-    return rawValue.slice(1, -1);
-  }
-
-  return rawValue.replace(/\s+#.*$/, "").trim();
 }
 
 function findWorkspacePackageDir(startDir = process.cwd()) {
