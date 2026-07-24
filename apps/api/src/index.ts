@@ -23,8 +23,8 @@ import { createBullMqDemoQueueMaintenance } from "./queue/bullmq-demo-queue-main
 import { createBullMqOrderProcessJobPublisher } from "./queue/bullmq-order-process-job-publisher.js";
 import { createBullMqOrderProcessQueueInspector } from "./queue/bullmq-order-process-queue-inspector.js";
 import { PostgresRunRetryPolicyResolver } from "./queue/postgres-run-retry-policy-resolver.js";
-import { createDashboardProjectionDirtySubscriberHandlers } from "./realtime/dashboard-projection-dirty-subscriber-handlers.js";
 import { DashboardProjectionFanout } from "./realtime/dashboard-projection-fanout.js";
+import { invalidDashboardDirtySignalMetadata } from "./realtime/invalid-dashboard-dirty-signal-metadata.js";
 import { closeApiResources } from "./runtime/api-resource-cleanup.js";
 import { loadApiConfig } from "./runtime/config.js";
 import { createDashboardRecoveryOperationFactory } from "./runtime/dashboard-recovery-operation-factory.js";
@@ -277,10 +277,20 @@ export async function startApiServer(): Promise<void> {
   });
   const dashboardProjectionDirtySubscriber = createRedisDashboardProjectionDirtySubscriber(
     dashboardProjectionDirtySubscriberRedis,
-    createDashboardProjectionDirtySubscriberHandlers({
-      projectionPublications: dashboardProjectionPublications,
-      logger,
-    }),
+    {
+      onDirty: (signal) => {
+        dashboardProjectionPublications.markDirty(signal);
+      },
+      onHandlerError: (error) => {
+        logger.error({ err: error }, "Dashboard projection dirty handler failed.");
+      },
+      onInvalidMessage: (error, message) => {
+        logger.warn(
+          invalidDashboardDirtySignalMetadata(message, error),
+          "Ignored invalid dashboard projection dirty signal from Redis Pub/Sub.",
+        );
+      },
+    },
   );
   const businessOutcomeReader = new PostgresDashboardBusinessOutcomeReader(connection.db);
   const trafficCompletionEnrichmentService = new TrafficCompletionEnrichmentService({
