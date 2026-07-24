@@ -1,5 +1,4 @@
-import { contractsPackageName } from "@checkout-surge/contracts";
-import { createServiceLogger, loggerPackageName } from "@checkout-surge/logger";
+import { createServiceLogger } from "@checkout-surge/logger";
 import { HttpLoadApiClient } from "./application/api-client.js";
 import { CompletionDeliveryCoordinator } from "./application/completion-delivery-coordinator.js";
 import { FileExecutionStore } from "./application/execution-store.js";
@@ -8,44 +7,6 @@ import { TrafficExecutionService } from "./application/traffic-execution-service
 import { loadLoadOrchestratorConfig } from "./runtime/config.js";
 import { createLoadOrchestratorReadiness } from "./runtime/readiness.js";
 import { buildLoadOrchestratorServer } from "./server.js";
-
-export const loadOrchestratorAppName = "load-orchestrator" as const;
-export const loadOrchestratorAppDependencies = [contractsPackageName, loggerPackageName] as const;
-
-export { HttpLoadApiClient, MetricBatcher } from "./application/api-client.js";
-export {
-  CompletionDeliveryCoordinator,
-  CompletionPersistenceError,
-  defaultCompletionDeliveryRetryIntervalMs,
-  maxCompletionDeliveryRetryIntervalMs,
-} from "./application/completion-delivery-coordinator.js";
-export {
-  ExecutionConflictError,
-  type ExecutionStore,
-  FileExecutionStore,
-} from "./application/execution-store.js";
-export {
-  defaultK6CancellationTimeoutMs,
-  K6ChildProcessSupervisor,
-  type K6ExecutionLifecycle,
-  maxK6CancellationTimeoutMs,
-} from "./application/k6-child-process-supervisor.js";
-export {
-  K6RunAccumulator,
-  type K6SummaryMetrics,
-  type K6TrendSummary,
-  parseK6JsonLine,
-  parseK6SummaryMetrics,
-} from "./application/k6-output-parser.js";
-export { type K6Runner, SpawnK6Runner } from "./application/k6-runner.js";
-export { generateK6Script } from "./application/k6-script.js";
-export { TrafficExecutionService } from "./application/traffic-execution-service.js";
-export { type LoadOrchestratorConfig, loadLoadOrchestratorConfig } from "./runtime/config.js";
-export {
-  createLoadOrchestratorReadiness,
-  type LoadOrchestratorReadiness,
-} from "./runtime/readiness.js";
-export { buildLoadOrchestratorServer } from "./server.js";
 
 export async function startLoadOrchestrator(): Promise<void> {
   const config = loadLoadOrchestratorConfig(process.env);

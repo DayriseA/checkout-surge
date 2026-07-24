@@ -1,4 +1,3 @@
-import { contractsPackageName } from "@checkout-surge/contracts";
 import {
   BusinessOutcomePublicationScheduler,
   clearErpCircuitBreakerSnapshots,
@@ -6,7 +5,6 @@ import {
   createRedisClient,
   createRedisDashboardProjectionDirtySubscriber,
   createSqlClient,
-  dbPackageName,
   deleteGeneratedRunDurable,
   deleteGeneratedRunRedisState,
   demoRuns,
@@ -19,7 +17,7 @@ import {
   reverseReservation,
   setRunSaleEligibility,
 } from "@checkout-surge/db";
-import { createServiceLogger, loggerPackageName } from "@checkout-surge/logger";
+import { createServiceLogger } from "@checkout-surge/logger";
 import { eq } from "drizzle-orm";
 import { createBullMqDemoQueueMaintenance } from "./queue/bullmq-demo-queue-maintenance.js";
 import { createBullMqOrderProcessJobPublisher } from "./queue/bullmq-order-process-job-publisher.js";
@@ -81,43 +79,7 @@ import { TrafficCompletionService } from "./services/traffic-completion-service.
 import { HttpTrafficExecutionGateway } from "./services/traffic-execution-gateway.js";
 import { TrafficMetricIngestionService } from "./services/traffic-metric-ingestion-service.js";
 
-export const apiAppName = "api" as const;
-export const apiAppDependencies = [contractsPackageName, dbPackageName, loggerPackageName] as const;
 const terminalInventoryReadTimeoutMs = 2_000;
-
-export { createBullMqDemoQueueMaintenance } from "./queue/bullmq-demo-queue-maintenance.js";
-export { createBullMqOrderProcessJobPublisher } from "./queue/bullmq-order-process-job-publisher.js";
-export { createBullMqOrderProcessQueueInspector } from "./queue/bullmq-order-process-queue-inspector.js";
-export { DashboardProjectionFanout } from "./realtime/dashboard-projection-fanout.js";
-export { type ApiConfig, loadApiConfig } from "./runtime/config.js";
-export { buildApiServer } from "./server.js";
-export { DashboardProjectionPublicationScheduler } from "./services/dashboard-projection-publication-scheduler.js";
-export {
-  DashboardProjectionService,
-  PostgresDashboardBusinessOutcomeReader,
-  PostgresDashboardCompletionOutcomeReader,
-  PostgresDashboardConsistencyLagReader,
-  PostgresDashboardRecoveryContextReader,
-  PostgresDashboardTransportAttemptCountsReader,
-} from "./services/dashboard-recovery-service.js";
-export { DashboardSourceDirtyScheduler } from "./services/dashboard-source-dirty-scheduler.js";
-export { DemoRunFinalizationService } from "./services/demo-run-finalization-service.js";
-export { DemoRunStartupReconciliationService } from "./services/demo-run-startup-reconciliation-service.js";
-export {
-  ErpStatusService,
-  PostgresErpAttemptStatusReader,
-  RedisErpCircuitBreakerStateReader,
-} from "./services/erp-status-service.js";
-export { InventoryStatusService } from "./services/inventory-status-service.js";
-export type { OrderProcessJobPublisher } from "./services/order-process-job-publisher.js";
-export { OrderStatusService } from "./services/order-status-service.js";
-export { PendingPersistenceRecoveryService } from "./services/pending-persistence-recovery-service.js";
-export { PostgresBuyPersistence } from "./services/postgres-buy-persistence.js";
-export { QueueStatusService } from "./services/queue-status-service.js";
-export { ReserveOrderService } from "./services/reserve-order-service.js";
-export { RunHistoryService } from "./services/run-history-service.js";
-export { TrafficCompletionEnrichmentService } from "./services/traffic-completion-enrichment-service.js";
-export { TrafficCompletionService } from "./services/traffic-completion-service.js";
 
 export async function startApiServer(): Promise<void> {
   const config = loadApiConfig(process.env);

@@ -1,5 +1,4 @@
-import { contractsPackageName } from "@checkout-surge/contracts";
-import { createServiceLogger, loggerPackageName } from "@checkout-surge/logger";
+import { createServiceLogger } from "@checkout-surge/logger";
 import {
   ChaosConfirmationDecisionProvider,
   ErpChaosConfigStore,
@@ -8,30 +7,6 @@ import { ConfirmationService } from "./application/confirmation-service.js";
 import { SlidingWindowTpsLimiter } from "./application/tps-limiter.js";
 import { loadMockErpConfig } from "./runtime/config.js";
 import { buildMockErpServer } from "./server.js";
-
-export const mockErpAppName = "mock-erp" as const;
-export const mockErpAppDependencies = [contractsPackageName, loggerPackageName] as const;
-
-export {
-  ChaosConfirmationDecisionProvider,
-  ErpChaosConfigSafetyError,
-  ErpChaosConfigStore,
-  type ErpChaosSafetyCaps,
-} from "./application/chaos-control-service.js";
-export {
-  type ConfirmationDecision,
-  type ConfirmationDecisionProvider,
-  ConfirmationIdempotencyConflictError,
-  ConfirmationService,
-  InMemoryConfirmationLedger,
-} from "./application/confirmation-service.js";
-export {
-  SlidingWindowTpsLimiter,
-  type SlidingWindowTpsLimiterOptions,
-  type TpsLimiter,
-} from "./application/tps-limiter.js";
-export { loadMockErpConfig, type MockErpConfig } from "./runtime/config.js";
-export { buildMockErpServer } from "./server.js";
 
 export async function startMockErp(): Promise<void> {
   const config = loadMockErpConfig(process.env);

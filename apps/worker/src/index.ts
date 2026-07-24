@@ -1,12 +1,10 @@
-import { contractsPackageName } from "@checkout-surge/contracts";
 import {
   BusinessOutcomePublicationScheduler,
   createDatabaseConnection,
-  dbPackageName,
   publishDashboardProjectionDirtySignal,
   setErpCircuitBreakerSnapshot,
 } from "@checkout-surge/db";
-import { createServiceLogger, loggerPackageName } from "@checkout-surge/logger";
+import { createServiceLogger } from "@checkout-surge/logger";
 import { Redis } from "ioredis";
 import {
   ErpCircuitBreaker,
@@ -44,109 +42,6 @@ import { loadWorkerConfig } from "./runtime/config.js";
 import { createWorkerReadiness } from "./runtime/readiness.js";
 import { createWorkerRuntime } from "./runtime/worker-runtime.js";
 import { buildWorkerHealthServer } from "./server.js";
-
-export const workerAppName = "worker" as const;
-export const workerAppDependencies = [
-  contractsPackageName,
-  dbPackageName,
-  loggerPackageName,
-] as const;
-
-export {
-  ErpCircuitBreaker,
-  type ErpCircuitBreakerSnapshot,
-  ErpCircuitOpenError,
-  type ErpCircuitState,
-  isTemporaryErpCircuitError,
-} from "./application/erp-circuit-breaker.js";
-export {
-  ErpAcceptedConfirmationPersistenceError,
-  type ErpAttemptPersistence,
-  ErpAttemptPersistenceError,
-  type ErpAttemptRecord,
-  ErpConfirmationFailedError,
-  ErpConfirmationInvalidResponseError,
-  ErpConfirmationRequestError,
-  ErpConfirmationTimeoutError,
-  HttpErpOrderConfirmation,
-  isAcceptedErpConfirmationPersistenceError,
-  isErpAttemptPersistenceError,
-  isTemporaryErpConfirmationError,
-  isTemporaryErpDependencyError,
-  type ReusableErpConfirmationAttempt,
-} from "./application/erp-confirmation-client.js";
-export type { GeneratedRunPublicationFence } from "./application/generated-run-publication-fence.js";
-export {
-  createNotificationRecordJobHandler,
-  type NotificationRecordJobHandler,
-  type NotificationRecordPersistence,
-} from "./application/notification-record-job-handler.js";
-export {
-  createNotificationRecoveryScanner,
-  type NotificationRecoveryPersistence,
-  type NotificationRecoveryScanner,
-  type NotificationRecoveryScanResult,
-  type RecoverableNotificationOrder,
-} from "./application/notification-recovery-scanner.js";
-export {
-  createOrderDispatchScanner,
-  type OrderDispatchPersistence,
-  type OrderDispatchPublisher,
-  type OrderDispatchScanner,
-  type OrderDispatchScanResult,
-} from "./application/order-dispatch-scanner.js";
-export {
-  createLocalOrderConfirmation,
-  createOrderProcessJobHandler,
-  type NotificationRecordPublisher,
-  OrderFailurePersistenceError,
-  OrderRecoveryHandoffError,
-} from "./application/order-process-job-handler.js";
-export {
-  createOrderRecoveryHandoff,
-  createOrderRecoveryScanner,
-  type DeadLetterRecord,
-  type OrderRecoveryPersistence,
-  type OrderRecoveryScanner,
-  type RecoverableOrderHandoff,
-} from "./application/order-recovery-scanner.js";
-export { RunScopedBackpressureOrderConfirmation } from "./application/run-backpressure.js";
-export type { RunConfigReader } from "./application/run-config.js";
-export { PostgresErpAttemptPersistence } from "./persistence/postgres-erp-attempt-persistence.js";
-export {
-  GeneratedRunPublicationRejectedError,
-  PostgresGeneratedRunPublicationFence,
-} from "./persistence/postgres-generated-run-publication-fence.js";
-export {
-  NotificationBeforeConfirmationError,
-  NotificationOrderIdentityMismatchError,
-  NotificationOrderNotFoundError,
-  PostgresNotificationRecordPersistence,
-} from "./persistence/postgres-notification-record-persistence.js";
-export { PostgresNotificationRecoveryPersistence } from "./persistence/postgres-notification-recovery-persistence.js";
-export { PostgresOrderDispatchPersistence } from "./persistence/postgres-order-dispatch-persistence.js";
-export { PostgresOrderRecoveryPersistence } from "./persistence/postgres-order-recovery-persistence.js";
-export {
-  InvalidOrderTransitionError,
-  OrderJobIdentityMismatchError,
-  OrderNotFoundError,
-  PostgresOrderTransitionPersistence,
-} from "./persistence/postgres-order-transition-persistence.js";
-export { PostgresRunConfigReader } from "./persistence/postgres-run-config-reader.js";
-export { createBullMqNotificationRecordConsumer } from "./queue/bullmq-notification-record-consumer.js";
-export { createBullMqNotificationRecordPublisher } from "./queue/bullmq-notification-record-publisher.js";
-export { createBullMqOrderProcessConsumer } from "./queue/bullmq-order-process-consumer.js";
-export {
-  createBullMqOrderProcessJobPublisher,
-  createOrderProcessJobPublisher,
-  type WorkerOrderProcessJobPublisher,
-} from "./queue/bullmq-order-process-job-publisher.js";
-export type { NotificationRecordConsumer } from "./queue/notification-record-consumer.js";
-export type { OrderProcessConsumer } from "./queue/order-process-consumer.js";
-export { loadWorkerConfig, type WorkerConfig } from "./runtime/config.js";
-export { createWorkerReadiness } from "./runtime/readiness.js";
-export { createWorkerRuntime } from "./runtime/worker-runtime.js";
-export { buildWorkerHealthServer } from "./server.js";
 
 export async function startWorker(): Promise<void> {
   const config = loadWorkerConfig(process.env);

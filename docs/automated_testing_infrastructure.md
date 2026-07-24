@@ -206,6 +206,8 @@ Preferred shape:
 - return handles that tests can close cleanly,
 - make loggers injectable or easy to silence in tests.
 
+Executable app `src/index.ts` files are private startup/composition roots, not library surfaces: package manifests declare dependencies, and tests import their focused app modules directly.
+
 For the API gateway, `buildApiServer()` should follow this pattern by accepting explicit configuration, PostgreSQL, Redis, queue, service, and realtime dependencies; tests should use that factory rather than constructing infrastructure clients in route modules.
 
 ---
