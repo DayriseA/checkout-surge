@@ -1,7 +1,5 @@
 import { randomUUID } from "node:crypto";
-import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { fileURLToPath } from "node:url";
 import type {
   AcceptedRunConfigSnapshot,
   AdminDemoResetResponse,
@@ -37,7 +35,7 @@ import {
   saleOffers,
   simulatedNotifications,
 } from "@checkout-surge/db";
-import { resetTestDatabase } from "@checkout-surge/db/testing";
+import { requireTestDatabaseUrl, resetTestDatabase } from "@checkout-surge/db/testing";
 import { createSilentLogger } from "@checkout-surge/logger";
 import { count, eq, sql } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -54,10 +52,6 @@ import {
   terminalDemoRunTransitionLockKey,
 } from "../src/services/terminal-demo-run-transition.js";
 import { classifyTrafficDelivery } from "../src/services/traffic-delivery-classifier.js";
-
-const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const dbPackageRoot = path.resolve(packageRoot, "../../packages/db");
-const migrationsFolder = path.join(dbPackageRoot, "drizzle");
 
 const ids = {
   product: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
@@ -94,7 +88,7 @@ describe("demo run finalization service", () => {
     connection = null;
     redis = null;
 
-    await resetTestDatabase({ databaseUrl: requireTestDatabaseUrl(), migrationsFolder });
+    await resetTestDatabase();
     connection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
     redis = createRedisClient(requireTestRedisUrl(), {
       lazyConnect: true,
@@ -1672,16 +1666,6 @@ function requireStartedPromise<T>(promise: Promise<T> | null, label: string): Pr
   }
 
   return promise;
-}
-
-function requireTestDatabaseUrl(): string {
-  const databaseUrl = process.env.TEST_DATABASE_URL;
-
-  if (!databaseUrl) {
-    throw new Error("TEST_DATABASE_URL is required for API finalization tests.");
-  }
-
-  return databaseUrl;
 }
 
 function requireTestRedisUrl(): string {

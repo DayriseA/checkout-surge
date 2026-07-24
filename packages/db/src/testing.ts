@@ -15,8 +15,7 @@ export interface ResetTestDatabaseOptions {
 }
 
 export async function resetTestDatabase(options: ResetTestDatabaseOptions = {}): Promise<void> {
-  assertTestEnvironment("reset test database state");
-  const databaseUrl = requireTestDatabaseUrl(options.databaseUrl ?? process.env.TEST_DATABASE_URL);
+  const databaseUrl = requireTestDatabaseUrl(options.databaseUrl);
   const { databaseName, url } = validateDedicatedTestDatabaseUrl(databaseUrl);
   const migrationsFolder = resolveMigrationsFolder(options.migrationsFolder);
   const administrationUrl = new URL(url);
@@ -42,9 +41,15 @@ export async function resetTestDatabase(options: ResetTestDatabaseOptions = {}):
   }
 }
 
-export function assertDedicatedTestDatabaseUrl(databaseUrl: string): void {
-  assertTestEnvironment("access a destructive test database helper");
+export function requireTestDatabaseUrl(
+  databaseUrl = process.env.TEST_DATABASE_URL,
+): string {
+  assertTestEnvironment("access the test database");
+  if (!databaseUrl) {
+    throw new Error("TEST_DATABASE_URL is required for test database access.");
+  }
   validateDedicatedTestDatabaseUrl(databaseUrl);
+  return databaseUrl;
 }
 
 async function rebuildTestSchema(
@@ -80,13 +85,6 @@ async function createTestDatabaseIfMissing(sql: SqlClient, databaseName: string)
   if (!rows[0]?.exists) {
     await sql.unsafe(`CREATE DATABASE ${quoteIdentifier(databaseName)}`);
   }
-}
-
-function requireTestDatabaseUrl(databaseUrl: string | undefined): string {
-  if (!databaseUrl) {
-    throw new Error("TEST_DATABASE_URL is required for destructive test database access.");
-  }
-  return databaseUrl;
 }
 
 function quoteIdentifier(identifier: string): string {

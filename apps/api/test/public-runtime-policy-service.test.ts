@@ -1,7 +1,5 @@
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { createDatabaseConnection, publicRuntimePolicies } from "@checkout-surge/db";
-import { resetTestDatabase } from "@checkout-surge/db/testing";
+import { requireTestDatabaseUrl, resetTestDatabase } from "@checkout-surge/db/testing";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import {
@@ -13,8 +11,6 @@ import {
   publicRuntimePolicyMutableFixture,
 } from "./demo-administration-test-fixtures.js";
 
-const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const migrationsFolder = path.resolve(packageRoot, "../../packages/db/drizzle");
 const now = new Date("2026-06-20T00:00:10.000Z");
 
 describe("public runtime policy service", () => {
@@ -22,7 +18,7 @@ describe("public runtime policy service", () => {
 
   beforeEach(async () => {
     await connection?.close();
-    await resetTestDatabase({ databaseUrl: requireTestDatabaseUrl(), migrationsFolder });
+    await resetTestDatabase();
     connection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
     await requireConnection(connection).db.insert(publicRuntimePolicies).values({
       id: "active",
@@ -202,10 +198,4 @@ function createService(
 function requireConnection(connection: ReturnType<typeof createDatabaseConnection> | null) {
   if (!connection) throw new Error("Test database connection was not initialized.");
   return connection;
-}
-
-function requireTestDatabaseUrl(): string {
-  const databaseUrl = process.env.TEST_DATABASE_URL;
-  if (!databaseUrl) throw new Error("TEST_DATABASE_URL is required for API tests.");
-  return databaseUrl;
 }

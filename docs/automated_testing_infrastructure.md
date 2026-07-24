@@ -175,7 +175,7 @@ The test database setup should:
 
 Schema and seed verification belongs in the schema/seed test suite. API and reservation behavior should create the data it needs through test fixtures so failures remain easy to diagnose.
 
-Cross-package test fixtures are allowed only through a package-owned public `testing` export. `@checkout-surge/contracts/testing` owns the shared contract-valid Preview 1k configuration used by API and web tests, while `@checkout-surge/db/testing` owns the guarded database reset. Same-package defaults may use a focused test helper beside their suites. Scenario-specific values, clocks, deferreds, response helpers, and environment guards stay local so tests continue to show the behavior they arrange. Testing exports must not expose PostgreSQL, Redis, BullMQ, or other infrastructure clients.
+Cross-package test fixtures are allowed only through a package-owned public `testing` export. `@checkout-surge/contracts/testing` owns the shared contract-valid Preview 1k configuration used by API and web tests, while `@checkout-surge/db/testing` owns the guarded database reset and fail-closed test database URL access. Same-package defaults may use a focused test helper beside their suites. Scenario-specific values, clocks, deferreds, response helpers, and non-database environment guards stay local so tests continue to show the behavior they arrange. Testing exports must not expose PostgreSQL, Redis, BullMQ, or other infrastructure clients.
 
 ---
 

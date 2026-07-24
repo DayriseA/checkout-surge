@@ -3,13 +3,16 @@ import {
   assertTestEnvironment,
   validateDedicatedTestDatabaseUrl,
 } from "../../src/test-environment-safety.js";
+import { requireTestDatabaseUrl } from "../../src/testing.js";
 
 const originalNodeEnvironment = process.env.NODE_ENV;
 const originalPortWaiver = process.env.ALLOW_TEST_DEFAULT_PORTS;
+const originalTestDatabaseUrl = process.env.TEST_DATABASE_URL;
 
 afterEach(() => {
   setEnvironment("NODE_ENV", originalNodeEnvironment);
   setEnvironment("ALLOW_TEST_DEFAULT_PORTS", originalPortWaiver);
+  setEnvironment("TEST_DATABASE_URL", originalTestDatabaseUrl);
 });
 
 describe("destructive database helper safety", () => {
@@ -72,6 +75,27 @@ describe("destructive database helper safety", () => {
     expect(() =>
       validateDedicatedTestDatabaseUrl("postgresql://postgres-test/checkout_surge_test_backup"),
     ).toThrow("not an approved isolated database");
+  });
+
+  it("returns only a fully guarded TEST_DATABASE_URL", () => {
+    process.env.NODE_ENV = "test";
+    process.env.TEST_DATABASE_URL =
+      "postgresql://localhost:56432/checkout_surge_test_db";
+
+    expect(requireTestDatabaseUrl()).toBe(process.env.TEST_DATABASE_URL);
+
+    delete process.env.TEST_DATABASE_URL;
+    expect(() => requireTestDatabaseUrl()).toThrow(
+      "TEST_DATABASE_URL is required for test database access.",
+    );
+
+    process.env.TEST_DATABASE_URL = "postgresql://localhost:56432/checkout_surge";
+    expect(() => requireTestDatabaseUrl()).toThrow("not an approved isolated database");
+
+    process.env.TEST_DATABASE_URL =
+      "postgresql://localhost:56432/checkout_surge_test_db";
+    process.env.NODE_ENV = "development";
+    expect(() => requireTestDatabaseUrl()).toThrow('NODE_ENV must be exactly "test"');
   });
 });
 

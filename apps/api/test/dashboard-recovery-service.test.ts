@@ -1,5 +1,3 @@
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import {
   type ConsistencyLagSummary,
   type DemoRunSnapshot,
@@ -23,7 +21,7 @@ import {
   products,
   saleOffers,
 } from "@checkout-surge/db";
-import { resetTestDatabase } from "@checkout-surge/db/testing";
+import { requireTestDatabaseUrl, resetTestDatabase } from "@checkout-surge/db/testing";
 import type { SQL } from "drizzle-orm";
 import { PgDialect } from "drizzle-orm/pg-core";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -37,14 +35,12 @@ import { emptyBusinessOutcomeSummary as businessOutcomeFixture } from "../src/se
 const now = new Date("2026-07-14T12:00:00.000Z");
 const runId = "11111111-1111-4111-8111-111111111111";
 const saleOfferId = "22222222-2222-4222-8222-222222222222";
-const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const migrationsFolder = path.resolve(packageRoot, "../../packages/db/drizzle");
 
 describe("PostgresDashboardRecoveryContextReader integration", () => {
   let connection: ReturnType<typeof createDatabaseConnection> | null = null;
 
   beforeAll(async () => {
-    await resetTestDatabase({ databaseUrl: requireTestDatabaseUrl(), migrationsFolder });
+    await resetTestDatabase();
     connection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
     await connection.db.insert(products).values({
       id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
@@ -411,9 +407,9 @@ describe("DashboardProjectionService", () => {
     const contextError = new Error("context unavailable");
     const harness = serviceHarness(null, contextError);
 
-    await expect(
-      harness.service.build({ correlationId: "corr-context-failure" }),
-    ).rejects.toBe(contextError);
+    await expect(harness.service.build({ correlationId: "corr-context-failure" })).rejects.toBe(
+      contextError,
+    );
 
     expect(harness.inventory).not.toHaveBeenCalled();
     expect(harness.business).not.toHaveBeenCalled();
@@ -888,10 +884,4 @@ function currentDiagnosticsFixture(plannedRequests: number) {
     },
     summaryExportWarnings: [],
   };
-}
-
-function requireTestDatabaseUrl(): string {
-  const databaseUrl = process.env.TEST_DATABASE_URL;
-  if (!databaseUrl) throw new Error("TEST_DATABASE_URL is required for API tests.");
-  return databaseUrl;
 }

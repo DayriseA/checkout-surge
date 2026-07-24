@@ -1,5 +1,3 @@
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { emptyHttpTimingBreakdownSummary } from "@checkout-surge/contracts";
 import {
   createDatabaseConnection,
@@ -13,7 +11,7 @@ import {
   saleOffers,
   setRunSaleEligibility,
 } from "@checkout-surge/db";
-import { resetTestDatabase } from "@checkout-surge/db/testing";
+import { requireTestDatabaseUrl, resetTestDatabase } from "@checkout-surge/db/testing";
 import { createSilentLogger } from "@checkout-surge/logger";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -23,9 +21,6 @@ import {
   PostgresStartingDemoRunReconciliationStore,
 } from "../src/services/demo-run-startup-reconciliation-service.js";
 import { TrafficCompletionEnrichmentService } from "../src/services/traffic-completion-enrichment-service.js";
-
-const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const migrationsFolder = path.join(packageRoot, "../../packages/db/drizzle");
 
 const drainingRun = {
   id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
@@ -120,7 +115,7 @@ describe("DemoRunStartupReconciliationService restart recovery", () => {
     connection = null;
     redis = null;
 
-    await resetTestDatabase({ databaseUrl: requireTestDatabaseUrl(), migrationsFolder });
+    await resetTestDatabase();
     connection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 2 });
     redis = createRedisClient(requireTestRedisUrl(), {
       lazyConnect: true,
@@ -389,12 +384,6 @@ function restartDiagnostics() {
     },
     summaryExportWarnings: [],
   };
-}
-
-function requireTestDatabaseUrl(): string {
-  const databaseUrl = process.env.TEST_DATABASE_URL;
-  if (!databaseUrl) throw new Error("TEST_DATABASE_URL is required for API tests.");
-  return databaseUrl;
 }
 
 function requireTestRedisUrl(): string {

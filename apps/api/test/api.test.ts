@@ -1,7 +1,5 @@
 import { randomUUID } from "node:crypto";
 import type { AddressInfo } from "node:net";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import {
   type AcceptedOrderSummary,
   type AcceptedReservationSummary,
@@ -84,7 +82,7 @@ import {
   saleOffers,
   setRunSaleEligibility,
 } from "@checkout-surge/db";
-import { resetTestDatabase } from "@checkout-surge/db/testing";
+import { requireTestDatabaseUrl, resetTestDatabase } from "@checkout-surge/db/testing";
 import {
   type CheckoutSurgeLogger,
   correlationIdHeaderName,
@@ -145,26 +143,12 @@ import {
   TrafficMetricIngestionService,
 } from "../src/services/traffic-metric-ingestion-service.js";
 
-const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const dbPackageRoot = path.resolve(packageRoot, "../../packages/db");
-const migrationsFolder = path.join(dbPackageRoot, "drizzle");
-
 const fixtureIds = {
   product: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
   saleOffer: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
   run: "55555555-5555-4555-8555-555555555555",
 } as const;
 const fixtureCorrelationId = "corr-api-test";
-
-function requireTestDatabaseUrl(): string {
-  const databaseUrl = process.env.TEST_DATABASE_URL;
-
-  if (!databaseUrl) {
-    throw new Error("TEST_DATABASE_URL is required for API tests.");
-  }
-
-  return databaseUrl;
-}
 
 function baseConfig() {
   return loadApiConfig({
@@ -2949,7 +2933,7 @@ describe("API buy persistence", () => {
   beforeEach(async () => {
     await connection?.close();
     connection = null;
-    await resetTestDatabase({ databaseUrl: requireTestDatabaseUrl(), migrationsFolder });
+    await resetTestDatabase();
     connection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
     redis ??= createRedisClient(process.env.TEST_REDIS_URL ?? "redis://localhost:6380", {
       maxRetriesPerRequest: 3,

@@ -1,4 +1,4 @@
-import { resetTestDatabase } from "@checkout-surge/db/testing";
+import { requireTestDatabaseUrl, resetTestDatabase } from "@checkout-surge/db/testing";
 import { describe, expect, it, vi } from "vitest";
 import { type ApiReadinessInfrastructure, createApiReadiness } from "../src/runtime/readiness.js";
 
@@ -10,12 +10,12 @@ const config = {
 
 describe("API runtime readiness", () => {
   it("checks the isolated PostgreSQL, Redis, and BullMQ resources through production adapters", async () => {
-    const databaseUrl = process.env.TEST_DATABASE_URL;
+    const databaseUrl = requireTestDatabaseUrl();
     const redisUrl = process.env.TEST_REDIS_URL;
-    if (!databaseUrl || !redisUrl) {
-      throw new Error("TEST_DATABASE_URL and TEST_REDIS_URL are required.");
+    if (!redisUrl) {
+      throw new Error("TEST_REDIS_URL is required.");
     }
-    await resetTestDatabase({ databaseUrl });
+    await resetTestDatabase();
     const readiness = createApiReadiness({
       databaseUrl,
       redisUrl,

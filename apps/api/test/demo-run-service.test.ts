@@ -1,5 +1,3 @@
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import type {
   AcceptedRunConfigSnapshot,
   PublicRuntimePolicy,
@@ -23,7 +21,7 @@ import {
   publicRuntimePolicies,
   saleOffers,
 } from "@checkout-surge/db";
-import { resetTestDatabase } from "@checkout-surge/db/testing";
+import { requireTestDatabaseUrl, resetTestDatabase } from "@checkout-surge/db/testing";
 import { createSilentLogger } from "@checkout-surge/logger";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -44,9 +42,6 @@ import { RedisPublicRunBudgetStore } from "../src/services/public-run-budget-sto
 import { PublicRuntimePolicyService } from "../src/services/public-runtime-policy-service.js";
 import { PostgresTerminalDemoRunSummaryWriter } from "../src/services/terminal-demo-run-transition.js";
 
-const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const dbPackageRoot = path.resolve(packageRoot, "../../packages/db");
-const migrationsFolder = path.join(dbPackageRoot, "drizzle");
 const publicCookieSecret = "test-public-cookie-secret";
 const signedVisitor = (visitorId: string) => {
   const credential = signPublicVisitorCredential(publicCookieSecret, visitorId, 1_750_000_000_000);
@@ -207,7 +202,7 @@ describe("demo-run lifecycle start gating", () => {
     connection = null;
     redis = null;
 
-    await resetTestDatabase({ databaseUrl: requireTestDatabaseUrl(), migrationsFolder });
+    await resetTestDatabase();
     connection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
     redis = createRedisClient(requireTestRedisUrl(), {
       lazyConnect: true,
@@ -1156,16 +1151,6 @@ function surge10kSnapshot(): AcceptedRunConfigSnapshot {
       circuitBreakerResetTimeoutMs: 10_000,
     },
   };
-}
-
-function requireTestDatabaseUrl(): string {
-  const databaseUrl = process.env.TEST_DATABASE_URL;
-
-  if (!databaseUrl) {
-    throw new Error("TEST_DATABASE_URL is required for API tests.");
-  }
-
-  return databaseUrl;
 }
 
 function requireConnection(

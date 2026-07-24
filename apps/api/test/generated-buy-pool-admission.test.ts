@@ -1,6 +1,4 @@
 import { randomUUID } from "node:crypto";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import {
   type OrderProcessJob,
   orderProcessBullMqQueueName,
@@ -23,7 +21,7 @@ import {
   reserveInventoryStock,
   saleOffers,
 } from "@checkout-surge/db";
-import { resetTestDatabase } from "@checkout-surge/db/testing";
+import { requireTestDatabaseUrl, resetTestDatabase } from "@checkout-surge/db/testing";
 import { Queue } from "bullmq";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createBullMqOrderProcessJobPublisher } from "../src/queue/bullmq-order-process-job-publisher.js";
@@ -32,8 +30,6 @@ import type { OrderProcessJobPublisher } from "../src/services/order-process-job
 import { PostgresBuyPersistence } from "../src/services/postgres-buy-persistence.js";
 import { ReserveOrderService } from "../src/services/reserve-order-service.js";
 
-const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const migrationsFolder = path.resolve(packageRoot, "../../packages/db/drizzle");
 const poolSize = 4;
 const readinessServiceLevelMs = 2_000;
 const readinessDeadlineMs = readinessServiceLevelMs - 100;
@@ -77,11 +73,6 @@ const configSnapshot = {
   },
 };
 
-function databaseUrl(): string {
-  if (!process.env.TEST_DATABASE_URL) throw new Error("TEST_DATABASE_URL is required.");
-  return process.env.TEST_DATABASE_URL;
-}
-
 function redisUrl(): string {
   if (!process.env.TEST_REDIS_URL) throw new Error("TEST_REDIS_URL is required.");
   return process.env.TEST_REDIS_URL;
@@ -91,10 +82,10 @@ describe("generated buy bounded-pool admission", () => {
   let redis: ReturnType<typeof createRedisClient> | undefined;
 
   beforeAll(async () => {
-    await resetTestDatabase({ databaseUrl: databaseUrl(), migrationsFolder });
+    await resetTestDatabase();
     redis = createRedisClient(redisUrl(), { maxRetriesPerRequest: 3 });
     await redis.flushdb();
-    const setup = createDatabaseConnection(databaseUrl(), { max: 1 });
+    const setup = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
     try {
       await setup.db.insert(products).values({
         id: ids.product,
@@ -161,7 +152,7 @@ describe("generated buy bounded-pool admission", () => {
   it("terminates N simultaneous accepted buys using one pool of size N", async () => {
     if (!redis) throw new Error("Test Redis was not initialized.");
     const activeRedis = redis;
-    const connection = createDatabaseConnection(databaseUrl(), { max: poolSize });
+    const connection = createDatabaseConnection(requireTestDatabaseUrl(), { max: poolSize });
     const queue = new Queue<OrderProcessJob, void, typeof orderProcessJobName>(
       orderProcessBullMqQueueName,
       { connection: { url: redisUrl(), maxRetriesPerRequest: 3 } },

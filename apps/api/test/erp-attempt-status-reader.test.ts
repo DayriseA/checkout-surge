@@ -1,5 +1,3 @@
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import {
   createDatabaseConnection,
   erpAttempts,
@@ -8,13 +6,9 @@ import {
   reservations,
   saleOffers,
 } from "@checkout-surge/db";
-import { resetTestDatabase } from "@checkout-surge/db/testing";
+import { requireTestDatabaseUrl, resetTestDatabase } from "@checkout-surge/db/testing";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { PostgresErpAttemptStatusReader } from "../src/services/erp-status-service.js";
-
-const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const dbPackageRoot = path.resolve(packageRoot, "../../packages/db");
-const migrationsFolder = path.join(dbPackageRoot, "drizzle");
 
 const ids = {
   product: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
@@ -29,7 +23,7 @@ describe("PostgresErpAttemptStatusReader", () => {
   beforeEach(async () => {
     await connection?.close();
     connection = null;
-    await resetTestDatabase({ databaseUrl: requireTestDatabaseUrl(), migrationsFolder });
+    await resetTestDatabase();
     connection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
     await seedOrder(connection);
   });
@@ -121,14 +115,4 @@ async function seedOrder(connection: ReturnType<typeof createDatabaseConnection>
     status: "queued",
     queuedAt: new Date("2026-06-22T00:00:00.000Z"),
   });
-}
-
-function requireTestDatabaseUrl(): string {
-  const databaseUrl = process.env.TEST_DATABASE_URL;
-
-  if (!databaseUrl) {
-    throw new Error("TEST_DATABASE_URL is required for API tests.");
-  }
-
-  return databaseUrl;
 }

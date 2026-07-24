@@ -6,6 +6,7 @@ import {
   inventoryKeys,
   reserveInventoryStock,
 } from "@checkout-surge/db";
+import { requireTestDatabaseUrl } from "@checkout-surge/db/testing";
 import { createSilentLogger } from "@checkout-surge/logger";
 import { describe, expect, it, vi } from "vitest";
 import { PendingPersistenceRecoveryService } from "../src/services/pending-persistence-recovery-service.js";
@@ -174,12 +175,6 @@ function noOpAudit() {
     markResolved: async () => undefined,
     markExhausted: async () => undefined,
   };
-}
-
-function requireTestDatabaseUrl(): string {
-  const value = process.env.TEST_DATABASE_URL;
-  if (!value) throw new Error("TEST_DATABASE_URL is required.");
-  return value;
 }
 
 function requireTestRedisUrl(): string {

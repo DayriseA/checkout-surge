@@ -1,5 +1,3 @@
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import {
   createDatabaseConnection,
   orderEvents,
@@ -8,12 +6,10 @@ import {
   reservations,
   saleOffers,
 } from "@checkout-surge/db";
-import { resetTestDatabase } from "@checkout-surge/db/testing";
+import { requireTestDatabaseUrl, resetTestDatabase } from "@checkout-surge/db/testing";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { OrderStatusService } from "../src/services/order-status-service.js";
 
-const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const migrationsFolder = path.resolve(packageRoot, "../../packages/db/drizzle");
 const ids = {
   product: "11111111-1111-4111-8111-111111111111",
   saleOffer: "22222222-2222-4222-8222-222222222222",
@@ -26,19 +22,11 @@ const confirmedAt = new Date("2026-07-15T10:02:00.000Z");
 const failedAt = new Date("2026-07-15T10:03:00.000Z");
 type DurableOrderStatus = "queued" | "processing" | "confirmed" | "failed";
 
-function requireTestDatabaseUrl(): string {
-  if (!process.env.TEST_DATABASE_URL) {
-    throw new Error("TEST_DATABASE_URL is required for order-status service tests.");
-  }
-
-  return process.env.TEST_DATABASE_URL;
-}
-
 describe("OrderStatusService", () => {
   let connection: ReturnType<typeof createDatabaseConnection> | null = null;
 
   beforeEach(async () => {
-    await resetTestDatabase({ databaseUrl: requireTestDatabaseUrl(), migrationsFolder });
+    await resetTestDatabase();
     connection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
     await connection.db.insert(products).values({
       id: ids.product,

@@ -1,5 +1,3 @@
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import {
   type AcceptedRunConfigSnapshot,
   emptyHttpTimingBreakdownSummary,
@@ -18,7 +16,7 @@ import {
   products,
   saleOffers,
 } from "@checkout-surge/db";
-import { resetTestDatabase } from "@checkout-surge/db/testing";
+import { requireTestDatabaseUrl, resetTestDatabase } from "@checkout-surge/db/testing";
 import { createSilentLogger } from "@checkout-surge/logger";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -29,8 +27,6 @@ import { PostgresTerminalDemoRunSummaryWriter } from "../src/services/terminal-d
 import { TrafficCompletionEnrichmentService } from "../src/services/traffic-completion-enrichment-service.js";
 import { TrafficCompletionService } from "../src/services/traffic-completion-service.js";
 
-const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const migrationsFolder = path.join(packageRoot, "../../packages/db/drizzle");
 const runId = "11111111-1111-4111-8111-111111111111";
 const presetId = "22222222-2222-4222-8222-222222222222";
 const productId = "33333333-3333-4333-8333-333333333333";
@@ -48,7 +44,7 @@ describe("TrafficCompletionService", () => {
     connection = null;
     redis = null;
 
-    await resetTestDatabase({ databaseUrl: requireTestDatabaseUrl(), migrationsFolder });
+    await resetTestDatabase();
     connection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 2 });
     redis = createRedisClient(requireTestRedisUrl(), {
       lazyConnect: true,
@@ -577,12 +573,6 @@ function noStartedTrafficCompletionReport(): TrafficCompletionReport {
       completedIterations: 0,
     },
   };
-}
-
-function requireTestDatabaseUrl(): string {
-  const databaseUrl = process.env.TEST_DATABASE_URL;
-  if (!databaseUrl) throw new Error("TEST_DATABASE_URL is required for API tests.");
-  return databaseUrl;
 }
 
 function requireTestRedisUrl(): string {

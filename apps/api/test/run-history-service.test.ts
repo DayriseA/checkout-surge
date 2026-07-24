@@ -1,5 +1,3 @@
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import {
   emptyHttpTimingBreakdownSummary,
   trafficDeliverySummarySchema,
@@ -18,14 +16,10 @@ import {
   saleOffers,
   simulatedNotifications,
 } from "@checkout-surge/db";
-import { resetTestDatabase } from "@checkout-surge/db/testing";
+import { requireTestDatabaseUrl, resetTestDatabase } from "@checkout-surge/db/testing";
 import { eq, inArray } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { RunHistoryService } from "../src/services/run-history-service.js";
-
-const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const dbPackageRoot = path.resolve(packageRoot, "../../packages/db");
-const migrationsFolder = path.join(dbPackageRoot, "drizzle");
 
 const ids = {
   product: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
@@ -51,7 +45,7 @@ describe("run history service", () => {
     await connection?.close();
     connection = null;
 
-    await resetTestDatabase({ databaseUrl: requireTestDatabaseUrl(), migrationsFolder });
+    await resetTestDatabase();
     connection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
   });
 
@@ -753,16 +747,6 @@ function configSnapshotFixture() {
       circuitBreakerResetTimeoutMs: 10_000,
     },
   };
-}
-
-function requireTestDatabaseUrl(): string {
-  const databaseUrl = process.env.TEST_DATABASE_URL;
-
-  if (!databaseUrl) {
-    throw new Error("TEST_DATABASE_URL is required for Run History service tests.");
-  }
-
-  return databaseUrl;
 }
 
 function requireConnection(

@@ -1,5 +1,3 @@
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import {
   type AcceptedRunConfigSnapshot,
   emptyHttpTimingBreakdownSummary,
@@ -32,7 +30,7 @@ import {
   saleOffers,
   simulatedNotifications,
 } from "@checkout-surge/db";
-import { resetTestDatabase } from "@checkout-surge/db/testing";
+import { requireTestDatabaseUrl, resetTestDatabase } from "@checkout-surge/db/testing";
 import { type CheckoutSurgeLogger, createSilentLogger } from "@checkout-surge/logger";
 import { eq, inArray } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -51,10 +49,6 @@ import {
   type StockReservationGateway,
 } from "../src/services/reserve-order-service.js";
 import { PostgresTerminalDemoRunSummaryWriter } from "../src/services/terminal-demo-run-transition.js";
-
-const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const dbPackageRoot = path.resolve(packageRoot, "../../packages/db");
-const migrationsFolder = path.join(dbPackageRoot, "drizzle");
 
 const ids = {
   product: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
@@ -189,7 +183,7 @@ describe("focused demo maintenance workflows", () => {
     connection = null;
     redis = null;
 
-    await resetTestDatabase({ databaseUrl: requireTestDatabaseUrl(), migrationsFolder });
+    await resetTestDatabase();
     connection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
     redis = createRedisClient(requireTestRedisUrl(), {
       lazyConnect: true,
@@ -2488,16 +2482,6 @@ function configSnapshotFixture(): AcceptedRunConfigSnapshot {
       circuitBreakerResetTimeoutMs: 10_000,
     },
   };
-}
-
-function requireTestDatabaseUrl(): string {
-  const databaseUrl = process.env.TEST_DATABASE_URL;
-
-  if (!databaseUrl) {
-    throw new Error("TEST_DATABASE_URL is required for API maintenance tests.");
-  }
-
-  return databaseUrl;
 }
 
 function requireTestRedisUrl(): string {
