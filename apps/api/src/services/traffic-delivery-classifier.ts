@@ -8,7 +8,7 @@ import {
   trafficHttpSummarySchema,
   transportAttemptCountsSchema,
 } from "@checkout-surge/contracts";
-import type { ZodError } from "zod";
+import { parsePersistedState } from "./persisted-demo-run-state.js";
 
 export const warningShortfallRatio = 0.01;
 export const failureShortfallRatio = 0.05;
@@ -57,17 +57,19 @@ export function parsePersistedTrafficDeliverySummary(
   transportAttemptCounts: TransportAttemptCounts,
   context: string,
 ): TrafficDeliverySummary {
-  const parsed = trafficDeliverySummarySchema.safeParse(input);
-  if (!parsed.success) {
-    throw persistedTrafficSummaryError(context, "trafficDeliverySummary", parsed.error);
-  }
+  const parsed = parsePersistedState(
+    trafficDeliverySummarySchema,
+    input,
+    context,
+    "trafficDeliverySummary",
+  );
   const expectedStatus = classifyTrafficDelivery(transportAttemptCounts);
-  if (parsed.data.trafficDeliveryStatus !== expectedStatus) {
+  if (parsed.trafficDeliveryStatus !== expectedStatus) {
     throw new Error(
       `Invalid persisted trafficDeliverySummary for ${context}: trafficDeliveryStatus must be ${expectedStatus ?? "classifiable from a positive plannedRequests count"}.`,
     );
   }
-  return parsed.data;
+  return parsed;
 }
 
 /** Strictly validates the current persisted HTTP-summary shape. */
@@ -75,11 +77,7 @@ export function parsePersistedTrafficHttpSummary(
   input: unknown,
   context: string,
 ): TrafficHttpSummary {
-  const parsed = trafficHttpSummarySchema.safeParse(input);
-  if (!parsed.success) {
-    throw persistedTrafficSummaryError(context, "httpSummary", parsed.error);
-  }
-  return parsed.data;
+  return parsePersistedState(trafficHttpSummarySchema, input, context, "httpSummary");
 }
 
 /** Strictly validates canonical persisted transport-attempt counts. */
@@ -87,16 +85,10 @@ export function parsePersistedTransportAttemptCounts(
   input: unknown,
   context: string,
 ): TransportAttemptCounts {
-  const parsed = transportAttemptCountsSchema.safeParse(input);
-  if (!parsed.success) {
-    throw persistedTrafficSummaryError(context, "transportAttemptCounts", parsed.error);
-  }
-  return parsed.data;
-}
-
-function persistedTrafficSummaryError(context: string, field: string, error: ZodError): Error {
-  const issues = error.issues
-    .map((issue) => `${[field, ...issue.path].join(".")}: ${issue.message}`)
-    .join("; ");
-  return new Error(`Invalid persisted ${field} for ${context}: ${issues}`, { cause: error });
+  return parsePersistedState(
+    transportAttemptCountsSchema,
+    input,
+    context,
+    "transportAttemptCounts",
+  );
 }

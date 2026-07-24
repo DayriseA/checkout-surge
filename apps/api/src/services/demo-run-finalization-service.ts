@@ -9,7 +9,6 @@ import {
   type TrafficDeliverySummary,
   type TrafficHttpSummary,
   type TransportAttemptCounts,
-  transportAttemptCountsSchema,
 } from "@checkout-surge/contracts";
 import {
   type CheckoutSurgeDatabase,
@@ -33,12 +32,14 @@ import {
 import { toDemoRunSnapshot, toRedisTerminalInventorySnapshot } from "./demo-run-projections.js";
 import {
   parsePersistedAcceptedRunConfigSnapshot,
+  parsePersistedState,
   parsePersistedTerminalInventorySnapshot,
 } from "./persisted-demo-run-state.js";
 import type { TerminalDemoRunWriter } from "./terminal-demo-run-writer.js";
 import {
   parsePersistedTrafficDeliverySummary,
   parsePersistedTrafficHttpSummary,
+  parsePersistedTransportAttemptCounts,
 } from "./traffic-delivery-classifier.js";
 
 export interface TerminalInventoryReadOperation {
@@ -461,47 +462,34 @@ function parseFinalizationEvidence(
   diagnostics: ReturnType<typeof realLoadRunDiagnosticsSummarySchema.parse>;
 } {
   const context = `demo run ${run.id} finalization`;
-  const timing = httpTimingBreakdownSummarySchema.safeParse(
+  const timing = parsePersistedState(
+    httpTimingBreakdownSummarySchema,
     finalization.httpTimingBreakdownSummary,
+    context,
+    "httpTimingBreakdownSummary",
   );
-  if (!timing.success) {
-    throw invalidFinalizationField(context, "httpTimingBreakdownSummary", timing.error);
-  }
-  const diagnostics = realLoadRunDiagnosticsSummarySchema.safeParse(
+  const diagnostics = parsePersistedState(
+    realLoadRunDiagnosticsSummarySchema,
     finalization.loadRunDiagnosticsSummary,
+    context,
+    "loadRunDiagnosticsSummary",
   );
-  if (!diagnostics.success) {
-    throw invalidFinalizationField(context, "loadRunDiagnosticsSummary", diagnostics.error);
-  }
-  const transportAttemptCounts = transportAttemptCountsSchema.safeParse(
+  const transportAttemptCounts = parsePersistedTransportAttemptCounts(
     finalization.transportAttemptCounts,
+    context,
   );
-  if (!transportAttemptCounts.success) {
-    throw invalidFinalizationField(context, "transportAttemptCounts", transportAttemptCounts.error);
-  }
   return {
     config: parsePersistedAcceptedRunConfigSnapshot(run.configSnapshot, context),
-    transportAttemptCounts: transportAttemptCounts.data,
+    transportAttemptCounts,
     delivery: parsePersistedTrafficDeliverySummary(
       finalization.trafficDeliverySummary,
-      transportAttemptCounts.data,
+      transportAttemptCounts,
       context,
     ),
     http: parsePersistedTrafficHttpSummary(finalization.httpSummary, context),
-    timing: timing.data,
-    diagnostics: diagnostics.data,
+    timing,
+    diagnostics,
   };
-}
-
-function invalidFinalizationField(
-  context: string,
-  field: string,
-  error: { issues: ReadonlyArray<{ path: PropertyKey[]; message: string }> },
-): Error {
-  const issues = error.issues
-    .map((issue) => `${field}.${issue.path.join(".")}: ${issue.message}`)
-    .join("; ");
-  return new Error(`Invalid persisted ${field} for ${context}: ${issues}`, { cause: error });
 }
 
 function hadPendingPersistenceAtTrafficCompletion(

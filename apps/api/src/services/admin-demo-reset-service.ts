@@ -9,7 +9,6 @@ import {
   type TrafficDeliverySummary,
   type TrafficHttpSummary,
   type TransportAttemptCounts,
-  transportAttemptCountsSchema,
 } from "@checkout-surge/contracts";
 import {
   type CheckoutSurgeDatabase,
@@ -28,7 +27,10 @@ import { and, eq, inArray, isNull, or } from "drizzle-orm";
 import type { DemoMaintenanceAuthority } from "./demo-maintenance-authority.js";
 import type { ExactRunQueueMaintenance } from "./demo-queue-maintenance.js";
 import { emptyBusinessOutcomeSummary } from "./demo-run-projections.js";
-import { parsePersistedAcceptedRunConfigSnapshot } from "./persisted-demo-run-state.js";
+import {
+  parsePersistedAcceptedRunConfigSnapshot,
+  parsePersistedState,
+} from "./persisted-demo-run-state.js";
 import type { DemoResetWorkflowFence } from "./postgres-demo-reset-workflow-fence.js";
 import type {
   TerminalDemoRunSummaryInput,
@@ -37,6 +39,7 @@ import type {
 import {
   parsePersistedTrafficDeliverySummary,
   parsePersistedTrafficHttpSummary,
+  parsePersistedTransportAttemptCounts,
 } from "./traffic-delivery-classifier.js";
 import { syntheticFailedTrafficSummary } from "./traffic-delivery-plan.js";
 import type { TrafficAbortGateway } from "./traffic-execution-gateway.js";
@@ -382,42 +385,32 @@ function adminResetTrafficSummary(
 } {
   if (finalization) {
     const context = `demo run ${run.id} finalization used by admin reset`;
-    const timing = httpTimingBreakdownSummarySchema.safeParse(
+    const timing = parsePersistedState(
+      httpTimingBreakdownSummarySchema,
       finalization.httpTimingBreakdownSummary,
+      context,
+      "httpTimingBreakdownSummary",
     );
-    if (!timing.success) {
-      throw invalidAdminResetFinalizationField(context, "httpTimingBreakdownSummary", timing.error);
-    }
-    const diagnostics = realLoadRunDiagnosticsSummarySchema.safeParse(
+    const diagnostics = parsePersistedState(
+      realLoadRunDiagnosticsSummarySchema,
       finalization.loadRunDiagnosticsSummary,
+      context,
+      "loadRunDiagnosticsSummary",
     );
-    if (!diagnostics.success) {
-      throw invalidAdminResetFinalizationField(
-        context,
-        "loadRunDiagnosticsSummary",
-        diagnostics.error,
-      );
-    }
-    const transportAttemptCounts = transportAttemptCountsSchema.safeParse(
+    const transportAttemptCounts = parsePersistedTransportAttemptCounts(
       finalization.transportAttemptCounts,
+      context,
     );
-    if (!transportAttemptCounts.success) {
-      throw invalidAdminResetFinalizationField(
-        context,
-        "transportAttemptCounts",
-        transportAttemptCounts.error,
-      );
-    }
     return {
-      transportAttemptCounts: transportAttemptCounts.data,
+      transportAttemptCounts,
       httpSummary: parsePersistedTrafficHttpSummary(finalization.httpSummary, context),
       trafficDeliverySummary: parsePersistedTrafficDeliverySummary(
         finalization.trafficDeliverySummary,
-        transportAttemptCounts.data,
+        transportAttemptCounts,
         context,
       ),
-      httpTimingBreakdownSummary: timing.data,
-      loadRunDiagnosticsSummary: diagnostics.data,
+      httpTimingBreakdownSummary: timing,
+      loadRunDiagnosticsSummary: diagnostics,
     };
   }
 
@@ -433,15 +426,4 @@ function adminResetTrafficSummary(
     httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
     loadRunDiagnosticsSummary: {},
   };
-}
-
-function invalidAdminResetFinalizationField(
-  context: string,
-  field: string,
-  error: { issues: ReadonlyArray<{ path: PropertyKey[]; message: string }> },
-): Error {
-  const issues = error.issues
-    .map((issue) => `${field}.${issue.path.join(".")}: ${issue.message}`)
-    .join("; ");
-  return new Error(`Invalid persisted ${field} for ${context}: ${issues}`, { cause: error });
 }

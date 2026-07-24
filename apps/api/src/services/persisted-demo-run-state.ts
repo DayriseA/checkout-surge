@@ -44,7 +44,7 @@ export function parsePersistedTerminalInventorySnapshot(
   );
 }
 
-function parsePersistedState<T>(
+export function parsePersistedState<T>(
   schema: z.ZodType<T>,
   value: unknown,
   context: string,
@@ -53,7 +53,7 @@ function parsePersistedState<T>(
   const result = schema.safeParse(value);
   if (result.success) return result.data;
   const issues = result.error.issues
-    .map((issue) => `${field}.${issue.path.join(".")}: ${issue.message}`)
+    .map((issue) => `${[field, ...issue.path].join(".")}: ${issue.message}`)
     .join("; ");
   throw new Error(`Invalid persisted ${field} for ${context}: ${issues}`, {
     cause: result.error,

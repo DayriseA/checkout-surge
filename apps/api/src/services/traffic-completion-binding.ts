@@ -10,7 +10,10 @@ import {
   transportAttemptCountsSchema,
 } from "@checkout-surge/contracts";
 import { z } from "zod";
-import { parsePersistedAcceptedRunConfigSnapshot } from "./persisted-demo-run-state.js";
+import {
+  parsePersistedAcceptedRunConfigSnapshot,
+  parsePersistedState,
+} from "./persisted-demo-run-state.js";
 import { parsePersistedTrafficDeliverySummary } from "./traffic-delivery-classifier.js";
 
 const persistedRedeliveryEvidenceSchema = z
@@ -102,24 +105,21 @@ export function findTrafficCompletionRedeliveryMismatch(
   report: TrafficCompletionReport,
   classifiedTrafficDeliverySummary: TrafficDeliverySummary,
 ): TrafficCompletionMismatch | null {
-  const parsedExisting = persistedRedeliveryEvidenceSchema.safeParse({
-    transportAttemptCounts: existing.transportAttemptCounts,
-    httpSummary: existing.httpSummary,
-    trafficDeliverySummary: existing.trafficDeliverySummary,
-    httpTimingBreakdownSummary: existing.httpTimingBreakdownSummary,
-    loadRunDiagnosticsSummary: existing.loadRunDiagnosticsSummary,
-  });
-  if (!parsedExisting.success) {
-    const issues = parsedExisting.error.issues
-      .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
-      .join("; ");
-    throw new Error(`Invalid persisted finalization for demo run ${report.runId}: ${issues}`, {
-      cause: parsedExisting.error,
-    });
-  }
+  const parsedExisting = parsePersistedState(
+    persistedRedeliveryEvidenceSchema,
+    {
+      transportAttemptCounts: existing.transportAttemptCounts,
+      httpSummary: existing.httpSummary,
+      trafficDeliverySummary: existing.trafficDeliverySummary,
+      httpTimingBreakdownSummary: existing.httpTimingBreakdownSummary,
+      loadRunDiagnosticsSummary: existing.loadRunDiagnosticsSummary,
+    },
+    `demo run ${report.runId}`,
+    "finalization",
+  );
   const persistedDelivery = parsePersistedTrafficDeliverySummary(
-    parsedExisting.data.trafficDeliverySummary,
-    parsedExisting.data.transportAttemptCounts,
+    parsedExisting.trafficDeliverySummary,
+    parsedExisting.transportAttemptCounts,
     `demo run ${report.runId} finalization`,
   );
 
@@ -130,9 +130,9 @@ export function findTrafficCompletionRedeliveryMismatch(
     [
       "transportAttemptCounts",
       report.transportAttemptCounts,
-      parsedExisting.data.transportAttemptCounts,
+      parsedExisting.transportAttemptCounts,
     ],
-    ["httpSummary", report.httpSummary, parsedExisting.data.httpSummary],
+    ["httpSummary", report.httpSummary, parsedExisting.httpSummary],
     [
       "trafficOutcomeSummary",
       report.trafficOutcomeSummary,
@@ -142,12 +142,12 @@ export function findTrafficCompletionRedeliveryMismatch(
     [
       "httpTimingBreakdownSummary",
       report.httpTimingBreakdownSummary,
-      parsedExisting.data.httpTimingBreakdownSummary,
+      parsedExisting.httpTimingBreakdownSummary,
     ],
     [
       "loadRunDiagnosticsSummary",
       report.loadRunDiagnosticsSummary,
-      parsedExisting.data.loadRunDiagnosticsSummary,
+      parsedExisting.loadRunDiagnosticsSummary,
     ],
     ["completedAt", report.completedAt, run.trafficEndedAt?.toISOString()],
   ];
