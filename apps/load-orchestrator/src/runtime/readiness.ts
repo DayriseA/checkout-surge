@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { execFile } from "node:child_process";
 import { healthResponseSchema, type ReadinessCheck } from "@checkout-surge/contracts";
 import type { LoadOrchestratorConfig } from "./config.js";
 
@@ -171,56 +171,35 @@ export function checkK6Executable(
   binary: string,
   args: string[],
   timeoutMs: number,
-  spawnProcess: typeof spawn = spawn,
 ): Promise<{ ok: boolean; message?: string }> {
   return new Promise((resolve) => {
-    let child: ReturnType<typeof spawn>;
     try {
-      child = spawnProcess(binary, args, { stdio: "ignore", shell: false });
+      execFile(
+        binary,
+        args,
+        {
+          timeout: timeoutMs,
+          killSignal: "SIGKILL",
+          shell: false,
+          encoding: "utf8",
+          maxBuffer: 16 * 1_024,
+        },
+        (error) => {
+          if (!error) {
+            resolve({ ok: true });
+          } else if (error.killed && error.signal === "SIGKILL") {
+            resolve({ ok: false, message: `k6 version timed out after ${timeoutMs}ms.` });
+          } else if (error.signal) {
+            resolve({ ok: false, message: `k6 version exited with signal ${error.signal}.` });
+          } else if (typeof error.code === "number") {
+            resolve({ ok: false, message: `k6 version exited with code ${error.code}.` });
+          } else {
+            resolve({ ok: false, message: "Configured k6 binary could not be executed." });
+          }
+        },
+      );
     } catch {
       resolve({ ok: false, message: "Configured k6 binary could not be executed." });
-      return;
     }
-    let settled = false;
-    let reapTimer: NodeJS.Timeout | null = null;
-    let timer: NodeJS.Timeout | null = null;
-    let timeoutMessage: string | null = null;
-    const onError = () =>
-      finish({ ok: false, message: "Configured k6 binary could not be executed." });
-    const onClose = (code: number | null, signal: NodeJS.Signals | null) =>
-      finish(
-        timeoutMessage
-          ? { ok: false, message: timeoutMessage }
-          : code === 0
-            ? { ok: true }
-            : {
-                ok: false,
-                message: `k6 version exited ${signal ? `with signal ${signal}` : `with code ${code ?? "unknown"}`}.`,
-              },
-      );
-    const finish = (result: { ok: boolean; message?: string }) => {
-      if (settled) return;
-      settled = true;
-      if (timer) clearTimeout(timer);
-      if (reapTimer) clearTimeout(reapTimer);
-      child.removeListener("error", onError);
-      child.removeListener("close", onClose);
-      resolve(result);
-    };
-    child.once("error", onError);
-    child.once("close", onClose);
-    timer = setTimeout(() => {
-      timeoutMessage = `k6 version timed out after ${timeoutMs}ms.`;
-      try {
-        child.kill("SIGKILL");
-      } catch {
-        finish({ ok: false, message: `${timeoutMessage} The probe could not be terminated.` });
-        return;
-      }
-      reapTimer = setTimeout(
-        () => finish({ ok: false, message: timeoutMessage ?? "k6 version timed out." }),
-        250,
-      );
-    }, timeoutMs);
   });
 }

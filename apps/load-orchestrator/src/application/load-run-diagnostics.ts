@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import type { LoadExecutionPlan, LoadRunDiagnosticsSummary } from "@checkout-surge/contracts";
 
@@ -54,62 +54,25 @@ export async function collectLoadRunDiagnostics(
 export function runBoundedDiagnosticCommand(
   command: string,
   args: string[],
-  options: { spawnProcess?: typeof spawn; timeoutMs?: number; reapMs?: number } = {},
+  options: { timeoutMs?: number } = {},
 ): Promise<string | null> {
   return new Promise((resolve) => {
-    let child: ReturnType<typeof spawn>;
     try {
-      child = (options.spawnProcess ?? spawn)(command, args, {
-        shell: false,
-        stdio: ["ignore", "pipe", "pipe"],
-      });
+      execFile(
+        command,
+        args,
+        {
+          timeout: options.timeoutMs ?? 1_000,
+          killSignal: "SIGKILL",
+          shell: false,
+          encoding: "utf8",
+          maxBuffer: 16 * 1_024,
+        },
+        (error, stdout, stderr) => resolve(error ? null : (stdout || stderr).slice(0, 2_000)),
+      );
     } catch {
       resolve(null);
-      return;
     }
-    let stdout = "";
-    let stderr = "";
-    let settled = false;
-    let timedOut = false;
-    const capture = (current: string, chunk: unknown) => (current + String(chunk)).slice(0, 2_000);
-    child.stdout?.setEncoding("utf8");
-    child.stderr?.setEncoding("utf8");
-    const onStdout = (chunk: unknown) => {
-      stdout = capture(stdout, chunk);
-    };
-    const onStderr = (chunk: unknown) => {
-      stderr = capture(stderr, chunk);
-    };
-    child.stdout?.on("data", onStdout);
-    child.stderr?.on("data", onStderr);
-    let reapTimer: NodeJS.Timeout | null = null;
-    let timeout: NodeJS.Timeout | null = null;
-    const onError = () => finish(null);
-    const onClose = (code: number | null) =>
-      finish(!timedOut && code === 0 ? stdout || stderr : null);
-    const finish = (value: string | null) => {
-      if (settled) return;
-      settled = true;
-      if (timeout) clearTimeout(timeout);
-      if (reapTimer) clearTimeout(reapTimer);
-      child.stdout?.removeListener("data", onStdout);
-      child.stderr?.removeListener("data", onStderr);
-      child.removeListener("error", onError);
-      child.removeListener("close", onClose);
-      resolve(value);
-    };
-    child.once("error", onError);
-    child.once("close", onClose);
-    timeout = setTimeout(() => {
-      timedOut = true;
-      try {
-        child.kill("SIGKILL");
-      } catch {
-        finish(null);
-        return;
-      }
-      reapTimer = setTimeout(() => finish(null), options.reapMs ?? 250);
-    }, options.timeoutMs ?? 1_000);
   });
 }
 

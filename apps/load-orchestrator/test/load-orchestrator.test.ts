@@ -486,35 +486,49 @@ describe("durable execution ownership", () => {
 });
 
 describe("load-orchestrator k6 mapping", () => {
-  it("runs production diagnostic commands with bounded stdout/stderr and argv spawning", async () => {
+  it("retains at most 2,000 characters from successful diagnostic stdout or stderr", async () => {
     for (const target of ["stdout", "stderr"] as const) {
-      const fixture = createK6ProcessFixture();
-      const result = runBoundedDiagnosticCommand("tool", ["version"], {
-        spawnProcess: fixture.spawnProcess,
-      });
-      fixture[target].write("v".repeat(2_500));
-      fixture.child.emit("close", 0);
-      expect(await result).toHaveLength(2_000);
-      expect(fixture.spawnProcess).toHaveBeenCalledWith("tool", ["version"], {
-        shell: false,
-        stdio: ["ignore", "pipe", "pipe"],
-      });
+      const result = await runBoundedDiagnosticCommand(process.execPath, [
+        "-e",
+        `process.${target}.write("v".repeat(2_500))`,
+      ]);
+      expect(result).toHaveLength(2_000);
     }
   });
 
-  it("kills and settles a timed-out production diagnostic command once", async () => {
-    const fixture = createK6ProcessFixture();
-    const result = runBoundedDiagnosticCommand("tool", [], {
-      spawnProcess: fixture.spawnProcess,
-      timeoutMs: 1,
-      reapMs: 20,
-    });
-    await new Promise((resolve) => setTimeout(resolve, 5));
-    expect(fixture.child.kill).toHaveBeenCalledTimes(1);
-    fixture.child.emit("close", null, "SIGKILL");
-    expect(await result).toBeNull();
-    fixture.child.emit("close", 0);
-    expect(fixture.child.kill).toHaveBeenCalledTimes(1);
+  it.each([
+    {
+      name: "nonzero exit",
+      command: process.execPath,
+      args: ["-e", "process.exit(2)"],
+      options: {},
+    },
+    {
+      name: "timeout",
+      command: process.execPath,
+      args: ["-e", "setInterval(() => {}, 1_000)"],
+      options: { timeoutMs: 50 },
+    },
+    {
+      name: "excessive output",
+      command: process.execPath,
+      args: ["-e", 'process.stdout.write("x".repeat(20_000))'],
+      options: {},
+    },
+    {
+      name: "missing executable",
+      command: "checkout-surge-missing-diagnostic-executable",
+      args: [],
+      options: {},
+    },
+    {
+      name: "synchronous spawn error",
+      command: "invalid\u0000path",
+      args: [],
+      options: {},
+    },
+  ])("degrades $name diagnostics to null", async ({ command, args, options }) => {
+    await expect(runBoundedDiagnosticCommand(command, args, options)).resolves.toBeNull();
   });
 
   it("collects bounded diagnostics and degrades malformed facts to null", async () => {

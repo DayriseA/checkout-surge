@@ -1,5 +1,3 @@
-import type { spawn } from "node:child_process";
-import { EventEmitter } from "node:events";
 import {
   controlServiceTokenHeaderName,
   type HealthStatus,
@@ -227,46 +225,54 @@ describe("load-orchestrator API client", () => {
 
 describe("load-orchestrator readiness", () => {
   it.each([
-    { event: ["close", 0, null], ok: true },
-    { event: ["close", 2, null], ok: false },
-    { event: ["close", null, "SIGTERM"], ok: false },
-    { event: ["error", new Error("ENOENT")], ok: false },
-  ])("settles direct executable probes for $event", async ({ event, ok }) => {
-    const child = new EventEmitter() as ReturnType<typeof spawn>;
-    Object.assign(child, { kill: vi.fn() });
-    const spawnProcess = vi.fn(() => child) as unknown as typeof spawn;
-    const resultPromise = checkK6Executable("k6", ["version"], 100, spawnProcess);
-    child.emit(event[0] as string, ...event.slice(1));
-    expect(await resultPromise).toMatchObject({ ok });
-    expect(spawnProcess).toHaveBeenCalledWith("k6", ["version"], { stdio: "ignore", shell: false });
+    {
+      args: ["-e", ""],
+      expected: { ok: true },
+    },
+    {
+      args: ["-e", "process.exit(2)"],
+      expected: { ok: false, message: "k6 version exited with code 2." },
+    },
+    {
+      args: ["-e", "process.kill(process.pid, 'SIGTERM')"],
+      expected: { ok: false, message: "k6 version exited with signal SIGTERM." },
+    },
+  ])("classifies a real executable probe for $args", async ({ args, expected }) => {
+    await expect(checkK6Executable(process.execPath, args, 1_000)).resolves.toEqual(expected);
   });
 
-  it("kills a timed-out executable probe once and ignores a late close", async () => {
-    const child = new EventEmitter() as ReturnType<typeof spawn>;
-    const kill = vi.fn();
-    Object.assign(child, { kill });
-    const resultPromise = checkK6Executable(
-      "k6",
-      ["version"],
-      1,
-      vi.fn(() => child) as unknown as typeof spawn,
-    );
-    await new Promise((resolve) => setTimeout(resolve, 5));
-    child.emit("close", null, "SIGKILL");
-    expect(await resultPromise).toMatchObject({
-      ok: false,
-      message: expect.stringContaining("timed out"),
-    });
-    child.emit("close", 0);
-    expect(kill).toHaveBeenCalledTimes(1);
-  });
-  it("degrades synchronous executable spawn failures", async () => {
+  it.each(["checkout-surge-missing-k6-executable", "invalid\u0000path"])(
+    "degrades executable spawn errors for %s",
+    async (binary) => {
+      await expect(checkK6Executable(binary, ["version"], 1_000)).resolves.toEqual({
+        ok: false,
+        message: "Configured k6 binary could not be executed.",
+      });
+    },
+  );
+
+  it("reports a timed-out executable probe", async () => {
     await expect(
-      checkK6Executable("k6", ["version"], 10, (() => {
-        throw new Error("spawn failed");
-      }) as typeof spawn),
-    ).resolves.toMatchObject({ ok: false, message: "Configured k6 binary could not be executed." });
+      checkK6Executable(process.execPath, ["-e", "setInterval(() => {}, 1_000)"], 50),
+    ).resolves.toEqual({
+      ok: false,
+      message: "k6 version timed out after 50ms.",
+    });
   });
+
+  it("degrades excessive executable probe output", async () => {
+    await expect(
+      checkK6Executable(
+        process.execPath,
+        ["-e", 'process.stdout.write("x".repeat(20_000))'],
+        1_000,
+      ),
+    ).resolves.toEqual({
+      ok: false,
+      message: "Configured k6 binary could not be executed.",
+    });
+  });
+
   it("executes both PATH and explicit k6 values with the version argv", async () => {
     for (const binary of ["k6", "C:\\tools\\k6.exe"]) {
       const checkExecutable = vi.fn(async () => ({ ok: true }));
