@@ -43,18 +43,11 @@ export function createSilentLogger(service: ServiceName): CheckoutSurgeLogger {
   });
 }
 
-export function childLoggerWithContext(
-  logger: CheckoutSurgeLogger,
-  fields: Record<string, unknown>,
-): CheckoutSurgeLogger {
-  return logger.child(fields);
-}
-
 export function childLoggerWithCorrelationId(
   logger: CheckoutSurgeLogger,
   correlationId: string,
 ): CheckoutSurgeLogger {
-  return childLoggerWithContext(logger, {
+  return logger.child({
     correlationId: normalizeCorrelationId(correlationId),
   });
 }

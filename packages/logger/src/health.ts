@@ -15,18 +15,6 @@ export interface HealthResponseOptions {
   now?: Date;
 }
 
-export function createLivenessResponse(options: HealthResponseOptions): HealthResponse {
-  const now = options.now ?? new Date();
-
-  return healthResponseSchema.parse({
-    service: serviceNameSchema.parse(options.service),
-    status: "ok",
-    timestamp: now.toISOString(),
-    uptimeSeconds: uptimeSeconds(options.startedAt, now),
-    checks: [],
-  });
-}
-
 export function createReadinessResponse(
   options: HealthResponseOptions & { checks: ReadinessCheck[] },
 ): HealthResponse {

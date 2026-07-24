@@ -62,7 +62,7 @@ describe("Fastify correlation installer", () => {
     const echo = await server.inject({
       method: "GET",
       url: "/echo",
-      headers: { [correlationIdHeaderName]: "known-inbound-1" },
+      headers: { "X-Correlation-ID": "known-inbound-1" },
     });
     const boom = await server.inject({
       method: "GET",

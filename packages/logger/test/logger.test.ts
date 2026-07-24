@@ -2,35 +2,16 @@ import { describe, expect, it } from "vitest";
 import {
   aggregateHealthStatus,
   childLoggerWithCorrelationId,
-  correlationIdHeaderName,
   createLivenessPayload,
   createReadinessResponse,
   createServiceLogger,
-  getCorrelationIdFromHeaders,
   normalizeCorrelationId,
-  withCorrelationId,
 } from "../src/index.js";
 
 describe("correlation ID helpers", () => {
   it("accept valid correlation IDs and generates replacements for invalid input", () => {
     expect(normalizeCorrelationId("request-123")).toBe("request-123");
     expect(normalizeCorrelationId(" ", { generate: () => "generated-1" })).toBe("generated-1");
-  });
-
-  it("reads correlation ID headers case-insensitively", () => {
-    const correlationId = getCorrelationIdFromHeaders({
-      "X-Correlation-ID": "header-correlation-1",
-    });
-
-    expect(correlationId).toBe("header-correlation-1");
-    expect(correlationIdHeaderName).toBe("x-correlation-id");
-  });
-
-  it("adds correlation IDs to structured fields", () => {
-    expect(withCorrelationId({ route: "/buy" }, "request-1")).toEqual({
-      route: "/buy",
-      correlationId: "request-1",
-    });
   });
 });
 

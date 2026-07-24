@@ -7,8 +7,6 @@ export interface NormalizeCorrelationIdOptions {
   generate?: () => string;
 }
 
-export type HeaderValue = string | string[] | number | undefined | null;
-
 export function createCorrelationId(): string {
   return randomUUID();
 }
@@ -25,37 +23,6 @@ export function normalizeCorrelationId(
   }
 
   return (options.generate ?? createCorrelationId)();
-}
-
-export function getCorrelationIdFromHeaders(
-  headers: Record<string, HeaderValue>,
-  options: NormalizeCorrelationIdOptions = {},
-): string {
-  const headerValue = readHeader(headers, correlationIdHeaderName);
-  return normalizeCorrelationId(headerValue, options);
-}
-
-export function withCorrelationId<TFields extends Record<string, unknown>>(
-  fields: TFields,
-  correlationId: string,
-): TFields & { correlationId: string } {
-  return {
-    ...fields,
-    correlationId,
-  };
-}
-
-export function readHeader(headers: Record<string, HeaderValue>, headerName: string): HeaderValue {
-  const directValue = headers[headerName];
-
-  if (directValue !== undefined) {
-    return directValue;
-  }
-
-  const lowerName = headerName.toLowerCase();
-  const matchingKey = Object.keys(headers).find((key) => key.toLowerCase() === lowerName);
-
-  return matchingKey ? headers[matchingKey] : undefined;
 }
 
 function firstHeaderValue(value: unknown): string | null {
