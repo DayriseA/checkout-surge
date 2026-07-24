@@ -31,7 +31,7 @@
     "test:coverage:unit": "turbo run test:coverage:unit --continue=always --concurrency=50%",
     "test:infra:up": "node scripts/run-with-test-env.mjs docker compose -f docker-compose.test.yml up -d --wait postgres-test redis-test",
     "test:infra:down": "node scripts/run-with-test-env.mjs docker compose -f docker-compose.test.yml down --volumes --remove-orphans",
-    "test:infra:reset": "node scripts/reset-test-infra.mjs",
+    "test:infra:reset": "pnpm test:infra:down && pnpm test:infra:up",
     "test:db:migrate": "pnpm --filter @checkout-surge/db test:db:migrate",
     "infra:up": "node scripts/run-with-env.mjs docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres redis",
     "infra:down": "node scripts/run-with-env.mjs docker compose -f docker-compose.yml -f docker-compose.dev.yml down postgres redis",

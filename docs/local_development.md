@@ -324,7 +324,7 @@ The worker-facing Mock ERP confirmation contract is `POST http://localhost:4100/
 | `pnpm test:coverage:unit` | Run only the infrastructure-free unit coverage lanes |
 | `pnpm test:infra:up` | Start isolated test PostgreSQL and Redis from `docker-compose.test.yml` |
 | `pnpm test:infra:down` | Stop isolated test services and remove their volumes |
-| `pnpm test:infra:reset` | Reset isolated test PostgreSQL and Redis services |
+| `pnpm test:infra:reset` | Remove isolated test volumes, recreate PostgreSQL and Redis, and wait for readiness |
 | `pnpm test:db:migrate` | Destructively rebuild only the approved `@checkout-surge/db` package-isolated test database from the reviewed baseline; verification aid, not required before tests |
 
 Useful package commands:

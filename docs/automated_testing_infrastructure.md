@@ -164,7 +164,7 @@ Integration tests need deterministic database state.
 
 Every reset drops `public` and Drizzle's `drizzle` journal schema, recreates `public`, and applies the selected reviewed migrations from the beginning. This is the only reset mode. It clears all data, resets migration and generated-sequence state, removes unexpected objects, and restores deleted or modified schema objects without maintaining a second schema representation. A migration failure leaves an incomplete schema, releases the session lock, and the next reset retries the same deterministic rebuild.
 
-The retained destructive guards are exact test-database allowlisting, exact `NODE_ENV=test`, default-port rejection with the existing narrow dedicated-service waiver, connected-database identity verification before schema drops and before migration, credential-safe diagnostics, and the single administration-database advisory lock. `scripts/reset-test-infra.mjs` remains separately responsible for recreating the dedicated Docker volumes; per-suite schema rebuild never manages service volumes or changes production/runtime wipe behavior.
+The retained destructive guards are exact test-database allowlisting, exact `NODE_ENV=test`, default-port rejection with the existing narrow dedicated-service waiver, connected-database identity verification before schema drops and before migration, credential-safe diagnostics, and the single administration-database advisory lock. The root `test:infra:reset` command composes `test:infra:down` and `test:infra:up` to recreate the dedicated Docker volumes; per-suite schema rebuild never manages service volumes or changes production/runtime wipe behavior.
 
 The test database setup should:
 
@@ -185,7 +185,7 @@ Redis integration tests should use the dedicated test Redis service and test-onl
 
 The reset strategy should:
 
-- flush only the package's own logical database (`FLUSHDB`), never the whole instance (`FLUSHALL`) — other packages run concurrently against their own logical databases (`pnpm test:infra:reset` is the only place `FLUSHALL` is allowed),
+- flush only the package's own logical database (`FLUSHDB`), never the whole instance (`FLUSHALL`) — other packages run concurrently against their own logical databases; `pnpm test:infra:reset` clears all test Redis data by deleting and recreating the dedicated Redis volume,
 - initialize inventory snapshots explicitly inside each suite,
 - use unique sale offer IDs or reset Redis state between tests when idempotency behavior is involved,
 - avoid sharing idempotency keys across unrelated tests.
