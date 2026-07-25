@@ -67,6 +67,8 @@ These objects intentionally separate:
 - append-only history,
 - and UI-facing derived status.
 
+`Product` and `SaleOffer` remain PostgreSQL/domain concepts. Shared contracts expose boundary-specific DTOs and should gain generic entity contracts only when a real endpoint or inter-service boundary needs them.
+
 ---
 
 ## Canonical Entity Definitions

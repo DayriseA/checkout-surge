@@ -3,45 +3,14 @@ import {
   demoPresetVisibilitySchema,
   demoRunStatusSchema,
   orderStatusSchema,
-  saleOfferPurposeSchema,
 } from "./lifecycle.js";
 import {
   correlationIdSchema,
   isoTimestampSchema,
   jsonObjectSchema,
-  nonnegativeIntegerSchema,
   positiveIntegerSchema,
   uuidSchema,
 } from "./primitives.js";
-
-export const productSchema = z
-  .object({
-    id: uuidSchema,
-    sku: z.string().trim().min(1),
-    slug: z.string().trim().min(1),
-    name: z.string().trim().min(1),
-    isActive: z.boolean(),
-    createdAt: isoTimestampSchema,
-    updatedAt: isoTimestampSchema,
-  })
-  .strict();
-export type Product = z.infer<typeof productSchema>;
-
-export const saleOfferSchema = z
-  .object({
-    id: uuidSchema,
-    productId: uuidSchema,
-    name: z.string().trim().min(1),
-    allocatedStock: nonnegativeIntegerSchema,
-    saleStartsAt: isoTimestampSchema,
-    saleEndsAt: isoTimestampSchema,
-    isActive: z.boolean(),
-    purpose: saleOfferPurposeSchema,
-    createdAt: isoTimestampSchema,
-    updatedAt: isoTimestampSchema,
-  })
-  .strict();
-export type SaleOffer = z.infer<typeof saleOfferSchema>;
 
 export const reservationSummarySchema = z
   .object({
