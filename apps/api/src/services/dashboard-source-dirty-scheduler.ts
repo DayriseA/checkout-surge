@@ -1,7 +1,4 @@
-import type {
-  DashboardProjectionDirtySignal,
-  QueueStatus,
-} from "@checkout-surge/contracts";
+import type { DashboardProjectionDirtySignal, QueueStatus } from "@checkout-surge/contracts";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 
 export const dashboardQueueRefreshIntervalMs = 2_000;

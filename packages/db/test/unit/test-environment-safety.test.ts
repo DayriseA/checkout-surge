@@ -79,8 +79,7 @@ describe("destructive database helper safety", () => {
 
   it("returns only a fully guarded TEST_DATABASE_URL", () => {
     process.env.NODE_ENV = "test";
-    process.env.TEST_DATABASE_URL =
-      "postgresql://localhost:56432/checkout_surge_test_db";
+    process.env.TEST_DATABASE_URL = "postgresql://localhost:56432/checkout_surge_test_db";
 
     expect(requireTestDatabaseUrl()).toBe(process.env.TEST_DATABASE_URL);
 
@@ -92,8 +91,7 @@ describe("destructive database helper safety", () => {
     process.env.TEST_DATABASE_URL = "postgresql://localhost:56432/checkout_surge";
     expect(() => requireTestDatabaseUrl()).toThrow("not an approved isolated database");
 
-    process.env.TEST_DATABASE_URL =
-      "postgresql://localhost:56432/checkout_surge_test_db";
+    process.env.TEST_DATABASE_URL = "postgresql://localhost:56432/checkout_surge_test_db";
     process.env.NODE_ENV = "development";
     expect(() => requireTestDatabaseUrl()).toThrow('NODE_ENV must be exactly "test"');
   });

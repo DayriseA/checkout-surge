@@ -54,9 +54,7 @@ export const dashboardProjectionDirtySignalSchema = z
     scope: dashboardProjectionScopeSchema.optional(),
   })
   .strict();
-export type DashboardProjectionDirtySignal = z.infer<
-  typeof dashboardProjectionDirtySignalSchema
->;
+export type DashboardProjectionDirtySignal = z.infer<typeof dashboardProjectionDirtySignalSchema>;
 
 export const dashboardRecoveryQuerySchema = z
   .object({

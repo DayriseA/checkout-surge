@@ -15,8 +15,8 @@ import type {
 import type {
   demoPresets,
   demoRunFinalizations,
-  demoRuns,
   demoRunSummaries,
+  demoRuns,
   publicRuntimePolicies,
 } from "../../src/schema.js";
 

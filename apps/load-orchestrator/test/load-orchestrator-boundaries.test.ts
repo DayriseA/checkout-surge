@@ -241,15 +241,15 @@ describe("load-orchestrator readiness", () => {
     await expect(checkK6Executable(process.execPath, args, 1_000)).resolves.toEqual(expected);
   });
 
-  it.each(["checkout-surge-missing-k6-executable", "invalid\u0000path"])(
-    "degrades executable spawn errors for %s",
-    async (binary) => {
-      await expect(checkK6Executable(binary, ["version"], 1_000)).resolves.toEqual({
-        ok: false,
-        message: "Configured k6 binary could not be executed.",
-      });
-    },
-  );
+  it.each([
+    "checkout-surge-missing-k6-executable",
+    "invalid\u0000path",
+  ])("degrades executable spawn errors for %s", async (binary) => {
+    await expect(checkK6Executable(binary, ["version"], 1_000)).resolves.toEqual({
+      ok: false,
+      message: "Configured k6 binary could not be executed.",
+    });
+  });
 
   it("reports a timed-out executable probe", async () => {
     await expect(

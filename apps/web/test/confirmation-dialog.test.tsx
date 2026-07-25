@@ -53,9 +53,9 @@ describe("ConfirmationDialog", () => {
     expect(onCancel).toHaveBeenCalledOnce();
 
     rerender(dialogElement({ confirmDisabled: true, onCancel, onConfirm, open: true }));
-    expect((screen.getByRole("button", { name: "Reset state" }) as HTMLButtonElement).disabled).toBe(
-      true,
-    );
+    expect(
+      (screen.getByRole("button", { name: "Reset state" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
 
     rerender(dialogElement({ onCancel, onConfirm, open: true, pending: true }));
     expect((screen.getByRole("button", { name: "Working…" }) as HTMLButtonElement).disabled).toBe(

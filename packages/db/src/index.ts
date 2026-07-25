@@ -3,7 +3,6 @@ export * from "./business-outcome-publication-scheduler.js";
 export * from "./client.js";
 export * from "./demo-run-locks.js";
 export * from "./demo-run-maintenance.js";
-export * from "./json.js";
 export * from "./migrations.js";
 export * from "./redis.js";
 export * from "./redis-dashboard-projection-dirty.js";

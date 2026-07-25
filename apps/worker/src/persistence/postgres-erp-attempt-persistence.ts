@@ -1,9 +1,5 @@
-import {
-  type CheckoutSurgeDatabase,
-  erpAttempts,
-  jsonDeepEqual,
-  orderEvents,
-} from "@checkout-surge/db";
+import { isDeepStrictEqual } from "node:util";
+import { type CheckoutSurgeDatabase, erpAttempts, orderEvents } from "@checkout-surge/db";
 import { and, desc, eq } from "drizzle-orm";
 import type {
   ErpAttemptPersistence,
@@ -177,7 +173,7 @@ function sameAttempt(existing: typeof erpAttempts.$inferSelect, record: ErpAttem
     existing.errorMessage === (record.errorMessage ?? null) &&
     existing.confirmationId === (record.response?.confirmationId ?? null) &&
     existing.idempotencyKey === (successfulIdempotencyKey(record) ?? null) &&
-    jsonDeepEqual(existing.response, record.response ?? null)
+    isDeepStrictEqual(existing.response, record.response ?? null)
   );
 }
 
@@ -196,6 +192,6 @@ function sameExternalSuccess(
     existing.terminal === record.terminal &&
     existing.httpStatus === (record.httpStatus ?? null) &&
     existing.confirmationId === (record.response?.confirmationId ?? null) &&
-    jsonDeepEqual(existing.response, record.response ?? null)
+    isDeepStrictEqual(existing.response, record.response ?? null)
   );
 }

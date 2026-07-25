@@ -21,8 +21,8 @@ import { PostgresBuyPersistence } from "../services/postgres-buy-persistence.js"
 import {
   createOperationResourceCleanup,
   failAfterResourceConstruction,
-  runWithResourceCleanup,
   type ResourceCleanup,
+  runWithResourceCleanup,
 } from "./api-resource-cleanup.js";
 
 export interface PendingPersistenceOperationConfig {

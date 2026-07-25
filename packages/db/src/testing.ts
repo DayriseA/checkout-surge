@@ -41,9 +41,7 @@ export async function resetTestDatabase(options: ResetTestDatabaseOptions = {}):
   }
 }
 
-export function requireTestDatabaseUrl(
-  databaseUrl = process.env.TEST_DATABASE_URL,
-): string {
+export function requireTestDatabaseUrl(databaseUrl = process.env.TEST_DATABASE_URL): string {
   assertTestEnvironment("access the test database");
   if (!databaseUrl) {
     throw new Error("TEST_DATABASE_URL is required for test database access.");

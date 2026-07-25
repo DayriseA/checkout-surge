@@ -1,9 +1,5 @@
 import { z } from "zod";
-import {
-  demoPresetVisibilitySchema,
-  demoRunStatusSchema,
-  orderStatusSchema,
-} from "./lifecycle.js";
+import { demoPresetVisibilitySchema, demoRunStatusSchema, orderStatusSchema } from "./lifecycle.js";
 import {
   correlationIdSchema,
   isoTimestampSchema,
