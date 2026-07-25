@@ -716,13 +716,6 @@ export async function readPendingPersistencePage(
   return { records, issues };
 }
 
-export async function readPendingPersistenceRecords(
-  redis: CheckoutSurgeRedis,
-  input: { saleOfferId: string; limit?: number },
-): Promise<PendingPersistenceRecord[]> {
-  return (await readPendingPersistencePage(redis, input)).records;
-}
-
 export async function readPendingPersistenceRecord(
   redis: CheckoutSurgeRedis,
   input: { saleOfferId: string; reservationId: string },

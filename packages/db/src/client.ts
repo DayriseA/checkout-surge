@@ -27,19 +27,6 @@ export function createDatabase(sqlClient: SqlClient): CheckoutSurgeDatabase {
   return drizzle(sqlClient, { schema });
 }
 
-/**
- * Creates a Drizzle database whose postgres.js statements are cancelled when
- * the supplied operation signal aborts. postgres.js cancellation removes a
- * queued query before pool checkout or sends PostgreSQL CancelRequest for an
- * active statement instead of merely racing the visible Drizzle promise.
- */
-export function createAbortableDatabase(
-  sqlClient: SqlClient,
-  signal: AbortSignal,
-): CheckoutSurgeDatabase {
-  return createDatabase(createAbortableSqlClient(sqlClient, signal));
-}
-
 /** Bind direct postgres.js queries to an operation signal. */
 export function createAbortableSqlClient(sqlClient: SqlClient, signal: AbortSignal): SqlClient {
   return new Proxy(sqlClient, {
@@ -112,7 +99,7 @@ export function createAbortableDatabaseConnection(
   if (signal.aborted) void abort();
 
   return {
-    db: createAbortableDatabase(sqlClient, signal),
+    db: createDatabase(createAbortableSqlClient(sqlClient, signal)),
     sql: createAbortableSqlClient(sqlClient, signal),
     abort,
     close: async () => {

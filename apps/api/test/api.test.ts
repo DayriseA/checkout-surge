@@ -41,16 +41,16 @@ import {
   orderProcessBullMqQueueName,
   orderProcessJobName,
   orderStatusResponseSchema,
+  type PublicRunHistoryDetailResponse,
   publicPresetListPath,
   publicPresetListResponseSchema,
+  publicRunHistoryDetailResponseSchema,
   publicRuntimePolicyPath,
   publicRuntimePolicyResponseSchema,
   publicVisitorIdHeaderName,
   type QueueStatus,
   queueStatusSchema,
-  type PublicRunHistoryDetailResponse,
   type RunHistoryListResponse,
-  publicRunHistoryDetailResponseSchema,
   runHistoryDetailPath,
   runHistoryListResponseSchema,
   runHistoryPath,
@@ -75,7 +75,7 @@ import {
   products,
   promoteReservationIdempotencyToAccepted,
   readBusinessOutcomeSummary,
-  readPendingPersistenceRecords,
+  readPendingPersistencePage,
   reservationPendingPersistence,
   reservations,
   reserveInventoryStock,
@@ -3906,7 +3906,7 @@ describe("API buy persistence", () => {
         .select()
         .from(reservationPendingPersistence)
         .where(eq(reservationPendingPersistence.reservationId, payload.reservation?.id ?? ""));
-      const pendingRecords = await readPendingPersistenceRecords(redis, {
+      const { records: pendingRecords } = await readPendingPersistencePage(redis, {
         saleOfferId: generatedSaleOfferId,
       });
 
@@ -3937,7 +3937,9 @@ describe("API buy persistence", () => {
 
       recoveryNow = new Date(Date.parse(payload.reservation?.securedAt ?? "") + 1);
       await expect(recovery.runOnce()).resolves.toMatchObject({ attempted: 1, deferred: 1 });
-      const [deferred] = await readPendingPersistenceRecords(redis, {
+      const {
+        records: [deferred],
+      } = await readPendingPersistencePage(redis, {
         saleOfferId: generatedSaleOfferId,
       });
       expect(deferred).toMatchObject({ recoveryAttemptCount: 1, recoveryStatus: "pending" });
