@@ -81,11 +81,7 @@ const readinessChecks = [
     envName: "LOAD_ORCHESTRATOR_BASE_URL",
     fallbackUrl: "http://localhost:4200",
     path: "/health/ready",
-    requiredChecks: [
-      "api_readiness_reachable",
-      "preset_traffic_start_enabled",
-      "k6_binary_executable",
-    ],
+    requiredChecks: ["api_readiness_reachable", "k6_binary_executable"],
   },
 ];
 

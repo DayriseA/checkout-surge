@@ -160,7 +160,6 @@ describe("DemoRunStartupReconciliationService restart recovery", () => {
         },
       },
       apiBaseUrl: "http://api.test",
-      buyEndpointPath: "/buy",
       listDrainingRuns: () =>
         activeConnection.db.select().from(demoRuns).where(eq(demoRuns.status, "draining")),
       closeRunSaleEligibility: ({ runId, saleOfferId }) =>
@@ -207,7 +206,6 @@ function unusedStartingRunOptions() {
       },
     },
     apiBaseUrl: "http://api.test",
-    buyEndpointPath: "/buy",
   };
 }
 

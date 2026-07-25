@@ -622,7 +622,10 @@ describe("load-orchestrator k6 mapping", () => {
     });
   });
   it("generates a contract-driven buyer-spike script without shell interpolation", () => {
-    const script = generateK6Script(startRequest);
+    const script = generateK6Script({
+      ...startRequest,
+      apiBaseUrl: "http://api.test///",
+    });
 
     expect(script.plannedRequests).toBe(400);
     expect(script.plannedRequests).toBe(script.executionPlan.plannedEmittedAttempts);
@@ -639,6 +642,8 @@ describe("load-orchestrator k6 mapping", () => {
     expect(script.contents).toContain('"vus":200');
     expect(script.contents).toContain('"iterations":2');
     expect(script.contents).toContain("http.post");
+    expect(script.contents).toContain('"apiBaseUrl":"http://api.test"');
+    expect(script.contents).toContain("config.apiBaseUrl}/buy");
     expect(script.contents).toContain(
       "const expectedCheckoutStatuses = http.expectedStatuses(202, 409);",
     );

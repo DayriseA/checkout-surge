@@ -104,7 +104,6 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
       businessOutcomeReader: DashboardBusinessOutcomeReader;
       terminalRunWriter: Pick<TerminalDemoRunWriter, "write">;
       apiBaseUrl: string;
-      buyEndpointPath: string;
       logger: CheckoutSurgeLogger;
       publicClientCookieSecret: string;
       now?: () => Date;
@@ -196,7 +195,6 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
           runId: accepted.run.runId,
           saleOfferId,
           apiBaseUrl: this.options.apiBaseUrl,
-          buyEndpointPath: this.options.buyEndpointPath,
           correlationId,
           configSnapshot: acceptedConfig.snapshot,
         });

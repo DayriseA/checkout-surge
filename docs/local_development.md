@@ -248,7 +248,7 @@ Healthy readiness includes these checks:
 | API gateway | `database_reachable=ok`, `redis_reachable=ok`, `order_process_queue_reachable=ok` |
 | Worker | `database_reachable=ok`, `redis_reachable=ok`, `order_process_worker_running=ok`, `order_process_queue_reachable=ok`, `notification_record_worker_running=ok`, `notification_record_queue_reachable=ok` |
 | Mock ERP | `confirmation_endpoint_ready=ok` |
-| Load orchestrator | `api_readiness_reachable=ok`, `preset_traffic_start_enabled=ok`, `k6_binary_executable=ok` |
+| Load orchestrator | `api_readiness_reachable=ok`, `k6_binary_executable=ok` |
 
 `status: "degraded"` means the process is reachable but one non-fatal readiness check is not ideal. The load orchestrator directly executes the configured `K6_BINARY` with `version`, including bare PATH commands such as `k6`; spawn failure, non-zero exit, signal exit, timeout, or excessive output makes readiness unavailable. `status: "unavailable"` means a required dependency or worker loop is not ready; the API, worker, and load orchestrator return HTTP 503 for unavailable readiness. Mock ERP readiness reflects only its running confirmation HTTP endpoint and has no dependency probe.
 
@@ -515,7 +515,6 @@ Most infrastructure URLs have local defaults, but every run/control service chan
 | `K6_CANCELLATION_TIMEOUT_MS` | `10000` (maximum `15000`) | End-to-end load-orchestrator bound from accepted exact-run cancellation through observed k6 child exit/reap |
 | `COMPLETION_DELIVERY_RETRY_INTERVAL_MS` | `5000` (maximum `60000`) | Fixed bounded interval between serialized retries of the one durable `completion_pending` report; each HTTP attempt retains its five-second deadline |
 | `LOAD_ORCHESTRATOR_STATE_DIR` | `.checkout-surge/load-orchestrator` host-native; named-volume path in Compose | Durable single-slot traffic execution journal |
-| `BUY_ENDPOINT_PATH` | `/buy` | Load orchestrator |
 | `LOG_LEVEL` | `info` | Shared logger |
 
 `API_POSTGRES_POOL_MAX` governs only the main long-lived application/data-path pool. The API also owns a separate long-lived reset-workflow client capped at one connection, up to three concurrent dashboard-recovery pools capped at one connection each, and one max-one readiness pool. Pending-persistence recovery adds at most one discovery pool or one sequential scheduler attempt plus three direct attempt pools by default. At an exhaustion boundary each of those four attempts can briefly retain its attempt pool while opening one separately bounded max-one audit pool, so the conservative default PostgreSQL client ceiling is 23 per API process: 10 main + 1 reset + 3 dashboard recovery + 1 readiness + 8 pending-persistence attempt/audit. Readiness is single-flight, direct pending recovery is permit-bounded, scheduler attempts are sequential, and every transient pool is terminated when its operation completes or aborts.

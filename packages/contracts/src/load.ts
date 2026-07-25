@@ -197,7 +197,6 @@ export const trafficExecutionStartRequestSchema = z
     runId: uuidSchema,
     saleOfferId: uuidSchema,
     apiBaseUrl: z.string().url(),
-    buyEndpointPath: z.string().startsWith("/"),
     correlationId: correlationIdSchema,
     configSnapshot: acceptedRunConfigSnapshotSchema,
   })

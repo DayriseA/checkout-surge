@@ -53,7 +53,6 @@ export function generateK6Script(input: TrafficExecutionStartRequest): Generated
     runId: input.runId,
     saleOfferId: input.saleOfferId,
     apiBaseUrl: input.apiBaseUrl.replace(/\/+$/, ""),
-    buyEndpointPath: input.buyEndpointPath,
     correlationId: input.correlationId,
     quantity: traffic.quantityPerAttempt,
     plannedRequests,
@@ -104,7 +103,7 @@ export default function () {
   const correlationId = \`\${config.correlationId}:k6:\${iteration}\`;
   attemptsStarted.add(1);
   const response = http.post(
-    \`\${config.apiBaseUrl}\${config.buyEndpointPath}\`,
+    \`\${config.apiBaseUrl}/buy\`,
     JSON.stringify({
       saleOfferId: config.saleOfferId,
       runId: config.runId,

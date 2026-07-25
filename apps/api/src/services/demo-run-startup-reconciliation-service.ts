@@ -89,7 +89,6 @@ export class DemoRunStartupReconciliationService {
       startingRunStore: StartingDemoRunReconciliationStore;
       trafficExecutionGateway: Pick<TrafficExecutionGateway, "start">;
       apiBaseUrl: string;
-      buyEndpointPath: string;
       listDrainingRuns: () => Promise<DemoRunRow[]>;
       closeRunSaleEligibility: (input: { runId: string; saleOfferId: string }) => Promise<boolean>;
       now?: () => Date;
@@ -108,7 +107,6 @@ export class DemoRunStartupReconciliationService {
           runId: run.id,
           saleOfferId: run.saleOfferId,
           apiBaseUrl: this.options.apiBaseUrl,
-          buyEndpointPath: this.options.buyEndpointPath,
           correlationId,
           configSnapshot: parsePersistedAcceptedRunConfigSnapshot(
             run.configSnapshot,

@@ -38,10 +38,6 @@ export function createLoadOrchestratorReadiness(
           path: apiReadinessPath,
           timeoutMs: apiReadinessTimeoutMs,
         }),
-        {
-          name: "preset_traffic_start_enabled",
-          status: "ok",
-        },
         await k6BinaryCheck(
           config.k6Binary,
           options.checkExecutable ?? checkK6Executable,

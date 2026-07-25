@@ -86,7 +86,6 @@ describe("demo-run lifecycle validation", () => {
       businessOutcomeReader: {} as never,
       terminalRunWriter: {} as never,
       apiBaseUrl: "http://api.test",
-      buyEndpointPath: "/buy",
       logger: createSilentLogger("api"),
       publicClientCookieSecret: publicCookieSecret,
     });
@@ -1245,7 +1244,6 @@ function createStartService(
     },
     businessOutcomeReader,
     apiBaseUrl: "http://api.test",
-    buyEndpointPath: "/buy",
     logger,
     publicClientCookieSecret: publicCookieSecret,
     now: () => new Date("2026-06-20T00:00:10.000Z"),

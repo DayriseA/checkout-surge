@@ -13,7 +13,6 @@ const request: TrafficExecutionStartRequest = {
   runId: "55555555-5555-4555-8555-555555555555",
   saleOfferId: "22222222-2222-4222-8222-222222222222",
   apiBaseUrl: "http://api.test",
-  buyEndpointPath: "/buy",
   correlationId: "gateway-reconcile",
   configSnapshot: {
     trafficConfig: {

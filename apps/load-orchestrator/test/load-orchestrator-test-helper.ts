@@ -6,7 +6,6 @@ export function trafficExecutionStartRequestFixture(): TrafficExecutionStartRequ
     runId: "55555555-5555-4555-8555-555555555555",
     saleOfferId: "22222222-2222-4222-8222-222222222222",
     apiBaseUrl: "http://localhost:4000",
-    buyEndpointPath: "/buy",
     correlationId: "corr-load-test",
     configSnapshot: {
       trafficConfig: {
@@ -50,7 +49,6 @@ export function createLoadOrchestratorConfig(
     host: "127.0.0.1",
     port: 4200,
     apiBaseUrl: "http://localhost:4000",
-    buyEndpointPath: "/buy",
     k6Binary: "k6",
     k6CancellationTimeoutMs: 10_000,
     completionDeliveryRetryIntervalMs: 5_000,

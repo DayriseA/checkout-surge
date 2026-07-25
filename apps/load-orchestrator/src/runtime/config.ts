@@ -11,7 +11,6 @@ export interface LoadOrchestratorConfig {
   host: string;
   port: number;
   apiBaseUrl: string;
-  buyEndpointPath: string;
   k6Binary: string;
   k6CancellationTimeoutMs: number;
   completionDeliveryRetryIntervalMs: number;
@@ -29,7 +28,6 @@ export function loadLoadOrchestratorConfig(env: NodeJS.ProcessEnv): LoadOrchestr
     host: env.HOST?.trim() || "0.0.0.0",
     port: parsePositiveInteger(env.PORT, "PORT", 4200),
     apiBaseUrl: parseUrl(env.API_BASE_URL, "API_BASE_URL", "http://localhost:4000"),
-    buyEndpointPath: parsePath(env.BUY_ENDPOINT_PATH, "BUY_ENDPOINT_PATH", "/buy"),
     k6Binary: env.K6_BINARY?.trim() || "k6",
     k6CancellationTimeoutMs: parsePositiveInteger(
       env.K6_CANCELLATION_TIMEOUT_MS,
@@ -91,14 +89,4 @@ function parseUrl(value: string | undefined, name: string, fallback: string): st
   } catch {
     throw new Error(`${name} must be a valid URL.`);
   }
-}
-
-function parsePath(value: string | undefined, name: string, fallback: string): string {
-  const raw = value?.trim() || fallback;
-
-  if (!raw.startsWith("/")) {
-    throw new Error(`${name} must start with '/'.`);
-  }
-
-  return raw;
 }

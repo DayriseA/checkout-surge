@@ -317,7 +317,6 @@ export async function startApiServer(): Promise<void> {
     startingRunStore: new PostgresStartingDemoRunReconciliationStore(connection.db),
     trafficExecutionGateway,
     apiBaseUrl: config.apiBaseUrl,
-    buyEndpointPath: "/buy",
     listDrainingRuns: () =>
       connection.db.select().from(demoRuns).where(eq(demoRuns.status, "draining")),
     closeRunSaleEligibility: ({ runId, saleOfferId }) =>
@@ -338,7 +337,6 @@ export async function startApiServer(): Promise<void> {
     businessOutcomeReader,
     terminalRunWriter,
     apiBaseUrl: config.apiBaseUrl,
-    buyEndpointPath: "/buy",
     logger,
     publicClientCookieSecret: config.publicClientCookieSecret,
   });

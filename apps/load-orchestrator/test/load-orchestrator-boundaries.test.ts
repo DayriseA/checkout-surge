@@ -403,7 +403,6 @@ describe("load-orchestrator HTTP boundary", () => {
       readiness: {
         checks: async () => [
           { name: "api_readiness_reachable", status: "ok" },
-          { name: "preset_traffic_start_enabled", status: "ok" },
           { name: "k6_binary_executable", status: "unavailable" },
         ],
       },
