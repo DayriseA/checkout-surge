@@ -51,12 +51,12 @@ beforeEach(() => {
 });
 
 describe("server-decided admin presentation", () => {
-  it("omits every operator navigation affordance for anonymous HTML", async () => {
+  it("links anonymous users to admin sign-in without exposing sign-out", async () => {
     const markup = renderToStaticMarkup(
       await RootLayout({ children: createElement("p", null, "public content") }),
     );
     expect(markup).toContain("public content");
-    expect(markup).not.toContain('href="/admin"');
+    expect(markup).toContain('href="/admin"');
     expect(markup).not.toContain("Sign out");
   });
 

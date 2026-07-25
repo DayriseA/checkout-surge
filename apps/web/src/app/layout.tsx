@@ -9,11 +9,12 @@ export const metadata: Metadata = {
   description: "Operational dashboard for Checkout-Surge.",
 };
 
-const publicNavItems = [
+const dashboardNavItems = [
   { href: "/", label: "Demo" },
   { href: "/watch", label: "Watch" },
   { href: "/run-history", label: "Run history" },
   { href: "/about", label: "About" },
+  { href: "/admin", label: "Admin" },
 ] as const;
 
 export const dynamic = "force-dynamic";
@@ -34,7 +35,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
                 className="flex flex-wrap justify-end gap-1 max-[900px]:justify-start"
                 aria-label="Dashboard routes"
               >
-                {publicNavItems.map((item) => (
+                {dashboardNavItems.map((item) => (
                   <Link
                     className="rounded-lg px-2.5 py-2 text-sm font-semibold text-muted-strong hover:bg-surface-muted hover:text-ink"
                     href={item.href}
@@ -43,17 +44,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
                     {item.label}
                   </Link>
                 ))}
-                {authenticated ? (
-                  <>
-                    <Link
-                      className="rounded-lg px-2.5 py-2 text-sm font-semibold text-muted-strong hover:bg-surface-muted hover:text-ink"
-                      href="/admin"
-                    >
-                      Admin
-                    </Link>
-                    <AdminSignOut />
-                  </>
-                ) : null}
+                {authenticated ? <AdminSignOut /> : null}
               </nav>
             </div>
           </header>

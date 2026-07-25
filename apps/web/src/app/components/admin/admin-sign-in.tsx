@@ -63,11 +63,21 @@ export function AdminSignInView({
           Protected operator surface
         </h2>
       </div>
-      <div className="grid gap-3">
+      <form
+        aria-busy={isPending}
+        className="grid gap-3"
+        onSubmit={(event) => {
+          event.preventDefault();
+          onSignIn();
+        }}
+      >
         <label className="grid gap-1 text-sm font-semibold text-muted-strong">
           <span>Admin passphrase</span>
           <input
+            autoComplete="current-password"
             className="min-h-10 min-w-0 rounded-lg border border-border bg-bg px-3 py-2 text-ink"
+            disabled={isPending}
+            name="passphrase"
             onChange={(event) => onPassphraseChange(event.target.value)}
             type="password"
             value={passphrase}
@@ -76,13 +86,16 @@ export function AdminSignInView({
         <button
           className="min-h-10 rounded-lg border border-accent bg-accent px-3.5 py-2.5 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
           disabled={isPending}
-          onClick={onSignIn}
-          type="button"
+          type="submit"
         >
-          Sign In
+          {isPending ? "Signing in…" : "Sign In"}
         </button>
-        {error ? <p className="m-0 text-sm font-semibold text-danger">{error}</p> : null}
-      </div>
+        {error ? (
+          <p className="m-0 text-sm font-semibold text-danger" role="alert">
+            {error}
+          </p>
+        ) : null}
+      </form>
     </section>
   );
 }

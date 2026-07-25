@@ -29,7 +29,7 @@ describe("AdminSignIn", () => {
     render(<AdminSignIn />);
 
     await user.type(screen.getByLabelText("Admin passphrase"), "admin-pass");
-    await user.click(screen.getByRole("button", { name: "Sign In" }));
+    await user.keyboard("{Enter}");
 
     await waitFor(() => expect(navigation.refresh).toHaveBeenCalledOnce());
     expect(fetchMock).toHaveBeenCalledOnce();
@@ -41,6 +41,32 @@ describe("AdminSignIn", () => {
       headers: { [adminPassphraseHeaderName]: "admin-pass" },
     });
     expect((screen.getByLabelText("Admin passphrase") as HTMLInputElement).value).toBe("");
+  });
+
+  it("shows a clear pending state while sign-in is in progress", async () => {
+    let resolveRequest: ((response: Response) => void) | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        () =>
+          new Promise<Response>((resolve) => {
+            resolveRequest = resolve;
+          }),
+      ),
+    );
+    const user = userEvent.setup();
+    render(<AdminSignIn />);
+
+    await user.type(screen.getByLabelText("Admin passphrase"), "admin-pass");
+    await user.click(screen.getByRole("button", { name: "Sign In" }));
+
+    expect(
+      (screen.getByRole("button", { name: "Signing in…" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+    expect((screen.getByLabelText("Admin passphrase") as HTMLInputElement).disabled).toBe(true);
+
+    resolveRequest?.(jsonResponse({ authenticated: true }));
+    await waitFor(() => expect(navigation.refresh).toHaveBeenCalledOnce());
   });
 
   it("keeps the sign-in island and never reflects the passphrase in an error", async () => {
@@ -57,7 +83,7 @@ describe("AdminSignIn", () => {
     expect(await screen.findByText("Admin sign-in failed.")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Sign In" })).toBeTruthy();
     expect(navigation.refresh).not.toHaveBeenCalled();
-    const error = screen.getByText("Admin sign-in failed.");
+    const error = screen.getByRole("alert");
     expect(error.textContent).not.toContain("secret-value");
   });
 });
