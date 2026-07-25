@@ -1,5 +1,7 @@
-import type { DashboardProjection } from "@checkout-surge/contracts";
-import type { DashboardProjectionDirtySignal } from "@checkout-surge/db";
+import type {
+  DashboardProjection,
+  DashboardProjectionDirtySignal,
+} from "@checkout-surge/contracts";
 import { createSilentLogger } from "@checkout-surge/logger";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DashboardProjectionPublicationScheduler } from "../src/services/dashboard-projection-publication-scheduler.js";

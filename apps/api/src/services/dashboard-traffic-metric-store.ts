@@ -1,11 +1,11 @@
 import {
+  type DashboardProjectionDirtySignal,
   type LoadMetricIngestRequest,
   loadMetricIngestRequestSchema,
   type MetricSample,
 } from "@checkout-surge/contracts";
 import {
   type CheckoutSurgeRedis,
-  type DashboardProjectionDirtySignal,
   dashboardProjectionDirtyRedisChannel,
   serializeDashboardProjectionDirtySignal,
 } from "@checkout-surge/db";

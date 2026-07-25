@@ -39,13 +39,24 @@ export function dashboardProjectionScopeId(
   return `run/${runId}/sale-offer/${saleOfferId}`;
 }
 
-const dashboardRunScopeSchema = z
+export const dashboardProjectionScopeSchema = z
   .object({
     runId: uuidSchema,
     saleOfferId: uuidSchema,
   })
   .strict();
-export type DashboardProjectionScope = z.infer<typeof dashboardRunScopeSchema>;
+export type DashboardProjectionScope = z.infer<typeof dashboardProjectionScopeSchema>;
+
+export const dashboardProjectionDirtySignalSchema = z
+  .object({
+    type: z.literal("dashboard.projection.dirty"),
+    correlationId: correlationIdSchema.optional(),
+    scope: dashboardProjectionScopeSchema.optional(),
+  })
+  .strict();
+export type DashboardProjectionDirtySignal = z.infer<
+  typeof dashboardProjectionDirtySignalSchema
+>;
 
 export const dashboardRecoveryQuerySchema = z
   .object({
@@ -68,7 +79,7 @@ export const dashboardProjectionSchema = z
     version: z.literal(dashboardProjectionSchemaVersion),
     correlationId: correlationIdSchema,
     scopeId: z.string().trim().min(1),
-    scope: dashboardRunScopeSchema.nullable(),
+    scope: dashboardProjectionScopeSchema.nullable(),
     revision: positiveIntegerSchema.max(Number.MAX_SAFE_INTEGER),
     recoveredAt: isoTimestampSchema,
     currentRun: demoRunSnapshotSchema.nullable(),

@@ -1,4 +1,7 @@
-import type { QueueStatus } from "@checkout-surge/contracts";
+import type {
+  DashboardProjectionDirtySignal,
+  QueueStatus,
+} from "@checkout-surge/contracts";
 import { createSilentLogger } from "@checkout-surge/logger";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DashboardSourceDirtyScheduler } from "../src/services/dashboard-source-dirty-scheduler.js";
@@ -71,7 +74,7 @@ describe("DashboardSourceDirtyScheduler", () => {
     });
     let active = 0;
     let maximumActive = 0;
-    const publish = vi.fn(async (_signal: { correlationId?: string }) => {
+    const publish = vi.fn(async (_signal: DashboardProjectionDirtySignal) => {
       active += 1;
       maximumActive = Math.max(maximumActive, active);
       if (publish.mock.calls.length === 1) {

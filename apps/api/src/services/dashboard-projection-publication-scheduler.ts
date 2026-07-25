@@ -1,9 +1,9 @@
 import {
   type DashboardProjection,
+  type DashboardProjectionDirtySignal,
   type DashboardProjectionScope,
   dashboardProjectionScopeId,
 } from "@checkout-surge/contracts";
-import type { DashboardProjectionDirtySignal } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { normalizeCorrelationId } from "@checkout-surge/logger";
 import {

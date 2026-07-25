@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import {
   backpressureConfigSchema,
+  type DashboardProjectionDirtySignal,
   publicRuntimePolicyPersistedSchema,
 } from "@checkout-surge/contracts";
 import { Redis } from "ioredis";
@@ -12,7 +13,6 @@ import {
   clearErpCircuitBreakerSnapshots,
   createDatabaseConnection,
   createRedisDashboardProjectionDirtySubscriber,
-  type DashboardProjectionDirtySignal,
   dashboardProjectionDirtyRedisChannel,
   deferPendingPersistenceRecord,
   getErpCircuitBreakerSnapshot,

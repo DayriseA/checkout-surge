@@ -28,9 +28,11 @@ import {
   collectPublicRuntimePolicyViolations,
   completionOutcomeSchema,
   controlServiceTokenHeaderName,
+  dashboardProjectionDirtySignalSchema,
   dashboardProjectionSchema,
   dashboardProjectionSchemaName,
   dashboardProjectionSchemaVersion,
+  dashboardProjectionScopeSchema,
   dashboardProjectionScopeId,
   dashboardRecoveryQuerySchema,
   demoRunOperatorModeHeaderName,
@@ -1310,6 +1312,27 @@ describe("ERP contracts", () => {
 });
 
 describe("buy and dashboard contracts", () => {
+  it("owns strict dashboard projection scopes and dirty signals", () => {
+    const scope = { runId, saleOfferId };
+    const signal = {
+      type: "dashboard.projection.dirty" as const,
+      correlationId,
+      scope,
+    };
+
+    expect(dashboardProjectionScopeSchema.parse(scope)).toEqual(scope);
+    expect(dashboardProjectionDirtySignalSchema.parse(signal)).toEqual(signal);
+    for (const invalidSignal of [
+      { ...signal, extra: true },
+      { ...signal, correlationId: "" },
+      { ...signal, scope: { runId } },
+      { ...signal, scope: { ...scope, runId: "not-a-uuid" } },
+      { ...signal, scope: { ...scope, extra: true } },
+    ]) {
+      expect(dashboardProjectionDirtySignalSchema.safeParse(invalidSignal).success).toBe(false);
+    }
+  });
+
   it("defines bounded inventory drain and sold-out projections without conflating units", () => {
     expect(
       inventoryStatusSchema.parse({
