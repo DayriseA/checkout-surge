@@ -1599,7 +1599,7 @@ describe("API gateway routes", () => {
       method: "DELETE",
       url: runHistoryPath,
       headers,
-      payload: { deleteAllConfirmation: "DELETE_ALL_RUN_SUMMARIES" },
+      payload: { deleteAllConfirmation: "DELETE" },
     });
 
     expect(unauthorized.statusCode).toBe(401);
@@ -1612,7 +1612,7 @@ describe("API gateway routes", () => {
     });
     expect(deleteHistory).toHaveBeenCalledWith({ runIds: [fixtureIds.run] }, "corr-history-delete");
     expect(deleteHistory).toHaveBeenCalledWith(
-      { deleteAllConfirmation: "DELETE_ALL_RUN_SUMMARIES" },
+      { deleteAllConfirmation: "DELETE" },
       expect.any(String),
     );
   });

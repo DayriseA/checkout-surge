@@ -1,5 +1,7 @@
 import type { RunHistoryListResponse, RunHistorySummary } from "@checkout-surge/contracts";
 import Link from "next/link";
+import { RunHistoryDeleteAllButton } from "./run-history-delete-all-button";
+import { RunHistoryRowControls } from "./run-history-row-controls";
 import { StatusPill } from "./status-pill";
 
 interface RunHistoryListProps {
@@ -158,7 +160,10 @@ function TerminalInventorySnapshot({ summary }: { summary: RunHistorySummary }) 
     return (
       <section className="mt-4 border-t border-border pt-3">
         <h3 className="m-0 text-sm font-bold text-ink">Terminal inventory</h3>
-        <p className="m-0 mt-2 text-sm font-semibold text-muted">No terminal snapshot captured.</p>
+        <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
+          <p className="m-0 text-sm font-semibold text-muted">No terminal snapshot captured.</p>
+          <RunHistoryRowControls presetName={summary.presetName} runId={summary.runId} />
+        </div>
       </section>
     );
   }
@@ -174,10 +179,13 @@ function TerminalInventorySnapshot({ summary }: { summary: RunHistorySummary }) 
         <Fact label="Sold out" value={formatNumber(snapshot.soldOutRejections)} />
         <Fact label="Pending" value={formatNumber(snapshot.pendingPersistenceCount)} />
       </dl>
-      <p className="m-0 mt-3 [overflow-wrap:anywhere] text-xs font-semibold text-muted">
-        {snapshot.source} snapshot captured {formatDate(snapshot.capturedAt)} for{" "}
-        {snapshot.saleOfferId}
-      </p>
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+        <p className="m-0 min-w-0 [overflow-wrap:anywhere] text-xs font-semibold text-muted">
+          {snapshot.source} snapshot captured {formatDate(snapshot.capturedAt)} for{" "}
+          {snapshot.saleOfferId}
+        </p>
+        <RunHistoryRowControls presetName={summary.presetName} runId={summary.runId} />
+      </div>
     </section>
   );
 }
@@ -197,16 +205,19 @@ function PaginationControls({ history }: { history: RunHistoryListResponse }) {
 
   return (
     <nav className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-surface p-4">
-      <p className="m-0 text-sm font-semibold text-muted-strong">
-        Page {history.page} · {formatNumber(history.totalCount)} summaries
-      </p>
-      <div className="flex gap-2">
-        <PaginationLink disabled={!hasPrevious} page={history.page - 1}>
-          Previous
-        </PaginationLink>
-        <PaginationLink disabled={!hasNext} page={history.page + 1}>
-          Next
-        </PaginationLink>
+      <RunHistoryDeleteAllButton />
+      <div className="ml-auto flex flex-wrap items-center gap-3">
+        <p className="m-0 text-sm font-semibold text-muted-strong">
+          Page {history.page} · {formatNumber(history.totalCount)} summaries
+        </p>
+        <div className="flex gap-2">
+          <PaginationLink disabled={!hasPrevious} page={history.page - 1}>
+            Previous
+          </PaginationLink>
+          <PaginationLink disabled={!hasNext} page={history.page + 1}>
+            Next
+          </PaginationLink>
+        </div>
       </div>
     </nav>
   );

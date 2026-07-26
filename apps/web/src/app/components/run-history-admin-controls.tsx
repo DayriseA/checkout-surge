@@ -1,178 +1,125 @@
 "use client";
 
-import {
-  adminDeleteRunHistoryResponseSchema,
-  type RunHistorySummary,
-} from "@checkout-surge/contracts";
-import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
-import { adminRunHistoryProxyPath } from "../lib/control-paths";
+import { deleteAllRunHistoryConfirmationToken } from "@checkout-surge/contracts";
+import type { ReactNode } from "react";
+import { useMemo } from "react";
+import { FiTrash2 } from "react-icons/fi";
 import { ConfirmationDialog } from "./confirmation-dialog";
+import { RunHistoryAdminProvider } from "./run-history-admin-context";
+import { type DeleteIntent, useRunHistoryDeletion } from "./use-run-history-deletion";
 
-const deleteAllToken = "DELETE_ALL_RUN_SUMMARIES";
-type DeleteIntent = { kind: "selected"; runIds: string[] } | { kind: "all" };
+interface RunHistoryAdminControlsProps {
+  visibleRunIds: string[];
+  children?: ReactNode;
+}
 
-export function RunHistoryAdminControls({ summaries }: { summaries: RunHistorySummary[] }) {
-  const router = useRouter();
-  const [selectedRunIds, setSelectedRunIds] = useState<Set<string>>(new Set());
-  const [intent, setIntent] = useState<DeleteIntent | null>(null);
-  const [deleteAllConfirmation, setDeleteAllConfirmation] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [statusMessage, setStatusMessage] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const visibleRunIds = useMemo(() => summaries.map((summary) => summary.runId), [summaries]);
+export function RunHistoryAdminControls({ visibleRunIds, children }: RunHistoryAdminControlsProps) {
+  const deletion = useRunHistoryDeletion(visibleRunIds);
+  const selectedCount = deletion.selectedRunIds.size;
+  const allVisibleSelected =
+    visibleRunIds.length > 0 && visibleRunIds.every((runId) => deletion.selectedRunIds.has(runId));
 
-  function closeDialog() {
-    if (isSubmitting) return;
-    setIntent(null);
-    setDeleteAllConfirmation("");
-    setError(null);
-  }
+  const rowAdmin = useMemo(
+    () => ({
+      isSelected: (runId: string) => deletion.selectedRunIds.has(runId),
+      toggleSelection: deletion.toggleSelection,
+      requestRunDeletion: (runId: string, presetName: string) =>
+        deletion.openIntent({
+          kind: "runs",
+          runIds: [runId],
+          description: `run summary “${presetName}” (${runId})`,
+        }),
+      requestDeleteAll: () => deletion.openIntent({ kind: "all" }),
+    }),
+    [deletion.openIntent, deletion.selectedRunIds, deletion.toggleSelection],
+  );
 
-  async function confirmDelete() {
-    if (!intent || isSubmitting) return;
-    const body =
-      intent.kind === "all"
-        ? { deleteAllConfirmation }
-        : { runIds: intent.runIds, visibleFilter: { runIds: visibleRunIds } };
-    setIsSubmitting(true);
-    setError(null);
-    try {
-      let response: Response;
-      try {
-        response = await fetch(adminRunHistoryProxyPath, {
-          method: "DELETE",
-          cache: "no-store",
-          headers: { accept: "application/json", "content-type": "application/json" },
-          body: JSON.stringify(body),
-        });
-      } catch (cause) {
-        setError(cause instanceof Error ? cause.message : "Run History deletion failed.");
-        return;
-      }
-      const payload = await response.json().catch(() => null);
-      if (response.status === 401) {
-        setIntent(null);
-        setSelectedRunIds(new Set());
-        setDeleteAllConfirmation("");
-        setError(null);
-        setStatusMessage(null);
-        router.refresh();
-        return;
-      }
-      if (!response.ok) {
-        setError(errorMessageFromPayload(payload, "Run History deletion failed."));
-        return;
-      }
-      const parsed = adminDeleteRunHistoryResponseSchema.safeParse(payload);
-      if (!parsed.success) {
-        setError("Deletion response did not match the shared contract.");
-        return;
-      }
-      setStatusMessage(`Deleted ${parsed.data.deletedSummaryCount} run summaries.`);
-      setSelectedRunIds(new Set());
-      setIntent(null);
-      setDeleteAllConfirmation("");
-      router.refresh();
-    } finally {
-      setIsSubmitting(false);
-    }
-  }
-
-  const selectedCount = selectedRunIds.size;
   return (
-    <section className="mt-4 rounded-lg border border-border bg-surface p-4">
-      <div className="mb-4">
-        <p className="m-0 text-xs font-bold uppercase text-muted">Admin history cleanup</p>
-        <h2 className="m-0 mt-1 text-base font-bold leading-tight text-ink">Protected deletion</h2>
-      </div>
-      <div className="grid gap-3">
-        {summaries.map((summary) => (
-          <label
-            className="flex min-w-0 items-center gap-2 text-sm font-semibold text-muted-strong"
-            key={summary.runId}
-          >
-            <input
-              aria-label={`Select run ${summary.runId}`}
-              checked={selectedRunIds.has(summary.runId)}
-              onChange={() =>
-                setSelectedRunIds((current) => {
-                  const next = new Set(current);
-                  next.has(summary.runId) ? next.delete(summary.runId) : next.add(summary.runId);
-                  return next;
-                })
-              }
-              type="checkbox"
-            />
-            <span className="min-w-0 [overflow-wrap:anywhere]">
-              {summary.presetName} · {summary.runId}
-            </span>
-          </label>
-        ))}
-        <div className="flex flex-wrap gap-2 border-t border-border pt-3">
-          <button
-            className="min-h-10 rounded-lg border border-danger bg-danger-soft px-3.5 py-2.5 font-semibold text-danger disabled:opacity-60"
-            disabled={selectedCount === 0}
-            onClick={() => {
-              setError(null);
-              setIntent({ kind: "selected", runIds: Array.from(selectedRunIds) });
+    <RunHistoryAdminProvider value={rowAdmin}>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <label className="flex items-center gap-2 text-sm font-semibold text-muted-strong">
+          <input
+            aria-label="Select all visible runs"
+            checked={allVisibleSelected}
+            className="size-4 cursor-pointer accent-danger"
+            onChange={deletion.toggleAllVisible}
+            ref={(node) => {
+              if (node) node.indeterminate = selectedCount > 0 && !allVisibleSelected;
             }}
+            type="checkbox"
+          />
+          Select all visible ({visibleRunIds.length})
+        </label>
+        <p aria-live="polite" className="m-0 text-sm text-muted">
+          {deletion.statusMessage}
+        </p>
+      </div>
+
+      {children}
+
+      {selectedCount > 0 ? (
+        <div className="fixed bottom-6 right-6 z-40 flex flex-wrap items-center gap-3 rounded-lg border border-border bg-surface px-4 py-3 shadow-xl">
+          <p className="m-0 text-sm font-semibold text-muted-strong">{selectedCount} selected</p>
+          <button
+            className="min-h-10 rounded-lg border border-border px-3 py-2 text-sm font-semibold text-muted-strong"
+            onClick={deletion.clearSelection}
             type="button"
           >
+            Clear
+          </button>
+          <button
+            className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-danger bg-danger-soft px-3.5 py-2.5 text-sm font-semibold text-danger"
+            onClick={() =>
+              deletion.openIntent({
+                kind: "runs",
+                runIds: Array.from(deletion.selectedRunIds),
+                description: `${selectedCount} selected run summaries`,
+              })
+            }
+            type="button"
+          >
+            <FiTrash2 aria-hidden="true" className="size-4" />
             Delete Selected ({selectedCount})
           </button>
-          <button
-            className="min-h-10 rounded-lg border border-danger bg-danger-soft px-3.5 py-2.5 font-semibold text-danger"
-            onClick={() => {
-              setError(null);
-              setIntent({ kind: "all" });
-            }}
-            type="button"
-          >
-            Delete All Run Summaries
-          </button>
         </div>
-        {statusMessage ? (
-          <p className="m-0 text-sm font-semibold text-muted-strong">{statusMessage}</p>
-        ) : null}
-      </div>
+      ) : null}
+
       <ConfirmationDialog
-        confirmDisabled={intent?.kind === "all" && deleteAllConfirmation !== deleteAllToken}
-        confirmLabel={intent?.kind === "all" ? "Delete all summaries" : "Delete selected summaries"}
-        description={
-          intent?.kind === "all"
-            ? "Permanently delete every run summary. This cannot be undone."
-            : `Permanently delete ${intent?.runIds.length ?? 0} selected run summaries. This cannot be undone.`
+        confirmDisabled={
+          deletion.intent?.kind === "all" &&
+          deletion.deleteAllConfirmation !== deleteAllRunHistoryConfirmationToken
         }
-        error={error}
-        onCancel={closeDialog}
-        onConfirm={() => void confirmDelete()}
-        open={intent !== null}
-        pending={isSubmitting}
+        confirmLabel={confirmLabel(deletion.intent)}
+        description={
+          deletion.intent?.kind === "all"
+            ? "Permanently delete every run summary. This cannot be undone."
+            : `Permanently delete ${deletion.intent?.description ?? ""}. This cannot be undone.`
+        }
+        error={deletion.error}
+        onCancel={deletion.closeIntent}
+        onConfirm={() => void deletion.confirmDelete()}
+        open={deletion.intent !== null}
+        pending={deletion.isSubmitting}
         title={
-          intent?.kind === "all" ? "Delete all run summaries?" : "Delete selected run summaries?"
+          deletion.intent?.kind === "all" ? "Delete all run summaries?" : "Delete run summaries?"
         }
       >
-        {intent?.kind === "all" ? (
+        {deletion.intent?.kind === "all" ? (
           <label className="grid gap-1 text-sm font-semibold text-muted-strong">
-            <span>Type {deleteAllToken} to confirm</span>
+            <span>Type {deleteAllRunHistoryConfirmationToken} to confirm</span>
             <input
               className="min-h-10 rounded-lg border border-border bg-bg px-3 py-2 text-ink"
-              onChange={(event) => setDeleteAllConfirmation(event.target.value)}
-              value={deleteAllConfirmation}
+              onChange={(event) => deletion.setDeleteAllConfirmation(event.target.value)}
+              value={deletion.deleteAllConfirmation}
             />
           </label>
         ) : null}
       </ConfirmationDialog>
-    </section>
+    </RunHistoryAdminProvider>
   );
 }
 
-function errorMessageFromPayload(payload: unknown, fallback: string): string {
-  return typeof payload === "object" &&
-    payload !== null &&
-    "message" in payload &&
-    typeof payload.message === "string"
-    ? payload.message
-    : fallback;
+function confirmLabel(intent: DeleteIntent | null): string {
+  if (intent?.kind === "all") return "Delete all summaries";
+  return intent?.runIds.length === 1 ? "Delete run summary" : "Delete selected summaries";
 }

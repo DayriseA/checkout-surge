@@ -31,6 +31,7 @@ import { AdminAuthenticatedSurface } from "../src/app/components/admin/admin-aut
 import { OperatorDashboard } from "../src/app/components/operator-dashboard.js";
 import { PublicDemoEntry } from "../src/app/components/public-demo-entry.js";
 import { RunHistoryAdminControls } from "../src/app/components/run-history-admin-controls.js";
+import { RunHistoryList } from "../src/app/components/run-history-list.js";
 import type { BackendRead, PublicDemoSurface } from "../src/app/lib/api";
 import {
   getPublicDemoSurface,
@@ -644,12 +645,18 @@ describe("run history browser cleanup", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const history = runHistoryListFixture();
-    render(createElement(RunHistoryAdminControls, { summaries: history.summaries }));
+    render(
+      createElement(
+        RunHistoryAdminControls,
+        { visibleRunIds: history.summaries.map((summary) => summary.runId) },
+        createElement(RunHistoryList, { history }),
+      ),
+    );
 
-    await user.click(screen.getByLabelText(new RegExp(history.summaries[0]?.runId ?? "")));
+    await user.click(screen.getByLabelText(`Select run ${history.summaries[0]?.runId}`));
     await user.click(screen.getByRole("button", { name: /Delete Selected/ }));
     expect(fetchMock).not.toHaveBeenCalled();
-    await user.click(screen.getByRole("button", { name: "Delete selected summaries" }));
+    await user.click(screen.getByRole("button", { name: "Delete run summary" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     expect(String(requireFetchCall(fetchMock, 0)[0])).toBe(adminRunHistoryProxyPath);
@@ -662,12 +669,48 @@ describe("run history browser cleanup", () => {
     });
 
     await user.click(screen.getByRole("button", { name: "Delete All Run Summaries" }));
-    await replaceInputValue(/Type DELETE_ALL_RUN_SUMMARIES/, "DELETE_ALL_RUN_SUMMARIES", user);
+    await replaceInputValue(/Type DELETE to confirm/, "DELETE", user);
     await user.click(screen.getByRole("button", { name: "Delete all summaries" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect(jsonRequestBody(requireFetchCall(fetchMock, 1)[1])).toEqual({
-      deleteAllConfirmation: "DELETE_ALL_RUN_SUMMARIES",
+      deleteAllConfirmation: "DELETE",
+    });
+  });
+
+  it("deletes a single run straight from its per-row trash control", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn(async () =>
+      jsonResponse({
+        deletedSummaryCount: 1,
+        deletedAt: "2026-06-20T00:00:10.000Z",
+        correlationId: "corr-delete-history",
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const history = runHistoryListFixture();
+    const target = history.summaries[0];
+    render(
+      createElement(
+        RunHistoryAdminControls,
+        { visibleRunIds: history.summaries.map((summary) => summary.runId) },
+        createElement(RunHistoryList, { history }),
+      ),
+    );
+
+    await user.click(
+      screen.getByRole("button", {
+        name: `Delete run ${target?.presetName} (${target?.runId})`,
+      }),
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Delete run summary" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(jsonRequestBody(requireFetchCall(fetchMock, 0)[1])).toEqual({
+      runIds: [target?.runId],
+      visibleFilter: { runIds: history.summaries.map((summary) => summary.runId) },
     });
   });
 });

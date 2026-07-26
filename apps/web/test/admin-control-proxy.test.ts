@@ -475,7 +475,7 @@ describe("dashboard control proxy routes", () => {
         new Request("http://dashboard.local/api/admin/demo/runs/history", {
           method: "DELETE",
           headers: rawPassphraseJsonHeaders,
-          body: JSON.stringify({ deleteAllConfirmation: "DELETE_ALL_RUN_SUMMARIES" }),
+          body: JSON.stringify({ deleteAllConfirmation: "DELETE" }),
         }),
       ),
       startAdminDemoRun(
@@ -696,7 +696,7 @@ describe("dashboard control proxy routes", () => {
         "control-token",
       );
       expect(JSON.parse(String(init?.body))).toEqual({
-        deleteAllConfirmation: "DELETE_ALL_RUN_SUMMARIES",
+        deleteAllConfirmation: "DELETE",
       });
       return jsonResponse({
         deletedSummaryCount: 3,
@@ -710,7 +710,7 @@ describe("dashboard control proxy routes", () => {
       new Request("http://dashboard.local/api/admin/demo/runs/history", {
         method: "DELETE",
         headers,
-        body: JSON.stringify({ deleteAllConfirmation: "DELETE_ALL_RUN_SUMMARIES" }),
+        body: JSON.stringify({ deleteAllConfirmation: "DELETE" }),
       }),
     );
     const payload = await response.json();

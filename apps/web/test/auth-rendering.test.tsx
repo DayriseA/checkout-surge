@@ -1,4 +1,4 @@
-import { createElement } from "react";
+import { createElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -28,7 +28,8 @@ vi.mock("../src/app/components/run-history-list.js", () => ({
   RunHistoryList: () => createElement("section", null, "Public history list"),
 }));
 vi.mock("../src/app/components/run-history-admin-controls.js", () => ({
-  RunHistoryAdminControls: () => createElement("section", null, "Authenticated history cleanup"),
+  RunHistoryAdminControls: ({ children }: { children: ReactNode }) =>
+    createElement("section", null, "Authenticated history cleanup", children),
 }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 

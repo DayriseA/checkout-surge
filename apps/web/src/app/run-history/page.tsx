@@ -1,3 +1,4 @@
+import type { RunHistoryListResponse } from "@checkout-surge/contracts";
 import { RunHistoryAdminControls } from "../components/run-history-admin-controls";
 import { RunHistoryList } from "../components/run-history-list";
 import { StatusPill } from "../components/status-pill";
@@ -34,10 +35,7 @@ export default async function RunHistoryPage({ searchParams }: RunHistoryPagePro
         <StatusPill label={summaryCount} tone={history.status === "available" ? "ok" : "blocked"} />
       </header>
       {history.status === "available" ? (
-        <>
-          <RunHistoryList history={history.data} />
-          {authenticated ? <RunHistoryAdminControls summaries={history.data.summaries} /> : null}
-        </>
+        <HistorySurface authenticated={authenticated} history={history.data} />
       ) : (
         <section className="rounded-lg border border-border bg-surface p-4">
           <p className="m-0 text-xs font-bold uppercase text-muted">Completed runs</p>
@@ -50,6 +48,27 @@ export default async function RunHistoryPage({ searchParams }: RunHistoryPagePro
         </section>
       )}
     </>
+  );
+}
+
+/** Admin sessions get the deletion provider wrapped around the same public list. */
+function HistorySurface({
+  authenticated,
+  history,
+}: {
+  authenticated: boolean;
+  history: RunHistoryListResponse;
+}) {
+  const list = <RunHistoryList history={history} />;
+
+  if (!authenticated) {
+    return list;
+  }
+
+  return (
+    <RunHistoryAdminControls visibleRunIds={history.summaries.map((summary) => summary.runId)}>
+      {list}
+    </RunHistoryAdminControls>
   );
 }
 

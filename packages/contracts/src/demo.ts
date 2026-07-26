@@ -732,17 +732,19 @@ export const copyDemoPresetToCustomRequestSchema = z
   .strict();
 export type CopyDemoPresetToCustomRequest = z.infer<typeof copyDemoPresetToCustomRequestSchema>;
 
+export const deleteAllRunHistoryConfirmationToken = "DELETE";
+
 export const adminDeleteRunHistoryRequestSchema = z
   .object({
     runIds: z.array(uuidSchema).min(1).optional(),
-    deleteAllConfirmation: z.literal("DELETE_ALL_RUN_SUMMARIES").optional(),
+    deleteAllConfirmation: z.literal(deleteAllRunHistoryConfirmationToken).optional(),
     visibleFilter: jsonObjectSchema.optional(),
     correlationId: correlationIdSchema.optional(),
   })
   .strict()
   .superRefine((request, context) => {
     const deletesSelectedRuns = Boolean(request.runIds?.length);
-    const deletesAllRuns = request.deleteAllConfirmation === "DELETE_ALL_RUN_SUMMARIES";
+    const deletesAllRuns = request.deleteAllConfirmation === deleteAllRunHistoryConfirmationToken;
 
     if (deletesSelectedRuns === deletesAllRuns) {
       context.addIssue({

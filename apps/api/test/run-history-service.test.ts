@@ -376,7 +376,7 @@ describe("run history service", () => {
     await seedHistory(db);
 
     const deletion = await service.delete(
-      { deleteAllConfirmation: "DELETE_ALL_RUN_SUMMARIES" },
+      { deleteAllConfirmation: "DELETE" },
       "corr-delete-all",
     );
     const history = await service.list({ page: 1, pageSize: 10 });

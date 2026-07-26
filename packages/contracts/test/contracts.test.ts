@@ -2225,14 +2225,14 @@ describe("public runtime policy contract", () => {
     });
     expect(
       adminDeleteRunHistoryRequestSchema.parse({
-        deleteAllConfirmation: "DELETE_ALL_RUN_SUMMARIES",
+        deleteAllConfirmation: "DELETE",
       }),
-    ).toEqual({ deleteAllConfirmation: "DELETE_ALL_RUN_SUMMARIES" });
+    ).toEqual({ deleteAllConfirmation: "DELETE" });
     expect(() => adminDeleteRunHistoryRequestSchema.parse({})).toThrow();
     expect(() =>
       adminDeleteRunHistoryRequestSchema.parse({
         runIds: [runId],
-        deleteAllConfirmation: "DELETE_ALL_RUN_SUMMARIES",
+        deleteAllConfirmation: "DELETE",
       }),
     ).toThrow();
     expect(
