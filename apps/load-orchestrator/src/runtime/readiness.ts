@@ -1,5 +1,9 @@
 import { execFile } from "node:child_process";
-import { healthResponseSchema, type ReadinessCheck } from "@checkout-surge/contracts";
+import {
+  healthReadyPath,
+  healthResponseSchema,
+  type ReadinessCheck,
+} from "@checkout-surge/contracts";
 import type { LoadOrchestratorConfig } from "./config.js";
 
 export interface LoadOrchestratorReadiness {
@@ -19,7 +23,6 @@ export interface LoadOrchestratorReadinessOptions {
 }
 
 const apiReadinessCheckName = "api_readiness_reachable";
-const defaultApiReadinessPath = "/health/ready";
 const defaultApiReadinessTimeoutMs = 2000;
 
 export function createLoadOrchestratorReadiness(
@@ -27,7 +30,7 @@ export function createLoadOrchestratorReadiness(
   options: LoadOrchestratorReadinessOptions = {},
 ): LoadOrchestratorReadiness {
   const fetchApi = options.fetch ?? fetch;
-  const apiReadinessPath = options.apiReadinessPath ?? defaultApiReadinessPath;
+  const apiReadinessPath = options.apiReadinessPath ?? healthReadyPath;
   const apiReadinessTimeoutMs = options.apiReadinessTimeoutMs ?? defaultApiReadinessTimeoutMs;
 
   return {

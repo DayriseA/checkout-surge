@@ -4,17 +4,21 @@ import {
   type AcceptedRunConfigSnapshot,
   type DashboardProjection,
   type DemoRunConfigOverride,
+  type HealthResponse,
+  healthResponseSchema,
   startDemoRunRequestSchema,
   startDemoRunResponseSchema,
 } from "@checkout-surge/contracts";
-import { useMemo, useState } from "react";
+import Link from "next/link";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BackendRead, PublicDemoSurface } from "../lib/api";
 import { readProxyJson } from "../lib/client/proxy-json";
-import { demoRunStartProxyPath } from "../lib/control-paths";
-import { formatDashboardTime } from "../lib/dashboard-time";
+import { demoRunStartProxyPath, healthReadyProxyPath } from "../lib/control-paths";
 import { useDashboardRecovery } from "./realtime/use-dashboard-recovery";
 import { StatusPill } from "./status-pill";
 
+const recoveryPollIntervalMs = 15_000;
+const readinessPollIntervalMs = 60_000;
 const panelClassName = "min-w-0 rounded-lg border border-border bg-surface p-4";
 const buttonClassName =
   "min-h-10 rounded-lg border border-border bg-surface px-3.5 py-2.5 font-semibold text-muted-strong disabled:cursor-not-allowed disabled:opacity-60";
@@ -42,6 +46,10 @@ interface CustomDraft {
 export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
   const [startingSlug, setStartingSlug] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [readiness, setReadiness] = useState(surface.readiness);
+  const [isReadinessRefreshing, setIsReadinessRefreshing] = useState(false);
+  const readinessRequestRef = useRef<Promise<BackendRead<HealthResponse>> | null>(null);
+  const readinessMountedRef = useRef(true);
   const [customDraft, setCustomDraft] = useState<CustomDraft>(() =>
     surface.runtimePolicy.status === "available"
       ? draftFromSnapshot(surface.runtimePolicy.data.policy.publicCustomDefaults)
@@ -55,9 +63,48 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
     retriesExhausted,
     retryAttempt,
     retryDelayMs,
+    refresh,
     retryNow,
   } = useDashboardRecovery(surface.recovery);
+  const refreshReadiness = useCallback(async (): Promise<void> => {
+    if (readinessRequestRef.current) {
+      await readinessRequestRef.current;
+      return;
+    }
+
+    setIsReadinessRefreshing(true);
+    const request = readProxyJson(healthReadyProxyPath, healthResponseSchema, undefined, [503]);
+    readinessRequestRef.current = request;
+
+    try {
+      const nextReadiness = await request;
+      if (readinessMountedRef.current) setReadiness(nextReadiness);
+    } finally {
+      if (readinessRequestRef.current === request) readinessRequestRef.current = null;
+      if (readinessMountedRef.current) setIsReadinessRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    readinessMountedRef.current = true;
+    return () => {
+      readinessMountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (recovery.status !== "available") return;
+    const interval = setInterval(() => void refresh(), recoveryPollIntervalMs);
+    return () => clearInterval(interval);
+  }, [recovery.status, refresh]);
+
+  useEffect(() => {
+    const interval = setInterval(() => void refreshReadiness(), readinessPollIntervalMs);
+    return () => clearInterval(interval);
+  }, [refreshReadiness]);
+
   const isBlocked = isRunStartBlocked(recovery);
+  const isReadinessBlocked = readinessBlocksRunStart(readiness);
   const presets =
     surface.presets.status === "available"
       ? surface.presets.data.presets.filter((preset) => preset.visibility === "public")
@@ -75,6 +122,7 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
   );
   const startDisabled =
     isBlocked ||
+    isReadinessBlocked ||
     startingSlug !== null ||
     surface.presets.status !== "available" ||
     recovery.status !== "available";
@@ -107,6 +155,7 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
       }
 
       setStatusMessage(result.reason);
+      void refreshReadiness();
     } finally {
       setStartingSlug(null);
     }
@@ -114,17 +163,27 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
 
   return (
     <div className="grid grid-cols-12 gap-4">
-      <section className={`${panelClassName} col-span-8 max-[900px]:col-span-full`}>
-        <div className="mb-4 flex items-start justify-between gap-3">
+      <section className={`${panelClassName} col-span-12`}>
+        <div className="mb-4 flex items-start justify-between gap-3 max-[700px]:flex-col">
           <div>
             <p className="m-0 text-xs font-bold uppercase text-muted">Public demo</p>
             <h2 className="m-0 mt-1 text-base font-bold leading-tight text-ink">
               Curated surge presets
             </h2>
           </div>
-          <StatusPill
-            label={publicAvailabilityStatus(recovery)}
-            tone={recovery.status === "unavailable" ? "unavailable" : isBlocked ? "pending" : "ok"}
+          <StartGate
+            isReadinessRefreshing={isReadinessRefreshing}
+            isRecoveryRefreshing={isRefreshing}
+            isRetryScheduled={isRetryScheduled}
+            onRetry={() => {
+              void Promise.all([retryNow(), refreshReadiness()]);
+            }}
+            readiness={readiness}
+            recovery={recovery}
+            retriesExhausted={retriesExhausted}
+            retryAttempt={retryAttempt}
+            retryDelayMs={retryDelayMs}
+            statusMessage={statusMessage}
           />
         </div>
         {surface.presets.status === "available" && curatedPresets.length > 0 ? (
@@ -158,45 +217,6 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
         ) : (
           <p className="m-0 text-muted">No curated public presets are currently available.</p>
         )}
-      </section>
-
-      <section className={`${panelClassName} col-span-4 max-[900px]:col-span-full`}>
-        <div className="mb-4 flex items-start justify-between gap-3">
-          <div>
-            <p className="m-0 text-xs font-bold uppercase text-muted">Current run</p>
-            <h2 className="m-0 mt-1 text-base font-bold leading-tight text-ink">Start gating</h2>
-          </div>
-          <StatusPill label={currentRunStatus(recovery)} tone={isBlocked ? "pending" : "idle"} />
-        </div>
-        {recovery.status === "available" ? (
-          <dl className="m-0 grid gap-3">
-            <Fact label="Run" value={recovery.data.currentRun?.presetName ?? "No active run"} />
-            <Fact label="Traffic" value={recovery.data.currentRun?.trafficStatus ?? "Not active"} />
-            <Fact label="Recovered" value={formatDashboardTime(recovery.data.recoveredAt)} />
-          </dl>
-        ) : (
-          <Unavailable read={recovery} />
-        )}
-        <button
-          className={`${buttonClassName} mt-4`}
-          disabled={isRefreshing}
-          onClick={() => void retryNow()}
-          type="button"
-        >
-          {isRefreshing ? "Checking recovery" : "Retry recovery"}
-        </button>
-        {isRetryScheduled && retryDelayMs !== null ? (
-          <p className="m-0 mt-2 text-sm text-muted">
-            Automatic retry {retryAttempt} in {Math.ceil(retryDelayMs / 1_000)} seconds.
-          </p>
-        ) : retriesExhausted ? (
-          <p className="m-0 mt-2 text-sm text-muted">
-            Automatic retries paused. Manual retry remains available.
-          </p>
-        ) : null}
-        {statusMessage ? (
-          <p className="m-0 mt-4 text-sm font-semibold text-muted-strong">{statusMessage}</p>
-        ) : null}
       </section>
 
       <section className={`${panelClassName} col-span-12`}>
@@ -345,6 +365,10 @@ export function isRunStartBlocked(recovery: BackendRead<DashboardProjection>): b
   return status === "starting" || status === "active" || status === "draining";
 }
 
+export function readinessBlocksRunStart(readiness: BackendRead<HealthResponse>): boolean {
+  return readiness.status !== "available" || readiness.data.status !== "ok";
+}
+
 function buildCustomConfigOverride(
   draft: CustomDraft,
   defaults: AcceptedRunConfigSnapshot,
@@ -419,17 +443,6 @@ function fallbackDraft(): CustomDraft {
   };
 }
 
-function currentRunStatus(recovery: BackendRead<DashboardProjection>): string {
-  return recovery.status === "available"
-    ? (recovery.data.currentRun?.status ?? "idle")
-    : "unavailable";
-}
-
-function publicAvailabilityStatus(recovery: BackendRead<DashboardProjection>): string {
-  if (recovery.status === "unavailable") return "availability unavailable";
-  return isRunStartBlocked(recovery) ? "run in progress" : "ready";
-}
-
 function navigateToWatch() {
   if (typeof window !== "undefined") {
     window.location.assign("/watch");
@@ -457,11 +470,96 @@ function Fact({ label, value }: { label: string; value: string }) {
 
 function Unavailable({ read }: { read: BackendRead<unknown> }) {
   return read.status === "available" ? null : (
-    <div className="grid gap-1 rounded-lg border border-[#f7b4ad] bg-danger-soft p-3 leading-6 text-danger">
+    <div className="grid w-full gap-1 rounded-lg border border-[#f7b4ad] bg-danger-soft p-3 leading-6 text-danger">
       <strong>Unavailable</strong>
       <span>{read.reason}</span>
       {read.httpStatus ? <span>HTTP {read.httpStatus}</span> : null}
       {read.correlationId ? <span>Correlation {read.correlationId}</span> : null}
+    </div>
+  );
+}
+
+function StartGate({
+  isReadinessRefreshing,
+  isRecoveryRefreshing,
+  isRetryScheduled,
+  onRetry,
+  readiness,
+  recovery,
+  retriesExhausted,
+  retryAttempt,
+  retryDelayMs,
+  statusMessage,
+}: {
+  isReadinessRefreshing: boolean;
+  isRecoveryRefreshing: boolean;
+  isRetryScheduled: boolean;
+  onRetry: () => void;
+  readiness: BackendRead<HealthResponse>;
+  recovery: BackendRead<DashboardProjection>;
+  retriesExhausted: boolean;
+  retryAttempt: number;
+  retryDelayMs: number | null;
+  statusMessage: string | null;
+}) {
+  const runInProgress = recovery.status === "available" && isRunStartBlocked(recovery);
+  const recoveryUnavailable = recovery.status === "unavailable";
+  const readinessBlocked = readinessBlocksRunStart(readiness);
+  const isRefreshing = isRecoveryRefreshing || isReadinessRefreshing;
+  const failedChecks =
+    readiness.status === "available" && readiness.data.status !== "ok"
+      ? readiness.data.checks.filter((check) => check.status !== "ok")
+      : [];
+
+  return (
+    <div className="grid max-w-[32rem] justify-items-end gap-2 text-right max-[700px]:w-full max-[700px]:max-w-none max-[700px]:justify-items-start max-[700px]:text-left">
+      <div className="flex flex-wrap justify-end gap-2 max-[700px]:justify-start">
+        {recoveryUnavailable ? (
+          <StatusPill label="start unavailable" tone="unavailable" />
+        ) : runInProgress ? (
+          <Link className="rounded-full focus:outline-2 focus:outline-offset-2" href="/watch">
+            <StatusPill label="run in progress" tone="pending" />
+          </Link>
+        ) : readinessBlocked ? (
+          <StatusPill
+            label={
+              readiness.status === "available"
+                ? `infrastructure ${readiness.data.status}`
+                : "infrastructure unavailable"
+            }
+            tone={readiness.status === "available" ? readiness.data.status : "unavailable"}
+          />
+        ) : (
+          <StatusPill label="ready" tone="ok" />
+        )}
+      </div>
+      {failedChecks.length > 0 ? (
+        <dl className="m-0 grid w-full gap-2 rounded-lg border border-border p-3 text-left">
+          {failedChecks.map((check) => (
+            <Fact key={check.name} label={check.name} value={check.message ?? check.status} />
+          ))}
+        </dl>
+      ) : readiness.status === "unavailable" ? (
+        <Unavailable read={readiness} />
+      ) : null}
+      {recoveryUnavailable ? <Unavailable read={recovery} /> : null}
+      {recoveryUnavailable || readinessBlocked ? (
+        <button className={buttonClassName} disabled={isRefreshing} onClick={onRetry} type="button">
+          {isRefreshing ? "Checking availability" : "Check again"}
+        </button>
+      ) : null}
+      {isRetryScheduled && retryDelayMs !== null ? (
+        <p className="m-0 text-sm text-muted">
+          Automatic retry {retryAttempt} in {Math.ceil(retryDelayMs / 1_000)} seconds.
+        </p>
+      ) : retriesExhausted ? (
+        <p className="m-0 text-sm text-muted">
+          Automatic retries paused. Manual retry remains available.
+        </p>
+      ) : null}
+      {statusMessage ? (
+        <p className="m-0 text-sm font-semibold text-muted-strong">{statusMessage}</p>
+      ) : null}
     </div>
   );
 }

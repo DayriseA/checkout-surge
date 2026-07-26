@@ -1,4 +1,8 @@
-import { healthResponseSchema, livenessResponseSchema } from "@checkout-surge/contracts";
+import {
+  healthReadyPath,
+  healthResponseSchema,
+  livenessResponseSchema,
+} from "@checkout-surge/contracts";
 import { createLivenessPayload, createReadinessResponse } from "@checkout-surge/logger";
 import type { ApiFastifyInstance } from "../runtime/fastify.js";
 import type { ApiReadiness } from "../runtime/readiness.js";
@@ -18,7 +22,7 @@ export function registerHealthRoutes(app: ApiFastifyInstance, options: HealthRou
     ),
   );
 
-  app.get("/health/ready", async (_request, reply) => {
+  app.get(healthReadyPath, async (_request, reply) => {
     const response = healthResponseSchema.parse(
       createReadinessResponse({
         service: "api",

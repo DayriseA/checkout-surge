@@ -1,4 +1,5 @@
 export const dashboardRecoveryProxyPath = "/api/dashboard/recovery" as const;
+export const healthReadyProxyPath = "/api/health/ready" as const;
 export const demoRunStartProxyPath = "/api/demo/runs/start" as const;
 export const adminDemoRunStartProxyPath = "/api/admin/demo/runs/start" as const;
 export const adminPresetListProxyPath = "/api/admin/demo/presets" as const;

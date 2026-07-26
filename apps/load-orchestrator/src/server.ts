@@ -2,6 +2,7 @@ import {
   controlServiceTokenHeaderName,
   type ErrorPayloadCode,
   errorPayloadSchema,
+  healthReadyPath,
   healthResponseSchema,
   livenessResponseSchema,
   trafficExecutionAbortPath,
@@ -97,7 +98,7 @@ export function buildLoadOrchestratorServer(options: BuildLoadOrchestratorServer
     ),
   );
 
-  app.get("/health/ready", async (_request, reply) => {
+  app.get(healthReadyPath, async (_request, reply) => {
     const response = healthResponseSchema.parse(
       createReadinessResponse({
         service: "load-orchestrator",

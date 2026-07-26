@@ -74,6 +74,7 @@ export function validateJson<T>(
 }
 
 export async function proxyJson<T>(options: {
+  acceptedContractStatuses?: readonly number[];
   ctx: ProxyRequestContext;
   url: string;
   method: "DELETE" | "GET" | "POST" | "PUT";
@@ -116,7 +117,7 @@ export async function proxyJson<T>(options: {
     return jsonError(ctx, 502, "invalid_backend_response", "Backend returned an invalid response.");
   }
 
-  if (!response.ok) {
+  if (!response.ok && !options.acceptedContractStatuses?.includes(response.status)) {
     const parsed = errorPayloadSchema.safeParse(body.value);
     if (!parsed.success) {
       return jsonError(

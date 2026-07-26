@@ -1,4 +1,8 @@
-import { healthResponseSchema, livenessResponseSchema } from "@checkout-surge/contracts";
+import {
+  healthReadyPath,
+  healthResponseSchema,
+  livenessResponseSchema,
+} from "@checkout-surge/contracts";
 import {
   type CheckoutSurgeLogger,
   createLivenessPayload,
@@ -25,7 +29,7 @@ export function buildWorkerHealthServer(options: BuildWorkerHealthServerOptions)
     ),
   );
 
-  app.get("/health/ready", async (_request, reply) => {
+  app.get(healthReadyPath, async (_request, reply) => {
     const response = healthResponseSchema.parse(
       createReadinessResponse({
         service: "worker",

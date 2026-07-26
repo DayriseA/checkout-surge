@@ -1,4 +1,4 @@
-import { errorPayloadSchema } from "@checkout-surge/contracts";
+import { errorPayloadSchema, healthResponseSchema } from "@checkout-surge/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { readProxyJson } from "../src/app/lib/client/proxy-json.js";
 
@@ -34,6 +34,36 @@ describe("readProxyJson degraded reads", () => {
     expect(result).toMatchObject({
       status: "unavailable",
       reason: "Dashboard response did not match the expected contract.",
+    });
+  });
+
+  it("retains an explicitly accepted contract response returned with HTTP 503", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              service: "api",
+              status: "unavailable",
+              timestamp: "2026-06-20T00:00:10.000Z",
+              uptimeSeconds: 10,
+              checks: [{ name: "database_reachable", status: "unavailable" }],
+            }),
+            { status: 503 },
+          ),
+      ),
+    );
+
+    const result = await readProxyJson("/api/health/ready", healthResponseSchema, undefined, [503]);
+
+    expect(result).toMatchObject({
+      status: "available",
+      httpStatus: 503,
+      data: {
+        status: "unavailable",
+        checks: [{ name: "database_reachable", status: "unavailable" }],
+      },
     });
   });
 

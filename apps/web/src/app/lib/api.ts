@@ -4,6 +4,9 @@ import {
   adminRunHistoryDetailResponseSchema,
   controlServiceTokenHeaderName,
   type DashboardProjection,
+  type HealthResponse,
+  healthReadyPath,
+  healthResponseSchema,
   type PublicPresetListResponse,
   type PublicRunHistoryDetailResponse,
   type PublicRuntimePolicyResponse,
@@ -24,6 +27,7 @@ export type { BackendRead } from "./backend-read";
 
 export interface PublicDemoSurface {
   presets: BackendRead<PublicPresetListResponse>;
+  readiness: BackendRead<HealthResponse>;
   runtimePolicy: BackendRead<PublicRuntimePolicyResponse>;
   recovery: BackendRead<DashboardProjection>;
 }
@@ -40,6 +44,7 @@ async function readJson<T>(
   url: string,
   schema: ContractSchema<T>,
   headers: Record<string, string> = {},
+  acceptedContractStatuses?: readonly number[],
 ): Promise<BackendRead<T>> {
   let response: Response;
 
@@ -56,6 +61,7 @@ async function readJson<T>(
   }
 
   return readBackendResponse(response, schema, {
+    ...(acceptedContractStatuses ? { acceptedContractStatuses } : {}),
     invalidError: "Backend returned an invalid error response.",
     invalidSuccess: "Backend response did not match the expected contract.",
   });
@@ -70,12 +76,13 @@ export function pendingDashboardRecovery(): BackendRead<DashboardProjection> {
 
 export async function getPublicDemoSurface(): Promise<PublicDemoSurface> {
   const apiBase = apiBaseUrl();
-  const [presets, runtimePolicy] = await Promise.all([
+  const [presets, readiness, runtimePolicy] = await Promise.all([
     readJson(`${apiBase}${publicPresetListPath}`, publicPresetListResponseSchema),
+    readJson(`${apiBase}${healthReadyPath}`, healthResponseSchema, {}, [503]),
     readJson(`${apiBase}${publicRuntimePolicyPath}`, publicRuntimePolicyResponseSchema),
   ]);
 
-  return { presets, runtimePolicy, recovery: pendingDashboardRecovery() };
+  return { presets, readiness, runtimePolicy, recovery: pendingDashboardRecovery() };
 }
 
 export async function getRunHistoryPage(

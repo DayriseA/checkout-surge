@@ -51,6 +51,7 @@ import {
   errorPayloadCodeSchema,
   errorPayloadCodes,
   errorPayloadSchema,
+  healthReadyPath,
   healthResponseSchema,
   internalLoadMetricIngestPath,
   internalTrafficCompletionPath,
@@ -1048,6 +1049,7 @@ describe("shared error and health contracts", () => {
       checks: [{ name: "redis_url_configured", status: "degraded" }],
     });
 
+    expect(healthReadyPath).toBe("/health/ready");
     expect(response.checks[0]?.name).toBe("redis_url_configured");
   });
 });

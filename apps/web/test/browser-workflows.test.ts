@@ -12,6 +12,7 @@ import {
   demoRunSnapshotSchema,
   type ErpChaosStatus,
   errorPayloadSchema,
+  type HealthResponse,
   type PublicPresetListResponse,
   type PublicRunHistoryDetailResponse,
   type PublicRuntimePolicy,
@@ -44,6 +45,7 @@ import {
   adminRunHistoryProxyPath,
   dashboardRecoveryProxyPath,
   demoRunStartProxyPath,
+  healthReadyProxyPath,
 } from "../src/app/lib/control-paths.js";
 import DemoDashboardPage from "../src/app/page.js";
 import RunHistoryDetailPage from "../src/app/run-history/[runId]/page.js";
@@ -121,8 +123,10 @@ afterEach(() => {
 describe("public browser starts", () => {
   it("submits curated start requests from the public surface", async () => {
     const user = userEvent.setup();
-    const fetchMock = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) =>
-      jsonResponse({ message: "start blocked" }, 409),
+    const fetchMock = vi.fn(async (input: string | URL | Request, _init?: RequestInit) =>
+      String(input) === healthReadyProxyPath
+        ? jsonResponse(readinessFixture())
+        : jsonResponse({ message: "start blocked" }, 409),
     );
     vi.stubGlobal("fetch", fetchMock);
 
@@ -135,17 +139,20 @@ describe("public browser starts", () => {
 
     await user.click(within(previewArticle).getByRole("button", { name: "Start" }));
 
-    expect(fetchMock).toHaveBeenCalledOnce();
-    const [, init] = requireFetchCall(fetchMock, 0);
-    expect(String(requireFetchCall(fetchMock, 0)[0])).toBe(demoRunStartProxyPath);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    const [, init] = findFetchCall(fetchMock, demoRunStartProxyPath, "POST");
     expect(init?.method).toBe("POST");
     expect(jsonRequestBody(init)).toEqual({ presetSlug: "preview-1k" });
+    expect(findFetchCall(fetchMock, healthReadyProxyPath)[0]).toBe(healthReadyProxyPath);
+    expect(screen.getByText("Dashboard returned an invalid error response.")).toBeTruthy();
   });
 
   it("builds bounded custom start payloads from edited public controls", async () => {
     const user = userEvent.setup();
-    const fetchMock = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) =>
-      jsonResponse({ message: "start blocked" }, 409),
+    const fetchMock = vi.fn(async (input: string | URL | Request, _init?: RequestInit) =>
+      String(input) === healthReadyProxyPath
+        ? jsonResponse(readinessFixture())
+        : jsonResponse({ message: "start blocked" }, 409),
     );
     vi.stubGlobal("fetch", fetchMock);
 
@@ -163,9 +170,8 @@ describe("public browser starts", () => {
     await replaceInputValue("ERP error rate", "0.2", user);
     await user.click(screen.getByRole("button", { name: "Start Public Custom" }));
 
-    expect(fetchMock).toHaveBeenCalledOnce();
-    const [, init] = requireFetchCall(fetchMock, 0);
-    expect(String(requireFetchCall(fetchMock, 0)[0])).toBe(demoRunStartProxyPath);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    const [, init] = findFetchCall(fetchMock, demoRunStartProxyPath, "POST");
     expect(jsonRequestBody(init)).toEqual({
       presetSlug: "public-custom",
       configOverride: {
@@ -191,11 +197,12 @@ describe("public browser starts", () => {
         },
       },
     });
+    expect(findFetchCall(fetchMock, healthReadyProxyPath)[0]).toBe(healthReadyProxyPath);
   });
 });
 
 describe("public recovery convergence", () => {
-  it("enables Start controls after a 429 then idle recovery without remounting or extra requests", async () => {
+  it("converges from bootstrap backoff and then arms steady polling", async () => {
     vi.useFakeTimers();
     const fetchMock = vi
       .fn()
@@ -212,7 +219,15 @@ describe("public recovery convergence", () => {
           { status: 429, headers: { "retry-after": "10" } },
         ),
       )
-      .mockResolvedValueOnce(jsonResponse(dashboardRecoveryFixture()));
+      .mockResolvedValueOnce(jsonResponse(dashboardRecoveryFixture()))
+      .mockResolvedValueOnce(
+        jsonResponse(
+          dashboardRecoveryFixture({
+            recoveredAt: "2026-06-20T00:00:11.000Z",
+            revision: 2,
+          }),
+        ),
+      );
     vi.stubGlobal("fetch", fetchMock);
     const surface = publicDemoSurfaceFixture();
     surface.recovery = {
@@ -239,8 +254,135 @@ describe("public recovery convergence", () => {
     expect(customStart.disabled).toBe(false);
     expect(screen.getByText("ready")).toBeTruthy();
 
+    await act(async () => vi.advanceTimersByTimeAsync(15_000));
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(screen.getByText("ready")).toBeTruthy();
+  });
+
+  it("re-homes manual recovery and readiness refresh into the gate", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn(async (input: string | URL | Request) =>
+      String(input) === healthReadyProxyPath
+        ? jsonResponse(readinessFixture())
+        : jsonResponse(dashboardRecoveryFixture()),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const surface = publicDemoSurfaceFixture();
+    surface.recovery = {
+      status: "unavailable",
+      reason: "Authoritative run state is loading.",
+    };
+
+    render(createElement(PublicDemoEntry, { surface }));
+    await user.click(screen.getByRole("button", { name: "Check again" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(findFetchCall(fetchMock, dashboardRecoveryProxyPath)[0]).toBe(
+      dashboardRecoveryProxyPath,
+    );
+    expect(findFetchCall(fetchMock, healthReadyProxyPath)[0]).toBe(healthReadyProxyPath);
+  });
+
+  it("polls recovery and blocks starts when another visitor starts a run", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      if (String(input) !== dashboardRecoveryProxyPath) {
+        throw new Error(`Unexpected fetch: ${String(input)}`);
+      }
+      return jsonResponse(
+        dashboardRecoveryFixture({
+          currentRun: demoRunFixture({ status: "active" }),
+          recoveredAt: "2026-06-20T00:00:11.000Z",
+          revision: 2,
+        }),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(createElement(PublicDemoEntry, { surface: publicDemoSurfaceFixture() }));
+    const curatedStart = screen.getByRole("button", { name: "Start" }) as HTMLButtonElement;
+    expect(curatedStart.disabled).toBe(false);
+
+    await act(async () => vi.advanceTimersByTimeAsync(15_000));
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(curatedStart.disabled).toBe(true);
+    expect(screen.getByRole("link", { name: "run in progress" }).getAttribute("href")).toBe(
+      "/watch",
+    );
+  });
+
+  it("leaves unavailable recovery to backoff and stops after retries are exhausted", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(async (input: string | URL | Request) =>
+      String(input) === healthReadyProxyPath
+        ? jsonResponse(readinessFixture())
+        : new Response(
+            JSON.stringify(
+              errorPayloadSchema.parse({
+                code: "backend_unavailable",
+                message: "Recovery temporarily unavailable.",
+                correlationId: "public-recovery-failed",
+                timestamp: "2026-06-20T00:00:00.000Z",
+              }),
+            ),
+            { status: 503 },
+          ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(createElement(PublicDemoEntry, { surface: publicDemoSurfaceFixture() }));
+
+    await act(async () => vi.advanceTimersByTimeAsync(15_000));
+    expect(recoveryFetchCount(fetchMock)).toBe(1);
+
+    await act(async () => vi.advanceTimersByTimeAsync(61_000));
+    expect(recoveryFetchCount(fetchMock)).toBe(7);
+    expect(
+      screen.getByText("Automatic retries paused. Manual retry remains available."),
+    ).toBeTruthy();
+
     await act(async () => vi.advanceTimersByTimeAsync(60_000));
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(recoveryFetchCount(fetchMock)).toBe(7);
+  });
+
+  it("polls readiness slowly and blocks starts on an unavailable check", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      if (String(input) === healthReadyProxyPath) {
+        return jsonResponse(
+          {
+            ...readinessFixture(),
+            status: "unavailable",
+            checks: [
+              {
+                name: "redis_reachable",
+                status: "unavailable",
+                message: "Redis readiness check failed.",
+              },
+            ],
+          },
+          503,
+        );
+      }
+      if (String(input) === dashboardRecoveryProxyPath) {
+        return jsonResponse(dashboardRecoveryFixture());
+      }
+      throw new Error(`Unexpected fetch: ${String(input)}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(createElement(PublicDemoEntry, { surface: publicDemoSurfaceFixture() }));
+    const curatedStart = screen.getByRole("button", { name: "Start" }) as HTMLButtonElement;
+
+    await act(async () => vi.advanceTimersByTimeAsync(60_000));
+
+    expect(curatedStart.disabled).toBe(true);
+    expect(screen.getByText("redis_reachable")).toBeTruthy();
+    expect(screen.getByText("Redis readiness check failed.")).toBeTruthy();
+    expect(
+      fetchMock.mock.calls.filter(([input]) => String(input) === healthReadyProxyPath),
+    ).toHaveLength(1);
   });
 });
 
@@ -375,12 +517,10 @@ describe("watch browser recovery", () => {
 
     expect(FakeEventSource.instances).toHaveLength(1);
     expect(fetchMock.mock.calls.map((call) => String(call[0]))).toEqual(
-      Array.from(
-        { length: 3 },
-        (_, index) =>
-          index === 0
-            ? dashboardRecoveryProxyPath
-            : `${dashboardRecoveryProxyPath}?knownRunId=55555555-5555-4555-8555-555555555555&knownSaleOfferId=22222222-2222-4222-8222-222222222222`,
+      Array.from({ length: 3 }, (_, index) =>
+        index === 0
+          ? dashboardRecoveryProxyPath
+          : `${dashboardRecoveryProxyPath}?knownRunId=55555555-5555-4555-8555-555555555555&knownSaleOfferId=22222222-2222-4222-8222-222222222222`,
       ),
     );
   });
@@ -609,6 +749,11 @@ function findFetchCall(fetchMock: FetchMock, path: string, method?: string): Fet
   return [call[0] as string | URL | Request, call[1] as RequestInit | undefined];
 }
 
+function recoveryFetchCount(fetchMock: FetchMock): number {
+  return fetchMock.mock.calls.filter(([input]) => String(input) === dashboardRecoveryProxyPath)
+    .length;
+}
+
 function jsonRequestBody(init: RequestInit | undefined): unknown {
   if (typeof init?.body !== "string") {
     throw new Error("Expected a string JSON request body.");
@@ -646,8 +791,19 @@ function available<T>(data: T): BackendRead<T> {
 function publicDemoSurfaceFixture(): PublicDemoSurface {
   return {
     presets: available(publicPresetListFixture()),
+    readiness: available(readinessFixture()),
     runtimePolicy: available(publicRuntimePolicyResponseFixture()),
     recovery: available(dashboardRecoveryFixture()),
+  };
+}
+
+function readinessFixture(): HealthResponse {
+  return {
+    service: "api",
+    status: "ok",
+    timestamp: "2026-06-20T00:00:10.000Z",
+    uptimeSeconds: 10,
+    checks: [{ name: "database_reachable", status: "ok" }],
   };
 }
 

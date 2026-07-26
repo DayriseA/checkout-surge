@@ -21,7 +21,8 @@ export type BackendRead<T> =
       retryAfterMs?: number;
     };
 
-interface BackendResponseMessages {
+interface BackendResponseOptions {
+  acceptedContractStatuses?: readonly number[];
   invalidError: string;
   invalidSuccess: string;
 }
@@ -31,18 +32,31 @@ const maximumRetryAfterMs = 5 * 60 * 1_000;
 export async function readBackendResponse<T>(
   response: Response,
   schema: ContractSchema<T>,
-  messages: BackendResponseMessages,
+  options: BackendResponseOptions,
 ): Promise<BackendRead<T>> {
   const retryAfterMs = parseRetryAfterMs(response.headers.get("retry-after"));
   const payload = await readJsonBody(response);
+  const acceptsContract =
+    response.ok || options.acceptedContractStatuses?.includes(response.status);
+
+  if (acceptsContract && payload.ok) {
+    const parsedSuccess = schema.safeParse(payload.value);
+    if (parsedSuccess.success) {
+      return {
+        status: "available",
+        data: parsedSuccess.data,
+        httpStatus: response.status,
+      };
+    }
+  }
 
   if (!response.ok) {
     if (!payload.ok) {
-      return unavailable(response.status, messages.invalidError, retryAfterMs);
+      return unavailable(response.status, options.invalidError, retryAfterMs);
     }
     const parsedError = errorPayloadSchema.safeParse(payload.value);
     if (!parsedError.success) {
-      return unavailable(response.status, messages.invalidError, retryAfterMs);
+      return unavailable(response.status, options.invalidError, retryAfterMs);
     }
     return {
       status: "unavailable",
@@ -54,18 +68,7 @@ export async function readBackendResponse<T>(
     };
   }
 
-  if (!payload.ok) {
-    return unavailable(response.status, messages.invalidSuccess);
-  }
-  const parsedSuccess = schema.safeParse(payload.value);
-  if (!parsedSuccess.success) {
-    return unavailable(response.status, messages.invalidSuccess);
-  }
-  return {
-    status: "available",
-    data: parsedSuccess.data,
-    httpStatus: response.status,
-  };
+  return unavailable(response.status, options.invalidSuccess);
 }
 
 export function parseRetryAfterMs(value: string | null): number | undefined {

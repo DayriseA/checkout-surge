@@ -1,4 +1,8 @@
-import { healthResponseSchema, livenessResponseSchema } from "@checkout-surge/contracts";
+import {
+  healthReadyPath,
+  healthResponseSchema,
+  livenessResponseSchema,
+} from "@checkout-surge/contracts";
 import {
   createLivenessPayload,
   createReadinessCheck,
@@ -23,7 +27,7 @@ export function registerHealthRoutes(
     ),
   );
 
-  app.get("/health/ready", async () =>
+  app.get(healthReadyPath, async () =>
     healthResponseSchema.parse(
       createReadinessResponse({
         service: "mock-erp",

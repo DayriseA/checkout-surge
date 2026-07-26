@@ -132,7 +132,17 @@ describe("dashboard backend API reads", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: string | URL | Request) => {
-        requestedUrls.push(String(input));
+        const url = String(input);
+        requestedUrls.push(url);
+        if (url.endsWith("/health/ready")) {
+          return jsonResponse({
+            service: "api",
+            status: "ok",
+            timestamp: "2026-06-20T00:00:10.000Z",
+            uptimeSeconds: 10,
+            checks: [{ name: "database_reachable", status: "ok" }],
+          });
+        }
         return jsonResponse({});
       }),
     );
@@ -143,10 +153,59 @@ describe("dashboard backend API reads", () => {
       status: "unavailable",
       reason: "Authoritative run state is loading.",
     });
+    expect(surface.readiness).toMatchObject({
+      status: "available",
+      data: { status: "ok" },
+    });
     expect(requestedUrls).toEqual([
       "http://api.internal/demo/presets/public",
+      "http://api.internal/health/ready",
       "http://api.internal/demo/runtime-policy",
     ]);
+  });
+
+  it("retains contract-valid unavailable readiness details returned with HTTP 503", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request) => {
+        if (String(input).endsWith("/health/ready")) {
+          return jsonResponse(
+            {
+              service: "api",
+              status: "unavailable",
+              timestamp: "2026-06-20T00:00:10.000Z",
+              uptimeSeconds: 10,
+              checks: [
+                {
+                  name: "database_reachable",
+                  status: "unavailable",
+                  message: "PostgreSQL readiness check failed.",
+                },
+              ],
+            },
+            503,
+          );
+        }
+        return jsonResponse({});
+      }),
+    );
+
+    const surface = await getPublicDemoSurface();
+
+    expect(surface.readiness).toMatchObject({
+      status: "available",
+      httpStatus: 503,
+      data: {
+        status: "unavailable",
+        checks: [
+          {
+            name: "database_reachable",
+            status: "unavailable",
+            message: "PostgreSQL readiness check failed.",
+          },
+        ],
+      },
+    });
   });
 
   it("reads run history detail through the shared API contract", async () => {
@@ -168,9 +227,9 @@ describe("dashboard backend API reads", () => {
   });
 });
 
-function jsonResponse(payload: unknown): Response {
+function jsonResponse(payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {
-    status: 200,
+    status,
     headers: { "content-type": "application/json" },
   });
 }

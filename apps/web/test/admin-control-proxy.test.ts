@@ -39,6 +39,7 @@ import { GET as getErpChaos, PUT as updateErpChaos } from "../src/app/api/admin/
 import { POST as createAdminSession } from "../src/app/api/admin/session/route.js";
 import { GET as getDashboardRecovery } from "../src/app/api/dashboard/recovery/route.js";
 import { POST as startDemoRun } from "../src/app/api/demo/runs/start/route.js";
+import { GET as getReadiness } from "../src/app/api/health/ready/route.js";
 import { adminPassphraseHeaderName } from "../src/app/lib/control-paths.js";
 import { resetAdminLoginAttemptLimiterForTests } from "../src/app/lib/server/admin-login-composition.js";
 import { createAdminSessionToken } from "../src/app/lib/server/admin-session.js";
@@ -154,6 +155,43 @@ describe("dashboard control proxy routes", () => {
     expect(payload.currentRun).toBeNull();
     expect(forwardedCredentials[1]).toBe(forwardedCredentials[0]);
     expect(forwardedCredentials[2]).not.toBe(forwardedCredentials[0]);
+  });
+
+  it("proxies readiness without minting or forwarding a visitor credential", async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      expect(String(input)).toBe("http://api.internal/health/ready");
+      expect(new Headers(init?.headers).has(publicVisitorIdHeaderName)).toBe(false);
+      return jsonResponse(
+        {
+          service: "api",
+          status: "unavailable",
+          timestamp: "2026-06-20T00:00:10.000Z",
+          uptimeSeconds: 10,
+          checks: [
+            {
+              name: "database_reachable",
+              status: "unavailable",
+              message: "PostgreSQL readiness check failed.",
+            },
+          ],
+        },
+        503,
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await getReadiness(
+      new Request("http://dashboard.local/api/health/ready", {
+        headers: { [publicVisitorIdHeaderName]: "caller-assertion" },
+      }),
+    );
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({
+      status: "unavailable",
+      checks: [{ name: "database_reachable", status: "unavailable" }],
+    });
+    expect(response.headers.get("set-cookie")).toBeNull();
   });
 
   it("forwards only a validated complete known recovery scope", async () => {

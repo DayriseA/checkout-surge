@@ -8,6 +8,7 @@ import {
   dashboardProjectionScopeId,
   demoRunSnapshotSchema,
   type ErpChaosStatus,
+  type HealthResponse,
   type PublicPresetListResponse,
   type PublicRuntimePolicyResponse,
 } from "@checkout-surge/contracts";
@@ -33,6 +34,10 @@ describe("dashboard control surface", () => {
     expect(markup).toContain("Public custom");
     expect(markup).toContain("Start Public Custom");
     expect(markup).toContain("ERP max TPS");
+    expect(markup).toContain(">ready<");
+    expect(markup).not.toContain("database_reachable");
+    expect(markup).not.toContain("Current run");
+    expect(markup).not.toContain("Start gating");
   });
 
   it("follows response visibility and never exposes forced outage on public custom", () => {
@@ -114,6 +119,7 @@ describe("dashboard control surface", () => {
     );
 
     expect(markup).toContain("run in progress");
+    expect(markup).toContain('href="/watch"');
     expect(markup).toContain("disabled");
   });
 
@@ -125,9 +131,63 @@ describe("dashboard control surface", () => {
     };
     const markup = renderToStaticMarkup(createElement(PublicDemoEntry, { surface }));
 
-    expect(markup).toContain("availability unavailable");
+    expect(markup).toContain("start unavailable");
     expect(markup).not.toContain("run in progress");
-    expect(markup).toContain("Retry recovery");
+    expect(markup).toContain("Check again");
+    expect(markup).toContain("disabled");
+  });
+
+  it("shows failed readiness checks and blocks starts", () => {
+    const surface = publicSurfaceFixture(null);
+    surface.readiness = available({
+      ...readinessFixture(),
+      status: "unavailable",
+      checks: [
+        {
+          name: "database_reachable",
+          status: "unavailable",
+          message: "PostgreSQL readiness check failed.",
+        },
+      ],
+    });
+
+    const markup = renderToStaticMarkup(createElement(PublicDemoEntry, { surface }));
+
+    expect(markup).toContain("infrastructure unavailable");
+    expect(markup).toContain("database_reachable");
+    expect(markup).toContain("PostgreSQL readiness check failed.");
+    expect(markup).toContain("disabled");
+  });
+
+  it("blocks starts when the readiness read is unavailable", () => {
+    const surface = publicSurfaceFixture(null);
+    surface.readiness = { status: "unavailable", reason: "Readiness proxy offline" };
+
+    const markup = renderToStaticMarkup(createElement(PublicDemoEntry, { surface }));
+
+    expect(markup).toContain("infrastructure unavailable");
+    expect(markup).toContain("Readiness proxy offline");
+    expect(markup).toContain("disabled");
+  });
+
+  it("blocks starts when readiness is degraded", () => {
+    const surface = publicSurfaceFixture(null);
+    surface.readiness = available({
+      ...readinessFixture(),
+      status: "degraded",
+      checks: [
+        {
+          name: "order_process_queue_reachable",
+          status: "degraded",
+          message: "Queue connectivity is slow.",
+        },
+      ],
+    });
+
+    const markup = renderToStaticMarkup(createElement(PublicDemoEntry, { surface }));
+
+    expect(markup).toContain("infrastructure degraded");
+    expect(markup).toContain("Queue connectivity is slow.");
     expect(markup).toContain("disabled");
   });
 
@@ -175,6 +235,7 @@ describe("dashboard control surface", () => {
 function publicSurfaceFixture(currentRun: DashboardProjection["currentRun"]): PublicDemoSurface {
   return {
     presets: available(publicPresetListFixture()),
+    readiness: available(readinessFixture()),
     runtimePolicy: available(publicRuntimePolicyFixture()),
     recovery: available(recoveryFixture(currentRun)),
   };
@@ -191,6 +252,16 @@ function publicPresetListFixture(): PublicPresetListResponse {
       demoPresetFixture("public-custom", "public", true),
     ],
     timestamp: "2026-06-20T00:00:10.000Z",
+  };
+}
+
+function readinessFixture(): HealthResponse {
+  return {
+    service: "api",
+    status: "ok",
+    timestamp: "2026-06-20T00:00:10.000Z",
+    uptimeSeconds: 10,
+    checks: [{ name: "database_reachable", status: "ok" }],
   };
 }
 
