@@ -12,8 +12,6 @@ import {
   demoRunSnapshotSchema,
   type ErpChaosStatus,
   errorPayloadSchema,
-  type HealthResponse,
-  type LivenessResponse,
   type PublicPresetListResponse,
   type PublicRunHistoryDetailResponse,
   type PublicRuntimePolicy,
@@ -32,12 +30,12 @@ import { AdminAuthenticatedSurface } from "../src/app/components/admin/admin-aut
 import { OperatorDashboard } from "../src/app/components/operator-dashboard.js";
 import { PublicDemoEntry } from "../src/app/components/public-demo-entry.js";
 import { RunHistoryAdminControls } from "../src/app/components/run-history-admin-controls.js";
-import type { BackendRead, DashboardBackendSnapshot, PublicDemoSurface } from "../src/app/lib/api";
+import type { BackendRead, PublicDemoSurface } from "../src/app/lib/api";
 import {
-  getDashboardBackendSnapshot,
   getPublicDemoSurface,
   getRunHistoryDetail,
   getRunHistoryPage,
+  pendingDashboardRecovery,
 } from "../src/app/lib/api.js";
 import {
   adminErpChaosProxyPath,
@@ -53,11 +51,14 @@ import RunHistoryPage from "../src/app/run-history/page.js";
 import WatchPage from "../src/app/watch/page.js";
 
 vi.mock("../src/app/lib/api.js", () => ({
-  getDashboardBackendSnapshot: vi.fn(),
   getAdminRunHistoryDetail: vi.fn(),
   getPublicDemoSurface: vi.fn(),
   getRunHistoryDetail: vi.fn(),
   getRunHistoryPage: vi.fn(),
+  pendingDashboardRecovery: vi.fn(() => ({
+    status: "unavailable",
+    reason: "Authoritative run state is loading.",
+  })),
 }));
 vi.mock("../src/app/lib/server/admin-page-session.js", () => ({
   hasValidAdminPageSession: vi.fn(async () => false),
@@ -316,12 +317,11 @@ describe("watch browser recovery", () => {
       .mockImplementationOnce(() => reconnectRecovery.promise);
     vi.stubGlobal("EventSource", FakeEventSource);
     vi.stubGlobal("fetch", fetchMock);
-    const snapshot = dashboardSnapshotFixture();
-    snapshot.recovery = available(
-      dashboardRecoveryFixture({ currentRun: demoRunFixture({ status: "active" }) }),
+    render(
+      createElement(OperatorDashboard, {
+        initialRecovery: pendingDashboardRecovery(),
+      }),
     );
-
-    render(createElement(OperatorDashboard, { snapshot }));
     await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
     const source = FakeEventSource.instances[0];
 
@@ -377,31 +377,41 @@ describe("watch browser recovery", () => {
     expect(fetchMock.mock.calls.map((call) => String(call[0]))).toEqual(
       Array.from(
         { length: 3 },
-        () =>
-          `${dashboardRecoveryProxyPath}?knownRunId=55555555-5555-4555-8555-555555555555&knownSaleOfferId=22222222-2222-4222-8222-222222222222`,
+        (_, index) =>
+          index === 0
+            ? dashboardRecoveryProxyPath
+            : `${dashboardRecoveryProxyPath}?knownRunId=55555555-5555-4555-8555-555555555555&knownSaleOfferId=22222222-2222-4222-8222-222222222222`,
       ),
     );
   });
 
   it("keeps an immediate terminal projection when a stale HTTP read races it", async () => {
-    const firstRecovery = deferred<Response>();
-    const fetchMock = vi.fn(
-      (_input: string | URL | Request, _init?: RequestInit) => firstRecovery.promise,
-    );
+    const staleRecovery = deferred<Response>();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse(
+          dashboardRecoveryFixture({ currentRun: demoRunFixture({ status: "active" }) }),
+        ),
+      )
+      .mockImplementationOnce(() => staleRecovery.promise);
     vi.stubGlobal("EventSource", FakeEventSource);
     vi.stubGlobal("fetch", fetchMock);
 
-    const snapshot = dashboardSnapshotFixture();
-    snapshot.recovery = available(
-      dashboardRecoveryFixture({ currentRun: demoRunFixture({ status: "active" }) }),
+    render(
+      createElement(OperatorDashboard, {
+        initialRecovery: pendingDashboardRecovery(),
+      }),
     );
-    render(createElement(OperatorDashboard, { snapshot }));
 
     await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
     act(() => {
       FakeEventSource.instances[0]?.emit("open", new Event("open"));
     });
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    await screen.findByText("Preview 1k");
+    act(() => FakeEventSource.instances[0]?.emit("error", new Event("error")));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
 
     act(() => {
       FakeEventSource.instances[0]?.emit(
@@ -419,7 +429,7 @@ describe("watch browser recovery", () => {
     });
     expect(screen.getByText("completed")).toBeTruthy();
     await act(async () => {
-      firstRecovery.resolve(
+      staleRecovery.resolve(
         jsonResponse(
           dashboardRecoveryFixture({
             currentRun: demoRunFixture({ status: "draining", trafficStatus: "succeeded" }),
@@ -428,40 +438,50 @@ describe("watch browser recovery", () => {
           }),
         ),
       );
-      await firstRecovery.promise;
+      await staleRecovery.promise;
     });
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect(screen.getByText("completed")).toBeTruthy();
     expect(fetchMock.mock.calls.map((call) => String(call[0]))).toEqual([
+      dashboardRecoveryProxyPath,
       `${dashboardRecoveryProxyPath}?knownRunId=55555555-5555-4555-8555-555555555555&knownSaleOfferId=22222222-2222-4222-8222-222222222222`,
     ]);
   });
 
   it("keeps the last Watch snapshot and renders one sync warning after refresh failure", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response(
-        JSON.stringify(
-          errorPayloadSchema.parse({
-            code: "backend_unavailable",
-            message: "Recovery temporarily unavailable.",
-            correlationId: "watch-refresh-failed",
-            timestamp: "2026-06-20T00:00:11.000Z",
-          }),
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse(
+          dashboardRecoveryFixture({ currentRun: demoRunFixture({ status: "active" }) }),
         ),
-        { status: 503, headers: { "content-type": "application/json" } },
-      ),
-    );
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify(
+            errorPayloadSchema.parse({
+              code: "backend_unavailable",
+              message: "Recovery temporarily unavailable.",
+              correlationId: "watch-refresh-failed",
+              timestamp: "2026-06-20T00:00:11.000Z",
+            }),
+          ),
+          { status: 503, headers: { "content-type": "application/json" } },
+        ),
+      );
     vi.stubGlobal("EventSource", FakeEventSource);
     vi.stubGlobal("fetch", fetchMock);
-    const snapshot = dashboardSnapshotFixture();
-    snapshot.recovery = available(
-      dashboardRecoveryFixture({ currentRun: demoRunFixture({ status: "active" }) }),
-    );
 
-    render(createElement(OperatorDashboard, { snapshot }));
+    render(
+      createElement(OperatorDashboard, {
+        initialRecovery: pendingDashboardRecovery(),
+      }),
+    );
     await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
     act(() => FakeEventSource.instances[0]?.emit("open", new Event("open")));
+    await screen.findByText("Preview 1k");
+    act(() => FakeEventSource.instances[0]?.emit("error", new Event("error")));
 
     await screen.findByText("Recovery temporarily unavailable.");
     expect(screen.getAllByText("Last-known-good projection")).toHaveLength(1);
@@ -520,7 +540,6 @@ describe("web page smoke coverage", () => {
       vi.fn(async () => jsonResponse({ message: "session required" }, 401)),
     );
     vi.mocked(getPublicDemoSurface).mockResolvedValue(publicDemoSurfaceFixture());
-    vi.mocked(getDashboardBackendSnapshot).mockResolvedValue(dashboardSnapshotFixture());
     vi.mocked(getRunHistoryPage).mockResolvedValue(available(runHistoryListFixture()));
     vi.mocked(getRunHistoryDetail).mockResolvedValue(available(runHistoryDetailFixture()));
 
@@ -624,35 +643,11 @@ function available<T>(data: T): BackendRead<T> {
   };
 }
 
-function dashboardSnapshotFixture(): DashboardBackendSnapshot {
-  return {
-    liveness: available(livenessFixture()),
-    readiness: available(readinessFixture()),
-    recovery: available(dashboardRecoveryFixture()),
-  };
-}
-
 function publicDemoSurfaceFixture(): PublicDemoSurface {
   return {
     presets: available(publicPresetListFixture()),
     runtimePolicy: available(publicRuntimePolicyResponseFixture()),
     recovery: available(dashboardRecoveryFixture()),
-  };
-}
-
-function livenessFixture(): LivenessResponse {
-  return {
-    service: "api",
-    status: "ok",
-    timestamp: "2026-06-20T00:00:10.000Z",
-    uptimeSeconds: 10,
-  };
-}
-
-function readinessFixture(): HealthResponse {
-  return {
-    ...livenessFixture(),
-    checks: [{ name: "database_reachable", status: "ok" }],
   };
 }
 

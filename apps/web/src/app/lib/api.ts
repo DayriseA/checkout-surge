@@ -4,10 +4,6 @@ import {
   adminRunHistoryDetailResponseSchema,
   controlServiceTokenHeaderName,
   type DashboardProjection,
-  type HealthResponse,
-  healthResponseSchema,
-  type LivenessResponse,
-  livenessResponseSchema,
   type PublicPresetListResponse,
   type PublicRunHistoryDetailResponse,
   type PublicRuntimePolicyResponse,
@@ -25,12 +21,6 @@ import { type BackendRead, type ContractSchema, readBackendResponse } from "./ba
 import { webServerConfig } from "./server/config";
 
 export type { BackendRead } from "./backend-read";
-
-export interface DashboardBackendSnapshot {
-  liveness: BackendRead<LivenessResponse>;
-  readiness: BackendRead<HealthResponse>;
-  recovery: BackendRead<DashboardProjection>;
-}
 
 export interface PublicDemoSurface {
   presets: BackendRead<PublicPresetListResponse>;
@@ -76,16 +66,6 @@ export function pendingDashboardRecovery(): BackendRead<DashboardProjection> {
     status: "unavailable",
     reason: "Authoritative run state is loading.",
   };
-}
-
-export async function getDashboardBackendSnapshot(): Promise<DashboardBackendSnapshot> {
-  const apiBase = apiBaseUrl();
-  const [liveness, readiness] = await Promise.all([
-    readJson(`${apiBase}/health/live`, livenessResponseSchema),
-    readJson(`${apiBase}/health/ready`, healthResponseSchema),
-  ]);
-
-  return { liveness, readiness, recovery: pendingDashboardRecovery() };
 }
 
 export async function getPublicDemoSurface(): Promise<PublicDemoSurface> {

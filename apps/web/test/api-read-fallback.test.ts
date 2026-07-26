@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  getDashboardBackendSnapshot,
   getPublicDemoSurface,
   getRunHistoryDetail,
   getRunHistoryPage,
@@ -9,6 +8,7 @@ import {
   initializeWebServerConfig,
   resetWebServerConfigForTests,
 } from "../src/app/lib/server/config.js";
+import WatchPage from "../src/app/watch/page.js";
 
 const originalEnv = { ...process.env };
 const validWebEnv = {
@@ -34,69 +34,13 @@ describe("dashboard backend API reads", () => {
     vi.unstubAllGlobals();
   });
 
-  it("returns unavailable snapshots when backend reads fail", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => {
-        throw new Error("backend offline");
-      }),
-    );
+  it("makes no backend reads during the server-side watch bootstrap", () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
 
-    const snapshot = await getDashboardBackendSnapshot();
+    WatchPage();
 
-    expect(snapshot.liveness).toMatchObject({
-      status: "unavailable",
-      reason: "backend offline",
-    });
-    expect(snapshot.readiness).toMatchObject({
-      status: "unavailable",
-      reason: "backend offline",
-    });
-    expect(snapshot.recovery).toEqual({
-      status: "unavailable",
-      reason: "Authoritative run state is loading.",
-    });
-  });
-
-  it("does not call dashboard recovery during the server-side watch bootstrap", async () => {
-    const requestedUrls: string[] = [];
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input: string | URL | Request) => {
-        const url = String(input);
-        requestedUrls.push(url);
-
-        if (url.endsWith("/health/live")) {
-          return jsonResponse({
-            service: "api",
-            status: "ok",
-            timestamp: "2026-06-20T00:00:10.000Z",
-            uptimeSeconds: 10,
-          });
-        }
-
-        if (url.endsWith("/health/ready")) {
-          return jsonResponse({
-            service: "api",
-            status: "ok",
-            timestamp: "2026-06-20T00:00:10.000Z",
-            uptimeSeconds: 10,
-            checks: [{ name: "database_reachable", status: "ok" }],
-          });
-        }
-
-        throw new Error(`Unexpected backend read: ${url}`);
-      }),
-    );
-
-    const snapshot = await getDashboardBackendSnapshot();
-
-    expect(snapshot.recovery.status).toBe("unavailable");
-    expect(requestedUrls).not.toContain("http://api.internal/dashboard/recovery");
-    expect(requestedUrls).toEqual([
-      "http://api.internal/health/live",
-      "http://api.internal/health/ready",
-    ]);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("reads paginated run history through the shared API contract", async () => {

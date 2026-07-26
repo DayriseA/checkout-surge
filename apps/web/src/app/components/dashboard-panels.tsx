@@ -7,7 +7,7 @@ import type {
   InventoryStatus,
   QueueStatus,
 } from "@checkout-surge/contracts";
-import type { BackendRead, DashboardBackendSnapshot } from "../lib/api";
+import type { BackendRead } from "../lib/api";
 import { formatDashboardTime } from "../lib/dashboard-time";
 import { StatusPill } from "./status-pill";
 
@@ -202,50 +202,6 @@ function completionOutcomeTone(
 
 function completionOutcomeLabel(status: CompletionOutcomeStatus): string {
   return status.replaceAll("_", " ");
-}
-
-export function ApiStatusPanel({ snapshot }: { snapshot: DashboardBackendSnapshot }) {
-  const liveness = snapshot.liveness.status === "available" ? snapshot.liveness.data : null;
-  const readiness = snapshot.readiness.status === "available" ? snapshot.readiness.data : null;
-  const status = readiness?.status ?? liveness?.status ?? "unavailable";
-
-  return (
-    <section className={panelWideClassName}>
-      <div className={panelHeaderClassName}>
-        <div>
-          <p className={eyebrowClassName}>API gateway</p>
-          <h2 className={panelTitleClassName}>Service readiness</h2>
-        </div>
-        <StatusPill label={status} tone={healthTone(status)} />
-      </div>
-      {snapshot.readiness.status === "available" ? (
-        <div className="grid gap-2.5">
-          {snapshot.readiness.data.checks.map((check) => (
-            <div
-              className="grid grid-cols-[1fr_auto] items-center gap-x-3 gap-y-1 border-t border-border pt-3"
-              key={check.name}
-            >
-              <span>{check.name}</span>
-              <StatusPill label={check.status} tone={healthTone(check.status)} />
-              {check.message ? (
-                <small className="col-span-full text-muted">{check.message}</small>
-              ) : null}
-            </div>
-          ))}
-          {snapshot.readiness.data.checks.length === 0 ? (
-            <EmptyState>No dependency checks are exposed yet.</EmptyState>
-          ) : null}
-        </div>
-      ) : (
-        <UnavailableState read={snapshot.readiness} />
-      )}
-      <dl className={factGridClassName}>
-        <Fact label="Liveness" value={liveness ? liveness.status : "unavailable"} />
-        <Fact label="Uptime" value={liveness ? `${Math.round(liveness.uptimeSeconds)}s` : "n/a"} />
-        <Fact label="Read timestamp" value={readiness ? formatTime(readiness.timestamp) : "n/a"} />
-      </dl>
-    </section>
-  );
 }
 
 export function RecoveryStatusPanel({

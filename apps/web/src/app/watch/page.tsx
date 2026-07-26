@@ -1,11 +1,9 @@
 import { OperatorDashboard } from "../components/operator-dashboard";
-import { getDashboardBackendSnapshot } from "../lib/api";
+import { pendingDashboardRecovery } from "../lib/api";
 
 export const dynamic = "force-dynamic";
 
-export default async function WatchPage() {
-  const snapshot = await getDashboardBackendSnapshot();
-
+export default function WatchPage() {
   return (
     <>
       <header className="mb-4 grid grid-cols-[1fr_auto] items-end gap-4 max-[900px]:grid-cols-1 max-[900px]:items-start">
@@ -16,7 +14,7 @@ export default async function WatchPage() {
           </p>
         </div>
       </header>
-      <OperatorDashboard snapshot={snapshot} />
+      <OperatorDashboard initialRecovery={pendingDashboardRecovery()} />
     </>
   );
 }
