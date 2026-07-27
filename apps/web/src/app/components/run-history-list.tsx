@@ -3,6 +3,7 @@ import Link from "next/link";
 import { RunHistoryDeleteAllButton } from "./run-history-delete-all-button";
 import { RunHistoryRowControls } from "./run-history-row-controls";
 import { StatusPill } from "./status-pill";
+import { systemOfRecordLens, TransportObservationSection } from "./transport-observation";
 
 interface RunHistoryListProps {
   history: RunHistoryListResponse;
@@ -98,21 +99,13 @@ function RunHistorySummaryArticle({ summary }: { summary: RunHistorySummary }) {
           ]}
           title="Lifecycle"
         />
-        <SummarySection
-          facts={[
-            ["Planned", formatNumber(summary.transportAttemptCounts.plannedRequests)],
-            ["Started", formatNumber(summary.transportAttemptCounts.startedRequests)],
-            ["Responses completed", formatNumber(summary.transportAttemptCounts.completedRequests)],
-            ["Interrupted", formatNumber(summary.transportAttemptCounts.interruptedRequests)],
-            ["Unstarted", formatNumber(summary.transportAttemptCounts.unstartedRequests)],
-            ["Accepted", formatNumber(summary.httpSummary.acceptedResponses)],
-            ["Sold out", formatNumber(summary.httpSummary.soldOutResponses)],
-            ["Unexpected", formatNumber(summary.httpSummary.unexpectedResponses)],
-            ["p95 latency", nullableMs(summary.httpSummary.p95LatencyMs)],
-          ]}
-          title="Traffic"
+        <TransportObservationSection
+          counts={summary.transportAttemptCounts}
+          httpSummary={summary.httpSummary}
+          surface="list"
         />
         <SummarySection
+          caption={systemOfRecordLens.caption}
           facts={[
             [
               "Accepted reservations",
@@ -127,7 +120,7 @@ function RunHistorySummaryArticle({ summary }: { summary: RunHistorySummary }) {
               formatNumber(summary.businessOutcomeSummary.pendingPersistenceCount),
             ],
           ]}
-          title="Business"
+          title={systemOfRecordLens.title}
         />
       </div>
       <TerminalInventorySnapshot summary={summary} />
@@ -135,10 +128,19 @@ function RunHistorySummaryArticle({ summary }: { summary: RunHistorySummary }) {
   );
 }
 
-function SummarySection({ facts, title }: { facts: Array<[string, string]>; title: string }) {
+function SummarySection({
+  caption,
+  facts,
+  title,
+}: {
+  caption?: string;
+  facts: Array<[string, string]>;
+  title: string;
+}) {
   return (
     <section className="min-w-0 border-t border-border pt-3">
       <h3 className="m-0 text-sm font-bold text-ink">{title}</h3>
+      {caption ? <p className="m-0 mt-0.5 text-xs text-muted">{caption}</p> : null}
       <dl className="m-0 mt-3 grid gap-2">
         {facts.map(([label, value]) => (
           <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-3" key={label}>
@@ -277,8 +279,4 @@ function formatDate(value: string | undefined): string {
     dateStyle: "medium",
     timeStyle: "medium",
   }).format(new Date(value));
-}
-
-function nullableMs(value: number | undefined): string {
-  return value === undefined ? "n/a" : `${formatNumber(value)}ms`;
 }

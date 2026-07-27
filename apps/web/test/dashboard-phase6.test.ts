@@ -30,6 +30,8 @@ describe("Phase 6 projection dashboard", () => {
     expect(lagMarkup).toContain("350ms");
     expect(lagMarkup).not.toContain("Latest individual order");
     expect(outcomeMarkup).toContain("Reservation and confirmation summary");
+    expect(outcomeMarkup).toContain("System of record");
+    expect(outcomeMarkup).toContain("what the API recorded");
     expect(outcomeMarkup).toContain("Accepted");
     expect(outcomeMarkup).toContain("Confirmed");
     expect(outcomeMarkup).toContain("Failed");
@@ -56,8 +58,14 @@ describe("Phase 6 projection dashboard", () => {
     expect(traffic).toContain("Window mean HTTP latency");
     expect(traffic).toContain("Window HTTP failure rate");
     expect(traffic).toContain("25%");
-    expect(traffic).toContain("Planned");
+    expect(traffic).toContain("Load generator");
+    expect(traffic).toContain("Planned attempts");
     expect(traffic).toContain("1,000");
+    // 850 of 900 dispatched attempts recorded a reply, and 100 were never sent.
+    expect(traffic).toContain("94% of dispatched attempts recorded a reply");
+    expect(traffic).toContain("generator shut down before the reply arrived");
+    expect(traffic).toContain("scenario window closed before these were sent");
+    expect(traffic).toContain("The rates above cover 850 of 1,000 attempts.");
     expect(inventory).toContain("Inventory updated");
     expect(queue).toContain("Queue inspected");
     expect(erp).toContain("Failure threshold");

@@ -35,12 +35,21 @@ describe("run history surface", () => {
     expect(markup).toContain("Preview 1k");
     expect(markup).toContain("55555555-5555-4555-8555-555555555555");
     expect(markup).toContain("traffic complete");
-    expect(markup).toContain("Planned");
-    expect(markup).toContain("Started");
-    expect(markup).toContain("Responses completed");
-    expect(markup).toContain("Interrupted");
-    expect(markup).toContain("Unstarted");
+    expect(markup).toContain("Load generator");
+    expect(markup).toContain("what k6 observed");
+    expect(markup).toContain("Planned attempts");
+    expect(markup).toContain("Dispatched");
+    expect(markup).toContain("Replies recorded");
+    expect(markup).toContain("Replies not recorded");
+    expect(markup).toContain("Never dispatched");
+    expect(markup).not.toContain("Interrupted");
+    expect(markup).not.toContain("Unstarted");
     expect(markup).not.toContain("Emitted");
+    // This run recorded every reply, so coverage and the survivorship caveat stay hidden.
+    expect(markup).not.toContain("recorded a reply");
+    expect(markup).not.toContain("Outcomes and latency");
+    expect(markup).toContain("System of record");
+    expect(markup).toContain("what the API recorded");
     expect(markup).toContain("Accepted reservations");
     expect(markup).toContain("Confirmed orders");
     expect(markup).toContain("Terminal inventory");
@@ -93,20 +102,33 @@ describe("run history surface", () => {
     );
 
     expect(markup).toContain("Terminal detail");
-    expect(markup).toContain("Responses completed");
-    expect(markup).toContain("Interrupted");
-    expect(markup).toContain("Unstarted");
+    expect(markup).toContain("Load generator");
+    expect(markup).toContain("what k6 observed");
+    expect(markup).toContain("Observed outcomes");
     expect(markup).toContain("p95 latency");
+    expect(markup).not.toContain("Interrupted");
+    expect(markup).not.toContain("Unstarted");
     expect(markup).not.toContain("Emitted");
-    expect(markup).toMatch(/Planned<\/dt><dd[^>]*>10<\/dd>/);
-    expect(markup).toMatch(/Started<\/dt><dd[^>]*>9<\/dd>/);
-    expect(markup).toMatch(/Responses completed<\/dt><dd[^>]*>7<\/dd>/);
-    expect(markup).toMatch(/Interrupted<\/dt><dd[^>]*>2<\/dd>/);
-    expect(markup).toMatch(/Unstarted<\/dt><dd[^>]*>1<\/dd>/);
+    expect(markup).toMatch(/Planned attempts<\/dt><dd[^>]*>10<\/dd>/);
+    expect(markup).toMatch(/Dispatched<\/dt><dd[^>]*>9<\/dd>/);
+    expect(markup).toMatch(/Replies recorded<\/dt><dd[^>]*>7<\/dd>/);
+    expect(markup).toMatch(
+      /Replies not recorded<span[^>]*>generator shut down before the reply arrived<\/span><\/dt><dd[^>]*>2<\/dd>/,
+    );
+    expect(markup).toMatch(
+      /Never dispatched<span[^>]*>scenario window closed before these were sent<\/span><\/dt><dd[^>]*>1<\/dd>/,
+    );
     expect(markup).toMatch(/Accepted<\/dt><dd[^>]*>4<\/dd>/);
     expect(markup).toMatch(/Sold out<\/dt><dd[^>]*>3<\/dd>/);
     expect(markup).toMatch(/Unexpected<\/dt><dd[^>]*>0<\/dd>/);
-    expect(markup).toMatch(/p95 latency<\/dt><dd[^>]*>42ms<\/dd>/);
+    expect(markup).toMatch(
+      /p95 latency<span[^>]*>observed replies only<\/span><\/dt><dd[^>]*>42ms<\/dd>/,
+    );
+    // 7 of 9 dispatched attempts recorded a reply.
+    expect(markup).toContain("78% of dispatched attempts recorded a reply");
+    expect(markup).toContain(
+      "Outcomes and latency above cover 7 of 10 attempts. The slowest attempts are the ones missing, so the true p95 is higher. Server-side totals are the authoritative record.",
+    );
     expect(markup).toContain("Accepted configuration");
     expect(markup).toContain("Order aggregates");
     expect(markup).toContain("ERP aggregates");
@@ -128,10 +150,15 @@ describe("run history surface", () => {
     expect(markup).toContain("ord_history_1");
     expect(markup).toContain("Event timeline");
     expect(markup).toContain("worker");
-    expect(markup).toContain("Responses completed");
-    expect(markup).toContain("Interrupted");
-    expect(markup).toContain("Unstarted");
+    expect(markup).toContain("Load generator");
+    expect(markup).toContain("Replies recorded");
+    expect(markup).toContain("Replies not recorded");
+    expect(markup).toContain("Never dispatched");
+    expect(markup).toContain("System of record");
+    expect(markup).not.toContain("Interrupted");
+    expect(markup).not.toContain("Unstarted");
     expect(markup).not.toContain("Emitted");
+    expect(markup).not.toContain("Outcomes and latency");
   });
 
   it("renders malformed detail routes as public-safe not-found states without an API read", async () => {

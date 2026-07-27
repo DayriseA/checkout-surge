@@ -10,6 +10,7 @@ import type {
 import type { BackendRead } from "../lib/api";
 import { formatDashboardTime } from "../lib/dashboard-time";
 import { StatusPill } from "./status-pill";
+import { systemOfRecordLens, TransportObservationPanelBlock } from "./transport-observation";
 
 export type RealtimeConnectionStatus = "connecting" | "connected" | "disconnected" | "unsupported";
 
@@ -371,22 +372,7 @@ export function RequestSurgePanel({
             the fraction of valid HTTP failure observations.
           </p>
           {transportAttemptCounts ? (
-            <dl className={factGridClassName}>
-              <Fact label="Planned" value={formatNumber(transportAttemptCounts.plannedRequests)} />
-              <Fact label="Started" value={formatNumber(transportAttemptCounts.startedRequests)} />
-              <Fact
-                label="Responses completed"
-                value={formatNumber(transportAttemptCounts.completedRequests)}
-              />
-              <Fact
-                label="Interrupted"
-                value={formatNumber(transportAttemptCounts.interruptedRequests)}
-              />
-              <Fact
-                label="Unstarted"
-                value={formatNumber(transportAttemptCounts.unstartedRequests)}
-              />
-            </dl>
+            <TransportObservationPanelBlock counts={transportAttemptCounts} />
           ) : (
             <p className="mb-0 mt-3 text-xs leading-5 text-muted">
               Terminal transport attempt counts appear here once traffic completion evidence is
@@ -589,8 +575,9 @@ export function RunOutcomesPanel({ recovery }: { recovery: BackendRead<Dashboard
     <section className={panelFullClassName}>
       <div className={panelHeaderClassName}>
         <div>
-          <p className={eyebrowClassName}>Run outcomes</p>
+          <p className={eyebrowClassName}>{systemOfRecordLens.title}</p>
           <h2 className={panelTitleClassName}>Reservation and confirmation summary</h2>
+          <p className="m-0 mt-1 text-xs text-muted">{systemOfRecordLens.caption}</p>
         </div>
         <StatusPill
           label={outcome ? `${formatNumber(outcome.acceptedReservations)} accepted` : "no data"}

@@ -1,10 +1,9 @@
 import type {
   AdminRunHistoryDetailResponse,
   PublicRunHistoryDetailResponse,
-  TrafficHttpSummary,
-  TransportAttemptCounts,
 } from "@checkout-surge/contracts";
 import { StatusPill } from "./status-pill";
+import { systemOfRecordLens, TransportObservationSection } from "./transport-observation";
 
 interface RunHistoryDetailProps {
   detail: AdminRunHistoryDetailResponse;
@@ -53,11 +52,13 @@ export function AdminRunHistoryDetail({ detail }: RunHistoryDetailProps) {
             ]}
             title="Lifecycle"
           />
-          <FactList
-            facts={trafficAccountingFacts(summary.transportAttemptCounts, summary.httpSummary)}
-            title="Traffic"
+          <TransportObservationSection
+            counts={summary.transportAttemptCounts}
+            httpSummary={summary.httpSummary}
+            surface="detail"
           />
           <FactList
+            caption={systemOfRecordLens.caption}
             facts={[
               ["Reservations", formatNumber(summary.businessOutcomeSummary.acceptedReservations)],
               ["Queued", formatNumber(summary.businessOutcomeSummary.queuedOrders)],
@@ -67,7 +68,7 @@ export function AdminRunHistoryDetail({ detail }: RunHistoryDetailProps) {
               ["Failed", formatNumber(summary.businessOutcomeSummary.failedOrders)],
               ["Notifications", formatNumber(summary.businessOutcomeSummary.notificationsRecorded)],
             ]}
-            title="Business"
+            title={systemOfRecordLens.title}
           />
         </div>
       </section>
@@ -234,10 +235,19 @@ function CollectionHeader({
   );
 }
 
-function FactList({ facts, title }: { facts: Array<[string, string]>; title: string }) {
+function FactList({
+  caption,
+  facts,
+  title,
+}: {
+  caption?: string;
+  facts: Array<[string, string]>;
+  title: string;
+}) {
   return (
     <section className="min-w-0 border-t border-border pt-3">
       <h3 className="m-0 text-sm font-bold text-ink">{title}</h3>
+      {caption ? <p className="m-0 mt-0.5 text-xs text-muted">{caption}</p> : null}
       <dl className="m-0 mt-3 grid gap-2">
         {facts.map(([label, value]) => (
           <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-3" key={label}>
@@ -325,11 +335,13 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
               ["Captured", formatDate(summary.capturedAt)],
             ]}
           />
-          <FactList
-            title="Traffic"
-            facts={trafficAccountingFacts(summary.transportAttemptCounts, summary.httpSummary)}
+          <TransportObservationSection
+            counts={summary.transportAttemptCounts}
+            httpSummary={summary.httpSummary}
+            surface="detail"
           />
           <FactList
+            caption="what the API recorded"
             title="Order aggregates"
             facts={[
               ["Total", formatNumber(detail.orders.totalCount)],
@@ -340,6 +352,7 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
             ]}
           />
           <FactList
+            caption="what the ERP dependency recorded"
             title="ERP aggregates"
             facts={[
               ["Attempts", formatNumber(detail.erpAttempts.totalCount)],
@@ -376,23 +389,6 @@ function nullableMetricMs(value: number | null): string {
   return value === null ? "n/a" : `${formatNumber(value)}ms`;
 }
 
-function trafficAccountingFacts(
-  transportAttemptCounts: TransportAttemptCounts,
-  summary: TrafficHttpSummary,
-): Array<[string, string]> {
-  return [
-    ["Planned", formatNumber(transportAttemptCounts.plannedRequests)],
-    ["Started", formatNumber(transportAttemptCounts.startedRequests)],
-    ["Responses completed", formatNumber(transportAttemptCounts.completedRequests)],
-    ["Interrupted", formatNumber(transportAttemptCounts.interruptedRequests)],
-    ["Unstarted", formatNumber(transportAttemptCounts.unstartedRequests)],
-    ["Accepted", formatNumber(summary.acceptedResponses)],
-    ["Sold out", formatNumber(summary.soldOutResponses)],
-    ["Unexpected", formatNumber(summary.unexpectedResponses)],
-    ["p95 latency", nullableMs(summary.p95LatencyMs)],
-  ];
-}
-
 function formatNumber(value: number): string {
   return new Intl.NumberFormat("en-US").format(value);
 }
@@ -410,8 +406,4 @@ function formatDate(value: string | undefined): string {
     dateStyle: "medium",
     timeStyle: "medium",
   }).format(new Date(value));
-}
-
-function nullableMs(value: number | undefined): string {
-  return value === undefined ? "n/a" : `${formatNumber(value)}ms`;
 }
