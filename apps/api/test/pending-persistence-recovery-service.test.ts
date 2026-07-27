@@ -18,6 +18,13 @@ const hold: SecuredReservationHold & { runId: string } = {
   expiresAt: "2026-06-20T00:15:00.000Z",
 };
 
+/** Models the `ZADD key [XX] score member` shape the pending readers use. */
+function parseZaddArguments(...args: (string | number)[]) {
+  const condition = args[0] === "XX" || args[0] === "NX" ? String(args[0]) : undefined;
+  const [score, member] = condition ? args.slice(1) : args;
+  return { condition, score: Number(score), member: String(member) };
+}
+
 function pendingRedis() {
   const keys = inventoryKeys(hold.saleOfferId);
   const record = {
@@ -47,9 +54,13 @@ function pendingRedis() {
       zscore: vi.fn(async (key: string, id: string) =>
         key === keys.pendingPersistence && id === hold.id && score !== null ? String(score) : null,
       ),
-      zadd: vi.fn(async (_key: string, nextScore: number, _id: string) => {
-        score = Number(nextScore);
-        return 1;
+      zadd: vi.fn(async (_key: string, ...args: (string | number)[]) => {
+        const command = parseZaddArguments(...args);
+        if (command.member !== hold.id) return 0;
+        const exists = score !== null;
+        if (command.condition === "XX" && !exists) return 0;
+        score = command.score;
+        return exists ? 0 : 1;
       }),
       hget: vi.fn(async (key: string, id: string) => {
         if (id !== hold.id) return null;
@@ -114,10 +125,13 @@ function pendingRedisFor(reservations: SecuredReservationHold[]) {
         if (key === keys.reservations) return JSON.stringify(state.reservation);
         return null;
       }),
-      zadd: vi.fn(async (_key: string, nextScore: number, id: string) => {
-        const state = states.get(id);
-        if (state) state.score = Number(nextScore);
-        return 1;
+      zadd: vi.fn(async (_key: string, ...args: (string | number)[]) => {
+        const command = parseZaddArguments(...args);
+        const state = states.get(command.member);
+        // Cursor presence is the map entry here, so an unknown member covers the `XX` guard.
+        if (!state) return 0;
+        state.score = command.score;
+        return 0;
       }),
       eval: vi.fn(async (...args: unknown[]) => {
         const id = String(args[4]);

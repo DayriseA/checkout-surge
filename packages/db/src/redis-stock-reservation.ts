@@ -707,6 +707,7 @@ export async function readPendingPersistencePage(
       issues.map((issue) =>
         redis.zadd(
           keys.pendingPersistence,
+          "XX",
           quarantinedPendingPersistenceScore,
           issue.reservationId,
         ),
@@ -731,6 +732,7 @@ export async function readPendingPersistenceRecord(
   if ("issue" in parsed) {
     await redis.zadd(
       keys.pendingPersistence,
+      "XX",
       quarantinedPendingPersistenceScore,
       input.reservationId,
     );
