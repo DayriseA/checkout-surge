@@ -3,6 +3,7 @@ import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import type { LoadApiClient } from "./api-client.js";
 import type { CompletionDelivery } from "./completion-delivery-coordinator.js";
 import type { DurableExecution, ExecutionStore } from "./execution-store.js";
+import type { StartGeneratorResourceSampler } from "./generator-resource-sampler.js";
 import {
   K6ChildProcessSupervisor,
   K6StartCancelledError,
@@ -49,6 +50,7 @@ type SpawnK6RunnerOptions = {
   metricBatchSize?: number;
   maxBufferedMetricSamples?: number;
   removeWorkDir?: (workDir: string) => Promise<void>;
+  startGeneratorResourceSampler?: StartGeneratorResourceSampler;
   diagnostics?: DiagnosticsDependencies;
 };
 
@@ -91,6 +93,9 @@ export class SpawnK6Runner implements K6Runner {
         ? {}
         : { maxBufferedMetricSamples: options.maxBufferedMetricSamples }),
       ...(options.removeWorkDir ? { removeWorkDir: options.removeWorkDir } : {}),
+      ...(options.startGeneratorResourceSampler
+        ? { startGeneratorResourceSampler: options.startGeneratorResourceSampler }
+        : {}),
     });
   }
 

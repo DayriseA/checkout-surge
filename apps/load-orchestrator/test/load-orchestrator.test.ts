@@ -278,6 +278,16 @@ describe("durable execution ownership", () => {
       startedAt: new Date(timestamp),
       executionPlan: generateK6Script(startRequest).executionPlan,
     }).completionReport({ status: "succeeded", completedAt: new Date(completionTimestamp) });
+    expect(report.loadRunDiagnosticsSummary).toMatchObject({
+      nproc: null,
+      ulimitNofile: null,
+      processMaxOpenFiles: null,
+      generatorCapacity: null,
+      generatorUtilisation: null,
+      networkDiagnostics: null,
+      k6Version: null,
+      executionPlan: generateK6Script(startRequest).executionPlan,
+    });
     const store = new FileExecutionStore(directory);
     try {
       for (const state of ["accepted", "executing"] as const) {
@@ -2981,7 +2991,167 @@ describe("SpawnK6Runner completion reporting", () => {
     expect(signals[1]?.aborted).toBe(false);
     expect(signals[1]).not.toBe(signals[0]);
   });
+
+  it("stops resource sampling before normal completion serialization", async () => {
+    const resource = await supervisedResourceSamplerFixture();
+    resource.process.child.emit("close", 0);
+
+    const result = await resource.execution.completion;
+
+    expect(resource.stop).toHaveBeenCalledOnce();
+    expect(result).toMatchObject({
+      outcome: "completed",
+      report: { loadRunDiagnosticsSummary: { generatorUtilisation: generatorUtilisationFixture } },
+    });
+    expect(resource.startSampler).toHaveBeenCalledWith({
+      pid: 42,
+      effectiveCpuCores: 1.5,
+    });
+    await resource.supervisor.release(startRequest.runId);
+
+    const fallback = await supervisedResourceSamplerFixture({ cgroupCpuQuota: null });
+    fallback.process.child.emit("close", 0);
+    await fallback.execution.completion;
+    expect(fallback.startSampler).toHaveBeenCalledWith({ pid: 42, effectiveCpuCores: 8 });
+    await fallback.supervisor.release(startRequest.runId);
+
+    const unknown = await supervisedResourceSamplerFixture({ cgroupCpuQuota: "unknown" });
+    unknown.process.child.emit("close", 0);
+    await unknown.execution.completion;
+    expect(unknown.startSampler).toHaveBeenCalledWith({ pid: 42, effectiveCpuCores: null });
+    await unknown.supervisor.release(startRequest.runId);
+  });
+
+  it("stops resource sampling when cancellation is accepted", async () => {
+    const resource = await supervisedResourceSamplerFixture();
+    const cancellation = resource.supervisor.cancel(startRequest.runId);
+    expect(resource.stop).toHaveBeenCalledOnce();
+    resource.process.child.emit("close", null, "SIGTERM");
+
+    await expect(cancellation).resolves.toBe("aborted");
+    await expect(resource.execution.completion).resolves.toEqual({ outcome: "cancelled" });
+    expect(resource.stop).toHaveBeenCalledOnce();
+  });
+
+  it("stops resource sampling on preparation failure", async () => {
+    const resource = await supervisedResourceSamplerFixture();
+    const cancellation = resource.supervisor.stopForPreparationFailure(startRequest.runId);
+    resource.process.child.emit("close", null, "SIGTERM");
+
+    await expect(cancellation).resolves.toBe("aborted");
+    await expect(resource.execution.completion).resolves.toEqual({ outcome: "cancelled" });
+    expect(resource.stop).toHaveBeenCalledOnce();
+    await resource.supervisor.release(startRequest.runId);
+  });
+
+  it("stops resource sampling during supervisor close", async () => {
+    const resource = await supervisedResourceSamplerFixture();
+    vi.mocked(resource.process.child.kill).mockImplementationOnce(() => {
+      queueMicrotask(() => resource.process.child.emit("close", null, "SIGTERM"));
+      return true;
+    });
+
+    await expect(resource.supervisor.close()).resolves.toBeUndefined();
+    expect(resource.stop).toHaveBeenCalledOnce();
+  });
+
+  it("stops resource sampling before unconfirmed termination is reported", async () => {
+    const resource = await supervisedResourceSamplerFixture({ cancellationTimeoutMs: 1 });
+
+    await expect(resource.supervisor.cancel(startRequest.runId)).rejects.toBeInstanceOf(
+      TrafficTerminationUnconfirmedError,
+    );
+    expect(resource.stop).toHaveBeenCalledOnce();
+
+    resource.process.child.emit("close", null, "SIGKILL");
+    await expect(resource.execution.completion).resolves.toEqual({ outcome: "cancelled" });
+  });
+
+  it("keeps sampler start and stop failures advisory", async () => {
+    const startFailure = await supervisedResourceSamplerFixture({
+      startSampler: () => {
+        throw new Error("sampler unavailable");
+      },
+    });
+    startFailure.process.child.emit("close", 0);
+    await expect(startFailure.execution.completion).resolves.toMatchObject({
+      outcome: "completed",
+      report: { loadRunDiagnosticsSummary: { generatorUtilisation: null } },
+    });
+    await startFailure.supervisor.release(startRequest.runId);
+
+    const stopFailure = await supervisedResourceSamplerFixture({
+      stop: () => {
+        throw new Error("sample unavailable");
+      },
+    });
+    stopFailure.process.child.emit("close", 0);
+    await expect(stopFailure.execution.completion).resolves.toMatchObject({
+      outcome: "completed",
+      report: { loadRunDiagnosticsSummary: { generatorUtilisation: null } },
+    });
+    await stopFailure.supervisor.release(startRequest.runId);
+  });
 });
+
+const generatorUtilisationFixture = {
+  peakK6RssBytes: 100,
+  peakCgroupMemoryBytes: 200,
+  minimumHostMemAvailableBytes: 300,
+  peakCpuUtilisationPercent: 75,
+  meanCpuUtilisationPercent: 50,
+  peakCgroupSwapBytes: 0,
+  finalMemoryEventsHighCount: 0,
+  finalMemoryEventsMaxCount: 0,
+  finalMemoryEventsOomKillCount: 0,
+  sampleCount: 2,
+  effectiveIntervalMs: 1_000,
+} as const;
+
+async function supervisedResourceSamplerFixture(
+  options: {
+    cancellationTimeoutMs?: number;
+    cgroupCpuQuota?: number | null | "unknown";
+    startSampler?: () => { stop(): typeof generatorUtilisationFixture };
+    stop?: () => typeof generatorUtilisationFixture;
+  } = {},
+) {
+  const process = createK6ProcessFixture();
+  Object.assign(process.child, { pid: 42 });
+  const stop = vi.fn(options.stop ?? (() => generatorUtilisationFixture));
+  const startSampler = vi.fn(options.startSampler ?? (() => ({ stop })));
+  const generated = generateK6Script(startRequest);
+  const cgroupCpuQuota =
+    options.cgroupCpuQuota === null
+      ? "max 100000"
+      : options.cgroupCpuQuota === "unknown"
+        ? null
+        : `${(options.cgroupCpuQuota ?? 1.5) * 100_000} 100000`;
+  const diagnostics = await collectLoadRunDiagnostics("k6", generated.executionPlan, {
+    runCommand: async (command) => (command === "nproc" ? "8" : null),
+    readText: diagnosticReader(
+      cgroupCpuQuota === null ? {} : { "/sys/fs/cgroup/cpu.max": cgroupCpuQuota },
+    ),
+  });
+  const supervisor = new K6ChildProcessSupervisor({
+    k6Binary: "k6",
+    logger: createSilentLogger("load-orchestrator"),
+    spawnProcess: process.spawnProcess,
+    cancellationTimeoutMs: options.cancellationTimeoutMs ?? 40,
+    apiClient: { sendMetrics: async () => undefined },
+    readSummaryFile: async () => "{}",
+    startGeneratorResourceSampler: startSampler,
+  });
+  const execution = await supervisor.start({
+    request: startRequest,
+    script: generated.contents,
+    startedAt: new Date(timestamp),
+    plannedRequests: generated.plannedRequests,
+    executionPlan: generated.executionPlan,
+    diagnostics,
+  });
+  return { process, stop, startSampler, supervisor, execution };
+}
 
 function createK6ProcessFixture(): {
   child: ReturnType<typeof spawn>;

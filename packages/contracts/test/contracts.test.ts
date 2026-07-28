@@ -432,6 +432,68 @@ describe("run lifecycle contracts", () => {
       }),
     ).toThrow();
   });
+  it("validates sampled generator utilisation and rejects unavailable or invalid blocks", () => {
+    const populated = {
+      peakK6RssBytes: 268_435_456,
+      peakCgroupMemoryBytes: 536_870_912,
+      minimumHostMemAvailableBytes: 4_294_967_296,
+      peakCpuUtilisationPercent: 100,
+      meanCpuUtilisationPercent: 75,
+      peakCgroupSwapBytes: 0,
+      finalMemoryEventsHighCount: 0,
+      finalMemoryEventsMaxCount: 0,
+      finalMemoryEventsOomKillCount: 0,
+      sampleCount: 5,
+      effectiveIntervalMs: 1_000,
+    };
+    expect(
+      loadRunDiagnosticsSummarySchema.parse({
+        ...runnerDiagnostics(),
+        generatorUtilisation: populated,
+      }).generatorUtilisation,
+    ).toEqual(populated);
+    expect(
+      loadRunDiagnosticsSummarySchema.parse({
+        ...runnerDiagnostics(),
+        generatorUtilisation: {
+          ...populated,
+          peakK6RssBytes: null,
+          peakCpuUtilisationPercent: null,
+          meanCpuUtilisationPercent: null,
+        },
+      }).generatorUtilisation,
+    ).toMatchObject({ peakCgroupSwapBytes: 0, sampleCount: 5 });
+    expect(() =>
+      loadRunDiagnosticsSummarySchema.parse({
+        ...runnerDiagnostics(),
+        generatorUtilisation: {
+          peakK6RssBytes: null,
+          peakCgroupMemoryBytes: null,
+          minimumHostMemAvailableBytes: null,
+          peakCpuUtilisationPercent: null,
+          meanCpuUtilisationPercent: null,
+          peakCgroupSwapBytes: null,
+          finalMemoryEventsHighCount: null,
+          finalMemoryEventsMaxCount: null,
+          finalMemoryEventsOomKillCount: null,
+          sampleCount: 1,
+          effectiveIntervalMs: 1_000,
+        },
+      }),
+    ).toThrow();
+    for (const invalid of [
+      { sampleCount: 0 },
+      { effectiveIntervalMs: 0 },
+      { peakCpuUtilisationPercent: Number.POSITIVE_INFINITY },
+    ]) {
+      expect(() =>
+        loadRunDiagnosticsSummarySchema.parse({
+          ...runnerDiagnostics(),
+          generatorUtilisation: { ...populated, ...invalid },
+        }),
+      ).toThrow();
+    }
+  });
   it("validates run-attributed buy and load payloads without deriving identity from correlation IDs", () => {
     expect(loadRunIdHeaderName).toBe("x-load-run-id");
 
@@ -3027,6 +3089,7 @@ function runnerDiagnostics() {
     ulimitNofile: null,
     processMaxOpenFiles: null,
     generatorCapacity: null,
+    generatorUtilisation: null,
     networkDiagnostics: null,
     k6Version: null,
     executionPlan: {

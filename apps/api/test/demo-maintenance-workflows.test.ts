@@ -2267,6 +2267,7 @@ function currentFinalizationDiagnosticsFixture(plannedRequests: number) {
     ulimitNofile: null,
     processMaxOpenFiles: null,
     generatorCapacity: null,
+    generatorUtilisation: null,
     networkDiagnostics: null,
     k6Version: null,
     executionPlan: {

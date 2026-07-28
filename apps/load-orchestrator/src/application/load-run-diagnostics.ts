@@ -12,6 +12,7 @@ export type InitialLoadRunDiagnostics = Omit<
   | "stderrRetainedLineLimit"
   | "stderrLineTruncationLength"
   | "stderrLineTruncatedCount"
+  | "generatorUtilisation"
 >;
 
 export interface DiagnosticsDependencies {

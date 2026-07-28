@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import type {
   TrafficCompletionReport,
   TrafficExecutionStartRequest,
@@ -95,7 +96,7 @@ class MemoryExecutionStore implements ExecutionStore {
         return "execution_mismatch";
       }
       if (this.execution.completion) {
-        return JSON.stringify(this.execution.completion) === JSON.stringify(report)
+        return isDeepStrictEqual(this.execution.completion, report)
           ? "already_published"
           : "completion_conflict";
       }
@@ -109,7 +110,7 @@ class MemoryExecutionStore implements ExecutionStore {
     return this.mutate(async () => {
       if (
         this.execution?.state !== "completion_pending" ||
-        JSON.stringify(this.execution.completion) !== JSON.stringify(report)
+        !isDeepStrictEqual(this.execution.completion, report)
       ) {
         return false;
       }

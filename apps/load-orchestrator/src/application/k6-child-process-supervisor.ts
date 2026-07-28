@@ -3,11 +3,17 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type {
+  GeneratorUtilisation,
   TrafficCompletionReport,
   TrafficExecutionStartRequest,
 } from "@checkout-surge/contracts";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { type LoadApiClient, MetricBatcher } from "./api-client.js";
+import {
+  type GeneratorResourceSampler,
+  type StartGeneratorResourceSampler,
+  startGeneratorResourceSampler,
+} from "./generator-resource-sampler.js";
 import { K6JsonLineFramer } from "./k6-json-line-framer.js";
 import { K6LiveMetricAggregator } from "./k6-live-metric-aggregator.js";
 import {
@@ -45,6 +51,8 @@ interface ActiveExecution {
   setupSettled: Promise<void>;
   resolveSetupSettled: () => void;
   disposition: Promise<void> | null;
+  resourceSampler: GeneratorResourceSampler | null;
+  generatorUtilisation: GeneratorUtilisation | null;
 }
 
 export class K6ChildProcessSupervisor {
@@ -62,6 +70,7 @@ export class K6ChildProcessSupervisor {
       metricBatchSize?: number;
       maxBufferedMetricSamples?: number;
       removeWorkDir?: (workDir: string) => Promise<void>;
+      startGeneratorResourceSampler?: StartGeneratorResourceSampler;
     },
   ) {}
 
@@ -116,6 +125,8 @@ export class K6ChildProcessSupervisor {
       setupSettled,
       resolveSetupSettled,
       disposition: null,
+      resourceSampler: null,
+      generatorUtilisation: null,
     };
     this.lastSettled = null;
     this.active = active;
@@ -147,12 +158,14 @@ export class K6ChildProcessSupervisor {
       );
       active.child = child;
       this.attachChildExitObservation(active);
+      this.startResourceSampler(active, input.diagnostics);
       active.completion = this.createCompletion(active, { ...input, summaryPath });
       this.lifecycle = "running";
       active.resolveSetupSettled();
       return { completion: active.completion };
     } catch (error) {
       active.resolveSetupSettled();
+      this.stopResourceSampler(active);
       if (active.child) {
         if (active.cancellationDeadlineAt === null) {
           active.cancellationDeadlineAt = Date.now() + this.cancellationTimeoutMs();
@@ -179,6 +192,7 @@ export class K6ChildProcessSupervisor {
     if (active.cancellation) return active.cancellation;
 
     active.cancellationAccepted = true;
+    this.stopResourceSampler(active);
     active.cancellationDeadlineAt ??= Date.now() + this.cancellationTimeoutMs();
     this.lifecycle = "stopping";
     const operation = (
@@ -384,6 +398,7 @@ export class K6ChildProcessSupervisor {
             }
           : {}),
         completedAt: this.options.now?.() ?? new Date(),
+        generatorUtilisation: active.generatorUtilisation,
         ...(summary.metrics ? { summaryMetrics: summary.metrics } : {}),
         ...(summary.warning ? { summaryExportWarning: summary.warning } : {}),
       }),
@@ -397,6 +412,7 @@ export class K6ChildProcessSupervisor {
       active.processError = error;
     });
     child.once("close", (exitCode) => {
+      this.stopResourceSampler(active);
       if (this.active === active) this.lifecycle = "exited";
       this.lastSettled = {
         runId: active.runId,
@@ -473,6 +489,7 @@ export class K6ChildProcessSupervisor {
 
   private async performDisposition(active: ActiveExecution): Promise<void> {
     await active.setupSettled;
+    this.stopResourceSampler(active);
     try {
       active.child?.stdout?.destroy();
       active.child?.stderr?.destroy();
@@ -495,6 +512,46 @@ export class K6ChildProcessSupervisor {
     ).catch((error) => {
       this.options.logger.warn({ err: error, workDir }, "Could not remove k6 work directory.");
     });
+  }
+
+  private startResourceSampler(
+    active: ActiveExecution,
+    diagnostics: Awaited<ReturnType<typeof collectLoadRunDiagnostics>>,
+  ): void {
+    const pid = active.child?.pid;
+    if (pid === undefined) return;
+    try {
+      active.resourceSampler = (
+        this.options.startGeneratorResourceSampler ?? startGeneratorResourceSampler
+      )({
+        pid,
+        effectiveCpuCores:
+          diagnostics.generatorCapacity?.cgroupCpuQuota ??
+          (diagnostics.generatorCapacity?.cgroupCpuQuotaUnlimited === true
+            ? diagnostics.nproc
+            : null),
+      });
+    } catch (error) {
+      this.options.logger.warn(
+        { err: error, runId: active.runId },
+        "Could not start generator resource sampling.",
+      );
+    }
+  }
+
+  private stopResourceSampler(active: ActiveExecution): void {
+    const sampler = active.resourceSampler;
+    if (!sampler) return;
+    active.resourceSampler = null;
+    try {
+      active.generatorUtilisation = sampler.stop();
+    } catch (error) {
+      active.generatorUtilisation = null;
+      this.options.logger.warn(
+        { err: error, runId: active.runId },
+        "Could not stop generator resource sampling.",
+      );
+    }
   }
 }
 

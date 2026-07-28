@@ -442,6 +442,32 @@ export const emptyHttpTimingBreakdownSummary: HttpTimingBreakdownSummary = {
   receiving: null,
 };
 
+export const generatorUtilisationSchema = z
+  .object({
+    peakK6RssBytes: nullableNonnegativeIntegerSchema,
+    peakCgroupMemoryBytes: nullableNonnegativeIntegerSchema,
+    minimumHostMemAvailableBytes: nullableNonnegativeIntegerSchema,
+    peakCpuUtilisationPercent: nonnegativeNumberSchema.nullable(),
+    meanCpuUtilisationPercent: nonnegativeNumberSchema.nullable(),
+    peakCgroupSwapBytes: nullableNonnegativeIntegerSchema,
+    finalMemoryEventsHighCount: nullableNonnegativeIntegerSchema,
+    finalMemoryEventsMaxCount: nullableNonnegativeIntegerSchema,
+    finalMemoryEventsOomKillCount: nullableNonnegativeIntegerSchema,
+    sampleCount: positiveIntegerSchema,
+    effectiveIntervalMs: positiveIntegerSchema,
+  })
+  .strict()
+  .superRefine((value, context) => {
+    const { sampleCount: _sampleCount, effectiveIntervalMs: _effectiveIntervalMs, ...metrics } =
+      value;
+    if (Object.values(metrics).every((entry) => entry === null))
+      context.addIssue({
+        code: "custom",
+        message: "all-unavailable generator utilisation must be null",
+      });
+  });
+export type GeneratorUtilisation = z.infer<typeof generatorUtilisationSchema>;
+
 export const loadRunDiagnosticsSummarySchema = z
   .object({
     startedAt: isoTimestampSchema,
@@ -493,6 +519,7 @@ export const loadRunDiagnosticsSummarySchema = z
           });
       })
       .nullable(),
+    generatorUtilisation: generatorUtilisationSchema.nullable(),
     networkDiagnostics: z
       .object({
         ipLocalPortRange: z.string().trim().min(1).nullable(),

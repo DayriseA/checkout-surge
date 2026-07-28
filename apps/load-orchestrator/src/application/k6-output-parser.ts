@@ -1,4 +1,5 @@
 import type {
+  GeneratorUtilisation,
   HttpTimingBreakdownSummary,
   LoadExecutionPlan,
   LoadRunDiagnosticsSummary,
@@ -169,6 +170,7 @@ export class K6RunAccumulator {
     exitCode?: number;
     errorMessage?: string;
     completedAt: Date;
+    generatorUtilisation?: GeneratorUtilisation | null;
     summaryMetrics?: K6SummaryMetrics;
     summaryExportWarning?: SummaryExportWarning;
   }): TrafficCompletionReport {
@@ -279,6 +281,7 @@ export class K6RunAccumulator {
           k6Version: null,
           executionPlan: this.options.executionPlan,
         }),
+        generatorUtilisation: input.generatorUtilisation ?? null,
         ...(this.options.stderr?.snapshot() ?? {
           stderrLines: [],
           stderrLineCountObserved: 0,

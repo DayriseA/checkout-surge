@@ -20,6 +20,8 @@ This document captures reusable guidance for local or single-machine high-load k
 
 Each real run persists a pre-flight `generatorCapacity` snapshot from the load-orchestrator namespace: host-visible `MemTotal`, `MemAvailable`, and `SwapTotal` in bytes, plus the cgroup memory limit and effective CPU quota in cores. The existing `nproc` value remains the host-visible CPU count; compare it with the cgroup quota when the container is CPU-limited. Nullable companion `cgroupMemoryLimitUnlimited` and `cgroupCpuQuotaUnlimited` fields distinguish an unlimited cgroup setting from an unavailable probe.
 
+While k6 is running, the load orchestrator also samples generator resource use once per second and reduces it to the nullable `generatorUtilisation` block. It records peak k6 RSS, peak cgroup `memory.current`, minimum host-visible `MemAvailable`, peak cgroup swap, final `memory.events` `high`/`max`/`oom_kill` counters, and peak/mean CPU utilisation percentages. CPU is normalized against a finite cgroup quota when present, or against `nproc` only when the cgroup probe explicitly reports an unlimited quota; CPU percentages remain unavailable when quota probing is unavailable. `sampleCount` and the observed-average `effectiveIntervalMs` describe the observation density, with the configured interval retained for a single usable sample. The report stores no time series or derived warning, and `null` means no usable sample was captured; sampled zero-valued swap or pressure counters remain distinct.
+
 ## Linux and Network Limits
 
 OS/network limits matter for high-concurrency HTTP tests. Grafana's Linux large-test example uses:
@@ -86,5 +88,6 @@ For a high-load replay, capture these before or during the run:
 - `sysctl net.ipv4.tcp_tw_reuse`
 - `sysctl net.ipv4.tcp_timestamps`
 - `/proc/meminfo`, `/sys/fs/cgroup/memory.max`, and `/sys/fs/cgroup/cpu.max` in the load-orchestrator namespace (captured automatically in run diagnostics, with cgroup v1 fallback)
+- `generatorUtilisation` in the persisted completion diagnostics, independently compared with `docker stats load-orchestrator` when validating a host
 - k6 stderr
 - k6 summary metrics, especially dropped iterations and HTTP blocked/connecting/waiting times
