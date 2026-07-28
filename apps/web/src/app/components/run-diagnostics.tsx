@@ -166,7 +166,7 @@ function K6Process({ summary }: { summary: LoadRunDiagnosticsSummary }) {
           ["k6 maximum duration", `${formatNumber(plan.maxDurationSeconds)}s`],
         ]
       : [
-          ["k6 traffic mode", "steady arrival rate"],
+          ["k6 traffic mode", "constant arrival rate"],
           ["k6 scheduled rate", `${formatNumber(plan.ratePerSecond)}/s`],
           ["k6 duration", `${formatNumber(plan.durationSeconds)}s`],
           ["k6 planned emitted attempts", formatNumber(plan.plannedEmittedAttempts)],

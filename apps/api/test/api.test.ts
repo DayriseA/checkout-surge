@@ -811,7 +811,7 @@ function publicRuntimePolicyFixture() {
       maxErpMaxTps: 300,
       maxErpErrorRate: 0.25,
       allowForcedOutage: false,
-      allowedTrafficModes: ["buyer-spike" as const, "steady-arrival-rate" as const],
+      allowedTrafficModes: ["buyer-spike" as const, "constant-arrival-rate" as const],
     },
     deploymentHardCaps: {
       maxBuyers: 100_000,
@@ -1671,7 +1671,7 @@ describe("API gateway routes", () => {
       method: "POST",
       url: startDemoRunPath,
       payload: {
-        presetSlug: "admin-smoke-steady",
+        presetSlug: "admin-smoke-constant",
         operatorMode: "admin",
       },
     });
@@ -1680,7 +1680,7 @@ describe("API gateway routes", () => {
       url: startDemoRunPath,
       headers: { [demoRunOperatorModeHeaderName]: "admin" },
       payload: {
-        presetSlug: "admin-smoke-steady",
+        presetSlug: "admin-smoke-constant",
       },
     });
     const invalidHeader = await server.inject({
@@ -1716,7 +1716,7 @@ describe("API gateway routes", () => {
         [controlServiceTokenHeaderName]: "wrong",
         [demoRunOperatorModeHeaderName]: "admin",
       },
-      payload: { presetSlug: "admin-smoke-steady" },
+      payload: { presetSlug: "admin-smoke-constant" },
     });
     const trustedHeader = await server.inject({
       method: "POST",
@@ -1726,7 +1726,7 @@ describe("API gateway routes", () => {
         "x-control-service-token": "test-control-token",
       },
       payload: {
-        presetSlug: "admin-smoke-steady",
+        presetSlug: "admin-smoke-constant",
       },
     });
 
@@ -1740,7 +1740,7 @@ describe("API gateway routes", () => {
     expect(startRun).toHaveBeenCalledTimes(1);
     expect(startRun).toHaveBeenCalledWith(
       {
-        presetSlug: "admin-smoke-steady",
+        presetSlug: "admin-smoke-constant",
         operatorMode: "admin",
       },
       expect.any(String),

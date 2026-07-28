@@ -227,7 +227,7 @@ test("terminal history rejects contradictory buyer delivery and sold-out evidenc
         ...summary,
         trafficDeliverySummary: {
           ...summary.trafficDeliverySummary,
-          trafficMode: "steady-arrival-rate",
+          trafficMode: "constant-arrival-rate",
         },
       },
     ],

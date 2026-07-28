@@ -540,7 +540,7 @@ Completion summary: Phase 7 now starts bounded public/admin demo runs through th
 
 Subtasks:
 
-- Implement the discriminated buyer-spike and steady-arrival traffic models in shared contracts.
+- Implement the discriminated buyer-spike and constant-arrival traffic models in shared contracts.
 - Add public/admin preset validation, public runtime policy enforcement, and deployment hard-cap checks.
 - Seed durable public presets, editable admin presets, and the public custom base in the database seed path if not already present.
 - Public preset set: `preview-1k`, `surge-5k`, `surge-10k`, `idempotency-check-200`, and read-only `public-custom`.

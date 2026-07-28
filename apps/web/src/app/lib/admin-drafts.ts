@@ -61,7 +61,7 @@ export interface RuntimePolicyDraft extends RunConfigDraft {
   maxErpErrorRate: string;
   allowForcedOutage: boolean;
   allowBuyerSpike: boolean;
-  allowSteadyArrivalRate: boolean;
+  allowConstantArrivalRate: boolean;
 }
 
 export function draftFromPreset(preset: DemoPresetContract): PresetDraft {
@@ -94,26 +94,26 @@ export function draftFromRuntimePolicy(policy: PublicRuntimePolicy): RuntimePoli
     maxErpErrorRate: String(policy.publicCustomLimits.maxErpErrorRate),
     allowForcedOutage: policy.publicCustomLimits.allowForcedOutage,
     allowBuyerSpike: policy.publicCustomLimits.allowedTrafficModes.includes("buyer-spike"),
-    allowSteadyArrivalRate:
-      policy.publicCustomLimits.allowedTrafficModes.includes("steady-arrival-rate"),
+    allowConstantArrivalRate:
+      policy.publicCustomLimits.allowedTrafficModes.includes("constant-arrival-rate"),
   };
 }
 
 export function draftFromConfigSnapshot(config: RunConfigBase): RunConfigDraft {
   const traffic = config.trafficConfig;
-  const steadyVus = traffic.mode === "steady-arrival-rate" ? traffic.k6Vus : undefined;
+  const constantArrivalVus = traffic.mode === "constant-arrival-rate" ? traffic.k6Vus : undefined;
   return {
     mode: traffic.mode,
     buyerCount: traffic.mode === "buyer-spike" ? String(traffic.buyerCount) : "1000",
     duplicateEachBuyerAttempt:
       traffic.mode === "buyer-spike" ? traffic.duplicateEachBuyerAttempt : false,
     maxDurationSeconds: traffic.mode === "buyer-spike" ? String(traffic.maxDurationSeconds) : "10",
-    ratePerSecond: traffic.mode === "steady-arrival-rate" ? String(traffic.ratePerSecond) : "50",
+    ratePerSecond: traffic.mode === "constant-arrival-rate" ? String(traffic.ratePerSecond) : "50",
     durationSeconds:
-      traffic.mode === "steady-arrival-rate" ? String(traffic.durationSeconds) : "10",
+      traffic.mode === "constant-arrival-rate" ? String(traffic.durationSeconds) : "10",
     startDelaySeconds: String(traffic.startDelaySeconds),
-    preAllocatedVus: String(steadyVus?.preAllocatedVus ?? 10),
-    maxVus: String(steadyVus?.maxVus ?? 50),
+    preAllocatedVus: String(constantArrivalVus?.preAllocatedVus ?? 10),
+    maxVus: String(constantArrivalVus?.maxVus ?? 50),
     startingStock: String(config.inventoryConfig.startingStock),
     quantityPerCheckout: String(config.inventoryConfig.quantityPerCheckout),
     reservationHoldMinutes: String(config.inventoryConfig.reservationHoldMinutes),
@@ -162,7 +162,7 @@ export function policyFromDraft(
       allowForcedOutage: draft.allowForcedOutage,
       allowedTrafficModes: [
         ...(draft.allowBuyerSpike ? (["buyer-spike"] as const) : []),
-        ...(draft.allowSteadyArrivalRate ? (["steady-arrival-rate"] as const) : []),
+        ...(draft.allowConstantArrivalRate ? (["constant-arrival-rate"] as const) : []),
       ],
     },
   };
@@ -184,7 +184,7 @@ export function configFromDraft(
             quantityPerAttempt: base.trafficConfig.quantityPerAttempt,
           }
         : {
-            mode: "steady-arrival-rate",
+            mode: "constant-arrival-rate",
             ratePerSecond: parseInteger(draft.ratePerSecond, 1),
             startDelaySeconds: parseInteger(draft.startDelaySeconds, 0),
             durationSeconds: parseInteger(draft.durationSeconds, 1),

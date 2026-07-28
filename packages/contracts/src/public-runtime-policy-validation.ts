@@ -3,7 +3,7 @@ import type { OperatorMode } from "./lifecycle.js";
 import {
   type AcceptedRunConfigSnapshot,
   deriveLoadExecutionPlan,
-  resolveSteadyArrivalVus,
+  resolveConstantArrivalVus,
   type TrafficConfig,
 } from "./load.js";
 
@@ -118,7 +118,7 @@ function collectDeploymentSnapshotViolations(
   const traffic = snapshot.trafficConfig;
   const caps = policy.deploymentHardCaps;
   const resolvedK6Vus =
-    traffic.mode === "steady-arrival-rate" ? resolveSteadyArrivalVus(traffic) : undefined;
+    traffic.mode === "constant-arrival-rate" ? resolveConstantArrivalVus(traffic) : undefined;
 
   addCapViolation(
     violations,
@@ -239,7 +239,7 @@ function collectPublicCustomSnapshotViolations(
 ): void {
   const traffic = snapshot.trafficConfig;
   const limits = policy.publicCustomLimits;
-  const k6Vus = traffic.mode === "steady-arrival-rate" ? traffic.k6Vus : undefined;
+  const k6Vus = traffic.mode === "constant-arrival-rate" ? traffic.k6Vus : undefined;
 
   if (!limits.allowedTrafficModes.includes(traffic.mode)) {
     violations.push({
@@ -431,11 +431,11 @@ function appendWrappedDefaultViolations(
  * an arrival window, so no rate can be derived from it.
  */
 function resolveConfiguredRequestRate(trafficConfig: TrafficConfig): number | null {
-  return trafficConfig.mode === "steady-arrival-rate" ? trafficConfig.ratePerSecond : null;
+  return trafficConfig.mode === "constant-arrival-rate" ? trafficConfig.ratePerSecond : null;
 }
 
 function calculateTrafficDurationSeconds(trafficConfig: TrafficConfig): number {
-  return trafficConfig.mode === "steady-arrival-rate"
+  return trafficConfig.mode === "constant-arrival-rate"
     ? trafficConfig.durationSeconds
     : trafficConfig.maxDurationSeconds;
 }
@@ -443,7 +443,7 @@ function calculateTrafficDurationSeconds(trafficConfig: TrafficConfig): number {
 function durationPath(trafficConfig: TrafficConfig): string[] {
   return [
     "trafficConfig",
-    trafficConfig.mode === "steady-arrival-rate" ? "durationSeconds" : "maxDurationSeconds",
+    trafficConfig.mode === "constant-arrival-rate" ? "durationSeconds" : "maxDurationSeconds",
   ];
 }
 

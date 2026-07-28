@@ -116,7 +116,7 @@ describe("public runtime policy service", () => {
     policy.publicCustomLimits.maxPreAllocatedVus = 10;
     policy.publicCustomLimits.maxVus = 10;
     policy.publicCustomDefaults.trafficConfig = {
-      mode: "steady-arrival-rate",
+      mode: "constant-arrival-rate",
       ratePerSecond: 6,
       startDelaySeconds: 0,
       durationSeconds: 1,

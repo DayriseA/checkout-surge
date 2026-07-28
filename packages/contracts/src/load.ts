@@ -42,9 +42,9 @@ const k6VusSchema = z
     message: "maxVus must be greater than or equal to preAllocatedVus.",
   });
 
-export const steadyArrivalTrafficConfigSchema = z
+export const constantArrivalTrafficConfigSchema = z
   .object({
-    mode: z.literal("steady-arrival-rate"),
+    mode: z.literal("constant-arrival-rate"),
     ratePerSecond: positiveIntegerSchema,
     startDelaySeconds: nonnegativeIntegerSchema.default(0),
     durationSeconds: positiveIntegerSchema,
@@ -52,11 +52,11 @@ export const steadyArrivalTrafficConfigSchema = z
     k6Vus: k6VusSchema.optional(),
   })
   .strict();
-export type SteadyArrivalTrafficConfig = z.infer<typeof steadyArrivalTrafficConfigSchema>;
+export type ConstantArrivalTrafficConfig = z.infer<typeof constantArrivalTrafficConfigSchema>;
 
 export const maximumAutomaticallyDerivedVUs = 10_000;
 
-export interface ResolvedSteadyArrivalVus {
+export interface ResolvedConstantArrivalVus {
   preAllocatedVus: number;
   maxVus: number;
 }
@@ -86,13 +86,13 @@ export function deriveLoadExecutionPlan(traffic: TrafficConfig): LoadExecutionPl
     durationSeconds: traffic.durationSeconds,
     plannedEmittedAttempts: traffic.ratePerSecond * traffic.durationSeconds,
     startDelaySeconds: traffic.startDelaySeconds,
-    ...resolveSteadyArrivalVus(traffic),
+    ...resolveConstantArrivalVus(traffic),
   };
 }
 
-export function resolveSteadyArrivalVus(
-  trafficConfig: Pick<SteadyArrivalTrafficConfig, "ratePerSecond" | "k6Vus">,
-): ResolvedSteadyArrivalVus {
+export function resolveConstantArrivalVus(
+  trafficConfig: Pick<ConstantArrivalTrafficConfig, "ratePerSecond" | "k6Vus">,
+): ResolvedConstantArrivalVus {
   if (trafficConfig.k6Vus) {
     return { ...trafficConfig.k6Vus };
   }
@@ -109,7 +109,7 @@ export function resolveSteadyArrivalVus(
 
 export const trafficConfigSchema = z.discriminatedUnion("mode", [
   buyerSpikeTrafficConfigSchema,
-  steadyArrivalTrafficConfigSchema,
+  constantArrivalTrafficConfigSchema,
 ]);
 export type TrafficConfig = z.infer<typeof trafficConfigSchema>;
 
@@ -172,15 +172,16 @@ const materializedBuyerSpikeTrafficConfigSchema = buyerSpikeTrafficConfigSchema.
   startDelaySeconds: nonnegativeIntegerSchema,
   quantityPerAttempt: positiveIntegerSchema,
 });
-const materializedSteadyArrivalTrafficConfigSchema = steadyArrivalTrafficConfigSchema.safeExtend({
-  startDelaySeconds: nonnegativeIntegerSchema,
-  quantityPerAttempt: positiveIntegerSchema,
-});
+const materializedConstantArrivalTrafficConfigSchema =
+  constantArrivalTrafficConfigSchema.safeExtend({
+    startDelaySeconds: nonnegativeIntegerSchema,
+    quantityPerAttempt: positiveIntegerSchema,
+  });
 export const materializedAcceptedRunConfigSnapshotSchema = z
   .object({
     trafficConfig: z.discriminatedUnion("mode", [
       materializedBuyerSpikeTrafficConfigSchema,
-      materializedSteadyArrivalTrafficConfigSchema,
+      materializedConstantArrivalTrafficConfigSchema,
     ]),
     inventoryConfig: inventoryConfigSchema.safeExtend({
       quantityPerCheckout: positiveIntegerSchema,
@@ -298,7 +299,7 @@ export type TrafficHttpSummary = z.infer<typeof trafficHttpSummarySchema>;
 /** Real completion input. Quality is classified by the API, not the caller. */
 export const trafficCompletionDeliverySummarySchema = z
   .object({
-    trafficMode: z.enum(["buyer-spike", "steady-arrival-rate"]),
+    trafficMode: z.enum(["buyer-spike", "constant-arrival-rate"]),
     plannedBuyers: positiveIntegerSchema.nullable(),
     scheduledRatePerSecond: positiveIntegerSchema.nullable(),
     configuredDurationSeconds: positiveIntegerSchema.nullable(),
@@ -315,7 +316,7 @@ export type TrafficCompletionDeliverySummary = z.infer<
 
 /** Field map of the authoritative persisted/history delivery summary. */
 export const trafficDeliverySummaryShape = {
-  trafficMode: z.enum(["buyer-spike", "steady-arrival-rate"]).nullable(),
+  trafficMode: z.enum(["buyer-spike", "constant-arrival-rate"]).nullable(),
   plannedBuyers: positiveIntegerSchema.nullable(),
   scheduledRatePerSecond: positiveIntegerSchema.nullable(),
   configuredDurationSeconds: positiveIntegerSchema.nullable(),
@@ -346,7 +347,7 @@ export const loadExecutionPlanSchema = z
       .strict(),
     z
       .object({
-        trafficMode: z.literal("steady-arrival-rate"),
+        trafficMode: z.literal("constant-arrival-rate"),
         ratePerSecond: positiveIntegerSchema,
         durationSeconds: positiveIntegerSchema,
         plannedEmittedAttempts: positiveIntegerSchema,
@@ -376,7 +377,7 @@ export const loadExecutionPlanSchema = z
         path: ["iterationsPerVu"],
         message: "must match duplicateEachBuyerAttempt",
       });
-    if (value.trafficMode === "steady-arrival-rate" && value.maxVus < value.preAllocatedVus)
+    if (value.trafficMode === "constant-arrival-rate" && value.maxVus < value.preAllocatedVus)
       context.addIssue({
         code: "custom",
         path: ["maxVus"],

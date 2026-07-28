@@ -95,7 +95,7 @@ describe("run diagnostics", () => {
     expect(markup).toMatch(/k6 stderr lines observed<\/dt><dd[^>]*>1<\/dd>/);
   });
 
-  it("renders zero CPU utilisation and every steady-arrival execution-plan field", () => {
+  it("renders zero CPU utilisation and every constant-arrival execution-plan field", () => {
     const populated = diagnostics();
     const markup = render(
       diagnostics({
@@ -103,7 +103,7 @@ describe("run diagnostics", () => {
           ? { ...populated.generatorUtilisation, peakCpuUtilisationPercent: 0 }
           : null,
         executionPlan: {
-          trafficMode: "steady-arrival-rate",
+          trafficMode: "constant-arrival-rate",
           ratePerSecond: 5,
           durationSeconds: 2,
           plannedEmittedAttempts: 10,
@@ -115,7 +115,7 @@ describe("run diagnostics", () => {
     );
 
     expect(markup).toMatch(/k6 process peak CPU utilisation<\/dt><dd[^>]*>0%<\/dd>/);
-    expect(markup).toContain("steady arrival rate");
+    expect(markup).toContain("constant arrival rate");
     expect(markup).toMatch(/k6 scheduled rate<\/dt><dd[^>]*>5\/s<\/dd>/);
     expect(markup).toMatch(/k6 duration<\/dt><dd[^>]*>2s<\/dd>/);
     expect(markup).toMatch(/k6 pre-allocated VUs<\/dt><dd[^>]*>3<\/dd>/);

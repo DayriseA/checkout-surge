@@ -385,7 +385,7 @@ function buildCustomConfigOverride(
             quantityPerAttempt: defaults.trafficConfig.quantityPerAttempt,
           }
         : {
-            mode: "steady-arrival-rate",
+            mode: "constant-arrival-rate",
             ratePerSecond: parseInteger(draft.ratePerSecond, 1),
             startDelaySeconds: parseInteger(draft.startDelaySeconds, 0),
             durationSeconds: parseInteger(draft.durationSeconds, 1),
@@ -414,9 +414,9 @@ function draftFromSnapshot(snapshot: AcceptedRunConfigSnapshot): CustomDraft {
     duplicateEachBuyerAttempt:
       traffic.mode === "buyer-spike" ? traffic.duplicateEachBuyerAttempt : false,
     maxDurationSeconds: traffic.mode === "buyer-spike" ? String(traffic.maxDurationSeconds) : "10",
-    ratePerSecond: traffic.mode === "steady-arrival-rate" ? String(traffic.ratePerSecond) : "50",
+    ratePerSecond: traffic.mode === "constant-arrival-rate" ? String(traffic.ratePerSecond) : "50",
     durationSeconds:
-      traffic.mode === "steady-arrival-rate" ? String(traffic.durationSeconds) : "10",
+      traffic.mode === "constant-arrival-rate" ? String(traffic.durationSeconds) : "10",
     startDelaySeconds: String(traffic.startDelaySeconds),
     startingStock: String(snapshot.inventoryConfig.startingStock),
     erpLatencyMs: String(snapshot.erpConfig.latencyMs),
@@ -575,7 +575,7 @@ function TrafficModeSelector({
 }) {
   return (
     <div className="flex flex-wrap gap-2">
-      {(["buyer-spike", "steady-arrival-rate"] as const).map((trafficMode) => (
+      {(["buyer-spike", "constant-arrival-rate"] as const).map((trafficMode) => (
         <button
           className={trafficMode === mode ? primaryButtonClassName : buttonClassName}
           disabled={!allowedModes.includes(trafficMode)}

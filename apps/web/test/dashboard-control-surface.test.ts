@@ -300,7 +300,7 @@ function publicRuntimePolicyFixture(): PublicRuntimePolicyResponse {
         maxErpMaxTps: 100,
         maxErpErrorRate: 0.25,
         allowForcedOutage: false,
-        allowedTrafficModes: ["buyer-spike", "steady-arrival-rate"],
+        allowedTrafficModes: ["buyer-spike", "constant-arrival-rate"],
       },
       deploymentHardCaps: {
         maxBuyers: 100_000,

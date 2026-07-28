@@ -353,11 +353,11 @@ export class K6RunAccumulator {
       trafficMode: plan.trafficMode,
       plannedBuyers: plan.trafficMode === "buyer-spike" ? plan.buyerCount : null,
       scheduledRatePerSecond:
-        plan.trafficMode === "steady-arrival-rate" ? plan.ratePerSecond : null,
+        plan.trafficMode === "constant-arrival-rate" ? plan.ratePerSecond : null,
       configuredDurationSeconds:
-        plan.trafficMode === "steady-arrival-rate" ? plan.durationSeconds : null,
-      preAllocatedVUs: plan.trafficMode === "steady-arrival-rate" ? plan.preAllocatedVus : null,
-      maxVUs: plan.trafficMode === "steady-arrival-rate" ? plan.maxVus : null,
+        plan.trafficMode === "constant-arrival-rate" ? plan.durationSeconds : null,
+      preAllocatedVUs: plan.trafficMode === "constant-arrival-rate" ? plan.preAllocatedVus : null,
+      maxVUs: plan.trafficMode === "constant-arrival-rate" ? plan.maxVus : null,
       droppedIterations: input.droppedIterations.value,
       completedIterations: input.completedIterations.valueOrNull,
       notes,

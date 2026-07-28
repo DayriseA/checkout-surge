@@ -4,7 +4,7 @@ import type {
   TrafficHttpSummary,
   TransportAttemptCounts,
 } from "@checkout-surge/contracts";
-import { calculatePlannedRequests, resolveSteadyArrivalVus } from "@checkout-surge/contracts";
+import { calculatePlannedRequests, resolveConstantArrivalVus } from "@checkout-surge/contracts";
 
 export function syntheticTrafficDeliverySummary(
   config: AcceptedRunConfigSnapshot,
@@ -12,14 +12,14 @@ export function syntheticTrafficDeliverySummary(
 ): TrafficDeliverySummary {
   const traffic = config.trafficConfig;
   const resolvedK6Vus =
-    traffic.mode === "steady-arrival-rate" ? resolveSteadyArrivalVus(traffic) : null;
+    traffic.mode === "constant-arrival-rate" ? resolveConstantArrivalVus(traffic) : null;
 
   return {
     trafficMode: traffic.mode,
     plannedBuyers: traffic.mode === "buyer-spike" ? traffic.buyerCount : null,
-    scheduledRatePerSecond: traffic.mode === "steady-arrival-rate" ? traffic.ratePerSecond : null,
+    scheduledRatePerSecond: traffic.mode === "constant-arrival-rate" ? traffic.ratePerSecond : null,
     configuredDurationSeconds:
-      traffic.mode === "steady-arrival-rate" ? traffic.durationSeconds : null,
+      traffic.mode === "constant-arrival-rate" ? traffic.durationSeconds : null,
     preAllocatedVUs: resolvedK6Vus?.preAllocatedVus ?? null,
     maxVUs: resolvedK6Vus?.maxVus ?? null,
     droppedIterations: 0,

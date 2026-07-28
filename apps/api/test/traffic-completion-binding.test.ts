@@ -45,14 +45,14 @@ describe("traffic completion binding", () => {
     ).toMatchObject({ field: "loadRunDiagnosticsSummary.startedAt" });
   });
 
-  it("binds steady-arrival rate, duration, and effective VUs", () => {
+  it("binds constant-arrival rate, duration, and effective VUs", () => {
     const report = completionReport();
-    const steadyReport: TrafficCompletionReport = {
+    const constantArrivalReport: TrafficCompletionReport = {
       ...report,
       loadRunDiagnosticsSummary: {
         ...report.loadRunDiagnosticsSummary,
         executionPlan: {
-          trafficMode: "steady-arrival-rate",
+          trafficMode: "constant-arrival-rate",
           ratePerSecond: 5,
           durationSeconds: 2,
           plannedEmittedAttempts: 10,
@@ -63,7 +63,7 @@ describe("traffic completion binding", () => {
       },
       trafficDeliverySummary: {
         ...report.trafficDeliverySummary,
-        trafficMode: "steady-arrival-rate",
+        trafficMode: "constant-arrival-rate",
         plannedBuyers: null,
         scheduledRatePerSecond: 5,
         configuredDurationSeconds: 2,
@@ -74,7 +74,7 @@ describe("traffic completion binding", () => {
     const snapshot: AcceptedRunConfigSnapshot = {
       ...buyerSpikeSnapshot(),
       trafficConfig: {
-        mode: "steady-arrival-rate",
+        mode: "constant-arrival-rate",
         ratePerSecond: 5,
         durationSeconds: 2,
         startDelaySeconds: 0,
@@ -91,7 +91,7 @@ describe("traffic completion binding", () => {
           acceptedAt: new Date("2026-07-19T00:00:00.000Z"),
           trafficStartedAt: null,
         },
-        steadyReport,
+        constantArrivalReport,
       ),
     ).toBeNull();
   });

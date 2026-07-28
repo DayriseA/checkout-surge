@@ -301,7 +301,7 @@ function trafficConfigFacts(
   }
 
   return [
-    ["Mode", "steady arrival"],
+    ["Mode", "constant arrival"],
     ["Rate", `${formatNumber(config.ratePerSecond)}/s`],
     ["Duration", `${formatNumber(config.durationSeconds)}s`],
     ["Quantity", formatNumber(config.quantityPerAttempt)],

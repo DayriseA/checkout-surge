@@ -486,11 +486,11 @@ Most infrastructure URLs have local defaults, but every run/control service chan
 | `ADMIN_ALLOW_FORCED_OUTAGE` | `true` | Mock ERP admin chaos cap |
 | `DEMO_MAX_BUYERS` | `100000` | API safety cap for buyer-spike preset buyer count |
 | `DEMO_MAX_TOTAL_REQUESTS` | `100000` | API safety cap for total emitted buy attempts |
-| `DEMO_MAX_REQUESTS_PER_SECOND` | `10000` | API safety cap for steady-arrival preset request rate |
-| `DEMO_MAX_TRAFFIC_DURATION_SECONDS` | `300` | API safety cap for steady-arrival duration and buyer-spike max duration |
+| `DEMO_MAX_REQUESTS_PER_SECOND` | `10000` | API safety cap for constant-arrival preset request rate |
+| `DEMO_MAX_TRAFFIC_DURATION_SECONDS` | `300` | API safety cap for constant-arrival duration and buyer-spike max duration |
 | `DEMO_MAX_TRAFFIC_START_DELAY_SECONDS` | `30` | API safety cap for buyer-spike start delay |
-| `DEMO_MAX_PRE_ALLOCATED_VUS` | `10000` | API hard cap for resolved steady-arrival preallocated VUs, whether automatic or explicit |
-| `DEMO_MAX_VUS` | `10000` | API hard cap for resolved steady-arrival max VUs, whether automatic or explicit |
+| `DEMO_MAX_PRE_ALLOCATED_VUS` | `10000` | API hard cap for resolved constant-arrival preallocated VUs, whether automatic or explicit |
+| `DEMO_MAX_VUS` | `10000` | API hard cap for resolved constant-arrival max VUs, whether automatic or explicit |
 | `DEMO_RUN_DRAIN_TIMEOUT_SECONDS` | `300` | API timeout while waiting for a demo run to drain before finalization |
 | `DEMO_RUN_FINALIZATION_POLL_INTERVAL_SECONDS` | `5` | API polling interval while waiting for demo run finalization |
 | `PUBLIC_RUN_BUDGET_WINDOW_SECONDS` | `300` | `runtime-setup` first-seed public run-budget window |

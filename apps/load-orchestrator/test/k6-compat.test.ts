@@ -37,9 +37,9 @@ describe("pinned production k6 compatibility", () => {
   it.each([
     ["buyer-spike", createRequest()],
     [
-      "steady-arrival-rate",
+      "constant-arrival-rate",
       createRequest({
-        mode: "steady-arrival-rate",
+        mode: "constant-arrival-rate",
         ratePerSecond: 1,
         startDelaySeconds: 0,
         durationSeconds: 1,

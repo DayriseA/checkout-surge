@@ -161,7 +161,7 @@ class SpawnK6Runner extends ProductionSpawnK6Runner {
   }
 }
 
-function steadyStartRequest(
+function constantArrivalStartRequest(
   ratePerSecond: number,
   durationSeconds: number,
   k6Vus?: { preAllocatedVus: number; maxVus: number },
@@ -171,7 +171,7 @@ function steadyStartRequest(
     configSnapshot: {
       ...startRequest.configSnapshot,
       trafficConfig: {
-        mode: "steady-arrival-rate",
+        mode: "constant-arrival-rate",
         ratePerSecond,
         startDelaySeconds: 2,
         durationSeconds,
@@ -789,13 +789,13 @@ describe("load-orchestrator k6 mapping", () => {
     });
   });
 
-  it("generates a steady-arrival scenario with k6 VU controls", () => {
+  it("generates a constant-arrival scenario with k6 VU controls", () => {
     const script = generateK6Script({
       ...startRequest,
       configSnapshot: {
         ...startRequest.configSnapshot,
         trafficConfig: {
-          mode: "steady-arrival-rate",
+          mode: "constant-arrival-rate",
           ratePerSecond: 20,
           startDelaySeconds: 2,
           durationSeconds: 10,
@@ -812,7 +812,7 @@ describe("load-orchestrator k6 mapping", () => {
     expect(script.contents).toContain('"preAllocatedVUs":10');
     expect(script.contents).toContain('"maxVUs":50');
     expect(script.contents).toContain(
-      'config.trafficMode === "steady-arrival-rate" && iteration >= config.plannedRequests',
+      'config.trafficMode === "constant-arrival-rate" && iteration >= config.plannedRequests',
     );
     expect(script.contents.indexOf("iteration >= config.plannedRequests")).toBeLessThan(
       script.contents.indexOf("const buyerId"),
@@ -846,12 +846,12 @@ describe("load-orchestrator k6 mapping", () => {
     expectedPreAllocatedVus,
     expectedMaxVus,
   }) => {
-    const script = generateK6Script(steadyStartRequest(rate, 3));
+    const script = generateK6Script(constantArrivalStartRequest(rate, 3));
     const scenario = generatedScenario(script.contents);
 
     expect(script.plannedRequests).toBe(rate * 3);
     expect(script.executionPlan).toEqual({
-      trafficMode: "steady-arrival-rate",
+      trafficMode: "constant-arrival-rate",
       ratePerSecond: rate,
       durationSeconds: 3,
       plannedEmittedAttempts: rate * 3,
@@ -870,8 +870,8 @@ describe("load-orchestrator k6 mapping", () => {
   });
 
   it("changes planned attempts with duration without changing automatic VU sizing", () => {
-    const short = generateK6Script(steadyStartRequest(1_000, 1));
-    const long = generateK6Script(steadyStartRequest(1_000, 30));
+    const short = generateK6Script(constantArrivalStartRequest(1_000, 1));
+    const long = generateK6Script(constantArrivalStartRequest(1_000, 30));
 
     expect(short.executionPlan).toMatchObject({
       plannedEmittedAttempts: 1_000,
@@ -902,13 +902,13 @@ describe("load-orchestrator k6 mapping", () => {
     expect(script.contents).not.toContain('"quantity":7');
   });
 
-  it("uses the same default steady VU values in the script and diagnostic plan", () => {
+  it("uses the same default constant-arrival VU values in the script and diagnostic plan", () => {
     const script = generateK6Script({
       ...startRequest,
       configSnapshot: {
         ...startRequest.configSnapshot,
         trafficConfig: {
-          mode: "steady-arrival-rate",
+          mode: "constant-arrival-rate",
           ratePerSecond: 21,
           startDelaySeconds: 0,
           durationSeconds: 2,
@@ -958,7 +958,7 @@ describe("load-orchestrator k6 mapping", () => {
   });
 
   it("increments the started counter before http.post and the completed counter after it returns", () => {
-    for (const request of [startRequest, steadyStartRequest(5, 3)]) {
+    for (const request of [startRequest, constantArrivalStartRequest(5, 3)]) {
       const script = generateK6Script(request).contents;
       const guardIndex = script.indexOf("iteration >= config.plannedRequests");
       const startedIndex = script.indexOf("attemptsStarted.add(1)");
@@ -1246,13 +1246,13 @@ describe("load-orchestrator k6 mapping", () => {
     });
   });
 
-  it("reports exact effective steady-arrival plan facts and null unavailable iterations", () => {
-    const steadyRequest = {
+  it("reports exact effective constant-arrival plan facts and null unavailable iterations", () => {
+    const constantArrivalRequest = {
       ...startRequest,
       configSnapshot: {
         ...startRequest.configSnapshot,
         trafficConfig: {
-          mode: "steady-arrival-rate" as const,
+          mode: "constant-arrival-rate" as const,
           ratePerSecond: 9,
           startDelaySeconds: 0,
           durationSeconds: 7,
@@ -1260,11 +1260,11 @@ describe("load-orchestrator k6 mapping", () => {
         },
       },
     };
-    const executionPlan = generateK6Script(steadyRequest).executionPlan;
+    const executionPlan = generateK6Script(constantArrivalRequest).executionPlan;
     const accumulator = new K6RunAccumulator({
       executionPlan,
-      runId: steadyRequest.runId,
-      correlationId: steadyRequest.correlationId,
+      runId: constantArrivalRequest.runId,
+      correlationId: constantArrivalRequest.correlationId,
       plannedRequests: executionPlan.plannedEmittedAttempts,
       startedAt: new Date(timestamp),
     });
@@ -1275,7 +1275,7 @@ describe("load-orchestrator k6 mapping", () => {
         completedAt: new Date(completionTimestamp),
       }).trafficDeliverySummary,
     ).toMatchObject({
-      trafficMode: "steady-arrival-rate",
+      trafficMode: "constant-arrival-rate",
       plannedBuyers: null,
       scheduledRatePerSecond: 9,
       configuredDurationSeconds: 7,

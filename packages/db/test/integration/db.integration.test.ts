@@ -917,7 +917,7 @@ describe("database migrations, seed data, and reset behavior", () => {
     await runSeedScript();
     // Operator edits the mutable admin preset and bumps updated_at. Uses the
     // `custom` scratch preset so later breaker-backfill assertions on
-    // `admin-smoke-steady` are not affected by the preserved operator edit.
+    // `admin-smoke-constant` are not affected by the preserved operator edit.
     await withDatabase(
       (sql) => sql`
         UPDATE demo_presets
@@ -1096,7 +1096,7 @@ describe("database migrations, seed data, and reset behavior", () => {
       await sql`
         UPDATE demo_presets
         SET backpressure_config = backpressure_config - 'circuitBreakerFailureThreshold' - 'circuitBreakerResetTimeoutMs'
-        WHERE slug = 'admin-smoke-steady'
+        WHERE slug = 'admin-smoke-constant'
       `;
       await sql`
         UPDATE demo_presets
@@ -1127,7 +1127,7 @@ describe("database migrations, seed data, and reset behavior", () => {
         (sql) => sql<{ slug: string; backpressure_config: Record<string, unknown> }[]>`
         SELECT slug, backpressure_config
         FROM demo_presets
-        WHERE slug IN ('admin-smoke-steady', 'admin-failure-path')
+        WHERE slug IN ('admin-smoke-constant', 'admin-failure-path')
         ORDER BY slug
       `,
       );
@@ -1147,7 +1147,7 @@ describe("database migrations, seed data, and reset behavior", () => {
         }),
       },
       {
-        slug: "admin-smoke-steady",
+        slug: "admin-smoke-constant",
         backpressure_config: expect.objectContaining({
           circuitBreakerFailureThreshold: 7,
           circuitBreakerResetTimeoutMs: 12_345,

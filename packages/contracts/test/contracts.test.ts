@@ -82,7 +82,7 @@ import {
   queueStatusSchema,
   reservationDecisionValues,
   reservationRejectedResponseSchema,
-  resolveSteadyArrivalVus,
+  resolveConstantArrivalVus,
   runHistoryDetailParamsSchema,
   runHistoryDetailPath,
   runHistoryDetailPathTemplate,
@@ -306,7 +306,7 @@ describe("run lifecycle contracts", () => {
     ).toThrow();
     expect(
       loadExecutionPlanSchema.parse({
-        trafficMode: "steady-arrival-rate",
+        trafficMode: "constant-arrival-rate",
         ratePerSecond: 5,
         durationSeconds: 2,
         plannedEmittedAttempts: 10,
@@ -344,7 +344,7 @@ describe("run lifecycle contracts", () => {
     ).toThrow();
     expect(() =>
       loadExecutionPlanSchema.parse({
-        trafficMode: "steady-arrival-rate",
+        trafficMode: "constant-arrival-rate",
         ratePerSecond: 5,
         durationSeconds: 2,
         plannedEmittedAttempts: 10,
@@ -528,7 +528,7 @@ describe("run lifecycle contracts", () => {
     ).not.toThrow();
   });
 
-  it("keeps steady-arrival VU overrides all-or-nothing and validates their relationship", () => {
+  it("keeps constant-arrival VU overrides all-or-nothing and validates their relationship", () => {
     const request = {
       runId,
       saleOfferId,
@@ -537,7 +537,7 @@ describe("run lifecycle contracts", () => {
       configSnapshot: {
         ...acceptedRunSnapshot(),
         trafficConfig: {
-          mode: "steady-arrival-rate",
+          mode: "constant-arrival-rate",
           ratePerSecond: 10,
           startDelaySeconds: 0,
           durationSeconds: 2,
@@ -2455,7 +2455,7 @@ describe("public runtime policy contract", () => {
         maxErpMaxTps: 100,
         maxErpErrorRate: 0.25,
         allowForcedOutage: false,
-        allowedTrafficModes: ["buyer-spike", "steady-arrival-rate"],
+        allowedTrafficModes: ["buyer-spike", "constant-arrival-rate"],
       },
       deploymentHardCaps: {
         maxBuyers: 100_000,
@@ -2613,7 +2613,7 @@ describe("public runtime policy contract", () => {
   it("validates automatic default VUs against deployment caps only for effective policy", () => {
     const effective = semanticRuntimePolicy();
     effective.publicCustomDefaults.trafficConfig = {
-      mode: "steady-arrival-rate",
+      mode: "constant-arrival-rate",
       ratePerSecond: 6,
       startDelaySeconds: 0,
       durationSeconds: 1,
@@ -2647,26 +2647,26 @@ describe("public runtime policy contract", () => {
     }
   });
 
-  it("resolves automatic steady-arrival VUs with one capped neutral rule", () => {
+  it("resolves automatic constant-arrival VUs with one capped neutral rule", () => {
     expect(maximumAutomaticallyDerivedVUs).toBe(10_000);
-    expect(resolveSteadyArrivalVus({ ratePerSecond: 4_999 })).toEqual({
+    expect(resolveConstantArrivalVus({ ratePerSecond: 4_999 })).toEqual({
       preAllocatedVus: 4_999,
       maxVus: 9_998,
     });
-    expect(resolveSteadyArrivalVus({ ratePerSecond: 5_000 })).toEqual({
+    expect(resolveConstantArrivalVus({ ratePerSecond: 5_000 })).toEqual({
       preAllocatedVus: 5_000,
       maxVus: 10_000,
     });
-    expect(resolveSteadyArrivalVus({ ratePerSecond: 5_001 })).toEqual({
+    expect(resolveConstantArrivalVus({ ratePerSecond: 5_001 })).toEqual({
       preAllocatedVus: 5_001,
       maxVus: 10_000,
     });
-    expect(resolveSteadyArrivalVus({ ratePerSecond: 12_000 })).toEqual({
+    expect(resolveConstantArrivalVus({ ratePerSecond: 12_000 })).toEqual({
       preAllocatedVus: 10_000,
       maxVus: 10_000,
     });
     expect(
-      resolveSteadyArrivalVus({
+      resolveConstantArrivalVus({
         ratePerSecond: 12_000,
         k6Vus: { preAllocatedVus: 12_000, maxVus: 15_000 },
       }),
@@ -2695,7 +2695,7 @@ describe("public runtime policy contract", () => {
     const snapshot: AcceptedRunConfigSnapshot = {
       ...acceptedRunSnapshot(),
       trafficConfig: {
-        mode: "steady-arrival-rate",
+        mode: "constant-arrival-rate",
         ratePerSecond: fixture.ratePerSecond,
         startDelaySeconds: 0,
         durationSeconds: 1,
@@ -2719,7 +2719,7 @@ describe("public runtime policy contract", () => {
     const snapshot: AcceptedRunConfigSnapshot = {
       ...acceptedRunSnapshot(),
       trafficConfig: {
-        mode: "steady-arrival-rate",
+        mode: "constant-arrival-rate",
         ratePerSecond: 20,
         startDelaySeconds: 0,
         durationSeconds: 1,
@@ -2806,7 +2806,7 @@ describe("public runtime policy contract", () => {
     const snapshot: AcceptedRunConfigSnapshot = {
       ...acceptedRunSnapshot(),
       trafficConfig: {
-        mode: "steady-arrival-rate",
+        mode: "constant-arrival-rate",
         ratePerSecond: 50,
         startDelaySeconds: 0,
         durationSeconds: 1,
@@ -3039,7 +3039,7 @@ describe("public runtime policy contract", () => {
     ).toBe(200);
   });
 
-  it("derives canonical buyer-spike and steady-arrival execution identities", () => {
+  it("derives canonical buyer-spike and constant-arrival execution identities", () => {
     expect(
       deriveLoadExecutionPlan({
         mode: "buyer-spike",
@@ -3060,7 +3060,7 @@ describe("public runtime policy contract", () => {
     });
     expect(
       deriveLoadExecutionPlan({
-        mode: "steady-arrival-rate",
+        mode: "constant-arrival-rate",
         ratePerSecond: 12,
         startDelaySeconds: 3,
         durationSeconds: 4,
@@ -3068,7 +3068,7 @@ describe("public runtime policy contract", () => {
         k6Vus: { preAllocatedVus: 5, maxVus: 8 },
       }),
     ).toEqual({
-      trafficMode: "steady-arrival-rate",
+      trafficMode: "constant-arrival-rate",
       ratePerSecond: 12,
       durationSeconds: 4,
       plannedEmittedAttempts: 48,
@@ -3256,7 +3256,7 @@ function semanticRuntimePolicy(): PublicRuntimePolicy {
       maxErpMaxTps: 10,
       maxErpErrorRate: 0.25,
       allowForcedOutage: false,
-      allowedTrafficModes: ["buyer-spike", "steady-arrival-rate"],
+      allowedTrafficModes: ["buyer-spike", "constant-arrival-rate"],
     },
     deploymentHardCaps: {
       maxBuyers: 100,

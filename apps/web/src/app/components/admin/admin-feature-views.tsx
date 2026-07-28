@@ -98,9 +98,9 @@ export function AdminRuntimePolicyView({
                 onChange={(value) => onUpdateDraft({ allowBuyerSpike: value })}
               />
               <Checkbox
-                label="Steady arrival"
-                checked={draft.allowSteadyArrivalRate}
-                onChange={(value) => onUpdateDraft({ allowSteadyArrivalRate: value })}
+                label="Constant arrival"
+                checked={draft.allowConstantArrivalRate}
+                onChange={(value) => onUpdateDraft({ allowConstantArrivalRate: value })}
               />
               <Checkbox
                 label="Allow forced outage"
@@ -346,7 +346,7 @@ function TrafficEditor({
   return (
     <div className="grid gap-3">
       <div className="flex flex-wrap gap-2">
-        {(["buyer-spike", "steady-arrival-rate"] as const).map((mode) => (
+        {(["buyer-spike", "constant-arrival-rate"] as const).map((mode) => (
           <button
             className={draft.mode === mode ? primaryButtonClassName : buttonClassName}
             key={mode}

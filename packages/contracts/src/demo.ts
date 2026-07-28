@@ -574,7 +574,7 @@ export const publicCustomLimitsSchema = z
     maxErpErrorRate: z.number().min(0).max(1),
     allowForcedOutage: z.boolean(),
     allowedTrafficModes: z
-      .array(z.union([z.literal("buyer-spike"), z.literal("steady-arrival-rate")]))
+      .array(z.union([z.literal("buyer-spike"), z.literal("constant-arrival-rate")]))
       .min(1),
   })
   .strict();

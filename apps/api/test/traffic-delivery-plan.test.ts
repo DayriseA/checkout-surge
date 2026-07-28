@@ -7,7 +7,7 @@ import {
 
 const baseSnapshot = {
   trafficConfig: {
-    mode: "steady-arrival-rate",
+    mode: "constant-arrival-rate",
     ratePerSecond: 5_001,
     startDelaySeconds: 0,
     durationSeconds: 2,
@@ -34,7 +34,7 @@ const baseSnapshot = {
 } satisfies AcceptedRunConfigSnapshot;
 
 describe("synthetic traffic delivery plan", () => {
-  it("uses the shared capped automatic steady-arrival VU resolution", () => {
+  it("uses the shared capped automatic constant-arrival VU resolution", () => {
     expect(syntheticTrafficDeliverySummary(baseSnapshot, ["not started"])).toMatchObject({
       preAllocatedVUs: 5_001,
       maxVUs: 10_000,
@@ -66,7 +66,7 @@ describe("synthetic traffic delivery plan", () => {
         failureRate: 0,
       },
       trafficDeliverySummary: {
-        trafficMode: "steady-arrival-rate",
+        trafficMode: "constant-arrival-rate",
         plannedBuyers: null,
         scheduledRatePerSecond: 5_001,
         configuredDurationSeconds: 2,
@@ -80,7 +80,7 @@ describe("synthetic traffic delivery plan", () => {
     });
   });
 
-  it("preserves explicit steady-arrival VUs in synthetic diagnostics", () => {
+  it("preserves explicit constant-arrival VUs in synthetic diagnostics", () => {
     const snapshot: AcceptedRunConfigSnapshot = {
       ...baseSnapshot,
       trafficConfig: {

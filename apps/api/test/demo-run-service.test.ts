@@ -166,7 +166,7 @@ describe("demo-run lifecycle validation", () => {
     const snapshot: AcceptedRunConfigSnapshot = {
       ...surge10kSnapshot(),
       trafficConfig: {
-        mode: "steady-arrival-rate",
+        mode: "constant-arrival-rate",
         ratePerSecond: fixture.ratePerSecond,
         startDelaySeconds: 0,
         durationSeconds: 1,
@@ -1480,7 +1480,7 @@ function publicRuntimePolicy(): PublicRuntimePolicy {
       maxErpMaxTps: 100,
       maxErpErrorRate: 0.25,
       allowForcedOutage: false,
-      allowedTrafficModes: ["buyer-spike", "steady-arrival-rate"],
+      allowedTrafficModes: ["buyer-spike", "constant-arrival-rate"],
     },
     deploymentHardCaps: {
       maxBuyers: 100_000,

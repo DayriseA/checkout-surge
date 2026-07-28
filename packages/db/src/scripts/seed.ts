@@ -325,18 +325,18 @@ function buildSeedPresets(): SeedPreset[] {
     },
     {
       id: seedIds.adminSmokePreset,
-      slug: "admin-smoke-steady",
+      slug: "admin-smoke-constant",
       visibility: "admin",
       isEditable: true,
       isCustom: false,
       isSystem: true,
       display: {
-        name: "Admin Smoke Steady",
-        description: "Small steady-arrival run for local dashboard and worker checks.",
+        name: "Admin Smoke Constant",
+        description: "Small constant-arrival run for local dashboard and worker checks.",
         sortOrder: 100,
         outcomeFocus: ["happy_path", "run_history"],
       },
-      trafficConfig: steadyArrivalTraffic({
+      trafficConfig: constantArrivalTraffic({
         ratePerSecond: 20,
         durationSeconds: 10,
         preAllocatedVus: 10,
@@ -360,7 +360,7 @@ function buildSeedPresets(): SeedPreset[] {
         sortOrder: 110,
         outcomeFocus: ["failure_path", "run_history"],
       },
-      trafficConfig: steadyArrivalTraffic({
+      trafficConfig: constantArrivalTraffic({
         ratePerSecond: 15,
         durationSeconds: 12,
         preAllocatedVus: 10,
@@ -384,7 +384,7 @@ function buildSeedPresets(): SeedPreset[] {
         sortOrder: 120,
         outcomeFocus: ["happy_path", "sold_out", "failure_path", "run_history"],
       },
-      trafficConfig: steadyArrivalTraffic({
+      trafficConfig: constantArrivalTraffic({
         ratePerSecond: 10,
         durationSeconds: 10,
         preAllocatedVus: 5,
@@ -414,7 +414,7 @@ function buyerSpikeTraffic(options: {
   };
 }
 
-function steadyArrivalTraffic(options: {
+function constantArrivalTraffic(options: {
   ratePerSecond: number;
   durationSeconds: number;
   preAllocatedVus: number;
@@ -422,7 +422,7 @@ function steadyArrivalTraffic(options: {
   startDelaySeconds?: number;
 }): TrafficConfig {
   return {
-    mode: "steady-arrival-rate",
+    mode: "constant-arrival-rate",
     ratePerSecond: options.ratePerSecond,
     startDelaySeconds: options.startDelaySeconds ?? 0,
     durationSeconds: options.durationSeconds,
@@ -511,7 +511,7 @@ function buildPublicRuntimePolicy(): PublicRuntimePolicyMutable {
       maxErpMaxTps: optionalIntegerEnv("PUBLIC_CUSTOM_MAX_ERP_MAX_TPS", 100),
       maxErpErrorRate: optionalNumberEnv("PUBLIC_CUSTOM_MAX_ERP_ERROR_RATE", 0.25),
       allowForcedOutage: false,
-      allowedTrafficModes: ["buyer-spike", "steady-arrival-rate"],
+      allowedTrafficModes: ["buyer-spike", "constant-arrival-rate"],
     },
   });
 }

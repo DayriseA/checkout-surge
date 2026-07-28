@@ -1,9 +1,9 @@
 import {
   buyOutcomeHeaderName,
+  type ConstantArrivalTrafficConfig,
   deriveLoadExecutionPlan,
   type LoadExecutionPlan,
   loadRunIdHeaderName,
-  type SteadyArrivalTrafficConfig,
   type TrafficExecutionStartRequest,
 } from "@checkout-surge/contracts";
 import { correlationIdHeaderName } from "@checkout-surge/logger";
@@ -16,12 +16,12 @@ export interface GeneratedK6Script {
 
 export const k6ScenarioGracefulStop = "30s";
 
-export function resolveSteadyArrivalExecutionPlan(
-  traffic: SteadyArrivalTrafficConfig,
-): Extract<LoadExecutionPlan, { trafficMode: "steady-arrival-rate" }> {
+export function resolveConstantArrivalExecutionPlan(
+  traffic: ConstantArrivalTrafficConfig,
+): Extract<LoadExecutionPlan, { trafficMode: "constant-arrival-rate" }> {
   return deriveLoadExecutionPlan(traffic) as Extract<
     LoadExecutionPlan,
-    { trafficMode: "steady-arrival-rate" }
+    { trafficMode: "constant-arrival-rate" }
   >;
 }
 
@@ -97,7 +97,7 @@ function readResponseHeader(response, headerName) {
 
 export default function () {
   const iteration = exec.scenario.iterationInTest;
-  if (config.trafficMode === "steady-arrival-rate" && iteration >= config.plannedRequests) {
+  if (config.trafficMode === "constant-arrival-rate" && iteration >= config.plannedRequests) {
     return;
   }
 

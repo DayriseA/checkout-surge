@@ -143,7 +143,7 @@ describe.skipIf(!databaseUrl)("contract-typed persisted JSON", () => {
         maxErpMaxTps: 100,
         maxErpErrorRate: 0.25,
         allowForcedOutage: false,
-        allowedTrafficModes: ["buyer-spike", "steady-arrival-rate"],
+        allowedTrafficModes: ["buyer-spike", "constant-arrival-rate"],
       },
     });
 

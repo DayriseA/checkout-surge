@@ -17,7 +17,7 @@ import {
 describe("admin drafts", () => {
   it.each([
     "buyer-spike",
-    "steady-arrival-rate",
+    "constant-arrival-rate",
   ] as const)("round-trips %s traffic and preserves hidden configuration", (mode) => {
     const preset = presetFixture(mode);
     const rebuilt = configFromDraft(draftFromPreset(preset), preset);
@@ -46,7 +46,7 @@ describe("admin drafts", () => {
     const policy = policyFixture();
     const draft = draftFromRuntimePolicy(policy);
     draft.maxBuyers = "4321";
-    draft.allowSteadyArrivalRate = false;
+    draft.allowConstantArrivalRate = false;
     const next = policyFromDraft(draft, policy);
     expect(next.publicCustomLimits.maxBuyers).toBe(4321);
     expect(next.publicCustomLimits.allowedTrafficModes).toEqual(["buyer-spike"]);
@@ -62,7 +62,7 @@ describe("admin drafts", () => {
   });
 
   it("builds contract-valid start and save payload configuration", () => {
-    const preset = presetFixture("steady-arrival-rate");
+    const preset = presetFixture("constant-arrival-rate");
     const draft = draftFromPreset(preset);
     const configOverride = configFromDraft(draft, preset);
     expect(
@@ -78,7 +78,7 @@ describe("admin drafts", () => {
   });
 });
 
-function presetFixture(mode: "buyer-spike" | "steady-arrival-rate"): DemoPresetContract {
+function presetFixture(mode: "buyer-spike" | "constant-arrival-rate"): DemoPresetContract {
   const base = {
     id: "33333333-3333-4333-8333-333333333333",
     slug: "custom",
@@ -150,7 +150,7 @@ function policyFixture(): PublicRuntimePolicy {
       maxErpMaxTps: 100,
       maxErpErrorRate: 0.25,
       allowForcedOutage: false,
-      allowedTrafficModes: ["buyer-spike", "steady-arrival-rate"],
+      allowedTrafficModes: ["buyer-spike", "constant-arrival-rate"],
     },
     deploymentHardCaps: {
       maxBuyers: 100_000,

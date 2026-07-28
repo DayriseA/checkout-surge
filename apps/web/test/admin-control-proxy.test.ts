@@ -1009,7 +1009,7 @@ function publicRuntimePolicyPayload() {
       maxErpMaxTps: 300,
       maxErpErrorRate: 0.25,
       allowForcedOutage: false,
-      allowedTrafficModes: ["buyer-spike" as const, "steady-arrival-rate" as const],
+      allowedTrafficModes: ["buyer-spike" as const, "constant-arrival-rate" as const],
     },
     deploymentHardCaps: {
       maxBuyers: 100_000,
