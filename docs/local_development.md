@@ -83,7 +83,7 @@ The reference Compose runtime widens only the load-orchestrator container's ephe
 docker compose -f docker-compose.yml -f docker-compose.no-sysctls.yml up -d
 ```
 
-The override uses Compose's `!reset` tag to clear both the API and load-orchestrator blocks and was verified with Docker Compose v2.40.3. If another Compose implementation does not support the tag, deploy from a copy of `docker-compose.yml` with the `sysctls:` blocks removed. See [High-Load Tuning Notes](k6_high_load_tuning.md#reference-runtime-network-namespace) for the measurement and portability rationale.
+The override uses Compose's `!reset` tag to clear both the API and load-orchestrator blocks and was verified with Docker Compose v2.40.3. If another Compose implementation does not support the tag, deploy from a copy of `docker-compose.yml` with the `sysctls:` blocks removed. See [Reference Runtime Measurements](reference_runtime_measurements.md#reference-runtime-network-namespace) for the measurement and portability rationale.
 
 Run migrations and seed the demo product, baseline sale offer, durable demo presets, PostgreSQL records, and Redis inventory:
 

@@ -28,8 +28,6 @@ The deployed demo access model is documented in `docs/admin_access_protection.md
 
 The project is a realistic systems simulation: external actors such as buyers, the ERP, and notifications are simulated, but the concurrency path, Redis reservation logic, queueing behavior, persistence model, worker backpressure, and observability signals are real implementation concerns.
 
-The accepted local runtime is single-instance while preserving service separation: one API process is the sole maintenance authority, one Next.js process serves the web application, one load-orchestrator process owns one journal, and one worker runtime processes background work. The single Caddy dashboard proxy/edge may route the public origin, but it is not another web application process or application authority. Horizontal application scaling and hosted orchestration are outside this accepted contract unless a later product decision defines them.
-
 ---
 
 ## 2. Technical Feature Set & Deep Dives
@@ -55,7 +53,7 @@ The accepted local runtime is single-instance while preserving service separatio
 
 ### D. The Load Generator (Orchestrated k6)
 
-- **Engine:** k6 (Go-based), triggered through a project-owned wrapper service. The reference development and demo runtime should run this wrapper in its own container with k6 installed inside the image, so local Dev Containers and Codespaces share the same load-generation assumptions. Host-native execution remains a convenience workflow for fast local iteration, not the architectural baseline.
+- **Engine:** k6 (Go-based), triggered through a project-owned wrapper service. The reference development and demo runtime should run this wrapper in its own container with k6 installed inside the image, so Dev Containers, Codespaces, and hosted environments share the same load-generation assumptions. Host-native execution remains a convenience workflow for fast local iteration, not the architectural baseline.
 - **Integration:** A wrapper service triggers k6 scripts via CLI and parses the JSON output stream. The wrapper owns the k6 binary/runtime boundary; the API, dashboard, worker, and ERP services must not depend on host-installed k6.
 - **Reporting:** Metrics (p95 latency, requests/sec, failure rate) are sent to the API, projected into dashboard recovery state, and forwarded to the Simulation Dashboard over SSE.
 - **Run Outcomes:** k6 can validate immediate HTTP responses from the API, but asynchronous business completion must be tracked by Checkout-Surge itself through durable order, ERP, and simulated-notification records tied to the load run.

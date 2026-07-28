@@ -168,6 +168,7 @@ The deployed-topology characterization is intentionally opt-in because it is slo
 - [Admin access protection](docs/admin_access_protection.md) - public/admin trust boundaries and resource protection
 - [Automated testing infrastructure](docs/automated_testing_infrastructure.md) - test taxonomy, isolated infrastructure, and composition coverage
 - [Local development](docs/local_development.md) - setup details, ports, commands, health checks, testing, and configuration
+- [High-load tuning notes](docs/k6_high_load_tuning.md) - host-neutral k6, OS, and container tuning reference, with [reference runtime measurements](docs/reference_runtime_measurements.md) recording this project's measured environment
 
 ## License
 
