@@ -37,6 +37,7 @@ import {
 } from "./persisted-demo-run-state.js";
 import type { TerminalDemoRunWriter } from "./terminal-demo-run-writer.js";
 import {
+  classifyTrafficTransport,
   parsePersistedTrafficDeliverySummary,
   parsePersistedTrafficHttpSummary,
   parsePersistedTransportAttemptCounts,
@@ -241,6 +242,7 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
         const latestFailureReason = this.deriveFailureReason({
           delivery: evidence.delivery,
           http: evidence.http,
+          transportAttemptCounts: evidence.transportAttemptCounts,
           trafficFailed: row.run.trafficStatus === "failed" || Boolean(finalization.errorMessage),
           businessTimedOut: latestBusinessBlockers.length > 0 && timedOut,
           accountingTimedOut:
@@ -332,6 +334,7 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
     const failureReason = this.deriveFailureReason({
       delivery: evidence.delivery,
       http: evidence.http,
+      transportAttemptCounts: evidence.transportAttemptCounts,
       trafficFailed:
         input.run.trafficStatus === "failed" || Boolean(input.finalization.errorMessage),
       businessTimedOut: businessBlockers.length > 0 && timedOut,
@@ -381,6 +384,7 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
   private deriveFailureReason(input: {
     delivery: TrafficDeliverySummary;
     http: TrafficHttpSummary;
+    transportAttemptCounts: TransportAttemptCounts;
     trafficFailed: boolean;
     businessTimedOut: boolean;
     accountingTimedOut: boolean;
@@ -399,11 +403,19 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
     if (input.accountingTimedOut) {
       return "accepted_response_accounting_timeout";
     }
+    if (input.delivery.trafficDeliveryStatus === "failed") {
+      return "traffic_delivery_major_shortfall";
+    }
     if (input.http.unexpectedResponses > 0) {
       return "traffic_outcome_unexpected_responses";
     }
-    if (input.delivery.trafficDeliveryStatus === "failed") {
-      return "traffic_delivery_major_shortfall";
+    if (
+      classifyTrafficTransport({
+        startedRequests: input.transportAttemptCounts.startedRequests,
+        transportFailures: input.http.transportFailures,
+      }) === "failed"
+    ) {
+      return "traffic_transport_major_loss";
     }
 
     if (input.trafficFailed) {

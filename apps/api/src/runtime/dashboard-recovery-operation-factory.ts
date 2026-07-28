@@ -17,7 +17,7 @@ import {
   PostgresDashboardCompletionOutcomeReader,
   PostgresDashboardConsistencyLagReader,
   PostgresDashboardRecoveryContextReader,
-  PostgresDashboardTransportAttemptCountsReader,
+  PostgresDashboardTransportObservationReader,
   RedisDashboardProjectionRevisionAllocator,
 } from "../services/dashboard-recovery-service.js";
 import { RedisDashboardTrafficMetricStore } from "../services/dashboard-traffic-metric-store.js";
@@ -132,7 +132,7 @@ export function createDashboardRecoveryOperationFactory(
           activeRunReader: new PostgresActiveErpRunReader(operationDatabase.db),
         }),
         trafficMetricReader: new RedisDashboardTrafficMetricStore(operationRedis),
-        transportAttemptCountsReader: new PostgresDashboardTransportAttemptCountsReader(
+        transportObservationReader: new PostgresDashboardTransportObservationReader(
           operationDatabase.db,
         ),
         revisionAllocator: new RedisDashboardProjectionRevisionAllocator(operationRedis),

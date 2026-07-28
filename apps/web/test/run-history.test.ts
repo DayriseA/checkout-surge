@@ -127,7 +127,7 @@ describe("run history surface", () => {
     // 7 of 9 dispatched attempts recorded a reply.
     expect(markup).toContain("78% of dispatched attempts recorded a reply");
     expect(markup).toContain(
-      "Outcomes and latency above cover 7 of 10 attempts. The slowest attempts are the ones missing, so the true p95 is higher. Server-side totals are the authoritative record.",
+      "Outcomes and latency above cover 7 of 10 attempts. The p95 describes replies received only. Server-side totals are the authoritative record.",
     );
     expect(markup).toContain("Accepted configuration");
     expect(markup).toContain("Order aggregates");
@@ -233,6 +233,7 @@ function runHistoryFixture(): RunHistoryListResponse {
           failedRequests: 0,
           acceptedResponses: 6,
           soldOutResponses: 4,
+          transportFailures: 0,
           unexpectedResponses: 0,
           p95LatencyMs: 42,
           failureRate: 0,

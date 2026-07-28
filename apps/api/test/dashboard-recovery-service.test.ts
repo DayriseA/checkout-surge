@@ -28,7 +28,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   DashboardProjectionService,
   PostgresDashboardRecoveryContextReader,
-  PostgresDashboardTransportAttemptCountsReader,
+  PostgresDashboardTransportObservationReader,
 } from "../src/services/dashboard-recovery-service.js";
 import { emptyBusinessOutcomeSummary as businessOutcomeFixture } from "../src/services/demo-run-projections.js";
 
@@ -117,6 +117,7 @@ describe("PostgresDashboardRecoveryContextReader integration", () => {
         failedRequests: 0,
         acceptedResponses: 250,
         soldOutResponses: 500,
+        transportFailures: 0,
         unexpectedResponses: 0,
         failureRate: 0,
       },
@@ -140,14 +141,24 @@ describe("PostgresDashboardRecoveryContextReader integration", () => {
       updatedAt: now,
     });
 
-    const reader = new PostgresDashboardTransportAttemptCountsReader(db);
+    const reader = new PostgresDashboardTransportObservationReader(db);
 
     await expect(reader.read(runId)).resolves.toEqual({
-      plannedRequests: 1_000,
-      startedRequests: 1_000,
-      completedRequests: 750,
-      interruptedRequests: 250,
-      unstartedRequests: 0,
+      transportAttemptCounts: {
+        plannedRequests: 1_000,
+        startedRequests: 1_000,
+        completedRequests: 750,
+        interruptedRequests: 250,
+        unstartedRequests: 0,
+      },
+      httpSummary: {
+        failedRequests: 0,
+        acceptedResponses: 250,
+        soldOutResponses: 500,
+        transportFailures: 0,
+        unexpectedResponses: 0,
+        failureRate: 0,
+      },
     });
     await expect(reader.read("99999999-9999-4999-8999-999999999999")).resolves.toBeNull();
   });
@@ -471,6 +482,7 @@ describe("DashboardProjectionService", () => {
 
     expect(harness.transportAttemptCounts).toHaveBeenCalledWith(runId);
     expect(recovery.transportAttemptCounts).toEqual(counts);
+    expect(recovery.httpSummary).toEqual(dashboardHttpSummaryFixture());
   });
 
   it("keeps transport accounting null while no completion evidence is available", async () => {
@@ -482,6 +494,7 @@ describe("DashboardProjectionService", () => {
 
     expect(harness.transportAttemptCounts).toHaveBeenCalledWith(runId);
     expect(recovery.transportAttemptCounts).toBeNull();
+    expect(recovery.httpSummary).toBeNull();
   });
 
   it("degrades a transport accounting read failure to null without losing the scope", async () => {
@@ -494,8 +507,9 @@ describe("DashboardProjectionService", () => {
 
     expect(recovery.scope).toEqual({ runId, saleOfferId });
     expect(recovery.transportAttemptCounts).toBeNull();
+    expect(recovery.httpSummary).toBeNull();
     expect(harness.loggerWarn).toHaveBeenCalledWith(
-      { err: projectionError, projection: "dashboard_transport_attempt_counts" },
+      { err: projectionError, projection: "dashboard_transport_observation" },
       "Dashboard recovery projection unavailable.",
     );
   });
@@ -557,7 +571,7 @@ describe("DashboardProjectionService", () => {
             queueStatusService: { getStatus: async () => queueStatusFixture() },
             erpStatusService: { getStatus: async () => erpStatusFixture() },
             trafficMetricReader: { readRecent: async () => [] },
-            transportAttemptCountsReader: { read: async () => null },
+            transportObservationReader: { read: async () => null },
             revisionAllocator: { allocate: async () => 1 },
           },
           close,
@@ -667,7 +681,7 @@ function projectionDependencies(options: {
     queueStatusService: { getStatus: async () => queueStatusFixture() },
     erpStatusService: { getStatus: async () => erpStatusFixture() },
     trafficMetricReader: { readRecent: async () => [] },
-    transportAttemptCountsReader: { read: async () => null },
+    transportObservationReader: { read: async () => null },
     revisionAllocator: { allocate: async () => 1 },
   };
 }
@@ -694,7 +708,14 @@ function serviceHarness(
   const metrics = vi.fn(async () => []);
   const transportAttemptCounts = options.transportAttemptCountsError
     ? vi.fn(async () => Promise.reject(options.transportAttemptCountsError))
-    : vi.fn(async () => options.transportAttemptCounts ?? null);
+    : vi.fn(async () =>
+        options.transportAttemptCounts
+          ? {
+              transportAttemptCounts: options.transportAttemptCounts,
+              httpSummary: dashboardHttpSummaryFixture(),
+            }
+          : null,
+      );
   const queue = vi.fn(async () => queueStatusFixture());
   const erp = vi.fn(async () => erpStatusFixture());
   const loggerWarn = vi.fn();
@@ -721,7 +742,7 @@ function serviceHarness(
         queueStatusService: { getStatus: queue },
         erpStatusService: { getStatus: erp },
         trafficMetricReader: { readRecent: metrics },
-        transportAttemptCountsReader: { read: transportAttemptCounts },
+        transportObservationReader: { read: transportAttemptCounts },
         revisionAllocator: { allocate: allocateRevision },
       },
       close,
@@ -742,6 +763,17 @@ function serviceHarness(
     loggerWarn,
     allocateRevision,
     close,
+  };
+}
+
+function dashboardHttpSummaryFixture() {
+  return {
+    failedRequests: 0,
+    acceptedResponses: 0,
+    soldOutResponses: 0,
+    transportFailures: 0,
+    unexpectedResponses: 0,
+    failureRate: 0,
   };
 }
 
@@ -878,6 +910,7 @@ function currentDiagnosticsFixture(plannedRequests: number) {
       completedRequests: "summary_export" as const,
       acceptedResponses: "summary_export" as const,
       soldOutResponses: "summary_export" as const,
+      transportFailures: "summary_export" as const,
       unexpectedResponses: "summary_export" as const,
       droppedIterations: "summary_export" as const,
       completedIterations: "summary_export" as const,

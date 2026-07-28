@@ -293,6 +293,7 @@ export function RequestSurgePanel({
   const data = recoveryData(recovery);
   const inventory = data?.inventory ?? null;
   const transportAttemptCounts = data?.transportAttemptCounts ?? null;
+  const httpSummary = data?.httpSummary ?? null;
   const latestMetric = data?.recentMetrics.at(-1) ?? null;
   const requestRateMetric = data
     ? findLatestMetric(
@@ -371,8 +372,11 @@ export function RequestSurgePanel({
             Shared 1-second producer event-time window; latency is the window mean and failures are
             the fraction of valid HTTP failure observations.
           </p>
-          {transportAttemptCounts ? (
-            <TransportObservationPanelBlock counts={transportAttemptCounts} />
+          {transportAttemptCounts && httpSummary ? (
+            <TransportObservationPanelBlock
+              counts={transportAttemptCounts}
+              httpSummary={httpSummary}
+            />
           ) : (
             <p className="mb-0 mt-3 text-xs leading-5 text-muted">
               Terminal transport attempt counts appear here once traffic completion evidence is

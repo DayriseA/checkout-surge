@@ -320,7 +320,7 @@ async function buildTestServer(options: {
             queueStatusService,
             erpStatusService,
             trafficMetricReader: { readRecent: async () => [] },
-            transportAttemptCountsReader: { read: async () => null },
+            transportObservationReader: { read: async () => null },
             revisionAllocator: { allocate: async () => 1 },
           },
           close: async () => undefined,
@@ -589,6 +589,7 @@ function runHistoryListResponseFixture(): RunHistoryListResponse {
           failedRequests: 0,
           acceptedResponses: 6,
           soldOutResponses: 4,
+          transportFailures: 0,
           unexpectedResponses: 0,
           p95LatencyMs: 42,
           failureRate: 0,
@@ -1227,6 +1228,7 @@ describe("API gateway routes", () => {
       consistencyLag: null,
       recentCompletionOutcomes: [],
       transportAttemptCounts: null,
+      httpSummary: null,
     };
 
     try {
@@ -2441,6 +2443,7 @@ describe("API gateway routes", () => {
         failedRequests: 0,
         acceptedResponses: 1,
         soldOutResponses: 1,
+        transportFailures: 0,
         unexpectedResponses: 0,
         p95LatencyMs: 42,
         failureRate: 0,
@@ -4373,6 +4376,7 @@ function internalCompletionReportFixture() {
       failedRequests: 0,
       acceptedResponses: 1,
       soldOutResponses: 1,
+      transportFailures: 0,
       unexpectedResponses: 0,
       failureRate: 0,
     },
@@ -4423,6 +4427,7 @@ function runnerDiagnosticsFixture() {
       completedRequests: "summary_export" as const,
       acceptedResponses: "summary_export" as const,
       soldOutResponses: "summary_export" as const,
+      transportFailures: "summary_export" as const,
       unexpectedResponses: "summary_export" as const,
       droppedIterations: "summary_export" as const,
       completedIterations: "summary_export" as const,

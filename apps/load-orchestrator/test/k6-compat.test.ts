@@ -183,6 +183,56 @@ export default function () { http.get("http://127.0.0.1:${address.port}/"); }
       );
     }
   });
+
+  it("separates a real connection failure from unexpected application responses", async () => {
+    const request = createRequest(undefined, "http://127.0.0.1:1");
+    const generated = generateK6Script(request);
+    const scriptPath = path.join(workDir, "unreachable-endpoint.js");
+    const summaryPath = path.join(workDir, "unreachable-endpoint.json");
+    await writeFile(scriptPath, generated.contents, "utf8");
+
+    const execution = await runK6([
+      "run",
+      "--quiet",
+      "--summary-export",
+      summaryPath,
+      "--out",
+      "json=-",
+      scriptPath,
+    ]);
+    const accumulator = new K6RunAccumulator({
+      runId: request.runId,
+      correlationId: request.correlationId,
+      plannedRequests: generated.plannedRequests,
+      startedAt: new Date(),
+      executionPlan: generated.executionPlan,
+    });
+    for (const line of execution.stdout.split("\n")) {
+      const point = parseK6JsonLine(line);
+      if (point) accumulator.observe(point);
+    }
+    const summaryMetrics = parseK6SummaryMetrics(await readFile(summaryPath, "utf8"));
+    const report = accumulator.completionReport({
+      status: "succeeded",
+      exitCode: execution.exitCode,
+      completedAt: new Date(),
+      ...(summaryMetrics ? { summaryMetrics } : {}),
+    });
+
+    expect(report.transportAttemptCounts).toEqual({
+      plannedRequests: 1,
+      startedRequests: 1,
+      completedRequests: 1,
+      interruptedRequests: 0,
+      unstartedRequests: 0,
+    });
+    expect(report.httpSummary).toMatchObject({
+      failedRequests: 1,
+      transportFailures: 1,
+      unexpectedResponses: 0,
+    });
+    expect(() => trafficCompletionReportSchema.parse(report)).not.toThrow();
+  });
 });
 
 async function runK6(

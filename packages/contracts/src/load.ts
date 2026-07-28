@@ -278,11 +278,21 @@ export const trafficHttpSummarySchema = z
     failedRequests: nonnegativeIntegerSchema,
     acceptedResponses: nonnegativeIntegerSchema,
     soldOutResponses: nonnegativeIntegerSchema,
+    transportFailures: nonnegativeIntegerSchema,
     unexpectedResponses: nonnegativeIntegerSchema,
     p95LatencyMs: nonnegativeNumberSchema.optional(),
     failureRate: percentageSchema,
   })
-  .strict();
+  .strict()
+  .superRefine((summary, context) => {
+    if (summary.failedRequests !== summary.unexpectedResponses + summary.transportFailures) {
+      context.addIssue({
+        code: "custom",
+        path: ["failedRequests"],
+        message: "must equal unexpectedResponses plus transportFailures",
+      });
+    }
+  });
 export type TrafficHttpSummary = z.infer<typeof trafficHttpSummarySchema>;
 
 /** Real completion input. Quality is classified by the API, not the caller. */
@@ -387,6 +397,7 @@ export const terminalMetricSourcesSchema = z
     completedRequests: terminalMetricSourceSchema.nullable(),
     acceptedResponses: terminalMetricSourceSchema.nullable(),
     soldOutResponses: terminalMetricSourceSchema.nullable(),
+    transportFailures: terminalMetricSourceSchema.nullable(),
     unexpectedResponses: terminalMetricSourceSchema.nullable(),
     droppedIterations: terminalMetricSourceSchema.nullable(),
     completedIterations: terminalMetricSourceSchema.nullable(),

@@ -89,6 +89,7 @@ export interface K6SummaryMetrics {
   responsesCompleted?: number;
   acceptedResponses?: number;
   soldOutResponses?: number;
+  transportFailures?: number;
   unexpectedResponses?: number;
   droppedIterations?: number;
   completedIterations?: number;
@@ -122,6 +123,7 @@ const counterMetricFields = {
   checkout_responses_completed: "responsesCompleted",
   checkout_reservation_accepted: "acceptedResponses",
   checkout_sold_out_rejections: "soldOutResponses",
+  checkout_transport_failures: "transportFailures",
   checkout_unexpected_responses: "unexpectedResponses",
   dropped_iterations: "droppedIterations",
   iterations: "completedIterations",
@@ -192,6 +194,10 @@ export class K6RunAccumulator {
       input.summaryMetrics?.soldOutResponses,
       "checkout_sold_out_rejections",
     );
+    const transportFailures = this.selectCount(
+      input.summaryMetrics?.transportFailures,
+      "checkout_transport_failures",
+    );
     const unexpectedResponses = this.selectCount(
       input.summaryMetrics?.unexpectedResponses,
       "checkout_unexpected_responses",
@@ -206,12 +212,9 @@ export class K6RunAccumulator {
     );
     const pointFailureRate = this.pointAverage("http_req_failed");
     const failureRate = input.summaryMetrics?.httpFailureRate ?? pointFailureRate ?? 0;
-    const httpFailedRequests = Math.round(failureRate * completed.value);
-    const failedRequests = Math.max(
-      unexpectedResponses.value,
-      httpFailedRequests - soldOutResponses.value,
-      0,
-    );
+    // Failed requests are completed attempts that did not produce a permitted
+    // application response: unexpected responses plus transport failures.
+    const failedRequests = unexpectedResponses.value + transportFailures.value;
     const interruptedRequests = started.value - completed.value;
     const unstartedRequests = this.options.plannedRequests - started.value;
     const transportAttemptCounts = {
@@ -230,13 +233,14 @@ export class K6RunAccumulator {
       completedRequests: completed.source,
       acceptedResponses: acceptedResponses.source,
       soldOutResponses: soldOutResponses.source,
+      transportFailures: transportFailures.source,
       unexpectedResponses: unexpectedResponses.source,
       droppedIterations: droppedIterations.source,
       completedIterations: completedIterations.source,
     };
     const summaryExportWarnings = this.summaryWarnings({
       initial: input.summaryExportWarning,
-      outcomes: [acceptedResponses, soldOutResponses, unexpectedResponses],
+      outcomes: [acceptedResponses, soldOutResponses, transportFailures, unexpectedResponses],
     });
     const timingBreakdown = this.timingBreakdown(input.summaryMetrics);
     const durationP95 = input.summaryMetrics?.requestDuration?.p95Ms;
@@ -251,6 +255,7 @@ export class K6RunAccumulator {
         failedRequests,
         acceptedResponses: acceptedResponses.value,
         soldOutResponses: soldOutResponses.value,
+        transportFailures: transportFailures.value,
         unexpectedResponses: unexpectedResponses.value,
         ...(durationP95 === undefined || durationP95 === null ? {} : { p95LatencyMs: durationP95 }),
         failureRate,

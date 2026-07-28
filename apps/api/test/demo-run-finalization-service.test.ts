@@ -973,7 +973,7 @@ describe("demo run finalization service", () => {
                 getStatus: async () => Promise.reject(new Error("unused ERP projection")),
               },
               trafficMetricReader: { readRecent: async () => [] },
-              transportAttemptCountsReader: { read: async () => null },
+              transportObservationReader: { read: async () => null },
               revisionAllocator: { allocate: async () => 1 },
             },
             close: async () => undefined,
@@ -1070,7 +1070,7 @@ describe("demo run finalization service", () => {
     });
   });
 
-  it("gives unexpected responses precedence over delivery and traffic-process failures", async () => {
+  it("fails one unexpected application response before a traffic-process failure", async () => {
     const db = requireConnection(connection).db;
     const redisClient = requireRedis(redis);
     const service = createService(connection, redis);
@@ -1091,6 +1091,110 @@ describe("demo run finalization service", () => {
       status: "failed",
       failureReason: "traffic_outcome_unexpected_responses",
     });
+  });
+
+  it("reports major delivery shortfall before an unexpected application response", async () => {
+    const db = requireConnection(connection).db;
+    const redisClient = requireRedis(redis);
+    const service = createService(connection, redis);
+    await seedDrainingRun({ db, redis: redisClient, trafficDeliveryStatus: "failed" });
+    await db
+      .update(demoRunFinalizations)
+      .set({
+        httpSummary: {
+          ...trafficCompletionReportFixture("failed").httpSummary,
+          unexpectedResponses: 1,
+          failedRequests: 1,
+        },
+      })
+      .where(eq(demoRunFinalizations.runId, ids.run));
+
+    await expect(service.finalizeRun(ids.run)).resolves.toMatchObject({
+      status: "failed",
+      failureReason: "traffic_delivery_major_shortfall",
+    });
+  });
+
+  it("reports transport-only major loss before a generic traffic-process failure", async () => {
+    const db = requireConnection(connection).db;
+    const redisClient = requireRedis(redis);
+    const service = createService(connection, redis);
+    await seedDrainingRun({ db, redis: redisClient, trafficDeliveryStatus: "complete" });
+    await db
+      .update(demoRunFinalizations)
+      .set({
+        httpSummary: {
+          ...trafficCompletionReportFixture("complete").httpSummary,
+          transportFailures: 1,
+          failedRequests: 1,
+        },
+        errorMessage: "k6 also reported a process error",
+      })
+      .where(eq(demoRunFinalizations.runId, ids.run));
+
+    await expect(service.finalizeRun(ids.run)).resolves.toMatchObject({
+      status: "failed",
+      failureReason: "traffic_transport_major_loss",
+    });
+  });
+
+  it("reports an unexpected application response before major transport loss", async () => {
+    const db = requireConnection(connection).db;
+    const redisClient = requireRedis(redis);
+    const service = createService(connection, redis);
+    await seedDrainingRun({ db, redis: redisClient, trafficDeliveryStatus: "complete" });
+    await db
+      .update(demoRunFinalizations)
+      .set({
+        httpSummary: {
+          ...trafficCompletionReportFixture("complete").httpSummary,
+          transportFailures: 1,
+          unexpectedResponses: 1,
+          failedRequests: 2,
+        },
+        errorMessage: "k6 also reported a process error",
+      })
+      .where(eq(demoRunFinalizations.runId, ids.run));
+
+    await expect(service.finalizeRun(ids.run)).resolves.toMatchObject({
+      status: "failed",
+      failureReason: "traffic_outcome_unexpected_responses",
+    });
+  });
+
+  it("completes the motivating degraded transport-loss profile without a failure reason", async () => {
+    const db = requireConnection(connection).db;
+    const redisClient = requireRedis(redis);
+    const service = createService(connection, redis);
+    await seedDrainingRun({ db, redis: redisClient, trafficDeliveryStatus: "complete" });
+    await db
+      .update(demoRunFinalizations)
+      .set({
+        transportAttemptCounts: {
+          plannedRequests: 10_000,
+          startedRequests: 10_000,
+          completedRequests: 10_000,
+          interruptedRequests: 0,
+          unstartedRequests: 0,
+        },
+        httpSummary: {
+          ...trafficCompletionReportFixture("complete").httpSummary,
+          acceptedResponses: 0,
+          soldOutResponses: 9_698,
+          transportFailures: 302,
+          unexpectedResponses: 0,
+          failedRequests: 302,
+          failureRate: 0.0302,
+        },
+      })
+      .where(eq(demoRunFinalizations.runId, ids.run));
+
+    await expect(service.finalizeRun(ids.run)).resolves.toMatchObject({ status: "completed" });
+    const [summary] = await db
+      .select({ failureReason: demoRunSummaries.failureReason, status: demoRunSummaries.status })
+      .from(demoRunSummaries)
+      .where(eq(demoRunSummaries.runId, ids.run));
+    expect(summary).toEqual({ status: "completed", failureReason: null });
   });
 
   it("normalizes a fully evidenced duplicate buyer spike before PostgreSQL reconciliation", async () => {
@@ -1386,6 +1490,7 @@ function runnerDiagnosticsFixture(): TrafficCompletionReport["loadRunDiagnostics
       completedRequests: "summary_export",
       acceptedResponses: "point_stream",
       soldOutResponses: "summary_export",
+      transportFailures: "summary_export" as const,
       unexpectedResponses: "summary_export",
       droppedIterations: "summary_export",
       completedIterations: "summary_export",
@@ -1535,6 +1640,7 @@ async function setAcceptedDeliveryEvidence(
         failedRequests: 0,
         acceptedResponses: input.acceptedResponses,
         soldOutResponses: 0,
+        transportFailures: 0,
         unexpectedResponses: 0,
         failureRate: 0,
       },
@@ -1603,6 +1709,7 @@ function trafficCompletionReportFixture(
       failedRequests: 0,
       acceptedResponses: 0,
       soldOutResponses: trafficDeliveryStatus === "failed" ? 3 : 8,
+      transportFailures: 0,
       unexpectedResponses: 0,
       p95LatencyMs: 25,
       failureRate: 0,

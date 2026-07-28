@@ -700,6 +700,7 @@ function activeProjection() {
     consistencyLag: null,
     recentCompletionOutcomes: [],
     transportAttemptCounts: null,
+    httpSummary: null,
   };
 }
 

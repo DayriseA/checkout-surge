@@ -462,6 +462,7 @@ function projection(revision: number): DashboardProjection {
     consistencyLag: null,
     recentCompletionOutcomes: [],
     transportAttemptCounts: null,
+    httpSummary: null,
   };
 }
 

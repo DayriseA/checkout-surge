@@ -474,6 +474,7 @@ describe("run lifecycle contracts", () => {
         failedRequests: 0,
         acceptedResponses: 2,
         soldOutResponses: 8,
+        transportFailures: 0,
         unexpectedResponses: 0,
         p95LatencyMs: 25,
         failureRate: 0,
@@ -500,6 +501,7 @@ describe("run lifecycle contracts", () => {
           completedRequests: "summary_export",
           acceptedResponses: "point_stream",
           soldOutResponses: "summary_export",
+          transportFailures: "summary_export" as const,
           unexpectedResponses: null,
           droppedIterations: "summary_export",
           completedIterations: "summary_export",
@@ -782,10 +784,27 @@ describe("run lifecycle contracts", () => {
       failedRequests: 0,
       acceptedResponses: 2,
       soldOutResponses: 5,
+      transportFailures: 0,
       unexpectedResponses: 0,
       failureRate: 0,
     };
     expect(trafficHttpSummarySchema.safeParse(httpSummary).success).toBe(true);
+    expect(
+      trafficHttpSummarySchema.safeParse({
+        ...httpSummary,
+        failedRequests: 3,
+        transportFailures: 2,
+        unexpectedResponses: 1,
+      }).success,
+    ).toBe(true);
+    expect(
+      trafficHttpSummarySchema.safeParse({
+        ...httpSummary,
+        failedRequests: 2,
+        transportFailures: 2,
+        unexpectedResponses: 1,
+      }).success,
+    ).toBe(false);
     expect(trafficHttpSummarySchema.safeParse({ ...httpSummary, ...coherent }).success).toBe(false);
   });
 
@@ -805,6 +824,7 @@ describe("run lifecycle contracts", () => {
         failedRequests: 0,
         acceptedResponses: 2,
         soldOutResponses: 6,
+        transportFailures: 0,
         unexpectedResponses: 0,
         failureRate: 0,
       },
@@ -1694,10 +1714,14 @@ describe("buy and dashboard contracts", () => {
       consistencyLag: null,
       recentCompletionOutcomes: [],
       transportAttemptCounts: null,
+      httpSummary: null,
       recoveredAt: timestamp,
     };
 
     expect(dashboardProjectionSchema.parse(idleProjection)).toEqual(idleProjection);
+    expect(
+      dashboardProjectionSchema.parse(omit(idleProjection, "httpSummary")).httpSummary,
+    ).toBeNull();
     for (const metadata of ["schema", "version", "scopeId", "revision"] as const) {
       const missingMetadata = omit(idleProjection, metadata);
       expect(dashboardProjectionSchema.safeParse(missingMetadata).success).toBe(false);
@@ -1721,6 +1745,7 @@ describe("buy and dashboard contracts", () => {
       consistencyLag: null,
       recentCompletionOutcomes: [],
       transportAttemptCounts: null,
+      httpSummary: null,
       recoveredAt: timestamp,
     };
 
@@ -1915,6 +1940,7 @@ describe("public runtime policy contract", () => {
             failedRequests: 0,
             acceptedResponses: 6,
             soldOutResponses: 4,
+            transportFailures: 0,
             unexpectedResponses: 0,
             p95LatencyMs: 42,
             failureRate: 0,
@@ -2738,6 +2764,7 @@ describe("public runtime policy contract", () => {
           failedRequests: 0,
           acceptedResponses: 200,
           soldOutResponses: 200,
+          transportFailures: 0,
           unexpectedResponses: 0,
           p95LatencyMs: 42,
           failureRate: 0,
@@ -2959,6 +2986,7 @@ function runnerDiagnostics() {
       completedRequests: "summary_export" as const,
       acceptedResponses: "summary_export" as const,
       soldOutResponses: "summary_export" as const,
+      transportFailures: "summary_export" as const,
       unexpectedResponses: "summary_export" as const,
       droppedIterations: "summary_export" as const,
       completedIterations: "summary_export" as const,

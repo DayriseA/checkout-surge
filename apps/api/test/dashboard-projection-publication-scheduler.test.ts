@@ -289,5 +289,6 @@ function projection(correlationId: string, scopedRunId?: string): DashboardProje
     consistencyLag: null,
     recentCompletionOutcomes: [],
     transportAttemptCounts: null,
+    httpSummary: null,
   };
 }

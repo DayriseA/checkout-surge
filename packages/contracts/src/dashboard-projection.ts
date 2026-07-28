@@ -14,6 +14,7 @@ import {
   uuidSchema,
 } from "./primitives.js";
 import { queueStatusSchema } from "./queue.js";
+import { trafficHttpSummarySchema } from "./load.js";
 import { transportAttemptCountsSchema } from "./traffic-transport-counts.js";
 
 export const dashboardEventsPath = "/dashboard/events" as const;
@@ -89,6 +90,7 @@ export const dashboardProjectionSchema = z
     consistencyLag: consistencyLagSummarySchema.nullable(),
     recentCompletionOutcomes: z.array(completionOutcomeSchema).default([]),
     transportAttemptCounts: transportAttemptCountsSchema.nullable().default(null),
+    httpSummary: trafficHttpSummarySchema.nullable().default(null),
   })
   .strict()
   .superRefine((projection, context) => {
@@ -128,6 +130,7 @@ export const dashboardProjectionSchema = z
             : projection.recentCompletionOutcomes,
         ],
         ["transportAttemptCounts", projection.transportAttemptCounts],
+        ["httpSummary", projection.httpSummary ?? null],
       ] as const;
       for (const [field, value] of runOwnedFields) {
         if (value !== null) {

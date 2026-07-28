@@ -358,7 +358,7 @@ pnpm test:composition
 pnpm test:characterization
 ```
 
-Set `COMPOSITION_KEEP_RUNTIME=true` to retain a failed composition project for inspection. The 10k characterization preserves the 10,000-buyer burst and requires the exact 1,000 accepted / 9,000 sold-out result when the host delivers every planned iteration. On constrained hosts it permits k6-dropped iterations but still requires complete request accounting, no unexpected responses, consistent inventory, and every accepted reservation to traverse the worker, ERP, notification, and Run History boundaries.
+Set `COMPOSITION_KEEP_RUNTIME=true` to retain a failed composition project for inspection. The 10k characterization preserves the 10,000-buyer burst and requires the exact 1,000 accepted / 9,000 sold-out result when the host delivers every planned iteration. On constrained hosts it permits k6-dropped iterations but still requires complete request accounting, zero transport failures, zero unexpected application responses, consistent inventory, and every accepted reservation to traverse the worker, ERP, notification, and Run History boundaries.
 
 For infrastructure-backed tests, start the isolated test services first — the package-isolated test databases are created and rebuilt from migrations on demand:
 

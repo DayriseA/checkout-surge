@@ -669,6 +669,7 @@ function summaryFixture(input: {
       failedRequests: 0,
       acceptedResponses: 3,
       soldOutResponses: 2,
+      transportFailures: 0,
       unexpectedResponses: 0,
       p95LatencyMs: 42,
       failureRate: 0,

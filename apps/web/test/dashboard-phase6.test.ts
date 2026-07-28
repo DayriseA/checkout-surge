@@ -65,7 +65,7 @@ describe("Phase 6 projection dashboard", () => {
     expect(traffic).toContain("94% of dispatched attempts recorded a reply");
     expect(traffic).toContain("generator shut down before the reply arrived");
     expect(traffic).toContain("scenario window closed before these were sent");
-    expect(traffic).toContain("The rates above cover 850 of 1,000 attempts.");
+    expect(traffic).toContain("Reply-dependent outcomes and latency cover 850 of 1,000 attempts.");
     expect(inventory).toContain("Inventory updated");
     expect(queue).toContain("Queue inspected");
     expect(erp).toContain("Failure threshold");
@@ -260,6 +260,14 @@ function projectionFixture(): DashboardProjection {
       completedRequests: 850,
       interruptedRequests: 50,
       unstartedRequests: 100,
+    },
+    httpSummary: {
+      failedRequests: 0,
+      acceptedResponses: 0,
+      soldOutResponses: 0,
+      transportFailures: 0,
+      unexpectedResponses: 0,
+      failureRate: 0,
     },
     recoveredAt: "2026-06-20T00:00:11.000Z",
   };

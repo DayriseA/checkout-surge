@@ -829,6 +829,7 @@ describe("load-orchestrator k6 mapping", () => {
       expect(script.contents).toContain('new Counter("checkout_responses_completed")');
       expect(script.contents).toContain('new Counter("checkout_reservation_accepted")');
       expect(script.contents).toContain('new Counter("checkout_sold_out_rejections")');
+      expect(script.contents).toContain('new Counter("checkout_transport_failures")');
       expect(script.contents).toContain('new Counter("checkout_unexpected_responses")');
       expect(script.contents).not.toMatch(/checkout_sold_out["']/);
       expect(script.contents).not.toMatch(/checkout_unexpected_response["']/);
@@ -852,6 +853,17 @@ describe("load-orchestrator k6 mapping", () => {
       expect(completedIndex).toBeGreaterThan(postIndex);
       expect(classificationIndex).toBeGreaterThan(completedIndex);
     }
+  });
+
+  it("classifies status-zero returns before application responses", () => {
+    const script = generateK6Script(startRequest).contents;
+    const transportIndex = script.indexOf("if (response.status === 0)");
+    const acceptedIndex = script.indexOf("else if (isAccepted)");
+    const unexpectedIndex = script.indexOf("unexpectedResponses.add(1)");
+
+    expect(transportIndex).toBeGreaterThanOrEqual(0);
+    expect(acceptedIndex).toBeGreaterThan(transportIndex);
+    expect(unexpectedIndex).toBeGreaterThan(acceptedIndex);
   });
 
   it("keeps terminal totals independent from windowed dashboard metrics", () => {
@@ -1005,6 +1017,7 @@ describe("load-orchestrator k6 mapping", () => {
       failedRequests: 0,
       acceptedResponses: 0,
       soldOutResponses: 2,
+      transportFailures: 0,
       unexpectedResponses: 0,
       failureRate: 1,
     });
@@ -1047,6 +1060,7 @@ describe("load-orchestrator k6 mapping", () => {
     expect(report.httpSummary).toMatchObject({
       failedRequests: 1,
       soldOutResponses: 0,
+      transportFailures: 0,
       unexpectedResponses: 1,
       failureRate: 0,
     });
@@ -1159,6 +1173,7 @@ describe("SpawnK6Runner completion reporting", () => {
             http_reqs: { count: 0 },
             checkout_reservation_accepted: { count: 0 },
             checkout_sold_out_rejections: { count: 0 },
+            checkout_transport_failures: { count: 0 },
             checkout_unexpected_responses: { count: 0 },
             iterations: { count: 0 },
             dropped_iterations: { count: 0 },

@@ -10,7 +10,7 @@ import {
 
 describe("transport observation coverage", () => {
   it("reports full coverage when every dispatched attempt recorded a reply", () => {
-    const observation = deriveTransportObservation(counts({ completedRequests: 10 }));
+    const observation = deriveTransportObservation(counts({ completedRequests: 10 }), 0);
 
     expect(observation.coveragePercent).toBe(100);
     expect(observation.hasUnrecordedReplies).toBe(false);
@@ -20,6 +20,7 @@ describe("transport observation coverage", () => {
   it("reports partial coverage when replies went unrecorded", () => {
     const observation = deriveTransportObservation(
       counts({ completedRequests: 7, interruptedRequests: 3 }),
+      0,
     );
 
     expect(observation.coveragePercent).toBe(70);
@@ -27,28 +28,42 @@ describe("transport observation coverage", () => {
   });
 
   it("never rounds up into a claim of full coverage while replies are missing", () => {
-    const observation = deriveTransportObservation({
-      plannedRequests: 5_000,
-      startedRequests: 5_000,
-      completedRequests: 4_999,
-      interruptedRequests: 1,
-      unstartedRequests: 0,
-    });
+    const observation = deriveTransportObservation(
+      {
+        plannedRequests: 5_000,
+        startedRequests: 5_000,
+        completedRequests: 4_999,
+        interruptedRequests: 1,
+        unstartedRequests: 0,
+      },
+      0,
+    );
 
     expect(observation.coveragePercent).toBe(99);
   });
 
   it("returns no coverage figure when nothing was dispatched", () => {
-    const observation = deriveTransportObservation({
-      plannedRequests: 10,
-      startedRequests: 0,
-      completedRequests: 0,
-      interruptedRequests: 0,
-      unstartedRequests: 10,
-    });
+    const observation = deriveTransportObservation(
+      {
+        plannedRequests: 10,
+        startedRequests: 0,
+        completedRequests: 0,
+        interruptedRequests: 0,
+        unstartedRequests: 10,
+      },
+      0,
+    );
 
     expect(observation.coveragePercent).toBeNull();
     expect(observation.hasUndispatchedAttempts).toBe(true);
+  });
+
+  it("excludes completed status-zero attempts from reply coverage", () => {
+    const observation = deriveTransportObservation(counts({ completedRequests: 10 }), 3);
+
+    expect(observation.repliesRecorded).toBe(7);
+    expect(observation.coveragePercent).toBe(70);
+    expect(observation.hasUnrecordedReplies).toBe(true);
   });
 });
 
@@ -77,8 +92,21 @@ describe("transport observation section", () => {
     expect(markup).toContain("generator shut down before the reply arrived");
     expect(markup).toContain("observed replies only");
     expect(markup).toContain(
-      "Outcomes and latency above cover 7 of 10 attempts. The slowest attempts are the ones missing, so the true p95 is higher. Server-side totals are the authoritative record.",
+      "Outcomes and latency above cover 7 of 10 attempts. The p95 describes replies received only. Server-side totals are the authoritative record.",
     );
+  });
+
+  it("distinguishes connection failures from shutdown-interrupted replies", () => {
+    const markup = renderSection(
+      counts({ completedRequests: 10 }),
+      httpSummary({ failedRequests: 3, transportFailures: 3 }),
+    );
+
+    expect(markup).toContain('value="70"');
+    expect(markup).toContain("Generator received no reply");
+    expect(markup).toContain("connection failed before a reply");
+    expect(markup).not.toContain("generator shut down before the reply arrived");
+    expect(markup).toContain("Outcomes and latency above cover 7 of 10 attempts.");
   });
 
   it("explains undispatched attempts without raising the survivorship caveat", () => {
@@ -129,6 +157,7 @@ describe("transport observation panel block", () => {
     const markup = renderToStaticMarkup(
       createElement(TransportObservationPanelBlock, {
         counts: counts({ completedRequests: 7, interruptedRequests: 3 }),
+        httpSummary: httpSummary(),
       }),
     );
 
@@ -136,7 +165,7 @@ describe("transport observation panel block", () => {
     expect(markup).toContain("what k6 observed");
     expect(markup).toContain("70% of dispatched attempts recorded a reply");
     expect(markup).toContain(
-      "The rates above cover 7 of 10 attempts. The slowest attempts are the ones missing, so latency is understated. Run outcomes below are the authoritative record.",
+      "Reply-dependent outcomes and latency cover 7 of 10 attempts. The HTTP failure rate above is a separate k6 measure and can include connection failures. Run outcomes below are the authoritative record.",
     );
   });
 
@@ -144,6 +173,7 @@ describe("transport observation panel block", () => {
     const markup = renderToStaticMarkup(
       createElement(TransportObservationPanelBlock, {
         counts: counts({ completedRequests: 10 }),
+        httpSummary: httpSummary(),
       }),
     );
 
@@ -153,11 +183,14 @@ describe("transport observation panel block", () => {
   });
 });
 
-function renderSection(transportAttemptCounts: TransportAttemptCounts): string {
+function renderSection(
+  transportAttemptCounts: TransportAttemptCounts,
+  summary = httpSummary(),
+): string {
   return renderToStaticMarkup(
     createElement(TransportObservationSection, {
       counts: transportAttemptCounts,
-      httpSummary: httpSummary(),
+      httpSummary: summary,
       surface: "detail",
     }),
   );
@@ -174,13 +207,15 @@ function counts(overrides: Partial<TransportAttemptCounts>): TransportAttemptCou
   };
 }
 
-function httpSummary(): TrafficHttpSummary {
+function httpSummary(overrides: Partial<TrafficHttpSummary> = {}): TrafficHttpSummary {
   return {
     failedRequests: 0,
     acceptedResponses: 4,
     soldOutResponses: 3,
+    transportFailures: 0,
     unexpectedResponses: 0,
     p95LatencyMs: 42,
     failureRate: 0,
+    ...overrides,
   };
 }

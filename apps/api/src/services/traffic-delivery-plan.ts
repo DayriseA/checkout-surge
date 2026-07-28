@@ -51,6 +51,7 @@ export function syntheticFailedTrafficSummary(
       failedRequests: 0,
       acceptedResponses: 0,
       soldOutResponses: 0,
+      transportFailures: 0,
       unexpectedResponses: 0,
       failureRate: 0,
     },

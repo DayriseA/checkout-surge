@@ -76,6 +76,7 @@ const attemptsStarted = new Counter("checkout_attempts_started");
 const responsesCompleted = new Counter("checkout_responses_completed");
 const acceptedResponses = new Counter("checkout_reservation_accepted");
 const soldOutResponses = new Counter("checkout_sold_out_rejections");
+const transportFailures = new Counter("checkout_transport_failures");
 const unexpectedResponses = new Counter("checkout_unexpected_responses");
 const checkoutOutcomeHeaderName = "${buyOutcomeHeaderName}";
 
@@ -130,7 +131,9 @@ export default function () {
       outcome === "reservation_pending_persistence");
   const isSoldOut = response.status === 409 && outcome === "sold_out";
 
-  if (isAccepted) {
+  if (response.status === 0) {
+    transportFailures.add(1);
+  } else if (isAccepted) {
     acceptedResponses.add(1);
   } else if (isSoldOut) {
     soldOutResponses.add(1);
@@ -138,6 +141,8 @@ export default function () {
     unexpectedResponses.add(1);
   }
 
+  // Transport failures still fail this k6-facing check because no expected
+  // checkout response was received.
   check(response, {
     "expected checkout response": () => isAccepted || isSoldOut,
   });

@@ -24,11 +24,13 @@ export const transportObservationLabels = {
   planned: "Planned attempts",
   dispatched: "Dispatched",
   repliesRecorded: "Replies recorded",
+  transportFailures: "Generator received no reply",
   repliesNotRecorded: "Replies not recorded",
   neverDispatched: "Never dispatched",
 } as const;
 
 const unrecordedReplyNote = "generator shut down before the reply arrived";
+const transportFailureNote = "connection failed before a reply";
 const undispatchedNote = "scenario window closed before these were sent";
 const biasedLatencyNote = "observed replies only";
 
@@ -37,37 +39,48 @@ export type ObservationSurface = "list" | "detail" | "dashboard";
 
 export interface TransportObservation {
   counts: TransportAttemptCounts;
+  transportFailures: number;
+  repliesRecorded: number;
   /** Share of dispatched attempts that recorded a reply; null when nothing was dispatched. */
   coveragePercent: number | null;
   hasUnrecordedReplies: boolean;
   hasUndispatchedAttempts: boolean;
 }
 
-export function deriveTransportObservation(counts: TransportAttemptCounts): TransportObservation {
+export function deriveTransportObservation(
+  counts: TransportAttemptCounts,
+  transportFailures: number,
+): TransportObservation {
+  const repliesRecorded = Math.max(counts.completedRequests - transportFailures, 0);
   return {
     counts,
-    coveragePercent: observationCoveragePercent(counts),
-    hasUnrecordedReplies: counts.interruptedRequests > 0,
+    transportFailures,
+    repliesRecorded,
+    coveragePercent: observationCoveragePercent(counts, repliesRecorded),
+    hasUnrecordedReplies: counts.interruptedRequests > 0 || transportFailures > 0,
     hasUndispatchedAttempts: counts.unstartedRequests > 0,
   };
 }
 
-function observationCoveragePercent(counts: TransportAttemptCounts): number | null {
+function observationCoveragePercent(
+  counts: TransportAttemptCounts,
+  repliesRecorded: number,
+): number | null {
   if (counts.startedRequests === 0) {
     return null;
   }
 
-  const percent = Math.round((counts.completedRequests / counts.startedRequests) * 100);
+  const percent = Math.round((repliesRecorded / counts.startedRequests) * 100);
 
   // Never round up into a claim of full coverage while replies are still missing.
-  return counts.interruptedRequests > 0 ? Math.min(percent, 99) : percent;
+  return repliesRecorded < counts.startedRequests ? Math.min(percent, 99) : percent;
 }
 
 export function survivorshipWarningText(
   observation: TransportObservation,
   surface: ObservationSurface,
 ): string {
-  const recorded = formatNumber(observation.counts.completedRequests);
+  const recorded = formatNumber(observation.repliesRecorded);
   const planned = formatNumber(observation.counts.plannedRequests);
 
   if (surface === "list") {
@@ -75,10 +88,10 @@ export function survivorshipWarningText(
   }
 
   if (surface === "dashboard") {
-    return `The rates above cover ${recorded} of ${planned} attempts. The slowest attempts are the ones missing, so latency is understated. Run outcomes below are the authoritative record.`;
+    return `Reply-dependent outcomes and latency cover ${recorded} of ${planned} attempts. The HTTP failure rate above is a separate k6 measure and can include connection failures. Run outcomes below are the authoritative record.`;
   }
 
-  return `Outcomes and latency above cover ${recorded} of ${planned} attempts. The slowest attempts are the ones missing, so the true p95 is higher. Server-side totals are the authoritative record.`;
+  return `Outcomes and latency above cover ${recorded} of ${planned} attempts. The p95 describes replies received only. Server-side totals are the authoritative record.`;
 }
 
 /**
@@ -94,7 +107,7 @@ export function TransportObservationSection({
   httpSummary: TrafficHttpSummary;
   surface: Extract<ObservationSurface, "list" | "detail">;
 }) {
-  const observation = deriveTransportObservation(counts);
+  const observation = deriveTransportObservation(counts, httpSummary.transportFailures);
 
   return (
     <section className="min-w-0 border-t border-border pt-3">
@@ -111,11 +124,17 @@ export function TransportObservationSection({
         />
         <ObservationRow
           label={transportObservationLabels.repliesRecorded}
-          value={formatNumber(counts.completedRequests)}
+          value={formatNumber(observation.repliesRecorded)}
+        />
+        <ObservationRow
+          label={transportObservationLabels.transportFailures}
+          note={observation.transportFailures > 0 ? transportFailureNote : undefined}
+          subordinate
+          value={formatNumber(observation.transportFailures)}
         />
         <ObservationRow
           label={transportObservationLabels.repliesNotRecorded}
-          note={observation.hasUnrecordedReplies ? unrecordedReplyNote : undefined}
+          note={counts.interruptedRequests > 0 ? unrecordedReplyNote : undefined}
           subordinate
           value={formatNumber(counts.interruptedRequests)}
         />
@@ -144,11 +163,16 @@ export function TransportObservationSection({
 
 /**
  * Transport funnel as stacked fact tiles, sized for the wide `/watch` panel.
- * The dashboard projection carries no terminal HTTP summary, so the caveat
- * qualifies the live rate metrics rendered above this block.
+ * The caveat qualifies the live rate metrics rendered above this block.
  */
-export function TransportObservationPanelBlock({ counts }: { counts: TransportAttemptCounts }) {
-  const observation = deriveTransportObservation(counts);
+export function TransportObservationPanelBlock({
+  counts,
+  httpSummary,
+}: {
+  counts: TransportAttemptCounts;
+  httpSummary: TrafficHttpSummary;
+}) {
+  const observation = deriveTransportObservation(counts, httpSummary.transportFailures);
 
   return (
     <>
@@ -167,13 +191,18 @@ export function TransportObservationPanelBlock({ counts }: { counts: TransportAt
         />
         <PanelFact
           label={transportObservationLabels.repliesRecorded}
-          value={formatNumber(counts.completedRequests)}
+          value={formatNumber(observation.repliesRecorded)}
         />
       </dl>
-      <dl className="m-0 mt-3 grid grid-cols-2 gap-3 max-[560px]:grid-cols-1">
+      <dl className="m-0 mt-3 grid grid-cols-3 gap-3 max-[560px]:grid-cols-1">
+        <PanelFact
+          label={transportObservationLabels.transportFailures}
+          note={observation.transportFailures > 0 ? transportFailureNote : undefined}
+          value={formatNumber(observation.transportFailures)}
+        />
         <PanelFact
           label={transportObservationLabels.repliesNotRecorded}
-          note={observation.hasUnrecordedReplies ? unrecordedReplyNote : undefined}
+          note={counts.interruptedRequests > 0 ? unrecordedReplyNote : undefined}
           value={formatNumber(counts.interruptedRequests)}
         />
         <PanelFact

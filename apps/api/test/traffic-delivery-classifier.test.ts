@@ -154,6 +154,7 @@ describe("traffic delivery classifier", () => {
       failedRequests: 0,
       acceptedResponses: 250,
       soldOutResponses: 500,
+      transportFailures: 0,
       unexpectedResponses: 0,
       failureRate: 0,
     };

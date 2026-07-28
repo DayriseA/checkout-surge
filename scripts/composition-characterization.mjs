@@ -201,6 +201,10 @@ async function characterizeRepresentativeSurge() {
     "surge produced unexpected HTTP responses",
   );
   assert(
+    summary.httpSummary.transportFailures === 0,
+    "surge load generator never reached the API on some dispatched attempts",
+  );
+  assert(
     summary.httpSummary.acceptedResponses + summary.httpSummary.soldOutResponses ===
       summary.transportAttemptCounts.completedRequests,
     "surge responses were not fully classified as accepted or sold out",

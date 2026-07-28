@@ -31,6 +31,19 @@ export function classifyTrafficDelivery(
   return "failed";
 }
 
+export function classifyTrafficTransport(input: {
+  startedRequests: number;
+  transportFailures: number;
+}): TrafficDeliverySummary["trafficDeliveryStatus"] | null {
+  if (input.startedRequests <= 0) return null;
+
+  const lossRatio = input.transportFailures / input.startedRequests;
+  if (lossRatio === 0) return "complete";
+  if (lossRatio <= warningShortfallRatio) return "warning";
+  if (lossRatio <= failureShortfallRatio) return "degraded";
+  return "failed";
+}
+
 /** Adds the API-owned delivery classification to a validated current completion. */
 export function classifyTrafficDeliverySummary(
   input: TrafficCompletionDeliverySummary,

@@ -134,7 +134,7 @@ function operation(redis: CheckoutSurgeRedis) {
       queueStatusService: { getStatus: unavailable },
       erpStatusService: { getStatus: unavailable },
       trafficMetricReader: { readRecent: async () => [] },
-      transportAttemptCountsReader: { read: async () => null },
+      transportObservationReader: { read: async () => null },
       revisionAllocator: new RedisDashboardProjectionRevisionAllocator(redis),
     },
     close: () => redis.disconnect(),

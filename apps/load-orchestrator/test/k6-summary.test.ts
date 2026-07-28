@@ -58,6 +58,7 @@ describe("parseK6SummaryMetrics", () => {
           checkout_responses_completed: { count: 12 },
           checkout_reservation_accepted: { count: 0 },
           checkout_sold_out_rejections: { count: 10 },
+          checkout_transport_failures: { count: 1 },
           checkout_unexpected_responses: { count: 2 },
           iterations: { count: 11.6 },
           dropped_iterations: { count: 1 },
@@ -80,6 +81,7 @@ describe("parseK6SummaryMetrics", () => {
       responsesCompleted: 12,
       acceptedResponses: 0,
       soldOutResponses: 10,
+      transportFailures: 1,
       unexpectedResponses: 2,
       completedIterations: 12,
       droppedIterations: 1,
@@ -185,6 +187,7 @@ describe("K6RunAccumulator summary precedence", () => {
       completedRequests: "summary_export",
       acceptedResponses: "point_stream",
       soldOutResponses: "summary_export",
+      transportFailures: null,
       unexpectedResponses: null,
       droppedIterations: null,
       completedIterations: null,
@@ -403,7 +406,7 @@ describe("K6RunAccumulator transport-attempt reconciliation", () => {
     });
   });
 
-  it("keeps HTTP failure and outcome counters measured against completed responses", () => {
+  it("defines failed requests as unexpected responses plus transport failures", () => {
     const accumulator = createAccumulator({ buyerCount: 1_000 });
     const report = accumulator.completionReport({
       status: "failed",
@@ -413,20 +416,20 @@ describe("K6RunAccumulator transport-attempt reconciliation", () => {
         responsesCompleted: 750,
         httpRequests: 750,
         acceptedResponses: 250,
-        soldOutResponses: 450,
+        soldOutResponses: 425,
+        transportFailures: 25,
         unexpectedResponses: 50,
         httpFailureRate: 0.2,
         timingPhases: {},
       },
     });
 
-    // failureRate × completed responses = 150 HTTP failures; 450 are expected
-    // sold-out rejections, so no additional domain failures are inferred.
-    expect(report.httpSummary.failedRequests).toBe(50);
+    expect(report.httpSummary.failedRequests).toBe(75);
+    expect(report.httpSummary.transportFailures).toBe(25);
     expect(report.httpSummary.failureRate).toBe(0.2);
     expect(report.trafficOutcomeSummary).toEqual({
       acceptedResponses: 250,
-      soldOutResponses: 450,
+      soldOutResponses: 425,
       unexpectedResponses: 50,
     });
   });

@@ -134,6 +134,7 @@ function recoveryFixture() {
     businessOutcome: null,
     consistencyLag: null,
     transportAttemptCounts: null,
+    httpSummary: null,
     recentMetrics: [],
     recentCompletionOutcomes: [],
   };
