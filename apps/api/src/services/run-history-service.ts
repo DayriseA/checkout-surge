@@ -4,6 +4,8 @@ import {
   type AdminRunHistoryDetailResponse,
   adminDeleteRunHistoryResponseSchema,
   adminRunHistoryDetailResponseSchema,
+  type LoadRunDiagnosticsSummary,
+  loadRunDiagnosticsSummarySchema,
   type PublicRunHistoryDetailResponse,
   type PublicRunHistoryRun,
   type PublicRunHistorySummary,
@@ -38,6 +40,7 @@ import { toDemoRunSnapshot } from "./demo-run-projections.js";
 import {
   parsePersistedAcceptedRunConfigSnapshot,
   parsePersistedBusinessOutcomeSummary,
+  parsePersistedState,
   parsePersistedTerminalInventorySnapshot,
 } from "./persisted-demo-run-state.js";
 import {
@@ -248,6 +251,10 @@ export class RunHistoryService implements RunHistoryController {
     return adminRunHistoryDetailResponseSchema.parse({
       summary: toRunHistorySummary(source.summaryRow),
       run: toDemoRunSnapshot(source.runRow),
+      loadRunDiagnosticsSummary: parseRunHistoryDiagnostics(
+        source.summaryRow.loadRunDiagnosticsSummary,
+        `run summary ${source.summaryRow.id} for demo run ${source.summaryRow.runId}`,
+      ),
       orders: {
         records: orderRows.map(toRunHistoryOrderOutcome),
         totalCount: orderTotalCount,
@@ -359,6 +366,25 @@ function toPublicRunHistorySummary(
       : {}),
     capturedAt: row.capturedAt.toISOString(),
   });
+}
+
+function parseRunHistoryDiagnostics(
+  value: unknown,
+  context: string,
+): LoadRunDiagnosticsSummary | null {
+  // Synthetic pre-traffic summaries have no startedAt; real diagnostics always do.
+  if (!value || typeof value !== "object" || !("startedAt" in value)) return null;
+  const stored = value as Record<string, unknown>;
+  return parsePersistedState(
+    loadRunDiagnosticsSummarySchema.strip(),
+    {
+      ...stored,
+      generatorCapacity: stored.generatorCapacity ?? null,
+      generatorUtilisation: stored.generatorUtilisation ?? null,
+    },
+    context,
+    "loadRunDiagnosticsSummary",
+  );
 }
 
 function toPublicRunHistoryRun(row: typeof demoRuns.$inferSelect): PublicRunHistoryRun {

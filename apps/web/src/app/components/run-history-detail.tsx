@@ -2,6 +2,7 @@ import type {
   AdminRunHistoryDetailResponse,
   PublicRunHistoryDetailResponse,
 } from "@checkout-surge/contracts";
+import { RunDiagnostics } from "./run-diagnostics";
 import { StatusPill } from "./status-pill";
 import { systemOfRecordLens, TransportObservationSection } from "./transport-observation";
 
@@ -72,6 +73,8 @@ export function AdminRunHistoryDetail({ detail }: RunHistoryDetailProps) {
           />
         </div>
       </section>
+
+      <RunDiagnostics summary={detail.loadRunDiagnosticsSummary} />
 
       <section className="rounded-lg border border-border bg-surface p-4">
         <h2 className="m-0 text-base font-bold leading-tight text-ink">Accepted configuration</h2>

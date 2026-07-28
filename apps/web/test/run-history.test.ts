@@ -133,6 +133,7 @@ describe("run history surface", () => {
     expect(markup).toContain("Order aggregates");
     expect(markup).toContain("ERP aggregates");
     expect(markup).toContain("Public activity totals");
+    expect(markup).not.toContain("Generator diagnostics");
     expect(markup).not.toContain("ord_history_1");
     expect(markup).not.toContain("corr-history-detail");
     expect(markup).not.toContain("worker");
@@ -155,6 +156,8 @@ describe("run history surface", () => {
     expect(markup).toContain("Replies not recorded");
     expect(markup).toContain("Never dispatched");
     expect(markup).toContain("System of record");
+    expect(markup).toContain("Generator diagnostics");
+    expect(markup).toContain("k6 v1.0.0");
     expect(markup).not.toContain("Interrupted");
     expect(markup).not.toContain("Unstarted");
     expect(markup).not.toContain("Emitted");
@@ -192,6 +195,23 @@ describe("run history surface", () => {
     expect(markup).not.toContain("Run not found");
     expect(getRunHistoryDetail).toHaveBeenCalledOnce();
     expect(getRunHistoryDetail).toHaveBeenCalledWith(runId);
+    expect(getAdminRunHistoryDetail).not.toHaveBeenCalled();
+  });
+
+  it("keeps diagnostics behind the validated admin page session", async () => {
+    const runId = "55555555-5555-4555-8555-555555555555";
+    getRunHistoryDetail.mockResolvedValue({
+      status: "available",
+      data: runHistoryDetailFixture(),
+      httpStatus: 200,
+    });
+
+    const page = await RunHistoryDetailPage({ params: Promise.resolve({ runId }) });
+    const markup = renderToStaticMarkup(page);
+
+    expect(markup).not.toContain("Generator diagnostics");
+    expect(getRunHistoryDetail).toHaveBeenCalledWith(runId);
+    expect(getAdminRunHistoryDetail).not.toHaveBeenCalled();
   });
 
   it("selects admin detail only from the validated page session", async () => {
@@ -337,6 +357,7 @@ function adminRunHistoryDetailFixture(): AdminRunHistoryDetailResponse {
 
   return {
     summary,
+    loadRunDiagnosticsSummary: runDiagnosticsFixture(),
     run: {
       runId: summary.runId,
       presetId: "33333333-3333-4333-8333-333333333333",
@@ -451,5 +472,45 @@ function adminRunHistoryDetailFixture(): AdminRunHistoryDetailResponse {
       ],
     },
     timestamp: "2026-06-20T00:00:10.000Z",
+  };
+}
+
+function runDiagnosticsFixture(): AdminRunHistoryDetailResponse["loadRunDiagnosticsSummary"] {
+  return {
+    startedAt: "2026-06-20T00:00:01.000Z",
+    completedAt: "2026-06-20T00:00:09.000Z",
+    nproc: 8,
+    ulimitNofile: 1_048_576,
+    processMaxOpenFiles: { soft: 1_048_576, hard: 1_048_576 },
+    generatorCapacity: null,
+    generatorUtilisation: null,
+    networkDiagnostics: null,
+    k6Version: "k6 v1.0.0",
+    executionPlan: {
+      trafficMode: "buyer-spike",
+      buyerCount: 10,
+      duplicateEachBuyerAttempt: false,
+      iterationsPerVu: 1,
+      plannedEmittedAttempts: 10,
+      startDelaySeconds: 0,
+      maxDurationSeconds: 1,
+    },
+    stderrLines: [],
+    stderrLineCountObserved: 0,
+    stderrLineCountRetained: 0,
+    stderrRetainedLineLimit: 50,
+    stderrLineTruncationLength: 500,
+    stderrLineTruncatedCount: 0,
+    terminalMetricSources: {
+      startedRequests: "summary_export",
+      completedRequests: "summary_export",
+      acceptedResponses: "summary_export",
+      soldOutResponses: "summary_export",
+      transportFailures: "summary_export",
+      unexpectedResponses: "summary_export",
+      droppedIterations: "summary_export",
+      completedIterations: "summary_export",
+    },
+    summaryExportWarnings: [],
   };
 }

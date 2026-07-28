@@ -636,6 +636,7 @@ function adminRunHistoryDetailResponseFixture(): AdminRunHistoryDetailResponse {
 
   return {
     summary,
+    loadRunDiagnosticsSummary: null,
     run: demoRunSnapshotSchema.parse({
       ...demoRunSnapshotFixture(),
       status: "completed",

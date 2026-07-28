@@ -19,6 +19,7 @@ import {
   backpressureConfigSchema,
   erpRunConfigSchema,
   inventoryConfigSchema,
+  loadRunDiagnosticsSummarySchema,
   trafficConfigSchema,
   trafficDeliverySummarySchema,
   trafficDeliverySummaryShape,
@@ -442,6 +443,7 @@ export const adminRunHistoryDetailResponseSchema = z
   .object({
     summary: runHistorySummarySchema,
     run: demoRunSnapshotSchema,
+    loadRunDiagnosticsSummary: loadRunDiagnosticsSummarySchema.nullable(),
     orders: runHistoryCollectionMetadataSchema
       .extend({
         records: z.array(runHistoryOrderOutcomeSchema),

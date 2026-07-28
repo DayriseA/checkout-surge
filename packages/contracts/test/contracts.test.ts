@@ -2235,6 +2235,7 @@ describe("public runtime policy contract", () => {
       adminRunHistoryDetailResponseSchema.parse({
         summary,
         run: { ...detail.run, presetId: "33333333-3333-4333-8333-333333333333", saleOfferId },
+        loadRunDiagnosticsSummary: runnerDiagnostics(),
         orders: {
           totalCount: 1,
           limit: 20,
@@ -2306,6 +2307,12 @@ describe("public runtime policy contract", () => {
         timestamp,
       }),
     ).not.toThrow();
+    expect(() =>
+      publicRunHistoryDetailResponseSchema.parse({
+        ...detail,
+        loadRunDiagnosticsSummary: runnerDiagnostics(),
+      }),
+    ).toThrow();
     expect(() =>
       publicRunHistoryDetailResponseSchema.parse({
         ...detail,

@@ -275,6 +275,11 @@ describe("run history service", () => {
     });
 
     const adminDetail = await service.adminDetail(ids.newerRun);
+    expect(adminDetail?.loadRunDiagnosticsSummary).toMatchObject({
+      k6Version: "k6 v1.0.0",
+      generatorCapacity: null,
+      generatorUtilisation: null,
+    });
     expect(adminDetail?.summary.trafficDeliverySummary.notes).toContain(
       "private-delivery-diagnostic-marker",
     );
@@ -293,6 +298,43 @@ describe("run history service", () => {
       "order.confirmed",
       "order.queued",
     ]);
+
+    const {
+      generatorCapacity: _generatorCapacity,
+      generatorUtilisation: _generatorUtilisation,
+      ...legacyDiagnostics
+    } = runHistoryDiagnosticsFixture();
+    await db
+      .update(demoRunSummaries)
+      .set({
+        loadRunDiagnosticsSummary: {
+          ...legacyDiagnostics,
+          accountingWarnings: ["accepted_response_accounting_incomplete"],
+        },
+      })
+      .where(eq(demoRunSummaries.id, ids.newerSummary));
+    const legacyAdminDetail = await service.adminDetail(ids.newerRun);
+    expect(legacyAdminDetail?.loadRunDiagnosticsSummary).toMatchObject({
+      generatorCapacity: null,
+      generatorUtilisation: null,
+    });
+    expect(legacyAdminDetail?.loadRunDiagnosticsSummary).not.toHaveProperty("accountingWarnings");
+
+    await db
+      .update(demoRunSummaries)
+      .set({ loadRunDiagnosticsSummary: { ...legacyDiagnostics, nproc: 0 } })
+      .where(eq(demoRunSummaries.id, ids.newerSummary));
+    await expect(service.adminDetail(ids.newerRun)).rejects.toThrow(
+      /loadRunDiagnosticsSummary\.nproc/,
+    );
+
+    await db
+      .update(demoRunSummaries)
+      .set({ loadRunDiagnosticsSummary: { failureReason: "failed_before_traffic_start" } })
+      .where(eq(demoRunSummaries.id, ids.newerSummary));
+    await expect(service.adminDetail(ids.newerRun)).resolves.toMatchObject({
+      loadRunDiagnosticsSummary: null,
+    });
   });
 
   it("caps protected admin rows at 20 with accurate truncation metadata", async () => {
@@ -684,7 +726,7 @@ function summaryFixture(input: {
       notes: input.trafficDeliveryStatus === "failed" ? ["private-delivery-diagnostic-marker"] : [],
     }),
     httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
-    loadRunDiagnosticsSummary: {},
+    loadRunDiagnosticsSummary: runHistoryDiagnosticsFixture(),
     businessOutcomeSummary: {
       acceptedReservations: 3,
       soldOutRejections: 2,
@@ -709,6 +751,46 @@ function summaryFixture(input: {
     },
     capturedAt: input.capturedAt,
     createdAt: input.capturedAt,
+  };
+}
+
+function runHistoryDiagnosticsFixture() {
+  return {
+    startedAt: "2026-06-20T00:00:00.000Z",
+    completedAt: "2026-06-20T00:00:10.000Z",
+    nproc: 8,
+    ulimitNofile: 1_048_576,
+    processMaxOpenFiles: { soft: 1_048_576, hard: 1_048_576 },
+    generatorCapacity: null,
+    generatorUtilisation: null,
+    networkDiagnostics: null,
+    k6Version: "k6 v1.0.0",
+    executionPlan: {
+      trafficMode: "buyer-spike" as const,
+      buyerCount: 10,
+      duplicateEachBuyerAttempt: false,
+      iterationsPerVu: 1,
+      plannedEmittedAttempts: 10,
+      startDelaySeconds: 0,
+      maxDurationSeconds: 1,
+    },
+    stderrLines: [],
+    stderrLineCountObserved: 0,
+    stderrLineCountRetained: 0,
+    stderrRetainedLineLimit: 50 as const,
+    stderrLineTruncationLength: 500 as const,
+    stderrLineTruncatedCount: 0,
+    terminalMetricSources: {
+      startedRequests: "summary_export" as const,
+      completedRequests: "summary_export" as const,
+      acceptedResponses: "summary_export" as const,
+      soldOutResponses: "summary_export" as const,
+      transportFailures: "summary_export" as const,
+      unexpectedResponses: "summary_export" as const,
+      droppedIterations: "summary_export" as const,
+      completedIterations: "summary_export" as const,
+    },
+    summaryExportWarnings: [],
   };
 }
 
