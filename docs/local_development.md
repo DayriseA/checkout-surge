@@ -77,6 +77,14 @@ Start the full local runtime (only the dashboard proxy is published):
 pnpm runtime:up
 ```
 
+The reference Compose runtime widens only the load-orchestrator container's ephemeral port range to `10240 65535` and enables outbound TIME_WAIT reuse with `tcp_tw_reuse=1`; `LOAD_ORCHESTRATOR_PORT_RANGE` and `LOAD_ORCHESTRATOR_TCP_TW_REUSE` override those defaults. These are generator-capacity safeguards for repeated cold-connection surges, not changes to the API's backpressure behavior. Container platforms that reject service-level sysctls can use the verified no-sysctls override:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.no-sysctls.yml up -d
+```
+
+The override uses Compose's `!reset` tag to clear both the API and load-orchestrator blocks and was verified with Docker Compose v2.40.3. If another Compose implementation does not support the tag, deploy from a copy of `docker-compose.yml` with the `sysctls:` blocks removed. See [High-Load Tuning Notes](k6_high_load_tuning.md#reference-runtime-network-namespace) for the measurement and portability rationale.
+
 Run migrations and seed the demo product, baseline sale offer, durable demo presets, PostgreSQL records, and Redis inventory:
 
 ```bash
@@ -514,6 +522,8 @@ Most infrastructure URLs have local defaults, but every run/control service chan
 | `K6_BINARY` | `k6` host-native; `/usr/local/bin/k6` in compose | Load orchestrator |
 | `K6_CANCELLATION_TIMEOUT_MS` | `10000` (maximum `15000`) | End-to-end load-orchestrator bound from accepted exact-run cancellation through observed k6 child exit/reap |
 | `COMPLETION_DELIVERY_RETRY_INTERVAL_MS` | `5000` (maximum `60000`) | Fixed bounded interval between serialized retries of the one durable `completion_pending` report; each HTTP attempt retains its five-second deadline |
+| `LOAD_ORCHESTRATOR_PORT_RANGE` | `10240 65535` in Compose | Load-orchestrator-only ephemeral port range for repeated cold-connection surges; host-native runs keep the host setting |
+| `LOAD_ORCHESTRATOR_TCP_TW_REUSE` | `1` in Compose | Load-orchestrator-only outbound TIME_WAIT reuse for back-to-back runs; host-native runs keep the host setting |
 | `LOAD_ORCHESTRATOR_STATE_DIR` | `.checkout-surge/load-orchestrator` host-native; named-volume path in Compose | Durable single-slot traffic execution journal |
 | `LOG_LEVEL` | `info` | Shared logger |
 

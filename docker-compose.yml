@@ -197,6 +197,9 @@ services:
       K6_CANCELLATION_TIMEOUT_MS: ${K6_CANCELLATION_TIMEOUT_MS:-10000}
       COMPLETION_DELIVERY_RETRY_INTERVAL_MS: ${COMPLETION_DELIVERY_RETRY_INTERVAL_MS:-5000}
       LOAD_ORCHESTRATOR_STATE_DIR: /var/lib/checkout-surge/load-orchestrator
+    sysctls:
+      net.ipv4.tcp_tw_reuse: "${LOAD_ORCHESTRATOR_TCP_TW_REUSE:-1}"
+      net.ipv4.ip_local_port_range: "${LOAD_ORCHESTRATOR_PORT_RANGE:-10240 65535}"
     volumes:
       - checkout-surge-load-orchestrator-data:/var/lib/checkout-surge/load-orchestrator
     depends_on:

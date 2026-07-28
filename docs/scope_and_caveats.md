@@ -22,15 +22,15 @@ These three limitations apply to the current reference runtime:
 
 ### Connection-establishment ceiling
 
-The reference runtime binds the API container's `net.core.somaxconn` to the same `API_LISTEN_BACKLOG` value that the Node.js server requests. This prevents Docker's kernel-level accept backlog from silently capping the application configuration. Platforms that reject container sysctls can remove them with the supplied override:
+The reference runtime binds the API container's `net.core.somaxconn` to the same `API_LISTEN_BACKLOG` value that the Node.js server requests. This prevents Docker's kernel-level accept backlog from silently capping the application configuration. It separately widens only the load-orchestrator's ephemeral port range and enables outbound TIME_WAIT reuse for repeated cold-connection surges. Platforms that reject container sysctls can remove both blocks with the supplied override:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.no-sysctls.yml up -d
 ```
 
-The override clears the block with the Compose `!reset` tag, verified on Docker Compose v2.40.3. A plain `sysctls: []` merges instead of clearing and would silently leave the sysctl in place, so the tag is required rather than cosmetic. If a Compose implementation does not support the tag correctly, deploy from a copy of `docker-compose.yml` with the `sysctls:` block removed.
+The override clears both blocks with the Compose `!reset` tag, verified on Docker Compose v2.40.3. A plain `sysctls: []` merges instead of clearing and would silently leave the sysctls in place, so the tag is required rather than cosmetic. If a Compose implementation does not support the tag correctly, deploy from a copy of `docker-compose.yml` with the `sysctls:` blocks removed.
 
-That escape hatch intentionally restores the platform default and therefore no longer guarantees that `API_LISTEN_BACKLOG` is fully honoured. The API reads `/proc/sys/net/core/somaxconn` at startup and logs a warning when the kernel limit is below the configured backlog, so the divergence is reported rather than silent.
+That escape hatch intentionally restores both platform defaults. It therefore no longer guarantees that `API_LISTEN_BACKLOG` is fully honoured or that the load generator has the wider ephemeral range and outbound TIME_WAIT reuse. The API reads `/proc/sys/net/core/somaxconn` at startup and logs a warning when the kernel limit is below the configured backlog, so its divergence is reported rather than silent. The load-orchestrator persists its effective network values in each run's `networkDiagnostics`.
 
 `surge-10k` opens 10,000 cold connections simultaneously: its `per-vu-iterations` executor runs one iteration per VU, so connection reuse is structurally impossible. Raising `somaxconn` from the Docker default of 4096 to the configured 8192 moves the connection-establishment cliff; it does not remove the finite capacity of one Node.js API process on the measured six-core host. Multi-second k6 `blocked` and `connecting` times at this boundary are TCP connection-establishment queueing rather than API processing time and are expected rather than anomalous. Scaling the system under test remains outside the demonstrator's scope.
 

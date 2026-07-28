@@ -1,3 +1,5 @@
 services:
   api:
     sysctls: !reset []
+  load-orchestrator:
+    sysctls: !reset []
