@@ -79,6 +79,7 @@ export default function () { http.get("http://127.0.0.1:${address.port}/"); }
       await runK6([
         "run",
         "--quiet",
+        "--no-usage-report",
         "--summary-export",
         summaryPath,
         "--out",
@@ -143,7 +144,16 @@ export default function () { http.get("http://127.0.0.1:${address.port}/"); }
 
     try {
       const execution = await runK6(
-        ["run", "--quiet", "--summary-export", summaryPath, "--out", "json=-", scriptPath],
+        [
+          "run",
+          "--quiet",
+          "--no-usage-report",
+          "--summary-export",
+          summaryPath,
+          "--out",
+          "json=-",
+          scriptPath,
+        ],
         { expectSuccessfulExit: false },
       );
 
@@ -194,6 +204,7 @@ export default function () { http.get("http://127.0.0.1:${address.port}/"); }
     const execution = await runK6([
       "run",
       "--quiet",
+      "--no-usage-report",
       "--summary-export",
       summaryPath,
       "--out",

@@ -649,6 +649,7 @@ describe("load-orchestrator k6 mapping", () => {
     );
     expect(script.contents).toContain("responseCallback: expectedCheckoutStatuses");
     expect(script.contents).toContain('"discardResponseBodies":true');
+    expect(script.contents).toContain('"systemTags":["scenario"]');
     expect(script.contents).toContain(
       `const checkoutOutcomeHeaderName = "${buyOutcomeHeaderName}"`,
     );
@@ -879,12 +880,26 @@ describe("load-orchestrator k6 mapping", () => {
       JSON.stringify({
         type: "Point",
         metric: "http_req_duration",
-        data: { value: 42, time: timestamp },
+        data: {
+          value: 42,
+          time: timestamp,
+          tags: {
+            error_code: "1404",
+            expected_response: "false",
+            group: "",
+            method: "POST",
+            name: "http://api:4000/buy",
+            proto: "HTTP/1.1",
+            scenario: "checkout",
+            status: "404",
+            url: "http://api:4000/buy",
+          },
+        },
       }),
       JSON.stringify({
         type: "Point",
         metric: "http_req_failed",
-        data: { value: 0, time: timestamp },
+        data: { value: 0, time: timestamp, tags: { scenario: "checkout" } },
       }),
       JSON.stringify({
         type: "Point",
@@ -2178,6 +2193,7 @@ describe("SpawnK6Runner completion reporting", () => {
     expect(spawnCall.args).toEqual([
       "run",
       "--quiet",
+      "--no-usage-report",
       "--summary-export",
       path.join(workDir, "summary.json"),
       "--out",
@@ -2190,7 +2206,7 @@ describe("SpawnK6Runner completion reporting", () => {
       stdio: ["ignore", "pipe", "pipe"],
     });
     expect(script).toContain(
-      'export const options = {"discardResponseBodies":true,"scenarios":{"checkout":',
+      'export const options = {"discardResponseBodies":true,"systemTags":["scenario"],"scenarios":{"checkout":',
     );
     expect(script).toContain(startRequest.runId);
     expect(apiClient.sendMetrics).toHaveBeenCalledTimes(1);

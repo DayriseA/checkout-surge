@@ -129,7 +129,16 @@ export class K6ChildProcessSupervisor {
       this.throwIfStartCancelled(active);
       const child = (this.options.spawnProcess ?? spawn)(
         this.options.k6Binary,
-        ["run", "--quiet", "--summary-export", summaryPath, "--out", "json=-", scriptPath],
+        [
+          "run",
+          "--quiet",
+          "--no-usage-report",
+          "--summary-export",
+          summaryPath,
+          "--out",
+          "json=-",
+          scriptPath,
+        ],
         {
           detached: false,
           shell: false,
