@@ -29,6 +29,7 @@ import { closeApiResources } from "./runtime/api-resource-cleanup.js";
 import { loadApiConfig } from "./runtime/config.js";
 import { createDashboardRecoveryOperationFactory } from "./runtime/dashboard-recovery-operation-factory.js";
 import type { ApiFastifyInstance } from "./runtime/fastify.js";
+import { warnWhenListenBacklogIsCapped } from "./runtime/listen-backlog-ceiling.js";
 import { createPendingPersistenceRecoveryOperations } from "./runtime/pending-persistence-operation-factory.js";
 import { createApiReadiness } from "./runtime/readiness.js";
 import { createTerminalInventoryReadOperation } from "./runtime/terminal-inventory-read-operation.js";
@@ -504,6 +505,8 @@ export async function startApiServer(): Promise<void> {
           process.exit(1);
         });
     });
+
+    await warnWhenListenBacklogIsCapped({ requestedBacklog: config.listenBacklog, logger });
 
     await server.listen({
       host: config.host,

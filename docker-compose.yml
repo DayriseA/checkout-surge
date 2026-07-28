@@ -93,6 +93,8 @@ services:
       DEMO_MAX_VUS: ${DEMO_MAX_VUS:-10000}
       DEMO_RUN_DRAIN_TIMEOUT_SECONDS: ${DEMO_RUN_DRAIN_TIMEOUT_SECONDS:-300}
       DEMO_RUN_FINALIZATION_POLL_INTERVAL_SECONDS: ${DEMO_RUN_FINALIZATION_POLL_INTERVAL_SECONDS:-5}
+    sysctls:
+      net.core.somaxconn: "${API_LISTEN_BACKLOG:-8192}"
     depends_on:
       postgres:
         condition: service_healthy

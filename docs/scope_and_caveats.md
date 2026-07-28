@@ -14,10 +14,34 @@ These five exclusions are not missing deliverables or roadmap commitments:
 
 ## Current Caveats
 
-These two limitations apply to the current reference runtime:
+These three limitations apply to the current reference runtime:
 
 - **Local and 10k validation is environment-dependent and is not hosted benchmark evidence.** Local laptop, Dev Container, and Codespaces runs share host resources; the 10k characterization permits capacity-driven dropped iterations while still requiring complete accounting and business invariants. The repository has no hosted benchmark workflow or published hosted result. See [containerized load-run validation](runtime_topology.md#containerized-load-run-validation).
 - **Host-native load-orchestrator runs require a separately available k6 executable.** `K6_BINARY` defaults to `k6` on `PATH`; the reference container instead includes pinned k6 2.0.0. See [host-native startup](local_development.md#host-native-startup) and the [reference local topology](runtime_topology.md#reference-local-topology).
+- **A single API process has a finite cold-connection establishment ceiling.** The reference runtime makes the configured listen backlog real, but does not claim that one Node.js process can accept an unlimited simultaneous connection burst. See the [connection-establishment ceiling](#connection-establishment-ceiling) for the `surge-10k` boundary and its measured evidence.
+
+### Connection-establishment ceiling
+
+The reference runtime binds the API container's `net.core.somaxconn` to the same `API_LISTEN_BACKLOG` value that the Node.js server requests. This prevents Docker's kernel-level accept backlog from silently capping the application configuration. Platforms that reject container sysctls can remove them with the supplied override:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.no-sysctls.yml up -d
+```
+
+The override clears the block with the Compose `!reset` tag, verified on Docker Compose v2.40.3. A plain `sysctls: []` merges instead of clearing and would silently leave the sysctl in place, so the tag is required rather than cosmetic. If a Compose implementation does not support the tag correctly, deploy from a copy of `docker-compose.yml` with the `sysctls:` block removed.
+
+That escape hatch intentionally restores the platform default and therefore no longer guarantees that `API_LISTEN_BACKLOG` is fully honoured. The API reads `/proc/sys/net/core/somaxconn` at startup and logs a warning when the kernel limit is below the configured backlog, so the divergence is reported rather than silent.
+
+`surge-10k` opens 10,000 cold connections simultaneously: its `per-vu-iterations` executor runs one iteration per VU, so connection reuse is structurally impossible. Raising `somaxconn` from the Docker default of 4096 to the configured 8192 moves the connection-establishment cliff; it does not remove the finite capacity of one Node.js API process on the measured six-core host. Multi-second k6 `blocked` and `connecting` times at this boundary are TCP connection-establishment queueing rather than API processing time and are expected rather than anomalous. Scaling the system under test remains outside the demonstrator's scope.
+
+On 2026-07-28, matched fully delivered `surge-10k` runs on the same reference Docker host produced these cumulative-counter deltas:
+
+| API `somaxconn` | `API_LISTEN_BACKLOG` | `ListenOverflows` delta | `ListenDrops` delta |
+| --- | --- | ---: | ---: |
+| 4096 | 8192 | 40,384 | 40,384 |
+| 8192 | 8192 | 0 | 0 |
+
+The load-orchestrator namespace remained unchanged at `somaxconn=4096`. The near-zero result after alignment shows that the significant fact was the static silent cap, so it belongs in environment configuration and documentation rather than the per-run diagnostics record. Future evidence of sustained accept-queue overflow with an aligned backlog would be the reason to revisit that decision.
 
 ## Deferred Decisions
 
