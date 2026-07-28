@@ -26,16 +26,47 @@ export async function collectLoadRunDiagnostics(
 ): Promise<InitialLoadRunDiagnostics> {
   const command = dependencies.runCommand ?? boundedCommand;
   const reader = dependencies.readText ?? ((file) => readFile(file, "utf8"));
-  const [nprocText, nofileText, limits, portRange, twReuse, timestamps, version] =
-    await Promise.all([
-      safeCommand(command, "nproc", []),
-      safeCommand(command, "sh", ["-lc", "ulimit -n"]),
-      safeRead(reader, "/proc/1/limits"),
-      safeRead(reader, "/proc/sys/net/ipv4/ip_local_port_range"),
-      safeRead(reader, "/proc/sys/net/ipv4/tcp_tw_reuse"),
-      safeRead(reader, "/proc/sys/net/ipv4/tcp_timestamps"),
-      safeCommand(command, k6Binary, ["version"]),
-    ]);
+  const [
+    nprocText,
+    nofileText,
+    limits,
+    meminfo,
+    v2MemoryLimit,
+    v2CpuQuota,
+    v1MemoryLimit,
+    v1CpuQuota,
+    v1CpuPeriod,
+    portRange,
+    twReuse,
+    timestamps,
+    version,
+  ] = await Promise.all([
+    safeCommand(command, "nproc", []),
+    safeCommand(command, "sh", ["-lc", "ulimit -n"]),
+    safeRead(reader, "/proc/1/limits"),
+    safeRead(reader, "/proc/meminfo"),
+    safeRead(reader, "/sys/fs/cgroup/memory.max"),
+    safeRead(reader, "/sys/fs/cgroup/cpu.max"),
+    safeRead(reader, "/sys/fs/cgroup/memory/memory.limit_in_bytes"),
+    safeRead(reader, "/sys/fs/cgroup/cpu/cpu.cfs_quota_us"),
+    safeRead(reader, "/sys/fs/cgroup/cpu/cpu.cfs_period_us"),
+    safeRead(reader, "/proc/sys/net/ipv4/ip_local_port_range"),
+    safeRead(reader, "/proc/sys/net/ipv4/tcp_tw_reuse"),
+    safeRead(reader, "/proc/sys/net/ipv4/tcp_timestamps"),
+    safeCommand(command, k6Binary, ["version"]),
+  ]);
+  const memory = parseMeminfo(meminfo);
+  const memoryLimit = parseV2MemoryLimit(v2MemoryLimit) ??
+    parseV1MemoryLimit(v1MemoryLimit) ?? { value: null, unlimited: null };
+  const cpuQuota = parseV2CpuQuota(v2CpuQuota) ??
+    parseV1CpuQuota(v1CpuQuota, v1CpuPeriod) ?? { value: null, unlimited: null };
+  const capacity = {
+    ...memory,
+    cgroupMemoryLimitBytes: memoryLimit.value,
+    cgroupMemoryLimitUnlimited: memoryLimit.unlimited,
+    cgroupCpuQuota: cpuQuota.value,
+    cgroupCpuQuotaUnlimited: cpuQuota.unlimited,
+  };
   const network = {
     ipLocalPortRange: parsePortRange(portRange),
     tcpTwReuse: parseNonnegative(twReuse),
@@ -45,6 +76,7 @@ export async function collectLoadRunDiagnostics(
     nproc: parsePositive(nprocText),
     ulimitNofile: parsePositive(nofileText),
     processMaxOpenFiles: parseOpenFiles(limits),
+    generatorCapacity: Object.values(capacity).every((value) => value === null) ? null : capacity,
     networkDiagnostics: Object.values(network).every((value) => value === null) ? null : network,
     k6Version: firstLine(version),
     executionPlan,
@@ -108,6 +140,54 @@ function parseInteger(value: string | null): number | null {
   if (!/^[0-9]+$/.test(normalized)) return null;
   const parsed = Number(normalized);
   return Number.isSafeInteger(parsed) ? parsed : null;
+}
+function parseMeminfo(value: string | null) {
+  return {
+    memTotalBytes: parseMeminfoBytes(value, "MemTotal", false),
+    memAvailableBytes: parseMeminfoBytes(value, "MemAvailable", false),
+    swapTotalBytes: parseMeminfoBytes(value, "SwapTotal", true),
+  };
+}
+function parseMeminfoBytes(value: string | null, field: string, allowZero: boolean) {
+  const match = new RegExp(`^${field}:\\s+([0-9]+)\\s+kB\\s*$`, "m").exec(value ?? "");
+  if (!match) return null;
+  const bytes = BigInt(match[1] ?? "") * 1_024n;
+  if ((!allowZero && bytes === 0n) || bytes > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+  return Number(bytes);
+}
+type CgroupValue = { value: number | null; unlimited: boolean };
+function parseV2MemoryLimit(value: string | null): CgroupValue | null {
+  if (value?.trim() === "max") return { value: null, unlimited: true };
+  const parsed = parsePositive(value);
+  return parsed === null ? null : { value: parsed, unlimited: false };
+}
+// cgroup v1 reports an unlimited limit near signed 64-bit max; 1 EiB is beyond a real limit.
+const v1UnlimitedMemoryThreshold = 1n << 60n;
+function parseV1MemoryLimit(value: string | null): CgroupValue | null {
+  const normalized = value?.trim() ?? "";
+  if (!/^[0-9]+$/.test(normalized)) return null;
+  const parsed = BigInt(normalized);
+  if (parsed >= v1UnlimitedMemoryThreshold) return { value: null, unlimited: true };
+  if (parsed <= 0n || parsed > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+  return { value: Number(parsed), unlimited: false };
+}
+function parseV2CpuQuota(value: string | null): CgroupValue | null {
+  const parts = value?.trim().split(/\s+/) ?? [];
+  if (parts.length !== 2 || parsePositive(parts[1] ?? null) === null) return null;
+  if (parts[0] === "max") return { value: null, unlimited: true };
+  return parseCpuQuota(parts[0] ?? null, parts[1] ?? null);
+}
+function parseV1CpuQuota(quota: string | null, period: string | null): CgroupValue | null {
+  if (parsePositive(period) === null) return null;
+  if (quota?.trim() === "-1") return { value: null, unlimited: true };
+  return parseCpuQuota(quota, period);
+}
+function parseCpuQuota(quota: string | null, period: string | null): CgroupValue | null {
+  const parsedQuota = parsePositive(quota);
+  const parsedPeriod = parsePositive(period);
+  if (parsedQuota === null || parsedPeriod === null) return null;
+  const value = parsedQuota / parsedPeriod;
+  return Number.isFinite(value) && value > 0 ? { value, unlimited: false } : null;
 }
 function parsePortRange(value: string | null): string | null {
   const parts = value?.trim().split(/\s+/) ?? [];

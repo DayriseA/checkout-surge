@@ -18,6 +18,8 @@ This document captures reusable guidance for local or single-machine high-load k
 - At `10,000` preallocated VUs, that implies roughly `10 GB` to `50 GB` possible generator RAM demand depending on script complexity. A simple script may land near the low end, but `32 GB` is not automatically excessive for a 10k-VU HTTP test.
 - Grafana recommends keeping physical RAM use below about `90%` and warns that swap can make performance erratic enough to invalidate load-test results.
 
+Each real run persists a pre-flight `generatorCapacity` snapshot from the load-orchestrator namespace: host-visible `MemTotal`, `MemAvailable`, and `SwapTotal` in bytes, plus the cgroup memory limit and effective CPU quota in cores. The existing `nproc` value remains the host-visible CPU count; compare it with the cgroup quota when the container is CPU-limited. Nullable companion `cgroupMemoryLimitUnlimited` and `cgroupCpuQuotaUnlimited` fields distinguish an unlimited cgroup setting from an unavailable probe.
+
 ## Linux and Network Limits
 
 OS/network limits matter for high-concurrency HTTP tests. Grafana's Linux large-test example uses:
@@ -83,6 +85,6 @@ For a high-load replay, capture these before or during the run:
 - `sysctl net.ipv4.ip_local_port_range`
 - `sysctl net.ipv4.tcp_tw_reuse`
 - `sysctl net.ipv4.tcp_timestamps`
-- load-orchestrator CPU and memory
+- `/proc/meminfo`, `/sys/fs/cgroup/memory.max`, and `/sys/fs/cgroup/cpu.max` in the load-orchestrator namespace (captured automatically in run diagnostics, with cgroup v1 fallback)
 - k6 stderr
 - k6 summary metrics, especially dropped iterations and HTTP blocked/connecting/waiting times

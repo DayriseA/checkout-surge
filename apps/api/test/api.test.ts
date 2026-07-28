@@ -4405,6 +4405,7 @@ function runnerDiagnosticsFixture() {
     nproc: null,
     ulimitNofile: null,
     processMaxOpenFiles: null,
+    generatorCapacity: null,
     networkDiagnostics: null,
     k6Version: null,
     executionPlan: {

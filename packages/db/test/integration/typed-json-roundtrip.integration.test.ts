@@ -70,6 +70,15 @@ describe.skipIf(!databaseUrl)("contract-typed persisted JSON", () => {
       nproc: null,
       ulimitNofile: null,
       processMaxOpenFiles: null,
+      generatorCapacity: {
+        memTotalBytes: 8_589_934_592,
+        memAvailableBytes: 6_442_450_944,
+        swapTotalBytes: 0,
+        cgroupMemoryLimitBytes: null,
+        cgroupMemoryLimitUnlimited: true,
+        cgroupCpuQuota: 1.5,
+        cgroupCpuQuotaUnlimited: false,
+      },
       networkDiagnostics: null,
       k6Version: "k6 v1.0.0",
       executionPlan: {

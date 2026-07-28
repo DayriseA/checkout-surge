@@ -387,6 +387,7 @@ export type LoadExecutionPlan = z.infer<typeof loadExecutionPlanSchema>;
 
 const nullablePositiveIntegerSchema = positiveIntegerSchema.nullable();
 const nullableNonnegativeIntegerSchema = nonnegativeIntegerSchema.nullable();
+const nullablePositiveNumberSchema = z.number().positive().finite().nullable();
 
 export const terminalMetricSourceSchema = z.enum(["summary_export", "point_stream"]);
 export type TerminalMetricSource = z.infer<typeof terminalMetricSourceSchema>;
@@ -456,6 +457,39 @@ export const loadRunDiagnosticsSummarySchema = z
             code: "custom",
             path: ["hard"],
             message: "must be greater than or equal to soft",
+          });
+      })
+      .nullable(),
+    generatorCapacity: z
+      .object({
+        memTotalBytes: nullablePositiveIntegerSchema,
+        memAvailableBytes: nullablePositiveIntegerSchema,
+        swapTotalBytes: nullableNonnegativeIntegerSchema,
+        cgroupMemoryLimitBytes: nullablePositiveIntegerSchema,
+        cgroupMemoryLimitUnlimited: z.boolean().nullable(),
+        cgroupCpuQuota: nullablePositiveNumberSchema,
+        cgroupCpuQuotaUnlimited: z.boolean().nullable(),
+      })
+      .strict()
+      .superRefine((value, context) => {
+        for (const [field, unlimitedField] of [
+          ["cgroupMemoryLimitBytes", "cgroupMemoryLimitUnlimited"],
+          ["cgroupCpuQuota", "cgroupCpuQuotaUnlimited"],
+        ] as const) {
+          if (
+            (value[field] !== null && value[unlimitedField] !== false) ||
+            (value[field] === null && value[unlimitedField] === false)
+          )
+            context.addIssue({
+              code: "custom",
+              path: [unlimitedField],
+              message: "must be false exactly when the paired finite value is available",
+            });
+        }
+        if (Object.values(value).every((entry) => entry === null))
+          context.addIssue({
+            code: "custom",
+            message: "all-unavailable generator capacity must be null",
           });
       })
       .nullable(),

@@ -53,6 +53,14 @@ const timestamp = "2026-06-20T12:00:00.000Z";
 const completionTimestamp = "2026-06-20T12:00:05.000Z";
 const startRequest = trafficExecutionStartRequestFixture();
 
+function diagnosticReader(files: Record<string, string>) {
+  return async (file: string) => {
+    const value = files[file];
+    if (value === undefined) throw new Error(`missing ${file}`);
+    return value;
+  };
+}
+
 class InMemoryExecutionStore implements ExecutionStore {
   private execution: DurableExecution | null = null;
   private mutationChain = Promise.resolve();
@@ -557,6 +565,7 @@ describe("load-orchestrator k6 mapping", () => {
       nproc: 8,
       ulimitNofile: null,
       processMaxOpenFiles: { soft: 1024, hard: 2048 },
+      generatorCapacity: null,
       networkDiagnostics: { ipLocalPortRange: "32768 60999", tcpTwReuse: 2, tcpTimestamps: null },
       k6Version: "k6 v1",
       executionPlan: plan,
@@ -574,16 +583,115 @@ describe("load-orchestrator k6 mapping", () => {
             ? "32768 60999 trailing"
             : file.endsWith("tcp_tw_reuse")
               ? "2garbage"
-              : "1 2",
+              : "malformed",
       ),
     });
     expect(diagnostics).toMatchObject({
       nproc: null,
       ulimitNofile: null,
       processMaxOpenFiles: null,
+      generatorCapacity: null,
       networkDiagnostics: null,
       k6Version: "2 garbage",
     });
+  });
+
+  it("collects meminfo and finite cgroup v2 capacity", async () => {
+    const plan = generateK6Script(startRequest).executionPlan;
+    const diagnostics = await collectLoadRunDiagnostics("k6", plan, {
+      runCommand: async () => null,
+      readText: diagnosticReader({
+        "/proc/meminfo":
+          "MemTotal:       8388608 kB\nMemAvailable:   6291456 kB\nSwapTotal:            0 kB\n",
+        "/sys/fs/cgroup/memory.max": "4294967296\n",
+        "/sys/fs/cgroup/cpu.max": "150000 100000\n",
+      }),
+    });
+    expect(diagnostics.generatorCapacity).toEqual({
+      memTotalBytes: 8_589_934_592,
+      memAvailableBytes: 6_442_450_944,
+      swapTotalBytes: 0,
+      cgroupMemoryLimitBytes: 4_294_967_296,
+      cgroupMemoryLimitUnlimited: false,
+      cgroupCpuQuota: 1.5,
+      cgroupCpuQuotaUnlimited: false,
+    });
+  });
+
+  it("retains partial meminfo and distinguishes unlimited cgroup v2 capacity", async () => {
+    const plan = generateK6Script(startRequest).executionPlan;
+    const diagnostics = await collectLoadRunDiagnostics("k6", plan, {
+      runCommand: async () => null,
+      readText: diagnosticReader({
+        "/proc/meminfo": "MemTotal: malformed\nMemAvailable: 1024 kB\nSwapTotal: 0 kB\n",
+        "/sys/fs/cgroup/memory.max": "max\n",
+        "/sys/fs/cgroup/cpu.max": "max 100000\n",
+      }),
+    });
+    expect(diagnostics.generatorCapacity).toEqual({
+      memTotalBytes: null,
+      memAvailableBytes: 1_048_576,
+      swapTotalBytes: 0,
+      cgroupMemoryLimitBytes: null,
+      cgroupMemoryLimitUnlimited: true,
+      cgroupCpuQuota: null,
+      cgroupCpuQuotaUnlimited: true,
+    });
+  });
+
+  it("falls back to finite and unlimited cgroup v1 capacity", async () => {
+    const plan = generateK6Script(startRequest).executionPlan;
+    const finite = await collectLoadRunDiagnostics("k6", plan, {
+      runCommand: async () => null,
+      readText: diagnosticReader({
+        "/sys/fs/cgroup/memory/memory.limit_in_bytes": "2147483648\n",
+        "/sys/fs/cgroup/cpu/cpu.cfs_quota_us": "50000\n",
+        "/sys/fs/cgroup/cpu/cpu.cfs_period_us": "100000\n",
+      }),
+    });
+    expect(finite.generatorCapacity).toMatchObject({
+      cgroupMemoryLimitBytes: 2_147_483_648,
+      cgroupMemoryLimitUnlimited: false,
+      cgroupCpuQuota: 0.5,
+      cgroupCpuQuotaUnlimited: false,
+    });
+
+    const unlimited = await collectLoadRunDiagnostics("k6", plan, {
+      runCommand: async () => null,
+      readText: diagnosticReader({
+        "/sys/fs/cgroup/memory/memory.limit_in_bytes": "9223372036854771712\n",
+        "/sys/fs/cgroup/cpu/cpu.cfs_quota_us": "-1\n",
+        "/sys/fs/cgroup/cpu/cpu.cfs_period_us": "100000\n",
+      }),
+    });
+    expect(unlimited.generatorCapacity).toMatchObject({
+      cgroupMemoryLimitBytes: null,
+      cgroupMemoryLimitUnlimited: true,
+      cgroupCpuQuota: null,
+      cgroupCpuQuotaUnlimited: true,
+    });
+  });
+
+  it("degrades invalid quota and malformed or missing capacity files without throwing", async () => {
+    const plan = generateK6Script(startRequest).executionPlan;
+    await expect(
+      collectLoadRunDiagnostics("k6", plan, {
+        runCommand: async () => null,
+        readText: diagnosticReader({
+          "/proc/meminfo": "MemTotal: nope\n",
+          "/sys/fs/cgroup/cpu.max": "100000 0\n",
+          "/sys/fs/cgroup/memory.max": "not-a-limit\n",
+        }),
+      }),
+    ).resolves.toMatchObject({ generatorCapacity: null });
+    await expect(
+      collectLoadRunDiagnostics("k6", plan, {
+        runCommand: async () => null,
+        readText: async () => {
+          throw new Error("missing");
+        },
+      }),
+    ).resolves.toMatchObject({ generatorCapacity: null });
   });
 
   it("frames and bounds retained stderr by logical line", () => {

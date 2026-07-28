@@ -370,6 +370,68 @@ describe("run lifecycle contracts", () => {
       }),
     ).toThrow();
   });
+  it("validates populated, partial, unavailable, and invalid generator capacity", () => {
+    const populated = {
+      memTotalBytes: 8_589_934_592,
+      memAvailableBytes: 6_442_450_944,
+      swapTotalBytes: 0,
+      cgroupMemoryLimitBytes: 4_294_967_296,
+      cgroupMemoryLimitUnlimited: false,
+      cgroupCpuQuota: 1.5,
+      cgroupCpuQuotaUnlimited: false,
+    };
+    expect(
+      loadRunDiagnosticsSummarySchema.parse({
+        ...runnerDiagnostics(),
+        generatorCapacity: populated,
+      }).generatorCapacity,
+    ).toEqual(populated);
+    expect(
+      loadRunDiagnosticsSummarySchema.parse({
+        ...runnerDiagnostics(),
+        generatorCapacity: {
+          ...populated,
+          memTotalBytes: null,
+          memAvailableBytes: null,
+          cgroupMemoryLimitBytes: null,
+          cgroupMemoryLimitUnlimited: true,
+          cgroupCpuQuota: null,
+          cgroupCpuQuotaUnlimited: null,
+        },
+      }).generatorCapacity,
+    ).toMatchObject({ swapTotalBytes: 0, cgroupMemoryLimitUnlimited: true });
+    expect(() =>
+      loadRunDiagnosticsSummarySchema.parse({
+        ...runnerDiagnostics(),
+        generatorCapacity: {
+          memTotalBytes: null,
+          memAvailableBytes: null,
+          swapTotalBytes: null,
+          cgroupMemoryLimitBytes: null,
+          cgroupMemoryLimitUnlimited: null,
+          cgroupCpuQuota: null,
+          cgroupCpuQuotaUnlimited: null,
+        },
+      }),
+    ).toThrow();
+    for (const cgroupCpuQuota of [-1, Number.POSITIVE_INFINITY]) {
+      expect(() =>
+        loadRunDiagnosticsSummarySchema.parse({
+          ...runnerDiagnostics(),
+          generatorCapacity: {
+            ...populated,
+            cgroupCpuQuota,
+          },
+        }),
+      ).toThrow();
+    }
+    expect(() =>
+      loadRunDiagnosticsSummarySchema.parse({
+        ...runnerDiagnostics(),
+        generatorCapacity: { ...populated, cgroupCpuQuotaUnlimited: null },
+      }),
+    ).toThrow();
+  });
   it("validates run-attributed buy and load payloads without deriving identity from correlation IDs", () => {
     expect(loadRunIdHeaderName).toBe("x-load-run-id");
 
@@ -2964,6 +3026,7 @@ function runnerDiagnostics() {
     nproc: null,
     ulimitNofile: null,
     processMaxOpenFiles: null,
+    generatorCapacity: null,
     networkDiagnostics: null,
     k6Version: null,
     executionPlan: {
