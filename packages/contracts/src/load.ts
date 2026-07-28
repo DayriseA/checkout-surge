@@ -458,8 +458,11 @@ export const generatorUtilisationSchema = z
   })
   .strict()
   .superRefine((value, context) => {
-    const { sampleCount: _sampleCount, effectiveIntervalMs: _effectiveIntervalMs, ...metrics } =
-      value;
+    const {
+      sampleCount: _sampleCount,
+      effectiveIntervalMs: _effectiveIntervalMs,
+      ...metrics
+    } = value;
     if (Object.values(metrics).every((entry) => entry === null))
       context.addIssue({
         code: "custom",

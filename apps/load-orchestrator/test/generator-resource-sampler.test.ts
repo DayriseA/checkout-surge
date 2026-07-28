@@ -62,8 +62,7 @@ function files(input: {
     "/proc/meminfo": `MemAvailable: ${input.memAvailableKb ?? 0} kB\n`,
     "/sys/fs/cgroup/cpu.stat": `usage_usec ${input.cpuUsageUsec ?? 0}\n`,
     "/sys/fs/cgroup/memory.swap.current": String(input.swapBytes ?? 0),
-    "/sys/fs/cgroup/memory.events":
-      `low 0\nhigh ${input.high ?? 0}\nmax ${input.max ?? 0}\noom 0\noom_kill ${input.oomKill ?? 0}\n`,
+    "/sys/fs/cgroup/memory.events": `low 0\nhigh ${input.high ?? 0}\nmax ${input.max ?? 0}\noom 0\noom_kill ${input.oomKill ?? 0}\n`,
   };
 }
 

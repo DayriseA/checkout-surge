@@ -52,15 +52,14 @@ export function startGeneratorResourceSampler(
     sampling = true;
     const observedAtMs = nowMs();
     try {
-      const [status, cgroupMemory, meminfo, cpuStat, cgroupSwap, memoryEvents] =
-        await Promise.all([
-          safeRead(readText, `/proc/${input.pid}/status`),
-          safeRead(readText, "/sys/fs/cgroup/memory.current"),
-          safeRead(readText, "/proc/meminfo"),
-          safeRead(readText, "/sys/fs/cgroup/cpu.stat"),
-          safeRead(readText, "/sys/fs/cgroup/memory.swap.current"),
-          safeRead(readText, "/sys/fs/cgroup/memory.events"),
-        ]);
+      const [status, cgroupMemory, meminfo, cpuStat, cgroupSwap, memoryEvents] = await Promise.all([
+        safeRead(readText, `/proc/${input.pid}/status`),
+        safeRead(readText, "/sys/fs/cgroup/memory.current"),
+        safeRead(readText, "/proc/meminfo"),
+        safeRead(readText, "/sys/fs/cgroup/cpu.stat"),
+        safeRead(readText, "/sys/fs/cgroup/memory.swap.current"),
+        safeRead(readText, "/sys/fs/cgroup/memory.events"),
+      ]);
       if (stopped) return;
 
       const k6RssBytes = parseKilobyteField(status, "VmRSS");
@@ -90,10 +89,7 @@ export function startGeneratorResourceSampler(
 
       peakK6RssBytes = maximum(peakK6RssBytes, k6RssBytes);
       peakCgroupMemoryBytes = maximum(peakCgroupMemoryBytes, cgroupMemoryBytes);
-      minimumHostMemAvailableBytes = minimum(
-        minimumHostMemAvailableBytes,
-        hostMemAvailableBytes,
-      );
+      minimumHostMemAvailableBytes = minimum(minimumHostMemAvailableBytes, hostMemAvailableBytes);
       peakCgroupSwapBytes = maximum(peakCgroupSwapBytes, cgroupSwapBytes);
       finalMemoryEventsHighCount = memoryEventsHighCount ?? finalMemoryEventsHighCount;
       finalMemoryEventsMaxCount = memoryEventsMaxCount ?? finalMemoryEventsMaxCount;
@@ -112,10 +108,7 @@ export function startGeneratorResourceSampler(
             (observedAtMs - previousCpu.observedAtMs) * 1_000 * input.effectiveCpuCores;
           const utilisationPercent = (usageDeltaUsec / capacityUsec) * 100;
           if (Number.isFinite(utilisationPercent)) {
-            peakCpuUtilisationPercent = maximum(
-              peakCpuUtilisationPercent,
-              utilisationPercent,
-            );
+            peakCpuUtilisationPercent = maximum(peakCpuUtilisationPercent, utilisationPercent);
             accumulatedCpuUsageUsec += usageDeltaUsec;
             accumulatedCpuCapacityUsec += capacityUsec;
           }
@@ -161,10 +154,7 @@ export function startGeneratorResourceSampler(
           firstSampleAtMs !== null &&
           lastSampleAtMs !== null &&
           lastSampleAtMs > firstSampleAtMs
-            ? Math.max(
-                1,
-                Math.round((lastSampleAtMs - firstSampleAtMs) / (sampleCount - 1)),
-              )
+            ? Math.max(1, Math.round((lastSampleAtMs - firstSampleAtMs) / (sampleCount - 1)))
             : intervalMs,
       };
       const { sampleCount: _sampleCount, effectiveIntervalMs: _interval, ...metrics } = result;

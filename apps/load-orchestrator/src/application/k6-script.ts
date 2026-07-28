@@ -81,10 +81,10 @@ const unexpectedResponses = new Counter("checkout_unexpected_responses");
 const checkoutOutcomeHeaderName = "${buyOutcomeHeaderName}";
 
 export const options = ${JSON.stringify({
-  discardResponseBodies: true,
-  systemTags: ["scenario"],
-  scenarios: { checkout: scenario },
-})};
+      discardResponseBodies: true,
+      systemTags: ["scenario"],
+      scenarios: { checkout: scenario },
+    })};
 
 function readResponseHeader(response, headerName) {
   for (const [key, value] of Object.entries(response.headers)) {

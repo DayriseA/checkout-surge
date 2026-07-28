@@ -7,6 +7,7 @@ import {
 } from "./demo.js";
 import { erpResilienceStatusSchema } from "./erp.js";
 import { inventoryStatusSchema } from "./inventory.js";
+import { trafficHttpSummarySchema } from "./load.js";
 import {
   correlationIdSchema,
   isoTimestampSchema,
@@ -14,7 +15,6 @@ import {
   uuidSchema,
 } from "./primitives.js";
 import { queueStatusSchema } from "./queue.js";
-import { trafficHttpSummarySchema } from "./load.js";
 import { transportAttemptCountsSchema } from "./traffic-transport-counts.js";
 
 export const dashboardEventsPath = "/dashboard/events" as const;

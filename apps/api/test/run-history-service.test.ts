@@ -375,10 +375,7 @@ describe("run history service", () => {
     const service = createService(connection);
     await seedHistory(db);
 
-    const deletion = await service.delete(
-      { deleteAllConfirmation: "DELETE" },
-      "corr-delete-all",
-    );
+    const deletion = await service.delete({ deleteAllConfirmation: "DELETE" }, "corr-delete-all");
     const history = await service.list({ page: 1, pageSize: 10 });
 
     expect(deletion.deletedSummaryCount).toBe(2);

@@ -8,14 +8,12 @@ describe("traffic transport classifier", () => {
     { transportFailures: 101, expected: "degraded" },
     { transportFailures: 500, expected: "degraded" },
     { transportFailures: 501, expected: "failed" },
-  ] as const)(
-    "classifies 10,000 started requests with $transportFailures failures as $expected",
-    ({ transportFailures, expected }) => {
-      expect(classifyTrafficTransport({ startedRequests: 10_000, transportFailures })).toBe(
-        expected,
-      );
-    },
-  );
+  ] as const)("classifies 10,000 started requests with $transportFailures failures as $expected", ({
+    transportFailures,
+    expected,
+  }) => {
+    expect(classifyTrafficTransport({ startedRequests: 10_000, transportFailures })).toBe(expected);
+  });
 
   it("does not classify transport loss without dispatched attempts", () => {
     expect(classifyTrafficTransport({ startedRequests: 0, transportFailures: 0 })).toBeNull();
