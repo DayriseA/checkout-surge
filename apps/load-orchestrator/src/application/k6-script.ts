@@ -14,7 +14,7 @@ export interface GeneratedK6Script {
   executionPlan: LoadExecutionPlan;
 }
 
-export const k6ScenarioGracefulStop = "5s";
+export const k6ScenarioGracefulStop = "30s";
 
 export function resolveSteadyArrivalExecutionPlan(
   traffic: SteadyArrivalTrafficConfig,

@@ -746,7 +746,7 @@ describe("load-orchestrator k6 mapping", () => {
       startTime: "2s",
       preAllocatedVUs: expectedPreAllocatedVus,
       maxVUs: expectedMaxVus,
-      gracefulStop: "5s",
+      gracefulStop: "30s",
     });
   });
 
