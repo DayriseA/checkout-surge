@@ -2735,6 +2735,115 @@ describe("public runtime policy contract", () => {
     ).toEqual([]);
   });
 
+  it("does not derive a request rate for buyer-spike traffic", () => {
+    const policy = semanticRuntimePolicy();
+    policy.publicCustomLimits.maxRequestsPerSecond = 5;
+    policy.deploymentHardCaps.maxRequestsPerSecond = 5;
+    const snapshot: AcceptedRunConfigSnapshot = {
+      ...acceptedRunSnapshot(),
+      trafficConfig: {
+        mode: "buyer-spike",
+        buyerCount: 90,
+        duplicateEachBuyerAttempt: false,
+        startDelaySeconds: 0,
+        maxDurationSeconds: 1,
+        quantityPerAttempt: 1,
+      },
+    };
+
+    expect(
+      collectAcceptedRunConfigSnapshotViolations(snapshot, policy, {
+        operatorMode: "public",
+        enforcePublicCustomLimits: true,
+      }),
+    ).toEqual([]);
+  });
+
+  it("still bounds buyer-spike volume through the buyer and total request caps", () => {
+    const policy = semanticRuntimePolicy();
+    policy.publicCustomLimits.maxRequestsPerSecond = 5;
+    policy.deploymentHardCaps.maxRequestsPerSecond = 5;
+    const snapshot: AcceptedRunConfigSnapshot = {
+      ...acceptedRunSnapshot(),
+      trafficConfig: {
+        mode: "buyer-spike",
+        buyerCount: 150,
+        duplicateEachBuyerAttempt: false,
+        startDelaySeconds: 0,
+        maxDurationSeconds: 1,
+        quantityPerAttempt: 1,
+      },
+    };
+
+    const codes = collectAcceptedRunConfigSnapshotViolations(snapshot, policy, {
+      operatorMode: "public",
+      enforcePublicCustomLimits: true,
+    }).map((violation) => violation.code);
+
+    expect(codes).toContain("public_buyers_exceeded");
+    expect(codes).toContain("public_total_requests_exceeded");
+    expect(codes).toContain("deployment_buyers_exceeded");
+    expect(codes).toContain("deployment_total_requests_exceeded");
+    expect(codes).not.toContain("public_request_rate_exceeded");
+    expect(codes).not.toContain("deployment_request_rate_exceeded");
+  });
+
+  it.each([
+    {
+      scope: "public",
+      enforcePublicCustomLimits: true,
+      expectedCode: "public_request_rate_exceeded",
+    },
+    {
+      scope: "deployment",
+      enforcePublicCustomLimits: false,
+      expectedCode: "deployment_request_rate_exceeded",
+    },
+  ] as const)("enforces the $scope request rate cap on configured arrival rates", (fixture) => {
+    const policy = semanticRuntimePolicy();
+    policy.publicCustomLimits.maxRequestsPerSecond = 5;
+    policy.deploymentHardCaps.maxRequestsPerSecond = 5;
+    const snapshot: AcceptedRunConfigSnapshot = {
+      ...acceptedRunSnapshot(),
+      trafficConfig: {
+        mode: "steady-arrival-rate",
+        ratePerSecond: 50,
+        startDelaySeconds: 0,
+        durationSeconds: 1,
+        quantityPerAttempt: 1,
+      },
+    };
+
+    expect(
+      collectAcceptedRunConfigSnapshotViolations(snapshot, policy, {
+        operatorMode: "public",
+        enforcePublicCustomLimits: fixture.enforcePublicCustomLimits,
+      }),
+    ).toContainEqual(
+      expect.objectContaining({
+        code: fixture.expectedCode,
+        details: { value: 50, cap: 5 },
+        path: ["trafficConfig", "ratePerSecond"],
+      }),
+    );
+  });
+
+  it("does not derive a request rate for buyer-spike public custom defaults", () => {
+    const policy = semanticRuntimePolicy();
+    policy.publicCustomLimits.maxRequestsPerSecond = 5;
+    policy.publicCustomDefaults.trafficConfig = {
+      mode: "buyer-spike",
+      buyerCount: 90,
+      duplicateEachBuyerAttempt: false,
+      startDelaySeconds: 0,
+      maxDurationSeconds: 1,
+      quantityPerAttempt: 1,
+    };
+    const { deploymentHardCaps: _deploymentHardCaps, ...mutable } = policy;
+
+    expect(collectPublicRuntimePolicyMutableViolations(mutable)).toEqual([]);
+  });
+
   it.each([
     ["maxTotalRequests", "maxTotalRequests", "public_limit_total_requests_exceeds_deployment_cap"],
     [

@@ -295,7 +295,7 @@ function trafficConfigFacts(
       ["Mode", "buyer spike"],
       ["Buyer count", formatNumber(config.buyerCount)],
       ["Duplicate attempts", config.duplicateEachBuyerAttempt ? "yes" : "no"],
-      ["Duration", `${formatNumber(config.maxDurationSeconds)}s`],
+      ["Dispatch window", `${formatNumber(config.maxDurationSeconds)}s`],
       ["Quantity", formatNumber(config.quantityPerAttempt)],
     ];
   }

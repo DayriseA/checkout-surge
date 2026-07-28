@@ -66,7 +66,7 @@ export function collectAcceptedRunConfigSnapshotViolations(
   const violations: PublicRuntimePolicyViolation[] = [];
   const traffic = snapshot.trafficConfig;
   const totalRequests = calculatePlannedRequests(traffic);
-  const requestRate = calculateRequestRate(traffic);
+  const requestRate = resolveConfiguredRequestRate(traffic);
   const durationSeconds = calculateTrafficDurationSeconds(traffic);
   collectDeploymentSnapshotViolations(snapshot, policy, violations, {
     totalRequests,
@@ -113,7 +113,7 @@ function collectDeploymentSnapshotViolations(
   snapshot: AcceptedRunConfigSnapshot,
   policy: PublicRuntimePolicy,
   violations: PublicRuntimePolicyViolation[],
-  trafficMetrics: { totalRequests: number; requestRate: number; durationSeconds: number },
+  trafficMetrics: { totalRequests: number; requestRate: number | null; durationSeconds: number },
 ): void {
   const traffic = snapshot.trafficConfig;
   const caps = policy.deploymentHardCaps;
@@ -127,13 +127,15 @@ function collectDeploymentSnapshotViolations(
     "deployment_total_requests_exceeded",
     ["trafficConfig"],
   );
-  addCapViolation(
-    violations,
-    trafficMetrics.requestRate,
-    caps.maxRequestsPerSecond,
-    "deployment_request_rate_exceeded",
-    requestRatePath(traffic),
-  );
+  if (trafficMetrics.requestRate !== null) {
+    addCapViolation(
+      violations,
+      trafficMetrics.requestRate,
+      caps.maxRequestsPerSecond,
+      "deployment_request_rate_exceeded",
+      ["trafficConfig", "ratePerSecond"],
+    );
+  }
   addCapViolation(
     violations,
     trafficMetrics.durationSeconds,
@@ -233,7 +235,7 @@ function collectPublicCustomSnapshotViolations(
   snapshot: AcceptedRunConfigSnapshot,
   policy: Pick<PublicRuntimePolicyMutable, "publicCustomLimits">,
   violations: PublicRuntimePolicyViolation[],
-  trafficMetrics: { totalRequests: number; requestRate: number; durationSeconds: number },
+  trafficMetrics: { totalRequests: number; requestRate: number | null; durationSeconds: number },
 ): void {
   const traffic = snapshot.trafficConfig;
   const limits = policy.publicCustomLimits;
@@ -253,13 +255,15 @@ function collectPublicCustomSnapshotViolations(
     "public_total_requests_exceeded",
     ["trafficConfig"],
   );
-  addCapViolation(
-    violations,
-    trafficMetrics.requestRate,
-    limits.maxRequestsPerSecond,
-    "public_request_rate_exceeded",
-    requestRatePath(traffic),
-  );
+  if (trafficMetrics.requestRate !== null) {
+    addCapViolation(
+      violations,
+      trafficMetrics.requestRate,
+      limits.maxRequestsPerSecond,
+      "public_request_rate_exceeded",
+      ["trafficConfig", "ratePerSecond"],
+    );
+  }
   addCapViolation(
     violations,
     trafficMetrics.durationSeconds,
@@ -394,13 +398,13 @@ function collectEffectiveDefaultSnapshotViolations(
 
 function defaultSnapshotTrafficMetrics(policy: PublicRuntimePolicyMutable): {
   totalRequests: number;
-  requestRate: number;
+  requestRate: number | null;
   durationSeconds: number;
 } {
   const traffic = policy.publicCustomDefaults.trafficConfig;
   return {
     totalRequests: calculatePlannedRequests(traffic),
-    requestRate: calculateRequestRate(traffic),
+    requestRate: resolveConfiguredRequestRate(traffic),
     durationSeconds: calculateTrafficDurationSeconds(traffic),
   };
 }
@@ -419,23 +423,21 @@ function appendWrappedDefaultViolations(
   }
 }
 
-function calculateRequestRate(trafficConfig: TrafficConfig): number {
-  return trafficConfig.mode === "steady-arrival-rate"
-    ? trafficConfig.ratePerSecond
-    : Math.ceil(trafficConfig.buyerCount / Math.max(trafficConfig.maxDurationSeconds, 1));
+/**
+ * Reports the configured arrival rate, or `null` for modes that have none.
+ *
+ * `buyer-spike` runs on k6's `per-vu-iterations` executor, which dispatches as
+ * fast as the host allows. Its `maxDurationSeconds` is a dispatch cutoff, not
+ * an arrival window, so no rate can be derived from it.
+ */
+function resolveConfiguredRequestRate(trafficConfig: TrafficConfig): number | null {
+  return trafficConfig.mode === "steady-arrival-rate" ? trafficConfig.ratePerSecond : null;
 }
 
 function calculateTrafficDurationSeconds(trafficConfig: TrafficConfig): number {
   return trafficConfig.mode === "steady-arrival-rate"
     ? trafficConfig.durationSeconds
     : trafficConfig.maxDurationSeconds;
-}
-
-function requestRatePath(trafficConfig: TrafficConfig): string[] {
-  return [
-    "trafficConfig",
-    trafficConfig.mode === "steady-arrival-rate" ? "ratePerSecond" : "buyerCount",
-  ];
 }
 
 function durationPath(trafficConfig: TrafficConfig): string[] {
