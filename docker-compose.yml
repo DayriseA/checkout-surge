@@ -11,7 +11,7 @@ x-app-env: &app-env
   MOCK_ERP_BASE_URL: http://mock-erp:4100
   LOAD_ORCHESTRATOR_BASE_URL: http://load-orchestrator:4200
   WEB_BASE_URL: http://localhost:8080
-  WEB_ORIGIN: http://localhost:8080
+  WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:8080}
 
 x-data-env: &data-env
   DATABASE_URL: postgresql://postgres:postgres@postgres:5432/checkout_surge
