@@ -308,9 +308,7 @@ describe("public recovery convergence", () => {
 
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(curatedStart.disabled).toBe(true);
-    expect(screen.getByRole("link", { name: "run in progress" }).getAttribute("href")).toBe(
-      "/watch",
-    );
+    expect(screen.getByRole("link", { name: "Watch live" }).getAttribute("href")).toBe("/watch");
   });
 
   it("leaves unavailable recovery to backoff and stops after retries are exhausted", async () => {

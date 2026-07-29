@@ -119,6 +119,7 @@ describe("dashboard control surface", () => {
     );
 
     expect(markup).toContain("run in progress");
+    expect(markup).toContain("Watch live");
     expect(markup).toContain('href="/watch"');
     expect(markup).toContain("disabled");
   });

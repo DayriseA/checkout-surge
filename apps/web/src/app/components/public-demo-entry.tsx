@@ -517,9 +517,16 @@ function StartGate({
         {recoveryUnavailable ? (
           <StatusPill label="start unavailable" tone="unavailable" />
         ) : runInProgress ? (
-          <Link className="rounded-full focus:outline-2 focus:outline-offset-2" href="/watch">
+          <>
             <StatusPill label="run in progress" tone="pending" />
-          </Link>
+            <Link
+              className="inline-flex min-h-7 items-center gap-1 rounded-lg border border-border bg-surface px-2.5 text-xs font-bold text-muted-strong hover:bg-surface-muted hover:text-ink focus:outline-2 focus:outline-offset-2"
+              href="/watch"
+            >
+              Watch live
+              <span aria-hidden="true">→</span>
+            </Link>
+          </>
         ) : readinessBlocked ? (
           <StatusPill
             label={
