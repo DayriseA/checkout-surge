@@ -58,3 +58,16 @@ test("Docker build contexts exclude environment and private-key files", () => {
   assert.match(dockerIgnore, /^\*\.pem$/m);
   assert.match(dockerIgnore, /^\*\.key$/m);
 });
+
+test("dashboard proxy repairs only Codespaces same-origin browser fetches", () => {
+  const compose = readText("docker-compose.yml");
+  assert.match(compose, /CODESPACES: \$\{CODESPACES:-false\}/);
+  assert.match(compose, /WEB_ORIGIN: \$\{WEB_ORIGIN:-http:\/\/localhost:8080\}/);
+
+  const caddy = readText("infra/caddy/Caddyfile");
+  assert.match(caddy, /Origin\} == "http:\/\/localhost:8080"/);
+  assert.match(caddy, /Origin\} == "https:\/\/localhost:8080"/);
+  assert.match(caddy, /Sec-Fetch-Site\} == "same-origin"/);
+  assert.match(caddy, /Sec-Fetch-Mode\} == "cors"/);
+  assert.match(caddy, /request_header @codespaces_forwarded_origin Origin/);
+});

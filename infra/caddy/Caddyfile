@@ -12,6 +12,11 @@
 	}
 
 	handle {
+		# The private Codespaces port proxy rewrites its own public Origin to an
+		# HTTP(S) localhost tunnel target. Restore it only for same-origin browser fetches.
+		@codespaces_forwarded_origin expression `{$CODESPACES:false} && ({http.request.header.Origin} == "http://localhost:8080" || {http.request.header.Origin} == "https://localhost:8080") && {http.request.header.Sec-Fetch-Site} == "same-origin" && {http.request.header.Sec-Fetch-Mode} == "cors"`
+		request_header @codespaces_forwarded_origin Origin "{$WEB_ORIGIN:http://localhost:8080}"
+
 		encode gzip
 		reverse_proxy web:3000
 	}

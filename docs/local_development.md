@@ -125,7 +125,7 @@ http://localhost:8080
 
 Use `/` for the public demo picker, `/admin` for operator controls, `/watch` for the active live run after a start, `/run-history` for finalized summaries, and `/about` for the static "how it works" explainer. The live watch route follows the active/current run exposed by dashboard recovery; arbitrary completed-run detail remains owned by Run History.
 
-In Dev Containers and GitHub Codespaces, launch the forwarded `8080` `dashboard-proxy` port. API, mock ERP, load-orchestrator, and direct web ports are forwarded as debugging surfaces, not as the normal dashboard URL. In Codespaces, set `WEB_ORIGIN` to the forwarded `8080` dashboard-proxy URL shown by the Ports panel, for example `https://<codespace>-8080.app.github.dev`.
+In Dev Containers and GitHub Codespaces, launch the forwarded `8080` `dashboard-proxy` port. API, mock ERP, load-orchestrator, and direct web ports are forwarded as debugging surfaces, not as the normal dashboard URL. In Codespaces, set `WEB_ORIGIN` to the forwarded `8080` dashboard-proxy URL shown by the Ports panel, for example `https://<codespace>-8080.app.github.dev`. The private Codespaces port proxy rewrites its own same-origin `Origin` header to an HTTP(S) localhost tunnel target; when `CODESPACES=true`, the dashboard proxy restores the configured public origin only for an exact localhost tunnel origin accompanied by browser-controlled `Sec-Fetch-Site: same-origin` and `Sec-Fetch-Mode: cors` metadata. Cross-site requests and non-Codespaces runtimes remain subject to the web server's exact-origin check and secure-cookie policy.
 
 Run the routine runtime verification (the command uses Compose-network checks for a running reference runtime and localhost checks for host-native services):
 
