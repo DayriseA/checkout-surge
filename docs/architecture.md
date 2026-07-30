@@ -135,7 +135,7 @@ The worker selects a circuit breaker per run and immutable threshold configurati
 
 The API process and the worker process are fully decoupled. The API's buy path touches PostgreSQL and BullMQ only after Redis accepts a reservation. Sold-out attempts stay on the Redis-first losing path and return without durable writes or per-loser dashboard publication. The request path does not wait for queue inspection or downstream confirmation; bounded advisory queue refresh runs behind the composition-owned scheduler. Accepted generated buys resolve the run policy before shared admission and perform no nested base-pool checkout while admission is held, so lock waiters cannot exhaust the pool around a holder that needs another connection. Queue depth itself does not block API responses, but accepted-heavy runs can still consume shared PostgreSQL, Redis, and CPU capacity, so API PostgreSQL pool sizing, worker PostgreSQL pool sizing, and the worker's process-wide BullMQ concurrency are intentionally tunable.
 
-For the public one-second presets, the API listener backlog is also explicit. The default `API_LISTEN_BACKLOG=8192` avoids relying on Node's lower default accept queue when k6 opens thousands of connections in a very short window.
+For the public burst presets, the API listener backlog is also explicit. The default `API_LISTEN_BACKLOG=8192` avoids relying on Node's lower default accept queue when k6 opens thousands of connections in a very short window.
 
 ### 7. Admin surface abuse
 

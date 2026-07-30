@@ -1,4 +1,9 @@
-import { emptyRequestArrivalSummary } from "@checkout-surge/contracts";
+import {
+  emptyHttpTimingBreakdownSummary,
+  emptyRequestArrivalSummary,
+  emptyServerReservationTimingSummary,
+  evaluateFastReservationTarget,
+} from "@checkout-surge/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   getPublicDemoSurface,
@@ -85,6 +90,11 @@ describe("dashboard backend API reads", () => {
               trafficDeliveryStatus: "complete",
               notes: [],
             },
+            serverReservationTimingSummary: emptyServerReservationTimingSummary,
+            fastReservationTargetEvaluation: evaluateFastReservationTarget(
+              emptyServerReservationTimingSummary,
+              10,
+            ),
             businessOutcomeSummary: {
               acceptedReservations: 6,
               soldOutRejections: 4,
@@ -275,6 +285,11 @@ function runHistoryDetailFixture() {
         trafficDeliveryStatus: "complete",
         notes: [],
       },
+      serverReservationTimingSummary: emptyServerReservationTimingSummary,
+      fastReservationTargetEvaluation: evaluateFastReservationTarget(
+        emptyServerReservationTimingSummary,
+        10,
+      ),
       businessOutcomeSummary: {
         acceptedReservations: 6,
         soldOutRejections: 4,
@@ -381,6 +396,7 @@ function runHistoryDetailFixture() {
       ...(sanitizedInventory ? { terminalInventorySnapshot: sanitizedInventory } : {}),
     },
     run,
+    httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
     orders: { totalCount: 1, byStatus: { queued: 0, processing: 0, confirmed: 1, failed: 0 } },
     erpAttempts: {
       totalCount: 0,

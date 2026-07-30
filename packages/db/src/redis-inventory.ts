@@ -101,6 +101,8 @@ export async function deleteGeneratedRunRedisState(
     `demo-run:${runId}:traffic-metrics`,
     `demo-run:${runId}:traffic-metrics-pinned`,
     `demo-run:${runId}:traffic-metrics-reset-fence`,
+    `demo-run:${runId}:reservation-timing`,
+    `demo-run:${runId}:reservation-timing-fence`,
   );
   return { deletedKeyCount };
 }

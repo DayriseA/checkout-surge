@@ -56,7 +56,10 @@ export function AdminRunHistoryDetail({ detail }: RunHistoryDetailProps) {
           <TransportObservationSection
             arrivalSummary={summary.trafficDeliverySummary.requestArrivalSummary}
             counts={summary.transportAttemptCounts}
+            fastReservationTargetEvaluation={summary.fastReservationTargetEvaluation}
+            httpTimingBreakdownSummary={detail.httpTimingBreakdownSummary}
             httpSummary={summary.httpSummary}
+            serverReservationTimingSummary={summary.serverReservationTimingSummary}
             surface="detail"
           />
           <FactList
@@ -342,7 +345,10 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
           <TransportObservationSection
             arrivalSummary={summary.trafficDeliverySummary.requestArrivalSummary}
             counts={summary.transportAttemptCounts}
+            fastReservationTargetEvaluation={summary.fastReservationTargetEvaluation}
+            httpTimingBreakdownSummary={detail.httpTimingBreakdownSummary}
             httpSummary={summary.httpSummary}
+            serverReservationTimingSummary={summary.serverReservationTimingSummary}
             surface="detail"
           />
           <FactList

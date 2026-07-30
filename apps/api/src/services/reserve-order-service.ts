@@ -16,6 +16,7 @@ import type {
   SoldOutObservationPort,
 } from "./dashboard-source-dirty-scheduler.js";
 import type { OrderProcessJobPublisher } from "./order-process-job-publisher.js";
+import type { ReservationTimingObservationPort } from "./reservation-timing-observation.js";
 import type { RunRetryPolicyResolver } from "./run-retry-policy-resolver.js";
 
 export const definitivePersistenceRejectionCode = "run_sale_offer_mismatch" as const;
@@ -108,6 +109,10 @@ export function isPersistedBuyForReservation(
   );
 }
 
+function elapsedMilliseconds(startedAt: number, endedAt: number): number {
+  return Math.max(endedAt - startedAt, 0);
+}
+
 export interface StockReservationGateway {
   reserve(input: {
     idempotencyKey: string;
@@ -193,6 +198,8 @@ export class ReserveOrderService {
   ) => void;
   private readonly dashboardSourceDirtyScheduler: DashboardSourceDirtySchedulerPort;
   private readonly soldOutObservations: SoldOutObservationPort;
+  private readonly reservationTimingObservations: ReservationTimingObservationPort;
+  private readonly monotonicNow: () => number;
 
   constructor(options: {
     persistence: BuyPersistence;
@@ -214,6 +221,8 @@ export class ReserveOrderService {
     reportBusinessOutcomeUpdateFailure?: (report: BusinessOutcomeUpdateFailureReport) => void;
     dashboardSourceDirtyScheduler?: DashboardSourceDirtySchedulerPort;
     soldOutObservations?: SoldOutObservationPort;
+    reservationTimingObservations?: ReservationTimingObservationPort;
+    monotonicNow?: () => number;
   }) {
     this.persistence = options.persistence;
     this.stockReservations = options.stockReservations;
@@ -245,6 +254,10 @@ export class ReserveOrderService {
       scheduleQueue: () => undefined,
     };
     this.soldOutObservations = options.soldOutObservations ?? { observeSoldOut: () => undefined };
+    this.reservationTimingObservations = options.reservationTimingObservations ?? {
+      observe: () => undefined,
+    };
+    this.monotonicNow = options.monotonicNow ?? (() => performance.now());
   }
 
   async reserve(input: {
@@ -252,14 +265,49 @@ export class ReserveOrderService {
     correlationId: string;
     now?: Date;
   }): Promise<BuyResponse> {
+    const serviceStartedAt = this.monotonicNow();
+    let redisAtomicReservationMs: number | undefined;
+    try {
+      return await this.performReservation(input, (durationMs) => {
+        redisAtomicReservationMs = durationMs;
+      });
+    } finally {
+      if (input.request.runId) {
+        try {
+          this.reservationTimingObservations.observe({
+            runId: input.request.runId,
+            reserveOrderServiceMs: elapsedMilliseconds(serviceStartedAt, this.monotonicNow()),
+            ...(redisAtomicReservationMs === undefined ? {} : { redisAtomicReservationMs }),
+          });
+        } catch {
+          // Timing observability is advisory and cannot alter the reservation outcome.
+        }
+      }
+    }
+  }
+
+  private async performReservation(
+    input: {
+      request: BuyRequest;
+      correlationId: string;
+      now?: Date;
+    },
+    recordRedisDuration: (durationMs: number) => void,
+  ): Promise<BuyResponse> {
     const now = input.now ?? new Date();
 
     const reservation = this.createReservationHold(input.request, input.correlationId, now);
-    const decision = await this.stockReservations.reserve({
-      idempotencyKey: input.request.idempotencyKey,
-      idempotencyTtlSeconds: this.idempotencyTtlSeconds,
-      reservation,
-    });
+    const redisStartedAt = this.monotonicNow();
+    let decision: StockReservationDecision;
+    try {
+      decision = await this.stockReservations.reserve({
+        idempotencyKey: input.request.idempotencyKey,
+        idempotencyTtlSeconds: this.idempotencyTtlSeconds,
+        reservation,
+      });
+    } finally {
+      recordRedisDuration(elapsedMilliseconds(redisStartedAt, this.monotonicNow()));
+    }
 
     if (decision.outcome === "sold_out") {
       try {

@@ -1,5 +1,14 @@
-import type { TrafficHttpSummary, TransportAttemptCounts } from "@checkout-surge/contracts";
-import { emptyRequestArrivalSummary } from "@checkout-surge/contracts";
+import type {
+  HttpTimingBreakdownSummary,
+  ServerReservationTimingSummary,
+  TrafficHttpSummary,
+  TransportAttemptCounts,
+} from "@checkout-surge/contracts";
+import {
+  deriveRecordedReplyCount,
+  emptyRequestArrivalSummary,
+  evaluateFastReservationTarget,
+} from "@checkout-surge/contracts";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
@@ -84,6 +93,21 @@ describe("transport observation section", () => {
     expect(markup).not.toContain("observed replies only");
   });
 
+  it("leads with the server boundary, target verdict, and shared-host caveat", () => {
+    const markup = renderSection(counts({ completedRequests: 10 }));
+
+    expect(markup.indexOf("Fast reservation")).toBeLessThan(markup.indexOf("Request arrival"));
+    expect(markup).toContain("Redis p95 target");
+    expect(markup).toContain("Redis p95 bound");
+    expect(markup).toContain("≤ 25ms");
+    expect(markup).toContain("Target verdict");
+    expect(markup).toMatch(/Target verdict<\/dt><dd[^>]*>fail<\/dd>/);
+    expect(markup).toContain("Reserve service p95 bound");
+    expect(markup).toContain("≤ 100ms");
+    expect(markup).toContain("fixed histogram upper bound");
+    expect(markup).toContain("not hosted benchmark evidence");
+  });
+
   it("discloses coverage, cause, and survivorship bias when replies went unrecorded", () => {
     const markup = renderSection(counts({ completedRequests: 7, interruptedRequests: 3 }));
 
@@ -144,6 +168,7 @@ describe("transport observation section", () => {
       createElement(TransportObservationSection, {
         arrivalSummary: emptyRequestArrivalSummary,
         counts: counts({ completedRequests: 7, interruptedRequests: 3 }),
+        ...timingProps(7),
         httpSummary: httpSummary(),
         surface: "list",
       }),
@@ -170,6 +195,7 @@ describe("transport observation section", () => {
           arrivalSeriesLimit: 120,
         },
         counts: counts({ completedRequests: 10 }),
+        ...timingProps(10),
         httpSummary: httpSummary(),
         surface: "detail",
       }),
@@ -218,10 +244,37 @@ function renderSection(
     createElement(TransportObservationSection, {
       arrivalSummary: emptyRequestArrivalSummary,
       counts: transportAttemptCounts,
+      ...timingProps(deriveRecordedReplyCount(transportAttemptCounts, summary.transportFailures)),
       httpSummary: summary,
+      httpTimingBreakdownSummary: timingBreakdown(),
       surface: "detail",
     }),
   );
+}
+
+function timingProps(expectedResponseCount: number) {
+  const serverReservationTimingSummary: ServerReservationTimingSummary = {
+    redisAtomicReservation: { sampleCount: 10, averageMs: 4, p95Ms: 25 },
+    reserveOrderService: { sampleCount: 10, averageMs: 30, p95Ms: 100 },
+  };
+  return {
+    serverReservationTimingSummary,
+    fastReservationTargetEvaluation: evaluateFastReservationTarget(
+      serverReservationTimingSummary,
+      expectedResponseCount,
+    ),
+  };
+}
+
+function timingBreakdown(): HttpTimingBreakdownSummary {
+  return {
+    blocked: { averageMs: 2, p95Ms: 5 },
+    connecting: { averageMs: 1, p95Ms: 4 },
+    tlsHandshaking: { averageMs: 0, p95Ms: 0 },
+    sending: { averageMs: 0.2, p95Ms: 1 },
+    waiting: { averageMs: 30, p95Ms: 42 },
+    receiving: { averageMs: 0.1, p95Ms: 0.5 },
+  };
 }
 
 function counts(overrides: Partial<TransportAttemptCounts>): TransportAttemptCounts {

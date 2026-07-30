@@ -39,6 +39,7 @@ import {
   demoRunSnapshotSchema,
   demoRunStatusValues,
   deriveLoadExecutionPlan,
+  deriveRecordedReplyCount,
   type ErrorPayloadCode,
   emptyHttpTimingBreakdownSummary,
   emptyRequestArrivalSummary,
@@ -52,6 +53,7 @@ import {
   errorPayloadCodeSchema,
   errorPayloadCodes,
   errorPayloadSchema,
+  evaluateFastReservationTarget,
   healthReadyPath,
   healthResponseSchema,
   internalLoadMetricIngestPath,
@@ -84,6 +86,7 @@ import {
   requestArrivalSummarySchema,
   reservationDecisionValues,
   reservationRejectedResponseSchema,
+  reservationTimingMeasurementSchema,
   resolveConstantArrivalVus,
   runHistoryDetailParamsSchema,
   runHistoryDetailPath,
@@ -92,6 +95,7 @@ import {
   runHistoryListResponseSchema,
   runHistoryPath,
   securedReservationHoldSchema,
+  serverReservationTimingSummarySchema,
   startDemoRunPath,
   startDemoRunRequestSchema,
   stockReservationDecisionSchema,
@@ -122,6 +126,10 @@ function omit<T extends object, K extends keyof T>(value: T, key: K): Omit<T, K>
 const correlationId = "corr-test-1";
 const saleOfferId = "22222222-2222-4222-8222-222222222222";
 const runId = "55555555-5555-4555-8555-555555555555";
+const serverReservationTimingSummary = serverReservationTimingSummarySchema.parse({
+  redisAtomicReservation: { sampleCount: 10, averageMs: 0.7, p95Ms: 1 },
+  reserveOrderService: { sampleCount: 10, averageMs: 12, p95Ms: 25 },
+});
 
 describe("accepted run breaker configuration", () => {
   const snapshot = {
@@ -677,6 +685,53 @@ describe("run lifecycle contracts", () => {
       "point_stream",
     );
     expect(() => demoRunSnapshotSchema.parse({ ...report, status: "completed" })).toThrow();
+  });
+
+  it("evaluates the declared Redis reservation p95 target at one shared boundary", () => {
+    expect(evaluateFastReservationTarget(serverReservationTimingSummary, 10)).toMatchObject({
+      target: {
+        operation: "redis_atomic_reservation",
+        percentile: "p95",
+        thresholdMs: 1,
+        startEvent: "stock_reservation_gateway_call_started",
+        endEvent: "stock_reservation_decision_received",
+      },
+      observedP95Ms: 1,
+      verdict: "pass",
+      qualification: null,
+    });
+
+    const failed = serverReservationTimingSummarySchema.parse({
+      ...serverReservationTimingSummary,
+      redisAtomicReservation: { sampleCount: 10, averageMs: 4, p95Ms: 25 },
+    });
+    expect(evaluateFastReservationTarget(failed, 10).verdict).toBe("fail");
+    expect(evaluateFastReservationTarget(failed, 9)).toMatchObject({
+      verdict: "qualified",
+      qualification: "incomplete_server_observation",
+    });
+    expect(() =>
+      reservationTimingMeasurementSchema.parse({
+        sampleCount: 0,
+        averageMs: 0,
+        p95Ms: null,
+      }),
+    ).toThrow();
+  });
+
+  it("derives recorded replies from completed attempts and transport failures", () => {
+    expect(
+      deriveRecordedReplyCount(
+        {
+          plannedRequests: 10,
+          startedRequests: 10,
+          completedRequests: 8,
+          interruptedRequests: 2,
+          unstartedRequests: 0,
+        },
+        3,
+      ),
+    ).toBe(5);
   });
 
   it("binds demo-run lifecycle states to their legal timestamp shapes", () => {
@@ -2122,6 +2177,11 @@ describe("public runtime policy contract", () => {
             trafficDeliveryStatus: "complete",
             notes: [],
           },
+          serverReservationTimingSummary,
+          fastReservationTargetEvaluation: evaluateFastReservationTarget(
+            serverReservationTimingSummary,
+            10,
+          ),
           businessOutcomeSummary: {
             acceptedReservations: 6,
             soldOutRejections: 4,
@@ -2254,6 +2314,7 @@ describe("public runtime policy contract", () => {
         trafficEndedAt: timestamp,
         finalizedAt: timestamp,
       },
+      httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
       orders: {
         totalCount: 1,
         byStatus: { queued: 0, processing: 0, confirmed: 1, failed: 0 },
@@ -2276,6 +2337,7 @@ describe("public runtime policy contract", () => {
       adminRunHistoryDetailResponseSchema.parse({
         summary,
         run: { ...detail.run, presetId: "33333333-3333-4333-8333-333333333333", saleOfferId },
+        httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
         loadRunDiagnosticsSummary: runnerDiagnostics(),
         orders: {
           totalCount: 1,

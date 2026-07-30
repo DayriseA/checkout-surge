@@ -68,6 +68,10 @@ import { RedisPublicRunBudgetStore } from "./services/public-run-budget-store.js
 import { PublicRuntimePolicyService } from "./services/public-runtime-policy-service.js";
 import { QueueStatusService } from "./services/queue-status-service.js";
 import {
+  RedisReservationTimingStore,
+  ReservationTimingObservationScheduler,
+} from "./services/reservation-timing-observation.js";
+import {
   type BusinessOutcomeUpdateFailureReport,
   type OrderEnqueueFailureReport,
   type ReservationPartialFailureReport,
@@ -214,6 +218,10 @@ export async function startApiServer(): Promise<void> {
     maxConcurrentDirectAttempts: config.pendingPersistenceRecoveryMaxConcurrentDirectAttempts,
   });
   const trafficMetricStore = new RedisDashboardTrafficMetricStore(redis);
+  const reservationTiming = new ReservationTimingObservationScheduler(
+    new RedisReservationTimingStore(redis),
+    logger,
+  );
   const trafficMetricIngestion = new TrafficMetricIngestionService({
     db: connection.db,
     store: trafficMetricStore,
@@ -256,6 +264,7 @@ export async function startApiServer(): Promise<void> {
         await trafficMetricStore.clearRun(runId);
       },
     },
+    reservationTiming,
     resetWorkflowFence: new PostgresDemoResetWorkflowFence(resetWorkflowSql),
     maintenanceAuthority,
     logger,
@@ -311,6 +320,7 @@ export async function startApiServer(): Promise<void> {
     }),
     terminalInventoryReadTimeoutMs,
     drainTimeoutSeconds: config.demoRunDrainTimeoutSeconds,
+    reservationTiming,
   });
   const demoRunStartupReconciliationService = new DemoRunStartupReconciliationService({
     logger,
@@ -359,6 +369,7 @@ export async function startApiServer(): Promise<void> {
     pendingPersistenceRecovery,
     dashboardSourceDirtyScheduler,
     soldOutObservations: dashboardSourceDirtyScheduler,
+    reservationTimingObservations: reservationTiming,
     reportPersistenceFailure: (report) => {
       logger.error(
         partialFailureLogContext(report),
@@ -420,10 +431,11 @@ export async function startApiServer(): Promise<void> {
           dashboardProjectionFanout.close();
           await server?.close();
         },
-        closeDashboardPublicationScheduler: async () => {
+        closeDashboardAndReservationSchedulers: async () => {
           await Promise.all([
             dashboardSourceDirtyScheduler.close(),
             dashboardProjectionPublications.close(),
+            reservationTiming.close(),
           ]);
         },
         closeBusinessOutcomePublicationScheduler: () => businessOutcomePublications.close(),

@@ -36,7 +36,7 @@ The project is a realistic systems simulation: external actors such as buyers, t
 
 - **Problem:** Traditional Database ACID transactions are too slow for 10k+ requests per second.
 - **Solution:** Use Redis for **Atomic Inventory Reservation**. Before any database record is touched, the system uses Redis `DECR` (or a Lua script) to check and reserve stock for the active sale offer.
-- **Benefit:** Prevents overselling with sub-millisecond latency.
+- **Benefit:** Prevents overselling atomically. 
 
 ### B. Asynchronous Order Processing (The Buffer)
 

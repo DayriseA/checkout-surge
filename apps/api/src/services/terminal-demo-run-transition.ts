@@ -1,4 +1,5 @@
 import {
+  serverReservationTimingSummarySchema,
   trafficDeliverySummarySchema,
   trafficHttpSummarySchema,
   transportAttemptCountsSchema,
@@ -201,6 +202,9 @@ export class PostgresTerminalDemoRunSummaryWriter implements TerminalDemoRunWrit
       httpSummary: trafficHttpSummarySchema.parse(input.httpSummary),
       trafficDeliverySummary: trafficDeliverySummarySchema.parse(input.trafficDeliverySummary),
       httpTimingBreakdownSummary: input.httpTimingBreakdownSummary,
+      serverReservationTimingSummary: serverReservationTimingSummarySchema.parse(
+        input.serverReservationTimingSummary,
+      ),
       loadRunDiagnosticsSummary: input.loadRunDiagnosticsSummary,
       businessOutcomeSummary: input.businessOutcome,
       terminalInventorySnapshot: input.terminalInventorySnapshot,

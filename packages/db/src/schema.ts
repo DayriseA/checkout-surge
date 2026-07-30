@@ -8,6 +8,7 @@ import type {
   InventoryConfig,
   PublicRuntimePolicyMutable as PublicRuntimePolicyMutableContract,
   RealLoadRunDiagnosticsSummary,
+  ServerReservationTimingSummary,
   TerminalInventorySnapshot,
   TrafficConfig,
   TrafficDeliverySummary,
@@ -17,6 +18,7 @@ import type {
 import {
   demoPresetVisibilityValues,
   demoRunStatusValues,
+  emptyServerReservationTimingSummary,
   erpAttemptStatusValues,
   operatorModeValues,
   orderEventNameValues,
@@ -609,6 +611,9 @@ export const demoRunSummaries = pgTable(
     httpSummary: jsonObject<TrafficHttpSummary>("http_summary"),
     trafficDeliverySummary: jsonObject<TrafficDeliverySummary>("traffic_delivery_summary"),
     httpTimingBreakdownSummary: jsonObject<JsonRecord>("http_timing_breakdown_summary"),
+    serverReservationTimingSummary: jsonObject<ServerReservationTimingSummary>(
+      "server_reservation_timing_summary",
+    ).default(emptyServerReservationTimingSummary),
     loadRunDiagnosticsSummary: jsonObject<JsonRecord>("load_run_diagnostics_summary"),
     businessOutcomeSummary: jsonObject<BusinessOutcomeSummary>("business_outcome_summary"),
     terminalInventorySnapshot: jsonb(

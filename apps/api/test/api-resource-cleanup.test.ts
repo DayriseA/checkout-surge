@@ -63,7 +63,7 @@ describe("API resource cleanup", () => {
     const closeOrderProcessJobPublisher = vi.fn(async () => {
       expect(serverClosed).toBe(true);
     });
-    const closeDashboardPublicationScheduler = vi.fn(async () => {
+    const closeDashboardAndReservationSchedulers = vi.fn(async () => {
       expect(serverClosed).toBe(true);
     });
     const closeBusinessOutcomePublicationScheduler = vi.fn(async () => undefined);
@@ -87,7 +87,7 @@ describe("API resource cleanup", () => {
       closePendingPersistenceRecovery,
       closeReadiness,
       closeServer,
-      closeDashboardPublicationScheduler,
+      closeDashboardAndReservationSchedulers,
       closeBusinessOutcomePublicationScheduler,
       closeDashboardProjectionDirtySubscriber,
       closeOrderProcessJobPublisher,
@@ -100,7 +100,7 @@ describe("API resource cleanup", () => {
     expect(closePendingPersistenceRecovery).toHaveBeenCalledOnce();
     expect(closeReadiness).toHaveBeenCalledOnce();
     expect(closeServer).toHaveBeenCalledOnce();
-    expect(closeDashboardPublicationScheduler).toHaveBeenCalledOnce();
+    expect(closeDashboardAndReservationSchedulers).toHaveBeenCalledOnce();
     expect(closeBusinessOutcomePublicationScheduler).toHaveBeenCalledOnce();
     expect(closeDashboardProjectionDirtySubscriber).toHaveBeenCalledOnce();
     expect(closeOrderProcessJobPublisher).toHaveBeenCalledOnce();
@@ -125,7 +125,7 @@ describe("API resource cleanup", () => {
     const readinessError = new Error("readiness close failed");
     const closeReadiness = vi.fn().mockRejectedValue(readinessError);
     const closeDashboardProjectionDirtySubscriber = vi.fn().mockRejectedValue(subscriberError);
-    const closeDashboardPublicationScheduler = vi.fn().mockRejectedValue(schedulerError);
+    const closeDashboardAndReservationSchedulers = vi.fn().mockRejectedValue(schedulerError);
     const closeBusinessOutcomePublicationScheduler = vi.fn(async () => undefined);
     const closeOrderProcessJobPublisher = vi.fn().mockRejectedValue(publisherError);
     const closeOrderProcessQueueInspector = vi.fn().mockRejectedValue(inspectorError);
@@ -141,7 +141,7 @@ describe("API resource cleanup", () => {
         closePendingPersistenceRecovery,
         closeReadiness,
         closeServer,
-        closeDashboardPublicationScheduler,
+        closeDashboardAndReservationSchedulers,
         closeBusinessOutcomePublicationScheduler,
         closeDashboardProjectionDirtySubscriber,
         closeOrderProcessJobPublisher,
@@ -170,7 +170,7 @@ describe("API resource cleanup", () => {
     expect(closePendingPersistenceRecovery).toHaveBeenCalledOnce();
     expect(closeReadiness).toHaveBeenCalledOnce();
     expect(closeServer).toHaveBeenCalledOnce();
-    expect(closeDashboardPublicationScheduler).toHaveBeenCalledOnce();
+    expect(closeDashboardAndReservationSchedulers).toHaveBeenCalledOnce();
     expect(closeDashboardProjectionDirtySubscriber).toHaveBeenCalledOnce();
     expect(closeOrderProcessJobPublisher).toHaveBeenCalledOnce();
     expect(closeOrderProcessQueueInspector).toHaveBeenCalledOnce();

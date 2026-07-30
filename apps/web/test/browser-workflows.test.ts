@@ -11,8 +11,10 @@ import {
   dashboardProjectionScopeId,
   demoRunSnapshotSchema,
   type ErpChaosStatus,
+  emptyHttpTimingBreakdownSummary,
   emptyRequestArrivalSummary,
   errorPayloadSchema,
+  evaluateFastReservationTarget,
   type HealthResponse,
   type PublicPresetListResponse,
   type PublicRunHistoryDetailResponse,
@@ -20,6 +22,7 @@ import {
   type PublicRuntimePolicyResponse,
   type RunHistoryListResponse,
   type RunHistorySummary,
+  type ServerReservationTimingSummary,
 } from "@checkout-surge/contracts";
 import { previewRunConfigSnapshotFixture as configSnapshotFixture } from "@checkout-surge/contracts/testing";
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
@@ -1030,6 +1033,10 @@ function runHistoryListFixture(): RunHistoryListResponse {
 function runHistorySummaryFixture(
   runId = "55555555-5555-4555-8555-555555555555",
 ): RunHistorySummary {
+  const serverReservationTimingSummary: ServerReservationTimingSummary = {
+    redisAtomicReservation: { sampleCount: 10, averageMs: 0.7, p95Ms: 1 },
+    reserveOrderService: { sampleCount: 10, averageMs: 12, p95Ms: 25 },
+  };
   return {
     id:
       runId === "55555555-5555-4555-8555-555555555555"
@@ -1069,6 +1076,11 @@ function runHistorySummaryFixture(
       trafficDeliveryStatus: "complete",
       notes: [],
     },
+    serverReservationTimingSummary,
+    fastReservationTargetEvaluation: evaluateFastReservationTarget(
+      serverReservationTimingSummary,
+      10,
+    ),
     businessOutcomeSummary: {
       acceptedReservations: 6,
       soldOutRejections: 4,
@@ -1123,6 +1135,7 @@ function runHistoryDetailFixture(): PublicRunHistoryDetailResponse {
       trafficEndedAt: "2026-06-20T00:00:09.000Z",
       finalizedAt: "2026-06-20T00:00:10.000Z",
     },
+    httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
     orders: {
       totalCount: 1,
       byStatus: { queued: 0, processing: 0, confirmed: 1, failed: 0 },

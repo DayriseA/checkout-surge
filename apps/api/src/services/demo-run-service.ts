@@ -8,6 +8,7 @@ import {
   type DemoRunConfigOverride,
   type DemoRunSnapshot,
   emptyHttpTimingBreakdownSummary,
+  emptyServerReservationTimingSummary,
   type OperatorMode,
   type PublicRuntimePolicy,
   type StartDemoRunRequest,
@@ -454,6 +455,7 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
         httpSummary: trafficSummary.httpSummary,
         trafficDeliverySummary: trafficSummary.trafficDeliverySummary,
         httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
+        serverReservationTimingSummary: emptyServerReservationTimingSummary,
         loadRunDiagnosticsSummary: {
           failureReason,
           previousTrafficStatus: run.trafficStatus,

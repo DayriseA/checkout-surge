@@ -1,8 +1,12 @@
 import type {
+  FastReservationTargetEvaluation,
+  HttpTimingBreakdownSummary,
   RequestArrivalSummary,
+  ServerReservationTimingSummary,
   TrafficHttpSummary,
   TransportAttemptCounts,
 } from "@checkout-surge/contracts";
+import { deriveRecordedReplyCount } from "@checkout-surge/contracts";
 
 /**
  * Presentation for the five transport-attempt counts.
@@ -55,7 +59,7 @@ export function deriveTransportObservation(
   counts: TransportAttemptCounts,
   transportFailures: number,
 ): TransportObservation {
-  const repliesRecorded = Math.max(counts.completedRequests - transportFailures, 0);
+  const repliesRecorded = deriveRecordedReplyCount(counts, transportFailures);
   return {
     counts,
     transportFailures,
@@ -105,19 +109,31 @@ export function survivorshipWarningText(
 export function TransportObservationSection({
   arrivalSummary,
   counts,
+  fastReservationTargetEvaluation,
+  httpTimingBreakdownSummary,
   httpSummary,
+  serverReservationTimingSummary,
   surface,
 }: {
   arrivalSummary: RequestArrivalSummary;
   counts: TransportAttemptCounts;
+  fastReservationTargetEvaluation: FastReservationTargetEvaluation;
+  httpTimingBreakdownSummary?: HttpTimingBreakdownSummary;
   httpSummary: TrafficHttpSummary;
+  serverReservationTimingSummary: ServerReservationTimingSummary;
   surface: Extract<ObservationSurface, "list" | "detail">;
 }) {
   const observation = deriveTransportObservation(counts, httpSummary.transportFailures);
 
   return (
     <section className="min-w-0 border-t border-border pt-3">
-      <RequestArrivalEvidence summary={arrivalSummary} showSeries={surface === "detail"} />
+      <FastReservationEvidence
+        evaluation={fastReservationTargetEvaluation}
+        summary={serverReservationTimingSummary}
+      />
+      <div className="mt-4 border-t border-border pt-3">
+        <RequestArrivalEvidence summary={arrivalSummary} showSeries={surface === "detail"} />
+      </div>
       <div className="mt-4 border-t border-border pt-3">
         <LensHeading />
       </div>
@@ -160,13 +176,91 @@ export function TransportObservationSection({
         <ObservationRow label="Sold out" value={formatNumber(httpSummary.soldOutResponses)} />
         <ObservationRow label="Unexpected" value={formatNumber(httpSummary.unexpectedResponses)} />
         <ObservationRow
-          label="p95 latency"
+          label="Client HTTP p95"
           note={observation.hasUnrecordedReplies ? biasedLatencyNote : undefined}
           value={formatMilliseconds(httpSummary.p95LatencyMs)}
         />
       </dl>
+      {httpTimingBreakdownSummary ? (
+        <ClientTimingBreakdown summary={httpTimingBreakdownSummary} />
+      ) : null}
       <SurvivorshipWarning observation={observation} surface={surface} />
     </section>
+  );
+}
+
+function FastReservationEvidence({
+  evaluation,
+  summary,
+}: {
+  evaluation: FastReservationTargetEvaluation;
+  summary: ServerReservationTimingSummary;
+}) {
+  return (
+    <>
+      <h3 className="m-0 text-sm font-bold text-ink">Fast reservation</h3>
+      <p className="m-0 mt-0.5 text-xs text-muted">
+        API Redis call start → reservation decision received
+      </p>
+      <dl className="m-0 mt-3 grid gap-2">
+        <ObservationRow
+          label="Redis p95 target"
+          value={`≤ ${formatMilliseconds(evaluation.target.thresholdMs)}`}
+        />
+        <ObservationRow
+          label="Redis p95 bound"
+          note="fixed histogram upper bound"
+          value={formatHistogramBoundMilliseconds(evaluation.observedP95Ms)}
+        />
+        <ObservationRow label="Target verdict" value={evaluation.verdict} />
+        <ObservationRow
+          label="Reserve service p95 bound"
+          note="fixed histogram upper bound; service entry → response ready"
+          value={formatHistogramBoundMilliseconds(summary.reserveOrderService.p95Ms)}
+        />
+      </dl>
+      {evaluation.qualification ? (
+        <p className="m-0 mt-2 text-xs text-muted">
+          Qualified:{" "}
+          {evaluation.qualification === "measurement_unavailable"
+            ? "server timing was unavailable"
+            : `server timing covered ${formatNumber(evaluation.observedSampleCount)} samples while k6 recorded ${formatNumber(evaluation.expectedResponseCount)} replies`}
+          .
+        </p>
+      ) : null}
+      <p className="m-0 mt-3 rounded-lg border border-border bg-surface-muted p-3 text-xs leading-5 text-muted">
+        Local Compose result: k6, API, PostgreSQL, Redis, Worker, and Mock ERP share one host. This
+        is not hosted benchmark evidence.
+      </p>
+    </>
+  );
+}
+
+function ClientTimingBreakdown({ summary }: { summary: HttpTimingBreakdownSummary }) {
+  return (
+    <div className="mt-4 border-t border-border pt-3">
+      <h4 className="m-0 text-xs font-bold uppercase text-muted">Client-observed HTTP phases</h4>
+      <p className="m-0 mt-0.5 text-xs text-muted">
+        k6 burst timing; waiting includes server and dependency queueing
+      </p>
+      <dl className="m-0 mt-2 grid gap-2">
+        <ObservationRow label="Waiting p95" value={formatMilliseconds(summary.waiting?.p95Ms)} />
+        <ObservationRow label="Blocked p95" value={formatMilliseconds(summary.blocked?.p95Ms)} />
+        <ObservationRow
+          label="Connecting p95"
+          value={formatMilliseconds(summary.connecting?.p95Ms)}
+        />
+        <ObservationRow label="Sending p95" value={formatMilliseconds(summary.sending?.p95Ms)} />
+        <ObservationRow
+          label="Receiving p95"
+          value={formatMilliseconds(summary.receiving?.p95Ms)}
+        />
+        <ObservationRow
+          label="TLS handshake p95"
+          value={formatMilliseconds(summary.tlsHandshaking?.p95Ms)}
+        />
+      </dl>
+    </div>
   );
 }
 
@@ -401,8 +495,12 @@ function formatNumber(value: number): string {
   return new Intl.NumberFormat("en-US").format(value);
 }
 
-function formatMilliseconds(value: number | undefined): string {
-  return value === undefined ? "n/a" : `${formatNumber(value)}ms`;
+function formatMilliseconds(value: number | null | undefined): string {
+  return value == null ? "n/a" : `${formatNumber(value)}ms`;
+}
+
+function formatHistogramBoundMilliseconds(value: number | null): string {
+  return value === null ? "n/a" : `≤ ${formatMilliseconds(value)}`;
 }
 
 function formatDuration(seconds: number): string {

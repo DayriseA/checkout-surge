@@ -591,6 +591,7 @@ Logical fields:
 - `httpSummary`
 - `trafficDeliverySummary`
 - `httpTimingBreakdownSummary`
+- `serverReservationTimingSummary`
 - `loadRunDiagnosticsSummary`
 - `businessOutcomeSummary`
 - `terminalInventorySnapshot` optional
@@ -600,7 +601,7 @@ Logical fields:
 Notes:
 
 - Run summaries are separate from live dashboard recovery state.
-- Persisted run snapshots, transport-attempt counts, HTTP and delivery summaries, business outcomes, terminal inventory, and the runtime-policy payload use their shared contract types in the Drizzle schema. Finalization timing and real-run diagnostics also use their current shared contract types; terminal run-summary diagnostics remain generic because API-owned failure and accounting annotations are legitimate current variants. Event-polymorphic order-event payloads remain outside this boundary. These TypeScript annotations do not validate existing rows or raw SQL writes; API read boundaries perform runtime schema validation and reject malformed current data with run, row, and field context.
+- Persisted run snapshots, transport-attempt counts, HTTP, delivery, server-reservation-timing, business-outcome, terminal-inventory, and runtime-policy payloads use their shared contract types in the Drizzle schema. Finalization client timing and real-run diagnostics also use their current shared contract types; terminal run-summary diagnostics remain generic because API-owned failure and accounting annotations are legitimate current variants. Event-polymorphic order-event payloads remain outside this boundary. These TypeScript annotations do not validate existing rows or raw SQL writes; API read boundaries perform runtime schema validation and reject malformed current data with run, row, and field context.
 - `terminalInventorySnapshot` carries the Redis-derived terminal observation produced by the applicable terminal workflow, so completed runs stay auditable after live Redis state is reset. Normal post-traffic finalization captures it only after every pending-persistence hold has converged and after the fresh Redis sold-out count agrees with the paired durable business aggregate; disagreement remains draining. Traffic-completion enrichment remains separate earlier evidence. Admin reset and early-failure workflows may capture their own terminal observations. Startup repair does not synthesize a terminal projection for orchestrator-owned or draining work.
 - Run History displays traffic delivery quality from `trafficDeliverySummary.trafficDeliveryStatus` next to the terminal run status, rather than encoding warning/degraded delivery as separate demo-run lifecycle states.
 - A terminal run should have one summary-backed history record whether it ended through normal finalization, admin recovery, traffic-start failure, or initialization failure.

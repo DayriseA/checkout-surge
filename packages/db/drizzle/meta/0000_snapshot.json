@@ -1,5 +1,5 @@
 {
-  "id": "e4b7b33a-b0d6-4c68-a05e-3d4259479fe6",
+  "id": "5b9dfe04-02df-4bd5-a388-eaced2777201",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -537,6 +537,13 @@
           "type": "jsonb",
           "primaryKey": false,
           "notNull": true
+        },
+        "server_reservation_timing_summary": {
+          "name": "server_reservation_timing_summary",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{\"redisAtomicReservation\":{\"sampleCount\":0,\"averageMs\":null,\"p95Ms\":null},\"reserveOrderService\":{\"sampleCount\":0,\"averageMs\":null,\"p95Ms\":null}}'::jsonb"
         },
         "load_run_diagnostics_summary": {
           "name": "load_run_diagnostics_summary",

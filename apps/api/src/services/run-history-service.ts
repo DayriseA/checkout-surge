@@ -4,6 +4,9 @@ import {
   type AdminRunHistoryDetailResponse,
   adminDeleteRunHistoryResponseSchema,
   adminRunHistoryDetailResponseSchema,
+  deriveRecordedReplyCount,
+  evaluateFastReservationTarget,
+  httpTimingBreakdownSummarySchema,
   type LoadRunDiagnosticsSummary,
   loadRunDiagnosticsSummarySchema,
   type PublicRunHistoryDetailResponse,
@@ -25,6 +28,7 @@ import {
   runHistoryNotificationSchema,
   runHistoryOrderOutcomeSchema,
   runHistorySummarySchema,
+  serverReservationTimingSummarySchema,
 } from "@checkout-surge/contracts";
 import {
   type CheckoutSurgeDatabase,
@@ -132,6 +136,12 @@ export class RunHistoryService implements RunHistoryController {
     return publicRunHistoryDetailResponseSchema.parse({
       summary: toPublicRunHistorySummary(source.summaryRow),
       run: toPublicRunHistoryRun(source.runRow),
+      httpTimingBreakdownSummary: parsePersistedState(
+        httpTimingBreakdownSummarySchema,
+        source.summaryRow.httpTimingBreakdownSummary,
+        `run summary ${source.summaryRow.id} for demo run ${source.summaryRow.runId}`,
+        "httpTimingBreakdownSummary",
+      ),
       orders: {
         totalCount: order?.totalCount ?? 0,
         byStatus: {
@@ -251,6 +261,12 @@ export class RunHistoryService implements RunHistoryController {
     return adminRunHistoryDetailResponseSchema.parse({
       summary: toRunHistorySummary(source.summaryRow),
       run: toDemoRunSnapshot(source.runRow),
+      httpTimingBreakdownSummary: parsePersistedState(
+        httpTimingBreakdownSummarySchema,
+        source.summaryRow.httpTimingBreakdownSummary,
+        `run summary ${source.summaryRow.id} for demo run ${source.summaryRow.runId}`,
+        "httpTimingBreakdownSummary",
+      ),
       loadRunDiagnosticsSummary: parseRunHistoryDiagnostics(
         source.summaryRow.loadRunDiagnosticsSummary,
         `run summary ${source.summaryRow.id} for demo run ${source.summaryRow.runId}`,
@@ -333,6 +349,13 @@ function toPublicRunHistorySummary(
     row.transportAttemptCounts,
     context,
   );
+  const httpSummary = parsePersistedTrafficHttpSummary(row.httpSummary, context);
+  const serverReservationTimingSummary = parsePersistedState(
+    serverReservationTimingSummarySchema,
+    row.serverReservationTimingSummary,
+    context,
+    "serverReservationTimingSummary",
+  );
   const { notes: _notes, ...publicDeliverySummary } = parsePersistedTrafficDeliverySummary(
     row.trafficDeliverySummary,
     transportAttemptCounts,
@@ -345,8 +368,13 @@ function toPublicRunHistorySummary(
     ...(row.startedAt ? { startedAt: row.startedAt.toISOString() } : {}),
     endedAt: row.endedAt.toISOString(),
     transportAttemptCounts,
-    httpSummary: parsePersistedTrafficHttpSummary(row.httpSummary, context),
+    httpSummary,
     trafficDeliverySummary: publicDeliverySummary,
+    serverReservationTimingSummary,
+    fastReservationTargetEvaluation: evaluateFastReservationTarget(
+      serverReservationTimingSummary,
+      deriveRecordedReplyCount(transportAttemptCounts, httpSummary.transportFailures),
+    ),
     businessOutcomeSummary: parsePersistedBusinessOutcomeSummary(
       row.businessOutcomeSummary,
       context,
@@ -409,6 +437,13 @@ function toRunHistorySummary(row: typeof demoRunSummaries.$inferSelect): RunHist
     row.transportAttemptCounts,
     context,
   );
+  const serverReservationTimingSummary = parsePersistedState(
+    serverReservationTimingSummarySchema,
+    row.serverReservationTimingSummary,
+    context,
+    "serverReservationTimingSummary",
+  );
+  const httpSummary = parsePersistedTrafficHttpSummary(row.httpSummary, context);
   return runHistorySummarySchema.parse({
     id: row.id,
     runId: row.runId,
@@ -418,11 +453,16 @@ function toRunHistorySummary(row: typeof demoRunSummaries.$inferSelect): RunHist
     ...(row.startedAt ? { startedAt: row.startedAt.toISOString() } : {}),
     endedAt: row.endedAt.toISOString(),
     transportAttemptCounts,
-    httpSummary: parsePersistedTrafficHttpSummary(row.httpSummary, context),
+    httpSummary,
     trafficDeliverySummary: parsePersistedTrafficDeliverySummary(
       row.trafficDeliverySummary,
       transportAttemptCounts,
       context,
+    ),
+    serverReservationTimingSummary,
+    fastReservationTargetEvaluation: evaluateFastReservationTarget(
+      serverReservationTimingSummary,
+      deriveRecordedReplyCount(transportAttemptCounts, httpSummary.transportFailures),
     ),
     businessOutcomeSummary: parsePersistedBusinessOutcomeSummary(
       row.businessOutcomeSummary,

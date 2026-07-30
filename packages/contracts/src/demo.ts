@@ -18,8 +18,11 @@ import {
   acceptedRunConfigSnapshotSchema,
   backpressureConfigSchema,
   erpRunConfigSchema,
+  fastReservationTargetEvaluationSchema,
+  httpTimingBreakdownSummarySchema,
   inventoryConfigSchema,
   loadRunDiagnosticsSummarySchema,
+  serverReservationTimingSummarySchema,
   trafficConfigSchema,
   trafficDeliverySummarySchema,
   trafficDeliverySummaryShape,
@@ -341,6 +344,8 @@ export const runHistorySummarySchema = demoRunSummaryShapeSchema
     transportAttemptCounts: transportAttemptCountsSchema,
     httpSummary: trafficHttpSummarySchema,
     trafficDeliverySummary: trafficDeliverySummarySchema,
+    serverReservationTimingSummary: serverReservationTimingSummarySchema,
+    fastReservationTargetEvaluation: fastReservationTargetEvaluationSchema,
     businessOutcomeSummary: businessOutcomeSummarySchema,
     terminalInventorySnapshot: terminalInventorySnapshotSchema.optional(),
   })
@@ -443,6 +448,7 @@ export const adminRunHistoryDetailResponseSchema = z
   .object({
     summary: runHistorySummarySchema,
     run: demoRunSnapshotSchema,
+    httpTimingBreakdownSummary: httpTimingBreakdownSummarySchema,
     loadRunDiagnosticsSummary: loadRunDiagnosticsSummarySchema.nullable(),
     orders: runHistoryCollectionMetadataSchema
       .extend({
@@ -488,6 +494,8 @@ export const publicRunHistorySummarySchema = z
     transportAttemptCounts: transportAttemptCountsSchema,
     httpSummary: trafficHttpSummarySchema,
     trafficDeliverySummary: publicTrafficDeliverySummarySchema,
+    serverReservationTimingSummary: serverReservationTimingSummarySchema,
+    fastReservationTargetEvaluation: fastReservationTargetEvaluationSchema,
     businessOutcomeSummary: businessOutcomeSummarySchema,
     terminalInventorySnapshot: publicTerminalInventorySnapshotSchema.optional(),
     capturedAt: isoTimestampSchema,
@@ -531,6 +539,7 @@ export const publicRunHistoryDetailResponseSchema = z
   .object({
     summary: publicRunHistorySummarySchema,
     run: publicRunHistoryRunSchema,
+    httpTimingBreakdownSummary: httpTimingBreakdownSummarySchema,
     orders: z
       .object({ totalCount: nonnegativeIntegerSchema, byStatus: orderStatusCountsSchema })
       .strict(),

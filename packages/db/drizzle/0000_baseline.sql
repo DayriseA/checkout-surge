@@ -73,6 +73,7 @@ CREATE TABLE "demo_run_summaries" (
 	"http_summary" jsonb NOT NULL,
 	"traffic_delivery_summary" jsonb NOT NULL,
 	"http_timing_breakdown_summary" jsonb NOT NULL,
+	"server_reservation_timing_summary" jsonb DEFAULT '{"redisAtomicReservation":{"sampleCount":0,"averageMs":null,"p95Ms":null},"reserveOrderService":{"sampleCount":0,"averageMs":null,"p95Ms":null}}'::jsonb NOT NULL,
 	"load_run_diagnostics_summary" jsonb NOT NULL,
 	"business_outcome_summary" jsonb NOT NULL,
 	"terminal_inventory_snapshot" jsonb,

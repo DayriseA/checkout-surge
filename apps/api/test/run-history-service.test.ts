@@ -106,6 +106,65 @@ describe("run history service", () => {
     expect(secondPage.summaries[0]?.runId).toBe(ids.olderRun);
   });
 
+  it("parses persisted server timing and derives expected replies from transport evidence", async () => {
+    const db = requireConnection(connection).db;
+    const service = createService(connection);
+    await seedHistory(db);
+    await db
+      .update(demoRunSummaries)
+      .set({
+        httpSummary: {
+          failedRequests: 2,
+          acceptedResponses: 2,
+          soldOutResponses: 1,
+          transportFailures: 2,
+          unexpectedResponses: 0,
+          p95LatencyMs: 42,
+          failureRate: 0.4,
+        },
+        serverReservationTimingSummary: {
+          redisAtomicReservation: { sampleCount: 3, averageMs: 4, p95Ms: 25 },
+          reserveOrderService: { sampleCount: 3, averageMs: 30, p95Ms: 100 },
+        },
+      })
+      .where(eq(demoRunSummaries.id, ids.newerSummary));
+
+    const history = await service.list({ page: 1, pageSize: 10 });
+    const detail = await service.detail(ids.newerRun);
+
+    expect(history.summaries[0]).toMatchObject({
+      serverReservationTimingSummary: {
+        redisAtomicReservation: { sampleCount: 3, averageMs: 4, p95Ms: 25 },
+        reserveOrderService: { sampleCount: 3, averageMs: 30, p95Ms: 100 },
+      },
+      fastReservationTargetEvaluation: {
+        expectedResponseCount: 3,
+        observedSampleCount: 3,
+        verdict: "fail",
+      },
+    });
+    expect(detail?.summary.fastReservationTargetEvaluation.expectedResponseCount).toBe(3);
+  });
+
+  it("rejects malformed persisted server timing with summary-row context", async () => {
+    const db = requireConnection(connection).db;
+    const service = createService(connection);
+    await seedHistory(db);
+    await db
+      .update(demoRunSummaries)
+      .set({
+        serverReservationTimingSummary: {
+          redisAtomicReservation: { sampleCount: 1, averageMs: 4, p95Ms: null },
+          reserveOrderService: { sampleCount: 1, averageMs: 30, p95Ms: 100 },
+        } as unknown as (typeof demoRunSummaries.$inferSelect)["serverReservationTimingSummary"],
+      })
+      .where(eq(demoRunSummaries.id, ids.newerSummary));
+
+    await expect(service.list({ page: 1, pageSize: 10 })).rejects.toThrow(
+      new RegExp(`${ids.newerSummary}.*${ids.newerRun}.*serverReservationTimingSummary`),
+    );
+  });
+
   it("rejects stored run config snapshots that rely on wire defaults with run context", async () => {
     const db = requireConnection(connection).db;
     const service = createService(connection);
@@ -276,6 +335,7 @@ describe("run history service", () => {
     });
 
     const adminDetail = await service.adminDetail(ids.newerRun);
+    expect(adminDetail?.httpTimingBreakdownSummary).toEqual(emptyHttpTimingBreakdownSummary);
     expect(adminDetail?.loadRunDiagnosticsSummary).toMatchObject({
       k6Version: "k6 v1.0.0",
       generatorCapacity: null,

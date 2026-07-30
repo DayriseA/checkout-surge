@@ -12,7 +12,10 @@ import {
   uuidSchema,
 } from "./primitives.js";
 import { orderProcessBullMqQueueName, orderProcessQueueName } from "./queue.js";
-import { transportAttemptCountsSchema } from "./traffic-transport-counts.js";
+import {
+  type TransportAttemptCounts,
+  transportAttemptCountsSchema,
+} from "./traffic-transport-counts.js";
 
 export const trafficExecutionStartPath = "/traffic/start" as const;
 export const trafficExecutionAbortPath = "/traffic/current/abort" as const;
@@ -501,6 +504,140 @@ export const emptyHttpTimingBreakdownSummary: HttpTimingBreakdownSummary = {
   waiting: null,
   receiving: null,
 };
+
+export const reservationTimingMeasurementSchema = httpTimingPhaseSummarySchema
+  .extend({
+    sampleCount: nonnegativeIntegerSchema,
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if ((value.averageMs === null) !== (value.p95Ms === null)) {
+      context.addIssue({
+        code: "custom",
+        message: "averageMs and p95Ms must be present together",
+      });
+    }
+    const hasMeasurement = value.averageMs !== null && value.p95Ms !== null;
+    if (value.sampleCount > 0 !== hasMeasurement) {
+      context.addIssue({
+        code: "custom",
+        message: "sampleCount and timing values must be present together",
+      });
+    }
+  });
+export type ReservationTimingMeasurement = z.infer<typeof reservationTimingMeasurementSchema>;
+
+export const serverReservationTimingSummarySchema = z
+  .object({
+    redisAtomicReservation: reservationTimingMeasurementSchema,
+    reserveOrderService: reservationTimingMeasurementSchema,
+  })
+  .strict();
+export type ServerReservationTimingSummary = z.infer<typeof serverReservationTimingSummarySchema>;
+
+const emptyReservationTimingMeasurement: ReservationTimingMeasurement = {
+  sampleCount: 0,
+  averageMs: null,
+  p95Ms: null,
+};
+
+export const emptyServerReservationTimingSummary: ServerReservationTimingSummary = {
+  redisAtomicReservation: emptyReservationTimingMeasurement,
+  reserveOrderService: emptyReservationTimingMeasurement,
+};
+
+export const redisAtomicReservationP95TargetMs = 1;
+
+export function deriveRecordedReplyCount(
+  counts: TransportAttemptCounts,
+  transportFailures: number,
+): number {
+  return Math.max(counts.completedRequests - transportFailures, 0);
+}
+
+export const fastReservationTargetSchema = z
+  .object({
+    operation: z.literal("redis_atomic_reservation"),
+    percentile: z.literal("p95"),
+    thresholdMs: z.literal(redisAtomicReservationP95TargetMs),
+    startEvent: z.literal("stock_reservation_gateway_call_started"),
+    endEvent: z.literal("stock_reservation_decision_received"),
+  })
+  .strict();
+export type FastReservationTarget = z.infer<typeof fastReservationTargetSchema>;
+
+export const fastReservationTargetEvaluationSchema = z
+  .object({
+    target: fastReservationTargetSchema,
+    observedP95Ms: nonnegativeNumberSchema.nullable(),
+    observedSampleCount: nonnegativeIntegerSchema,
+    expectedResponseCount: nonnegativeIntegerSchema,
+    verdict: z.enum(["pass", "fail", "qualified"]),
+    qualification: z.enum(["measurement_unavailable", "incomplete_server_observation"]).nullable(),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if ((value.verdict === "qualified") !== (value.qualification !== null)) {
+      context.addIssue({
+        code: "custom",
+        path: ["qualification"],
+        message: "qualification must be present only for a qualified verdict",
+      });
+    }
+  });
+export type FastReservationTargetEvaluation = z.infer<typeof fastReservationTargetEvaluationSchema>;
+
+const fastReservationTarget: FastReservationTarget = {
+  operation: "redis_atomic_reservation",
+  percentile: "p95",
+  thresholdMs: redisAtomicReservationP95TargetMs,
+  startEvent: "stock_reservation_gateway_call_started",
+  endEvent: "stock_reservation_decision_received",
+};
+
+export function evaluateFastReservationTarget(
+  summary: ServerReservationTimingSummary,
+  expectedResponseCount: number,
+): FastReservationTargetEvaluation {
+  const parsedSummary = serverReservationTimingSummarySchema.parse(summary);
+  const parsedExpectedResponseCount = nonnegativeIntegerSchema.parse(expectedResponseCount);
+  const observed = parsedSummary.redisAtomicReservation;
+  const service = parsedSummary.reserveOrderService;
+
+  if (observed.p95Ms === null || service.sampleCount === 0) {
+    return fastReservationTargetEvaluationSchema.parse({
+      target: fastReservationTarget,
+      observedP95Ms: observed.p95Ms,
+      observedSampleCount: observed.sampleCount,
+      expectedResponseCount: parsedExpectedResponseCount,
+      verdict: "qualified",
+      qualification: "measurement_unavailable",
+    });
+  }
+
+  if (
+    observed.sampleCount !== service.sampleCount ||
+    service.sampleCount !== parsedExpectedResponseCount
+  ) {
+    return fastReservationTargetEvaluationSchema.parse({
+      target: fastReservationTarget,
+      observedP95Ms: observed.p95Ms,
+      observedSampleCount: observed.sampleCount,
+      expectedResponseCount: parsedExpectedResponseCount,
+      verdict: "qualified",
+      qualification: "incomplete_server_observation",
+    });
+  }
+
+  return fastReservationTargetEvaluationSchema.parse({
+    target: fastReservationTarget,
+    observedP95Ms: observed.p95Ms,
+    observedSampleCount: observed.sampleCount,
+    expectedResponseCount: parsedExpectedResponseCount,
+    verdict: observed.p95Ms <= redisAtomicReservationP95TargetMs ? "pass" : "fail",
+    qualification: null,
+  });
+}
 
 export const generatorUtilisationSchema = z
   .object({

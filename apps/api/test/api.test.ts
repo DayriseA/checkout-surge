@@ -30,9 +30,11 @@ import {
   type ErpResilienceStatus,
   emptyHttpTimingBreakdownSummary,
   emptyRequestArrivalSummary,
+  emptyServerReservationTimingSummary,
   erpResilienceStatusPath,
   erpResilienceStatusSchema,
   errorPayloadSchema,
+  evaluateFastReservationTarget,
   healthResponseSchema,
   inventoryStatusSchema,
   livenessResponseSchema,
@@ -609,6 +611,11 @@ function runHistoryListResponseFixture(): RunHistoryListResponse {
           trafficDeliveryStatus: "complete",
           notes: [],
         },
+        serverReservationTimingSummary: emptyServerReservationTimingSummary,
+        fastReservationTargetEvaluation: evaluateFastReservationTarget(
+          emptyServerReservationTimingSummary,
+          10,
+        ),
         businessOutcomeSummary: businessOutcomeFixture(),
         terminalInventorySnapshot: {
           saleOfferId: fixtureIds.saleOffer,
@@ -639,6 +646,7 @@ function adminRunHistoryDetailResponseFixture(): AdminRunHistoryDetailResponse {
 
   return {
     summary,
+    httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
     loadRunDiagnosticsSummary: null,
     run: demoRunSnapshotSchema.parse({
       ...demoRunSnapshotFixture(),
@@ -778,6 +786,7 @@ function publicRunHistoryDetailResponseFixture(): PublicRunHistoryDetailResponse
       ...(sanitizedInventory ? { terminalInventorySnapshot: sanitizedInventory } : {}),
     },
     run,
+    httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
     orders: { totalCount: 1, byStatus: { queued: 0, processing: 0, confirmed: 1, failed: 0 } },
     erpAttempts: {
       totalCount: 1,

@@ -44,6 +44,10 @@ function buildService(options: {
     typeof ReserveOrderService
   >[0]["dashboardSourceDirtyScheduler"];
   soldOutObservations?: ConstructorParameters<typeof ReserveOrderService>[0]["soldOutObservations"];
+  reservationTimingObservations?: ConstructorParameters<
+    typeof ReserveOrderService
+  >[0]["reservationTimingObservations"];
+  monotonicNow?: () => number;
 }) {
   return new ReserveOrderService({
     persistence: options.persistence,
@@ -90,6 +94,10 @@ function buildService(options: {
       ? { dashboardSourceDirtyScheduler: options.dashboardSourceDirtyScheduler }
       : {}),
     ...(options.soldOutObservations ? { soldOutObservations: options.soldOutObservations } : {}),
+    ...(options.reservationTimingObservations
+      ? { reservationTimingObservations: options.reservationTimingObservations }
+      : {}),
+    ...(options.monotonicNow ? { monotonicNow: options.monotonicNow } : {}),
   });
 }
 
@@ -130,6 +138,37 @@ function persistedBuy(hold: SecuredReservationHold): PersistedBuyAcceptance {
 }
 
 describe("ReserveOrderService queue handoff", () => {
+  it("observes the Redis and whole-service boundaries without changing the outcome", async () => {
+    const observations: unknown[] = [];
+    const observe = vi.fn((input) => {
+      observations.push(input);
+      throw new Error("timing sink unavailable");
+    });
+    const monotonicTimes = [100, 102, 107, 115];
+    const service = buildService({
+      persistence: {
+        persistSecuredReservation: vi.fn(),
+        getPersistedBuyByReservationId: vi.fn(),
+      },
+      stockReservations: acceptingGateway({
+        reserve: async () => ({ outcome: "sold_out", reservation: null }),
+      }),
+      reservationTimingObservations: { observe },
+      monotonicNow: () => monotonicTimes.shift() ?? 115,
+    });
+
+    await expect(service.reserve({ request, correlationId, now })).resolves.toMatchObject({
+      outcome: "sold_out",
+    });
+    expect(observations).toEqual([
+      {
+        runId: request.runId,
+        redisAtomicReservationMs: 5,
+        reserveOrderServiceMs: 15,
+      },
+    ]);
+  });
+
   it("observes only a fresh sold-out decision synchronously and isolates observer failure", async () => {
     const observeSoldOut = vi.fn(() => {
       throw new Error("observer unavailable");

@@ -3,6 +3,7 @@ import {
   adminDemoResetResponseSchema,
   type BusinessOutcomeSummary,
   emptyHttpTimingBreakdownSummary,
+  emptyServerReservationTimingSummary,
   httpTimingBreakdownSummarySchema,
   realLoadRunDiagnosticsSummarySchema,
   type TerminalInventorySnapshot,
@@ -32,6 +33,7 @@ import {
   parsePersistedState,
 } from "./persisted-demo-run-state.js";
 import type { DemoResetWorkflowFence } from "./postgres-demo-reset-workflow-fence.js";
+import type { ReservationTimingLifecycle } from "./reservation-timing-observation.js";
 import type {
   TerminalDemoRunSummaryInput,
   TerminalDemoRunWriter,
@@ -76,6 +78,7 @@ export class AdminDemoResetService implements AdminDemoResetWorkflow {
       clearErpCircuitBreakerState: () => Promise<void>;
       trafficAborter: TrafficAbortGateway;
       dashboardLiveStateReset: DashboardLiveStateReset;
+      reservationTiming?: ReservationTimingLifecycle;
       resetWorkflowFence: DemoResetWorkflowFence;
       maintenanceAuthority: DemoMaintenanceAuthority;
       now?: () => Date;
@@ -235,6 +238,7 @@ export class AdminDemoResetService implements AdminDemoResetWorkflow {
         httpSummary: trafficSummary.httpSummary,
         trafficDeliverySummary: trafficSummary.trafficDeliverySummary,
         httpTimingBreakdownSummary: trafficSummary.httpTimingBreakdownSummary,
+        serverReservationTimingSummary: await this.readReservationTiming(latest.run.id),
         loadRunDiagnosticsSummary: {
           ...trafficSummary.loadRunDiagnosticsSummary,
           failureReason: "admin_reset",
@@ -280,6 +284,14 @@ export class AdminDemoResetService implements AdminDemoResetWorkflow {
           "Admin reset terminalized the run but could not clear its dashboard projection. Retry reset to finish projection cleanup.",
         );
       }
+      try {
+        await this.options.reservationTiming?.clearRun(runId);
+      } catch (error) {
+        this.options.logger.warn(
+          { err: error, runId, correlationId },
+          "Could not clear advisory reservation timing after admin reset.",
+        );
+      }
     }
     await this.options.clearErpCircuitBreakerState();
 
@@ -295,6 +307,19 @@ export class AdminDemoResetService implements AdminDemoResetWorkflow {
 
   private now(): Date {
     return this.options.now?.() ?? new Date();
+  }
+
+  private async readReservationTiming(runId: string) {
+    if (!this.options.reservationTiming) return emptyServerReservationTimingSummary;
+    try {
+      return await this.options.reservationTiming.readAndFence(runId);
+    } catch (error) {
+      this.options.logger.warn(
+        { err: error, runId },
+        "Could not capture advisory server-side reservation timing during admin reset.",
+      );
+      return emptyServerReservationTimingSummary;
+    }
   }
 
   private async readResetRun(runId: string): Promise<{

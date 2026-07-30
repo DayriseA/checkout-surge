@@ -1,6 +1,7 @@
 import type {
   BusinessOutcomeSummary,
   DemoRunStatus,
+  ServerReservationTimingSummary,
   TerminalInventorySnapshot,
   TrafficDeliverySummary,
   TrafficExecutionStatus,
@@ -30,6 +31,7 @@ export interface TerminalDemoRunSummaryInput {
   httpSummary: TrafficHttpSummary;
   trafficDeliverySummary: TrafficDeliverySummary;
   httpTimingBreakdownSummary: Record<string, unknown>;
+  serverReservationTimingSummary: ServerReservationTimingSummary;
   loadRunDiagnosticsSummary: Record<string, unknown>;
   businessOutcome: BusinessOutcomeSummary;
   terminalInventorySnapshot: TerminalInventorySnapshot | null;

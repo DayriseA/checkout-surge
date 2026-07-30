@@ -233,7 +233,8 @@ function buildSeedPresets(): SeedPreset[] {
       isSystem: true,
       display: {
         name: "Preview 1k",
-        description: "One-second public preview with visible scarcity and fast drain.",
+        description:
+          "Public scarcity preview that dispatches 1,000 buyer attempts as fast as the host allows.",
         sortOrder: 10,
         outcomeFocus: ["happy_path", "sold_out"],
       },
@@ -271,7 +272,8 @@ function buildSeedPresets(): SeedPreset[] {
       isSystem: true,
       display: {
         name: "Surge 10k",
-        description: "Public showcase target with approximately 10,000 one-second attempts.",
+        description:
+          "Public showcase target that dispatches 10,000 buyer attempts as fast as the host allows.",
         sortOrder: 30,
         outcomeFocus: ["sold_out", "queue_pressure", "run_history"],
       },

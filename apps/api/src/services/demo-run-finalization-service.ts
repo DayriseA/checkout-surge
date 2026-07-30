@@ -3,6 +3,7 @@ import {
   type BusinessOutcomeSummary,
   businessOutcomeSummarySchema,
   type DemoRunSnapshot,
+  emptyServerReservationTimingSummary,
   httpTimingBreakdownSummarySchema,
   type InventoryStatus,
   realLoadRunDiagnosticsSummarySchema,
@@ -35,6 +36,7 @@ import {
   parsePersistedState,
   parsePersistedTerminalInventorySnapshot,
 } from "./persisted-demo-run-state.js";
+import type { TerminalReservationTimingReader } from "./reservation-timing-observation.js";
 import type { TerminalDemoRunWriter } from "./terminal-demo-run-writer.js";
 import {
   classifyTrafficTransport,
@@ -75,6 +77,7 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
       terminalInventoryRead: TerminalInventoryReadOperation;
       terminalInventoryReadTimeoutMs: number;
       drainTimeoutSeconds: number;
+      reservationTiming?: TerminalReservationTimingReader;
       now?: () => Date;
     },
   ) {
@@ -264,6 +267,7 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
           httpSummary: evidence.http,
           trafficDeliverySummary: evidence.delivery,
           httpTimingBreakdownSummary: evidence.timing,
+          serverReservationTimingSummary: await this.readReservationTiming(runId),
           loadRunDiagnosticsSummary,
           businessOutcome: latestBusinessOutcome,
           terminalInventorySnapshot: toRedisTerminalInventorySnapshot({
@@ -459,6 +463,19 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
 
   private now(): Date {
     return this.options.now?.() ?? new Date();
+  }
+
+  private async readReservationTiming(runId: string) {
+    if (!this.options.reservationTiming) return emptyServerReservationTimingSummary;
+    try {
+      return await this.options.reservationTiming.readAndFence(runId);
+    } catch (error) {
+      this.options.logger.warn(
+        { err: error, runId },
+        "Could not capture advisory server-side reservation timing.",
+      );
+      return emptyServerReservationTimingSummary;
+    }
   }
 }
 

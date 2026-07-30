@@ -3,7 +3,11 @@ import type {
   PublicRunHistoryDetailResponse,
   RunHistoryListResponse,
 } from "@checkout-surge/contracts";
-import { emptyRequestArrivalSummary } from "@checkout-surge/contracts";
+import {
+  emptyRequestArrivalSummary,
+  evaluateFastReservationTarget,
+  type ServerReservationTimingSummary,
+} from "@checkout-surge/contracts";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -17,6 +21,18 @@ import RunHistoryDetailPage from "../src/app/run-history/[runId]/page.js";
 const getRunHistoryDetail = vi.hoisted(() => vi.fn());
 const getAdminRunHistoryDetail = vi.hoisted(() => vi.fn());
 const hasValidAdminPageSession = vi.hoisted(() => vi.fn());
+const serverReservationTimingSummary: ServerReservationTimingSummary = {
+  redisAtomicReservation: { sampleCount: 10, averageMs: 0.7, p95Ms: 1 },
+  reserveOrderService: { sampleCount: 10, averageMs: 12, p95Ms: 25 },
+};
+const httpTimingBreakdownSummary: PublicRunHistoryDetailResponse["httpTimingBreakdownSummary"] = {
+  blocked: { averageMs: 2, p95Ms: 5 },
+  connecting: { averageMs: 1, p95Ms: 4 },
+  tlsHandshaking: { averageMs: 0, p95Ms: 0 },
+  sending: { averageMs: 0.2, p95Ms: 1 },
+  waiting: { averageMs: 30, p95Ms: 42 },
+  receiving: { averageMs: 0.1, p95Ms: 0.5 },
+};
 
 vi.mock("../src/app/lib/api.js", () => ({ getRunHistoryDetail, getAdminRunHistoryDetail }));
 vi.mock("../src/app/lib/server/admin-page-session.js", () => ({ hasValidAdminPageSession }));
@@ -126,7 +142,7 @@ describe("run history surface", () => {
     expect(markup).toMatch(/Sold out<\/dt><dd[^>]*>3<\/dd>/);
     expect(markup).toMatch(/Unexpected<\/dt><dd[^>]*>0<\/dd>/);
     expect(markup).toMatch(
-      /p95 latency<span[^>]*>observed replies only<\/span><\/dt><dd[^>]*>42ms<\/dd>/,
+      /Client HTTP p95<span[^>]*>observed replies only<\/span><\/dt><dd[^>]*>42ms<\/dd>/,
     );
     // 7 of 9 dispatched attempts recorded a reply.
     expect(markup).toContain("78% of dispatched attempts recorded a reply");
@@ -162,6 +178,8 @@ describe("run history surface", () => {
     expect(markup).toContain("System of record");
     expect(markup).toContain("Generator diagnostics");
     expect(markup).toContain("k6 v1.0.0");
+    expect(markup).toContain("Client-observed HTTP phases");
+    expect(markup).toContain("Waiting p95");
     expect(markup).not.toContain("Interrupted");
     expect(markup).not.toContain("Unstarted");
     expect(markup).not.toContain("Emitted");
@@ -287,6 +305,11 @@ function runHistoryFixture(): RunHistoryListResponse {
           trafficDeliveryStatus: "complete",
           notes: [],
         },
+        serverReservationTimingSummary,
+        fastReservationTargetEvaluation: evaluateFastReservationTarget(
+          serverReservationTimingSummary,
+          10,
+        ),
         businessOutcomeSummary: {
           acceptedReservations: 6,
           soldOutRejections: 4,
@@ -350,9 +373,14 @@ function runHistoryDetailFixture(): PublicRunHistoryDetailResponse {
         completedIterations: 7,
         trafficDeliveryStatus: "failed",
       },
+      fastReservationTargetEvaluation: evaluateFastReservationTarget(
+        serverReservationTimingSummary,
+        7,
+      ),
       ...(sanitizedInventory ? { terminalInventorySnapshot: sanitizedInventory } : {}),
     },
     run,
+    httpTimingBreakdownSummary,
     orders: { totalCount: 1, byStatus: { queued: 0, processing: 0, confirmed: 1, failed: 0 } },
     erpAttempts: {
       totalCount: 1,
@@ -374,6 +402,7 @@ function adminRunHistoryDetailFixture(): AdminRunHistoryDetailResponse {
 
   return {
     summary,
+    httpTimingBreakdownSummary,
     loadRunDiagnosticsSummary: runDiagnosticsFixture(),
     run: {
       runId: summary.runId,

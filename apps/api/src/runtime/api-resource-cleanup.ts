@@ -2,7 +2,7 @@ export interface ApiResourceCleanupOperations {
   closePendingPersistenceRecovery(): Promise<void>;
   closeReadiness(): Promise<void>;
   closeServer(): Promise<void>;
-  closeDashboardPublicationScheduler(): Promise<void>;
+  closeDashboardAndReservationSchedulers(): Promise<void>;
   closeBusinessOutcomePublicationScheduler(): Promise<void>;
   closeDashboardProjectionDirtySubscriber(): Promise<void>;
   closeOrderProcessJobPublisher(): Promise<void>;
@@ -113,7 +113,7 @@ export async function closeApiResources(operations: ApiResourceCleanupOperations
   }
 
   try {
-    await runCleanup(operations.closeDashboardPublicationScheduler);
+    await runCleanup(operations.closeDashboardAndReservationSchedulers);
   } catch (error) {
     errors.push(error);
   }

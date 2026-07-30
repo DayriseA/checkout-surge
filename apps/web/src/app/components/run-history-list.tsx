@@ -102,7 +102,9 @@ function RunHistorySummaryArticle({ summary }: { summary: RunHistorySummary }) {
         <TransportObservationSection
           arrivalSummary={summary.trafficDeliverySummary.requestArrivalSummary}
           counts={summary.transportAttemptCounts}
+          fastReservationTargetEvaluation={summary.fastReservationTargetEvaluation}
           httpSummary={summary.httpSummary}
+          serverReservationTimingSummary={summary.serverReservationTimingSummary}
           surface="list"
         />
         <SummarySection
