@@ -54,6 +54,7 @@ export function AdminRunHistoryDetail({ detail }: RunHistoryDetailProps) {
             title="Lifecycle"
           />
           <TransportObservationSection
+            arrivalSummary={summary.trafficDeliverySummary.requestArrivalSummary}
             counts={summary.transportAttemptCounts}
             httpSummary={summary.httpSummary}
             surface="detail"
@@ -339,6 +340,7 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
             ]}
           />
           <TransportObservationSection
+            arrivalSummary={summary.trafficDeliverySummary.requestArrivalSummary}
             counts={summary.transportAttemptCounts}
             httpSummary={summary.httpSummary}
             surface="detail"

@@ -135,6 +135,7 @@ function recoveryFixture() {
     consistencyLag: null,
     transportAttemptCounts: null,
     httpSummary: null,
+    requestArrivalSummary: null,
     recentMetrics: [],
     recentCompletionOutcomes: [],
   };

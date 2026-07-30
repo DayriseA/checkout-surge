@@ -701,6 +701,7 @@ function activeProjection() {
     recentCompletionOutcomes: [],
     transportAttemptCounts: null,
     httpSummary: null,
+    requestArrivalSummary: null,
   };
 }
 
@@ -726,7 +727,8 @@ function terminalProjection() {
       reservationThroughput: {
         windowSeconds: 1,
         successfulReservationCount: 32,
-        rate: 32,
+        peakRatePerSecond: 32,
+        peakWindowSeconds: 1,
         unit: "reservations_per_second",
         measuredAt: "2026-07-23T00:00:05.000Z",
       },

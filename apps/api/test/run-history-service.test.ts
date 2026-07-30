@@ -1,5 +1,6 @@
 import {
   emptyHttpTimingBreakdownSummary,
+  emptyRequestArrivalSummary,
   trafficDeliverySummarySchema,
 } from "@checkout-surge/contracts";
 import {
@@ -722,6 +723,7 @@ function summaryFixture(input: {
       maxVUs: null,
       droppedIterations: 10 - input.startedRequests,
       completedIterations: null,
+      requestArrivalSummary: emptyRequestArrivalSummary,
       trafficDeliveryStatus: input.trafficDeliveryStatus,
       notes: input.trafficDeliveryStatus === "failed" ? ["private-delivery-diagnostic-marker"] : [],
     }),

@@ -1,4 +1,5 @@
 import type { AcceptedRunConfigSnapshot } from "@checkout-surge/contracts";
+import { emptyRequestArrivalSummary } from "@checkout-surge/contracts";
 import { describe, expect, it } from "vitest";
 import {
   syntheticFailedTrafficSummary,
@@ -74,6 +75,7 @@ describe("synthetic traffic delivery plan", () => {
         maxVUs: 10_000,
         droppedIterations: 0,
         completedIterations: 0,
+        requestArrivalSummary: emptyRequestArrivalSummary,
         trafficDeliveryStatus: "failed",
         notes: ["not started"],
       },

@@ -29,6 +29,7 @@ import {
   demoRunSnapshotSchema,
   type ErpResilienceStatus,
   emptyHttpTimingBreakdownSummary,
+  emptyRequestArrivalSummary,
   erpResilienceStatusPath,
   erpResilienceStatusSchema,
   errorPayloadSchema,
@@ -267,7 +268,8 @@ async function buildTestServer(options: {
             reservationThroughput: {
               windowSeconds: 60,
               successfulReservationCount: 6,
-              rate: 0.1,
+              peakRatePerSecond: 6,
+              peakWindowSeconds: 1 as const,
               unit: "reservations_per_second" as const,
               measuredAt: "2026-06-20T00:00:10.000Z",
             },
@@ -603,6 +605,7 @@ function runHistoryListResponseFixture(): RunHistoryListResponse {
           maxVUs: null,
           droppedIterations: 0,
           completedIterations: null,
+          requestArrivalSummary: emptyRequestArrivalSummary,
           trafficDeliveryStatus: "complete",
           notes: [],
         },
@@ -1230,6 +1233,7 @@ describe("API gateway routes", () => {
       recentCompletionOutcomes: [],
       transportAttemptCounts: null,
       httpSummary: null,
+      requestArrivalSummary: null,
     };
 
     try {
@@ -1270,7 +1274,8 @@ describe("API gateway routes", () => {
       reservationThroughput: {
         windowSeconds: 60,
         successfulReservationCount: 6,
-        rate: 0.1,
+        peakRatePerSecond: 6,
+        peakWindowSeconds: 1,
         unit: "reservations_per_second",
       },
       soldOutPressure: {
@@ -2458,6 +2463,7 @@ describe("API gateway routes", () => {
         preAllocatedVUs: null,
         maxVUs: null,
         droppedIterations: 0,
+        requestArrivalSummary: emptyRequestArrivalSummary,
         notes: [],
       },
       httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
@@ -4390,6 +4396,7 @@ function internalCompletionReportFixture() {
       preAllocatedVUs: null,
       maxVUs: null,
       droppedIterations: 0,
+      requestArrivalSummary: emptyRequestArrivalSummary,
       notes: [],
     },
     httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,

@@ -4,7 +4,11 @@ import type {
   TrafficHttpSummary,
   TransportAttemptCounts,
 } from "@checkout-surge/contracts";
-import { calculatePlannedRequests, resolveConstantArrivalVus } from "@checkout-surge/contracts";
+import {
+  calculatePlannedRequests,
+  emptyRequestArrivalSummary,
+  resolveConstantArrivalVus,
+} from "@checkout-surge/contracts";
 
 export function syntheticTrafficDeliverySummary(
   config: AcceptedRunConfigSnapshot,
@@ -24,6 +28,7 @@ export function syntheticTrafficDeliverySummary(
     maxVUs: resolvedK6Vus?.maxVus ?? null,
     droppedIterations: 0,
     completedIterations: 0,
+    requestArrivalSummary: emptyRequestArrivalSummary,
     trafficDeliveryStatus: "failed",
     notes,
   };

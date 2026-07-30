@@ -1047,7 +1047,7 @@ describe("load-orchestrator k6 mapping", () => {
     });
 
     expect(samples.map((sample) => sample.metricName)).toEqual([
-      "traffic.scheduled_request_rate",
+      "traffic.response_completion_rate",
       "traffic.latency",
       "traffic.failure_rate",
     ]);
@@ -2288,6 +2288,11 @@ describe("SpawnK6Runner completion reporting", () => {
     const script = await readFile(spawnCall.scriptPath, "utf8");
 
     writeK6JsonLines(k6Process.stdout, [
+      {
+        type: "Point",
+        metric: "checkout_attempts_started",
+        data: { value: 1, time: timestamp },
+      },
       { type: "Point", metric: "http_reqs", data: { value: 1, time: timestamp } },
       { type: "Point", metric: "http_req_duration", data: { value: 42, time: timestamp } },
       { type: "Point", metric: "http_req_failed", data: { value: 0, time: timestamp } },
@@ -2334,7 +2339,19 @@ describe("SpawnK6Runner completion reporting", () => {
         correlationId: startRequest.correlationId,
         samples: [
           {
-            metricName: "traffic.scheduled_request_rate",
+            metricName: "traffic.attempts_dispatched",
+            value: 1,
+            unit: "requests",
+            timestamp,
+          },
+          {
+            metricName: "traffic.request_arrival_rate",
+            value: 1,
+            unit: "requests_per_second",
+            timestamp,
+          },
+          {
+            metricName: "traffic.response_completion_rate",
             value: 1,
             unit: "requests_per_second",
             timestamp,
@@ -2368,6 +2385,17 @@ describe("SpawnK6Runner completion reporting", () => {
       loadRunDiagnosticsSummary: {
         stderrLines: ["prefix-€"],
         stderrLineCountObserved: 1,
+      },
+      trafficDeliverySummary: {
+        requestArrivalSummary: {
+          peakArrivalRatePerSecond: 1,
+          peakArrivalWindowSeconds: 1,
+          dispatchDurationSeconds: 0,
+          arrivalRateSeries: [{ windowStartedAt: timestamp, ratePerSecond: 1 }],
+          arrivalWindowCountObserved: 1,
+          arrivalWindowCountRetained: 1,
+          arrivalSeriesLimit: 120,
+        },
       },
     });
   });
@@ -2461,7 +2489,7 @@ describe("SpawnK6Runner completion reporting", () => {
 
     expect(apiClient.sendMetrics).toHaveBeenCalledTimes(1);
     expect(metricBatches[0]?.samples.map((sample) => sample.metricName)).toEqual([
-      "traffic.scheduled_request_rate",
+      "traffic.response_completion_rate",
       "traffic.failure_rate",
     ]);
     expect(apiClient.sendCompletion).toHaveBeenCalledTimes(1);

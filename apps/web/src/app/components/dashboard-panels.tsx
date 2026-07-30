@@ -8,9 +8,14 @@ import type {
   QueueStatus,
 } from "@checkout-surge/contracts";
 import type { BackendRead } from "../lib/api";
+import { projectRequestSurge } from "../lib/dashboard-projection-state";
 import { formatDashboardTime } from "../lib/dashboard-time";
 import { StatusPill } from "./status-pill";
-import { systemOfRecordLens, TransportObservationPanelBlock } from "./transport-observation";
+import {
+  RequestArrivalRateSeries,
+  systemOfRecordLens,
+  TransportObservationPanelBlock,
+} from "./transport-observation";
 
 export type RealtimeConnectionStatus = "connecting" | "connected" | "disconnected" | "unsupported";
 
@@ -93,7 +98,7 @@ function formatFailureSample(value: number, unit: string): string {
 }
 
 function formatObservedRequestRate(value: number): string {
-  return formatRate(value, "requests/s");
+  return formatRate(value, "attempts/s");
 }
 
 function recoveryData(recovery: BackendRead<DashboardProjection>): DashboardProjection | null {
@@ -294,13 +299,8 @@ export function RequestSurgePanel({
   const inventory = data?.inventory ?? null;
   const transportAttemptCounts = data?.transportAttemptCounts ?? null;
   const httpSummary = data?.httpSummary ?? null;
+  const requestSurge = data ? projectRequestSurge(data) : null;
   const latestMetric = data?.recentMetrics.at(-1) ?? null;
-  const requestRateMetric = data
-    ? findLatestMetric(
-        data.recentMetrics,
-        (name, unit) => name === "traffic.scheduled_request_rate" && unit === "requests_per_second",
-      )
-    : null;
   const latencyMetric = data
     ? findLatestMetric(data.recentMetrics, (name) => name === "traffic.latency")
     : null;
@@ -316,20 +316,52 @@ export function RequestSurgePanel({
           <h2 className={panelTitleClassName}>Traffic pressure</h2>
         </div>
         <StatusPill
-          label={requestRateMetric ? "metrics live" : inventory ? "reservations live" : "idle"}
-          tone={requestRateMetric || inventory ? "ok" : "idle"}
+          label={
+            requestSurge !== null && requestSurge.arrivalRatePerSecond !== null
+              ? "metrics live"
+              : inventory
+                ? "reservations live"
+                : "idle"
+          }
+          tone={
+            (requestSurge !== null && requestSurge.arrivalRatePerSecond !== null) || inventory
+              ? "ok"
+              : "idle"
+          }
         />
       </div>
       {data ? (
         <>
           <dl className={factGridClassName}>
             <Fact
-              label="Observed HTTP request rate"
-              value={
-                requestRateMetric
-                  ? formatObservedRequestRate(requestRateMetric.value)
-                  : "Awaiting k6 metrics"
+              label={
+                requestSurge?.arrivalRateIsPeak
+                  ? `Peak request arrival rate (${requestSurge.arrivalWindowSeconds}-second windows)`
+                  : "Request arrival rate (1-second window)"
               }
+              value={
+                requestSurge?.arrivalRatePerSecond !== null &&
+                requestSurge?.arrivalRatePerSecond !== undefined
+                  ? formatObservedRequestRate(requestSurge.arrivalRatePerSecond)
+                  : "Awaiting first full arrival window"
+              }
+            />
+            <Fact
+              label="Attempts dispatched"
+              value={
+                requestSurge?.attemptsDispatched === null ||
+                requestSurge?.attemptsDispatched === undefined
+                  ? "Awaiting dispatch"
+                  : formatNumber(requestSurge.attemptsDispatched)
+              }
+            />
+            <Fact
+              label="Dispatch duration"
+              value={formatSeconds(requestSurge?.dispatchDurationSeconds)}
+            />
+            <Fact
+              label="Response completion rate"
+              value={formatRate(requestSurge?.responseCompletionRatePerSecond, "responses/s")}
             />
             <Fact
               label="Window mean HTTP latency"
@@ -350,8 +382,15 @@ export function RequestSurgePanel({
           </dl>
           <dl className={stackedFactGridClassName}>
             <Fact
-              label="Reservation rate"
-              value={formatRate(inventory?.reservationThroughput.rate, "holds/s")}
+              label={`Peak reservation rate (1-second windows, trailing ${inventory?.reservationThroughput.windowSeconds ?? 60}s)`}
+              value={formatRate(
+                inventory?.reservationThroughput.peakRatePerSecond,
+                "reservations/s",
+              )}
+            />
+            <Fact
+              label={`Reservations in last ${inventory?.reservationThroughput.windowSeconds ?? 60}s`}
+              value={formatNumber(inventory?.reservationThroughput.successfulReservationCount ?? 0)}
             />
             <Fact
               label="Sold-out pressure"
@@ -369,9 +408,17 @@ export function RequestSurgePanel({
             />
           </dl>
           <p className="mb-0 mt-3 text-xs leading-5 text-muted">
-            Shared 1-second producer event-time window; latency is the window mean and failures are
-            the fraction of valid HTTP failure observations.
+            Arrival counts checkout attempts when k6 starts them. Response completion, latency, and
+            failures are separate HTTP observations on the shared 1-second producer event-time
+            window.
           </p>
+          {requestSurge &&
+          (data.requestArrivalSummary !== null || requestSurge.arrivalRateSeries.length > 0) ? (
+            <RequestArrivalRateSeries
+              samples={requestSurge.arrivalRateSeries}
+              {...(data.requestArrivalSummary ? { summary: data.requestArrivalSummary } : {})}
+            />
+          ) : null}
           {transportAttemptCounts && httpSummary ? (
             <TransportObservationPanelBlock
               counts={transportAttemptCounts}

@@ -99,6 +99,7 @@ export async function deleteGeneratedRunRedisState(
   deletedKeyCount += await redis.unlink(
     runSaleEligibilityKey(runId),
     `demo-run:${runId}:traffic-metrics`,
+    `demo-run:${runId}:traffic-metrics-pinned`,
     `demo-run:${runId}:traffic-metrics-reset-fence`,
   );
   return { deletedKeyCount };
@@ -415,6 +416,7 @@ function buildReservationThroughput(values: Array<string | null>, measuredAt: Da
   const currentSecond = Math.floor(measuredAt.getTime() / 1000);
   const firstIncludedSecond = currentSecond - reservationThroughputWindowSeconds + 1;
   let successfulReservationCount = 0;
+  let peakRatePerSecond = 0;
 
   for (let index = 0; index < values.length; index += 2) {
     const slot = index / 2;
@@ -433,13 +435,15 @@ function buildReservationThroughput(values: Array<string | null>, measuredAt: Da
     if (observedSecond >= firstIncludedSecond && observedSecond <= currentSecond) {
       successfulReservationCount += count;
       assertNonnegativeInteger(successfulReservationCount, "successfulReservationCount");
+      peakRatePerSecond = Math.max(peakRatePerSecond, count);
     }
   }
 
   return {
     windowSeconds: reservationThroughputWindowSeconds,
     successfulReservationCount,
-    rate: successfulReservationCount / reservationThroughputWindowSeconds,
+    peakRatePerSecond,
+    peakWindowSeconds: 1 as const,
     unit: "reservations_per_second" as const,
     measuredAt: measuredAt.toISOString(),
   };

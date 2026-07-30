@@ -7,7 +7,7 @@ import {
 } from "./demo.js";
 import { erpResilienceStatusSchema } from "./erp.js";
 import { inventoryStatusSchema } from "./inventory.js";
-import { trafficHttpSummarySchema } from "./load.js";
+import { requestArrivalSummarySchema, trafficHttpSummarySchema } from "./load.js";
 import {
   correlationIdSchema,
   isoTimestampSchema,
@@ -91,6 +91,7 @@ export const dashboardProjectionSchema = z
     recentCompletionOutcomes: z.array(completionOutcomeSchema).default([]),
     transportAttemptCounts: transportAttemptCountsSchema.nullable().default(null),
     httpSummary: trafficHttpSummarySchema.nullable().default(null),
+    requestArrivalSummary: requestArrivalSummarySchema.nullable().default(null),
   })
   .strict()
   .superRefine((projection, context) => {
@@ -131,6 +132,7 @@ export const dashboardProjectionSchema = z
         ],
         ["transportAttemptCounts", projection.transportAttemptCounts],
         ["httpSummary", projection.httpSummary ?? null],
+        ["requestArrivalSummary", projection.requestArrivalSummary ?? null],
       ] as const;
       for (const [field, value] of runOwnedFields) {
         if (value !== null) {

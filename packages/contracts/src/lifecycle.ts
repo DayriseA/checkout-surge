@@ -85,7 +85,9 @@ export const trafficDeliveryStatusValues = ["complete", "warning", "degraded", "
 export const trafficDeliveryStatusSchema = z.enum(trafficDeliveryStatusValues);
 
 export const metricNameValues = [
-  "traffic.scheduled_request_rate",
+  "traffic.request_arrival_rate",
+  "traffic.response_completion_rate",
+  "traffic.attempts_dispatched",
   "traffic.latency",
   "traffic.failure_rate",
   "queue.depth",

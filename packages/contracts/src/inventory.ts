@@ -13,7 +13,8 @@ export const reservationThroughputSchema = z
   .object({
     windowSeconds: positiveIntegerSchema,
     successfulReservationCount: nonnegativeIntegerSchema,
-    rate: nonnegativeNumberSchema,
+    peakRatePerSecond: nonnegativeIntegerSchema,
+    peakWindowSeconds: z.literal(1),
     unit: z.literal("reservations_per_second"),
     measuredAt: isoTimestampSchema,
   })

@@ -13,8 +13,9 @@ describe("RedisDashboardTrafficMetricStore", () => {
 
     expect(evalCommand).toHaveBeenCalledOnce();
     expect(evalCommand.mock.calls[0]?.[0]).toContain('redis.call("LTRIM", KEYS[1], -50, -1)');
-    expect(evalCommand.mock.calls[0]?.[1]).toBe(2);
-    expect(evalCommand.mock.calls[0]).toHaveLength(104);
+    expect(evalCommand.mock.calls[0]?.[0]).toContain('redis.call("HSET", KEYS[3]');
+    expect(evalCommand.mock.calls[0]?.[1]).toBe(3);
+    expect(evalCommand.mock.calls[0]).toHaveLength(105);
   });
 
   it("reports a fenced append without retaining samples", async () => {

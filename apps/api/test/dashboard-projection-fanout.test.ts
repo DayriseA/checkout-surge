@@ -463,6 +463,7 @@ function projection(revision: number): DashboardProjection {
     recentCompletionOutcomes: [],
     transportAttemptCounts: null,
     httpSummary: null,
+    requestArrivalSummary: null,
   };
 }
 

@@ -648,6 +648,7 @@ function recoveryFixture(currentRun: DashboardProjection["currentRun"]): Dashboa
     consistencyLag: null,
     transportAttemptCounts: null,
     httpSummary: null,
+    requestArrivalSummary: null,
     recentCompletionOutcomes: [],
     recoveredAt: "2026-06-20T00:00:10.000Z",
   };

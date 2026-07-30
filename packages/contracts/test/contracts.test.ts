@@ -41,6 +41,7 @@ import {
   deriveLoadExecutionPlan,
   type ErrorPayloadCode,
   emptyHttpTimingBreakdownSummary,
+  emptyRequestArrivalSummary,
   erpChaosResetPath,
   erpChaosStatusPath,
   erpConfirmationPath,
@@ -80,6 +81,7 @@ import {
   publicRuntimePolicySchema,
   publicVisitorIdHeaderName,
   queueStatusSchema,
+  requestArrivalSummarySchema,
   reservationDecisionValues,
   reservationRejectedResponseSchema,
   resolveConstantArrivalVus,
@@ -255,9 +257,41 @@ describe("shared lifecycle vocabulary", () => {
   });
 
   it("exposes the documented dashboard metric names", () => {
-    expect(metricNameValues).toContain("traffic.scheduled_request_rate");
+    expect(metricNameValues).toContain("traffic.request_arrival_rate");
+    expect(metricNameValues).toContain("traffic.response_completion_rate");
+    expect(metricNameValues).toContain("traffic.attempts_dispatched");
     expect(metricNameValues).toContain("queue.depth");
     expect(metricNameValues).toContain("inventory.sold_out_rejection");
+  });
+});
+
+describe("request-arrival evidence", () => {
+  it("round-trips a bounded series and rejects inconsistent truncation metadata", () => {
+    const summary = {
+      peakArrivalRatePerSecond: 10,
+      peakArrivalWindowSeconds: 1,
+      dispatchDurationSeconds: 0.25,
+      arrivalRateSeries: [{ windowStartedAt: timestamp, ratePerSecond: 10 }],
+      arrivalWindowCountObserved: 2,
+      arrivalWindowCountRetained: 1,
+      arrivalSeriesLimit: 120 as const,
+    };
+
+    expect(requestArrivalSummarySchema.parse(summary)).toEqual(summary);
+    expect(
+      requestArrivalSummarySchema.safeParse({
+        ...summary,
+        arrivalWindowCountRetained: 2,
+      }).success,
+    ).toBe(false);
+    expect(
+      requestArrivalSummarySchema.safeParse({
+        ...summary,
+        arrivalRateSeries: Array.from({ length: 121 }, () => summary.arrivalRateSeries[0]),
+        arrivalWindowCountObserved: 121,
+        arrivalWindowCountRetained: 121,
+      }).success,
+    ).toBe(false);
   });
 });
 
@@ -612,6 +646,7 @@ describe("run lifecycle contracts", () => {
         preAllocatedVUs: null,
         maxVUs: null,
         droppedIterations: 0,
+        requestArrivalSummary: emptyRequestArrivalSummary,
         notes: [],
       },
       httpTimingBreakdownSummary: {
@@ -844,6 +879,7 @@ describe("run lifecycle contracts", () => {
       preAllocatedVUs: null,
       maxVUs: null,
       droppedIterations: 1,
+      requestArrivalSummary: emptyRequestArrivalSummary,
       notes: [],
     };
     expect(trafficCompletionDeliverySummarySchema.parse(evidence)).not.toHaveProperty(
@@ -961,6 +997,7 @@ describe("run lifecycle contracts", () => {
         preAllocatedVUs: null,
         maxVUs: null,
         droppedIterations: 0,
+        requestArrivalSummary: emptyRequestArrivalSummary,
         notes: [],
       },
       httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
@@ -1489,7 +1526,8 @@ describe("buy and dashboard contracts", () => {
         reservationThroughput: {
           windowSeconds: 60,
           successfulReservationCount: 4,
-          rate: 4 / 60,
+          peakRatePerSecond: 4,
+          peakWindowSeconds: 1,
           unit: "reservations_per_second",
           measuredAt: timestamp,
         },
@@ -1839,6 +1877,7 @@ describe("buy and dashboard contracts", () => {
       recentCompletionOutcomes: [],
       transportAttemptCounts: null,
       httpSummary: null,
+      requestArrivalSummary: null,
       recoveredAt: timestamp,
     };
 
@@ -1870,6 +1909,7 @@ describe("buy and dashboard contracts", () => {
       recentCompletionOutcomes: [],
       transportAttemptCounts: null,
       httpSummary: null,
+      requestArrivalSummary: null,
       recoveredAt: timestamp,
     };
 
@@ -2078,6 +2118,7 @@ describe("public runtime policy contract", () => {
             maxVUs: null,
             droppedIterations: 0,
             completedIterations: 10,
+            requestArrivalSummary: emptyRequestArrivalSummary,
             trafficDeliveryStatus: "complete",
             notes: [],
           },
@@ -3018,6 +3059,7 @@ describe("public runtime policy contract", () => {
           preAllocatedVUs: null,
           maxVUs: null,
           droppedIterations: 0,
+          requestArrivalSummary: emptyRequestArrivalSummary,
           notes: [],
         },
         httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,

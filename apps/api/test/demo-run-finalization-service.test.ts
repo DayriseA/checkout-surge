@@ -9,6 +9,7 @@ import type {
 } from "@checkout-surge/contracts";
 import {
   emptyHttpTimingBreakdownSummary,
+  emptyRequestArrivalSummary,
   trafficDeliverySummarySchema,
 } from "@checkout-surge/contracts";
 import {
@@ -1655,6 +1656,7 @@ async function setAcceptedDeliveryEvidence(
         maxVUs: null,
         droppedIterations: 0,
         completedIterations: input.completedIterations ?? startedRequests,
+        requestArrivalSummary: emptyRequestArrivalSummary,
         trafficDeliveryStatus,
         notes: [],
       },
@@ -1725,6 +1727,7 @@ function trafficCompletionReportFixture(
       preAllocatedVUs: null,
       maxVUs: null,
       droppedIterations: trafficDeliveryStatus === "failed" ? 5 : 0,
+      requestArrivalSummary: emptyRequestArrivalSummary,
       notes: trafficDeliveryStatus === "failed" ? ["Major request delivery shortfall."] : [],
     },
     httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,

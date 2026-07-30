@@ -9,9 +9,10 @@ const windowStart = "2026-06-20T12:00:00.000Z";
 const nextWindow = "2026-06-20T12:00:01.000Z";
 
 describe("K6LiveMetricAggregator", () => {
-  it("emits summed request rate, mean latency, and failure fraction for a closed window", () => {
+  it("keeps attempt arrival separate from response completion in one window", () => {
     const aggregator = new K6LiveMetricAggregator();
     const points = [
+      point("checkout_attempts_started", 6, windowStart),
       point("http_reqs", 1, windowStart),
       point("http_reqs", 3, windowStart),
       point("http_req_duration", 20, windowStart),
@@ -22,7 +23,8 @@ describe("K6LiveMetricAggregator", () => {
 
     expect(points.flatMap((entry) => aggregator.observe(entry))).toEqual([]);
     expect(aggregator.flush()).toEqual([
-      metric("traffic.scheduled_request_rate", 4, "requests_per_second"),
+      metric("traffic.request_arrival_rate", 6, "requests_per_second"),
+      metric("traffic.response_completion_rate", 4, "requests_per_second"),
       metric("traffic.latency", 30, "ms"),
       metric("traffic.failure_rate", 0.5, "ratio"),
     ]);
@@ -33,7 +35,7 @@ describe("K6LiveMetricAggregator", () => {
     aggregator.observe(point("http_reqs", 4, windowStart));
 
     expect(aggregator.flush()).toEqual([
-      metric("traffic.scheduled_request_rate", 2, "requests_per_second"),
+      metric("traffic.response_completion_rate", 2, "requests_per_second"),
     ]);
     expect(() => new K6LiveMetricAggregator({ windowMs: 0 })).toThrow(/greater than zero/);
     expect(() => new K6LiveMetricAggregator({ windowMs: Number.NaN })).toThrow(/finite/);
@@ -44,11 +46,11 @@ describe("K6LiveMetricAggregator", () => {
     aggregator.observe(point("http_reqs", 2, windowStart));
 
     expect(aggregator.observe(point("http_reqs", 1, nextWindow))).toEqual([
-      metric("traffic.scheduled_request_rate", 2, "requests_per_second"),
+      metric("traffic.response_completion_rate", 2, "requests_per_second"),
     ]);
     expect(aggregator.flush()).toEqual([
       {
-        ...metric("traffic.scheduled_request_rate", 1, "requests_per_second"),
+        ...metric("traffic.response_completion_rate", 1, "requests_per_second"),
         timestamp: nextWindow,
       },
     ]);
@@ -100,18 +102,72 @@ describe("K6LiveMetricAggregator", () => {
     ]);
   });
 
-  it("emits no metric without observations and preserves an observed zero request rate", () => {
+  it("emits no metric without observations and preserves an observed zero completion rate", () => {
     expect(new K6LiveMetricAggregator().flush()).toEqual([]);
 
     const requestOnly = new K6LiveMetricAggregator();
     requestOnly.observe(point("http_reqs", 0, windowStart));
     expect(requestOnly.flush()).toEqual([
-      metric("traffic.scheduled_request_rate", 0, "requests_per_second"),
+      metric("traffic.response_completion_rate", 0, "requests_per_second"),
     ]);
 
     const latencyOnly = new K6LiveMetricAggregator();
     latencyOnly.observe(point("http_req_duration", 0, windowStart));
     expect(latencyOnly.flush()).toEqual([metric("traffic.latency", 0, "ms")]);
+  });
+
+  it("reports a slow-response burst at attempt time, retains its peak, and bounds its series", () => {
+    const aggregator = new K6LiveMetricAggregator({ plannedRequests: 230 });
+    const samples = [];
+    for (let index = 0; index < 100; index += 1) {
+      samples.push(...aggregator.observe(point("checkout_attempts_started", 1, windowStart)));
+    }
+
+    for (let window = 1; window <= 130; window += 1) {
+      const timestamp = new Date(Date.parse(windowStart) + window * 1_000).toISOString();
+      if (window <= 3) {
+        samples.push(...aggregator.observe(point("http_reqs", window === 3 ? 50 : 25, timestamp)));
+      }
+      samples.push(...aggregator.observe(point("checkout_attempts_started", 1, timestamp)));
+    }
+    samples.push(...aggregator.flush());
+
+    expect(samples).toContainEqual(
+      metric("traffic.request_arrival_rate", 100, "requests_per_second"),
+    );
+    expect(samples).toContainEqual({
+      ...metric("traffic.response_completion_rate", 25, "requests_per_second"),
+      timestamp: nextWindow,
+    });
+    expect(samples).toContainEqual({
+      ...metric("traffic.response_completion_rate", 50, "requests_per_second"),
+      timestamp: "2026-06-20T12:00:03.000Z",
+    });
+
+    const summary = aggregator.requestArrivalSummary();
+    expect(summary).toMatchObject({
+      peakArrivalRatePerSecond: 100,
+      peakArrivalWindowSeconds: 1,
+      arrivalWindowCountObserved: 131,
+      arrivalWindowCountRetained: 120,
+      arrivalSeriesLimit: 120,
+    });
+    expect(summary.arrivalRateSeries).toHaveLength(120);
+  });
+
+  it("emits bounded cumulative dispatch progress before any response completes", () => {
+    const aggregator = new K6LiveMetricAggregator({ plannedRequests: 10 });
+    const samples = Array.from({ length: 10 }, () =>
+      aggregator.observe(point("checkout_attempts_started", 1, windowStart)),
+    ).flat();
+
+    expect(samples.at(-1)).toEqual({
+      metricName: "traffic.attempts_dispatched",
+      value: 10,
+      unit: "requests",
+      timestamp: windowStart,
+    });
+    expect(samples).toHaveLength(10);
   });
 });
 

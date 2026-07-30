@@ -1863,7 +1863,8 @@ describe("database migrations, seed data, and reset behavior", () => {
       reservationThroughput: {
         windowSeconds: 60,
         successfulReservationCount: 2,
-        rate: 2 / 60,
+        peakRatePerSecond: 2,
+        peakWindowSeconds: 1,
         unit: "reservations_per_second",
         measuredAt: "2026-06-20T12:00:30.000Z",
       },
@@ -1873,6 +1874,7 @@ describe("database migrations, seed data, and reset behavior", () => {
       },
     });
     expect(expiredWindow.reservationThroughput.successfulReservationCount).toBe(0);
+    expect(expiredWindow.reservationThroughput.peakRatePerSecond).toBe(0);
     expect(await redis.hlen(keys.reservationThroughput)).toBe(2);
   });
 

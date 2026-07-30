@@ -15,7 +15,8 @@ const projection: InventoryStatus = {
   reservationThroughput: {
     windowSeconds: 60,
     successfulReservationCount: 5,
-    rate: 5 / 60,
+    peakRatePerSecond: 5,
+    peakWindowSeconds: 1,
     unit: "reservations_per_second",
     measuredAt: "2026-06-20T12:00:30.000Z",
   },

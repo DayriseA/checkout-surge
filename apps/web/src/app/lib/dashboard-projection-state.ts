@@ -15,6 +15,53 @@ export interface DashboardProjectionState {
   liveProjectionCount: number;
 }
 
+export interface RequestSurgeProjection {
+  arrivalRatePerSecond: number | null;
+  arrivalRateIsPeak: boolean;
+  arrivalWindowSeconds: number;
+  responseCompletionRatePerSecond: number | null;
+  attemptsDispatched: number | null;
+  dispatchDurationSeconds: number | null;
+  arrivalRateSeries: Array<{ windowStartedAt: string; ratePerSecond: number }>;
+}
+
+export function projectRequestSurge(projection: DashboardProjection): RequestSurgeProjection {
+  const terminal = projection.requestArrivalSummary;
+  const liveArrival = findLatestMetric(
+    projection,
+    "traffic.request_arrival_rate",
+    "requests_per_second",
+  );
+  const responseCompletion = findLatestMetric(
+    projection,
+    "traffic.response_completion_rate",
+    "requests_per_second",
+  );
+  const dispatchProgress = findLatestMetric(projection, "traffic.attempts_dispatched", "requests");
+
+  return {
+    arrivalRatePerSecond: terminal?.peakArrivalRatePerSecond ?? liveArrival?.value ?? null,
+    arrivalRateIsPeak: terminal !== null,
+    arrivalWindowSeconds: terminal?.peakArrivalWindowSeconds ?? 1,
+    responseCompletionRatePerSecond: responseCompletion?.value ?? null,
+    attemptsDispatched:
+      projection.transportAttemptCounts?.startedRequests ?? dispatchProgress?.value ?? null,
+    dispatchDurationSeconds: terminal?.dispatchDurationSeconds ?? null,
+    arrivalRateSeries:
+      terminal?.arrivalRateSeries ??
+      projection.recentMetrics
+        .filter(
+          (sample) =>
+            sample.metricName === "traffic.request_arrival_rate" &&
+            sample.unit === "requests_per_second",
+        )
+        .map((sample) => ({
+          windowStartedAt: sample.timestamp,
+          ratePerSecond: sample.value,
+        })),
+  };
+}
+
 export type DashboardProjectionStateAction =
   | { type: "initial-read-received"; recovery: BackendRead<DashboardProjection> }
   | { type: "refresh-started" }
@@ -128,4 +175,16 @@ function acceptProjection(
 
 function isTerminal(status: NonNullable<DashboardProjection["currentRun"]>["status"]): boolean {
   return status === "completed" || status === "failed";
+}
+
+function findLatestMetric(
+  projection: DashboardProjection,
+  metricName: string,
+  unit: string,
+): DashboardProjection["recentMetrics"][number] | null {
+  for (let index = projection.recentMetrics.length - 1; index >= 0; index -= 1) {
+    const sample = projection.recentMetrics[index];
+    if (sample?.metricName === metricName && sample.unit === unit) return sample;
+  }
+  return null;
 }

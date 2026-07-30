@@ -296,6 +296,63 @@ export const trafficHttpSummarySchema = z
   });
 export type TrafficHttpSummary = z.infer<typeof trafficHttpSummarySchema>;
 
+export const arrivalRateSeriesLimit = 120 as const;
+
+export const requestArrivalSummarySchema = z
+  .object({
+    peakArrivalRatePerSecond: nonnegativeNumberSchema,
+    peakArrivalWindowSeconds: z.number().positive().finite(),
+    dispatchDurationSeconds: nonnegativeNumberSchema,
+    arrivalRateSeries: z
+      .array(
+        z
+          .object({
+            windowStartedAt: isoTimestampSchema,
+            ratePerSecond: nonnegativeNumberSchema,
+          })
+          .strict(),
+      )
+      .max(arrivalRateSeriesLimit),
+    arrivalWindowCountObserved: nonnegativeIntegerSchema,
+    arrivalWindowCountRetained: nonnegativeIntegerSchema,
+    arrivalSeriesLimit: z.literal(arrivalRateSeriesLimit),
+  })
+  .strict()
+  .superRefine((summary, context) => {
+    if (
+      summary.arrivalWindowCountRetained !== summary.arrivalRateSeries.length ||
+      summary.arrivalWindowCountObserved < summary.arrivalWindowCountRetained
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["arrivalRateSeries"],
+        message: "arrival window counts are inconsistent",
+      });
+    }
+    if (
+      summary.arrivalRateSeries.some(
+        (sample) => sample.ratePerSecond > summary.peakArrivalRatePerSecond,
+      )
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["peakArrivalRatePerSecond"],
+        message: "must be at least every retained arrival rate",
+      });
+    }
+  });
+export type RequestArrivalSummary = z.infer<typeof requestArrivalSummarySchema>;
+
+export const emptyRequestArrivalSummary: RequestArrivalSummary = {
+  peakArrivalRatePerSecond: 0,
+  peakArrivalWindowSeconds: 1,
+  dispatchDurationSeconds: 0,
+  arrivalRateSeries: [],
+  arrivalWindowCountObserved: 0,
+  arrivalWindowCountRetained: 0,
+  arrivalSeriesLimit: arrivalRateSeriesLimit,
+};
+
 /** Real completion input. Quality is classified by the API, not the caller. */
 export const trafficCompletionDeliverySummarySchema = z
   .object({
@@ -307,6 +364,7 @@ export const trafficCompletionDeliverySummarySchema = z
     maxVUs: positiveIntegerSchema.nullable(),
     droppedIterations: nonnegativeIntegerSchema,
     completedIterations: nonnegativeIntegerSchema.nullable().optional(),
+    requestArrivalSummary: requestArrivalSummarySchema,
     notes: z.array(z.string().trim().min(1)).default([]),
   })
   .strict();
@@ -324,6 +382,7 @@ export const trafficDeliverySummaryShape = {
   maxVUs: positiveIntegerSchema.nullable(),
   droppedIterations: nonnegativeIntegerSchema,
   completedIterations: nonnegativeIntegerSchema.nullable(),
+  requestArrivalSummary: requestArrivalSummarySchema,
   notes: z.array(z.string().trim().min(1)),
   trafficDeliveryStatus: trafficDeliveryStatusSchema,
 } as const;

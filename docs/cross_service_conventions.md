@@ -182,7 +182,9 @@ Metric names follow these rules:
 
 The reserved canonical metric names are:
 
-- `traffic.scheduled_request_rate`
+- `traffic.request_arrival_rate`
+- `traffic.response_completion_rate`
+- `traffic.attempts_dispatched`
 - `queue.depth`
 - `inventory.remaining`
 - `inventory.sold_out_rejection`
@@ -192,7 +194,7 @@ Dashboard traffic metrics also use:
 - `traffic.latency`
 - `traffic.failure_rate`
 
-For live k6 observations, `traffic.scheduled_request_rate` is the compatibility name for achieved throughput, not the configured traffic target. Its unit is `requests_per_second`. Production uses a shared one-second producer event-time window: `traffic.latency` is its mean in `ms`, and `traffic.failure_rate` is the fraction of valid failure observations in that same window with unit `ratio`.
+`traffic.request_arrival_rate` counts `checkout_attempts_started` points in aligned one-second producer event-time windows. The load script increments that counter immediately before `http.post`, so this is the authoritative public arrival signal. `traffic.attempts_dispatched` is a bounded cumulative progress sample with unit `requests`, emitted while dispatch is still active. `traffic.response_completion_rate` separately counts completed HTTP responses from `http_reqs`; it is never a fallback for request arrival. Arrival and completion rates use `requests_per_second`. `traffic.latency` is the mean in `ms`, and `traffic.failure_rate` is the fraction of valid HTTP failure observations in the same one-second window with unit `ratio`.
 
 ---
 

@@ -34,6 +34,7 @@ import type { ErpStatusService } from "./erp-status-service.js";
 import type { InventoryStatusService } from "./inventory-status-service.js";
 import type { QueueStatusService } from "./queue-status-service.js";
 import {
+  parsePersistedTrafficDeliverySummary,
   parsePersistedTrafficHttpSummary,
   parsePersistedTransportAttemptCounts,
 } from "./traffic-delivery-classifier.js";
@@ -74,6 +75,7 @@ export interface DashboardTransportObservationReader {
   read(runId: string): Promise<{
     transportAttemptCounts: TransportAttemptCounts;
     httpSummary: TrafficHttpSummary;
+    persistedTrafficDeliverySummary: unknown;
   } | null>;
 }
 
@@ -87,6 +89,7 @@ export class PostgresDashboardTransportObservationReader
       .select({
         transportAttemptCounts: demoRunFinalizations.transportAttemptCounts,
         httpSummary: demoRunFinalizations.httpSummary,
+        trafficDeliverySummary: demoRunFinalizations.trafficDeliverySummary,
       })
       .from(demoRunFinalizations)
       .where(eq(demoRunFinalizations.runId, runId))
@@ -94,12 +97,14 @@ export class PostgresDashboardTransportObservationReader
 
     if (!row) return null;
     const context = `demo run ${runId} finalization`;
+    const transportAttemptCounts = parsePersistedTransportAttemptCounts(
+      row.transportAttemptCounts,
+      context,
+    );
     return {
-      transportAttemptCounts: parsePersistedTransportAttemptCounts(
-        row.transportAttemptCounts,
-        context,
-      ),
+      transportAttemptCounts,
       httpSummary: parsePersistedTrafficHttpSummary(row.httpSummary, context),
+      persistedTrafficDeliverySummary: row.trafficDeliverySummary,
     };
   }
 }
@@ -337,6 +342,19 @@ export class DashboardProjectionService {
           )
         : Promise.resolve({ ok: true as const, value: null }),
     ]);
+    const transportObservation = transportObservationResult.ok
+      ? transportObservationResult.value
+      : null;
+    const requestArrivalResult =
+      transportObservation !== null
+        ? await readSafely("dashboard_request_arrival_summary", signal, async () => {
+            return parsePersistedTrafficDeliverySummary(
+              transportObservation.persistedTrafficDeliverySummary,
+              transportObservation.transportAttemptCounts,
+              scope ? `demo run ${scope.runId} finalization` : "dashboard transport observation",
+            ).requestArrivalSummary;
+          })
+        : { ok: true as const, value: null };
 
     for (const result of [
       inventoryResult,
@@ -347,6 +365,7 @@ export class DashboardProjectionService {
       trafficMetricResult,
       completionOutcomeResult,
       transportObservationResult,
+      requestArrivalResult,
     ]) {
       if (!result.ok) {
         this.options.logger.warn(
@@ -378,6 +397,7 @@ export class DashboardProjectionService {
       httpSummary: transportObservationResult.ok
         ? (transportObservationResult.value?.httpSummary ?? null)
         : null,
+      requestArrivalSummary: requestArrivalResult.ok ? requestArrivalResult.value : null,
       recoveredAt: now.toISOString(),
     });
   }

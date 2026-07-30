@@ -285,6 +285,7 @@ function projectionFixture(overrides: Partial<DashboardProjection> = {}): Dashbo
     consistencyLag: null,
     transportAttemptCounts: null,
     httpSummary: null,
+    requestArrivalSummary: null,
     recentCompletionOutcomes: [],
     recoveredAt: "2026-06-20T00:00:10.000Z",
     ...overrides,

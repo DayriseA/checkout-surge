@@ -100,6 +100,7 @@ function RunHistorySummaryArticle({ summary }: { summary: RunHistorySummary }) {
           title="Lifecycle"
         />
         <TransportObservationSection
+          arrivalSummary={summary.trafficDeliverySummary.requestArrivalSummary}
           counts={summary.transportAttemptCounts}
           httpSummary={summary.httpSummary}
           surface="list"

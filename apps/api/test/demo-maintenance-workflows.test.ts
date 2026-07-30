@@ -1,6 +1,7 @@
 import {
   type AcceptedRunConfigSnapshot,
   emptyHttpTimingBreakdownSummary,
+  emptyRequestArrivalSummary,
   trafficDeliverySummarySchema,
 } from "@checkout-surge/contracts";
 import {
@@ -217,6 +218,17 @@ describe("focused demo maintenance workflows", () => {
       await seedCleanupDurableGraph(db);
       await redisClient.set(`demo-run:${ids.completedRun}:traffic-metrics`, "metric");
       await redisClient.set(`demo-run:${ids.activeRun}:traffic-metrics`, "active-metric");
+      await redisClient.set(`demo-run:${ids.completedRun}:traffic-metrics-reset-fence`, "reset");
+      await redisClient.hset(
+        `demo-run:${ids.completedRun}:traffic-metrics-pinned`,
+        "traffic.request_arrival_rate",
+        "metric",
+      );
+      await redisClient.hset(
+        `demo-run:${ids.activeRun}:traffic-metrics-pinned`,
+        "traffic.request_arrival_rate",
+        "active-metric",
+      );
 
       let queueFailure: Error | undefined = new Error("queue unavailable");
       let redisFailure: Error | undefined;
@@ -262,7 +274,7 @@ describe("focused demo maintenance workflows", () => {
         outcome: "deleted",
         runId: ids.completedRun,
         saleOfferId: ids.completedOffer,
-        cleanup: { redisKeysDeleted: expect.any(Number), queueJobsDeleted: 2 },
+        cleanup: { redisKeysDeleted: 7, queueJobsDeleted: 2 },
         cleanedAt: "2026-07-13T00:00:00.000Z",
         correlationId: "corr-success",
       });
@@ -284,6 +296,10 @@ describe("focused demo maintenance workflows", () => {
       expect(await redisClient.get(`demo-run:${ids.activeRun}:traffic-metrics`)).toBe(
         "active-metric",
       );
+      expect(await redisClient.exists(`demo-run:${ids.completedRun}:traffic-metrics-pinned`)).toBe(
+        0,
+      );
+      expect(await redisClient.exists(`demo-run:${ids.activeRun}:traffic-metrics-pinned`)).toBe(1);
       await expect(
         service.teardownGeneratedRun({ runId: ids.completedRun, correlationId: "corr-absent" }),
       ).resolves.toMatchObject({ outcome: "already_absent", runId: ids.completedRun });
@@ -1452,6 +1468,11 @@ describe("focused demo maintenance workflows", () => {
       const completedInventoryKeys = inventoryKeys(ids.completedOffer);
       const dynamicInventoryKey = completedInventoryKeys.idempotency("cleanup-dynamic-key");
       await redisClient.set(dynamicInventoryKey, "stored");
+      await redisClient.hset(
+        `demo-run:${ids.completedRun}:traffic-metrics-pinned`,
+        "traffic.request_arrival_rate",
+        "metric",
+      );
 
       await seedRun(db, redisClient, {
         runId: ids.failedRun,
@@ -1463,6 +1484,11 @@ describe("focused demo maintenance workflows", () => {
         createdAt: new Date("2026-06-24T12:00:00.000Z"),
       });
       const retainedInventoryKeys = inventoryKeys(ids.failedOffer);
+      await redisClient.hset(
+        `demo-run:${ids.failedRun}:traffic-metrics-pinned`,
+        "traffic.request_arrival_rate",
+        "retained-metric",
+      );
 
       const response = await service.cleanupOldRuns({
         keepLatest: 1,
@@ -1493,8 +1519,12 @@ describe("focused demo maintenance workflows", () => {
       expect(saleOfferRows).toHaveLength(0);
       expect(await redisClient.keys(`${completedInventoryKeys.prefix}:*`)).toHaveLength(0);
       expect(await redisClient.get(`demo-run:${ids.completedRun}:sale-eligibility`)).toBeNull();
+      expect(await redisClient.exists(`demo-run:${ids.completedRun}:traffic-metrics-pinned`)).toBe(
+        0,
+      );
       expect(await redisClient.exists(retainedInventoryKeys.state)).toBe(1);
       expect(await redisClient.get(`demo-run:${ids.failedRun}:sale-eligibility`)).not.toBeNull();
+      expect(await redisClient.exists(`demo-run:${ids.failedRun}:traffic-metrics-pinned`)).toBe(1);
       expect(await readRunScopedGraphCounts(db, ids.completedRun)).toEqual({
         erpAttempts: 0,
         finalizations: 0,
@@ -2016,6 +2046,7 @@ async function seedRun(
         maxVUs: null,
         droppedIterations: 0,
         completedIterations: null,
+        requestArrivalSummary: emptyRequestArrivalSummary,
         trafficDeliveryStatus: "complete",
         notes: [],
       }),
@@ -2242,6 +2273,7 @@ async function seedCleanupDurableGraph(
       maxVUs: null,
       droppedIterations: 0,
       completedIterations: null,
+      requestArrivalSummary: emptyRequestArrivalSummary,
       trafficDeliveryStatus: "complete",
       notes: [],
     }),
@@ -2380,6 +2412,7 @@ async function seedTerminalSummary(
       maxVUs: null,
       droppedIterations: 0,
       completedIterations: null,
+      requestArrivalSummary: emptyRequestArrivalSummary,
       trafficDeliveryStatus: input.status === "completed" ? "complete" : "failed",
       notes: [],
     }),

@@ -296,11 +296,12 @@ export class K6ChildProcessSupervisor {
         );
       },
     });
-    const liveMetrics = new K6LiveMetricAggregator(
-      this.options.liveMetricWindowMs === undefined
+    const liveMetrics = new K6LiveMetricAggregator({
+      plannedRequests: input.plannedRequests,
+      ...(this.options.liveMetricWindowMs === undefined
         ? {}
-        : { windowMs: this.options.liveMetricWindowMs },
-    );
+        : { windowMs: this.options.liveMetricWindowMs }),
+    });
     const child = active.child;
     if (!child) throw new Error("Cannot consume k6 output before spawn.");
     const stdout = child.stdout;
@@ -401,6 +402,7 @@ export class K6ChildProcessSupervisor {
         generatorUtilisation: active.generatorUtilisation,
         ...(summary.metrics ? { summaryMetrics: summary.metrics } : {}),
         ...(summary.warning ? { summaryExportWarning: summary.warning } : {}),
+        requestArrivalSummary: input.liveMetrics.requestArrivalSummary(),
       }),
     };
   }

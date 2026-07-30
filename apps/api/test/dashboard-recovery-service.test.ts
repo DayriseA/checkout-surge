@@ -7,6 +7,7 @@ import {
   demoRunSnapshotSchema,
   type ErpResilienceStatus,
   emptyHttpTimingBreakdownSummary,
+  emptyRequestArrivalSummary,
   type InventoryStatus,
   type QueueStatus,
   type TransportAttemptCounts,
@@ -131,6 +132,7 @@ describe("PostgresDashboardRecoveryContextReader integration", () => {
         maxVUs: null,
         droppedIterations: 0,
         completedIterations: 750,
+        requestArrivalSummary: emptyRequestArrivalSummary,
         trafficDeliveryStatus: "complete",
         notes: [],
       },
@@ -159,6 +161,9 @@ describe("PostgresDashboardRecoveryContextReader integration", () => {
         unexpectedResponses: 0,
         failureRate: 0,
       },
+      persistedTrafficDeliverySummary: expect.objectContaining({
+        requestArrivalSummary: emptyRequestArrivalSummary,
+      }),
     });
     await expect(reader.read("99999999-9999-4999-8999-999999999999")).resolves.toBeNull();
   });
@@ -483,6 +488,7 @@ describe("DashboardProjectionService", () => {
     expect(harness.transportAttemptCounts).toHaveBeenCalledWith(runId);
     expect(recovery.transportAttemptCounts).toEqual(counts);
     expect(recovery.httpSummary).toEqual(dashboardHttpSummaryFixture());
+    expect(recovery.requestArrivalSummary).toEqual(emptyRequestArrivalSummary);
   });
 
   it("keeps transport accounting null while no completion evidence is available", async () => {
@@ -495,6 +501,7 @@ describe("DashboardProjectionService", () => {
     expect(harness.transportAttemptCounts).toHaveBeenCalledWith(runId);
     expect(recovery.transportAttemptCounts).toBeNull();
     expect(recovery.httpSummary).toBeNull();
+    expect(recovery.requestArrivalSummary).toBeNull();
   });
 
   it("degrades a transport accounting read failure to null without losing the scope", async () => {
@@ -510,6 +517,35 @@ describe("DashboardProjectionService", () => {
     expect(recovery.httpSummary).toBeNull();
     expect(harness.loggerWarn).toHaveBeenCalledWith(
       { err: projectionError, projection: "dashboard_transport_observation" },
+      "Dashboard recovery projection unavailable.",
+    );
+  });
+
+  it("keeps valid transport evidence when persisted delivery status is corrupt", async () => {
+    const counts = {
+      plannedRequests: 1_000,
+      startedRequests: 1_000,
+      completedRequests: 1_000,
+      interruptedRequests: 0,
+      unstartedRequests: 0,
+    };
+    const harness = serviceHarness({ currentRun: runSnapshot(), saleOfferId }, undefined, {
+      transportAttemptCounts: counts,
+      trafficDeliveryStatus: "warning",
+    });
+
+    const recovery = await harness.service.build({ correlationId: "corr-arrival-corrupt" });
+
+    expect(recovery.transportAttemptCounts).toEqual(counts);
+    expect(recovery.httpSummary).toEqual(dashboardHttpSummaryFixture());
+    expect(recovery.requestArrivalSummary).toBeNull();
+    expect(harness.loggerWarn).toHaveBeenCalledWith(
+      {
+        err: expect.objectContaining({
+          message: expect.stringContaining("trafficDeliveryStatus must be complete"),
+        }),
+        projection: "dashboard_request_arrival_summary",
+      },
       "Dashboard recovery projection unavailable.",
     );
   });
@@ -697,6 +733,7 @@ function serviceHarness(
     lagError?: Error;
     transportAttemptCounts?: TransportAttemptCounts | null;
     transportAttemptCountsError?: Error;
+    trafficDeliveryStatus?: "complete" | "warning";
   } = {},
 ) {
   const inventory = vi.fn(async () => inventoryStatusFixture());
@@ -713,6 +750,19 @@ function serviceHarness(
           ? {
               transportAttemptCounts: options.transportAttemptCounts,
               httpSummary: dashboardHttpSummaryFixture(),
+              persistedTrafficDeliverySummary: {
+                trafficMode: "buyer-spike",
+                plannedBuyers: options.transportAttemptCounts.plannedRequests,
+                scheduledRatePerSecond: null,
+                configuredDurationSeconds: null,
+                preAllocatedVUs: null,
+                maxVUs: null,
+                droppedIterations: 0,
+                completedIterations: options.transportAttemptCounts.completedRequests,
+                requestArrivalSummary: emptyRequestArrivalSummary,
+                trafficDeliveryStatus: options.trafficDeliveryStatus ?? "complete",
+                notes: [],
+              },
             }
           : null,
       );
@@ -789,7 +839,8 @@ function inventoryStatusFixture(): InventoryStatus {
     reservationThroughput: {
       windowSeconds: 60,
       successfulReservationCount: 10,
-      rate: 1,
+      peakRatePerSecond: 1,
+      peakWindowSeconds: 1,
       unit: "reservations_per_second",
       measuredAt: now.toISOString(),
     },

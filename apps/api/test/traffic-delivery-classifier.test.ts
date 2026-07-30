@@ -1,3 +1,4 @@
+import { emptyRequestArrivalSummary } from "@checkout-surge/contracts";
 import { describe, expect, it } from "vitest";
 import {
   classifyTrafficDelivery,
@@ -37,6 +38,7 @@ describe("traffic delivery classifier", () => {
           preAllocatedVUs: null,
           maxVUs: null,
           droppedIterations: 0,
+          requestArrivalSummary: emptyRequestArrivalSummary,
           notes: [],
         },
         {
@@ -60,6 +62,7 @@ describe("traffic delivery classifier", () => {
         preAllocatedVUs: null,
         maxVUs: null,
         droppedIterations: 0,
+        requestArrivalSummary: emptyRequestArrivalSummary,
         notes: [],
       },
       {
@@ -79,6 +82,7 @@ describe("traffic delivery classifier", () => {
       maxVUs: null,
       droppedIterations: 0,
       completedIterations: null,
+      requestArrivalSummary: emptyRequestArrivalSummary,
       trafficDeliveryStatus: "failed",
       notes: [],
     });
@@ -115,6 +119,7 @@ describe("traffic delivery classifier", () => {
           maxVUs: null,
           droppedIterations: 7,
           completedIterations: 90,
+          requestArrivalSummary: emptyRequestArrivalSummary,
           notes: ["interrupted traffic mislabeled"],
         },
         {
@@ -136,6 +141,7 @@ describe("traffic delivery classifier", () => {
           preAllocatedVUs: null,
           maxVUs: null,
           droppedIterations: 0,
+          requestArrivalSummary: emptyRequestArrivalSummary,
           notes: [],
         },
         {

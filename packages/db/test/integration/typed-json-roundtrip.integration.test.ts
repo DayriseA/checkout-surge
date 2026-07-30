@@ -290,6 +290,20 @@ function trafficDeliverySummaryFixture(): TrafficDeliverySummary {
     maxVUs: null,
     droppedIterations: 0,
     completedIterations: 10,
+    requestArrivalSummary: {
+      peakArrivalRatePerSecond: 10,
+      peakArrivalWindowSeconds: 1,
+      dispatchDurationSeconds: 0.8,
+      arrivalRateSeries: [
+        {
+          windowStartedAt: capturedAt.toISOString(),
+          ratePerSecond: 10,
+        },
+      ],
+      arrivalWindowCountObserved: 1,
+      arrivalWindowCountRetained: 1,
+      arrivalSeriesLimit: 120,
+    },
     notes: ["Typed JSON round-trip evidence."],
     trafficDeliveryStatus: "complete",
   };

@@ -13,6 +13,7 @@ import {
 const recentMetricRetentionLimit = 50;
 const recoveredMetricLimit = 20;
 const metricTtlSeconds = 24 * 60 * 60;
+const pinnedMetricNames = ["traffic.request_arrival_rate", "traffic.attempts_dispatched"] as const;
 
 export type TrafficMetricPublishResult =
   | { outcome: "fenced" }
@@ -45,11 +46,19 @@ export class RedisDashboardTrafficMetricStore implements DashboardTrafficMetricS
         redis.call("RPUSH", KEYS[1], unpack(ARGV))
         redis.call("LTRIM", KEYS[1], -${recentMetricRetentionLimit}, -1)
         redis.call("EXPIRE", KEYS[1], ${metricTtlSeconds})
+        for index, payload in ipairs(ARGV) do
+          local metricName = cjson.decode(payload).metricName
+          if metricName == "${pinnedMetricNames[0]}" or metricName == "${pinnedMetricNames[1]}" then
+            redis.call("HSET", KEYS[3], metricName, payload)
+          end
+        end
+        redis.call("EXPIRE", KEYS[3], ${metricTtlSeconds})
         return 1
       `,
-      2,
+      3,
       trafficMetricKey(input.runId),
       trafficMetricFenceKey(input.runId),
+      pinnedTrafficMetricKey(input.runId),
       ...samplePayloads,
     );
     return result === 1;
@@ -86,20 +95,41 @@ export class RedisDashboardTrafficMetricStore implements DashboardTrafficMetricS
       .multi()
       .set(trafficMetricFenceKey(runId), "reset", "EX", metricTtlSeconds)
       .del(trafficMetricKey(runId))
+      .del(pinnedTrafficMetricKey(runId))
       .exec();
   }
 
   async hasRunState(runId: string): Promise<boolean> {
-    return (await this.redis.exists(trafficMetricKey(runId))) === 1;
+    return (await this.redis.exists(trafficMetricKey(runId), pinnedTrafficMetricKey(runId))) > 0;
   }
 
   async readRecent(runId: string | null): Promise<MetricSample[]> {
     if (!runId) return [];
 
-    const rawSamples = await this.redis.lrange(trafficMetricKey(runId), -recoveredMetricLimit, -1);
-    return rawSamples.map((raw) =>
-      loadMetricIngestRequestSchema.shape.samples.element.parse(JSON.parse(raw)),
+    const [rawSamples, pinnedSamplesByName] = parseTrafficMetricSnapshot(
+      await this.redis.eval(
+        `
+          return {
+            redis.call("LRANGE", KEYS[1], -${recoveredMetricLimit}, -1),
+            redis.call("HMGET", KEYS[2], unpack(ARGV))
+          }
+        `,
+        2,
+        trafficMetricKey(runId),
+        pinnedTrafficMetricKey(runId),
+        ...pinnedMetricNames,
+      ),
     );
+    const sampleSchema = loadMetricIngestRequestSchema.shape.samples.element;
+    const recentSamples = rawSamples.map((raw) => sampleSchema.parse(JSON.parse(raw)));
+    const pinnedSamples = pinnedSamplesByName
+      .filter((raw): raw is string => raw !== null)
+      .map((raw) => sampleSchema.parse(JSON.parse(raw)));
+    const recentEvidence = new Set(recentSamples.map((sample) => JSON.stringify(sample)));
+    return [
+      ...recentSamples,
+      ...pinnedSamples.filter((sample) => !recentEvidence.has(JSON.stringify(sample))),
+    ].sort((left, right) => left.timestamp.localeCompare(right.timestamp));
   }
 }
 
@@ -109,6 +139,24 @@ function trafficMetricKey(runId: string): string {
 
 function trafficMetricFenceKey(runId: string): string {
   return `demo-run:${runId}:traffic-metrics-reset-fence`;
+}
+
+function pinnedTrafficMetricKey(runId: string): string {
+  return `demo-run:${runId}:traffic-metrics-pinned`;
+}
+
+function parseTrafficMetricSnapshot(value: unknown): [string[], Array<string | null>] {
+  if (
+    !Array.isArray(value) ||
+    value.length !== 2 ||
+    !Array.isArray(value[0]) ||
+    !value[0].every((sample) => typeof sample === "string") ||
+    !Array.isArray(value[1]) ||
+    !value[1].every((sample) => sample === null || typeof sample === "string")
+  ) {
+    throw new Error("Redis returned an invalid traffic metric snapshot.");
+  }
+  return [value[0], value[1]];
 }
 
 function parseTrafficMetricPublishResult(value: unknown): TrafficMetricPublishResult {

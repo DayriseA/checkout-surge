@@ -1,4 +1,5 @@
 import type { TrafficHttpSummary, TransportAttemptCounts } from "@checkout-surge/contracts";
+import { emptyRequestArrivalSummary } from "@checkout-surge/contracts";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
@@ -141,6 +142,7 @@ describe("transport observation section", () => {
   it("shortens the survivorship caveat on the run-history list", () => {
     const markup = renderToStaticMarkup(
       createElement(TransportObservationSection, {
+        arrivalSummary: emptyRequestArrivalSummary,
         counts: counts({ completedRequests: 7, interruptedRequests: 3 }),
         httpSummary: httpSummary(),
         surface: "list",
@@ -149,6 +151,31 @@ describe("transport observation section", () => {
 
     expect(markup).toContain("Outcomes and latency cover 7 of 10 attempts.");
     expect(markup).not.toContain("the true p95 is higher");
+  });
+
+  it("discloses terminal arrival-series storage and display truncation", () => {
+    const arrivalRateSeries = Array.from({ length: 15 }, (_, index) => ({
+      windowStartedAt: new Date(Date.UTC(2026, 5, 20, 12, 0, index)).toISOString(),
+      ratePerSecond: index + 1,
+    }));
+    const markup = renderToStaticMarkup(
+      createElement(TransportObservationSection, {
+        arrivalSummary: {
+          peakArrivalRatePerSecond: 20,
+          peakArrivalWindowSeconds: 1,
+          dispatchDurationSeconds: 1,
+          arrivalRateSeries,
+          arrivalWindowCountObserved: 20,
+          arrivalWindowCountRetained: 15,
+          arrivalSeriesLimit: 120,
+        },
+        counts: counts({ completedRequests: 10 }),
+        httpSummary: httpSummary(),
+        surface: "detail",
+      }),
+    );
+
+    expect(markup).toContain("Showing the last 12 of 15 retained windows (20 observed).");
   });
 });
 
@@ -189,6 +216,7 @@ function renderSection(
 ): string {
   return renderToStaticMarkup(
     createElement(TransportObservationSection, {
+      arrivalSummary: emptyRequestArrivalSummary,
       counts: transportAttemptCounts,
       httpSummary: summary,
       surface: "detail",

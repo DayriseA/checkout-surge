@@ -1,4 +1,8 @@
-import type { TrafficHttpSummary, TransportAttemptCounts } from "@checkout-surge/contracts";
+import type {
+  RequestArrivalSummary,
+  TrafficHttpSummary,
+  TransportAttemptCounts,
+} from "@checkout-surge/contracts";
 
 /**
  * Presentation for the five transport-attempt counts.
@@ -99,10 +103,12 @@ export function survivorshipWarningText(
  * narrow columns on the run-history list and detail views.
  */
 export function TransportObservationSection({
+  arrivalSummary,
   counts,
   httpSummary,
   surface,
 }: {
+  arrivalSummary: RequestArrivalSummary;
   counts: TransportAttemptCounts;
   httpSummary: TrafficHttpSummary;
   surface: Extract<ObservationSurface, "list" | "detail">;
@@ -111,7 +117,10 @@ export function TransportObservationSection({
 
   return (
     <section className="min-w-0 border-t border-border pt-3">
-      <LensHeading />
+      <RequestArrivalEvidence summary={arrivalSummary} showSeries={surface === "detail"} />
+      <div className="mt-4 border-t border-border pt-3">
+        <LensHeading />
+      </div>
       <CoverageMeter observation={observation} />
       <dl className="m-0 mt-3 grid gap-2">
         <ObservationRow
@@ -158,6 +167,82 @@ export function TransportObservationSection({
       </dl>
       <SurvivorshipWarning observation={observation} surface={surface} />
     </section>
+  );
+}
+
+export function RequestArrivalEvidence({
+  summary,
+  showSeries = true,
+}: {
+  summary: RequestArrivalSummary;
+  showSeries?: boolean;
+}) {
+  return (
+    <>
+      <h3 className="m-0 text-sm font-bold text-ink">Request arrival</h3>
+      <p className="m-0 mt-0.5 text-xs text-muted">checkout attempts started by k6</p>
+      <dl className="m-0 mt-3 grid gap-2">
+        <ObservationRow
+          label={`Peak (${formatWindow(summary.peakArrivalWindowSeconds)} window)`}
+          value={`${formatNumber(summary.peakArrivalRatePerSecond)} attempts/s`}
+        />
+        <ObservationRow
+          label="Dispatch duration"
+          value={formatDuration(summary.dispatchDurationSeconds)}
+        />
+      </dl>
+      {showSeries ? (
+        <RequestArrivalRateSeries samples={summary.arrivalRateSeries} summary={summary} />
+      ) : null}
+    </>
+  );
+}
+
+const arrivalSeriesDisplayLimit = 12;
+
+export function RequestArrivalRateSeries({
+  samples,
+  summary,
+}: {
+  samples: RequestArrivalSummary["arrivalRateSeries"];
+  summary?: RequestArrivalSummary;
+}) {
+  const visibleSamples = samples.slice(-arrivalSeriesDisplayLimit);
+  const seriesWasTruncated =
+    summary !== undefined && summary.arrivalWindowCountObserved > visibleSamples.length;
+
+  return (
+    <>
+      {visibleSamples.length === 0 ? (
+        <p className="m-0 mt-3 text-xs text-muted">No finalized arrival windows.</p>
+      ) : (
+        <ol aria-label="Request arrival time series" className="m-0 mt-3 grid gap-1 p-0">
+          {visibleSamples.map((sample) => (
+            <li
+              className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 text-xs text-muted"
+              key={sample.windowStartedAt}
+            >
+              <time dateTime={sample.windowStartedAt}>
+                {new Date(sample.windowStartedAt).toLocaleTimeString("en-US", {
+                  hour12: false,
+                  timeZone: "UTC",
+                })}
+              </time>
+              <strong className="text-muted-strong">
+                {formatNumber(sample.ratePerSecond)} attempts/s
+              </strong>
+            </li>
+          ))}
+        </ol>
+      )}
+      {seriesWasTruncated ? (
+        <p className="m-0 mt-2 text-xs text-muted">
+          {visibleSamples.length > 0
+            ? `Showing the last ${visibleSamples.length} of ${summary.arrivalWindowCountRetained} retained windows (${summary.arrivalWindowCountObserved} observed).`
+            : `No samples retained from ${summary.arrivalWindowCountObserved} observed windows.`}
+        </p>
+      ) : null}
+    </>
   );
 }
 
@@ -318,4 +403,14 @@ function formatNumber(value: number): string {
 
 function formatMilliseconds(value: number | undefined): string {
   return value === undefined ? "n/a" : `${formatNumber(value)}ms`;
+}
+
+function formatDuration(seconds: number): string {
+  return seconds < 1
+    ? `${Math.round(seconds * 1_000)}ms`
+    : `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(seconds)}s`;
+}
+
+function formatWindow(seconds: number): string {
+  return `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(seconds)}-second`;
 }

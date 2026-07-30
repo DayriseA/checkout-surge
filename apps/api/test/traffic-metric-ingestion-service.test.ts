@@ -22,7 +22,7 @@ const metricRequest = {
       timestamp: "2026-07-14T00:00:01.000Z",
     },
     {
-      metricName: "traffic.scheduled_request_rate" as const,
+      metricName: "traffic.request_arrival_rate" as const,
       value: 100,
       unit: "requests_per_second",
       timestamp: "2026-07-14T00:00:02.000Z",

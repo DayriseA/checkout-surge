@@ -1,4 +1,7 @@
-import { emptyHttpTimingBreakdownSummary } from "@checkout-surge/contracts";
+import {
+  emptyHttpTimingBreakdownSummary,
+  emptyRequestArrivalSummary,
+} from "@checkout-surge/contracts";
 import {
   createDatabaseConnection,
   createRedisClient,
@@ -335,6 +338,7 @@ async function seedPendingCompletion(
       maxVUs: null,
       droppedIterations: 10,
       completedIterations: 0,
+      requestArrivalSummary: emptyRequestArrivalSummary,
       trafficDeliveryStatus: "failed",
       notes: [],
     },

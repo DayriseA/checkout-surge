@@ -11,10 +11,12 @@ describe("generated-run Redis cleanup", () => {
     const scan = vi.fn().mockResolvedValue(["0", []]);
     const unlink = vi.fn().mockResolvedValue(0);
 
-    await deleteGeneratedRunRedisState(redisStub({ eval: evalCommand, scan, unlink }), {
-      runId,
-      saleOfferId,
-    });
+    await expect(
+      deleteGeneratedRunRedisState(redisStub({ eval: evalCommand, scan, unlink }), {
+        runId,
+        saleOfferId,
+      }),
+    ).resolves.toEqual({ deletedKeyCount: 0 });
 
     expect(evalCommand).toHaveBeenCalledWith(
       expect.any(String),
@@ -29,6 +31,7 @@ describe("generated-run Redis cleanup", () => {
     expect(unlink).toHaveBeenCalledWith(
       `demo-run:${runId}:sale-eligibility`,
       `demo-run:${runId}:traffic-metrics`,
+      `demo-run:${runId}:traffic-metrics-pinned`,
       `demo-run:${runId}:traffic-metrics-reset-fence`,
     );
   });
@@ -40,12 +43,18 @@ describe("generated-run Redis cleanup", () => {
       .fn()
       .mockResolvedValueOnce(["17", [dynamicKey]])
       .mockResolvedValueOnce(["0", [`inventory:${saleOfferId}:events`]]);
-    const unlink = vi.fn().mockResolvedValue(1);
+    const unlink = vi
+      .fn()
+      .mockResolvedValueOnce(1)
+      .mockResolvedValueOnce(1)
+      .mockResolvedValueOnce(4);
 
-    await deleteGeneratedRunRedisState(redisStub({ eval: evalCommand, scan, unlink }), {
-      runId,
-      saleOfferId,
-    });
+    await expect(
+      deleteGeneratedRunRedisState(redisStub({ eval: evalCommand, scan, unlink }), {
+        runId,
+        saleOfferId,
+      }),
+    ).resolves.toEqual({ deletedKeyCount: 8 });
 
     expect(scan).toHaveBeenNthCalledWith(
       2,
@@ -61,6 +70,7 @@ describe("generated-run Redis cleanup", () => {
       3,
       `demo-run:${runId}:sale-eligibility`,
       `demo-run:${runId}:traffic-metrics`,
+      `demo-run:${runId}:traffic-metrics-pinned`,
       `demo-run:${runId}:traffic-metrics-reset-fence`,
     );
   });

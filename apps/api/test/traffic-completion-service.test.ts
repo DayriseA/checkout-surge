@@ -1,6 +1,7 @@
 import {
   type AcceptedRunConfigSnapshot,
   emptyHttpTimingBreakdownSummary,
+  emptyRequestArrivalSummary,
   type TrafficCompletionReport,
 } from "@checkout-surge/contracts";
 import {
@@ -508,6 +509,7 @@ function completionReport(): TrafficCompletionReport {
       maxVUs: null,
       droppedIterations: 0,
       completedIterations: 10,
+      requestArrivalSummary: emptyRequestArrivalSummary,
       notes: [],
     },
     httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,

@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import {
   type AcceptedRunConfigSnapshot,
   emptyHttpTimingBreakdownSummary,
+  emptyRequestArrivalSummary,
   type NotificationRecordJob,
   notificationRecordBullMqQueueName,
   type notificationRecordJobName,
@@ -1336,6 +1337,7 @@ function trafficCompletionReportFixture(): TrafficCompletionReport {
       preAllocatedVUs: null,
       maxVUs: null,
       droppedIterations: 0,
+      requestArrivalSummary: emptyRequestArrivalSummary,
       notes: [],
     },
     httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,

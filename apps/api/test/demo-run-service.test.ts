@@ -6,6 +6,7 @@ import type {
 } from "@checkout-surge/contracts";
 import {
   emptyHttpTimingBreakdownSummary,
+  emptyRequestArrivalSummary,
   trafficDeliverySummarySchema,
 } from "@checkout-surge/contracts";
 import { signPublicVisitorCredential } from "@checkout-surge/contracts/public-visitor-credential";
@@ -1004,6 +1005,7 @@ describe("demo-run lifecycle start gating", () => {
               maxVUs: null,
               droppedIterations: 10_000,
               completedIterations: null,
+              requestArrivalSummary: emptyRequestArrivalSummary,
               trafficDeliveryStatus: "failed",
               notes: [],
             }),

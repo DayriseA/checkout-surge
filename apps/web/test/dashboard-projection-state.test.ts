@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import {
   createDashboardProjectionState,
   dashboardProjectionStateReducer,
+  projectRequestSurge,
 } from "../src/app/lib/dashboard-projection-state.js";
 
 type ActiveRun = Extract<NonNullable<DashboardProjection["currentRun"]>, { status: "active" }>;
@@ -18,6 +19,80 @@ type CompletedRun = Extract<
 >;
 
 describe("dashboard projection state", () => {
+  it("projects attempt arrival and terminal peak without falling back to a completion tail", () => {
+    const live = projectRequestSurge(
+      runProjection({
+        recentMetrics: [
+          {
+            metricName: "traffic.request_arrival_rate",
+            value: 500,
+            unit: "requests_per_second",
+            timestamp: "2026-06-20T00:00:01.000Z",
+          },
+          {
+            metricName: "traffic.response_completion_rate",
+            value: 7,
+            unit: "requests_per_second",
+            timestamp: "2026-06-20T00:00:10.000Z",
+          },
+          {
+            metricName: "traffic.attempts_dispatched",
+            value: 500,
+            unit: "requests",
+            timestamp: "2026-06-20T00:00:01.100Z",
+          },
+        ],
+      }),
+    );
+    expect(live).toMatchObject({
+      arrivalRatePerSecond: 500,
+      arrivalRateIsPeak: false,
+      responseCompletionRatePerSecond: 7,
+      attemptsDispatched: 500,
+    });
+
+    const terminal = projectRequestSurge(
+      runProjection({
+        transportAttemptCounts: {
+          plannedRequests: 500,
+          startedRequests: 500,
+          completedRequests: 500,
+          interruptedRequests: 0,
+          unstartedRequests: 0,
+        },
+        requestArrivalSummary: {
+          peakArrivalRatePerSecond: 500,
+          peakArrivalWindowSeconds: 1,
+          dispatchDurationSeconds: 0.4,
+          arrivalRateSeries: [
+            {
+              windowStartedAt: "2026-06-20T00:00:01.000Z",
+              ratePerSecond: 500,
+            },
+          ],
+          arrivalWindowCountObserved: 1,
+          arrivalWindowCountRetained: 1,
+          arrivalSeriesLimit: 120,
+        },
+        recentMetrics: [
+          {
+            metricName: "traffic.response_completion_rate",
+            value: 7,
+            unit: "requests_per_second",
+            timestamp: "2026-06-20T00:00:10.000Z",
+          },
+        ],
+      }),
+    );
+    expect(terminal).toMatchObject({
+      arrivalRatePerSecond: 500,
+      arrivalRateIsPeak: true,
+      responseCompletionRatePerSecond: 7,
+      attemptsDispatched: 500,
+      dispatchDurationSeconds: 0.4,
+    });
+  });
+
   it("atomically replaces only with a higher same-scope revision", () => {
     const current = runProjection({ revision: 4 });
     let state = createDashboardProjectionState(available(current));
@@ -32,7 +107,7 @@ describe("dashboard projection state", () => {
       correlationId: "higher",
       recentMetrics: [
         {
-          metricName: "traffic.scheduled_request_rate",
+          metricName: "traffic.request_arrival_rate",
           value: 1_000,
           unit: "requests_per_second",
           timestamp: "2026-06-20T00:00:12.000Z",
@@ -219,6 +294,7 @@ function idleProjection(overrides: Partial<DashboardProjection> = {}): Dashboard
     consistencyLag: null,
     transportAttemptCounts: null,
     httpSummary: null,
+    requestArrivalSummary: null,
     recentCompletionOutcomes: [],
     recoveredAt: "2026-06-20T00:00:10.000Z",
     ...overrides,

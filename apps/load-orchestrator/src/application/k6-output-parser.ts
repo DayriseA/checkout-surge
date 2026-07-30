@@ -3,11 +3,13 @@ import type {
   HttpTimingBreakdownSummary,
   LoadExecutionPlan,
   LoadRunDiagnosticsSummary,
+  RequestArrivalSummary,
   SummaryExportWarning,
   TerminalMetricSource,
   TerminalMetricSources,
   TrafficCompletionReport,
 } from "@checkout-surge/contracts";
+import { emptyRequestArrivalSummary } from "@checkout-surge/contracts";
 import type { InitialLoadRunDiagnostics } from "./load-run-diagnostics.js";
 
 export class BoundedStderrCollector {
@@ -173,6 +175,7 @@ export class K6RunAccumulator {
     generatorUtilisation?: GeneratorUtilisation | null;
     summaryMetrics?: K6SummaryMetrics;
     summaryExportWarning?: SummaryExportWarning;
+    requestArrivalSummary?: RequestArrivalSummary;
   }): TrafficCompletionReport {
     const attemptsStarted = this.selectCount(
       input.summaryMetrics?.attemptsStarted,
@@ -229,6 +232,7 @@ export class K6RunAccumulator {
     const trafficDeliverySummary = this.trafficDeliverySummary({
       droppedIterations,
       completedIterations,
+      requestArrivalSummary: input.requestArrivalSummary,
     });
     const terminalMetricSources: TerminalMetricSources = {
       startedRequests: started.source,
@@ -341,6 +345,7 @@ export class K6RunAccumulator {
   private trafficDeliverySummary(input: {
     droppedIterations: SelectedCount;
     completedIterations: SelectedCount;
+    requestArrivalSummary: RequestArrivalSummary | undefined;
   }) {
     const plan = this.options.executionPlan;
     const notes: string[] = [];
@@ -360,6 +365,7 @@ export class K6RunAccumulator {
       maxVUs: plan.trafficMode === "constant-arrival-rate" ? plan.maxVus : null,
       droppedIterations: input.droppedIterations.value,
       completedIterations: input.completedIterations.valueOrNull,
+      requestArrivalSummary: input.requestArrivalSummary ?? emptyRequestArrivalSummary,
       notes,
     };
   }

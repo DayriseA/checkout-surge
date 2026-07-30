@@ -1,3 +1,4 @@
+import { emptyRequestArrivalSummary } from "@checkout-surge/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   getPublicDemoSurface,
@@ -80,6 +81,7 @@ describe("dashboard backend API reads", () => {
               maxVUs: null,
               droppedIterations: 0,
               completedIterations: null,
+              requestArrivalSummary: emptyRequestArrivalSummary,
               trafficDeliveryStatus: "complete",
               notes: [],
             },
@@ -269,6 +271,7 @@ function runHistoryDetailFixture() {
         maxVUs: null,
         droppedIterations: 0,
         completedIterations: null,
+        requestArrivalSummary: emptyRequestArrivalSummary,
         trafficDeliveryStatus: "complete",
         notes: [],
       },

@@ -74,6 +74,106 @@ describe("Redis dashboard traffic metric reset", () => {
     await subscriber.unsubscribe(dashboardProjectionDirtyRedisChannel);
     subscriber.disconnect();
   });
+
+  it("recovers pinned surge evidence without collapsing recent arrival windows", async () => {
+    await store.appendIfLive({
+      runId: runA,
+      correlationId: "surge",
+      samples: [
+        {
+          metricName: "traffic.request_arrival_rate",
+          value: 1_000,
+          unit: "requests_per_second",
+          timestamp: "2026-07-13T00:00:00.000Z",
+        },
+        {
+          metricName: "traffic.attempts_dispatched",
+          value: 100,
+          unit: "requests",
+          timestamp: "2026-07-13T00:00:00.500Z",
+        },
+        {
+          metricName: "traffic.attempts_dispatched",
+          value: 1_000,
+          unit: "requests",
+          timestamp: "2026-07-13T00:00:00.500Z",
+        },
+      ],
+      observedAt: "2026-07-13T00:00:00.500Z",
+    });
+    await store.appendIfLive({
+      runId: runA,
+      correlationId: "slow-completions",
+      samples: Array.from({ length: 100 }, (_, index) => ({
+        metricName: ["traffic.response_completion_rate", "traffic.latency", "traffic.failure_rate"][
+          index % 3
+        ] as "traffic.response_completion_rate" | "traffic.latency" | "traffic.failure_rate",
+        value: index % 3 === 2 ? 0.1 : index,
+        unit: index % 3 === 0 ? "requests_per_second" : index % 3 === 1 ? "ms" : "ratio",
+        timestamp: new Date(Date.UTC(2026, 6, 13, 0, 0, index + 1)).toISOString(),
+      })),
+      observedAt: "2026-07-13T00:01:40.000Z",
+    });
+
+    const restoredSurge = await store.readRecent(runA);
+    expect(restoredSurge).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          metricName: "traffic.request_arrival_rate",
+          value: 1_000,
+        }),
+        expect.objectContaining({
+          metricName: "traffic.attempts_dispatched",
+          value: 1_000,
+        }),
+      ]),
+    );
+    expect(
+      restoredSurge
+        .filter((sample) => sample.metricName === "traffic.attempts_dispatched")
+        .map((sample) => sample.value),
+    ).toEqual([1_000]);
+
+    await store.appendIfLive({
+      runId: runA,
+      correlationId: "later-arrivals",
+      samples: [20, 25, 30].map((value, index) => ({
+        metricName: "traffic.request_arrival_rate" as const,
+        value,
+        unit: "requests_per_second",
+        timestamp: new Date(Date.UTC(2026, 6, 13, 0, 2, index)).toISOString(),
+      })),
+      observedAt: "2026-07-13T00:02:02.000Z",
+    });
+    await store.appendIfLive({
+      runId: runA,
+      correlationId: "later-churn",
+      samples: Array.from({ length: 15 }, (_, index) => ({
+        metricName: "traffic.response_completion_rate" as const,
+        value: index,
+        unit: "requests_per_second",
+        timestamp: new Date(Date.UTC(2026, 6, 13, 0, 3, index)).toISOString(),
+      })),
+      observedAt: "2026-07-13T00:03:14.000Z",
+    });
+
+    const recovered = await store.readRecent(runA);
+    expect(
+      recovered
+        .filter((sample) => sample.metricName === "traffic.request_arrival_rate")
+        .map((sample) => sample.value),
+    ).toEqual([20, 25, 30]);
+    expect(
+      recovered.filter((sample) => sample.metricName === "traffic.attempts_dispatched").at(-1)
+        ?.value,
+    ).toBe(1_000);
+    expect(recovered).toHaveLength(21);
+
+    await store.clearRun(runA);
+    await expect(store.appendIfLive(metricBatch(runA, 30))).resolves.toBe(false);
+    expect(await store.readRecent(runA)).toEqual([]);
+    expect(await store.hasRunState(runA)).toBe(false);
+  });
 });
 
 function metricBatch(runId: string, value: number) {

@@ -3,6 +3,7 @@ import type {
   PublicRunHistoryDetailResponse,
   RunHistoryListResponse,
 } from "@checkout-surge/contracts";
+import { emptyRequestArrivalSummary } from "@checkout-surge/contracts";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -35,6 +36,9 @@ describe("run history surface", () => {
     expect(markup).toContain("Preview 1k");
     expect(markup).toContain("55555555-5555-4555-8555-555555555555");
     expect(markup).toContain("traffic complete");
+    expect(markup).toContain("Request arrival");
+    expect(markup).toContain("10 attempts/s");
+    expect(markup).toContain("1-second window");
     expect(markup).toContain("Load generator");
     expect(markup).toContain("what k6 observed");
     expect(markup).toContain("Planned attempts");
@@ -267,6 +271,19 @@ function runHistoryFixture(): RunHistoryListResponse {
           maxVUs: null,
           droppedIterations: 0,
           completedIterations: null,
+          requestArrivalSummary: {
+            ...emptyRequestArrivalSummary,
+            peakArrivalRatePerSecond: 10,
+            dispatchDurationSeconds: 0.2,
+            arrivalRateSeries: [
+              {
+                windowStartedAt: "2026-06-20T00:00:00.000Z",
+                ratePerSecond: 10,
+              },
+            ],
+            arrivalWindowCountObserved: 1,
+            arrivalWindowCountRetained: 1,
+          },
           trafficDeliveryStatus: "complete",
           notes: [],
         },

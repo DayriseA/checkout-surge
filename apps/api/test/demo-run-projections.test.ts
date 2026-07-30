@@ -85,7 +85,8 @@ describe("demo-run projections", () => {
       reservationThroughput: {
         windowSeconds: 60,
         successfulReservationCount: 4,
-        rate: 4 / 60,
+        peakRatePerSecond: 4,
+        peakWindowSeconds: 1,
         unit: "reservations_per_second",
         measuredAt: "2026-07-21T10:00:02.000Z",
       },

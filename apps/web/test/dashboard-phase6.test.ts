@@ -53,8 +53,16 @@ describe("Phase 6 projection dashboard", () => {
     const erp = renderToStaticMarkup(createElement(ErpHealthPanel, { recovery }));
     const lag = renderToStaticMarkup(createElement(ConsistencyLagPanel, { recovery }));
 
-    expect(traffic).toContain("Observed HTTP request rate");
-    expect(traffic).toContain("12.5 requests/s");
+    expect(traffic).toContain("Peak request arrival rate (1-second windows)");
+    expect(traffic).toContain("1,000 attempts/s");
+    expect(traffic).not.toContain("12.5 attempts/s");
+    expect(traffic).toContain("Attempts dispatched");
+    expect(traffic).toContain("Dispatch duration");
+    expect(traffic).toContain("Response completion rate");
+    expect(traffic).toContain("Request arrival time series");
+    expect(traffic).toContain("1,000 attempts/s");
+    expect(traffic).toContain("Peak reservation rate (1-second windows, trailing 60s)");
+    expect(traffic).toContain("88 reservations/s");
     expect(traffic).toContain("Window mean HTTP latency");
     expect(traffic).toContain("Window HTTP failure rate");
     expect(traffic).toContain("25%");
@@ -141,7 +149,8 @@ function projectionFixture(): DashboardProjection {
       reservationThroughput: {
         windowSeconds: 60,
         successfulReservationCount: 88,
-        rate: 1.47,
+        peakRatePerSecond: 88,
+        peakWindowSeconds: 1,
         unit: "reservations_per_second",
         measuredAt: "2026-06-20T00:00:11.000Z",
       },
@@ -150,7 +159,7 @@ function projectionFixture(): DashboardProjection {
     },
     recentMetrics: [
       {
-        metricName: "traffic.scheduled_request_rate",
+        metricName: "traffic.request_arrival_rate",
         value: 12.5,
         unit: "requests_per_second",
         timestamp: "2026-06-20T00:00:11.000Z",
@@ -268,6 +277,20 @@ function projectionFixture(): DashboardProjection {
       transportFailures: 0,
       unexpectedResponses: 0,
       failureRate: 0,
+    },
+    requestArrivalSummary: {
+      peakArrivalRatePerSecond: 1_000,
+      peakArrivalWindowSeconds: 1,
+      dispatchDurationSeconds: 0.8,
+      arrivalRateSeries: [
+        {
+          windowStartedAt: "2026-06-20T00:00:00.000Z",
+          ratePerSecond: 1_000,
+        },
+      ],
+      arrivalWindowCountObserved: 1,
+      arrivalWindowCountRetained: 1,
+      arrivalSeriesLimit: 120,
     },
     recoveredAt: "2026-06-20T00:00:11.000Z",
   };
