@@ -94,6 +94,7 @@ describe("demo-run projections", () => {
         rejectionCount: 7,
         latestObservedAt: "2026-07-21T10:00:02.000Z",
       },
+      observedAt: "2026-07-21T10:00:03.000Z",
       lastUpdatedAt: "2026-07-21T10:00:02.000Z",
     };
 

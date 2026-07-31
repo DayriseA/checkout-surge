@@ -24,6 +24,7 @@ const projection: InventoryStatus = {
     rejectionCount: 3,
     latestObservedAt: "2026-06-20T12:00:29.000Z",
   },
+  observedAt: "2026-06-20T12:00:30.000Z",
   lastUpdatedAt: "2026-06-20T12:00:00.000Z",
 };
 

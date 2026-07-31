@@ -42,8 +42,15 @@ export function AdminRuntimePolicyView({
         title="Runtime budgets and custom limits"
         status={
           <StatusPill
-            label={draft?.isPublicRunBudgetEnforced ? "budgeted" : "open"}
-            tone={policy ? "ok" : "pending"}
+            status={{
+              label:
+                policy && draft
+                  ? draft.isPublicRunBudgetEnforced
+                    ? "budgeted"
+                    : "open"
+                  : "not yet available",
+              tone: policy && draft ? "ok" : "idle",
+            }}
           />
         }
       />
@@ -216,7 +223,7 @@ export function AdminPresetView({
       <PanelHeading
         eyebrow="Presets"
         title="Inspection and starts"
-        status={<StatusPill label={`${presets.length} loaded`} tone="ok" />}
+        status={<StatusPill status={{ label: `${presets.length} loaded`, tone: "ok" }} />}
       />
       <div className="grid grid-cols-[minmax(180px,260px)_1fr] gap-4 max-[800px]:grid-cols-1">
         <div className="grid content-start gap-2">
@@ -503,7 +510,11 @@ export function AdminErpDiagnosticsView({
       <PanelHeading
         eyebrow="ERP diagnostics"
         title="Global chaos controls"
-        status={<StatusPill label={current?.forcedOutage ? "outage" : "ready"} tone="idle" />}
+        status={
+          <StatusPill
+            status={{ label: current?.forcedOutage ? "outage" : "ready", tone: "idle" }}
+          />
+        }
       />
       <div className="grid grid-cols-4 gap-3 max-[700px]:grid-cols-2">
         <LabeledTextInput
@@ -613,7 +624,8 @@ export function Fact({ label, value }: { label: string; value: string }) {
 }
 
 export function Unavailable({ read }: { read: BackendRead<unknown> }) {
-  return read.status === "available" ? null : (
+  if (read.status !== "unavailable") return null;
+  return (
     <div className="mt-3 grid gap-1 rounded-lg border border-[#f7b4ad] bg-danger-soft p-3 leading-6 text-danger">
       <strong>Unavailable</strong>
       <span>{read.reason}</span>

@@ -103,29 +103,20 @@ describe("useDashboardProjections", () => {
 });
 
 describe("useDashboardRecovery", () => {
-  it("keeps initial loading fail-closed and retries once after Strict Mode effect replay", async () => {
+  it("keeps initial loading fail-closed and performs one initial read without retry UI", async () => {
     vi.useFakeTimers();
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse(projectionFixture()));
     vi.stubGlobal("fetch", fetchMock);
-    const { result } = renderHook(
-      () =>
-        useDashboardRecovery({
-          status: "unavailable",
-          reason: "Authoritative run state is loading.",
-        }),
-      {
-        wrapper: ({ children }: { children: ReactNode }) => <StrictMode>{children}</StrictMode>,
-      },
-    );
+    const { result } = renderHook(() => useDashboardRecovery({ status: "loading" }), {
+      wrapper: ({ children }: { children: ReactNode }) => <StrictMode>{children}</StrictMode>,
+    });
 
-    expect(result.current.recovery.status).toBe("unavailable");
+    expect(result.current.recovery.status).toBe("loading");
     expect(result.current.hasSyncIssue).toBe(false);
     expect(result.current.syncIssue).toBeNull();
-    expect(result.current.isRetryScheduled).toBe(true);
-    expect(result.current.retryDelayMs).toBe(1_000);
-    await act(async () => vi.advanceTimersByTimeAsync(999));
-    expect(fetchMock).not.toHaveBeenCalled();
-    await act(async () => vi.advanceTimersByTimeAsync(1));
+    expect(result.current.isRetryScheduled).toBe(false);
+    expect(result.current.retryDelayMs).toBeNull();
+    await act(async () => Promise.resolve());
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(result.current.recovery).toEqual(available(projectionFixture()));
   });
@@ -167,7 +158,7 @@ describe("useDashboardRecovery", () => {
       .mockResolvedValueOnce(jsonResponse(recovered));
     vi.stubGlobal("fetch", fetchMock);
     const { result } = renderHook(() =>
-      useDashboardRecovery({ status: "unavailable", reason: "Authoritative state loading" }),
+      useDashboardRecovery({ status: "unavailable", reason: "API unavailable" }),
     );
 
     await act(async () => vi.advanceTimersByTimeAsync(1_000));

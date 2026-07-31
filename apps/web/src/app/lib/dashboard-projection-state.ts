@@ -1,5 +1,5 @@
 import type { DashboardProjection } from "@checkout-surge/contracts";
-import type { BackendRead } from "./api";
+import type { BackendRead, CompletedBackendRead } from "./api";
 
 type UnavailableProjectionRead = Extract<
   BackendRead<DashboardProjection>,
@@ -67,7 +67,7 @@ export type DashboardProjectionStateAction =
   | { type: "refresh-started" }
   | {
       type: "refresh-completed";
-      recovery: BackendRead<DashboardProjection>;
+      recovery: CompletedBackendRead<DashboardProjection>;
       preserveAvailableRecoveryOnFailure: boolean;
     }
   | { type: "live-projection-received"; projection: DashboardProjection };

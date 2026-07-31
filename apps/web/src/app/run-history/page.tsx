@@ -32,7 +32,12 @@ export default async function RunHistoryPage({ searchParams }: RunHistoryPagePro
             Completed runs, terminal inventory, traffic summaries, and business outcomes.
           </p>
         </div>
-        <StatusPill label={summaryCount} tone={history.status === "available" ? "ok" : "blocked"} />
+        <StatusPill
+          status={{
+            label: summaryCount,
+            tone: history.status === "available" ? "ok" : "danger",
+          }}
+        />
       </header>
       {history.status === "available" ? (
         <HistorySurface authenticated={authenticated} history={history.data} />

@@ -2,7 +2,7 @@
 
 import { type DashboardProjection, dashboardProjectionSchema } from "@checkout-surge/contracts";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
-import type { BackendRead } from "../../lib/api";
+import type { BackendRead, CompletedBackendRead } from "../../lib/api";
 import { readProxyJson } from "../../lib/client/proxy-json";
 import { dashboardRecoveryProxyPath } from "../../lib/control-paths";
 import {
@@ -31,7 +31,7 @@ export function useDashboardRecovery(
     initialRecovery,
     createDashboardProjectionState,
   );
-  const requestRef = useRef<Promise<BackendRead<DashboardProjection>> | null>(null);
+  const requestRef = useRef<Promise<CompletedBackendRead<DashboardProjection>> | null>(null);
   const acceptedProjectionRef = useRef(state.acceptedProjection);
   acceptedProjectionRef.current = state.acceptedProjection;
   const mountedRef = useRef(true);
@@ -65,12 +65,12 @@ export function useDashboardRecovery(
       hasLocalRecoveryActivityRef.current = true;
       retrySchedulerRef.current?.cancel();
       dispatch({ type: "refresh-started" });
-      let completedRecovery: BackendRead<DashboardProjection> | null = null;
+      let completedRecovery: CompletedBackendRead<DashboardProjection> | null = null;
       const request = readProxyJson(
         recoveryPath(acceptedProjectionRef.current),
         dashboardProjectionSchema,
       ).catch(
-        (error: unknown): BackendRead<DashboardProjection> => ({
+        (error: unknown): CompletedBackendRead<DashboardProjection> => ({
           status: "unavailable",
           reason: error instanceof Error ? error.message : "Dashboard recovery request failed.",
         }),
@@ -87,7 +87,7 @@ export function useDashboardRecovery(
         });
         if (completedRecovery.status === "available") {
           retrySchedulerRef.current?.reset();
-        } else {
+        } else if (completedRecovery.status === "unavailable") {
           retrySchedulerRef.current?.schedule(completedRecovery.retryAfterMs);
         }
       } finally {
@@ -126,7 +126,9 @@ export function useDashboardRecovery(
         initialRecoveryIdentityRef.current = initialRecoveryIdentity;
         dispatch({ type: "initial-read-received", recovery: nextRecovery });
       }
-      if (nextRecovery.status === "unavailable") {
+      if (nextRecovery.status === "loading") {
+        void refreshRef.current();
+      } else if (nextRecovery.status === "unavailable") {
         retrySchedulerRef.current?.schedule(nextRecovery.retryAfterMs);
       } else {
         retrySchedulerRef.current?.reset();
@@ -156,9 +158,11 @@ export function useDashboardRecovery(
 }
 
 function recoveryIdentity(recovery: BackendRead<DashboardProjection>): string {
-  return recovery.status === "available"
-    ? `${recovery.data.scopeId}:${recovery.data.revision}`
-    : `unavailable:${recovery.httpStatus ?? "none"}:${recovery.reason}`;
+  if (recovery.status === "available") {
+    return `${recovery.data.scopeId}:${recovery.data.revision}`;
+  }
+  if (recovery.status === "loading") return "loading";
+  return `unavailable:${recovery.httpStatus ?? "none"}:${recovery.reason}`;
 }
 
 function recoveryPath(projection: DashboardProjection | null): string {

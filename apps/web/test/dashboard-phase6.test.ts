@@ -13,15 +13,56 @@ import {
   ErpHealthPanel,
   InventoryDrainPanel,
   QueuePressurePanel,
+  RecoveryStatusPanel,
   RequestSurgePanel,
   RunOutcomesPanel,
 } from "../src/app/components/dashboard-panels.js";
+import type { Freshness } from "../src/app/lib/presentation/freshness.js";
+import {
+  deriveInventoryOutcomeState,
+  deriveLagPresentationState,
+  deriveOutcomePresentationState,
+  deriveQueuePresentationState,
+  deriveRunPresentationState,
+  type PresentationState,
+} from "../src/app/lib/presentation/run-presentation-state.js";
 
 describe("Phase 6 projection dashboard", () => {
+  it("renders neutral initial hydration without recovery controls", () => {
+    const recovery = { status: "loading" as const };
+    const markup = renderToStaticMarkup(
+      createElement(RecoveryStatusPanel, {
+        recovery,
+        realtimeStatus: "connecting",
+        liveProjectionCount: 0,
+        presentation: deriveRunPresentationState(recovery),
+        onRefresh: () => undefined,
+      }),
+    );
+
+    expect(markup).toContain("Checking availability.");
+    expect(markup).not.toContain("Unavailable");
+    expect(markup).not.toContain("<button");
+    expect(markup).not.toContain("Refresh");
+    expect(markup).not.toContain("Retry");
+  });
+
   it("renders aggregate lag and durable completion outcomes without a recent-order panel", () => {
     const recovery = available(projectionFixture());
-    const lagMarkup = renderToStaticMarkup(createElement(ConsistencyLagPanel, { recovery }));
-    const outcomeMarkup = renderToStaticMarkup(createElement(RunOutcomesPanel, { recovery }));
+    const lagMarkup = renderToStaticMarkup(
+      createElement(ConsistencyLagPanel, {
+        recovery,
+        presentation: activePresentation,
+        freshness: liveFreshness,
+      }),
+    );
+    const outcomeMarkup = renderToStaticMarkup(
+      createElement(RunOutcomesPanel, {
+        recovery,
+        presentation: activePresentation,
+        freshness: liveFreshness,
+      }),
+    );
     const completionMarkup = renderToStaticMarkup(
       createElement(CompletionOutcomesPanel, { recovery }),
     );
@@ -46,12 +87,40 @@ describe("Phase 6 projection dashboard", () => {
   it("presents all four gold signals and producer freshness from one projection", () => {
     const recovery = available(projectionFixture());
     const traffic = renderToStaticMarkup(
-      createElement(RequestSurgePanel, { recovery, liveProjectionCount: 3 }),
+      createElement(RequestSurgePanel, {
+        recovery,
+        liveProjectionCount: 3,
+        freshness: liveFreshness,
+      }),
     );
-    const inventory = renderToStaticMarkup(createElement(InventoryDrainPanel, { recovery }));
-    const queue = renderToStaticMarkup(createElement(QueuePressurePanel, { recovery }));
-    const erp = renderToStaticMarkup(createElement(ErpHealthPanel, { recovery }));
-    const lag = renderToStaticMarkup(createElement(ConsistencyLagPanel, { recovery }));
+    const inventory = renderToStaticMarkup(
+      createElement(InventoryDrainPanel, {
+        recovery,
+        presentation: activePresentation,
+        freshness: liveFreshness,
+      }),
+    );
+    const queue = renderToStaticMarkup(
+      createElement(QueuePressurePanel, {
+        recovery,
+        presentation: activePresentation,
+        freshness: liveFreshness,
+      }),
+    );
+    const erp = renderToStaticMarkup(
+      createElement(ErpHealthPanel, {
+        recovery,
+        presentation: activePresentation,
+        freshness: liveFreshness,
+      }),
+    );
+    const lag = renderToStaticMarkup(
+      createElement(ConsistencyLagPanel, {
+        recovery,
+        presentation: activePresentation,
+        freshness: liveFreshness,
+      }),
+    );
 
     expect(traffic).toContain("Peak request arrival rate (1-second windows)");
     expect(traffic).toContain("1,000 attempts/s");
@@ -74,12 +143,179 @@ describe("Phase 6 projection dashboard", () => {
     expect(traffic).toContain("generator shut down before the reply arrived");
     expect(traffic).toContain("scenario window closed before these were sent");
     expect(traffic).toContain("Reply-dependent outcomes and latency cover 850 of 1,000 attempts.");
-    expect(inventory).toContain("Inventory updated");
+    expect(inventory).toContain("Stock last changed");
+    expect(inventory).toContain("Stock observed");
     expect(queue).toContain("Queue inspected");
     expect(erp).toContain("Failure threshold");
     expect(lag).toContain("p95 confirmed");
   });
+
+  it.each([
+    ["connecting", "connecting to live updates", "connecting", "bg-surface-muted"],
+    ["unsupported", "live updates unsupported", "live updates unsupported", "bg-surface-muted"],
+  ] as const)("renders %s freshness without a disconnect claim", (state, expectedCopy, expectedLabel, expectedToneClass) => {
+    const recovery = available(projectionFixture());
+    const markup = renderToStaticMarkup(
+      createElement(RequestSurgePanel, {
+        recovery,
+        liveProjectionCount: 0,
+        freshness: { ...liveFreshness, state },
+      }),
+    );
+
+    expect(markup).toContain(`Updated 12:00:12 AM UTC · ${expectedCopy}`);
+    expect(markup).toMatch(
+      new RegExp(`${expectedToneClass}[^>]*><span[^>]*>[^<]*</span>${expectedLabel}</span>`),
+    );
+    expect(markup).not.toContain("disconnected");
+    expect(markup).not.toContain("last known values");
+  });
+
+  it("renders a completed exact sellout without warning presentation", () => {
+    const projection = projectionFixture();
+    if (
+      projection.currentRun?.status !== "active" ||
+      !projection.inventory ||
+      !projection.queue ||
+      !projection.businessOutcome ||
+      !projection.consistencyLag
+    ) {
+      throw new Error("Expected a complete active projection fixture.");
+    }
+    const currentRun = projection.currentRun;
+    const inventory = projection.inventory;
+    const queue = projection.queue;
+    const businessOutcome = projection.businessOutcome;
+    const consistencyLag = projection.consistencyLag;
+    projection.currentRun = {
+      ...currentRun,
+      status: "completed",
+      trafficStatus: "succeeded",
+      trafficEndedAt: "2026-06-20T00:00:12.000Z",
+      finalizedAt: "2026-06-20T00:00:13.000Z",
+    };
+    projection.inventory = {
+      ...inventory,
+      remainingStock: 0,
+      reservedStock: 100,
+    };
+    projection.queue = {
+      ...queue,
+      depth: 0,
+      counts: {
+        ...queue.counts,
+        waiting: 0,
+        active: 0,
+      },
+      failedJobs: { ...queue.failedJobs, totalCount: 0 },
+    };
+    projection.businessOutcome = {
+      ...businessOutcome,
+      acceptedReservations: 100,
+      queuedOrders: 0,
+      processingOrders: 0,
+      retryingOrders: 0,
+      confirmedOrders: 100,
+      failedOrders: 0,
+      pendingPersistenceCount: 0,
+    };
+    projection.consistencyLag = {
+      ...consistencyLag,
+      confirmedOrderCount: 100,
+      pendingConfirmationCount: 0,
+      oldestPendingAgeSeconds: null,
+    };
+    const recovery = available(projection);
+    const runState = deriveRunPresentationState(recovery);
+    const freshness = { ...liveFreshness, state: "not-applicable" as const, final: true };
+    const markup = [
+      renderToStaticMarkup(
+        createElement(InventoryDrainPanel, {
+          recovery,
+          presentation: deriveInventoryOutcomeState(
+            projection.inventory,
+            projection.currentRun,
+            projection.businessOutcome.acceptedReservations,
+          ),
+          freshness,
+        }),
+      ),
+      renderToStaticMarkup(
+        createElement(QueuePressurePanel, {
+          recovery,
+          presentation: deriveQueuePresentationState(projection.queue, projection.currentRun),
+          freshness,
+        }),
+      ),
+      renderToStaticMarkup(
+        createElement(ConsistencyLagPanel, {
+          recovery,
+          presentation: deriveLagPresentationState(
+            projection.consistencyLag.pendingConfirmationCount,
+            projection.consistencyLag.confirmedOrderCount,
+            projection.currentRun,
+          ),
+          freshness,
+        }),
+      ),
+      renderToStaticMarkup(
+        createElement(RunOutcomesPanel, {
+          recovery,
+          presentation: deriveOutcomePresentationState(
+            projection.businessOutcome,
+            projection.currentRun,
+            runState,
+          ),
+          freshness,
+        }),
+      ),
+    ].join("");
+
+    expect(markup).toContain("exact sellout");
+    expect(markup).toContain("completed successfully");
+    expect(markup).not.toContain("bg-warning-soft");
+  });
+
+  it("renders retained inventory values and their update time after disconnect", () => {
+    const projection = projectionFixture();
+    const markup = renderToStaticMarkup(
+      createElement(InventoryDrainPanel, {
+        recovery: available(projection),
+        presentation: deriveInventoryOutcomeState(
+          projection.inventory,
+          projection.currentRun,
+          projection.businessOutcome?.acceptedReservations,
+        ),
+        freshness: {
+          state: "disconnected",
+          observedAt: projection.recoveredAt,
+          final: false,
+        },
+      }),
+    );
+
+    expect(markup).toContain("Updated 12:00:11 AM UTC · disconnected, showing last known values");
+    expect(markup).toContain("Allocated");
+    expect(markup).toContain(">100<");
+    expect(markup).toContain("Remaining");
+    expect(markup).toContain(">12<");
+    expect(markup).toContain("Reserved");
+    expect(markup).toContain(">88<");
+  });
 });
+
+const activePresentation: PresentationState = {
+  state: "accepting-checkout-attempts",
+  tone: "progress",
+  label: "accepting checkout attempts",
+  description: "Checkout attempts are being accepted.",
+};
+
+const liveFreshness: Freshness = {
+  state: "live",
+  observedAt: "2026-06-20T00:00:12.000Z",
+  final: false,
+};
 
 function available(data: DashboardProjection) {
   return { status: "available" as const, data, httpStatus: 200 };
@@ -155,6 +391,7 @@ function projectionFixture(): DashboardProjection {
         measuredAt: "2026-06-20T00:00:11.000Z",
       },
       soldOutPressure: { rejectionCount: 0, latestObservedAt: null },
+      observedAt: "2026-06-20T00:00:12.000Z",
       lastUpdatedAt: "2026-06-20T00:00:11.000Z",
     },
     recentMetrics: [

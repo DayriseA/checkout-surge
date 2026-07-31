@@ -63,8 +63,7 @@ vi.mock("../src/app/lib/api.js", () => ({
   getRunHistoryDetail: vi.fn(),
   getRunHistoryPage: vi.fn(),
   pendingDashboardRecovery: vi.fn(() => ({
-    status: "unavailable",
-    reason: "Authoritative run state is loading.",
+    status: "loading",
   })),
 }));
 vi.mock("../src/app/lib/server/admin-page-session.js", () => ({
@@ -236,8 +235,7 @@ describe("public recovery convergence", () => {
     vi.stubGlobal("fetch", fetchMock);
     const surface = publicDemoSurfaceFixture();
     surface.recovery = {
-      status: "unavailable",
-      reason: "Authoritative run state is loading.",
+      status: "loading",
     };
 
     render(createElement(PublicDemoEntry, { surface }));
@@ -275,7 +273,7 @@ describe("public recovery convergence", () => {
     const surface = publicDemoSurfaceFixture();
     surface.recovery = {
       status: "unavailable",
-      reason: "Authoritative run state is loading.",
+      reason: "Recovery unavailable.",
     };
 
     render(createElement(PublicDemoEntry, { surface }));
@@ -481,7 +479,7 @@ describe("watch browser recovery", () => {
         }),
       ),
     );
-    await screen.findByText("12:00:11 AM UTC");
+    await screen.findAllByText(/Updated 12:00:11 AM UTC/);
 
     act(() => source?.emit("error", new Event("error")));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
@@ -494,7 +492,7 @@ describe("watch browser recovery", () => {
         }),
       ),
     );
-    await screen.findByText("12:00:12 AM UTC");
+    await screen.findAllByText(/Updated 12:00:12 AM UTC/);
 
     act(() => {
       source?.emit("error", new Event("error"));
@@ -516,7 +514,7 @@ describe("watch browser recovery", () => {
         }),
       ),
     );
-    await screen.findByText("12:00:13 AM UTC");
+    await screen.findAllByText(/Updated 12:00:13 AM UTC/);
 
     expect(FakeEventSource.instances).toHaveLength(1);
     expect(fetchMock.mock.calls.map((call) => String(call[0]))).toEqual(
@@ -570,7 +568,7 @@ describe("watch browser recovery", () => {
         }),
       );
     });
-    expect(screen.getByText("completed")).toBeTruthy();
+    expect(screen.getAllByText("outcome not yet available").length).toBeGreaterThan(0);
     await act(async () => {
       staleRecovery.resolve(
         jsonResponse(
@@ -585,7 +583,7 @@ describe("watch browser recovery", () => {
     });
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-    expect(screen.getByText("completed")).toBeTruthy();
+    expect(screen.getAllByText("outcome not yet available").length).toBeGreaterThan(0);
     expect(fetchMock.mock.calls.map((call) => String(call[0]))).toEqual([
       dashboardRecoveryProxyPath,
       `${dashboardRecoveryProxyPath}?knownRunId=55555555-5555-4555-8555-555555555555&knownSaleOfferId=22222222-2222-4222-8222-222222222222`,
@@ -825,7 +823,7 @@ function deferred<T>() {
   return { promise, reject, resolve };
 }
 
-function available<T>(data: T): BackendRead<T> {
+function available<T>(data: T): Extract<BackendRead<T>, { status: "available" }> {
   return {
     status: "available",
     data,

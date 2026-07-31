@@ -260,6 +260,7 @@ export async function initializeInventory(
       rejectionCount: 0,
       latestObservedAt: null,
     },
+    observedAt: timestamp,
     lastUpdatedAt: timestamp,
   });
 }
@@ -320,14 +321,15 @@ export async function getInventoryStatus(
       ),
       latestObservedAt: reservationOutcomeValues[1] ?? null,
     },
-    lastUpdatedAt: latestInventoryObservationAt(
+    observedAt: now.toISOString(),
+    lastUpdatedAt: latestInventoryChangeAt(
       requireStateValue(state, "lastUpdatedAt"),
       reservationOutcomeValues[1] ?? null,
     ),
   });
 }
 
-function latestInventoryObservationAt(stockUpdatedAt: string, soldOutObservedAt: string | null) {
+function latestInventoryChangeAt(stockUpdatedAt: string, soldOutObservedAt: string | null) {
   if (!soldOutObservedAt) return stockUpdatedAt;
   return Date.parse(soldOutObservedAt) > Date.parse(stockUpdatedAt)
     ? soldOutObservedAt

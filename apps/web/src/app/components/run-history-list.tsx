@@ -1,5 +1,6 @@
 import type { RunHistoryListResponse, RunHistorySummary } from "@checkout-surge/contracts";
 import Link from "next/link";
+import { deriveTerminalSummaryPresentation } from "../lib/presentation/run-presentation-state";
 import { RunHistoryDeleteAllButton } from "./run-history-delete-all-button";
 import { RunHistoryRowControls } from "./run-history-row-controls";
 import { StatusPill } from "./status-pill";
@@ -60,6 +61,17 @@ function OutOfRangePageState({ history }: { history: RunHistoryListResponse }) {
 }
 
 function RunHistorySummaryArticle({ summary }: { summary: RunHistorySummary }) {
+  const business = summary.businessOutcomeSummary;
+  const runPresentation = deriveTerminalSummaryPresentation({
+    runStatus: summary.status,
+    ...(summary.terminalInventorySnapshot
+      ? { startingStock: summary.terminalInventorySnapshot.startingStock }
+      : {}),
+    acceptedReservations: business.acceptedReservations,
+    confirmedOrders: business.confirmedOrders,
+    failedOrders: business.failedOrders,
+    pendingPersistenceCount: business.pendingPersistenceCount,
+  });
   return (
     <article className="rounded-lg border border-border bg-surface p-4">
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
@@ -73,13 +85,12 @@ function RunHistorySummaryArticle({ summary }: { summary: RunHistorySummary }) {
           </p>
         </div>
         <div className="flex flex-wrap justify-end gap-2">
+          <StatusPill status={runPresentation} />
           <StatusPill
-            label={summary.status}
-            tone={summary.status === "completed" ? "ok" : "blocked"}
-          />
-          <StatusPill
-            label={`traffic ${summary.trafficDeliverySummary.trafficDeliveryStatus}`}
-            tone={trafficDeliveryTone(summary.trafficDeliverySummary.trafficDeliveryStatus)}
+            status={{
+              label: `traffic ${summary.trafficDeliverySummary.trafficDeliveryStatus}`,
+              tone: trafficDeliveryTone(summary.trafficDeliverySummary.trafficDeliveryStatus),
+            }}
           />
           <Link
             className="inline-flex min-h-8 items-center rounded-lg border border-border px-3 text-sm font-semibold text-muted-strong"
@@ -263,10 +274,10 @@ function trafficDeliveryTone(
   }
 
   if (status === "failed") {
-    return "blocked";
+    return "danger";
   }
 
-  return "pending";
+  return "warning";
 }
 
 function formatNumber(value: number): string {

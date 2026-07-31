@@ -31,6 +31,7 @@ export default async function RunHistoryDetailPage({ params }: RunHistoryDetailP
       reason: "No terminal summary exists for this run.",
     };
   const unavailableReason = detail.status === "unavailable" ? detail.reason : "Detail unavailable.";
+  const unavailableStatus = detail.status === "unavailable" ? detail.httpStatus : undefined;
 
   return (
     <>
@@ -46,8 +47,10 @@ export default async function RunHistoryDetailPage({ params }: RunHistoryDetailP
           <p className="mt-3 max-w-[66ch] [overflow-wrap:anywhere] leading-6 text-muted">{runId}</p>
         </div>
         <StatusPill
-          label={detail.status === "available" ? "available" : statusLabel(detail.httpStatus)}
-          tone={detail.status === "available" ? "ok" : "blocked"}
+          status={{
+            label: detail.status === "available" ? "available" : statusLabel(unavailableStatus),
+            tone: detail.status === "available" ? "ok" : "danger",
+          }}
         />
       </header>
       {adminDetail?.status === "available" ? (
@@ -58,10 +61,10 @@ export default async function RunHistoryDetailPage({ params }: RunHistoryDetailP
         <section className="rounded-lg border border-border bg-surface p-4">
           <p className="m-0 text-xs font-bold uppercase text-muted">Run history detail</p>
           <h2 className="m-0 mt-1 text-base font-bold leading-tight text-ink">
-            {detail.httpStatus === 404 ? "Run not found" : "Detail unavailable"}
+            {unavailableStatus === 404 ? "Run not found" : "Detail unavailable"}
           </h2>
           <p className="m-0 mt-3 max-w-[66ch] text-sm font-semibold leading-6 text-danger">
-            {detail.httpStatus === 404
+            {unavailableStatus === 404
               ? "No terminal summary exists for this run."
               : unavailableReason}
           </p>

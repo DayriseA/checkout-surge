@@ -120,7 +120,12 @@ export function AdminCurrentRunPanel({
           <p className="m-0 text-xs font-bold uppercase text-muted">Recovery</p>
           <h2 className="m-0 mt-1 text-base font-bold leading-tight text-ink">Current run</h2>
         </div>
-        <StatusPill label={currentRunStatus(recovery)} tone={startBlocked ? "pending" : "idle"} />
+        <StatusPill
+          status={{
+            label: currentRunStatus(recovery),
+            tone: startBlocked ? "progress" : "idle",
+          }}
+        />
       </div>
       {recovery.status === "available" ? (
         <dl className="m-0 grid gap-3">

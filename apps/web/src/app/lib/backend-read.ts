@@ -8,6 +8,15 @@ export interface ContractSchema<T> {
 
 export type BackendRead<T> =
   | {
+      status: "loading";
+      data?: never;
+      reason?: never;
+      httpStatus?: never;
+      errorCode?: never;
+      correlationId?: never;
+      retryAfterMs?: never;
+    }
+  | {
       status: "available";
       data: T;
       httpStatus: number;
@@ -21,6 +30,8 @@ export type BackendRead<T> =
       retryAfterMs?: number;
     };
 
+export type CompletedBackendRead<T> = Exclude<BackendRead<T>, { status: "loading" }>;
+
 interface BackendResponseOptions {
   acceptedContractStatuses?: readonly number[];
   invalidError: string;
@@ -33,7 +44,7 @@ export async function readBackendResponse<T>(
   response: Response,
   schema: ContractSchema<T>,
   options: BackendResponseOptions,
-): Promise<BackendRead<T>> {
+): Promise<CompletedBackendRead<T>> {
   const retryAfterMs = parseRetryAfterMs(response.headers.get("retry-after"));
   const payload = await readJsonBody(response);
   const acceptsContract =
@@ -82,7 +93,7 @@ function unavailable(
   httpStatus: number,
   reason: string,
   retryAfterMs?: number,
-): BackendRead<never> {
+): CompletedBackendRead<never> {
   return {
     status: "unavailable",
     reason,

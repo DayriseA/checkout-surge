@@ -20,10 +20,15 @@ import {
   runHistoryListResponseSchema,
   runHistoryPath,
 } from "@checkout-surge/contracts";
-import { type BackendRead, type ContractSchema, readBackendResponse } from "./backend-read";
+import {
+  type BackendRead,
+  type CompletedBackendRead,
+  type ContractSchema,
+  readBackendResponse,
+} from "./backend-read";
 import { webServerConfig } from "./server/config";
 
-export type { BackendRead } from "./backend-read";
+export type { BackendRead, CompletedBackendRead } from "./backend-read";
 
 export interface PublicDemoSurface {
   presets: BackendRead<PublicPresetListResponse>;
@@ -45,7 +50,7 @@ async function readJson<T>(
   schema: ContractSchema<T>,
   headers: Record<string, string> = {},
   acceptedContractStatuses?: readonly number[],
-): Promise<BackendRead<T>> {
+): Promise<CompletedBackendRead<T>> {
   let response: Response;
 
   try {
@@ -68,10 +73,7 @@ async function readJson<T>(
 }
 
 export function pendingDashboardRecovery(): BackendRead<DashboardProjection> {
-  return {
-    status: "unavailable",
-    reason: "Authoritative run state is loading.",
-  };
+  return { status: "loading" };
 }
 
 export async function getPublicDemoSurface(): Promise<PublicDemoSurface> {
@@ -88,7 +90,7 @@ export async function getPublicDemoSurface(): Promise<PublicDemoSurface> {
 export async function getRunHistoryPage(
   page: number,
   pageSize: number,
-): Promise<BackendRead<RunHistoryListResponse>> {
+): Promise<CompletedBackendRead<RunHistoryListResponse>> {
   const query = new URLSearchParams({
     page: String(page),
     pageSize: String(pageSize),
@@ -102,7 +104,7 @@ export async function getRunHistoryPage(
 
 export async function getRunHistoryDetail(
   runId: string,
-): Promise<BackendRead<PublicRunHistoryDetailResponse>> {
+): Promise<CompletedBackendRead<PublicRunHistoryDetailResponse>> {
   return readJson(
     `${apiBaseUrl()}${runHistoryDetailPath(runId)}`,
     publicRunHistoryDetailResponseSchema,
@@ -111,7 +113,7 @@ export async function getRunHistoryDetail(
 
 export async function getAdminRunHistoryDetail(
   runId: string,
-): Promise<BackendRead<AdminRunHistoryDetailResponse>> {
+): Promise<CompletedBackendRead<AdminRunHistoryDetailResponse>> {
   return readJson(
     `${apiBaseUrl()}${adminRunHistoryDetailPath(runId)}`,
     adminRunHistoryDetailResponseSchema,

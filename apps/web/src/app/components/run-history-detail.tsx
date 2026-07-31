@@ -2,6 +2,7 @@ import type {
   AdminRunHistoryDetailResponse,
   PublicRunHistoryDetailResponse,
 } from "@checkout-surge/contracts";
+import { deriveTerminalSummaryPresentation } from "../lib/presentation/run-presentation-state";
 import { RunDiagnostics } from "./run-diagnostics";
 import { StatusPill } from "./status-pill";
 import { systemOfRecordLens, TransportObservationSection } from "./transport-observation";
@@ -13,6 +14,7 @@ interface RunHistoryDetailProps {
 export function AdminRunHistoryDetail({ detail }: RunHistoryDetailProps) {
   const { run, summary } = detail;
   const config = run.configSnapshot;
+  const runPresentation = terminalSummaryPresentation(summary);
 
   return (
     <div className="grid gap-4">
@@ -28,16 +30,16 @@ export function AdminRunHistoryDetail({ detail }: RunHistoryDetailProps) {
             </p>
           </div>
           <div className="flex flex-wrap justify-end gap-2">
+            <StatusPill status={runPresentation} />
+            <StatusPill status={{ label: `operator ${run.operatorMode}`, tone: "idle" }} />
             <StatusPill
-              label={summary.status}
-              tone={summary.status === "completed" ? "ok" : "blocked"}
-            />
-            <StatusPill label={`operator ${run.operatorMode}`} tone="pending" />
-            <StatusPill
-              label={`traffic ${summary.trafficDeliverySummary.trafficDeliveryStatus}`}
-              tone={
-                summary.trafficDeliverySummary.trafficDeliveryStatus === "failed" ? "blocked" : "ok"
-              }
+              status={{
+                label: `traffic ${summary.trafficDeliverySummary.trafficDeliveryStatus}`,
+                tone:
+                  summary.trafficDeliverySummary.trafficDeliveryStatus === "failed"
+                    ? "danger"
+                    : "ok",
+              }}
             />
           </div>
         </div>
@@ -315,6 +317,7 @@ function trafficConfigFacts(
 
 export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDetailResponse }) {
   const { run, summary } = detail;
+  const runPresentation = terminalSummaryPresentation(summary);
   return (
     <div className="grid gap-4">
       <section className="rounded-lg border border-border bg-surface p-4">
@@ -326,10 +329,7 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
             </h2>
             <p className="m-0 mt-2 text-sm font-semibold text-muted-strong">{summary.runId}</p>
           </div>
-          <StatusPill
-            label={summary.status}
-            tone={summary.status === "completed" ? "ok" : "blocked"}
-          />
+          <StatusPill status={runPresentation} />
         </div>
         <div className="mt-4 grid grid-cols-4 gap-4 max-[1100px]:grid-cols-2 max-[700px]:grid-cols-1">
           <FactList
@@ -406,6 +406,22 @@ function formatNumber(value: number): string {
 
 function formatPercent(value: number): string {
   return `${formatNumber(value * 100)}%`;
+}
+
+function terminalSummaryPresentation(
+  summary: AdminRunHistoryDetailResponse["summary"] | PublicRunHistoryDetailResponse["summary"],
+) {
+  const business = summary.businessOutcomeSummary;
+  return deriveTerminalSummaryPresentation({
+    runStatus: summary.status,
+    ...(summary.terminalInventorySnapshot
+      ? { startingStock: summary.terminalInventorySnapshot.startingStock }
+      : {}),
+    acceptedReservations: business.acceptedReservations,
+    confirmedOrders: business.confirmedOrders,
+    failedOrders: business.failedOrders,
+    pendingPersistenceCount: business.pendingPersistenceCount,
+  });
 }
 
 function formatDate(value: string | undefined): string {

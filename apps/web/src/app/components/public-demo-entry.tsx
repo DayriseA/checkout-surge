@@ -14,6 +14,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BackendRead, PublicDemoSurface } from "../lib/api";
 import { readProxyJson } from "../lib/client/proxy-json";
 import { demoRunStartProxyPath, healthReadyProxyPath } from "../lib/control-paths";
+import {
+  deriveRunPresentationState,
+  type PresentationState,
+} from "../lib/presentation/run-presentation-state";
 import { useDashboardRecovery } from "./realtime/use-dashboard-recovery";
 import { StatusPill } from "./status-pill";
 
@@ -228,8 +232,10 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
             </h2>
           </div>
           <StatusPill
-            label={runtimePolicy?.isPublicRunBudgetEnforced ? "budgeted" : "open"}
-            tone="idle"
+            status={{
+              label: runtimePolicy?.isPublicRunBudgetEnforced ? "budgeted" : "open",
+              tone: "idle",
+            }}
           />
         </div>
         {runtimePolicy && customPreset && customConfig ? (
@@ -469,7 +475,8 @@ function Fact({ label, value }: { label: string; value: string }) {
 }
 
 function Unavailable({ read }: { read: BackendRead<unknown> }) {
-  return read.status === "available" ? null : (
+  if (read.status !== "unavailable") return null;
+  return (
     <div className="grid w-full gap-1 rounded-lg border border-[#f7b4ad] bg-danger-soft p-3 leading-6 text-danger">
       <strong>Unavailable</strong>
       <span>{read.reason}</span>
@@ -514,11 +521,11 @@ function StartGate({
   return (
     <div className="grid max-w-[32rem] justify-items-end gap-2 text-right max-[700px]:w-full max-[700px]:max-w-none max-[700px]:justify-items-start max-[700px]:text-left">
       <div className="flex flex-wrap justify-end gap-2 max-[700px]:justify-start">
-        {recoveryUnavailable ? (
-          <StatusPill label="start unavailable" tone="unavailable" />
+        {recovery.status !== "available" ? (
+          <StatusPill status={deriveRunPresentationState(recovery)} />
         ) : runInProgress ? (
           <>
-            <StatusPill label="run in progress" tone="pending" />
+            <StatusPill status={deriveRunPresentationState(recovery)} />
             <Link
               className="inline-flex min-h-7 items-center gap-1 rounded-lg border border-border bg-surface px-2.5 text-xs font-bold text-muted-strong hover:bg-surface-muted hover:text-ink focus:outline-2 focus:outline-offset-2"
               href="/watch"
@@ -528,16 +535,9 @@ function StartGate({
             </Link>
           </>
         ) : readinessBlocked ? (
-          <StatusPill
-            label={
-              readiness.status === "available"
-                ? `infrastructure ${readiness.data.status}`
-                : "infrastructure unavailable"
-            }
-            tone={readiness.status === "available" ? readiness.data.status : "unavailable"}
-          />
+          <StatusPill status={readinessPresentation(readiness)} />
         ) : (
-          <StatusPill label="ready" tone="ok" />
+          <StatusPill status={{ label: "ready", tone: "idle" }} />
         )}
       </div>
       {failedChecks.length > 0 ? (
@@ -569,6 +569,39 @@ function StartGate({
       ) : null}
     </div>
   );
+}
+
+function readinessPresentation(readiness: BackendRead<HealthResponse>): PresentationState {
+  if (readiness.status === "loading") {
+    return {
+      state: "infrastructure-checking",
+      label: "checking infrastructure",
+      tone: "idle",
+      description: "Checking infrastructure readiness.",
+    };
+  }
+  if (readiness.status === "unavailable" || readiness.data.status === "unavailable") {
+    return {
+      state: "infrastructure-unavailable",
+      label: "infrastructure unavailable",
+      tone: "danger",
+      description: "Infrastructure is unavailable.",
+    };
+  }
+  if (readiness.data.status === "degraded") {
+    return {
+      state: "infrastructure-degraded",
+      label: "infrastructure degraded",
+      tone: "warning",
+      description: "Infrastructure is degraded.",
+    };
+  }
+  return {
+    state: "infrastructure-ready",
+    label: "infrastructure ready",
+    tone: "ok",
+    description: "Infrastructure is ready.",
+  };
 }
 
 function TrafficModeSelector({

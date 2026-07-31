@@ -279,6 +279,7 @@ async function buildTestServer(options: {
               rejectionCount: 4,
               latestObservedAt: "2026-06-20T00:00:09.000Z",
             },
+            observedAt: "2026-06-20T00:00:10.000Z",
             lastUpdatedAt: "2026-06-20T00:00:00.000Z",
           }),
         }

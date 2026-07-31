@@ -28,6 +28,7 @@ import {
   collectPublicRuntimePolicyViolations,
   completionOutcomeSchema,
   controlServiceTokenHeaderName,
+  dashboardLiveUpdateExpectedIntervalMs,
   dashboardProjectionDirtySignalSchema,
   dashboardProjectionSchema,
   dashboardProjectionSchemaName,
@@ -1548,6 +1549,7 @@ describe("ERP contracts", () => {
 
 describe("buy and dashboard contracts", () => {
   it("owns strict dashboard projection scopes and dirty signals", () => {
+    expect(dashboardLiveUpdateExpectedIntervalMs).toBe(2_000);
     const scope = { runId, saleOfferId };
     const signal = {
       type: "dashboard.projection.dirty" as const,
@@ -1569,30 +1571,36 @@ describe("buy and dashboard contracts", () => {
   });
 
   it("defines bounded inventory drain and sold-out projections without conflating units", () => {
+    const inventory = {
+      saleOfferId,
+      allocatedStock: 20,
+      remainingStock: 12,
+      reservedStock: 8,
+      pendingPersistenceCount: 0,
+      expiredReservationCount: 0,
+      oldestPendingPersistenceAgeSeconds: 0,
+      reservationThroughput: {
+        windowSeconds: 60,
+        successfulReservationCount: 4,
+        peakRatePerSecond: 4,
+        peakWindowSeconds: 1,
+        unit: "reservations_per_second",
+        measuredAt: timestamp,
+      },
+      soldOutPressure: {
+        rejectionCount: 9,
+        latestObservedAt: timestamp,
+      },
+      observedAt: "2026-06-20T12:00:10.000Z",
+      lastUpdatedAt: timestamp,
+    };
     expect(
-      inventoryStatusSchema.parse({
-        saleOfferId,
-        allocatedStock: 20,
-        remainingStock: 12,
-        reservedStock: 8,
-        pendingPersistenceCount: 0,
-        expiredReservationCount: 0,
-        oldestPendingPersistenceAgeSeconds: 0,
-        reservationThroughput: {
-          windowSeconds: 60,
-          successfulReservationCount: 4,
-          peakRatePerSecond: 4,
-          peakWindowSeconds: 1,
-          unit: "reservations_per_second",
-          measuredAt: timestamp,
-        },
-        soldOutPressure: {
-          rejectionCount: 9,
-          latestObservedAt: timestamp,
-        },
-        lastUpdatedAt: timestamp,
-      }).reservationThroughput.successfulReservationCount,
+      inventoryStatusSchema.parse(inventory).reservationThroughput.successfulReservationCount,
     ).toBe(4);
+    expect(inventoryStatusSchema.safeParse({ ...inventory, observedAt: undefined }).success).toBe(
+      false,
+    );
+    expect(Date.parse(inventory.lastUpdatedAt)).toBeLessThan(Date.parse(inventory.observedAt));
   });
 
   it("keeps initialization events valid and gives reservation events explicit count and quantity", () => {

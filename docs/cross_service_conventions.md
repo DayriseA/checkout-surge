@@ -99,6 +99,30 @@ The browser compares revisions only inside one scope. A higher same-scope revisi
 
 Unavailable reads retain the existing bounded exponential retry policy. Initial loading and public/admin start gating fail closed. Watch keeps its last successful complete projection after a failed read and labels it last-known-good. An accepted live or HTTP projection clears that warning and cancels a scheduled retry. There is no active-run polling loop; immediate lifecycle/terminal publication and connection-triggered current reads provide convergence.
 
+### Public lifecycle, freshness, and outcome
+
+Public presentation keeps three concerns separate:
+
+- Lifecycle describes what the run is doing: `checking availability`, `ready`, `starting`, `accepting checkout attempts`, `processing accepted reservations`, `completed successfully`, `completed with order failures`, `completed with unsettled orders`, `completed with oversell`, or `failed`.
+- Freshness describes whether the displayed projection can still be called live. It never changes the lifecycle or outcome tone.
+- Outcome describes whether terminal durable evidence satisfied the run goal.
+
+Backend run states remain unchanged. The web maps `starting` to starting, active traffic preparation to starting, active traffic delivery to accepting checkout attempts, and `draining` to processing accepted reservations. Expected work uses the progress treatment; amber is reserved for anomalies. A completed successful run and an exact sellout with zero oversell use the success treatment.
+
+Freshness is delivery-based rather than producer-age-based. `inventory.lastUpdatedAt` is a change time and can remain unchanged after a correct sellout; queue, ERP, and consistency-lag timestamps are observations assembled into the same projection. The projection therefore carries `inventory.observedAt` as the inventory read time while preserving `lastUpdatedAt` as the last inventory change time.
+
+The browser calls a nonterminal projection live only when the SSE transport is connected, update-producing work exists, and the last projection arrived inside the age guard. Update-producing work means queue depth, active queue work, or pending inventory persistence is non-zero. The guard is three times `dashboardLiveUpdateExpectedIntervalMs`: 6 seconds at the current 2-second queue refresh cadence. A connected run with no update-producing work is retained-fresh regardless of projection age. `connecting` and `unsupported` are neutral delivery states; neither is called disconnected or stale, nor described as showing last-known-good values because of a failure. A disconnected transport is disconnected regardless of age. Completed, failed, and no-run projections are final or not applicable and never decay into stale data. Last-known-good values remain visible with their projection update time and an explicit disconnected or stale label.
+
+Terminal outcome precedence is normative: failed run, oversell, failed orders, unsettled orders, then completed successfully. Oversell outranks order failures because it breaks the core stock invariant. Classification uses durable terminal evidence; notification counts are not order-confirmation evidence.
+
+Missing values use field-specific language:
+
+- `not scheduled` means no future action is planned, such as a circuit probe while the breaker is closed;
+- `not yet available` means evidence is expected later;
+- `—` means no semantic sentence is needed.
+
+Initial dashboard hydration is `loading`, not unavailable. It says checking availability, starts the initial read without retry/backoff presentation, and shows retry controls only after an actual failed read.
+
 Inventory and queue mutations publish only the internal projection-dirty signal. Fresh holds dirty best-effort; replays do not. Sold-out scopes coalesce for 500 ms, while queue inspection repeats every two seconds until drain. The projection service reads the complete inventory and queue values for both SSE and `/dashboard/recovery`.
 
 API and worker business mutation handlers mark the dashboard dirty only after fresh durable changes. The single API process and single worker runtime each own one scheduler that coalesces each `(runId, saleOfferId)` for 500 ms. The projection service reads aggregate business outcomes and consistency lag into the next complete replacement; no aggregate delta contract exists.

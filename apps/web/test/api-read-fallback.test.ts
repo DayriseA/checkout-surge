@@ -162,10 +162,7 @@ describe("dashboard backend API reads", () => {
 
     const surface = await getPublicDemoSurface();
 
-    expect(surface.recovery).toEqual({
-      status: "unavailable",
-      reason: "Authoritative run state is loading.",
-    });
+    expect(surface.recovery).toEqual({ status: "loading" });
     expect(surface.readiness).toMatchObject({
       status: "available",
       data: { status: "ok" },

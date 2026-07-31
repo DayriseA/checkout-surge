@@ -1,0 +1,299 @@
+import {
+  type DashboardProjection,
+  type DemoRunSnapshot,
+  dashboardProjectionSchemaName,
+  dashboardProjectionSchemaVersion,
+  dashboardProjectionScopeId,
+} from "@checkout-surge/contracts";
+import { previewRunConfigSnapshotFixture } from "@checkout-surge/contracts/testing";
+import { describe, expect, it } from "vitest";
+import {
+  classifyTerminalOutcome,
+  deriveInventoryOutcomeState,
+  deriveQueuePresentationState,
+  deriveRunPresentationState,
+  deriveTerminalSummaryPresentation,
+} from "../src/app/lib/presentation/run-presentation-state.js";
+
+describe("run presentation state", () => {
+  it.each([
+    [{ status: "loading" as const }, "checking availability"],
+    [{ status: "available" as const, data: projection(null), httpStatus: 200 }, "ready"],
+    [
+      { status: "available" as const, data: projection(run("starting")), httpStatus: 200 },
+      "starting",
+    ],
+    [
+      { status: "available" as const, data: projection(run("active")), httpStatus: 200 },
+      "accepting checkout attempts",
+    ],
+    [
+      { status: "available" as const, data: projection(run("draining")), httpStatus: 200 },
+      "processing accepted reservations",
+    ],
+    [{ status: "available" as const, data: projection(run("failed")), httpStatus: 200 }, "failed"],
+  ])("maps authoritative lifecycle to %s", (read, expected) => {
+    expect(deriveRunPresentationState(read).label).toBe(expected);
+  });
+
+  it("classifies terminal evidence in normative precedence order", () => {
+    expect(
+      classifyTerminalOutcome({
+        runStatus: "failed",
+        oversoldUnits: 1,
+        failedOrders: 1,
+        pendingOrders: 1,
+      }),
+    ).toBe("failed");
+    expect(
+      classifyTerminalOutcome({
+        runStatus: "completed",
+        oversoldUnits: 1,
+        failedOrders: 1,
+        pendingOrders: 1,
+      }),
+    ).toBe("completed-with-oversell");
+    expect(
+      classifyTerminalOutcome({
+        runStatus: "completed",
+        oversoldUnits: 0,
+        failedOrders: 1,
+        pendingOrders: 1,
+      }),
+    ).toBe("completed-with-order-failures");
+    expect(
+      classifyTerminalOutcome({
+        runStatus: "completed",
+        oversoldUnits: 0,
+        failedOrders: 0,
+        pendingOrders: 1,
+      }),
+    ).toBe("completed-with-unsettled-orders");
+  });
+
+  it.each([
+    {
+      name: "completed success",
+      status: "completed" as const,
+      acceptedReservations: 10,
+      allocatedStock: 10,
+      confirmedOrders: 10,
+      failedOrders: 0,
+      pendingPersistenceCount: 0,
+      expected: "completed successfully",
+    },
+    {
+      name: "order failures",
+      status: "completed" as const,
+      acceptedReservations: 10,
+      allocatedStock: 10,
+      confirmedOrders: 9,
+      failedOrders: 1,
+      pendingPersistenceCount: 0,
+      expected: "completed with order failures",
+    },
+    {
+      name: "unsettled orders",
+      status: "completed" as const,
+      acceptedReservations: 10,
+      allocatedStock: 10,
+      confirmedOrders: 9,
+      failedOrders: 0,
+      pendingPersistenceCount: 0,
+      expected: "completed with unsettled orders",
+    },
+    {
+      name: "oversell before failures and unsettled orders",
+      status: "completed" as const,
+      acceptedReservations: 11,
+      allocatedStock: 10,
+      confirmedOrders: 8,
+      failedOrders: 1,
+      pendingPersistenceCount: 1,
+      expected: "completed with oversell",
+    },
+    {
+      name: "failed before every completed outcome",
+      status: "failed" as const,
+      acceptedReservations: 11,
+      allocatedStock: 10,
+      confirmedOrders: 8,
+      failedOrders: 1,
+      pendingPersistenceCount: 1,
+      expected: "failed",
+    },
+  ])("derives $name at the projection seam", (example) => {
+    const data = projection(run(example.status));
+    data.inventory = inventory(example.allocatedStock);
+    data.businessOutcome = {
+      acceptedReservations: example.acceptedReservations,
+      soldOutRejections: 0,
+      queuedOrders: 0,
+      processingOrders: 0,
+      retryingOrders: 0,
+      confirmedOrders: example.confirmedOrders,
+      failedOrders: example.failedOrders,
+      pendingPersistenceCount: example.pendingPersistenceCount,
+      notificationsRecorded: 0,
+    };
+
+    expect(deriveRunPresentationState({ status: "available", data, httpStatus: 200 }).label).toBe(
+      example.expected,
+    );
+  });
+
+  it("does not present a nonterminal empty queue as an achieved drain", () => {
+    expect(deriveQueuePresentationState(queue(), run("active"))).toMatchObject({
+      label: "no backlog",
+      tone: "idle",
+    });
+    expect(deriveQueuePresentationState(queue(), run("completed"))).toMatchObject({
+      label: "queue drained",
+      tone: "ok",
+    });
+  });
+
+  it.each([
+    { failedOrders: 0, queuedOrders: 0, expected: ["completed successfully", "ok"] },
+    {
+      failedOrders: 1,
+      queuedOrders: 0,
+      expected: ["completed with order failures", "warning"],
+    },
+    {
+      failedOrders: 0,
+      queuedOrders: 1,
+      expected: ["completed with unsettled orders", "warning"],
+    },
+  ])("derives $expected.0 from durable terminal evidence", (example) => {
+    const presentation = deriveTerminalSummaryPresentation({
+      runStatus: "completed",
+      startingStock: 10,
+      acceptedReservations: 10,
+      confirmedOrders: 10 - example.failedOrders - example.queuedOrders,
+      failedOrders: example.failedOrders,
+      pendingPersistenceCount: 0,
+    });
+    expect([presentation.label, presentation.tone]).toEqual(example.expected);
+  });
+
+  it("treats exact sellout with zero oversell as success", () => {
+    const presentation = deriveInventoryOutcomeState(inventory(10), null, 10);
+
+    expect([presentation.label, presentation.tone]).toEqual(["exact sellout", "ok"]);
+  });
+});
+
+const runId = "11111111-1111-4111-8111-111111111111";
+const saleOfferId = "33333333-3333-4333-8333-333333333333";
+const startedAt = "2026-07-30T12:00:00.000Z";
+
+function run(status: DemoRunSnapshot["status"]): DemoRunSnapshot {
+  const base = {
+    runId,
+    presetId: "22222222-2222-4222-8222-222222222222",
+    presetName: "Preview 1k",
+    operatorMode: "public" as const,
+    saleOfferId,
+    configSnapshot: previewRunConfigSnapshotFixture(),
+    startedAt,
+  };
+  if (status === "starting") return { ...base, status, trafficStatus: "starting" };
+  if (status === "active") {
+    return { ...base, status, trafficStatus: "active", trafficStartedAt: startedAt };
+  }
+  if (status === "draining") {
+    return {
+      ...base,
+      status,
+      trafficStatus: "succeeded",
+      trafficStartedAt: startedAt,
+      trafficEndedAt: "2026-07-30T12:00:01.000Z",
+    };
+  }
+  if (status === "completed") {
+    return {
+      ...base,
+      status,
+      trafficStatus: "succeeded",
+      trafficStartedAt: startedAt,
+      trafficEndedAt: "2026-07-30T12:00:01.000Z",
+      finalizedAt: "2026-07-30T12:00:02.000Z",
+    };
+  }
+  return {
+    ...base,
+    status,
+    trafficStatus: "failed",
+    trafficStartedAt: startedAt,
+    trafficEndedAt: "2026-07-30T12:00:01.000Z",
+    finalizedAt: "2026-07-30T12:00:02.000Z",
+    failureReason: "traffic_failed",
+  };
+}
+
+function projection(currentRun: DemoRunSnapshot | null): DashboardProjection {
+  const scope = currentRun ? { runId, saleOfferId } : null;
+  return {
+    schema: dashboardProjectionSchemaName,
+    version: dashboardProjectionSchemaVersion,
+    correlationId: "corr-presentation",
+    scopeId: dashboardProjectionScopeId(scope),
+    scope,
+    revision: 1,
+    recoveredAt: "2026-07-30T12:00:03.000Z",
+    currentRun,
+    inventory: null,
+    recentMetrics: [],
+    queue: null,
+    erp: null,
+    businessOutcome: null,
+    consistencyLag: null,
+    recentCompletionOutcomes: [],
+    transportAttemptCounts: null,
+    httpSummary: null,
+    requestArrivalSummary: null,
+  };
+}
+
+function inventory(allocatedStock: number): NonNullable<DashboardProjection["inventory"]> {
+  return {
+    saleOfferId,
+    allocatedStock,
+    remainingStock: 0,
+    reservedStock: allocatedStock,
+    pendingPersistenceCount: 0,
+    expiredReservationCount: 0,
+    oldestPendingPersistenceAgeSeconds: 0,
+    reservationThroughput: {
+      windowSeconds: 60,
+      successfulReservationCount: allocatedStock,
+      peakRatePerSecond: allocatedStock,
+      peakWindowSeconds: 1,
+      unit: "reservations_per_second",
+      measuredAt: "2026-07-30T12:00:00.000Z",
+    },
+    soldOutPressure: { rejectionCount: 4, latestObservedAt: "2026-07-30T12:00:00.000Z" },
+    observedAt: "2026-07-30T12:00:01.000Z",
+    lastUpdatedAt: "2026-07-30T12:00:00.000Z",
+  };
+}
+
+function queue(): NonNullable<DashboardProjection["queue"]> {
+  return {
+    name: "orders:process",
+    connectivity: "reachable",
+    depth: 0,
+    counts: { waiting: 0, prioritized: 0, paused: 0, delayed: 0, active: 0, failed: 0 },
+    oldestWaitingAgeSeconds: null,
+    retryPressure: {
+      inspectedJobCount: 0,
+      inspectionLimit: 100,
+      retryingJobCount: 0,
+      retryAttemptCount: 0,
+      inspectionTruncated: false,
+    },
+    failedJobs: { totalCount: 0, recent: [], inspectionLimit: 20, inspectionTruncated: false },
+    updatedAt: "2026-07-30T12:00:01.000Z",
+  };
+}

@@ -1,4 +1,8 @@
-import type { DashboardProjectionDirtySignal, QueueStatus } from "@checkout-surge/contracts";
+import {
+  type DashboardProjectionDirtySignal,
+  dashboardLiveUpdateExpectedIntervalMs,
+  type QueueStatus,
+} from "@checkout-surge/contracts";
 import { createSilentLogger } from "@checkout-surge/logger";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DashboardSourceDirtyScheduler } from "../src/services/dashboard-source-dirty-scheduler.js";
@@ -59,6 +63,28 @@ describe("DashboardSourceDirtyScheduler", () => {
     await vi.waitFor(() => expect(publish).toHaveBeenCalledOnce());
     await vi.advanceTimersByTimeAsync(50);
     await vi.waitFor(() => expect(publish).toHaveBeenCalledTimes(2));
+    expect(readQueue).toHaveBeenCalledTimes(2);
+    await scheduler.close();
+  });
+
+  it("uses the shared live-update cadence by default", async () => {
+    vi.useFakeTimers();
+    const publish = vi.fn().mockResolvedValue(undefined);
+    const readQueue = vi
+      .fn()
+      .mockResolvedValueOnce(queueStatus(1))
+      .mockResolvedValueOnce(queueStatus(0));
+    const scheduler = createScheduler({ readQueue, publish });
+
+    scheduler.scheduleQueue({ correlationId: "corr-shared-cadence" });
+    await scheduler.flush();
+    expect(publish).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(dashboardLiveUpdateExpectedIntervalMs - 1);
+    expect(publish).toHaveBeenCalledOnce();
+    expect(readQueue).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(1);
+    await scheduler.flush();
+    expect(publish).toHaveBeenCalledTimes(2);
     expect(readQueue).toHaveBeenCalledTimes(2);
     await scheduler.close();
   });

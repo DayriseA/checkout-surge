@@ -38,6 +38,9 @@ export const inventoryStatusSchema = z
     oldestPendingPersistenceAgeSeconds: nonnegativeNumberSchema,
     reservationThroughput: reservationThroughputSchema,
     soldOutPressure: soldOutPressureSchema,
+    /** When this inventory state was read for the projection. */
+    observedAt: isoTimestampSchema,
+    /** When stock or sold-out pressure last changed. */
     lastUpdatedAt: isoTimestampSchema,
   })
   .strict();

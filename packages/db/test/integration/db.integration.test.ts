@@ -1723,6 +1723,8 @@ describe("database migrations, seed data, and reset behavior", () => {
       pendingPersistenceCount: 2,
       expiredReservationCount: 1,
       oldestPendingPersistenceAgeSeconds: 4.5,
+      observedAt: now.toISOString(),
+      lastUpdatedAt: "2026-06-20T11:59:00.000Z",
     });
   });
 

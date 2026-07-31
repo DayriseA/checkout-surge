@@ -21,6 +21,8 @@ export const dashboardEventsPath = "/dashboard/events" as const;
 export const dashboardRecoveryPath = "/dashboard/recovery" as const;
 export const dashboardProjectionSchemaName = "checkout-surge.dashboard-projection" as const;
 export const dashboardProjectionSchemaVersion = 1 as const;
+/** Slowest expected cadence while dashboard work remains in flight. */
+export const dashboardLiveUpdateExpectedIntervalMs = 2_000;
 
 const metricSampleSchema = z
   .object({

@@ -845,6 +845,7 @@ function inventoryStatusFixture(): InventoryStatus {
       measuredAt: now.toISOString(),
     },
     soldOutPressure: { rejectionCount: 0, latestObservedAt: null },
+    observedAt: now.toISOString(),
     lastUpdatedAt: now.toISOString(),
   };
 }

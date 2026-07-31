@@ -1,11 +1,15 @@
-import { type BackendRead, type ContractSchema, readBackendResponse } from "../backend-read";
+import {
+  type CompletedBackendRead,
+  type ContractSchema,
+  readBackendResponse,
+} from "../backend-read";
 
 export async function readProxyJson<T>(
   path: string,
   schema: ContractSchema<T>,
   init?: RequestInit,
   acceptedContractStatuses?: readonly number[],
-): Promise<BackendRead<T>> {
+): Promise<CompletedBackendRead<T>> {
   let response: Response;
   const { headers, ...requestInit } = init ?? {};
 

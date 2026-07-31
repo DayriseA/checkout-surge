@@ -22,7 +22,7 @@ vi.mock("../src/app/components/admin/admin-authenticated-surface.js", () => ({
 }));
 vi.mock("../src/app/lib/api.js", () => ({
   getRunHistoryPage: historyRead,
-  pendingDashboardRecovery: () => ({ status: "unavailable", reason: "loading" }),
+  pendingDashboardRecovery: () => ({ status: "loading" }),
 }));
 vi.mock("../src/app/components/run-history-list.js", () => ({
   RunHistoryList: () => createElement("section", null, "Public history list"),

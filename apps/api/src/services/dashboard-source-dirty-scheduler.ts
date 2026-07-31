@@ -1,7 +1,10 @@
-import type { DashboardProjectionDirtySignal, QueueStatus } from "@checkout-surge/contracts";
+import {
+  type DashboardProjectionDirtySignal,
+  dashboardLiveUpdateExpectedIntervalMs,
+  type QueueStatus,
+} from "@checkout-surge/contracts";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 
-export const dashboardQueueRefreshIntervalMs = 2_000;
 export const soldOutPublicationWindowMs = 500;
 
 export interface DashboardInventoryDirtyRequest {
@@ -242,7 +245,7 @@ export class DashboardSourceDirtyScheduler implements DashboardSourceDirtySchedu
       this.delayedQueueRefresh = null;
       const request = this.latestQueueRequest;
       if (request) this.schedule("queue", { kind: "queue", request });
-    }, this.options.queueRefreshIntervalMs ?? dashboardQueueRefreshIntervalMs);
+    }, this.options.queueRefreshIntervalMs ?? dashboardLiveUpdateExpectedIntervalMs);
     this.delayedQueueRefresh.unref();
   }
 

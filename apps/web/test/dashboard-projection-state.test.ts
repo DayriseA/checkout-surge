@@ -247,10 +247,7 @@ describe("dashboard projection state", () => {
   });
 
   it("does not let a terminal stream frame establish scope while initial recovery is unavailable", () => {
-    const unavailable = createDashboardProjectionState({
-      status: "unavailable",
-      reason: "Authoritative run state is loading.",
-    });
+    const unavailable = createDashboardProjectionState({ status: "loading" });
 
     const state = receive(
       unavailable,
@@ -260,10 +257,7 @@ describe("dashboard projection state", () => {
       }),
     );
 
-    expect(state.recovery).toEqual({
-      status: "unavailable",
-      reason: "Authoritative run state is loading.",
-    });
+    expect(state.recovery).toEqual({ status: "loading" });
   });
 });
 

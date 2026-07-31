@@ -16,6 +16,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { AdminAuthenticatedSurface } from "../src/app/components/admin/admin-authenticated-surface.js";
+import { AdminRuntimePolicyView } from "../src/app/components/admin/admin-feature-views.js";
 import { AdminSignInView } from "../src/app/components/admin/admin-sign-in.js";
 import { PublicDemoEntry } from "../src/app/components/public-demo-entry.js";
 import type { BackendRead, PublicDemoSurface } from "../src/app/lib/api.js";
@@ -118,23 +119,22 @@ describe("dashboard control surface", () => {
       createElement(PublicDemoEntry, { surface: publicSurfaceFixture(runFixture("active")) }),
     );
 
-    expect(markup).toContain("run in progress");
+    expect(markup).toContain("accepting checkout attempts");
     expect(markup).toContain("Watch live");
     expect(markup).toContain('href="/watch"');
     expect(markup).toContain("disabled");
   });
 
-  it("labels unavailable recovery separately from an active run and retains manual retry", () => {
+  it("renders initial recovery as neutral checking without error or retry controls", () => {
     const surface = publicSurfaceFixture(null);
-    surface.recovery = {
-      status: "unavailable",
-      reason: "Authoritative run state is loading.",
-    };
+    surface.recovery = { status: "loading" };
     const markup = renderToStaticMarkup(createElement(PublicDemoEntry, { surface }));
 
-    expect(markup).toContain("start unavailable");
+    expect(markup).toContain("checking availability");
     expect(markup).not.toContain("run in progress");
-    expect(markup).toContain("Check again");
+    expect(markup).not.toContain("Unavailable");
+    expect(markup).not.toContain("Check again");
+    expect(markup).not.toContain("Automatic retry");
     expect(markup).toContain("disabled");
   });
 
@@ -208,6 +208,24 @@ describe("dashboard control surface", () => {
     expect(markup).not.toContain("Reset Demo");
     expect(markup).not.toContain("Start Admin Run");
     expect(markup).not.toContain("Save Public Policy");
+  });
+
+  it("presents absent admin runtime policy evidence neutrally", () => {
+    const markup = renderToStaticMarkup(
+      createElement(AdminRuntimePolicyView, {
+        draft: null,
+        isPending: false,
+        notice: null,
+        onRefresh: () => undefined,
+        onSave: () => undefined,
+        onUpdateDraft: () => undefined,
+        runtimePolicy: { status: "unavailable", reason: "policy offline" },
+      }),
+    );
+
+    expect(markup).toMatch(/bg-surface-muted[^>]*>.*not yet available/);
+    expect(markup).not.toContain(">open</span>");
+    expect(markup).not.toContain("bg-info-soft");
   });
 
   it("renders protected admin controls and disables starts while a run is draining", () => {

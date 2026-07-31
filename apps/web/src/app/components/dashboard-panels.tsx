@@ -1,15 +1,13 @@
-import type {
-  BusinessOutcomeSummary,
-  CompletionOutcome,
-  CompletionOutcomeStatus,
-  DashboardProjection,
-  HealthStatus,
-  InventoryStatus,
-  QueueStatus,
-} from "@checkout-surge/contracts";
+import type { CompletionOutcome, DashboardProjection } from "@checkout-surge/contracts";
 import type { BackendRead } from "../lib/api";
 import { projectRequestSurge } from "../lib/dashboard-projection-state";
 import { formatDashboardTime } from "../lib/dashboard-time";
+import type { Freshness, RealtimeConnectionStatus } from "../lib/presentation/freshness";
+import {
+  deriveCompletionOutcomePresentationState,
+  deriveFreshnessPresentationState,
+  type PresentationState,
+} from "../lib/presentation/run-presentation-state";
 import { StatusPill } from "./status-pill";
 import {
   RequestArrivalRateSeries,
@@ -17,7 +15,7 @@ import {
   TransportObservationPanelBlock,
 } from "./transport-observation";
 
-export type RealtimeConnectionStatus = "connecting" | "connected" | "disconnected" | "unsupported";
+export type { RealtimeConnectionStatus } from "../lib/presentation/freshness";
 
 const panelClassName =
   "min-w-0 rounded-lg border border-border bg-surface p-4 max-[900px]:col-span-full";
@@ -43,9 +41,9 @@ function formatNumber(value: number): string {
   return new Intl.NumberFormat("en-US").format(value);
 }
 
-function formatRate(value: number | null | undefined, unit: string): string {
+function formatRate(value: number | null | undefined, unit: string, absent = "—"): string {
   if (value === null || value === undefined) {
-    return "n/a";
+    return absent;
   }
 
   return `${new Intl.NumberFormat("en-US", {
@@ -53,17 +51,21 @@ function formatRate(value: number | null | undefined, unit: string): string {
   }).format(value)} ${unit}`;
 }
 
-function formatTime(value: string | undefined | null): string {
-  if (!value) {
-    return "Not started";
-  }
-
-  return formatDashboardTime(value);
+function formatExpectedTime(value: string | undefined | null): string {
+  return value ? formatDashboardTime(value) : "not yet available";
 }
 
-function formatSeconds(value: number | null | undefined): string {
+function formatScheduledTime(value: string | undefined | null): string {
+  return value ? formatDashboardTime(value) : "not scheduled";
+}
+
+function formatOptionalTime(value: string | undefined | null): string {
+  return value ? formatDashboardTime(value) : "—";
+}
+
+function formatSeconds(value: number | null | undefined, absent = "—"): string {
   if (value === null || value === undefined) {
-    return "n/a";
+    return absent;
   }
 
   if (value < 1) {
@@ -73,13 +75,13 @@ function formatSeconds(value: number | null | undefined): string {
   return `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 }).format(value)}s`;
 }
 
-function formatMilliseconds(value: number | null | undefined): string {
+function formatMilliseconds(value: number | null | undefined, absent = "—"): string {
   if (value === null || value === undefined) {
-    return "n/a";
+    return absent;
   }
 
   if (value >= 1000) {
-    return formatSeconds(value / 1000);
+    return formatSeconds(value / 1000, absent);
   }
 
   return `${Math.round(value)}ms`;
@@ -110,8 +112,9 @@ function EmptyState({ children }: { children: React.ReactNode }) {
 }
 
 function UnavailableState({ read }: { read: BackendRead<unknown> }) {
-  if (read.status === "available") {
-    return null;
+  if (read.status === "available") return null;
+  if (read.status === "loading") {
+    return <EmptyState>Checking availability.</EmptyState>;
   }
 
   return (
@@ -133,81 +136,22 @@ function Fact({ label, value, small = false }: { label: string; value: string; s
   );
 }
 
-function healthTone(
-  status: HealthStatus | "healthy" | "idle",
-): Parameters<typeof StatusPill>[0]["tone"] {
-  if (status === "ok" || status === "healthy") {
-    return "ok";
-  }
-  if (status === "degraded") {
-    return "degraded";
-  }
-  if (status === "idle") {
-    return "idle";
-  }
-  return "unavailable";
-}
+function FreshnessLine({ freshness }: { freshness: Freshness }) {
+  const updated = formatDashboardTime(freshness.observedAt);
+  const notApplicable = freshness.final
+    ? `Final, as of ${updated}`
+    : `As of ${updated} · no active run`;
+  const copy = {
+    connecting: `Updated ${updated} · connecting to live updates`,
+    disconnected: `Updated ${updated} · disconnected, showing last known values`,
+    live: `Updated ${updated} · live`,
+    "not-applicable": notApplicable,
+    "retained-fresh": `Updated ${updated} · connected, no update expected`,
+    stale: `Updated ${updated} · stale, showing last known values`,
+    unsupported: `Updated ${updated} · live updates unsupported`,
+  }[freshness.state];
 
-function queueTone(queue: QueueStatus | null): Parameters<typeof StatusPill>[0]["tone"] {
-  if (!queue) {
-    return "idle";
-  }
-  if (queue.failedJobs.totalCount > 0) {
-    return "degraded";
-  }
-  if (queue.depth > 0 || queue.counts.active > 0) {
-    return "pending";
-  }
-  return "ok";
-}
-
-function inventoryTone(
-  inventory: InventoryStatus | null,
-): Parameters<typeof StatusPill>[0]["tone"] {
-  if (!inventory) {
-    return "idle";
-  }
-  if (inventory.pendingPersistenceCount > 0) {
-    return "degraded";
-  }
-  if (inventory.remainingStock === 0) {
-    return "blocked";
-  }
-  return "ok";
-}
-
-function outcomeTone(
-  outcome: BusinessOutcomeSummary | null,
-): Parameters<typeof StatusPill>[0]["tone"] {
-  if (!outcome) {
-    return "idle";
-  }
-  if (outcome.failedOrders > 0 || outcome.pendingPersistenceCount > 0) {
-    return "degraded";
-  }
-  if (outcome.processingOrders > 0 || outcome.retryingOrders > 0 || outcome.queuedOrders > 0) {
-    return "pending";
-  }
-  return "ok";
-}
-
-function completionOutcomeTone(
-  status: CompletionOutcomeStatus,
-): Parameters<typeof StatusPill>[0]["tone"] {
-  if (status === "confirmed" || status === "notification_recorded") {
-    return "ok";
-  }
-  if (status === "failed") {
-    return "degraded";
-  }
-  if (status === "delayed" || status === "retrying") {
-    return "pending";
-  }
-  return "idle";
-}
-
-function completionOutcomeLabel(status: CompletionOutcomeStatus): string {
-  return status.replaceAll("_", " ");
+  return <p className="m-0 mb-3 text-xs leading-5 text-muted">{copy}</p>;
 }
 
 export function RecoveryStatusPanel({
@@ -220,6 +164,8 @@ export function RecoveryStatusPanel({
   retryDelayMs = null,
   hasSyncIssue = false,
   syncIssue = null,
+  presentation,
+  freshness,
   onRefresh,
 }: {
   recovery: BackendRead<DashboardProjection>;
@@ -231,6 +177,8 @@ export function RecoveryStatusPanel({
   retryDelayMs?: number | null;
   hasSyncIssue?: boolean;
   syncIssue?: Extract<BackendRead<DashboardProjection>, { status: "unavailable" }> | null;
+  presentation: PresentationState;
+  freshness?: Freshness;
   onRefresh?: () => void;
 }) {
   const data = recoveryData(recovery);
@@ -241,11 +189,11 @@ export function RecoveryStatusPanel({
     <section className={panelNarrowClassName}>
       <div className={panelHeaderClassName}>
         <div>
-          <p className={eyebrowClassName}>Recovery</p>
-          <h2 className={panelTitleClassName}>Latest backend snapshot</h2>
+          <p className={eyebrowClassName}>Current state</p>
+          <h2 className={panelTitleClassName}>Run availability and updates</h2>
         </div>
         <div className="flex flex-wrap justify-end gap-2">
-          {onRefresh ? (
+          {onRefresh && recovery.status !== "loading" ? (
             <button
               className={`${controlButtonClassName} min-h-9 px-3 py-2 text-sm`}
               disabled={isRefreshing}
@@ -255,11 +203,11 @@ export function RecoveryStatusPanel({
               {isRefreshing ? "Refreshing" : "Refresh"}
             </button>
           ) : null}
-          <StatusPill label={run?.status ?? "idle"} tone={run ? "pending" : "idle"} />
+          <StatusPill status={presentation} />
         </div>
       </div>
       {hasLastKnownGoodSyncIssue ? (
-        <div className="mb-3 grid gap-1 rounded-lg border border-[#f7b4ad] bg-danger-soft p-3 leading-6 text-danger">
+        <div className="mb-3 grid gap-1 rounded-lg border border-border bg-surface-muted p-3 leading-6 text-muted-strong">
           <strong>Last-known-good projection</strong>
           <span>
             {isRefreshing
@@ -274,13 +222,15 @@ export function RecoveryStatusPanel({
         </div>
       ) : null}
       {data ? (
-        <dl className={stackedFactGridClassName}>
-          <Fact label="Current run" value={run ? run.presetName : "No active run"} />
-          <Fact label="Traffic" value={run?.trafficStatus ?? "Not active"} />
-          <Fact label="Recovered at" value={formatTime(data.recoveredAt)} />
-          <Fact label="Live stream" value={realtimeStatus} />
-          <Fact label="Live projections applied" value={formatNumber(liveProjectionCount)} />
-        </dl>
+        <>
+          {freshness ? <FreshnessLine freshness={freshness} /> : null}
+          <dl className={stackedFactGridClassName}>
+            <Fact label="Current run" value={run ? run.presetName : "No active run"} />
+            <Fact label="Traffic" value={run?.trafficStatus ?? "Not active"} />
+            <Fact label="Update stream" value={realtimeStatus} />
+            <Fact label="Projections applied" value={formatNumber(liveProjectionCount)} />
+          </dl>
+        </>
       ) : (
         <UnavailableState read={recovery} />
       )}
@@ -291,9 +241,11 @@ export function RecoveryStatusPanel({
 export function RequestSurgePanel({
   recovery,
   liveProjectionCount,
+  freshness,
 }: {
   recovery: BackendRead<DashboardProjection>;
   liveProjectionCount: number;
+  freshness: Freshness;
 }) {
   const data = recoveryData(recovery);
   const inventory = data?.inventory ?? null;
@@ -315,23 +267,11 @@ export function RequestSurgePanel({
           <p className={eyebrowClassName}>Request surge</p>
           <h2 className={panelTitleClassName}>Traffic pressure</h2>
         </div>
-        <StatusPill
-          label={
-            requestSurge !== null && requestSurge.arrivalRatePerSecond !== null
-              ? "metrics live"
-              : inventory
-                ? "reservations live"
-                : "idle"
-          }
-          tone={
-            (requestSurge !== null && requestSurge.arrivalRatePerSecond !== null) || inventory
-              ? "ok"
-              : "idle"
-          }
-        />
+        <StatusPill status={deriveFreshnessPresentationState(freshness)} />
       </div>
       {data ? (
         <>
+          <FreshnessLine freshness={freshness} />
           <dl className={factGridClassName}>
             <Fact
               label={
@@ -357,11 +297,15 @@ export function RequestSurgePanel({
             />
             <Fact
               label="Dispatch duration"
-              value={formatSeconds(requestSurge?.dispatchDurationSeconds)}
+              value={formatSeconds(requestSurge?.dispatchDurationSeconds, "not yet available")}
             />
             <Fact
               label="Response completion rate"
-              value={formatRate(requestSurge?.responseCompletionRatePerSecond, "responses/s")}
+              value={formatRate(
+                requestSurge?.responseCompletionRatePerSecond,
+                "responses/s",
+                "not yet available",
+              )}
             />
             <Fact
               label="Window mean HTTP latency"
@@ -386,6 +330,7 @@ export function RequestSurgePanel({
               value={formatRate(
                 inventory?.reservationThroughput.peakRatePerSecond,
                 "reservations/s",
+                "not yet available",
               )}
             />
             <Fact
@@ -401,8 +346,8 @@ export function RequestSurgePanel({
               label="Latest metric"
               value={
                 latestMetric
-                  ? `${latestMetric.metricName} at ${formatTime(latestMetric.timestamp)}`
-                  : "n/a"
+                  ? `${latestMetric.metricName} at ${formatExpectedTime(latestMetric.timestamp)}`
+                  : "not yet available"
               }
               small
             />
@@ -453,7 +398,15 @@ function findLatestMetric(
   return null;
 }
 
-export function InventoryDrainPanel({ recovery }: { recovery: BackendRead<DashboardProjection> }) {
+export function InventoryDrainPanel({
+  recovery,
+  presentation,
+  freshness,
+}: {
+  recovery: BackendRead<DashboardProjection>;
+  presentation: PresentationState;
+  freshness: Freshness;
+}) {
   const inventory = recoveryData(recovery)?.inventory ?? null;
   const percentRemaining =
     inventory && inventory.allocatedStock > 0
@@ -467,13 +420,11 @@ export function InventoryDrainPanel({ recovery }: { recovery: BackendRead<Dashbo
           <p className={eyebrowClassName}>Inventory drain</p>
           <h2 className={panelTitleClassName}>Stock hold path</h2>
         </div>
-        <StatusPill
-          label={inventory ? `${percentRemaining}% left` : "no data"}
-          tone={inventoryTone(inventory)}
-        />
+        <StatusPill status={presentation} />
       </div>
       {inventory ? (
         <>
+          <FreshnessLine freshness={freshness} />
           <meter
             aria-label="Remaining inventory"
             className="meter mb-4 block h-2 w-full rounded-full border-0 bg-surface-muted"
@@ -491,7 +442,12 @@ export function InventoryDrainPanel({ recovery }: { recovery: BackendRead<Dashbo
               label="Oldest pending"
               value={formatSeconds(inventory.oldestPendingPersistenceAgeSeconds)}
             />
-            <Fact label="Inventory updated" value={formatTime(inventory.lastUpdatedAt)} small />
+            <Fact
+              label="Stock last changed"
+              value={formatExpectedTime(inventory.lastUpdatedAt)}
+              small
+            />
+            <Fact label="Stock observed" value={formatExpectedTime(inventory.observedAt)} small />
           </dl>
         </>
       ) : (
@@ -501,7 +457,15 @@ export function InventoryDrainPanel({ recovery }: { recovery: BackendRead<Dashbo
   );
 }
 
-export function QueuePressurePanel({ recovery }: { recovery: BackendRead<DashboardProjection> }) {
+export function QueuePressurePanel({
+  recovery,
+  presentation,
+  freshness,
+}: {
+  recovery: BackendRead<DashboardProjection>;
+  presentation: PresentationState;
+  freshness: Freshness;
+}) {
   const queue = recoveryData(recovery)?.queue ?? null;
 
   return (
@@ -511,13 +475,11 @@ export function QueuePressurePanel({ recovery }: { recovery: BackendRead<Dashboa
           <p className={eyebrowClassName}>Queue pressure</p>
           <h2 className={panelTitleClassName}>orders:process</h2>
         </div>
-        <StatusPill
-          label={queue ? `${formatNumber(queue.depth)} jobs` : "no data"}
-          tone={queueTone(queue)}
-        />
+        <StatusPill status={presentation} />
       </div>
       {queue ? (
         <>
+          <FreshnessLine freshness={freshness} />
           <dl className={factGridClassName}>
             <Fact label="Waiting" value={formatNumber(queue.counts.waiting)} />
             <Fact label="Active" value={formatNumber(queue.counts.active)} />
@@ -525,7 +487,7 @@ export function QueuePressurePanel({ recovery }: { recovery: BackendRead<Dashboa
             <Fact label="Retrying" value={formatNumber(queue.retryPressure.retryingJobCount)} />
             <Fact label="Failed" value={formatNumber(queue.failedJobs.totalCount)} />
             <Fact label="Oldest wait" value={formatSeconds(queue.oldestWaitingAgeSeconds)} />
-            <Fact label="Queue inspected" value={formatTime(queue.updatedAt)} small />
+            <Fact label="Queue inspected" value={formatExpectedTime(queue.updatedAt)} small />
           </dl>
           <p className="mb-0 mt-3 text-xs leading-5 text-muted">
             Enqueues publish live; the API refreshes worker drain, retry, and failure state from the
@@ -539,7 +501,15 @@ export function QueuePressurePanel({ recovery }: { recovery: BackendRead<Dashboa
   );
 }
 
-export function ErpHealthPanel({ recovery }: { recovery: BackendRead<DashboardProjection> }) {
+export function ErpHealthPanel({
+  recovery,
+  presentation,
+  freshness,
+}: {
+  recovery: BackendRead<DashboardProjection>;
+  presentation: PresentationState;
+  freshness: Freshness;
+}) {
   const erp = recoveryData(recovery)?.erp ?? null;
 
   return (
@@ -549,36 +519,48 @@ export function ErpHealthPanel({ recovery }: { recovery: BackendRead<DashboardPr
           <p className={eyebrowClassName}>ERP health</p>
           <h2 className={panelTitleClassName}>Downstream dependency</h2>
         </div>
-        <StatusPill
-          label={erp ? erp.status : "no data"}
-          tone={erp ? healthTone(erp.status) : "idle"}
-        />
+        <StatusPill status={presentation} />
       </div>
       {erp ? (
-        <dl className={factGridClassName}>
-          <Fact label="Circuit" value={erp.circuit?.state ?? "missing"} />
-          <Fact label="Reason" value={erp.reason ?? "normal"} small />
-          <Fact label="Retrying" value={formatNumber(erp.retryPressure.retryingJobCount)} />
-          <Fact label="Recent attempts" value={formatNumber(erp.recentAttemptCount)} />
-          <Fact label="Failures" value={formatNumber(erp.recentFailureCount)} />
-          <Fact label="Timeouts" value={formatNumber(erp.recentTimeoutCount)} />
-          <Fact
-            label="Failure threshold"
-            value={erp.circuit ? formatNumber(erp.circuit.failureThreshold) : "n/a"}
-          />
-          <Fact
-            label="Consecutive failures"
-            value={erp.circuit ? formatNumber(erp.circuit.consecutiveFailureCount) : "n/a"}
-          />
-          <Fact
-            label="Reset timeout"
-            value={erp.circuit ? formatMilliseconds(erp.circuit.resetTimeoutMs) : "n/a"}
-          />
-          <Fact label="Next probe" value={formatTime(erp.circuit?.nextAttemptAt)} small />
-          <Fact label="Breaker reported" value={formatTime(erp.circuit?.updatedAt)} small />
-          <Fact label="API projection" value={formatTime(erp.updatedAt)} small />
-          <Fact label="Attempt window" value={`${formatNumber(erp.recentAttemptWindowSeconds)}s`} />
-        </dl>
+        <>
+          <FreshnessLine freshness={freshness} />
+          <dl className={factGridClassName}>
+            <Fact label="Circuit" value={erp.circuit?.state ?? "not yet available"} />
+            <Fact label="Reason" value={erp.reason ?? "normal"} small />
+            <Fact label="Retrying" value={formatNumber(erp.retryPressure.retryingJobCount)} />
+            <Fact label="Recent attempts" value={formatNumber(erp.recentAttemptCount)} />
+            <Fact label="Failures" value={formatNumber(erp.recentFailureCount)} />
+            <Fact label="Timeouts" value={formatNumber(erp.recentTimeoutCount)} />
+            <Fact
+              label="Failure threshold"
+              value={erp.circuit ? formatNumber(erp.circuit.failureThreshold) : "—"}
+            />
+            <Fact
+              label="Consecutive failures"
+              value={erp.circuit ? formatNumber(erp.circuit.consecutiveFailureCount) : "—"}
+            />
+            <Fact
+              label="Reset timeout"
+              value={erp.circuit ? formatMilliseconds(erp.circuit.resetTimeoutMs) : "—"}
+            />
+            <Fact label="Breaker opened" value={formatScheduledTime(erp.circuit?.openedAt)} small />
+            <Fact
+              label="Next probe"
+              value={formatScheduledTime(erp.circuit?.nextAttemptAt)}
+              small
+            />
+            <Fact
+              label="Breaker reported"
+              value={formatExpectedTime(erp.circuit?.updatedAt)}
+              small
+            />
+            <Fact label="API projection" value={formatExpectedTime(erp.updatedAt)} small />
+            <Fact
+              label="Attempt window"
+              value={`${formatNumber(erp.recentAttemptWindowSeconds)}s`}
+            />
+          </dl>
+        </>
       ) : (
         <EmptyState>No ERP health data.</EmptyState>
       )}
@@ -586,7 +568,15 @@ export function ErpHealthPanel({ recovery }: { recovery: BackendRead<DashboardPr
   );
 }
 
-export function ConsistencyLagPanel({ recovery }: { recovery: BackendRead<DashboardProjection> }) {
+export function ConsistencyLagPanel({
+  recovery,
+  presentation,
+  freshness,
+}: {
+  recovery: BackendRead<DashboardProjection>;
+  presentation: PresentationState;
+  freshness: Freshness;
+}) {
   const lag = recoveryData(recovery)?.consistencyLag ?? null;
 
   return (
@@ -596,22 +586,30 @@ export function ConsistencyLagPanel({ recovery }: { recovery: BackendRead<Dashbo
           <p className={eyebrowClassName}>Consistency lag</p>
           <h2 className={panelTitleClassName}>Fast reservation vs final confirmation</h2>
         </div>
-        <StatusPill
-          label={lag && lag.pendingConfirmationCount > 0 ? "draining" : lag ? "settled" : "no data"}
-          tone={lag && lag.pendingConfirmationCount > 0 ? "pending" : lag ? "ok" : "idle"}
-        />
+        <StatusPill status={presentation} />
       </div>
       {lag ? (
-        <dl className={factGridClassName}>
-          <Fact label="Reservation" value="Secured" />
-          <Fact label="p95 confirmed" value={formatMilliseconds(lag.p95LagMs)} />
-          <Fact label="Avg confirmed" value={formatMilliseconds(lag.averageLagMs)} />
-          <Fact label="Max confirmed" value={formatMilliseconds(lag.maxLagMs)} />
-          <Fact label="Pending" value={formatNumber(lag.pendingConfirmationCount)} />
-          <Fact label="Oldest pending" value={formatSeconds(lag.oldestPendingAgeSeconds)} />
-          <Fact label="Confirmed" value={formatNumber(lag.confirmedOrderCount)} />
-          <Fact label="Measured" value={formatTime(lag.measuredAt)} />
-        </dl>
+        <>
+          <FreshnessLine freshness={freshness} />
+          <dl className={factGridClassName}>
+            <Fact
+              label="p95 confirmed"
+              value={formatMilliseconds(lag.p95LagMs, "not yet available")}
+            />
+            <Fact
+              label="Avg confirmed"
+              value={formatMilliseconds(lag.averageLagMs, "not yet available")}
+            />
+            <Fact
+              label="Max confirmed"
+              value={formatMilliseconds(lag.maxLagMs, "not yet available")}
+            />
+            <Fact label="Pending" value={formatNumber(lag.pendingConfirmationCount)} />
+            <Fact label="Oldest pending" value={formatSeconds(lag.oldestPendingAgeSeconds)} />
+            <Fact label="Confirmed" value={formatNumber(lag.confirmedOrderCount)} />
+            <Fact label="Measured" value={formatExpectedTime(lag.measuredAt)} />
+          </dl>
+        </>
       ) : (
         <EmptyState>No consistency-lag data.</EmptyState>
       )}
@@ -619,7 +617,15 @@ export function ConsistencyLagPanel({ recovery }: { recovery: BackendRead<Dashbo
   );
 }
 
-export function RunOutcomesPanel({ recovery }: { recovery: BackendRead<DashboardProjection> }) {
+export function RunOutcomesPanel({
+  recovery,
+  presentation,
+  freshness,
+}: {
+  recovery: BackendRead<DashboardProjection>;
+  presentation: PresentationState;
+  freshness: Freshness;
+}) {
   const outcome = recoveryData(recovery)?.businessOutcome ?? null;
 
   return (
@@ -630,23 +636,26 @@ export function RunOutcomesPanel({ recovery }: { recovery: BackendRead<Dashboard
           <h2 className={panelTitleClassName}>Reservation and confirmation summary</h2>
           <p className="m-0 mt-1 text-xs text-muted">{systemOfRecordLens.caption}</p>
         </div>
-        <StatusPill
-          label={outcome ? `${formatNumber(outcome.acceptedReservations)} accepted` : "no data"}
-          tone={outcomeTone(outcome)}
-        />
+        <StatusPill status={presentation} />
       </div>
       {outcome ? (
-        <dl className={wideFactGridClassName}>
-          <Fact label="Accepted" value={formatNumber(outcome.acceptedReservations)} />
-          <Fact label="Sold out" value={formatNumber(outcome.soldOutRejections)} />
-          <Fact label="Queued" value={formatNumber(outcome.queuedOrders)} />
-          <Fact label="Processing" value={formatNumber(outcome.processingOrders)} />
-          <Fact label="Retrying" value={formatNumber(outcome.retryingOrders)} />
-          <Fact label="Confirmed" value={formatNumber(outcome.confirmedOrders)} />
-          <Fact label="Failed" value={formatNumber(outcome.failedOrders)} />
-          <Fact label="Pending persistence" value={formatNumber(outcome.pendingPersistenceCount)} />
-          <Fact label="Notifications" value={formatNumber(outcome.notificationsRecorded)} />
-        </dl>
+        <>
+          <FreshnessLine freshness={freshness} />
+          <dl className={wideFactGridClassName}>
+            <Fact label="Accepted" value={formatNumber(outcome.acceptedReservations)} />
+            <Fact label="Sold out" value={formatNumber(outcome.soldOutRejections)} />
+            <Fact label="Queued" value={formatNumber(outcome.queuedOrders)} />
+            <Fact label="Processing" value={formatNumber(outcome.processingOrders)} />
+            <Fact label="Retrying" value={formatNumber(outcome.retryingOrders)} />
+            <Fact label="Confirmed" value={formatNumber(outcome.confirmedOrders)} />
+            <Fact label="Failed" value={formatNumber(outcome.failedOrders)} />
+            <Fact
+              label="Pending persistence"
+              value={formatNumber(outcome.pendingPersistenceCount)}
+            />
+            <Fact label="Notifications" value={formatNumber(outcome.notificationsRecorded)} />
+          </dl>
+        </>
       ) : (
         <EmptyState>No business outcome data.</EmptyState>
       )}
@@ -669,8 +678,10 @@ export function CompletionOutcomesPanel({
           <h2 className={panelTitleClassName}>Recent order workflow results</h2>
         </div>
         <StatusPill
-          label={outcomes.length > 0 ? `${formatNumber(outcomes.length)} shown` : "no data"}
-          tone={outcomes.length > 0 ? "ok" : "idle"}
+          status={{
+            label: outcomes.length > 0 ? `${formatNumber(outcomes.length)} shown` : "no data",
+            tone: outcomes.length > 0 ? "ok" : "idle",
+          }}
         />
       </div>
       {outcomes.length > 0 ? (
@@ -703,10 +714,7 @@ function CompletionOutcomeRow({ outcome }: { outcome: CompletionOutcome }) {
   return (
     <tr className="border-b border-border last:border-b-0">
       <td className="py-3 pr-3 align-top">
-        <StatusPill
-          label={completionOutcomeLabel(outcome.displayStatus)}
-          tone={completionOutcomeTone(outcome.displayStatus)}
-        />
+        <StatusPill status={deriveCompletionOutcomePresentationState(outcome.displayStatus)} />
       </td>
       <td className="px-3 py-3 align-top">
         <div className="grid gap-1">
@@ -717,13 +725,15 @@ function CompletionOutcomeRow({ outcome }: { outcome: CompletionOutcome }) {
       <td className="px-3 py-3 align-top text-muted">
         {outcome.latestErpAttemptStatus
           ? `${outcome.latestErpAttemptStatus}${outcome.latestErpErrorCode ? `:${outcome.latestErpErrorCode}` : ""}`
-          : "n/a"}
+          : "—"}
       </td>
       <td className="px-3 py-3 align-top text-muted">
         <div className="grid gap-1">
-          <span>{formatTime(outcome.latestEventAt)}</span>
+          <span>{formatExpectedTime(outcome.latestEventAt)}</span>
           {outcome.notificationRecordedAt ? (
-            <span className="text-xs">Notified {formatTime(outcome.notificationRecordedAt)}</span>
+            <span className="text-xs">
+              Notified {formatOptionalTime(outcome.notificationRecordedAt)}
+            </span>
           ) : null}
         </div>
       </td>
