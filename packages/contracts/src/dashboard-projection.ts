@@ -15,6 +15,7 @@ import {
   uuidSchema,
 } from "./primitives.js";
 import { queueStatusSchema } from "./queue.js";
+import { runSignalTimelineSummarySchema } from "./run-signals.js";
 import { transportAttemptCountsSchema } from "./traffic-transport-counts.js";
 
 export const dashboardEventsPath = "/dashboard/events" as const;
@@ -94,6 +95,7 @@ export const dashboardProjectionSchema = z
     transportAttemptCounts: transportAttemptCountsSchema.nullable().default(null),
     httpSummary: trafficHttpSummarySchema.nullable().default(null),
     requestArrivalSummary: requestArrivalSummarySchema.nullable().default(null),
+    runSignalTimelineSummary: runSignalTimelineSummarySchema.nullable().default(null),
   })
   .strict()
   .superRefine((projection, context) => {
@@ -135,6 +137,7 @@ export const dashboardProjectionSchema = z
         ["transportAttemptCounts", projection.transportAttemptCounts],
         ["httpSummary", projection.httpSummary ?? null],
         ["requestArrivalSummary", projection.requestArrivalSummary ?? null],
+        ["runSignalTimelineSummary", projection.runSignalTimelineSummary ?? null],
       ] as const;
       for (const [field, value] of runOwnedFields) {
         if (value !== null) {

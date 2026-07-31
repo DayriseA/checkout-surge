@@ -10,6 +10,8 @@ import {
   dashboardProjectionSchemaVersion,
   dashboardProjectionScopeId,
   type MetricSample,
+  type RunSignalTimelineSummary,
+  runSignalTimelineSummarySchema,
   type TrafficHttpSummary,
   type TransportAttemptCounts,
 } from "@checkout-surge/contracts";
@@ -17,6 +19,7 @@ import {
   type CheckoutSurgeDatabase,
   type CheckoutSurgeRedis,
   demoRunFinalizations,
+  demoRunSummaries,
   demoRuns,
   incrementDashboardProjectionRevision,
   incrementIdleDashboardProjectionRevision,
@@ -76,6 +79,7 @@ export interface DashboardTransportObservationReader {
     transportAttemptCounts: TransportAttemptCounts;
     httpSummary: TrafficHttpSummary;
     persistedTrafficDeliverySummary: unknown;
+    runSignalTimelineSummary: RunSignalTimelineSummary | null;
   } | null>;
 }
 
@@ -90,8 +94,10 @@ export class PostgresDashboardTransportObservationReader
         transportAttemptCounts: demoRunFinalizations.transportAttemptCounts,
         httpSummary: demoRunFinalizations.httpSummary,
         trafficDeliverySummary: demoRunFinalizations.trafficDeliverySummary,
+        runSignalTimelineSummary: demoRunSummaries.runSignalTimelineSummary,
       })
       .from(demoRunFinalizations)
+      .leftJoin(demoRunSummaries, eq(demoRunSummaries.runId, demoRunFinalizations.runId))
       .where(eq(demoRunFinalizations.runId, runId))
       .limit(1);
 
@@ -105,6 +111,10 @@ export class PostgresDashboardTransportObservationReader
       transportAttemptCounts,
       httpSummary: parsePersistedTrafficHttpSummary(row.httpSummary, context),
       persistedTrafficDeliverySummary: row.trafficDeliverySummary,
+      runSignalTimelineSummary:
+        row.runSignalTimelineSummary === null
+          ? null
+          : runSignalTimelineSummarySchema.parse(row.runSignalTimelineSummary),
     };
   }
 }
@@ -398,6 +408,9 @@ export class DashboardProjectionService {
         ? (transportObservationResult.value?.httpSummary ?? null)
         : null,
       requestArrivalSummary: requestArrivalResult.ok ? requestArrivalResult.value : null,
+      runSignalTimelineSummary: transportObservationResult.ok
+        ? (transportObservationResult.value?.runSignalTimelineSummary ?? null)
+        : null,
       recoveredAt: now.toISOString(),
     });
   }

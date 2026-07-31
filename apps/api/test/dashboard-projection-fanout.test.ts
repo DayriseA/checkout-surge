@@ -464,6 +464,7 @@ function projection(revision: number): DashboardProjection {
     transportAttemptCounts: null,
     httpSummary: null,
     requestArrivalSummary: null,
+    runSignalTimelineSummary: null,
   };
 }
 

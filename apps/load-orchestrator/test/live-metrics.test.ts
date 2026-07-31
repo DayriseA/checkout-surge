@@ -146,6 +146,7 @@ describe("K6LiveMetricAggregator", () => {
 
     const summary = aggregator.requestArrivalSummary();
     expect(summary).toMatchObject({
+      firstAttemptStartedAt: windowStart,
       peakArrivalRatePerSecond: 100,
       peakArrivalWindowSeconds: 1,
       arrivalWindowCountObserved: 131,

@@ -1,6 +1,7 @@
 import type {
   BusinessOutcomeSummary,
   DemoRunStatus,
+  RunSignalTimelineSummary,
   ServerReservationTimingSummary,
   TerminalInventorySnapshot,
   TrafficDeliverySummary,
@@ -35,6 +36,7 @@ export interface TerminalDemoRunSummaryInput {
   loadRunDiagnosticsSummary: Record<string, unknown>;
   businessOutcome: BusinessOutcomeSummary;
   terminalInventorySnapshot: TerminalInventorySnapshot | null;
+  runSignalTimelineSummary: RunSignalTimelineSummary | null;
   allowedCurrentStatuses: DemoRunStatus[];
   terminalTrafficStatus?: TrafficExecutionStatus;
 }

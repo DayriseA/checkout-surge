@@ -1,6 +1,6 @@
 "use client";
 
-import type { DashboardProjection } from "@checkout-surge/contracts";
+import { type DashboardProjection, deriveOversoldUnits } from "@checkout-surge/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { BackendRead } from "../lib/api";
 import { dashboardUpdateExpected, deriveFreshness } from "../lib/presentation/freshness";
@@ -22,6 +22,7 @@ import {
   RequestSurgePanel,
   RunOutcomesPanel,
 } from "./dashboard-panels";
+import { GoldSignals } from "./gold-signals";
 import { useDashboardProjections } from "./realtime/use-dashboard-projections";
 import { useDashboardRecovery } from "./realtime/use-dashboard-recovery";
 
@@ -39,6 +40,7 @@ export function OperatorDashboard({
     hasSyncIssue,
     syncIssue,
     liveProjectionCount,
+    signalSamples,
     refresh,
     retryNow,
     applyProjection,
@@ -92,6 +94,26 @@ export function OperatorDashboard({
         onRefresh={() => {
           void retryNow();
         }}
+      />
+      <GoldSignals
+        acceptedReservations={outcome?.acceptedReservations ?? 0}
+        arrivalSummary={projection?.requestArrivalSummary ?? null}
+        liveLag={projection?.consistencyLag ?? null}
+        liveSamples={signalSamples}
+        oversoldUnits={
+          projection?.runSignalTimelineSummary || projection?.inventory
+            ? deriveOversoldUnits({
+                acceptedReservations: outcome?.acceptedReservations ?? 0,
+                startingStock:
+                  projection.runSignalTimelineSummary?.inventoryDrain.startingStock ??
+                  projection.inventory?.allocatedStock ??
+                  0,
+              })
+            : 0
+        }
+        retryingJobCount={projection?.queue?.retryPressure.retryingJobCount ?? 0}
+        startingStock={projection?.inventory?.allocatedStock ?? null}
+        terminalSummary={projection?.runSignalTimelineSummary ?? null}
       />
       <RequestSurgePanel
         recovery={recovery}

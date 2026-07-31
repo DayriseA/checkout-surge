@@ -28,7 +28,9 @@ import {
   runHistoryNotificationSchema,
   runHistoryOrderOutcomeSchema,
   runHistorySummarySchema,
+  runSignalTimelineSummarySchema,
   serverReservationTimingSummarySchema,
+  toRunSignalTimelineHeadline,
 } from "@checkout-surge/contracts";
 import {
   type CheckoutSurgeDatabase,
@@ -163,6 +165,7 @@ export class RunHistoryService implements RunHistoryController {
       },
       notifications: { totalCount: notificationCounts[0]?.totalCount ?? 0 },
       events: { totalCount: eventCounts[0]?.totalCount ?? 0 },
+      runSignalTimelineSummary: parseRunSignalTimelineSummary(source.summaryRow),
       timestamp: this.now().toISOString(),
     });
   }
@@ -295,6 +298,7 @@ export class RunHistoryService implements RunHistoryController {
         limit: detailRecordLimit,
         truncated: eventTotalCount > detailRecordLimit,
       },
+      runSignalTimelineSummary: parseRunSignalTimelineSummary(source.summaryRow),
       timestamp: this.now().toISOString(),
     });
   }
@@ -392,6 +396,7 @@ function toPublicRunHistorySummary(
           },
         }
       : {}),
+    runSignalTimelineSummary: toRunSignalTimelineHeadlineOrNull(row),
     capturedAt: row.capturedAt.toISOString(),
   });
 }
@@ -476,8 +481,24 @@ function toRunHistorySummary(row: typeof demoRunSummaries.$inferSelect): RunHist
           ),
         }
       : {}),
+    runSignalTimelineSummary: toRunSignalTimelineHeadlineOrNull(row),
     capturedAt: row.capturedAt.toISOString(),
   });
+}
+
+function parseRunSignalTimelineSummary(row: typeof demoRunSummaries.$inferSelect) {
+  if (row.runSignalTimelineSummary === null) return null;
+  return parsePersistedState(
+    runSignalTimelineSummarySchema,
+    row.runSignalTimelineSummary,
+    `run summary ${row.id} for demo run ${row.runId}`,
+    "runSignalTimelineSummary",
+  );
+}
+
+function toRunSignalTimelineHeadlineOrNull(row: typeof demoRunSummaries.$inferSelect) {
+  const summary = parseRunSignalTimelineSummary(row);
+  return summary ? toRunSignalTimelineHeadline(summary) : null;
 }
 
 function toRunHistoryOrderOutcome(row: typeof orders.$inferSelect): RunHistoryOrderOutcome {

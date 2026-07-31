@@ -22,12 +22,14 @@ import {
   type PublicRuntimePolicyResponse,
   type RunHistoryListResponse,
   type RunHistorySummary,
+  runSignalBucketCount,
   type ServerReservationTimingSummary,
 } from "@checkout-surge/contracts";
 import { previewRunConfigSnapshotFixture as configSnapshotFixture } from "@checkout-surge/contracts/testing";
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import AboutPage from "../src/app/about/page.js";
 import AdminPage from "../src/app/admin/page.js";
@@ -449,6 +451,112 @@ describe("admin browser workflows", () => {
 });
 
 describe("watch browser recovery", () => {
+  it("keeps the terminal chart anchored at the first attempt after a long preparation gap", () => {
+    const firstAttemptStartedAt = "2026-06-20T00:01:10.000Z";
+    const elapsed = Array.from({ length: runSignalBucketCount }, (_, index) => (index + 1) * 0.005);
+    const currentRun = demoRunFixture({
+      status: "completed",
+      startedAt: "2026-06-20T00:00:00.000Z",
+      trafficStartedAt: "2026-06-20T00:00:10.000Z",
+      trafficEndedAt: "2026-06-20T00:01:10.100Z",
+      finalizedAt: "2026-06-20T00:01:10.600Z",
+      configSnapshot: {
+        ...configSnapshotFixture(),
+        trafficConfig: {
+          ...configSnapshotFixture().trafficConfig,
+          startDelaySeconds: 15,
+        },
+      },
+    });
+    const markup = renderToStaticMarkup(
+      createElement(OperatorDashboard, {
+        initialRecovery: available(
+          dashboardRecoveryFixture({
+            currentRun,
+            businessOutcome: {
+              acceptedReservations: 1,
+              soldOutRejections: 0,
+              queuedOrders: 0,
+              processingOrders: 0,
+              retryingOrders: 0,
+              confirmedOrders: 1,
+              failedOrders: 0,
+              pendingPersistenceCount: 0,
+              notificationsRecorded: 0,
+            },
+            requestArrivalSummary: {
+              firstAttemptStartedAt,
+              peakArrivalRatePerSecond: 1,
+              peakArrivalWindowSeconds: 0.6,
+              dispatchDurationSeconds: 0,
+              arrivalRateSeries: [{ windowStartedAt: firstAttemptStartedAt, ratePerSecond: 1 }],
+              arrivalWindowCountObserved: 1,
+              arrivalWindowCountRetained: 1,
+              arrivalSeriesLimit: 120,
+            },
+            runSignalTimelineSummary: {
+              window: {
+                anchoredAt: firstAttemptStartedAt,
+                endedAt: "2026-06-20T00:01:10.600Z",
+                bucketCount: runSignalBucketCount,
+                bucketWidthSeconds: 0.005,
+              },
+              inventoryDrain: {
+                startingStock: 1,
+                remainingStock: 0,
+                depletedAt: "2026-06-20T00:01:10.200Z",
+                timeToDepletionSeconds: 0.2,
+                remainingStockSeries: elapsed.map((elapsedSeconds) => ({
+                  elapsedSeconds,
+                  remainingStock: elapsedSeconds < 0.2 ? 1 : 0,
+                })),
+              },
+              queueBacklog: {
+                peakBacklog: 0,
+                peakAtElapsedSeconds: null,
+                backlogDrainedAt: null,
+                drainDurationSeconds: null,
+                drainDurationBoundary: "first_order_queued_to_final_backlog_zero",
+                definition: "accepted_awaiting_first_processing_start",
+                backlogSeries: elapsed.map((elapsedSeconds) => ({
+                  elapsedSeconds,
+                  backlog: 0,
+                })),
+              },
+              confirmationConvergence: {
+                confirmedOrderCount: 1,
+                failedOrderCount: 0,
+                pendingAtCaptureCount: 0,
+                averageLagMs: 200,
+                p95LagMs: 200,
+                maxLagMs: 200,
+                boundary: "reservation_secured_to_order_confirmed",
+                convergenceSeries: elapsed.map((elapsedSeconds) => ({
+                  elapsedSeconds,
+                  cumulativeConfirmedOrderCount: elapsedSeconds < 0.2 ? 0 : 1,
+                  cumulativeSettledOrderCount: elapsedSeconds < 0.2 ? 0 : 1,
+                })),
+              },
+              convergenceDurationSeconds: 0.2,
+            },
+            recoveredAt: "2026-06-20T00:01:10.600Z",
+          }),
+        ),
+      }),
+    );
+
+    expect(markup).toContain("Configured start delay</dt><dd");
+    expect(markup).toContain(">15s</dd>");
+    expect(markup).toContain("Remaining harness preparation</dt><dd");
+    expect(markup).toContain(">45s</dd>");
+    expect(markup).toContain("depleted in 0.2s");
+    expect(markup).toContain(
+      "Shared axis: 0s first checkout attempt · 0.6s terminal timeline boundary",
+    );
+    expect(markup).toContain("<li>0s: 1</li>");
+    expect(markup).not.toContain("60.6s terminal timeline boundary");
+  });
+
   it("requests one recovery per stream lifecycle transition and coalesces simultaneous triggers", async () => {
     const initialOpenRecovery = deferred<Response>();
     const disconnectRecovery = deferred<Response>();
@@ -872,6 +980,7 @@ function dashboardRecoveryFixture(
     transportAttemptCounts: null,
     httpSummary: null,
     requestArrivalSummary: null,
+    runSignalTimelineSummary: null,
     recentCompletionOutcomes: [],
     recoveredAt: "2026-06-20T00:00:10.000Z",
     ...overrides,
@@ -1101,6 +1210,7 @@ function runHistorySummaryFixture(
       capturedAt: "2026-06-20T00:00:10.000Z",
       source: "redis",
     },
+    runSignalTimelineSummary: null,
     capturedAt: "2026-06-20T00:00:10.000Z",
   };
 }
@@ -1146,6 +1256,7 @@ function runHistoryDetailFixture(): PublicRunHistoryDetailResponse {
     },
     notifications: { totalCount: 1 },
     events: { totalCount: 1 },
+    runSignalTimelineSummary: null,
     timestamp: "2026-06-20T00:00:10.000Z",
   };
 }

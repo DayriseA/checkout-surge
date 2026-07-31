@@ -85,6 +85,8 @@ export class K6LiveMetricAggregator {
 
   requestArrivalSummary(): RequestArrivalSummary {
     return {
+      firstAttemptStartedAt:
+        this.firstAttemptAtMs === null ? null : new Date(this.firstAttemptAtMs).toISOString(),
       peakArrivalRatePerSecond: this.peakArrivalRatePerSecond,
       peakArrivalWindowSeconds: this.windowMs / 1_000,
       dispatchDurationSeconds:

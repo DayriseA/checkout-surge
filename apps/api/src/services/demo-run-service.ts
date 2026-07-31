@@ -462,6 +462,7 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
         },
         businessOutcome,
         terminalInventorySnapshot,
+        runSignalTimelineSummary: null,
         allowedCurrentStatuses: ["starting", "active"],
         terminalTrafficStatus: "failed",
       });

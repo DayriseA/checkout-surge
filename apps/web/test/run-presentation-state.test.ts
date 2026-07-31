@@ -253,6 +253,7 @@ function projection(currentRun: DemoRunSnapshot | null): DashboardProjection {
     transportAttemptCounts: null,
     httpSummary: null,
     requestArrivalSummary: null,
+    runSignalTimelineSummary: null,
   };
 }
 

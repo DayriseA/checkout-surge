@@ -22,6 +22,7 @@ import {
   orders,
   publishDashboardProjectionDirtySignal,
   readBusinessOutcomeSummary,
+  readRunSignalTimeline,
 } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { and, eq, inArray } from "drizzle-orm";
@@ -257,6 +258,21 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
         const loadRunDiagnosticsSummary = accountingWarning
           ? appendAccountingWarning(evidence.diagnostics, accountingWarning)
           : evidence.diagnostics;
+        const runSignalTimelineSummary = await readRunSignalTimeline(
+          lockedDb,
+          {
+            saleOfferId: requireSaleOfferId(row.run),
+            runId: row.run.id,
+          },
+          {
+            firstAttemptStartedAt: evidence.delivery.requestArrivalSummary.firstAttemptStartedAt,
+            dispatchDurationSeconds:
+              evidence.delivery.requestArrivalSummary.dispatchDurationSeconds,
+            peakArrivalWindowSeconds:
+              evidence.delivery.requestArrivalSummary.peakArrivalWindowSeconds,
+            capturedAt: now,
+          },
+        );
 
         return {
           run: row.run,
@@ -276,6 +292,7 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
             businessOutcome: latestBusinessOutcome,
             capturedAt: now,
           }),
+          runSignalTimelineSummary,
           allowedCurrentStatuses: ["draining"],
         };
       },

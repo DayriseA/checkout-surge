@@ -77,6 +77,7 @@ CREATE TABLE "demo_run_summaries" (
 	"load_run_diagnostics_summary" jsonb NOT NULL,
 	"business_outcome_summary" jsonb NOT NULL,
 	"terminal_inventory_snapshot" jsonb,
+	"run_signal_timeline_summary" jsonb,
 	"captured_at" timestamp with time zone NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "demo_run_summaries_terminal_status" CHECK ("demo_run_summaries"."status" IN ('completed', 'failed'))

@@ -629,6 +629,7 @@ function runHistoryListResponseFixture(): RunHistoryListResponse {
           capturedAt: "2026-06-20T00:00:10.000Z",
           source: "redis",
         },
+        runSignalTimelineSummary: null,
         capturedAt: "2026-06-20T00:00:10.000Z",
       },
     ],
@@ -725,6 +726,7 @@ function adminRunHistoryDetailResponseFixture(): AdminRunHistoryDetailResponse {
         },
       ],
     },
+    runSignalTimelineSummary: null,
     timestamp: "2026-06-20T00:00:10.000Z",
   };
 }
@@ -797,6 +799,7 @@ function publicRunHistoryDetailResponseFixture(): PublicRunHistoryDetailResponse
     },
     notifications: { totalCount: 1 },
     events: { totalCount: 1 },
+    runSignalTimelineSummary: null,
     timestamp: admin.timestamp,
   };
 }
@@ -1244,6 +1247,7 @@ describe("API gateway routes", () => {
       transportAttemptCounts: null,
       httpSummary: null,
       requestArrivalSummary: null,
+      runSignalTimelineSummary: null,
     };
 
     try {

@@ -188,6 +188,7 @@ describe("demo run finalization service", () => {
     });
 
     await seedDrainingRun({ db, redis: redisClient, trafficDeliveryStatus: "complete" });
+    await setArrivalAnchor(db);
     await db
       .update(demoRunFinalizations)
       .set({
@@ -264,6 +265,15 @@ describe("demo run finalization service", () => {
       capturedAt: "2026-06-20T00:00:10.000Z",
       source: "redis",
     });
+    expect(summaries[0]?.runSignalTimelineSummary).toMatchObject({
+      window: { anchoredAt: "2026-06-20T00:00:01.500Z", bucketCount: 120 },
+      queueBacklog: { peakBacklog: 2 },
+      confirmationConvergence: {
+        confirmedOrderCount: 1,
+        failedOrderCount: 1,
+        pendingAtCaptureCount: 0,
+      },
+    });
     expect(summaries[0]?.httpTimingBreakdownSummary).toEqual({
       ...emptyHttpTimingBreakdownSummary,
       waiting: { averageMs: 10, p95Ms: 20 },
@@ -287,6 +297,9 @@ describe("demo run finalization service", () => {
           acceptedReservations: 2,
           soldOutRejections: 7,
           capturedAt: "2026-06-20T00:00:10.000Z",
+        }),
+        runSignalTimelineSummary: expect.objectContaining({
+          queueBacklog: expect.objectContaining({ peakBacklog: 2 }),
         }),
         allowedCurrentStatuses: ["draining"],
         finalizedAt: new Date("2026-06-20T00:00:10.000Z"),
@@ -1317,6 +1330,7 @@ describe("demo run finalization service", () => {
       configSnapshot: configSnapshotFixture({ drainTimeoutSeconds: 300 }),
       trafficEndedAt: new Date("2026-06-20T00:00:00.000Z"),
     });
+    await setArrivalAnchor(db);
     await db.insert(reservations).values(reservationFixture(ids.reservation1));
     await db.insert(orders).values(orderFixture(ids.order1, ids.reservation1, "queued"));
 
@@ -1324,6 +1338,14 @@ describe("demo run finalization service", () => {
 
     expect(finalized?.status).toBe("failed");
     expect(finalized?.failureReason).toBe("business_drain_timeout");
+    const [summary] = await db
+      .select()
+      .from(demoRunSummaries)
+      .where(eq(demoRunSummaries.runId, ids.run));
+    expect(summary?.runSignalTimelineSummary).toMatchObject({
+      confirmationConvergence: { pendingAtCaptureCount: 1 },
+      convergenceDurationSeconds: null,
+    });
   });
 });
 
@@ -1659,6 +1681,29 @@ async function setAcceptedDeliveryEvidence(
         requestArrivalSummary: emptyRequestArrivalSummary,
         trafficDeliveryStatus,
         notes: [],
+      },
+    })
+    .where(eq(demoRunFinalizations.runId, ids.run));
+}
+
+async function setArrivalAnchor(
+  db: ReturnType<typeof createDatabaseConnection>["db"],
+): Promise<void> {
+  const [row] = await db
+    .select({ trafficDeliverySummary: demoRunFinalizations.trafficDeliverySummary })
+    .from(demoRunFinalizations)
+    .where(eq(demoRunFinalizations.runId, ids.run));
+  const delivery = trafficDeliverySummarySchema.parse(row?.trafficDeliverySummary);
+  await db
+    .update(demoRunFinalizations)
+    .set({
+      trafficDeliverySummary: {
+        ...delivery,
+        requestArrivalSummary: {
+          ...delivery.requestArrivalSummary,
+          firstAttemptStartedAt: "2026-06-20T00:00:01.500Z",
+          dispatchDurationSeconds: 1,
+        },
       },
     })
     .where(eq(demoRunFinalizations.runId, ids.run));

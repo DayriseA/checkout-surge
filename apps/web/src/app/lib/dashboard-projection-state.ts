@@ -1,4 +1,4 @@
-import type { DashboardProjection } from "@checkout-surge/contracts";
+import { arrivalRateSeriesLimit, type DashboardProjection } from "@checkout-surge/contracts";
 import type { BackendRead, CompletedBackendRead } from "./api";
 
 type UnavailableProjectionRead = Extract<
@@ -13,6 +13,18 @@ export interface DashboardProjectionState {
   syncIssue: UnavailableProjectionRead | null;
   isRefreshing: boolean;
   liveProjectionCount: number;
+  signalSamples: RunSignalLiveSample[];
+}
+
+export interface RunSignalLiveSample {
+  recoveredAt: string;
+  arrivalRatePerSecond: number | null;
+  remainingStock: number | null;
+  queueBacklog: number | null;
+  confirmedOrderCount: number;
+  settledOrderCount: number;
+  failedOrderCount: number;
+  pendingOrderCount: number;
 }
 
 export interface RequestSurgeProjection {
@@ -83,6 +95,7 @@ export function createDashboardProjectionState(
     syncIssue: null,
     isRefreshing: false,
     liveProjectionCount: 0,
+    signalSamples: acceptedProjection?.scope ? [toRunSignalLiveSample(acceptedProjection)] : [],
   };
 }
 
@@ -170,6 +183,35 @@ function acceptProjection(
     syncIssue: null,
     isRefreshing: false,
     liveProjectionCount: state.liveProjectionCount + (live ? 1 : 0),
+    signalSamples: appendSignalSample(state, candidate),
+  };
+}
+
+function appendSignalSample(
+  state: DashboardProjectionState,
+  candidate: DashboardProjection,
+): RunSignalLiveSample[] {
+  if (candidate.scope === null) return [];
+  const retained =
+    state.acceptedProjection?.scopeId === candidate.scopeId ? state.signalSamples : [];
+  return [...retained, toRunSignalLiveSample(candidate)].slice(-arrivalRateSeriesLimit);
+}
+
+function toRunSignalLiveSample(projection: DashboardProjection): RunSignalLiveSample {
+  const outcome = projection.businessOutcome;
+  const queue = projection.queue;
+  const pendingOrderCount = outcome ? outcome.queuedOrders + outcome.processingOrders : 0;
+  return {
+    recoveredAt: projection.recoveredAt,
+    arrivalRatePerSecond:
+      findLatestMetric(projection, "traffic.request_arrival_rate", "requests_per_second")?.value ??
+      null,
+    remainingStock: projection.inventory?.remainingStock ?? null,
+    queueBacklog: queue?.depth ?? null,
+    confirmedOrderCount: outcome?.confirmedOrders ?? 0,
+    settledOrderCount: (outcome?.confirmedOrders ?? 0) + (outcome?.failedOrders ?? 0),
+    failedOrderCount: outcome?.failedOrders ?? 0,
+    pendingOrderCount,
   };
 }
 

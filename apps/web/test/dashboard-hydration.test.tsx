@@ -68,6 +68,9 @@ describe("dashboard hydration", () => {
         initialRecovery: { status: "available", data: recovery, httpStatus: 200 },
       }),
     );
+    expect(serverMarkup).toContain("Not yet available");
+    expect(serverMarkup).not.toContain("Peak 0");
+    expect(serverMarkup).not.toContain("0 remaining");
 
     const next = document.createElement("div");
     next.innerHTML = serverMarkup;
@@ -116,6 +119,7 @@ function dashboardRecoveryFixture(): DashboardProjection {
     transportAttemptCounts: null,
     httpSummary: null,
     requestArrivalSummary: null,
+    runSignalTimelineSummary: null,
     recentCompletionOutcomes: [],
     recoveredAt: "2026-06-20T00:00:10.000Z",
   };

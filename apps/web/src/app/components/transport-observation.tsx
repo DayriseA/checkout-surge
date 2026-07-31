@@ -113,7 +113,9 @@ export function TransportObservationSection({
   httpTimingBreakdownSummary,
   httpSummary,
   serverReservationTimingSummary,
+  startDelaySeconds,
   surface,
+  trafficStartedAt,
 }: {
   arrivalSummary: RequestArrivalSummary;
   counts: TransportAttemptCounts;
@@ -121,9 +123,12 @@ export function TransportObservationSection({
   httpTimingBreakdownSummary?: HttpTimingBreakdownSummary;
   httpSummary: TrafficHttpSummary;
   serverReservationTimingSummary: ServerReservationTimingSummary;
+  startDelaySeconds?: number;
   surface: Extract<ObservationSurface, "list" | "detail">;
+  trafficStartedAt?: string;
 }) {
   const observation = deriveTransportObservation(counts, httpSummary.transportFailures);
+  const preparation = deriveHarnessPreparation(arrivalSummary, trafficStartedAt, startDelaySeconds);
 
   return (
     <section className="min-w-0 border-t border-border pt-3">
@@ -139,6 +144,18 @@ export function TransportObservationSection({
       </div>
       <CoverageMeter observation={observation} />
       <dl className="m-0 mt-3 grid gap-2">
+        {preparation ? (
+          <>
+            <ObservationRow
+              label="Configured start delay"
+              value={formatDuration(preparation.configuredDelaySeconds)}
+            />
+            <ObservationRow
+              label="Remaining harness preparation"
+              value={formatDuration(preparation.remainingPreparationSeconds)}
+            />
+          </>
+        ) : null}
         <ObservationRow
           label={transportObservationLabels.planned}
           value={formatNumber(counts.plannedRequests)}
@@ -187,6 +204,23 @@ export function TransportObservationSection({
       <SurvivorshipWarning observation={observation} surface={surface} />
     </section>
   );
+}
+
+export function deriveHarnessPreparation(
+  arrivalSummary: RequestArrivalSummary,
+  trafficStartedAt: string | undefined,
+  startDelaySeconds: number | undefined,
+): { configuredDelaySeconds: number; remainingPreparationSeconds: number } | null {
+  if (!arrivalSummary.firstAttemptStartedAt || !trafficStartedAt) return null;
+  const totalSeconds = Math.max(
+    0,
+    (Date.parse(arrivalSummary.firstAttemptStartedAt) - Date.parse(trafficStartedAt)) / 1_000,
+  );
+  const configuredDelaySeconds = Math.min(totalSeconds, startDelaySeconds ?? 0);
+  return {
+    configuredDelaySeconds,
+    remainingPreparationSeconds: Math.max(0, totalSeconds - configuredDelaySeconds),
+  };
 }
 
 function FastReservationEvidence({

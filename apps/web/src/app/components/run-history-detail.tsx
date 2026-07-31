@@ -2,7 +2,9 @@ import type {
   AdminRunHistoryDetailResponse,
   PublicRunHistoryDetailResponse,
 } from "@checkout-surge/contracts";
+import { deriveOversoldUnits } from "@checkout-surge/contracts";
 import { deriveTerminalSummaryPresentation } from "../lib/presentation/run-presentation-state";
+import { GoldSignals } from "./gold-signals";
 import { RunDiagnostics } from "./run-diagnostics";
 import { StatusPill } from "./status-pill";
 import { systemOfRecordLens, TransportObservationSection } from "./transport-observation";
@@ -62,7 +64,9 @@ export function AdminRunHistoryDetail({ detail }: RunHistoryDetailProps) {
             httpTimingBreakdownSummary={detail.httpTimingBreakdownSummary}
             httpSummary={summary.httpSummary}
             serverReservationTimingSummary={summary.serverReservationTimingSummary}
+            startDelaySeconds={run.configSnapshot.trafficConfig.startDelaySeconds}
             surface="detail"
+            {...(run.trafficStartedAt ? { trafficStartedAt: run.trafficStartedAt } : {})}
           />
           <FactList
             caption={systemOfRecordLens.caption}
@@ -79,6 +83,17 @@ export function AdminRunHistoryDetail({ detail }: RunHistoryDetailProps) {
           />
         </div>
       </section>
+
+      <GoldSignals
+        acceptedReservations={summary.businessOutcomeSummary.acceptedReservations}
+        arrivalSummary={summary.trafficDeliverySummary.requestArrivalSummary}
+        oversoldUnits={
+          summary.terminalInventorySnapshot
+            ? deriveOversoldUnits(summary.terminalInventorySnapshot)
+            : 0
+        }
+        terminalSummary={detail.runSignalTimelineSummary}
+      />
 
       <RunDiagnostics summary={detail.loadRunDiagnosticsSummary} />
 
@@ -349,7 +364,9 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
             httpTimingBreakdownSummary={detail.httpTimingBreakdownSummary}
             httpSummary={summary.httpSummary}
             serverReservationTimingSummary={summary.serverReservationTimingSummary}
+            startDelaySeconds={run.configSnapshot.trafficConfig.startDelaySeconds}
             surface="detail"
+            {...(run.trafficStartedAt ? { trafficStartedAt: run.trafficStartedAt } : {})}
           />
           <FactList
             caption="what the API recorded"
@@ -376,6 +393,16 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
           />
         </div>
       </section>
+      <GoldSignals
+        acceptedReservations={summary.businessOutcomeSummary.acceptedReservations}
+        arrivalSummary={summary.trafficDeliverySummary.requestArrivalSummary}
+        oversoldUnits={
+          summary.terminalInventorySnapshot
+            ? deriveOversoldUnits(summary.terminalInventorySnapshot)
+            : 0
+        }
+        terminalSummary={detail.runSignalTimelineSummary}
+      />
       <section className="rounded-lg border border-border bg-surface p-4">
         <h2 className="m-0 text-base font-bold leading-tight text-ink">Public activity totals</h2>
         <div className="mt-3 grid grid-cols-2 gap-4 max-[700px]:grid-cols-1">

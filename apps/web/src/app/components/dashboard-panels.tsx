@@ -10,6 +10,7 @@ import {
 } from "../lib/presentation/run-presentation-state";
 import { StatusPill } from "./status-pill";
 import {
+  deriveHarnessPreparation,
   RequestArrivalRateSeries,
   systemOfRecordLens,
   TransportObservationPanelBlock,
@@ -252,6 +253,13 @@ export function RequestSurgePanel({
   const transportAttemptCounts = data?.transportAttemptCounts ?? null;
   const httpSummary = data?.httpSummary ?? null;
   const requestSurge = data ? projectRequestSurge(data) : null;
+  const preparation = data?.requestArrivalSummary
+    ? deriveHarnessPreparation(
+        data.requestArrivalSummary,
+        data.currentRun?.trafficStartedAt,
+        data.currentRun?.configSnapshot.trafficConfig.startDelaySeconds,
+      )
+    : null;
   const latestMetric = data?.recentMetrics.at(-1) ?? null;
   const latencyMetric = data
     ? findLatestMetric(data.recentMetrics, (name) => name === "traffic.latency")
@@ -306,6 +314,14 @@ export function RequestSurgePanel({
                 "responses/s",
                 "not yet available",
               )}
+            />
+            <Fact
+              label="Configured start delay"
+              value={formatSeconds(preparation?.configuredDelaySeconds, "not yet available")}
+            />
+            <Fact
+              label="Remaining harness preparation"
+              value={formatSeconds(preparation?.remainingPreparationSeconds, "not yet available")}
             />
             <Fact
               label="Window mean HTTP latency"

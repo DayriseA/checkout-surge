@@ -178,6 +178,28 @@ describe("transport observation section", () => {
     expect(markup).not.toContain("the true p95 is higher");
   });
 
+  it("separates configured delay from the remaining harness preparation", () => {
+    const markup = renderToStaticMarkup(
+      createElement(TransportObservationSection, {
+        arrivalSummary: {
+          ...emptyRequestArrivalSummary,
+          firstAttemptStartedAt: "2026-06-20T12:00:10.000Z",
+        },
+        counts: counts({ completedRequests: 10 }),
+        ...timingProps(10),
+        httpSummary: httpSummary(),
+        startDelaySeconds: 3,
+        surface: "detail",
+        trafficStartedAt: "2026-06-20T12:00:00.000Z",
+      }),
+    );
+
+    expect(markup).toContain("Configured start delay");
+    expect(markup).toContain(">3s<");
+    expect(markup).toContain("Remaining harness preparation");
+    expect(markup).toContain(">7s<");
+  });
+
   it("discloses terminal arrival-series storage and display truncation", () => {
     const arrivalRateSeries = Array.from({ length: 15 }, (_, index) => ({
       windowStartedAt: new Date(Date.UTC(2026, 5, 20, 12, 0, index)).toISOString(),
@@ -186,6 +208,7 @@ describe("transport observation section", () => {
     const markup = renderToStaticMarkup(
       createElement(TransportObservationSection, {
         arrivalSummary: {
+          firstAttemptStartedAt: "2026-06-20T12:00:01.000Z",
           peakArrivalRatePerSecond: 20,
           peakArrivalWindowSeconds: 1,
           dispatchDurationSeconds: 1,

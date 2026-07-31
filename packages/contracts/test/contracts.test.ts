@@ -277,6 +277,7 @@ describe("shared lifecycle vocabulary", () => {
 describe("request-arrival evidence", () => {
   it("round-trips a bounded series and rejects inconsistent truncation metadata", () => {
     const summary = {
+      firstAttemptStartedAt: timestamp,
       peakArrivalRatePerSecond: 10,
       peakArrivalWindowSeconds: 1,
       dispatchDurationSeconds: 0.25,
@@ -1941,6 +1942,7 @@ describe("buy and dashboard contracts", () => {
       transportAttemptCounts: null,
       httpSummary: null,
       requestArrivalSummary: null,
+      runSignalTimelineSummary: null,
       recoveredAt: timestamp,
     };
 
@@ -1973,6 +1975,7 @@ describe("buy and dashboard contracts", () => {
       transportAttemptCounts: null,
       httpSummary: null,
       requestArrivalSummary: null,
+      runSignalTimelineSummary: null,
       recoveredAt: timestamp,
     };
 
@@ -2212,6 +2215,7 @@ describe("public runtime policy contract", () => {
             capturedAt: timestamp,
             source: "redis",
           },
+          runSignalTimelineSummary: null,
           capturedAt: timestamp,
         },
       ],
@@ -2335,6 +2339,7 @@ describe("public runtime policy contract", () => {
       },
       notifications: { totalCount: 1 },
       events: { totalCount: 1 },
+      runSignalTimelineSummary: null,
       timestamp,
     });
     expect(detail.summary.runId).toBe(runId);
@@ -2415,6 +2420,7 @@ describe("public runtime policy contract", () => {
             },
           ],
         },
+        runSignalTimelineSummary: null,
         timestamp,
       }),
     ).not.toThrow();

@@ -220,6 +220,17 @@ Dashboard traffic metrics also use:
 
 `traffic.request_arrival_rate` counts `checkout_attempts_started` points in aligned one-second producer event-time windows. The load script increments that counter immediately before `http.post`, so this is the authoritative public arrival signal. `traffic.attempts_dispatched` is a bounded cumulative progress sample with unit `requests`, emitted while dispatch is still active. `traffic.response_completion_rate` separately counts completed HTTP responses from `http_reqs`; it is never a fallback for request arrival. Arrival and completion rates use `requests_per_second`. `traffic.latency` is the mean in `ms`, and `traffic.failure_rate` is the fraction of valid HTTP failure observations in the same one-second window with unit `ratio`.
 
+### Four Gold Signals
+
+The public causal timeline uses exactly four signals on one elapsed-time axis:
+
+- Request arrival is `checkout_attempts_started` in fixed one-second producer event-time windows. The first attempt is time zero; harness preparation and configured start delay are reported separately.
+- Inventory drain is starting stock minus the quantity of secured reservations. Its headline preserves starting stock, remaining stock, depletion time, and the derived oversell invariant.
+- Processing backlog is the durable count of accepted orders awaiting their first processing start: orders with `queuedAt` at or before the observation boundary minus orders with `processingAt` at or before it. `peakAtElapsedSeconds` is relative to the first checkout attempt, while `drainDurationSeconds` spans the first queued order through the final return to backlog zero and carries the `first_order_queued_to_final_backlog_zero` boundary discriminator. BullMQ depth is only a live approximation because it also includes waiting, prioritized, paused, and delayed jobs. ERP retries can re-enter BullMQ after `processingAt` is set, so retrying job count is shown beside the durable backlog rather than folded into it.
+- Confirmation convergence is cumulative confirmed orders, with cumulative settled outcomes shown separately when failures exist. Reservation-to-confirmation lag remains `orders.confirmedAt − reservations.securedAt` over confirmed orders only and is always accompanied by failed and pending counts.
+
+PostgreSQL terminal derivation retains 120 buckets from the first checkout attempt through a terminal timeline boundary: the later of checkout dispatch completion or the latest retained reservation/order activity. If neither boundary is strictly after the first attempt, the producer arrival-window duration supplies the minimum terminal span. That boundary is not labelled as a settled outcome because a partial run may still have pending work, and dispatch can end after all accepted work has settled. The derived bucket width is stored. Exact backlog peaks are derived from the ordered event stream before bucketing, so a peak that rises and drains inside one bucket is not lost. This fixed-count terminal policy intentionally differs from request arrival’s fixed one-second producer windows: PostgreSQL can re-bucket durable rows after completion, while producer-emitted arrival evidence cannot. A live browser buffer instead measures elapsed time from its first retained projection and restarts on reload; it does not claim that its local zero is the first checkout attempt.
+
 ---
 
 ## Summary

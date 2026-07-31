@@ -8,6 +8,7 @@ import type {
   InventoryConfig,
   PublicRuntimePolicyMutable as PublicRuntimePolicyMutableContract,
   RealLoadRunDiagnosticsSummary,
+  RunSignalTimelineSummary,
   ServerReservationTimingSummary,
   TerminalInventorySnapshot,
   TrafficConfig,
@@ -619,6 +620,9 @@ export const demoRunSummaries = pgTable(
     terminalInventorySnapshot: jsonb(
       "terminal_inventory_snapshot",
     ).$type<TerminalInventorySnapshot>(),
+    runSignalTimelineSummary: jsonb(
+      "run_signal_timeline_summary",
+    ).$type<RunSignalTimelineSummary>(),
     capturedAt: timestamp("captured_at", { withTimezone: true }).notNull(),
     createdAt: createdAt(),
   },

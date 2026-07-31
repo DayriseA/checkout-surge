@@ -61,6 +61,7 @@ describe("dashboard projection state", () => {
           unstartedRequests: 0,
         },
         requestArrivalSummary: {
+          firstAttemptStartedAt: "2026-06-20T00:00:01.000Z",
           peakArrivalRatePerSecond: 500,
           peakArrivalWindowSeconds: 1,
           dispatchDurationSeconds: 0.4,
@@ -117,6 +118,81 @@ describe("dashboard projection state", () => {
     state = receive(state, higher);
     expect(state.recovery).toEqual(available(higher));
     expect(state.liveProjectionCount).toBe(1);
+  });
+
+  it("caps signal samples, drops the oldest, and resets on a newer run scope", () => {
+    let state = createDashboardProjectionState(available(runProjection({ revision: 1 })));
+    for (let revision = 2; revision <= 122; revision += 1) {
+      state = receive(
+        state,
+        runProjection({
+          revision,
+          recoveredAt: new Date(
+            Date.parse("2026-06-20T00:00:00.000Z") + revision * 1_000,
+          ).toISOString(),
+        }),
+      );
+    }
+
+    expect(state.signalSamples).toHaveLength(120);
+    expect(state.signalSamples[0]?.recoveredAt).toBe("2026-06-20T00:00:03.000Z");
+
+    const newerRun = activeRun({
+      runId: "22222222-2222-4222-8222-222222222222",
+      saleOfferId: "33333333-3333-4333-8333-333333333333",
+      startedAt: "2026-06-20T00:10:00.000Z",
+      trafficStartedAt: "2026-06-20T00:10:00.000Z",
+    });
+    state = receive(
+      state,
+      runProjection({
+        revision: 1,
+        recoveredAt: "2026-06-20T00:10:01.000Z",
+        currentRun: newerRun,
+      }),
+    );
+    expect(state.signalSamples).toEqual([
+      expect.objectContaining({ recoveredAt: "2026-06-20T00:10:01.000Z" }),
+    ]);
+  });
+
+  it("buffers the authoritative queue depth without redefining it from component counts", () => {
+    const state = createDashboardProjectionState(
+      available(
+        runProjection({
+          queue: {
+            name: "orders:process",
+            connectivity: "reachable",
+            depth: 9,
+            counts: {
+              waiting: 1,
+              prioritized: 0,
+              paused: 0,
+              delayed: 0,
+              active: 8,
+              failed: 0,
+            },
+            oldestWaitingAgeSeconds: 1,
+            retryPressure: {
+              inspectedJobCount: 9,
+              inspectionLimit: 100,
+              retryingJobCount: 0,
+              retryAttemptCount: 0,
+              inspectionTruncated: false,
+            },
+            failedJobs: {
+              totalCount: 0,
+              recent: [],
+              inspectionLimit: 20,
+              inspectionTruncated: false,
+            },
+            updatedAt: "2026-06-20T00:00:01.000Z",
+          },
+        }),
+      ),
+    );
+
+    expect(state.signalSamples[0]?.queueBacklog).toBe(9);
   });
 
   it("accepts the C1 idle recovery overlap only after the committed projection", () => {
@@ -289,6 +365,7 @@ function idleProjection(overrides: Partial<DashboardProjection> = {}): Dashboard
     transportAttemptCounts: null,
     httpSummary: null,
     requestArrivalSummary: null,
+    runSignalTimelineSummary: null,
     recentCompletionOutcomes: [],
     recoveredAt: "2026-06-20T00:00:10.000Z",
     ...overrides,

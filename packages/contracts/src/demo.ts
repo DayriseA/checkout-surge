@@ -41,6 +41,7 @@ import {
   collectPublicRuntimePolicyMutableViolations,
   collectPublicRuntimePolicyViolations,
 } from "./public-runtime-policy-validation.js";
+import { runSignalTimelineHeadlineSchema, runSignalTimelineSummarySchema } from "./run-signals.js";
 import { transportAttemptCountsSchema } from "./traffic-transport-counts.js";
 
 export const publicPresetListPath = "/demo/presets/public" as const;
@@ -348,6 +349,7 @@ export const runHistorySummarySchema = demoRunSummaryShapeSchema
     fastReservationTargetEvaluation: fastReservationTargetEvaluationSchema,
     businessOutcomeSummary: businessOutcomeSummarySchema,
     terminalInventorySnapshot: terminalInventorySnapshotSchema.optional(),
+    runSignalTimelineSummary: runSignalTimelineHeadlineSchema.nullable(),
   })
   .strict();
 export type RunHistorySummary = z.infer<typeof runHistorySummarySchema>;
@@ -470,6 +472,7 @@ export const adminRunHistoryDetailResponseSchema = z
         records: z.array(runHistoryEventTimelineEntrySchema),
       })
       .strict(),
+    runSignalTimelineSummary: runSignalTimelineSummarySchema.nullable(),
     timestamp: isoTimestampSchema,
   })
   .strict();
@@ -498,6 +501,7 @@ export const publicRunHistorySummarySchema = z
     fastReservationTargetEvaluation: fastReservationTargetEvaluationSchema,
     businessOutcomeSummary: businessOutcomeSummarySchema,
     terminalInventorySnapshot: publicTerminalInventorySnapshotSchema.optional(),
+    runSignalTimelineSummary: runSignalTimelineHeadlineSchema.nullable(),
     capturedAt: isoTimestampSchema,
   })
   .strict();
@@ -553,6 +557,7 @@ export const publicRunHistoryDetailResponseSchema = z
       .strict(),
     notifications: z.object({ totalCount: nonnegativeIntegerSchema }).strict(),
     events: z.object({ totalCount: nonnegativeIntegerSchema }).strict(),
+    runSignalTimelineSummary: runSignalTimelineSummarySchema.nullable(),
     timestamp: isoTimestampSchema,
   })
   .strict();

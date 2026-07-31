@@ -563,6 +563,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "run_signal_timeline_summary": {
+          "name": "run_signal_timeline_summary",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
         "captured_at": {
           "name": "captured_at",
           "type": "timestamp with time zone",

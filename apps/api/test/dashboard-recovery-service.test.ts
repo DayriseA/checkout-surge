@@ -10,6 +10,7 @@ import {
   emptyRequestArrivalSummary,
   type InventoryStatus,
   type QueueStatus,
+  runSignalBucketCount,
   type TransportAttemptCounts,
 } from "@checkout-surge/contracts";
 import { previewRunConfigSnapshotFixture as configSnapshot } from "@checkout-surge/contracts/testing";
@@ -18,6 +19,7 @@ import {
   createDatabaseConnection,
   demoPresets,
   demoRunFinalizations,
+  demoRunSummaries,
   demoRuns,
   products,
   saleOffers,
@@ -86,21 +88,23 @@ describe("PostgresDashboardRecoveryContextReader integration", () => {
     ).resolves.toEqual({ currentRun: null, saleOfferId: null });
   });
 
-  it("projects canonical transport accounting from persisted completion evidence", async () => {
+  it("recovers transport accounting and the joined terminal signal timeline", async () => {
     if (!connection) throw new Error("Test database connection was not initialized.");
     const db = connection.db;
+    const terminalStartedAt = new Date("2026-07-14T11:58:00.000Z");
     await db.insert(demoRuns).values({
       id: runId,
       presetId: "33333333-3333-4333-8333-333333333333",
       presetName: "Preview 1k",
       operatorMode: "public",
-      status: "draining",
+      status: "completed",
       trafficStatus: "succeeded",
       saleOfferId,
       configSnapshot: configSnapshot(),
-      startedAt: now,
-      trafficStartedAt: now,
+      startedAt: terminalStartedAt,
+      trafficStartedAt: terminalStartedAt,
       trafficEndedAt: now,
+      finalizedAt: now,
       createdAt: now,
       updatedAt: now,
     });
@@ -142,6 +146,24 @@ describe("PostgresDashboardRecoveryContextReader integration", () => {
       createdAt: now,
       updatedAt: now,
     });
+    const runSignalTimelineSummary = terminalRunSignalTimelineFixture();
+    const [finalizationRow] = await db.select().from(demoRunFinalizations);
+    if (!finalizationRow) throw new Error("Expected persisted completion evidence.");
+    await db.insert(demoRunSummaries).values({
+      runId,
+      presetName: "Preview 1k",
+      status: "completed",
+      startedAt: terminalStartedAt,
+      endedAt: now,
+      transportAttemptCounts: finalizationRow.transportAttemptCounts,
+      httpSummary: finalizationRow.httpSummary,
+      trafficDeliverySummary: finalizationRow.trafficDeliverySummary,
+      httpTimingBreakdownSummary: finalizationRow.httpTimingBreakdownSummary,
+      loadRunDiagnosticsSummary: finalizationRow.loadRunDiagnosticsSummary,
+      businessOutcomeSummary: businessOutcomeFixture(),
+      runSignalTimelineSummary,
+      capturedAt: now,
+    });
 
     const reader = new PostgresDashboardTransportObservationReader(db);
 
@@ -164,6 +186,7 @@ describe("PostgresDashboardRecoveryContextReader integration", () => {
       persistedTrafficDeliverySummary: expect.objectContaining({
         requestArrivalSummary: emptyRequestArrivalSummary,
       }),
+      runSignalTimelineSummary,
     });
     await expect(reader.read("99999999-9999-4999-8999-999999999999")).resolves.toBeNull();
   });
@@ -763,6 +786,7 @@ function serviceHarness(
                 trafficDeliveryStatus: options.trafficDeliveryStatus ?? "complete",
                 notes: [],
               },
+              runSignalTimelineSummary: null,
             }
           : null,
       );
@@ -824,6 +848,55 @@ function dashboardHttpSummaryFixture() {
     transportFailures: 0,
     unexpectedResponses: 0,
     failureRate: 0,
+  };
+}
+
+function terminalRunSignalTimelineFixture() {
+  const elapsed = Array.from({ length: runSignalBucketCount }, (_, index) => index + 1);
+  return {
+    window: {
+      anchoredAt: "2026-07-14T11:58:00.000Z",
+      endedAt: now.toISOString(),
+      bucketCount: runSignalBucketCount,
+      bucketWidthSeconds: 1,
+    },
+    inventoryDrain: {
+      startingStock: 10,
+      remainingStock: 0,
+      depletedAt: "2026-07-14T11:58:05.000Z",
+      timeToDepletionSeconds: 5,
+      remainingStockSeries: elapsed.map((elapsedSeconds) => ({
+        elapsedSeconds,
+        remainingStock: Math.max(0, 10 - elapsedSeconds),
+      })),
+    },
+    queueBacklog: {
+      peakBacklog: 4,
+      peakAtElapsedSeconds: 2,
+      backlogDrainedAt: "2026-07-14T11:58:10.000Z",
+      drainDurationSeconds: 9,
+      drainDurationBoundary: "first_order_queued_to_final_backlog_zero" as const,
+      definition: "accepted_awaiting_first_processing_start" as const,
+      backlogSeries: elapsed.map((elapsedSeconds) => ({
+        elapsedSeconds,
+        backlog: elapsedSeconds < 5 ? Math.min(4, elapsedSeconds) : 0,
+      })),
+    },
+    confirmationConvergence: {
+      confirmedOrderCount: 10,
+      failedOrderCount: 0,
+      pendingAtCaptureCount: 0,
+      averageLagMs: 2_000,
+      p95LagMs: 3_000,
+      maxLagMs: 4_000,
+      boundary: "reservation_secured_to_order_confirmed" as const,
+      convergenceSeries: elapsed.map((elapsedSeconds) => ({
+        elapsedSeconds,
+        cumulativeConfirmedOrderCount: Math.min(10, elapsedSeconds),
+        cumulativeSettledOrderCount: Math.min(10, elapsedSeconds),
+      })),
+    },
+    convergenceDurationSeconds: 118,
   };
 }
 

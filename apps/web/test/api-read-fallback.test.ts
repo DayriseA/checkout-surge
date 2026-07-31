@@ -117,6 +117,7 @@ describe("dashboard backend API reads", () => {
               capturedAt: "2026-06-20T00:00:10.000Z",
               source: "redis",
             },
+            runSignalTimelineSummary: null,
             capturedAt: "2026-06-20T00:00:10.000Z",
           },
         ],
@@ -309,6 +310,7 @@ function runHistoryDetailFixture() {
         capturedAt: "2026-06-20T00:00:10.000Z",
         source: "redis",
       },
+      runSignalTimelineSummary: null,
       capturedAt: "2026-06-20T00:00:10.000Z",
     },
     run: {
@@ -377,6 +379,7 @@ function runHistoryDetailFixture() {
     erpAttempts: { totalCount: 0, limit: 20, truncated: false, records: [] },
     notifications: { totalCount: 0, limit: 20, truncated: false, records: [] },
     eventTimeline: { totalCount: 0, limit: 20, truncated: false, records: [] },
+    runSignalTimelineSummary: null,
     timestamp: "2026-06-20T00:00:10.000Z",
   };
   const { id: _id, terminalInventorySnapshot, ...summary } = admin.summary;
@@ -403,6 +406,7 @@ function runHistoryDetailFixture() {
     },
     notifications: { totalCount: 0 },
     events: { totalCount: 0 },
+    runSignalTimelineSummary: null,
     timestamp: admin.timestamp,
   };
 }

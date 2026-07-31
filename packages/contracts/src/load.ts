@@ -303,6 +303,7 @@ export const arrivalRateSeriesLimit = 120 as const;
 
 export const requestArrivalSummarySchema = z
   .object({
+    firstAttemptStartedAt: isoTimestampSchema.nullable(),
     peakArrivalRatePerSecond: nonnegativeNumberSchema,
     peakArrivalWindowSeconds: z.number().positive().finite(),
     dispatchDurationSeconds: nonnegativeNumberSchema,
@@ -347,6 +348,7 @@ export const requestArrivalSummarySchema = z
 export type RequestArrivalSummary = z.infer<typeof requestArrivalSummarySchema>;
 
 export const emptyRequestArrivalSummary: RequestArrivalSummary = {
+  firstAttemptStartedAt: null,
   peakArrivalRatePerSecond: 0,
   peakArrivalWindowSeconds: 1,
   dispatchDurationSeconds: 0,

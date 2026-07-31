@@ -702,6 +702,7 @@ function activeProjection() {
     transportAttemptCounts: null,
     httpSummary: null,
     requestArrivalSummary: null,
+    runSignalTimelineSummary: null,
   };
 }
 

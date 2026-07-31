@@ -1,4 +1,5 @@
 import {
+  runSignalTimelineSummarySchema,
   serverReservationTimingSummarySchema,
   trafficDeliverySummarySchema,
   trafficHttpSummarySchema,
@@ -208,6 +209,10 @@ export class PostgresTerminalDemoRunSummaryWriter implements TerminalDemoRunWrit
       loadRunDiagnosticsSummary: input.loadRunDiagnosticsSummary,
       businessOutcomeSummary: input.businessOutcome,
       terminalInventorySnapshot: input.terminalInventorySnapshot,
+      runSignalTimelineSummary:
+        input.runSignalTimelineSummary === null
+          ? null
+          : runSignalTimelineSummarySchema.parse(input.runSignalTimelineSummary),
       capturedAt,
       createdAt: capturedAt,
     });

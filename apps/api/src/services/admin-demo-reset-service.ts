@@ -249,6 +249,7 @@ export class AdminDemoResetService implements AdminDemoResetWorkflow {
         },
         businessOutcome,
         terminalInventorySnapshot,
+        runSignalTimelineSummary: null,
         allowedCurrentStatuses: ["failed"],
         terminalTrafficStatus: "failed",
       });

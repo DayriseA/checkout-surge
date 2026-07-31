@@ -136,6 +136,7 @@ function recoveryFixture() {
     transportAttemptCounts: null,
     httpSummary: null,
     requestArrivalSummary: null,
+    runSignalTimelineSummary: null,
     recentMetrics: [],
     recentCompletionOutcomes: [],
   };

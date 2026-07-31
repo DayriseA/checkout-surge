@@ -84,72 +84,6 @@ describe("Phase 6 projection dashboard", () => {
     );
   });
 
-  it("presents all four gold signals and producer freshness from one projection", () => {
-    const recovery = available(projectionFixture());
-    const traffic = renderToStaticMarkup(
-      createElement(RequestSurgePanel, {
-        recovery,
-        liveProjectionCount: 3,
-        freshness: liveFreshness,
-      }),
-    );
-    const inventory = renderToStaticMarkup(
-      createElement(InventoryDrainPanel, {
-        recovery,
-        presentation: activePresentation,
-        freshness: liveFreshness,
-      }),
-    );
-    const queue = renderToStaticMarkup(
-      createElement(QueuePressurePanel, {
-        recovery,
-        presentation: activePresentation,
-        freshness: liveFreshness,
-      }),
-    );
-    const erp = renderToStaticMarkup(
-      createElement(ErpHealthPanel, {
-        recovery,
-        presentation: activePresentation,
-        freshness: liveFreshness,
-      }),
-    );
-    const lag = renderToStaticMarkup(
-      createElement(ConsistencyLagPanel, {
-        recovery,
-        presentation: activePresentation,
-        freshness: liveFreshness,
-      }),
-    );
-
-    expect(traffic).toContain("Peak request arrival rate (1-second windows)");
-    expect(traffic).toContain("1,000 attempts/s");
-    expect(traffic).not.toContain("12.5 attempts/s");
-    expect(traffic).toContain("Attempts dispatched");
-    expect(traffic).toContain("Dispatch duration");
-    expect(traffic).toContain("Response completion rate");
-    expect(traffic).toContain("Request arrival time series");
-    expect(traffic).toContain("1,000 attempts/s");
-    expect(traffic).toContain("Peak reservation rate (1-second windows, trailing 60s)");
-    expect(traffic).toContain("88 reservations/s");
-    expect(traffic).toContain("Window mean HTTP latency");
-    expect(traffic).toContain("Window HTTP failure rate");
-    expect(traffic).toContain("25%");
-    expect(traffic).toContain("Load generator");
-    expect(traffic).toContain("Planned attempts");
-    expect(traffic).toContain("1,000");
-    // 850 of 900 dispatched attempts recorded a reply, and 100 were never sent.
-    expect(traffic).toContain("94% of dispatched attempts recorded a reply");
-    expect(traffic).toContain("generator shut down before the reply arrived");
-    expect(traffic).toContain("scenario window closed before these were sent");
-    expect(traffic).toContain("Reply-dependent outcomes and latency cover 850 of 1,000 attempts.");
-    expect(inventory).toContain("Stock last changed");
-    expect(inventory).toContain("Stock observed");
-    expect(queue).toContain("Queue inspected");
-    expect(erp).toContain("Failure threshold");
-    expect(lag).toContain("p95 confirmed");
-  });
-
   it.each([
     ["connecting", "connecting to live updates", "connecting", "bg-surface-muted"],
     ["unsupported", "live updates unsupported", "live updates unsupported", "bg-surface-muted"],
@@ -169,6 +103,54 @@ describe("Phase 6 projection dashboard", () => {
     );
     expect(markup).not.toContain("disconnected");
     expect(markup).not.toContain("last known values");
+  });
+
+  it("renders the request panel's configured delay and remaining harness preparation", () => {
+    const projection = projectionFixture();
+    if (projection.currentRun?.status !== "active" || !projection.requestArrivalSummary) {
+      throw new Error("Expected a run with terminal arrival evidence.");
+    }
+    const currentRun = projection.currentRun;
+    projection.currentRun = {
+      ...currentRun,
+      configSnapshot: {
+        ...currentRun.configSnapshot,
+        trafficConfig: {
+          ...currentRun.configSnapshot.trafficConfig,
+          startDelaySeconds: 3,
+        },
+      },
+      trafficStartedAt: "2026-06-20T00:00:00.000Z",
+    };
+    projection.requestArrivalSummary = {
+      ...projection.requestArrivalSummary,
+      firstAttemptStartedAt: "2026-06-20T00:00:10.000Z",
+    };
+
+    const markup = renderToStaticMarkup(
+      createElement(RequestSurgePanel, {
+        recovery: available(projection),
+        liveProjectionCount: 1,
+        freshness: liveFreshness,
+      }),
+    );
+
+    expect(markup).toMatch(/Configured start delay<\/dt><dd[^>]*>3s<\/dd>/);
+    expect(markup).toMatch(/Remaining harness preparation<\/dt><dd[^>]*>7s<\/dd>/);
+  });
+
+  it("renders ERP circuit threshold evidence with its projection freshness", () => {
+    const markup = renderToStaticMarkup(
+      createElement(ErpHealthPanel, {
+        recovery: available(projectionFixture()),
+        presentation: activePresentation,
+        freshness: liveFreshness,
+      }),
+    );
+
+    expect(markup).toMatch(/Circuit<\/dt><dd[^>]*>open<\/dd>/);
+    expect(markup).toMatch(/Failure threshold<\/dt><dd[^>]*>5<\/dd>/);
+    expect(markup).toContain("Updated 12:00:12 AM UTC · live");
   });
 
   it("renders a completed exact sellout without warning presentation", () => {
@@ -516,6 +498,7 @@ function projectionFixture(): DashboardProjection {
       failureRate: 0,
     },
     requestArrivalSummary: {
+      firstAttemptStartedAt: "2026-06-20T00:00:00.000Z",
       peakArrivalRatePerSecond: 1_000,
       peakArrivalWindowSeconds: 1,
       dispatchDurationSeconds: 0.8,
@@ -529,6 +512,7 @@ function projectionFixture(): DashboardProjection {
       arrivalWindowCountRetained: 1,
       arrivalSeriesLimit: 120,
     },
+    runSignalTimelineSummary: null,
     recoveredAt: "2026-06-20T00:00:11.000Z",
   };
 }

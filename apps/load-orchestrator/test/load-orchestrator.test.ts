@@ -2388,6 +2388,7 @@ describe("SpawnK6Runner completion reporting", () => {
       },
       trafficDeliverySummary: {
         requestArrivalSummary: {
+          firstAttemptStartedAt: "2026-06-20T12:00:00.000Z",
           peakArrivalRatePerSecond: 1,
           peakArrivalWindowSeconds: 1,
           dispatchDurationSeconds: 0,

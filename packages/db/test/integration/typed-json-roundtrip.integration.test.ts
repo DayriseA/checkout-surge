@@ -291,6 +291,7 @@ function trafficDeliverySummaryFixture(): TrafficDeliverySummary {
     droppedIterations: 0,
     completedIterations: 10,
     requestArrivalSummary: {
+      firstAttemptStartedAt: capturedAt.toISOString(),
       peakArrivalRatePerSecond: 10,
       peakArrivalWindowSeconds: 1,
       dispatchDurationSeconds: 0.8,

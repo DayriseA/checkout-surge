@@ -153,6 +153,9 @@ describe("run history surface", () => {
     expect(markup).toContain("Order aggregates");
     expect(markup).toContain("ERP aggregates");
     expect(markup).toContain("Public activity totals");
+    expect(markup).toContain("Unavailable for this run");
+    expect(markup).not.toContain("Peak 0");
+    expect(markup).not.toContain("0 remaining");
     expect(markup).not.toContain("Generator diagnostics");
     expect(markup).not.toContain("ord_history_1");
     expect(markup).not.toContain("corr-history-detail");
@@ -332,6 +335,7 @@ function runHistoryFixture(): RunHistoryListResponse {
           capturedAt: "2026-06-20T00:00:10.000Z",
           source: "redis",
         },
+        runSignalTimelineSummary: null,
         capturedAt: "2026-06-20T00:00:10.000Z",
       },
     ],
@@ -390,6 +394,7 @@ function runHistoryDetailFixture(): PublicRunHistoryDetailResponse {
     },
     notifications: { totalCount: 1 },
     events: { totalCount: 1 },
+    runSignalTimelineSummary: null,
     timestamp: admin.timestamp,
   };
 }
@@ -487,6 +492,7 @@ function adminRunHistoryDetailFixture(): AdminRunHistoryDetailResponse {
         },
       ],
     },
+    runSignalTimelineSummary: null,
     notifications: {
       totalCount: 1,
       limit: 20,

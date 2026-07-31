@@ -151,6 +151,7 @@ export function useDashboardRecovery(
     syncIssue: state.syncIssue,
     hasSyncIssue: state.syncIssue !== null,
     liveProjectionCount: state.liveProjectionCount,
+    signalSamples: state.signalSamples,
     refresh,
     retryNow,
     applyProjection,

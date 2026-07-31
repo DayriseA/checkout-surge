@@ -1,6 +1,7 @@
 import {
   emptyHttpTimingBreakdownSummary,
   emptyRequestArrivalSummary,
+  runSignalBucketCount,
   trafficDeliverySummarySchema,
 } from "@checkout-surge/contracts";
 import {
@@ -104,6 +105,32 @@ describe("run history service", () => {
     expect(firstPage.summaries[0]).not.toHaveProperty("reservationToken");
     expect(firstPage.summaries[0]).not.toHaveProperty("idempotencyKey");
     expect(secondPage.summaries[0]?.runId).toBe(ids.olderRun);
+    expect(firstPage.summaries[0]?.runSignalTimelineSummary).toBeNull();
+  });
+
+  it("keeps list payloads headline-only and detail payloads series-bearing", async () => {
+    const db = requireConnection(connection).db;
+    const service = createService(connection);
+    await seedHistory(db);
+    await db
+      .update(demoRunSummaries)
+      .set({ runSignalTimelineSummary: runSignalTimelineFixture() })
+      .where(eq(demoRunSummaries.id, ids.newerSummary));
+
+    const list = await service.list({ page: 1, pageSize: 1 });
+    const detail = await service.detail(ids.newerRun);
+    const adminDetail = await service.adminDetail(ids.newerRun);
+
+    expect(list.summaries[0]?.runSignalTimelineSummary).toMatchObject({
+      queueBacklog: { peakBacklog: 3 },
+    });
+    expect(list.summaries[0]?.runSignalTimelineSummary?.queueBacklog).not.toHaveProperty(
+      "backlogSeries",
+    );
+    expect(detail?.runSignalTimelineSummary?.queueBacklog.backlogSeries).toHaveLength(120);
+    expect(adminDetail?.runSignalTimelineSummary?.inventoryDrain.remainingStockSeries).toHaveLength(
+      120,
+    );
   });
 
   it("parses persisted server timing and derives expected replies from transport evidence", async () => {
@@ -853,6 +880,55 @@ function runHistoryDiagnosticsFixture() {
       completedIterations: "summary_export" as const,
     },
     summaryExportWarnings: [],
+  };
+}
+
+function runSignalTimelineFixture() {
+  const elapsed = Array.from({ length: runSignalBucketCount }, (_, index) => index + 1);
+  return {
+    window: {
+      anchoredAt: "2026-06-20T00:00:01.000Z",
+      endedAt: "2026-06-20T00:02:01.000Z",
+      bucketCount: runSignalBucketCount,
+      bucketWidthSeconds: 1,
+    },
+    inventoryDrain: {
+      startingStock: 5,
+      remainingStock: 0,
+      depletedAt: "2026-06-20T00:00:05.000Z",
+      timeToDepletionSeconds: 4,
+      remainingStockSeries: elapsed.map((elapsedSeconds) => ({
+        elapsedSeconds,
+        remainingStock: Math.max(0, 5 - elapsedSeconds),
+      })),
+    },
+    queueBacklog: {
+      peakBacklog: 3,
+      peakAtElapsedSeconds: 2,
+      backlogDrainedAt: "2026-06-20T00:00:06.000Z",
+      drainDurationSeconds: 4,
+      drainDurationBoundary: "first_order_queued_to_final_backlog_zero" as const,
+      definition: "accepted_awaiting_first_processing_start" as const,
+      backlogSeries: elapsed.map((elapsedSeconds) => ({
+        elapsedSeconds,
+        backlog: elapsedSeconds <= 3 ? elapsedSeconds : 0,
+      })),
+    },
+    confirmationConvergence: {
+      confirmedOrderCount: 2,
+      failedOrderCount: 1,
+      pendingAtCaptureCount: 0,
+      averageLagMs: 2_000,
+      p95LagMs: 3_000,
+      maxLagMs: 3_000,
+      boundary: "reservation_secured_to_order_confirmed" as const,
+      convergenceSeries: elapsed.map((elapsedSeconds) => ({
+        elapsedSeconds,
+        cumulativeConfirmedOrderCount: Math.min(2, elapsedSeconds),
+        cumulativeSettledOrderCount: Math.min(3, elapsedSeconds),
+      })),
+    },
+    convergenceDurationSeconds: 5,
   };
 }
 

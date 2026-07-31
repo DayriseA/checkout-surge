@@ -291,5 +291,6 @@ function projection(correlationId: string, scopedRunId?: string): DashboardProje
     transportAttemptCounts: null,
     httpSummary: null,
     requestArrivalSummary: null,
+    runSignalTimelineSummary: null,
   };
 }

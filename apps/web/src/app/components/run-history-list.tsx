@@ -1,6 +1,11 @@
-import type { RunHistoryListResponse, RunHistorySummary } from "@checkout-surge/contracts";
+import {
+  deriveOversoldUnits,
+  type RunHistoryListResponse,
+  type RunHistorySummary,
+} from "@checkout-surge/contracts";
 import Link from "next/link";
 import { deriveTerminalSummaryPresentation } from "../lib/presentation/run-presentation-state";
+import { GoldSignalHeadlines } from "./gold-signals";
 import { RunHistoryDeleteAllButton } from "./run-history-delete-all-button";
 import { RunHistoryRowControls } from "./run-history-row-controls";
 import { StatusPill } from "./status-pill";
@@ -137,6 +142,15 @@ function RunHistorySummaryArticle({ summary }: { summary: RunHistorySummary }) {
           title={systemOfRecordLens.title}
         />
       </div>
+      <GoldSignalHeadlines
+        arrivalSummary={summary.trafficDeliverySummary.requestArrivalSummary}
+        headline={summary.runSignalTimelineSummary}
+        oversoldUnits={
+          summary.terminalInventorySnapshot
+            ? deriveOversoldUnits(summary.terminalInventorySnapshot)
+            : 0
+        }
+      />
       <TerminalInventorySnapshot summary={summary} />
     </article>
   );
