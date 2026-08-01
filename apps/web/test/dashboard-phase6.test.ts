@@ -10,20 +10,22 @@ import { describe, expect, it } from "vitest";
 import {
   CompletionOutcomesPanel,
   ConsistencyLagPanel,
-  ErpHealthPanel,
   InventoryDrainPanel,
-  QueuePressurePanel,
   RecoveryStatusPanel,
   RequestSurgePanel,
+  RunErpOutcomesPanel,
   RunOutcomesPanel,
+  SystemStatusPanel,
 } from "../src/app/components/dashboard-panels.js";
 import type { Freshness } from "../src/app/lib/presentation/freshness.js";
 import {
   deriveInventoryOutcomeState,
   deriveLagPresentationState,
   deriveOutcomePresentationState,
-  deriveQueuePresentationState,
+  deriveRunErpOutcomeState,
   deriveRunPresentationState,
+  deriveSharedErpProtectionState,
+  deriveSharedRuntimeState,
   type PresentationState,
 } from "../src/app/lib/presentation/run-presentation-state.js";
 
@@ -139,18 +141,58 @@ describe("Phase 6 projection dashboard", () => {
     expect(markup).toMatch(/Remaining harness preparation<\/dt><dd[^>]*>7s<\/dd>/);
   });
 
-  it("renders ERP circuit threshold evidence with its projection freshness", () => {
-    const markup = renderToStaticMarkup(
-      createElement(ErpHealthPanel, {
+  it("separates run ERP outcomes from shared runtime state and labels both clocks", () => {
+    const projection = projectionFixture();
+    const runMarkup = renderToStaticMarkup(
+      createElement(RunErpOutcomesPanel, {
+        recovery: available(projection),
+        presentation: deriveRunErpOutcomeState(projection.erp),
+        freshness: liveFreshness,
+      }),
+    );
+    const systemMarkup = renderToStaticMarkup(
+      createElement(SystemStatusPanel, {
         recovery: available(projectionFixture()),
-        presentation: activePresentation,
+        presentation: deriveSharedRuntimeState(projection.systemStatus),
+        erpPresentation: deriveSharedErpProtectionState(
+          projection.systemStatus?.erpProtection ?? null,
+        ),
+      }),
+    );
+
+    expect(runMarkup).toContain("This run");
+    expect(runMarkup).toMatch(/Run circuit<\/dt><dd[^>]*>open<\/dd>/);
+    expect(runMarkup).toContain("Run circuit last changed");
+    expect(runMarkup).not.toContain("Shared demo runtime");
+    expect(systemMarkup).toContain("Shared demo runtime");
+    expect(systemMarkup).toContain("across all runs and visitors");
+    expect(systemMarkup).toContain("Circuit state since");
+    expect(systemMarkup).toContain("Protection observed");
+    expect(systemMarkup).toContain("no scheduled update cadence");
+    expect(systemMarkup).not.toContain("Recent attempts");
+  });
+
+  it("keeps run attempt evidence visible when circuit state is unavailable", () => {
+    const projection = projectionFixture();
+    if (!projection.erp) throw new Error("Expected run ERP outcome fixture.");
+    projection.erp = {
+      ...projection.erp,
+      circuit: null,
+      circuitReadStatus: "unavailable",
+    };
+
+    const markup = renderToStaticMarkup(
+      createElement(RunErpOutcomesPanel, {
+        recovery: available(projection),
+        presentation: deriveRunErpOutcomeState(projection.erp),
         freshness: liveFreshness,
       }),
     );
 
-    expect(markup).toMatch(/Circuit<\/dt><dd[^>]*>open<\/dd>/);
-    expect(markup).toMatch(/Failure threshold<\/dt><dd[^>]*>5<\/dd>/);
-    expect(markup).toContain("Updated 12:00:12 AM UTC · live");
+    expect(markup).toMatch(/Run circuit<\/dt><dd[^>]*>unavailable<\/dd>/);
+    expect(markup).toMatch(/Recent attempts<\/dt><dd[^>]*>3<\/dd>/);
+    expect(markup).toContain("protection unavailable");
+    expect(markup).not.toContain("No ERP outcome data for this run.");
   });
 
   it("renders a completed exact sellout without warning presentation", () => {
@@ -158,7 +200,6 @@ describe("Phase 6 projection dashboard", () => {
     if (
       projection.currentRun?.status !== "active" ||
       !projection.inventory ||
-      !projection.queue ||
       !projection.businessOutcome ||
       !projection.consistencyLag
     ) {
@@ -166,7 +207,6 @@ describe("Phase 6 projection dashboard", () => {
     }
     const currentRun = projection.currentRun;
     const inventory = projection.inventory;
-    const queue = projection.queue;
     const businessOutcome = projection.businessOutcome;
     const consistencyLag = projection.consistencyLag;
     projection.currentRun = {
@@ -180,16 +220,6 @@ describe("Phase 6 projection dashboard", () => {
       ...inventory,
       remainingStock: 0,
       reservedStock: 100,
-    };
-    projection.queue = {
-      ...queue,
-      depth: 0,
-      counts: {
-        ...queue.counts,
-        waiting: 0,
-        active: 0,
-      },
-      failedJobs: { ...queue.failedJobs, totalCount: 0 },
     };
     projection.businessOutcome = {
       ...businessOutcome,
@@ -219,13 +249,6 @@ describe("Phase 6 projection dashboard", () => {
             projection.currentRun,
             projection.businessOutcome.acceptedReservations,
           ),
-          freshness,
-        }),
-      ),
-      renderToStaticMarkup(
-        createElement(QueuePressurePanel, {
-          recovery,
-          presentation: deriveQueuePresentationState(projection.queue, projection.currentRun),
           freshness,
         }),
       ),
@@ -396,25 +419,8 @@ function projectionFixture(): DashboardProjection {
         timestamp: "2026-06-20T00:00:11.000Z",
       },
     ],
-    queue: {
-      name: "orders:process",
-      connectivity: "reachable",
-      depth: 2,
-      counts: { waiting: 2, prioritized: 0, paused: 0, delayed: 0, active: 0, failed: 0 },
-      oldestWaitingAgeSeconds: null,
-      retryPressure: {
-        inspectedJobCount: 2,
-        inspectionLimit: 100,
-        retryingJobCount: 0,
-        retryAttemptCount: 0,
-        inspectionTruncated: false,
-      },
-      failedJobs: { totalCount: 0, recent: [], inspectionLimit: 20, inspectionTruncated: false },
-      updatedAt: "2026-06-20T00:00:11.000Z",
-    },
     erp: {
-      status: "degraded",
-      reason: "recent_erp_failures",
+      runId,
       circuit: {
         state: "open",
         consecutiveFailureCount: 5,
@@ -423,27 +429,60 @@ function projectionFixture(): DashboardProjection {
         openedAt: "2026-06-20T00:00:09.000Z",
         nextAttemptAt: "2026-06-20T00:00:19.000Z",
         halfOpenProbeInFlight: false,
-        updatedAt: "2026-06-20T00:00:10.000Z",
+        lastChangedAt: "2026-06-20T00:00:10.000Z",
       },
-      retryPressure: {
-        retryingJobCount: 1,
-        retryAttemptCount: 2,
-        inspectedJobCount: 2,
-        inspectionLimit: 100,
-        inspectionTruncated: false,
-      },
+      circuitReadStatus: "available",
       latestAttempt: null,
       recentAttemptWindowSeconds: 60,
       recentAttemptCount: 3,
       recentFailureCount: 2,
       recentTimeoutCount: 1,
-      confirmationDelay: {
-        processingOrderCount: 1,
-        oldestProcessingAgeSeconds: 2,
-        recentConfirmedCount: 1,
-        averageConfirmationDelayMs: 80,
+      observedAt: "2026-06-20T00:00:11.000Z",
+    },
+    systemStatus: {
+      queue: {
+        name: "orders:process",
+        connectivity: "reachable",
+        depth: 2,
+        counts: { waiting: 2, prioritized: 0, paused: 0, delayed: 0, active: 0, failed: 0 },
+        oldestWaitingAgeSeconds: null,
+        retryPressure: {
+          inspectedJobCount: 2,
+          inspectionLimit: 100,
+          retryingJobCount: 1,
+          retryAttemptCount: 2,
+          inspectionTruncated: false,
+        },
+        failedJobs: {
+          totalCount: 0,
+          recent: [],
+          inspectionLimit: 20,
+          inspectionTruncated: false,
+        },
+        observedAt: "2026-06-20T00:00:11.000Z",
       },
-      updatedAt: "2026-06-20T00:00:11.000Z",
+      erpProtection: {
+        status: "degraded",
+        reason: "erp_retries_pending",
+        circuit: {
+          state: "closed",
+          consecutiveFailureCount: 0,
+          failureThreshold: 5,
+          resetTimeoutMs: 10_000,
+          openedAt: null,
+          nextAttemptAt: null,
+          halfOpenProbeInFlight: false,
+          lastChangedAt: "2026-06-19T16:00:10.000Z",
+        },
+        retryPressure: {
+          retryingJobCount: 1,
+          retryAttemptCount: 2,
+          inspectedJobCount: 2,
+          inspectionLimit: 100,
+          inspectionTruncated: false,
+        },
+        observedAt: "2026-06-20T00:00:11.000Z",
+      },
     },
     businessOutcome: {
       acceptedReservations: 6,

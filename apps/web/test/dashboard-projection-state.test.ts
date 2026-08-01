@@ -156,37 +156,20 @@ describe("dashboard projection state", () => {
     ]);
   });
 
-  it("buffers the authoritative queue depth without redefining it from component counts", () => {
+  it("buffers the run-scoped accepted backlog rather than shared physical queue depth", () => {
     const state = createDashboardProjectionState(
       available(
         runProjection({
-          queue: {
-            name: "orders:process",
-            connectivity: "reachable",
-            depth: 9,
-            counts: {
-              waiting: 1,
-              prioritized: 0,
-              paused: 0,
-              delayed: 0,
-              active: 8,
-              failed: 0,
-            },
-            oldestWaitingAgeSeconds: 1,
-            retryPressure: {
-              inspectedJobCount: 9,
-              inspectionLimit: 100,
-              retryingJobCount: 0,
-              retryAttemptCount: 0,
-              inspectionTruncated: false,
-            },
-            failedJobs: {
-              totalCount: 0,
-              recent: [],
-              inspectionLimit: 20,
-              inspectionTruncated: false,
-            },
-            updatedAt: "2026-06-20T00:00:01.000Z",
+          businessOutcome: {
+            acceptedReservations: 10,
+            soldOutRejections: 0,
+            queuedOrders: 9,
+            processingOrders: 1,
+            retryingOrders: 0,
+            confirmedOrders: 0,
+            failedOrders: 0,
+            pendingPersistenceCount: 0,
+            notificationsRecorded: 0,
           },
         }),
       ),
@@ -358,8 +341,8 @@ function idleProjection(overrides: Partial<DashboardProjection> = {}): Dashboard
     currentRun: null,
     inventory: null,
     recentMetrics: [],
-    queue: null,
     erp: null,
+    systemStatus: null,
     businessOutcome: null,
     consistencyLag: null,
     transportAttemptCounts: null,

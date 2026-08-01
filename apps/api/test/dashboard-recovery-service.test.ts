@@ -5,12 +5,13 @@ import {
   dashboardProjectionSchemaVersion,
   dashboardProjectionScopeId,
   demoRunSnapshotSchema,
-  type ErpResilienceStatus,
   emptyHttpTimingBreakdownSummary,
   emptyRequestArrivalSummary,
   type InventoryStatus,
   type QueueStatus,
+  type RunErpOutcomeSummary,
   runSignalBucketCount,
+  type SharedErpProtectionStatus,
   type TransportAttemptCounts,
 } from "@checkout-surge/contracts";
 import { previewRunConfigSnapshotFixture as configSnapshot } from "@checkout-surge/contracts/testing";
@@ -374,7 +375,10 @@ describe("DashboardProjectionService", () => {
     expect(harness.metrics).not.toHaveBeenCalled();
     expect(harness.transportAttemptCounts).not.toHaveBeenCalled();
     expect(harness.queue).toHaveBeenCalledOnce();
-    expect(harness.erp).toHaveBeenCalledOnce();
+    expect(harness.sharedErp).toHaveBeenCalledOnce();
+    expect(harness.runErp).not.toHaveBeenCalled();
+    expect(recovery.systemStatus).not.toBeNull();
+    expect(recovery.erp).toBeNull();
   });
 
   it("passes one selected run scope and one captured time to every owned projection", async () => {
@@ -392,6 +396,8 @@ describe("DashboardProjectionService", () => {
     expect(harness.lag).toHaveBeenCalledWith(expectedScope, now);
     expect(harness.completion).toHaveBeenCalledWith(expectedScope, now);
     expect(harness.metrics).toHaveBeenCalledWith(runId);
+    expect(harness.runErp).toHaveBeenCalledWith(expectedScope);
+    expect(recovery.erp?.runId).toBe(runId);
     expect(recovery.recoveredAt).toBe(now.toISOString());
   });
 
@@ -457,7 +463,8 @@ describe("DashboardProjectionService", () => {
     expect(harness.metrics).not.toHaveBeenCalled();
     expect(harness.transportAttemptCounts).not.toHaveBeenCalled();
     expect(harness.queue).not.toHaveBeenCalled();
-    expect(harness.erp).not.toHaveBeenCalled();
+    expect(harness.sharedErp).not.toHaveBeenCalled();
+    expect(harness.runErp).not.toHaveBeenCalled();
     expect(harness.allocateRevision).not.toHaveBeenCalled();
     expect(harness.close).toHaveBeenCalledOnce();
     expect(harness.loggerWarn).not.toHaveBeenCalled();
@@ -628,7 +635,10 @@ describe("DashboardProjectionService", () => {
             completionOutcomeReader: { read: async () => [] },
             inventoryStatusService: { getStatus: async () => inventoryStatusFixture() },
             queueStatusService: { getStatus: async () => queueStatusFixture() },
-            erpStatusService: { getStatus: async () => erpStatusFixture() },
+            sharedErpProtectionService: {
+              getStatus: async () => sharedErpProtectionFixture(),
+            },
+            runErpOutcomeService: { getOutcomes: async () => runErpOutcomeFixture() },
             trafficMetricReader: { readRecent: async () => [] },
             transportObservationReader: { read: async () => null },
             revisionAllocator: { allocate: async () => 1 },
@@ -738,7 +748,10 @@ function projectionDependencies(options: {
     completionOutcomeReader: { read: async () => [] },
     inventoryStatusService: { getStatus: async () => inventoryStatusFixture() },
     queueStatusService: { getStatus: async () => queueStatusFixture() },
-    erpStatusService: { getStatus: async () => erpStatusFixture() },
+    sharedErpProtectionService: {
+      getStatus: async () => sharedErpProtectionFixture(),
+    },
+    runErpOutcomeService: { getOutcomes: async () => runErpOutcomeFixture() },
     trafficMetricReader: { readRecent: async () => [] },
     transportObservationReader: { read: async () => null },
     revisionAllocator: { allocate: async () => 1 },
@@ -791,7 +804,8 @@ function serviceHarness(
           : null,
       );
   const queue = vi.fn(async () => queueStatusFixture());
-  const erp = vi.fn(async () => erpStatusFixture());
+  const sharedErp = vi.fn(async () => sharedErpProtectionFixture());
+  const runErp = vi.fn(async (scope: { runId: string }) => runErpOutcomeFixture(scope.runId));
   const loggerWarn = vi.fn();
   let revision = 0;
   const allocateRevision = vi.fn(async () => {
@@ -814,7 +828,8 @@ function serviceHarness(
         completionOutcomeReader: { read: completion },
         inventoryStatusService: { getStatus: inventory },
         queueStatusService: { getStatus: queue },
-        erpStatusService: { getStatus: erp },
+        sharedErpProtectionService: { getStatus: sharedErp },
+        runErpOutcomeService: { getOutcomes: runErp },
         trafficMetricReader: { readRecent: metrics },
         transportObservationReader: { read: transportAttemptCounts },
         revisionAllocator: { allocate: allocateRevision },
@@ -833,7 +848,8 @@ function serviceHarness(
     metrics,
     transportAttemptCounts,
     queue,
-    erp,
+    sharedErp,
+    runErp,
     loggerWarn,
     allocateRevision,
     close,
@@ -950,11 +966,11 @@ function queueStatusFixture(): QueueStatus {
       inspectionTruncated: false,
     },
     failedJobs: { totalCount: 0, recent: [], inspectionLimit: 20, inspectionTruncated: false },
-    updatedAt: now.toISOString(),
+    observedAt: now.toISOString(),
   };
 }
 
-function erpStatusFixture(): ErpResilienceStatus {
+function sharedErpProtectionFixture(): SharedErpProtectionStatus {
   return {
     status: "healthy",
     reason: null,
@@ -966,7 +982,7 @@ function erpStatusFixture(): ErpResilienceStatus {
       openedAt: null,
       nextAttemptAt: null,
       halfOpenProbeInFlight: false,
-      updatedAt: now.toISOString(),
+      lastChangedAt: now.toISOString(),
     },
     retryPressure: {
       retryingJobCount: 0,
@@ -975,18 +991,21 @@ function erpStatusFixture(): ErpResilienceStatus {
       inspectionLimit: 100,
       inspectionTruncated: false,
     },
+    observedAt: now.toISOString(),
+  };
+}
+
+function runErpOutcomeFixture(scopedRunId = runId): RunErpOutcomeSummary {
+  return {
+    runId: scopedRunId,
+    circuit: null,
+    circuitReadStatus: "available",
     latestAttempt: null,
     recentAttemptWindowSeconds: 60,
     recentAttemptCount: 0,
     recentFailureCount: 0,
     recentTimeoutCount: 0,
-    confirmationDelay: {
-      processingOrderCount: 0,
-      oldestProcessingAgeSeconds: null,
-      recentConfirmedCount: 0,
-      averageConfirmationDelayMs: null,
-    },
-    updatedAt: now.toISOString(),
+    observedAt: now.toISOString(),
   };
 }
 

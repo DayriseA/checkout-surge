@@ -301,6 +301,6 @@ function queueStatus(depth: number): QueueStatus {
       inspectionLimit: 20,
       inspectionTruncated: false,
     },
-    updatedAt: "2026-07-23T12:00:00.000Z",
+    observedAt: "2026-07-23T12:00:00.000Z",
   };
 }

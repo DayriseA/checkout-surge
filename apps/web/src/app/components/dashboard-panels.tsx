@@ -1,4 +1,8 @@
-import type { CompletionOutcome, DashboardProjection } from "@checkout-surge/contracts";
+import {
+  type CompletionOutcome,
+  type DashboardProjection,
+  dashboardLiveUpdateExpectedIntervalMs,
+} from "@checkout-surge/contracts";
 import type { BackendRead } from "../lib/api";
 import { projectRequestSurge } from "../lib/dashboard-projection-state";
 import { formatDashboardTime } from "../lib/dashboard-time";
@@ -473,51 +477,7 @@ export function InventoryDrainPanel({
   );
 }
 
-export function QueuePressurePanel({
-  recovery,
-  presentation,
-  freshness,
-}: {
-  recovery: BackendRead<DashboardProjection>;
-  presentation: PresentationState;
-  freshness: Freshness;
-}) {
-  const queue = recoveryData(recovery)?.queue ?? null;
-
-  return (
-    <section className={panelNarrowClassName}>
-      <div className={panelHeaderClassName}>
-        <div>
-          <p className={eyebrowClassName}>Queue pressure</p>
-          <h2 className={panelTitleClassName}>orders:process</h2>
-        </div>
-        <StatusPill status={presentation} />
-      </div>
-      {queue ? (
-        <>
-          <FreshnessLine freshness={freshness} />
-          <dl className={factGridClassName}>
-            <Fact label="Waiting" value={formatNumber(queue.counts.waiting)} />
-            <Fact label="Active" value={formatNumber(queue.counts.active)} />
-            <Fact label="Delayed" value={formatNumber(queue.counts.delayed)} />
-            <Fact label="Retrying" value={formatNumber(queue.retryPressure.retryingJobCount)} />
-            <Fact label="Failed" value={formatNumber(queue.failedJobs.totalCount)} />
-            <Fact label="Oldest wait" value={formatSeconds(queue.oldestWaitingAgeSeconds)} />
-            <Fact label="Queue inspected" value={formatExpectedTime(queue.updatedAt)} small />
-          </dl>
-          <p className="mb-0 mt-3 text-xs leading-5 text-muted">
-            Enqueues publish live; the API refreshes worker drain, retry, and failure state from the
-            authoritative inspector every 2 seconds until the queue drains.
-          </p>
-        </>
-      ) : (
-        <EmptyState>No queue data.</EmptyState>
-      )}
-    </section>
-  );
-}
-
-export function ErpHealthPanel({
+export function RunErpOutcomesPanel({
   recovery,
   presentation,
   freshness,
@@ -532,8 +492,8 @@ export function ErpHealthPanel({
     <section className={panelNarrowClassName}>
       <div className={panelHeaderClassName}>
         <div>
-          <p className={eyebrowClassName}>ERP health</p>
-          <h2 className={panelTitleClassName}>Downstream dependency</h2>
+          <p className={eyebrowClassName}>This run</p>
+          <h2 className={panelTitleClassName}>ERP outcomes</h2>
         </div>
         <StatusPill status={presentation} />
       </div>
@@ -541,9 +501,14 @@ export function ErpHealthPanel({
         <>
           <FreshnessLine freshness={freshness} />
           <dl className={factGridClassName}>
-            <Fact label="Circuit" value={erp.circuit?.state ?? "not yet available"} />
-            <Fact label="Reason" value={erp.reason ?? "normal"} small />
-            <Fact label="Retrying" value={formatNumber(erp.retryPressure.retryingJobCount)} />
+            <Fact
+              label="Run circuit"
+              value={
+                erp.circuitReadStatus === "unavailable"
+                  ? "unavailable"
+                  : (erp.circuit?.state ?? "not yet exercised")
+              }
+            />
             <Fact label="Recent attempts" value={formatNumber(erp.recentAttemptCount)} />
             <Fact label="Failures" value={formatNumber(erp.recentFailureCount)} />
             <Fact label="Timeouts" value={formatNumber(erp.recentTimeoutCount)} />
@@ -566,19 +531,155 @@ export function ErpHealthPanel({
               small
             />
             <Fact
-              label="Breaker reported"
-              value={formatExpectedTime(erp.circuit?.updatedAt)}
+              label="Run circuit last changed"
+              value={formatExpectedTime(erp.circuit?.lastChangedAt)}
               small
             />
-            <Fact label="API projection" value={formatExpectedTime(erp.updatedAt)} small />
+            <Fact label="Run outcomes observed" value={formatExpectedTime(erp.observedAt)} small />
             <Fact
               label="Attempt window"
               value={`${formatNumber(erp.recentAttemptWindowSeconds)}s`}
             />
+            <Fact
+              label="Latest attempt"
+              value={
+                erp.latestAttempt
+                  ? `${erp.latestAttempt.status} at ${formatExpectedTime(erp.latestAttempt.finishedAt)}`
+                  : "not yet available"
+              }
+              small
+            />
           </dl>
+          <p className="mb-0 mt-3 text-xs leading-5 text-muted">
+            The run circuit is scoped to this run. Its clock changes only when run protection opens,
+            probes, or closes.
+          </p>
         </>
       ) : (
-        <EmptyState>No ERP health data.</EmptyState>
+        <EmptyState>No ERP outcome data for this run.</EmptyState>
+      )}
+    </section>
+  );
+}
+
+export function SystemStatusPanel({
+  recovery,
+  presentation,
+  erpPresentation,
+}: {
+  recovery: BackendRead<DashboardProjection>;
+  presentation: PresentationState;
+  erpPresentation: PresentationState;
+}) {
+  const systemStatus = recoveryData(recovery)?.systemStatus ?? null;
+  const queue = systemStatus?.queue ?? null;
+  const protection = systemStatus?.erpProtection ?? null;
+
+  return (
+    <section className={panelFullClassName}>
+      <div className={panelHeaderClassName}>
+        <div>
+          <p className={eyebrowClassName}>Shared demo runtime</p>
+          <h2 className={panelTitleClassName}>System status across all runs and visitors</h2>
+          <p className="m-0 mt-1 text-xs text-muted">
+            Infrastructure readiness and protection below are global technical context, not evidence
+            for the selected run.
+          </p>
+        </div>
+        <StatusPill status={presentation} />
+      </div>
+      {queue && protection ? (
+        <div className="grid grid-cols-2 gap-6 max-[760px]:grid-cols-1">
+          <div>
+            <h3 className="mb-3 mt-0 text-sm font-bold text-ink">
+              Shared physical queue: {queue.name}
+            </h3>
+            <dl className={factGridClassName}>
+              <Fact label="Connectivity" value={queue.connectivity} />
+              <Fact label="Depth (all runs)" value={formatNumber(queue.depth)} />
+              <Fact label="Waiting" value={formatNumber(queue.counts.waiting)} />
+              <Fact label="Prioritized" value={formatNumber(queue.counts.prioritized)} />
+              <Fact label="Paused" value={formatNumber(queue.counts.paused)} />
+              <Fact label="Delayed" value={formatNumber(queue.counts.delayed)} />
+              <Fact label="Active" value={formatNumber(queue.counts.active)} />
+              <Fact label="Failed" value={formatNumber(queue.failedJobs.totalCount)} />
+              <Fact label="Oldest wait" value={formatSeconds(queue.oldestWaitingAgeSeconds)} />
+              <Fact
+                label="Retrying jobs"
+                value={formatNumber(queue.retryPressure.retryingJobCount)}
+              />
+              <Fact
+                label="Retry attempts"
+                value={formatNumber(queue.retryPressure.retryAttemptCount)}
+              />
+              <Fact label="Queue observed" value={formatExpectedTime(queue.observedAt)} small />
+            </dl>
+            <p className="mb-0 mt-3 text-xs leading-5 text-muted">
+              Polled every {dashboardLiveUpdateExpectedIntervalMs / 1_000} seconds while runtime
+              work remains. Counts include all runs and visitors.
+            </p>
+          </div>
+          <div>
+            <div className="mb-3 flex items-start justify-between gap-3">
+              <h3 className="m-0 text-sm font-bold text-ink">Shared catalog ERP protection</h3>
+              <StatusPill status={erpPresentation} />
+            </div>
+            <dl className={factGridClassName}>
+              <Fact label="Circuit" value={protection.circuit?.state ?? "not yet available"} />
+              <Fact label="Reason" value={protection.reason ?? "normal"} small />
+              <Fact
+                label="Retrying jobs"
+                value={formatNumber(protection.retryPressure.retryingJobCount)}
+              />
+              <Fact
+                label="Failure threshold"
+                value={
+                  protection.circuit
+                    ? formatNumber(protection.circuit.failureThreshold)
+                    : "not yet available"
+                }
+              />
+              <Fact
+                label="Consecutive failures"
+                value={
+                  protection.circuit
+                    ? formatNumber(protection.circuit.consecutiveFailureCount)
+                    : "not yet available"
+                }
+              />
+              <Fact
+                label="Reset timeout"
+                value={formatMilliseconds(protection.circuit?.resetTimeoutMs, "not yet available")}
+              />
+              <Fact
+                label="Breaker opened"
+                value={formatScheduledTime(protection.circuit?.openedAt)}
+                small
+              />
+              <Fact
+                label="Next probe"
+                value={formatScheduledTime(protection.circuit?.nextAttemptAt)}
+                small
+              />
+              <Fact
+                label="Circuit state since"
+                value={formatExpectedTime(protection.circuit?.lastChangedAt)}
+                small
+              />
+              <Fact
+                label="Protection observed"
+                value={formatExpectedTime(protection.observedAt)}
+                small
+              />
+            </dl>
+            <p className="mb-0 mt-3 text-xs leading-5 text-muted">
+              The catalog breaker is edge-triggered: its “state since” clock changes only on open,
+              probe, or close and has no scheduled update cadence.
+            </p>
+          </div>
+        </div>
+      ) : (
+        <EmptyState>No shared demo-runtime status.</EmptyState>
       )}
     </section>
   );
@@ -660,7 +761,10 @@ export function RunOutcomesPanel({
           <dl className={wideFactGridClassName}>
             <Fact label="Accepted" value={formatNumber(outcome.acceptedReservations)} />
             <Fact label="Sold out" value={formatNumber(outcome.soldOutRejections)} />
-            <Fact label="Queued" value={formatNumber(outcome.queuedOrders)} />
+            <Fact
+              label="Queued (awaiting first processing start)"
+              value={formatNumber(outcome.queuedOrders)}
+            />
             <Fact label="Processing" value={formatNumber(outcome.processingOrders)} />
             <Fact label="Retrying" value={formatNumber(outcome.retryingOrders)} />
             <Fact label="Confirmed" value={formatNumber(outcome.confirmedOrders)} />

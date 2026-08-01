@@ -50,7 +50,6 @@ import {
   erpConfirmationRequestSchema,
   erpConfirmationResponseSchema,
   erpResilienceStatusPath,
-  erpResilienceStatusSchema,
   errorPayloadCodeSchema,
   errorPayloadCodes,
   errorPayloadSchema,
@@ -89,6 +88,7 @@ import {
   reservationRejectedResponseSchema,
   reservationTimingMeasurementSchema,
   resolveConstantArrivalVus,
+  runErpOutcomeSummarySchema,
   runHistoryDetailParamsSchema,
   runHistoryDetailPath,
   runHistoryDetailPathTemplate,
@@ -97,6 +97,8 @@ import {
   runHistoryPath,
   securedReservationHoldSchema,
   serverReservationTimingSummarySchema,
+  sharedErpProtectionStatusSchema,
+  sharedRuntimeStatusSchema,
   startDemoRunPath,
   startDemoRunRequestSchema,
   stockReservationDecisionSchema,
@@ -1158,13 +1160,20 @@ describe("queue contracts", () => {
         inspectionLimit: 20,
         inspectionTruncated: false,
       },
-      updatedAt: timestamp,
+      observedAt: timestamp,
     });
 
     expect(status.depth).toBe(8);
     expect(status.retryPressure.inspectionTruncated).toBe(true);
     expect(status.failedJobs.totalCount).toBe(9);
     expect(() => queueStatusSchema.parse({ ...status, physicalName: "orders-process" })).toThrow();
+    expect(
+      queueStatusSchema.safeParse({
+        ...status,
+        observedAt: undefined,
+        updatedAt: timestamp,
+      }).success,
+    ).toBe(false);
   });
 });
 
@@ -1499,52 +1508,61 @@ describe("ERP contracts", () => {
     expect(controlServiceTokenHeaderName).toBe("x-control-service-token");
   });
 
-  it("validates operator-facing ERP resilience status", () => {
+  it("validates distinct run ERP outcomes and shared ERP protection", () => {
+    const circuit = {
+      state: "half_open" as const,
+      consecutiveFailureCount: 5,
+      failureThreshold: 5,
+      resetTimeoutMs: 10_000,
+      openedAt: "2026-06-20T00:00:00.000Z",
+      nextAttemptAt: "2026-06-20T00:00:10.000Z",
+      halfOpenProbeInFlight: true,
+      lastChangedAt: timestamp,
+    };
+    const retryPressure = {
+      retryingJobCount: 2,
+      retryAttemptCount: 4,
+      inspectedJobCount: 10,
+      inspectionLimit: 100,
+      inspectionTruncated: false,
+    };
+    const runOutcome = runErpOutcomeSummarySchema.parse({
+      runId,
+      circuit,
+      circuitReadStatus: "available",
+      latestAttempt: {
+        orderId: "11111111-1111-4111-8111-111111111111",
+        runId,
+        attemptNumber: 3,
+        status: "failed",
+        httpStatus: 503,
+        errorCode: "erp_unavailable",
+        errorMessage: "The ERP is temporarily unavailable.",
+        latencyMs: 125,
+        finishedAt: timestamp,
+      },
+      recentAttemptWindowSeconds: 60,
+      recentAttemptCount: 8,
+      recentFailureCount: 3,
+      recentTimeoutCount: 1,
+      observedAt: timestamp,
+    });
+    const protection = sharedErpProtectionStatusSchema.parse({
+      status: "degraded",
+      reason: "erp_retries_pending",
+      circuit,
+      retryPressure,
+      observedAt: timestamp,
+    });
+
+    expect(runOutcome.runId).toBe(runId);
+    expect(protection.status).toBe("degraded");
     expect(
-      erpResilienceStatusSchema.parse({
-        status: "degraded",
-        reason: "erp_retries_pending",
-        circuit: {
-          state: "half_open",
-          consecutiveFailureCount: 5,
-          failureThreshold: 5,
-          resetTimeoutMs: 10_000,
-          openedAt: "2026-06-20T00:00:00.000Z",
-          nextAttemptAt: "2026-06-20T00:00:10.000Z",
-          halfOpenProbeInFlight: true,
-          updatedAt: timestamp,
-        },
-        retryPressure: {
-          retryingJobCount: 2,
-          retryAttemptCount: 4,
-          inspectedJobCount: 10,
-          inspectionLimit: 100,
-          inspectionTruncated: false,
-        },
-        latestAttempt: {
-          orderId: "11111111-1111-4111-8111-111111111111",
-          runId: null,
-          attemptNumber: 3,
-          status: "failed",
-          httpStatus: 503,
-          errorCode: "erp_unavailable",
-          errorMessage: "The ERP is temporarily unavailable.",
-          latencyMs: 125,
-          finishedAt: timestamp,
-        },
-        recentAttemptWindowSeconds: 60,
-        recentAttemptCount: 8,
-        recentFailureCount: 3,
-        recentTimeoutCount: 1,
-        confirmationDelay: {
-          processingOrderCount: 4,
-          oldestProcessingAgeSeconds: 12.5,
-          recentConfirmedCount: 6,
-          averageConfirmationDelayMs: 275,
-        },
-        updatedAt: timestamp,
-      }).status,
-    ).toBe("degraded");
+      runErpOutcomeSummarySchema.safeParse({
+        ...runOutcome,
+        circuit: { ...circuit, lastChangedAt: undefined, updatedAt: timestamp },
+      }).success,
+    ).toBe(false);
   });
 });
 
@@ -1842,8 +1860,8 @@ describe("buy and dashboard contracts", () => {
       currentRun,
       inventory: null,
       recentMetrics: [],
-      queue: null,
       erp: null,
+      systemStatus: null,
       businessOutcome: {
         acceptedReservations: 10,
         soldOutRejections: 20,
@@ -1896,6 +1914,46 @@ describe("buy and dashboard contracts", () => {
         })),
       }).success,
     ).toBe(false);
+
+    const runErp = runErpOutcomeSummarySchema.parse({
+      runId,
+      circuit: null,
+      circuitReadStatus: "available",
+      latestAttempt: {
+        orderId: "44444444-4444-4444-8444-444444444444",
+        runId,
+        attemptNumber: 1,
+        status: "succeeded",
+        httpStatus: 200,
+        errorCode: null,
+        errorMessage: null,
+        latencyMs: 10,
+        finishedAt: timestamp,
+      },
+      recentAttemptWindowSeconds: 60,
+      recentAttemptCount: 1,
+      recentFailureCount: 0,
+      recentTimeoutCount: 0,
+      observedAt: timestamp,
+    });
+    expect(
+      dashboardProjectionSchema.safeParse({
+        ...recovery,
+        erp: { ...runErp, runId: "55555555-5555-4555-8555-555555555555" },
+      }).success,
+    ).toBe(false);
+    expect(
+      dashboardProjectionSchema.safeParse({
+        ...recovery,
+        erp: {
+          ...runErp,
+          latestAttempt: {
+            ...runErp.latestAttempt,
+            runId: "55555555-5555-4555-8555-555555555555",
+          },
+        },
+      }).success,
+    ).toBe(false);
     expect(
       dashboardProjectionSchema.safeParse({
         ...recovery,
@@ -1934,8 +1992,8 @@ describe("buy and dashboard contracts", () => {
       currentRun: null,
       inventory: null,
       recentMetrics: [],
-      queue: null,
       erp: null,
+      systemStatus: null,
       businessOutcome: null,
       consistencyLag: null,
       recentCompletionOutcomes: [],
@@ -1957,6 +2015,42 @@ describe("buy and dashboard contracts", () => {
   });
 
   it("rejects run-owned data from idle projections", () => {
+    const systemStatus = sharedRuntimeStatusSchema.parse({
+      queue: {
+        name: "orders:process",
+        connectivity: "reachable",
+        depth: 0,
+        counts: { waiting: 0, prioritized: 0, paused: 0, delayed: 0, active: 0, failed: 0 },
+        oldestWaitingAgeSeconds: null,
+        retryPressure: {
+          inspectedJobCount: 0,
+          inspectionLimit: 100,
+          retryingJobCount: 0,
+          retryAttemptCount: 0,
+          inspectionTruncated: false,
+        },
+        failedJobs: {
+          totalCount: 0,
+          recent: [],
+          inspectionLimit: 20,
+          inspectionTruncated: false,
+        },
+        observedAt: timestamp,
+      },
+      erpProtection: {
+        status: "healthy",
+        reason: null,
+        circuit: null,
+        retryPressure: {
+          retryingJobCount: 0,
+          retryAttemptCount: 0,
+          inspectedJobCount: 0,
+          inspectionLimit: 100,
+          inspectionTruncated: false,
+        },
+        observedAt: timestamp,
+      },
+    });
     const idleProjection = {
       schema: dashboardProjectionSchemaName,
       version: dashboardProjectionSchemaVersion,
@@ -1967,8 +2061,8 @@ describe("buy and dashboard contracts", () => {
       currentRun: null,
       inventory: null,
       recentMetrics: [],
-      queue: null,
       erp: null,
+      systemStatus,
       businessOutcome: null,
       consistencyLag: null,
       recentCompletionOutcomes: [],
@@ -1990,6 +2084,23 @@ describe("buy and dashboard contracts", () => {
             timestamp,
           },
         ],
+      }).success,
+    ).toBe(false);
+    expect(dashboardProjectionSchema.safeParse(idleProjection).success).toBe(true);
+    expect(
+      dashboardProjectionSchema.safeParse({
+        ...idleProjection,
+        erp: {
+          runId,
+          circuit: null,
+          circuitReadStatus: "available",
+          latestAttempt: null,
+          recentAttemptWindowSeconds: 60,
+          recentAttemptCount: 0,
+          recentFailureCount: 0,
+          recentTimeoutCount: 0,
+          observedAt: timestamp,
+        },
       }).success,
     ).toBe(false);
     expect(
@@ -2033,8 +2144,8 @@ describe("buy and dashboard contracts", () => {
       currentRun,
       inventory: null,
       recentMetrics: [],
-      queue: null,
       erp: null,
+      systemStatus: null,
       businessOutcome: null,
       consistencyLag: null,
       recentCompletionOutcomes: [],
@@ -2096,8 +2207,8 @@ describe("buy and dashboard contracts", () => {
       scope: null,
       currentRun: null,
       inventory: null,
-      queue: null,
       erp: null,
+      systemStatus: null,
       businessOutcome: null,
       consistencyLag: null,
       recoveredAt: timestamp,

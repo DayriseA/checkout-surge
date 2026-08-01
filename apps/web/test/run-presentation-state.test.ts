@@ -10,8 +10,8 @@ import { describe, expect, it } from "vitest";
 import {
   classifyTerminalOutcome,
   deriveInventoryOutcomeState,
-  deriveQueuePresentationState,
   deriveRunPresentationState,
+  deriveSharedRuntimeState,
   deriveTerminalSummaryPresentation,
 } from "../src/app/lib/presentation/run-presentation-state.js";
 
@@ -142,15 +142,17 @@ describe("run presentation state", () => {
     );
   });
 
-  it("does not present a nonterminal empty queue as an achieved drain", () => {
-    expect(deriveQueuePresentationState(queue(), run("active"))).toMatchObject({
-      label: "no backlog",
-      tone: "idle",
-    });
-    expect(deriveQueuePresentationState(queue(), run("completed"))).toMatchObject({
-      label: "queue drained",
+  it("derives shared runtime state without a run lifecycle", () => {
+    expect(deriveSharedRuntimeState(systemStatus())).toMatchObject({
+      label: "runtime ready",
       tone: "ok",
     });
+    expect(
+      deriveSharedRuntimeState({
+        ...systemStatus(),
+        queue: { ...systemStatus().queue, depth: 1 },
+      }),
+    ).toMatchObject({ label: "runtime busy", tone: "progress" });
   });
 
   it.each([
@@ -245,8 +247,8 @@ function projection(currentRun: DemoRunSnapshot | null): DashboardProjection {
     currentRun,
     inventory: null,
     recentMetrics: [],
-    queue: null,
     erp: null,
+    systemStatus: null,
     businessOutcome: null,
     consistencyLag: null,
     recentCompletionOutcomes: [],
@@ -280,21 +282,36 @@ function inventory(allocatedStock: number): NonNullable<DashboardProjection["inv
   };
 }
 
-function queue(): NonNullable<DashboardProjection["queue"]> {
+function systemStatus(): NonNullable<DashboardProjection["systemStatus"]> {
   return {
-    name: "orders:process",
-    connectivity: "reachable",
-    depth: 0,
-    counts: { waiting: 0, prioritized: 0, paused: 0, delayed: 0, active: 0, failed: 0 },
-    oldestWaitingAgeSeconds: null,
-    retryPressure: {
-      inspectedJobCount: 0,
-      inspectionLimit: 100,
-      retryingJobCount: 0,
-      retryAttemptCount: 0,
-      inspectionTruncated: false,
+    queue: {
+      name: "orders:process",
+      connectivity: "reachable",
+      depth: 0,
+      counts: { waiting: 0, prioritized: 0, paused: 0, delayed: 0, active: 0, failed: 0 },
+      oldestWaitingAgeSeconds: null,
+      retryPressure: {
+        inspectedJobCount: 0,
+        inspectionLimit: 100,
+        retryingJobCount: 0,
+        retryAttemptCount: 0,
+        inspectionTruncated: false,
+      },
+      failedJobs: { totalCount: 0, recent: [], inspectionLimit: 20, inspectionTruncated: false },
+      observedAt: "2026-07-30T12:00:01.000Z",
     },
-    failedJobs: { totalCount: 0, recent: [], inspectionLimit: 20, inspectionTruncated: false },
-    updatedAt: "2026-07-30T12:00:01.000Z",
+    erpProtection: {
+      status: "healthy",
+      reason: null,
+      circuit: null,
+      retryPressure: {
+        inspectedJobCount: 0,
+        inspectionLimit: 100,
+        retryingJobCount: 0,
+        retryAttemptCount: 0,
+        inspectionTruncated: false,
+      },
+      observedAt: "2026-07-30T12:00:01.000Z",
+    },
   };
 }

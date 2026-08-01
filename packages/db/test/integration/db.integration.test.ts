@@ -734,7 +734,7 @@ describe("database migrations, seed data, and reset behavior", () => {
       openedAt: null,
       nextAttemptAt: null,
       halfOpenProbeInFlight: false,
-      updatedAt: "2026-06-20T12:00:00.000Z",
+      lastChangedAt: "2026-06-20T12:00:00.000Z",
     };
     const runA = { type: "run" as const, runId: "55555555-5555-4555-8555-555555555555" };
     const runB = { type: "run" as const, runId: "66666666-6666-4666-8666-666666666666" };

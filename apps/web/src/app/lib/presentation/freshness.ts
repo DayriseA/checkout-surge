@@ -1,7 +1,9 @@
 import {
+  type BusinessOutcomeSummary,
   type DemoRunSnapshot,
   dashboardLiveUpdateExpectedIntervalMs,
 } from "@checkout-surge/contracts";
+import { hasExpectedWork } from "./run-presentation-state";
 
 export type RealtimeConnectionStatus = "connecting" | "connected" | "disconnected" | "unsupported";
 
@@ -23,14 +25,11 @@ export interface Freshness {
 }
 
 export function dashboardUpdateExpected(projection: {
-  queue: { depth: number; counts: { active: number } } | null;
-  inventory: { pendingPersistenceCount: number } | null;
+  businessOutcome: BusinessOutcomeSummary | null;
 }): boolean {
-  return (
-    (projection.queue?.depth ?? 0) > 0 ||
-    (projection.queue?.counts.active ?? 0) > 0 ||
-    (projection.inventory?.pendingPersistenceCount ?? 0) > 0
-  );
+  // A run's work is a subset of shared-runtime work, so narrowing this guard can only prevent a
+  // foreign run from making retained data look live.
+  return projection.businessOutcome ? hasExpectedWork(projection.businessOutcome) : false;
 }
 
 export function deriveFreshness(input: {

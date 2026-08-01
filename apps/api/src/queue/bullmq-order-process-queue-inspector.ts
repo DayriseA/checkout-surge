@@ -135,7 +135,7 @@ export function createOrderProcessQueueInspector(
           inspectionLimit: failedJobInspectionLimit,
           inspectionTruncated: normalizedCounts.failed > failedJobs.length,
         },
-        updatedAt: measuredAt.toISOString(),
+        observedAt: measuredAt.toISOString(),
       });
     },
     async checkConnectivity(): Promise<void> {

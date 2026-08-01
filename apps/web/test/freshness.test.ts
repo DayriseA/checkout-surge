@@ -45,26 +45,48 @@ describe("dashboard delivery freshness", () => {
   });
 
   it.each([
-    ["queue depth", { queueDepth: 1, activeJobs: 0, pendingPersistence: 0 }, true],
-    ["active jobs", { queueDepth: 0, activeJobs: 1, pendingPersistence: 0 }, true],
-    [
-      "pending inventory persistence",
-      { queueDepth: 0, activeJobs: 0, pendingPersistence: 1 },
-      true,
-    ],
-    ["no work", { queueDepth: 0, activeJobs: 0, pendingPersistence: 0 }, false],
+    ["queued orders", { queued: 1, processing: 0, retrying: 0, pending: 0 }, true],
+    ["processing orders", { queued: 0, processing: 1, retrying: 0, pending: 0 }, true],
+    ["retrying orders", { queued: 0, processing: 0, retrying: 1, pending: 0 }, true],
+    ["pending persistence", { queued: 0, processing: 0, retrying: 0, pending: 1 }, true],
+    ["no work", { queued: 0, processing: 0, retrying: 0, pending: 0 }, false],
   ])("expects updates for %s", (_name, values, expected) => {
     expect(
       dashboardUpdateExpected({
-        queue: {
-          depth: values.queueDepth,
-          counts: { active: values.activeJobs },
-        },
-        inventory: {
-          pendingPersistenceCount: values.pendingPersistence,
+        businessOutcome: {
+          acceptedReservations: 1,
+          soldOutRejections: 0,
+          queuedOrders: values.queued,
+          processingOrders: values.processing,
+          retryingOrders: values.retrying,
+          confirmedOrders: 0,
+          failedOrders: 0,
+          pendingPersistenceCount: values.pending,
+          notificationsRecorded: 0,
         },
       }),
     ).toBe(expected);
+  });
+
+  it("ignores shared queue work when the selected run has no expected work", () => {
+    const projection = {
+      businessOutcome: {
+        acceptedReservations: 1,
+        soldOutRejections: 0,
+        queuedOrders: 0,
+        processingOrders: 0,
+        retryingOrders: 0,
+        confirmedOrders: 1,
+        failedOrders: 0,
+        pendingPersistenceCount: 0,
+        notificationsRecorded: 1,
+      },
+      systemStatus: {
+        queue: { depth: 9, counts: { active: 1 } },
+      },
+    };
+
+    expect(dashboardUpdateExpected(projection)).toBe(false);
   });
 });
 

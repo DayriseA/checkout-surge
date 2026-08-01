@@ -224,6 +224,7 @@ export const businessOutcomeSummarySchema = z
   .object({
     acceptedReservations: nonnegativeIntegerSchema,
     soldOutRejections: nonnegativeIntegerSchema,
+    /** Live form of queueBacklogDefinition: accepted_awaiting_first_processing_start. */
     queuedOrders: nonnegativeIntegerSchema,
     processingOrders: nonnegativeIntegerSchema.default(0),
     retryingOrders: nonnegativeIntegerSchema.default(0),

@@ -27,7 +27,7 @@ import { DashboardRecoveryWorkflow } from "./services/dashboard-recovery-workflo
 import type { DemoPresetController } from "./services/demo-preset-service.js";
 import type { DemoRunLifecycleController } from "./services/demo-run-service.js";
 import { DemoRunValidationError } from "./services/demo-run-validation-error.js";
-import type { ErpStatusService } from "./services/erp-status-service.js";
+import type { SharedErpProtectionService } from "./services/erp-status-service.js";
 import type { GeneratedRunRetentionWorkflow } from "./services/generated-run-retention-service.js";
 import type { GeneratedRunTeardownWorkflow } from "./services/generated-run-teardown-service.js";
 import type { InventoryStatusService } from "./services/inventory-status-service.js";
@@ -46,7 +46,7 @@ export interface BuildApiServerOptions {
   dashboardProjectionFanout: DashboardProjectionFanout;
   dashboardRecoveryService: DashboardProjectionService;
   dashboardRecoveryAdmission: DashboardRecoveryAdmissionController;
-  erpStatusService: ErpStatusService;
+  sharedErpProtectionService: SharedErpProtectionService;
   inventoryStatusService: InventoryStatusService;
   orderStatusService: OrderStatusController;
   queueStatusService: QueueStatusService;
@@ -126,7 +126,9 @@ export async function buildApiServer(options: BuildApiServerOptions): Promise<Ap
     readiness: options.readiness,
     ...(options.startedAt ? { startedAt: options.startedAt } : {}),
   });
-  registerErpRoutes(app, { erpStatusService: options.erpStatusService });
+  registerErpRoutes(app, {
+    sharedErpProtectionService: options.sharedErpProtectionService,
+  });
   registerBuyRoutes(app, { reserveOrderService: options.reserveOrderService });
   registerInventoryRoutes(app, { inventoryStatusService: options.inventoryStatusService });
   registerOrderStatusRoutes(app, { orderStatusService: options.orderStatusService });

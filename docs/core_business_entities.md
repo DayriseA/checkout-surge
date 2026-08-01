@@ -727,7 +727,7 @@ The UI should consume derived read models rather than raw internal tables or key
 Examples of derived UI data:
 
 - active sale-offer details
-- admin queue and ERP health panels
+- run ERP outcome and shared-runtime system-status panels
 - inventory-drain charts
 - consistency-lag metrics
 

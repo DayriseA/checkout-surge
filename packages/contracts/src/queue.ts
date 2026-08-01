@@ -84,7 +84,8 @@ export const queueStatusSchema = z
         inspectionTruncated: z.boolean(),
       })
       .strict(),
-    updatedAt: isoTimestampSchema,
+    /** Poll clock: records when the shared physical queue was observed. */
+    observedAt: isoTimestampSchema,
   })
   .strict();
 export type QueueStatus = z.infer<typeof queueStatusSchema>;

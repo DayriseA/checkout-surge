@@ -983,8 +983,11 @@ describe("demo run finalization service", () => {
               queueStatusService: {
                 getStatus: async () => Promise.reject(new Error("unused queue projection")),
               },
-              erpStatusService: {
+              sharedErpProtectionService: {
                 getStatus: async () => Promise.reject(new Error("unused ERP projection")),
+              },
+              runErpOutcomeService: {
+                getOutcomes: async () => Promise.reject(new Error("unused run ERP projection")),
               },
               trafficMetricReader: { readRecent: async () => [] },
               transportObservationReader: { read: async () => null },

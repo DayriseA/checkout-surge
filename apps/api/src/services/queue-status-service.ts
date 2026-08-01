@@ -31,7 +31,7 @@ export class QueueStatusService {
           activeCount: status.counts.active,
           retryingJobCount: status.retryPressure.retryingJobCount,
           failedJobCount: status.failedJobs.totalCount,
-          updatedAt: status.updatedAt,
+          observedAt: status.observedAt,
         },
         "Order-processing queue status inspected.",
       );

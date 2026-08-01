@@ -64,7 +64,7 @@ describe("order-processing queue inspection", () => {
           expect.objectContaining({ jobId: "failed-older", failedReason: "Timed out" }),
         ],
       },
-      updatedAt: measuredAt.toISOString(),
+      observedAt: measuredAt.toISOString(),
     });
     expect(queue.getJobs).toHaveBeenCalledWith(["waiting", "prioritized", "paused"], 0, 0, true);
     expect(queue.getJobs).toHaveBeenCalledWith(

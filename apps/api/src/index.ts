@@ -52,10 +52,8 @@ import {
   PostgresStartingDemoRunReconciliationStore,
 } from "./services/demo-run-startup-reconciliation-service.js";
 import {
-  ErpStatusService,
-  PostgresActiveErpRunReader,
-  PostgresErpAttemptStatusReader,
   RedisErpCircuitBreakerStateReader,
+  SharedErpProtectionService,
 } from "./services/erp-status-service.js";
 import { GeneratedRunRetentionService } from "./services/generated-run-retention-service.js";
 import { GeneratedRunTeardownService } from "./services/generated-run-teardown-service.js";
@@ -144,12 +142,10 @@ export async function startApiServer(): Promise<void> {
     logger,
   });
   const queueStatusService = new QueueStatusService(orderProcessQueueInspector, logger);
-  const erpStatusService = new ErpStatusService({
+  const sharedErpProtectionService = new SharedErpProtectionService({
     circuitBreakerStateReader: new RedisErpCircuitBreakerStateReader(redis),
-    attemptStatusReader: new PostgresErpAttemptStatusReader(connection.db),
     queueStatusService,
     logger,
-    activeRunReader: new PostgresActiveErpRunReader(connection.db),
   });
   const inventoryStatusService = new InventoryStatusService({
     getStatus: (saleOfferId) => getInventoryStatus(redis, saleOfferId),
@@ -483,7 +479,7 @@ export async function startApiServer(): Promise<void> {
       dashboardProjectionFanout,
       dashboardRecoveryService: dashboardProjectionService,
       dashboardRecoveryAdmission,
-      erpStatusService,
+      sharedErpProtectionService,
       inventoryStatusService,
       orderStatusService,
       queueStatusService,

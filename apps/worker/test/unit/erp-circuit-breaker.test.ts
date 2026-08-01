@@ -46,7 +46,7 @@ describe("ERP circuit breaker", () => {
       openedAt: null,
       nextAttemptAt: null,
       halfOpenProbeInFlight: false,
-      updatedAt: "2026-06-22T00:00:00.000Z",
+      lastChangedAt: "2026-06-22T00:00:00.000Z",
     });
   });
 
@@ -80,6 +80,72 @@ describe("ERP circuit breaker", () => {
       state: "closed",
       consecutiveFailureCount: 0,
       openedAt: null,
+    });
+  });
+
+  it("advances lastChangedAt only when the circuit state transitions", async () => {
+    let now = new Date("2026-06-22T00:00:00.000Z");
+    let resolveProbe!: () => void;
+    const probe = new Promise<void>((resolve) => {
+      resolveProbe = resolve;
+    });
+    const delegate = {
+      confirm: vi
+        .fn()
+        .mockRejectedValueOnce(new Error("first failure"))
+        .mockResolvedValueOnce(undefined)
+        .mockRejectedValueOnce(new Error("second failure"))
+        .mockRejectedValueOnce(new Error("third failure"))
+        .mockReturnValueOnce(probe),
+    };
+    const breaker = new ErpCircuitBreaker({
+      confirmation: delegate,
+      failureThreshold: 2,
+      resetTimeoutMs: 1000,
+      isCountedFailure: () => true,
+      now: () => now,
+    });
+
+    now = new Date("2026-06-22T00:00:00.100Z");
+    await expect(breaker.confirm(job, delivery)).rejects.toThrow("first failure");
+    expect(breaker.snapshot()).toMatchObject({
+      state: "closed",
+      consecutiveFailureCount: 1,
+      lastChangedAt: "2026-06-22T00:00:00.000Z",
+    });
+
+    now = new Date("2026-06-22T00:00:00.200Z");
+    await expect(breaker.confirm(job, delivery)).resolves.toBeUndefined();
+    expect(breaker.snapshot()).toMatchObject({
+      state: "closed",
+      consecutiveFailureCount: 0,
+      lastChangedAt: "2026-06-22T00:00:00.000Z",
+    });
+
+    now = new Date("2026-06-22T00:00:00.300Z");
+    await expect(breaker.confirm(job, delivery)).rejects.toThrow("second failure");
+    now = new Date("2026-06-22T00:00:00.400Z");
+    await expect(breaker.confirm(job, delivery)).rejects.toThrow("third failure");
+    expect(breaker.snapshot()).toMatchObject({
+      state: "open",
+      lastChangedAt: "2026-06-22T00:00:00.400Z",
+    });
+
+    now = new Date("2026-06-22T00:00:01.400Z");
+    const pendingProbe = breaker.confirm(job, delivery);
+    expect(breaker.snapshot()).toMatchObject({
+      state: "half_open",
+      halfOpenProbeInFlight: true,
+      lastChangedAt: "2026-06-22T00:00:01.400Z",
+    });
+
+    now = new Date("2026-06-22T00:00:01.500Z");
+    resolveProbe();
+    await expect(pendingProbe).resolves.toBeUndefined();
+    expect(breaker.snapshot()).toMatchObject({
+      state: "closed",
+      halfOpenProbeInFlight: false,
+      lastChangedAt: "2026-06-22T00:00:01.500Z",
     });
   });
 

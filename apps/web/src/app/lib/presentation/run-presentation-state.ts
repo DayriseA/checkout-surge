@@ -3,9 +3,10 @@ import type {
   CompletionOutcomeStatus,
   DashboardProjection,
   DemoRunSnapshot,
-  ErpResilienceStatus,
   InventoryStatus,
-  QueueStatus,
+  RunErpOutcomeSummary,
+  SharedErpProtectionStatus,
+  SharedRuntimeStatus,
 } from "@checkout-surge/contracts";
 import type { BackendRead } from "../api";
 import type { Freshness } from "./freshness";
@@ -240,35 +241,49 @@ export function deriveInventoryOutcomeState(
   return state("inventory-ready", "idle", "inventory ready", "Inventory is ready.");
 }
 
-export function deriveQueuePresentationState(
-  queue: QueueStatus | null,
-  run: DemoRunSnapshot | null,
+export function deriveSharedRuntimeState(
+  systemStatus: SharedRuntimeStatus | null,
 ): PresentationState {
-  if (!queue)
+  if (!systemStatus)
     return state(
-      "queue-not-yet-available",
+      "shared-runtime-not-yet-available",
       "idle",
       "no data",
-      "Queue evidence is not yet available.",
+      "Shared demo-runtime state is not yet available.",
     );
-  const hasWork = queue.depth > 0 || queue.counts.active > 0;
-  if (queue.failedJobs.totalCount > 0) {
-    return state("queue-failures", "warning", "failed jobs", "The queue contains failed jobs.");
-  }
-  if (hasWork && (run?.status === "completed" || run?.status === "failed")) {
+  if (systemStatus.erpProtection.status === "unavailable") {
     return state(
-      "queue-unsettled",
-      "warning",
-      "backlog remains",
-      "Queue work remains after finalization.",
+      "shared-runtime-unavailable",
+      "danger",
+      "protection unavailable",
+      "Shared ERP protection is unavailable.",
     );
   }
-  if (hasWork) return states.draining;
-  if (!run) return state("queue-ready", "idle", "ready", "The queue is ready.");
-  if (run.status === "completed" || run.status === "failed") {
-    return state("queue-drained", "ok", "queue drained", "No queue work remains.");
+  if (
+    systemStatus.erpProtection.status === "degraded" ||
+    systemStatus.queue.failedJobs.totalCount > 0
+  ) {
+    return state(
+      "shared-runtime-degraded",
+      "warning",
+      "attention needed",
+      "Shared demo-runtime protection or queue state needs attention.",
+    );
   }
-  return state("queue-no-backlog", "idle", "no backlog", "No queue work is currently waiting.");
+  if (systemStatus.queue.depth > 0 || systemStatus.queue.counts.active > 0) {
+    return state(
+      "shared-runtime-busy",
+      "progress",
+      "runtime busy",
+      "The shared physical queue is processing work.",
+    );
+  }
+  return state(
+    "shared-runtime-ready",
+    "ok",
+    "runtime ready",
+    "The shared physical queue and ERP protection are ready.",
+  );
 }
 
 export function deriveFreshnessPresentationState(freshness: Freshness): PresentationState {
@@ -359,22 +374,85 @@ export function deriveOutcomePresentationState(
     : state("outcomes-observed", "idle", "outcomes observed", "Durable outcomes are available.");
 }
 
-export function deriveErpPresentationState(erp: ErpResilienceStatus | null): PresentationState {
-  if (!erp || erp.recentAttemptCount === 0) {
+export function deriveRunErpOutcomeState(erp: RunErpOutcomeSummary | null): PresentationState {
+  if (!erp) {
     return state(
-      "erp-not-yet-observed",
+      "run-erp-not-yet-observed",
       "idle",
       "not yet observed",
-      "ERP evidence is not yet available.",
+      "ERP outcome evidence for this run is not yet available.",
     );
   }
-  if (erp.status === "healthy") {
-    return state("erp-healthy", "ok", "healthy", "The ERP dependency is healthy.");
+  if (erp.circuitReadStatus === "unavailable") {
+    return state(
+      "run-erp-protection-unavailable",
+      "warning",
+      "protection unavailable",
+      "ERP attempt outcomes are available, but this run's protection state could not be read.",
+    );
   }
-  if (erp.status === "degraded") {
-    return state("erp-degraded", "warning", "degraded", "The ERP dependency is degraded.");
+  if (!erp.circuit && erp.recentAttemptCount === 0) {
+    return state(
+      "run-erp-protection-not-exercised",
+      "idle",
+      "not yet exercised",
+      "This run has not exercised ERP protection.",
+    );
   }
-  return state("erp-unavailable", "danger", "unavailable", "The ERP dependency is unavailable.");
+  if (
+    erp.recentFailureCount > 0 ||
+    erp.recentTimeoutCount > 0 ||
+    erp.latestAttempt?.status === "failed" ||
+    erp.latestAttempt?.status === "timed_out"
+  ) {
+    return state(
+      "run-erp-failures-observed",
+      "warning",
+      "failures observed",
+      "This run has ERP failures or timeouts in the recent attempt window.",
+    );
+  }
+  return state(
+    "run-erp-outcomes-observed",
+    "ok",
+    "outcomes observed",
+    "ERP attempt outcomes for this run are available.",
+  );
+}
+
+export function deriveSharedErpProtectionState(
+  protection: SharedErpProtectionStatus | null,
+): PresentationState {
+  if (!protection) {
+    return state(
+      "shared-erp-protection-not-yet-available",
+      "idle",
+      "no data",
+      "Shared ERP protection state is not yet available.",
+    );
+  }
+  if (protection.status === "healthy") {
+    return state(
+      "shared-erp-protection-healthy",
+      "ok",
+      "healthy",
+      "Shared ERP protection is healthy.",
+    );
+  }
+  if (protection.status === "degraded") {
+    return state(
+      "shared-erp-protection-degraded",
+      "warning",
+      "degraded",
+      "Shared ERP protection is degraded.",
+    );
+  }
+  return state(
+    "shared-erp-protection-unavailable",
+    "danger",
+    "unavailable",
+    "Shared ERP protection is unavailable.",
+  );
 }
 
 export function deriveCompletionOutcomePresentationState(
@@ -399,7 +477,7 @@ function unsettledOrders(outcome: BusinessOutcomeSummary): number {
   );
 }
 
-function hasExpectedWork(outcome: BusinessOutcomeSummary): boolean {
+export function hasExpectedWork(outcome: BusinessOutcomeSummary): boolean {
   return (
     outcome.pendingPersistenceCount +
       outcome.queuedOrders +

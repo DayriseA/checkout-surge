@@ -451,6 +451,84 @@ describe("admin browser workflows", () => {
 });
 
 describe("watch browser recovery", () => {
+  it("keeps run backlog and retries separate from shared queue pressure", () => {
+    const currentRun = demoRunFixture();
+    const markup = renderToStaticMarkup(
+      createElement(OperatorDashboard, {
+        initialRecovery: available(
+          dashboardRecoveryFixture({
+            currentRun,
+            businessOutcome: {
+              acceptedReservations: 12,
+              soldOutRejections: 0,
+              queuedOrders: 7,
+              processingOrders: 1,
+              retryingOrders: 3,
+              confirmedOrders: 1,
+              failedOrders: 0,
+              pendingPersistenceCount: 0,
+              notificationsRecorded: 1,
+            },
+            systemStatus: {
+              queue: {
+                name: "orders:process",
+                connectivity: "reachable",
+                depth: 41,
+                counts: {
+                  waiting: 30,
+                  prioritized: 0,
+                  paused: 0,
+                  delayed: 10,
+                  active: 1,
+                  failed: 0,
+                },
+                oldestWaitingAgeSeconds: 4,
+                retryPressure: {
+                  inspectedJobCount: 41,
+                  inspectionLimit: 100,
+                  retryingJobCount: 29,
+                  retryAttemptCount: 37,
+                  inspectionTruncated: false,
+                },
+                failedJobs: {
+                  totalCount: 0,
+                  recent: [],
+                  inspectionLimit: 20,
+                  inspectionTruncated: false,
+                },
+                observedAt: "2026-06-20T00:00:10.000Z",
+              },
+              erpProtection: {
+                status: "degraded",
+                reason: "erp_retries_pending",
+                circuit: null,
+                retryPressure: {
+                  retryingJobCount: 29,
+                  retryAttemptCount: 37,
+                  inspectedJobCount: 41,
+                  inspectionLimit: 100,
+                  inspectionTruncated: false,
+                },
+                observedAt: "2026-06-20T00:00:10.000Z",
+              },
+            },
+          }),
+        ),
+      }),
+    );
+
+    expect(markup).toContain("Peak 7 orders");
+    expect(markup).toContain("Run-owned retrying orders are shown separately (3)");
+    expect(markup).toContain("Reservation and confirmation summary");
+    expect(markup).toMatch(/Queued \(awaiting first processing start\)<\/dt><dd[^>]*>7<\/dd>/);
+    expect(markup).toMatch(/Retrying<\/dt><dd[^>]*>3<\/dd>/);
+    expect(markup).toContain("System status across all runs and visitors");
+    expect(markup).toMatch(/Depth \(all runs\)<\/dt><dd[^>]*>41<\/dd>/);
+    expect(markup.match(/Retrying jobs<\/dt><dd[^>]*>29<\/dd>/g)).toHaveLength(2);
+    expect(markup).not.toContain("Peak 41 orders");
+    expect(markup).not.toContain("Run-owned retrying orders are shown separately (29)");
+  });
+
   it("keeps the terminal chart anchored at the first attempt after a long preparation gap", () => {
     const firstAttemptStartedAt = "2026-06-20T00:01:10.000Z";
     const elapsed = Array.from({ length: runSignalBucketCount }, (_, index) => (index + 1) * 0.005);
@@ -973,8 +1051,8 @@ function dashboardRecoveryFixture(
     currentRun: null,
     inventory: null,
     recentMetrics: [],
-    queue: null,
     erp: null,
+    systemStatus: null,
     businessOutcome: null,
     consistencyLag: null,
     transportAttemptCounts: null,

@@ -33,7 +33,7 @@ import { runWithResourceCleanup } from "../runtime/api-resource-cleanup.js";
 import { abortReason, settleWithAbort } from "../runtime/operation-lifecycle.js";
 import type { DashboardTrafficMetricReader } from "./dashboard-traffic-metric-store.js";
 import { toDemoRunSnapshot } from "./demo-run-projections.js";
-import type { ErpStatusService } from "./erp-status-service.js";
+import type { RunErpOutcomeService, SharedErpProtectionService } from "./erp-status-service.js";
 import type { InventoryStatusService } from "./inventory-status-service.js";
 import type { QueueStatusService } from "./queue-status-service.js";
 import {
@@ -312,7 +312,8 @@ export class DashboardProjectionService {
     const [
       inventoryResult,
       queueResult,
-      erpResult,
+      sharedErpProtectionResult,
+      runErpOutcomeResult,
       businessOutcomeResult,
       consistencyLagResult,
       trafficMetricResult,
@@ -325,7 +326,14 @@ export class DashboardProjectionService {
           )
         : Promise.resolve({ ok: true as const, value: null }),
       readSafely("dashboard_queue", signal, () => dependencies.queueStatusService.getStatus()),
-      readSafely("dashboard_erp", signal, () => dependencies.erpStatusService.getStatus()),
+      readSafely("dashboard_shared_erp_protection", signal, () =>
+        dependencies.sharedErpProtectionService.getStatus(),
+      ),
+      scope
+        ? readSafely("dashboard_run_erp_outcome", signal, () =>
+            dependencies.runErpOutcomeService.getOutcomes(scope),
+          )
+        : Promise.resolve({ ok: true as const, value: null }),
       saleScope
         ? readSafely("dashboard_business_outcome", signal, () =>
             dependencies.businessOutcomeReader.read(saleScope),
@@ -369,7 +377,8 @@ export class DashboardProjectionService {
     for (const result of [
       inventoryResult,
       queueResult,
-      erpResult,
+      sharedErpProtectionResult,
+      runErpOutcomeResult,
       businessOutcomeResult,
       consistencyLagResult,
       trafficMetricResult,
@@ -396,8 +405,14 @@ export class DashboardProjectionService {
       currentRun: context.currentRun,
       inventory: inventoryResult.ok ? inventoryResult.value : null,
       recentMetrics: trafficMetricResult.ok ? trafficMetricResult.value : [],
-      queue: queueResult.ok ? queueResult.value : null,
-      erp: erpResult.ok ? erpResult.value : null,
+      erp: runErpOutcomeResult.ok ? runErpOutcomeResult.value : null,
+      systemStatus:
+        queueResult.ok && sharedErpProtectionResult.ok
+          ? {
+              queue: queueResult.value,
+              erpProtection: sharedErpProtectionResult.value,
+            }
+          : null,
       businessOutcome: businessOutcomeResult.ok ? businessOutcomeResult.value : null,
       consistencyLag: consistencyLagResult.ok ? consistencyLagResult.value : null,
       recentCompletionOutcomes: completionOutcomeResult.ok ? completionOutcomeResult.value : [],
@@ -423,7 +438,8 @@ export interface DashboardRecoveryDependencies {
   completionOutcomeReader: DashboardCompletionOutcomeReader;
   inventoryStatusService: Pick<InventoryStatusService, "getStatus">;
   queueStatusService: Pick<QueueStatusService, "getStatus">;
-  erpStatusService: Pick<ErpStatusService, "getStatus">;
+  sharedErpProtectionService: Pick<SharedErpProtectionService, "getStatus">;
+  runErpOutcomeService: Pick<RunErpOutcomeService, "getOutcomes">;
   trafficMetricReader: DashboardTrafficMetricReader;
   transportObservationReader: DashboardTransportObservationReader;
   revisionAllocator: DashboardProjectionRevisionAllocator;

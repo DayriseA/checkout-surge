@@ -32,7 +32,7 @@ describe("Gold Signals", () => {
           },
         ],
         oversoldUnits: 0,
-        retryingJobCount: 2,
+        retryingOrderCount: 2,
         terminalSummary: timelineFixture(),
       }),
     );

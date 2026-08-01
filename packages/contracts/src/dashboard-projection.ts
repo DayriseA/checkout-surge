@@ -5,7 +5,7 @@ import {
   consistencyLagSummarySchema,
   demoRunSnapshotSchema,
 } from "./demo.js";
-import { erpResilienceStatusSchema } from "./erp.js";
+import { runErpOutcomeSummarySchema, sharedErpProtectionStatusSchema } from "./erp.js";
 import { inventoryStatusSchema } from "./inventory.js";
 import { requestArrivalSummarySchema, trafficHttpSummarySchema } from "./load.js";
 import {
@@ -51,6 +51,14 @@ export const dashboardProjectionScopeSchema = z
   .strict();
 export type DashboardProjectionScope = z.infer<typeof dashboardProjectionScopeSchema>;
 
+export const sharedRuntimeStatusSchema = z
+  .object({
+    queue: queueStatusSchema,
+    erpProtection: sharedErpProtectionStatusSchema,
+  })
+  .strict();
+export type SharedRuntimeStatus = z.infer<typeof sharedRuntimeStatusSchema>;
+
 export const dashboardProjectionDirtySignalSchema = z
   .object({
     type: z.literal("dashboard.projection.dirty"),
@@ -87,8 +95,8 @@ export const dashboardProjectionSchema = z
     currentRun: demoRunSnapshotSchema.nullable(),
     inventory: inventoryStatusSchema.nullable(),
     recentMetrics: z.array(metricSampleSchema).default([]),
-    queue: queueStatusSchema.nullable(),
-    erp: erpResilienceStatusSchema.nullable(),
+    erp: runErpOutcomeSummarySchema.nullable(),
+    systemStatus: sharedRuntimeStatusSchema.nullable(),
     businessOutcome: businessOutcomeSummarySchema.nullable(),
     consistencyLag: consistencyLagSummarySchema.nullable(),
     recentCompletionOutcomes: z.array(completionOutcomeSchema).default([]),
@@ -126,6 +134,7 @@ export const dashboardProjectionSchema = z
       const runOwnedFields = [
         ["inventory", projection.inventory],
         ["recentMetrics", projection.recentMetrics.length === 0 ? null : projection.recentMetrics],
+        ["erp", projection.erp],
         ["businessOutcome", projection.businessOutcome],
         ["consistencyLag", projection.consistencyLag],
         [
@@ -172,6 +181,23 @@ export const dashboardProjectionSchema = z
         code: "custom",
         path: ["inventory", "saleOfferId"],
         message: "Projection inventory and scope sale offer IDs must agree.",
+      });
+    }
+    if (projection.erp !== null && projection.erp.runId !== projection.scope.runId) {
+      context.addIssue({
+        code: "custom",
+        path: ["erp", "runId"],
+        message: "Projection ERP outcome and scope run IDs must agree.",
+      });
+    }
+    if (
+      projection.erp?.latestAttempt &&
+      projection.erp.latestAttempt.runId !== projection.scope.runId
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["erp", "latestAttempt", "runId"],
+        message: "Projection latest ERP attempt and scope run IDs must agree.",
       });
     }
     for (const [index, outcome] of projection.recentCompletionOutcomes.entries()) {

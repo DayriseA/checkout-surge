@@ -44,7 +44,7 @@ export class ErpCircuitBreaker implements OrderConfirmation {
   private consecutiveFailureCount = 0;
   private openedAt: Date | null = null;
   private halfOpenProbeInFlight = false;
-  private updatedAt: Date;
+  private lastChangedAt: Date;
 
   constructor(options: ErpCircuitBreakerOptions) {
     this.confirmation = options.confirmation;
@@ -53,8 +53,8 @@ export class ErpCircuitBreaker implements OrderConfirmation {
     this.isCountedFailure = options.isCountedFailure;
     this.onStateChange = options.onStateChange;
     this.now = options.now ?? (() => new Date());
-    this.updatedAt = this.now();
-    this.reportStateChange();
+    this.lastChangedAt = this.now();
+    this.reportSnapshot();
   }
 
   async confirm(job: OrderProcessJob, delivery: OrderProcessDeliveryMetadata): Promise<void> {
@@ -71,7 +71,7 @@ export class ErpCircuitBreaker implements OrderConfirmation {
     const isHalfOpenProbe = this.state === "half_open";
     if (isHalfOpenProbe) {
       this.halfOpenProbeInFlight = true;
-      this.touch();
+      this.reportSnapshot();
     }
 
     try {
@@ -83,9 +83,9 @@ export class ErpCircuitBreaker implements OrderConfirmation {
       }
       throw error;
     } finally {
-      if (isHalfOpenProbe) {
+      if (isHalfOpenProbe && this.halfOpenProbeInFlight) {
         this.halfOpenProbeInFlight = false;
-        this.touch();
+        this.reportSnapshot();
       }
     }
   }
@@ -103,7 +103,7 @@ export class ErpCircuitBreaker implements OrderConfirmation {
       openedAt: openedAt ? openedAt.toISOString() : null,
       nextAttemptAt: nextAttemptAt ? nextAttemptAt.toISOString() : null,
       halfOpenProbeInFlight: this.halfOpenProbeInFlight,
-      updatedAt: this.updatedAt.toISOString(),
+      lastChangedAt: this.lastChangedAt.toISOString(),
     };
   }
 
@@ -114,7 +114,7 @@ export class ErpCircuitBreaker implements OrderConfirmation {
 
     if (this.now().getTime() - this.openedAt.getTime() >= this.resetTimeoutMs) {
       this.state = "half_open";
-      this.touch();
+      this.recordStateChange();
     }
   }
 
@@ -125,26 +125,33 @@ export class ErpCircuitBreaker implements OrderConfirmation {
     }
 
     this.consecutiveFailureCount += 1;
-    this.touch();
 
     if (this.consecutiveFailureCount >= this.failureThreshold) {
       this.open();
+      return;
     }
+
+    this.reportSnapshot();
   }
 
   private open(): void {
     this.state = "open";
     this.openedAt = this.now();
     this.halfOpenProbeInFlight = false;
-    this.touch();
+    this.recordStateChange();
   }
 
   private close(): void {
+    const wasClosed = this.state === "closed";
     this.state = "closed";
     this.consecutiveFailureCount = 0;
     this.openedAt = null;
     this.halfOpenProbeInFlight = false;
-    this.touch();
+    if (wasClosed) {
+      this.reportSnapshot();
+      return;
+    }
+    this.recordStateChange();
   }
 
   private retryAfterMs(): number {
@@ -156,12 +163,12 @@ export class ErpCircuitBreaker implements OrderConfirmation {
     return Math.max(0, nextAttemptAt - this.now().getTime());
   }
 
-  private touch(): void {
-    this.updatedAt = this.now();
-    this.reportStateChange();
+  private recordStateChange(): void {
+    this.lastChangedAt = this.now();
+    this.reportSnapshot();
   }
 
-  private reportStateChange(): void {
+  private reportSnapshot(): void {
     if (!this.onStateChange) {
       return;
     }

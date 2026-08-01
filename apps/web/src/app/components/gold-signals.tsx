@@ -20,7 +20,7 @@ export function GoldSignals({
   liveLag = null,
   liveSamples,
   oversoldUnits,
-  retryingJobCount = 0,
+  retryingOrderCount = 0,
   startingStock = null,
   terminalSummary,
 }: {
@@ -29,7 +29,7 @@ export function GoldSignals({
   liveLag?: ConsistencyLagSummary | null;
   liveSamples?: RunSignalLiveSample[];
   oversoldUnits: number;
-  retryingJobCount?: number;
+  retryingOrderCount?: number;
   startingStock?: number | null;
   terminalSummary: RunSignalTimelineSummary | null;
 }) {
@@ -247,9 +247,9 @@ export function GoldSignals({
             terminal?.queueBacklog.peakBacklog ?? livePeakBacklog,
           )} orders.`}
           area
-          caption={`Accepted orders awaiting their first processing start. Drain duration runs from the first queued order to final backlog zero. Live BullMQ depth is an approximation; ${formatNumber(
-            retryingJobCount,
-          )} retrying jobs may re-enter BullMQ without re-entering this durable backlog.`}
+          caption={`Live and durable backlog counts are accepted orders awaiting their first processing start. Drain duration runs from the first queued order to final backlog zero. Run-owned retrying orders are shown separately (${formatNumber(
+            retryingOrderCount,
+          )}) because retries can re-enter BullMQ without re-entering this backlog.`}
           headline={`Peak ${formatNumber(
             terminal?.queueBacklog.peakBacklog ?? livePeakBacklog,
           )} orders${

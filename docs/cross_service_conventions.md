@@ -109,9 +109,9 @@ Public presentation keeps three concerns separate:
 
 Backend run states remain unchanged. The web maps `starting` to starting, active traffic preparation to starting, active traffic delivery to accepting checkout attempts, and `draining` to processing accepted reservations. Expected work uses the progress treatment; amber is reserved for anomalies. A completed successful run and an exact sellout with zero oversell use the success treatment.
 
-Freshness is delivery-based rather than producer-age-based. `inventory.lastUpdatedAt` is a change time and can remain unchanged after a correct sellout; queue, ERP, and consistency-lag timestamps are observations assembled into the same projection. The projection therefore carries `inventory.observedAt` as the inventory read time while preserving `lastUpdatedAt` as the last inventory change time.
+Freshness is delivery-based rather than producer-age-based. `inventory.lastUpdatedAt` is a change time and can remain unchanged after a correct sellout; queue, ERP, and consistency-lag timestamps are observations assembled into the same projection. The projection therefore carries `inventory.observedAt` as the inventory read time while preserving `lastUpdatedAt` as the last inventory change time. Scope is independent of freshness: a current shared-runtime value is not run evidence, and an older edge-triggered breaker state can still be valid.
 
-The browser calls a nonterminal projection live only when the SSE transport is connected, update-producing work exists, and the last projection arrived inside the age guard. Update-producing work means queue depth, active queue work, or pending inventory persistence is non-zero. The guard is three times `dashboardLiveUpdateExpectedIntervalMs`: 6 seconds at the current 2-second queue refresh cadence. A connected run with no update-producing work is retained-fresh regardless of projection age. `connecting` and `unsupported` are neutral delivery states; neither is called disconnected or stale, nor described as showing last-known-good values because of a failure. A disconnected transport is disconnected regardless of age. Completed, failed, and no-run projections are final or not applicable and never decay into stale data. Last-known-good values remain visible with their projection update time and an explicit disconnected or stale label.
+The browser calls a nonterminal projection live only when the SSE transport is connected, update-producing work for the selected run exists, and the last projection arrived inside the age guard. Update-producing work means the run's pending persistence, queued, processing, or retrying order count is non-zero. Shared BullMQ depth and active counts do not keep another run's surface live. The guard is three times `dashboardLiveUpdateExpectedIntervalMs`: 6 seconds at the current 2-second queue refresh cadence. A connected run with no update-producing work is retained-fresh regardless of projection age. `connecting` and `unsupported` are neutral delivery states; neither is called disconnected or stale, nor described as showing last-known-good values because of a failure. A disconnected transport is disconnected regardless of age. Completed, failed, and no-run projections are final or not applicable and never decay into stale data. Last-known-good values remain visible with their projection update time and an explicit disconnected or stale label.
 
 Terminal outcome precedence is normative: failed run, oversell, failed orders, unsettled orders, then completed successfully. Oversell outranks order failures because it breaks the core stock invariant. Classification uses durable terminal evidence; notification counts are not order-confirmation evidence.
 
@@ -130,6 +130,45 @@ API and worker business mutation handlers mark the dashboard dirty only after fr
 The cutover is canonical-only: publishers and consumers deploy together, existing browser tabs must reload, and active k6 processes must be restarted. Legacy wire shapes and singular k6 counters are not normalized, avoiding duplicate aggregate/delta application and counter double counting.
 
 The worker does not publish individual order status or consistency-lag messages. Retained completion and aggregate consistency-lag views come from the complete projection, while focused order investigation uses the durable status read or protected Run History.
+
+### Dashboard queue and ERP scope inventory
+
+The public run surface has two structural homes:
+
+- `erp` is a `runErpOutcomeSummary` and is run-owned. Its `runId` and any `latestAttempt.runId` must match the projection scope.
+- `systemStatus` is a `sharedRuntimeStatus` and remains available on idle projections. It is never terminal or current-run evidence.
+
+Run-scoped fields:
+
+| Public evidence | Source and meaning | Clock |
+| --- | --- | --- |
+| Queued / processing backlog | `businessOutcome.queuedOrders` is `accepted_awaiting_first_processing_start`; `processingOrders` and adjacent `retryingOrders` are filtered by `orders.runId`. Retrying remains separate because BullMQ retries can resume after the first processing start. | Complete projection `recoveredAt`; terminal history uses its captured run timeline. |
+| Confirmed and failed outcomes | `businessOutcome.confirmedOrders`, `failedOrders`, and recent completion outcomes are filtered by the selected `runId`. | Durable event timestamps and projection `recoveredAt`. |
+| ERP attempt totals | `erp.recentAttemptCount`, `recentFailureCount`, and `recentTimeoutCount` query only `erp_attempts.run_id = scope.runId`; `recentAttemptWindowSeconds` defines the aggregate window. | `erp.observedAt` is the API observation time. |
+| Latest ERP attempt | `erp.latestAttempt` is selected only inside the same run predicate. Its status and `finishedAt` cannot be inherited from another or unscoped run. | `latestAttempt.finishedAt` is attempt completion time. |
+| Run circuit | `erp.circuit` reads the Redis per-run breaker key. `circuitReadStatus = available` with no snapshot means protection has not yet been exercised and is neutral; `unavailable` means the Redis read failed while independently read PostgreSQL attempt evidence remains visible. State, threshold, failure count, open/probe times, and reset timeout all belong to this run-keyed snapshot. | `circuit.lastChangedAt` is edge-triggered and changes only when run protection opens, probes, or closes. |
+
+Shared-runtime fields:
+
+| Public technical context | Source and meaning | Clock |
+| --- | --- | --- |
+| Physical queue identity and readiness | `systemStatus.queue.name` and `connectivity` describe the one shared BullMQ queue. | `queue.observedAt` is the queue-inspector poll time. |
+| Physical queue work | `depth`; waiting, prioritized, paused, delayed, active, and failed counts; oldest waiting age; failed-job total; and bounded recent failed details include all runs and visitors. BullMQ cannot filter these counts by run without enumerating and truncating jobs. | Polled on the shared dashboard cadence, currently `dashboardLiveUpdateExpectedIntervalMs`. |
+| Physical retry pressure | Retrying job count, retry-attempt count, inspected count/limit, and truncation flag are bounded shared-queue telemetry. Gold Signals and run outcomes use `businessOutcome.retryingOrders` instead. | The enclosing `queue.observedAt` poll time. |
+| ERP protection verdict | `systemStatus.erpProtection.status` and `reason` derive only from the catalog circuit, circuit-read availability, and shared queue retry pressure. They do not use run attempt failures or timeouts. | `erpProtection.observedAt` is the API observation time. |
+| Catalog circuit | State, threshold, consecutive failures, open/probe times, reset timeout, and probe-in-flight state come from the catalog Redis breaker key shared by the runtime. | `circuit.lastChangedAt` is edge-triggered with no scheduled cadence; it can legitimately be hours older than `erpProtection.observedAt` or projection `recoveredAt`. |
+
+There are no public unscoped-legacy queue or ERP values. Rows whose nullable `run_id` is absent are excluded from run evidence, and physical BullMQ values are retained only in the explicitly shared system-status area.
+
+The same shared queue numbers intentionally have a different valid use inside the API: the dirty scheduler uses global depth and active counts to decide whether the runtime may still have work to publish. Browser freshness uses only selected-run work. Infrastructure scheduling and public run evidence must not be forced into one scope.
+
+The three dashboard clock names are:
+
+- `recoveredAt`: when the complete API projection was assembled;
+- `observedAt`: when a polled/read model was observed;
+- `lastChangedAt`: when edge-triggered state last changed.
+
+These clocks need not advance together.
 
 ---
 
@@ -226,7 +265,7 @@ The public causal timeline uses exactly four signals on one elapsed-time axis:
 
 - Request arrival is `checkout_attempts_started` in fixed one-second producer event-time windows. The first attempt is time zero; harness preparation and configured start delay are reported separately.
 - Inventory drain is starting stock minus the quantity of secured reservations. Its headline preserves starting stock, remaining stock, depletion time, and the derived oversell invariant.
-- Processing backlog is the durable count of accepted orders awaiting their first processing start: orders with `queuedAt` at or before the observation boundary minus orders with `processingAt` at or before it. `peakAtElapsedSeconds` is relative to the first checkout attempt, while `drainDurationSeconds` spans the first queued order through the final return to backlog zero and carries the `first_order_queued_to_final_backlog_zero` boundary discriminator. BullMQ depth is only a live approximation because it also includes waiting, prioritized, paused, and delayed jobs. ERP retries can re-enter BullMQ after `processingAt` is set, so retrying job count is shown beside the durable backlog rather than folded into it.
+- Processing backlog is the durable count of accepted orders awaiting their first processing start: orders with `queuedAt` at or before the observation boundary minus orders with `processingAt` at or before it. `peakAtElapsedSeconds` is relative to the first checkout attempt, while `drainDurationSeconds` spans the first queued order through the final return to backlog zero and carries the `first_order_queued_to_final_backlog_zero` boundary discriminator. Live and terminal processing-backlog series use this durable run-owned definition. Physical BullMQ depth remains shared system-status context because it includes waiting, prioritized, paused, delayed, and retry work across all runs. ERP retries can re-enter BullMQ after `processingAt` is set, so the run-owned retrying-order count is shown beside the durable backlog rather than folded into it.
 - Confirmation convergence is cumulative confirmed orders, with cumulative settled outcomes shown separately when failures exist. Reservation-to-confirmation lag remains `orders.confirmedAt − reservations.securedAt` over confirmed orders only and is always accompanied by failed and pending counts.
 
 PostgreSQL terminal derivation retains 120 buckets from the first checkout attempt through a terminal timeline boundary: the later of checkout dispatch completion or the latest retained reservation/order activity. If neither boundary is strictly after the first attempt, the producer arrival-window duration supplies the minimum terminal span. That boundary is not labelled as a settled outcome because a partial run may still have pending work, and dispatch can end after all accepted work has settled. The derived bucket width is stored. Exact backlog peaks are derived from the ordered event stream before bucketing, so a peak that rises and drains inside one bucket is not lost. This fixed-count terminal policy intentionally differs from request arrival’s fixed one-second producer windows: PostgreSQL can re-bucket durable rows after completion, while producer-emitted arrival evidence cannot. A live browser buffer instead measures elapsed time from its first retained projection and restarts on reload; it does not claim that its local zero is the first checkout attempt.

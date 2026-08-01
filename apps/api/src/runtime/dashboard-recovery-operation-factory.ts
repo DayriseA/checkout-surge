@@ -22,10 +22,10 @@ import {
 } from "../services/dashboard-recovery-service.js";
 import { RedisDashboardTrafficMetricStore } from "../services/dashboard-traffic-metric-store.js";
 import {
-  ErpStatusService,
-  PostgresActiveErpRunReader,
   PostgresErpAttemptStatusReader,
   RedisErpCircuitBreakerStateReader,
+  RunErpOutcomeService,
+  SharedErpProtectionService,
 } from "../services/erp-status-service.js";
 import { InventoryStatusService } from "../services/inventory-status-service.js";
 import { QueueStatusService } from "../services/queue-status-service.js";
@@ -114,6 +114,7 @@ export function createDashboardRecoveryOperationFactory(
       "dashboard recovery queue inspector",
     );
     const queueStatusService = new QueueStatusService(operationQueueInspector, config.logger);
+    const circuitBreakerStateReader = new RedisErpCircuitBreakerStateReader(operationRedis);
     const operation: DashboardRecoveryOperation = {
       dependencies: {
         contextReader: new PostgresDashboardRecoveryContextReader(operationDatabase.db),
@@ -124,12 +125,15 @@ export function createDashboardRecoveryOperationFactory(
           getStatus: (saleOfferId) => getInventoryStatus(operationRedis, saleOfferId),
         }),
         queueStatusService,
-        erpStatusService: new ErpStatusService({
-          circuitBreakerStateReader: new RedisErpCircuitBreakerStateReader(operationRedis),
-          attemptStatusReader: new PostgresErpAttemptStatusReader(operationDatabase.db),
+        sharedErpProtectionService: new SharedErpProtectionService({
+          circuitBreakerStateReader,
           queueStatusService,
           logger: config.logger,
-          activeRunReader: new PostgresActiveErpRunReader(operationDatabase.db),
+        }),
+        runErpOutcomeService: new RunErpOutcomeService({
+          circuitBreakerStateReader,
+          attemptStatusReader: new PostgresErpAttemptStatusReader(operationDatabase.db),
+          logger: config.logger,
         }),
         trafficMetricReader: new RedisDashboardTrafficMetricStore(operationRedis),
         transportObservationReader: new PostgresDashboardTransportObservationReader(

@@ -27,12 +27,10 @@ import {
   dashboardProjectionSchema,
   demoRunOperatorModeHeaderName,
   demoRunSnapshotSchema,
-  type ErpResilienceStatus,
   emptyHttpTimingBreakdownSummary,
   emptyRequestArrivalSummary,
   emptyServerReservationTimingSummary,
   erpResilienceStatusPath,
-  erpResilienceStatusSchema,
   errorPayloadSchema,
   evaluateFastReservationTarget,
   healthResponseSchema,
@@ -53,10 +51,13 @@ import {
   publicVisitorIdHeaderName,
   type QueueStatus,
   queueStatusSchema,
+  type RunErpOutcomeSummary,
   type RunHistoryListResponse,
   runHistoryDetailPath,
   runHistoryListResponseSchema,
   runHistoryPath,
+  type SharedErpProtectionStatus,
+  sharedErpProtectionStatusSchema,
   startDemoRunPath,
   startDemoRunResponseSchema,
 } from "@checkout-surge/contracts";
@@ -115,7 +116,10 @@ import type { RedisDashboardTrafficMetricStore } from "../src/services/dashboard
 import type { DemoPresetController } from "../src/services/demo-preset-service.js";
 import type { DemoRunLifecycleController } from "../src/services/demo-run-service.js";
 import { DemoRunValidationError } from "../src/services/demo-run-validation-error.js";
-import type { ErpStatusService } from "../src/services/erp-status-service.js";
+import type {
+  RunErpOutcomeService,
+  SharedErpProtectionService,
+} from "../src/services/erp-status-service.js";
 import type { GeneratedRunRetentionWorkflow } from "../src/services/generated-run-retention-service.js";
 import type { GeneratedRunTeardownWorkflow } from "../src/services/generated-run-teardown-service.js";
 import {
@@ -192,7 +196,7 @@ function queueStatusFixture(): QueueStatus {
       inspectionLimit: 20,
       inspectionTruncated: false,
     },
-    updatedAt: "2026-06-20T00:00:10.000Z",
+    observedAt: "2026-06-20T00:00:10.000Z",
   };
 }
 
@@ -239,7 +243,7 @@ async function buildTestServer(options: {
   orderProcessJobPublisher?: OrderProcessJobPublisher;
   orderStatusService?: OrderStatusController;
   queueInspector?: OrderProcessQueueInspector;
-  erpStatusService?: ErpStatusService;
+  sharedErpProtectionService?: SharedErpProtectionService;
   dashboardRecoveryService?: DashboardProjectionService;
   dashboardRecoveryAdmission?: DashboardRecoveryAdmissionController;
   dashboardProjectionFanout?: DashboardProjectionFanout;
@@ -290,8 +294,9 @@ async function buildTestServer(options: {
     options.queueInspector ?? { inspect: async () => queueStatusFixture() },
     logger,
   );
-  const erpStatusService =
-    options.erpStatusService ?? createStaticErpStatusService(erpStatusFixture());
+  const sharedErpProtectionService =
+    options.sharedErpProtectionService ??
+    createStaticSharedErpProtectionService(sharedErpProtectionFixture());
   const inventoryStatusService = new InventoryStatusService(inventoryReader);
 
   return buildApiServer({
@@ -323,7 +328,8 @@ async function buildTestServer(options: {
             completionOutcomeReader: { read: async () => [] },
             inventoryStatusService,
             queueStatusService,
-            erpStatusService,
+            sharedErpProtectionService,
+            runErpOutcomeService: createStaticRunErpOutcomeService(runErpOutcomeFixture()),
             trafficMetricReader: { readRecent: async () => [] },
             transportObservationReader: { read: async () => null },
             revisionAllocator: { allocate: async () => 1 },
@@ -336,7 +342,7 @@ async function buildTestServer(options: {
     dashboardRecoveryAdmission: options.dashboardRecoveryAdmission ?? {
       admit: async () => ({ outcome: "admitted", release: () => undefined }),
     },
-    erpStatusService,
+    sharedErpProtectionService,
     inventoryStatusService,
     orderStatusService: options.orderStatusService ?? { getStatus: async () => null },
     queueStatusService,
@@ -855,7 +861,7 @@ function publicRuntimePolicyMutableFixture() {
   };
 }
 
-function erpStatusFixture(): ErpResilienceStatus {
+function sharedErpProtectionFixture(): SharedErpProtectionStatus {
   return {
     status: "healthy",
     reason: null,
@@ -867,7 +873,7 @@ function erpStatusFixture(): ErpResilienceStatus {
       openedAt: null,
       nextAttemptAt: null,
       halfOpenProbeInFlight: false,
-      updatedAt: "2026-06-20T00:00:10.000Z",
+      lastChangedAt: "2026-06-20T00:00:10.000Z",
     },
     retryPressure: {
       retryingJobCount: 0,
@@ -876,23 +882,32 @@ function erpStatusFixture(): ErpResilienceStatus {
       inspectionLimit: 100,
       inspectionTruncated: false,
     },
+    observedAt: "2026-06-20T00:00:10.000Z",
+  };
+}
+
+function runErpOutcomeFixture(): RunErpOutcomeSummary {
+  return {
+    runId: fixtureIds.run,
+    circuit: null,
+    circuitReadStatus: "available",
     latestAttempt: null,
     recentAttemptWindowSeconds: 60,
     recentAttemptCount: 0,
     recentFailureCount: 0,
     recentTimeoutCount: 0,
-    confirmationDelay: {
-      processingOrderCount: 0,
-      oldestProcessingAgeSeconds: null,
-      recentConfirmedCount: 0,
-      averageConfirmationDelayMs: null,
-    },
-    updatedAt: "2026-06-20T00:00:10.000Z",
+    observedAt: "2026-06-20T00:00:10.000Z",
   };
 }
 
-function createStaticErpStatusService(status: ErpResilienceStatus): ErpStatusService {
-  return { getStatus: async () => status } as unknown as ErpStatusService;
+function createStaticSharedErpProtectionService(
+  status: SharedErpProtectionStatus,
+): SharedErpProtectionService {
+  return { getStatus: async () => status } as SharedErpProtectionService;
+}
+
+function createStaticRunErpOutcomeService(outcome: RunErpOutcomeSummary): RunErpOutcomeService {
+  return { getOutcomes: async () => outcome } as unknown as RunErpOutcomeService;
 }
 
 function createRedisStockReservations(redis: CheckoutSurgeRedis): StockReservationGateway {
@@ -1023,7 +1038,7 @@ describe("API gateway routes", () => {
     orderProcessJobPublisher?: OrderProcessJobPublisher;
     orderStatusService?: OrderStatusController;
     queueInspector?: OrderProcessQueueInspector;
-    erpStatusService?: ErpStatusService;
+    sharedErpProtectionService?: SharedErpProtectionService;
     presetService?: DemoPresetController;
     runtimePolicyService?: PublicRuntimePolicyController;
     demoRunLifecycleService?: DemoRunLifecycleController;
@@ -1172,8 +1187,9 @@ describe("API gateway routes", () => {
     expect(payload.scope).toEqual({ runId: fixtureIds.run, saleOfferId: fixtureIds.saleOffer });
     expect(payload.correlationId).toBe(response.headers[correlationIdHeaderName]);
     expect(payload.inventory?.remainingStock).toBe(7);
-    expect(payload.queue?.depth).toBe(10);
-    expect(payload.erp?.status).toBe("healthy");
+    expect(payload.systemStatus?.queue.depth).toBe(10);
+    expect(payload.systemStatus?.erpProtection.status).toBe("healthy");
+    expect(payload.erp?.runId).toBe(fixtureIds.run);
     expect(payload.businessOutcome).toEqual(businessOutcomeFixture());
     expect(payload.consistencyLag).toEqual(consistencyLagFixture());
     expect(payload.recentCompletionOutcomes).toEqual([]);
@@ -1239,8 +1255,8 @@ describe("API gateway routes", () => {
       currentRun: null,
       inventory: null,
       recentMetrics: [],
-      queue: null,
       erp: null,
+      systemStatus: null,
       businessOutcome: null,
       consistencyLag: null,
       recentCompletionOutcomes: [],
@@ -1310,18 +1326,20 @@ describe("API gateway routes", () => {
     expect(payload).not.toHaveProperty("physicalName");
   });
 
-  it("returns the validated ERP resilience status projection", async () => {
-    const status = erpStatusFixture();
+  it("returns only validated shared ERP protection from the global route", async () => {
+    const status = sharedErpProtectionFixture();
     const server = await trackedServer({
       persistence: new AcceptingPersistence(),
-      erpStatusService: createStaticErpStatusService(status),
+      sharedErpProtectionService: createStaticSharedErpProtectionService(status),
     });
 
     const response = await server.inject({ method: "GET", url: erpResilienceStatusPath });
-    const payload = erpResilienceStatusSchema.parse(response.json());
+    const payload = sharedErpProtectionStatusSchema.parse(response.json());
 
     expect(response.statusCode).toBe(200);
     expect(payload).toEqual(status);
+    expect(payload).not.toHaveProperty("recentAttemptCount");
+    expect(payload).not.toHaveProperty("latestAttempt");
   });
 
   it("returns public demo presets and runtime policy through shared contracts", async () => {

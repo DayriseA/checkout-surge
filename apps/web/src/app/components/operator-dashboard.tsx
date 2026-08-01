@@ -5,22 +5,23 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { BackendRead } from "../lib/api";
 import { dashboardUpdateExpected, deriveFreshness } from "../lib/presentation/freshness";
 import {
-  deriveErpPresentationState,
   deriveInventoryOutcomeState,
   deriveLagPresentationState,
   deriveOutcomePresentationState,
-  deriveQueuePresentationState,
+  deriveRunErpOutcomeState,
   deriveRunPresentationState,
+  deriveSharedErpProtectionState,
+  deriveSharedRuntimeState,
 } from "../lib/presentation/run-presentation-state";
 import {
   CompletionOutcomesPanel,
   ConsistencyLagPanel,
-  ErpHealthPanel,
   InventoryDrainPanel,
-  QueuePressurePanel,
   RecoveryStatusPanel,
   RequestSurgePanel,
+  RunErpOutcomesPanel,
   RunOutcomesPanel,
+  SystemStatusPanel,
 } from "./dashboard-panels";
 import { GoldSignals } from "./gold-signals";
 import { useDashboardProjections } from "./realtime/use-dashboard-projections";
@@ -111,7 +112,7 @@ export function OperatorDashboard({
               })
             : 0
         }
-        retryingJobCount={projection?.queue?.retryPressure.retryingJobCount ?? 0}
+        retryingOrderCount={outcome?.retryingOrders ?? 0}
         startingStock={projection?.inventory?.allocatedStock ?? null}
         terminalSummary={projection?.runSignalTimelineSummary ?? null}
       />
@@ -129,15 +130,10 @@ export function OperatorDashboard({
           outcome?.acceptedReservations,
         )}
       />
-      <QueuePressurePanel
+      <RunErpOutcomesPanel
         recovery={recovery}
         freshness={freshness}
-        presentation={deriveQueuePresentationState(projection?.queue ?? null, run)}
-      />
-      <ErpHealthPanel
-        recovery={recovery}
-        freshness={freshness}
-        presentation={deriveErpPresentationState(projection?.erp ?? null)}
+        presentation={deriveRunErpOutcomeState(projection?.erp ?? null)}
       />
       <ConsistencyLagPanel
         recovery={recovery}
@@ -154,6 +150,13 @@ export function OperatorDashboard({
         presentation={deriveOutcomePresentationState(outcome, run, runPresentation)}
       />
       <CompletionOutcomesPanel recovery={recovery} />
+      <SystemStatusPanel
+        recovery={recovery}
+        presentation={deriveSharedRuntimeState(projection?.systemStatus ?? null)}
+        erpPresentation={deriveSharedErpProtectionState(
+          projection?.systemStatus?.erpProtection ?? null,
+        )}
+      />
     </div>
   );
 }

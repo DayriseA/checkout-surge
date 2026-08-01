@@ -90,7 +90,8 @@ export const erpCircuitBreakerSnapshotSchema = z
     openedAt: isoTimestampSchema.nullable(),
     nextAttemptAt: isoTimestampSchema.nullable(),
     halfOpenProbeInFlight: z.boolean(),
-    updatedAt: isoTimestampSchema,
+    /** Edge-triggered clock: changes only when the breaker state changes. */
+    lastChangedAt: isoTimestampSchema,
   })
   .strict();
 export type ErpCircuitBreakerSnapshot = z.infer<typeof erpCircuitBreakerSnapshotSchema>;
@@ -123,29 +124,28 @@ export const erpLatestAttemptSummarySchema = z
   .strict();
 export type ErpLatestAttemptSummary = z.infer<typeof erpLatestAttemptSummarySchema>;
 
-export const erpConfirmationDelaySchema = z
+export const runErpOutcomeSummarySchema = z
   .object({
-    processingOrderCount: nonnegativeIntegerSchema,
-    oldestProcessingAgeSeconds: nonnegativeNumberSchema.nullable(),
-    recentConfirmedCount: nonnegativeIntegerSchema,
-    averageConfirmationDelayMs: nonnegativeNumberSchema.nullable(),
-  })
-  .strict();
-export type ErpConfirmationDelay = z.infer<typeof erpConfirmationDelaySchema>;
-
-export const erpResilienceStatusSchema = z
-  .object({
-    status: erpDependencyStatusSchema,
-    reason: z.string().trim().min(1).nullable(),
+    runId: uuidSchema,
     circuit: erpCircuitBreakerSnapshotSchema.nullable(),
-    retryPressure: erpRetryPressureSchema,
+    circuitReadStatus: z.enum(["available", "unavailable"]),
     latestAttempt: erpLatestAttemptSummarySchema.nullable(),
     recentAttemptWindowSeconds: z.number().int().positive(),
     recentAttemptCount: nonnegativeIntegerSchema,
     recentFailureCount: nonnegativeIntegerSchema,
     recentTimeoutCount: nonnegativeIntegerSchema,
-    confirmationDelay: erpConfirmationDelaySchema,
-    updatedAt: isoTimestampSchema,
+    observedAt: isoTimestampSchema,
   })
   .strict();
-export type ErpResilienceStatus = z.infer<typeof erpResilienceStatusSchema>;
+export type RunErpOutcomeSummary = z.infer<typeof runErpOutcomeSummarySchema>;
+
+export const sharedErpProtectionStatusSchema = z
+  .object({
+    status: erpDependencyStatusSchema,
+    reason: z.string().trim().min(1).nullable(),
+    circuit: erpCircuitBreakerSnapshotSchema.nullable(),
+    retryPressure: erpRetryPressureSchema,
+    observedAt: isoTimestampSchema,
+  })
+  .strict();
+export type SharedErpProtectionStatus = z.infer<typeof sharedErpProtectionStatusSchema>;

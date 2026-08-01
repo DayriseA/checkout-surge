@@ -199,7 +199,6 @@ function appendSignalSample(
 
 function toRunSignalLiveSample(projection: DashboardProjection): RunSignalLiveSample {
   const outcome = projection.businessOutcome;
-  const queue = projection.queue;
   const pendingOrderCount = outcome ? outcome.queuedOrders + outcome.processingOrders : 0;
   return {
     recoveredAt: projection.recoveredAt,
@@ -207,7 +206,7 @@ function toRunSignalLiveSample(projection: DashboardProjection): RunSignalLiveSa
       findLatestMetric(projection, "traffic.request_arrival_rate", "requests_per_second")?.value ??
       null,
     remainingStock: projection.inventory?.remainingStock ?? null,
-    queueBacklog: queue?.depth ?? null,
+    queueBacklog: outcome?.queuedOrders ?? null,
     confirmedOrderCount: outcome?.confirmedOrders ?? 0,
     settledOrderCount: (outcome?.confirmedOrders ?? 0) + (outcome?.failedOrders ?? 0),
     failedOrderCount: outcome?.failedOrders ?? 0,
