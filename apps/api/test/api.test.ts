@@ -25,6 +25,7 @@ import {
   type DemoRunSnapshot,
   dashboardEventsPath,
   dashboardProjectionSchema,
+  dashboardProjectionSchemaVersion,
   dashboardProjectionScopeId,
   demoRunOperatorModeHeaderName,
   demoRunSnapshotSchema,
@@ -326,7 +327,6 @@ async function buildTestServer(options: {
             contextReader: staticRecoveryContextReader(fixtureIds.saleOffer),
             businessOutcomeReader: { read: async () => businessOutcomeFixture() },
             consistencyLagReader: { read: async () => consistencyLagFixture() },
-            completionOutcomeReader: { read: async () => [] },
             inventoryStatusService,
             queueStatusService,
             sharedErpProtectionService,
@@ -924,9 +924,13 @@ function runErpOutcomeFixture(): RunErpOutcomeSummary {
     runId: fixtureIds.run,
     circuit: null,
     circuitReadStatus: "available",
-    latestAttempt: null,
+    latestAttempt: {
+      runId: fixtureIds.run,
+      status: "succeeded",
+      finishedAt: "2026-06-20T00:00:09.000Z",
+    },
     recentAttemptWindowSeconds: 60,
-    recentAttemptCount: 0,
+    recentAttemptCount: 1,
     recentFailureCount: 0,
     recentTimeoutCount: 0,
     observedAt: "2026-06-20T00:00:10.000Z",
@@ -1226,8 +1230,23 @@ describe("API gateway routes", () => {
     expect(payload.erp?.runId).toBe(fixtureIds.run);
     expect(payload.businessOutcome).toEqual(businessOutcomeFixture());
     expect(payload.consistencyLag).toEqual(consistencyLagFixture());
-    expect(payload.recentCompletionOutcomes).toEqual([]);
     expect(payload.recentMetrics).toEqual([]);
+    expect(payload).not.toHaveProperty("recentCompletionOutcomes");
+    expect(Object.keys(payload.erp?.latestAttempt ?? {}).sort()).toEqual([
+      "finishedAt",
+      "runId",
+      "status",
+    ]);
+    for (const field of [
+      "orderId",
+      "errorCode",
+      "errorMessage",
+      "httpStatus",
+      "attemptNumber",
+      "latencyMs",
+    ]) {
+      expect(payload.erp?.latestAttempt).not.toHaveProperty(field);
+    }
   });
 
   it("serves a bounded failure category in a failed dashboard recovery projection", async () => {
@@ -1240,7 +1259,7 @@ describe("API gateway routes", () => {
     });
     const projection = dashboardProjectionSchema.parse({
       schema: "checkout-surge.dashboard-projection",
-      version: 1,
+      version: dashboardProjectionSchemaVersion,
       correlationId: "corr-dashboard-failed",
       scopeId: dashboardProjectionScopeId({
         runId: fixtureIds.run,
@@ -1252,11 +1271,24 @@ describe("API gateway routes", () => {
       currentRun: failedRun,
       inventory: null,
       recentMetrics: [],
-      erp: null,
+      erp: {
+        runId: fixtureIds.run,
+        circuit: null,
+        circuitReadStatus: "available",
+        latestAttempt: {
+          runId: fixtureIds.run,
+          status: "failed",
+          finishedAt: "2026-06-20T00:00:09.000Z",
+        },
+        recentAttemptWindowSeconds: 60,
+        recentAttemptCount: 1,
+        recentFailureCount: 1,
+        recentTimeoutCount: 0,
+        observedAt: "2026-06-20T00:00:10.000Z",
+      },
       systemStatus: null,
       businessOutcome: null,
       consistencyLag: null,
-      recentCompletionOutcomes: [],
       transportAttemptCounts: null,
       httpSummary: null,
       requestArrivalSummary: null,
@@ -1346,7 +1378,7 @@ describe("API gateway routes", () => {
     const failedScope = { runId: fixtureIds.run, saleOfferId: fixtureIds.saleOffer };
     const projection: DashboardProjection = {
       schema: "checkout-surge.dashboard-projection",
-      version: 1,
+      version: dashboardProjectionSchemaVersion,
       correlationId: "corr-dashboard-event",
       scopeId: dashboardProjectionScopeId(failedScope),
       scope: failedScope,
@@ -1355,11 +1387,24 @@ describe("API gateway routes", () => {
       currentRun: failedRun,
       inventory: null,
       recentMetrics: [],
-      erp: null,
+      erp: {
+        runId: fixtureIds.run,
+        circuit: null,
+        circuitReadStatus: "available",
+        latestAttempt: {
+          runId: fixtureIds.run,
+          status: "failed",
+          finishedAt: "2026-06-20T00:00:09.000Z",
+        },
+        recentAttemptWindowSeconds: 60,
+        recentAttemptCount: 1,
+        recentFailureCount: 1,
+        recentTimeoutCount: 0,
+        observedAt: "2026-06-20T00:00:10.000Z",
+      },
       systemStatus: null,
       businessOutcome: null,
       consistencyLag: null,
-      recentCompletionOutcomes: [],
       transportAttemptCounts: null,
       httpSummary: null,
       requestArrivalSummary: null,
@@ -1380,6 +1425,24 @@ describe("API gateway routes", () => {
       expect(frame).toContain('"failureCategory":"traffic"');
       expect(frame).not.toContain("traffic_failed");
       expect(frame).not.toContain('"failureReason"');
+      const dataLine = frame.split("data: ")[1]?.split("\n", 1)[0];
+      const payload = dashboardProjectionSchema.parse(JSON.parse(dataLine ?? "{}"));
+      expect(payload).not.toHaveProperty("recentCompletionOutcomes");
+      expect(Object.keys(payload.erp?.latestAttempt ?? {}).sort()).toEqual([
+        "finishedAt",
+        "runId",
+        "status",
+      ]);
+      for (const field of [
+        "orderId",
+        "errorCode",
+        "errorMessage",
+        "httpStatus",
+        "attemptNumber",
+        "latencyMs",
+      ]) {
+        expect(payload.erp?.latestAttempt).not.toHaveProperty(field);
+      }
     } finally {
       await reader?.cancel();
       dashboardProjectionFanout.close();
@@ -1669,6 +1732,7 @@ describe("API gateway routes", () => {
     expect(authorized.statusCode).toBe(200);
     expect(authorized.headers["cache-control"]).toBe("no-store");
     expect(adminPayload.orders.records[0]?.orderId).toBe("99999999-9999-4999-8999-999999999991");
+    expect(adminPayload.orders.records[0]?.correlationId).toBe(fixtureCorrelationId);
     const adminMissing = await adminServer.inject({
       method: "GET",
       url: adminRunHistoryDetailPath("ffffffff-ffff-4fff-8fff-ffffffffffff"),

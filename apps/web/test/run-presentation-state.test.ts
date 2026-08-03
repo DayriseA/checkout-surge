@@ -265,7 +265,6 @@ function projection(currentRun: DemoRunSnapshot | null): DashboardProjection {
     systemStatus: null,
     businessOutcome: null,
     consistencyLag: null,
-    recentCompletionOutcomes: [],
     transportAttemptCounts: null,
     httpSummary: null,
     requestArrivalSummary: null,

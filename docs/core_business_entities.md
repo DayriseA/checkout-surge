@@ -30,7 +30,7 @@ The goal is to keep the limited-inventory checkout flow and its recovery boundar
 | Traffic delivery quality | Classify request delivery inside `trafficDeliverySummary.trafficDeliveryStatus` as `complete`, `warning`, `degraded`, or `failed` | Keeps traffic fidelity visible without adding terminal demo-run statuses beyond `completed` and `failed`. |
 | Quantity semantics | Keep `quantity` in the model, but default the limited-inventory flow to one unit per checkout | The demo is single-item focused, but the schema should not require a breaking change to support quantity later. |
 | UI status strategy | Keep canonical persistence states minimal and display the buy outcome or canonical order status directly | This avoids parallel customer/simulated status vocabularies while still supporting clear operator feedback. |
-| Realtime order presentation | No separate per-order feed or recent-activity panel; the complete revisioned projection retains aggregate consistency lag and completion outcomes | Per-order live activity does not justify a second update protocol. Focused durable diagnostics use `GET /orders/:publicOrderId/status` or protected Run History. |
+| Realtime order presentation | No separate per-order feed, recent-activity panel, or public order rows; the complete revisioned projection retains aggregate consistency lag and run outcomes | Per-order live activity does not justify a second update protocol. Focused durable diagnostics use `GET /orders/:publicOrderId/status` or protected Run History. |
 
 ---
 
@@ -745,8 +745,6 @@ The UI projection layer may combine:
 The canonical persistence model remains small: reservation row existence means secured, while order status is `queued`, `processing`, `confirmed`, or `failed`.
 
 The live operator dashboard should expose these states as aggregate run outcomes. Protected Run History may retain bounded drill-down records, and `GET /orders/:publicOrderId/status` remains the focused durable diagnostic for a known order.
-
-The recent completion-outcome DTO is also status-discriminated. Every outcome has `queuedAt`; processing and terminal outcomes require `processingAt`; confirmed and failed outcomes require only their matching terminal timestamp and forbid the opposite one. `notificationRecordedAt` occurs only on confirmed outcomes. This keeps the dashboard projection aligned with the durable producer rather than accepting timestamps from a later or contradictory lifecycle state.
 
 ### Purchase Outcome and Order Status
 

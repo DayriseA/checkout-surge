@@ -129,7 +129,6 @@ function operation(redis: CheckoutSurgeRedis) {
       },
       businessOutcomeReader: { read: unavailable },
       consistencyLagReader: { read: unavailable },
-      completionOutcomeReader: { read: async () => [] },
       inventoryStatusService: { getStatus: unavailable },
       queueStatusService: { getStatus: unavailable },
       sharedErpProtectionService: { getStatus: unavailable },

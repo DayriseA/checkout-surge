@@ -1,6 +1,5 @@
 import type {
   BusinessOutcomeSummary,
-  CompletionOutcomeStatus,
   DashboardProjection,
   DemoRunSnapshot,
   InventoryStatus,
@@ -425,21 +424,6 @@ export function deriveSharedErpProtectionState(
     "unavailable",
     "Shared ERP protection is unavailable.",
   );
-}
-
-export function deriveCompletionOutcomePresentationState(
-  status: CompletionOutcomeStatus,
-): PresentationState {
-  if (status === "confirmed" || status === "notification_recorded") {
-    return state(status, "ok", status.replaceAll("_", " "), "Durable workflow step completed.");
-  }
-  if (status === "failed") {
-    return state(status, "warning", "failed", "The order workflow failed.");
-  }
-  if (status === "delayed" || status === "retrying" || status === "processing") {
-    return state(status, "progress", status, "The order workflow is in progress.");
-  }
-  return state(status, "idle", status, "The order is queued.");
 }
 
 export function hasExpectedWork(outcome: BusinessOutcomeSummary): boolean {

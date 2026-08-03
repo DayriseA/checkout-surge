@@ -85,10 +85,10 @@ describe("PostgresErpAttemptStatusReader", () => {
     expect(readModel.recentAttemptCount).toBe(125);
     expect(readModel.recentFailureCount).toBe(50);
     expect(readModel.recentTimeoutCount).toBe(25);
-    expect(readModel.latestAttempt).toMatchObject({
-      orderId: ids.order,
-      attemptNumber: 125,
+    expect(readModel.latestAttempt).toEqual({
+      runId: ids.runA,
       status: "timed_out",
+      finishedAt: expect.any(String),
     });
   });
 
@@ -132,7 +132,7 @@ describe("PostgresErpAttemptStatusReader", () => {
     await expect(
       reader.readStatus({ runId: ids.runA }, new Date(startedAt.getTime() + 10_000), 60),
     ).resolves.toMatchObject({
-      latestAttempt: { orderId: ids.order, runId: ids.runA, attemptNumber: 2 },
+      latestAttempt: { runId: ids.runA, status: "timed_out" },
       recentAttemptCount: 2,
       recentFailureCount: 1,
       recentTimeoutCount: 1,
@@ -140,7 +140,7 @@ describe("PostgresErpAttemptStatusReader", () => {
     await expect(
       reader.readStatus({ runId: ids.runB }, new Date(startedAt.getTime() + 10_000), 60),
     ).resolves.toMatchObject({
-      latestAttempt: { orderId: ids.orderB, runId: ids.runB, attemptNumber: 2 },
+      latestAttempt: { runId: ids.runB, status: "failed" },
       recentAttemptCount: 2,
       recentFailureCount: 1,
       recentTimeoutCount: 0,

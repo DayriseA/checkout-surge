@@ -350,7 +350,6 @@ function idleProjection(overrides: Partial<DashboardProjection> = {}): Dashboard
     httpSummary: null,
     requestArrivalSummary: null,
     runSignalTimelineSummary: null,
-    recentCompletionOutcomes: [],
     recoveredAt: "2026-06-20T00:00:10.000Z",
     ...overrides,
   };

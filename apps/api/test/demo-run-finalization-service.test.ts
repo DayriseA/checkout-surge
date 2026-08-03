@@ -980,7 +980,6 @@ describe("demo run finalization service", () => {
               consistencyLagReader: {
                 read: async () => Promise.reject(new Error("unused lag projection")),
               },
-              completionOutcomeReader: { read: async () => [] },
               inventoryStatusService: {
                 getStatus: async () => Promise.reject(new Error("unused inventory projection")),
               },

@@ -215,6 +215,5 @@ function recoveryFixture() {
     businessOutcome: null,
     consistencyLag: null,
     recentMetrics: [],
-    recentCompletionOutcomes: [],
   };
 }

@@ -1,12 +1,10 @@
 import {
   type BusinessOutcomeSummary,
   businessOutcomeSummarySchema,
-  type CompletionOutcome,
   type ConsistencyLagSummary,
-  completionOutcomeSchema,
   consistencyLagSummarySchema,
 } from "@checkout-surge/contracts";
-import { and, desc, eq, inArray, type SQL, sql } from "drizzle-orm";
+import { and, eq, inArray, type SQL, sql } from "drizzle-orm";
 import type { CheckoutSurgeDatabase } from "./client.js";
 import {
   demoRunSoldOutCounts,
@@ -139,132 +137,6 @@ export async function readConsistencyLagSummary(
       : null,
     measuredAt: measuredAt.toISOString(),
   });
-}
-
-const delayedOutcomeThresholdMs = 5_000;
-
-export async function readRecentCompletionOutcomes(
-  db: CheckoutSurgeDatabase,
-  scope: BusinessOutcomeProjectionScope,
-  options: { limit?: number; now?: Date } = {},
-): Promise<CompletionOutcome[]> {
-  const limit = options.limit ?? 8;
-  const measuredAt = options.now ?? new Date();
-  const orderFilter = scope.runId
-    ? eq(orders.runId, scope.runId)
-    : eq(orders.saleOfferId, scope.saleOfferId);
-
-  const latestNotification = db
-    .select({
-      id: simulatedNotifications.id,
-      recordedAt: simulatedNotifications.recordedAt,
-    })
-    .from(simulatedNotifications)
-    .where(eq(simulatedNotifications.orderId, orders.id))
-    .orderBy(desc(simulatedNotifications.recordedAt), desc(simulatedNotifications.id))
-    .limit(1)
-    .as("latest_completion_notification");
-  const latestAttempt = db
-    .select({
-      id: erpAttempts.id,
-      status: erpAttempts.status,
-      errorCode: erpAttempts.errorCode,
-    })
-    .from(erpAttempts)
-    .where(eq(erpAttempts.orderId, orders.id))
-    .orderBy(desc(erpAttempts.startedAt), desc(erpAttempts.createdAt), desc(erpAttempts.id))
-    .limit(1)
-    .as("latest_completion_erp_attempt");
-
-  const rows = await db
-    .select({
-      order: orders,
-      notificationId: latestNotification.id,
-      notificationRecordedAt: latestNotification.recordedAt,
-      attemptId: latestAttempt.id,
-      attemptStatus: latestAttempt.status,
-      attemptErrorCode: latestAttempt.errorCode,
-    })
-    .from(orders)
-    .leftJoinLateral(latestNotification, sql`true`)
-    .leftJoinLateral(latestAttempt, sql`true`)
-    .where(orderFilter)
-    .orderBy(
-      desc(
-        sql`coalesce(${orders.confirmedAt}, ${orders.failedAt}, ${orders.processingAt}, ${orders.queuedAt})`,
-      ),
-    )
-    .limit(limit);
-
-  return rows.map((row) => {
-    const order = row.order;
-    const notification =
-      order.status === "confirmed" && row.notificationId && row.notificationRecordedAt
-        ? {
-            id: row.notificationId,
-            recordedAt: row.notificationRecordedAt,
-          }
-        : null;
-    const attempt =
-      row.attemptId && row.attemptStatus
-        ? {
-            id: row.attemptId,
-            status: row.attemptStatus,
-            errorCode: row.attemptErrorCode,
-          }
-        : null;
-    const latestEventAt =
-      notification?.recordedAt ??
-      order.confirmedAt ??
-      order.failedAt ??
-      order.processingAt ??
-      order.queuedAt;
-
-    return completionOutcomeSchema.parse({
-      orderId: order.id,
-      publicOrderId: order.publicOrderId,
-      saleOfferId: order.saleOfferId,
-      ...(order.runId ? { runId: order.runId } : {}),
-      correlationId: order.correlationId,
-      orderStatus: order.status,
-      displayStatus: deriveCompletionOutcomeStatus(order, attempt, notification, measuredAt),
-      queuedAt: order.queuedAt.toISOString(),
-      ...(order.processingAt ? { processingAt: order.processingAt.toISOString() } : {}),
-      ...(order.confirmedAt ? { confirmedAt: order.confirmedAt.toISOString() } : {}),
-      ...(order.failedAt ? { failedAt: order.failedAt.toISOString() } : {}),
-      ...(notification ? { notificationRecordedAt: notification.recordedAt.toISOString() } : {}),
-      ...(attempt ? { latestErpAttemptStatus: attempt.status } : {}),
-      ...(attempt?.errorCode ? { latestErpErrorCode: attempt.errorCode } : {}),
-      latestEventAt: latestEventAt.toISOString(),
-    });
-  });
-}
-
-function deriveCompletionOutcomeStatus(
-  order: typeof orders.$inferSelect,
-  latestAttempt: Pick<typeof erpAttempts.$inferSelect, "id" | "status" | "errorCode"> | null,
-  latestNotification: Pick<typeof simulatedNotifications.$inferSelect, "id" | "recordedAt"> | null,
-  measuredAt: Date,
-): CompletionOutcome["displayStatus"] {
-  if (latestNotification) {
-    return "notification_recorded";
-  }
-  if (order.status === "confirmed") {
-    return "confirmed";
-  }
-  if (order.status === "failed") {
-    return "failed";
-  }
-  if (latestAttempt && ["failed", "timed_out"].includes(latestAttempt.status)) {
-    return "retrying";
-  }
-
-  const waitingSince = order.processingAt ?? order.queuedAt;
-  if (measuredAt.getTime() - waitingSince.getTime() >= delayedOutcomeThresholdMs) {
-    return "delayed";
-  }
-
-  return order.status;
 }
 
 async function countRows(

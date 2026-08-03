@@ -55,7 +55,11 @@ export class PostgresErpAttemptStatusReader implements ErpAttemptStatusReader {
     const recentSince = new Date(now.getTime() - recentAttemptWindowSeconds * 1000);
     const [latestAttemptRows, recentAttemptCountRows] = await Promise.all([
       this.db
-        .select()
+        .select({
+          runId: erpAttempts.runId,
+          status: erpAttempts.status,
+          finishedAt: erpAttempts.finishedAt,
+        })
         .from(erpAttempts)
         .where(eq(erpAttempts.runId, scope.runId))
         .orderBy(desc(erpAttempts.finishedAt))
@@ -214,16 +218,12 @@ function deriveSharedProtectionState(input: {
   return { status: "healthy", reason: null };
 }
 
-function toLatestAttemptSummary(attempt: typeof erpAttempts.$inferSelect): ErpLatestAttemptSummary {
+function toLatestAttemptSummary(
+  attempt: Pick<typeof erpAttempts.$inferSelect, "runId" | "status" | "finishedAt">,
+): ErpLatestAttemptSummary {
   return {
-    orderId: attempt.orderId,
     runId: attempt.runId,
-    attemptNumber: attempt.attemptNumber,
     status: attempt.status,
-    httpStatus: attempt.httpStatus,
-    errorCode: attempt.errorCode,
-    errorMessage: attempt.errorMessage,
-    latencyMs: attempt.latencyMs,
     finishedAt: attempt.finishedAt.toISOString(),
   };
 }

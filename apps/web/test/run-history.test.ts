@@ -172,6 +172,7 @@ describe("run history surface", () => {
     );
     expect(markup).toContain("Order outcomes");
     expect(markup).toContain("ord_history_1");
+    expect(markup).toContain("corr-history-detail");
     expect(markup).toContain("Event timeline");
     expect(markup).toContain("worker");
     expect(markup).toContain("Load generator");

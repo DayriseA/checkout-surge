@@ -26,7 +26,6 @@ import {
   collectAcceptedRunConfigSnapshotViolations,
   collectPublicRuntimePolicyMutableViolations,
   collectPublicRuntimePolicyViolations,
-  completionOutcomeSchema,
   controlServiceTokenHeaderName,
   dashboardLiveUpdateExpectedIntervalMs,
   dashboardProjectionDirtySignalSchema,
@@ -846,89 +845,6 @@ describe("run lifecycle contracts", () => {
     }
   });
 
-  it("binds completion outcomes to status-specific timestamps", () => {
-    const baseOutcome = {
-      orderId: "11111111-1111-4111-8111-111111111111",
-      publicOrderId: "ord_completion",
-      saleOfferId,
-      runId,
-      correlationId,
-      queuedAt: timestamp,
-      latestEventAt: timestamp,
-    };
-    const processingAt = "2026-06-20T12:00:01.000Z";
-    const terminalAt = "2026-06-20T12:00:02.000Z";
-    const legalOutcomes = [
-      { ...baseOutcome, orderStatus: "queued", displayStatus: "delayed" },
-      {
-        ...baseOutcome,
-        orderStatus: "processing",
-        displayStatus: "retrying",
-        processingAt,
-        latestErpAttemptStatus: "timed_out",
-      },
-      {
-        ...baseOutcome,
-        orderStatus: "confirmed",
-        displayStatus: "notification_recorded",
-        processingAt,
-        confirmedAt: terminalAt,
-        notificationRecordedAt: terminalAt,
-        latestErpAttemptStatus: "succeeded",
-      },
-      {
-        ...baseOutcome,
-        orderStatus: "failed",
-        displayStatus: "failed",
-        processingAt,
-        failedAt: terminalAt,
-        latestErpAttemptStatus: "failed",
-      },
-    ];
-
-    for (const outcome of legalOutcomes) {
-      expect(completionOutcomeSchema.safeParse(outcome).success).toBe(true);
-    }
-
-    const incoherentOutcomes = [
-      { ...baseOutcome, orderStatus: "queued", displayStatus: "queued", processingAt },
-      { ...baseOutcome, orderStatus: "processing", displayStatus: "processing" },
-      {
-        ...baseOutcome,
-        orderStatus: "processing",
-        displayStatus: "retrying",
-        processingAt,
-        failedAt: terminalAt,
-      },
-      {
-        ...baseOutcome,
-        orderStatus: "confirmed",
-        displayStatus: "confirmed",
-        processingAt,
-        confirmedAt: terminalAt,
-        notificationRecordedAt: terminalAt,
-      },
-      {
-        ...baseOutcome,
-        orderStatus: "confirmed",
-        displayStatus: "notification_recorded",
-        processingAt,
-        confirmedAt: terminalAt,
-      },
-      {
-        ...baseOutcome,
-        orderStatus: "failed",
-        displayStatus: "confirmed",
-        processingAt,
-        failedAt: terminalAt,
-      },
-    ];
-
-    for (const outcome of incoherentOutcomes) {
-      expect(completionOutcomeSchema.safeParse(outcome).success).toBe(false);
-    }
-  });
-
   it("accepts unclassified completion evidence but requires status in stored history", () => {
     const evidence = {
       trafficMode: "buyer-spike" as const,
@@ -1531,14 +1447,8 @@ describe("ERP contracts", () => {
       circuit,
       circuitReadStatus: "available",
       latestAttempt: {
-        orderId: "11111111-1111-4111-8111-111111111111",
         runId,
-        attemptNumber: 3,
         status: "failed",
-        httpStatus: 503,
-        errorCode: "erp_unavailable",
-        errorMessage: "The ERP is temporarily unavailable.",
-        latencyMs: 125,
         finishedAt: timestamp,
       },
       recentAttemptWindowSeconds: 60,
@@ -1883,52 +1793,18 @@ describe("buy and dashboard contracts", () => {
         oldestPendingAgeSeconds: 12.5,
         measuredAt: timestamp,
       },
-      recentCompletionOutcomes: [
-        {
-          orderId: "11111111-1111-4111-8111-111111111111",
-          publicOrderId: "ord_recent",
-          saleOfferId,
-          runId,
-          correlationId: "corr-recent",
-          orderStatus: "confirmed",
-          displayStatus: "notification_recorded",
-          queuedAt: timestamp,
-          processingAt: timestamp,
-          confirmedAt: timestamp,
-          notificationRecordedAt: timestamp,
-          latestErpAttemptStatus: "succeeded",
-          latestEventAt: timestamp,
-        },
-      ],
       recoveredAt: timestamp,
     });
 
     expect(recovery.businessOutcome?.retryingOrders).toBe(2);
     expect(recovery.consistencyLag?.p95LagMs).toBe(350);
-    expect(recovery.recentCompletionOutcomes[0]?.displayStatus).toBe("notification_recorded");
-    expect(
-      dashboardProjectionSchema.safeParse({
-        ...recovery,
-        recentCompletionOutcomes: recovery.recentCompletionOutcomes.map((outcome) => ({
-          ...outcome,
-          runId: "44444444-4444-4444-8444-444444444444",
-        })),
-      }).success,
-    ).toBe(false);
-
     const runErp = runErpOutcomeSummarySchema.parse({
       runId,
       circuit: null,
       circuitReadStatus: "available",
       latestAttempt: {
-        orderId: "44444444-4444-4444-8444-444444444444",
         runId,
-        attemptNumber: 1,
         status: "succeeded",
-        httpStatus: 200,
-        errorCode: null,
-        errorMessage: null,
-        latencyMs: 10,
         finishedAt: timestamp,
       },
       recentAttemptWindowSeconds: 60,
@@ -1958,11 +1834,31 @@ describe("buy and dashboard contracts", () => {
     expect(
       dashboardProjectionSchema.safeParse({
         ...recovery,
-        recentCompletionOutcomes: recovery.recentCompletionOutcomes.map((outcome) =>
-          omit(outcome, "runId"),
-        ),
+        recentCompletionOutcomes: [],
       }).success,
     ).toBe(false);
+    for (const field of [
+      "orderId",
+      "errorCode",
+      "errorMessage",
+      "httpStatus",
+      "attemptNumber",
+      "latencyMs",
+    ]) {
+      expect(
+        dashboardProjectionSchema.safeParse({
+          ...recovery,
+          erp: {
+            ...runErp,
+            latestAttempt: { ...runErp.latestAttempt, [field]: 1 },
+          },
+        }).success,
+      ).toBe(false);
+    }
+    expect(dashboardProjectionSchema.safeParse({ ...recovery, version: 1 }).success).toBe(false);
+    expect(dashboardProjectionSchema.safeParse(omit(recovery, "correlationId")).success).toBe(
+      false,
+    );
   });
 
   it("requires a complete optional known scope for dashboard recovery", () => {
@@ -1997,7 +1893,6 @@ describe("buy and dashboard contracts", () => {
       systemStatus: null,
       businessOutcome: null,
       consistencyLag: null,
-      recentCompletionOutcomes: [],
       transportAttemptCounts: null,
       httpSummary: null,
       requestArrivalSummary: null,
@@ -2066,7 +1961,6 @@ describe("buy and dashboard contracts", () => {
       systemStatus,
       businessOutcome: null,
       consistencyLag: null,
-      recentCompletionOutcomes: [],
       transportAttemptCounts: null,
       httpSummary: null,
       requestArrivalSummary: null,
@@ -2149,7 +2043,6 @@ describe("buy and dashboard contracts", () => {
       systemStatus: null,
       businessOutcome: null,
       consistencyLag: null,
-      recentCompletionOutcomes: [],
       recoveredAt: timestamp,
     };
 

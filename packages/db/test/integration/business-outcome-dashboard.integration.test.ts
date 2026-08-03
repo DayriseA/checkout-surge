@@ -4,7 +4,6 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   readBusinessOutcomeSummary,
   readConsistencyLagSummary,
-  readRecentCompletionOutcomes,
 } from "../../src/business-outcome-dashboard.js";
 import { createDatabaseConnection } from "../../src/client.js";
 import {
@@ -28,7 +27,6 @@ const databaseUrl = process.env.TEST_DATABASE_URL;
 
 describe.skipIf(!databaseUrl)("business outcome dashboard projection", () => {
   let connection: ReturnType<typeof createDatabaseConnection>;
-  let observedQueries: string[] = [];
 
   beforeAll(async () => {
     if (!databaseUrl) {
@@ -36,10 +34,7 @@ describe.skipIf(!databaseUrl)("business outcome dashboard projection", () => {
     }
 
     await resetTestDatabase({ databaseUrl, migrationsFolder });
-    connection = createDatabaseConnection(databaseUrl, {
-      max: 1,
-      debug: (_connection, query) => observedQueries.push(query),
-    });
+    connection = createDatabaseConnection(databaseUrl, { max: 1 });
   });
 
   afterAll(async () => {
@@ -261,41 +256,6 @@ describe.skipIf(!databaseUrl)("business outcome dashboard projection", () => {
       oldestPendingAgeSeconds: 6,
       measuredAt: now.toISOString(),
     });
-
-    observedQueries = [];
-    const completionOutcomes = readRecentCompletionOutcomes(
-      connection.db,
-      { saleOfferId, runId },
-      { now },
-    );
-    await expect(completionOutcomes).resolves.toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          publicOrderId: "ord-confirmed",
-          displayStatus: "notification_recorded",
-          notificationRecordedAt: now.toISOString(),
-        }),
-        expect.objectContaining({
-          publicOrderId: "ord-failed",
-          displayStatus: "failed",
-        }),
-        expect.objectContaining({
-          publicOrderId: "ord-processing",
-          displayStatus: "retrying",
-          latestErpAttemptStatus: "failed",
-          latestErpErrorCode: "temporary_erp_failure",
-        }),
-        expect.objectContaining({
-          publicOrderId: "ord-delayed",
-          displayStatus: "delayed",
-        }),
-        expect.objectContaining({
-          publicOrderId: "ord-queued",
-          displayStatus: "queued",
-        }),
-      ]),
-    );
-    expect(observedQueries).toHaveLength(1);
   });
 });
 

@@ -19,7 +19,6 @@ import {
 } from "../lib/presentation/run-presentation-state";
 import { evidenceFromDashboard } from "../lib/presentation/run-result-presentation";
 import {
-  CompletionOutcomesPanel,
   ConsistencyLagPanel,
   InventoryDrainPanel,
   RecoveryStatusPanel,
@@ -160,7 +159,6 @@ export function OperatorDashboard({
         freshness={freshness}
         presentation={deriveOutcomePresentationState(outcome, run, runPresentation)}
       />
-      <CompletionOutcomesPanel recovery={recovery} />
       <SystemStatusPanel
         recovery={recovery}
         presentation={deriveSharedRuntimeState(projection?.systemStatus ?? null)}

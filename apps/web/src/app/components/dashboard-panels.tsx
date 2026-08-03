@@ -1,5 +1,4 @@
 import {
-  type CompletionOutcome,
   type DashboardProjection,
   dashboardLiveUpdateExpectedIntervalMs,
 } from "@checkout-surge/contracts";
@@ -8,7 +7,6 @@ import { projectRequestSurge } from "../lib/dashboard-projection-state";
 import { formatDashboardTime } from "../lib/dashboard-time";
 import type { Freshness, RealtimeConnectionStatus } from "../lib/presentation/freshness";
 import {
-  deriveCompletionOutcomePresentationState,
   deriveFreshnessPresentationState,
   type PresentationState,
 } from "../lib/presentation/run-presentation-state";
@@ -62,10 +60,6 @@ function formatExpectedTime(value: string | undefined | null): string {
 
 function formatScheduledTime(value: string | undefined | null): string {
   return value ? formatDashboardTime(value) : "not scheduled";
-}
-
-function formatOptionalTime(value: string | undefined | null): string {
-  return value ? formatDashboardTime(value) : "—";
 }
 
 function formatSeconds(value: number | null | undefined, absent = "—"): string {
@@ -773,93 +767,15 @@ export function RunOutcomesPanel({
               label="Pending persistence"
               value={formatNumber(outcome.pendingPersistenceCount)}
             />
-            <Fact label="Notifications" value={formatNumber(outcome.notificationsRecorded)} />
+            <Fact
+              label="Confirmation notices recorded"
+              value={formatNumber(outcome.notificationsRecorded)}
+            />
           </dl>
         </>
       ) : (
         <EmptyState>No business outcome data.</EmptyState>
       )}
     </section>
-  );
-}
-
-export function CompletionOutcomesPanel({
-  recovery,
-}: {
-  recovery: BackendRead<DashboardProjection>;
-}) {
-  const outcomes = recoveryData(recovery)?.recentCompletionOutcomes ?? [];
-
-  return (
-    <section className={panelFullClassName}>
-      <div className={panelHeaderClassName}>
-        <div>
-          <p className={eyebrowClassName}>Completion outcomes</p>
-          <h2 className={panelTitleClassName}>Recent order workflow results</h2>
-        </div>
-        <StatusPill
-          status={{
-            label: outcomes.length > 0 ? `${formatNumber(outcomes.length)} shown` : "no data",
-            tone: outcomes.length > 0 ? "ok" : "idle",
-          }}
-        />
-      </div>
-      {outcomes.length > 0 ? (
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[720px] border-collapse text-left text-sm">
-            <thead>
-              <tr className="border-b border-border text-xs uppercase text-muted">
-                <th className="py-2 pr-3 font-bold">Status</th>
-                <th className="px-3 py-2 font-bold">Order</th>
-                <th className="px-3 py-2 font-bold">ERP</th>
-                <th className="px-3 py-2 font-bold">Latest</th>
-                <th className="py-2 pl-3 font-bold">Correlation</th>
-              </tr>
-            </thead>
-            <tbody>
-              {outcomes.map((outcome) => (
-                <CompletionOutcomeRow key={outcome.orderId} outcome={outcome} />
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        <EmptyState>No recent order outcomes.</EmptyState>
-      )}
-    </section>
-  );
-}
-
-function CompletionOutcomeRow({ outcome }: { outcome: CompletionOutcome }) {
-  return (
-    <tr className="border-b border-border last:border-b-0">
-      <td className="py-3 pr-3 align-top">
-        <StatusPill status={deriveCompletionOutcomePresentationState(outcome.displayStatus)} />
-      </td>
-      <td className="px-3 py-3 align-top">
-        <div className="grid gap-1">
-          <span className="font-semibold text-ink">{outcome.publicOrderId}</span>
-          <span className="text-xs text-muted [overflow-wrap:anywhere]">{outcome.orderId}</span>
-        </div>
-      </td>
-      <td className="px-3 py-3 align-top text-muted">
-        {outcome.latestErpAttemptStatus
-          ? `${outcome.latestErpAttemptStatus}${outcome.latestErpErrorCode ? `:${outcome.latestErpErrorCode}` : ""}`
-          : "—"}
-      </td>
-      <td className="px-3 py-3 align-top text-muted">
-        <div className="grid gap-1">
-          <span>{formatExpectedTime(outcome.latestEventAt)}</span>
-          {outcome.notificationRecordedAt ? (
-            <span className="text-xs">
-              Notified {formatOptionalTime(outcome.notificationRecordedAt)}
-            </span>
-          ) : null}
-        </div>
-      </td>
-      <td className="py-3 pl-3 align-top text-xs text-muted [overflow-wrap:anywhere]">
-        {outcome.correlationId}
-      </td>
-    </tr>
   );
 }

@@ -364,7 +364,6 @@ describe("DashboardProjectionService", () => {
       inventory: null,
       businessOutcome: null,
       consistencyLag: null,
-      recentCompletionOutcomes: [],
       recentMetrics: [],
       transportAttemptCounts: null,
       recoveredAt: now.toISOString(),
@@ -372,7 +371,6 @@ describe("DashboardProjectionService", () => {
     expect(harness.inventory).not.toHaveBeenCalled();
     expect(harness.business).not.toHaveBeenCalled();
     expect(harness.lag).not.toHaveBeenCalled();
-    expect(harness.completion).not.toHaveBeenCalled();
     expect(harness.metrics).not.toHaveBeenCalled();
     expect(harness.transportAttemptCounts).not.toHaveBeenCalled();
     expect(harness.queue).toHaveBeenCalledOnce();
@@ -395,7 +393,6 @@ describe("DashboardProjectionService", () => {
     expect(harness.inventory).toHaveBeenCalledWith(saleOfferId);
     expect(harness.business).toHaveBeenCalledWith(expectedScope);
     expect(harness.lag).toHaveBeenCalledWith(expectedScope, now);
-    expect(harness.completion).toHaveBeenCalledWith(expectedScope, now);
     expect(harness.metrics).toHaveBeenCalledWith(runId);
     expect(harness.runErp).toHaveBeenCalledWith(expectedScope);
     expect(recovery.erp?.runId).toBe(runId);
@@ -460,7 +457,6 @@ describe("DashboardProjectionService", () => {
     expect(harness.inventory).not.toHaveBeenCalled();
     expect(harness.business).not.toHaveBeenCalled();
     expect(harness.lag).not.toHaveBeenCalled();
-    expect(harness.completion).not.toHaveBeenCalled();
     expect(harness.metrics).not.toHaveBeenCalled();
     expect(harness.transportAttemptCounts).not.toHaveBeenCalled();
     expect(harness.queue).not.toHaveBeenCalled();
@@ -633,7 +629,6 @@ describe("DashboardProjectionService", () => {
             contextReader: { readContext: async () => await new Promise<never>(() => undefined) },
             businessOutcomeReader: { read: async () => businessOutcomeFixture() },
             consistencyLagReader: { read: async () => consistencyLagFixture() },
-            completionOutcomeReader: { read: async () => [] },
             inventoryStatusService: { getStatus: async () => inventoryStatusFixture() },
             queueStatusService: { getStatus: async () => queueStatusFixture() },
             sharedErpProtectionService: {
@@ -746,7 +741,6 @@ function projectionDependencies(options: {
     contextReader: { readContext: options.readContext },
     businessOutcomeReader: { read: async () => businessOutcomeFixture() },
     consistencyLagReader: { read: async () => consistencyLagFixture() },
-    completionOutcomeReader: { read: async () => [] },
     inventoryStatusService: { getStatus: async () => inventoryStatusFixture() },
     queueStatusService: { getStatus: async () => queueStatusFixture() },
     sharedErpProtectionService: {
@@ -778,7 +772,6 @@ function serviceHarness(
   const lag = options.lagError
     ? vi.fn(async () => Promise.reject(options.lagError))
     : vi.fn(async () => consistencyLagFixture());
-  const completion = vi.fn(async () => []);
   const metrics = vi.fn(async () => []);
   const transportAttemptCounts = options.transportAttemptCountsError
     ? vi.fn(async () => Promise.reject(options.transportAttemptCountsError))
@@ -826,7 +819,6 @@ function serviceHarness(
         },
         businessOutcomeReader: { read: business },
         consistencyLagReader: { read: lag },
-        completionOutcomeReader: { read: completion },
         inventoryStatusService: { getStatus: inventory },
         queueStatusService: { getStatus: queue },
         sharedErpProtectionService: { getStatus: sharedErp },
@@ -845,7 +837,6 @@ function serviceHarness(
     inventory,
     business,
     lag,
-    completion,
     metrics,
     transportAttemptCounts,
     queue,

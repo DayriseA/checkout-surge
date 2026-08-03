@@ -531,6 +531,39 @@ describe("watch browser recovery", () => {
     expect(markup).not.toContain("Run-owned retrying orders are shown separately (29)");
   });
 
+  it("does not render order-scoped diagnostic values on the public watch surface", () => {
+    const orderId = "99999999-9999-4999-8999-999999999991";
+    const orderCorrelation = "corr-order-private";
+    const base = dashboardRecoveryFixture({ currentRun: demoRunFixture() });
+    const polluted = {
+      ...base,
+      erp: {
+        runId: demoRunFixture().runId,
+        circuit: null,
+        circuitReadStatus: "available" as const,
+        latestAttempt: {
+          runId: demoRunFixture().runId,
+          status: "failed" as const,
+          finishedAt: "2026-06-20T00:00:09.000Z",
+          orderId,
+          correlationId: orderCorrelation,
+        },
+        recentAttemptWindowSeconds: 60,
+        recentAttemptCount: 1,
+        recentFailureCount: 1,
+        recentTimeoutCount: 0,
+        observedAt: "2026-06-20T00:00:10.000Z",
+      },
+    } as unknown as DashboardProjection;
+    const markup = renderToStaticMarkup(
+      createElement(OperatorDashboard, { initialRecovery: available(polluted) }),
+    );
+
+    expect(markup).not.toContain("Recent order workflow results");
+    expect(markup).not.toContain(orderId);
+    expect(markup).not.toContain(orderCorrelation);
+  });
+
   it("keeps the terminal chart anchored at the first attempt after a long preparation gap", () => {
     const firstAttemptStartedAt = "2026-06-20T00:01:10.000Z";
     const elapsed = Array.from({ length: runSignalBucketCount }, (_, index) => (index + 1) * 0.005);
@@ -1062,7 +1095,6 @@ function dashboardRecoveryFixture(
     httpSummary: null,
     requestArrivalSummary: null,
     runSignalTimelineSummary: null,
-    recentCompletionOutcomes: [],
     recoveredAt: "2026-06-20T00:00:10.000Z",
     ...overrides,
   };

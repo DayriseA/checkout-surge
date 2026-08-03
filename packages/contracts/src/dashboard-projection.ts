@@ -1,7 +1,6 @@
 import { z } from "zod";
 import {
   businessOutcomeSummarySchema,
-  completionOutcomeSchema,
   consistencyLagSummarySchema,
   demoRunSnapshotSchema,
 } from "./demo.js";
@@ -21,7 +20,7 @@ import { transportAttemptCountsSchema } from "./traffic-transport-counts.js";
 export const dashboardEventsPath = "/dashboard/events" as const;
 export const dashboardRecoveryPath = "/dashboard/recovery" as const;
 export const dashboardProjectionSchemaName = "checkout-surge.dashboard-projection" as const;
-export const dashboardProjectionSchemaVersion = 1 as const;
+export const dashboardProjectionSchemaVersion = 2 as const;
 /** Slowest expected cadence while dashboard work remains in flight. */
 export const dashboardLiveUpdateExpectedIntervalMs = 2_000;
 
@@ -99,7 +98,6 @@ export const dashboardProjectionSchema = z
     systemStatus: sharedRuntimeStatusSchema.nullable(),
     businessOutcome: businessOutcomeSummarySchema.nullable(),
     consistencyLag: consistencyLagSummarySchema.nullable(),
-    recentCompletionOutcomes: z.array(completionOutcomeSchema).default([]),
     transportAttemptCounts: transportAttemptCountsSchema.nullable().default(null),
     httpSummary: trafficHttpSummarySchema.nullable().default(null),
     requestArrivalSummary: requestArrivalSummarySchema.nullable().default(null),
@@ -137,12 +135,6 @@ export const dashboardProjectionSchema = z
         ["erp", projection.erp],
         ["businessOutcome", projection.businessOutcome],
         ["consistencyLag", projection.consistencyLag],
-        [
-          "recentCompletionOutcomes",
-          projection.recentCompletionOutcomes.length === 0
-            ? null
-            : projection.recentCompletionOutcomes,
-        ],
         ["transportAttemptCounts", projection.transportAttemptCounts],
         ["httpSummary", projection.httpSummary ?? null],
         ["requestArrivalSummary", projection.requestArrivalSummary ?? null],
@@ -199,18 +191,6 @@ export const dashboardProjectionSchema = z
         path: ["erp", "latestAttempt", "runId"],
         message: "Projection latest ERP attempt and scope run IDs must agree.",
       });
-    }
-    for (const [index, outcome] of projection.recentCompletionOutcomes.entries()) {
-      if (
-        outcome.runId !== projection.scope.runId ||
-        outcome.saleOfferId !== projection.scope.saleOfferId
-      ) {
-        context.addIssue({
-          code: "custom",
-          path: ["recentCompletionOutcomes", index],
-          message: "Projection completion outcome and scope IDs must agree.",
-        });
-      }
     }
   });
 export type DashboardProjection = z.infer<typeof dashboardProjectionSchema>;

@@ -75,6 +75,7 @@ Avoid:
 - HTTP services use `x-correlation-id` as the transport header. Each inbound boundary normalizes or generates one value, returns it in the response header, and binds it to the request-scoped logger so routine Fastify logs are searchable without repeating the field at every call site.
 - A route that promotes a validated body correlation ID must update the response header and request/reply loggers together. Per-request child bindings must not mutate the application logger or retain the previous request's correlation fields.
 - Browser-facing Next.js proxy routes create one request context, forward only its normalized correlation ID plus explicitly allow-listed server-owned headers, and preserve the validated backend response correlation ID when reconstructing the browser response.
+- Order-scoped correlation IDs, internal order IDs, and raw ERP error/result fields are prohibited on public pages and public projection content. The per-request envelope `correlationId` remains required in responses, headers, and error payloads so the visitor's own request can be traced.
 
 ### Timestamps
 
@@ -87,7 +88,7 @@ Avoid:
 Checkout-Surge uses one complete revisioned browser projection.
 
 - API and worker code publish validated dashboard projection-dirty signals to Redis Pub/Sub.
-- The API gateway owns the browser-facing SSE stream at `/dashboard/events` and assembles complete `checkout-surge.dashboard-projection` version 1 frames.
+- The API gateway owns the browser-facing SSE stream at `/dashboard/events` and assembles complete `checkout-surge.dashboard-projection` version 2 frames. The version tracks the projection wire shape from this point forward; version 1 covered several earlier shapes across A03, A04, and A06.
 - Dashboard clients receive complete projections over same-origin `EventSource`; no delta or per-order event schema is part of the browser protocol.
 - Dashboard observability remains public for the demo; admin access gates only privileged controls.
 - Live projections are ephemeral operator feedback, not the durable system of record.
@@ -149,7 +150,7 @@ API and worker business mutation handlers mark the dashboard dirty only after fr
 
 The cutover is canonical-only: publishers and consumers deploy together, existing browser tabs must reload, and active k6 processes must be restarted. Legacy wire shapes and singular k6 counters are not normalized, avoiding duplicate aggregate/delta application and counter double counting.
 
-The worker does not publish individual order status or consistency-lag messages. Retained completion and aggregate consistency-lag views come from the complete projection, while focused order investigation uses the durable status read or protected Run History.
+The worker does not publish individual order status or consistency-lag messages. Aggregate run outcomes and aggregate consistency-lag views come from the complete projection, while focused order investigation uses the durable status read or protected Run History.
 
 ### Dashboard queue and ERP scope inventory
 
@@ -163,7 +164,7 @@ Run-scoped fields:
 | Public evidence | Source and meaning | Clock |
 | --- | --- | --- |
 | Queued / processing backlog | `businessOutcome.queuedOrders` is `accepted_awaiting_first_processing_start`; `processingOrders` and adjacent `retryingOrders` are filtered by `orders.runId`. Retrying remains separate because BullMQ retries can resume after the first processing start. | Complete projection `recoveredAt`; terminal history uses its captured run timeline. |
-| Confirmed and failed outcomes | `businessOutcome.confirmedOrders`, `failedOrders`, and recent completion outcomes are filtered by the selected `runId`. | Durable event timestamps and projection `recoveredAt`. |
+| Confirmed and failed outcomes | `businessOutcome.confirmedOrders` and `failedOrders` are filtered by the selected `runId`. | Durable event timestamps and projection `recoveredAt`. |
 | ERP attempt totals | `erp.recentAttemptCount`, `recentFailureCount`, and `recentTimeoutCount` query only `erp_attempts.run_id = scope.runId`; `recentAttemptWindowSeconds` defines the aggregate window. | `erp.observedAt` is the API observation time. |
 | Latest ERP attempt | `erp.latestAttempt` is selected only inside the same run predicate. Its status and `finishedAt` cannot be inherited from another or unscoped run. | `latestAttempt.finishedAt` is attempt completion time. |
 | Run circuit | `erp.circuit` reads the Redis per-run breaker key. `circuitReadStatus = available` with no snapshot means protection has not yet been exercised and is neutral; `unavailable` means the Redis read failed while independently read PostgreSQL attempt evidence remains visible. State, threshold, failure count, open/probe times, and reset timeout all belong to this run-keyed snapshot. | `circuit.lastChangedAt` is edge-triggered and changes only when run protection opens, probes, or closes. |

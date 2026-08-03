@@ -14,7 +14,6 @@ import {
   type DashboardRecoveryOperation,
   type DashboardRecoveryOperationFactory,
   PostgresDashboardBusinessOutcomeReader,
-  PostgresDashboardCompletionOutcomeReader,
   PostgresDashboardConsistencyLagReader,
   PostgresDashboardRecoveryContextReader,
   PostgresDashboardTransportObservationReader,
@@ -120,7 +119,6 @@ export function createDashboardRecoveryOperationFactory(
         contextReader: new PostgresDashboardRecoveryContextReader(operationDatabase.db),
         businessOutcomeReader: new PostgresDashboardBusinessOutcomeReader(operationDatabase.db),
         consistencyLagReader: new PostgresDashboardConsistencyLagReader(operationDatabase.db),
-        completionOutcomeReader: new PostgresDashboardCompletionOutcomeReader(operationDatabase.db),
         inventoryStatusService: new InventoryStatusService({
           getStatus: (saleOfferId) => getInventoryStatus(operationRedis, saleOfferId),
         }),

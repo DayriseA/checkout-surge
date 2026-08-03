@@ -1,6 +1,5 @@
 import {
   type BusinessOutcomeSummary,
-  type CompletionOutcome,
   type ConsistencyLagSummary,
   type DashboardProjection,
   type DashboardProjectionScope,
@@ -25,7 +24,6 @@ import {
   incrementIdleDashboardProjectionRevision,
   readBusinessOutcomeSummary,
   readConsistencyLagSummary,
-  readRecentCompletionOutcomes,
 } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { and, desc, eq, inArray, or } from "drizzle-orm";
@@ -63,10 +61,6 @@ export interface DashboardConsistencyLagReader {
     scope: { saleOfferId: string; runId?: string },
     measuredAt: Date,
   ): Promise<ConsistencyLagSummary>;
-}
-
-export interface DashboardCompletionOutcomeReader {
-  read(scope: { saleOfferId: string; runId?: string }, now: Date): Promise<CompletionOutcome[]>;
 }
 
 /**
@@ -200,14 +194,6 @@ export class PostgresDashboardConsistencyLagReader implements DashboardConsisten
   }
 }
 
-export class PostgresDashboardCompletionOutcomeReader implements DashboardCompletionOutcomeReader {
-  constructor(private readonly db: CheckoutSurgeDatabase) {}
-
-  read(scope: { saleOfferId: string; runId?: string }, now: Date): Promise<CompletionOutcome[]> {
-    return readRecentCompletionOutcomes(this.db, scope, { now });
-  }
-}
-
 export interface DashboardProjectionRevisionAllocator {
   allocate(scope: DashboardProjectionScope | null): Promise<number>;
 }
@@ -317,7 +303,6 @@ export class DashboardProjectionService {
       businessOutcomeResult,
       consistencyLagResult,
       trafficMetricResult,
-      completionOutcomeResult,
       transportObservationResult,
     ] = await Promise.all([
       saleScope
@@ -349,11 +334,6 @@ export class DashboardProjectionService {
             dependencies.trafficMetricReader.readRecent(scope.runId),
           )
         : Promise.resolve({ ok: true as const, value: [] satisfies MetricSample[] }),
-      saleScope
-        ? readSafely("dashboard_completion_outcomes", signal, () =>
-            dependencies.completionOutcomeReader.read(saleScope, now),
-          )
-        : Promise.resolve({ ok: true as const, value: [] }),
       scope
         ? readSafely("dashboard_transport_observation", signal, () =>
             dependencies.transportObservationReader.read(scope.runId),
@@ -382,7 +362,6 @@ export class DashboardProjectionService {
       businessOutcomeResult,
       consistencyLagResult,
       trafficMetricResult,
-      completionOutcomeResult,
       transportObservationResult,
       requestArrivalResult,
     ]) {
@@ -415,7 +394,6 @@ export class DashboardProjectionService {
           : null,
       businessOutcome: businessOutcomeResult.ok ? businessOutcomeResult.value : null,
       consistencyLag: consistencyLagResult.ok ? consistencyLagResult.value : null,
-      recentCompletionOutcomes: completionOutcomeResult.ok ? completionOutcomeResult.value : [],
       transportAttemptCounts: transportObservationResult.ok
         ? (transportObservationResult.value?.transportAttemptCounts ?? null)
         : null,
@@ -435,7 +413,6 @@ export interface DashboardRecoveryDependencies {
   contextReader: DashboardRecoveryContextReader;
   businessOutcomeReader: DashboardBusinessOutcomeReader;
   consistencyLagReader: DashboardConsistencyLagReader;
-  completionOutcomeReader: DashboardCompletionOutcomeReader;
   inventoryStatusService: Pick<InventoryStatusService, "getStatus">;
   queueStatusService: Pick<QueueStatusService, "getStatus">;
   sharedErpProtectionService: Pick<SharedErpProtectionService, "getStatus">;

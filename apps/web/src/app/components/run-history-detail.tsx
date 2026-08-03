@@ -160,6 +160,7 @@ export function AdminRunHistoryDetail({ detail }: RunHistoryDetailProps) {
                   ["Confirmed", formatDate(order.confirmedAt)],
                   ["Failed", formatDate(order.failedAt)],
                   ["Failure code", order.failureCode ?? "none"],
+                  ["Correlation", order.correlationId],
                 ]}
                 key={order.orderId}
                 title={order.orderId}

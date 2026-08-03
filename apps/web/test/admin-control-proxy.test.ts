@@ -939,7 +939,6 @@ function dashboardRecoveryPayload(correlationId = "corr-recovery") {
     systemStatus: null,
     businessOutcome: null,
     consistencyLag: null,
-    recentCompletionOutcomes: [],
     recoveredAt: "2026-06-20T00:00:10.000Z",
   };
 }

@@ -138,6 +138,5 @@ function recoveryFixture() {
     requestArrivalSummary: null,
     runSignalTimelineSummary: null,
     recentMetrics: [],
-    recentCompletionOutcomes: [],
   };
 }

@@ -8,7 +8,6 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import {
-  CompletionOutcomesPanel,
   ConsistencyLagPanel,
   InventoryDrainPanel,
   RecoveryStatusPanel,
@@ -65,10 +64,6 @@ describe("Phase 6 projection dashboard", () => {
         freshness: liveFreshness,
       }),
     );
-    const completionMarkup = renderToStaticMarkup(
-      createElement(CompletionOutcomesPanel, { recovery }),
-    );
-
     expect(lagMarkup).toContain("Fast reservation vs final confirmation");
     expect(lagMarkup).toContain("350ms");
     expect(lagMarkup).not.toContain("Latest individual order");
@@ -78,12 +73,6 @@ describe("Phase 6 projection dashboard", () => {
     expect(outcomeMarkup).toContain("Unique reservations secured");
     expect(outcomeMarkup).toContain("Confirmed");
     expect(outcomeMarkup).toContain("Failed");
-    expect(completionMarkup).toContain("Recent order workflow results");
-    expect(completionMarkup).toContain("notification recorded");
-    expect(completionMarkup).toContain("ord_recent");
-    expect(`${lagMarkup}${outcomeMarkup}${completionMarkup}`).not.toContain(
-      "Recent order transitions",
-    );
   });
 
   it.each([
@@ -505,23 +494,6 @@ function projectionFixture(): DashboardProjection {
       oldestPendingAgeSeconds: 8.5,
       measuredAt: "2026-06-20T00:00:10.000Z",
     },
-    recentCompletionOutcomes: [
-      {
-        orderId: "44444444-4444-4444-8444-444444444444",
-        publicOrderId: "ord_recent",
-        saleOfferId,
-        runId,
-        correlationId: "corr-web-recent",
-        orderStatus: "confirmed",
-        displayStatus: "notification_recorded",
-        queuedAt: "2026-06-20T00:00:01.000Z",
-        processingAt: "2026-06-20T00:00:02.000Z",
-        confirmedAt: "2026-06-20T00:00:03.000Z",
-        notificationRecordedAt: "2026-06-20T00:00:04.000Z",
-        latestErpAttemptStatus: "succeeded",
-        latestEventAt: "2026-06-20T00:00:04.000Z",
-      },
-    ],
     transportAttemptCounts: {
       plannedRequests: 1_000,
       startedRequests: 900,

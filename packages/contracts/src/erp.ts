@@ -111,14 +111,8 @@ export const erpRetryPressureSchema = z
 
 export const erpLatestAttemptSummarySchema = z
   .object({
-    orderId: uuidSchema,
     runId: uuidSchema.nullable(),
-    attemptNumber: z.number().int().positive(),
     status: erpAttemptStatusSchema,
-    httpStatus: z.number().int().min(100).max(599).nullable(),
-    errorCode: z.string().trim().min(1).nullable(),
-    errorMessage: z.string().trim().min(1).nullable(),
-    latencyMs: nonnegativeIntegerSchema,
     finishedAt: isoTimestampSchema,
   })
   .strict();
