@@ -1,9 +1,10 @@
-import type {
-  AcceptedRunConfigSnapshot,
-  BusinessOutcomeSummary,
-  TrafficDeliverySummary,
-  TrafficHttpSummary,
-  TransportAttemptCounts,
+import {
+  type AcceptedRunConfigSnapshot,
+  type BusinessOutcomeSummary,
+  type TrafficDeliverySummary,
+  type TrafficHttpSummary,
+  type TransportAttemptCounts,
+  isReplayPossible,
 } from "@checkout-surge/contracts";
 
 export interface AcceptedResponseAccounting {
@@ -61,7 +62,8 @@ function isCompleteDuplicateBuyerDelivery(
   delivery: TrafficDeliverySummary,
 ): boolean {
   const traffic = config.trafficConfig;
-  if (traffic.mode !== "buyer-spike" || !traffic.duplicateEachBuyerAttempt) return false;
+  if (!isReplayPossible(config)) return false;
+  if (traffic.mode !== "buyer-spike") return false;
   const expectedAttempts = traffic.buyerCount * 2;
 
   return (

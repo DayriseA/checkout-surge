@@ -50,8 +50,10 @@ describe.skipIf(!databaseUrl)("business outcome dashboard projection", () => {
     const now = new Date("2026-06-21T00:00:00.000Z");
     const productId = "11111111-1111-4111-8111-111111111111";
     const saleOfferId = "22222222-2222-4222-8222-222222222222";
+    const otherSaleOfferId = "22222222-2222-4222-8222-222222222223";
     const presetId = "33333333-3333-4333-8333-333333333333";
     const runId = "44444444-4444-4444-8444-444444444444";
+    const otherRunId = "44444444-4444-4444-8444-444444444445";
 
     await connection.db.insert(products).values({
       id: productId,
@@ -63,6 +65,15 @@ describe.skipIf(!databaseUrl)("business outcome dashboard projection", () => {
       id: saleOfferId,
       productId,
       name: "Business Outcome Offer",
+      allocatedStock: 10,
+      saleStartsAt: now,
+      saleEndsAt: new Date("2026-06-22T00:00:00.000Z"),
+      purpose: "generated_run",
+    });
+    await connection.db.insert(saleOffers).values({
+      id: otherSaleOfferId,
+      productId,
+      name: "Business Outcome Other Offer",
       allocatedStock: 10,
       saleStartsAt: now,
       saleEndsAt: new Date("2026-06-22T00:00:00.000Z"),
@@ -92,9 +103,27 @@ describe.skipIf(!databaseUrl)("business outcome dashboard projection", () => {
       saleOfferId,
       startedAt: now,
     });
+    await connection.db.insert(demoRuns).values({
+      id: otherRunId,
+      presetId,
+      presetName: "Business Outcome Preset",
+      operatorMode: "admin",
+      status: "completed",
+      trafficStatus: "succeeded",
+      configSnapshot: configSnapshotFixture(),
+      saleOfferId: otherSaleOfferId,
+      startedAt: now,
+      trafficStartedAt: now,
+      trafficEndedAt: now,
+      finalizedAt: now,
+    });
     await connection.db.insert(demoRunSaleContexts).values({
       runId,
       saleOfferId,
+    });
+    await connection.db.insert(demoRunSaleContexts).values({
+      runId: otherRunId,
+      saleOfferId: otherSaleOfferId,
     });
     await connection.db.insert(demoRunSoldOutCounts).values({
       runId,
@@ -116,7 +145,7 @@ describe.skipIf(!databaseUrl)("business outcome dashboard projection", () => {
         saleOfferId,
         runId,
         correlationId: `corr-${status}`,
-        quantity: 1,
+        quantity: status === "confirmed" ? 2 : 1,
         reservationToken: `res-${status}`,
         securedAt: securedAtByStatus[status as keyof typeof securedAtByStatus],
         expiresAt: new Date("2026-06-21T00:15:00.000Z"),
@@ -130,7 +159,7 @@ describe.skipIf(!databaseUrl)("business outcome dashboard projection", () => {
         reservationId: `55555555-5555-4555-8555-55555555555${index}`,
         runId,
         correlationId: `corr-${status}`,
-        quantity: 1,
+        quantity: status === "confirmed" ? 2 : 1,
         status: status as "queued" | "processing" | "confirmed" | "failed",
         queuedAt: securedAtByStatus[status as keyof typeof securedAtByStatus],
         ...(status === "processing" ? { processingAt: now } : {}),
@@ -146,6 +175,16 @@ describe.skipIf(!databaseUrl)("business outcome dashboard projection", () => {
       quantity: 1,
       reservationToken: "res-delayed",
       securedAt: new Date(now.getTime() - 6_000),
+      expiresAt: new Date("2026-06-21T00:15:00.000Z"),
+    });
+    await connection.db.insert(reservations).values({
+      id: "55555555-5555-4555-8555-555555555555",
+      saleOfferId: otherSaleOfferId,
+      runId: otherRunId,
+      correlationId: "corr-other-run",
+      quantity: 9,
+      reservationToken: "res-other-run",
+      securedAt: now,
       expiresAt: new Date("2026-06-21T00:15:00.000Z"),
     });
     await connection.db.insert(orders).values({
@@ -193,6 +232,7 @@ describe.skipIf(!databaseUrl)("business outcome dashboard projection", () => {
       readBusinessOutcomeSummary(connection.db, { saleOfferId, runId }),
     ).resolves.toEqual({
       acceptedReservations: 5,
+      reservedUnits: 6,
       soldOutRejections: 7,
       queuedOrders: 1,
       processingOrders: 2,

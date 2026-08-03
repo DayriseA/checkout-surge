@@ -978,7 +978,8 @@ describe("demo-run lifecycle start gating", () => {
             runId: request.runId,
             presetName: "Preview 1k",
             status: "failed",
-            failureReason: "existing_terminal_summary",
+            failureReason: "traffic_failed",
+            replayPossible: false,
             startedAt: new Date("2026-06-20T00:00:10.000Z"),
             endedAt: new Date("2026-06-20T00:00:12.000Z"),
             transportAttemptCounts: {
@@ -1096,7 +1097,7 @@ describe("demo-run lifecycle start gating", () => {
         runId: "77777777-7777-4777-8777-777777777777",
         status: "failed",
         trafficStatus: "failed",
-        failureReason: "admin_reset",
+        failureCategory: "operator",
         finalizedAt: "2026-06-20T00:00:20.000Z",
       });
       const [run] = await startConnection.db

@@ -125,8 +125,8 @@ describe("run signal timeline contract", () => {
   });
 
   it("derives oversell from its authoritative inventory inputs", () => {
-    expect(deriveOversoldUnits({ acceptedReservations: 12, startingStock: 10 })).toBe(2);
-    expect(deriveOversoldUnits({ acceptedReservations: 8, startingStock: 10 })).toBe(0);
+    expect(deriveOversoldUnits({ reservedUnits: 12, startingStock: 10 })).toBe(2);
+    expect(deriveOversoldUnits({ reservedUnits: 8, startingStock: 10 })).toBe(0);
   });
 });
 

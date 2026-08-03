@@ -4,6 +4,8 @@ import {
   demoRunSnapshotSchema,
   type InventoryStatus,
   type TerminalInventorySnapshot,
+  internalRunFailureReasonSchema,
+  toPublicRunFailureCategory,
 } from "@checkout-surge/contracts";
 import type { demoRuns } from "@checkout-surge/db";
 import { parsePersistedAcceptedRunConfigSnapshot } from "./persisted-demo-run-state.js";
@@ -23,7 +25,9 @@ export function toDemoRunSnapshot(run: typeof demoRuns.$inferSelect): DemoRunSna
     ...(run.trafficStartedAt ? { trafficStartedAt: run.trafficStartedAt.toISOString() } : {}),
     ...(run.trafficEndedAt ? { trafficEndedAt: run.trafficEndedAt.toISOString() } : {}),
     ...(run.finalizedAt ? { finalizedAt: run.finalizedAt.toISOString() } : {}),
-    ...(run.failureReason ? { failureReason: run.failureReason } : {}),
+    ...(run.failureReason
+      ? { failureCategory: toPublicRunFailureCategory(internalRunFailureReasonSchema.parse(run.failureReason)) }
+      : {}),
   });
 }
 
@@ -49,6 +53,7 @@ export function toRedisTerminalInventorySnapshot(input: {
 export function emptyBusinessOutcomeSummary(): BusinessOutcomeSummary {
   return {
     acceptedReservations: 0,
+    reservedUnits: 0,
     soldOutRejections: 0,
     queuedOrders: 0,
     processingOrders: 0,

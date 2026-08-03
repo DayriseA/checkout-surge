@@ -16,6 +16,8 @@ import {
   startDemoRunResponseSchema,
   type TerminalInventorySnapshot,
   type TrafficExecutionStartResponse,
+  isReplayPossible,
+  type InternalRunFailureReason,
 } from "@checkout-surge/contracts";
 import { verifyPublicVisitorCredential } from "@checkout-surge/contracts/public-visitor-credential";
 import {
@@ -430,7 +432,7 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
 
   private async failRun(
     runId: string,
-    failureReason: string,
+    failureReason: InternalRunFailureReason,
     correlationId: string,
   ): Promise<void> {
     const now = this.now();
@@ -450,6 +452,9 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
         run,
         terminalStatus: "failed",
         failureReason,
+        replayPossible: isReplayPossible(
+          parsePersistedAcceptedRunConfigSnapshot(run.configSnapshot, `demo run ${run.id}`),
+        ),
         finalizedAt: now,
         transportAttemptCounts: trafficSummary.transportAttemptCounts,
         httpSummary: trafficSummary.httpSummary,

@@ -5,11 +5,14 @@ import type {
   DemoRunSnapshot,
   InventoryStatus,
   RunErpOutcomeSummary,
+  RunResult,
   SharedErpProtectionStatus,
   SharedRuntimeStatus,
 } from "@checkout-surge/contracts";
+import { deriveOversoldUnits, deriveRunResult } from "@checkout-surge/contracts";
 import type { BackendRead } from "../api";
 import type { Freshness } from "./freshness";
+import { evidenceFromDashboard } from "./run-result-presentation";
 
 export type PresentationTone = "idle" | "progress" | "ok" | "warning" | "danger";
 
@@ -19,29 +22,6 @@ export interface PresentationState {
   label: string;
   description: string;
 }
-
-export interface TerminalOutcomeEvidence {
-  runStatus: "completed" | "failed";
-  oversoldUnits: number;
-  failedOrders: number;
-  pendingOrders: number;
-}
-
-export type TerminalOutcome =
-  | "completed-successfully"
-  | "completed-with-order-failures"
-  | "completed-with-unsettled-orders"
-  | "completed-with-oversell"
-  | "failed";
-
-/** Temporary A07 integration seam. Replace this implementation with A07's classifier. */
-export const classifyTerminalOutcome = (evidence: TerminalOutcomeEvidence): TerminalOutcome => {
-  if (evidence.runStatus === "failed") return "failed";
-  if (evidence.oversoldUnits > 0) return "completed-with-oversell";
-  if (evidence.failedOrders > 0) return "completed-with-order-failures";
-  if (evidence.pendingOrders > 0) return "completed-with-unsettled-orders";
-  return "completed-successfully";
-};
 
 const states = {
   checking: state(
@@ -61,8 +41,8 @@ const states = {
   draining: state(
     "processing-accepted-reservations",
     "progress",
-    "processing accepted reservations",
-    "Accepted reservations are progressing to durable outcomes.",
+    "processing unique reservations",
+    "Unique reservations secured are progressing to durable outcomes.",
   ),
   completed: state(
     "completed-successfully",
@@ -80,13 +60,13 @@ const states = {
     "completed-with-unsettled-orders",
     "warning",
     "completed with unsettled orders",
-    "The run finalized before every accepted reservation settled.",
+    "The run finalized before every unique reservation secured settled.",
   ),
   oversell: state(
     "completed-with-oversell",
     "danger",
     "completed with oversell",
-    "Accepted reservations exceeded available stock.",
+    "Reserved units exceeded available stock.",
   ),
   failed: state("failed", "danger", "failed", "The run failed."),
   unavailable: state(
@@ -95,25 +75,43 @@ const states = {
     "updates unavailable",
     "Current run updates are unavailable.",
   ),
+  outcomeIndeterminate: state(
+    "terminal-outcome-not-yet-available",
+    "idle",
+    "outcome not yet available",
+    "Terminal outcome evidence is not yet available.",
+  ),
+  inventoryReservationEvidenceUnavailable: state(
+    "inventory-reservation-evidence-not-yet-available",
+    "idle",
+    "reservation evidence not yet available",
+    "Durable reservation evidence is not yet available.",
+  ),
+  contradictoryOutcome: state(
+    "terminal-outcome-contradictory",
+    "danger",
+    "contradictory outcome evidence",
+    "One or more authoritative terminal invariants are broken.",
+  ),
 } satisfies Record<string, PresentationState>;
 
 export function deriveRunPresentationState(
   read: BackendRead<DashboardProjection>,
   projection: DashboardProjection | null = read.status === "available" ? read.data : null,
-  outcome: TerminalOutcome | null = projection ? terminalOutcome(projection) : null,
+  result: RunResult | null = projection ? terminalResult(projection) : null,
 ): PresentationState {
   if (read.status === "loading") return states.checking;
   if (read.status === "unavailable") return states.unavailable;
 
   const run = projection?.currentRun ?? null;
-  if (!run) return states.ready;
+  if (!projection || !run) return states.ready;
   if (run.status === "starting") return states.starting;
   if (run.status === "active") {
     return run.trafficStatus === "starting" ? states.starting : states.active;
   }
   if (run.status === "draining") return states.draining;
 
-  switch (outcome) {
+  switch (result?.outcome ?? null) {
     case "completed-successfully":
       return states.completed;
     case "completed-with-order-failures":
@@ -124,6 +122,10 @@ export function deriveRunPresentationState(
       return states.oversell;
     case "failed":
       return states.failed;
+    case "outcome-indeterminate":
+      return result?.maximumClassification === "correctness_failure"
+        ? states.contradictoryOutcome
+        : states.outcomeIndeterminate;
     case null:
       return state(
         "terminal-outcome-not-yet-available",
@@ -134,58 +136,20 @@ export function deriveRunPresentationState(
   }
 }
 
-export function terminalOutcome(projection: DashboardProjection): TerminalOutcome | null {
+function terminalResult(projection: DashboardProjection): RunResult | null {
   const run = projection.currentRun;
   if (!run || (run.status !== "completed" && run.status !== "failed")) return null;
-  const outcome = projection.businessOutcome;
-  const inventory = projection.inventory;
-  if (!outcome || !inventory) return run.status === "failed" ? "failed" : null;
-
-  return classifyTerminalOutcome({
-    runStatus: run.status,
-    // A03 integration: replace this temporary live-input derivation with deriveOversoldUnits.
-    oversoldUnits: Math.max(0, outcome.acceptedReservations - inventory.allocatedStock),
-    failedOrders: outcome.failedOrders,
-    pendingOrders: unsettledOrders(outcome),
-  });
+  return deriveRunResult(evidenceFromDashboard(projection));
 }
 
-export function deriveTerminalSummaryPresentation(input: {
-  runStatus: DemoRunSnapshot["status"];
-  startingStock?: number;
-  acceptedReservations: number;
-  confirmedOrders: number;
-  failedOrders: number;
-  pendingPersistenceCount: number;
-}): PresentationState {
-  if (input.runStatus !== "completed" && input.runStatus !== "failed") {
-    return input.runStatus === "draining" ? states.draining : states.starting;
-  }
-  if (input.startingStock === undefined && input.runStatus === "completed") {
-    return state(
-      "terminal-outcome-not-yet-available",
-      "idle",
-      "outcome not yet available",
-      "Terminal inventory evidence is not yet available.",
-    );
-  }
-
-  return presentationForTerminalOutcome(
-    classifyTerminalOutcome({
-      runStatus: input.runStatus,
-      oversoldUnits: Math.max(
-        0,
-        input.acceptedReservations - (input.startingStock ?? input.acceptedReservations),
-      ),
-      failedOrders: input.failedOrders,
-      pendingOrders:
-        Math.max(0, input.acceptedReservations - input.confirmedOrders - input.failedOrders) +
-        input.pendingPersistenceCount,
-    }),
-  );
+export function deriveTerminalSummaryPresentation(result: RunResult): PresentationState {
+  return result.outcome === "outcome-indeterminate" &&
+    result.maximumClassification === "correctness_failure"
+    ? states.contradictoryOutcome
+    : presentationForTerminalOutcome(result.outcome);
 }
 
-function presentationForTerminalOutcome(outcome: TerminalOutcome): PresentationState {
+function presentationForTerminalOutcome(outcome: RunResult["outcome"]): PresentationState {
   switch (outcome) {
     case "completed-successfully":
       return states.completed;
@@ -197,13 +161,15 @@ function presentationForTerminalOutcome(outcome: TerminalOutcome): PresentationS
       return states.oversell;
     case "failed":
       return states.failed;
+    case "outcome-indeterminate":
+      return states.outcomeIndeterminate;
   }
 }
 
 export function deriveInventoryOutcomeState(
   inventory: InventoryStatus | null,
   run: DemoRunSnapshot | null,
-  acceptedReservations = 0,
+  reservedUnits: number | null = null,
 ): PresentationState {
   if (!inventory)
     return state(
@@ -212,9 +178,15 @@ export function deriveInventoryOutcomeState(
       "no data",
       "Inventory evidence is not yet available.",
     );
-  const oversoldUnits = Math.max(0, acceptedReservations - inventory.allocatedStock);
-  if (oversoldUnits > 0) return states.oversell;
-  if (inventory.allocatedStock > 0 && inventory.remainingStock === 0) {
+  const oversoldUnits =
+    reservedUnits === null
+      ? null
+      : deriveOversoldUnits({ reservedUnits, startingStock: inventory.allocatedStock });
+  if (oversoldUnits !== null && oversoldUnits > 0) return states.oversell;
+  if (reservedUnits === null && run?.status === "completed") {
+    return states.inventoryReservationEvidenceUnavailable;
+  }
+  if (oversoldUnits === 0 && inventory.allocatedStock > 0 && inventory.remainingStock === 0) {
     return state(
       "exact-sellout",
       "ok",
@@ -468,13 +440,6 @@ export function deriveCompletionOutcomePresentationState(
     return state(status, "progress", status, "The order workflow is in progress.");
   }
   return state(status, "idle", status, "The order is queued.");
-}
-
-function unsettledOrders(outcome: BusinessOutcomeSummary): number {
-  return (
-    Math.max(0, outcome.acceptedReservations - outcome.confirmedOrders - outcome.failedOrders) +
-    outcome.pendingPersistenceCount
-  );
 }
 
 export function hasExpectedWork(outcome: BusinessOutcomeSummary): boolean {

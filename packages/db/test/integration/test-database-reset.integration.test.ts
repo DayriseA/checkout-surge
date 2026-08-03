@@ -51,7 +51,7 @@ describe.skipIf(!databaseUrl)("deterministic test database reset", () => {
         return { counts, inserted };
       });
 
-      expect(state.counts).toEqual({ migrations: 2, probes: 0 });
+      expect(state.counts).toEqual({ migrations: 3, probes: 0 });
       expect(state.inserted?.id).toBe(1);
     } finally {
       await rm(temporaryMigrations, { force: true, recursive: true });

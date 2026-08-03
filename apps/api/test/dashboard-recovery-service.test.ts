@@ -154,6 +154,7 @@ describe("PostgresDashboardRecoveryContextReader integration", () => {
       runId,
       presetName: "Preview 1k",
       status: "completed",
+      replayPossible: false,
       startedAt: terminalStartedAt,
       endedAt: now,
       transportAttemptCounts: finalizationRow.transportAttemptCounts,
@@ -272,7 +273,7 @@ describe("PostgresDashboardRecoveryContextReader", () => {
       trafficStatus: "failed",
       trafficEndedAt: now,
       finalizedAt: now,
-      failureReason: "terminal test",
+      failureReason: "traffic_failed",
     });
     const database = controlledDatabase([knownTerminal]);
 

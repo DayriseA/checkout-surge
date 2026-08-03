@@ -25,6 +25,7 @@ import {
   type DemoRunSnapshot,
   dashboardEventsPath,
   dashboardProjectionSchema,
+  dashboardProjectionScopeId,
   demoRunOperatorModeHeaderName,
   demoRunSnapshotSchema,
   emptyHttpTimingBreakdownSummary,
@@ -448,6 +449,7 @@ function staticRecoveryContextReader(saleOfferId: string): DashboardRecoveryCont
 function businessOutcomeFixture(): BusinessOutcomeSummary {
   return {
     acceptedReservations: 6,
+    reservedUnits: 6,
     soldOutRejections: 4,
     queuedOrders: 2,
     processingOrders: 1,
@@ -624,6 +626,7 @@ function runHistoryListResponseFixture(): RunHistoryListResponse {
           10,
         ),
         businessOutcomeSummary: businessOutcomeFixture(),
+        replayPossible: false,
         terminalInventorySnapshot: {
           saleOfferId: fixtureIds.saleOffer,
           startingStock: 10,
@@ -773,14 +776,14 @@ function publicRunHistoryDetailResponseFixture(): PublicRunHistoryDetailResponse
   const admin = adminRunHistoryDetailResponseFixture();
   const {
     id: _id,
-    failureReason: _failureReason,
+    failureCategory: _failureCategory,
     terminalInventorySnapshot,
     ...summary
   } = admin.summary;
   const {
     presetId: _presetId,
     saleOfferId: _saleOfferId,
-    failureReason: _runFailure,
+    failureCategory: _runFailureCategory,
     ...run
   } = admin.run;
   const sanitizedInventory = terminalInventorySnapshot
@@ -808,6 +811,36 @@ function publicRunHistoryDetailResponseFixture(): PublicRunHistoryDetailResponse
     runSignalTimelineSummary: null,
     timestamp: admin.timestamp,
   };
+}
+
+function failedPublicRunHistoryDetailResponseFixture(): PublicRunHistoryDetailResponse {
+  const base = publicRunHistoryDetailResponseFixture();
+  return publicRunHistoryDetailResponseSchema.parse({
+    ...base,
+    summary: { ...base.summary, status: "failed", failureCategory: "traffic" },
+    run: {
+      ...base.run,
+      status: "failed",
+      trafficStatus: "failed",
+      finalizedAt: "2026-06-20T00:00:10.000Z",
+    },
+  });
+}
+
+function failedAdminRunHistoryDetailResponseFixture(): AdminRunHistoryDetailResponse {
+  const base = adminRunHistoryDetailResponseFixture();
+  return adminRunHistoryDetailResponseSchema.parse({
+    ...base,
+    summary: { ...base.summary, status: "failed", failureCategory: "traffic" },
+    run: demoRunSnapshotSchema.parse({
+      ...base.run,
+      status: "failed",
+      trafficStatus: "failed",
+      finalizedAt: "2026-06-20T00:00:10.000Z",
+      failureCategory: "traffic",
+    }),
+    internalFailureReason: "traffic_failed",
+  });
 }
 
 function publicRuntimePolicyFixture() {
@@ -1039,6 +1072,7 @@ describe("API gateway routes", () => {
     orderStatusService?: OrderStatusController;
     queueInspector?: OrderProcessQueueInspector;
     sharedErpProtectionService?: SharedErpProtectionService;
+    dashboardRecoveryService?: DashboardProjectionService;
     presetService?: DemoPresetController;
     runtimePolicyService?: PublicRuntimePolicyController;
     demoRunLifecycleService?: DemoRunLifecycleController;
@@ -1196,6 +1230,64 @@ describe("API gateway routes", () => {
     expect(payload.recentMetrics).toEqual([]);
   });
 
+  it("serves a bounded failure category in a failed dashboard recovery projection", async () => {
+    const failedRun = demoRunSnapshotSchema.parse({
+      ...demoRunSnapshotFixture(),
+      status: "failed",
+      trafficStatus: "failed",
+      finalizedAt: "2026-06-20T00:00:10.000Z",
+      failureCategory: "traffic",
+    });
+    const projection = dashboardProjectionSchema.parse({
+      schema: "checkout-surge.dashboard-projection",
+      version: 1,
+      correlationId: "corr-dashboard-failed",
+      scopeId: dashboardProjectionScopeId({
+        runId: fixtureIds.run,
+        saleOfferId: fixtureIds.saleOffer,
+      }),
+      scope: { runId: fixtureIds.run, saleOfferId: fixtureIds.saleOffer },
+      revision: 1,
+      recoveredAt: "2026-06-20T00:00:10.000Z",
+      currentRun: failedRun,
+      inventory: null,
+      recentMetrics: [],
+      erp: null,
+      systemStatus: null,
+      businessOutcome: null,
+      consistencyLag: null,
+      recentCompletionOutcomes: [],
+      transportAttemptCounts: null,
+      httpSummary: null,
+      requestArrivalSummary: null,
+      runSignalTimelineSummary: null,
+    });
+    const dashboardRecoveryService = new (class extends DashboardProjectionService {
+      override build(
+        _input: Parameters<DashboardProjectionService["build"]>[0],
+      ): Promise<DashboardProjection> {
+        return Promise.resolve(projection);
+      }
+    })({
+      logger: createSilentLogger("api"),
+      openOperation: async () => {
+        throw new Error("The static projection service does not open recovery operations.");
+      },
+    });
+    const server = await trackedServer({
+      persistence: new AcceptingPersistence(),
+      dashboardRecoveryService,
+    });
+
+    const response = await server.inject({ method: "GET", url: "/dashboard/recovery" });
+    const payload = dashboardProjectionSchema.parse(response.json());
+
+    expect(response.statusCode).toBe(200);
+    expect(payload.currentRun?.failureCategory).toBe("traffic");
+    expect(response.body).not.toContain('"failureReason"');
+    expect(response.body).not.toContain("traffic_failed");
+  });
+
   it("opens the dashboard realtime SSE stream with browser reconnect guidance", async () => {
     const dashboardProjectionFanout = new DashboardProjectionFanout({
       logger: createSilentLogger("api"),
@@ -1244,15 +1336,23 @@ describe("API gateway routes", () => {
     const address = server.server.address() as AddressInfo;
     const response = await fetch(`http://127.0.0.1:${address.port}${dashboardEventsPath}`);
     const reader = response.body?.getReader();
+    const failedRun = demoRunSnapshotSchema.parse({
+      ...demoRunSnapshotFixture(),
+      status: "failed",
+      trafficStatus: "failed",
+      finalizedAt: "2026-06-20T00:00:10.000Z",
+      failureCategory: "traffic",
+    });
+    const failedScope = { runId: fixtureIds.run, saleOfferId: fixtureIds.saleOffer };
     const projection: DashboardProjection = {
       schema: "checkout-surge.dashboard-projection",
       version: 1,
       correlationId: "corr-dashboard-event",
-      scopeId: "idle",
-      scope: null,
+      scopeId: dashboardProjectionScopeId(failedScope),
+      scope: failedScope,
       revision: 7,
       recoveredAt: "2026-06-20T00:00:11.000Z",
-      currentRun: null,
+      currentRun: failedRun,
       inventory: null,
       recentMetrics: [],
       erp: null,
@@ -1277,6 +1377,9 @@ describe("API gateway routes", () => {
 
       expect(frame).toContain('"schema":"checkout-surge.dashboard-projection"');
       expect(frame).toContain('"revision":7');
+      expect(frame).toContain('"failureCategory":"traffic"');
+      expect(frame).not.toContain("traffic_failed");
+      expect(frame).not.toContain('"failureReason"');
     } finally {
       await reader?.cancel();
       dashboardProjectionFanout.close();
@@ -1575,6 +1678,56 @@ describe("API gateway routes", () => {
     expect(adminMissing.headers["cache-control"]).toBe("no-store");
   });
 
+  it("serves bounded failure categories while keeping exact reasons admin-only", async () => {
+    const failedPublic = failedPublicRunHistoryDetailResponseFixture();
+    const failedAdmin = failedAdminRunHistoryDetailResponseFixture();
+    const summary = runHistoryListResponseFixture().summaries[0];
+    if (!summary) throw new Error("Expected a run-history summary fixture.");
+    const failedSummary = {
+      ...summary,
+      status: "failed" as const,
+      failureCategory: "traffic" as const,
+    };
+    const server = await trackedServer({
+      persistence: new AcceptingPersistence(),
+      runHistoryService: {
+        ...runHistoryControllerFixture(),
+        list: async (input) => ({
+          ...runHistoryListResponseFixture(),
+          summaries: [failedSummary],
+          page: input.page,
+          pageSize: input.pageSize,
+        }),
+        detail: async () => failedPublic,
+        adminDetail: async () => failedAdmin,
+      },
+    });
+
+    const listResponse = await server.inject({
+      method: "GET",
+      url: runHistoryPath,
+    });
+    const detailResponse = await server.inject({
+      method: "GET",
+      url: runHistoryDetailPath(fixtureIds.run),
+    });
+    const adminResponse = await server.inject({
+      method: "GET",
+      url: adminRunHistoryDetailPath(fixtureIds.run),
+      headers: { [controlServiceTokenHeaderName]: "test-control-token" },
+    });
+
+    const listPayload = runHistoryListResponseSchema.parse(listResponse.json());
+    const detailPayload = publicRunHistoryDetailResponseSchema.parse(detailResponse.json());
+    const adminPayload = adminRunHistoryDetailResponseSchema.parse(adminResponse.json());
+    expect(listPayload.summaries[0]?.failureCategory).toBe("traffic");
+    expect(detailPayload.summary.failureCategory).toBe("traffic");
+    expect(JSON.stringify(listPayload)).not.toContain("failureReason");
+    expect(JSON.stringify(detailPayload)).not.toContain("failureReason");
+    expect(JSON.stringify(detailPayload)).not.toContain("traffic_failed");
+    expect(adminPayload.internalFailureReason).toBe("traffic_failed");
+  });
+
   it("rejects malformed public and admin detail controller responses", async () => {
     const publicFixture = publicRunHistoryDetailResponseFixture();
     const adminFixture = adminRunHistoryDetailResponseFixture();
@@ -1605,6 +1758,27 @@ describe("API gateway routes", () => {
     expect(adminResponse.body).not.toContain("privateDiagnostics");
     expect(publicResponse.headers["cache-control"]).toBe("no-store");
     expect(adminResponse.headers["cache-control"]).toBe("no-store");
+  });
+
+  it("rejects an authenticated failed admin detail without its internal reason", async () => {
+    const failedAdmin = failedAdminRunHistoryDetailResponseFixture();
+    const { internalFailureReason: _internalFailureReason, ...missingReason } = failedAdmin;
+    const server = await trackedServer({
+      persistence: new AcceptingPersistence(),
+      runHistoryService: {
+        ...runHistoryControllerFixture(),
+        adminDetail: async () => missingReason as never,
+      },
+    });
+
+    const response = await server.inject({
+      method: "GET",
+      url: adminRunHistoryDetailPath(fixtureIds.run),
+      headers: { [controlServiceTokenHeaderName]: "test-control-token" },
+    });
+
+    expect(response.statusCode).toBe(500);
+    expect(response.body).not.toContain("traffic_failed");
   });
 
   it("protects run history deletion and requires delete-all confirmation", async () => {
@@ -1692,6 +1866,38 @@ describe("API gateway routes", () => {
       },
       "run-start-correlation",
     );
+  });
+
+  it("returns the established error envelope when traffic fails before a run response exists", async () => {
+    const server = await trackedServer({
+      persistence: new AcceptingPersistence(),
+      demoRunLifecycleService: {
+        ...demoRunLifecycleControllerFixture(),
+        startRun: async () => {
+          throw new ApiHttpError({
+            statusCode: 502,
+            code: "load_orchestrator_unavailable",
+            message: "Load orchestrator unavailable.",
+          });
+        },
+      },
+    });
+
+    const response = await server.inject({
+      method: "POST",
+      url: startDemoRunPath,
+      headers: {
+        [controlServiceTokenHeaderName]: "test-control-token",
+        [demoRunOperatorModeHeaderName]: "admin",
+      },
+      payload: { presetSlug: "preview-1k" },
+    });
+    const payload = errorPayloadSchema.parse(response.json());
+
+    expect(response.statusCode).toBe(502);
+    expect(payload.code).toBe("load_orchestrator_unavailable");
+    expect(payload).not.toHaveProperty("run");
+    expect(payload).not.toHaveProperty("failureReason");
   });
 
   it("derives admin demo-run authority only from trusted headers", async () => {

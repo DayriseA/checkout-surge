@@ -70,7 +70,7 @@ describe("run history surface", () => {
     expect(markup).not.toContain("Outcomes and latency");
     expect(markup).toContain("System of record");
     expect(markup).toContain("what the API recorded");
-    expect(markup).toContain("Accepted reservations");
+    expect(markup).toContain("Unique reservations secured");
     expect(markup).toContain("Confirmed orders");
     expect(markup).toContain("Terminal inventory");
     expect(markup).toContain("Starting stock");
@@ -138,8 +138,8 @@ describe("run history surface", () => {
     expect(markup).toMatch(
       /Never dispatched<span[^>]*>scenario window closed before these were sent<\/span><\/dt><dd[^>]*>1<\/dd>/,
     );
-    expect(markup).toMatch(/Accepted<\/dt><dd[^>]*>4<\/dd>/);
-    expect(markup).toMatch(/Sold out<\/dt><dd[^>]*>3<\/dd>/);
+    expect(markup).toMatch(/Accepted responses<\/dt><dd[^>]*>4<\/dd>/);
+    expect(markup).toMatch(/Sold-out responses<\/dt><dd[^>]*>3<\/dd>/);
     expect(markup).toMatch(/Unexpected<\/dt><dd[^>]*>0<\/dd>/);
     expect(markup).toMatch(
       /Client HTTP p95<span[^>]*>observed replies only<\/span><\/dt><dd[^>]*>42ms<\/dd>/,
@@ -265,6 +265,7 @@ function runHistoryFixture(): RunHistoryListResponse {
         runId: "55555555-5555-4555-8555-555555555555",
         presetName: "Preview 1k",
         status: "completed",
+        replayPossible: false,
         startedAt: "2026-06-20T00:00:00.000Z",
         endedAt: "2026-06-20T00:00:10.000Z",
         transportAttemptCounts: {
@@ -315,6 +316,7 @@ function runHistoryFixture(): RunHistoryListResponse {
         ),
         businessOutcomeSummary: {
           acceptedReservations: 6,
+          reservedUnits: 6,
           soldOutRejections: 4,
           queuedOrders: 0,
           processingOrders: 0,

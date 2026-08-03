@@ -1,0 +1,619 @@
+import {
+  type DashboardProjection,
+  dashboardProjectionSchema,
+  dashboardProjectionSchemaName,
+  dashboardProjectionSchemaVersion,
+  dashboardProjectionScopeId,
+  demoRunSnapshotSchema,
+  deriveRunResult,
+  emptyHttpTimingBreakdownSummary,
+  emptyRequestArrivalSummary,
+  emptyServerReservationTimingSummary,
+  evaluateFastReservationTarget,
+  type PublicRunHistoryDetailResponse,
+  publicRunHistoryDetailResponseSchema,
+  publicRunHistorySummarySchema,
+  type RunHistorySummary,
+  type RunResultEvidence,
+  runHistorySummarySchema,
+} from "@checkout-surge/contracts";
+import { previewRunConfigSnapshotFixture } from "@checkout-surge/contracts/testing";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, it } from "vitest";
+import { RunConclusion } from "../src/app/components/run-conclusion.js";
+import {
+  evidenceFromDashboard,
+  evidenceFromRunHistoryDetail,
+  evidenceFromRunHistorySummary,
+  runConclusionSentence,
+} from "../src/app/lib/presentation/run-result-presentation.js";
+
+const runId = "11111111-1111-4111-8111-111111111111";
+const saleOfferId = "22222222-2222-4222-8222-222222222222";
+const timestamp = "2026-07-30T12:00:00.000Z";
+
+const cleanDurable: NonNullable<RunResultEvidence["durable"]> = {
+  reservedUnits: 250,
+  uniqueReservations: 250,
+  soldOutDecisions: 750,
+  confirmedOrders: 250,
+  failedOrders: 0,
+  queuedOrders: 0,
+  processingOrders: 0,
+  durablePendingPersistenceRecords: 0,
+  notificationsRecorded: 250,
+};
+
+const cleanEvidence: RunResultEvidence = {
+  runStatus: "completed",
+  failureCategory: null,
+  startingStock: 250,
+  remainingStock: 0,
+  durable: cleanDurable,
+  heldReservationsAwaitingPersistence: 0,
+  replayPossible: false,
+  generator: completeGenerator(),
+};
+
+describe("run result presentation", () => {
+  it.each([
+    {
+      name: "clean sellout",
+      evidence: cleanEvidence,
+      outcome: "completed-successfully",
+      sentence:
+        "All 250 available units were reserved without overselling. 750 sold-out decisions were recorded. All 250 reservations were confirmed, with no failed orders.",
+      invariantStatuses: ["holds", "holds", "holds"],
+      reconciliationCodes: [
+        "accepted_responses_vs_unique_reservations",
+        "sold_out_decisions_vs_responses",
+      ],
+    },
+    {
+      name: "stock remaining",
+      evidence: withEvidence({
+        startingStock: 250,
+        remainingStock: 100,
+        durable: {
+          reservedUnits: 150,
+          uniqueReservations: 150,
+          soldOutDecisions: 0,
+          confirmedOrders: 150,
+        },
+      }),
+      outcome: "completed-successfully",
+      sentence:
+        "150 units were reserved from 250, and 100 units remain. No units were oversold. All 150 reservations were confirmed, with no failed orders.",
+      invariantStatuses: ["holds", "holds", "holds"],
+      reconciliationCodes: [
+        "accepted_responses_vs_unique_reservations",
+        "sold_out_decisions_vs_responses",
+      ],
+    },
+    {
+      name: "order failures",
+      evidence: withEvidence({
+        durable: { confirmedOrders: 200, failedOrders: 50 },
+      }),
+      outcome: "completed-with-order-failures",
+      sentence:
+        "All 250 available units were reserved without overselling. 750 sold-out decisions were recorded. 200 orders were confirmed, 50 failed, and 0 remain pending.",
+      invariantStatuses: ["holds", "holds", "holds"],
+      reconciliationCodes: [
+        "accepted_responses_vs_unique_reservations",
+        "sold_out_decisions_vs_responses",
+      ],
+    },
+    {
+      name: "pending outcomes",
+      evidence: withEvidence({
+        durable: { confirmedOrders: 200, queuedOrders: 30, processingOrders: 20 },
+      }),
+      outcome: "completed-with-unsettled-orders",
+      sentence:
+        "All 250 available units were reserved without overselling. 750 sold-out decisions were recorded. 200 orders were confirmed, 0 failed, and 50 remain pending.",
+      invariantStatuses: ["holds", "holds", "holds"],
+      reconciliationCodes: [
+        "accepted_responses_vs_unique_reservations",
+        "sold_out_decisions_vs_responses",
+      ],
+    },
+    {
+      name: "oversell",
+      evidence: withEvidence({ durable: { reservedUnits: 260, uniqueReservations: 260 } }),
+      outcome: "completed-with-oversell",
+      sentence:
+        "Durable records show 260 units reserved against 250 starting units, so 10 units were oversold. 750 sold-out decisions were recorded. Order outcomes: 250 confirmed, 0 failed, and 0 pending.",
+      invariantStatuses: ["broken", "broken", "broken"],
+      reconciliationCodes: [
+        "accepted_responses_vs_unique_reservations",
+        "sold_out_decisions_vs_responses",
+      ],
+    },
+    {
+      name: "partial generator observation",
+      evidence: withEvidence({
+        generator: completeGenerator({
+          transportAttemptCounts: {
+            plannedRequests: 1_000,
+            startedRequests: 900,
+            completedRequests: 850,
+            interruptedRequests: 50,
+            unstartedRequests: 100,
+          },
+        }),
+      }),
+      outcome: "completed-successfully",
+      sentence:
+        "All 250 available units were reserved without overselling. 750 sold-out decisions were recorded. All 250 reservations were confirmed, with no failed orders.",
+      invariantStatuses: ["holds", "holds", "holds"],
+      reconciliationCodes: [
+        "accepted_responses_vs_unique_reservations",
+        "sold_out_decisions_vs_responses",
+        "partial_generator_coverage",
+      ],
+    },
+    {
+      name: "missing terminal snapshot",
+      evidence: withEvidence({ startingStock: null, remainingStock: null }),
+      outcome: "outcome-indeterminate",
+      sentence: "The run outcome is indeterminate because authoritative evidence is incomplete.",
+      invariantStatuses: ["not_evaluable", "holds", "not_evaluable"],
+      reconciliationCodes: [
+        "accepted_responses_vs_unique_reservations",
+        "sold_out_decisions_vs_responses",
+      ],
+    },
+    {
+      name: "failed category",
+      evidence: withEvidence({
+        runStatus: "failed",
+        failureCategory: "traffic",
+        durable: { reservedUnits: 260 },
+      }),
+      outcome: "failed",
+      sentence: "The run failed due to a traffic failure.",
+      invariantStatuses: ["broken", "holds", "broken"],
+      reconciliationCodes: [
+        "accepted_responses_vs_unique_reservations",
+        "sold_out_decisions_vs_responses",
+      ],
+    },
+  ] as const)("states $name", ({
+    name,
+    evidence,
+    outcome,
+    sentence,
+    invariantStatuses,
+    reconciliationCodes,
+  }) => {
+    const result = deriveRunResult(evidence);
+    expect(result.outcome).toBe(outcome);
+    expect(runConclusionSentence(result)).toBe(sentence);
+    expect(result.invariants.map(({ status }) => status)).toEqual(invariantStatuses);
+    expect(result.reconciliations.map(({ code }) => code)).toEqual(reconciliationCodes);
+    if (name === "partial generator observation") {
+      expect(
+        result.reconciliations.map(({ code, classification, incompleteReason }) => ({
+          code,
+          classification,
+          incompleteReason,
+        })),
+      ).toEqual([
+        {
+          code: "accepted_responses_vs_unique_reservations",
+          classification: "evidence_incomplete",
+          incompleteReason: "partial",
+        },
+        {
+          code: "sold_out_decisions_vs_responses",
+          classification: "evidence_incomplete",
+          incompleteReason: "partial",
+        },
+        {
+          code: "partial_generator_coverage",
+          classification: "evidence_incomplete",
+          incompleteReason: "partial",
+        },
+      ]);
+    }
+  });
+
+  it("uses units, not reservation rows, for a multi-unit clean sellout", () => {
+    const result = deriveRunResult(
+      withEvidence({
+        startingStock: 12,
+        remainingStock: 0,
+        durable: {
+          reservedUnits: 12,
+          uniqueReservations: 4,
+          confirmedOrders: 4,
+          soldOutDecisions: 2,
+          notificationsRecorded: 4,
+        },
+      }),
+    );
+
+    expect(result.outcome).toBe("completed-successfully");
+    expect(result.invariants.map((item) => item.status)).toEqual(["holds", "holds", "holds"]);
+    expect(result.oversoldUnits).toBe(0);
+    expect(runConclusionSentence(result)).toContain("All 12 available units were reserved");
+  });
+
+  it("keeps durable sold-out decisions distinct from generator responses", () => {
+    const sentence = runConclusionSentence(deriveRunResult(cleanEvidence));
+    expect(sentence).toContain("750 sold-out decisions");
+    expect(sentence).toContain("no failed orders");
+    expect(sentence).not.toContain("sold-out responses");
+  });
+
+  it("states unsettled orders even when some orders failed", () => {
+    const result = deriveRunResult(
+      withEvidence({
+        durable: {
+          uniqueReservations: 260,
+          confirmedOrders: 200,
+          failedOrders: 50,
+          queuedOrders: 10,
+        },
+      }),
+    );
+
+    expect(result.outcome).toBe("completed-with-order-failures");
+    expect(runConclusionSentence(result)).toContain(
+      "200 orders were confirmed, 50 failed, and 10 remain pending.",
+    );
+  });
+
+  it("renders contradictory completed evidence with danger treatment", () => {
+    const evidence = withEvidence({ durable: { reservedUnits: 249 } });
+    const result = deriveRunResult(evidence);
+    const markup = renderToStaticMarkup(
+      createElement(RunConclusion, { result, runStatus: "completed" }),
+    );
+
+    expect(runConclusionSentence(result)).toBe(
+      "The completed run has contradictory authoritative evidence: one or more invariants are broken.",
+    );
+    expect(markup).toContain("border-danger bg-danger-soft");
+  });
+
+  it("renders nothing for a draining lifecycle even when given a derived result", () => {
+    const result = deriveRunResult(withEvidence({ runStatus: "draining" }));
+    const markup = renderToStaticMarkup(
+      createElement(RunConclusion, { result, runStatus: "draining" }),
+    );
+
+    expect(markup).toBe("");
+  });
+
+  it("states confirmations neutrally when they exceed starting stock", () => {
+    const sentence = runConclusionSentence(
+      deriveRunResult(
+        withEvidence({
+          durable: {
+            reservedUnits: 255,
+            uniqueReservations: 255,
+            confirmedOrders: 255,
+            notificationsRecorded: 255,
+          },
+        }),
+      ),
+    );
+
+    expect(sentence).toContain("Order outcomes: 255 confirmed, 0 failed, and 0 pending.");
+    expect(sentence).not.toContain("All 255");
+  });
+
+  it("treats Redis-held reservations as incomplete evidence", () => {
+    const result = deriveRunResult(
+      withEvidence({
+        heldReservationsAwaitingPersistence: 1,
+        durable: { durablePendingPersistenceRecords: 1 },
+      }),
+    );
+
+    expect(result.invariants.find((item) => item.name === "stock")?.status).toBe("not_evaluable");
+    const pendingPersistence = result.reconciliations.find(
+      (item) => item.code === "pending_persistence",
+    );
+    expect({
+      code: pendingPersistence?.code,
+      classification: pendingPersistence?.classification,
+      incompleteReason: pendingPersistence?.incompleteReason,
+    }).toEqual({
+      code: "pending_persistence",
+      classification: "evidence_incomplete",
+      incompleteReason: "partial",
+    });
+    expect(result.maximumClassification).toBe("evidence_incomplete");
+  });
+
+  it("keeps idempotent replay out of oversell and corruption copy", () => {
+    const result = deriveRunResult(
+      withEvidence({
+        replayPossible: true,
+        generator: completeGenerator({ acceptedResponses: 300 }),
+      }),
+    );
+    const sentence = runConclusionSentence(result).toLowerCase();
+    const replay = result.reconciliations.find(
+      (item) => item.code === "accepted_responses_vs_unique_reservations",
+    );
+
+    expect({
+      code: replay?.code,
+      classification: replay?.classification,
+      incompleteReason: replay?.incompleteReason,
+    }).toEqual({
+      code: "accepted_responses_vs_unique_reservations",
+      classification: "expected_population_difference",
+      incompleteReason: undefined,
+    });
+    expect(sentence).not.toContain("oversold");
+    expect(sentence).not.toContain("corruption");
+    expect(`${replay?.reason ?? ""}`.toLowerCase()).not.toMatch(/oversell|corruption/);
+  });
+
+  it("produces the same sentence through dashboard, history, and detail adapters", () => {
+    const dashboard = evidenceFromDashboard(dashboardFixture(cleanEvidence));
+    const summary = evidenceFromRunHistorySummary(summaryFixture(cleanEvidence));
+    const detail = evidenceFromRunHistoryDetail(detailFixture(cleanEvidence));
+    const sentences = [dashboard, summary, detail].map((evidence) =>
+      runConclusionSentence(deriveRunResult(evidence)),
+    );
+
+    expect(dashboard).toEqual(cleanEvidence);
+    expect(summary).toEqual(cleanEvidence);
+    expect(detail).toEqual(cleanEvidence);
+    expect(sentences[0]).toBe(sentences[1]);
+    expect(sentences[1]).toBe(sentences[2]);
+  });
+});
+
+function withEvidence(
+  overrides: {
+    runStatus?: RunResultEvidence["runStatus"];
+    failureCategory?: RunResultEvidence["failureCategory"];
+    startingStock?: number | null;
+    remainingStock?: number | null;
+    heldReservationsAwaitingPersistence?: number | null;
+    replayPossible?: boolean | null;
+    durable?: Partial<NonNullable<RunResultEvidence["durable"]>>;
+    generator?: RunResultEvidence["generator"];
+  } = {},
+): RunResultEvidence {
+  return {
+    ...cleanEvidence,
+    ...overrides,
+    durable: { ...cleanDurable, ...overrides.durable },
+  };
+}
+
+function completeGenerator(
+  overrides: {
+    acceptedResponses?: number;
+    transportAttemptCounts?: NonNullable<RunResultEvidence["generator"]>["transportAttemptCounts"];
+  } = {},
+): NonNullable<RunResultEvidence["generator"]> {
+  return {
+    transportAttemptCounts: overrides.transportAttemptCounts ?? {
+      plannedRequests: 1_000,
+      startedRequests: 1_000,
+      completedRequests: 1_000,
+      interruptedRequests: 0,
+      unstartedRequests: 0,
+    },
+    httpSummary: {
+      failedRequests: 0,
+      acceptedResponses: overrides.acceptedResponses ?? 250,
+      soldOutResponses: 750,
+      transportFailures: 0,
+      unexpectedResponses: 0,
+      p95LatencyMs: 42,
+      failureRate: 0,
+    },
+  };
+}
+
+function runFixture(evidence: RunResultEvidence) {
+  return demoRunSnapshotSchema.parse({
+    runId,
+    presetId: "33333333-3333-4333-8333-333333333333",
+    presetName: "Presentation fixture",
+    operatorMode: "public",
+    status: evidence.runStatus,
+    trafficStatus: evidence.runStatus === "failed" ? "failed" : "succeeded",
+    saleOfferId,
+    configSnapshot: previewRunConfigSnapshotFixture(),
+    startedAt: timestamp,
+    trafficStartedAt: timestamp,
+    trafficEndedAt: timestamp,
+    finalizedAt: timestamp,
+    ...(evidence.failureCategory ? { failureCategory: evidence.failureCategory } : {}),
+  });
+}
+
+function dashboardFixture(evidence: RunResultEvidence): DashboardProjection {
+  const durable = evidence.durable ?? cleanDurable;
+  const inventory =
+    evidence.startingStock === null || evidence.remainingStock === null
+      ? null
+      : {
+          saleOfferId,
+          allocatedStock: evidence.startingStock,
+          remainingStock: evidence.remainingStock,
+          reservedStock: evidence.startingStock - evidence.remainingStock,
+          pendingPersistenceCount: evidence.heldReservationsAwaitingPersistence ?? 0,
+          expiredReservationCount: 0,
+          oldestPendingPersistenceAgeSeconds: 0,
+          reservationThroughput: {
+            windowSeconds: 60,
+            successfulReservationCount: durable.uniqueReservations,
+            peakRatePerSecond: durable.uniqueReservations,
+            peakWindowSeconds: 1,
+            unit: "reservations_per_second",
+            measuredAt: timestamp,
+          },
+          soldOutPressure: {
+            rejectionCount: durable.soldOutDecisions,
+            latestObservedAt: timestamp,
+          },
+          observedAt: timestamp,
+          lastUpdatedAt: timestamp,
+        };
+  const scope = { runId, saleOfferId };
+  return dashboardProjectionSchema.parse({
+    schema: dashboardProjectionSchemaName,
+    version: dashboardProjectionSchemaVersion,
+    correlationId: "corr-presentation",
+    scopeId: dashboardProjectionScopeId(scope),
+    scope,
+    revision: 1,
+    recoveredAt: timestamp,
+    currentRun: runFixture(evidence),
+    inventory,
+    erp: null,
+    systemStatus: null,
+    businessOutcome: {
+      acceptedReservations: durable.uniqueReservations,
+      reservedUnits: durable.reservedUnits,
+      soldOutRejections: durable.soldOutDecisions,
+      queuedOrders: durable.queuedOrders,
+      processingOrders: durable.processingOrders,
+      confirmedOrders: durable.confirmedOrders,
+      failedOrders: durable.failedOrders,
+      pendingPersistenceCount: durable.durablePendingPersistenceRecords,
+      notificationsRecorded: durable.notificationsRecorded,
+    },
+    consistencyLag: null,
+    transportAttemptCounts: evidence.generator?.transportAttemptCounts ?? null,
+    httpSummary: evidence.generator?.httpSummary ?? null,
+    requestArrivalSummary: null,
+    runSignalTimelineSummary: null,
+  });
+}
+
+function summaryFixture(evidence: RunResultEvidence): RunHistorySummary {
+  const durable = evidence.durable ?? cleanDurable;
+  const generator = evidence.generator ?? completeGenerator();
+  return runHistorySummarySchema.parse({
+    id: "44444444-4444-4444-8444-444444444444",
+    runId,
+    presetName: "Presentation fixture",
+    status: evidence.runStatus,
+    replayPossible: evidence.replayPossible ?? false,
+    ...(evidence.failureCategory ? { failureCategory: evidence.failureCategory } : {}),
+    transportAttemptCounts: generator.transportAttemptCounts,
+    httpSummary: generator.httpSummary,
+    trafficDeliverySummary: {
+      trafficMode: null,
+      plannedBuyers: null,
+      scheduledRatePerSecond: null,
+      configuredDurationSeconds: null,
+      preAllocatedVUs: null,
+      maxVUs: null,
+      droppedIterations: 0,
+      completedIterations: null,
+      requestArrivalSummary: emptyRequestArrivalSummary,
+      trafficDeliveryStatus: "complete",
+      notes: [],
+    },
+    serverReservationTimingSummary: emptyServerReservationTimingSummary,
+    fastReservationTargetEvaluation: evaluateFastReservationTarget(
+      emptyServerReservationTimingSummary,
+      generator.transportAttemptCounts.completedRequests,
+    ),
+    businessOutcomeSummary: {
+      acceptedReservations: durable.uniqueReservations,
+      reservedUnits: durable.reservedUnits,
+      soldOutRejections: durable.soldOutDecisions,
+      queuedOrders: durable.queuedOrders,
+      processingOrders: durable.processingOrders,
+      retryingOrders: 0,
+      confirmedOrders: durable.confirmedOrders,
+      failedOrders: durable.failedOrders,
+      pendingPersistenceCount: durable.durablePendingPersistenceRecords,
+      notificationsRecorded: durable.notificationsRecorded,
+    },
+    terminalInventorySnapshot:
+      evidence.startingStock !== null && evidence.remainingStock !== null
+        ? {
+            saleOfferId,
+            startingStock: evidence.startingStock,
+            remainingStock: evidence.remainingStock,
+            reservedStock: evidence.startingStock - evidence.remainingStock,
+            acceptedReservations: durable.uniqueReservations,
+            soldOutRejections: durable.soldOutDecisions,
+            pendingPersistenceCount: evidence.heldReservationsAwaitingPersistence ?? 0,
+            capturedAt: timestamp,
+            source: "redis",
+          }
+        : undefined,
+    runSignalTimelineSummary: null,
+    startedAt: timestamp,
+    endedAt: timestamp,
+    capturedAt: timestamp,
+  });
+}
+
+function detailFixture(evidence: RunResultEvidence): PublicRunHistoryDetailResponse {
+  const { id: _id, terminalInventorySnapshot, ...summary } = summaryFixture(evidence);
+  const { notes: _notes, ...trafficDeliverySummary } = summary.trafficDeliverySummary;
+  const publicSummary = publicRunHistorySummarySchema.parse({
+    ...summary,
+    trafficDeliverySummary,
+    ...(terminalInventorySnapshot
+      ? {
+          terminalInventorySnapshot: (({ saleOfferId: _saleOfferId, source: _source, ...value }) =>
+            value)(terminalInventorySnapshot),
+        }
+      : {}),
+  });
+  return publicRunHistoryDetailResponseSchema.parse({
+    summary: publicSummary,
+    run: {
+      runId,
+      presetName: "Presentation fixture",
+      operatorMode: "public",
+      status: evidence.runStatus,
+      trafficStatus: evidence.runStatus === "failed" ? "failed" : "succeeded",
+      configSnapshot: previewRunConfigSnapshotFixture(),
+      startedAt: timestamp,
+      trafficStartedAt: timestamp,
+      trafficEndedAt: timestamp,
+      finalizedAt: timestamp,
+    },
+    httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
+    orders: {
+      totalCount: durableOrderCount(evidence),
+      byStatus: {
+        queued: evidence.durable?.queuedOrders ?? 0,
+        processing: evidence.durable?.processingOrders ?? 0,
+        confirmed: evidence.durable?.confirmedOrders ?? 0,
+        failed: evidence.durable?.failedOrders ?? 0,
+      },
+    },
+    erpAttempts: {
+      totalCount: 0,
+      byStatus: { succeeded: 0, failed: 0, timedOut: 0 },
+      averageLatencyMs: null,
+      p95LatencyMs: null,
+    },
+    notifications: { totalCount: evidence.durable?.notificationsRecorded ?? 0 },
+    events: { totalCount: 0 },
+    runSignalTimelineSummary: null,
+    timestamp,
+  });
+}
+
+function durableOrderCount(evidence: RunResultEvidence): number {
+  const durable = evidence.durable;
+  return durable
+    ? durable.queuedOrders +
+        durable.processingOrders +
+        durable.confirmedOrders +
+        durable.failedOrders
+    : 0;
+}

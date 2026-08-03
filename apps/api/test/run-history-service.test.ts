@@ -84,7 +84,7 @@ describe("run history service", () => {
       runId: ids.newerRun,
       presetName: "History Failed",
       status: "failed",
-      failureReason: "traffic_delivery_major_shortfall",
+      failureCategory: "traffic",
       transportAttemptCounts: {
         plannedRequests: 10,
         startedRequests: 5,
@@ -95,6 +95,7 @@ describe("run history service", () => {
       },
       businessOutcomeSummary: {
         acceptedReservations: 3,
+        reservedUnits: 3,
         soldOutRejections: 2,
       },
       terminalInventorySnapshot: {
@@ -783,6 +784,7 @@ function summaryFixture(input: {
     presetName: input.presetName,
     status: input.status,
     failureReason: input.failureReason,
+    replayPossible: false,
     startedAt: new Date("2026-06-20T00:00:00.000Z"),
     endedAt: input.capturedAt,
     transportAttemptCounts: {
@@ -818,6 +820,7 @@ function summaryFixture(input: {
     loadRunDiagnosticsSummary: runHistoryDiagnosticsFixture(),
     businessOutcomeSummary: {
       acceptedReservations: 3,
+      reservedUnits: 3,
       soldOutRejections: 2,
       queuedOrders: 0,
       processingOrders: 0,

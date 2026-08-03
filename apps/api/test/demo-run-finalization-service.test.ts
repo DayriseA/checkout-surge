@@ -10,6 +10,7 @@ import type {
 import {
   emptyHttpTimingBreakdownSummary,
   emptyRequestArrivalSummary,
+  isReplayPossible,
   trafficDeliverySummarySchema,
 } from "@checkout-surge/contracts";
 import {
@@ -243,11 +244,13 @@ describe("demo run finalization service", () => {
     expect(second?.status).toBe("completed");
     expect(summaries).toHaveLength(1);
     expect(summaries[0]?.status).toBe("completed");
+    expect(summaries[0]?.replayPossible).toBe(false);
     expect(summaries[0]?.endedAt).toEqual(new Date("2026-06-20T00:00:10.000Z"));
     expect(summaries[0]?.createdAt).toEqual(new Date("2026-06-20T00:00:10.000Z"));
     expect(summaries[0]?.failureReason).toBeNull();
     expect(summaries[0]?.businessOutcomeSummary as BusinessOutcomeSummary).toMatchObject({
       acceptedReservations: 2,
+      reservedUnits: 2,
       soldOutRejections: 7,
       confirmedOrders: 1,
       failedOrders: 1,
@@ -291,6 +294,7 @@ describe("demo run finalization service", () => {
         terminalStatus: "completed",
         businessOutcome: expect.objectContaining({
           acceptedReservations: 2,
+          reservedUnits: 2,
           soldOutRejections: 7,
         }),
         terminalInventorySnapshot: expect.objectContaining({
@@ -600,7 +604,7 @@ describe("demo run finalization service", () => {
     const finalized = await service.finalizeRun(ids.run, "corr-finalize-escalated");
     expect(finalized).toMatchObject({
       status: "failed",
-      failureReason: "reconciliation_escalated",
+      failureCategory: "reconciliation",
     });
   });
 
@@ -1075,7 +1079,7 @@ describe("demo run finalization service", () => {
       .limit(1);
 
     expect(finalized?.status).toBe("failed");
-    expect(finalized?.failureReason).toBe("traffic_delivery_major_shortfall");
+    expect(finalized?.failureCategory).toBe("traffic");
     expect(summary?.status).toBe("failed");
     expect(summary?.failureReason).toBe("traffic_delivery_major_shortfall");
     expect(summary?.transportAttemptCounts).toMatchObject({
@@ -1106,7 +1110,7 @@ describe("demo run finalization service", () => {
 
     await expect(service.finalizeRun(ids.run)).resolves.toMatchObject({
       status: "failed",
-      failureReason: "traffic_outcome_unexpected_responses",
+      failureCategory: "traffic",
     });
   });
 
@@ -1128,7 +1132,7 @@ describe("demo run finalization service", () => {
 
     await expect(service.finalizeRun(ids.run)).resolves.toMatchObject({
       status: "failed",
-      failureReason: "traffic_delivery_major_shortfall",
+      failureCategory: "traffic",
     });
   });
 
@@ -1151,7 +1155,7 @@ describe("demo run finalization service", () => {
 
     await expect(service.finalizeRun(ids.run)).resolves.toMatchObject({
       status: "failed",
-      failureReason: "traffic_transport_major_loss",
+      failureCategory: "traffic",
     });
   });
 
@@ -1175,7 +1179,7 @@ describe("demo run finalization service", () => {
 
     await expect(service.finalizeRun(ids.run)).resolves.toMatchObject({
       status: "failed",
-      failureReason: "traffic_outcome_unexpected_responses",
+      failureCategory: "traffic",
     });
   });
 
@@ -1241,8 +1245,10 @@ describe("demo run finalization service", () => {
       .where(eq(demoRunSummaries.runId, ids.run));
     expect(summary?.businessOutcomeSummary).toMatchObject({
       acceptedReservations: 50,
+      reservedUnits: 50,
       failedOrders: 50,
     });
+    expect(summary?.replayPossible).toBe(true);
   });
 
   it("does not halve duplicate responses when delivery is incomplete", async () => {
@@ -1264,6 +1270,7 @@ describe("demo run finalization service", () => {
     });
     await insertFailedReservationOrders(db, 50);
 
+    expect(isReplayPossible(duplicateBuyerConfigSnapshot())).toBe(true);
     await expect(service.finalizeRun(ids.run)).resolves.toMatchObject({ status: "draining" });
   });
 
@@ -1283,7 +1290,7 @@ describe("demo run finalization service", () => {
       }).finalizeRun(ids.run),
     ).resolves.toMatchObject({
       status: "failed",
-      failureReason: "accepted_response_accounting_timeout",
+      failureCategory: "business",
     });
   });
 
@@ -1340,7 +1347,7 @@ describe("demo run finalization service", () => {
     const finalized = await service.finalizeRun(ids.run, "corr-finalize-test");
 
     expect(finalized?.status).toBe("failed");
-    expect(finalized?.failureReason).toBe("business_drain_timeout");
+    expect(finalized?.failureCategory).toBe("business");
     const [summary] = await db
       .select()
       .from(demoRunSummaries)

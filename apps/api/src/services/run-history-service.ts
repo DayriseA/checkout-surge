@@ -31,6 +31,8 @@ import {
   runSignalTimelineSummarySchema,
   serverReservationTimingSummarySchema,
   toRunSignalTimelineHeadline,
+  internalRunFailureReasonSchema,
+  toPublicRunFailureCategory,
 } from "@checkout-surge/contracts";
 import {
   type CheckoutSurgeDatabase,
@@ -264,6 +266,9 @@ export class RunHistoryService implements RunHistoryController {
     return adminRunHistoryDetailResponseSchema.parse({
       summary: toRunHistorySummary(source.summaryRow),
       run: toDemoRunSnapshot(source.runRow),
+      ...(source.runRow.failureReason
+        ? { internalFailureReason: internalRunFailureReasonSchema.parse(source.runRow.failureReason) }
+        : {}),
       httpTimingBreakdownSummary: parsePersistedState(
         httpTimingBreakdownSummarySchema,
         source.summaryRow.httpTimingBreakdownSummary,
@@ -369,6 +374,10 @@ function toPublicRunHistorySummary(
     runId: row.runId,
     presetName: row.presetName,
     status: row.status,
+    replayPossible: row.replayPossible,
+    ...(row.failureReason
+      ? { failureCategory: toPublicRunFailureCategory(internalRunFailureReasonSchema.parse(row.failureReason)) }
+      : {}),
     ...(row.startedAt ? { startedAt: row.startedAt.toISOString() } : {}),
     endedAt: row.endedAt.toISOString(),
     transportAttemptCounts,
@@ -454,7 +463,10 @@ function toRunHistorySummary(row: typeof demoRunSummaries.$inferSelect): RunHist
     runId: row.runId,
     presetName: row.presetName,
     status: row.status,
-    ...(row.failureReason ? { failureReason: row.failureReason } : {}),
+    replayPossible: row.replayPossible,
+    ...(row.failureReason
+      ? { failureCategory: toPublicRunFailureCategory(internalRunFailureReasonSchema.parse(row.failureReason)) }
+      : {}),
     ...(row.startedAt ? { startedAt: row.startedAt.toISOString() } : {}),
     endedAt: row.endedAt.toISOString(),
     transportAttemptCounts,

@@ -774,7 +774,7 @@ describe("run lifecycle contracts", () => {
         status: "failed",
         trafficStatus: "failed",
         finalizedAt,
-        failureReason: "traffic_start_failed",
+        failureCategory: "traffic",
       },
       {
         ...baseRun,
@@ -782,7 +782,7 @@ describe("run lifecycle contracts", () => {
         trafficStatus: "failed",
         trafficStartedAt,
         finalizedAt,
-        failureReason: "admin_reset",
+        failureCategory: "operator",
       },
       {
         ...baseRun,
@@ -791,7 +791,7 @@ describe("run lifecycle contracts", () => {
         trafficStartedAt,
         trafficEndedAt,
         finalizedAt,
-        failureReason: "business_drain_timeout",
+        failureCategory: "business",
       },
     ];
 
@@ -822,7 +822,7 @@ describe("run lifecycle contracts", () => {
         trafficStartedAt,
         trafficEndedAt,
         finalizedAt,
-        failureReason: "not_legal_on_success",
+        failureCategory: "traffic",
       },
       {
         ...baseRun,
@@ -830,14 +830,14 @@ describe("run lifecycle contracts", () => {
         trafficStatus: "failed",
         trafficEndedAt,
         finalizedAt,
-        failureReason: "missing_traffic_start",
+        failureCategory: "traffic",
       },
       {
         ...baseRun,
         status: "failed",
         trafficStatus: "succeeded",
         finalizedAt,
-        failureReason: "missing_traffic_timestamps",
+        failureCategory: "business",
       },
     ];
 
@@ -1864,6 +1864,7 @@ describe("buy and dashboard contracts", () => {
       systemStatus: null,
       businessOutcome: {
         acceptedReservations: 10,
+        reservedUnits: 10,
         soldOutRejections: 20,
         queuedOrders: 4,
         processingOrders: 3,
@@ -2268,6 +2269,7 @@ describe("public runtime policy contract", () => {
           runId,
           presetName: "Preview 1k",
           status: "completed",
+          replayPossible: false,
           startedAt: timestamp,
           endedAt: timestamp,
           transportAttemptCounts: {
@@ -2306,6 +2308,7 @@ describe("public runtime policy contract", () => {
           ),
           businessOutcomeSummary: {
             acceptedReservations: 6,
+            reservedUnits: 10,
             soldOutRejections: 4,
             queuedOrders: 0,
             processingOrders: 0,
@@ -2378,7 +2381,7 @@ describe("public runtime policy contract", () => {
 
     const {
       id: _summaryId,
-      failureReason: _failureReason,
+      failureCategory: _failureCategory,
       terminalInventorySnapshot,
       ...publicSummary
     } = summary;

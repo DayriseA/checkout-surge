@@ -2,9 +2,11 @@ import type {
   AdminRunHistoryDetailResponse,
   PublicRunHistoryDetailResponse,
 } from "@checkout-surge/contracts";
-import { deriveOversoldUnits } from "@checkout-surge/contracts";
+import { deriveOversoldUnits, deriveRunResult } from "@checkout-surge/contracts";
 import { deriveTerminalSummaryPresentation } from "../lib/presentation/run-presentation-state";
+import { evidenceFromRunHistoryDetail } from "../lib/presentation/run-result-presentation";
 import { GoldSignals } from "./gold-signals";
+import { RunConclusion } from "./run-conclusion";
 import { RunDiagnostics } from "./run-diagnostics";
 import { StatusPill } from "./status-pill";
 import { systemOfRecordLens, TransportObservationSection } from "./transport-observation";
@@ -16,10 +18,12 @@ interface RunHistoryDetailProps {
 export function AdminRunHistoryDetail({ detail }: RunHistoryDetailProps) {
   const { run, summary } = detail;
   const config = run.configSnapshot;
-  const runPresentation = terminalSummaryPresentation(summary);
+  const result = deriveRunResult(evidenceFromRunHistoryDetail(detail));
+  const runPresentation = deriveTerminalSummaryPresentation(result);
 
   return (
     <div className="grid gap-4">
+      <RunConclusion result={result} runStatus={summary.status} />
       <section className="rounded-lg border border-border bg-surface p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
@@ -53,7 +57,7 @@ export function AdminRunHistoryDetail({ detail }: RunHistoryDetailProps) {
               ["Traffic ended", formatDate(run.trafficEndedAt)],
               ["Finalized", formatDate(run.finalizedAt)],
               ["Captured", formatDate(summary.capturedAt)],
-              ["Failure", summary.failureReason ?? "none"],
+              ["Failure", detail.internalFailureReason ?? "none"],
             ]}
             title="Lifecycle"
           />
@@ -71,7 +75,10 @@ export function AdminRunHistoryDetail({ detail }: RunHistoryDetailProps) {
           <FactList
             caption={systemOfRecordLens.caption}
             facts={[
-              ["Reservations", formatNumber(summary.businessOutcomeSummary.acceptedReservations)],
+              [
+                "Unique reservations secured",
+                formatNumber(summary.businessOutcomeSummary.acceptedReservations),
+              ],
               ["Queued", formatNumber(summary.businessOutcomeSummary.queuedOrders)],
               ["Processing", formatNumber(summary.businessOutcomeSummary.processingOrders)],
               ["Retrying", formatNumber(summary.businessOutcomeSummary.retryingOrders)],
@@ -89,7 +96,10 @@ export function AdminRunHistoryDetail({ detail }: RunHistoryDetailProps) {
         arrivalSummary={summary.trafficDeliverySummary.requestArrivalSummary}
         oversoldUnits={
           summary.terminalInventorySnapshot
-            ? deriveOversoldUnits(summary.terminalInventorySnapshot)
+            ? deriveOversoldUnits({
+                reservedUnits: summary.businessOutcomeSummary.reservedUnits,
+                startingStock: summary.terminalInventorySnapshot.startingStock,
+              })
             : 0
         }
         terminalSummary={detail.runSignalTimelineSummary}
@@ -332,9 +342,11 @@ function trafficConfigFacts(
 
 export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDetailResponse }) {
   const { run, summary } = detail;
-  const runPresentation = terminalSummaryPresentation(summary);
+  const result = deriveRunResult(evidenceFromRunHistoryDetail(detail));
+  const runPresentation = deriveTerminalSummaryPresentation(result);
   return (
     <div className="grid gap-4">
+      <RunConclusion result={result} runStatus={summary.status} />
       <section className="rounded-lg border border-border bg-surface p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
@@ -398,7 +410,10 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
         arrivalSummary={summary.trafficDeliverySummary.requestArrivalSummary}
         oversoldUnits={
           summary.terminalInventorySnapshot
-            ? deriveOversoldUnits(summary.terminalInventorySnapshot)
+            ? deriveOversoldUnits({
+                reservedUnits: summary.businessOutcomeSummary.reservedUnits,
+                startingStock: summary.terminalInventorySnapshot.startingStock,
+              })
             : 0
         }
         terminalSummary={detail.runSignalTimelineSummary}
@@ -433,22 +448,6 @@ function formatNumber(value: number): string {
 
 function formatPercent(value: number): string {
   return `${formatNumber(value * 100)}%`;
-}
-
-function terminalSummaryPresentation(
-  summary: AdminRunHistoryDetailResponse["summary"] | PublicRunHistoryDetailResponse["summary"],
-) {
-  const business = summary.businessOutcomeSummary;
-  return deriveTerminalSummaryPresentation({
-    runStatus: summary.status,
-    ...(summary.terminalInventorySnapshot
-      ? { startingStock: summary.terminalInventorySnapshot.startingStock }
-      : {}),
-    acceptedReservations: business.acceptedReservations,
-    confirmedOrders: business.confirmedOrders,
-    failedOrders: business.failedOrders,
-    pendingPersistenceCount: business.pendingPersistenceCount,
-  });
 }
 
 function formatDate(value: string | undefined): string {

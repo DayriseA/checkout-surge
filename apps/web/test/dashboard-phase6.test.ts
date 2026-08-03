@@ -75,7 +75,7 @@ describe("Phase 6 projection dashboard", () => {
     expect(outcomeMarkup).toContain("Reservation and confirmation summary");
     expect(outcomeMarkup).toContain("System of record");
     expect(outcomeMarkup).toContain("what the API recorded");
-    expect(outcomeMarkup).toContain("Accepted");
+    expect(outcomeMarkup).toContain("Unique reservations secured");
     expect(outcomeMarkup).toContain("Confirmed");
     expect(outcomeMarkup).toContain("Failed");
     expect(completionMarkup).toContain("Recent order workflow results");
@@ -247,7 +247,7 @@ describe("Phase 6 projection dashboard", () => {
           presentation: deriveInventoryOutcomeState(
             projection.inventory,
             projection.currentRun,
-            projection.businessOutcome.acceptedReservations,
+            projection.businessOutcome.reservedUnits,
           ),
           freshness,
         }),
@@ -289,7 +289,7 @@ describe("Phase 6 projection dashboard", () => {
         presentation: deriveInventoryOutcomeState(
           projection.inventory,
           projection.currentRun,
-          projection.businessOutcome?.acceptedReservations,
+          projection.businessOutcome?.reservedUnits ?? null,
         ),
         freshness: {
           state: "disconnected",
@@ -486,6 +486,7 @@ function projectionFixture(): DashboardProjection {
     },
     businessOutcome: {
       acceptedReservations: 6,
+      reservedUnits: 6,
       soldOutRejections: 2,
       queuedOrders: 1,
       processingOrders: 1,

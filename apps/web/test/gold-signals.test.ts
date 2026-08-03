@@ -46,6 +46,9 @@ describe("Gold Signals", () => {
     expect(markup).toContain("Start 10 · 0 remaining · 0 oversold · depleted in 5s");
     expect(markup).toContain("Peak 6 orders · drained in 10s");
     expect(markup).toContain("9/10 confirmed · 1 failed · 0 pending");
+    expect(markup).toContain(
+      "Of 10 unique reservations secured, 9 were confirmed, 1 failed, and 0 remain pending.",
+    );
     expect(markup).toContain("Lag avg 2,000ms, p95 3,000ms, max 4,000ms · Converged in 118s");
     expect(markup).not.toContain("999 remaining");
     expect(markup).not.toContain("Peak 999 orders");

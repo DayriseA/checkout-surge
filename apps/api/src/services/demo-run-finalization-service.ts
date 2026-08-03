@@ -2,6 +2,8 @@ import {
   type AcceptedRunConfigSnapshot,
   type BusinessOutcomeSummary,
   businessOutcomeSummarySchema,
+  type InternalRunFailureReason,
+  isReplayPossible,
   type DemoRunSnapshot,
   emptyServerReservationTimingSummary,
   httpTimingBreakdownSummarySchema,
@@ -64,7 +66,7 @@ type FinalizationDecision =
   | {
       ready: true;
       terminalStatus: "completed" | "failed";
-      failureReason: string | null;
+      failureReason: InternalRunFailureReason | null;
       businessOutcome: BusinessOutcomeSummary;
     };
 
@@ -278,6 +280,7 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
           run: row.run,
           terminalStatus: latestFailureReason ? "failed" : "completed",
           failureReason: latestFailureReason,
+          replayPossible: isReplayPossible(evidence.config),
           finalizedAt: now,
           transportAttemptCounts: evidence.transportAttemptCounts,
           httpSummary: evidence.http,
@@ -411,7 +414,7 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
     accountingTimedOut: boolean;
     escalatedRecoveryCount?: number;
     reconciliationTimedOut?: boolean;
-  }): string | null {
+  }): InternalRunFailureReason | null {
     if ((input.escalatedRecoveryCount ?? 0) > 0) {
       return "reconciliation_escalated";
     }

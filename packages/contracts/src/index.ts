@@ -12,4 +12,5 @@ export * from "./primitives.js";
 export * from "./public-runtime-policy-validation.js";
 export * from "./queue.js";
 export * from "./run-signals.js";
+export * from "./run-result.js";
 export * from "./traffic-transport-counts.js";

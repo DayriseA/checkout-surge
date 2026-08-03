@@ -1,0 +1,140 @@
+import {
+  type DashboardProjection,
+  isReplayPossible,
+  type PublicRunHistoryDetailResponse,
+  type PublicRunHistorySummary,
+  type RunHistorySummary,
+  type RunResult,
+  type RunResultEvidence,
+  runResultEvidenceSchema,
+} from "@checkout-surge/contracts";
+
+type SummaryLike = RunHistorySummary | PublicRunHistorySummary;
+
+export function evidenceFromDashboard(projection: DashboardProjection): RunResultEvidence {
+  const run = projection.currentRun;
+  const business = projection.businessOutcome;
+  const inventory = projection.inventory;
+  return runResultEvidenceSchema.parse({
+    runStatus: run?.status ?? "starting",
+    failureCategory: run?.status === "failed" ? (run.failureCategory ?? null) : null,
+    startingStock: inventory?.allocatedStock ?? null,
+    remainingStock: inventory?.remainingStock ?? null,
+    durable: business
+      ? {
+          reservedUnits: business.reservedUnits,
+          uniqueReservations: business.acceptedReservations,
+          soldOutDecisions: business.soldOutRejections,
+          confirmedOrders: business.confirmedOrders,
+          failedOrders: business.failedOrders,
+          queuedOrders: business.queuedOrders,
+          processingOrders: business.processingOrders,
+          durablePendingPersistenceRecords: business.pendingPersistenceCount,
+          notificationsRecorded: business.notificationsRecorded,
+        }
+      : null,
+    heldReservationsAwaitingPersistence: inventory?.pendingPersistenceCount ?? null,
+    replayPossible: run ? isReplayPossible(run.configSnapshot) : null,
+    generator:
+      projection.transportAttemptCounts && projection.httpSummary
+        ? {
+            transportAttemptCounts: projection.transportAttemptCounts,
+            httpSummary: projection.httpSummary,
+          }
+        : null,
+  });
+}
+
+export function evidenceFromRunHistorySummary(summary: SummaryLike): RunResultEvidence {
+  const inventory = summary.terminalInventorySnapshot;
+  const business = summary.businessOutcomeSummary;
+  return runResultEvidenceSchema.parse({
+    runStatus: summary.status,
+    failureCategory: summary.failureCategory ?? null,
+    startingStock: inventory?.startingStock ?? null,
+    remainingStock: inventory?.remainingStock ?? null,
+    durable: {
+      reservedUnits: business.reservedUnits,
+      uniqueReservations: business.acceptedReservations,
+      soldOutDecisions: business.soldOutRejections,
+      confirmedOrders: business.confirmedOrders,
+      failedOrders: business.failedOrders,
+      queuedOrders: business.queuedOrders,
+      processingOrders: business.processingOrders,
+      durablePendingPersistenceRecords: business.pendingPersistenceCount,
+      notificationsRecorded: business.notificationsRecorded,
+    },
+    heldReservationsAwaitingPersistence: inventory?.pendingPersistenceCount ?? null,
+    replayPossible: summary.replayPossible,
+    generator: {
+      transportAttemptCounts: summary.transportAttemptCounts,
+      httpSummary: summary.httpSummary,
+    },
+  });
+}
+
+export function evidenceFromRunHistoryDetail(
+  detail: PublicRunHistoryDetailResponse | { summary: SummaryLike },
+): RunResultEvidence {
+  return evidenceFromRunHistorySummary(detail.summary);
+}
+
+export function runConclusionSentence(result: RunResult): string {
+  if (result.outcome === "failed") {
+    const category = result.failureCategory
+      ? ` due to a ${result.failureCategory} failure`
+      : "; the failure category is unavailable";
+    return `The run failed${category}${result.failedOrders ? ` with ${result.failedOrders} failed orders` : ""}.`;
+  }
+  if (result.outcome === "outcome-indeterminate") {
+    return result.maximumClassification === "correctness_failure"
+      ? "The completed run has contradictory authoritative evidence: one or more invariants are broken."
+      : "The run outcome is indeterminate because authoritative evidence is incomplete.";
+  }
+
+  if (result.outcome === "completed-with-oversell") {
+    const stock =
+      result.reservedUnits === null ||
+      result.startingStock === null ||
+      result.oversoldUnits === null
+        ? "Stock evidence is unavailable."
+        : `Durable records show ${result.reservedUnits} units reserved against ${result.startingStock} starting units, so ${result.oversoldUnits} units were oversold.`;
+    return [stock, soldOutSentence(result), neutralOrderSentence(result)].filter(Boolean).join(" ");
+  }
+
+  const stock =
+    result.startingStock === null || result.remainingStock === null || result.reservedUnits === null
+      ? "Stock evidence is unavailable."
+      : result.remainingStock === 0
+        ? `All ${result.startingStock} available units were reserved without overselling.`
+        : `${result.reservedUnits} units were reserved from ${result.startingStock}, and ${result.remainingStock} units remain. No units were oversold.`;
+  return [stock, soldOutSentence(result), orderSentence(result)].filter(Boolean).join(" ");
+}
+
+function soldOutSentence(result: RunResult): string {
+  return result.soldOutDecisions && result.soldOutDecisions > 0
+    ? `${result.soldOutDecisions} sold-out decisions were recorded.`
+    : "";
+}
+
+function orderSentence(result: RunResult): string {
+  if (result.confirmedOrders === null) return "Order evidence is unavailable.";
+  const failed = result.failedOrders ?? 0;
+  const pending = result.pendingOrders ?? 0;
+  if (failed > 0 || pending > 0) {
+    return `${result.confirmedOrders} orders were confirmed, ${failed} failed, and ${pending} remain pending.`;
+  }
+  return result.uniqueReservations === result.confirmedOrders
+    ? `All ${result.confirmedOrders} reservations were confirmed, with no failed orders.`
+    : `${result.confirmedOrders} orders were confirmed, with no failed orders.`;
+}
+
+function neutralOrderSentence(result: RunResult): string {
+  return result.confirmedOrders === null
+    ? "Order evidence is unavailable."
+    : `Order outcomes: ${result.confirmedOrders} confirmed, ${result.failedOrders ?? 0} failed, and ${result.pendingOrders ?? 0} pending.`;
+}
+
+export function invariantLabel(status: RunResult["invariants"][number]["status"]): string {
+  return status === "holds" ? "holds" : status === "broken" ? "broken" : "not evaluable";
+}

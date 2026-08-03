@@ -460,6 +460,7 @@ describe("watch browser recovery", () => {
             currentRun,
             businessOutcome: {
               acceptedReservations: 12,
+              reservedUnits: 12,
               soldOutRejections: 0,
               queuedOrders: 7,
               processingOrders: 1,
@@ -517,6 +518,7 @@ describe("watch browser recovery", () => {
       }),
     );
 
+    expect(markup).not.toContain('aria-label="Run conclusion"');
     expect(markup).toContain("Peak 7 orders");
     expect(markup).toContain("Run-owned retrying orders are shown separately (3)");
     expect(markup).toContain("Reservation and confirmation summary");
@@ -553,6 +555,7 @@ describe("watch browser recovery", () => {
             currentRun,
             businessOutcome: {
               acceptedReservations: 1,
+              reservedUnits: 1,
               soldOutRejections: 0,
               queuedOrders: 0,
               processingOrders: 0,
@@ -1230,6 +1233,7 @@ function runHistorySummaryFixture(
     runId,
     presetName: "Preview 1k",
     status: "completed",
+    replayPossible: false,
     startedAt: "2026-06-20T00:00:00.000Z",
     endedAt: "2026-06-20T00:00:10.000Z",
     transportAttemptCounts: {
@@ -1268,6 +1272,7 @@ function runHistorySummaryFixture(
     ),
     businessOutcomeSummary: {
       acceptedReservations: 6,
+      reservedUnits: 6,
       soldOutRejections: 4,
       queuedOrders: 0,
       processingOrders: 0,

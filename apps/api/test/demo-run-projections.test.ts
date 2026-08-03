@@ -69,7 +69,7 @@ describe("demo-run projections", () => {
       trafficStartedAt: "2026-07-21T10:00:01.000Z",
       trafficEndedAt: "2026-07-21T10:00:02.000Z",
       finalizedAt: "2026-07-21T10:00:03.000Z",
-      failureReason: "traffic_failed",
+      failureCategory: "traffic",
     });
   });
 
@@ -121,6 +121,7 @@ describe("demo-run projections", () => {
   it("builds the canonical zero-evidence business outcome", () => {
     expect(emptyBusinessOutcomeSummary()).toEqual({
       acceptedReservations: 0,
+      reservedUnits: 0,
       soldOutRejections: 0,
       queuedOrders: 0,
       processingOrders: 0,

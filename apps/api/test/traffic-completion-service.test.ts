@@ -333,7 +333,7 @@ describe("TrafficCompletionService", () => {
 
     await expect(completionService.recordTrafficCompletion(report)).resolves.toMatchObject({
       status: "failed",
-      failureReason: "traffic_delivery_major_shortfall",
+      failureCategory: "traffic",
     });
     failCapture = false;
     await expect(completionService.recordTrafficCompletion(report)).resolves.toMatchObject({

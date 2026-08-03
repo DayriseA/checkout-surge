@@ -2386,6 +2386,7 @@ async function seedTerminalSummary(
     presetName: "Reset Preset",
     status: input.status,
     failureReason: input.failureReason,
+    replayPossible: false,
     startedAt: new Date("2026-06-20T00:00:00.000Z"),
     endedAt: new Date("2026-06-20T00:00:06.000Z"),
     transportAttemptCounts: {
@@ -2423,6 +2424,7 @@ async function seedTerminalSummary(
     loadRunDiagnosticsSummary: { source: "existing-summary" },
     businessOutcomeSummary: {
       acceptedReservations: input.status === "completed" ? 10 : 8,
+      reservedUnits: input.status === "completed" ? 10 : 8,
       soldOutRejections: input.status === "completed" ? 0 : 2,
       queuedOrders: 0,
       processingOrders: 0,

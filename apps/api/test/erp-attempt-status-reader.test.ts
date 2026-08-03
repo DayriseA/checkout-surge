@@ -118,6 +118,7 @@ describe("PostgresErpAttemptStatusReader", () => {
     const reader = new PostgresErpAttemptStatusReader(connection.db);
     const expectedBusinessOutcome = {
       acceptedReservations: 1,
+      reservedUnits: 1,
       soldOutRejections: 0,
       queuedOrders: 1,
       processingOrders: 0,

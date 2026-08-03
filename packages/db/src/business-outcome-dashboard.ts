@@ -41,6 +41,7 @@ export async function readBusinessOutcomeSummary(
 
   const [
     acceptedReservations,
+    reservedUnits,
     soldOutRejections,
     queuedOrders,
     processingOrders,
@@ -51,6 +52,11 @@ export async function readBusinessOutcomeSummary(
     notificationsRecorded,
   ] = await Promise.all([
     countRows(db, reservations, reservationFilter),
+    db
+      .select({ total: sql<number>`coalesce(sum(${reservations.quantity}), 0)::int` })
+      .from(reservations)
+      .where(reservationFilter)
+      .then((rows) => rows[0]?.total ?? 0),
     readSoldOutRejections(db, scope.runId),
     countRows(db, orders, and(orderFilter, eq(orders.status, "queued"))),
     countRows(db, orders, and(orderFilter, eq(orders.status, "processing"))),
@@ -70,6 +76,7 @@ export async function readBusinessOutcomeSummary(
 
   return businessOutcomeSummarySchema.parse({
     acceptedReservations,
+    reservedUnits,
     soldOutRejections,
     queuedOrders,
     processingOrders,

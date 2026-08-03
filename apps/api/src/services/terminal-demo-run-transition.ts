@@ -1,4 +1,5 @@
 import {
+  internalRunFailureReasonSchema,
   runSignalTimelineSummarySchema,
   serverReservationTimingSummarySchema,
   trafficDeliverySummarySchema,
@@ -66,7 +67,9 @@ export class PostgresTerminalDemoRunSummaryWriter implements TerminalDemoRunWrit
       await this.claimTerminalRunInsideLock(tx, {
         runId: input.run.id,
         terminalStatus: existingSummary.status as TerminalDemoRunStatus,
-        failureReason: existingSummary.failureReason,
+        failureReason: existingSummary.failureReason
+          ? internalRunFailureReasonSchema.parse(existingSummary.failureReason)
+          : null,
         finalizedAt: existingSummary.endedAt,
         allowedCurrentStatuses: input.allowedCurrentStatuses,
         ...(input.terminalTrafficStatus
@@ -197,6 +200,7 @@ export class PostgresTerminalDemoRunSummaryWriter implements TerminalDemoRunWrit
       presetName: input.run.presetName,
       status: input.terminalStatus,
       failureReason: input.failureReason,
+      replayPossible: input.replayPossible,
       startedAt: input.run.startedAt,
       endedAt: input.finalizedAt,
       transportAttemptCounts: transportAttemptCountsSchema.parse(input.transportAttemptCounts),

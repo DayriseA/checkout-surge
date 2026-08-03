@@ -606,6 +606,7 @@ export const demoRunSummaries = pgTable(
     presetName: text("preset_name").notNull(),
     status: demoRunStatusEnum("status").notNull(),
     failureReason: text("failure_reason"),
+    replayPossible: boolean("replay_possible").notNull(),
     startedAt: timestamp("started_at", { withTimezone: true }),
     endedAt: timestamp("ended_at", { withTimezone: true }).notNull(),
     transportAttemptCounts: jsonObject<TransportAttemptCounts>("transport_attempt_counts"),

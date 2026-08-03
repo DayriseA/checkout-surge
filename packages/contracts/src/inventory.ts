@@ -52,6 +52,7 @@ export const terminalInventorySnapshotSchema = z
     startingStock: nonnegativeIntegerSchema,
     remainingStock: nonnegativeIntegerSchema,
     reservedStock: nonnegativeIntegerSchema,
+    /** Durable PostgreSQL reservation-row count carried on this Redis-sourced snapshot. */
     acceptedReservations: nonnegativeIntegerSchema,
     soldOutRejections: nonnegativeIntegerSchema,
     pendingPersistenceCount: nonnegativeIntegerSchema,

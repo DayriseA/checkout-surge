@@ -10,6 +10,7 @@ import {
   type TrafficDeliverySummary,
   type TrafficHttpSummary,
   type TransportAttemptCounts,
+  isReplayPossible,
 } from "@checkout-surge/contracts";
 import {
   type CheckoutSurgeDatabase,
@@ -232,6 +233,9 @@ export class AdminDemoResetService implements AdminDemoResetWorkflow {
         run: latest.run,
         terminalStatus: "failed",
         failureReason: "admin_reset",
+        replayPossible: isReplayPossible(
+          parsePersistedAcceptedRunConfigSnapshot(latest.run.configSnapshot, `demo run ${latest.run.id}`),
+        ),
         finalizedAt: fencedRun.finalizedAt,
         capturedAt: now,
         transportAttemptCounts: trafficSummary.transportAttemptCounts,

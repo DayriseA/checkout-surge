@@ -1,11 +1,14 @@
 import {
   deriveOversoldUnits,
+  deriveRunResult,
   type RunHistoryListResponse,
   type RunHistorySummary,
 } from "@checkout-surge/contracts";
 import Link from "next/link";
 import { deriveTerminalSummaryPresentation } from "../lib/presentation/run-presentation-state";
+import { evidenceFromRunHistorySummary } from "../lib/presentation/run-result-presentation";
 import { GoldSignalHeadlines } from "./gold-signals";
+import { RunConclusion } from "./run-conclusion";
 import { RunHistoryDeleteAllButton } from "./run-history-delete-all-button";
 import { RunHistoryRowControls } from "./run-history-row-controls";
 import { StatusPill } from "./status-pill";
@@ -66,19 +69,19 @@ function OutOfRangePageState({ history }: { history: RunHistoryListResponse }) {
 }
 
 function RunHistorySummaryArticle({ summary }: { summary: RunHistorySummary }) {
-  const business = summary.businessOutcomeSummary;
-  const runPresentation = deriveTerminalSummaryPresentation({
-    runStatus: summary.status,
-    ...(summary.terminalInventorySnapshot
-      ? { startingStock: summary.terminalInventorySnapshot.startingStock }
-      : {}),
-    acceptedReservations: business.acceptedReservations,
-    confirmedOrders: business.confirmedOrders,
-    failedOrders: business.failedOrders,
-    pendingPersistenceCount: business.pendingPersistenceCount,
-  });
+  const lifecycleFacts: Array<[string, string]> = [
+    ["Started", formatDate(summary.startedAt)],
+    ["Ended", formatDate(summary.endedAt)],
+    ["Captured", formatDate(summary.capturedAt)],
+    ...(summary.failureCategory
+      ? [["Failure category", summary.failureCategory] as [string, string]]
+      : []),
+  ];
+  const result = deriveRunResult(evidenceFromRunHistorySummary(summary));
+  const runPresentation = deriveTerminalSummaryPresentation(result);
   return (
     <article className="rounded-lg border border-border bg-surface p-4">
+      <RunConclusion result={result} runStatus={summary.status} />
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="m-0 text-xs font-bold uppercase text-muted">Terminal summary</p>
@@ -106,15 +109,7 @@ function RunHistorySummaryArticle({ summary }: { summary: RunHistorySummary }) {
         </div>
       </div>
       <div className="grid grid-cols-3 gap-4 max-[900px]:grid-cols-1">
-        <SummarySection
-          facts={[
-            ["Started", formatDate(summary.startedAt)],
-            ["Ended", formatDate(summary.endedAt)],
-            ["Captured", formatDate(summary.capturedAt)],
-            ["Failure", summary.failureReason ?? "none"],
-          ]}
-          title="Lifecycle"
-        />
+        <SummarySection facts={lifecycleFacts} title="Lifecycle" />
         <TransportObservationSection
           arrivalSummary={summary.trafficDeliverySummary.requestArrivalSummary}
           counts={summary.transportAttemptCounts}
@@ -127,7 +122,7 @@ function RunHistorySummaryArticle({ summary }: { summary: RunHistorySummary }) {
           caption={systemOfRecordLens.caption}
           facts={[
             [
-              "Accepted reservations",
+              "Unique reservations secured",
               formatNumber(summary.businessOutcomeSummary.acceptedReservations),
             ],
             ["Sold-out decisions", formatNumber(summary.businessOutcomeSummary.soldOutRejections)],
@@ -147,7 +142,10 @@ function RunHistorySummaryArticle({ summary }: { summary: RunHistorySummary }) {
         headline={summary.runSignalTimelineSummary}
         oversoldUnits={
           summary.terminalInventorySnapshot
-            ? deriveOversoldUnits(summary.terminalInventorySnapshot)
+            ? deriveOversoldUnits({
+                reservedUnits: summary.businessOutcomeSummary.reservedUnits,
+                startingStock: summary.terminalInventorySnapshot.startingStock,
+              })
             : 0
         }
       />
@@ -205,8 +203,11 @@ function TerminalInventorySnapshot({ summary }: { summary: RunHistorySummary }) 
         <Fact label="Starting stock" value={formatNumber(snapshot.startingStock)} />
         <Fact label="Remaining" value={formatNumber(snapshot.remainingStock)} />
         <Fact label="Reserved" value={formatNumber(snapshot.reservedStock)} />
-        <Fact label="Accepted" value={formatNumber(snapshot.acceptedReservations)} />
-        <Fact label="Sold out" value={formatNumber(snapshot.soldOutRejections)} />
+        <Fact
+          label="Unique reservations secured"
+          value={formatNumber(snapshot.acceptedReservations)}
+        />
+        <Fact label="Sold-out decisions" value={formatNumber(snapshot.soldOutRejections)} />
         <Fact label="Pending" value={formatNumber(snapshot.pendingPersistenceCount)} />
       </dl>
       <div className="mt-3 flex flex-wrap items-center justify-between gap-3">

@@ -436,7 +436,7 @@ describe("database migrations, seed data, and reset behavior", () => {
           sql<{ count: number }[]>`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`,
       );
 
-      expect(firstCount?.count).toBe(1);
+      expect(firstCount?.count).toBe(2);
       expect(secondCount).toEqual(firstCount);
     } finally {
       await resetTestDatabase();

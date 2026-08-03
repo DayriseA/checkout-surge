@@ -189,8 +189,8 @@ export function TransportObservationSection({
       </dl>
       <h4 className="m-0 mt-4 text-xs font-bold uppercase text-muted">Observed outcomes</h4>
       <dl className="m-0 mt-2 grid gap-2">
-        <ObservationRow label="Accepted" value={formatNumber(httpSummary.acceptedResponses)} />
-        <ObservationRow label="Sold out" value={formatNumber(httpSummary.soldOutResponses)} />
+        <ObservationRow label="Accepted responses" value={formatNumber(httpSummary.acceptedResponses)} />
+        <ObservationRow label="Sold-out responses" value={formatNumber(httpSummary.soldOutResponses)} />
         <ObservationRow label="Unexpected" value={formatNumber(httpSummary.unexpectedResponses)} />
         <ObservationRow
           label="Client HTTP p95"

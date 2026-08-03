@@ -29,7 +29,7 @@ async function readJson<T>(filePath: string): Promise<T> {
 }
 
 describe("Drizzle migration metadata", () => {
-  it("has exactly one linked PostgreSQL v7 baseline snapshot and SQL file", async () => {
+  it("has linked PostgreSQL v7 migration snapshots and SQL files", async () => {
     const journal = await readJson<Journal>(path.join(metadataFolder, "_journal.json"));
     const snapshotFiles = (await readdir(metadataFolder))
       .filter((fileName) => fileName.endsWith("_snapshot.json"))
@@ -39,7 +39,7 @@ describe("Drizzle migration metadata", () => {
       .sort();
 
     expect(journal).toMatchObject({ version: "7", dialect: "postgresql" });
-    expect(journal.entries).toHaveLength(1);
+    expect(journal.entries).toHaveLength(2);
     expect(journal.entries[0]).toMatchObject({
       idx: 0,
       version: "7",

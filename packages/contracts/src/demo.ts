@@ -42,6 +42,10 @@ import {
   collectPublicRuntimePolicyViolations,
 } from "./public-runtime-policy-validation.js";
 import { runSignalTimelineHeadlineSchema, runSignalTimelineSummarySchema } from "./run-signals.js";
+import {
+  internalRunFailureReasonSchema,
+  publicRunFailureCategorySchema,
+} from "./run-result.js";
 import { transportAttemptCountsSchema } from "./traffic-transport-counts.js";
 
 export const publicPresetListPath = "/demo/presets/public" as const;
@@ -130,7 +134,7 @@ const demoRunSnapshotBaseShape = {
 
 const nonterminalDemoRunSnapshotShape = {
   finalizedAt: z.never().optional(),
-  failureReason: z.never().optional(),
+  failureCategory: z.never().optional(),
 };
 
 const failedDemoRunSnapshotSchema = z
@@ -141,7 +145,7 @@ const failedDemoRunSnapshotSchema = z
     trafficStartedAt: isoTimestampSchema.optional(),
     trafficEndedAt: isoTimestampSchema.optional(),
     finalizedAt: isoTimestampSchema,
-    failureReason: z.string().trim().min(1),
+    failureCategory: publicRunFailureCategorySchema,
   })
   .strict()
   .superRefine((run, context) => {
@@ -203,7 +207,7 @@ export const demoRunSnapshotSchema = z.discriminatedUnion("status", [
       trafficStartedAt: isoTimestampSchema,
       trafficEndedAt: isoTimestampSchema,
       finalizedAt: isoTimestampSchema,
-      failureReason: z.never().optional(),
+      failureCategory: z.never().optional(),
     })
     .strict(),
   failedDemoRunSnapshotSchema,
@@ -223,6 +227,8 @@ export type StartDemoRunResponse = z.infer<typeof startDemoRunResponseSchema>;
 export const businessOutcomeSummarySchema = z
   .object({
     acceptedReservations: nonnegativeIntegerSchema,
+    /** Durable sum of reservation quantities; acceptedReservations is a row count. */
+    reservedUnits: nonnegativeIntegerSchema,
     soldOutRejections: nonnegativeIntegerSchema,
     /** Live form of queueBacklogDefinition: accepted_awaiting_first_processing_start. */
     queuedOrders: nonnegativeIntegerSchema,
@@ -342,7 +348,7 @@ export const completionOutcomeSchema = z.discriminatedUnion("orderStatus", [
 export type CompletionOutcome = z.infer<typeof completionOutcomeSchema>;
 
 export const runHistorySummarySchema = demoRunSummaryShapeSchema
-  .extend({
+  .safeExtend({
     transportAttemptCounts: transportAttemptCountsSchema,
     httpSummary: trafficHttpSummarySchema,
     trafficDeliverySummary: trafficDeliverySummarySchema,
@@ -451,6 +457,7 @@ export const adminRunHistoryDetailResponseSchema = z
   .object({
     summary: runHistorySummarySchema,
     run: demoRunSnapshotSchema,
+    internalFailureReason: internalRunFailureReasonSchema.optional(),
     httpTimingBreakdownSummary: httpTimingBreakdownSummarySchema,
     loadRunDiagnosticsSummary: loadRunDiagnosticsSummarySchema.nullable(),
     orders: runHistoryCollectionMetadataSchema
@@ -476,7 +483,15 @@ export const adminRunHistoryDetailResponseSchema = z
     runSignalTimelineSummary: runSignalTimelineSummarySchema.nullable(),
     timestamp: isoTimestampSchema,
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    if (value.run.status === "failed" && value.internalFailureReason === undefined) {
+      context.addIssue({ code: "custom", path: ["internalFailureReason"], message: "Required for failed runs." });
+    }
+    if (value.run.status !== "failed" && value.internalFailureReason !== undefined) {
+      context.addIssue({ code: "custom", path: ["internalFailureReason"], message: "Only valid for failed runs." });
+    }
+  });
 export type AdminRunHistoryDetailResponse = z.infer<typeof adminRunHistoryDetailResponseSchema>;
 
 const publicTerminalInventorySnapshotSchema = terminalInventorySnapshotSchema
@@ -493,6 +508,8 @@ export const publicRunHistorySummarySchema = z
     runId: uuidSchema,
     presetName: z.string().trim().min(1),
     status: demoRunStatusSchema,
+    replayPossible: z.boolean(),
+    failureCategory: publicRunFailureCategorySchema.optional(),
     startedAt: isoTimestampSchema.optional(),
     endedAt: isoTimestampSchema,
     transportAttemptCounts: transportAttemptCountsSchema,
@@ -505,7 +522,15 @@ export const publicRunHistorySummarySchema = z
     runSignalTimelineSummary: runSignalTimelineHeadlineSchema.nullable(),
     capturedAt: isoTimestampSchema,
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    if (value.status === "failed" && value.failureCategory === undefined) {
+      context.addIssue({ code: "custom", path: ["failureCategory"], message: "Required for failed summaries." });
+    }
+    if (value.status !== "failed" && value.failureCategory !== undefined) {
+      context.addIssue({ code: "custom", path: ["failureCategory"], message: "Only valid for failed summaries." });
+    }
+  });
 export type PublicRunHistorySummary = z.infer<typeof publicRunHistorySummarySchema>;
 
 export const publicRunHistoryRunSchema = z

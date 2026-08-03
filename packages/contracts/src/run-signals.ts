@@ -1,5 +1,4 @@
 import { z } from "zod";
-import type { terminalInventorySnapshotSchema } from "./inventory.js";
 import {
   isoTimestampSchema,
   nonnegativeIntegerSchema,
@@ -218,12 +217,9 @@ export function toRunSignalTimelineHeadline(
 }
 
 export function deriveOversoldUnits(
-  inventory: Pick<
-    z.infer<typeof terminalInventorySnapshotSchema>,
-    "acceptedReservations" | "startingStock"
-  >,
+  evidence: { reservedUnits: number; startingStock: number },
 ): number {
-  return Math.max(0, inventory.acceptedReservations - inventory.startingStock);
+  return Math.max(0, evidence.reservedUnits - evidence.startingStock);
 }
 
 export function runSignalBucketElapsedSeconds(index: number, bucketWidthSeconds: number): number {

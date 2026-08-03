@@ -222,7 +222,7 @@ export function GoldSignals({
               : `${formatNumber(displayedStartingStock)} starting units`
           }, with ${formatNumber(oversoldUnits)} oversold units.`}
           area
-          caption="Stock remaining after immediate reservations; oversell is accepted reservations above starting stock."
+          caption="Stock remaining after immediate reservations; oversell is reserved units above starting stock."
           headline={`Start ${
             displayedStartingStock === null
               ? "not yet available"
@@ -266,13 +266,15 @@ export function GoldSignals({
         />
         <SignalPanel
           available={convergenceAvailable}
-          ariaLabel={`${formatNumber(
+          ariaLabel={`Of ${formatNumber(
+            acceptedReservations,
+          )} unique reservations secured, ${formatNumber(
             convergence?.confirmedOrderCount ?? liveConfirmed,
-          )} of ${formatNumber(acceptedReservations)} accepted reservations confirmed, ${formatNumber(
+          )} were confirmed, ${formatNumber(
             convergence?.failedOrderCount ?? liveFailed,
           )} failed, and ${formatNumber(
             convergence?.pendingAtCaptureCount ?? livePending,
-          )} pending. ${convergenceStatus}.`}
+          )} remain pending. ${convergenceStatus}.`}
           caption="Cumulative confirmed orders. Lag is order confirmedAt minus reservation securedAt over confirmed orders only."
           headline={`${formatNumber(
             convergence?.confirmedOrderCount ?? liveConfirmed,

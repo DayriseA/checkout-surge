@@ -162,6 +162,7 @@ describe("dashboard projection state", () => {
         runProjection({
           businessOutcome: {
             acceptedReservations: 10,
+            reservedUnits: 10,
             soldOutRejections: 0,
             queuedOrders: 9,
             processingOrders: 1,

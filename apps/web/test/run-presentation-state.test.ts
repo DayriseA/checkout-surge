@@ -4,11 +4,12 @@ import {
   dashboardProjectionSchemaName,
   dashboardProjectionSchemaVersion,
   dashboardProjectionScopeId,
+  deriveRunResult,
+  type RunResultEvidence,
 } from "@checkout-surge/contracts";
 import { previewRunConfigSnapshotFixture } from "@checkout-surge/contracts/testing";
 import { describe, expect, it } from "vitest";
 import {
-  classifyTerminalOutcome,
   deriveInventoryOutcomeState,
   deriveRunPresentationState,
   deriveSharedRuntimeState,
@@ -29,46 +30,11 @@ describe("run presentation state", () => {
     ],
     [
       { status: "available" as const, data: projection(run("draining")), httpStatus: 200 },
-      "processing accepted reservations",
+      "processing unique reservations",
     ],
     [{ status: "available" as const, data: projection(run("failed")), httpStatus: 200 }, "failed"],
   ])("maps authoritative lifecycle to %s", (read, expected) => {
     expect(deriveRunPresentationState(read).label).toBe(expected);
-  });
-
-  it("classifies terminal evidence in normative precedence order", () => {
-    expect(
-      classifyTerminalOutcome({
-        runStatus: "failed",
-        oversoldUnits: 1,
-        failedOrders: 1,
-        pendingOrders: 1,
-      }),
-    ).toBe("failed");
-    expect(
-      classifyTerminalOutcome({
-        runStatus: "completed",
-        oversoldUnits: 1,
-        failedOrders: 1,
-        pendingOrders: 1,
-      }),
-    ).toBe("completed-with-oversell");
-    expect(
-      classifyTerminalOutcome({
-        runStatus: "completed",
-        oversoldUnits: 0,
-        failedOrders: 1,
-        pendingOrders: 1,
-      }),
-    ).toBe("completed-with-order-failures");
-    expect(
-      classifyTerminalOutcome({
-        runStatus: "completed",
-        oversoldUnits: 0,
-        failedOrders: 0,
-        pendingOrders: 1,
-      }),
-    ).toBe("completed-with-unsettled-orders");
   });
 
   it.each([
@@ -127,8 +93,12 @@ describe("run presentation state", () => {
     data.inventory = inventory(example.allocatedStock);
     data.businessOutcome = {
       acceptedReservations: example.acceptedReservations,
+      reservedUnits: example.acceptedReservations,
       soldOutRejections: 0,
-      queuedOrders: 0,
+      queuedOrders: Math.max(
+        0,
+        example.acceptedReservations - example.confirmedOrders - example.failedOrders,
+      ),
       processingOrders: 0,
       retryingOrders: 0,
       confirmedOrders: example.confirmedOrders,
@@ -168,21 +138,65 @@ describe("run presentation state", () => {
       expected: ["completed with unsettled orders", "warning"],
     },
   ])("derives $expected.0 from durable terminal evidence", (example) => {
-    const presentation = deriveTerminalSummaryPresentation({
-      runStatus: "completed",
-      startingStock: 10,
-      acceptedReservations: 10,
-      confirmedOrders: 10 - example.failedOrders - example.queuedOrders,
-      failedOrders: example.failedOrders,
-      pendingPersistenceCount: 0,
-    });
+    const presentation = deriveTerminalSummaryPresentation(
+      deriveRunResult(
+        resultEvidence({
+          confirmedOrders: 10 - example.failedOrders - example.queuedOrders,
+          failedOrders: example.failedOrders,
+          queuedOrders: example.queuedOrders,
+        }),
+      ),
+    );
     expect([presentation.label, presentation.tone]).toEqual(example.expected);
+  });
+
+  it("presents broken completed evidence as contradictory and dangerous", () => {
+    const data = projection(run("completed"));
+    data.inventory = inventory(10);
+    data.businessOutcome = {
+      ...businessOutcome(10),
+      reservedUnits: 9,
+    };
+
+    expect(
+      deriveRunPresentationState({ status: "available", data, httpStatus: 200 }),
+    ).toMatchObject({
+      label: "contradictory outcome evidence",
+      tone: "danger",
+    });
+  });
+
+  it("keeps a valid terminal outcome successful when reconciliation has a warning", () => {
+    const result = deriveRunResult(resultEvidence({ durablePendingPersistenceRecords: 1 }));
+
+    expect(result.maximumClassification).toBe("warning");
+    expect(deriveTerminalSummaryPresentation(result)).toMatchObject({
+      label: "completed successfully",
+      tone: "ok",
+    });
   });
 
   it("treats exact sellout with zero oversell as success", () => {
     const presentation = deriveInventoryOutcomeState(inventory(10), null, 10);
 
     expect([presentation.label, presentation.tone]).toEqual(["exact sellout", "ok"]);
+  });
+
+  it("keeps active depleted inventory draining until durable reservation evidence exists", () => {
+    expect(deriveInventoryOutcomeState(inventory(10), run("active"), null)).toMatchObject({
+      state: "inventory-draining",
+      label: "inventory draining",
+      tone: "progress",
+    });
+  });
+
+  it("uses inventory-specific copy when completed reservation evidence is unavailable", () => {
+    expect(deriveInventoryOutcomeState(inventory(10), run("completed"), null)).toMatchObject({
+      state: "inventory-reservation-evidence-not-yet-available",
+      label: "reservation evidence not yet available",
+      description: "Durable reservation evidence is not yet available.",
+      tone: "idle",
+    });
   });
 });
 
@@ -230,7 +244,7 @@ function run(status: DemoRunSnapshot["status"]): DemoRunSnapshot {
     trafficStartedAt: startedAt,
     trafficEndedAt: "2026-07-30T12:00:01.000Z",
     finalizedAt: "2026-07-30T12:00:02.000Z",
-    failureReason: "traffic_failed",
+    failureCategory: "traffic",
   };
 }
 
@@ -279,6 +293,47 @@ function inventory(allocatedStock: number): NonNullable<DashboardProjection["inv
     soldOutPressure: { rejectionCount: 4, latestObservedAt: "2026-07-30T12:00:00.000Z" },
     observedAt: "2026-07-30T12:00:01.000Z",
     lastUpdatedAt: "2026-07-30T12:00:00.000Z",
+  };
+}
+
+function resultEvidence(
+  durableOverrides: Partial<NonNullable<RunResultEvidence["durable"]>> = {},
+): RunResultEvidence {
+  return {
+    runStatus: "completed",
+    failureCategory: null,
+    startingStock: 10,
+    remainingStock: 0,
+    durable: {
+      reservedUnits: 10,
+      uniqueReservations: 10,
+      soldOutDecisions: 0,
+      confirmedOrders: 10,
+      failedOrders: 0,
+      queuedOrders: 0,
+      processingOrders: 0,
+      durablePendingPersistenceRecords: 0,
+      notificationsRecorded: 10,
+      ...durableOverrides,
+    },
+    heldReservationsAwaitingPersistence: 0,
+    replayPossible: false,
+    generator: null,
+  };
+}
+
+function businessOutcome(acceptedReservations: number) {
+  return {
+    acceptedReservations,
+    reservedUnits: acceptedReservations,
+    soldOutRejections: 0,
+    queuedOrders: 0,
+    processingOrders: 0,
+    retryingOrders: 0,
+    confirmedOrders: acceptedReservations,
+    failedOrders: 0,
+    pendingPersistenceCount: 0,
+    notificationsRecorded: acceptedReservations,
   };
 }
 

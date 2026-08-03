@@ -103,17 +103,37 @@ Unavailable reads retain the existing bounded exponential retry policy. Initial 
 
 Public presentation keeps three concerns separate:
 
-- Lifecycle describes what the run is doing: `checking availability`, `ready`, `starting`, `accepting checkout attempts`, `processing accepted reservations`, `completed successfully`, `completed with order failures`, `completed with unsettled orders`, `completed with oversell`, or `failed`.
+- Lifecycle describes what the run is doing: `checking availability`, `ready`, `starting`, `accepting checkout attempts`, `processing unique reservations`, `completed successfully`, `completed with order failures`, `completed with unsettled orders`, `completed with oversell`, or `failed`.
 - Freshness describes whether the displayed projection can still be called live. It never changes the lifecycle or outcome tone.
 - Outcome describes whether terminal durable evidence satisfied the run goal.
 
-Backend run states remain unchanged. The web maps `starting` to starting, active traffic preparation to starting, active traffic delivery to accepting checkout attempts, and `draining` to processing accepted reservations. Expected work uses the progress treatment; amber is reserved for anomalies. A completed successful run and an exact sellout with zero oversell use the success treatment.
+Backend run states remain unchanged. The web maps `starting` to starting, active traffic preparation to starting, active traffic delivery to accepting checkout attempts, and `draining` to processing unique reservations. Expected work uses the progress treatment; amber is reserved for anomalies. A completed successful run and an exact sellout with zero oversell use the success treatment.
+
+When a completed run has contradictory authoritative evidence because a non-oversell invariant is broken, it uses the danger presentation labelled `contradictory outcome evidence`; it is never shown as a neutral indeterminate result.
 
 Freshness is delivery-based rather than producer-age-based. `inventory.lastUpdatedAt` is a change time and can remain unchanged after a correct sellout; queue, ERP, and consistency-lag timestamps are observations assembled into the same projection. The projection therefore carries `inventory.observedAt` as the inventory read time while preserving `lastUpdatedAt` as the last inventory change time. Scope is independent of freshness: a current shared-runtime value is not run evidence, and an older edge-triggered breaker state can still be valid.
 
 The browser calls a nonterminal projection live only when the SSE transport is connected, update-producing work for the selected run exists, and the last projection arrived inside the age guard. Update-producing work means the run's pending persistence, queued, processing, or retrying order count is non-zero. Shared BullMQ depth and active counts do not keep another run's surface live. The guard is three times `dashboardLiveUpdateExpectedIntervalMs`: 6 seconds at the current 2-second queue refresh cadence. A connected run with no update-producing work is retained-fresh regardless of projection age. `connecting` and `unsupported` are neutral delivery states; neither is called disconnected or stale, nor described as showing last-known-good values because of a failure. A disconnected transport is disconnected regardless of age. Completed, failed, and no-run projections are final or not applicable and never decay into stale data. Last-known-good values remain visible with their projection update time and an explicit disconnected or stale label.
 
-Terminal outcome precedence is normative: failed run, oversell, failed orders, unsettled orders, then completed successfully. Oversell outranks order failures because it breaks the core stock invariant. Classification uses durable terminal evidence; notification counts are not order-confirmation evidence.
+Terminal outcome precedence is normative: failed run, oversell, indeterminate outcome, failed orders, unsettled orders, then completed successfully. Oversell outranks order failures because it breaks the core stock invariant; indeterminate evidence demotes only non-oversell verdicts. Classification uses durable terminal evidence; notification counts are not order-confirmation evidence.
+
+#### Run result and reconciliation
+
+The durable result model is shared by live completion, history summaries, and public detail. It uses explicit populations: planned checkout attempts; observed responses; accepted responses (including idempotent replays); sold-out decisions recorded by the system; sold-out responses observed by the generator; unique reservations secured; orders confirmed; orders failed; reservations pending a durable outcome; and oversold units. An unqualified `accepted` or `sold out` label is not public vocabulary.
+
+Starting and remaining stock come from the Redis terminal inventory snapshot. Unique reservations, reserved units (`sum(reservations.quantity)`), sold-out decisions, order counts, and notification counts come from run-filtered PostgreSQL business evidence. Generator HTTP and transport counts are proof only. A03's derived `inventoryDrain` is a reservation-row visualization and is deliberately not an invariant input.
+
+The authoritative invariants are:
+
+- `reserved units = starting stock − remaining stock` (evaluated only when Redis holds awaiting persistence are zero and both stores are present);
+- `confirmed + failed + pending = unique reservations` (pending is queued plus processing orders; retrying is a subset of processing, and pending-persistence rows are reconciliation evidence rather than unsettled orders);
+- `oversold units = 0` (reserved units compared with starting stock).
+
+Missing or partial evidence is never defaulted to zero. Reconciliation classifications have precedence `correctness_failure` > `warning` > `evidence_incomplete` > `expected_population_difference`. Accepted responses may exceed unique reservations when `replayPossible` is true; that is an expected population difference, not oversell. A partial generator view is incomplete evidence, not agreement. Sold-out decisions and sold-out responses are separate populations: with complete generator coverage, observed responses at or below recorded decisions are an expected population difference, while observed responses above recorded decisions are a warning. PostgreSQL `pendingPersistenceCount` counts pending rows, while Redis `pendingPersistenceCount` counts holds awaiting persistence; they share a field name but not a meaning, and disagreement is a warning. Outcome and reconciliation severity remain separate: a run can satisfy all outcome invariants while still carrying a reconciliation warning, such as disagreement between those pending-persistence stores.
+
+Inventory presentation requires durable `reservedUnits` before it can claim exact sellout. A depleted active run without that evidence remains `inventory draining`; a completed run uses neutral inventory-specific copy that durable reservation evidence is not yet available.
+
+Public failed runs expose only a bounded failure category. The exact internal reason remains on authenticated admin detail. The shared contracts package derives the result and invariant proof; one web presentation template formats the sentence. Pages render that result and place generator-versus-durable evidence in a collapsed proof.
 
 Missing values use field-specific language:
 

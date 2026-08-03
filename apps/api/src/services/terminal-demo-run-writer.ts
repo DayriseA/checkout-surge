@@ -8,6 +8,7 @@ import type {
   TrafficExecutionStatus,
   TrafficHttpSummary,
   TransportAttemptCounts,
+  InternalRunFailureReason,
 } from "@checkout-surge/contracts";
 import type { CheckoutSurgeDatabase, demoRuns } from "@checkout-surge/db";
 
@@ -16,7 +17,7 @@ export type TerminalDemoRunStatus = "completed" | "failed";
 export interface TerminalDemoRunTransitionInput {
   runId: string;
   terminalStatus: TerminalDemoRunStatus;
-  failureReason: string | null;
+  failureReason: InternalRunFailureReason | null;
   finalizedAt: Date;
   allowedCurrentStatuses: DemoRunStatus[];
   terminalTrafficStatus?: TrafficExecutionStatus;
@@ -25,7 +26,8 @@ export interface TerminalDemoRunTransitionInput {
 export interface TerminalDemoRunSummaryInput {
   run: typeof demoRuns.$inferSelect;
   terminalStatus: TerminalDemoRunStatus;
-  failureReason: string | null;
+  failureReason: InternalRunFailureReason | null;
+  replayPossible: boolean;
   finalizedAt: Date;
   capturedAt?: Date;
   transportAttemptCounts: TransportAttemptCounts;

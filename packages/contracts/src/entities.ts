@@ -7,6 +7,7 @@ import {
   positiveIntegerSchema,
   uuidSchema,
 } from "./primitives.js";
+import { publicRunFailureCategorySchema } from "./run-result.js";
 
 export const reservationSummarySchema = z
   .object({
@@ -74,7 +75,8 @@ export const demoRunSummaryShapeSchema = z
     runId: uuidSchema,
     presetName: z.string().trim().min(1),
     status: demoRunStatusSchema,
-    failureReason: z.string().trim().min(1).optional(),
+    failureCategory: publicRunFailureCategorySchema.optional(),
+    replayPossible: z.boolean(),
     startedAt: isoTimestampSchema.optional(),
     endedAt: isoTimestampSchema,
     transportAttemptCounts: jsonObjectSchema,
@@ -84,4 +86,12 @@ export const demoRunSummaryShapeSchema = z
     terminalInventorySnapshot: jsonObjectSchema.optional(),
     capturedAt: isoTimestampSchema,
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    if (value.status === "failed" && value.failureCategory === undefined) {
+      context.addIssue({ code: "custom", path: ["failureCategory"], message: "Required for failed summaries." });
+    }
+    if (value.status !== "failed" && value.failureCategory !== undefined) {
+      context.addIssue({ code: "custom", path: ["failureCategory"], message: "Only valid for failed summaries." });
+    }
+  });

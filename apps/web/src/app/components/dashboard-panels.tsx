@@ -759,8 +759,8 @@ export function RunOutcomesPanel({
         <>
           <FreshnessLine freshness={freshness} />
           <dl className={wideFactGridClassName}>
-            <Fact label="Accepted" value={formatNumber(outcome.acceptedReservations)} />
-            <Fact label="Sold out" value={formatNumber(outcome.soldOutRejections)} />
+            <Fact label="Unique reservations secured" value={formatNumber(outcome.acceptedReservations)} />
+            <Fact label="Sold-out decisions" value={formatNumber(outcome.soldOutRejections)} />
             <Fact
               label="Queued (awaiting first processing start)"
               value={formatNumber(outcome.queuedOrders)}

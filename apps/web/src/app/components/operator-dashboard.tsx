@@ -1,6 +1,10 @@
 "use client";
 
-import { type DashboardProjection, deriveOversoldUnits } from "@checkout-surge/contracts";
+import {
+  type DashboardProjection,
+  deriveOversoldUnits,
+  deriveRunResult,
+} from "@checkout-surge/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { BackendRead } from "../lib/api";
 import { dashboardUpdateExpected, deriveFreshness } from "../lib/presentation/freshness";
@@ -13,6 +17,7 @@ import {
   deriveSharedErpProtectionState,
   deriveSharedRuntimeState,
 } from "../lib/presentation/run-presentation-state";
+import { evidenceFromDashboard } from "../lib/presentation/run-result-presentation";
 import {
   CompletionOutcomesPanel,
   ConsistencyLagPanel,
@@ -26,6 +31,7 @@ import {
 import { GoldSignals } from "./gold-signals";
 import { useDashboardProjections } from "./realtime/use-dashboard-projections";
 import { useDashboardRecovery } from "./realtime/use-dashboard-recovery";
+import { RunConclusion } from "./run-conclusion";
 
 export function OperatorDashboard({
   initialRecovery,
@@ -68,7 +74,11 @@ export function OperatorDashboard({
   }, []);
   const projection = recovery.status === "available" ? recovery.data : null;
   const run = projection?.currentRun ?? null;
-  const runPresentation = deriveRunPresentationState(recovery, projection);
+  const result =
+    projection && (run?.status === "completed" || run?.status === "failed")
+      ? deriveRunResult(evidenceFromDashboard(projection))
+      : null;
+  const runPresentation = deriveRunPresentationState(recovery, projection, result);
   const freshness = deriveFreshness({
     transportStatus: realtimeStatus,
     recoveredAt: projection?.recoveredAt ?? now.toISOString(),
@@ -80,6 +90,7 @@ export function OperatorDashboard({
 
   return (
     <div className="grid grid-cols-12 gap-4">
+      {result ? <RunConclusion result={result} runStatus={run?.status ?? "starting"} /> : null}
       <RecoveryStatusPanel
         recovery={recovery}
         isRefreshing={isRefreshing}
@@ -104,7 +115,7 @@ export function OperatorDashboard({
         oversoldUnits={
           projection?.runSignalTimelineSummary || projection?.inventory
             ? deriveOversoldUnits({
-                acceptedReservations: outcome?.acceptedReservations ?? 0,
+                reservedUnits: outcome ? outcome.reservedUnits : 0,
                 startingStock:
                   projection.runSignalTimelineSummary?.inventoryDrain.startingStock ??
                   projection.inventory?.allocatedStock ??
@@ -127,7 +138,7 @@ export function OperatorDashboard({
         presentation={deriveInventoryOutcomeState(
           projection?.inventory ?? null,
           run,
-          outcome?.acceptedReservations,
+          outcome?.reservedUnits ?? null,
         )}
       />
       <RunErpOutcomesPanel

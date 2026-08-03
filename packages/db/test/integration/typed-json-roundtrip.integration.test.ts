@@ -190,6 +190,7 @@ describe.skipIf(!databaseUrl)("contract-typed persisted JSON", () => {
       status: "completed",
       startedAt: capturedAt,
       endedAt: capturedAt,
+      replayPossible: false,
       transportAttemptCounts,
       httpSummary,
       trafficDeliverySummary,
@@ -313,6 +314,7 @@ function trafficDeliverySummaryFixture(): TrafficDeliverySummary {
 function businessOutcomeSummaryFixture(): BusinessOutcomeSummary {
   return {
     acceptedReservations: 7,
+    reservedUnits: 7,
     soldOutRejections: 3,
     queuedOrders: 0,
     processingOrders: 0,

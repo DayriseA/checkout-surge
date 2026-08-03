@@ -97,6 +97,7 @@ describe("dashboard backend API reads", () => {
             ),
             businessOutcomeSummary: {
               acceptedReservations: 6,
+              reservedUnits: 6,
               soldOutRejections: 4,
               queuedOrders: 0,
               processingOrders: 0,
@@ -106,6 +107,7 @@ describe("dashboard backend API reads", () => {
               pendingPersistenceCount: 0,
               notificationsRecorded: 5,
             },
+            replayPossible: false,
             terminalInventorySnapshot: {
               saleOfferId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
               startingStock: 10,
@@ -130,7 +132,6 @@ describe("dashboard backend API reads", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const history = await getRunHistoryPage(2, 5);
-
     expect(history.status).toBe("available");
     if (history.status !== "available") {
       throw new Error("Expected available history.");
@@ -290,6 +291,7 @@ function runHistoryDetailFixture() {
       ),
       businessOutcomeSummary: {
         acceptedReservations: 6,
+        reservedUnits: 6,
         soldOutRejections: 4,
         queuedOrders: 0,
         processingOrders: 0,
@@ -299,6 +301,7 @@ function runHistoryDetailFixture() {
         pendingPersistenceCount: 0,
         notificationsRecorded: 5,
       },
+      replayPossible: false,
       terminalInventorySnapshot: {
         saleOfferId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
         startingStock: 10,

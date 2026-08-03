@@ -55,6 +55,7 @@ describe("dashboard delivery freshness", () => {
       dashboardUpdateExpected({
         businessOutcome: {
           acceptedReservations: 1,
+          reservedUnits: 1,
           soldOutRejections: 0,
           queuedOrders: values.queued,
           processingOrders: values.processing,
@@ -72,6 +73,7 @@ describe("dashboard delivery freshness", () => {
     const projection = {
       businessOutcome: {
         acceptedReservations: 1,
+        reservedUnits: 1,
         soldOutRejections: 0,
         queuedOrders: 0,
         processingOrders: 0,
