@@ -7,6 +7,7 @@ const adminReads = vi.hoisted(() => ({
   erp: vi.fn(async () => ({ status: "available" })),
   presets: vi.fn(async () => ({ status: "available" })),
   policy: vi.fn(async () => ({ status: "available" })),
+  readiness: vi.fn(async () => ({ status: "available" })),
 }));
 const historyRead = vi.hoisted(() => vi.fn());
 vi.mock("../src/app/lib/server/admin-page-session.js", () => ({
@@ -16,6 +17,7 @@ vi.mock("../src/app/lib/server/admin-reads.js", () => ({
   readAdminErpChaos: adminReads.erp,
   readAdminPresets: adminReads.presets,
   readAdminRuntimePolicy: adminReads.policy,
+  readAdminReadiness: adminReads.readiness,
 }));
 vi.mock("../src/app/components/admin/admin-authenticated-surface.js", () => ({
   AdminAuthenticatedSurface: () => createElement("section", null, "Authenticated console data"),
@@ -86,6 +88,7 @@ describe("server-decided admin presentation", () => {
     expect(adminReads.erp).toHaveBeenCalledOnce();
     expect(adminReads.presets).toHaveBeenCalledOnce();
     expect(adminReads.policy).toHaveBeenCalledOnce();
+    expect(adminReads.readiness).toHaveBeenCalledOnce();
   });
 
   it("keeps History public while including cleanup only in authenticated server HTML", async () => {
@@ -101,5 +104,31 @@ describe("server-decided admin presentation", () => {
     );
     expect(authenticated).toContain("Public history list");
     expect(authenticated).toContain("Authenticated history cleanup");
+  });
+
+  it("keeps history diagnostics anonymous-safe while retaining them for authenticated failures", async () => {
+    historyRead.mockResolvedValue({
+      status: "unavailable",
+      errorCode: "backend_unavailable",
+      httpStatus: 503,
+      correlationId: "history-correlation",
+      reason: "history backend diagnostic",
+    });
+
+    const anonymous = renderToStaticMarkup(
+      await RunHistoryPage({ searchParams: Promise.resolve({ page: "1" }) }),
+    );
+    expect(anonymous).toContain("The latest information is temporarily unavailable");
+    expect(anonymous).not.toContain("Technical details");
+    expect(anonymous).not.toContain("history-correlation");
+    expect(anonymous).not.toContain("history backend diagnostic");
+
+    sessionMock.mockResolvedValue(true);
+    const authenticated = renderToStaticMarkup(
+      await RunHistoryPage({ searchParams: Promise.resolve({ page: "1" }) }),
+    );
+    expect(authenticated).toContain("Technical details");
+    expect(authenticated).toContain("history-correlation");
+    expect(authenticated).toContain("history backend diagnostic");
   });
 });

@@ -187,10 +187,13 @@ describe("dashboard control proxy routes", () => {
     );
 
     expect(response.status).toBe(503);
-    expect(await response.json()).toMatchObject({
+    const body = await response.json();
+    expect(body).toMatchObject({
       status: "unavailable",
-      checks: [{ name: "database_reachable", status: "unavailable" }],
+      checks: [],
     });
+    expect(JSON.stringify(body)).not.toContain("database_reachable");
+    expect(JSON.stringify(body)).not.toContain("PostgreSQL readiness check failed.");
     expect(response.headers.get("set-cookie")).toBeNull();
   });
 

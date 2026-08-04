@@ -14,18 +14,21 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BackendRead, PublicDemoSurface } from "../lib/api";
 import { readProxyJson } from "../lib/client/proxy-json";
 import { demoRunStartProxyPath, healthReadyProxyPath } from "../lib/control-paths";
+import {
+  type ErrorPresentation,
+  mapErrorPresentation,
+} from "../lib/presentation/error-presentation";
 import { formatCount } from "../lib/presentation/format";
 import {
   publicLimitsLabel,
   publicVocabulary,
-  readinessCheckLabel,
-  readinessCheckStatusLabel,
   trafficModeLabel,
 } from "../lib/presentation/public-vocabulary";
 import {
   deriveRunPresentationState,
   type PresentationState,
 } from "../lib/presentation/run-presentation-state";
+import { ErrorNotice } from "./error-notice";
 import { useDashboardRecovery } from "./realtime/use-dashboard-recovery";
 import { StatusPill } from "./status-pill";
 
@@ -58,9 +61,22 @@ interface CustomDraft {
 export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
   const [startingSlug, setStartingSlug] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [startPresentation, setStartPresentation] = useState<ErrorPresentation | null>(null);
+  const [startConflictBlock, setStartConflictBlock] = useState<
+    "active_run_exists" | "reset_incomplete" | null
+  >(null);
+  const [activeConflictRefreshComplete, setActiveConflictRefreshComplete] = useState(false);
+  const [startRetryUntil, setStartRetryUntil] = useState<number | null>(null);
   const [readiness, setReadiness] = useState(surface.readiness);
-  const [isReadinessRefreshing, setIsReadinessRefreshing] = useState(false);
+  const [, setIsReadinessRefreshing] = useState(false);
   const readinessRequestRef = useRef<Promise<BackendRead<HealthResponse>> | null>(null);
+  const readinessRetryUntilRef = useRef<number | null>(
+    surface.readiness.status === "unavailable" &&
+      surface.readiness.retryAfterMs !== undefined &&
+      surface.readiness.retryAfterMs > 0
+      ? Date.now() + surface.readiness.retryAfterMs
+      : null,
+  );
   const readinessMountedRef = useRef(true);
   const [customDraft, setCustomDraft] = useState<CustomDraft>(() =>
     surface.runtimePolicy.status === "available"
@@ -70,7 +86,6 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
 
   const {
     recovery,
-    isRefreshing,
     isRetryScheduled,
     retriesExhausted,
     retryAttempt,
@@ -79,6 +94,11 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
     retryNow,
   } = useDashboardRecovery(surface.recovery);
   const refreshReadiness = useCallback(async (): Promise<void> => {
+    if (readinessRetryUntilRef.current !== null && readinessRetryUntilRef.current > Date.now()) {
+      return;
+    }
+    readinessRetryUntilRef.current = null;
+
     if (readinessRequestRef.current) {
       await readinessRequestRef.current;
       return;
@@ -90,7 +110,15 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
 
     try {
       const nextReadiness = await request;
-      if (readinessMountedRef.current) setReadiness(nextReadiness);
+      if (readinessMountedRef.current) {
+        readinessRetryUntilRef.current =
+          nextReadiness.status === "unavailable" &&
+          nextReadiness.retryAfterMs !== undefined &&
+          nextReadiness.retryAfterMs > 0
+            ? Date.now() + nextReadiness.retryAfterMs
+            : null;
+        setReadiness(nextReadiness);
+      }
     } finally {
       if (readinessRequestRef.current === request) readinessRequestRef.current = null;
       if (readinessMountedRef.current) setIsReadinessRefreshing(false);
@@ -115,6 +143,61 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
     return () => clearInterval(interval);
   }, [refreshReadiness]);
 
+  useEffect(() => {
+    const retryUntil = readinessRetryUntilRef.current;
+    if (readiness.status !== "unavailable" || retryUntil === null) return;
+    const timer = setTimeout(
+      () => {
+        if (readinessRetryUntilRef.current !== retryUntil) return;
+        readinessRetryUntilRef.current = null;
+        setReadiness((current) => {
+          if (current.status !== "unavailable") return current;
+          const { retryAfterMs: _expiredRetryAfterMs, ...withoutRetryAfter } = current;
+          return withoutRetryAfter;
+        });
+      },
+      Math.max(0, retryUntil - Date.now()),
+    );
+    return () => clearTimeout(timer);
+  }, [readiness]);
+
+  useEffect(() => {
+    if (startRetryUntil === null) return;
+    const remainingMs = Math.max(0, startRetryUntil - Date.now());
+    const timer = setTimeout(() => {
+      setStartRetryUntil(null);
+      setStartPresentation(
+        startConflictBlock === null
+          ? null
+          : mapErrorPresentation(
+              {
+                status: "unavailable",
+                errorCode: "run_conflict",
+                details: { conflictReason: startConflictBlock },
+              },
+              "public-start",
+            ),
+      );
+    }, remainingMs);
+    return () => clearTimeout(timer);
+  }, [startConflictBlock, startRetryUntil]);
+
+  useEffect(() => {
+    if (
+      startConflictBlock !== "active_run_exists" ||
+      !activeConflictRefreshComplete ||
+      recovery.status !== "available"
+    ) {
+      return;
+    }
+    if (isRunStartBlocked(recovery)) {
+      setStartPresentation(null);
+      return;
+    }
+    setStartConflictBlock(null);
+    setStartPresentation(null);
+  }, [activeConflictRefreshComplete, recovery, startConflictBlock]);
+
   const isBlocked = isRunStartBlocked(recovery);
   const isReadinessBlocked = readinessBlocksRunStart(readiness);
   const presets =
@@ -136,6 +219,8 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
     isBlocked ||
     isReadinessBlocked ||
     startingSlug !== null ||
+    startConflictBlock !== null ||
+    startRetryUntil !== null ||
     surface.presets.status !== "available" ||
     recovery.status !== "available";
 
@@ -146,12 +231,20 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
     });
 
     if (!parsed.success) {
-      setStatusMessage("Run configuration is outside the shared start contract.");
+      setStatusMessage(null);
+      setStartPresentation(
+        mapErrorPresentation(
+          { status: "unavailable", errorCode: "invalid_request", reason: "invalid request" },
+          "public-start",
+        ),
+      );
       return;
     }
 
     setStartingSlug(presetSlug);
     setStatusMessage(null);
+    setStartPresentation(null);
+    setStartRetryUntil(null);
 
     try {
       const result = await readProxyJson(demoRunStartProxyPath, startDemoRunResponseSchema, {
@@ -166,8 +259,25 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
         return;
       }
 
-      setStatusMessage(result.reason);
-      void refreshReadiness();
+      const presentation = mapErrorPresentation(result, "public-start");
+      setStartPresentation(presentation);
+      const conflictReason =
+        result.status === "unavailable" &&
+        (result.details?.conflictReason === "active_run_exists" ||
+          result.details?.conflictReason === "reset_incomplete")
+          ? result.details.conflictReason
+          : null;
+      setStartConflictBlock(conflictReason);
+      setActiveConflictRefreshComplete(false);
+      if (result.status === "unavailable" && result.retryAfterMs && result.retryAfterMs > 0) {
+        setStartRetryUntil(Date.now() + result.retryAfterMs);
+      }
+      if (conflictReason) {
+        await Promise.all([refresh(), refreshReadiness()]);
+        if (conflictReason === "active_run_exists") setActiveConflictRefreshComplete(true);
+      } else {
+        await refreshReadiness();
+      }
     } finally {
       setStartingSlug(null);
     }
@@ -184,8 +294,6 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
             </h2>
           </div>
           <StartGate
-            isReadinessRefreshing={isReadinessRefreshing}
-            isRecoveryRefreshing={isRefreshing}
             isRetryScheduled={isRetryScheduled}
             onRetry={() => {
               void Promise.all([retryNow(), refreshReadiness()]);
@@ -195,7 +303,11 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
             retriesExhausted={retriesExhausted}
             retryAttempt={retryAttempt}
             retryDelayMs={retryDelayMs}
+            presentation={startPresentation}
             statusMessage={statusMessage}
+            startRetryAfterMs={
+              startRetryUntil === null ? null : Math.max(0, startRetryUntil - Date.now())
+            }
           />
         </div>
         {surface.presets.status === "available" && curatedPresets.length > 0 ? (
@@ -499,21 +611,18 @@ function Fact({ label, value }: { label: string; value: string }) {
   );
 }
 
-function Unavailable({ read }: { read: BackendRead<unknown> }) {
-  if (read.status !== "unavailable") return null;
+function Unavailable({ read, onRetry }: { read: BackendRead<unknown>; onRetry?: () => void }) {
   return (
-    <div className="grid w-full gap-1 rounded-lg border border-[#f7b4ad] bg-danger-soft p-3 leading-6 text-danger">
-      <strong>Unavailable</strong>
-      <span>{read.reason}</span>
-      {read.httpStatus ? <span>HTTP {read.httpStatus}</span> : null}
-      {read.correlationId ? <span>Correlation {read.correlationId}</span> : null}
-    </div>
+    <ErrorNotice
+      className="w-full"
+      context="public-start"
+      {...(onRetry ? { onRetry } : {})}
+      read={read}
+    />
   );
 }
 
 function StartGate({
-  isReadinessRefreshing,
-  isRecoveryRefreshing,
   isRetryScheduled,
   onRetry,
   readiness,
@@ -521,10 +630,10 @@ function StartGate({
   retriesExhausted,
   retryAttempt,
   retryDelayMs,
+  presentation,
   statusMessage,
+  startRetryAfterMs,
 }: {
-  isReadinessRefreshing: boolean;
-  isRecoveryRefreshing: boolean;
   isRetryScheduled: boolean;
   onRetry: () => void;
   readiness: BackendRead<HealthResponse>;
@@ -532,16 +641,21 @@ function StartGate({
   retriesExhausted: boolean;
   retryAttempt: number;
   retryDelayMs: number | null;
+  presentation: ErrorPresentation | null;
   statusMessage: string | null;
+  startRetryAfterMs: number | null;
 }) {
   const runInProgress = recovery.status === "available" && isRunStartBlocked(recovery);
   const recoveryUnavailable = recovery.status === "unavailable";
   const readinessBlocked = readinessBlocksRunStart(readiness);
-  const isRefreshing = isRecoveryRefreshing || isReadinessRefreshing;
-  const failedChecks =
-    readiness.status === "available" && readiness.data.status !== "ok"
-      ? readiness.data.checks.filter((check) => check.status !== "ok")
-      : [];
+  const retryAfterMs = [
+    recovery.status === "unavailable" ? recovery.retryAfterMs : undefined,
+    readiness.status === "unavailable" ? readiness.retryAfterMs : undefined,
+    startRetryAfterMs ?? undefined,
+  ].find((value) => value !== undefined);
+  const retryWaitActive = retryAfterMs !== undefined && retryAfterMs > 0;
+  const shouldShowRetryWait =
+    retryWaitActive && (recoveryUnavailable || readinessBlocked || startRetryAfterMs !== null);
 
   return (
     <div className="grid max-w-[32rem] justify-items-end gap-2 text-right max-[700px]:w-full max-[700px]:max-w-none max-[700px]:justify-items-start max-[700px]:text-left">
@@ -565,24 +679,19 @@ function StartGate({
           <StatusPill status={{ label: "ready", tone: "idle" }} />
         )}
       </div>
-      {failedChecks.length > 0 ? (
-        <dl className="m-0 grid w-full gap-2 rounded-lg border border-border p-3 text-left">
-          {failedChecks.map((check) => (
-            <Fact
-              key={check.name}
-              label={readinessCheckLabel(check.name)}
-              value={check.message ?? readinessCheckStatusLabel(check.status)}
-            />
-          ))}
-        </dl>
-      ) : readiness.status === "unavailable" ? (
-        <Unavailable read={readiness} />
+      {readinessBlocked ? (
+        <ReadinessNotice
+          {...(readiness.status === "unavailable" && readiness.retryAfterMs ? {} : { onRetry })}
+          read={readiness}
+        />
       ) : null}
-      {recoveryUnavailable ? <Unavailable read={recovery} /> : null}
-      {recoveryUnavailable || readinessBlocked ? (
-        <button className={buttonClassName} disabled={isRefreshing} onClick={onRetry} type="button">
-          {isRefreshing ? "Checking availability" : "Check again"}
-        </button>
+      {recoveryUnavailable ? <Unavailable onRetry={onRetry} read={recovery} /> : null}
+      {recoveryUnavailable || readinessBlocked || startRetryAfterMs !== null ? (
+        shouldShowRetryWait && retryAfterMs !== undefined ? (
+          <p className="m-0 text-sm text-muted">
+            Wait {Math.ceil(retryAfterMs / 1_000)} seconds before trying again.
+          </p>
+        ) : null
       ) : null}
       {isRetryScheduled && retryDelayMs !== null ? (
         <p className="m-0 text-sm text-muted">
@@ -593,44 +702,65 @@ function StartGate({
           Automatic retries paused. Manual retry remains available.
         </p>
       ) : null}
-      {statusMessage ? (
+      {presentation ? (
+        <ErrorNotice context="public-start" onRetry={onRetry} presentation={presentation} />
+      ) : statusMessage ? (
         <p className="m-0 text-sm font-semibold text-muted-strong">{statusMessage}</p>
       ) : null}
     </div>
   );
 }
 
-function readinessPresentation(readiness: BackendRead<HealthResponse>): PresentationState {
-  if (readiness.status === "loading") {
-    return {
-      state: "infrastructure-checking",
-      label: "checking infrastructure",
-      tone: "idle",
-      description: "Checking infrastructure readiness.",
-    };
-  }
-  if (readiness.status === "unavailable" || readiness.data.status === "unavailable") {
-    return {
-      state: "infrastructure-unavailable",
-      label: "infrastructure unavailable",
-      tone: "danger",
-      description: "Infrastructure is unavailable.",
-    };
-  }
-  if (readiness.data.status === "degraded") {
-    return {
-      state: "infrastructure-degraded",
-      label: "infrastructure needs attention",
-      tone: "warning",
-      description: "Infrastructure needs attention.",
-    };
-  }
+export function readinessPresentation(readiness: BackendRead<HealthResponse>): PresentationState {
+  const readinessStatus =
+    readiness.status === "unavailable" ||
+    (readiness.status === "available" && readiness.data.status === "unavailable")
+      ? "unavailable"
+      : "degraded";
+  const presentation =
+    readiness.status === "loading"
+      ? mapErrorPresentation(readiness, "public-start")
+      : mapErrorPresentation(readiness, {
+          surface: "public-start",
+          readiness: readinessStatus,
+        });
   return {
-    state: "infrastructure-ready",
-    label: "infrastructure ready",
-    tone: "ok",
-    description: "Infrastructure is ready.",
+    state:
+      readiness.status === "loading"
+        ? "infrastructure-checking"
+        : `infrastructure-${readinessStatus}`,
+    label:
+      readiness.status === "loading"
+        ? "checking infrastructure"
+        : presentation.headline.toLowerCase(),
+    tone: presentation.tone,
+    description: presentation.explanation ?? presentation.headline,
   };
+}
+
+function ReadinessNotice({
+  onRetry,
+  read,
+}: {
+  onRetry?: () => void;
+  read: BackendRead<HealthResponse>;
+}) {
+  if (read.status === "available" && read.data.status === "ok") return null;
+  if (read.status === "loading")
+    return <ErrorNotice context="public-start" {...(onRetry ? { onRetry } : {})} read={read} />;
+  return (
+    <ErrorNotice
+      context={{
+        surface: "public-start",
+        readiness:
+          read.status === "unavailable" || read.data.status === "unavailable"
+            ? "unavailable"
+            : "degraded",
+      }}
+      {...(onRetry ? { onRetry } : {})}
+      read={read}
+    />
+  );
 }
 
 function TrafficModeSelector({

@@ -1,4 +1,5 @@
 import type { RunHistoryListResponse } from "@checkout-surge/contracts";
+import { ErrorNotice } from "../components/error-notice";
 import { RunHistoryAdminControls } from "../components/run-history-admin-controls";
 import { RunHistoryList } from "../components/run-history-list";
 import { StatusPill } from "../components/status-pill";
@@ -51,9 +52,11 @@ export default async function RunHistoryPage({ searchParams }: RunHistoryPagePro
           <h2 className="m-0 mt-1 text-base font-bold leading-tight text-ink">
             History unavailable
           </h2>
-          <p className="m-0 mt-3 max-w-[66ch] text-sm font-semibold leading-6 text-danger">
-            {history.reason}
-          </p>
+          <ErrorNotice
+            context={{ surface: "history-read", protected: authenticated }}
+            protectedDetails={authenticated}
+            read={history}
+          />
         </section>
       )}
     </>

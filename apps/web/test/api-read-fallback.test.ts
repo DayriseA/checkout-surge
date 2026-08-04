@@ -2,6 +2,7 @@ import {
   emptyHttpTimingBreakdownSummary,
   emptyRequestArrivalSummary,
   emptyServerReservationTimingSummary,
+  errorPayloadSchema,
   evaluateFastReservationTarget,
 } from "@checkout-surge/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -176,6 +177,46 @@ describe("dashboard backend API reads", () => {
     ]);
   });
 
+  it("keeps only the safe canonical selector and retry timing on unavailable public props", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request) => {
+        const url = String(input);
+        if (url.endsWith("/demo/presets/public")) {
+          return new Response(
+            JSON.stringify(
+              errorPayloadSchema.parse({
+                code: "backend_unavailable",
+                message: "Private preset backend message.",
+                details: { probe: "private-probe" },
+                correlationId: "private-public-props-correlation",
+                timestamp: "2026-06-20T00:00:10.000Z",
+              }),
+            ),
+            {
+              status: 503,
+              headers: { "content-type": "application/json", "retry-after": "3" },
+            },
+          );
+        }
+        if (url.endsWith("/health/ready")) return jsonResponse(readinessFixture());
+        return jsonResponse({});
+      }),
+    );
+
+    const surface = await getPublicDemoSurface();
+
+    expect(surface.presets).toEqual({
+      status: "unavailable",
+      errorCode: "backend_unavailable",
+      retryAfterMs: 3_000,
+    });
+    expect(JSON.stringify(surface.presets)).not.toContain("Private preset backend message.");
+    expect(JSON.stringify(surface.presets)).not.toContain("private-probe");
+    expect(JSON.stringify(surface.presets)).not.toContain("private-public-props-correlation");
+    expect(JSON.stringify(surface.presets)).not.toContain("503");
+  });
+
   it("retains contract-valid unavailable readiness details returned with HTTP 503", async () => {
     vi.stubGlobal(
       "fetch",
@@ -206,18 +247,11 @@ describe("dashboard backend API reads", () => {
 
     expect(surface.readiness).toMatchObject({
       status: "available",
-      httpStatus: 503,
-      data: {
-        status: "unavailable",
-        checks: [
-          {
-            name: "database_reachable",
-            status: "unavailable",
-            message: "PostgreSQL readiness check failed.",
-          },
-        ],
-      },
+      data: { status: "unavailable", checks: [] },
     });
+    expect(JSON.stringify(surface.readiness)).not.toContain("database_reachable");
+    expect(JSON.stringify(surface.readiness)).not.toContain("PostgreSQL readiness check failed.");
+    expect(JSON.stringify(surface.readiness)).not.toContain("503");
   });
 
   it("reads run history detail through the shared API contract", async () => {
@@ -244,6 +278,16 @@ function jsonResponse(payload: unknown, status = 200): Response {
     status,
     headers: { "content-type": "application/json" },
   });
+}
+
+function readinessFixture() {
+  return {
+    service: "api",
+    status: "ok",
+    timestamp: "2026-06-20T00:00:10.000Z",
+    uptimeSeconds: 10,
+    checks: [],
+  };
 }
 
 function runHistoryDetailFixture() {

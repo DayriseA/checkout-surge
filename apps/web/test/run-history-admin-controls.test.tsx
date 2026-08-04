@@ -19,6 +19,12 @@ afterEach(() => {
 });
 
 describe("RunHistoryAdminControls", () => {
+  it("does not render an empty dialog error wrapper", () => {
+    const { container } = renderSurface();
+
+    expect(container.querySelector("dialog > div.mt-4")).toBeNull();
+  });
+
   it("sends no request on trigger/cancel and requires the exact delete-all token", async () => {
     const user = userEvent.setup();
     const fetchMock = vi.fn();
@@ -151,9 +157,15 @@ describe("RunHistoryAdminControls", () => {
     await user.click(screen.getByRole("button", { name: /Delete Selected/ }));
 
     await user.click(screen.getByRole("button", { name: "Delete run summary" }));
-    expect(await screen.findByRole("alert")).toHaveProperty("textContent", "Network disconnected");
+    expect((await screen.findByRole("alert")).textContent).toContain(
+      "Something didn't work on our side",
+    );
+    expect(screen.getByText("Technical details")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Delete run summary" }));
-    expect(await screen.findByRole("alert")).toHaveProperty("textContent", "Deletion refused");
+    expect((await screen.findByRole("alert")).textContent).toContain(
+      "Something didn't work on our side",
+    );
+    expect(screen.getByText("Technical details")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Delete run summary" }));
     await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
     expect(fetchMock).toHaveBeenCalledTimes(3);
@@ -164,7 +176,17 @@ describe("RunHistoryAdminControls", () => {
     const user = userEvent.setup();
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => Response.json({ message: "Session expired" }, { status: 401 })),
+      vi.fn(async () =>
+        Response.json(
+          {
+            code: "admin_session_required",
+            message: "Session expired",
+            correlationId: "delete-session-expired",
+            timestamp: "2026-06-20T00:00:00.000Z",
+          },
+          { status: 401 },
+        ),
+      ),
     );
     renderSurface();
     await user.click(screen.getByRole("checkbox", { name: `Select run ${summaries[0]?.runId}` }));
@@ -180,6 +202,23 @@ describe("RunHistoryAdminControls", () => {
     expect(
       (screen.getByRole("button", { name: "Delete all summaries" }) as HTMLButtonElement).disabled,
     ).toBe(true);
+  });
+
+  it("does not refresh on a malformed 401 and retains protected diagnostics", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({ message: "Session expired" }, { status: 401 })),
+    );
+    renderSurface();
+    await user.click(screen.getByRole("checkbox", { name: `Select run ${summaries[0]?.runId}` }));
+    await user.click(screen.getByRole("button", { name: /Delete Selected/ }));
+    await user.click(screen.getByRole("button", { name: "Delete run summary" }));
+
+    await waitFor(() => expect(screen.getByRole("alert")).toBeTruthy());
+    expect(refresh).not.toHaveBeenCalled();
+    expect(screen.getByText("Technical details")).toBeTruthy();
+    expect(screen.getByRole("alert").textContent).toContain("Something didn't work on our side");
   });
 });
 

@@ -1,5 +1,6 @@
 import { runHistoryDetailParamsSchema } from "@checkout-surge/contracts";
 import Link from "next/link";
+import { ErrorNotice } from "../../components/error-notice";
 import { AdminRunHistoryDetail, PublicRunHistoryDetail } from "../../components/run-history-detail";
 import { StatusPill } from "../../components/status-pill";
 import { getAdminRunHistoryDetail, getRunHistoryDetail } from "../../lib/api";
@@ -28,9 +29,9 @@ export default async function RunHistoryDetailPage({ params }: RunHistoryDetailP
     publicDetail ?? {
       status: "unavailable" as const,
       httpStatus: 404,
+      errorCode: "resource_not_found" as const,
       reason: "No finished result exists for this run.",
     };
-  const unavailableReason = detail.status === "unavailable" ? detail.reason : "Detail unavailable.";
   const unavailableStatus = detail.status === "unavailable" ? detail.httpStatus : undefined;
 
   return (
@@ -63,11 +64,11 @@ export default async function RunHistoryDetailPage({ params }: RunHistoryDetailP
           <h2 className="m-0 mt-1 text-base font-bold leading-tight text-ink">
             {unavailableStatus === 404 ? "Run not found" : "Detail unavailable"}
           </h2>
-          <p className="m-0 mt-3 max-w-[66ch] text-sm font-semibold leading-6 text-danger">
-            {unavailableStatus === 404
-              ? "No finished result exists for this run."
-              : unavailableReason}
-          </p>
+          <ErrorNotice
+            context={{ surface: "history-detail", protected: isAdmin }}
+            protectedDetails={isAdmin}
+            read={detail}
+          />
         </section>
       )}
     </>

@@ -26,7 +26,7 @@ import {
   type ServerReservationTimingSummary,
 } from "@checkout-surge/contracts";
 import { previewRunConfigSnapshotFixture as configSnapshotFixture } from "@checkout-surge/contracts/testing";
-import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -75,6 +75,7 @@ vi.mock("../src/app/lib/server/admin-reads.js", () => ({
   readAdminErpChaos: vi.fn(),
   readAdminPresets: vi.fn(),
   readAdminRuntimePolicy: vi.fn(),
+  readAdminReadiness: vi.fn(),
 }));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn() }),
@@ -127,6 +128,121 @@ afterEach(() => {
 });
 
 describe("public browser starts", () => {
+  it("blocks repeated starts while an active-run conflict converges to Watch", async () => {
+    const recovery = deferred<Response>();
+    const fetchMock = vi.fn((input: string | URL | Request) => {
+      if (String(input) === demoRunStartProxyPath) {
+        return Promise.resolve(runConflictResponse("active_run_exists"));
+      }
+      if (String(input) === healthReadyProxyPath) {
+        return Promise.resolve(jsonResponse(readinessFixture()));
+      }
+      if (String(input) === dashboardRecoveryProxyPath) return recovery.promise;
+      throw new Error(`Unexpected fetch: ${String(input)}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    render(createElement(PublicDemoEntry, { surface: publicDemoSurfaceFixture() }));
+    const start = screen.getByRole("button", { name: "Start" }) as HTMLButtonElement;
+    await user.click(start);
+
+    expect(await screen.findByText("A run is already in progress")).toBeTruthy();
+    expect(start.disabled).toBe(true);
+    expect(screen.getByRole("link", { name: "Watch live" }).getAttribute("href")).toBe("/watch");
+    expect(
+      fetchMock.mock.calls.filter(([input]) => String(input) === demoRunStartProxyPath),
+    ).toHaveLength(1);
+
+    recovery.resolve(
+      jsonResponse(
+        dashboardRecoveryFixture({
+          currentRun: demoRunFixture({
+            status: "active",
+            startedAt: "2026-06-20T00:00:11.000Z",
+            trafficStartedAt: "2026-06-20T00:00:11.000Z",
+          }),
+          recoveredAt: "2026-06-20T00:00:11.000Z",
+        }),
+      ),
+    );
+    await waitFor(() => expect(screen.queryByText("A run is already in progress")).toBeNull());
+    expect(start.disabled).toBe(true);
+    expect(screen.getByRole("link", { name: "Watch live" }).getAttribute("href")).toBe("/watch");
+  });
+
+  it("keeps starts blocked after a reset-incomplete conflict until the page is refreshed", async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      if (String(input) === demoRunStartProxyPath) {
+        return runConflictResponse("reset_incomplete");
+      }
+      if (String(input) === healthReadyProxyPath) return jsonResponse(readinessFixture());
+      if (String(input) === dashboardRecoveryProxyPath) {
+        return jsonResponse(dashboardRecoveryFixture({ revision: 2 }));
+      }
+      throw new Error(`Unexpected fetch: ${String(input)}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    render(createElement(PublicDemoEntry, { surface: publicDemoSurfaceFixture() }));
+    const start = screen.getByRole("button", { name: "Start" }) as HTMLButtonElement;
+    await user.click(start);
+
+    expect(await screen.findByText("The demo is still recovering")).toBeTruthy();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    expect(start.disabled).toBe(true);
+    expect(screen.queryByRole("button", { name: "Check again" })).toBeNull();
+    expect(
+      fetchMock.mock.calls.filter(([input]) => String(input) === demoRunStartProxyPath),
+    ).toHaveLength(1);
+  });
+
+  it("removes an expired start rate-limit wait before enabling starts", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      if (String(input) === demoRunStartProxyPath) {
+        return new Response(
+          JSON.stringify(
+            errorPayloadSchema.parse({
+              code: "public_run_budget_exceeded",
+              message: "Public start limit reached.",
+              correlationId: "public-start-limited",
+              timestamp: "2026-06-20T00:00:00.000Z",
+            }),
+          ),
+          {
+            status: 429,
+            headers: { "content-type": "application/json", "retry-after": "10" },
+          },
+        );
+      }
+      if (String(input) === healthReadyProxyPath) return jsonResponse(readinessFixture());
+      throw new Error(`Unexpected fetch: ${String(input)}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(createElement(PublicDemoEntry, { surface: publicDemoSurfaceFixture() }));
+    const start = screen.getByRole("button", { name: "Start" }) as HTMLButtonElement;
+    await act(async () => {
+      fireEvent.click(start);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(start.disabled).toBe(true);
+    expect(screen.getByText("The public run limit has been reached")).toBeTruthy();
+    expect(screen.getAllByText("Wait 10 seconds before trying again.").length).toBeGreaterThan(0);
+    expect(screen.getByText("Wait before retrying")).toBeTruthy();
+
+    await act(async () => vi.advanceTimersByTimeAsync(10_000));
+
+    expect(start.disabled).toBe(false);
+    expect(screen.queryByText("The public run limit has been reached")).toBeNull();
+    expect(screen.queryByText("Wait 10 seconds before trying again.")).toBeNull();
+    expect(screen.queryByText("Wait before retrying")).toBeNull();
+  });
+
   it("submits curated start requests from the public surface", async () => {
     const user = userEvent.setup();
     const fetchMock = vi.fn(async (input: string | URL | Request, _init?: RequestInit) =>
@@ -150,7 +266,7 @@ describe("public browser starts", () => {
     expect(init?.method).toBe("POST");
     expect(jsonRequestBody(init)).toEqual({ presetSlug: "preview-1k" });
     expect(findFetchCall(fetchMock, healthReadyProxyPath)[0]).toBe(healthReadyProxyPath);
-    expect(screen.getByText("Dashboard returned an invalid error response.")).toBeTruthy();
+    expect(screen.getByText("Something didn't work on our side", { exact: false })).toBeTruthy();
   });
 
   it("displays the default ERP failure ratio as a percentage and submits the contract ratio", async () => {
@@ -279,7 +395,7 @@ describe("public recovery convergence", () => {
     await act(async () => vi.advanceTimersByTimeAsync(1_000));
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(curatedStart.disabled).toBe(true);
-    expect(screen.getByText("Recovery is temporarily limited.")).toBeTruthy();
+    expect(screen.getByText("Please wait before trying again")).toBeTruthy();
 
     await act(async () => vi.advanceTimersByTimeAsync(10_000));
     expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -357,7 +473,10 @@ describe("public recovery convergence", () => {
                 timestamp: "2026-06-20T00:00:00.000Z",
               }),
             ),
-            { status: 503 },
+            {
+              status: 503,
+              headers: { "content-type": "application/json", "retry-after": "1" },
+            },
           ),
     );
     vi.stubGlobal("fetch", fetchMock);
@@ -372,9 +491,69 @@ describe("public recovery convergence", () => {
     expect(
       screen.getByText("Automatic retries paused. Manual retry remains available."),
     ).toBeTruthy();
+    const manualRetry = screen.getByRole("button", { name: "Check again" });
 
     await act(async () => vi.advanceTimersByTimeAsync(60_000));
     expect(recoveryFetchCount(fetchMock)).toBe(7);
+    await act(async () => {
+      fireEvent.click(manualRetry);
+      await Promise.resolve();
+    });
+    expect(recoveryFetchCount(fetchMock)).toBe(8);
+  });
+
+  it("guards every readiness request until the current Retry-After expires", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      if (String(input) === dashboardRecoveryProxyPath) {
+        return jsonResponse(dashboardRecoveryFixture());
+      }
+      if (String(input) === healthReadyProxyPath) {
+        const readinessRequests = fetchMock.mock.calls.filter(
+          ([requestInput]) => String(requestInput) === healthReadyProxyPath,
+        ).length;
+        return readinessRequests === 1
+          ? new Response(
+              JSON.stringify(
+                errorPayloadSchema.parse({
+                  code: "backend_unavailable",
+                  message: "Readiness temporarily unavailable.",
+                  correlationId: "public-readiness-limited",
+                  timestamp: "2026-06-20T00:00:00.000Z",
+                }),
+              ),
+              {
+                status: 503,
+                headers: { "content-type": "application/json", "retry-after": "120" },
+              },
+            )
+          : jsonResponse(readinessFixture());
+      }
+      throw new Error(`Unexpected fetch: ${String(input)}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const surface = publicDemoSurfaceFixture();
+    surface.readiness = {
+      status: "unavailable",
+      errorCode: "dashboard_recovery_rate_limited",
+      retryAfterMs: 120_000,
+    };
+
+    render(createElement(PublicDemoEntry, { surface }));
+    expect(screen.queryByRole("button", { name: "Check again" })).toBeNull();
+
+    await act(async () => vi.advanceTimersByTimeAsync(119_999));
+    expect(readinessFetchCount(fetchMock)).toBe(0);
+    await act(async () => vi.advanceTimersByTimeAsync(1));
+    expect(readinessFetchCount(fetchMock)).toBe(1);
+
+    await act(async () => vi.advanceTimersByTimeAsync(119_999));
+    expect(readinessFetchCount(fetchMock)).toBe(1);
+    await act(async () => vi.advanceTimersByTimeAsync(1));
+    expect(readinessFetchCount(fetchMock)).toBe(2);
+    expect((screen.getByRole("button", { name: "Start" }) as HTMLButtonElement).disabled).toBe(
+      false,
+    );
   });
 
   it("polls readiness slowly and blocks starts on an unavailable check", async () => {
@@ -409,8 +588,8 @@ describe("public recovery convergence", () => {
     await act(async () => vi.advanceTimersByTimeAsync(60_000));
 
     expect(curatedStart.disabled).toBe(true);
-    expect(screen.getByText("Inventory reservation")).toBeTruthy();
-    expect(screen.getByText("Redis readiness check failed.")).toBeTruthy();
+    expect(screen.getByText("The demo is temporarily unavailable")).toBeTruthy();
+    expect(screen.queryByText("Redis readiness check failed.")).toBeNull();
     expect(
       fetchMock.mock.calls.filter(([input]) => String(input) === healthReadyProxyPath),
     ).toHaveLength(1);
@@ -458,6 +637,7 @@ describe("admin browser workflows", () => {
         initialErpChaos: available(erpChaosStatusFixture()),
         initialPresets: available(adminPresetListFixture()),
         initialRecovery: available(dashboardRecoveryFixture()),
+        initialReadiness: available(readinessFixture()),
         initialRuntimePolicy: available(adminRuntimePolicyResponseFixture()),
       }),
     );
@@ -504,7 +684,7 @@ describe("watch browser recovery", () => {
     expect(loadingMarkup).not.toContain("Sale evidence");
 
     expect(unavailableMarkup).toContain("Run: updates unavailable");
-    expect(unavailableMarkup).toContain("Current run data could not be loaded.");
+    expect(unavailableMarkup).toContain("Something didn");
     expect(unavailableMarkup).not.toContain("No run has started");
     expect(unavailableMarkup.toLowerCase()).not.toContain("not yet");
     expect(unavailableMarkup).not.toContain("Sale evidence");
@@ -964,11 +1144,11 @@ describe("watch browser recovery", () => {
     await screen.findByText("Preview 1k");
     act(() => FakeEventSource.instances[0]?.emit("error", new Event("error")));
 
-    await screen.findByText("Recovery temporarily unavailable.");
+    await screen.findByText("The latest information is temporarily unavailable");
     expect(screen.getAllByText("Last-known-good data")).toHaveLength(1);
     expect(screen.getByText("Preview 1k")).toBeTruthy();
     expect(screen.queryAllByText("Unavailable")).toHaveLength(0);
-    expect(screen.getAllByText("Correlation watch-refresh-failed")).toHaveLength(1);
+    expect(screen.queryAllByText("Correlation watch-refresh-failed")).toHaveLength(0);
   });
 });
 
@@ -1157,6 +1337,10 @@ function recoveryFetchCount(fetchMock: FetchMock): number {
     .length;
 }
 
+function readinessFetchCount(fetchMock: FetchMock): number {
+  return fetchMock.mock.calls.filter(([input]) => String(input) === healthReadyProxyPath).length;
+}
+
 function jsonRequestBody(init: RequestInit | undefined): unknown {
   if (typeof init?.body !== "string") {
     throw new Error("Expected a string JSON request body.");
@@ -1170,6 +1354,19 @@ function jsonResponse(payload: unknown, status = 200): Response {
     status,
     headers: { "content-type": "application/json" },
   });
+}
+
+function runConflictResponse(conflictReason: "active_run_exists" | "reset_incomplete"): Response {
+  return jsonResponse(
+    errorPayloadSchema.parse({
+      code: "run_conflict",
+      message: "Backend conflict detail must not become public copy.",
+      details: { conflictReason },
+      correlationId: "public-start-conflict",
+      timestamp: "2026-06-20T00:00:10.000Z",
+    }),
+    409,
+  );
 }
 
 function deferred<T>() {

@@ -18,7 +18,7 @@ import { describe, expect, it, vi } from "vitest";
 import { AdminAuthenticatedSurface } from "../src/app/components/admin/admin-authenticated-surface.js";
 import { AdminRuntimePolicyView } from "../src/app/components/admin/admin-feature-views.js";
 import { AdminSignInView } from "../src/app/components/admin/admin-sign-in.js";
-import { PublicDemoEntry } from "../src/app/components/public-demo-entry.js";
+import { PublicDemoEntry, readinessPresentation } from "../src/app/components/public-demo-entry.js";
 import type { BackendRead, PublicDemoSurface } from "../src/app/lib/api.js";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
@@ -111,7 +111,8 @@ describe("dashboard control surface", () => {
     const unavailableMarkup = renderToStaticMarkup(
       createElement(PublicDemoEntry, { surface: unavailable }),
     );
-    expect(unavailableMarkup).toContain("Preset service offline");
+    expect(unavailableMarkup).toContain("Something didn");
+    expect(unavailableMarkup).not.toContain("Preset service offline");
   });
 
   it("disables public starts while a run is active", () => {
@@ -154,9 +155,9 @@ describe("dashboard control surface", () => {
 
     const markup = renderToStaticMarkup(createElement(PublicDemoEntry, { surface }));
 
-    expect(markup).toContain("infrastructure unavailable");
-    expect(markup).toContain("Database");
-    expect(markup).toContain("PostgreSQL readiness check failed.");
+    expect(markup).toContain("the demo is temporarily unavailable");
+    expect(markup).not.toContain("database_reachable");
+    expect(markup).not.toContain("PostgreSQL readiness check failed.");
     expect(markup).toContain("disabled");
   });
 
@@ -166,8 +167,8 @@ describe("dashboard control surface", () => {
 
     const markup = renderToStaticMarkup(createElement(PublicDemoEntry, { surface }));
 
-    expect(markup).toContain("infrastructure unavailable");
-    expect(markup).toContain("Readiness proxy offline");
+    expect(markup).toContain("the demo is temporarily unavailable");
+    expect(markup).not.toContain("Readiness proxy offline");
     expect(markup).toContain("disabled");
   });
 
@@ -187,9 +188,19 @@ describe("dashboard control surface", () => {
 
     const markup = renderToStaticMarkup(createElement(PublicDemoEntry, { surface }));
 
-    expect(markup).toContain("infrastructure needs attention");
-    expect(markup).toContain("Queue connectivity is slow.");
+    expect(markup).toContain("the demo is still getting ready");
+    expect(markup).not.toContain("order_process_queue_reachable");
+    expect(markup).not.toContain("Queue connectivity is slow.");
     expect(markup).toContain("disabled");
+  });
+
+  it("keeps degraded and unavailable readiness state vocabulary distinct", () => {
+    expect(
+      readinessPresentation(available({ ...readinessFixture(), status: "degraded" })).state,
+    ).toBe("infrastructure-degraded");
+    expect(
+      readinessPresentation(available({ ...readinessFixture(), status: "unavailable" })).state,
+    ).toBe("infrastructure-unavailable");
   });
 
   it("renders only the admin sign-in gate for anonymous admin access", () => {
@@ -197,6 +208,7 @@ describe("dashboard control surface", () => {
       createElement(AdminSignInView, {
         error: null,
         isPending: false,
+        retryAfterMs: null,
         onPassphraseChange: () => undefined,
         onSignIn: () => undefined,
         passphrase: "",
@@ -234,6 +246,7 @@ describe("dashboard control surface", () => {
         initialErpChaos: available(erpChaosFixture()),
         initialPresets: available(adminPresetListFixture()),
         initialRecovery: available(recoveryFixture(runFixture("draining"))),
+        initialReadiness: available(readinessFixture()),
         initialRuntimePolicy: available(adminRuntimePolicyFixture()),
       }),
     );

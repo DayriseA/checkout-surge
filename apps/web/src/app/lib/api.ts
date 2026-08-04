@@ -84,7 +84,34 @@ export async function getPublicDemoSurface(): Promise<PublicDemoSurface> {
     readJson(`${apiBase}${publicRuntimePolicyPath}`, publicRuntimePolicyResponseSchema),
   ]);
 
-  return { presets, readiness, runtimePolicy, recovery: pendingDashboardRecovery() };
+  // Public props carry only the presentation inputs they need. Correlation, transport status,
+  // backend messages, and diagnostic details remain in the canonical transport response and are
+  // not serialized into the public client tree.
+  return {
+    presets: publicRead(presets),
+    readiness: publicReadiness(readiness),
+    runtimePolicy: publicRead(runtimePolicy),
+    recovery: pendingDashboardRecovery(),
+  };
+}
+
+function publicReadiness(
+  read: CompletedBackendRead<HealthResponse>,
+): CompletedBackendRead<HealthResponse> {
+  if (read.status === "unavailable") return publicRead(read);
+  return {
+    status: "available",
+    data: { ...read.data, checks: [] },
+  };
+}
+
+function publicRead<T>(read: CompletedBackendRead<T>): CompletedBackendRead<T> {
+  if (read.status === "available") return { status: "available", data: read.data };
+  return {
+    status: "unavailable",
+    ...(read.errorCode === undefined ? {} : { errorCode: read.errorCode }),
+    ...(read.retryAfterMs === undefined ? {} : { retryAfterMs: read.retryAfterMs }),
+  };
 }
 
 export async function getRunHistoryPage(

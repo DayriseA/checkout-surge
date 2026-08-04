@@ -9,7 +9,7 @@ export interface ConfirmationDialogProps {
   confirmLabel: string;
   pending?: boolean;
   confirmDisabled?: boolean;
-  error?: string | null;
+  error?: ReactNode;
   children?: ReactNode;
   onCancel: () => void;
   onConfirm: () => void;
@@ -59,9 +59,13 @@ export function ConfirmationDialog({
       </p>
       {children ? <div className="mt-4">{children}</div> : null}
       {error ? (
-        <p aria-live="polite" className="mt-4 text-sm font-semibold text-danger" role="alert">
-          {error}
-        </p>
+        typeof error === "string" ? (
+          <p aria-live="polite" className="mt-4 text-sm font-semibold text-danger" role="alert">
+            {error}
+          </p>
+        ) : (
+          <div className="mt-4">{error}</div>
+        )
       ) : null}
       <div className="mt-5 flex flex-wrap justify-end gap-2">
         <button

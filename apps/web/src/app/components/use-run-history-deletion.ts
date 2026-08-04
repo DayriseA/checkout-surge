@@ -1,9 +1,11 @@
 "use client";
 
-import { adminDeleteRunHistoryResponseSchema } from "@checkout-surge/contracts";
+import { adminDeleteRunHistoryResponseSchema, errorPayloadSchema } from "@checkout-surge/contracts";
 import { useRouter } from "next/navigation";
 import { useCallback, useState } from "react";
 import { adminRunHistoryProxyPath } from "../lib/control-paths";
+import type { AdminNotice } from "../lib/presentation/admin-notice";
+import { adminFailureNotice } from "../lib/presentation/admin-notice";
 import { formatCount } from "../lib/presentation/format";
 
 export type DeleteIntent =
@@ -21,7 +23,7 @@ export interface RunHistoryDeletion {
   confirmDelete: () => Promise<void>;
   deleteAllConfirmation: string;
   setDeleteAllConfirmation: (value: string) => void;
-  error: string | null;
+  error: AdminNotice | null;
   statusMessage: string | null;
   isSubmitting: boolean;
 }
@@ -31,7 +33,7 @@ export function useRunHistoryDeletion(visibleRunIds: string[]): RunHistoryDeleti
   const [selectedRunIds, setSelectedRunIds] = useState<Set<string>>(new Set());
   const [intent, setIntent] = useState<DeleteIntent | null>(null);
   const [deleteAllConfirmation, setDeleteAllConfirmation] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<AdminNotice | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -79,12 +81,18 @@ export function useRunHistoryDeletion(visibleRunIds: string[]): RunHistoryDeleti
           body: JSON.stringify(deletionRequestBody(intent, visibleRunIds, deleteAllConfirmation)),
         });
       } catch (cause) {
-        setError(cause instanceof Error ? cause.message : "Run History deletion failed.");
+        setError(
+          adminFailureNotice({
+            status: "unavailable",
+            reason: cause instanceof Error ? cause.message : "Run History deletion failed.",
+          }),
+        );
         return;
       }
 
       const payload = await response.json().catch(() => null);
-      if (response.status === 401) {
+      const errorPayload = errorPayloadSchema.safeParse(payload);
+      if (errorPayload.success && errorPayload.data.code === "admin_session_required") {
         setIntent(null);
         setSelectedRunIds(new Set());
         setDeleteAllConfirmation("");
@@ -94,13 +102,18 @@ export function useRunHistoryDeletion(visibleRunIds: string[]): RunHistoryDeleti
         return;
       }
       if (!response.ok) {
-        setError(errorMessageFromPayload(payload, "Run History deletion failed."));
+        setError(failureNoticeFromPayload(payload, response.status));
         return;
       }
 
       const parsed = adminDeleteRunHistoryResponseSchema.safeParse(payload);
       if (!parsed.success) {
-        setError("Deletion response did not match the shared contract.");
+        setError(
+          adminFailureNotice({
+            status: "unavailable",
+            reason: "Deletion response did not match the shared contract.",
+          }),
+        );
         return;
       }
 
@@ -150,11 +163,18 @@ function remainingSelection(current: Set<string>, intent: DeleteIntent): Set<str
   return next;
 }
 
-function errorMessageFromPayload(payload: unknown, fallback: string): string {
-  return typeof payload === "object" &&
-    payload !== null &&
-    "message" in payload &&
-    typeof payload.message === "string"
-    ? payload.message
-    : fallback;
+function failureNoticeFromPayload(payload: unknown, httpStatus: number): AdminNotice {
+  const parsed = errorPayloadSchema.safeParse(payload);
+  return adminFailureNotice(
+    parsed.success
+      ? {
+          status: "unavailable",
+          reason: parsed.data.message,
+          errorCode: parsed.data.code,
+          httpStatus,
+          correlationId: parsed.data.correlationId,
+          ...(parsed.data.details === undefined ? {} : { details: parsed.data.details }),
+        }
+      : { status: "unavailable", reason: "Run History deletion failed.", httpStatus },
+  );
 }

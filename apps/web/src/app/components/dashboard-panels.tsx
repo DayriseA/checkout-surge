@@ -30,6 +30,7 @@ import {
   type PresentationState,
 } from "../lib/presentation/run-presentation-state";
 import { StatusPill } from "./status-pill";
+import { ErrorNotice } from "./error-notice";
 import {
   deriveHarnessPreparation,
   RequestArrivalRateSeries,
@@ -127,18 +128,7 @@ function EmptyState({ children }: { children: React.ReactNode }) {
 
 function UnavailableState({ read }: { read: BackendRead<unknown> }) {
   if (read.status === "available") return null;
-  if (read.status === "loading") {
-    return <EmptyState>Checking availability.</EmptyState>;
-  }
-
-  return (
-    <div className="grid gap-1 rounded-lg border border-[#f7b4ad] bg-danger-soft p-3 leading-6 text-danger">
-      <strong>Unavailable</strong>
-      <span>{read.reason}</span>
-      {read.httpStatus ? <span>HTTP {read.httpStatus}</span> : null}
-      {read.correlationId ? <span>Correlation {read.correlationId}</span> : null}
-    </div>
-  );
+  return <ErrorNotice context="watch-read" read={read} />;
 }
 
 function Fact({ label, value, small = false }: { label: string; value: string; small?: boolean }) {
@@ -209,6 +199,9 @@ export function RecoveryStatusPanel({
   const data = recoveryData(recovery);
   const run = data?.currentRun ?? null;
   const hasLastKnownGoodSyncIssue = data !== null && hasSyncIssue;
+  const retryWaitActive =
+    (recovery.status === "unavailable" && (recovery.retryAfterMs ?? 0) > 0) ||
+    (syncIssue?.retryAfterMs ?? 0) > 0;
 
   return (
     <section className={panelNarrowClassName}>
@@ -218,7 +211,7 @@ export function RecoveryStatusPanel({
           <h2 className={panelTitleClassName}>Run availability and updates</h2>
         </div>
         <div className="flex flex-wrap justify-end gap-2">
-          {onRefresh && recovery.status !== "loading" ? (
+          {onRefresh && recovery.status !== "loading" && !retryWaitActive ? (
             <button
               className={`${controlButtonClassName} min-h-9 px-3 py-2 text-sm`}
               disabled={isRefreshing}
@@ -243,16 +236,14 @@ export function RecoveryStatusPanel({
       {hasLastKnownGoodSyncIssue ? (
         <div className="mb-3 grid gap-1 rounded-lg border border-border bg-surface-muted p-3 leading-6 text-muted-strong">
           <strong>Last-known-good data</strong>
-          <span>
+          <div>
             {isRefreshing
               ? "Refreshing the latest run data now."
               : isRetryScheduled && retryDelayMs !== null
                 ? `Retry scheduled in ${formatMilliseconds(retryDelayMs)} (attempt ${retryAttempt}).`
                 : "The latest authoritative data is unavailable."}
-          </span>
-          {syncIssue ? <span>{syncIssue.reason}</span> : null}
-          {syncIssue?.httpStatus ? <span>HTTP {syncIssue.httpStatus}</span> : null}
-          {syncIssue?.correlationId ? <span>Correlation {syncIssue.correlationId}</span> : null}
+          </div>
+          {syncIssue ? <ErrorNotice context="watch-read" read={syncIssue} /> : null}
         </div>
       ) : null}
       {data ? (

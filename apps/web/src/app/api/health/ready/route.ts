@@ -15,5 +15,19 @@ export function GET(
     url: `${apiBaseUrl()}${healthReadyPath}`,
     method: "GET",
     schema: healthResponseSchema,
-  });
+  }).then((response) => sanitizePublicReadiness(response));
+}
+
+async function sanitizePublicReadiness(response: Response): Promise<Response> {
+  if (response.status !== 200 && response.status !== 503) return response;
+
+  try {
+    const parsed = healthResponseSchema.safeParse(await response.clone().json());
+    if (!parsed.success) return response;
+
+    const headers = new Headers(response.headers);
+    return Response.json({ ...parsed.data, checks: [] }, { status: response.status, headers });
+  } catch {
+    return response;
+  }
 }

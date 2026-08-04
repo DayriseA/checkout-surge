@@ -28,6 +28,7 @@ import {
   adminMaintenanceCleanupRunsProxyPath,
   adminPresetDuplicateProxyPath,
   adminPresetListProxyPath,
+  adminPresetSaveProxyPath,
   adminPublicRuntimePolicyProxyPath,
   dashboardRecoveryProxyPath,
 } from "../src/app/lib/control-paths.js";
@@ -86,6 +87,35 @@ describe("admin feature controllers", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe(adminErpChaosResetProxyPath);
     expect(fetchMock.mock.calls[0]?.[1]?.method).toBe("POST");
+  });
+
+  it("renders protected readiness probes in a collapsed operator block", () => {
+    render(
+      <AdminAuthenticatedSurface
+        {...surfaceProps(null)}
+        initialReadiness={{
+          status: "available",
+          httpStatus: 503,
+          data: {
+            service: "api",
+            status: "unavailable",
+            timestamp: "2026-06-20T00:00:00.000Z",
+            uptimeSeconds: 1,
+            checks: [
+              {
+                name: "database_reachable",
+                status: "unavailable",
+                message: "PostgreSQL readiness check failed.",
+              },
+            ],
+          },
+        }}
+      />,
+    );
+
+    expect(screen.getByText("Readiness probe details")).toBeTruthy();
+    expect(screen.getByText("database_reachable")).toBeTruthy();
+    expect(screen.getByText(/PostgreSQL readiness check failed/)).toBeTruthy();
   });
 
   it("keeps unrelated controls enabled while an ERP mutation is pending", async () => {
@@ -214,10 +244,39 @@ describe("admin feature controllers", () => {
         (screen.getByRole("button", { name: "Start Admin Run" }) as HTMLButtonElement).disabled,
       ).toBe(false),
     );
-    expect(await screen.findByText("Reset outcome is uncertain.")).toBeTruthy();
+    expect(await screen.findByText("Something didn't work on our side")).toBeTruthy();
     expect(fetchMock.mock.calls.map(([input]) => String(input))).toEqual([
       adminDemoResetProxyPath,
       knownRecoveryPath,
+    ]);
+  });
+
+  it("keeps preset mutation failures separate from dashboard recovery retry", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === adminPresetSaveProxyPath) {
+        return canonicalErrorResponse("Preset save failed", 503, "backend_unavailable");
+      }
+      if (String(input) === dashboardRecoveryProxyPath) {
+        return jsonResponse({ ...recoveryFixture(null), revision: 2 });
+      }
+      throw new Error(`Unexpected fetch: ${String(input)}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<AdminAuthenticatedSurface {...surfaceProps(null)} />);
+
+    await user.click(screen.getByRole("button", { name: "Save Preset" }));
+    expect(
+      await screen.findByText("The latest information is temporarily unavailable"),
+    ).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Check again" })).toBeNull();
+    expect(fetchMock).toHaveBeenCalledOnce();
+
+    await user.click(screen.getByRole("button", { name: "Retry Recovery" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(fetchMock.mock.calls.map(([input]) => String(input))).toEqual([
+      adminPresetSaveProxyPath,
+      dashboardRecoveryProxyPath,
     ]);
   });
 
@@ -259,7 +318,9 @@ describe("admin feature controllers", () => {
 
     expect(fetchMock).not.toHaveBeenCalled();
     expect(
-      await screen.findByText("Duplicate target slug is outside the shared contract."),
+      await screen.findByText(
+        "Check the values and try again. Use the available fields and limits for this operation.",
+      ),
     ).toBeTruthy();
   });
 
@@ -302,6 +363,36 @@ describe("admin feature controllers", () => {
       targetSlug: "preview-clone",
       displayName: "Custom Copy",
     });
+  });
+
+  it("turns a duplicate slug conflict into edit guidance without recovery retry", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        canonicalErrorResponse("A preset already uses that slug.", 409, "preset_conflict", {
+          conflictReason: "slug_in_use",
+          slug: "private-duplicate-slug",
+          internal: "private-detail",
+        }),
+      ),
+    );
+    const user = userEvent.setup();
+    render(
+      <AdminPresetController
+        initialPresets={presetListFixture("Custom")}
+        recovery={available(recoveryFixture(null))}
+      />,
+    );
+
+    await user.clear(screen.getByLabelText("Duplicate slug"));
+    await user.type(screen.getByLabelText("Duplicate slug"), "taken-slug");
+    await user.click(screen.getByRole("button", { name: "Duplicate" }));
+
+    expect(await screen.findByText("That preset slug is already in use")).toBeTruthy();
+    expect(screen.getByText("Choose another slug")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Check again" })).toBeNull();
+    expect(document.body.textContent).not.toContain("private-duplicate-slug");
+    expect(document.body.textContent).not.toContain("private-detail");
   });
 
   it("preserves an in-progress preset draft while refreshed props update start gating", async () => {
@@ -358,6 +449,23 @@ describe("admin feature controllers", () => {
     expect((screen.getByLabelText("Max buyers") as HTMLInputElement).value).toBe("4321");
   });
 
+  it("refreshes the runtime policy only for the canonical session-expired error", async () => {
+    const fetchMock = vi.fn(async () =>
+      canonicalErrorResponse("Session expired", 401, "admin_session_required"),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(
+      <AdminRuntimePolicyController
+        initialRuntimePolicy={available(runtimePolicyFixture(10_000, 300))}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Refresh Policy" }));
+    await waitFor(() => expect(navigation.refresh).toHaveBeenCalledOnce());
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
   it("disables the archive control for protected presets", () => {
     render(
       <AdminPresetController
@@ -396,7 +504,7 @@ describe("admin feature controllers", () => {
   it("closes an archive confirmation and refreshes server auth state on 401", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => jsonResponse({ message: "Session expired" }, 401)),
+      vi.fn(async () => canonicalErrorResponse("Session expired", 401, "admin_session_required")),
     );
     const user = userEvent.setup();
     render(
@@ -412,6 +520,73 @@ describe("admin feature controllers", () => {
     await user.click(screen.getByRole("button", { name: "Archive preset" }));
     await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
     expect(navigation.refresh).toHaveBeenCalledOnce();
+  });
+
+  it("keeps non-session 401 diagnostics instead of refreshing", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        canonicalErrorResponse("Control token missing", 401, "control_token_required"),
+      ),
+    );
+    const user = userEvent.setup();
+    render(
+      <AdminPresetController
+        initialPresets={available<AdminPresetListResponse>({
+          presets: [archivablePresetFixture("operator-dup", "Operator Dup")],
+          timestamp: "2026-06-20T00:00:10.000Z",
+        })}
+        recovery={available(recoveryFixture(null))}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Archive Preset" }));
+    await user.click(screen.getByRole("button", { name: "Archive preset" }));
+
+    expect(await screen.findByText("Operator connection needs attention")).toBeTruthy();
+    expect(screen.getByText("Technical details")).toBeTruthy();
+    expect(navigation.refresh).not.toHaveBeenCalled();
+  });
+
+  it("disables stale archive capability after a not-archivable conflict", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        canonicalErrorResponse(
+          "Only operator-created admin presets can be archived.",
+          409,
+          "preset_conflict",
+          {
+            conflictReason: "not_archivable",
+            slug: "private-archive-slug",
+            internal: "private-detail",
+          },
+        ),
+      ),
+    );
+    const user = userEvent.setup();
+    render(
+      <AdminPresetController
+        initialPresets={available<AdminPresetListResponse>({
+          presets: [archivablePresetFixture("operator-dup", "Operator Dup")],
+          timestamp: "2026-06-20T00:00:10.000Z",
+        })}
+        recovery={available(recoveryFixture(null))}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Archive Preset" }));
+    await user.click(screen.getByRole("button", { name: "Archive preset" }));
+
+    expect(await screen.findByText("This preset can no longer be archived")).toBeTruthy();
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(
+      (screen.getByRole("button", { name: "Archive Preset" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+    expect(screen.getByRole("link", { name: "Refresh presets" }).getAttribute("href")).toBe(
+      "/admin",
+    );
+    expect(document.body.textContent).not.toContain("private-archive-slug");
+    expect(document.body.textContent).not.toContain("private-detail");
   });
 
   it("keeps archive failures visible and allows retry in the same dialog", async () => {
@@ -444,10 +619,10 @@ describe("admin feature controllers", () => {
     );
     await user.click(screen.getByRole("button", { name: "Archive Preset" }));
     await user.click(screen.getByRole("button", { name: "Archive preset" }));
-    expect(await screen.findByRole("alert")).toHaveProperty(
-      "textContent",
-      "Archive temporarily unavailable",
+    expect((await screen.findByRole("alert")).textContent).toContain(
+      "The latest information is temporarily unavailable",
     );
+    expect(screen.getByText("Technical details")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Archive preset" }));
     await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
     expect(deleteAttempts).toBe(2);
@@ -495,6 +670,70 @@ describe("admin feature controllers", () => {
     expect(screen.queryByRole("button", { name: "Operator Dup" })).toBeNull();
     expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("Custom");
     expect((screen.getByLabelText("Duplicate slug") as HTMLInputElement).value).toBe("custom-copy");
+  });
+
+  it("keeps an archive success after the follow-up list refresh fails", async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "DELETE") {
+        return jsonResponse({
+          slug: "operator-dup",
+          archivedAt: "2026-06-20T00:00:12.000Z",
+          timestamp: "2026-06-20T00:00:12.000Z",
+        });
+      }
+      return canonicalErrorResponse("List refresh failed", 503);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(
+      <AdminPresetController
+        initialPresets={available<AdminPresetListResponse>({
+          presets: [archivablePresetFixture("operator-dup", "Operator Dup"), presetFixture()],
+          timestamp: "2026-06-20T00:00:10.000Z",
+        })}
+        recovery={available(recoveryFixture(null))}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Archive Preset" }));
+    await user.click(screen.getByRole("button", { name: "Archive preset" }));
+
+    await waitFor(() => expect(screen.getByText("Preset archived.")).toBeTruthy());
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Operator Dup" })).toBeNull();
+    expect(screen.getByText("Technical details")).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps a duplicate success when the follow-up list refresh fails", async () => {
+    const clone = presetWithSlug("preview-clone", "Custom Copy");
+    const { canArchive: _canArchive, ...cloneContract } = clone;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === adminPresetDuplicateProxyPath && init?.method === "POST") {
+        return jsonResponse({ preset: cloneContract, timestamp: "2026-06-20T00:00:12.000Z" });
+      }
+      return canonicalErrorResponse("List refresh failed", 503);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(
+      <AdminPresetController
+        initialPresets={presetListFixture("Custom")}
+        recovery={available(recoveryFixture(null))}
+      />,
+    );
+
+    await user.clear(screen.getByLabelText("Duplicate slug"));
+    await user.type(screen.getByLabelText("Duplicate slug"), "preview-clone");
+    await user.click(screen.getByRole("button", { name: "Duplicate" }));
+
+    await waitFor(() => expect(screen.getByText("Preset duplicated.")).toBeTruthy());
+    expect(screen.getByRole("button", { name: "Custom Copy" })).toBeTruthy();
+    expect(
+      (screen.getByRole("button", { name: "Archive Preset" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+    expect(screen.getByText("Technical details")).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("clears the preset editor after archiving the last remaining preset", async () => {
@@ -593,6 +832,13 @@ function surfaceProps(currentRun: DashboardProjection["currentRun"]) {
       timestamp: "2026-06-20T00:00:10.000Z",
     }),
     initialRecovery: available(recoveryFixture(currentRun)),
+    initialReadiness: available({
+      service: "api" as const,
+      status: "ok" as const,
+      timestamp: "2026-06-20T00:00:10.000Z",
+      uptimeSeconds: 10,
+      checks: [],
+    }),
     initialRuntimePolicy: { status: "unavailable" as const, reason: "Not loaded" },
   };
 }
@@ -608,11 +854,21 @@ function available<T>(data: T): BackendRead<T> {
   return { status: "available", data, httpStatus: 200 };
 }
 
-function canonicalErrorResponse(message: string, status: number): Response {
+function canonicalErrorResponse(
+  message: string,
+  status: number,
+  code:
+    | "backend_unavailable"
+    | "admin_session_required"
+    | "control_token_required"
+    | "preset_conflict" = "backend_unavailable",
+  details?: Record<string, unknown>,
+): Response {
   return jsonResponse(
     errorPayloadSchema.parse({
-      code: "backend_unavailable",
+      code,
       message,
+      ...(details ? { details } : {}),
       correlationId: "admin-controller-error",
       timestamp: "2026-06-20T00:00:00.000Z",
     }),

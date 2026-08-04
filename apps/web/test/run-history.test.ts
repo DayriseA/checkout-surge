@@ -292,7 +292,7 @@ describe("run history surface", () => {
     const markup = renderToStaticMarkup(page);
 
     expect(markup).toContain("Run not found");
-    expect(markup).toContain("No finished result exists for this run.");
+    expect(markup).toContain("That result is no longer available");
     expect(markup).toContain("not found");
     expect(markup).not.toContain("Detail unavailable");
     expect(markup).not.toContain("Invalid UUID");
@@ -305,6 +305,8 @@ describe("run history surface", () => {
     const runId = "55555555-5555-4555-8555-555555555555";
     getRunHistoryDetail.mockResolvedValue({
       status: "unavailable",
+      httpStatus: 503,
+      correlationId: "public-history-correlation",
       reason: "backend offline",
     });
 
@@ -312,11 +314,35 @@ describe("run history surface", () => {
     const markup = renderToStaticMarkup(page);
 
     expect(markup).toContain("Detail unavailable");
-    expect(markup).toContain("backend offline");
+    expect(markup).toContain("Something didn");
+    expect(markup).not.toContain("backend offline");
+    expect(markup).not.toContain("public-history-correlation");
+    expect(markup).not.toContain("Technical details");
     expect(markup).not.toContain("Run not found");
     expect(getRunHistoryDetail).toHaveBeenCalledOnce();
     expect(getRunHistoryDetail).toHaveBeenCalledWith(runId);
     expect(getAdminRunHistoryDetail).not.toHaveBeenCalled();
+  });
+
+  it("retains detail diagnostics only for an authenticated history failure", async () => {
+    const runId = "55555555-5555-4555-8555-555555555555";
+    hasValidAdminPageSession.mockResolvedValue(true);
+    getAdminRunHistoryDetail.mockResolvedValue({
+      status: "unavailable",
+      errorCode: "backend_unavailable",
+      httpStatus: 503,
+      correlationId: "admin-history-correlation",
+      reason: "admin history backend diagnostic",
+    });
+
+    const page = await RunHistoryDetailPage({ params: Promise.resolve({ runId }) });
+    const markup = renderToStaticMarkup(page);
+
+    expect(markup).toContain("Detail unavailable");
+    expect(markup).toContain("Technical details");
+    expect(markup).toContain("admin-history-correlation");
+    expect(markup).toContain("admin history backend diagnostic");
+    expect(markup).not.toContain("Something didn");
   });
 
   it("keeps diagnostics behind the validated admin page session", async () => {

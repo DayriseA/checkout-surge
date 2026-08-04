@@ -7,8 +7,11 @@ import type {
 } from "@checkout-surge/contracts";
 import type { PresetDraft, RunConfigDraft, RuntimePolicyDraft } from "../../lib/admin-drafts";
 import type { BackendRead } from "../../lib/api";
+import type { AdminNotice } from "../../lib/presentation/admin-notice";
 import { formatCount } from "../../lib/presentation/format";
+import { ErrorNotice } from "../error-notice";
 import { StatusPill } from "../status-pill";
+import { AdminNoticeView } from "./admin-notice";
 
 export const panelClassName =
   "min-w-0 rounded-lg border border-border bg-surface p-4 max-[900px]:col-span-full";
@@ -29,7 +32,7 @@ export function AdminRuntimePolicyView({
 }: {
   draft: RuntimePolicyDraft | null;
   isPending: boolean;
-  notice: string | null;
+  notice: AdminNotice | null;
   onRefresh: () => void;
   onSave: () => void;
   onUpdateDraft: (next: Partial<RuntimePolicyDraft>) => void;
@@ -164,7 +167,7 @@ export function AdminRuntimePolicyView({
           </button>
         </div>
       )}
-      {notice ? <Notice>{notice}</Notice> : null}
+      <AdminNoticeView notice={notice} />
     </section>
   );
 }
@@ -200,6 +203,7 @@ export function AdminPresetView({
   duplicateTargetSlug,
   isPending,
   notice,
+  syncNotice,
   onArchive,
   onCopyToCustom,
   onDuplicate,
@@ -216,7 +220,8 @@ export function AdminPresetView({
   draft: PresetDraft | null;
   duplicateTargetSlug: string;
   isPending: boolean;
-  notice: string | null;
+  notice: AdminNotice | null;
+  syncNotice: AdminNotice | null;
   onArchive: () => void;
   onCopyToCustom: () => void;
   onDuplicate: (targetSlug: string) => void;
@@ -350,7 +355,8 @@ export function AdminPresetView({
           <p className="m-0 text-muted">No admin presets are available.</p>
         )}
       </div>
-      {notice ? <Notice>{notice}</Notice> : null}
+      <AdminNoticeView notice={notice} />
+      <AdminNoticeView notice={syncNotice} />
     </section>
   );
 }
@@ -508,7 +514,7 @@ export function AdminErpDiagnosticsView({
   isPending: boolean;
   latencyMs: string;
   maxTps: string;
-  notice: string | null;
+  notice: AdminNotice | null;
   onApply: () => void;
   onErrorRateChange: (value: string) => void;
   onForcedOutageChange: (value: boolean) => void;
@@ -554,7 +560,7 @@ export function AdminErpDiagnosticsView({
         </button>
       </div>
       {erpChaos.status === "unavailable" ? <Unavailable read={erpChaos} /> : null}
-      {notice ? <Notice>{notice}</Notice> : null}
+      <AdminNoticeView notice={notice} />
     </section>
   );
 }
@@ -636,19 +642,7 @@ export function Fact({ label, value }: { label: string; value: string }) {
 }
 
 export function Unavailable({ read }: { read: BackendRead<unknown> }) {
-  if (read.status !== "unavailable") return null;
-  return (
-    <div className="mt-3 grid gap-1 rounded-lg border border-[#f7b4ad] bg-danger-soft p-3 leading-6 text-danger">
-      <strong>Unavailable</strong>
-      <span>{read.reason}</span>
-      {read.httpStatus ? <span>HTTP {read.httpStatus}</span> : null}
-      {read.correlationId ? <span>Correlation {read.correlationId}</span> : null}
-    </div>
-  );
-}
-
-function Notice({ children }: { children: React.ReactNode }) {
-  return <p className="m-0 mt-4 text-sm font-semibold text-muted-strong">{children}</p>;
+  return <ErrorNotice className="mt-3" context="admin-read" protectedDetails read={read} />;
 }
 
 function LabeledTextInput({

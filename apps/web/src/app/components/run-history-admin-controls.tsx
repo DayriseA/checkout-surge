@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import { useMemo } from "react";
 import { FiTrash2 } from "react-icons/fi";
 import { formatCount } from "../lib/presentation/format";
+import { AdminNoticeView } from "./admin/admin-notice";
 import { ConfirmationDialog } from "./confirmation-dialog";
 import { RunHistoryAdminProvider } from "./run-history-admin-context";
 import { type DeleteIntent, useRunHistoryDeletion } from "./use-run-history-deletion";
@@ -96,7 +97,7 @@ export function RunHistoryAdminControls({ visibleRunIds, children }: RunHistoryA
             ? "Permanently delete every run summary. This cannot be undone."
             : `Permanently delete ${deletion.intent?.description ?? ""}. This cannot be undone.`
         }
-        error={deletion.error}
+        error={deletion.error ? <AdminNoticeView notice={deletion.error} /> : null}
         onCancel={deletion.closeIntent}
         onConfirm={() => void deletion.confirmDelete()}
         open={deletion.intent !== null}

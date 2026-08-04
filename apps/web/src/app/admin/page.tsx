@@ -4,6 +4,7 @@ import { pendingDashboardRecovery } from "../lib/api";
 import { hasValidAdminPageSession } from "../lib/server/admin-page-session";
 import {
   readAdminErpChaos,
+  readAdminReadiness,
   readAdminPresets,
   readAdminRuntimePolicy,
 } from "../lib/server/admin-reads";
@@ -17,6 +18,7 @@ export default async function AdminPage() {
     readAdminErpChaos(),
     readAdminPresets(),
     readAdminRuntimePolicy(),
+    readAdminReadiness(),
   ]);
   return (
     <>
@@ -32,6 +34,7 @@ export default async function AdminPage() {
         initialErpChaos={reads[0]}
         initialPresets={reads[1]}
         initialRecovery={pendingDashboardRecovery()}
+        initialReadiness={reads[3]}
         initialRuntimePolicy={reads[2]}
       />
     </>

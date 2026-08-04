@@ -11,6 +11,9 @@ import {
   type ErpChaosStatus,
   erpChaosStatusPath,
   erpChaosStatusSchema,
+  healthReadyPath,
+  healthResponseSchema,
+  type HealthResponse,
 } from "@checkout-surge/contracts";
 import type { BackendRead } from "../api";
 import { type ContractSchema, readBackendResponse } from "../backend-read";
@@ -19,6 +22,7 @@ import { webServerConfig } from "./config";
 async function readProtectedJson<T>(
   url: string,
   schema: ContractSchema<T>,
+  acceptedContractStatuses?: readonly number[],
 ): Promise<BackendRead<T>> {
   let response: Response;
   try {
@@ -37,9 +41,18 @@ async function readProtectedJson<T>(
   }
 
   return readBackendResponse(response, schema, {
+    ...(acceptedContractStatuses ? { acceptedContractStatuses } : {}),
     invalidError: "Admin backend returned an invalid error response.",
     invalidSuccess: "Admin backend response did not match the expected contract.",
   });
+}
+
+export function readAdminReadiness(): Promise<BackendRead<HealthResponse>> {
+  return readProtectedJson(
+    `${webServerConfig().apiBaseUrl}${healthReadyPath}`,
+    healthResponseSchema,
+    [503],
+  );
 }
 
 export function readAdminPresets(): Promise<BackendRead<AdminPresetListResponse>> {

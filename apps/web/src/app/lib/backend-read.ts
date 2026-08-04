@@ -19,14 +19,15 @@ export type BackendRead<T> =
   | {
       status: "available";
       data: T;
-      httpStatus: number;
+      httpStatus?: number;
     }
   | {
       status: "unavailable";
-      reason: string;
+      reason?: string;
       httpStatus?: number;
       errorCode?: ErrorPayloadCode;
       correlationId?: string;
+      details?: Record<string, unknown>;
       retryAfterMs?: number;
     };
 
@@ -75,6 +76,7 @@ export async function readBackendResponse<T>(
       httpStatus: response.status,
       errorCode: parsedError.data.code,
       correlationId: parsedError.data.correlationId,
+      ...(parsedError.data.details === undefined ? {} : { details: parsedError.data.details }),
       ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
     };
   }

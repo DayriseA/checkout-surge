@@ -140,21 +140,37 @@ export function useDashboardRecovery(
     retrySchedulerRef.current?.reset();
     await refresh();
   }, [refresh]);
+  const hasInitialRetryWait =
+    !hasLocalRecoveryActivityRef.current &&
+    initialRecovery.status === "unavailable" &&
+    initialRecovery.retryAfterMs !== undefined;
+  const retryAfterLive =
+    hasInitialRetryWait || retrySchedulerRef.current?.state().scheduled === true;
+  const recovery = withLiveRetryAfter(state.recovery, retryAfterLive);
+  const syncIssue = state.syncIssue ? withLiveRetryAfter(state.syncIssue, retryAfterLive) : null;
 
   return {
-    recovery: state.recovery,
+    recovery,
     isRefreshing: state.isRefreshing,
     isRetryScheduled: retryState.scheduled,
     retryAttempt: retryState.attempt,
     retryDelayMs: retryState.delayMs,
     retriesExhausted: retryState.exhausted,
-    syncIssue: state.syncIssue,
+    syncIssue,
     hasSyncIssue: state.syncIssue !== null,
     signalSamples: state.signalSamples,
     refresh,
     retryNow,
     applyProjection,
   };
+}
+
+function withLiveRetryAfter<T extends BackendRead<unknown>>(read: T, retryScheduled: boolean): T {
+  if (retryScheduled || read.status !== "unavailable" || read.retryAfterMs === undefined) {
+    return read;
+  }
+  const { retryAfterMs: _expiredRetryAfterMs, ...withoutRetryAfter } = read;
+  return withoutRetryAfter as T;
 }
 
 function recoveryIdentity(recovery: BackendRead<DashboardProjection>): string {

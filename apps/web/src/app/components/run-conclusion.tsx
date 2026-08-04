@@ -29,7 +29,7 @@ function publicPopulationLabel(item: Reconciliation, side: "left" | "right"): st
     case "notifications_below_confirmations":
       return side === "left" ? publicVocabulary.notifications : "confirmed orders";
     default:
-      return side === "left" ? item.leftPopulation : item.rightPopulation;
+      return side === "left" ? "first observed population" : "second observed population";
   }
 }
 
@@ -46,9 +46,12 @@ function publicReconciliationReason(item: Reconciliation): string | null {
         return "Some accepted responses may repeat an existing reservation.";
       }
       if (reason === "The populations represent different observations.") {
-        return reason;
+        return "Accepted checkout responses and unique reservations measure different stages of the run.";
       }
-      return reason;
+      if (reason === "Durable reservation evidence is unavailable.") {
+        return "The durable reservation count is not available for comparison.";
+      }
+      return null;
     case "sold_out_decisions_vs_responses":
       if (reason === "Observed replies and durable decisions are separate populations.") {
         return "Load-generator reply observations and durable rejection records are separate populations.";
@@ -59,7 +62,7 @@ function publicReconciliationReason(item: Reconciliation): string | null {
       if (reason === "Durable sold-out decision evidence is unavailable.") {
         return "Durable sold-out rejection evidence is unavailable.";
       }
-      return reason;
+      return null;
     case "partial_generator_coverage":
       return "Only attempts that reached a response are included in the load-generator evidence.";
     case "generator_evidence_unavailable":
@@ -69,7 +72,7 @@ function publicReconciliationReason(item: Reconciliation): string | null {
     case "notifications_below_confirmations":
       return "Not every confirmed order has a recorded simulated email.";
     default:
-      return reason;
+      return null;
   }
 }
 

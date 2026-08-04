@@ -296,6 +296,62 @@ describe("run result presentation", () => {
     expect(markup).not.toContain("Observed sold-out replies exceed recorded server decisions.");
   });
 
+  it("owns normal different-population copy for a no-replay result", () => {
+    const markup = renderToStaticMarkup(
+      createElement(RunConclusion, {
+        result: deriveRunResult(cleanEvidence),
+        runStatus: "completed",
+      }),
+    );
+
+    expect(markup).toContain(
+      "Accepted checkout responses and unique reservations measure different stages of the run.",
+    );
+    expect(markup).not.toContain("The populations represent different observations.");
+    expect(markup).not.toContain("accepted responses observed by generator");
+    expect(markup).not.toContain("unique reservations secured");
+  });
+
+  it("fails closed for unexpected reconciliation populations and reasons", () => {
+    const result = deriveRunResult(cleanEvidence);
+    const accepted = result.reconciliations[0];
+    const soldOut = result.reconciliations[1];
+    if (!accepted || !soldOut) throw new Error("Expected reconciliation fixtures.");
+    const tainted: typeof result = {
+      ...result,
+      reconciliations: [
+        {
+          ...accepted,
+          leftPopulation: "UNSAFE ACCEPTED POPULATION",
+          rightPopulation: "UNSAFE RESERVATION POPULATION",
+          reason: "UNSAFE ACCEPTED REASON",
+        },
+        {
+          ...soldOut,
+          leftPopulation: "UNSAFE SOLD OUT POPULATION",
+          rightPopulation: "UNSAFE DECISION POPULATION",
+          reason: "UNSAFE SOLD OUT REASON",
+        },
+        {
+          code: "future_contract_reconciliation",
+          leftPopulation: "UNSAFE FUTURE LEFT",
+          leftValue: 1,
+          rightPopulation: "UNSAFE FUTURE RIGHT",
+          rightValue: 2,
+          classification: "warning",
+          reason: "UNSAFE FUTURE REASON",
+        },
+      ],
+    };
+    const markup = renderToStaticMarkup(
+      createElement(RunConclusion, { result: tainted, runStatus: "completed" }),
+    );
+
+    expect(markup).not.toContain("UNSAFE");
+    expect(markup).toContain("first observed population");
+    expect(markup).toContain("second observed population");
+  });
+
   it("renders nothing for a draining lifecycle even when given a derived result", () => {
     const result = deriveRunResult(withEvidence({ runStatus: "draining" }));
     const markup = renderToStaticMarkup(

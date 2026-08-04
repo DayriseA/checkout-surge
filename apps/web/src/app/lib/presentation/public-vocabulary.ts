@@ -179,34 +179,6 @@ export function protectionReasonLabel(reason: string | null): string {
   }
 }
 
-export function readinessCheckLabel(name: string): string {
-  switch (name) {
-    case "database_reachable":
-      return "Database";
-    case "redis_reachable":
-      return "Inventory reservation";
-    case "order_process_queue_reachable":
-      return "Order processing";
-    case "mock_erp_reachable":
-      return "Simulated ERP";
-    case "load_orchestrator_reachable":
-      return "Load generator";
-    default:
-      return "Service readiness";
-  }
-}
-
-export function readinessCheckStatusLabel(status: "ok" | "degraded" | "unavailable"): string {
-  switch (status) {
-    case "ok":
-      return "Ready";
-    case "degraded":
-      return "Needs attention";
-    case "unavailable":
-      return "Unavailable";
-  }
-}
-
 export function queueConnectivityLabel(connectivity: string): string {
   return connectivity === "reachable" ? "Available" : "Needs attention";
 }
