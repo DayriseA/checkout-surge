@@ -34,7 +34,7 @@ describe("dashboard control surface", () => {
     expect(markup).not.toContain("Forced outage");
     expect(markup).toContain("Public custom");
     expect(markup).toContain("Start Public Custom");
-    expect(markup).toContain("ERP max TPS");
+    expect(markup).toContain("Simulated ERP capacity (orders/s)");
     expect(markup).toContain(">ready<");
     expect(markup).not.toContain("database_reachable");
     expect(markup).not.toContain("Current run");
@@ -155,7 +155,7 @@ describe("dashboard control surface", () => {
     const markup = renderToStaticMarkup(createElement(PublicDemoEntry, { surface }));
 
     expect(markup).toContain("infrastructure unavailable");
-    expect(markup).toContain("database_reachable");
+    expect(markup).toContain("Database");
     expect(markup).toContain("PostgreSQL readiness check failed.");
     expect(markup).toContain("disabled");
   });
@@ -187,7 +187,7 @@ describe("dashboard control surface", () => {
 
     const markup = renderToStaticMarkup(createElement(PublicDemoEntry, { surface }));
 
-    expect(markup).toContain("infrastructure degraded");
+    expect(markup).toContain("infrastructure needs attention");
     expect(markup).toContain("Queue connectivity is slow.");
     expect(markup).toContain("disabled");
   });

@@ -3,14 +3,20 @@ import type {
   DashboardProjection,
   PublicRunHistoryDetailResponse,
   RunHistoryListResponse,
+  RunSignalTimelineHeadline,
 } from "@checkout-surge/contracts";
 import {
+  confirmationLagBoundary,
   dashboardProjectionSchemaName,
   dashboardProjectionSchemaVersion,
   emptyRequestArrivalSummary,
   evaluateFastReservationTarget,
+  queueBacklogDefinition,
+  queueBacklogDrainDurationBoundary,
+  runSignalBucketCount,
   type ServerReservationTimingSummary,
 } from "@checkout-surge/contracts";
+import { previewRunConfigSnapshotFixture } from "@checkout-surge/contracts/testing";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -55,12 +61,12 @@ describe("run history surface", () => {
 
     expect(markup).toContain("Preview 1k");
     expect(markup).toContain("55555555-5555-4555-8555-555555555555");
-    expect(markup).toContain("traffic complete");
+    expect(markup).toContain("Traffic delivery: All planned attempts dispatched");
     expect(markup).toContain("Request arrival");
     expect(markup).toContain("10 attempts/s");
     expect(markup).toContain("1-second window");
     expect(markup).toContain("Load generator");
-    expect(markup).toContain("what k6 observed");
+    expect(markup).toContain("what the load generator observed");
     expect(markup).toContain("Planned attempts");
     expect(markup).toContain("Dispatched");
     expect(markup).toContain("Replies recorded");
@@ -72,15 +78,99 @@ describe("run history surface", () => {
     // This run recorded every reply, so coverage and the survivorship caveat stay hidden.
     expect(markup).not.toContain("recorded a reply");
     expect(markup).not.toContain("Outcomes and latency");
-    expect(markup).toContain("System of record");
-    expect(markup).toContain("what the API recorded");
+    expect(markup).toContain("Durable checkout records");
+    expect(markup).toContain("Reservation and order outcomes recorded by Checkout-Surge");
     expect(markup).toContain("Unique reservations secured");
+    expect(markup).toContain("sold-out rejections recorded by Checkout-Surge");
     expect(markup).toContain("Confirmed orders");
-    expect(markup).toContain("Terminal inventory");
-    expect(markup).toContain("Starting stock");
-    expect(markup).toContain("redis snapshot captured");
+    expect(markup).toContain("Final inventory");
+    expect(markup).toContain("starting stock");
+    expect(markup).toContain("Inventory evidence recorded");
     expect(markup).toContain('href="/run-history/55555555-5555-4555-8555-555555555555"');
     expect(markup).toContain("View details");
+  });
+
+  it("collapses warning and degraded delivery into one public partial-delivery state", () => {
+    const history = runHistoryFixture();
+    const summary = history.summaries[0];
+    if (!summary) throw new Error("Expected a history summary fixture.");
+    const markup = renderToStaticMarkup(
+      createElement(RunHistoryList, {
+        history: {
+          ...history,
+          summaries: [
+            {
+              ...summary,
+              runId: "55555555-5555-4555-8555-555555555551",
+              trafficDeliverySummary: {
+                ...summary.trafficDeliverySummary,
+                trafficDeliveryStatus: "warning",
+              },
+            },
+            {
+              ...summary,
+              runId: "55555555-5555-4555-8555-555555555552",
+              trafficDeliverySummary: {
+                ...summary.trafficDeliverySummary,
+                trafficDeliveryStatus: "degraded",
+              },
+            },
+          ],
+          totalCount: 2,
+        },
+      }),
+    );
+
+    expect(markup.match(/Traffic delivery: Partial delivery/g)).toHaveLength(2);
+    expect(markup).not.toContain("Traffic delivery: warning");
+    expect(markup).not.toContain("Traffic delivery: degraded");
+  });
+
+  it("leaves oversell unknown when no authoritative inventory snapshot was captured", () => {
+    const history = runHistoryFixture();
+    const summary = history.summaries[0];
+    if (!summary) throw new Error("Expected a history summary fixture.");
+    const { terminalInventorySnapshot: _snapshot, ...withoutSnapshot } = summary;
+    const markup = renderToStaticMarkup(
+      createElement(RunHistoryList, {
+        history: {
+          ...history,
+          summaries: [{ ...withoutSnapshot, runSignalTimelineSummary: timelineHeadlineFixture() }],
+        },
+      }),
+    );
+
+    expect(markup).toContain("oversell unknown");
+    expect(markup).not.toContain("0 oversold");
+    expect(markup).toContain("No final inventory evidence recorded.");
+  });
+
+  it("does not publish an unobserved arrival summary as a measured peak", () => {
+    const history = runHistoryFixture();
+    const summary = history.summaries[0];
+    if (!summary) throw new Error("Expected a history summary fixture.");
+    const markup = renderToStaticMarkup(
+      createElement(RunHistoryList, {
+        history: {
+          ...history,
+          summaries: [
+            {
+              ...summary,
+              trafficDeliverySummary: {
+                ...summary.trafficDeliverySummary,
+                requestArrivalSummary: emptyRequestArrivalSummary,
+              },
+              runSignalTimelineSummary: timelineHeadlineFixture(),
+            },
+          ],
+        },
+      }),
+    );
+
+    expect(markup).toContain("No checkout attempt was recorded for this run.");
+    expect(markup).toContain("Not recorded for this run");
+    expect(markup).not.toContain("0 attempts/s");
+    expect(markup).not.toContain("dispatched in 0 s");
   });
 
   it("renders a clear empty state before terminal summaries exist", () => {
@@ -96,8 +186,9 @@ describe("run history surface", () => {
       }),
     );
 
+    expect(markup).toContain("Finished runs");
     expect(markup).toContain("No history yet");
-    expect(markup).toContain("Terminal summaries appear here");
+    expect(markup).toContain("Finished-run evidence appears here");
   });
 
   it("distinguishes an out-of-range page from globally empty history", () => {
@@ -125,10 +216,10 @@ describe("run history surface", () => {
       createElement(PublicRunHistoryDetail, { detail: runHistoryDetailFixture() }),
     );
 
-    expect(markup).toContain("Terminal detail");
+    expect(markup).toContain("Run detail");
     expect(markup).toContain("Load generator");
-    expect(markup).toContain("what k6 observed");
-    expect(markup).toContain("Observed outcomes");
+    expect(markup).toContain("what the load generator observed");
+    expect(markup).toContain("Durable checkout records");
     expect(markup).toContain("p95 latency");
     expect(markup).not.toContain("Interrupted");
     expect(markup).not.toContain("Unstarted");
@@ -137,13 +228,13 @@ describe("run history surface", () => {
     expect(markup).toMatch(/Dispatched<\/dt><dd[^>]*>9<\/dd>/);
     expect(markup).toMatch(/Replies recorded<\/dt><dd[^>]*>7<\/dd>/);
     expect(markup).toMatch(
-      /Replies not recorded<span[^>]*>generator shut down before the reply arrived<\/span><\/dt><dd[^>]*>2<\/dd>/,
+      /Replies not recorded<span[^>]*>load generator stopped before the reply arrived<\/span><\/dt><dd[^>]*>2<\/dd>/,
     );
     expect(markup).toMatch(
       /Never dispatched<span[^>]*>scenario window closed before these were sent<\/span><\/dt><dd[^>]*>1<\/dd>/,
     );
-    expect(markup).toMatch(/Accepted responses<\/dt><dd[^>]*>4<\/dd>/);
-    expect(markup).toMatch(/Sold-out responses<\/dt><dd[^>]*>3<\/dd>/);
+    expect(markup).toMatch(/accepted responses<\/dt><dd[^>]*>4<\/dd>/);
+    expect(markup).toMatch(/sold-out rejections seen by the load generator<\/dt><dd[^>]*>3<\/dd>/);
     expect(markup).toMatch(/Unexpected<\/dt><dd[^>]*>0<\/dd>/);
     expect(markup).toMatch(
       /Client HTTP p95<span[^>]*>observed replies only<\/span><\/dt><dd[^>]*>42 ms<\/dd>/,
@@ -151,13 +242,13 @@ describe("run history surface", () => {
     // 7 of 9 dispatched attempts recorded a reply.
     expect(markup).toContain("78% of dispatched attempts recorded a reply");
     expect(markup).toContain(
-      "Outcomes and latency above cover 7 of 10 attempts. The p95 describes replies received only. Server-side totals are the authoritative record.",
+      "Outcomes and latency above cover 7 of 10 attempts. The p95 describes replies received only. Durable checkout records are the authoritative record.",
     );
-    expect(markup).toContain("Accepted configuration");
-    expect(markup).toContain("Order aggregates");
-    expect(markup).toContain("ERP aggregates");
+    expect(markup).toContain("Run configuration");
+    expect(markup).toContain("Durable checkout records");
+    expect(markup).toContain("Simulated ERP calls");
     expect(markup).toContain("Public activity totals");
-    expect(markup).toContain("Unavailable for this run");
+    expect(markup).toContain("Not recorded for this run");
     expect(markup).not.toContain("Peak 0");
     expect(markup).not.toContain("0 remaining");
     expect(markup).not.toContain("Generator diagnostics");
@@ -183,10 +274,10 @@ describe("run history surface", () => {
     expect(markup).toContain("Replies recorded");
     expect(markup).toContain("Replies not recorded");
     expect(markup).toContain("Never dispatched");
-    expect(markup).toContain("System of record");
+    expect(markup).toContain("Durable checkout records");
     expect(markup).toContain("Generator diagnostics");
     expect(markup).toContain("k6 v1.0.0");
-    expect(markup).toContain("Client-observed HTTP phases");
+    expect(markup).toContain("Observed response timing");
     expect(markup).toContain("Waiting p95");
     expect(markup).not.toContain("Interrupted");
     expect(markup).not.toContain("Unstarted");
@@ -201,7 +292,7 @@ describe("run history surface", () => {
     const markup = renderToStaticMarkup(page);
 
     expect(markup).toContain("Run not found");
-    expect(markup).toContain("No terminal summary exists for this run.");
+    expect(markup).toContain("No finished result exists for this run.");
     expect(markup).toContain("not found");
     expect(markup).not.toContain("Detail unavailable");
     expect(markup).not.toContain("Invalid UUID");
@@ -272,7 +363,6 @@ describe("cross-route presentation of the same instant and duration", () => {
       createElement(RecoveryStatusPanel, {
         recovery: { status: "available", data: watchProjectionFixture(), httpStatus: 200 },
         realtimeStatus: "disconnected",
-        liveProjectionCount: 0,
         presentation: {
           state: "ready",
           tone: "idle",
@@ -305,7 +395,7 @@ describe("cross-route presentation of the same instant and duration", () => {
     expectedText,
     forbidden,
   }) => {
-    const projection = watchProjectionFixture();
+    const projection = activeWatchProjectionFixture();
     projection.recentMetrics = [
       {
         metricName: "traffic.latency",
@@ -318,18 +408,36 @@ describe("cross-route presentation of the same instant and duration", () => {
     const markup = renderToStaticMarkup(
       createElement(RequestSurgePanel, {
         recovery: { status: "available", data: projection, httpStatus: 200 },
-        liveProjectionCount: 1,
         freshness: { state: "live", observedAt: "2026-06-20T00:00:00.000Z", final: false },
       }),
     );
 
     expect(markup).toMatch(
       new RegExp(
-        `Window mean HTTP latency</dt><dd[^>]*>${expectedText.replaceAll(".", "\\.")}</dd>`,
+        `Response latency \\(1-second window; mean\\)</dt><dd[^>]*>${expectedText.replaceAll(".", "\\.")}</dd>`,
       ),
     );
     expect(markup).not.toMatch(/\d,\d{3}\.\d ms/);
     expect(markup).not.toContain(forbidden);
+  });
+
+  it("does not render run-scoped rate evidence while Watch is idle", () => {
+    const markup = renderToStaticMarkup(
+      createElement(RequestSurgePanel, {
+        recovery: { status: "available", data: watchProjectionFixture(), httpStatus: 200 },
+        freshness: {
+          state: "not-applicable",
+          observedAt: "2026-06-20T00:00:00.000Z",
+          final: false,
+        },
+      }),
+    );
+
+    expect(markup).toContain("No run has started");
+    expect(markup).not.toContain("measurement window");
+    expect(markup).not.toContain("not yet available");
+    expect(markup).not.toContain("Final request totals appear here");
+    expect(markup).not.toContain("attempts/s");
   });
 
   it("renders one instant with the same dated UTC reading on Watch and both history routes", () => {
@@ -429,6 +537,23 @@ function watchProjectionFixture(): DashboardProjection {
   };
 }
 
+function activeWatchProjectionFixture(): DashboardProjection {
+  const projection = watchProjectionFixture();
+  projection.currentRun = {
+    runId: "55555555-5555-4555-8555-555555555555",
+    presetId: "66666666-6666-4666-8666-666666666666",
+    presetName: "Active fixture",
+    operatorMode: "public",
+    status: "active",
+    trafficStatus: "active",
+    saleOfferId: "77777777-7777-4777-8777-777777777777",
+    configSnapshot: previewRunConfigSnapshotFixture(),
+    startedAt: "2026-06-20T00:00:00.000Z",
+    trafficStartedAt: "2026-06-20T00:00:00.000Z",
+  };
+  return projection;
+}
+
 function runHistoryFixture(): RunHistoryListResponse {
   return {
     summaries: [
@@ -517,6 +642,41 @@ function runHistoryFixture(): RunHistoryListResponse {
     pageSize: 10,
     totalCount: 1,
     timestamp: "2026-06-20T00:00:10.000Z",
+  };
+}
+
+function timelineHeadlineFixture(): RunSignalTimelineHeadline {
+  return {
+    window: {
+      anchoredAt: "2026-06-20T00:00:00.000Z",
+      endedAt: "2026-06-20T00:00:10.000Z",
+      bucketCount: runSignalBucketCount,
+      bucketWidthSeconds: 1,
+    },
+    inventoryDrain: {
+      startingStock: 10,
+      remainingStock: 0,
+      depletedAt: "2026-06-20T00:00:05.000Z",
+      timeToDepletionSeconds: 5,
+    },
+    queueBacklog: {
+      peakBacklog: 6,
+      peakAtElapsedSeconds: 3,
+      backlogDrainedAt: "2026-06-20T00:00:09.000Z",
+      drainDurationSeconds: 9,
+      drainDurationBoundary: queueBacklogDrainDurationBoundary,
+      definition: queueBacklogDefinition,
+    },
+    confirmationConvergence: {
+      confirmedOrderCount: 5,
+      failedOrderCount: 1,
+      pendingAtCaptureCount: 0,
+      averageLagMs: 2_000,
+      p95LagMs: 3_000,
+      maxLagMs: 4_000,
+      boundary: confirmationLagBoundary,
+    },
+    convergenceDurationSeconds: 9,
   };
 }
 

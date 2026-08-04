@@ -1,5 +1,4 @@
 import {
-  deriveOversoldUnits,
   deriveRunResult,
   type RunHistoryListResponse,
   type RunHistorySummary,
@@ -7,15 +6,24 @@ import {
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { formatCount, formatInstantUtc } from "../lib/presentation/format";
+import {
+  durableCheckoutLens,
+  publicStatusLabel,
+  publicVocabulary,
+  trafficDeliveryStatusTone,
+} from "../lib/presentation/public-vocabulary";
 import { deriveOverallRunDuration } from "../lib/presentation/run-duration";
 import { deriveTerminalSummaryPresentation } from "../lib/presentation/run-presentation-state";
-import { evidenceFromRunHistorySummary } from "../lib/presentation/run-result-presentation";
+import {
+  evidenceFromRunHistorySummary,
+  oversoldUnitsFromTerminalInventory,
+} from "../lib/presentation/run-result-presentation";
 import { GoldSignalHeadlines } from "./gold-signals";
 import { RunConclusion } from "./run-conclusion";
 import { RunHistoryDeleteAllButton } from "./run-history-delete-all-button";
 import { RunHistoryRowControls } from "./run-history-row-controls";
 import { StatusPill } from "./status-pill";
-import { systemOfRecordLens, TransportObservationSection } from "./transport-observation";
+import { TransportObservationSection } from "./transport-observation";
 
 interface RunHistoryListProps {
   history: RunHistoryListResponse;
@@ -29,10 +37,11 @@ export function RunHistoryList({ history }: RunHistoryListProps) {
 
     return (
       <section className="rounded-lg border border-border bg-surface p-4">
-        <p className="m-0 text-xs font-bold uppercase text-muted">Completed runs</p>
+        <p className="m-0 text-xs font-bold uppercase text-muted">Finished runs</p>
         <h2 className="m-0 mt-1 text-base font-bold leading-tight text-ink">No history yet</h2>
         <p className="m-0 mt-3 max-w-[66ch] text-sm leading-6 text-muted">
-          Terminal summaries appear here after a load run reaches API-owned finalization.
+          Finished-run evidence appears here after the load generator completes and final records
+          are written.
         </p>
       </section>
     );
@@ -53,7 +62,7 @@ export function RunHistoryList({ history }: RunHistoryListProps) {
 function OutOfRangePageState({ history }: { history: RunHistoryListResponse }) {
   return (
     <section className="rounded-lg border border-border bg-surface p-4">
-      <p className="m-0 text-xs font-bold uppercase text-muted">Completed runs</p>
+      <p className="m-0 text-xs font-bold uppercase text-muted">Finished runs</p>
       <h2 className="m-0 mt-1 text-base font-bold leading-tight text-ink">
         Page {history.page} has no summaries
       </h2>
@@ -77,7 +86,7 @@ function RunHistorySummaryArticle({ summary }: { summary: RunHistorySummary }) {
     ["Started", <LifecycleInstant key="started" value={summary.startedAt} />],
     ["Ended", <LifecycleInstant key="ended" value={summary.endedAt} />],
     ["Overall run duration", overallDuration.text],
-    ["Captured", <LifecycleInstant key="captured" value={summary.capturedAt} />],
+    ["Evidence recorded", <LifecycleInstant key="captured" value={summary.capturedAt} />],
     ...(summary.failureCategory
       ? [["Failure category", summary.failureCategory] as [string, ReactNode]]
       : []),
@@ -89,7 +98,7 @@ function RunHistorySummaryArticle({ summary }: { summary: RunHistorySummary }) {
       <RunConclusion result={result} runStatus={summary.status} />
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="m-0 text-xs font-bold uppercase text-muted">Terminal summary</p>
+          <p className="m-0 text-xs font-bold uppercase text-muted">Run result</p>
           <h2 className="m-0 mt-1 text-xl font-bold leading-tight text-ink">
             {summary.presetName}
           </h2>
@@ -98,11 +107,23 @@ function RunHistorySummaryArticle({ summary }: { summary: RunHistorySummary }) {
           </p>
         </div>
         <div className="flex flex-wrap justify-end gap-2">
-          <StatusPill status={runPresentation} />
           <StatusPill
             status={{
-              label: `traffic ${summary.trafficDeliverySummary.trafficDeliveryStatus}`,
-              tone: trafficDeliveryTone(summary.trafficDeliverySummary.trafficDeliveryStatus),
+              ...runPresentation,
+              label: publicStatusLabel({
+                family: "run",
+                status: summary.status,
+                displayLabel: runPresentation.label,
+              }),
+            }}
+          />
+          <StatusPill
+            status={{
+              label: publicStatusLabel({
+                family: "traffic-delivery",
+                status: summary.trafficDeliverySummary.trafficDeliveryStatus,
+              }),
+              tone: trafficDeliveryStatusTone(summary.trafficDeliverySummary.trafficDeliveryStatus),
             }}
           />
           <Link
@@ -124,35 +145,34 @@ function RunHistorySummaryArticle({ summary }: { summary: RunHistorySummary }) {
           surface="list"
         />
         <SummarySection
-          caption={systemOfRecordLens.caption}
+          caption={durableCheckoutLens.caption}
           facts={[
             [
-              "Unique reservations secured",
+              publicVocabulary.uniqueReservationsSecured,
               formatNumber(summary.businessOutcomeSummary.acceptedReservations),
             ],
-            ["Sold-out decisions", formatNumber(summary.businessOutcomeSummary.soldOutRejections)],
+            [
+              publicVocabulary.soldOutRejectionsRecorded,
+              formatNumber(summary.businessOutcomeSummary.soldOutRejections),
+            ],
             ["Confirmed orders", formatNumber(summary.businessOutcomeSummary.confirmedOrders)],
             ["Failed orders", formatNumber(summary.businessOutcomeSummary.failedOrders)],
-            ["Notifications", formatNumber(summary.businessOutcomeSummary.notificationsRecorded)],
             [
-              "Pending persistence",
+              publicVocabulary.notifications,
+              formatNumber(summary.businessOutcomeSummary.notificationsRecorded),
+            ],
+            [
+              publicVocabulary.pendingReservations,
               formatNumber(summary.businessOutcomeSummary.pendingPersistenceCount),
             ],
           ]}
-          title={systemOfRecordLens.title}
+          title={durableCheckoutLens.title}
         />
       </div>
       <GoldSignalHeadlines
         arrivalSummary={summary.trafficDeliverySummary.requestArrivalSummary}
         headline={summary.runSignalTimelineSummary}
-        oversoldUnits={
-          summary.terminalInventorySnapshot
-            ? deriveOversoldUnits({
-                reservedUnits: summary.businessOutcomeSummary.reservedUnits,
-                startingStock: summary.terminalInventorySnapshot.startingStock,
-              })
-            : 0
-        }
+        oversoldUnits={oversoldUnitsFromTerminalInventory(summary)}
       />
       <TerminalInventorySnapshot summary={summary} />
     </article>
@@ -192,9 +212,11 @@ function TerminalInventorySnapshot({ summary }: { summary: RunHistorySummary }) 
   if (!snapshot) {
     return (
       <section className="mt-4 border-t border-border pt-3">
-        <h3 className="m-0 text-sm font-bold text-ink">Terminal inventory</h3>
+        <h3 className="m-0 text-sm font-bold text-ink">Final inventory</h3>
         <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
-          <p className="m-0 text-sm font-semibold text-muted">No terminal snapshot captured.</p>
+          <p className="m-0 text-sm font-semibold text-muted">
+            No final inventory evidence recorded.
+          </p>
           <RunHistoryRowControls presetName={summary.presetName} runId={summary.runId} />
         </div>
       </section>
@@ -203,22 +225,27 @@ function TerminalInventorySnapshot({ summary }: { summary: RunHistorySummary }) 
 
   return (
     <section className="mt-4 border-t border-border pt-3">
-      <h3 className="m-0 text-sm font-bold text-ink">Terminal inventory</h3>
+      <h3 className="m-0 text-sm font-bold text-ink">Final inventory</h3>
       <dl className="m-0 mt-3 grid grid-cols-6 gap-3 max-[900px]:grid-cols-2">
-        <Fact label="Starting stock" value={formatNumber(snapshot.startingStock)} />
+        <Fact label={publicVocabulary.startingStock} value={formatNumber(snapshot.startingStock)} />
         <Fact label="Remaining" value={formatNumber(snapshot.remainingStock)} />
         <Fact label="Reserved" value={formatNumber(snapshot.reservedStock)} />
         <Fact
-          label="Unique reservations secured"
+          label={publicVocabulary.uniqueReservationsSecured}
           value={formatNumber(snapshot.acceptedReservations)}
         />
-        <Fact label="Sold-out decisions" value={formatNumber(snapshot.soldOutRejections)} />
-        <Fact label="Pending" value={formatNumber(snapshot.pendingPersistenceCount)} />
+        <Fact
+          label={publicVocabulary.soldOutRejectionsRecorded}
+          value={formatNumber(snapshot.soldOutRejections)}
+        />
+        <Fact
+          label={publicVocabulary.pendingReservations}
+          value={formatNumber(snapshot.pendingPersistenceCount)}
+        />
       </dl>
       <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
         <p className="m-0 min-w-0 [overflow-wrap:anywhere] text-xs font-semibold text-muted">
-          {snapshot.source} snapshot captured <LifecycleInstant value={snapshot.capturedAt} /> for{" "}
-          {snapshot.saleOfferId}
+          Inventory evidence recorded <LifecycleInstant value={snapshot.capturedAt} />
         </p>
         <RunHistoryRowControls presetName={summary.presetName} runId={summary.runId} />
       </div>
@@ -284,20 +311,6 @@ function PaginationLink({
       {children}
     </Link>
   );
-}
-
-function trafficDeliveryTone(
-  status: RunHistorySummary["trafficDeliverySummary"]["trafficDeliveryStatus"],
-) {
-  if (status === "complete") {
-    return "ok";
-  }
-
-  if (status === "failed") {
-    return "danger";
-  }
-
-  return "warning";
 }
 
 function formatNumber(value: number): string {

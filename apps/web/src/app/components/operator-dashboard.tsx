@@ -45,7 +45,6 @@ export function OperatorDashboard({
     retryDelayMs,
     hasSyncIssue,
     syncIssue,
-    liveProjectionCount,
     signalSamples,
     refresh,
     retryNow,
@@ -86,6 +85,17 @@ export function OperatorDashboard({
     updateExpected: projection ? dashboardUpdateExpected(projection) : false,
   });
   const outcome = projection?.businessOutcome ?? null;
+  // Oversell is an authoritative invariant: it compares durable reserved units with the inventory
+  // snapshot's starting stock. The derived signal timeline is a reservation-row visualization and
+  // is deliberately not an input, so a missing snapshot leaves oversell unknown rather than zero.
+  const oversellStartingStock = projection?.inventory?.allocatedStock ?? null;
+  const oversoldUnits =
+    outcome && oversellStartingStock !== null
+      ? deriveOversoldUnits({
+          reservedUnits: outcome.reservedUnits,
+          startingStock: oversellStartingStock,
+        })
+      : null;
 
   return (
     <div className="grid grid-cols-12 gap-4">
@@ -101,71 +111,61 @@ export function OperatorDashboard({
         presentation={runPresentation}
         {...(projection ? { freshness } : {})}
         realtimeStatus={realtimeStatus}
-        liveProjectionCount={liveProjectionCount}
         onRefresh={() => {
           void retryNow();
         }}
       />
-      <GoldSignals
-        acceptedReservations={outcome?.acceptedReservations ?? 0}
-        arrivalSummary={projection?.requestArrivalSummary ?? null}
-        liveLag={projection?.consistencyLag ?? null}
-        liveSamples={signalSamples}
-        oversoldUnits={
-          projection?.runSignalTimelineSummary || projection?.inventory
-            ? deriveOversoldUnits({
-                reservedUnits: outcome ? outcome.reservedUnits : 0,
-                startingStock:
-                  projection.runSignalTimelineSummary?.inventoryDrain.startingStock ??
-                  projection.inventory?.allocatedStock ??
-                  0,
-              })
-            : 0
-        }
-        retryingOrderCount={outcome?.retryingOrders ?? 0}
-        startingStock={projection?.inventory?.allocatedStock ?? null}
-        terminalSummary={projection?.runSignalTimelineSummary ?? null}
-      />
-      <RequestSurgePanel
-        recovery={recovery}
-        freshness={freshness}
-        liveProjectionCount={liveProjectionCount}
-      />
-      <InventoryDrainPanel
-        recovery={recovery}
-        freshness={freshness}
-        presentation={deriveInventoryOutcomeState(
-          projection?.inventory ?? null,
-          run,
-          outcome?.reservedUnits ?? null,
-        )}
-      />
-      <RunErpOutcomesPanel
-        recovery={recovery}
-        freshness={freshness}
-        presentation={deriveRunErpOutcomeState(projection?.erp ?? null)}
-      />
-      <ConsistencyLagPanel
-        recovery={recovery}
-        freshness={freshness}
-        presentation={deriveLagPresentationState(
-          projection?.consistencyLag?.pendingConfirmationCount ?? null,
-          projection?.consistencyLag?.confirmedOrderCount ?? null,
-          run,
-        )}
-      />
-      <RunOutcomesPanel
-        recovery={recovery}
-        freshness={freshness}
-        presentation={deriveOutcomePresentationState(outcome, run, runPresentation)}
-      />
-      <SystemStatusPanel
-        recovery={recovery}
-        presentation={deriveSharedRuntimeState(projection?.systemStatus ?? null)}
-        erpPresentation={deriveSharedErpProtectionState(
-          projection?.systemStatus?.erpProtection ?? null,
-        )}
-      />
+      {projection ? (
+        <>
+          <GoldSignals
+            acceptedReservations={outcome?.acceptedReservations ?? null}
+            arrivalSummary={projection.requestArrivalSummary}
+            liveLag={projection.consistencyLag}
+            liveSamples={signalSamples}
+            oversoldUnits={oversoldUnits}
+            retryingOrderCount={outcome?.retryingOrders ?? 0}
+            runStatus={run?.status ?? null}
+            startingStock={projection.inventory?.allocatedStock ?? null}
+            terminalSummary={projection.runSignalTimelineSummary}
+          />
+          <RequestSurgePanel recovery={recovery} freshness={freshness} />
+          <InventoryDrainPanel
+            recovery={recovery}
+            freshness={freshness}
+            presentation={deriveInventoryOutcomeState(
+              projection.inventory,
+              run,
+              outcome?.reservedUnits ?? null,
+            )}
+          />
+          <RunErpOutcomesPanel
+            recovery={recovery}
+            freshness={freshness}
+            presentation={deriveRunErpOutcomeState(projection.erp, run)}
+          />
+          <ConsistencyLagPanel
+            recovery={recovery}
+            freshness={freshness}
+            presentation={deriveLagPresentationState(
+              projection.consistencyLag?.pendingConfirmationCount ?? null,
+              projection.consistencyLag?.confirmedOrderCount ?? null,
+              run,
+            )}
+          />
+          <RunOutcomesPanel
+            recovery={recovery}
+            freshness={freshness}
+            presentation={deriveOutcomePresentationState(outcome, run, runPresentation)}
+          />
+          <SystemStatusPanel
+            recovery={recovery}
+            presentation={deriveSharedRuntimeState(projection.systemStatus)}
+            erpPresentation={deriveSharedErpProtectionState(
+              projection.systemStatus?.erpProtection ?? null,
+            )}
+          />
+        </>
+      ) : null}
     </div>
   );
 }

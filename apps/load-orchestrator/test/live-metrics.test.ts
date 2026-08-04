@@ -1,4 +1,8 @@
-import type { LoadMetricIngestRequest, MetricSample } from "@checkout-surge/contracts";
+import {
+  type LoadMetricIngestRequest,
+  liveTrafficMetricWindowSeconds,
+  type MetricSample,
+} from "@checkout-surge/contracts";
 import { describe, expect, it, vi } from "vitest";
 import { MetricBatcher } from "../src/application/api-client.js";
 import { K6JsonLineFramer } from "../src/application/k6-json-line-framer.js";
@@ -28,6 +32,9 @@ describe("K6LiveMetricAggregator", () => {
       metric("traffic.latency", 30, "ms"),
       metric("traffic.failure_rate", 0.5, "ratio"),
     ]);
+    expect(aggregator.requestArrivalSummary().peakArrivalWindowSeconds).toBe(
+      liveTrafficMetricWindowSeconds,
+    );
   });
 
   it("scales request deltas by the full configured window and validates the width", () => {

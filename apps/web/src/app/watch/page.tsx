@@ -10,7 +10,8 @@ export default function WatchPage() {
         <div>
           <h1 className="m-0 text-4xl font-bold leading-tight text-ink">Live watch</h1>
           <p className="mt-3 max-w-[66ch] leading-6 text-muted">
-            Current-run recovery, inventory, queue pressure, and outcome signals.
+            Follow the current flash-sale run: buyer traffic, inventory, order processing, and final
+            outcomes.
           </p>
         </div>
       </header>

@@ -1,7 +1,4 @@
-import {
-  type DashboardProjection,
-  dashboardLiveUpdateExpectedIntervalMs,
-} from "@checkout-surge/contracts";
+import type { DashboardProjection } from "@checkout-surge/contracts";
 import type { ReactNode } from "react";
 import type { BackendRead } from "../lib/api";
 import { projectRequestSurge } from "../lib/dashboard-projection-state";
@@ -10,9 +7,24 @@ import {
   formatDurationMs,
   formatInstantUtc,
   formatWindowSeconds,
-  formatWindowSecondsAdjective,
 } from "../lib/presentation/format";
 import type { Freshness, RealtimeConnectionStatus } from "../lib/presentation/freshness";
+import {
+  circuitStateLabel,
+  durableCheckoutLens,
+  erpAttemptStatusLabel,
+  liveTrafficMetricWindowSeconds,
+  liveTrafficWindowLabel,
+  protectionReasonLabel,
+  publicStatusLabel,
+  publicVocabulary,
+  queueConnectivityLabel,
+  rateWindowLabel,
+  runEvidenceAbsence,
+  runLifecycleStatusLabel,
+  trafficExecutionStatusLabel,
+  trailingRateWindowLabel,
+} from "../lib/presentation/public-vocabulary";
 import {
   deriveFreshnessPresentationState,
   type PresentationState,
@@ -21,7 +33,6 @@ import { StatusPill } from "./status-pill";
 import {
   deriveHarnessPreparation,
   RequestArrivalRateSeries,
-  systemOfRecordLens,
   TransportObservationPanelBlock,
 } from "./transport-observation";
 
@@ -47,7 +58,7 @@ const smallValueClassName = "m-0 [overflow-wrap:anywhere] text-sm font-semibold 
 const controlButtonClassName =
   "min-h-10 rounded-lg border border-border bg-surface px-3.5 py-2.5 font-semibold text-muted-strong disabled:cursor-not-allowed disabled:opacity-60";
 
-/** The unit tag k6 latency samples carry; see `k6-live-metric-aggregator`. */
+/** The unit tag carried by load-generator latency samples. */
 const millisecondUnit = "ms";
 
 function formatNumber(value: number): string {
@@ -173,7 +184,6 @@ function FreshnessLine({ freshness }: { freshness: Freshness }) {
 export function RecoveryStatusPanel({
   recovery,
   realtimeStatus,
-  liveProjectionCount,
   isRefreshing = false,
   isRetryScheduled = false,
   retryAttempt = 0,
@@ -186,7 +196,6 @@ export function RecoveryStatusPanel({
 }: {
   recovery: BackendRead<DashboardProjection>;
   realtimeStatus: RealtimeConnectionStatus;
-  liveProjectionCount: number;
   isRefreshing?: boolean;
   isRetryScheduled?: boolean;
   retryAttempt?: number;
@@ -219,18 +228,27 @@ export function RecoveryStatusPanel({
               {isRefreshing ? "Refreshing" : "Refresh"}
             </button>
           ) : null}
-          <StatusPill status={presentation} />
+          <StatusPill
+            status={{
+              ...presentation,
+              label: publicStatusLabel({
+                family: "run",
+                status: run?.status ?? "starting",
+                displayLabel: presentation.label,
+              }),
+            }}
+          />
         </div>
       </div>
       {hasLastKnownGoodSyncIssue ? (
         <div className="mb-3 grid gap-1 rounded-lg border border-border bg-surface-muted p-3 leading-6 text-muted-strong">
-          <strong>Last-known-good projection</strong>
+          <strong>Last-known-good data</strong>
           <span>
             {isRefreshing
-              ? "Refreshing authoritative snapshot now."
+              ? "Refreshing the latest run data now."
               : isRetryScheduled && retryDelayMs !== null
                 ? `Retry scheduled in ${formatMilliseconds(retryDelayMs)} (attempt ${retryAttempt}).`
-                : "Authoritative recovery is unavailable."}
+                : "The latest authoritative data is unavailable."}
           </span>
           {syncIssue ? <span>{syncIssue.reason}</span> : null}
           {syncIssue?.httpStatus ? <span>HTTP {syncIssue.httpStatus}</span> : null}
@@ -241,11 +259,17 @@ export function RecoveryStatusPanel({
         <>
           {freshness ? <FreshnessLine freshness={freshness} /> : null}
           <dl className={stackedFactGridClassName}>
-            <Fact label="Current run" value={run ? run.presetName : "No active run"} />
-            <Fact label="Traffic" value={run?.trafficStatus ?? "Not active"} />
-            <Fact label="Update stream" value={realtimeStatus} />
-            <Fact label="Projections applied" value={formatNumber(liveProjectionCount)} />
+            <Fact label="Current scenario" value={run ? run.presetName : "No run has started"} />
+            <Fact
+              label="Run"
+              value={run ? runLifecycleStatusLabel(run.status) : "No run has started"}
+            />
+            <Fact
+              label="Load generator"
+              value={run ? trafficExecutionStatusLabel(run.trafficStatus) : "No run has started"}
+            />
           </dl>
+          <p className="m-0 mt-3 text-xs leading-5 text-muted">Updates {realtimeStatus}</p>
         </>
       ) : (
         <UnavailableState read={recovery} />
@@ -256,15 +280,40 @@ export function RecoveryStatusPanel({
 
 export function RequestSurgePanel({
   recovery,
-  liveProjectionCount,
   freshness,
 }: {
   recovery: BackendRead<DashboardProjection>;
-  liveProjectionCount: number;
   freshness: Freshness;
 }) {
   const data = recoveryData(recovery);
+  if (data && data.currentRun === null) {
+    return (
+      <section className={panelWideClassName}>
+        <div className={panelHeaderClassName}>
+          <div>
+            <p className={eyebrowClassName}>Request surge</p>
+            <h2 className={panelTitleClassName}>Traffic arrival and responses</h2>
+          </div>
+          <StatusPill status={deriveFreshnessPresentationState(freshness)} />
+        </div>
+        <EmptyState>No run has started.</EmptyState>
+      </section>
+    );
+  }
   const inventory = data?.inventory ?? null;
+  const runStatus = data?.currentRun?.status ?? null;
+  // Every fact in this panel is load-generator evidence, so all of it is final once traffic ends.
+  const loadGeneratorEvidenceAbsence = runEvidenceAbsence(runStatus, {
+    source: "load-generator",
+    pending: "Waiting for the load generator",
+    settled: "Not recorded for this run",
+  });
+  const timingEvidenceAbsence = runEvidenceAbsence(runStatus, {
+    source: "load-generator",
+    pending: "not yet available",
+    settled: "Not recorded for this run",
+  });
+  const reservationThroughput = inventory?.reservationThroughput ?? null;
   const transportAttemptCounts = data?.transportAttemptCounts ?? null;
   const httpSummary = data?.httpSummary ?? null;
   const requestSurge = data ? projectRequestSurge(data) : null;
@@ -275,7 +324,6 @@ export function RequestSurgePanel({
         data.currentRun?.configSnapshot.trafficConfig.startDelaySeconds,
       )
     : null;
-  const latestMetric = data?.recentMetrics.at(-1) ?? null;
   const latencyMetric = data
     ? findLatestMetric(data.recentMetrics, (name) => name === "traffic.latency")
     : null;
@@ -288,7 +336,7 @@ export function RequestSurgePanel({
       <div className={panelHeaderClassName}>
         <div>
           <p className={eyebrowClassName}>Request surge</p>
-          <h2 className={panelTitleClassName}>Traffic pressure</h2>
+          <h2 className={panelTitleClassName}>Traffic arrival and responses</h2>
         </div>
         <StatusPill status={deriveFreshnessPresentationState(freshness)} />
       </div>
@@ -299,14 +347,14 @@ export function RequestSurgePanel({
             <Fact
               label={
                 requestSurge?.arrivalRateIsPeak
-                  ? `Peak request arrival rate (${formatWindowSecondsAdjective(requestSurge.arrivalWindowSeconds)} windows)`
-                  : "Request arrival rate (1-second window)"
+                  ? `Peak request arrival rate (${rateWindowLabel(requestSurge.arrivalWindowSeconds)})`
+                  : `Request arrival rate (${rateWindowLabel(requestSurge?.arrivalWindowSeconds ?? liveTrafficMetricWindowSeconds)})`
               }
               value={
                 requestSurge?.arrivalRatePerSecond !== null &&
                 requestSurge?.arrivalRatePerSecond !== undefined
                   ? formatObservedRequestRate(requestSurge.arrivalRatePerSecond)
-                  : "Awaiting first full arrival window"
+                  : loadGeneratorEvidenceAbsence
               }
             />
             <Fact
@@ -314,7 +362,7 @@ export function RequestSurgePanel({
               value={
                 requestSurge?.attemptsDispatched === null ||
                 requestSurge?.attemptsDispatched === undefined
-                  ? "Awaiting dispatch"
+                  ? loadGeneratorEvidenceAbsence
                   : formatNumber(requestSurge.attemptsDispatched)
               }
             />
@@ -322,86 +370,89 @@ export function RequestSurgePanel({
               label="Dispatch duration"
               value={formatDurationSeconds(
                 requestSurge?.dispatchDurationSeconds,
-                "not yet available",
+                timingEvidenceAbsence,
               )}
             />
             <Fact
-              label="Response completion rate"
+              label={`Response completion rate (${liveTrafficWindowLabel})`}
               value={formatRate(
                 requestSurge?.responseCompletionRatePerSecond,
                 "responses/s",
-                "not yet available",
+                timingEvidenceAbsence,
               )}
             />
             <Fact
               label="Configured start delay"
               value={formatDurationSeconds(
                 preparation?.configuredDelaySeconds,
-                "not yet available",
+                timingEvidenceAbsence,
               )}
             />
             <Fact
-              label="Remaining harness preparation"
+              label="Time until checkout attempts begin"
               value={formatDurationSeconds(
                 preparation?.remainingPreparationSeconds,
-                "not yet available",
+                timingEvidenceAbsence,
               )}
             />
             <Fact
-              label="Window mean HTTP latency"
+              label={`Response latency (${liveTrafficWindowLabel}; mean)`}
               value={
                 latencyMetric
                   ? formatMetric(latencyMetric.value, latencyMetric.unit, "not measurable")
-                  : "Awaiting k6 metrics"
+                  : loadGeneratorEvidenceAbsence
               }
             />
             <Fact
-              label="Window HTTP failure rate"
+              label={`HTTP failure rate (${liveTrafficWindowLabel}; ${publicVocabulary.httpFailurePopulation})`}
               value={
                 failureRateMetric
                   ? formatFailureSample(failureRateMetric.value, failureRateMetric.unit)
-                  : "Awaiting k6 metrics"
+                  : loadGeneratorEvidenceAbsence
               }
             />
           </dl>
           <dl className={stackedFactGridClassName}>
+            {reservationThroughput ? (
+              <>
+                <Fact
+                  label={`Peak reservation rate (${rateWindowLabel(reservationThroughput.peakWindowSeconds)}; ${trailingRateWindowLabel(reservationThroughput.windowSeconds)})`}
+                  value={formatRate(reservationThroughput.peakRatePerSecond, "reservations/s")}
+                />
+                <Fact
+                  label={`Reservations in ${trailingRateWindowLabel(reservationThroughput.windowSeconds)}`}
+                  value={formatNumber(reservationThroughput.successfulReservationCount)}
+                />
+              </>
+            ) : null}
             <Fact
-              label={`Peak reservation rate (1-second windows, trailing ${formatWindowSeconds(inventory?.reservationThroughput.windowSeconds ?? 60)}s)`}
-              value={formatRate(
-                inventory?.reservationThroughput.peakRatePerSecond,
-                "reservations/s",
-                "not yet available",
-              )}
-            />
-            <Fact
-              label={`Reservations in last ${formatWindowSeconds(inventory?.reservationThroughput.windowSeconds ?? 60)}s`}
-              value={formatNumber(inventory?.reservationThroughput.successfulReservationCount ?? 0)}
-            />
-            <Fact
-              label="Sold-out pressure"
-              value={formatNumber(inventory?.soldOutPressure.rejectionCount ?? 0)}
-            />
-            <Fact label="Live projections" value={formatNumber(liveProjectionCount)} />
-            <Fact
-              label="Latest metric"
+              label={publicVocabulary.soldOutRejectionsRecorded}
               value={
-                latestMetric
-                  ? `${latestMetric.metricName} at ${formatExpectedTime(latestMetric.timestamp)}`
-                  : "not yet available"
+                inventory
+                  ? formatNumber(inventory.soldOutPressure.rejectionCount)
+                  : runEvidenceAbsence(runStatus, {
+                      source: "durable-processing",
+                      pending: "Waiting for inventory evidence",
+                      settled: "Not recorded for this run",
+                    })
               }
-              small
             />
           </dl>
           <p className="mb-0 mt-3 text-xs leading-5 text-muted">
-            Arrival counts checkout attempts when k6 starts them. Response completion, latency, and
-            failures are separate HTTP observations on the shared 1-second producer event-time
-            window.
+            Arrival counts checkout attempts when the load generator starts them. Response
+            completion and latency are separate HTTP observations aggregated per{" "}
+            {liveTrafficWindowLabel}; failure observations use the same window over{" "}
+            {publicVocabulary.httpFailurePopulation}.
           </p>
           {requestSurge &&
           (data.requestArrivalSummary !== null || requestSurge.arrivalRateSeries.length > 0) ? (
             <RequestArrivalRateSeries
+              emptyText={runEvidenceAbsence(runStatus, {
+                source: "load-generator",
+                pending: "No completed arrival windows yet.",
+                settled: "No arrival windows were recorded for this run.",
+              })}
               samples={requestSurge.arrivalRateSeries}
-              {...(data.requestArrivalSummary ? { summary: data.requestArrivalSummary } : {})}
             />
           ) : null}
           {transportAttemptCounts && httpSummary ? (
@@ -411,8 +462,12 @@ export function RequestSurgePanel({
             />
           ) : (
             <p className="mb-0 mt-3 text-xs leading-5 text-muted">
-              Terminal transport attempt counts appear here once traffic completion evidence is
-              recorded.
+              {runEvidenceAbsence(runStatus, {
+                source: "load-generator",
+                pending:
+                  "Final request totals appear here once all planned attempts have been dispatched.",
+                settled: "Final request totals were not recorded for this run.",
+              })}
             </p>
           )}
         </>
@@ -447,7 +502,8 @@ export function InventoryDrainPanel({
   presentation: PresentationState;
   freshness: Freshness;
 }) {
-  const inventory = recoveryData(recovery)?.inventory ?? null;
+  const data = recoveryData(recovery);
+  const inventory = data?.inventory ?? null;
   const percentRemaining =
     inventory && inventory.allocatedStock > 0
       ? Math.round((inventory.remainingStock / inventory.allocatedStock) * 100)
@@ -458,7 +514,7 @@ export function InventoryDrainPanel({
       <div className={panelHeaderClassName}>
         <div>
           <p className={eyebrowClassName}>Inventory drain</p>
-          <h2 className={panelTitleClassName}>Stock hold path</h2>
+          <h2 className={panelTitleClassName}>Inventory</h2>
         </div>
         <StatusPill status={presentation} />
       </div>
@@ -473,11 +529,17 @@ export function InventoryDrainPanel({
             value={percentRemaining}
           />
           <dl className={factGridClassName}>
-            <Fact label="Allocated" value={formatNumber(inventory.allocatedStock)} />
+            <Fact label="Starting stock" value={formatNumber(inventory.allocatedStock)} />
             <Fact label="Remaining" value={formatNumber(inventory.remainingStock)} />
             <Fact label="Reserved" value={formatNumber(inventory.reservedStock)} />
-            <Fact label="Pending" value={formatNumber(inventory.pendingPersistenceCount)} />
-            <Fact label="Expired" value={formatNumber(inventory.expiredReservationCount)} />
+            <Fact
+              label={publicVocabulary.pendingReservations}
+              value={formatNumber(inventory.pendingPersistenceCount)}
+            />
+            <Fact
+              label={publicVocabulary.expiredReservations}
+              value={formatNumber(inventory.expiredReservationCount)}
+            />
             <Fact
               label="Oldest pending"
               value={formatDurationSeconds(inventory.oldestPendingPersistenceAgeSeconds)}
@@ -491,7 +553,13 @@ export function InventoryDrainPanel({
           </dl>
         </>
       ) : (
-        <EmptyState>No inventory data.</EmptyState>
+        <EmptyState>
+          {runEvidenceAbsence(data?.currentRun?.status ?? null, {
+            source: "durable-processing",
+            pending: "No inventory evidence yet.",
+            settled: "Inventory evidence is unavailable for this run.",
+          })}
+        </EmptyState>
       )}
     </section>
   );
@@ -506,14 +574,16 @@ export function RunErpOutcomesPanel({
   presentation: PresentationState;
   freshness: Freshness;
 }) {
-  const erp = recoveryData(recovery)?.erp ?? null;
+  const data = recoveryData(recovery);
+  const erp = data?.erp ?? null;
+  const runStatus = data?.currentRun?.status ?? null;
 
   return (
     <section className={panelNarrowClassName}>
       <div className={panelHeaderClassName}>
         <div>
           <p className={eyebrowClassName}>This run</p>
-          <h2 className={panelTitleClassName}>ERP outcomes</h2>
+          <h2 className={panelTitleClassName}>Simulated ERP outcomes</h2>
         </div>
         <StatusPill status={presentation} />
       </div>
@@ -522,40 +592,26 @@ export function RunErpOutcomesPanel({
           <FreshnessLine freshness={freshness} />
           <dl className={factGridClassName}>
             <Fact
-              label="Run circuit"
+              label="Run protection"
               value={
                 erp.circuitReadStatus === "unavailable"
-                  ? "unavailable"
-                  : (erp.circuit?.state ?? "not yet exercised")
+                  ? "Protection status unavailable"
+                  : erp.circuit
+                    ? circuitStateLabel(erp.circuit.state)
+                    : // A successful read with no snapshot only proves that no protection state is
+                      // retained now; run-scoped snapshots expire, so a settled run cannot claim
+                      // that protection never engaged.
+                      runEvidenceAbsence(runStatus, {
+                        source: "durable-processing",
+                        pending: "not yet exercised",
+                        settled: "No protection state was retained for this run",
+                      })
               }
             />
             <Fact label="Recent attempts" value={formatNumber(erp.recentAttemptCount)} />
             <Fact label="Failures" value={formatNumber(erp.recentFailureCount)} />
             <Fact label="Timeouts" value={formatNumber(erp.recentTimeoutCount)} />
-            <Fact
-              label="Failure threshold"
-              value={erp.circuit ? formatNumber(erp.circuit.failureThreshold) : "—"}
-            />
-            <Fact
-              label="Consecutive failures"
-              value={erp.circuit ? formatNumber(erp.circuit.consecutiveFailureCount) : "—"}
-            />
-            <Fact
-              label="Reset timeout"
-              value={erp.circuit ? formatMilliseconds(erp.circuit.resetTimeoutMs) : "—"}
-            />
-            <Fact label="Breaker opened" value={formatScheduledTime(erp.circuit?.openedAt)} small />
-            <Fact
-              label="Next probe"
-              value={formatScheduledTime(erp.circuit?.nextAttemptAt)}
-              small
-            />
-            <Fact
-              label="Run circuit last changed"
-              value={formatExpectedTime(erp.circuit?.lastChangedAt)}
-              small
-            />
-            <Fact label="Run outcomes observed" value={formatExpectedTime(erp.observedAt)} small />
+            <Fact label="Last updated" value={formatExpectedTime(erp.observedAt)} small />
             <Fact
               label="Attempt window"
               value={`${formatWindowSeconds(erp.recentAttemptWindowSeconds)}s`}
@@ -564,19 +620,63 @@ export function RunErpOutcomesPanel({
               label="Latest attempt"
               value={
                 erp.latestAttempt
-                  ? `${erp.latestAttempt.status} at ${formatExpectedTime(erp.latestAttempt.finishedAt)}`
-                  : "not yet available"
+                  ? `${erpAttemptStatusLabel(erp.latestAttempt.status)} at ${formatExpectedTime(erp.latestAttempt.finishedAt)}`
+                  : runEvidenceAbsence(runStatus, {
+                      source: "durable-processing",
+                      pending: "not yet available",
+                      settled: "No attempt was recorded for this run",
+                    })
               }
               small
             />
           </dl>
+          <details className="mt-3 rounded border border-border px-3 py-2 text-sm">
+            <summary className="cursor-pointer font-semibold text-muted-strong">
+              Protection details
+            </summary>
+            <dl className={factGridClassName}>
+              <Fact
+                label="Failures before protection pauses calls"
+                value={erp.circuit ? formatNumber(erp.circuit.failureThreshold) : "—"}
+              />
+              <Fact
+                label="Current failure streak"
+                value={erp.circuit ? formatNumber(erp.circuit.consecutiveFailureCount) : "—"}
+              />
+              <Fact
+                label="Recovery check delay"
+                value={erp.circuit ? formatMilliseconds(erp.circuit.resetTimeoutMs) : "—"}
+              />
+              <Fact
+                label="Protection pause began"
+                value={formatScheduledTime(erp.circuit?.openedAt)}
+                small
+              />
+              <Fact
+                label="Next recovery check"
+                value={formatScheduledTime(erp.circuit?.nextAttemptAt)}
+                small
+              />
+              <Fact
+                label="Protection last changed"
+                value={formatExpectedTime(erp.circuit?.lastChangedAt)}
+                small
+              />
+            </dl>
+          </details>
           <p className="mb-0 mt-3 text-xs leading-5 text-muted">
-            The run circuit is scoped to this run. Its clock changes only when run protection opens,
-            probes, or closes.
+            Protection is scoped to this run. Its state changes only when calls pause, recovery is
+            tested, or normal operation resumes.
           </p>
         </>
       ) : (
-        <EmptyState>No ERP outcome data for this run.</EmptyState>
+        <EmptyState>
+          {runEvidenceAbsence(runStatus, {
+            source: "durable-processing",
+            pending: "No simulated ERP evidence yet.",
+            settled: "Simulated ERP evidence is unavailable for this run.",
+          })}
+        </EmptyState>
       )}
     </section>
   );
@@ -612,97 +712,124 @@ export function SystemStatusPanel({
         <div className="grid grid-cols-2 gap-6 max-[760px]:grid-cols-1">
           <div>
             <h3 className="mb-3 mt-0 text-sm font-bold text-ink">
-              Shared physical queue: {queue.name}
+              Shared order-processing backlog
             </h3>
             <dl className={factGridClassName}>
-              <Fact label="Connectivity" value={queue.connectivity} />
+              <Fact label="Connectivity" value={queueConnectivityLabel(queue.connectivity)} />
               <Fact label="Depth (all runs)" value={formatNumber(queue.depth)} />
-              <Fact label="Waiting" value={formatNumber(queue.counts.waiting)} />
-              <Fact label="Prioritized" value={formatNumber(queue.counts.prioritized)} />
-              <Fact label="Paused" value={formatNumber(queue.counts.paused)} />
-              <Fact label="Delayed" value={formatNumber(queue.counts.delayed)} />
-              <Fact label="Active" value={formatNumber(queue.counts.active)} />
-              <Fact label="Failed" value={formatNumber(queue.failedJobs.totalCount)} />
               <Fact
                 label="Oldest wait"
                 value={formatDurationSeconds(queue.oldestWaitingAgeSeconds)}
               />
-              <Fact
-                label="Retrying jobs"
-                value={formatNumber(queue.retryPressure.retryingJobCount)}
-              />
-              <Fact
-                label="Retry attempts"
-                value={formatNumber(queue.retryPressure.retryAttemptCount)}
-              />
-              <Fact label="Queue observed" value={formatExpectedTime(queue.observedAt)} small />
+              <Fact label="Last updated" value={formatExpectedTime(queue.observedAt)} small />
             </dl>
+            <details className="mt-3 rounded border border-border px-3 py-2 text-sm">
+              <summary className="cursor-pointer font-semibold text-muted-strong">
+                Backlog details
+              </summary>
+              <dl className={factGridClassName}>
+                <Fact label="Waiting" value={formatNumber(queue.counts.waiting)} />
+                <Fact label="Prioritized" value={formatNumber(queue.counts.prioritized)} />
+                <Fact label="Paused" value={formatNumber(queue.counts.paused)} />
+                <Fact label="Delayed" value={formatNumber(queue.counts.delayed)} />
+                <Fact label="Active" value={formatNumber(queue.counts.active)} />
+                <Fact label="Failed" value={formatNumber(queue.failedJobs.totalCount)} />
+                <Fact
+                  label="Retrying jobs"
+                  value={formatNumber(queue.retryPressure.retryingJobCount)}
+                />
+                <Fact
+                  label="Retry attempts"
+                  value={formatNumber(queue.retryPressure.retryAttemptCount)}
+                />
+              </dl>
+            </details>
             <p className="mb-0 mt-3 text-xs leading-5 text-muted">
-              Polled every {dashboardLiveUpdateExpectedIntervalMs / 1_000} seconds while runtime
-              work remains. Counts include all runs and visitors.
+              Counts include work from all runs and visitors.
             </p>
           </div>
           <div>
             <div className="mb-3 flex items-start justify-between gap-3">
-              <h3 className="m-0 text-sm font-bold text-ink">Shared catalog ERP protection</h3>
+              <h3 className="m-0 text-sm font-bold text-ink">Shared simulated ERP protection</h3>
               <StatusPill status={erpPresentation} />
             </div>
             <dl className={factGridClassName}>
-              <Fact label="Circuit" value={protection.circuit?.state ?? "not yet available"} />
-              <Fact label="Reason" value={protection.reason ?? "normal"} small />
               <Fact
-                label="Retrying jobs"
-                value={formatNumber(protection.retryPressure.retryingJobCount)}
-              />
-              <Fact
-                label="Failure threshold"
+                label="Protection"
                 value={
                   protection.circuit
-                    ? formatNumber(protection.circuit.failureThreshold)
+                    ? circuitStateLabel(protection.circuit.state)
                     : "not yet available"
                 }
               />
               <Fact
-                label="Consecutive failures"
-                value={
-                  protection.circuit
-                    ? formatNumber(protection.circuit.consecutiveFailureCount)
-                    : "not yet available"
-                }
-              />
-              <Fact
-                label="Reset timeout"
-                value={formatMilliseconds(protection.circuit?.resetTimeoutMs, "not yet available")}
-              />
-              <Fact
-                label="Breaker opened"
-                value={formatScheduledTime(protection.circuit?.openedAt)}
+                label="Protection note"
+                value={protectionReasonLabel(protection.reason)}
                 small
               />
-              <Fact
-                label="Next probe"
-                value={formatScheduledTime(protection.circuit?.nextAttemptAt)}
-                small
-              />
-              <Fact
-                label="Circuit state since"
-                value={formatExpectedTime(protection.circuit?.lastChangedAt)}
-                small
-              />
-              <Fact
-                label="Protection observed"
-                value={formatExpectedTime(protection.observedAt)}
-                small
-              />
+              <Fact label="Last updated" value={formatExpectedTime(protection.observedAt)} small />
             </dl>
+            <details className="mt-3 rounded border border-border px-3 py-2 text-sm">
+              <summary className="cursor-pointer font-semibold text-muted-strong">
+                Protection details
+              </summary>
+              <dl className={factGridClassName}>
+                <Fact
+                  label="Retrying jobs"
+                  value={formatNumber(protection.retryPressure.retryingJobCount)}
+                />
+                <Fact
+                  label="Failures before protection pauses calls"
+                  value={
+                    protection.circuit
+                      ? formatNumber(protection.circuit.failureThreshold)
+                      : "not yet available"
+                  }
+                />
+                <Fact
+                  label="Current failure streak"
+                  value={
+                    protection.circuit
+                      ? formatNumber(protection.circuit.consecutiveFailureCount)
+                      : "not yet available"
+                  }
+                />
+                <Fact
+                  label="Recovery check delay"
+                  value={formatMilliseconds(
+                    protection.circuit?.resetTimeoutMs,
+                    "not yet available",
+                  )}
+                />
+                <Fact
+                  label="Protection pause began"
+                  value={formatScheduledTime(protection.circuit?.openedAt)}
+                  small
+                />
+                <Fact
+                  label="Next recovery check"
+                  value={formatScheduledTime(protection.circuit?.nextAttemptAt)}
+                  small
+                />
+                <Fact
+                  label="Protection state since"
+                  value={formatExpectedTime(protection.circuit?.lastChangedAt)}
+                  small
+                />
+                <Fact
+                  label="Retry attempts"
+                  value={formatNumber(protection.retryPressure.retryAttemptCount)}
+                />
+              </dl>
+            </details>
             <p className="mb-0 mt-3 text-xs leading-5 text-muted">
-              The catalog breaker is edge-triggered: its “state since” clock changes only on open,
-              probe, or close and has no scheduled update cadence.
+              Protection changes only when calls pause, recovery is tested, or normal operation
+              resumes.
             </p>
           </div>
         </div>
       ) : (
-        <EmptyState>No shared demo-runtime status.</EmptyState>
+        <EmptyState>Shared demo-runtime status is unavailable.</EmptyState>
       )}
     </section>
   );
@@ -717,13 +844,19 @@ export function ConsistencyLagPanel({
   presentation: PresentationState;
   freshness: Freshness;
 }) {
-  const lag = recoveryData(recovery)?.consistencyLag ?? null;
+  const data = recoveryData(recovery);
+  const lag = data?.consistencyLag ?? null;
+  const lagAbsence = runEvidenceAbsence(data?.currentRun?.status ?? null, {
+    source: "durable-processing",
+    pending: "not yet available",
+    settled: "Not recorded for this run",
+  });
 
   return (
     <section className={panelNarrowClassName}>
       <div className={panelHeaderClassName}>
         <div>
-          <p className={eyebrowClassName}>Consistency lag</p>
+          <p className={eyebrowClassName}>{publicVocabulary.consistencyLag}</p>
           <h2 className={panelTitleClassName}>Fast reservation vs final confirmation</h2>
         </div>
         <StatusPill status={presentation} />
@@ -733,18 +866,15 @@ export function ConsistencyLagPanel({
           <FreshnessLine freshness={freshness} />
           <dl className={factGridClassName}>
             <Fact
-              label="p95 confirmed"
-              value={formatMilliseconds(lag.p95LagMs, "not yet available")}
+              label="95% confirmed within"
+              value={formatMilliseconds(lag.p95LagMs, lagAbsence)}
             />
+            <Fact label="Avg confirmed" value={formatMilliseconds(lag.averageLagMs, lagAbsence)} />
+            <Fact label="Max confirmed" value={formatMilliseconds(lag.maxLagMs, lagAbsence)} />
             <Fact
-              label="Avg confirmed"
-              value={formatMilliseconds(lag.averageLagMs, "not yet available")}
+              label="Awaiting confirmation"
+              value={formatNumber(lag.pendingConfirmationCount)}
             />
-            <Fact
-              label="Max confirmed"
-              value={formatMilliseconds(lag.maxLagMs, "not yet available")}
-            />
-            <Fact label="Pending" value={formatNumber(lag.pendingConfirmationCount)} />
             <Fact
               label="Oldest pending"
               value={formatDurationSeconds(lag.oldestPendingAgeSeconds)}
@@ -754,7 +884,13 @@ export function ConsistencyLagPanel({
           </dl>
         </>
       ) : (
-        <EmptyState>No consistency-lag data.</EmptyState>
+        <EmptyState>
+          {runEvidenceAbsence(data?.currentRun?.status ?? null, {
+            source: "durable-processing",
+            pending: "No confirmation evidence yet.",
+            settled: "Confirmation evidence is unavailable for this run.",
+          })}
+        </EmptyState>
       )}
     </section>
   );
@@ -769,15 +905,16 @@ export function RunOutcomesPanel({
   presentation: PresentationState;
   freshness: Freshness;
 }) {
-  const outcome = recoveryData(recovery)?.businessOutcome ?? null;
+  const data = recoveryData(recovery);
+  const outcome = data?.businessOutcome ?? null;
 
   return (
     <section className={panelFullClassName}>
       <div className={panelHeaderClassName}>
         <div>
-          <p className={eyebrowClassName}>{systemOfRecordLens.title}</p>
+          <p className={eyebrowClassName}>{durableCheckoutLens.title}</p>
           <h2 className={panelTitleClassName}>Reservation and confirmation summary</h2>
-          <p className="m-0 mt-1 text-xs text-muted">{systemOfRecordLens.caption}</p>
+          <p className="m-0 mt-1 text-xs text-muted">{durableCheckoutLens.caption}</p>
         </div>
         <StatusPill status={presentation} />
       </div>
@@ -786,10 +923,13 @@ export function RunOutcomesPanel({
           <FreshnessLine freshness={freshness} />
           <dl className={wideFactGridClassName}>
             <Fact
-              label="Unique reservations secured"
+              label={publicVocabulary.uniqueReservationsSecured}
               value={formatNumber(outcome.acceptedReservations)}
             />
-            <Fact label="Sold-out decisions" value={formatNumber(outcome.soldOutRejections)} />
+            <Fact
+              label={publicVocabulary.soldOutRejectionsRecorded}
+              value={formatNumber(outcome.soldOutRejections)}
+            />
             <Fact
               label="Queued (awaiting first processing start)"
               value={formatNumber(outcome.queuedOrders)}
@@ -799,17 +939,23 @@ export function RunOutcomesPanel({
             <Fact label="Confirmed" value={formatNumber(outcome.confirmedOrders)} />
             <Fact label="Failed" value={formatNumber(outcome.failedOrders)} />
             <Fact
-              label="Pending persistence"
+              label={publicVocabulary.pendingReservations}
               value={formatNumber(outcome.pendingPersistenceCount)}
             />
             <Fact
-              label="Confirmation notices recorded"
+              label={publicVocabulary.notifications}
               value={formatNumber(outcome.notificationsRecorded)}
             />
           </dl>
         </>
       ) : (
-        <EmptyState>No business outcome data.</EmptyState>
+        <EmptyState>
+          {runEvidenceAbsence(data?.currentRun?.status ?? null, {
+            source: "durable-processing",
+            pending: "No checkout outcome evidence yet.",
+            settled: "Checkout outcome evidence is unavailable for this run.",
+          })}
+        </EmptyState>
       )}
     </section>
   );

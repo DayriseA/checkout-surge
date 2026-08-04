@@ -1,6 +1,7 @@
 import {
   arrivalRateSeriesLimit,
   isoTimestampSchema,
+  liveTrafficMetricWindowSeconds,
   type MetricSample,
   type RequestArrivalSummary,
 } from "@checkout-surge/contracts";
@@ -38,7 +39,7 @@ export class K6LiveMetricAggregator {
   private readonly arrivalRateSeries: RequestArrivalSummary["arrivalRateSeries"] = [];
 
   constructor(options: { windowMs?: number; plannedRequests?: number } = {}) {
-    this.windowMs = options.windowMs ?? 1_000;
+    this.windowMs = options.windowMs ?? liveTrafficMetricWindowSeconds * 1_000;
     if (!Number.isFinite(this.windowMs) || this.windowMs <= 0) {
       throw new Error("k6 live metric windowMs must be finite and greater than zero.");
     }

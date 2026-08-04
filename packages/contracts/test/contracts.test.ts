@@ -53,6 +53,7 @@ import {
   errorPayloadCodes,
   errorPayloadSchema,
   evaluateFastReservationTarget,
+  hasObservedRequestArrivals,
   healthReadyPath,
   healthResponseSchema,
   internalLoadMetricIngestPath,
@@ -303,6 +304,23 @@ describe("request-arrival evidence", () => {
         arrivalWindowCountRetained: 121,
       }).success,
     ).toBe(false);
+  });
+
+  it("separates an absence of observation from a measured zero arrival rate", () => {
+    expect(hasObservedRequestArrivals(emptyRequestArrivalSummary)).toBe(false);
+    // A summary can retain no window and still prove the generator started attempts.
+    expect(
+      hasObservedRequestArrivals({
+        ...emptyRequestArrivalSummary,
+        firstAttemptStartedAt: timestamp,
+      }),
+    ).toBe(true);
+    expect(
+      hasObservedRequestArrivals({
+        ...emptyRequestArrivalSummary,
+        arrivalWindowCountObserved: 1,
+      }),
+    ).toBe(true);
   });
 });
 

@@ -215,7 +215,6 @@ describe("useDashboardRecovery", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
     act(() => result.current.applyProjection(liveTerminal));
     expect(result.current.recovery).toEqual(available(liveTerminal));
-    expect(result.current.liveProjectionCount).toBe(1);
 
     request.resolve(jsonResponse(staleRead));
     await act(async () => request.promise);

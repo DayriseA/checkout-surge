@@ -22,6 +22,7 @@ export type OrderStatus = z.infer<typeof orderStatusSchema>;
 
 export const erpAttemptStatusValues = ["succeeded", "failed", "timed_out"] as const;
 export const erpAttemptStatusSchema = z.enum(erpAttemptStatusValues);
+export type ErpAttemptStatus = z.infer<typeof erpAttemptStatusSchema>;
 
 export const recoveryJobStatusValues = ["pending", "enqueued", "escalated", "resolved"] as const;
 export const recoveryJobStatusSchema = z.enum(recoveryJobStatusValues);
@@ -83,6 +84,7 @@ export const trafficCompletionEnrichmentStatusSchema = z.enum(
 
 export const trafficDeliveryStatusValues = ["complete", "warning", "degraded", "failed"] as const;
 export const trafficDeliveryStatusSchema = z.enum(trafficDeliveryStatusValues);
+export type TrafficDeliveryStatus = z.infer<typeof trafficDeliveryStatusSchema>;
 
 export const metricNameValues = [
   "traffic.request_arrival_rate",

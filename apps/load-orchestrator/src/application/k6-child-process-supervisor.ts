@@ -64,7 +64,6 @@ export class K6ChildProcessSupervisor {
       cancellationTimeoutMs?: number;
       spawnProcess?: typeof spawn;
       now?: () => Date;
-      liveMetricWindowMs?: number;
       maxK6OutputLineLength?: number;
       readSummaryFile?: (summaryPath: string) => Promise<string>;
       metricBatchSize?: number;
@@ -298,9 +297,6 @@ export class K6ChildProcessSupervisor {
     });
     const liveMetrics = new K6LiveMetricAggregator({
       plannedRequests: input.plannedRequests,
-      ...(this.options.liveMetricWindowMs === undefined
-        ? {}
-        : { windowMs: this.options.liveMetricWindowMs }),
     });
     const child = active.child;
     if (!child) throw new Error("Cannot consume k6 output before spawn.");

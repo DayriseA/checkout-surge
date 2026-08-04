@@ -16,6 +16,13 @@ import { readProxyJson } from "../lib/client/proxy-json";
 import { demoRunStartProxyPath, healthReadyProxyPath } from "../lib/control-paths";
 import { formatCount } from "../lib/presentation/format";
 import {
+  publicLimitsLabel,
+  publicVocabulary,
+  readinessCheckLabel,
+  readinessCheckStatusLabel,
+  trafficModeLabel,
+} from "../lib/presentation/public-vocabulary";
+import {
   deriveRunPresentationState,
   type PresentationState,
 } from "../lib/presentation/run-presentation-state";
@@ -200,13 +207,16 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
                   <span className="text-sm leading-5 text-muted">{preset.display.description}</span>
                 </div>
                 <dl className="m-0 mb-3 grid grid-cols-3 gap-2 text-sm">
-                  <Fact label="Mode" value={preset.trafficConfig.mode} />
                   <Fact
-                    label="Stock"
+                    label="Scenario"
+                    value={trafficModeLabel(preset.trafficConfig.mode as TrafficMode)}
+                  />
+                  <Fact
+                    label={publicVocabulary.startingStock}
                     value={formatCount(preset.inventoryConfig.startingStock) ?? "not configured"}
                   />
                   <Fact
-                    label="ERP TPS"
+                    label="Simulated ERP capacity (orders/s)"
                     value={formatCount(preset.erpConfig.maxTps) ?? "not configured"}
                   />
                 </dl>
@@ -235,12 +245,12 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
           <div>
             <p className="m-0 text-xs font-bold uppercase text-muted">Public custom</p>
             <h2 className="m-0 mt-1 text-base font-bold leading-tight text-ink">
-              Bounded run-scoped start
+              Build a safe custom scenario
             </h2>
           </div>
           <StatusPill
             status={{
-              label: runtimePolicy?.isPublicRunBudgetEnforced ? "budgeted" : "open",
+              label: publicLimitsLabel(runtimePolicy?.isPublicRunBudgetEnforced),
               tone: "idle",
             }}
           />
@@ -263,7 +273,7 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
                     value={customDraft.buyerCount}
                   />
                   <LabeledInput
-                    label="Max duration seconds"
+                    label="Maximum run time (seconds)"
                     max={runtimePolicy.publicCustomLimits.maxTrafficDurationSeconds}
                     min={1}
                     onChange={(maxDurationSeconds) =>
@@ -326,22 +336,22 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
                 value={customDraft.startingStock}
               />
               <LabeledInput
-                label="ERP latency ms"
+                label="Simulated ERP delay per order (ms)"
                 max={runtimePolicy.publicCustomLimits.maxErpLatencyMs}
                 min={0}
                 onChange={(erpLatencyMs) => setCustomDraft((draft) => ({ ...draft, erpLatencyMs }))}
                 value={customDraft.erpLatencyMs}
               />
               <LabeledInput
-                label="ERP max TPS"
+                label="Simulated ERP capacity (orders/s)"
                 max={runtimePolicy.publicCustomLimits.maxErpMaxTps}
                 min={runtimePolicy.publicCustomLimits.minErpMaxTps}
                 onChange={(erpMaxTps) => setCustomDraft((draft) => ({ ...draft, erpMaxTps }))}
                 value={customDraft.erpMaxTps}
               />
               <LabeledInput
-                label="ERP error rate"
-                max={runtimePolicy.publicCustomLimits.maxErpErrorRate}
+                label="Simulated ERP failure rate (%)"
+                max={ratioToPercent(runtimePolicy.publicCustomLimits.maxErpErrorRate)}
                 min={0}
                 onChange={(erpErrorRate) => setCustomDraft((draft) => ({ ...draft, erpErrorRate }))}
                 step="0.01"
@@ -412,7 +422,7 @@ function buildCustomConfigOverride(
       ...defaults.erpConfig,
       latencyMs: parseInteger(draft.erpLatencyMs, 0),
       maxTps: parseInteger(draft.erpMaxTps, 1),
-      errorRate: parseNumber(draft.erpErrorRate, 0),
+      errorRate: percentToRatio(draft.erpErrorRate),
       forcedOutage: false,
     },
   };
@@ -434,7 +444,7 @@ function draftFromSnapshot(snapshot: AcceptedRunConfigSnapshot): CustomDraft {
     startingStock: String(snapshot.inventoryConfig.startingStock),
     erpLatencyMs: String(snapshot.erpConfig.latencyMs),
     erpMaxTps: String(snapshot.erpConfig.maxTps),
-    erpErrorRate: String(snapshot.erpConfig.errorRate),
+    erpErrorRate: String(ratioToPercent(snapshot.erpConfig.errorRate)),
     forcedOutage: false,
   };
 }
@@ -470,6 +480,14 @@ function parseInteger(value: string, fallback: number): number {
 function parseNumber(value: string, fallback: number): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function ratioToPercent(ratio: number): number {
+  return ratio * 100;
+}
+
+function percentToRatio(percent: string): number {
+  return parseNumber(percent, 0) / 100;
 }
 
 function Fact({ label, value }: { label: string; value: string }) {
@@ -550,7 +568,11 @@ function StartGate({
       {failedChecks.length > 0 ? (
         <dl className="m-0 grid w-full gap-2 rounded-lg border border-border p-3 text-left">
           {failedChecks.map((check) => (
-            <Fact key={check.name} label={check.name} value={check.message ?? check.status} />
+            <Fact
+              key={check.name}
+              label={readinessCheckLabel(check.name)}
+              value={check.message ?? readinessCheckStatusLabel(check.status)}
+            />
           ))}
         </dl>
       ) : readiness.status === "unavailable" ? (
@@ -598,9 +620,9 @@ function readinessPresentation(readiness: BackendRead<HealthResponse>): Presenta
   if (readiness.data.status === "degraded") {
     return {
       state: "infrastructure-degraded",
-      label: "infrastructure degraded",
+      label: "infrastructure needs attention",
       tone: "warning",
-      description: "Infrastructure is degraded.",
+      description: "Infrastructure needs attention.",
     };
   }
   return {
@@ -630,7 +652,7 @@ function TrafficModeSelector({
           onClick={() => onChange(trafficMode)}
           type="button"
         >
-          {trafficMode}
+          {trafficModeLabel(trafficMode)}
         </button>
       ))}
     </div>

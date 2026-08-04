@@ -63,7 +63,7 @@ describe("run result presentation", () => {
       evidence: cleanEvidence,
       outcome: "completed-successfully",
       sentence:
-        "All 250 available units were reserved without overselling. 750 sold-out decisions were recorded. All 250 reservations were confirmed, with no failed orders.",
+        "All 250 available units were reserved without overselling. Checkout-Surge recorded 750 sold-out rejections. All 250 reservations were confirmed, with no failed orders.",
       invariantStatuses: ["holds", "holds", "holds"],
       reconciliationCodes: [
         "accepted_responses_vs_unique_reservations",
@@ -98,7 +98,7 @@ describe("run result presentation", () => {
       }),
       outcome: "completed-with-order-failures",
       sentence:
-        "All 250 available units were reserved without overselling. 750 sold-out decisions were recorded. 200 orders were confirmed, 50 failed, and 0 remain pending.",
+        "All 250 available units were reserved without overselling. Checkout-Surge recorded 750 sold-out rejections. 200 orders were confirmed, 50 failed, and 0 remain pending.",
       invariantStatuses: ["holds", "holds", "holds"],
       reconciliationCodes: [
         "accepted_responses_vs_unique_reservations",
@@ -112,7 +112,7 @@ describe("run result presentation", () => {
       }),
       outcome: "completed-with-unsettled-orders",
       sentence:
-        "All 250 available units were reserved without overselling. 750 sold-out decisions were recorded. 200 orders were confirmed, 0 failed, and 50 remain pending.",
+        "All 250 available units were reserved without overselling. Checkout-Surge recorded 750 sold-out rejections. 200 orders were confirmed, 0 failed, and 50 remain pending.",
       invariantStatuses: ["holds", "holds", "holds"],
       reconciliationCodes: [
         "accepted_responses_vs_unique_reservations",
@@ -124,7 +124,7 @@ describe("run result presentation", () => {
       evidence: withEvidence({ durable: { reservedUnits: 260, uniqueReservations: 260 } }),
       outcome: "completed-with-oversell",
       sentence:
-        "Durable records show 260 units reserved against 250 starting units, so 10 units were oversold. 750 sold-out decisions were recorded. Order outcomes: 250 confirmed, 0 failed, and 0 pending.",
+        "Durable records show 260 units reserved against 250 starting units, so 10 units were oversold. Checkout-Surge recorded 750 sold-out rejections. Order outcomes: 250 confirmed, 0 failed, and 0 pending.",
       invariantStatuses: ["broken", "broken", "broken"],
       reconciliationCodes: [
         "accepted_responses_vs_unique_reservations",
@@ -146,7 +146,7 @@ describe("run result presentation", () => {
       }),
       outcome: "completed-successfully",
       sentence:
-        "All 250 available units were reserved without overselling. 750 sold-out decisions were recorded. All 250 reservations were confirmed, with no failed orders.",
+        "All 250 available units were reserved without overselling. Checkout-Surge recorded 750 sold-out rejections. All 250 reservations were confirmed, with no failed orders.",
       invariantStatuses: ["holds", "holds", "holds"],
       reconciliationCodes: [
         "accepted_responses_vs_unique_reservations",
@@ -241,9 +241,9 @@ describe("run result presentation", () => {
     expect(runConclusionSentence(result)).toContain("All 12 available units were reserved");
   });
 
-  it("keeps durable sold-out decisions distinct from generator responses", () => {
+  it("keeps durable sold-out rejections distinct from generator responses", () => {
     const sentence = runConclusionSentence(deriveRunResult(cleanEvidence));
-    expect(sentence).toContain("750 sold-out decisions");
+    expect(sentence).toContain("Checkout-Surge recorded 750 sold-out rejections");
     expect(sentence).toContain("no failed orders");
     expect(sentence).not.toContain("sold-out responses");
   });
@@ -277,6 +277,23 @@ describe("run result presentation", () => {
       "The completed run has contradictory authoritative evidence: one or more invariants are broken.",
     );
     expect(markup).toContain("border-danger bg-danger-soft");
+  });
+
+  it("maps the sold-out reconciliation reason without mixing populations", () => {
+    const result = deriveRunResult(
+      withEvidence({
+        durable: { soldOutDecisions: 1 },
+        generator: completeGenerator({ soldOutResponses: 2 }),
+      }),
+    );
+    const markup = renderToStaticMarkup(
+      createElement(RunConclusion, { result, runStatus: "completed" }),
+    );
+
+    expect(markup).toContain(
+      "Sold-out rejections seen by the load generator exceed durable sold-out rejections.",
+    );
+    expect(markup).not.toContain("Observed sold-out replies exceed recorded server decisions.");
   });
 
   it("renders nothing for a draining lifecycle even when given a derived result", () => {
@@ -395,7 +412,7 @@ describe("run result presentation", () => {
 
     expect(result.outcome).toBe("completed-successfully");
     expect(sentence).toBe(
-      "All 100,000 available units were reserved without overselling. 250,000 sold-out decisions were recorded. All 100,000 reservations were confirmed, with no failed orders.",
+      "All 100,000 available units were reserved without overselling. Checkout-Surge recorded 250,000 sold-out rejections. All 100,000 reservations were confirmed, with no failed orders.",
     );
     expect(sentence).not.toContain("100000");
     expect(sentence).not.toContain("250000");
@@ -485,6 +502,7 @@ function withEvidence(
 function completeGenerator(
   overrides: {
     acceptedResponses?: number;
+    soldOutResponses?: number;
     transportAttemptCounts?: NonNullable<RunResultEvidence["generator"]>["transportAttemptCounts"];
   } = {},
 ): NonNullable<RunResultEvidence["generator"]> {
@@ -499,7 +517,7 @@ function completeGenerator(
     httpSummary: {
       failedRequests: 0,
       acceptedResponses: overrides.acceptedResponses ?? 250,
-      soldOutResponses: 750,
+      soldOutResponses: overrides.soldOutResponses ?? 750,
       transportFailures: 0,
       unexpectedResponses: 0,
       p95LatencyMs: 42,

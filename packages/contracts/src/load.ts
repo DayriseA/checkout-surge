@@ -23,6 +23,9 @@ export const trafficExecutionStatusPath = "/traffic/status/:runId" as const;
 export const internalLoadMetricIngestPath = "/internal/load/metrics" as const;
 export const internalTrafficCompletionPath = "/internal/load/completion" as const;
 
+/** Live traffic metrics use aligned producer event-time windows of this width. */
+export const liveTrafficMetricWindowSeconds = 1 as const;
+
 export const buyerSpikeTrafficConfigSchema = z
   .object({
     mode: z.literal("buyer-spike"),
@@ -357,6 +360,15 @@ export const emptyRequestArrivalSummary: RequestArrivalSummary = {
   arrivalWindowCountRetained: 0,
   arrivalSeriesLimit: arrivalRateSeriesLimit,
 };
+
+/**
+ * Every finished run carries an arrival summary, including one whose load generator never started
+ * a checkout attempt. The empty summary is an absence of observation, not a measured peak of zero
+ * attempts per second, so readers must qualify it before presenting any of its values.
+ */
+export function hasObservedRequestArrivals(summary: RequestArrivalSummary): boolean {
+  return summary.arrivalWindowCountObserved > 0 || summary.firstAttemptStartedAt !== null;
+}
 
 /** Real completion input. Quality is classified by the API, not the caller. */
 export const trafficCompletionDeliverySummarySchema = z

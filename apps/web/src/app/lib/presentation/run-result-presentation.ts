@@ -1,5 +1,6 @@
 import {
   type DashboardProjection,
+  deriveOversoldUnits,
   isReplayPossible,
   type PublicRunHistoryDetailResponse,
   type PublicRunHistorySummary,
@@ -74,6 +75,21 @@ export function evidenceFromRunHistorySummary(summary: SummaryLike): RunResultEv
   });
 }
 
+/**
+ * Oversell compares durable reserved units with the authoritative terminal inventory snapshot.
+ * The derived signal timeline is a reservation-row visualization rather than an invariant input,
+ * so a run without that snapshot has unknown oversell instead of an implied zero.
+ */
+export function oversoldUnitsFromTerminalInventory(summary: SummaryLike): number | null {
+  const inventory = summary.terminalInventorySnapshot;
+  return inventory
+    ? deriveOversoldUnits({
+        reservedUnits: summary.businessOutcomeSummary.reservedUnits,
+        startingStock: inventory.startingStock,
+      })
+    : null;
+}
+
 export function evidenceFromRunHistoryDetail(
   detail: PublicRunHistoryDetailResponse | { summary: SummaryLike },
 ): RunResultEvidence {
@@ -114,7 +130,7 @@ export function runConclusionSentence(result: RunResult): string {
 
 function soldOutSentence(result: RunResult): string {
   return result.soldOutDecisions && result.soldOutDecisions > 0
-    ? `${formatNarrativeCount(result.soldOutDecisions)} sold-out decisions were recorded.`
+    ? `Checkout-Surge recorded ${formatNarrativeCount(result.soldOutDecisions)} sold-out rejections.`
     : "";
 }
 

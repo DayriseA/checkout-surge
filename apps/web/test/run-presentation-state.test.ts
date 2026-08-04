@@ -11,7 +11,11 @@ import { previewRunConfigSnapshotFixture } from "@checkout-surge/contracts/testi
 import { describe, expect, it } from "vitest";
 import {
   deriveInventoryOutcomeState,
+  deriveLagPresentationState,
+  deriveOutcomePresentationState,
+  deriveRunErpOutcomeState,
   deriveRunPresentationState,
+  deriveSharedErpProtectionState,
   deriveSharedRuntimeState,
   deriveTerminalSummaryPresentation,
 } from "../src/app/lib/presentation/run-presentation-state.js";
@@ -192,10 +196,55 @@ describe("run presentation state", () => {
 
   it("uses inventory-specific copy when completed reservation evidence is unavailable", () => {
     expect(deriveInventoryOutcomeState(inventory(10), run("completed"), null)).toMatchObject({
-      state: "inventory-reservation-evidence-not-yet-available",
-      label: "reservation evidence not yet available",
-      description: "Durable reservation evidence is not yet available.",
+      state: "inventory-reservation-evidence-unavailable",
+      label: "reservation evidence unavailable",
+      description: "Durable reservation evidence was unavailable for this run.",
       tone: "idle",
+    });
+  });
+
+  it.each([
+    "completed",
+    "failed",
+  ] as const)("uses final absence semantics across missing %s run evidence", (status) => {
+    const terminalRun = run(status);
+    const read = {
+      status: "available" as const,
+      data: projection(terminalRun),
+      httpStatus: 200,
+    };
+    const runState = deriveRunPresentationState(read);
+
+    expect(runState).toMatchObject({
+      state: status === "completed" ? "terminal-outcome-unavailable" : "failed",
+      label: status === "completed" ? "outcome unavailable" : "failed",
+    });
+    expect(deriveInventoryOutcomeState(null, terminalRun)).toMatchObject({
+      state: "inventory-evidence-unavailable",
+      label: "inventory evidence unavailable",
+    });
+    expect(deriveLagPresentationState(null, null, terminalRun)).toMatchObject({
+      state: "lag-evidence-unavailable",
+      label: "confirmation evidence unavailable",
+    });
+    expect(deriveOutcomePresentationState(null, terminalRun, runState)).toMatchObject({
+      state: "outcome-evidence-unavailable",
+      label: "checkout evidence unavailable",
+    });
+    expect(deriveRunErpOutcomeState(null, terminalRun)).toMatchObject({
+      state: "run-erp-evidence-unavailable",
+      label: "ERP evidence unavailable",
+    });
+  });
+
+  it("describes missing shared-runtime evidence as unavailable", () => {
+    expect(deriveSharedRuntimeState(null)).toMatchObject({
+      state: "shared-runtime-unavailable",
+      label: "system status unavailable",
+    });
+    expect(deriveSharedErpProtectionState(null)).toMatchObject({
+      state: "shared-erp-protection-unavailable",
+      label: "protection unavailable",
     });
   });
 });

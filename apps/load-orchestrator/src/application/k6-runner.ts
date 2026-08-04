@@ -44,7 +44,6 @@ type SpawnK6RunnerOptions = {
   spawnProcess?: ConstructorParameters<typeof K6ChildProcessSupervisor>[0]["spawnProcess"];
   executionStore: ExecutionStore;
   cancellationTimeoutMs?: number;
-  liveMetricWindowMs?: number;
   maxK6OutputLineLength?: number;
   readSummaryFile?: (summaryPath: string) => Promise<string>;
   metricBatchSize?: number;
@@ -79,9 +78,6 @@ export class SpawnK6Runner implements K6Runner {
       ...(options.cancellationTimeoutMs === undefined
         ? {}
         : { cancellationTimeoutMs: options.cancellationTimeoutMs }),
-      ...(options.liveMetricWindowMs === undefined
-        ? {}
-        : { liveMetricWindowMs: options.liveMetricWindowMs }),
       ...(options.maxK6OutputLineLength === undefined
         ? {}
         : { maxK6OutputLineLength: options.maxK6OutputLineLength }),

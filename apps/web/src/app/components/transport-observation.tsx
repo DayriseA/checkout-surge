@@ -6,33 +6,30 @@ import type {
   TrafficHttpSummary,
   TransportAttemptCounts,
 } from "@checkout-surge/contracts";
-import { deriveRecordedReplyCount } from "@checkout-surge/contracts";
+import { deriveRecordedReplyCount, hasObservedRequestArrivals } from "@checkout-surge/contracts";
 import {
   formatCount,
   formatDurationMs,
   formatInstantUtc,
   formatWindowSecondsAdjective,
 } from "../lib/presentation/format";
+import {
+  durableCheckoutLens,
+  loadGeneratorLens,
+  publicVocabulary,
+} from "../lib/presentation/public-vocabulary";
 
 /**
  * Presentation for the five transport-attempt counts.
  *
  * The counts are client-side evidence: they describe what the load generator
- * personally witnessed, not what the API did. Every label here keeps the
+ * personally witnessed, not what Checkout-Surge recorded. Every label here keeps the
  * generator as the grammatical subject so that a missing observation never
  * reads as a failed request.
  */
 
 /** Column headings name the vantage point, not the topic. */
-export const loadGeneratorLens = {
-  title: "Load generator",
-  caption: "what k6 observed",
-} as const;
-
-export const systemOfRecordLens = {
-  title: "System of record",
-  caption: "what the API recorded",
-} as const;
+export { durableCheckoutLens, loadGeneratorLens };
 
 export const transportObservationLabels = {
   planned: "Planned attempts",
@@ -43,7 +40,7 @@ export const transportObservationLabels = {
   neverDispatched: "Never dispatched",
 } as const;
 
-const unrecordedReplyNote = "generator shut down before the reply arrived";
+const unrecordedReplyNote = "load generator stopped before the reply arrived";
 const transportFailureNote = "connection failed before a reply";
 const undispatchedNote = "scenario window closed before these were sent";
 const biasedLatencyNote = "observed replies only";
@@ -102,10 +99,10 @@ export function survivorshipWarningText(
   }
 
   if (surface === "dashboard") {
-    return `Reply-dependent outcomes and latency cover ${recorded} of ${planned} attempts. The HTTP failure rate above is a separate k6 measure and can include connection failures. Run outcomes below are the authoritative record.`;
+    return `Reply-dependent outcomes and latency cover ${recorded} of ${planned} attempts. The HTTP failure rate above is a separate load-generator measure and can include connection failures. Durable checkout records below are the authoritative record.`;
   }
 
-  return `Outcomes and latency above cover ${recorded} of ${planned} attempts. The p95 describes replies received only. Server-side totals are the authoritative record.`;
+  return `Outcomes and latency above cover ${recorded} of ${planned} attempts. The p95 describes replies received only. Durable checkout records are the authoritative record.`;
 }
 
 /**
@@ -157,7 +154,7 @@ export function TransportObservationSection({
               value={formatDuration(preparation.configuredDelaySeconds)}
             />
             <ObservationRow
-              label="Remaining harness preparation"
+              label="Time until checkout attempts begin"
               value={formatDuration(preparation.remainingPreparationSeconds)}
             />
           </>
@@ -193,14 +190,14 @@ export function TransportObservationSection({
           value={formatNumber(counts.unstartedRequests)}
         />
       </dl>
-      <h4 className="m-0 mt-4 text-xs font-bold uppercase text-muted">Observed outcomes</h4>
+      <h4 className="m-0 mt-4 text-xs font-bold uppercase text-muted">Load-generator outcomes</h4>
       <dl className="m-0 mt-2 grid gap-2">
         <ObservationRow
-          label="Accepted responses"
+          label={publicVocabulary.acceptedResponses}
           value={formatNumber(httpSummary.acceptedResponses)}
         />
         <ObservationRow
-          label="Sold-out responses"
+          label={publicVocabulary.soldOutRejectionsSeen}
           value={formatNumber(httpSummary.soldOutResponses)}
         />
         <ObservationRow label="Unexpected" value={formatNumber(httpSummary.unexpectedResponses)} />
@@ -244,24 +241,24 @@ function FastReservationEvidence({
 }) {
   return (
     <>
-      <h3 className="m-0 text-sm font-bold text-ink">Fast reservation</h3>
+      <h3 className="m-0 text-sm font-bold text-ink">Fast inventory reservation</h3>
       <p className="m-0 mt-0.5 text-xs text-muted">
-        API Redis call start → reservation decision received
+        Inventory reservation start → reservation decision received
       </p>
       <dl className="m-0 mt-3 grid gap-2">
         <ObservationRow
-          label="Redis p95 target"
+          label="Inventory reservation target"
           value={formatHistogramBoundMilliseconds(evaluation.target.thresholdMs)}
         />
         <ObservationRow
-          label="Redis p95 bound"
-          note="fixed histogram upper bound"
+          label="Observed reservation p95"
+          note="bounded p95 estimate"
           value={formatHistogramBoundMilliseconds(evaluation.observedP95Ms)}
         />
         <ObservationRow label="Target verdict" value={evaluation.verdict} />
         <ObservationRow
-          label="Reserve service p95 bound"
-          note="fixed histogram upper bound; service entry → response ready"
+          label="Reservation service p95 bound"
+          note="bounded p95 estimate; service entry → response ready"
           value={formatHistogramBoundMilliseconds(summary.reserveOrderService.p95Ms)}
         />
       </dl>
@@ -270,13 +267,13 @@ function FastReservationEvidence({
           Qualified:{" "}
           {evaluation.qualification === "measurement_unavailable"
             ? "server timing was unavailable"
-            : `server timing covered ${formatNumber(evaluation.observedSampleCount)} samples while k6 recorded ${formatNumber(evaluation.expectedResponseCount)} replies`}
+            : `server timing covered ${formatNumber(evaluation.observedSampleCount)} samples while the load generator recorded ${formatNumber(evaluation.expectedResponseCount)} replies`}
           .
         </p>
       ) : null}
       <p className="m-0 mt-3 rounded-lg border border-border bg-surface-muted p-3 text-xs leading-5 text-muted">
-        Local Compose result: k6, API, PostgreSQL, Redis, Worker, and Mock ERP share one host. This
-        is not hosted benchmark evidence.
+        Local run note: the load generator, API, database, order-processing service, and simulated
+        ERP share one host. This is not hosted benchmark evidence.
       </p>
     </>
   );
@@ -285,9 +282,9 @@ function FastReservationEvidence({
 function ClientTimingBreakdown({ summary }: { summary: HttpTimingBreakdownSummary }) {
   return (
     <div className="mt-4 border-t border-border pt-3">
-      <h4 className="m-0 text-xs font-bold uppercase text-muted">Client-observed HTTP phases</h4>
+      <h4 className="m-0 text-xs font-bold uppercase text-muted">Observed response timing</h4>
       <p className="m-0 mt-0.5 text-xs text-muted">
-        k6 burst timing; waiting includes server and dependency queueing
+        Load-generator timing; waiting includes server and dependency queueing
       </p>
       <dl className="m-0 mt-2 grid gap-2">
         <ObservationRow label="Waiting p95" value={formatMilliseconds(summary.waiting?.p95Ms)} />
@@ -317,22 +314,37 @@ export function RequestArrivalEvidence({
   summary: RequestArrivalSummary;
   showSeries?: boolean;
 }) {
+  // A run whose generator never started an attempt still carries a summary; its zeros are an
+  // absence of observation and must not be published as a measured peak or dispatch duration.
+  const observed = hasObservedRequestArrivals(summary);
+
   return (
     <>
       <h3 className="m-0 text-sm font-bold text-ink">Request arrival</h3>
-      <p className="m-0 mt-0.5 text-xs text-muted">checkout attempts started by k6</p>
-      <dl className="m-0 mt-3 grid gap-2">
-        <ObservationRow
-          label={`Peak (${formatWindowSecondsAdjective(summary.peakArrivalWindowSeconds)} window)`}
-          value={`${formatNumber(summary.peakArrivalRatePerSecond)} attempts/s`}
-        />
-        <ObservationRow
-          label="Dispatch duration"
-          value={formatDuration(summary.dispatchDurationSeconds)}
-        />
-      </dl>
+      <p className="m-0 mt-0.5 text-xs text-muted">
+        checkout attempts started by the load generator
+      </p>
+      {observed ? (
+        <dl className="m-0 mt-3 grid gap-2">
+          <ObservationRow
+            label={`Peak (${formatWindowSecondsAdjective(summary.peakArrivalWindowSeconds)} window)`}
+            value={`${formatNumber(summary.peakArrivalRatePerSecond)} attempts/s`}
+          />
+          <ObservationRow
+            label="Dispatch duration"
+            value={formatDuration(summary.dispatchDurationSeconds)}
+          />
+        </dl>
+      ) : (
+        <p className="m-0 mt-3 text-sm font-semibold text-muted">
+          No checkout attempt was recorded for this run.
+        </p>
+      )}
       {showSeries ? (
-        <RequestArrivalRateSeries samples={summary.arrivalRateSeries} summary={summary} />
+        <RequestArrivalRateSeries
+          emptyText="No arrival windows were recorded for this run."
+          samples={summary.arrivalRateSeries}
+        />
       ) : null}
     </>
   );
@@ -341,20 +353,19 @@ export function RequestArrivalEvidence({
 const arrivalSeriesDisplayLimit = 12;
 
 export function RequestArrivalRateSeries({
+  emptyText,
   samples,
-  summary,
 }: {
+  /** Only the caller knows whether the load generator can still complete another window. */
+  emptyText: string;
   samples: RequestArrivalSummary["arrivalRateSeries"];
-  summary?: RequestArrivalSummary;
 }) {
   const visibleSamples = samples.slice(-arrivalSeriesDisplayLimit);
-  const seriesWasTruncated =
-    summary !== undefined && summary.arrivalWindowCountObserved > visibleSamples.length;
 
   return (
     <>
       {visibleSamples.length === 0 ? (
-        <p className="m-0 mt-3 text-xs text-muted">No finalized arrival windows.</p>
+        <p className="m-0 mt-3 text-xs text-muted">{emptyText}</p>
       ) : (
         <ol aria-label="Request arrival time series" className="m-0 mt-3 grid gap-1 p-0">
           {visibleSamples.map((sample) => (
@@ -374,13 +385,6 @@ export function RequestArrivalRateSeries({
           ))}
         </ol>
       )}
-      {seriesWasTruncated ? (
-        <p className="m-0 mt-2 text-xs text-muted">
-          {visibleSamples.length > 0
-            ? `Showing the last ${formatNumber(visibleSamples.length)} of ${formatNumber(summary.arrivalWindowCountRetained)} retained windows (${formatNumber(summary.arrivalWindowCountObserved)} observed).`
-            : `No samples retained from ${formatNumber(summary.arrivalWindowCountObserved)} observed windows.`}
-        </p>
-      ) : null}
     </>
   );
 }

@@ -28,7 +28,7 @@ export default async function RunHistoryDetailPage({ params }: RunHistoryDetailP
     publicDetail ?? {
       status: "unavailable" as const,
       httpStatus: 404,
-      reason: "No terminal summary exists for this run.",
+      reason: "No finished result exists for this run.",
     };
   const unavailableReason = detail.status === "unavailable" ? detail.reason : "Detail unavailable.";
   const unavailableStatus = detail.status === "unavailable" ? detail.httpStatus : undefined;
@@ -65,7 +65,7 @@ export default async function RunHistoryDetailPage({ params }: RunHistoryDetailP
           </h2>
           <p className="m-0 mt-3 max-w-[66ch] text-sm font-semibold leading-6 text-danger">
             {unavailableStatus === 404
-              ? "No terminal summary exists for this run."
+              ? "No finished result exists for this run."
               : unavailableReason}
           </p>
         </section>

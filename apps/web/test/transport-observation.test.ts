@@ -87,7 +87,7 @@ describe("transport observation section", () => {
     expect(markup).toContain("Never dispatched");
     expect(markup).not.toContain("<meter");
     expect(markup).not.toContain("recorded a reply");
-    expect(markup).not.toContain("generator shut down before the reply arrived");
+    expect(markup).not.toContain("load generator stopped before the reply arrived");
     expect(markup).not.toContain("scenario window closed before these were sent");
     expect(markup).not.toContain("Outcomes and latency");
     expect(markup).not.toContain("observed replies only");
@@ -96,19 +96,21 @@ describe("transport observation section", () => {
   it("leads with the server boundary, target verdict, and shared-host caveat", () => {
     const markup = renderSection(counts({ completedRequests: 10 }));
 
-    expect(markup.indexOf("Fast reservation")).toBeLessThan(markup.indexOf("Request arrival"));
-    expect(markup).toContain("Redis p95 target");
-    expect(markup).toContain("Redis p95 bound");
+    expect(markup.indexOf("Fast inventory reservation")).toBeLessThan(
+      markup.indexOf("Request arrival"),
+    );
+    expect(markup).toContain("Inventory reservation target");
+    expect(markup).toContain("Observed reservation p95");
     // The declared target and the observed bound sit adjacent and must spell milliseconds the
     // same way, so the panel's whole comparison reads in one unit.
-    expect(markup).toMatch(/Redis p95 target<\/dt><dd[^>]*>≤ 1ms<\/dd>/);
+    expect(markup).toMatch(/Inventory reservation target<\/dt><dd[^>]*>≤ 1ms<\/dd>/);
     expect(markup).toContain("≤ 25ms");
     expect(markup).not.toContain("≤ 1 ms");
     expect(markup).toContain("Target verdict");
     expect(markup).toMatch(/Target verdict<\/dt><dd[^>]*>fail<\/dd>/);
-    expect(markup).toContain("Reserve service p95 bound");
+    expect(markup).toContain("Reservation service p95 bound");
     expect(markup).toContain("≤ 100ms");
-    expect(markup).toContain("fixed histogram upper bound");
+    expect(markup).toContain("bounded p95 estimate");
     expect(markup).toContain("not hosted benchmark evidence");
   });
 
@@ -118,10 +120,10 @@ describe("transport observation section", () => {
     expect(markup).toContain("<meter");
     expect(markup).toContain('value="70"');
     expect(markup).toContain("70% of dispatched attempts recorded a reply");
-    expect(markup).toContain("generator shut down before the reply arrived");
+    expect(markup).toContain("load generator stopped before the reply arrived");
     expect(markup).toContain("observed replies only");
     expect(markup).toContain(
-      "Outcomes and latency above cover 7 of 10 attempts. The p95 describes replies received only. Server-side totals are the authoritative record.",
+      "Outcomes and latency above cover 7 of 10 attempts. The p95 describes replies received only. Durable checkout records are the authoritative record.",
     );
   });
 
@@ -134,7 +136,7 @@ describe("transport observation section", () => {
     expect(markup).toContain('value="70"');
     expect(markup).toContain("Generator received no reply");
     expect(markup).toContain("connection failed before a reply");
-    expect(markup).not.toContain("generator shut down before the reply arrived");
+    expect(markup).not.toContain("load generator stopped before the reply arrived");
     expect(markup).toContain("Outcomes and latency above cover 7 of 10 attempts.");
   });
 
@@ -182,7 +184,7 @@ describe("transport observation section", () => {
     expect(markup).not.toContain("the true p95 is higher");
   });
 
-  it("separates configured delay from the remaining harness preparation", () => {
+  it("separates configured delay from the remaining time before checkout attempts begin", () => {
     const markup = renderToStaticMarkup(
       createElement(TransportObservationSection, {
         arrivalSummary: {
@@ -200,11 +202,11 @@ describe("transport observation section", () => {
 
     expect(markup).toContain("Configured start delay");
     expect(markup).toContain(">3 s<");
-    expect(markup).toContain("Remaining harness preparation");
+    expect(markup).toContain("Time until checkout attempts begin");
     expect(markup).toContain(">7 s<");
   });
 
-  it("discloses terminal arrival-series storage and display truncation", () => {
+  it("does not expose arrival-series retention bookkeeping", () => {
     const arrivalRateSeries = Array.from({ length: 15 }, (_, index) => ({
       windowStartedAt: new Date(Date.UTC(2026, 5, 20, 12, 0, index)).toISOString(),
       ratePerSecond: index + 1,
@@ -228,7 +230,8 @@ describe("transport observation section", () => {
       }),
     );
 
-    expect(markup).toContain("Showing the last 12 of 15 retained windows (20 observed).");
+    expect(markup).not.toContain("retained windows");
+    expect(markup).not.toContain("observed windows");
   });
 });
 
@@ -242,10 +245,10 @@ describe("transport observation panel block", () => {
     );
 
     expect(markup).toContain("Load generator");
-    expect(markup).toContain("what k6 observed");
+    expect(markup).toContain("what the load generator observed");
     expect(markup).toContain("70% of dispatched attempts recorded a reply");
     expect(markup).toContain(
-      "Reply-dependent outcomes and latency cover 7 of 10 attempts. The HTTP failure rate above is a separate k6 measure and can include connection failures. Run outcomes below are the authoritative record.",
+      "Reply-dependent outcomes and latency cover 7 of 10 attempts. The HTTP failure rate above is a separate load-generator measure and can include connection failures. Durable checkout records below are the authoritative record.",
     );
   });
 

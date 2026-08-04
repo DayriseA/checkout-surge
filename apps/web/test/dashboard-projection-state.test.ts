@@ -3,6 +3,7 @@ import {
   dashboardProjectionSchemaName,
   dashboardProjectionSchemaVersion,
   dashboardProjectionScopeId,
+  emptyRequestArrivalSummary,
 } from "@checkout-surge/contracts";
 import { previewRunConfigSnapshotFixture } from "@checkout-surge/contracts/testing";
 import { describe, expect, it } from "vitest";
@@ -94,6 +95,22 @@ describe("dashboard projection state", () => {
     });
   });
 
+  it("does not treat an unobserved arrival summary as terminal arrival evidence", () => {
+    const surge = projectRequestSurge(
+      runProjection({
+        requestArrivalSummary: emptyRequestArrivalSummary,
+        recentMetrics: [],
+      }),
+    );
+
+    expect(surge).toMatchObject({
+      arrivalRatePerSecond: null,
+      arrivalRateIsPeak: false,
+      dispatchDurationSeconds: null,
+    });
+    expect(surge.arrivalRateSeries).toEqual([]);
+  });
+
   it("atomically replaces only with a higher same-scope revision", () => {
     const current = runProjection({ revision: 4 });
     let state = createDashboardProjectionState(available(current));
@@ -117,7 +134,6 @@ describe("dashboard projection state", () => {
     });
     state = receive(state, higher);
     expect(state.recovery).toEqual(available(higher));
-    expect(state.liveProjectionCount).toBe(1);
   });
 
   it("caps signal samples, drops the oldest, and resets on a newer run scope", () => {

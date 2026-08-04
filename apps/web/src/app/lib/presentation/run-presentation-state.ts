@@ -11,6 +11,7 @@ import type {
 import { deriveOversoldUnits, deriveRunResult } from "@checkout-surge/contracts";
 import type { BackendRead } from "../api";
 import type { Freshness } from "./freshness";
+import { publicVocabulary } from "./public-vocabulary";
 import { evidenceFromDashboard } from "./run-result-presentation";
 
 export type PresentationTone = "idle" | "progress" | "ok" | "warning" | "danger";
@@ -41,7 +42,7 @@ const states = {
     "processing-accepted-reservations",
     "progress",
     "processing unique reservations",
-    "Unique reservations secured are progressing to durable outcomes.",
+    `${publicVocabulary.uniqueReservationsSecured} are progressing to durable outcomes.`,
   ),
   completed: state(
     "completed-successfully",
@@ -75,22 +76,22 @@ const states = {
     "Current run updates are unavailable.",
   ),
   outcomeIndeterminate: state(
-    "terminal-outcome-not-yet-available",
+    "terminal-outcome-unavailable",
     "idle",
-    "outcome not yet available",
-    "Terminal outcome evidence is not yet available.",
+    "outcome unavailable",
+    "Final outcome evidence was unavailable for this run.",
   ),
   inventoryReservationEvidenceUnavailable: state(
-    "inventory-reservation-evidence-not-yet-available",
+    "inventory-reservation-evidence-unavailable",
     "idle",
-    "reservation evidence not yet available",
-    "Durable reservation evidence is not yet available.",
+    "reservation evidence unavailable",
+    "Durable reservation evidence was unavailable for this run.",
   ),
   contradictoryOutcome: state(
     "terminal-outcome-contradictory",
     "danger",
     "contradictory outcome evidence",
-    "One or more authoritative terminal invariants are broken.",
+    "One or more authoritative final-result checks are broken.",
   ),
 } satisfies Record<string, PresentationState>;
 
@@ -126,12 +127,7 @@ export function deriveRunPresentationState(
         ? states.contradictoryOutcome
         : states.outcomeIndeterminate;
     case null:
-      return state(
-        "terminal-outcome-not-yet-available",
-        "idle",
-        "outcome not yet available",
-        "Terminal outcome evidence is not yet available.",
-      );
+      return states.outcomeIndeterminate;
   }
 }
 
@@ -170,19 +166,30 @@ export function deriveInventoryOutcomeState(
   run: DemoRunSnapshot | null,
   reservedUnits: number | null = null,
 ): PresentationState {
-  if (!inventory)
+  const terminal = isTerminalRun(run);
+  if (!inventory) {
+    if (!run) return states.ready;
+    if (terminal) {
+      return state(
+        "inventory-evidence-unavailable",
+        "idle",
+        "inventory evidence unavailable",
+        "Final inventory evidence was unavailable for this run.",
+      );
+    }
     return state(
       "inventory-not-yet-available",
       "idle",
       "no data",
       "Inventory evidence is not yet available.",
     );
+  }
   const oversoldUnits =
     reservedUnits === null
       ? null
       : deriveOversoldUnits({ reservedUnits, startingStock: inventory.allocatedStock });
   if (oversoldUnits !== null && oversoldUnits > 0) return states.oversell;
-  if (reservedUnits === null && run?.status === "completed") {
+  if (reservedUnits === null && terminal) {
     return states.inventoryReservationEvidenceUnavailable;
   }
   if (oversoldUnits === 0 && inventory.allocatedStock > 0 && inventory.remainingStock === 0) {
@@ -201,7 +208,15 @@ export function deriveInventoryOutcomeState(
       "The run completed without selling out.",
     );
   }
-  if (run && run.status !== "failed") {
+  if (run?.status === "failed") {
+    return state(
+      "final-inventory-recorded",
+      "idle",
+      "final inventory recorded",
+      "Final inventory evidence was recorded for the failed run.",
+    );
+  }
+  if (run) {
     return state(
       "inventory-draining",
       "progress",
@@ -217,10 +232,10 @@ export function deriveSharedRuntimeState(
 ): PresentationState {
   if (!systemStatus)
     return state(
-      "shared-runtime-not-yet-available",
+      "shared-runtime-unavailable",
       "idle",
-      "no data",
-      "Shared demo-runtime state is not yet available.",
+      "system status unavailable",
+      "Shared demo-runtime status could not be loaded.",
     );
   if (systemStatus.erpProtection.status === "unavailable") {
     return state(
@@ -302,6 +317,15 @@ export function deriveLagPresentationState(
   run: DemoRunSnapshot | null,
 ): PresentationState {
   if (pendingConfirmationCount === null || confirmedOrderCount === null) {
+    if (!run) return states.ready;
+    if (isTerminalRun(run)) {
+      return state(
+        "lag-evidence-unavailable",
+        "idle",
+        "confirmation evidence unavailable",
+        "Final confirmation evidence was unavailable for this run.",
+      );
+    }
     return state(
       "lag-not-yet-available",
       "idle",
@@ -309,12 +333,11 @@ export function deriveLagPresentationState(
       "Confirmation evidence is not yet available.",
     );
   }
+  if (run?.status === "failed") return states.failed;
   if (pendingConfirmationCount > 0) {
-    return run?.status === "completed" || run?.status === "failed"
-      ? states.unsettled
-      : states.draining;
+    return run?.status === "completed" ? states.unsettled : states.draining;
   }
-  if (!run || (run.status !== "completed" && run.status !== "failed")) {
+  if (run?.status !== "completed") {
     return state(
       "lag-awaiting-outcomes",
       "idle",
@@ -332,21 +355,43 @@ export function deriveOutcomePresentationState(
   run: DemoRunSnapshot | null,
   runState: PresentationState,
 ): PresentationState {
-  if (!outcome)
+  if (!outcome) {
+    if (!run) return states.ready;
+    if (isTerminalRun(run)) {
+      return state(
+        "outcome-evidence-unavailable",
+        "idle",
+        "checkout evidence unavailable",
+        "Final checkout outcome evidence was unavailable for this run.",
+      );
+    }
     return state(
       "outcome-not-yet-available",
       "idle",
       "no data",
       "Outcome evidence is not yet available.",
     );
+  }
   if (run?.status === "completed" || run?.status === "failed") return runState;
   return hasExpectedWork(outcome)
     ? states.draining
     : state("outcomes-observed", "idle", "outcomes observed", "Durable outcomes are available.");
 }
 
-export function deriveRunErpOutcomeState(erp: RunErpOutcomeSummary | null): PresentationState {
+export function deriveRunErpOutcomeState(
+  erp: RunErpOutcomeSummary | null,
+  run: DemoRunSnapshot | null = null,
+): PresentationState {
   if (!erp) {
+    if (!run) return states.ready;
+    if (isTerminalRun(run)) {
+      return state(
+        "run-erp-evidence-unavailable",
+        "idle",
+        "ERP evidence unavailable",
+        "Final simulated ERP evidence was unavailable for this run.",
+      );
+    }
     return state(
       "run-erp-not-yet-observed",
       "idle",
@@ -363,6 +408,14 @@ export function deriveRunErpOutcomeState(erp: RunErpOutcomeSummary | null): Pres
     );
   }
   if (!erp.circuit && erp.recentAttemptCount === 0) {
+    if (isTerminalRun(run)) {
+      return state(
+        "run-erp-not-recorded",
+        "idle",
+        "no ERP calls recorded",
+        "No simulated ERP calls were recorded for this run.",
+      );
+    }
     return state(
       "run-erp-protection-not-exercised",
       "idle",
@@ -396,10 +449,10 @@ export function deriveSharedErpProtectionState(
 ): PresentationState {
   if (!protection) {
     return state(
-      "shared-erp-protection-not-yet-available",
+      "shared-erp-protection-unavailable",
       "idle",
-      "no data",
-      "Shared ERP protection state is not yet available.",
+      "protection unavailable",
+      "Shared ERP protection status could not be loaded.",
     );
   }
   if (protection.status === "healthy") {
@@ -414,8 +467,8 @@ export function deriveSharedErpProtectionState(
     return state(
       "shared-erp-protection-degraded",
       "warning",
-      "degraded",
-      "Shared ERP protection is degraded.",
+      "protection needs attention",
+      "Shared ERP protection needs attention.",
     );
   }
   return state(
@@ -434,6 +487,10 @@ export function hasExpectedWork(outcome: BusinessOutcomeSummary): boolean {
       outcome.retryingOrders >
     0
   );
+}
+
+function isTerminalRun(run: DemoRunSnapshot | null): boolean {
+  return run?.status === "completed" || run?.status === "failed";
 }
 
 function state(

@@ -153,6 +153,34 @@ describe("public browser starts", () => {
     expect(screen.getByText("Dashboard returned an invalid error response.")).toBeTruthy();
   });
 
+  it("displays the default ERP failure ratio as a percentage and submits the contract ratio", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn(async (input: string | URL | Request, _init?: RequestInit) =>
+      String(input) === healthReadyProxyPath
+        ? jsonResponse(readinessFixture())
+        : jsonResponse({ message: "start blocked" }, 409),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const surface = publicDemoSurfaceFixture();
+    if (surface.runtimePolicy.status !== "available") throw new Error("Expected runtime policy.");
+    surface.runtimePolicy.data.policy.publicCustomDefaults.erpConfig.errorRate = 0.25;
+    surface.runtimePolicy.data.policy.publicCustomLimits.maxErpErrorRate = 0.25;
+    render(createElement(PublicDemoEntry, { surface }));
+
+    const errorRate = screen.getByLabelText("Simulated ERP failure rate (%)") as HTMLInputElement;
+    expect(errorRate.value).toBe("25");
+    expect(errorRate.max).toBe("25");
+
+    await user.click(screen.getByRole("button", { name: "Start Public Custom" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    const [, init] = findFetchCall(fetchMock, demoRunStartProxyPath, "POST");
+    expect(jsonRequestBody(init)).toMatchObject({
+      configOverride: { erpConfig: { errorRate: 0.25 } },
+    });
+  });
+
   it("builds bounded custom start payloads from edited public controls", async () => {
     const user = userEvent.setup();
     const fetchMock = vi.fn(async (input: string | URL | Request, _init?: RequestInit) =>
@@ -171,9 +199,9 @@ describe("public browser starts", () => {
 
     await replaceInputValue("Buyers", "321", user);
     await replaceInputValue("Starting stock", "44", user);
-    await replaceInputValue("ERP latency ms", "125", user);
-    await replaceInputValue("ERP max TPS", "33", user);
-    await replaceInputValue("ERP error rate", "0.2", user);
+    await replaceInputValue("Simulated ERP delay per order (ms)", "125", user);
+    await replaceInputValue("Simulated ERP capacity (orders/s)", "33", user);
+    await replaceInputValue("Simulated ERP failure rate (%)", "0.2", user);
     await user.click(screen.getByRole("button", { name: "Start Public Custom" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
@@ -197,7 +225,7 @@ describe("public browser starts", () => {
         erpConfig: {
           latencyMs: 125,
           maxTps: 33,
-          errorRate: 0.2,
+          errorRate: 0.002,
           forcedOutage: false,
           requestTimeoutMs: 2000,
         },
@@ -381,7 +409,7 @@ describe("public recovery convergence", () => {
     await act(async () => vi.advanceTimersByTimeAsync(60_000));
 
     expect(curatedStart.disabled).toBe(true);
-    expect(screen.getByText("redis_reachable")).toBeTruthy();
+    expect(screen.getByText("Inventory reservation")).toBeTruthy();
     expect(screen.getByText("Redis readiness check failed.")).toBeTruthy();
     expect(
       fetchMock.mock.calls.filter(([input]) => String(input) === healthReadyProxyPath),
@@ -451,6 +479,96 @@ describe("admin browser workflows", () => {
 });
 
 describe("watch browser recovery", () => {
+  it("keeps initial read availability separate from an available idle lifecycle", () => {
+    const loadingMarkup = renderToStaticMarkup(
+      createElement(OperatorDashboard, { initialRecovery: { status: "loading" } }),
+    );
+    const unavailableMarkup = renderToStaticMarkup(
+      createElement(OperatorDashboard, {
+        initialRecovery: {
+          status: "unavailable",
+          reason: "Current run data could not be loaded.",
+          httpStatus: 503,
+        },
+      }),
+    );
+    const idleMarkup = renderToStaticMarkup(
+      createElement(OperatorDashboard, {
+        initialRecovery: available(dashboardRecoveryFixture()),
+      }),
+    );
+
+    expect(loadingMarkup).toContain("Run: checking availability");
+    expect(loadingMarkup).toContain("Checking availability.");
+    expect(loadingMarkup).not.toContain("No run has started");
+    expect(loadingMarkup).not.toContain("Sale evidence");
+
+    expect(unavailableMarkup).toContain("Run: updates unavailable");
+    expect(unavailableMarkup).toContain("Current run data could not be loaded.");
+    expect(unavailableMarkup).not.toContain("No run has started");
+    expect(unavailableMarkup.toLowerCase()).not.toContain("not yet");
+    expect(unavailableMarkup).not.toContain("Sale evidence");
+
+    expect(idleMarkup).toContain("No run has started");
+    expect(idleMarkup).toContain("Shared demo-runtime status is unavailable.");
+    expect(idleMarkup.toLowerCase()).not.toContain("not yet");
+    expect(idleMarkup).not.toContain("Live panels");
+    expect(idleMarkup).not.toContain("in progress");
+  });
+
+  it("uses pending wording only for an available active run with missing evidence", () => {
+    const markup = renderToStaticMarkup(
+      createElement(OperatorDashboard, {
+        initialRecovery: available(
+          dashboardRecoveryFixture({ currentRun: demoRunFixture({ status: "active" }) }),
+        ),
+      }),
+    );
+
+    expect(markup).toContain("Run: accepting checkout attempts");
+    expect(markup).toContain("Not yet available");
+    expect(markup).toContain("No inventory evidence yet.");
+    expect(markup).not.toContain("No run has started");
+  });
+
+  it.each([
+    "completed",
+    "failed",
+  ] as const)("renders retained partial %s evidence as final and incomplete", (status) => {
+    const currentRun =
+      status === "completed"
+        ? demoRunFixture({ status, trafficStatus: "succeeded" })
+        : demoRunFixture({ status, trafficStatus: "failed" });
+    const markup = renderToStaticMarkup(
+      createElement(OperatorDashboard, {
+        initialRecovery: available(
+          dashboardRecoveryFixture({
+            currentRun,
+            recentMetrics: [
+              {
+                metricName: "traffic.request_arrival_rate",
+                value: 8,
+                unit: "requests_per_second",
+                timestamp: "2026-06-20T00:00:11.000Z",
+              },
+            ],
+            recoveredAt: "2026-06-20T00:00:12.000Z",
+          }),
+        ),
+      }),
+    );
+    const normalized = markup.toLowerCase();
+
+    expect(markup).toContain("Final timeline evidence was not recorded");
+    expect(markup).toContain("Retained peak 8 attempts/s");
+    expect(markup).toContain("Final request totals were not recorded for this run.");
+    expect(markup).toContain("Shared demo-runtime status is unavailable.");
+    expect(markup).not.toContain("No run has started");
+    expect(markup).not.toContain("Live panels");
+    expect(normalized).not.toContain("not yet");
+    expect(normalized).not.toContain("in progress");
+  });
+
   it("keeps run backlog and retries separate from shared queue pressure", () => {
     const currentRun = demoRunFixture();
     const markup = renderToStaticMarkup(
@@ -661,14 +779,14 @@ describe("watch browser recovery", () => {
 
     expect(markup).toContain("Configured start delay</dt><dd");
     expect(markup).toContain(">15 s</dd>");
-    expect(markup).toContain("Remaining harness preparation</dt><dd");
+    expect(markup).toContain("Time until checkout attempts begin</dt><dd");
     expect(markup).toContain(">45 s</dd>");
     expect(markup).toContain("depleted in 200 ms");
     expect(markup).toContain(
-      "Shared axis: 0s first checkout attempt · 0.6s terminal timeline boundary",
+      "Shared axis: 0s first checkout attempt · 0.6s final timeline boundary",
     );
     expect(markup).toContain("<li>0s: 1</li>");
-    expect(markup).not.toContain("60.6s terminal timeline boundary");
+    expect(markup).not.toContain("60.6s final timeline boundary");
   });
 
   it("requests one recovery per stream lifecycle transition and coalesces simultaneous triggers", async () => {
@@ -790,7 +908,7 @@ describe("watch browser recovery", () => {
         }),
       );
     });
-    expect(screen.getAllByText("outcome not yet available").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Run: outcome unavailable").length).toBeGreaterThan(0);
     await act(async () => {
       staleRecovery.resolve(
         jsonResponse(
@@ -805,7 +923,7 @@ describe("watch browser recovery", () => {
     });
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-    expect(screen.getAllByText("outcome not yet available").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Run: outcome unavailable").length).toBeGreaterThan(0);
     expect(fetchMock.mock.calls.map((call) => String(call[0]))).toEqual([
       dashboardRecoveryProxyPath,
       `${dashboardRecoveryProxyPath}?knownRunId=55555555-5555-4555-8555-555555555555&knownSaleOfferId=22222222-2222-4222-8222-222222222222`,
@@ -847,7 +965,7 @@ describe("watch browser recovery", () => {
     act(() => FakeEventSource.instances[0]?.emit("error", new Event("error")));
 
     await screen.findByText("Recovery temporarily unavailable.");
-    expect(screen.getAllByText("Last-known-good projection")).toHaveLength(1);
+    expect(screen.getAllByText("Last-known-good data")).toHaveLength(1);
     expect(screen.getByText("Preview 1k")).toBeTruthy();
     expect(screen.queryAllByText("Unavailable")).toHaveLength(0);
     expect(screen.getAllByText("Correlation watch-refresh-failed")).toHaveLength(1);
@@ -977,6 +1095,8 @@ describe("web page smoke coverage", () => {
     expect(screen.getByRole("heading", { name: "Run history detail" })).toBeTruthy();
     cleanup();
 
+    const aboutMarkup = renderToStaticMarkup(createElement(AboutPage));
+    expect(aboutMarkup.match(/k6/g)).toHaveLength(1);
     render(createElement(AboutPage));
     expect(screen.getByRole("heading", { name: "About" })).toBeTruthy();
   });
@@ -1250,7 +1370,7 @@ function demoRunFixture(overrides: Partial<DemoRunSnapshot> = {}): DemoRunSnapsh
           finalizedAt: "2026-06-20T00:00:12.000Z",
         }
       : {}),
-    ...(status === "failed" ? { failureReason: "traffic_failed" } : {}),
+    ...(status === "failed" ? { failureCategory: "traffic" as const } : {}),
     ...overrides,
   });
 }

@@ -1,4 +1,9 @@
-import { arrivalRateSeriesLimit, type DashboardProjection } from "@checkout-surge/contracts";
+import {
+  arrivalRateSeriesLimit,
+  type DashboardProjection,
+  hasObservedRequestArrivals,
+  liveTrafficMetricWindowSeconds,
+} from "@checkout-surge/contracts";
 import type { BackendRead, CompletedBackendRead } from "./api";
 
 type UnavailableProjectionRead = Extract<
@@ -12,7 +17,6 @@ export interface DashboardProjectionState {
   latestRunStartedAt: string | null;
   syncIssue: UnavailableProjectionRead | null;
   isRefreshing: boolean;
-  liveProjectionCount: number;
   signalSamples: RunSignalLiveSample[];
 }
 
@@ -38,7 +42,12 @@ export interface RequestSurgeProjection {
 }
 
 export function projectRequestSurge(projection: DashboardProjection): RequestSurgeProjection {
-  const terminal = projection.requestArrivalSummary;
+  // An arrival summary whose generator observed nothing carries zeros for a measurement it never
+  // took, so it cannot stand in as terminal arrival evidence.
+  const terminal =
+    projection.requestArrivalSummary && hasObservedRequestArrivals(projection.requestArrivalSummary)
+      ? projection.requestArrivalSummary
+      : null;
   const liveArrival = findLatestMetric(
     projection,
     "traffic.request_arrival_rate",
@@ -54,7 +63,9 @@ export function projectRequestSurge(projection: DashboardProjection): RequestSur
   return {
     arrivalRatePerSecond: terminal?.peakArrivalRatePerSecond ?? liveArrival?.value ?? null,
     arrivalRateIsPeak: terminal !== null,
-    arrivalWindowSeconds: terminal?.peakArrivalWindowSeconds ?? 1,
+    // Live samples use the producer's shared aligned event-time window. Terminal summaries carry
+    // their own explicit metadata and take precedence when present.
+    arrivalWindowSeconds: terminal?.peakArrivalWindowSeconds ?? liveTrafficMetricWindowSeconds,
     responseCompletionRatePerSecond: responseCompletion?.value ?? null,
     attemptsDispatched:
       projection.transportAttemptCounts?.startedRequests ?? dispatchProgress?.value ?? null,
@@ -94,7 +105,6 @@ export function createDashboardProjectionState(
     latestRunStartedAt: acceptedProjection?.currentRun?.startedAt ?? null,
     syncIssue: null,
     isRefreshing: false,
-    liveProjectionCount: 0,
     signalSamples: acceptedProjection?.scope ? [toRunSignalLiveSample(acceptedProjection)] : [],
   };
 }
@@ -182,7 +192,6 @@ function acceptProjection(
     latestRunStartedAt: candidate.currentRun?.startedAt ?? state.latestRunStartedAt,
     syncIssue: null,
     isRefreshing: false,
-    liveProjectionCount: state.liveProjectionCount + (live ? 1 : 0),
     signalSamples: appendSignalSample(state, candidate),
   };
 }

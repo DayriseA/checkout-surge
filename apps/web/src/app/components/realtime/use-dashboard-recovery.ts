@@ -150,7 +150,6 @@ export function useDashboardRecovery(
     retriesExhausted: retryState.exhausted,
     syncIssue: state.syncIssue,
     hasSyncIssue: state.syncIssue !== null,
-    liveProjectionCount: state.liveProjectionCount,
     signalSamples: state.signalSamples,
     refresh,
     retryNow,

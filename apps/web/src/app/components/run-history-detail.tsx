@@ -2,17 +2,28 @@ import type {
   AdminRunHistoryDetailResponse,
   PublicRunHistoryDetailResponse,
 } from "@checkout-surge/contracts";
-import { deriveOversoldUnits, deriveRunResult } from "@checkout-surge/contracts";
+import { deriveRunResult } from "@checkout-surge/contracts";
 import type { ReactNode } from "react";
 import { formatCount, formatDurationMs, formatInstantUtc } from "../lib/presentation/format";
+import {
+  durableCheckoutLens,
+  publicStatusLabel,
+  publicVocabulary,
+  simulatedErpLens,
+  trafficDeliveryStatusTone,
+  trafficModeLabel,
+} from "../lib/presentation/public-vocabulary";
 import { deriveOverallRunDuration } from "../lib/presentation/run-duration";
 import { deriveTerminalSummaryPresentation } from "../lib/presentation/run-presentation-state";
-import { evidenceFromRunHistoryDetail } from "../lib/presentation/run-result-presentation";
+import {
+  evidenceFromRunHistoryDetail,
+  oversoldUnitsFromTerminalInventory,
+} from "../lib/presentation/run-result-presentation";
 import { GoldSignals } from "./gold-signals";
 import { RunConclusion } from "./run-conclusion";
 import { RunDiagnostics } from "./run-diagnostics";
 import { StatusPill } from "./status-pill";
-import { systemOfRecordLens, TransportObservationSection } from "./transport-observation";
+import { TransportObservationSection } from "./transport-observation";
 
 interface RunHistoryDetailProps {
   detail: AdminRunHistoryDetailResponse;
@@ -31,7 +42,7 @@ export function AdminRunHistoryDetail({ detail }: RunHistoryDetailProps) {
       <section className="rounded-lg border border-border bg-surface p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
-            <p className="m-0 text-xs font-bold uppercase text-muted">Terminal detail</p>
+            <p className="m-0 text-xs font-bold uppercase text-muted">Run detail</p>
             <h2 className="m-0 mt-1 text-2xl font-bold leading-tight text-ink">
               {summary.presetName}
             </h2>
@@ -40,15 +51,26 @@ export function AdminRunHistoryDetail({ detail }: RunHistoryDetailProps) {
             </p>
           </div>
           <div className="flex flex-wrap justify-end gap-2">
-            <StatusPill status={runPresentation} />
+            <StatusPill
+              status={{
+                ...runPresentation,
+                label: publicStatusLabel({
+                  family: "run",
+                  status: summary.status,
+                  displayLabel: runPresentation.label,
+                }),
+              }}
+            />
             <StatusPill status={{ label: `operator ${run.operatorMode}`, tone: "idle" }} />
             <StatusPill
               status={{
-                label: `traffic ${summary.trafficDeliverySummary.trafficDeliveryStatus}`,
-                tone:
-                  summary.trafficDeliverySummary.trafficDeliveryStatus === "failed"
-                    ? "danger"
-                    : "ok",
+                label: publicStatusLabel({
+                  family: "traffic-delivery",
+                  status: summary.trafficDeliverySummary.trafficDeliveryStatus,
+                }),
+                tone: trafficDeliveryStatusTone(
+                  summary.trafficDeliverySummary.trafficDeliveryStatus,
+                ),
               }}
             />
           </div>
@@ -61,7 +83,7 @@ export function AdminRunHistoryDetail({ detail }: RunHistoryDetailProps) {
               ["Traffic started", formatDate(run.trafficStartedAt)],
               ["Traffic ended", formatDate(run.trafficEndedAt)],
               ["Finalized", formatDate(run.finalizedAt)],
-              ["Captured", formatDate(summary.capturedAt)],
+              ["Evidence recorded", formatDate(summary.capturedAt)],
               ["Failure", detail.internalFailureReason ?? "none"],
             ]}
             title="Lifecycle"
@@ -78,10 +100,10 @@ export function AdminRunHistoryDetail({ detail }: RunHistoryDetailProps) {
             {...(run.trafficStartedAt ? { trafficStartedAt: run.trafficStartedAt } : {})}
           />
           <FactList
-            caption={systemOfRecordLens.caption}
+            caption={durableCheckoutLens.caption}
             facts={[
               [
-                "Unique reservations secured",
+                publicVocabulary.uniqueReservationsSecured,
                 formatNumber(summary.businessOutcomeSummary.acceptedReservations),
               ],
               ["Queued", formatNumber(summary.businessOutcomeSummary.queuedOrders)],
@@ -89,9 +111,12 @@ export function AdminRunHistoryDetail({ detail }: RunHistoryDetailProps) {
               ["Retrying", formatNumber(summary.businessOutcomeSummary.retryingOrders)],
               ["Confirmed", formatNumber(summary.businessOutcomeSummary.confirmedOrders)],
               ["Failed", formatNumber(summary.businessOutcomeSummary.failedOrders)],
-              ["Notifications", formatNumber(summary.businessOutcomeSummary.notificationsRecorded)],
+              [
+                publicVocabulary.notifications,
+                formatNumber(summary.businessOutcomeSummary.notificationsRecorded),
+              ],
             ]}
-            title={systemOfRecordLens.title}
+            title={durableCheckoutLens.title}
           />
         </div>
       </section>
@@ -99,21 +124,15 @@ export function AdminRunHistoryDetail({ detail }: RunHistoryDetailProps) {
       <GoldSignals
         acceptedReservations={summary.businessOutcomeSummary.acceptedReservations}
         arrivalSummary={summary.trafficDeliverySummary.requestArrivalSummary}
-        oversoldUnits={
-          summary.terminalInventorySnapshot
-            ? deriveOversoldUnits({
-                reservedUnits: summary.businessOutcomeSummary.reservedUnits,
-                startingStock: summary.terminalInventorySnapshot.startingStock,
-              })
-            : 0
-        }
+        oversoldUnits={oversoldUnitsFromTerminalInventory(summary)}
+        runStatus={run.status}
         terminalSummary={detail.runSignalTimelineSummary}
       />
 
       <RunDiagnostics summary={detail.loadRunDiagnosticsSummary} />
 
       <section className="rounded-lg border border-border bg-surface p-4">
-        <h2 className="m-0 text-base font-bold leading-tight text-ink">Accepted configuration</h2>
+        <h2 className="m-0 text-base font-bold leading-tight text-ink">Run configuration</h2>
         <div className="mt-3 grid grid-cols-4 gap-4 max-[1100px]:grid-cols-2 max-[700px]:grid-cols-1">
           <FactList facts={trafficConfigFacts(config.trafficConfig)} title="Traffic" />
           <FactList
@@ -133,12 +152,15 @@ export function AdminRunHistoryDetail({ detail }: RunHistoryDetailProps) {
           />
           <FactList
             facts={[
-              ["Configured latency", formatDurationMs(config.erpConfig.latencyMs) ?? "n/a"],
-              ["Max TPS", formatNumber(config.erpConfig.maxTps)],
-              ["Error rate", formatPercent(config.erpConfig.errorRate)],
-              ["Forced outage", config.erpConfig.forcedOutage ? "yes" : "no"],
+              [
+                "Simulated ERP delay per order",
+                formatDurationMs(config.erpConfig.latencyMs) ?? "n/a",
+              ],
+              ["Simulated ERP capacity (orders/s)", formatNumber(config.erpConfig.maxTps)],
+              ["Simulated ERP failure rate (%)", formatPercent(config.erpConfig.errorRate)],
+              ["Simulated ERP outage", config.erpConfig.forcedOutage ? "yes" : "no"],
             ]}
-            title="ERP"
+            title="Simulated ERP"
           />
           <FactList
             facts={[
@@ -154,7 +176,7 @@ export function AdminRunHistoryDetail({ detail }: RunHistoryDetailProps) {
                 ),
               ],
             ]}
-            title="Backpressure"
+            title="Order processing"
           />
         </div>
       </section>
@@ -215,7 +237,7 @@ export function AdminRunHistoryDetail({ detail }: RunHistoryDetailProps) {
             title: notification.publicOrderId,
             facts: [["Recorded", formatDate(notification.recordedAt)]],
           }))}
-          title="Notifications"
+          title={publicVocabulary.notifications}
           totalCount={detail.notifications.totalCount}
           truncated={detail.notifications.truncated}
         />
@@ -341,7 +363,7 @@ function trafficConfigFacts(
 ): Array<[string, ReactNode]> {
   if (config.mode === "buyer-spike") {
     return [
-      ["Mode", "buyer spike"],
+      ["Scenario", trafficModeLabel(config.mode)],
       ["Buyer count", formatNumber(config.buyerCount)],
       ["Duplicate attempts", config.duplicateEachBuyerAttempt ? "yes" : "no"],
       ["Configured maximum dispatch time", formatDurationSeconds(config.maxDurationSeconds)],
@@ -350,11 +372,10 @@ function trafficConfigFacts(
   }
 
   return [
-    ["Mode", "constant arrival"],
-    ["Rate", `${formatNumber(config.ratePerSecond)}/s`],
+    ["Scenario", trafficModeLabel(config.mode)],
+    ["Configured arrival rate (per second)", formatNumber(config.ratePerSecond)],
     ["Configured traffic duration", formatDurationSeconds(config.durationSeconds)],
     ["Quantity", formatNumber(config.quantityPerAttempt)],
-    ["Max VUs", config.k6Vus ? formatNumber(config.k6Vus.maxVus) : "n/a"],
   ];
 }
 
@@ -369,13 +390,22 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
       <section className="rounded-lg border border-border bg-surface p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <p className="m-0 text-xs font-bold uppercase text-muted">Terminal detail</p>
+            <p className="m-0 text-xs font-bold uppercase text-muted">Run detail</p>
             <h2 className="m-0 mt-1 text-2xl font-bold leading-tight text-ink">
               {summary.presetName}
             </h2>
             <p className="m-0 mt-2 text-sm font-semibold text-muted-strong">{summary.runId}</p>
           </div>
-          <StatusPill status={runPresentation} />
+          <StatusPill
+            status={{
+              ...runPresentation,
+              label: publicStatusLabel({
+                family: "run",
+                status: summary.status,
+                displayLabel: runPresentation.label,
+              }),
+            }}
+          />
         </div>
         <div className="mt-4 grid grid-cols-4 gap-4 max-[1100px]:grid-cols-2 max-[700px]:grid-cols-1">
           <FactList
@@ -386,7 +416,7 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
               ["Traffic started", formatDate(run.trafficStartedAt)],
               ["Traffic ended", formatDate(run.trafficEndedAt)],
               ["Finalized", formatDate(run.finalizedAt)],
-              ["Captured", formatDate(summary.capturedAt)],
+              ["Evidence recorded", formatDate(summary.capturedAt)],
             ]}
           />
           <TransportObservationSection
@@ -401,8 +431,8 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
             {...(run.trafficStartedAt ? { trafficStartedAt: run.trafficStartedAt } : {})}
           />
           <FactList
-            caption="what the API recorded"
-            title="Order aggregates"
+            caption={durableCheckoutLens.caption}
+            title={durableCheckoutLens.title}
             facts={[
               ["Total", formatNumber(detail.orders.totalCount)],
               ["Queued", formatNumber(detail.orders.byStatus.queued)],
@@ -412,8 +442,8 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
             ]}
           />
           <FactList
-            caption="what the ERP dependency recorded"
-            title="ERP aggregates"
+            caption={simulatedErpLens.caption}
+            title={simulatedErpLens.title}
             facts={[
               ["Attempts", formatNumber(detail.erpAttempts.totalCount)],
               ["Succeeded", formatNumber(detail.erpAttempts.byStatus.succeeded)],
@@ -428,28 +458,22 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
       <GoldSignals
         acceptedReservations={summary.businessOutcomeSummary.acceptedReservations}
         arrivalSummary={summary.trafficDeliverySummary.requestArrivalSummary}
-        oversoldUnits={
-          summary.terminalInventorySnapshot
-            ? deriveOversoldUnits({
-                reservedUnits: summary.businessOutcomeSummary.reservedUnits,
-                startingStock: summary.terminalInventorySnapshot.startingStock,
-              })
-            : 0
-        }
+        oversoldUnits={oversoldUnitsFromTerminalInventory(summary)}
+        runStatus={run.status}
         terminalSummary={detail.runSignalTimelineSummary}
       />
       <section className="rounded-lg border border-border bg-surface p-4">
         <h2 className="m-0 text-base font-bold leading-tight text-ink">Public activity totals</h2>
         <div className="mt-3 grid grid-cols-2 gap-4 max-[700px]:grid-cols-1">
           <FactList
-            title="Notifications"
+            title={publicVocabulary.notifications}
             facts={[["Recorded", formatNumber(detail.notifications.totalCount)]]}
           />
           <FactList title="Events" facts={[["Recorded", formatNumber(detail.events.totalCount)]]} />
         </div>
       </section>
       <section className="rounded-lg border border-border bg-surface p-4">
-        <h2 className="m-0 text-base font-bold leading-tight text-ink">Accepted configuration</h2>
+        <h2 className="m-0 text-base font-bold leading-tight text-ink">Run configuration</h2>
         <div className="mt-3">
           <FactList facts={trafficConfigFacts(run.configSnapshot.trafficConfig)} title="Traffic" />
         </div>

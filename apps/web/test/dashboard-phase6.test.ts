@@ -35,7 +35,6 @@ describe("Phase 6 projection dashboard", () => {
       createElement(RecoveryStatusPanel, {
         recovery,
         realtimeStatus: "connecting",
-        liveProjectionCount: 0,
         presentation: deriveRunPresentationState(recovery),
         onRefresh: () => undefined,
       }),
@@ -68,9 +67,10 @@ describe("Phase 6 projection dashboard", () => {
     expect(lagMarkup).toContain("350 ms");
     expect(lagMarkup).not.toContain("Latest individual order");
     expect(outcomeMarkup).toContain("Reservation and confirmation summary");
-    expect(outcomeMarkup).toContain("System of record");
-    expect(outcomeMarkup).toContain("what the API recorded");
+    expect(outcomeMarkup).toContain("Durable checkout records");
+    expect(outcomeMarkup).toContain("Reservation and order outcomes recorded by Checkout-Surge");
     expect(outcomeMarkup).toContain("Unique reservations secured");
+    expect(outcomeMarkup).toContain("sold-out rejections recorded by Checkout-Surge");
     expect(outcomeMarkup).toContain("Confirmed");
     expect(outcomeMarkup).toContain("Failed");
   });
@@ -83,7 +83,6 @@ describe("Phase 6 projection dashboard", () => {
     const markup = renderToStaticMarkup(
       createElement(RequestSurgePanel, {
         recovery,
-        liveProjectionCount: 0,
         freshness: { ...liveFreshness, state },
       }),
     );
@@ -98,7 +97,7 @@ describe("Phase 6 projection dashboard", () => {
     expect(markup).not.toContain("last known values");
   });
 
-  it("renders the request panel's configured delay and remaining harness preparation", () => {
+  it("renders the request panel's configured delay and time until checkout attempts begin", () => {
     const projection = projectionFixture();
     if (projection.currentRun?.status !== "active" || !projection.requestArrivalSummary) {
       throw new Error("Expected a run with terminal arrival evidence.");
@@ -123,13 +122,13 @@ describe("Phase 6 projection dashboard", () => {
     const markup = renderToStaticMarkup(
       createElement(RequestSurgePanel, {
         recovery: available(projection),
-        liveProjectionCount: 1,
         freshness: liveFreshness,
       }),
     );
 
     expect(markup).toMatch(/Configured start delay<\/dt><dd[^>]*>3 s<\/dd>/);
-    expect(markup).toMatch(/Remaining harness preparation<\/dt><dd[^>]*>7 s<\/dd>/);
+    expect(markup).toMatch(/Time until checkout attempts begin<\/dt><dd[^>]*>7 s<\/dd>/);
+    expect(markup).toContain("sold-out rejections recorded by Checkout-Surge");
   });
 
   it("separates run ERP outcomes from shared runtime state and labels both clocks", () => {
@@ -152,14 +151,14 @@ describe("Phase 6 projection dashboard", () => {
     );
 
     expect(runMarkup).toContain("This run");
-    expect(runMarkup).toMatch(/Run circuit<\/dt><dd[^>]*>open<\/dd>/);
-    expect(runMarkup).toContain("Run circuit last changed");
+    expect(runMarkup).toMatch(/Run protection<\/dt><dd[^>]*>Calls paused to protect the ERP<\/dd>/);
+    expect(runMarkup).toContain("Protection last changed");
     expect(runMarkup).not.toContain("Shared demo runtime");
     expect(systemMarkup).toContain("Shared demo runtime");
     expect(systemMarkup).toContain("across all runs and visitors");
-    expect(systemMarkup).toContain("Circuit state since");
-    expect(systemMarkup).toContain("Protection observed");
-    expect(systemMarkup).toContain("no scheduled update cadence");
+    expect(systemMarkup).toContain("Protection state since");
+    expect(systemMarkup).toContain("Last updated");
+    expect(systemMarkup).not.toContain("no scheduled update cadence");
     expect(systemMarkup).not.toContain("Recent attempts");
   });
 
@@ -180,7 +179,7 @@ describe("Phase 6 projection dashboard", () => {
       }),
     );
 
-    expect(markup).toMatch(/Run circuit<\/dt><dd[^>]*>unavailable<\/dd>/);
+    expect(markup).toMatch(/Run protection<\/dt><dd[^>]*>Protection status unavailable<\/dd>/);
     expect(markup).toMatch(/Recent attempts<\/dt><dd[^>]*>3<\/dd>/);
     expect(markup).toContain("protection unavailable");
     expect(markup).not.toContain("No ERP outcome data for this run.");
@@ -272,6 +271,155 @@ describe("Phase 6 projection dashboard", () => {
     expect(markup).not.toContain("bg-warning-soft");
   });
 
+  it.each([
+    "completed",
+    "failed",
+  ] as const)("does not imply missing evidence will arrive after a %s run", (status) => {
+    const projection = projectionFixture();
+    const currentRun = projection.currentRun;
+    if (currentRun?.status !== "active") {
+      throw new Error("Expected an active run fixture.");
+    }
+    projection.currentRun =
+      status === "completed"
+        ? {
+            ...currentRun,
+            status,
+            trafficStatus: "succeeded",
+            trafficEndedAt: "2026-06-20T00:00:12.000Z",
+            finalizedAt: "2026-06-20T00:00:13.000Z",
+          }
+        : {
+            ...currentRun,
+            status,
+            trafficStatus: "failed",
+            failureCategory: "traffic",
+            trafficEndedAt: "2026-06-20T00:00:12.000Z",
+            finalizedAt: "2026-06-20T00:00:13.000Z",
+          };
+    projection.inventory = null;
+    projection.erp = null;
+    projection.businessOutcome = null;
+    projection.consistencyLag = null;
+    projection.recentMetrics = [];
+    projection.transportAttemptCounts = null;
+    projection.httpSummary = null;
+    projection.requestArrivalSummary = null;
+    const recovery = available(projection);
+    const freshness = { ...liveFreshness, state: "not-applicable" as const, final: true };
+    const markup = [
+      renderToStaticMarkup(createElement(RequestSurgePanel, { recovery, freshness })),
+      renderToStaticMarkup(
+        createElement(InventoryDrainPanel, {
+          recovery,
+          presentation: activePresentation,
+          freshness,
+        }),
+      ),
+      renderToStaticMarkup(
+        createElement(RunErpOutcomesPanel, {
+          recovery,
+          presentation: activePresentation,
+          freshness,
+        }),
+      ),
+      renderToStaticMarkup(
+        createElement(ConsistencyLagPanel, {
+          recovery,
+          presentation: activePresentation,
+          freshness,
+        }),
+      ),
+      renderToStaticMarkup(
+        createElement(RunOutcomesPanel, {
+          recovery,
+          presentation: activePresentation,
+          freshness,
+        }),
+      ),
+    ].join("");
+
+    expect(markup).toContain("Not recorded for this run");
+    expect(markup).toContain("Inventory evidence is unavailable for this run.");
+    expect(markup).toContain("Simulated ERP evidence is unavailable for this run.");
+    expect(markup).toContain("Confirmation evidence is unavailable for this run.");
+    expect(markup).toContain("Checkout outcome evidence is unavailable for this run.");
+    expect(markup).toContain("Final request totals were not recorded for this run.");
+    expect(markup).not.toContain("Waiting for");
+    expect(markup).not.toContain("not yet available");
+    expect(markup).not.toContain("evidence yet");
+    expect(markup).not.toContain("appear here once");
+  });
+
+  it("settles load-generator absence while a draining run still awaits durable evidence", () => {
+    const projection = projectionFixture();
+    const currentRun = projection.currentRun;
+    if (currentRun?.status !== "active") {
+      throw new Error("Expected an active run fixture.");
+    }
+    projection.currentRun = {
+      ...currentRun,
+      status: "draining",
+      trafficStatus: "succeeded",
+      trafficEndedAt: "2026-06-20T00:00:12.000Z",
+    };
+    projection.inventory = null;
+    projection.erp = null;
+    projection.businessOutcome = null;
+    projection.consistencyLag = null;
+    projection.recentMetrics = [];
+    projection.transportAttemptCounts = null;
+    projection.httpSummary = null;
+    projection.requestArrivalSummary = null;
+    const recovery = available(projection);
+    const surgeMarkup = renderToStaticMarkup(
+      createElement(RequestSurgePanel, { recovery, freshness: liveFreshness }),
+    );
+    const durableMarkup = [
+      renderToStaticMarkup(
+        createElement(InventoryDrainPanel, {
+          recovery,
+          presentation: activePresentation,
+          freshness: liveFreshness,
+        }),
+      ),
+      renderToStaticMarkup(
+        createElement(RunErpOutcomesPanel, {
+          recovery,
+          presentation: activePresentation,
+          freshness: liveFreshness,
+        }),
+      ),
+      renderToStaticMarkup(
+        createElement(ConsistencyLagPanel, {
+          recovery,
+          presentation: activePresentation,
+          freshness: liveFreshness,
+        }),
+      ),
+      renderToStaticMarkup(
+        createElement(RunOutcomesPanel, {
+          recovery,
+          presentation: activePresentation,
+          freshness: liveFreshness,
+        }),
+      ),
+    ].join("");
+
+    // Traffic has ended, so nothing the load generator owns can still arrive.
+    expect(surgeMarkup).toContain("Not recorded for this run");
+    expect(surgeMarkup).toContain("Final request totals were not recorded for this run.");
+    expect(surgeMarkup).not.toContain("Waiting for the load generator");
+    expect(surgeMarkup).not.toContain("not yet available");
+    expect(surgeMarkup).not.toContain("appear here once");
+    // Durable processing continues, so its absence stays provisional in the same panel.
+    expect(surgeMarkup).toContain("Waiting for inventory evidence");
+    expect(durableMarkup).toContain("No inventory evidence yet.");
+    expect(durableMarkup).toContain("No simulated ERP evidence yet.");
+    expect(durableMarkup).toContain("No confirmation evidence yet.");
+    expect(durableMarkup).toContain("No checkout outcome evidence yet.");
+  });
+
   it("renders retained inventory values and their update time after disconnect", () => {
     const projection = projectionFixture();
     const markup = renderToStaticMarkup(
@@ -293,7 +441,7 @@ describe("Phase 6 projection dashboard", () => {
     expect(markup).toContain(
       'Updated <time dateTime="2026-06-20T00:00:11.000Z">2026-06-20 00:00:11 UTC</time> · disconnected, showing last known values',
     );
-    expect(markup).toContain("Allocated");
+    expect(markup).toContain("Starting stock");
     expect(markup).toContain(">100<");
     expect(markup).toContain("Remaining");
     expect(markup).toContain(">12<");

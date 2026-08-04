@@ -12,8 +12,8 @@ export default async function DemoDashboardPage() {
         <div>
           <h1 className="m-0 text-4xl font-bold leading-tight text-ink">Checkout-Surge demo</h1>
           <p className="mt-3 max-w-[66ch] leading-6 text-muted">
-            Start bounded synthetic checkout traffic, then watch Redis reservations, queue pressure,
-            ERP behavior, and terminal outcomes settle in real time.
+            Start a flash-sale scenario, then watch buyer attempts, inventory, order processing,
+            simulated ERP behavior, and the final result settle in real time.
           </p>
         </div>
       </header>

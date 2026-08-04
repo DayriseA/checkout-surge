@@ -82,7 +82,7 @@ Anonymous `GET /demo/runs/history/:runId` reads use purpose-built summary/run pr
 10. Mock ERP success is first-write-wins only in its process-local in-memory ledger, so duplicate calls during one process lifetime replay the same result while a restart may forget that simulated history. The worker's PostgreSQL `erp_attempts` boundary owns durable accepted-result idempotency and recovery across process/job failures; malformed poison jobs are recorded in a durable dead-letter audit table.
 11. After successful confirmation, the worker enqueues and records a simulated notification. A notification scanner reasserts missing notification jobs, and failed deterministic BullMQ jobs are removed so scanner redelivery is not blocked.
 12. Fresh worker mutations dirty the process-local bounded aggregate scheduler, which coalesces transition bursts before publishing one internal projection-dirty signal. The worker does not broadcast individual order status or lag. Aggregate consistency lag is read into the next complete dashboard projection, while per-order status and confirmed lag remain queryable through the durable status diagnostic.
-13. The dashboard reflects the outcome through the API-owned SSE stream, latest-state recovery reads, and k6 metric-stream summaries for high-volume sold-out pressure.
+13. The dashboard reflects the outcome through the API-owned SSE stream, latest-state recovery reads, and load-generator observations of sold-out rejections.
 
 This split is the core architectural bet: callers are never blocked by slow downstream confirmation, and the buy path remains fast regardless of what is happening in the queue.
 
@@ -96,10 +96,10 @@ The dashboard surfaces four signals that make system behavior visible under load
 
 | Signal | What it shows |
 | :-- | :-- |
-| **Request surge** | API requests per second as the k6 burst hits. |
+| **Request surge** | Load-generator checkout attempts started per second in the aligned one-second producer window. |
 | **Processing backlog** | Run-owned durable accepted orders awaiting their first processing start. |
 | **Inventory drain** | Remaining stock countdown as reservations succeed. |
-| **Consistency lag** | p95 delta between the initial buy timestamp and the final downstream confirmation. |
+| **Consistency lag** | p95 time from reservation secured to final downstream confirmation. |
 
 ---
 
@@ -107,11 +107,11 @@ The dashboard surfaces four signals that make system behavior visible under load
 
 ### 1. Overselling under concurrent load
 
-The Redis Lua script is the exclusive gate for stock decisions. It reads and decrements `remainingStock` in a single atomic operation; no number of simultaneous requests handled by the supported API process can reserve the same unit twice. The first request that decrements from 1 to 0 succeeds; every subsequent concurrent attempt reads 0 and receives a sold-out response. The Lua operation runs on the single reference Redis service and cannot be interrupted mid-execution; this atomicity claim is not a broader horizontal-deployment contract.
+The Redis Lua script is the exclusive gate for stock decisions. It reads and decrements `remainingStock` in a single atomic operation; no number of simultaneous requests handled by the supported API process can reserve the same unit twice. The first request that decrements from 1 to 0 succeeds; every subsequent concurrent attempt reads 0 and is recorded as a sold-out rejection by Checkout-Surge. The Lua operation runs on the single reference Redis service and cannot be interrupted mid-execution; this atomicity claim is not a broader horizontal-deployment contract.
 
 ### 2. Duplicate or retried buy requests
 
-Each accepted request carries a client-supplied idempotency key scoped to the generated run sale offer. After the Lua script confirms that the inventory still accepts that run, it checks this key before any accepted stock decision. Retries for accepted or pending reservations replay the stored outcome without consuming additional stock while the run remains accepting; closure fails closed before replay. Retries with the same key but different parameters are rejected as an idempotency conflict rather than silently producing a different accepted result. Sold-out responses are intentionally not stored per request, which keeps the losing side cheap during public scarcity-driven spikes.
+Each accepted request carries a client-supplied idempotency key scoped to the generated run sale offer. After the Lua script confirms that the inventory still accepts that run, it checks this key before any accepted stock decision. Retries for accepted or pending reservations replay the stored outcome without consuming additional stock while the run remains accepting; closure fails closed before replay. Retries with the same key but different parameters are rejected as an idempotency conflict rather than silently producing a different accepted result. Individual sold-out rejections are intentionally not stored per request, which keeps the losing side cheap during public scarcity-driven spikes.
 
 For duplicate buyer-spike traffic, repeated accepted idempotency replays can increase the raw accepted HTTP response count without increasing durable stock reservations. Finalization and terminal run summaries therefore count complete duplicate buyer-spike deliveries by durable unique reservations, while planned attempts still show the full emitted duplicate-attempt total.
 

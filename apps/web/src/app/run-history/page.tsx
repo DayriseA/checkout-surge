@@ -32,7 +32,8 @@ export default async function RunHistoryPage({ searchParams }: RunHistoryPagePro
         <div>
           <h1 className="m-0 text-4xl font-bold leading-tight text-ink">Run history</h1>
           <p className="mt-3 max-w-[66ch] leading-6 text-muted">
-            Completed runs, terminal inventory, traffic summaries, and business outcomes.
+            Finished flash-sale scenarios, inventory evidence, buyer observations, and durable
+            checkout outcomes.
           </p>
         </div>
         <StatusPill
@@ -46,7 +47,7 @@ export default async function RunHistoryPage({ searchParams }: RunHistoryPagePro
         <HistorySurface authenticated={authenticated} history={history.data} />
       ) : (
         <section className="rounded-lg border border-border bg-surface p-4">
-          <p className="m-0 text-xs font-bold uppercase text-muted">Completed runs</p>
+          <p className="m-0 text-xs font-bold uppercase text-muted">Finished runs</p>
           <h2 className="m-0 mt-1 text-base font-bold leading-tight text-ink">
             History unavailable
           </h2>

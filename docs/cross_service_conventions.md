@@ -154,9 +154,9 @@ Terminal outcome precedence is normative: failed run, oversell, indeterminate ou
 
 #### Run result and reconciliation
 
-The durable result model is shared by live completion, history summaries, and public detail. It uses explicit populations: planned checkout attempts; observed responses; accepted responses (including idempotent replays); sold-out decisions recorded by the system; sold-out responses observed by the generator; unique reservations secured; orders confirmed; orders failed; reservations pending a durable outcome; and oversold units. An unqualified `accepted` or `sold out` label is not public vocabulary.
+The durable result model is shared by live completion, history summaries, and public detail. It uses explicit populations: planned checkout attempts; observed responses; accepted responses (including idempotent replays); sold-out rejections recorded by Checkout-Surge; sold-out rejections seen by the load generator; unique reservations secured; orders confirmed; orders failed; reservations pending a durable outcome; and oversold units. An unqualified `accepted` or `sold out` label is not public vocabulary.
 
-Starting and remaining stock come from the Redis terminal inventory snapshot. Unique reservations, reserved units (`sum(reservations.quantity)`), sold-out decisions, order counts, and notification counts come from run-filtered PostgreSQL business evidence. Generator HTTP and transport counts are proof only. A03's derived `inventoryDrain` is a reservation-row visualization and is deliberately not an invariant input.
+Starting and remaining stock come from the Redis terminal inventory snapshot. Unique reservations, reserved units (`sum(reservations.quantity)`), sold-out rejections recorded by Checkout-Surge, order counts, and notification counts come from run-filtered PostgreSQL business evidence. Load-generator HTTP and transport counts are proof only. A03's derived `inventoryDrain` is a reservation-row visualization and is deliberately not an invariant input.
 
 The authoritative invariants are:
 
@@ -164,9 +164,9 @@ The authoritative invariants are:
 - `confirmed + failed + pending = unique reservations` (pending is queued plus processing orders; retrying is a subset of processing, and pending-persistence rows are reconciliation evidence rather than unsettled orders);
 - `oversold units = 0` (reserved units compared with starting stock).
 
-Missing or partial evidence is never defaulted to zero. Reconciliation classifications have precedence `correctness_failure` > `warning` > `evidence_incomplete` > `expected_population_difference`. Accepted responses may exceed unique reservations when `replayPossible` is true; that is an expected population difference, not oversell. A partial generator view is incomplete evidence, not agreement. Sold-out decisions and sold-out responses are separate populations: with complete generator coverage, observed responses at or below recorded decisions are an expected population difference, while observed responses above recorded decisions are a warning. PostgreSQL `pendingPersistenceCount` counts pending rows, while Redis `pendingPersistenceCount` counts holds awaiting persistence; they share a field name but not a meaning, and disagreement is a warning. Outcome and reconciliation severity remain separate: a run can satisfy all outcome invariants while still carrying a reconciliation warning, such as disagreement between those pending-persistence stores.
+Missing or partial evidence is never defaulted to zero. Reconciliation classifications have precedence `correctness_failure` > `warning` > `evidence_incomplete` > `expected_population_difference`. Accepted responses may exceed unique reservations when `replayPossible` is true; that is an expected population difference, not oversell. A partial generator view is incomplete evidence, not agreement. Sold-out rejections recorded by Checkout-Surge and sold-out rejections seen by the load generator are separate populations: with complete generator coverage, generator observations at or below recorded rejections are an expected population difference, while generator observations above recorded rejections are a warning. PostgreSQL `pendingPersistenceCount` counts pending rows, while Redis `pendingPersistenceCount` counts holds awaiting persistence; they share a field name but not a meaning, and disagreement is a warning. Outcome and reconciliation severity remain separate: a run can satisfy all outcome invariants while still carrying a reconciliation warning, such as disagreement between those pending-persistence stores.
 
-Inventory presentation requires durable `reservedUnits` before it can claim exact sellout. A depleted active run without that evidence remains `inventory draining`; a completed run uses neutral inventory-specific copy that durable reservation evidence is not yet available.
+Inventory presentation requires durable `reservedUnits` before it can claim exact sellout. A depleted active run without that evidence remains `inventory draining`; a completed run uses neutral inventory-specific copy that durable reservation evidence was unavailable for that run.
 
 Public failed runs expose only a bounded failure category. The exact internal reason remains on authenticated admin detail. The shared contracts package derives the result and invariant proof; one web presentation template formats the sentence. Pages render that result and place generator-versus-durable evidence in a collapsed proof.
 
@@ -175,6 +175,12 @@ Missing values use field-specific language:
 - `not scheduled` means no future action is planned, such as a circuit probe while the breaker is closed;
 - `not yet available` means evidence is expected later;
 - `—` means no semantic sentence is needed.
+
+Whether more evidence is expected depends on the producer that owns the missing value, not on the run being terminal. Load-generator evidence — arrival rate, dispatched attempts, dispatch duration, response latency and failure rate, request totals, arrival windows — stops changing when traffic ends, so it is already final while a `draining` run keeps processing reservations and must not be labelled as awaited. Durable processing evidence — inventory, simulated ERP outcomes, reservation-to-confirmation, checkout outcomes — may still arrive until the run reaches `completed` or `failed`. One panel can hold both, and each fact follows its own producer.
+
+Oversell is an authoritative invariant and uses only durable reserved units against the Redis inventory snapshot's starting stock. Without that snapshot, oversell is unknown on every surface; the derived signal timeline supplies the drain visualization, never the oversell comparison.
+
+Every finished run carries a request-arrival summary, including one whose load generator never started a checkout attempt. That empty summary is an absence of observation, so no surface may render its zeros as a measured peak, dispatch duration, or arrival series, and no coverage claim may state that a panel covers evidence it does not have.
 
 Initial dashboard hydration is `loading`, not unavailable. It says checking availability, starts the initial read without retry/backoff presentation, and shows retry controls only after an actual failed read.
 

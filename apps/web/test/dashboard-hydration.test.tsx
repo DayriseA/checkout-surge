@@ -68,7 +68,7 @@ describe("dashboard hydration", () => {
         initialRecovery: { status: "available", data: recovery, httpStatus: 200 },
       }),
     );
-    expect(serverMarkup).toContain("Not yet available");
+    expect(serverMarkup).toContain("No run has started");
     expect(serverMarkup).not.toContain("Peak 0");
     expect(serverMarkup).not.toContain("0 remaining");
 
