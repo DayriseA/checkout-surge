@@ -147,7 +147,7 @@ describe("public browser starts", () => {
     const start = screen.getByRole("button", { name: "Start" }) as HTMLButtonElement;
     await user.click(start);
 
-    expect(await screen.findByText("A run is already in progress")).toBeTruthy();
+    expect(await screen.findByText("A demo run is already in progress")).toBeTruthy();
     expect(start.disabled).toBe(true);
     expect(screen.getByRole("link", { name: "Watch live" }).getAttribute("href")).toBe("/watch");
     expect(
@@ -166,12 +166,163 @@ describe("public browser starts", () => {
         }),
       ),
     );
-    await waitFor(() => expect(screen.queryByText("A run is already in progress")).toBeNull());
+    await waitFor(() => expect(screen.getByText("accepting checkout attempts")).toBeTruthy());
+    expect(screen.getByText("A demo run is already in progress")).toBeTruthy();
     expect(start.disabled).toBe(true);
     expect(screen.getByRole("link", { name: "Watch live" }).getAttribute("href")).toBe("/watch");
   });
 
-  it("keeps starts blocked after a reset-incomplete conflict until the page is refreshed", async () => {
+  it("replaces a stale failed-start notice when recovery discovers an active run", async () => {
+    vi.useFakeTimers();
+    let recoveryRevision = 1;
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      if (String(input) === demoRunStartProxyPath) {
+        return new Response(
+          JSON.stringify(
+            errorPayloadSchema.parse({
+              code: "backend_unavailable",
+              message: "Private backend failure must not become public copy.",
+              correlationId: "stale-start-failure",
+              timestamp: "2026-06-20T00:00:00.000Z",
+            }),
+          ),
+          { status: 503, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (String(input) === healthReadyProxyPath) return jsonResponse(readinessFixture());
+      if (String(input).startsWith(dashboardRecoveryProxyPath)) {
+        recoveryRevision += 1;
+        const currentRun =
+          recoveryRevision === 2
+            ? demoRunFixture({ status: "active" })
+            : recoveryRevision === 3
+              ? demoRunFixture({ status: "completed", trafficStatus: "succeeded" })
+              : null;
+        return jsonResponse(
+          dashboardRecoveryFixture({
+            currentRun,
+            recoveredAt: "2026-06-20T00:00:11.000Z",
+            revision: recoveryRevision,
+          }),
+        );
+      }
+      throw new Error(`Unexpected fetch: ${String(input)}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(createElement(PublicDemoEntry, { surface: publicDemoSurfaceFixture() }));
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Start" }));
+      for (let index = 0; index < 10; index += 1) await Promise.resolve();
+    });
+    expect(
+      screen.getByText("The demo backend isn't ready yet — try again in a moment"),
+    ).toBeTruthy();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15_000);
+      for (let index = 0; index < 10; index += 1) await Promise.resolve();
+    });
+    expect(screen.getByText("accepting checkout attempts")).toBeTruthy();
+    expect(screen.getByText("A demo run is already in progress")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Watch live" }).getAttribute("href")).toBe("/watch");
+    expect(
+      screen.queryByText("The demo backend isn't ready yet — try again in a moment"),
+    ).toBeNull();
+    expect((screen.getByRole("button", { name: "Start" }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15_000);
+      for (let index = 0; index < 10; index += 1) await Promise.resolve();
+    });
+    expect(screen.queryByText("A demo run is already in progress")).toBeNull();
+    expect(
+      screen.queryByText("The demo backend isn't ready yet — try again in a moment"),
+    ).toBeNull();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15_000);
+      for (let index = 0; index < 10; index += 1) await Promise.resolve();
+    });
+    expect(
+      screen.queryByText("The demo backend isn't ready yet — try again in a moment"),
+    ).toBeNull();
+    expect((screen.getByRole("button", { name: "Start" }) as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+  });
+
+  it.each([
+    "degraded",
+    "unavailable",
+  ] as const)("prioritizes the active-run outcome over %s readiness", (readinessStatus) => {
+    const surface = publicDemoSurfaceFixture();
+    surface.recovery = available(
+      dashboardRecoveryFixture({ currentRun: demoRunFixture({ status: "active" }) }),
+    );
+    surface.readiness =
+      readinessStatus === "degraded"
+        ? available({ ...readinessFixture(), status: "degraded" })
+        : { status: "unavailable", reason: "Private readiness failure." };
+
+    render(createElement(PublicDemoEntry, { surface }));
+
+    expect(screen.getByText("A demo run is already in progress")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Watch live" }).getAttribute("href")).toBe("/watch");
+    expect(screen.queryByRole("button", { name: "Check again" })).toBeNull();
+    expect(
+      screen.queryByText("The demo backend isn't ready yet — try again in a moment"),
+    ).toBeNull();
+    expect((screen.getByRole("button", { name: "Start" }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+  });
+
+  it("navigates an accepted public start to the live view", async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      if (String(input) === healthReadyProxyPath) return jsonResponse(readinessFixture());
+      if (String(input) === demoRunStartProxyPath) {
+        return jsonResponse(startDemoRunResponseFixture(), 202);
+      }
+      throw new Error(`Unexpected fetch: ${String(input)}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(createElement(PublicDemoEntry, { surface: publicDemoSurfaceFixture() }));
+
+    const assign = vi.fn();
+    const navigationWindow = Object.create(window) as Window;
+    Object.defineProperty(navigationWindow, "location", { value: { assign } });
+    vi.stubGlobal("window", navigationWindow);
+
+    await user.click(screen.getByRole("button", { name: "Start" }));
+
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("/watch"));
+  });
+
+  it.each([
+    "presets",
+    "runtimePolicy",
+  ] as const)("offers a same-page reload for unavailable initial %s", async (readName) => {
+    const surface = publicDemoSurfaceFixture();
+    const unavailableRead = { status: "unavailable" as const, reason: `${readName} offline` };
+    if (readName === "presets") surface.presets = unavailableRead;
+    else surface.runtimePolicy = unavailableRead;
+
+    const reload = vi.fn();
+    const navigationWindow = Object.create(window) as Window;
+    Object.defineProperty(navigationWindow, "location", { value: { reload } });
+    render(createElement(PublicDemoEntry, { surface }));
+    vi.stubGlobal("window", navigationWindow);
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Check again" }));
+    expect(reload).toHaveBeenCalledOnce();
+  });
+
+  it("reloads to recheck a reset-incomplete conflict while keeping starts blocked", async () => {
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
       if (String(input) === demoRunStartProxyPath) {
         return runConflictResponse("reset_incomplete");
@@ -183,19 +334,29 @@ describe("public browser starts", () => {
       throw new Error(`Unexpected fetch: ${String(input)}`);
     });
     vi.stubGlobal("fetch", fetchMock);
+    const reload = vi.fn();
+    const navigationWindow = Object.create(window) as Window;
+    Object.defineProperty(navigationWindow, "location", { value: { reload } });
+    vi.stubGlobal("window", navigationWindow);
     const user = userEvent.setup();
 
     render(createElement(PublicDemoEntry, { surface: publicDemoSurfaceFixture() }));
     const start = screen.getByRole("button", { name: "Start" }) as HTMLButtonElement;
     await user.click(start);
 
-    expect(await screen.findByText("The demo is still recovering")).toBeTruthy();
+    expect(
+      await screen.findByText("The demo backend isn't ready yet — try again in a moment"),
+    ).toBeTruthy();
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
     expect(start.disabled).toBe(true);
-    expect(screen.queryByRole("button", { name: "Check again" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Check again" })).toBeTruthy();
     expect(
       fetchMock.mock.calls.filter(([input]) => String(input) === demoRunStartProxyPath),
     ).toHaveLength(1);
+
+    await user.click(screen.getByRole("button", { name: "Check again" }));
+    expect(reload).toHaveBeenCalledOnce();
+    expect(start.disabled).toBe(true);
   });
 
   it("removes an expired start rate-limit wait before enabling starts", async () => {
@@ -231,14 +392,14 @@ describe("public browser starts", () => {
     });
 
     expect(start.disabled).toBe(true);
-    expect(screen.getByText("The public run limit has been reached")).toBeTruthy();
+    expect(screen.getByText("Public start limit reached for now — try again later")).toBeTruthy();
     expect(screen.getAllByText("Wait 10 seconds before trying again.").length).toBeGreaterThan(0);
     expect(screen.getByText("Wait before retrying")).toBeTruthy();
 
     await act(async () => vi.advanceTimersByTimeAsync(10_000));
 
     expect(start.disabled).toBe(false);
-    expect(screen.queryByText("The public run limit has been reached")).toBeNull();
+    expect(screen.queryByText("Public start limit reached for now — try again later")).toBeNull();
     expect(screen.queryByText("Wait 10 seconds before trying again.")).toBeNull();
     expect(screen.queryByText("Wait before retrying")).toBeNull();
   });
@@ -266,7 +427,9 @@ describe("public browser starts", () => {
     expect(init?.method).toBe("POST");
     expect(jsonRequestBody(init)).toEqual({ presetSlug: "preview-1k" });
     expect(findFetchCall(fetchMock, healthReadyProxyPath)[0]).toBe(healthReadyProxyPath);
-    expect(screen.getByText("Something didn't work on our side", { exact: false })).toBeTruthy();
+    expect(
+      screen.getByText("The demo backend isn't ready yet — try again in a moment"),
+    ).toBeTruthy();
   });
 
   it("displays the default ERP failure ratio as a percentage and submits the contract ratio", async () => {
@@ -395,7 +558,9 @@ describe("public recovery convergence", () => {
     await act(async () => vi.advanceTimersByTimeAsync(1_000));
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(curatedStart.disabled).toBe(true);
-    expect(screen.getByText("Please wait before trying again")).toBeTruthy();
+    expect(
+      screen.getByText("The demo backend isn't ready yet — try again in a moment"),
+    ).toBeTruthy();
 
     await act(async () => vi.advanceTimersByTimeAsync(10_000));
     expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -488,6 +653,9 @@ describe("public recovery convergence", () => {
 
     await act(async () => vi.advanceTimersByTimeAsync(61_000));
     expect(recoveryFetchCount(fetchMock)).toBe(7);
+    expect(
+      screen.getByText("The demo backend isn't ready yet — try again in a moment"),
+    ).toBeTruthy();
     expect(
       screen.getByText("Automatic retries paused. Manual retry remains available."),
     ).toBeTruthy();
@@ -588,7 +756,9 @@ describe("public recovery convergence", () => {
     await act(async () => vi.advanceTimersByTimeAsync(60_000));
 
     expect(curatedStart.disabled).toBe(true);
-    expect(screen.getByText("The demo is temporarily unavailable")).toBeTruthy();
+    expect(
+      screen.getByText("The demo backend isn't ready yet — try again in a moment"),
+    ).toBeTruthy();
     expect(screen.queryByText("Redis readiness check failed.")).toBeNull();
     expect(
       fetchMock.mock.calls.filter(([input]) => String(input) === healthReadyProxyPath),
@@ -1367,6 +1537,15 @@ function runConflictResponse(conflictReason: "active_run_exists" | "reset_incomp
     }),
     409,
   );
+}
+
+function startDemoRunResponseFixture() {
+  return {
+    run: demoRunFixture({ status: "active" }),
+    recovery: { establishedAt: "2026-06-20T00:00:10.000Z" },
+    correlationId: "public-start-success",
+    timestamp: "2026-06-20T00:00:10.000Z",
+  };
 }
 
 function deferred<T>() {

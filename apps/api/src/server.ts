@@ -88,12 +88,18 @@ export async function buildApiServer(options: BuildApiServerOptions): Promise<Ap
     }
 
     if (error instanceof DemoRunValidationError) {
-      return sendError(reply, demoRunValidationStatus(error.code), {
-        code: error.code,
-        message: error.message,
-        correlationId,
-        ...(error.details ? { details: error.details } : {}),
-      });
+      const retryAfterSeconds = publicRunBudgetRetryAfterSeconds(error);
+      return sendError(
+        reply,
+        demoRunValidationStatus(error.code),
+        {
+          code: error.code,
+          message: error.message,
+          correlationId,
+          ...(error.details ? { details: error.details } : {}),
+        },
+        retryAfterSeconds === undefined ? undefined : { "retry-after": String(retryAfterSeconds) },
+      );
     }
 
     if (error instanceof ZodError) {
@@ -186,7 +192,17 @@ function sendError(
   reply: FastifyReply,
   statusCode: number,
   options: Parameters<typeof createErrorPayload>[0],
+  headers?: Record<string, string>,
 ) {
+  if (headers) {
+    for (const [name, value] of Object.entries(headers)) reply.header(name, value);
+  }
   const payload = createErrorPayload(options);
   return reply.status(statusCode).send(payload);
+}
+
+function publicRunBudgetRetryAfterSeconds(error: DemoRunValidationError): number | undefined {
+  if (error.code !== "public_run_budget_exceeded") return undefined;
+  const value = error.retryAfterSeconds;
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined;
 }

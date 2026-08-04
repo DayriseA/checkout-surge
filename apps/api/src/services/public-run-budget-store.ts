@@ -41,7 +41,11 @@ export interface PublicRunBudgetStore {
 
 export type PublicRunBudgetDecision =
   | { outcome: "allowed"; reservation: PublicRunBudgetReservation }
-  | { outcome: "denied"; reason: "visitor" | "global" };
+  | {
+      outcome: "denied";
+      reason: "visitor" | "global";
+      retryAfterSeconds: number;
+    };
 
 export class RedisPublicRunBudgetStore implements PublicRunBudgetStore {
   constructor(private readonly redis: CheckoutSurgeRedis) {}
@@ -56,6 +60,7 @@ export class RedisPublicRunBudgetStore implements PublicRunBudgetStore {
     const globalKey = `demo-run:public-budget:${hashTag}:global`;
     const visitorKey = `demo-run:public-budget:${hashTag}:visitor:${input.publicVisitorId}`;
     const ttlSeconds = input.budget.windowSeconds * 2;
+    const retryAfterSeconds = fixedWindowRetryAfterSeconds(input.now, input.budget.windowSeconds);
 
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const reservationId = randomUUID();
@@ -75,7 +80,9 @@ export class RedisPublicRunBudgetStore implements PublicRunBudgetStore {
           outcome: "allowed",
           reservation: { reservationId, globalKey, visitorKey, reservationKey },
         };
-      if (result === "visitor" || result === "global") return { outcome: "denied", reason: result };
+      if (result === "visitor" || result === "global") {
+        return { outcome: "denied", reason: result, retryAfterSeconds };
+      }
       if (result !== "collision") throw new Error("Redis public run budget reservation failed.");
     }
     throw new Error("Could not allocate a unique public run budget reservation ID.");
@@ -90,4 +97,10 @@ export class RedisPublicRunBudgetStore implements PublicRunBudgetStore {
       reservation.reservationKey,
     );
   }
+}
+
+function fixedWindowRetryAfterSeconds(now: Date, windowSeconds: number): number {
+  const windowMs = windowSeconds * 1_000;
+  const windowStartMs = Math.floor(now.getTime() / windowMs) * windowMs;
+  return Math.max(1, Math.ceil((windowStartMs + windowMs - now.getTime()) / 1_000));
 }

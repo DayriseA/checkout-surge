@@ -158,6 +158,7 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
               ? "Public visitor run budget is exhausted."
               : "Public run budget is exhausted.",
             { budget: decision.reason },
+            decision.retryAfterSeconds,
           );
         }
         reservation = decision.reservation;

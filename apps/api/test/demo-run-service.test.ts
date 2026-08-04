@@ -487,7 +487,7 @@ describe("demo-run lifecycle start gating", () => {
   ] as const)("maps %s budget denial decisions to stable application errors", async (reason, code) => {
     const service = createStartService(requireConnection(connection), requireRedis(redis), {
       publicRunBudgetStore: {
-        reserve: async () => ({ outcome: "denied", reason }),
+        reserve: async () => ({ outcome: "denied", reason, retryAfterSeconds: 59 }),
         release: vi.fn(),
       },
     });
@@ -500,7 +500,7 @@ describe("demo-run lifecycle start gating", () => {
         },
         `denied-${reason}`,
       ),
-    ).rejects.toMatchObject({ code });
+    ).rejects.toMatchObject({ code, retryAfterSeconds: 59 });
   });
 
   it.each([
@@ -797,7 +797,7 @@ describe("demo-run lifecycle start gating", () => {
         publicVisitorId: "visitor-budget-1",
         now: new Date("2026-06-20T00:00:01.000Z"),
       }),
-    ).resolves.toEqual({ outcome: "denied", reason: "visitor" });
+    ).resolves.toEqual({ outcome: "denied", reason: "visitor", retryAfterSeconds: 59 });
     expect(await requireRedis(redis).get(firstReservation.globalKey)).toBe("1");
     expect(await requireRedis(redis).get(firstReservation.visitorKey)).toBe("1");
     await store.release(firstReservation);
@@ -809,6 +809,13 @@ describe("demo-run lifecycle start gating", () => {
       publicVisitorId: "visitor-budget-1",
       now: new Date("2026-06-20T00:00:59.000Z"),
     });
+    await expect(
+      store.reserve({
+        budget: policy.publicRunBudget,
+        publicVisitorId: "visitor-budget-1",
+        now: new Date("2026-06-20T00:00:59.500Z"),
+      }),
+    ).resolves.toEqual({ outcome: "denied", reason: "visitor", retryAfterSeconds: 1 });
 
     await requireRedis(redis).flushdb();
     policy.publicRunBudget = {
@@ -832,7 +839,7 @@ describe("demo-run lifecycle start gating", () => {
         publicVisitorId: "visitor-budget-4",
         now: new Date("2026-06-20T00:00:04.000Z"),
       }),
-    ).resolves.toEqual({ outcome: "denied", reason: "global" });
+    ).resolves.toEqual({ outcome: "denied", reason: "global", retryAfterSeconds: 56 });
   });
 
   it("atomically enforces concurrent budgets and exact-window idempotent release", async () => {
@@ -869,7 +876,7 @@ describe("demo-run lifecycle start gating", () => {
       publicVisitorId: "denied-visitor",
       now,
     });
-    expect(deniedGlobal).toEqual({ outcome: "denied", reason: "global" });
+    expect(deniedGlobal).toEqual({ outcome: "denied", reason: "global", retryAfterSeconds: 60 });
     const deniedKey = oldReservation.visitorKey.replace("concurrent", "denied-visitor");
     expect(await client.get(deniedKey)).toBeNull();
     expect(await client.get(oldReservation.globalKey)).toBe(globalBefore);

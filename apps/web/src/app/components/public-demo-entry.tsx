@@ -9,7 +9,6 @@ import {
   startDemoRunRequestSchema,
   startDemoRunResponseSchema,
 } from "@checkout-surge/contracts";
-import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BackendRead, PublicDemoSurface } from "../lib/api";
 import { readProxyJson } from "../lib/client/proxy-json";
@@ -198,6 +197,13 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
     setStartPresentation(null);
   }, [activeConflictRefreshComplete, recovery, startConflictBlock]);
 
+  useEffect(() => {
+    if (recovery.status !== "available" || !isRunStartBlocked(recovery)) return;
+    if (startRetryUntil === null) {
+      if (startPresentation !== null) setStartPresentation(null);
+    }
+  }, [recovery, startPresentation, startRetryUntil]);
+
   const isBlocked = isRunStartBlocked(recovery);
   const isReadinessBlocked = readinessBlocksRunStart(readiness);
   const presets =
@@ -295,9 +301,13 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
           </div>
           <StartGate
             isRetryScheduled={isRetryScheduled}
-            onRetry={() => {
-              void Promise.all([retryNow(), refreshReadiness()]);
-            }}
+            onRetry={
+              startConflictBlock === "reset_incomplete"
+                ? reloadPage
+                : () => {
+                    void Promise.all([retryNow(), refreshReadiness()]);
+                  }
+            }
             readiness={readiness}
             recovery={recovery}
             retriesExhausted={retriesExhausted}
@@ -310,6 +320,7 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
             }
           />
         </div>
+        <SharedRuntimeDisclosure />
         {surface.presets.status === "available" && curatedPresets.length > 0 ? (
           <div className="grid grid-cols-2 gap-3 max-[700px]:grid-cols-1">
             {curatedPresets.map((preset) => (
@@ -346,7 +357,7 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
             ))}
           </div>
         ) : surface.presets.status === "unavailable" ? (
-          <Unavailable read={surface.presets} />
+          <Unavailable onRetry={reloadPage} read={surface.presets} />
         ) : (
           <p className="m-0 text-muted">No curated public presets are currently available.</p>
         )}
@@ -470,6 +481,7 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
                 value={customDraft.erpErrorRate}
               />
             </div>
+            <SharedRuntimeDisclosure />
             <button
               className={primaryButtonClassName}
               disabled={startDisabled}
@@ -482,7 +494,7 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
             </button>
           </div>
         ) : surface.runtimePolicy.status === "unavailable" ? (
-          <Unavailable read={surface.runtimePolicy} />
+          <Unavailable onRetry={reloadPage} read={surface.runtimePolicy} />
         ) : (
           <p className="m-0 text-muted">Public custom is unavailable.</p>
         )}
@@ -584,6 +596,12 @@ function navigateToWatch() {
   }
 }
 
+function reloadPage() {
+  if (typeof window !== "undefined") {
+    window.location.reload();
+  }
+}
+
 function parseInteger(value: string, fallback: number): number {
   const parsed = Number(value);
   return Number.isInteger(parsed) ? parsed : fallback;
@@ -608,6 +626,15 @@ function Fact({ label, value }: { label: string; value: string }) {
       <dt className="mb-1 text-xs font-bold text-muted">{label}</dt>
       <dd className="m-0 [overflow-wrap:anywhere] text-sm font-semibold text-ink">{value}</dd>
     </div>
+  );
+}
+
+function SharedRuntimeDisclosure() {
+  return (
+    <p className="m-0 mb-4 rounded-lg border border-border bg-surface-muted px-3 py-2 text-sm leading-6 text-muted-strong">
+      Starting a bounded run uses the one shared demo runtime — other visitors can&apos;t start
+      until it finishes. A successful start opens the live view.
+    </p>
   );
 }
 
@@ -646,6 +673,16 @@ function StartGate({
   startRetryAfterMs: number | null;
 }) {
   const runInProgress = recovery.status === "available" && isRunStartBlocked(recovery);
+  const activeRunPresentation = runInProgress
+    ? mapErrorPresentation(
+        {
+          status: "unavailable",
+          errorCode: "run_conflict",
+          details: { conflictReason: "active_run_exists" },
+        },
+        "public-start",
+      )
+    : null;
   const recoveryUnavailable = recovery.status === "unavailable";
   const readinessBlocked = readinessBlocksRunStart(readiness);
   const retryAfterMs = [
@@ -663,48 +700,49 @@ function StartGate({
         {recovery.status !== "available" ? (
           <StatusPill status={deriveRunPresentationState(recovery)} />
         ) : runInProgress ? (
-          <>
-            <StatusPill status={deriveRunPresentationState(recovery)} />
-            <Link
-              className="inline-flex min-h-7 items-center gap-1 rounded-lg border border-border bg-surface px-2.5 text-xs font-bold text-muted-strong hover:bg-surface-muted hover:text-ink focus:outline-2 focus:outline-offset-2"
-              href="/watch"
-            >
-              Watch live
-              <span aria-hidden="true">→</span>
-            </Link>
-          </>
+          <StatusPill status={deriveRunPresentationState(recovery)} />
         ) : readinessBlocked ? (
           <StatusPill status={readinessPresentation(readiness)} />
         ) : (
           <StatusPill status={{ label: "ready", tone: "idle" }} />
         )}
       </div>
-      {readinessBlocked ? (
+      {activeRunPresentation ? (
+        <ErrorNotice
+          className="w-full"
+          context="public-start"
+          presentation={activeRunPresentation}
+        />
+      ) : null}
+      {!activeRunPresentation && readinessBlocked ? (
         <ReadinessNotice
           {...(readiness.status === "unavailable" && readiness.retryAfterMs ? {} : { onRetry })}
           read={readiness}
         />
       ) : null}
-      {recoveryUnavailable ? <Unavailable onRetry={onRetry} read={recovery} /> : null}
-      {recoveryUnavailable || readinessBlocked || startRetryAfterMs !== null ? (
+      {!activeRunPresentation && recoveryUnavailable ? (
+        <Unavailable onRetry={onRetry} read={recovery} />
+      ) : null}
+      {!activeRunPresentation &&
+      (recoveryUnavailable || readinessBlocked || startRetryAfterMs !== null) ? (
         shouldShowRetryWait && retryAfterMs !== undefined ? (
           <p className="m-0 text-sm text-muted">
             Wait {Math.ceil(retryAfterMs / 1_000)} seconds before trying again.
           </p>
         ) : null
       ) : null}
-      {isRetryScheduled && retryDelayMs !== null ? (
+      {!activeRunPresentation && isRetryScheduled && retryDelayMs !== null ? (
         <p className="m-0 text-sm text-muted">
           Automatic retry {retryAttempt} in {Math.ceil(retryDelayMs / 1_000)} seconds.
         </p>
-      ) : retriesExhausted ? (
+      ) : !activeRunPresentation && retriesExhausted ? (
         <p className="m-0 text-sm text-muted">
           Automatic retries paused. Manual retry remains available.
         </p>
       ) : null}
-      {presentation ? (
+      {!activeRunPresentation && presentation ? (
         <ErrorNotice context="public-start" onRetry={onRetry} presentation={presentation} />
-      ) : statusMessage ? (
+      ) : !activeRunPresentation && statusMessage ? (
         <p className="m-0 text-sm font-semibold text-muted-strong">{statusMessage}</p>
       ) : null}
     </div>
@@ -729,10 +767,7 @@ export function readinessPresentation(readiness: BackendRead<HealthResponse>): P
       readiness.status === "loading"
         ? "infrastructure-checking"
         : `infrastructure-${readinessStatus}`,
-    label:
-      readiness.status === "loading"
-        ? "checking infrastructure"
-        : presentation.headline.toLowerCase(),
+    label: readiness.status === "loading" ? "checking infrastructure" : "backend not ready",
     tone: presentation.tone,
     description: presentation.explanation ?? presentation.headline,
   };

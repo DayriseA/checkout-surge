@@ -34,6 +34,11 @@ describe("dashboard control surface", () => {
     expect(markup).not.toContain("Forced outage");
     expect(markup).toContain("Public custom");
     expect(markup).toContain("Start Public Custom");
+    expect(markup.match(/Starting a bounded run uses the one shared demo runtime/g)?.length).toBe(
+      2,
+    );
+    expect(markup).toContain("other visitors can&#x27;t start until it finishes");
+    expect(markup).toContain("A successful start opens the live view.");
     expect(markup).toContain("Simulated ERP capacity (orders/s)");
     expect(markup).toContain(">ready<");
     expect(markup).not.toContain("database_reachable");
@@ -111,7 +116,10 @@ describe("dashboard control surface", () => {
     const unavailableMarkup = renderToStaticMarkup(
       createElement(PublicDemoEntry, { surface: unavailable }),
     );
-    expect(unavailableMarkup).toContain("Something didn");
+    expect(unavailableMarkup).toContain(
+      "The demo backend isn&#x27;t ready yet — try again in a moment",
+    );
+    expect(unavailableMarkup).toContain(">Check again<");
     expect(unavailableMarkup).not.toContain("Preset service offline");
   });
 
@@ -155,7 +163,8 @@ describe("dashboard control surface", () => {
 
     const markup = renderToStaticMarkup(createElement(PublicDemoEntry, { surface }));
 
-    expect(markup).toContain("the demo is temporarily unavailable");
+    expect(markup).toContain(">backend not ready<");
+    expect(markup).toContain("The demo backend isn&#x27;t ready yet — try again in a moment");
     expect(markup).not.toContain("database_reachable");
     expect(markup).not.toContain("PostgreSQL readiness check failed.");
     expect(markup).toContain("disabled");
@@ -167,7 +176,8 @@ describe("dashboard control surface", () => {
 
     const markup = renderToStaticMarkup(createElement(PublicDemoEntry, { surface }));
 
-    expect(markup).toContain("the demo is temporarily unavailable");
+    expect(markup).toContain(">backend not ready<");
+    expect(markup).toContain("The demo backend isn&#x27;t ready yet — try again in a moment");
     expect(markup).not.toContain("Readiness proxy offline");
     expect(markup).toContain("disabled");
   });
@@ -188,19 +198,29 @@ describe("dashboard control surface", () => {
 
     const markup = renderToStaticMarkup(createElement(PublicDemoEntry, { surface }));
 
-    expect(markup).toContain("the demo is still getting ready");
+    expect(markup).toContain(">backend not ready<");
+    expect(markup).toContain("The demo backend isn&#x27;t ready yet — try again in a moment");
     expect(markup).not.toContain("order_process_queue_reachable");
     expect(markup).not.toContain("Queue connectivity is slow.");
     expect(markup).toContain("disabled");
   });
 
   it("keeps degraded and unavailable readiness state vocabulary distinct", () => {
-    expect(
-      readinessPresentation(available({ ...readinessFixture(), status: "degraded" })).state,
-    ).toBe("infrastructure-degraded");
-    expect(
-      readinessPresentation(available({ ...readinessFixture(), status: "unavailable" })).state,
-    ).toBe("infrastructure-unavailable");
+    const degraded = readinessPresentation(
+      available({ ...readinessFixture(), status: "degraded" }),
+    );
+    const unavailable = readinessPresentation(
+      available({ ...readinessFixture(), status: "unavailable" }),
+    );
+
+    expect(degraded).toMatchObject({
+      state: "infrastructure-degraded",
+      label: "backend not ready",
+    });
+    expect(unavailable).toMatchObject({
+      state: "infrastructure-unavailable",
+      label: "backend not ready",
+    });
   });
 
   it("renders only the admin sign-in gate for anonymous admin access", () => {

@@ -289,6 +289,40 @@ describe("dashboard control proxy routes", () => {
     expect(secondResponse.headers.get("set-cookie")).toBeNull();
   });
 
+  it("preserves the API-owned public budget Retry-After through the BFF", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify(
+              errorPayloadSchema.parse({
+                code: "public_run_budget_exceeded",
+                message: "Public run budget is exhausted.",
+                correlationId: "corr-budget-bff",
+                timestamp: "2026-06-20T00:00:10.000Z",
+              }),
+            ),
+            {
+              status: 429,
+              headers: { "content-type": "application/json", "retry-after": "59" },
+            },
+          ),
+      ),
+    );
+
+    const response = await startDemoRun(
+      new Request("http://dashboard.local/api/demo/runs/start", {
+        method: "POST",
+        body: JSON.stringify({ presetSlug: "preview-1k" }),
+      }),
+    );
+
+    expect(response.status).toBe(429);
+    expect(response.headers.get("retry-after")).toBe("59");
+    expect(errorPayloadSchema.parse(await response.json()).code).toBe("public_run_budget_exceeded");
+  });
+
   it("rotates malformed public visitor cookies before proxying demo run starts", async () => {
     const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
       const headers = init?.headers as Record<string, string>;

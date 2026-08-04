@@ -18,7 +18,7 @@ describe("error presentation", () => {
       },
       "public-start",
     );
-    expect(presentation.headline).toBe("A run is already in progress");
+    expect(presentation.headline).toBe("A demo run is already in progress");
     expect(presentation.action).toMatchObject({ kind: "watch", href: "/watch" });
     expect(presentation.explanation).not.toContain("contract");
   });
@@ -33,6 +33,7 @@ describe("error presentation", () => {
       },
       "public-start",
     );
+    expect(presentation.headline).toBe("Public start limit reached for now — try again later");
     expect(presentation.action).toMatchObject({ kind: "wait", retryAfterMs: 5_000 });
     expect(presentation.explanation).toContain("5 seconds");
   });
@@ -64,11 +65,32 @@ describe("error presentation", () => {
       httpStatus: 502,
       correlationId: "corr-private",
     });
+
+    const publicStartPresentation = mapErrorPresentation(
+      {
+        status: "unavailable",
+        reason: "raw backend probe failure",
+        httpStatus: 502,
+        correlationId: "corr-private",
+      },
+      "public-start",
+    );
+    expect(publicStartPresentation.headline).toBe(
+      "The demo backend isn't ready yet — try again in a moment",
+    );
+    expect(publicStartPresentation.action.kind).toBe("check");
+    expect(JSON.stringify(publicStartPresentation)).not.toContain("raw backend probe failure");
+    expect(JSON.stringify(publicStartPresentation)).not.toContain("corr-private");
   });
 
   it.each([
-    ["active_run_exists", "A run is already in progress", "watch", "/watch"],
-    ["reset_incomplete", "The demo is still recovering", "wait", undefined],
+    ["active_run_exists", "A demo run is already in progress", "watch", "/watch"],
+    [
+      "reset_incomplete",
+      "The demo backend isn't ready yet — try again in a moment",
+      "check",
+      undefined,
+    ],
   ] as const)("maps the bounded conflict cause %s", (cause, headline, kind, href) => {
     const presentation = mapErrorPresentation(
       {
@@ -131,6 +153,60 @@ describe("error presentation", () => {
     expect(presentation.headline).toBe("Something didn't work on our side");
     expect(presentation.action.kind).toBe("retry");
     expect(JSON.stringify(presentation)).not.toContain("future_conflict");
+
+    const publicPresentation = mapErrorPresentation(
+      { status: "unavailable", errorCode: "preset_conflict" },
+      "public-start",
+    );
+    expect(publicPresentation.headline).toBe(
+      "The demo backend isn't ready yet — try again in a moment",
+    );
+  });
+
+  it.each([
+    ["resource_not_found", "No active product is available for demo runs."],
+    ["control_token_required", "Control service token is not configured."],
+    ["preset_operation_not_allowed", "That preset cannot be started here."],
+    ["public_override_not_allowed", "That public override is not allowed."],
+    ["invalid_runtime_policy", "The runtime policy is invalid."],
+    ["invalid_chaos_configuration", "The chaos configuration is invalid."],
+  ] as const)("maps non-correctable public start failure %s safely", (errorCode, reason) => {
+    const presentation = mapErrorPresentation(
+      {
+        status: "unavailable",
+        errorCode,
+        reason,
+        correlationId: "public-start-private-correlation",
+        httpStatus: errorCode === "resource_not_found" ? 404 : 503,
+      },
+      "public-start",
+    );
+
+    expect(presentation.headline).toBe("The demo backend isn't ready yet — try again in a moment");
+    expect(presentation.action).toMatchObject({ kind: "check", label: "Check again" });
+    expect(presentation.technicalDetails).toBeUndefined();
+    expect(JSON.stringify(presentation)).not.toContain(reason);
+    expect(JSON.stringify(presentation)).not.toContain("public-start-private-correlation");
+  });
+
+  it.each([
+    "invalid_request",
+    "invalid_run_configuration",
+  ] as const)("keeps visitor-correctable public start failure %s actionable", (errorCode) => {
+    const presentation = mapErrorPresentation({ status: "unavailable", errorCode }, "public-start");
+
+    expect(presentation.headline).toBe("Check the values and try again");
+    expect(presentation.action).toMatchObject({ kind: "edit", label: "Edit values" });
+  });
+
+  it("keeps non-correctable validation mappings actionable on protected surfaces", () => {
+    const presentation = mapErrorPresentation(
+      { status: "unavailable", errorCode: "invalid_runtime_policy" },
+      "admin-operation",
+    );
+
+    expect(presentation.headline).toBe("Check the values and try again");
+    expect(presentation.action).toMatchObject({ kind: "edit", label: "Edit values" });
   });
 
   it("keeps resource-not-found actions contextual", () => {
@@ -201,7 +277,7 @@ describe("error presentation", () => {
       },
       { surface: "public-start", readiness: "unavailable" },
     );
-    expect(presentation.headline).toBe("The demo is temporarily unavailable");
+    expect(presentation.headline).toBe("The demo backend isn't ready yet — try again in a moment");
     expect(presentation.explanation).not.toContain("PostgreSQL");
   });
 });

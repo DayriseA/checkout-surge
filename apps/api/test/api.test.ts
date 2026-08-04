@@ -2538,6 +2538,7 @@ describe("API gateway routes", () => {
         "public_run_budget_exceeded",
         "Public visitor run budget is exhausted.",
         { budget: "visitor" },
+        59,
       );
     });
     const server = await trackedServer({
@@ -2559,12 +2560,48 @@ describe("API gateway routes", () => {
     const error = errorPayloadSchema.parse(response.json());
 
     expect(response.statusCode).toBe(429);
+    expect(response.headers["retry-after"]).toBe("59");
     expect(response.headers[correlationIdHeaderName]).toBe(correlationId);
     expect(error).toMatchObject({
       code: "public_run_budget_exceeded",
       correlationId,
       details: { budget: "visitor" },
     });
+  });
+
+  it.each([
+    0,
+    -1,
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+    Number.MAX_SAFE_INTEGER + 1,
+  ])("does not emit an invalid public budget Retry-After value (%s)", async (retryAfterSeconds) => {
+    const startRun = vi.fn(async () => {
+      throw new DemoRunValidationError(
+        "public_run_budget_exceeded",
+        "Public visitor run budget is exhausted.",
+        { budget: "visitor" },
+        retryAfterSeconds,
+      );
+    });
+    const server = await trackedServer({
+      persistence: new AcceptingPersistence(),
+      demoRunLifecycleService: { ...demoRunLifecycleControllerFixture(), startRun },
+    });
+
+    const response = await server.inject({
+      method: "POST",
+      url: startDemoRunPath,
+      headers: {
+        [controlServiceTokenHeaderName]: "test-control-token",
+        [demoRunOperatorModeHeaderName]: "public",
+        [publicVisitorIdHeaderName]: "signed-visitor-1",
+      },
+      payload: { presetSlug: "preview-1k" },
+    });
+
+    expect(response.statusCode).toBe(429);
+    expect(response.headers["retry-after"]).toBeUndefined();
   });
 
   it("protects internal load metric ingestion with the control service token", async () => {

@@ -62,6 +62,13 @@ const genericPresentation = {
   tone: "danger" as const,
 };
 
+const publicStartActionCodes = new Set<ErrorPayloadCode>([
+  "run_conflict",
+  "public_run_budget_exceeded",
+  "invalid_request",
+  "invalid_run_configuration",
+]);
+
 /**
  * The one web boundary between canonical transport errors and user-facing copy.
  * Backend messages remain diagnostics; only this client-owned table becomes public text.
@@ -119,11 +126,23 @@ export function mapErrorPresentation(
 
   const retryAfterMs =
     read.retryAfterMs !== undefined && read.retryAfterMs > 0 ? read.retryAfterMs : undefined;
-  const mapped = read.errorCode ? codePresentation(read.errorCode, retryAfterMs, resolved) : null;
+  const mapped =
+    read.errorCode &&
+    (resolved.surface !== "public-start" || publicStartActionCodes.has(read.errorCode))
+      ? codePresentation(read.errorCode, retryAfterMs, resolved)
+      : resolved.surface === "public-start"
+        ? publicBackendRetryPresentation(retryAfterMs)
+        : null;
   if (mapped) return { ...mapped, technicalDetails };
 
   // An absent code includes network failures and malformed envelopes. Fail closed: the
   // transport reason is retained only for authenticated technical details.
+  if (resolved.surface === "public-start") {
+    return {
+      ...publicBackendUnavailablePresentation(),
+      technicalDetails,
+    };
+  }
   return { ...genericPresentation, technicalDetails };
 }
 
@@ -131,21 +150,21 @@ function readinessPresentation(
   status: "degraded" | "unavailable",
   technicalDetails: ErrorTechnicalDetails | undefined,
 ): ErrorPresentation {
-  return status === "degraded"
-    ? {
-        headline: "The demo is still getting ready",
-        explanation: "A shared dependency needs attention. Check again before starting a run.",
-        action: { kind: "check", label: "Check again" },
-        tone: "warning",
-        technicalDetails,
-      }
-    : {
-        headline: "The demo is temporarily unavailable",
-        explanation: "Check again shortly before starting a run.",
-        action: { kind: "check", label: "Check again" },
-        tone: "danger",
-        technicalDetails,
-      };
+  return {
+    ...publicBackendUnavailablePresentation(status),
+    technicalDetails,
+  };
+}
+
+function publicBackendUnavailablePresentation(
+  status: "degraded" | "unavailable" = "unavailable",
+): Omit<ErrorPresentation, "technicalDetails"> {
+  return {
+    headline: "The demo backend isn't ready yet — try again in a moment",
+    explanation: "Check again before starting a run.",
+    action: { kind: "check", label: "Check again" },
+    tone: status === "degraded" ? "warning" : "danger",
+  };
 }
 
 function failedRunPresentation(
@@ -180,9 +199,16 @@ function codePresentation(
     case "preset_conflict":
       return presetConflictPresentation(context);
     case "traffic_execution_conflict":
-      return genericPresentation;
+      return context.surface === "public-start"
+        ? publicBackendRetryPresentation(retryAfterMs)
+        : genericPresentation;
     case "public_run_budget_exceeded":
-      return waitPresentation("The public run limit has been reached", retryAfterMs);
+      return waitPresentation(
+        context.surface === "public-start"
+          ? "Public start limit reached for now — try again later"
+          : "The public run limit has been reached",
+        retryAfterMs,
+      );
     case "admin_login_rate_limited":
     case "dashboard_recovery_rate_limited":
       return waitPresentation("Please wait before trying again", retryAfterMs);
@@ -208,11 +234,15 @@ function codePresentation(
     case "inventory_unavailable":
     case "queue_status_unavailable":
     case "load_orchestrator_unavailable":
-      return retryPresentation("The latest information is temporarily unavailable", retryAfterMs);
+      return context.surface === "public-start"
+        ? publicBackendRetryPresentation(retryAfterMs)
+        : retryPresentation("The latest information is temporarily unavailable", retryAfterMs);
     case "invalid_backend_response":
     case "internal_error":
     case "service_misconfigured":
-      return genericPresentation;
+      return context.surface === "public-start"
+        ? publicBackendRetryPresentation(retryAfterMs)
+        : genericPresentation;
     case "invalid_request":
     case "invalid_run_configuration":
     case "invalid_runtime_policy":
@@ -248,7 +278,7 @@ function conflictPresentation(
 ): Omit<ErrorPresentation, "technicalDetails"> {
   if (context.cause === "active_run_exists") {
     return {
-      headline: "A run is already in progress",
+      headline: "A demo run is already in progress",
       explanation: "Watch the current run, then try again when it finishes.",
       action: { kind: "watch", label: "Watch live", href: "/watch" },
       tone: "warning",
@@ -266,9 +296,11 @@ function conflictPresentation(
           },
           tone: "warning",
         }
-      : waitPresentation("The demo is still recovering", retryAfterMs);
+      : publicBackendRetryPresentation(retryAfterMs);
   }
-  return genericPresentation;
+  return context.surface === "public-start"
+    ? publicBackendUnavailablePresentation()
+    : genericPresentation;
 }
 
 function presetConflictPresentation(
@@ -290,7 +322,9 @@ function presetConflictPresentation(
       tone: "warning",
     };
   }
-  return genericPresentation;
+  return context.surface === "public-start"
+    ? publicBackendUnavailablePresentation()
+    : genericPresentation;
 }
 
 function resourceNotFoundPresentation(
@@ -305,12 +339,7 @@ function resourceNotFoundPresentation(
     };
   }
   if (context.surface === "public-start") {
-    return {
-      headline: "The demo is not available right now",
-      explanation: "Check again shortly before starting a run.",
-      action: { kind: "check", label: "Check again" },
-      tone: "warning",
-    };
+    return publicBackendUnavailablePresentation();
   }
   if (context.surface === "admin-operation") {
     return {
@@ -358,6 +387,14 @@ function retryPresentation(
         tone: "danger",
       }
     : waitPresentation(headline, retryAfterMs);
+}
+
+function publicBackendRetryPresentation(
+  retryAfterMs: number | undefined,
+): Omit<ErrorPresentation, "technicalDetails"> {
+  return retryAfterMs === undefined
+    ? publicBackendUnavailablePresentation()
+    : waitPresentation(publicBackendUnavailablePresentation().headline, retryAfterMs);
 }
 
 function waitPresentation(
