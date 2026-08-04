@@ -216,9 +216,10 @@ export function toRunSignalTimelineHeadline(
   });
 }
 
-export function deriveOversoldUnits(
-  evidence: { reservedUnits: number; startingStock: number },
-): number {
+export function deriveOversoldUnits(evidence: {
+  reservedUnits: number;
+  startingStock: number;
+}): number {
   return Math.max(0, evidence.reservedUnits - evidence.startingStock);
 }
 

@@ -1,6 +1,7 @@
 import type {
   BusinessOutcomeSummary,
   DemoRunStatus,
+  InternalRunFailureReason,
   RunSignalTimelineSummary,
   ServerReservationTimingSummary,
   TerminalInventorySnapshot,
@@ -8,7 +9,6 @@ import type {
   TrafficExecutionStatus,
   TrafficHttpSummary,
   TransportAttemptCounts,
-  InternalRunFailureReason,
 } from "@checkout-surge/contracts";
 import type { CheckoutSurgeDatabase, demoRuns } from "@checkout-surge/db";
 

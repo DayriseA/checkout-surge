@@ -41,11 +41,8 @@ import {
   collectPublicRuntimePolicyMutableViolations,
   collectPublicRuntimePolicyViolations,
 } from "./public-runtime-policy-validation.js";
+import { internalRunFailureReasonSchema, publicRunFailureCategorySchema } from "./run-result.js";
 import { runSignalTimelineHeadlineSchema, runSignalTimelineSummarySchema } from "./run-signals.js";
-import {
-  internalRunFailureReasonSchema,
-  publicRunFailureCategorySchema,
-} from "./run-result.js";
 import { transportAttemptCountsSchema } from "./traffic-transport-counts.js";
 
 export const publicPresetListPath = "/demo/presets/public" as const;
@@ -400,10 +397,18 @@ export const adminRunHistoryDetailResponseSchema = z
   .strict()
   .superRefine((value, context) => {
     if (value.run.status === "failed" && value.internalFailureReason === undefined) {
-      context.addIssue({ code: "custom", path: ["internalFailureReason"], message: "Required for failed runs." });
+      context.addIssue({
+        code: "custom",
+        path: ["internalFailureReason"],
+        message: "Required for failed runs.",
+      });
     }
     if (value.run.status !== "failed" && value.internalFailureReason !== undefined) {
-      context.addIssue({ code: "custom", path: ["internalFailureReason"], message: "Only valid for failed runs." });
+      context.addIssue({
+        code: "custom",
+        path: ["internalFailureReason"],
+        message: "Only valid for failed runs.",
+      });
     }
   });
 export type AdminRunHistoryDetailResponse = z.infer<typeof adminRunHistoryDetailResponseSchema>;
@@ -439,10 +444,18 @@ export const publicRunHistorySummarySchema = z
   .strict()
   .superRefine((value, context) => {
     if (value.status === "failed" && value.failureCategory === undefined) {
-      context.addIssue({ code: "custom", path: ["failureCategory"], message: "Required for failed summaries." });
+      context.addIssue({
+        code: "custom",
+        path: ["failureCategory"],
+        message: "Required for failed summaries.",
+      });
     }
     if (value.status !== "failed" && value.failureCategory !== undefined) {
-      context.addIssue({ code: "custom", path: ["failureCategory"], message: "Only valid for failed summaries." });
+      context.addIssue({
+        code: "custom",
+        path: ["failureCategory"],
+        message: "Only valid for failed summaries.",
+      });
     }
   });
 export type PublicRunHistorySummary = z.infer<typeof publicRunHistorySummarySchema>;

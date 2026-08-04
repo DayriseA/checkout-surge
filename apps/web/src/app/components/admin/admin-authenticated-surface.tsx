@@ -48,7 +48,7 @@ import {
   adminPresetSaveProxyPath,
   adminPublicRuntimePolicyProxyPath,
 } from "../../lib/control-paths";
-import { formatDashboardTime } from "../../lib/dashboard-time";
+import { formatCount, formatInstantUtc } from "../../lib/presentation/format";
 import { ConfirmationDialog } from "../confirmation-dialog";
 import { useDashboardRecovery } from "../realtime/use-dashboard-recovery";
 import { StatusPill } from "../status-pill";
@@ -132,7 +132,10 @@ export function AdminCurrentRunPanel({
           <Fact label="Run" value={recovery.data.currentRun?.presetName ?? "No active run"} />
           <Fact label="Status" value={recovery.data.currentRun?.status ?? "idle"} />
           <Fact label="Traffic" value={recovery.data.currentRun?.trafficStatus ?? "Not active"} />
-          <Fact label="Recovered" value={formatDashboardTime(recovery.data.recoveredAt)} />
+          <Fact
+            label="Recovered"
+            value={formatInstantUtc(recovery.data.recoveredAt) ?? "not yet available"}
+          />
         </dl>
       ) : (
         <Unavailable read={recovery} />
@@ -527,11 +530,13 @@ export function AdminMaintenancePanel({
       }
       if (intent === "reset" && "failedRunCount" in result.data) {
         setNotice(
-          `Reset complete: ${result.data.failedRunCount} runs failed, ${result.data.cleanedJobCount} jobs cleaned.`,
+          `Reset complete: ${formatMaintenanceCount(result.data.failedRunCount)} runs failed, ${formatMaintenanceCount(result.data.cleanedJobCount)} jobs cleaned.`,
         );
         await onResetComplete();
       } else if ("deletedRunCount" in result.data) {
-        setNotice(`Cleanup complete: ${result.data.deletedRunCount} generated runs removed.`);
+        setNotice(
+          `Cleanup complete: ${formatMaintenanceCount(result.data.deletedRunCount)} generated runs removed.`,
+        );
       }
       setIntent(null);
     } finally {
@@ -715,4 +720,9 @@ function isRunStartBlocked(recovery: BackendRead<DashboardProjection>): boolean 
   if (recovery.status !== "available") return true;
   const status = recovery.data.currentRun?.status;
   return status === "starting" || status === "active" || status === "draining";
+}
+
+/** Maintenance receipts report counts, so they group like every other count on the product. */
+function formatMaintenanceCount(value: number): string {
+  return formatCount(value) ?? "an unreported number of";
 }

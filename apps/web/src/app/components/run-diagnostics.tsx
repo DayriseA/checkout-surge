@@ -1,5 +1,6 @@
 import type { LoadRunDiagnosticsSummary } from "@checkout-surge/contracts";
 import type { ReactNode } from "react";
+import { formatCount } from "../lib/presentation/format";
 
 const unavailable = "Could not determine";
 
@@ -323,9 +324,13 @@ function humanize(value: string): string {
 }
 
 function formatNumber(value: number): string {
-  return new Intl.NumberFormat("en-US").format(value);
+  return formatCount(value) ?? unavailable;
 }
 
+/**
+ * Diagnostics is a technical-details block, so raw significant digits are retained here
+ * deliberately: they support diagnosis rather than a public summary reading.
+ */
 function formatDecimal(value: number): string {
   return new Intl.NumberFormat("en-US", { maximumSignificantDigits: 4 }).format(value);
 }

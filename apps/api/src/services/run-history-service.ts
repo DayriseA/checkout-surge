@@ -7,6 +7,7 @@ import {
   deriveRecordedReplyCount,
   evaluateFastReservationTarget,
   httpTimingBreakdownSummarySchema,
+  internalRunFailureReasonSchema,
   type LoadRunDiagnosticsSummary,
   loadRunDiagnosticsSummarySchema,
   type PublicRunHistoryDetailResponse,
@@ -30,9 +31,8 @@ import {
   runHistorySummarySchema,
   runSignalTimelineSummarySchema,
   serverReservationTimingSummarySchema,
-  toRunSignalTimelineHeadline,
-  internalRunFailureReasonSchema,
   toPublicRunFailureCategory,
+  toRunSignalTimelineHeadline,
 } from "@checkout-surge/contracts";
 import {
   type CheckoutSurgeDatabase,
@@ -267,7 +267,11 @@ export class RunHistoryService implements RunHistoryController {
       summary: toRunHistorySummary(source.summaryRow),
       run: toDemoRunSnapshot(source.runRow),
       ...(source.runRow.failureReason
-        ? { internalFailureReason: internalRunFailureReasonSchema.parse(source.runRow.failureReason) }
+        ? {
+            internalFailureReason: internalRunFailureReasonSchema.parse(
+              source.runRow.failureReason,
+            ),
+          }
         : {}),
       httpTimingBreakdownSummary: parsePersistedState(
         httpTimingBreakdownSummarySchema,
@@ -376,7 +380,11 @@ function toPublicRunHistorySummary(
     status: row.status,
     replayPossible: row.replayPossible,
     ...(row.failureReason
-      ? { failureCategory: toPublicRunFailureCategory(internalRunFailureReasonSchema.parse(row.failureReason)) }
+      ? {
+          failureCategory: toPublicRunFailureCategory(
+            internalRunFailureReasonSchema.parse(row.failureReason),
+          ),
+        }
       : {}),
     ...(row.startedAt ? { startedAt: row.startedAt.toISOString() } : {}),
     endedAt: row.endedAt.toISOString(),
@@ -465,7 +473,11 @@ function toRunHistorySummary(row: typeof demoRunSummaries.$inferSelect): RunHist
     status: row.status,
     replayPossible: row.replayPossible,
     ...(row.failureReason
-      ? { failureCategory: toPublicRunFailureCategory(internalRunFailureReasonSchema.parse(row.failureReason)) }
+      ? {
+          failureCategory: toPublicRunFailureCategory(
+            internalRunFailureReasonSchema.parse(row.failureReason),
+          ),
+        }
       : {}),
     ...(row.startedAt ? { startedAt: row.startedAt.toISOString() } : {}),
     endedAt: row.endedAt.toISOString(),

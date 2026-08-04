@@ -97,7 +97,7 @@ describe("dashboard hydration", () => {
     });
 
     expect(recoverableErrors).toHaveLength(0);
-    expect(next.textContent).toContain("12:00:10 AM UTC");
+    expect(next.textContent).toContain("2026-06-20 00:00:10 UTC");
   });
 });
 

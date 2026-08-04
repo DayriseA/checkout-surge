@@ -5,6 +5,9 @@ import {
   type RunHistorySummary,
 } from "@checkout-surge/contracts";
 import Link from "next/link";
+import type { ReactNode } from "react";
+import { formatCount, formatInstantUtc } from "../lib/presentation/format";
+import { deriveOverallRunDuration } from "../lib/presentation/run-duration";
 import { deriveTerminalSummaryPresentation } from "../lib/presentation/run-presentation-state";
 import { evidenceFromRunHistorySummary } from "../lib/presentation/run-result-presentation";
 import { GoldSignalHeadlines } from "./gold-signals";
@@ -69,12 +72,14 @@ function OutOfRangePageState({ history }: { history: RunHistoryListResponse }) {
 }
 
 function RunHistorySummaryArticle({ summary }: { summary: RunHistorySummary }) {
-  const lifecycleFacts: Array<[string, string]> = [
-    ["Started", formatDate(summary.startedAt)],
-    ["Ended", formatDate(summary.endedAt)],
-    ["Captured", formatDate(summary.capturedAt)],
+  const overallDuration = deriveOverallRunDuration(summary);
+  const lifecycleFacts: Array<[string, ReactNode]> = [
+    ["Started", <LifecycleInstant key="started" value={summary.startedAt} />],
+    ["Ended", <LifecycleInstant key="ended" value={summary.endedAt} />],
+    ["Overall run duration", overallDuration.text],
+    ["Captured", <LifecycleInstant key="captured" value={summary.capturedAt} />],
     ...(summary.failureCategory
-      ? [["Failure category", summary.failureCategory] as [string, string]]
+      ? [["Failure category", summary.failureCategory] as [string, ReactNode]]
       : []),
   ];
   const result = deriveRunResult(evidenceFromRunHistorySummary(summary));
@@ -160,7 +165,7 @@ function SummarySection({
   title,
 }: {
   caption?: string;
-  facts: Array<[string, string]>;
+  facts: Array<[string, ReactNode]>;
   title: string;
 }) {
   return (
@@ -212,7 +217,7 @@ function TerminalInventorySnapshot({ summary }: { summary: RunHistorySummary }) 
       </dl>
       <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
         <p className="m-0 min-w-0 [overflow-wrap:anywhere] text-xs font-semibold text-muted">
-          {snapshot.source} snapshot captured {formatDate(snapshot.capturedAt)} for{" "}
+          {snapshot.source} snapshot captured <LifecycleInstant value={snapshot.capturedAt} /> for{" "}
           {snapshot.saleOfferId}
         </p>
         <RunHistoryRowControls presetName={summary.presetName} runId={summary.runId} />
@@ -296,16 +301,19 @@ function trafficDeliveryTone(
 }
 
 function formatNumber(value: number): string {
-  return new Intl.NumberFormat("en-US").format(value);
+  return formatCount(value) ?? "n/a";
 }
 
-function formatDate(value: string | undefined): string {
-  if (!value) {
-    return "n/a";
+/**
+ * A lifecycle instant renders the labelled UTC reading a person compares across routes and keeps
+ * the exact ISO value in `dateTime` for assistive technology and technical inspection. Both parts
+ * come from the same server-supplied string under a fixed zone, so hydration cannot disagree.
+ */
+function LifecycleInstant({ value }: { value: string | undefined }) {
+  const text = formatInstantUtc(value);
+  if (value === undefined || text === null) {
+    return <>n/a</>;
   }
 
-  return new Intl.DateTimeFormat("en-US", {
-    dateStyle: "medium",
-    timeStyle: "medium",
-  }).format(new Date(value));
+  return <time dateTime={value}>{text}</time>;
 }

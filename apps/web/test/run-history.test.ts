@@ -1,9 +1,12 @@
 import type {
   AdminRunHistoryDetailResponse,
+  DashboardProjection,
   PublicRunHistoryDetailResponse,
   RunHistoryListResponse,
 } from "@checkout-surge/contracts";
 import {
+  dashboardProjectionSchemaName,
+  dashboardProjectionSchemaVersion,
   emptyRequestArrivalSummary,
   evaluateFastReservationTarget,
   type ServerReservationTimingSummary,
@@ -11,6 +14,7 @@ import {
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { RecoveryStatusPanel, RequestSurgePanel } from "../src/app/components/dashboard-panels.js";
 import {
   AdminRunHistoryDetail,
   PublicRunHistoryDetail,
@@ -142,7 +146,7 @@ describe("run history surface", () => {
     expect(markup).toMatch(/Sold-out responses<\/dt><dd[^>]*>3<\/dd>/);
     expect(markup).toMatch(/Unexpected<\/dt><dd[^>]*>0<\/dd>/);
     expect(markup).toMatch(
-      /Client HTTP p95<span[^>]*>observed replies only<\/span><\/dt><dd[^>]*>42ms<\/dd>/,
+      /Client HTTP p95<span[^>]*>observed replies only<\/span><\/dt><dd[^>]*>42 ms<\/dd>/,
     );
     // 7 of 9 dispatched attempts recorded a reply.
     expect(markup).toContain("78% of dispatched attempts recorded a reply");
@@ -257,6 +261,173 @@ describe("run history surface", () => {
     expect(getRunHistoryDetail).not.toHaveBeenCalled();
   });
 });
+
+describe("cross-route presentation of the same instant and duration", () => {
+  // The fixture run starts at 00:00:00Z and finalizes at 00:00:10Z on 2026-06-20.
+  const sharedInstantText = "2026-06-20 00:00:00 UTC";
+  const sharedDurationText = "10 s";
+
+  function watchMarkup(): string {
+    return renderToStaticMarkup(
+      createElement(RecoveryStatusPanel, {
+        recovery: { status: "available", data: watchProjectionFixture(), httpStatus: 200 },
+        realtimeStatus: "disconnected",
+        liveProjectionCount: 0,
+        presentation: {
+          state: "ready",
+          tone: "idle",
+          label: "ready",
+          description: "Ready to start a run.",
+        },
+        freshness: { state: "disconnected", observedAt: "2026-06-20T00:00:00.000Z", final: false },
+        hasSyncIssue: true,
+        isRetryScheduled: true,
+        retryDelayMs: 10_000,
+        syncIssue: { status: "unavailable", reason: "backend offline" },
+      }),
+    );
+  }
+
+  // `traffic.latency` arrives from k6 as a raw mean in milliseconds. Watch is public summary UI,
+  // so it must not reproduce the readings B10 named. The panel renders only the latest sample, so
+  // each raw value is rendered in its own pass — otherwise the forbidden strings for the earlier
+  // samples would never reach the markup and their assertions would be inert.
+  const rawLatencySamples = [
+    { rawMs: 11_028.779, expectedText: "11 s", forbidden: ".779" },
+    { rawMs: 14_487.6, expectedText: "14.5 s", forbidden: "487.6" },
+    { rawMs: 126.683, expectedText: "127 ms", forbidden: ".683" },
+  ];
+
+  it.each(
+    rawLatencySamples,
+  )("never renders the falsely precise $rawMs ms sample on the public watch route", ({
+    rawMs,
+    expectedText,
+    forbidden,
+  }) => {
+    const projection = watchProjectionFixture();
+    projection.recentMetrics = [
+      {
+        metricName: "traffic.latency",
+        value: rawMs,
+        unit: "ms",
+        timestamp: "2026-06-20T00:00:00.000Z",
+      },
+    ];
+
+    const markup = renderToStaticMarkup(
+      createElement(RequestSurgePanel, {
+        recovery: { status: "available", data: projection, httpStatus: 200 },
+        liveProjectionCount: 1,
+        freshness: { state: "live", observedAt: "2026-06-20T00:00:00.000Z", final: false },
+      }),
+    );
+
+    expect(markup).toMatch(
+      new RegExp(
+        `Window mean HTTP latency</dt><dd[^>]*>${expectedText.replaceAll(".", "\\.")}</dd>`,
+      ),
+    );
+    expect(markup).not.toMatch(/\d,\d{3}\.\d ms/);
+    expect(markup).not.toContain(forbidden);
+  });
+
+  it("renders one instant with the same dated UTC reading on Watch and both history routes", () => {
+    const watch = watchMarkup();
+    const list = renderToStaticMarkup(
+      createElement(RunHistoryList, { history: runHistoryFixture() }),
+    );
+    const publicDetail = renderToStaticMarkup(
+      createElement(PublicRunHistoryDetail, { detail: runHistoryDetailFixture() }),
+    );
+    const adminDetail = renderToStaticMarkup(
+      createElement(AdminRunHistoryDetail, { detail: adminRunHistoryDetailFixture() }),
+    );
+
+    for (const markup of [watch, list, publicDetail, adminDetail]) {
+      expect(markup).toContain(sharedInstantText);
+    }
+    // No surface may fall back to a viewer-local reading or an unlabeled clock.
+    for (const markup of [list, publicDetail, adminDetail]) {
+      expect(markup).not.toContain("Jun 20, 2026");
+      expect(markup).not.toContain("AM UTC");
+      expect(markup).not.toContain("PM UTC");
+    }
+    // The exact machine-readable instant stays available for accessible or technical inspection
+    // alongside the human reading, on both history routes.
+    for (const markup of [list, publicDetail, adminDetail]) {
+      expect(markup).toContain(
+        `<time dateTime="2026-06-20T00:00:00.000Z">${sharedInstantText}</time>`,
+      );
+    }
+  });
+
+  it("renders one elapsed interval with the same human reading on Watch and both history routes", () => {
+    const watch = watchMarkup();
+    const list = renderToStaticMarkup(
+      createElement(RunHistoryList, { history: runHistoryFixture() }),
+    );
+    const publicDetail = renderToStaticMarkup(
+      createElement(PublicRunHistoryDetail, { detail: runHistoryDetailFixture() }),
+    );
+    const adminDetail = renderToStaticMarkup(
+      createElement(AdminRunHistoryDetail, { detail: adminRunHistoryDetailFixture() }),
+    );
+
+    expect(watch).toContain(`Retry scheduled in ${sharedDurationText}`);
+    for (const markup of [list, publicDetail, adminDetail]) {
+      expect(markup).toContain("Overall run duration");
+      expect(markup).toMatch(
+        new RegExp(`Overall run duration</dt><dd[^>]*>${sharedDurationText}</dd>`),
+      );
+    }
+  });
+
+  it("shows an explicit no-duration state instead of zero when a start boundary is missing", () => {
+    const history = runHistoryFixture();
+    const summary = history.summaries[0];
+    if (!summary) throw new Error("Expected a run history summary fixture.");
+    delete (summary as { startedAt?: string }).startedAt;
+
+    const markup = renderToStaticMarkup(createElement(RunHistoryList, { history }));
+
+    expect(markup).toMatch(/Overall run duration<\/dt><dd[^>]*>— no recorded start<\/dd>/);
+    expect(markup).not.toMatch(/Overall run duration<\/dt><dd[^>]*>0 ms<\/dd>/);
+  });
+
+  it("keeps the configured maximum dispatch time distinguishable from an observed dispatch duration", () => {
+    const markup = renderToStaticMarkup(
+      createElement(PublicRunHistoryDetail, { detail: runHistoryDetailFixture() }),
+    );
+
+    expect(markup).toContain("Configured maximum dispatch time");
+    expect(markup).toContain("Dispatch duration");
+    expect(markup).not.toContain(">Dispatch window<");
+  });
+});
+
+function watchProjectionFixture(): DashboardProjection {
+  return {
+    schema: dashboardProjectionSchemaName,
+    version: dashboardProjectionSchemaVersion,
+    scopeId: "idle",
+    revision: 1,
+    correlationId: "corr-web-recovery",
+    scope: null,
+    currentRun: null,
+    inventory: null,
+    recentMetrics: [],
+    erp: null,
+    systemStatus: null,
+    businessOutcome: null,
+    consistencyLag: null,
+    transportAttemptCounts: null,
+    httpSummary: null,
+    requestArrivalSummary: null,
+    runSignalTimelineSummary: null,
+    recoveredAt: "2026-06-20T00:00:00.000Z",
+  };
+}
 
 function runHistoryFixture(): RunHistoryListResponse {
   return {

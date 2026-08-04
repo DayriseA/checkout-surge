@@ -9,6 +9,8 @@ import {
   type DemoRunSnapshot,
   emptyHttpTimingBreakdownSummary,
   emptyServerReservationTimingSummary,
+  type InternalRunFailureReason,
+  isReplayPossible,
   type OperatorMode,
   type PublicRuntimePolicy,
   type StartDemoRunRequest,
@@ -16,8 +18,6 @@ import {
   startDemoRunResponseSchema,
   type TerminalInventorySnapshot,
   type TrafficExecutionStartResponse,
-  isReplayPossible,
-  type InternalRunFailureReason,
 } from "@checkout-surge/contracts";
 import { verifyPublicVisitorCredential } from "@checkout-surge/contracts/public-visitor-credential";
 import {

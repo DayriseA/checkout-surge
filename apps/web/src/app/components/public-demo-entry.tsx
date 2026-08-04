@@ -14,6 +14,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BackendRead, PublicDemoSurface } from "../lib/api";
 import { readProxyJson } from "../lib/client/proxy-json";
 import { demoRunStartProxyPath, healthReadyProxyPath } from "../lib/control-paths";
+import { formatCount } from "../lib/presentation/format";
 import {
   deriveRunPresentationState,
   type PresentationState,
@@ -200,8 +201,14 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
                 </div>
                 <dl className="m-0 mb-3 grid grid-cols-3 gap-2 text-sm">
                   <Fact label="Mode" value={preset.trafficConfig.mode} />
-                  <Fact label="Stock" value={String(preset.inventoryConfig.startingStock)} />
-                  <Fact label="ERP TPS" value={String(preset.erpConfig.maxTps)} />
+                  <Fact
+                    label="Stock"
+                    value={formatCount(preset.inventoryConfig.startingStock) ?? "not configured"}
+                  />
+                  <Fact
+                    label="ERP TPS"
+                    value={formatCount(preset.erpConfig.maxTps) ?? "not configured"}
+                  />
                 </dl>
                 <button
                   className={primaryButtonClassName}

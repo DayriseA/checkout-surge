@@ -7,6 +7,7 @@ import type {
 } from "@checkout-surge/contracts";
 import type { PresetDraft, RunConfigDraft, RuntimePolicyDraft } from "../../lib/admin-drafts";
 import type { BackendRead } from "../../lib/api";
+import { formatCount } from "../../lib/presentation/format";
 import { StatusPill } from "../status-pill";
 
 export const panelClassName =
@@ -117,18 +118,18 @@ export function AdminRuntimePolicyView({
             </div>
           </div>
           <dl className="m-0 grid grid-cols-4 gap-3 max-[900px]:grid-cols-2">
-            <Fact label="Hard max buyers" value={String(policy.deploymentHardCaps.maxBuyers)} />
+            <Fact label="Hard max buyers" value={formatCap(policy.deploymentHardCaps.maxBuyers)} />
             <Fact
               label="Hard max requests"
-              value={String(policy.deploymentHardCaps.maxTotalRequests)}
+              value={formatCap(policy.deploymentHardCaps.maxTotalRequests)}
             />
             <Fact
               label="Hard max RPS"
-              value={String(policy.deploymentHardCaps.maxRequestsPerSecond)}
+              value={formatCap(policy.deploymentHardCaps.maxRequestsPerSecond)}
             />
             <Fact
-              label="Hard max duration"
-              value={`${policy.deploymentHardCaps.maxTrafficDurationSeconds}s`}
+              label="Hard max duration (seconds)"
+              value={formatCap(policy.deploymentHardCaps.maxTrafficDurationSeconds)}
             />
           </dl>
           <div className="flex flex-wrap gap-2">
@@ -166,6 +167,17 @@ export function AdminRuntimePolicyView({
       {notice ? <Notice>{notice}</Notice> : null}
     </section>
   );
+}
+
+/**
+ * A cap is read against the editable field that sets it — the duration cap sits beside the
+ * `Max duration seconds` input — so it renders as a grouped count in that field's unit rather
+ * than as a tiered duration. Being operator-typed is not the reason: configured guards that sit
+ * among observed intervals in the run-history detail are operator-typed too and are tiered there.
+ * Grouping still follows the one locale policy, so 100000 reads 100,000.
+ */
+function formatCap(value: number): string {
+  return formatCount(value) ?? "not configured";
 }
 
 const policyLimitFields: ReadonlyArray<[keyof RuntimePolicyDraft, string, string?]> = [

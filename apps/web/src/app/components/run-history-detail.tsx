@@ -3,6 +3,9 @@ import type {
   PublicRunHistoryDetailResponse,
 } from "@checkout-surge/contracts";
 import { deriveOversoldUnits, deriveRunResult } from "@checkout-surge/contracts";
+import type { ReactNode } from "react";
+import { formatCount, formatDurationMs, formatInstantUtc } from "../lib/presentation/format";
+import { deriveOverallRunDuration } from "../lib/presentation/run-duration";
 import { deriveTerminalSummaryPresentation } from "../lib/presentation/run-presentation-state";
 import { evidenceFromRunHistoryDetail } from "../lib/presentation/run-result-presentation";
 import { GoldSignals } from "./gold-signals";
@@ -20,6 +23,7 @@ export function AdminRunHistoryDetail({ detail }: RunHistoryDetailProps) {
   const config = run.configSnapshot;
   const result = deriveRunResult(evidenceFromRunHistoryDetail(detail));
   const runPresentation = deriveTerminalSummaryPresentation(result);
+  const overallDuration = deriveOverallRunDuration(summary);
 
   return (
     <div className="grid gap-4">
@@ -53,6 +57,7 @@ export function AdminRunHistoryDetail({ detail }: RunHistoryDetailProps) {
           <FactList
             facts={[
               ["Started", formatDate(summary.startedAt)],
+              ["Overall run duration", overallDuration.text],
               ["Traffic started", formatDate(run.trafficStartedAt)],
               ["Traffic ended", formatDate(run.trafficEndedAt)],
               ["Finalized", formatDate(run.finalizedAt)],
@@ -115,13 +120,20 @@ export function AdminRunHistoryDetail({ detail }: RunHistoryDetailProps) {
             facts={[
               ["Starting stock", formatNumber(config.inventoryConfig.startingStock)],
               ["Quantity", formatNumber(config.inventoryConfig.quantityPerCheckout)],
-              ["Hold minutes", formatNumber(config.inventoryConfig.reservationHoldMinutes)],
+              // Native minutes because of the unit, not because it is configured: the tiered
+              // formatter has no minute-native form and would render a 15 minute hold as
+              // "15 min 0 s" under a label that declares minutes. The guards below are configured
+              // too and are tiered. See the unit-choice table in docs/cross_service_conventions.md.
+              [
+                "Configured hold (minutes)",
+                formatNumber(config.inventoryConfig.reservationHoldMinutes),
+              ],
             ]}
             title="Inventory"
           />
           <FactList
             facts={[
-              ["Latency", `${formatNumber(config.erpConfig.latencyMs)}ms`],
+              ["Configured latency", formatDurationMs(config.erpConfig.latencyMs) ?? "n/a"],
               ["Max TPS", formatNumber(config.erpConfig.maxTps)],
               ["Error rate", formatPercent(config.erpConfig.errorRate)],
               ["Forced outage", config.erpConfig.forcedOutage ? "yes" : "no"],
@@ -131,10 +143,15 @@ export function AdminRunHistoryDetail({ detail }: RunHistoryDetailProps) {
           <FactList
             facts={[
               ["Concurrency", formatNumber(config.backpressureConfig.orderProcessConcurrency)],
-              ["Drain timeout", `${formatNumber(config.backpressureConfig.drainTimeoutSeconds)}s`],
               [
-                "Retry delay",
-                `${formatNumber(config.backpressureConfig.pendingPersistenceRetryAfterSeconds)}s`,
+                "Configured drain timeout",
+                formatDurationSeconds(config.backpressureConfig.drainTimeoutSeconds),
+              ],
+              [
+                "Configured retry delay",
+                formatDurationSeconds(
+                  config.backpressureConfig.pendingPersistenceRetryAfterSeconds,
+                ),
               ],
             ]}
             title="Backpressure"
@@ -183,7 +200,7 @@ export function AdminRunHistoryDetail({ detail }: RunHistoryDetailProps) {
               ["Terminal", attempt.terminal ? "yes" : "no"],
               ["HTTP", attempt.httpStatus ? String(attempt.httpStatus) : "n/a"],
               ["Error", attempt.errorCode ?? "none"],
-              ["Latency", `${formatNumber(attempt.latencyMs)}ms`],
+              ["Observed latency", formatDurationMs(attempt.latencyMs) ?? "n/a"],
               ["Finished", formatDate(attempt.finishedAt)],
             ],
           }))}
@@ -230,7 +247,7 @@ function CollectionPanel({
   truncated,
 }: {
   emptyLabel: string;
-  records: Array<{ id: string; title: string; facts: Array<[string, string]> }>;
+  records: Array<{ id: string; title: string; facts: Array<[string, ReactNode]> }>;
   title: string;
   totalCount: number;
   truncated: boolean;
@@ -276,7 +293,7 @@ function FactList({
   title,
 }: {
   caption?: string;
-  facts: Array<[string, string]>;
+  facts: Array<[string, ReactNode]>;
   title: string;
 }) {
   return (
@@ -297,7 +314,7 @@ function FactList({
   );
 }
 
-function RecordRow({ facts, title }: { facts: Array<[string, string]>; title: string }) {
+function RecordRow({ facts, title }: { facts: Array<[string, ReactNode]>; title: string }) {
   return (
     <article className="min-w-0 border-t border-border pt-3 first:border-t-0 first:pt-0">
       <h3 className="m-0 [overflow-wrap:anywhere] text-sm font-bold text-ink">{title}</h3>
@@ -321,13 +338,13 @@ function EmptyCollection({ label }: { label: string }) {
 
 function trafficConfigFacts(
   config: AdminRunHistoryDetailResponse["run"]["configSnapshot"]["trafficConfig"],
-): Array<[string, string]> {
+): Array<[string, ReactNode]> {
   if (config.mode === "buyer-spike") {
     return [
       ["Mode", "buyer spike"],
       ["Buyer count", formatNumber(config.buyerCount)],
       ["Duplicate attempts", config.duplicateEachBuyerAttempt ? "yes" : "no"],
-      ["Dispatch window", `${formatNumber(config.maxDurationSeconds)}s`],
+      ["Configured maximum dispatch time", formatDurationSeconds(config.maxDurationSeconds)],
       ["Quantity", formatNumber(config.quantityPerAttempt)],
     ];
   }
@@ -335,7 +352,7 @@ function trafficConfigFacts(
   return [
     ["Mode", "constant arrival"],
     ["Rate", `${formatNumber(config.ratePerSecond)}/s`],
-    ["Duration", `${formatNumber(config.durationSeconds)}s`],
+    ["Configured traffic duration", formatDurationSeconds(config.durationSeconds)],
     ["Quantity", formatNumber(config.quantityPerAttempt)],
     ["Max VUs", config.k6Vus ? formatNumber(config.k6Vus.maxVus) : "n/a"],
   ];
@@ -345,6 +362,7 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
   const { run, summary } = detail;
   const result = deriveRunResult(evidenceFromRunHistoryDetail(detail));
   const runPresentation = deriveTerminalSummaryPresentation(result);
+  const overallDuration = deriveOverallRunDuration(summary);
   return (
     <div className="grid gap-4">
       <RunConclusion result={result} runStatus={summary.status} />
@@ -364,6 +382,7 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
             title="Lifecycle"
             facts={[
               ["Started", formatDate(summary.startedAt)],
+              ["Overall run duration", overallDuration.text],
               ["Traffic started", formatDate(run.trafficStartedAt)],
               ["Traffic ended", formatDate(run.trafficEndedAt)],
               ["Finalized", formatDate(run.finalizedAt)],
@@ -440,24 +459,39 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
 }
 
 function nullableMetricMs(value: number | null): string {
-  return value === null ? "n/a" : `${formatNumber(value)}ms`;
+  return formatDurationMs(value) ?? "n/a";
 }
 
 function formatNumber(value: number): string {
-  return new Intl.NumberFormat("en-US").format(value);
+  return formatCount(value) ?? "n/a";
 }
+
+/**
+ * A percentage keeps its own decimal rule rather than inheriting a count formatter's default: a
+ * 0-100 reading never needs grouping, and its precision must not move if the shared count policy
+ * changes.
+ */
+const percentFormatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
 
 function formatPercent(value: number): string {
-  return `${formatNumber(value * 100)}%`;
+  return `${percentFormatter.format(value * 100)}%`;
 }
 
-function formatDate(value: string | undefined): string {
-  if (!value) {
+/**
+ * Renders the labelled UTC reading a person compares across routes while keeping the exact ISO
+ * value in `<time dateTime>` for assistive technology and technical inspection. Both parts derive
+ * from the same server-supplied string under a fixed zone, so hydration cannot disagree.
+ */
+function formatDate(value: string | undefined): ReactNode {
+  const text = formatInstantUtc(value);
+  if (value === undefined || text === null) {
     return "n/a";
   }
 
-  return new Intl.DateTimeFormat("en-US", {
-    dateStyle: "medium",
-    timeStyle: "medium",
-  }).format(new Date(value));
+  return <time dateTime={value}>{text}</time>;
+}
+
+/** Configured guards are stored in seconds but are presented under the one duration policy. */
+function formatDurationSeconds(value: number): string {
+  return formatDurationMs(value * 1000) ?? "n/a";
 }

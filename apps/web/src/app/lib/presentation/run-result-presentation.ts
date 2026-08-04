@@ -8,6 +8,7 @@ import {
   type RunResultEvidence,
   runResultEvidenceSchema,
 } from "@checkout-surge/contracts";
+import { formatCount } from "./format";
 
 type SummaryLike = RunHistorySummary | PublicRunHistorySummary;
 
@@ -84,7 +85,7 @@ export function runConclusionSentence(result: RunResult): string {
     const category = result.failureCategory
       ? ` due to a ${result.failureCategory} failure`
       : "; the failure category is unavailable";
-    return `The run failed${category}${result.failedOrders ? ` with ${result.failedOrders} failed orders` : ""}.`;
+    return `The run failed${category}${result.failedOrders ? ` with ${formatNarrativeCount(result.failedOrders)} failed orders` : ""}.`;
   }
   if (result.outcome === "outcome-indeterminate") {
     return result.maximumClassification === "correctness_failure"
@@ -98,7 +99,7 @@ export function runConclusionSentence(result: RunResult): string {
       result.startingStock === null ||
       result.oversoldUnits === null
         ? "Stock evidence is unavailable."
-        : `Durable records show ${result.reservedUnits} units reserved against ${result.startingStock} starting units, so ${result.oversoldUnits} units were oversold.`;
+        : `Durable records show ${formatNarrativeCount(result.reservedUnits)} units reserved against ${formatNarrativeCount(result.startingStock)} starting units, so ${formatNarrativeCount(result.oversoldUnits)} units were oversold.`;
     return [stock, soldOutSentence(result), neutralOrderSentence(result)].filter(Boolean).join(" ");
   }
 
@@ -106,14 +107,14 @@ export function runConclusionSentence(result: RunResult): string {
     result.startingStock === null || result.remainingStock === null || result.reservedUnits === null
       ? "Stock evidence is unavailable."
       : result.remainingStock === 0
-        ? `All ${result.startingStock} available units were reserved without overselling.`
-        : `${result.reservedUnits} units were reserved from ${result.startingStock}, and ${result.remainingStock} units remain. No units were oversold.`;
+        ? `All ${formatNarrativeCount(result.startingStock)} available units were reserved without overselling.`
+        : `${formatNarrativeCount(result.reservedUnits)} units were reserved from ${formatNarrativeCount(result.startingStock)}, and ${formatNarrativeCount(result.remainingStock)} units remain. No units were oversold.`;
   return [stock, soldOutSentence(result), orderSentence(result)].filter(Boolean).join(" ");
 }
 
 function soldOutSentence(result: RunResult): string {
   return result.soldOutDecisions && result.soldOutDecisions > 0
-    ? `${result.soldOutDecisions} sold-out decisions were recorded.`
+    ? `${formatNarrativeCount(result.soldOutDecisions)} sold-out decisions were recorded.`
     : "";
 }
 
@@ -122,17 +123,29 @@ function orderSentence(result: RunResult): string {
   const failed = result.failedOrders ?? 0;
   const pending = result.pendingOrders ?? 0;
   if (failed > 0 || pending > 0) {
-    return `${result.confirmedOrders} orders were confirmed, ${failed} failed, and ${pending} remain pending.`;
+    return `${formatNarrativeCount(result.confirmedOrders)} orders were confirmed, ${formatNarrativeCount(failed)} failed, and ${formatNarrativeCount(pending)} remain pending.`;
   }
   return result.uniqueReservations === result.confirmedOrders
-    ? `All ${result.confirmedOrders} reservations were confirmed, with no failed orders.`
-    : `${result.confirmedOrders} orders were confirmed, with no failed orders.`;
+    ? `All ${formatNarrativeCount(result.confirmedOrders)} reservations were confirmed, with no failed orders.`
+    : `${formatNarrativeCount(result.confirmedOrders)} orders were confirmed, with no failed orders.`;
 }
 
 function neutralOrderSentence(result: RunResult): string {
   return result.confirmedOrders === null
     ? "Order evidence is unavailable."
-    : `Order outcomes: ${result.confirmedOrders} confirmed, ${result.failedOrders ?? 0} failed, and ${result.pendingOrders ?? 0} pending.`;
+    : `Order outcomes: ${formatNarrativeCount(result.confirmedOrders)} confirmed, ${formatNarrativeCount(result.failedOrders ?? 0)} failed, and ${formatNarrativeCount(result.pendingOrders ?? 0)} pending.`;
+}
+
+/**
+ * Narrative counts group like every other count on the product: order, decision, and stock
+ * totals here are bounded by `maxTotalRequests` and `maxStartingStock`, which reach six figures.
+ *
+ * Every call site has already ruled out a missing value with its own field-specific copy
+ * ("Stock evidence is unavailable.", "Order evidence is unavailable."), so the sentinel below is
+ * a last resort that still refuses to pass off an absent count as zero.
+ */
+function formatNarrativeCount(value: number | null | undefined): string {
+  return formatCount(value) ?? "an unreported number of";
 }
 
 export function invariantLabel(status: RunResult["invariants"][number]["status"]): string {

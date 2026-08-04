@@ -89,9 +89,17 @@ export const demoRunSummaryShapeSchema = z
   .strict()
   .superRefine((value, context) => {
     if (value.status === "failed" && value.failureCategory === undefined) {
-      context.addIssue({ code: "custom", path: ["failureCategory"], message: "Required for failed summaries." });
+      context.addIssue({
+        code: "custom",
+        path: ["failureCategory"],
+        message: "Required for failed summaries.",
+      });
     }
     if (value.status !== "failed" && value.failureCategory !== undefined) {
-      context.addIssue({ code: "custom", path: ["failureCategory"], message: "Only valid for failed summaries." });
+      context.addIssue({
+        code: "custom",
+        path: ["failureCategory"],
+        message: "Only valid for failed summaries.",
+      });
     }
   });

@@ -99,7 +99,11 @@ describe("transport observation section", () => {
     expect(markup.indexOf("Fast reservation")).toBeLessThan(markup.indexOf("Request arrival"));
     expect(markup).toContain("Redis p95 target");
     expect(markup).toContain("Redis p95 bound");
+    // The declared target and the observed bound sit adjacent and must spell milliseconds the
+    // same way, so the panel's whole comparison reads in one unit.
+    expect(markup).toMatch(/Redis p95 target<\/dt><dd[^>]*>≤ 1ms<\/dd>/);
     expect(markup).toContain("≤ 25ms");
+    expect(markup).not.toContain("≤ 1 ms");
     expect(markup).toContain("Target verdict");
     expect(markup).toMatch(/Target verdict<\/dt><dd[^>]*>fail<\/dd>/);
     expect(markup).toContain("Reserve service p95 bound");
@@ -195,9 +199,9 @@ describe("transport observation section", () => {
     );
 
     expect(markup).toContain("Configured start delay");
-    expect(markup).toContain(">3s<");
+    expect(markup).toContain(">3 s<");
     expect(markup).toContain("Remaining harness preparation");
-    expect(markup).toContain(">7s<");
+    expect(markup).toContain(">7 s<");
   });
 
   it("discloses terminal arrival-series storage and display truncation", () => {

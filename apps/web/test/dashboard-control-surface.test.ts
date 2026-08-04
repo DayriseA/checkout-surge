@@ -242,6 +242,10 @@ describe("dashboard control surface", () => {
     expect(markup).toContain("Public policy");
     expect(markup).toContain("Save Public Policy");
     expect(markup).toContain("Hard max buyers");
+    // The fixture's hard caps are exactly 100,000. B10's criterion is about presentation, so
+    // assert the grouped form actually reaches the markup rather than an ungrouped digit wall.
+    expect(markup).toContain(">100,000<");
+    expect(markup).not.toContain(">100000<");
     expect(markup).toContain("Start Admin Run");
     expect(markup).toContain("Save Preset");
     expect(markup).toContain("Copy to Custom");

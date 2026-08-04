@@ -4,6 +4,7 @@ import { adminDeleteRunHistoryResponseSchema } from "@checkout-surge/contracts";
 import { useRouter } from "next/navigation";
 import { useCallback, useState } from "react";
 import { adminRunHistoryProxyPath } from "../lib/control-paths";
+import { formatCount } from "../lib/presentation/format";
 
 export type DeleteIntent =
   | { kind: "runs"; runIds: string[]; description: string }
@@ -103,7 +104,9 @@ export function useRunHistoryDeletion(visibleRunIds: string[]): RunHistoryDeleti
         return;
       }
 
-      setStatusMessage(`Deleted ${parsed.data.deletedSummaryCount} run summaries.`);
+      setStatusMessage(
+        `Deleted ${formatCount(parsed.data.deletedSummaryCount) ?? "an unreported number of"} run summaries.`,
+      );
       setSelectedRunIds((current) => remainingSelection(current, intent));
       setIntent(null);
       setDeleteAllConfirmation("");

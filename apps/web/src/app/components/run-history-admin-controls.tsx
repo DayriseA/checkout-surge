@@ -4,6 +4,7 @@ import { deleteAllRunHistoryConfirmationToken } from "@checkout-surge/contracts"
 import type { ReactNode } from "react";
 import { useMemo } from "react";
 import { FiTrash2 } from "react-icons/fi";
+import { formatCount } from "../lib/presentation/format";
 import { ConfirmationDialog } from "./confirmation-dialog";
 import { RunHistoryAdminProvider } from "./run-history-admin-context";
 import { type DeleteIntent, useRunHistoryDeletion } from "./use-run-history-deletion";
@@ -73,7 +74,7 @@ export function RunHistoryAdminControls({ visibleRunIds, children }: RunHistoryA
               deletion.openIntent({
                 kind: "runs",
                 runIds: Array.from(deletion.selectedRunIds),
-                description: `${selectedCount} selected run summaries`,
+                description: `${formatCount(selectedCount) ?? "an unknown number of"} selected run summaries`,
               })
             }
             type="button"

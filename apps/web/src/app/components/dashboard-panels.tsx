@@ -2,9 +2,16 @@ import {
   type DashboardProjection,
   dashboardLiveUpdateExpectedIntervalMs,
 } from "@checkout-surge/contracts";
+import type { ReactNode } from "react";
 import type { BackendRead } from "../lib/api";
 import { projectRequestSurge } from "../lib/dashboard-projection-state";
-import { formatDashboardTime } from "../lib/dashboard-time";
+import {
+  formatCount,
+  formatDurationMs,
+  formatInstantUtc,
+  formatWindowSeconds,
+  formatWindowSecondsAdjective,
+} from "../lib/presentation/format";
 import type { Freshness, RealtimeConnectionStatus } from "../lib/presentation/freshness";
 import {
   deriveFreshnessPresentationState,
@@ -40,10 +47,14 @@ const smallValueClassName = "m-0 [overflow-wrap:anywhere] text-sm font-semibold 
 const controlButtonClassName =
   "min-h-10 rounded-lg border border-border bg-surface px-3.5 py-2.5 font-semibold text-muted-strong disabled:cursor-not-allowed disabled:opacity-60";
 
+/** The unit tag k6 latency samples carry; see `k6-live-metric-aggregator`. */
+const millisecondUnit = "ms";
+
 function formatNumber(value: number): string {
-  return new Intl.NumberFormat("en-US").format(value);
+  return formatCount(value) ?? "—";
 }
 
+/** Rates are not counts or durations; they keep their own precision rule and unit label. */
 function formatRate(value: number | null | undefined, unit: string, absent = "—"): string {
   if (value === null || value === undefined) {
     return absent;
@@ -55,38 +66,31 @@ function formatRate(value: number | null | undefined, unit: string, absent = "�
 }
 
 function formatExpectedTime(value: string | undefined | null): string {
-  return value ? formatDashboardTime(value) : "not yet available";
+  return formatInstantUtc(value) ?? "not yet available";
 }
 
 function formatScheduledTime(value: string | undefined | null): string {
-  return value ? formatDashboardTime(value) : "not scheduled";
+  return formatInstantUtc(value) ?? "not scheduled";
 }
 
-function formatSeconds(value: number | null | undefined, absent = "—"): string {
-  if (value === null || value === undefined) {
-    return absent;
-  }
-
-  if (value < 1) {
-    return `${Math.round(value * 1000)}ms`;
-  }
-
-  return `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 }).format(value)}s`;
+function formatDurationSeconds(value: number | null | undefined, absent = "—"): string {
+  return formatDurationMs(value === null || value === undefined ? null : value * 1000) ?? absent;
 }
 
 function formatMilliseconds(value: number | null | undefined, absent = "—"): string {
-  if (value === null || value === undefined) {
-    return absent;
-  }
-
-  if (value >= 1000) {
-    return formatSeconds(value / 1000, absent);
-  }
-
-  return `${Math.round(value)}ms`;
+  return formatDurationMs(value) ?? absent;
 }
 
-function formatMetric(value: number, unit: string): string {
+/**
+ * A metric sample carries its own unit. A millisecond sample is an elapsed measurement, so it
+ * follows the one duration policy rather than the sample's raw precision; every other unit is a
+ * rate or a ratio and keeps its own precision rule and unit label.
+ */
+function formatMetric(value: number, unit: string, absent = "—"): string {
+  if (unit === millisecondUnit) {
+    return formatDurationMs(value) ?? absent;
+  }
+
   return `${new Intl.NumberFormat("en-US", {
     maximumFractionDigits: value < 10 ? 2 : 1,
   }).format(value)} ${unit}`;
@@ -136,21 +140,34 @@ function Fact({ label, value, small = false }: { label: string; value: string; s
 }
 
 function FreshnessLine({ freshness }: { freshness: Freshness }) {
-  const updated = formatDashboardTime(freshness.observedAt);
-  const notApplicable = freshness.final
-    ? `Final, as of ${updated}`
-    : `As of ${updated} · no active run`;
-  const copy = {
-    connecting: `Updated ${updated} · connecting to live updates`,
-    disconnected: `Updated ${updated} · disconnected, showing last known values`,
-    live: `Updated ${updated} · live`,
+  // Retained and stale states can show an observation from an earlier calendar day, so this
+  // line always carries the full dated UTC form rather than a bare clock reading. Like both
+  // history routes, it keeps the exact ISO value in `<time dateTime>`; the reading and the
+  // machine value derive from the same server-supplied string under a fixed zone, so server
+  // rendering and hydration cannot disagree.
+  const reading = formatInstantUtc(freshness.observedAt);
+  const updated: ReactNode =
+    reading === null ? (
+      "an unrecorded time"
+    ) : (
+      <time dateTime={freshness.observedAt}>{reading}</time>
+    );
+  const notApplicable = freshness.final ? (
+    <>Final, as of {updated}</>
+  ) : (
+    <>As of {updated} · no active run</>
+  );
+  const copy: Record<Freshness["state"], ReactNode> = {
+    connecting: <>Updated {updated} · connecting to live updates</>,
+    disconnected: <>Updated {updated} · disconnected, showing last known values</>,
+    live: <>Updated {updated} · live</>,
     "not-applicable": notApplicable,
-    "retained-fresh": `Updated ${updated} · connected, no update expected`,
-    stale: `Updated ${updated} · stale, showing last known values`,
-    unsupported: `Updated ${updated} · live updates unsupported`,
-  }[freshness.state];
+    "retained-fresh": <>Updated {updated} · connected, no update expected</>,
+    stale: <>Updated {updated} · stale, showing last known values</>,
+    unsupported: <>Updated {updated} · live updates unsupported</>,
+  };
 
-  return <p className="m-0 mb-3 text-xs leading-5 text-muted">{copy}</p>;
+  return <p className="m-0 mb-3 text-xs leading-5 text-muted">{copy[freshness.state]}</p>;
 }
 
 export function RecoveryStatusPanel({
@@ -212,7 +229,7 @@ export function RecoveryStatusPanel({
             {isRefreshing
               ? "Refreshing authoritative snapshot now."
               : isRetryScheduled && retryDelayMs !== null
-                ? `Retry scheduled in ${formatSeconds(retryDelayMs / 1000)} (attempt ${retryAttempt}).`
+                ? `Retry scheduled in ${formatMilliseconds(retryDelayMs)} (attempt ${retryAttempt}).`
                 : "Authoritative recovery is unavailable."}
           </span>
           {syncIssue ? <span>{syncIssue.reason}</span> : null}
@@ -282,7 +299,7 @@ export function RequestSurgePanel({
             <Fact
               label={
                 requestSurge?.arrivalRateIsPeak
-                  ? `Peak request arrival rate (${requestSurge.arrivalWindowSeconds}-second windows)`
+                  ? `Peak request arrival rate (${formatWindowSecondsAdjective(requestSurge.arrivalWindowSeconds)} windows)`
                   : "Request arrival rate (1-second window)"
               }
               value={
@@ -303,7 +320,10 @@ export function RequestSurgePanel({
             />
             <Fact
               label="Dispatch duration"
-              value={formatSeconds(requestSurge?.dispatchDurationSeconds, "not yet available")}
+              value={formatDurationSeconds(
+                requestSurge?.dispatchDurationSeconds,
+                "not yet available",
+              )}
             />
             <Fact
               label="Response completion rate"
@@ -315,17 +335,23 @@ export function RequestSurgePanel({
             />
             <Fact
               label="Configured start delay"
-              value={formatSeconds(preparation?.configuredDelaySeconds, "not yet available")}
+              value={formatDurationSeconds(
+                preparation?.configuredDelaySeconds,
+                "not yet available",
+              )}
             />
             <Fact
               label="Remaining harness preparation"
-              value={formatSeconds(preparation?.remainingPreparationSeconds, "not yet available")}
+              value={formatDurationSeconds(
+                preparation?.remainingPreparationSeconds,
+                "not yet available",
+              )}
             />
             <Fact
               label="Window mean HTTP latency"
               value={
                 latencyMetric
-                  ? formatMetric(latencyMetric.value, latencyMetric.unit)
+                  ? formatMetric(latencyMetric.value, latencyMetric.unit, "not measurable")
                   : "Awaiting k6 metrics"
               }
             />
@@ -340,7 +366,7 @@ export function RequestSurgePanel({
           </dl>
           <dl className={stackedFactGridClassName}>
             <Fact
-              label={`Peak reservation rate (1-second windows, trailing ${inventory?.reservationThroughput.windowSeconds ?? 60}s)`}
+              label={`Peak reservation rate (1-second windows, trailing ${formatWindowSeconds(inventory?.reservationThroughput.windowSeconds ?? 60)}s)`}
               value={formatRate(
                 inventory?.reservationThroughput.peakRatePerSecond,
                 "reservations/s",
@@ -348,7 +374,7 @@ export function RequestSurgePanel({
               )}
             />
             <Fact
-              label={`Reservations in last ${inventory?.reservationThroughput.windowSeconds ?? 60}s`}
+              label={`Reservations in last ${formatWindowSeconds(inventory?.reservationThroughput.windowSeconds ?? 60)}s`}
               value={formatNumber(inventory?.reservationThroughput.successfulReservationCount ?? 0)}
             />
             <Fact
@@ -454,7 +480,7 @@ export function InventoryDrainPanel({
             <Fact label="Expired" value={formatNumber(inventory.expiredReservationCount)} />
             <Fact
               label="Oldest pending"
-              value={formatSeconds(inventory.oldestPendingPersistenceAgeSeconds)}
+              value={formatDurationSeconds(inventory.oldestPendingPersistenceAgeSeconds)}
             />
             <Fact
               label="Stock last changed"
@@ -532,7 +558,7 @@ export function RunErpOutcomesPanel({
             <Fact label="Run outcomes observed" value={formatExpectedTime(erp.observedAt)} small />
             <Fact
               label="Attempt window"
-              value={`${formatNumber(erp.recentAttemptWindowSeconds)}s`}
+              value={`${formatWindowSeconds(erp.recentAttemptWindowSeconds)}s`}
             />
             <Fact
               label="Latest attempt"
@@ -597,7 +623,10 @@ export function SystemStatusPanel({
               <Fact label="Delayed" value={formatNumber(queue.counts.delayed)} />
               <Fact label="Active" value={formatNumber(queue.counts.active)} />
               <Fact label="Failed" value={formatNumber(queue.failedJobs.totalCount)} />
-              <Fact label="Oldest wait" value={formatSeconds(queue.oldestWaitingAgeSeconds)} />
+              <Fact
+                label="Oldest wait"
+                value={formatDurationSeconds(queue.oldestWaitingAgeSeconds)}
+              />
               <Fact
                 label="Retrying jobs"
                 value={formatNumber(queue.retryPressure.retryingJobCount)}
@@ -716,7 +745,10 @@ export function ConsistencyLagPanel({
               value={formatMilliseconds(lag.maxLagMs, "not yet available")}
             />
             <Fact label="Pending" value={formatNumber(lag.pendingConfirmationCount)} />
-            <Fact label="Oldest pending" value={formatSeconds(lag.oldestPendingAgeSeconds)} />
+            <Fact
+              label="Oldest pending"
+              value={formatDurationSeconds(lag.oldestPendingAgeSeconds)}
+            />
             <Fact label="Confirmed" value={formatNumber(lag.confirmedOrderCount)} />
             <Fact label="Measured" value={formatExpectedTime(lag.measuredAt)} />
           </dl>
@@ -753,7 +785,10 @@ export function RunOutcomesPanel({
         <>
           <FreshnessLine freshness={freshness} />
           <dl className={wideFactGridClassName}>
-            <Fact label="Unique reservations secured" value={formatNumber(outcome.acceptedReservations)} />
+            <Fact
+              label="Unique reservations secured"
+              value={formatNumber(outcome.acceptedReservations)}
+            />
             <Fact label="Sold-out decisions" value={formatNumber(outcome.soldOutRejections)} />
             <Fact
               label="Queued (awaiting first processing start)"

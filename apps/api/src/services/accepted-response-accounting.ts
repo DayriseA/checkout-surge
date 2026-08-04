@@ -1,10 +1,10 @@
 import {
   type AcceptedRunConfigSnapshot,
   type BusinessOutcomeSummary,
+  isReplayPossible,
   type TrafficDeliverySummary,
   type TrafficHttpSummary,
   type TransportAttemptCounts,
-  isReplayPossible,
 } from "@checkout-surge/contracts";
 
 export interface AcceptedResponseAccounting {

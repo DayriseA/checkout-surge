@@ -660,10 +660,10 @@ describe("watch browser recovery", () => {
     );
 
     expect(markup).toContain("Configured start delay</dt><dd");
-    expect(markup).toContain(">15s</dd>");
+    expect(markup).toContain(">15 s</dd>");
     expect(markup).toContain("Remaining harness preparation</dt><dd");
-    expect(markup).toContain(">45s</dd>");
-    expect(markup).toContain("depleted in 0.2s");
+    expect(markup).toContain(">45 s</dd>");
+    expect(markup).toContain("depleted in 200 ms");
     expect(markup).toContain(
       "Shared axis: 0s first checkout attempt · 0.6s terminal timeline boundary",
     );
@@ -701,7 +701,7 @@ describe("watch browser recovery", () => {
         }),
       ),
     );
-    await screen.findAllByText(/Updated 12:00:11 AM UTC/);
+    await findFreshnessLine("2026-06-20 00:00:11 UTC");
 
     act(() => source?.emit("error", new Event("error")));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
@@ -714,7 +714,7 @@ describe("watch browser recovery", () => {
         }),
       ),
     );
-    await screen.findAllByText(/Updated 12:00:12 AM UTC/);
+    await findFreshnessLine("2026-06-20 00:00:12 UTC");
 
     act(() => {
       source?.emit("error", new Event("error"));
@@ -736,7 +736,7 @@ describe("watch browser recovery", () => {
         }),
       ),
     );
-    await screen.findAllByText(/Updated 12:00:13 AM UTC/);
+    await findFreshnessLine("2026-06-20 00:00:13 UTC");
 
     expect(FakeEventSource.instances).toHaveLength(1);
     expect(fetchMock.mock.calls.map((call) => String(call[0]))).toEqual(
@@ -990,6 +990,24 @@ async function replaceInputValue(
   const input = screen.getByLabelText(label);
   await user.clear(input);
   await user.type(input, value);
+}
+
+/**
+ * Waits for the freshness line to read `Updated <instant> · …` as one sentence.
+ *
+ * The instant lives in a nested `<time>`, and `getNodeText` only concatenates an element's direct
+ * text-node children, so a plain string query can never see the "Updated" prefix and the reading
+ * together. Matching on the paragraph's `textContent` keeps that adjacency covered while the
+ * `<time>` assertion keeps the machine-readable element itself covered.
+ */
+async function findFreshnessLine(instant: string) {
+  const [line] = await screen.findAllByText(
+    (_, element) =>
+      element?.tagName === "P" && element.textContent?.startsWith(`Updated ${instant} ·`) === true,
+  );
+  await screen.findAllByText(instant, { selector: "time" });
+
+  return line;
 }
 
 function requireFetchCall(fetchMock: FetchMock, index: number): FetchCall {

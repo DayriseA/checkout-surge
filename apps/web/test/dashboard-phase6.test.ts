@@ -65,7 +65,7 @@ describe("Phase 6 projection dashboard", () => {
       }),
     );
     expect(lagMarkup).toContain("Fast reservation vs final confirmation");
-    expect(lagMarkup).toContain("350ms");
+    expect(lagMarkup).toContain("350 ms");
     expect(lagMarkup).not.toContain("Latest individual order");
     expect(outcomeMarkup).toContain("Reservation and confirmation summary");
     expect(outcomeMarkup).toContain("System of record");
@@ -88,7 +88,9 @@ describe("Phase 6 projection dashboard", () => {
       }),
     );
 
-    expect(markup).toContain(`Updated 12:00:12 AM UTC · ${expectedCopy}`);
+    expect(markup).toContain(
+      `Updated <time dateTime="2026-06-20T00:00:12.000Z">2026-06-20 00:00:12 UTC</time> · ${expectedCopy}`,
+    );
     expect(markup).toMatch(
       new RegExp(`${expectedToneClass}[^>]*><span[^>]*>[^<]*</span>${expectedLabel}</span>`),
     );
@@ -126,8 +128,8 @@ describe("Phase 6 projection dashboard", () => {
       }),
     );
 
-    expect(markup).toMatch(/Configured start delay<\/dt><dd[^>]*>3s<\/dd>/);
-    expect(markup).toMatch(/Remaining harness preparation<\/dt><dd[^>]*>7s<\/dd>/);
+    expect(markup).toMatch(/Configured start delay<\/dt><dd[^>]*>3 s<\/dd>/);
+    expect(markup).toMatch(/Remaining harness preparation<\/dt><dd[^>]*>7 s<\/dd>/);
   });
 
   it("separates run ERP outcomes from shared runtime state and labels both clocks", () => {
@@ -288,7 +290,9 @@ describe("Phase 6 projection dashboard", () => {
       }),
     );
 
-    expect(markup).toContain("Updated 12:00:11 AM UTC · disconnected, showing last known values");
+    expect(markup).toContain(
+      'Updated <time dateTime="2026-06-20T00:00:11.000Z">2026-06-20 00:00:11 UTC</time> · disconnected, showing last known values',
+    );
     expect(markup).toContain("Allocated");
     expect(markup).toContain(">100<");
     expect(markup).toContain("Remaining");

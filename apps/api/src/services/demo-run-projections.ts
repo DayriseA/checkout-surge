@@ -3,8 +3,8 @@ import {
   type DemoRunSnapshot,
   demoRunSnapshotSchema,
   type InventoryStatus,
-  type TerminalInventorySnapshot,
   internalRunFailureReasonSchema,
+  type TerminalInventorySnapshot,
   toPublicRunFailureCategory,
 } from "@checkout-surge/contracts";
 import type { demoRuns } from "@checkout-surge/db";
@@ -26,7 +26,11 @@ export function toDemoRunSnapshot(run: typeof demoRuns.$inferSelect): DemoRunSna
     ...(run.trafficEndedAt ? { trafficEndedAt: run.trafficEndedAt.toISOString() } : {}),
     ...(run.finalizedAt ? { finalizedAt: run.finalizedAt.toISOString() } : {}),
     ...(run.failureReason
-      ? { failureCategory: toPublicRunFailureCategory(internalRunFailureReasonSchema.parse(run.failureReason)) }
+      ? {
+          failureCategory: toPublicRunFailureCategory(
+            internalRunFailureReasonSchema.parse(run.failureReason),
+          ),
+        }
       : {}),
   });
 }

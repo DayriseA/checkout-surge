@@ -5,12 +5,12 @@ import {
   emptyHttpTimingBreakdownSummary,
   emptyServerReservationTimingSummary,
   httpTimingBreakdownSummarySchema,
+  isReplayPossible,
   realLoadRunDiagnosticsSummarySchema,
   type TerminalInventorySnapshot,
   type TrafficDeliverySummary,
   type TrafficHttpSummary,
   type TransportAttemptCounts,
-  isReplayPossible,
 } from "@checkout-surge/contracts";
 import {
   type CheckoutSurgeDatabase,
@@ -234,7 +234,10 @@ export class AdminDemoResetService implements AdminDemoResetWorkflow {
         terminalStatus: "failed",
         failureReason: "admin_reset",
         replayPossible: isReplayPossible(
-          parsePersistedAcceptedRunConfigSnapshot(latest.run.configSnapshot, `demo run ${latest.run.id}`),
+          parsePersistedAcceptedRunConfigSnapshot(
+            latest.run.configSnapshot,
+            `demo run ${latest.run.id}`,
+          ),
         ),
         finalizedAt: fencedRun.finalizedAt,
         capturedAt: now,

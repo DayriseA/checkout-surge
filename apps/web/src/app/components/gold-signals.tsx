@@ -5,6 +5,11 @@ import type {
   RunSignalTimelineSummary,
 } from "@checkout-surge/contracts";
 import type { RunSignalLiveSample } from "../lib/dashboard-projection-state";
+import {
+  formatCount,
+  formatDurationMs,
+  formatWindowSecondsAdjective,
+} from "../lib/presentation/format";
 
 type SignalPoint = {
   elapsedSeconds: number;
@@ -185,9 +190,9 @@ export function GoldSignals({
             ? "All panels share elapsed seconds from the first checkout attempt."
             : "All panels share elapsed seconds from the first retained live projection."}{" "}
           {terminal
-            ? `PostgreSQL-derived terminal series use ${terminal.window.bucketCount} buckets of ${formatDuration(
-                terminal.window.bucketWidthSeconds,
-              )} each.`
+            ? `PostgreSQL-derived terminal series use ${
+                formatCount(terminal.window.bucketCount) ?? "an unavailable number of"
+              } buckets of ${formatAxisSeconds(terminal.window.bucketWidthSeconds)} each.`
             : "Reloading restarts this bounded live window."}
         </p>
       </div>
@@ -200,7 +205,7 @@ export function GoldSignals({
           )}.`}
           caption={`Checkout attempts started by k6 in ${
             terminal && arrivalSummary
-              ? `${formatNumber(arrivalSummary.peakArrivalWindowSeconds)}-second`
+              ? formatWindowSecondsAdjective(arrivalSummary.peakArrivalWindowSeconds)
               : "one-second"
           } producer event-time windows.`}
           headline={`${arrivalSummary ? "Peak " : "Latest/retained peak "}${formatRate(
@@ -297,8 +302,8 @@ export function GoldSignals({
       </div>
       <p className="m-0 mt-4 text-xs text-muted">
         {terminal
-          ? `Shared axis: 0s first checkout attempt · ${formatDuration(xMax)} terminal timeline boundary`
-          : `Shared axis: 0s first retained live projection · ${formatDuration(xMax)} latest retained live projection`}
+          ? `Shared axis: 0s first checkout attempt · ${formatAxisSeconds(xMax)} terminal timeline boundary`
+          : `Shared axis: 0s first retained live projection · ${formatAxisSeconds(xMax)} latest retained live projection`}
       </p>
     </section>
   );
@@ -426,7 +431,7 @@ function SignalPanel({
             <ol className="m-0 mt-2 grid max-h-40 gap-1 overflow-auto pl-5">
               {points.map((point) => (
                 <li key={point.elapsedSeconds}>
-                  {formatDuration(point.elapsedSeconds)}: {formatNumber(point.value)}
+                  {formatAxisSeconds(point.elapsedSeconds)}: {formatNumber(point.value)}
                   {secondary && point.secondaryValue !== undefined
                     ? ` confirmed, ${formatNumber(point.secondaryValue)} settled`
                     : ""}
@@ -571,13 +576,26 @@ function formatRate(value: number): string {
 }
 
 function formatDuration(value: number): string {
-  return `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(value)}s`;
+  return formatDurationMs(value * 1_000) ?? "not yet available";
 }
 
 function formatMilliseconds(value: number | null): string {
-  return value === null ? "not yet available" : `${formatNumber(value)}ms`;
+  return formatDurationMs(value) ?? "not yet available";
 }
 
+/**
+ * Chart-axis coordinates, not named measurements. They keep one fixed unit so tick labels and
+ * sample rows stay directly comparable down a column; that is the technical-details reason this
+ * surface does not use the tiered duration policy.
+ */
+function formatAxisSeconds(value: number): string {
+  return `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(value)}s`;
+}
+
+/**
+ * Signal magnitudes can be fractional (rates, sampled backlog values), so they keep two decimals
+ * rather than the whole-count formatter. Grouping still follows the shared `en-US` policy.
+ */
 function formatNumber(value: number): string {
   return new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(value);
 }

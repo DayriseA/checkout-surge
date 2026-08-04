@@ -3,6 +3,7 @@ import { RunHistoryAdminControls } from "../components/run-history-admin-control
 import { RunHistoryList } from "../components/run-history-list";
 import { StatusPill } from "../components/status-pill";
 import { getRunHistoryPage } from "../lib/api";
+import { formatCount } from "../lib/presentation/format";
 import { hasValidAdminPageSession } from "../lib/server/admin-page-session";
 
 export const dynamic = "force-dynamic";
@@ -21,7 +22,9 @@ export default async function RunHistoryPage({ searchParams }: RunHistoryPagePro
   const history = await getRunHistoryPage(page, pageSize);
   const authenticated = await hasValidAdminPageSession();
   const summaryCount =
-    history.status === "available" ? `${history.data.totalCount} summaries` : "unavailable";
+    history.status === "available"
+      ? `${formatCount(history.data.totalCount) ?? "an unknown number of"} summaries`
+      : "unavailable";
 
   return (
     <>

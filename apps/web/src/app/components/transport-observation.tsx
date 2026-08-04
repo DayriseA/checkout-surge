@@ -7,6 +7,12 @@ import type {
   TransportAttemptCounts,
 } from "@checkout-surge/contracts";
 import { deriveRecordedReplyCount } from "@checkout-surge/contracts";
+import {
+  formatCount,
+  formatDurationMs,
+  formatInstantUtc,
+  formatWindowSecondsAdjective,
+} from "../lib/presentation/format";
 
 /**
  * Presentation for the five transport-attempt counts.
@@ -189,8 +195,14 @@ export function TransportObservationSection({
       </dl>
       <h4 className="m-0 mt-4 text-xs font-bold uppercase text-muted">Observed outcomes</h4>
       <dl className="m-0 mt-2 grid gap-2">
-        <ObservationRow label="Accepted responses" value={formatNumber(httpSummary.acceptedResponses)} />
-        <ObservationRow label="Sold-out responses" value={formatNumber(httpSummary.soldOutResponses)} />
+        <ObservationRow
+          label="Accepted responses"
+          value={formatNumber(httpSummary.acceptedResponses)}
+        />
+        <ObservationRow
+          label="Sold-out responses"
+          value={formatNumber(httpSummary.soldOutResponses)}
+        />
         <ObservationRow label="Unexpected" value={formatNumber(httpSummary.unexpectedResponses)} />
         <ObservationRow
           label="Client HTTP p95"
@@ -239,7 +251,7 @@ function FastReservationEvidence({
       <dl className="m-0 mt-3 grid gap-2">
         <ObservationRow
           label="Redis p95 target"
-          value={`≤ ${formatMilliseconds(evaluation.target.thresholdMs)}`}
+          value={formatHistogramBoundMilliseconds(evaluation.target.thresholdMs)}
         />
         <ObservationRow
           label="Redis p95 bound"
@@ -311,7 +323,7 @@ export function RequestArrivalEvidence({
       <p className="m-0 mt-0.5 text-xs text-muted">checkout attempts started by k6</p>
       <dl className="m-0 mt-3 grid gap-2">
         <ObservationRow
-          label={`Peak (${formatWindow(summary.peakArrivalWindowSeconds)} window)`}
+          label={`Peak (${formatWindowSecondsAdjective(summary.peakArrivalWindowSeconds)} window)`}
           value={`${formatNumber(summary.peakArrivalRatePerSecond)} attempts/s`}
         />
         <ObservationRow
@@ -350,11 +362,10 @@ export function RequestArrivalRateSeries({
               className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 text-xs text-muted"
               key={sample.windowStartedAt}
             >
+              {/* Compact clock form: every sample sits inside one run whose dated lifecycle
+                  boundaries are rendered alongside this series. */}
               <time dateTime={sample.windowStartedAt}>
-                {new Date(sample.windowStartedAt).toLocaleTimeString("en-US", {
-                  hour12: false,
-                  timeZone: "UTC",
-                })}
+                {formatInstantUtc(sample.windowStartedAt, { variant: "timeOnly" }) ?? "n/a"}
               </time>
               <strong className="text-muted-strong">
                 {formatNumber(sample.ratePerSecond)} attempts/s
@@ -366,8 +377,8 @@ export function RequestArrivalRateSeries({
       {seriesWasTruncated ? (
         <p className="m-0 mt-2 text-xs text-muted">
           {visibleSamples.length > 0
-            ? `Showing the last ${visibleSamples.length} of ${summary.arrivalWindowCountRetained} retained windows (${summary.arrivalWindowCountObserved} observed).`
-            : `No samples retained from ${summary.arrivalWindowCountObserved} observed windows.`}
+            ? `Showing the last ${formatNumber(visibleSamples.length)} of ${formatNumber(summary.arrivalWindowCountRetained)} retained windows (${formatNumber(summary.arrivalWindowCountObserved)} observed).`
+            : `No samples retained from ${formatNumber(summary.arrivalWindowCountObserved)} observed windows.`}
         </p>
       ) : null}
     </>
@@ -526,23 +537,29 @@ function PanelFact({
 }
 
 function formatNumber(value: number): string {
-  return new Intl.NumberFormat("en-US").format(value);
+  return formatCount(value) ?? "n/a";
 }
 
 function formatMilliseconds(value: number | null | undefined): string {
-  return value == null ? "n/a" : `${formatNumber(value)}ms`;
+  return formatDurationMs(value) ?? "n/a";
 }
 
+/**
+ * A histogram bucket bound is a declared technical parameter, not an elapsed measurement. The
+ * buckets are defined in fixed millisecond edges and are read as a ladder, so tiering one edge
+ * into seconds while its neighbours stay in milliseconds would hide the unit the ladder is
+ * defined in. This is a sanctioned exemption from the tiered duration policy.
+ *
+ * The declared p95 target renders through here for the same reason: it is a hard-coded parameter
+ * and `1` is itself a member of the bucket ladder, so it must read `≤ 1ms` beside `≤ 25ms` rather
+ * than in a second spelling of the same unit.
+ *
+ * The bucket edges start at 0.25 ms, so `formatNumber` must keep fractional input.
+ */
 function formatHistogramBoundMilliseconds(value: number | null): string {
-  return value === null ? "n/a" : `≤ ${formatMilliseconds(value)}`;
+  return value === null ? "n/a" : `≤ ${formatNumber(value)}ms`;
 }
 
 function formatDuration(seconds: number): string {
-  return seconds < 1
-    ? `${Math.round(seconds * 1_000)}ms`
-    : `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(seconds)}s`;
-}
-
-function formatWindow(seconds: number): string {
-  return `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(seconds)}-second`;
+  return formatDurationMs(seconds * 1_000) ?? "n/a";
 }

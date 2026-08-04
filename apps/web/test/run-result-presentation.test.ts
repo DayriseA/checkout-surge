@@ -356,6 +356,97 @@ describe("run result presentation", () => {
     expect(`${replay?.reason ?? ""}`.toLowerCase()).not.toMatch(/oversell|corruption/);
   });
 
+  it("groups six-figure narrative counts instead of rendering a digit wall", () => {
+    // Stock is operator-editable and order/decision counts are bounded by `maxTotalRequests`,
+    // whose shipped default is 100,000 — exactly the value B10 names.
+    const result = deriveRunResult(
+      withEvidence({
+        startingStock: 100_000,
+        remainingStock: 0,
+        durable: {
+          reservedUnits: 100_000,
+          uniqueReservations: 100_000,
+          soldOutDecisions: 250_000,
+          confirmedOrders: 100_000,
+          notificationsRecorded: 100_000,
+        },
+        generator: {
+          transportAttemptCounts: {
+            plannedRequests: 350_000,
+            startedRequests: 350_000,
+            completedRequests: 350_000,
+            interruptedRequests: 0,
+            unstartedRequests: 0,
+          },
+          httpSummary: {
+            failedRequests: 0,
+            acceptedResponses: 100_000,
+            soldOutResponses: 250_000,
+            transportFailures: 0,
+            unexpectedResponses: 0,
+            p95LatencyMs: 42,
+            failureRate: 0,
+          },
+        },
+      }),
+    );
+
+    const sentence = runConclusionSentence(result);
+
+    expect(result.outcome).toBe("completed-successfully");
+    expect(sentence).toBe(
+      "All 100,000 available units were reserved without overselling. 250,000 sold-out decisions were recorded. All 100,000 reservations were confirmed, with no failed orders.",
+    );
+    expect(sentence).not.toContain("100000");
+    expect(sentence).not.toContain("250000");
+  });
+
+  it("groups six-figure order counts in the failed and unsettled narratives", () => {
+    const orderFailures = runConclusionSentence(
+      deriveRunResult(
+        withEvidence({
+          startingStock: 500_000,
+          remainingStock: 0,
+          durable: {
+            reservedUnits: 500_000,
+            uniqueReservations: 500_000,
+            soldOutDecisions: 250_000,
+            confirmedOrders: 100_000,
+            failedOrders: 250_000,
+            queuedOrders: 150_000,
+            notificationsRecorded: 100_000,
+          },
+          generator: {
+            transportAttemptCounts: {
+              plannedRequests: 750_000,
+              startedRequests: 750_000,
+              completedRequests: 750_000,
+              interruptedRequests: 0,
+              unstartedRequests: 0,
+            },
+            httpSummary: {
+              failedRequests: 0,
+              acceptedResponses: 500_000,
+              soldOutResponses: 250_000,
+              transportFailures: 0,
+              unexpectedResponses: 0,
+              p95LatencyMs: 42,
+              failureRate: 0,
+            },
+          },
+        }),
+      ),
+    );
+    const failedRun = runConclusionSentence(
+      deriveRunResult(withEvidence({ runStatus: "failed", durable: { failedOrders: 100_000 } })),
+    );
+
+    expect(orderFailures).toContain(
+      "100,000 orders were confirmed, 250,000 failed, and 150,000 remain pending.",
+    );
+    expect(failedRun).toContain("with 100,000 failed orders");
+  });
+
   it("produces the same sentence through dashboard, history, and detail adapters", () => {
     const dashboard = evidenceFromDashboard(dashboardFixture(cleanEvidence));
     const summary = evidenceFromRunHistorySummary(summaryFixture(cleanEvidence));

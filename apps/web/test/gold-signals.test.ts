@@ -43,13 +43,13 @@ describe("Gold Signals", () => {
     expect(markup).toContain(
       "Checkout attempts started by k6 in 1-second producer event-time windows.",
     );
-    expect(markup).toContain("Start 10 · 0 remaining · 0 oversold · depleted in 5s");
-    expect(markup).toContain("Peak 6 orders · drained in 10s");
+    expect(markup).toContain("Start 10 · 0 remaining · 0 oversold · depleted in 5 s");
+    expect(markup).toContain("Peak 6 orders · drained in 10 s");
     expect(markup).toContain("9/10 confirmed · 1 failed · 0 pending");
     expect(markup).toContain(
       "Of 10 unique reservations secured, 9 were confirmed, 1 failed, and 0 remain pending.",
     );
-    expect(markup).toContain("Lag avg 2,000ms, p95 3,000ms, max 4,000ms · Converged in 118s");
+    expect(markup).toContain("Lag avg 2 s, p95 3 s, max 4 s · Converged in 118 s");
     expect(markup).not.toContain("999 remaining");
     expect(markup).not.toContain("Peak 999 orders");
     expect(markup).not.toContain("999/10 confirmed");
@@ -174,7 +174,7 @@ describe("Gold Signals", () => {
 
     expect(markup).toContain("Start 10 · 3 remaining · 0 oversold");
     expect(markup).toContain(
-      "Lag avg 900ms, p95 1,200ms, max 1,500ms · Convergence in progress · 1 pending",
+      "Lag avg 900 ms, p95 1.2 s, max 1.5 s · Convergence in progress · 1 pending",
     );
     expect(markup).toContain(
       "Shared axis: 0s first retained live projection · 2s latest retained live projection",
@@ -263,11 +263,11 @@ describe("Gold Signals", () => {
     );
 
     expect(markup).toContain("Request arrival");
-    expect(markup).toContain("Peak 10 attempts/s · dispatched in 2s");
-    expect(markup).toContain("Start 10 · 0 remaining · 0 oversold · depleted in 5s");
-    expect(markup).toContain("Peak 6 · drained in 10s");
+    expect(markup).toContain("Peak 10 attempts/s · dispatched in 2 s");
+    expect(markup).toContain("Start 10 · 0 remaining · 0 oversold · depleted in 5 s");
+    expect(markup).toContain("Peak 6 · drained in 10 s");
     expect(markup).toContain(
-      "9 confirmed · 1 failed · 0 pending · lag avg 2,000ms, p95 3,000ms, max 4,000ms · converged in 118s",
+      "9 confirmed · 1 failed · 0 pending · lag avg 2 s, p95 3 s, max 4 s · converged in 118 s",
     );
   });
 
