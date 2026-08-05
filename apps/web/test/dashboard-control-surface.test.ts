@@ -23,6 +23,7 @@ import {
   PublicDemoEntry,
   readinessPresentation,
 } from "../src/app/components/public-demo-entry.js";
+import { draftFromRuntimePolicy } from "../src/app/lib/admin-drafts.js";
 import type { BackendRead, PublicDemoSurface } from "../src/app/lib/api.js";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
@@ -397,6 +398,26 @@ describe("dashboard control surface", () => {
     expect(markup).not.toContain("bg-info-soft");
   });
 
+  it("omits forced outage from dashboard policy editing even when compatibility fields are true", () => {
+    const runtimePolicy = adminRuntimePolicyFixture();
+    runtimePolicy.policy.publicCustomDefaults.erpConfig.forcedOutage = true;
+    runtimePolicy.policy.publicCustomLimits.allowForcedOutage = true;
+    const markup = renderToStaticMarkup(
+      createElement(AdminRuntimePolicyView, {
+        draft: draftFromRuntimePolicy(runtimePolicy.policy),
+        isPending: false,
+        notice: null,
+        onRefresh: () => undefined,
+        onSave: () => undefined,
+        onUpdateDraft: () => undefined,
+        runtimePolicy: available(runtimePolicy),
+      }),
+    );
+
+    expect(markup).not.toContain("runtime-policy-erpForcedOutage");
+    expect(markup).not.toContain("runtime-policy-allowForcedOutage");
+  });
+
   it("renders protected admin controls and disables starts while a run is draining", () => {
     const markup = renderToStaticMarkup(
       createElement(AdminAuthenticatedSurface, {
@@ -419,6 +440,10 @@ describe("dashboard control surface", () => {
     expect(markup).toContain("Start Admin Run");
     expect(markup).toContain("Save Preset");
     expect(markup).toContain("Copy to Custom");
+    expect(markup).toContain('id="preset-erpForcedOutage"');
+    expect(markup).toContain('id="erp-chaos-forcedOutage"');
+    expect(markup).not.toContain('id="runtime-policy-erpForcedOutage"');
+    expect(markup).not.toContain('id="runtime-policy-allowForcedOutage"');
     expect(markup).toContain("Reset Demo");
     expect(markup).toContain("ERP diagnostics");
     expect(markup).toContain("disabled");

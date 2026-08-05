@@ -977,9 +977,14 @@ describe("admin feature controllers", () => {
   });
 
   it("preserves a dirty policy draft across props and adopts an explicit save response", async () => {
-    const initial = available(runtimePolicyFixture(10_000, 300));
+    const initialResponse = runtimePolicyFixture(10_000, 300);
+    initialResponse.policy.publicCustomDefaults.erpConfig.forcedOutage = true;
+    initialResponse.policy.publicCustomLimits.allowForcedOutage = true;
+    const initial = available(initialResponse);
     const user = userEvent.setup();
     const { rerender } = render(<AdminRuntimePolicyController initialRuntimePolicy={initial} />);
+    expect(screen.queryByLabelText("ERP forced outage")).toBeNull();
+    expect(screen.queryByLabelText("Allow forced outage")).toBeNull();
     const maxBuyers = screen.getByLabelText("Max buyers");
     await user.clear(maxBuyers);
     await user.type(maxBuyers, "4321");
@@ -992,6 +997,8 @@ describe("admin feature controllers", () => {
     expect((screen.getByLabelText("Max buyers") as HTMLInputElement).value).toBe("4321");
 
     const saved = runtimePolicyFixture(4321, 777);
+    saved.policy.publicCustomDefaults.erpConfig.forcedOutage = true;
+    saved.policy.publicCustomLimits.allowForcedOutage = true;
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
       jsonResponse(saved),
     );
@@ -1005,6 +1012,12 @@ describe("admin feature controllers", () => {
     );
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe(adminPublicRuntimePolicyProxyPath);
     expect(fetchMock.mock.calls[0]?.[1]?.method).toBe("PUT");
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
+      policy: {
+        publicCustomDefaults: { erpConfig: { forcedOutage: true } },
+        publicCustomLimits: { allowForcedOutage: true, maxBuyers: 4321 },
+      },
+    });
     expect((screen.getByLabelText("Max buyers") as HTMLInputElement).value).toBe("4321");
   });
 

@@ -141,6 +141,7 @@ export function AdminRuntimePolicyView({
             <RunConfigFields
               draft={draft}
               errors={fieldErrors}
+              includeForcedOutage={false}
               onBlur={onBlurField}
               onUpdateDraft={onUpdateDraft}
               prefix="runtime-policy"
@@ -175,13 +176,6 @@ export function AdminRuntimePolicyView({
                 checked={draft.allowConstantArrivalRate}
                 error={fieldErrors.allowConstantArrivalRate}
                 onChange={(value) => onUpdateDraft({ allowConstantArrivalRate: value })}
-              />
-              <Checkbox
-                label="Allow forced outage"
-                id="runtime-policy-allowForcedOutage"
-                checked={draft.allowForcedOutage}
-                error={fieldErrors.allowForcedOutage}
-                onChange={(value) => onUpdateDraft({ allowForcedOutage: value })}
               />
             </div>
           </div>
@@ -615,12 +609,14 @@ function TrafficEditor({
 function RunConfigFields({
   draft,
   errors,
+  includeForcedOutage = true,
   onBlur,
   onUpdateDraft,
   prefix,
 }: {
   draft: RunConfigDraft;
   errors: Record<string, DraftFieldError>;
+  includeForcedOutage?: boolean;
   onBlur: (field: string) => void;
   onUpdateDraft: (next: Partial<RunConfigDraft>) => void;
   prefix: string;
@@ -655,13 +651,15 @@ function RunConfigFields({
             step={step}
           />
         ))}
-        <Checkbox
-          label="ERP forced outage"
-          id={`${prefix}-erpForcedOutage`}
-          checked={draft.erpForcedOutage}
-          error={errors.erpForcedOutage}
-          onChange={(value) => onUpdateDraft({ erpForcedOutage: value })}
-        />
+        {includeForcedOutage ? (
+          <Checkbox
+            label="ERP forced outage"
+            id={`${prefix}-erpForcedOutage`}
+            checked={draft.erpForcedOutage}
+            error={errors.erpForcedOutage}
+            onChange={(value) => onUpdateDraft({ erpForcedOutage: value })}
+          />
+        ) : null}
       </div>
     </>
   );

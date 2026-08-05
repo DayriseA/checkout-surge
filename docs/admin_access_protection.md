@@ -64,6 +64,7 @@ Direct service endpoints that mutate demo state or start load must reject unauth
 
 Public mutation should be narrow:
 
+- The dashboard at `/` is the only supported public-start client. There is no supported direct or integration public API client.
 - Allow curated public preset starts and bounded public custom starts. Public custom values are run-scoped and are not saved as shared preset defaults.
 - Enforce per-visitor and global public run budgets before starting another public demo run or public surge trigger.
 - Reject requests when a run is already active or draining.
@@ -75,7 +76,7 @@ Public mutation should be narrow:
 Examples of acceptable public controls:
 
 - Start a predefined public preset such as `preview-1k`, `surge-5k`, `surge-10k`, or `idempotency-check-200` when the public run budget allows another start.
-- Start `public-custom` with bounded buyer count, starting stock, ERP latency/error profile, start delay, and buyer-spike safety cutoff. Worker/backpressure, retry, circuit, reservation-hold, and ERP request-timeout settings remain policy/deployment controlled; the shared accepted-snapshot validator rejects public custom deviations from the protected defaults. The public UI always submits `forcedOutage: false` and never exposes an outage control, even if a permissive runtime-policy response is received.
+- Start `public-custom` with bounded buyer count, starting stock, ERP latency/error profile, start delay, and buyer-spike safety cutoff. Worker/backpressure, retry, circuit, reservation-hold, and ERP request-timeout settings remain policy/deployment controlled; the shared accepted-snapshot validator rejects public custom deviations from the protected defaults. The dashboard always submits `forcedOutage: false` and never exposes an outage control, even if a permissive runtime-policy response is received. The retained persisted `forcedOutage` default, `allowForcedOutage` limit, and validator rule are API-boundary defense only; they do not describe a supported non-dashboard client or a dashboard-configurable capability.
 
 Examples of controls that should not be public:
 

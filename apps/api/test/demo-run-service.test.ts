@@ -145,6 +145,37 @@ describe("demo-run lifecycle validation", () => {
     ).toThrow(DemoRunValidationError);
   });
 
+  it("retains authoritative forced-outage enforcement for public custom snapshots", () => {
+    const policy = publicRuntimePolicy();
+    const snapshot = {
+      ...policy.publicCustomDefaults,
+      erpConfig: { ...policy.publicCustomDefaults.erpConfig, forcedOutage: true },
+    };
+
+    expect(() =>
+      validateAcceptedRunSnapshot(snapshot, policy, {
+        operatorMode: "public",
+        enforcePublicCustomLimits: true,
+      }),
+    ).toThrowError(
+      expect.objectContaining({
+        code: "invalid_run_configuration",
+        details: expect.objectContaining({
+          violationCode: "public_forced_outage_not_allowed",
+          path: ["erpConfig", "forcedOutage"],
+        }),
+      }),
+    );
+
+    policy.publicCustomLimits.allowForcedOutage = true;
+    expect(() =>
+      validateAcceptedRunSnapshot(snapshot, policy, {
+        operatorMode: "public",
+        enforcePublicCustomLimits: true,
+      }),
+    ).not.toThrow();
+  });
+
   it.each([
     {
       ratePerSecond: 5_001,

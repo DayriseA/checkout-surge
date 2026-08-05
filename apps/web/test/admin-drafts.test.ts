@@ -155,6 +155,8 @@ describe("admin drafts", () => {
 
   it("merges editable runtime policy fields without losing deployment hard caps", () => {
     const policy = policyFixture();
+    policy.publicCustomDefaults.erpConfig.forcedOutage = true;
+    policy.publicCustomLimits.allowForcedOutage = true;
     const draft = draftFromRuntimePolicy(policy);
     draft.maxBuyers = "4321";
     draft.allowConstantArrivalRate = false;
@@ -163,6 +165,8 @@ describe("admin drafts", () => {
     if (!next) throw new Error("Expected valid fixture policy.");
     expect(next.publicCustomLimits.maxBuyers).toBe(4321);
     expect(next.publicCustomLimits.allowedTrafficModes).toEqual(["buyer-spike"]);
+    expect(next.publicCustomDefaults.erpConfig.forcedOutage).toBe(true);
+    expect(next.publicCustomLimits.allowForcedOutage).toBe(true);
     expect(policy.deploymentHardCaps).toEqual({
       maxBuyers: 100_000,
       maxTotalRequests: 100_000,
