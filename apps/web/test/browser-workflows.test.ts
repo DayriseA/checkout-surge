@@ -144,7 +144,7 @@ describe("public browser starts", () => {
     const user = userEvent.setup();
 
     render(createElement(PublicDemoEntry, { surface: publicDemoSurfaceFixture() }));
-    const start = screen.getByRole("button", { name: "Start" }) as HTMLButtonElement;
+    const start = screen.getByRole("button", { name: "Start Preview 1k" }) as HTMLButtonElement;
     await user.click(start);
 
     expect(await screen.findByText("A demo run is already in progress")).toBeTruthy();
@@ -212,7 +212,7 @@ describe("public browser starts", () => {
     render(createElement(PublicDemoEntry, { surface: publicDemoSurfaceFixture() }));
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Start" }));
+      fireEvent.click(screen.getByRole("button", { name: "Start Preview 1k" }));
       for (let index = 0; index < 10; index += 1) await Promise.resolve();
     });
     expect(
@@ -229,9 +229,9 @@ describe("public browser starts", () => {
     expect(
       screen.queryByText("The demo backend isn't ready yet — try again in a moment"),
     ).toBeNull();
-    expect((screen.getByRole("button", { name: "Start" }) as HTMLButtonElement).disabled).toBe(
-      true,
-    );
+    expect(
+      (screen.getByRole("button", { name: "Start Preview 1k" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(15_000);
@@ -249,9 +249,9 @@ describe("public browser starts", () => {
     expect(
       screen.queryByText("The demo backend isn't ready yet — try again in a moment"),
     ).toBeNull();
-    expect((screen.getByRole("button", { name: "Start" }) as HTMLButtonElement).disabled).toBe(
-      false,
-    );
+    expect(
+      (screen.getByRole("button", { name: "Start Preview 1k" }) as HTMLButtonElement).disabled,
+    ).toBe(false);
   });
 
   it.each([
@@ -275,9 +275,9 @@ describe("public browser starts", () => {
     expect(
       screen.queryByText("The demo backend isn't ready yet — try again in a moment"),
     ).toBeNull();
-    expect((screen.getByRole("button", { name: "Start" }) as HTMLButtonElement).disabled).toBe(
-      true,
-    );
+    expect(
+      (screen.getByRole("button", { name: "Start Preview 1k" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
   });
 
   it("navigates an accepted public start to the live view", async () => {
@@ -297,7 +297,7 @@ describe("public browser starts", () => {
     Object.defineProperty(navigationWindow, "location", { value: { assign } });
     vi.stubGlobal("window", navigationWindow);
 
-    await user.click(screen.getByRole("button", { name: "Start" }));
+    await user.click(screen.getByRole("button", { name: "Start Preview 1k" }));
 
     await waitFor(() => expect(assign).toHaveBeenCalledWith("/watch"));
   });
@@ -341,7 +341,7 @@ describe("public browser starts", () => {
     const user = userEvent.setup();
 
     render(createElement(PublicDemoEntry, { surface: publicDemoSurfaceFixture() }));
-    const start = screen.getByRole("button", { name: "Start" }) as HTMLButtonElement;
+    const start = screen.getByRole("button", { name: "Start Preview 1k" }) as HTMLButtonElement;
     await user.click(start);
 
     expect(
@@ -384,7 +384,7 @@ describe("public browser starts", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     render(createElement(PublicDemoEntry, { surface: publicDemoSurfaceFixture() }));
-    const start = screen.getByRole("button", { name: "Start" }) as HTMLButtonElement;
+    const start = screen.getByRole("button", { name: "Start Preview 1k" }) as HTMLButtonElement;
     await act(async () => {
       fireEvent.click(start);
       await Promise.resolve();
@@ -420,7 +420,7 @@ describe("public browser starts", () => {
       throw new Error("Expected Preview 1k card.");
     }
 
-    await user.click(within(previewArticle).getByRole("button", { name: "Start" }));
+    await user.click(within(previewArticle).getByRole("button", { name: "Start Preview 1k" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     const [, init] = findFetchCall(fetchMock, demoRunStartProxyPath, "POST");
@@ -548,7 +548,9 @@ describe("public recovery convergence", () => {
     };
 
     render(createElement(PublicDemoEntry, { surface }));
-    const curatedStart = screen.getByRole("button", { name: "Start" }) as HTMLButtonElement;
+    const curatedStart = screen.getByRole("button", {
+      name: "Start Preview 1k",
+    }) as HTMLButtonElement;
     const customStart = screen.getByRole("button", {
       name: "Start Public Custom",
     }) as HTMLButtonElement;
@@ -614,7 +616,9 @@ describe("public recovery convergence", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     render(createElement(PublicDemoEntry, { surface: publicDemoSurfaceFixture() }));
-    const curatedStart = screen.getByRole("button", { name: "Start" }) as HTMLButtonElement;
+    const curatedStart = screen.getByRole("button", {
+      name: "Start Preview 1k",
+    }) as HTMLButtonElement;
     expect(curatedStart.disabled).toBe(false);
 
     await act(async () => vi.advanceTimersByTimeAsync(15_000));
@@ -719,9 +723,9 @@ describe("public recovery convergence", () => {
     expect(readinessFetchCount(fetchMock)).toBe(1);
     await act(async () => vi.advanceTimersByTimeAsync(1));
     expect(readinessFetchCount(fetchMock)).toBe(2);
-    expect((screen.getByRole("button", { name: "Start" }) as HTMLButtonElement).disabled).toBe(
-      false,
-    );
+    expect(
+      (screen.getByRole("button", { name: "Start Preview 1k" }) as HTMLButtonElement).disabled,
+    ).toBe(false);
   });
 
   it("polls readiness slowly and blocks starts on an unavailable check", async () => {
@@ -751,7 +755,9 @@ describe("public recovery convergence", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     render(createElement(PublicDemoEntry, { surface: publicDemoSurfaceFixture() }));
-    const curatedStart = screen.getByRole("button", { name: "Start" }) as HTMLButtonElement;
+    const curatedStart = screen.getByRole("button", {
+      name: "Start Preview 1k",
+    }) as HTMLButtonElement;
 
     await act(async () => vi.advanceTimersByTimeAsync(60_000));
 

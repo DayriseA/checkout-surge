@@ -888,6 +888,20 @@ describe("database migrations, seed data, and reset behavior", () => {
         WHERE id = 'active'
       `,
     );
+    const [duplicatePreset] = await withDatabase(
+      (sql) =>
+        sql<
+          {
+            slug: string;
+            visibility: string;
+            display: { name: string; description: string };
+          }[]
+        >`
+        SELECT slug, visibility, display
+        FROM demo_presets
+        WHERE slug = 'idempotency-check-200'
+      `,
+    );
     const inventoryState = await redis.hgetall(`inventory:${seededSaleOfferId}:state`);
 
     expect(counts).toEqual({
@@ -904,6 +918,14 @@ describe("database migrations, seed data, and reset behavior", () => {
     expect(new Date(policyRow?.updated_at ?? 0).getTime()).toBeGreaterThan(
       new Date(initialPolicyRow?.updated_at ?? 0).getTime(),
     );
+    expect(duplicatePreset).toMatchObject({
+      slug: "idempotency-check-200",
+      visibility: "public",
+      display: {
+        name: "Duplicate-click storm",
+        description: "200 buyers, every buyer clicks Buy twice.",
+      },
+    });
     expect(inventoryState).toMatchObject({
       saleOfferId: seededSaleOfferId,
       inventoryScope: "catalog",

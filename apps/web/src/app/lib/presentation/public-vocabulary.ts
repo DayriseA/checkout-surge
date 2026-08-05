@@ -48,6 +48,25 @@ export function trafficModeLabel(mode: "buyer-spike" | "constant-arrival-rate"):
   return mode === "buyer-spike" ? "Everyone at once" : "Steady stream";
 }
 
+export function outcomeFocusLabel(focus: string): string {
+  switch (focus) {
+    case "happy_path":
+      return "Reservations confirm cleanly";
+    case "sold_out":
+      return "Stock depletes without overselling";
+    case "queue_pressure":
+      return "The order backlog grows, then drains";
+    case "run_history":
+      return "The final evidence remains available";
+    case "idempotency":
+      return "Duplicate clicks replay one reservation";
+    case "failure_path":
+      return "Failed orders and retries";
+    default:
+      return focus.replaceAll("_", " ").replace(/^\w/, (letter) => letter.toUpperCase());
+  }
+}
+
 export function erpAttemptStatusLabel(status: ErpAttemptStatus): string {
   switch (status) {
     case "succeeded":

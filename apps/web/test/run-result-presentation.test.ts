@@ -406,11 +406,32 @@ describe("run result presentation", () => {
   it("keeps idempotent replay out of oversell and corruption copy", () => {
     const result = deriveRunResult(
       withEvidence({
+        startingStock: 200,
+        durable: {
+          reservedUnits: 200,
+          uniqueReservations: 200,
+          soldOutDecisions: 0,
+          confirmedOrders: 200,
+          notificationsRecorded: 200,
+        },
         replayPossible: true,
-        generator: completeGenerator({ acceptedResponses: 300 }),
+        generator: completeGenerator({
+          acceptedResponses: 400,
+          soldOutResponses: 0,
+          transportAttemptCounts: {
+            plannedRequests: 400,
+            startedRequests: 400,
+            completedRequests: 400,
+            interruptedRequests: 0,
+            unstartedRequests: 0,
+          },
+        }),
       }),
     );
     const sentence = runConclusionSentence(result).toLowerCase();
+    const markup = renderToStaticMarkup(
+      createElement(RunConclusion, { result, runStatus: "completed" }),
+    );
     const replay = result.reconciliations.find(
       (item) => item.code === "accepted_responses_vs_unique_reservations",
     );
@@ -427,6 +448,10 @@ describe("run result presentation", () => {
     expect(sentence).not.toContain("oversold");
     expect(sentence).not.toContain("corruption");
     expect(`${replay?.reason ?? ""}`.toLowerCase()).not.toMatch(/oversell|corruption/);
+    expect(markup).toContain("accepted responses observed by the load generator");
+    expect(markup).toContain("(400) vs Unique reservations secured (200)");
+    expect(markup).toContain("expected population difference");
+    expect(markup).toContain("Some accepted responses may repeat an existing reservation.");
   });
 
   it("groups six-figure narrative counts instead of rendering a digit wall", () => {

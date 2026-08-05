@@ -18,7 +18,11 @@ import { describe, expect, it, vi } from "vitest";
 import { AdminAuthenticatedSurface } from "../src/app/components/admin/admin-authenticated-surface.js";
 import { AdminRuntimePolicyView } from "../src/app/components/admin/admin-feature-views.js";
 import { AdminSignInView } from "../src/app/components/admin/admin-sign-in.js";
-import { PublicDemoEntry, readinessPresentation } from "../src/app/components/public-demo-entry.js";
+import {
+  derivePresetCardFacts,
+  PublicDemoEntry,
+  readinessPresentation,
+} from "../src/app/components/public-demo-entry.js";
 import type { BackendRead, PublicDemoSurface } from "../src/app/lib/api.js";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
@@ -90,7 +94,98 @@ describe("dashboard control surface", () => {
       demoPresetFixture("preview-1k", "public", false),
     ];
     const markup = renderToStaticMarkup(createElement(PublicDemoEntry, { surface }));
-    expect(markup.indexOf("New Public Surge")).toBeLessThan(markup.indexOf("Preview 1k"));
+    expect(markup.indexOf("Preview 1k")).toBeLessThan(markup.indexOf("New Public Surge"));
+  });
+
+  it("renders comparable scenario facts and derives duplicate outcomes without extra sellout", () => {
+    const surface = publicSurfaceFixture(null);
+    if (surface.presets.status !== "available") throw new Error("Expected available presets.");
+    const duplicatePreset: DemoPresetContract = {
+      ...demoPresetFixture("preview-1k", "public", false),
+      id: "99999999-9999-4999-8999-999999999998",
+      slug: "idempotency-check-200",
+      display: {
+        name: "Duplicate-click storm",
+        description: "200 buyers, every buyer clicks Buy twice.",
+        sortOrder: 40,
+        outcomeFocus: ["idempotency", "happy_path"],
+      },
+      trafficConfig: {
+        ...configSnapshotFixture().trafficConfig,
+        buyerCount: 200,
+        duplicateEachBuyerAttempt: true,
+      },
+      inventoryConfig: {
+        ...configSnapshotFixture().inventoryConfig,
+        startingStock: 200,
+      },
+      erpConfig: {
+        ...configSnapshotFixture().erpConfig,
+        latencyMs: 50,
+        maxTps: 200,
+      },
+    };
+    const steadyPreset: DemoPresetContract = {
+      ...demoPresetFixture("preview-1k", "public", false),
+      id: "99999999-9999-4999-8999-999999999997",
+      slug: "steady-public-surge",
+      display: {
+        name: "Steady public surge",
+        description: "100 attempts per second for 10 seconds.",
+        sortOrder: 50,
+        outcomeFocus: ["queue_pressure"],
+      },
+      trafficConfig: {
+        mode: "constant-arrival-rate",
+        ratePerSecond: 100,
+        startDelaySeconds: 0,
+        durationSeconds: 10,
+        quantityPerAttempt: 1,
+      },
+    };
+    surface.presets.data.presets = [
+      duplicatePreset,
+      steadyPreset,
+      {
+        ...demoPresetFixture("preview-1k", "public", false),
+        display: {
+          name: "Preview 1k",
+          description: "1,000 buyers rush 250 units.",
+          sortOrder: 10,
+          outcomeFocus: ["happy_path", "sold_out"],
+        },
+      },
+    ];
+
+    const markup = renderToStaticMarkup(createElement(PublicDemoEntry, { surface }));
+    const duplicateFacts = derivePresetCardFacts(duplicatePreset);
+    const steadyFacts = derivePresetCardFacts(steadyPreset);
+
+    expect(markup.indexOf("Preview 1k")).toBeLessThan(markup.indexOf("Duplicate-click storm"));
+    expect(markup).toContain("<h3");
+    expect(markup).toContain("Recommended: start here");
+    expect(markup).toContain("Start Preview 1k");
+    expect(markup).toContain("Start Duplicate-click storm");
+    expect(markup).toContain("Scenario");
+    expect(markup).toContain("Everyone at once");
+    expect(markup).toContain("Steady stream");
+    expect(markup).not.toContain("buyer-spike");
+    expect(markup).not.toContain("constant-arrival-rate");
+    expect(markup).toContain("Simulated ERP capacity");
+    expect(markup).toContain("200 orders/s");
+    expect(markup).toContain("Simulated ERP delay per order");
+    expect(markup).toContain("50 ms");
+    expect(markup).toContain("Yes — every buyer sends the same request twice");
+    expect(markup).toContain("The API safely replays the same accepted reservation");
+    expect(markup).toContain("What to watch for");
+    expect(markup).toContain("Duplicate clicks replay one reservation");
+    expect(markup).toContain("Reservations confirm cleanly");
+    expect(markup).not.toContain("happy_path");
+    expect(markup).not.toContain(">idempotency<");
+    expect(duplicateFacts.expectedSoldOutCount).toBe(0);
+    expect(duplicateFacts.settlingCopy).toContain("2 s");
+    expect(duplicateFacts.settlingCopy).toContain("actual time depends on the environment");
+    expect(steadyFacts.duplicateAttempts).toBe("No");
   });
 
   it("handles only-public-custom, missing custom, and unavailable preset reads", () => {

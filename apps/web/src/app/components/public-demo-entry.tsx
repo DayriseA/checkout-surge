@@ -3,6 +3,7 @@
 import {
   type AcceptedRunConfigSnapshot,
   type DashboardProjection,
+  type DemoPresetContract,
   type DemoRunConfigOverride,
   type HealthResponse,
   healthResponseSchema,
@@ -17,8 +18,9 @@ import {
   type ErrorPresentation,
   mapErrorPresentation,
 } from "../lib/presentation/error-presentation";
-import { formatCount } from "../lib/presentation/format";
+import { formatCount, formatDurationMs } from "../lib/presentation/format";
 import {
+  outcomeFocusLabel,
   publicLimitsLabel,
   publicVocabulary,
   trafficModeLabel,
@@ -30,6 +32,7 @@ import {
 import { ErrorNotice } from "./error-notice";
 import { useDashboardRecovery } from "./realtime/use-dashboard-recovery";
 import { StatusPill } from "./status-pill";
+import { ConditionalCaveat } from "./transport-observation";
 
 const recoveryPollIntervalMs = 15_000;
 const readinessPollIntervalMs = 60_000;
@@ -39,6 +42,7 @@ const buttonClassName =
 const primaryButtonClassName =
   "min-h-10 rounded-lg border border-accent bg-accent px-3.5 py-2.5 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60";
 const inputClassName = "min-h-10 min-w-0 rounded-lg border border-border bg-bg px-3 py-2 text-ink";
+const recommendedPresetSlug = "preview-1k";
 
 type TrafficMode = AcceptedRunConfigSnapshot["trafficConfig"]["mode"];
 
@@ -210,7 +214,12 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
     surface.presets.status === "available"
       ? surface.presets.data.presets.filter((preset) => preset.visibility === "public")
       : [];
-  const curatedPresets = presets.filter((preset) => preset.slug !== "public-custom");
+  const curatedPresets = presets
+    .filter((preset) => preset.slug !== "public-custom")
+    .sort(
+      (left, right) =>
+        Number(right.slug === recommendedPresetSlug) - Number(left.slug === recommendedPresetSlug),
+    );
   const customPreset = presets.find((preset) => preset.slug === "public-custom") ?? null;
   const runtimePolicy =
     surface.runtimePolicy.status === "available" ? surface.runtimePolicy.data.policy : null;
@@ -323,38 +332,76 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
         <SharedRuntimeDisclosure />
         {surface.presets.status === "available" && curatedPresets.length > 0 ? (
           <div className="grid grid-cols-2 gap-3 max-[700px]:grid-cols-1">
-            {curatedPresets.map((preset) => (
-              <article className="min-w-0 rounded-lg border border-border p-3" key={preset.slug}>
-                <div className="mb-3 grid gap-1">
-                  <strong className="text-ink">{preset.display.name}</strong>
-                  <span className="text-sm leading-5 text-muted">{preset.display.description}</span>
-                </div>
-                <dl className="m-0 mb-3 grid grid-cols-3 gap-2 text-sm">
-                  <Fact
-                    label="Scenario"
-                    value={trafficModeLabel(preset.trafficConfig.mode as TrafficMode)}
-                  />
-                  <Fact
-                    label={publicVocabulary.startingStock}
-                    value={formatCount(preset.inventoryConfig.startingStock) ?? "not configured"}
-                  />
-                  <Fact
-                    label="Simulated ERP capacity (orders/s)"
-                    value={formatCount(preset.erpConfig.maxTps) ?? "not configured"}
-                  />
-                </dl>
-                <button
-                  className={primaryButtonClassName}
-                  disabled={startDisabled}
-                  onClick={() => {
-                    void startRun(preset.slug);
-                  }}
-                  type="button"
+            {curatedPresets.map((preset) => {
+              const facts = derivePresetCardFacts(preset);
+              const isRecommended = preset.slug === recommendedPresetSlug;
+              const headingId = `${preset.slug}-title`;
+              return (
+                <article
+                  aria-labelledby={headingId}
+                  className={`min-w-0 rounded-lg border p-3 ${
+                    isRecommended ? "border-accent bg-accent-soft" : "border-border"
+                  }`}
+                  key={preset.slug}
                 >
-                  {startingSlug === preset.slug ? "Starting" : "Start"}
-                </button>
-              </article>
-            ))}
+                  <div className="mb-3 grid gap-1">
+                    {isRecommended ? (
+                      <span className="w-fit rounded-full bg-accent px-2 py-1 text-xs font-bold text-white">
+                        Recommended: start here
+                      </span>
+                    ) : null}
+                    <h3 className="m-0 text-base font-bold text-ink" id={headingId}>
+                      {preset.display.name}
+                    </h3>
+                    <span className="text-sm leading-5 text-muted">
+                      {preset.display.description}
+                    </span>
+                  </div>
+                  <dl className="m-0 mb-3 grid grid-cols-2 gap-3 text-sm">
+                    <Fact
+                      label="Scenario"
+                      value={trafficModeLabel(preset.trafficConfig.mode as TrafficMode)}
+                    />
+                    <Fact label={facts.surgeLabel} value={facts.surgeValue} />
+                    <Fact
+                      label={publicVocabulary.startingStock}
+                      value={formatCount(preset.inventoryConfig.startingStock) ?? "not configured"}
+                    />
+                    <Fact
+                      label="Simulated ERP capacity"
+                      value={`${formatCount(preset.erpConfig.maxTps) ?? "not configured"} orders/s`}
+                    />
+                    <Fact
+                      label="Simulated ERP delay per order"
+                      value={formatDurationMs(preset.erpConfig.latencyMs) ?? "not configured"}
+                    />
+                    <Fact label="Duplicate attempts" value={facts.duplicateAttempts} />
+                    <Fact
+                      label="Expected sold-out rejections"
+                      value={formatCount(facts.expectedSoldOutCount) ?? "not configured"}
+                    />
+                    <Fact label="Approximate settling" value={facts.settlingCopy} />
+                    <Fact label="What to watch for" value={facts.outcomeFocus} />
+                  </dl>
+                  <ConditionalCaveat show={facts.hasDuplicateAttempts}>
+                    The API safely replays the same accepted reservation, so accepted responses can
+                    exceed unique reservations in the completed result.
+                  </ConditionalCaveat>
+                  <button
+                    className={`${primaryButtonClassName} mt-3`}
+                    disabled={startDisabled}
+                    onClick={() => {
+                      void startRun(preset.slug);
+                    }}
+                    type="button"
+                  >
+                    {startingSlug === preset.slug
+                      ? `Starting ${preset.display.name}`
+                      : `Start ${preset.display.name}`}
+                  </button>
+                </article>
+              );
+            })}
           </div>
         ) : surface.presets.status === "unavailable" ? (
           <Unavailable onRetry={reloadPage} read={surface.presets} />
@@ -514,6 +561,38 @@ export function isRunStartBlocked(recovery: BackendRead<DashboardProjection>): b
 
 export function readinessBlocksRunStart(readiness: BackendRead<HealthResponse>): boolean {
   return readiness.status !== "available" || readiness.data.status !== "ok";
+}
+
+export function derivePresetCardFacts(preset: DemoPresetContract) {
+  const traffic = preset.trafficConfig;
+  const uniqueAttempts =
+    traffic.mode === "buyer-spike"
+      ? traffic.buyerCount
+      : traffic.ratePerSecond * traffic.durationSeconds;
+  const expectedConfirmedOrders = Math.min(uniqueAttempts, preset.inventoryConfig.startingStock);
+  const workerThroughput =
+    preset.erpConfig.latencyMs === 0
+      ? Number.POSITIVE_INFINITY
+      : (preset.backpressureConfig.orderProcessConcurrency * 1_000) / preset.erpConfig.latencyMs;
+  const settlingSeconds = Math.max(
+    1,
+    Math.ceil(expectedConfirmedOrders / Math.min(preset.erpConfig.maxTps, workerThroughput)),
+  );
+  const hasDuplicateAttempts = traffic.mode === "buyer-spike" && traffic.duplicateEachBuyerAttempt;
+
+  return {
+    surgeLabel: traffic.mode === "buyer-spike" ? "Buyers" : "Planned unique attempts",
+    surgeValue: formatCount(uniqueAttempts) ?? "not configured",
+    hasDuplicateAttempts,
+    duplicateAttempts: hasDuplicateAttempts
+      ? "Yes — every buyer sends the same request twice"
+      : traffic.mode === "buyer-spike"
+        ? "No — one request per buyer"
+        : "No",
+    expectedSoldOutCount: Math.max(0, uniqueAttempts - preset.inventoryConfig.startingStock),
+    settlingCopy: `Usually about ${formatDurationMs(settlingSeconds * 1_000) ?? `${settlingSeconds}s`} on the demo host; actual time depends on the environment`,
+    outcomeFocus: preset.display.outcomeFocus.map(outcomeFocusLabel).join(" · "),
+  };
 }
 
 function buildCustomConfigOverride(

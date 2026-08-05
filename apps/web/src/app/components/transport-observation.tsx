@@ -7,6 +7,7 @@ import type {
   TransportAttemptCounts,
 } from "@checkout-surge/contracts";
 import { deriveRecordedReplyCount, hasObservedRequestArrivals } from "@checkout-surge/contracts";
+import type { ReactNode } from "react";
 import {
   formatCount,
   formatDurationMs,
@@ -481,13 +482,18 @@ function SurvivorshipWarning({
   observation: TransportObservation;
   surface: ObservationSurface;
 }) {
-  if (!observation.hasUnrecordedReplies) {
-    return null;
-  }
+  return (
+    <ConditionalCaveat show={observation.hasUnrecordedReplies}>
+      {survivorshipWarningText(observation, surface)}
+    </ConditionalCaveat>
+  );
+}
 
+export function ConditionalCaveat({ children, show }: { children: ReactNode; show: boolean }) {
+  if (!show) return null;
   return (
     <p className="m-0 mt-3 rounded-lg border border-[#ecd08f] bg-warning-soft p-3 text-xs leading-5 text-warning">
-      {survivorshipWarningText(observation, surface)}
+      {children}
     </p>
   );
 }

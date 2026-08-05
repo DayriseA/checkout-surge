@@ -233,8 +233,7 @@ function buildSeedPresets(): SeedPreset[] {
       isSystem: true,
       display: {
         name: "Preview 1k",
-        description:
-          "Public scarcity preview that dispatches 1,000 buyer attempts as fast as the host allows.",
+        description: "1,000 buyers rush 250 units.",
         sortOrder: 10,
         outcomeFocus: ["happy_path", "sold_out"],
       },
@@ -253,7 +252,7 @@ function buildSeedPresets(): SeedPreset[] {
       isSystem: true,
       display: {
         name: "Surge 5k",
-        description: "Scarcity run for several thousand simultaneous synthetic buyers.",
+        description: "5,000 buyers rush 750 units.",
         sortOrder: 20,
         outcomeFocus: ["sold_out", "queue_pressure", "run_history"],
       },
@@ -272,8 +271,7 @@ function buildSeedPresets(): SeedPreset[] {
       isSystem: true,
       display: {
         name: "Surge 10k",
-        description:
-          "Public showcase target that dispatches 10,000 buyer attempts as fast as the host allows.",
+        description: "10,000 buyers rush 1,000 units.",
         sortOrder: 30,
         outcomeFocus: ["sold_out", "queue_pressure", "run_history"],
       },
@@ -291,8 +289,8 @@ function buildSeedPresets(): SeedPreset[] {
       isCustom: false,
       isSystem: true,
       display: {
-        name: "Idempotency Check 200",
-        description: "Duplicate-attempt run that should replay accepted reservation outcomes.",
+        name: "Duplicate-click storm",
+        description: "200 buyers, every buyer clicks Buy twice.",
         sortOrder: 40,
         outcomeFocus: ["idempotency", "happy_path"],
       },
