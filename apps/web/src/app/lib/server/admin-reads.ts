@@ -11,9 +11,9 @@ import {
   type ErpChaosStatus,
   erpChaosStatusPath,
   erpChaosStatusSchema,
+  type HealthResponse,
   healthReadyPath,
   healthResponseSchema,
-  type HealthResponse,
 } from "@checkout-surge/contracts";
 import type { BackendRead } from "../api";
 import { type ContractSchema, readBackendResponse } from "../backend-read";

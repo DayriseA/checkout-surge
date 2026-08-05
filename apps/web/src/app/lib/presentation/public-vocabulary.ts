@@ -31,6 +31,12 @@ export const publicVocabulary = {
   runLifecycle: "Run",
 } as const;
 
+export const publicNarrative = {
+  repositoryUrl: "https://github.com/DayriseA/checkout-surge",
+  watchOrientation:
+    "You’re watching simulated buyers compete for limited stock: reservations happen first, then queued orders reach durable outcomes.",
+} as const;
+
 export { liveTrafficMetricWindowSeconds };
 
 export type PublicStatus =

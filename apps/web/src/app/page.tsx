@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { PublicDemoEntry } from "./components/public-demo-entry";
 import { getPublicDemoSurface } from "./lib/api";
 
@@ -17,6 +18,25 @@ export default async function DemoDashboardPage() {
           </p>
         </div>
       </header>
+      <section
+        aria-labelledby="demo-mental-model"
+        className="mb-4 rounded-lg border border-border bg-surface p-5"
+      >
+        <h2 className="m-0 text-xl font-bold text-ink" id="demo-mental-model">
+          How the surge stays safe
+        </h2>
+        <p className="mt-3 max-w-[80ch] leading-7 text-muted-strong">
+          Simulated buyers compete for limited stock. Redis atomically reserves units immediately
+          without overselling, and orders for unique reservations wait in a BullMQ queue. Workers
+          drain that queue at a safe rate while calling a deliberately slow simulated ERP; a run
+          succeeds only when every unique reservation reaches a durable outcome, none fail, and
+          oversold units remain zero. Results depend on the environment and are not universal
+          production evidence.
+        </p>
+        <Link className="mt-3 inline-block font-semibold text-accent underline" href="/about">
+          How this works
+        </Link>
+      </section>
       <PublicDemoEntry surface={surface} />
     </>
   );

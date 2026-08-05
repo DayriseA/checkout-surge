@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { AdminSignOut } from "./components/admin-nav";
+import { publicNarrative } from "./lib/presentation/public-vocabulary";
 import { hasValidAdminPageSession } from "./lib/server/admin-page-session";
 import "./globals.css";
 
@@ -44,6 +45,15 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
                     {item.label}
                   </Link>
                 ))}
+                <a
+                  className="rounded-lg px-2.5 py-2 text-sm font-semibold text-muted-strong hover:bg-surface-muted hover:text-ink"
+                  href={publicNarrative.repositoryUrl}
+                  rel="noopener noreferrer"
+                  target="_blank"
+                >
+                  Repository
+                  <span className="sr-only"> (opens in a new tab)</span>
+                </a>
                 {authenticated ? <AdminSignOut /> : null}
               </nav>
             </div>

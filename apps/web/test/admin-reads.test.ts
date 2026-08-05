@@ -1,7 +1,8 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
 import { controlServiceTokenHeaderName } from "@checkout-surge/contracts";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
+
 import { readAdminReadiness } from "../src/app/lib/server/admin-reads.js";
 import {
   initializeWebServerConfig,
