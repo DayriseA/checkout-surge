@@ -958,6 +958,12 @@ function erpChaosStatusPayload() {
   return {
     ...erpChaosConfigPayload(),
     updatedAt: "2026-06-20T00:00:10.000Z",
+    effectiveSafetyCaps: {
+      maxLatencyMs: 5000,
+      minMaxTps: 1,
+      maxErrorRate: 1,
+      allowForcedOutage: true,
+    },
   };
 }
 

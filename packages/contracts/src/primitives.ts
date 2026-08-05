@@ -16,13 +16,18 @@ export const idempotencyKeySchema = z.string().trim().min(1).max(200);
 
 export const uuidSchema = z.string().uuid();
 
-export const positiveIntegerSchema = z.number().int().positive();
+export const positiveIntegerMinimum = 1;
+export const nonnegativeNumberMinimum = 0;
+export const percentageMinimum = 0;
+export const percentageMaximum = 1;
 
-export const nonnegativeIntegerSchema = z.number().int().min(0);
+export const positiveIntegerSchema = z.number().int().min(positiveIntegerMinimum);
 
-export const nonnegativeNumberSchema = z.number().min(0);
+export const nonnegativeIntegerSchema = z.number().int().min(nonnegativeNumberMinimum);
 
-export const percentageSchema = z.number().min(0).max(1);
+export const nonnegativeNumberSchema = z.number().min(nonnegativeNumberMinimum);
+
+export const percentageSchema = z.number().min(percentageMinimum).max(percentageMaximum);
 
 export const jsonObjectSchema = z.record(z.string(), z.unknown());
 

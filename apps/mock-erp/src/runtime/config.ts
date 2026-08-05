@@ -1,5 +1,8 @@
-import { type ErpChaosConfig, erpChaosConfigSchema } from "@checkout-surge/contracts";
-import type { ErpChaosSafetyCaps } from "../application/chaos-control-service.js";
+import {
+  type ErpChaosConfig,
+  type ErpChaosSafetyCaps,
+  erpChaosConfigSchema,
+} from "@checkout-surge/contracts";
 
 export interface MockErpConfig {
   host: string;

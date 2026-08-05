@@ -6,12 +6,12 @@ import {
 } from "@checkout-surge/contracts";
 import { describe, expect, it } from "vitest";
 import {
-  configFromDraft,
+  buildConfigFromDraft,
+  buildErpChaosFromDraft,
+  buildPolicyFromDraft,
+  buildSortOrder,
   draftFromPreset,
   draftFromRuntimePolicy,
-  parseInteger,
-  parseNumber,
-  policyFromDraft,
 } from "../src/app/lib/admin-drafts.js";
 
 describe("admin drafts", () => {
@@ -20,7 +20,9 @@ describe("admin drafts", () => {
     "constant-arrival-rate",
   ] as const)("round-trips %s traffic and preserves hidden configuration", (mode) => {
     const preset = presetFixture(mode);
-    const rebuilt = configFromDraft(draftFromPreset(preset), preset);
+    const rebuilt = buildConfigFromDraft(draftFromPreset(preset), preset).values;
+    expect(rebuilt).toBeDefined();
+    if (!rebuilt) throw new Error("Expected valid fixture config.");
     expect(rebuilt).toEqual({
       trafficConfig: preset.trafficConfig,
       inventoryConfig: preset.inventoryConfig,
@@ -35,11 +37,120 @@ describe("admin drafts", () => {
     expect(rebuilt.backpressureConfig.queueName).toBe("orders:process");
   });
 
-  it("uses numeric fallbacks without accepting partial or non-finite values", () => {
-    expect(parseInteger("2.5", 7)).toBe(7);
-    expect(parseInteger("12", 7)).toBe(12);
-    expect(parseNumber("Infinity", 0.25)).toBe(0.25);
-    expect(parseNumber("0.2", 0)).toBe(0.2);
+  it("rejects blank, fractional, and non-finite numeric drafts without fallbacks", () => {
+    expect(buildSortOrder("").fieldErrors.sortOrder?.code).toBe("required");
+    expect(buildSortOrder("2.5").fieldErrors.sortOrder?.code).toBe("not_an_integer");
+    expect(buildSortOrder("Infinity").fieldErrors.sortOrder?.code).toBe("not_a_number");
+    expect(buildSortOrder("0").values).toBe(0);
+  });
+
+  it("keeps inactive traffic drafts untouched and validates only the selected mode", () => {
+    const preset = presetFixture("buyer-spike");
+    const draft = draftFromPreset(preset);
+    draft.ratePerSecond = "Infinity";
+    draft.preAllocatedVus = "2.5";
+    draft.buyerCount = "";
+    const invalid = buildConfigFromDraft(draft, preset);
+    expect(invalid.fieldErrors.buyerCount?.code).toBe("required");
+    expect(invalid.fieldErrors.ratePerSecond).toBeUndefined();
+    expect(draft.ratePerSecond).toBe("Infinity");
+    expect(draft.buyerCount).toBe("");
+  });
+
+  it.each([
+    ["Infinity", "not_a_number"],
+    ["2.5", "not_an_integer"],
+    ["5001", "above_max"],
+  ] as const)("classifies ERP latency %s as %s", (latencyMs, code) => {
+    const result = buildErpChaosFromDraft(
+      { latencyMs, maxTps: "1", errorRate: "0", forcedOutage: false },
+      { maxLatencyMs: 5000, minMaxTps: 1, maxErrorRate: 0.5, allowForcedOutage: true },
+    );
+    expect(result.fieldErrors.latencyMs?.code).toBe(code);
+  });
+
+  it("accepts valid zero where the ERP contract permits it", () => {
+    const result = buildErpChaosFromDraft(
+      { latencyMs: "0", maxTps: "1", errorRate: "0", forcedOutage: false },
+      { maxLatencyMs: 5000, minMaxTps: 1, maxErrorRate: 0.5, allowForcedOutage: true },
+    );
+    expect(result.values).toMatchObject({ latencyMs: 0, maxTps: 1, errorRate: 0 });
+  });
+
+  it("maps canonical intrinsic bounds while keeping sourced caps separate", () => {
+    const preset = presetFixture("buyer-spike");
+    const draft = draftFromPreset(preset);
+    draft.buyerCount = "0";
+    expect(buildConfigFromDraft(draft, preset).fieldErrors.buyerCount?.code).toBe("below_min");
+
+    draft.buyerCount = "1";
+    draft.startingStock = "0";
+    draft.erpErrorRate = "1";
+    expect(buildConfigFromDraft(draft, preset).values).toBeDefined();
+
+    draft.orderProcessConcurrency = "11";
+    expect(buildConfigFromDraft(draft, preset).fieldErrors.orderProcessConcurrency?.code).toBe(
+      "above_max",
+    );
+
+    draft.orderProcessConcurrency = "10";
+    draft.buyerCount = "1001";
+    const policy = policyFixture();
+    policy.deploymentHardCaps.maxBuyers = 1000;
+    expect(buildConfigFromDraft(draft, preset, policy).fieldErrors.buyerCount?.code).toBe(
+      "above_max",
+    );
+
+    expect(
+      buildErpChaosFromDraft(
+        { latencyMs: "0", maxTps: "4", errorRate: "0", forcedOutage: false },
+        { maxLatencyMs: 5000, minMaxTps: 5, maxErrorRate: 0.5, allowForcedOutage: true },
+      ).fieldErrors.maxTps?.code,
+    ).toBe("below_min");
+  });
+
+  it("reports both controls in VU relationship failures", () => {
+    const preset = presetFixture("constant-arrival-rate");
+    const draft = draftFromPreset(preset);
+    draft.preAllocatedVus = "51";
+    draft.maxVus = "50";
+    expect(buildConfigFromDraft(draft, preset).formErrors).toEqual([
+      {
+        message: "Maximum VUs must be greater than or equal to preallocated VUs.",
+        fields: ["preAllocatedVus", "maxVus"],
+      },
+    ]);
+  });
+
+  it.each([
+    {
+      mode: "buyer-spike" as const,
+      mutate: (draft: ReturnType<typeof draftFromPreset>) => {
+        draft.buyerCount = "50000";
+        draft.duplicateEachBuyerAttempt = true;
+      },
+      fields: ["buyerCount", "duplicateEachBuyerAttempt"],
+      computedTotal: 100_000,
+    },
+    {
+      mode: "constant-arrival-rate" as const,
+      mutate: (draft: ReturnType<typeof draftFromPreset>) => {
+        draft.ratePerSecond = "1000";
+        draft.durationSeconds = "91";
+      },
+      fields: ["ratePerSecond", "durationSeconds"],
+      computedTotal: 91_000,
+    },
+  ])("uses canonical deployment totals for $mode", ({ mode, mutate, fields, computedTotal }) => {
+    const preset = presetFixture(mode);
+    const draft = draftFromPreset(preset);
+    const policy = policyFixture();
+    policy.deploymentHardCaps.maxTotalRequests = 90_000;
+    mutate(draft);
+    expect(buildConfigFromDraft(draft, preset, policy).formErrors).toContainEqual({
+      message: `This configuration creates ${computedTotal} requests; the permitted maximum is 90000 requests.`,
+      fields,
+    });
   });
 
   it("merges editable runtime policy fields without losing deployment hard caps", () => {
@@ -47,7 +158,9 @@ describe("admin drafts", () => {
     const draft = draftFromRuntimePolicy(policy);
     draft.maxBuyers = "4321";
     draft.allowConstantArrivalRate = false;
-    const next = policyFromDraft(draft, policy);
+    const next = buildPolicyFromDraft(draft, policy).values;
+    expect(next).toBeDefined();
+    if (!next) throw new Error("Expected valid fixture policy.");
     expect(next.publicCustomLimits.maxBuyers).toBe(4321);
     expect(next.publicCustomLimits.allowedTrafficModes).toEqual(["buyer-spike"]);
     expect(policy.deploymentHardCaps).toEqual({
@@ -61,10 +174,71 @@ describe("admin drafts", () => {
     });
   });
 
+  it.each([
+    {
+      mutate: (draft: ReturnType<typeof draftFromRuntimePolicy>) => {
+        draft.buyerCount = "1001";
+        draft.maxBuyers = "1000";
+      },
+      fields: ["buyerCount", "maxBuyers"],
+    },
+    {
+      mutate: (draft: ReturnType<typeof draftFromRuntimePolicy>) => {
+        draft.mode = "constant-arrival-rate";
+        draft.maxVus = "51";
+        draft.maxPublicVus = "50";
+      },
+      fields: ["maxVus", "maxPublicVus"],
+    },
+    {
+      mutate: (draft: ReturnType<typeof draftFromRuntimePolicy>) => {
+        draft.erpMaxTps = "101";
+        draft.maxErpMaxTps = "100";
+      },
+      fields: ["erpMaxTps", "minErpMaxTps", "maxErpMaxTps"],
+    },
+    {
+      mutate: (draft: ReturnType<typeof draftFromRuntimePolicy>) => {
+        draft.minErpMaxTps = "101";
+        draft.maxErpMaxTps = "100";
+      },
+      fields: ["minErpMaxTps", "maxErpMaxTps"],
+    },
+    {
+      mutate: (draft: ReturnType<typeof draftFromRuntimePolicy>) => {
+        draft.buyerCount = "1001";
+        draft.maxTotalRequests = "1000";
+      },
+      fields: ["buyerCount", "duplicateEachBuyerAttempt", "maxTotalRequests"],
+    },
+    {
+      mutate: (draft: ReturnType<typeof draftFromRuntimePolicy>) => {
+        draft.allowBuyerSpike = false;
+      },
+      fields: ["mode", "allowBuyerSpike"],
+    },
+  ])("targets every editable side of policy relationships", ({ mutate, fields }) => {
+    const policy = policyFixture();
+    const draft = draftFromRuntimePolicy(policy);
+    mutate(draft);
+    expect(buildPolicyFromDraft(draft, policy).formErrors).toContainEqual(
+      expect.objectContaining({ fields }),
+    );
+  });
+
+  it("classifies policy fractional input and accepts its hard-cap boundary", () => {
+    const policy = policyFixture();
+    const draft = draftFromRuntimePolicy(policy);
+    draft.maxBuyers = "2.5";
+    expect(buildPolicyFromDraft(draft, policy).fieldErrors.maxBuyers?.code).toBe("not_an_integer");
+    draft.maxBuyers = String(policy.deploymentHardCaps.maxBuyers);
+    expect(buildPolicyFromDraft(draft, policy).fieldErrors.maxBuyers).toBeUndefined();
+  });
+
   it("builds contract-valid start and save payload configuration", () => {
     const preset = presetFixture("constant-arrival-rate");
     const draft = draftFromPreset(preset);
-    const configOverride = configFromDraft(draft, preset);
+    const configOverride = buildConfigFromDraft(draft, preset).values;
     expect(
       startDemoRunRequestSchema.safeParse({ presetSlug: preset.slug, configOverride }).success,
     ).toBe(true);

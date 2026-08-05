@@ -26,6 +26,16 @@ export const erpChaosConfigSchema = z
   .strict();
 export type ErpChaosConfig = z.infer<typeof erpChaosConfigSchema>;
 
+export const erpChaosSafetyCapsSchema = z
+  .object({
+    maxLatencyMs: nonnegativeIntegerSchema,
+    minMaxTps: z.number().int().positive(),
+    maxErrorRate: percentageSchema,
+    allowForcedOutage: z.boolean(),
+  })
+  .strict();
+export type ErpChaosSafetyCaps = z.infer<typeof erpChaosSafetyCapsSchema>;
+
 export const erpConfirmationRequestSchema = z
   .object({
     orderId: uuidSchema,
@@ -73,6 +83,7 @@ export type ErpConfirmationResponse = z.infer<typeof erpConfirmationResponseSche
 export const erpChaosStatusSchema = erpChaosConfigSchema
   .extend({
     updatedAt: isoTimestampSchema,
+    effectiveSafetyCaps: erpChaosSafetyCapsSchema,
   })
   .strict();
 export type ErpChaosStatus = z.infer<typeof erpChaosStatusSchema>;

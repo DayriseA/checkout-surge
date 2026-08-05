@@ -9,7 +9,11 @@ import {
   dashboardProjectionSchemaVersion,
   dashboardProjectionScopeId,
   type ErpChaosStatus,
+  type ErrorPayloadCode,
   errorPayloadSchema,
+  nonnegativeNumberMinimum,
+  orderProcessConcurrencyHardCap,
+  percentageMinimum,
 } from "@checkout-surge/contracts";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -19,10 +23,12 @@ import {
   AdminErpDiagnosticsController,
   AdminPresetController,
   AdminRuntimePolicyController,
+  serverFieldErrors,
 } from "../src/app/components/admin/admin-authenticated-surface.js";
 import type { BackendRead } from "../src/app/lib/api.js";
 import {
   adminDemoResetProxyPath,
+  adminDemoRunStartProxyPath,
   adminErpChaosProxyPath,
   adminErpChaosResetProxyPath,
   adminMaintenanceCleanupRunsProxyPath,
@@ -148,6 +154,30 @@ describe("admin feature controllers", () => {
     );
   });
 
+  it("renders the canonical worker concurrency cap", () => {
+    render(
+      <AdminPresetController
+        initialPresets={presetListFixture("Custom")}
+        recovery={available(recoveryFixture(null))}
+      />,
+    );
+    expect(screen.getByLabelText("Worker concurrency").getAttribute("max")).toBeNull();
+    expect(screen.getByLabelText("Worker concurrency").getAttribute("min")).toBeNull();
+    expect(screen.getByLabelText("Worker concurrency").getAttribute("step")).toBeNull();
+    expect(screen.getByText(`Allowed range: 1–${orderProcessConcurrencyHardCap}.`)).toBeTruthy();
+  });
+
+  it("describes canonical ERP bounds without inert numeric attributes", () => {
+    render(<AdminErpDiagnosticsController initialErpChaos={available(erpFixture())} />);
+    expect(screen.getByLabelText("Latency ms").getAttribute("min")).toBeNull();
+    expect(screen.getByLabelText("Error rate").getAttribute("min")).toBeNull();
+    expect(screen.getByLabelText("Error rate").getAttribute("step")).toBeNull();
+    expect(
+      screen.getByText(`Allowed range: ${nonnegativeNumberMinimum}–5000 milliseconds.`),
+    ).toBeTruthy();
+    expect(screen.getByText(`Allowed range: ${percentageMinimum}–1.`)).toBeTruthy();
+  });
+
   it("keeps a dirty ERP draft across props and submits its exact values", async () => {
     const user = userEvent.setup();
     const { rerender } = render(
@@ -175,6 +205,177 @@ describe("admin feature controllers", () => {
       errorRate: 0,
       forcedOutage: false,
     });
+  });
+
+  it("retains ERP controls while reporting a newer unavailable read", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <AdminErpDiagnosticsController initialErpChaos={available(erpFixture())} />,
+    );
+    await user.clear(screen.getByLabelText("Latency ms"));
+    await user.type(screen.getByLabelText("Latency ms"), "250");
+
+    rerender(
+      <AdminErpDiagnosticsController
+        initialErpChaos={{ status: "unavailable", reason: "Latest ERP read failed" }}
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByRole("alert")).toBeTruthy());
+    expect(screen.getByText("Latest ERP read failed")).toBeTruthy();
+    expect((screen.getByLabelText("Latency ms") as HTMLInputElement).value).toBe("250");
+    expect(
+      (screen.getByRole("button", { name: "Apply ERP Controls" }) as HTMLButtonElement).disabled,
+    ).toBe(false);
+  });
+
+  it("disables ERP Apply when no authoritative caps are available", () => {
+    render(
+      <AdminErpDiagnosticsController
+        initialErpChaos={{ status: "unavailable", reason: "ERP not loaded" }}
+      />,
+    );
+
+    expect(
+      (screen.getByRole("button", { name: "Apply ERP Controls" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+    expect(
+      (screen.getByRole("button", { name: "Reset ERP Controls" }) as HTMLButtonElement).disabled,
+    ).toBe(false);
+    expect(screen.getByRole("alert")).toBeTruthy();
+  });
+
+  it("keeps an empty operation status mounted until a success message arrives", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse(erpFixture())),
+    );
+    const user = userEvent.setup();
+    render(<AdminErpDiagnosticsController initialErpChaos={available(erpFixture())} />);
+    const status = screen.getByRole("status");
+    expect(status.textContent).toBe("");
+
+    await user.type(screen.getByLabelText("Latency ms"), "0");
+    expect(screen.getByRole("status")).toBe(status);
+    expect(status.textContent).toBe("");
+
+    await user.click(screen.getByRole("button", { name: "Apply ERP Controls" }));
+    await waitFor(() => expect(status.textContent).toBe("ERP diagnostics updated."));
+    expect(screen.getByRole("status")).toBe(status);
+  });
+
+  it("classifies authoritative field rejections separately from parse failures", () => {
+    expect(
+      serverFieldErrors(
+        { issues: [{ path: ["policy", "publicCustomLimits", "maxBuyers"] }] },
+        "policy",
+      ).maxBuyers?.code,
+    ).toBe("server_rejected");
+  });
+
+  it("keeps a blank ERP draft, validates it on blur, and sends no fallback request", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<AdminErpDiagnosticsController initialErpChaos={available(erpFixture())} />);
+
+    const latency = screen.getByLabelText("Latency ms");
+    await user.clear(latency);
+    await user.tab();
+    expect((latency as HTMLInputElement).value).toBe("");
+    expect(latency.getAttribute("aria-invalid")).toBe("true");
+    expect(screen.getByText("Latency is required.")).toBeTruthy();
+    expect(screen.queryByText("Correct the highlighted fields.")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Apply ERP Controls" }));
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(screen.getByText("Correct the highlighted fields.").parentElement).toBe(
+      document.activeElement,
+    );
+    await user.click(screen.getByRole("button", { name: "Apply ERP Controls" }));
+    expect(screen.getByText("Correct the highlighted fields.").parentElement).toBe(
+      document.activeElement,
+    );
+  });
+
+  it("preserves malformed ERP text through blur and submit", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<AdminErpDiagnosticsController initialErpChaos={available(erpFixture())} />);
+
+    const latency = screen.getByLabelText("Latency ms");
+    expect(latency.getAttribute("type")).toBe("text");
+    expect(latency.getAttribute("inputmode")).toBe("numeric");
+    await user.clear(latency);
+    await user.type(latency, "Infinity");
+    await user.tab();
+    expect((latency as HTMLInputElement).value).toBe("Infinity");
+    expect(
+      screen.getByText("Latency must be a finite number.", {
+        selector: "#erp-chaos-latencyMs-error",
+      }),
+    ).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: "Apply ERP Controls" }));
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect((latency as HTMLInputElement).value).toBe("Infinity");
+  });
+
+  it("keeps ERP controls usable after a structured server rejection and retries exactly", async () => {
+    let attempts = 0;
+    const fetchMock = vi.fn(async () =>
+      attempts++ === 0
+        ? canonicalErrorResponse("Rejected", 400, "invalid_chaos_configuration", {
+            forcedOutage: { allowed: false, actual: true },
+          })
+        : jsonResponse({ ...erpFixture(), forcedOutage: true }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<AdminErpDiagnosticsController initialErpChaos={available(erpFixture())} />);
+    await user.click(screen.getByLabelText("Forced outage"));
+
+    await user.click(screen.getByRole("button", { name: "Apply ERP Controls" }));
+    const forcedOutage = screen.getByLabelText("Forced outage");
+    expect(
+      await screen.findByText(
+        "The service rejected this value. Review its permitted range and try again.",
+        { selector: "#erp-chaos-forcedOutage-error" },
+      ),
+    ).toBeTruthy();
+    expect(forcedOutage.getAttribute("aria-invalid")).toBe("true");
+    expect(forcedOutage.getAttribute("aria-describedby")).toBe("erp-chaos-forcedOutage-error");
+    expect(document.querySelector("#erp-chaos-forcedOutage-error")).toBeTruthy();
+    expect((forcedOutage as HTMLInputElement).checked).toBe(true);
+    expect(screen.queryByText("ERP diagnostics are unavailable.")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Apply ERP Controls" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText("ERP diagnostics updated.")).toBeTruthy();
+    expect(screen.getByLabelText("Forced outage").getAttribute("aria-invalid")).toBeNull();
+  });
+
+  it("clears stale ERP validation after a successful authoritative reset", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse(erpFixture())),
+    );
+    const user = userEvent.setup();
+    render(<AdminErpDiagnosticsController initialErpChaos={available(erpFixture())} />);
+    await user.clear(screen.getByLabelText("Latency ms"));
+    await user.click(screen.getByRole("button", { name: "Apply ERP Controls" }));
+    expect(
+      screen.getByText("Latency is required.", {
+        selector: "#erp-chaos-latencyMs-error",
+      }),
+    ).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: "Reset ERP Controls" }));
+    await user.click(screen.getByRole("button", { name: "Reset ERP controls" }));
+    await waitFor(() => expect(screen.queryByText("Latency is required.")).toBeNull());
+    expect(screen.queryByText("Correct the highlighted fields.")).toBeNull();
+    expect((screen.getByLabelText("Latency ms") as HTMLInputElement).value).toBe("50");
   });
 
   it("reconciles reset recovery into current-run and preset start gating", async () => {
@@ -297,6 +498,282 @@ describe("admin feature controllers", () => {
     );
   });
 
+  it("suppresses invalid preset save/start requests and clears selected-mode errors", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(
+      <AdminPresetController
+        initialPresets={presetListFixture("Custom")}
+        recovery={available(recoveryFixture(null))}
+      />,
+    );
+    const buyers = screen.getByLabelText("Buyer count");
+    await user.clear(buyers);
+    await user.click(screen.getByRole("button", { name: "Save Preset" }));
+    await user.click(screen.getByRole("button", { name: "Start Admin Run" }));
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(
+      screen.getByText("Buyer count is required.", {
+        selector: "#preset-buyerCount-error",
+      }),
+    ).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: "constant-arrival-rate" }));
+    expect(screen.queryByText("Buyer count is required.")).toBeNull();
+    expect(screen.queryByText("Correct the highlighted fields.")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "buyer-spike" }));
+    expect((screen.getByLabelText("Buyer count") as HTMLInputElement).value).toBe("");
+    expect(screen.getByLabelText("Buyer count").getAttribute("aria-invalid")).toBeNull();
+  });
+
+  it("preserves incomplete, malformed, and fractional preset numbers", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(
+      <AdminPresetController
+        initialPresets={presetListFixture("Custom")}
+        recovery={available(recoveryFixture(null))}
+      />,
+    );
+    const buyers = screen.getByLabelText("Buyer count");
+    expect(buyers.getAttribute("type")).toBe("text");
+    expect(buyers.getAttribute("inputmode")).toBe("numeric");
+
+    await user.clear(buyers);
+    await user.type(buyers, "-");
+    await user.tab();
+    expect((buyers as HTMLInputElement).value).toBe("-");
+    expect(
+      screen.getByText("Buyer count must be a finite number.", {
+        selector: "#preset-buyerCount-error",
+      }),
+    ).toBeTruthy();
+
+    await user.clear(buyers);
+    await user.type(buyers, "oops");
+    await user.tab();
+    expect((buyers as HTMLInputElement).value).toBe("oops");
+    expect(
+      screen.getByText("Buyer count must be a finite number.", {
+        selector: "#preset-buyerCount-error",
+      }),
+    ).toBeTruthy();
+
+    await user.clear(buyers);
+    await user.type(buyers, "2.5");
+    await user.click(screen.getByRole("button", { name: "Start Admin Run" }));
+    expect((buyers as HTMLInputElement).value).toBe("2.5");
+    expect(
+      screen.getByText("Buyer count must be a whole number.", {
+        selector: "#preset-buyerCount-error",
+      }),
+    ).toBeTruthy();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      mode: "buyer spike",
+      prepare: async (user: ReturnType<typeof userEvent.setup>) => {
+        const buyers = screen.getByLabelText("Buyer count");
+        await user.clear(buyers);
+        await user.type(buyers, "50000");
+        await user.click(screen.getByLabelText("Duplicate attempts"));
+      },
+      links: ["Buyer count", "Duplicate attempts"],
+      values: [["Buyer count", "50000"]] as const,
+      checkedLabel: "Duplicate attempts",
+      message:
+        "This configuration creates 100000 requests; the permitted maximum is 90000 requests.",
+    },
+    {
+      mode: "constant arrival",
+      prepare: async (user: ReturnType<typeof userEvent.setup>) => {
+        await user.click(screen.getByRole("button", { name: "constant-arrival-rate" }));
+        const rate = screen.getByLabelText("Requests per second");
+        const duration = screen.getByLabelText("Duration seconds");
+        await user.clear(rate);
+        await user.type(rate, "1000");
+        await user.clear(duration);
+        await user.type(duration, "91");
+      },
+      links: ["Requests per second", "Duration"],
+      values: [
+        ["Requests per second", "1000"],
+        ["Duration seconds", "91"],
+      ] as const,
+      checkedLabel: undefined,
+      message:
+        "This configuration creates 91000 requests; the permitted maximum is 90000 requests.",
+    },
+  ])("blocks derived deployment totals for $mode save and start", async ({
+    prepare,
+    links,
+    values,
+    checkedLabel,
+    message,
+  }) => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    const runtimePolicy = runtimePolicyFixture(100_000, 300);
+    runtimePolicy.policy.deploymentHardCaps.maxTotalRequests = 90_000;
+    render(
+      <AdminPresetController
+        initialPresets={presetListFixture("Custom")}
+        recovery={available(recoveryFixture(null))}
+        runtimePolicy={available(runtimePolicy)}
+      />,
+    );
+    await prepare(user);
+
+    await user.click(screen.getByRole("button", { name: "Save Preset" }));
+    expect(fetchMock).not.toHaveBeenCalled();
+    for (const label of links) {
+      expect(screen.getByRole("link", { name: label })).toBeTruthy();
+    }
+    expect(document.body.textContent).toContain(message);
+
+    await user.click(screen.getByRole("button", { name: "Start Admin Run" }));
+    expect(fetchMock).not.toHaveBeenCalled();
+    for (const label of links) {
+      expect(screen.getByRole("link", { name: label })).toBeTruthy();
+    }
+    expect(document.body.textContent).toContain(message);
+    for (const [label, value] of values) {
+      expect((screen.getByLabelText(label) as HTMLInputElement).value).toBe(value);
+    }
+    if (checkedLabel) {
+      expect((screen.getByLabelText(checkedLabel) as HTMLInputElement).checked).toBe(true);
+    }
+  });
+
+  it("sends a valid run start unchanged and keeps authoritative rejection guidance usable", async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      canonicalErrorResponse("Rejected", 400, "invalid_run_configuration", {
+        violationCode: "public_traffic_mode_not_allowed",
+        path: ["trafficConfig", "mode"],
+        value: "buyer-spike",
+        internal: "private-detail",
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    const preset = presetFixture();
+    render(
+      <AdminPresetController
+        initialPresets={presetListFixture("Custom")}
+        recovery={available(recoveryFixture(null))}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Start Admin Run" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(adminDemoRunStartProxyPath);
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+      presetSlug: preset.slug,
+      configOverride: {
+        trafficConfig: preset.trafficConfig,
+        inventoryConfig: preset.inventoryConfig,
+        erpConfig: preset.erpConfig,
+        backpressureConfig: preset.backpressureConfig,
+      },
+    });
+    expect(await screen.findByText("Check the values and try again")).toBeTruthy();
+    expect(
+      screen
+        .getByRole("link", {
+          name: "The service rejected this value. Review its permitted range and try again.",
+        })
+        .getAttribute("href"),
+    ).toBe("#preset-mode");
+    const mode = document.querySelector("#preset-mode");
+    expect(mode).toBeTruthy();
+    expect(mode?.getAttribute("aria-invalid")).toBe("true");
+    expect(mode?.getAttribute("aria-describedby")).toBe("preset-mode-error");
+    expect(document.querySelector("#preset-mode-error")?.textContent).toBe(
+      "The service rejected this value. Review its permitted range and try again.",
+    );
+    expect(document.querySelector('a[href="#preset-internal"]')).toBeNull();
+    expect(document.body.textContent).not.toContain("private-detail");
+    expect(
+      (screen.getByRole("button", { name: "Start Admin Run" }) as HTMLButtonElement).disabled,
+    ).toBe(false);
+
+    await user.click(screen.getByRole("button", { name: "Start Admin Run" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(fetchMock.mock.calls[1]?.[1]?.body).toBe(fetchMock.mock.calls[0]?.[1]?.body);
+  });
+
+  it("announces an accepted admin start before offering user-activated Watch navigation", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        const preset = presetFixture();
+        return jsonResponse(
+          {
+            run: {
+              ...runFixture(),
+              configSnapshot: {
+                trafficConfig: preset.trafficConfig,
+                inventoryConfig: preset.inventoryConfig,
+                erpConfig: preset.erpConfig,
+                backpressureConfig: preset.backpressureConfig,
+              },
+            },
+            recovery: { establishedAt: "2026-06-20T00:00:01.000Z" },
+            correlationId: "admin-start-accepted",
+            timestamp: "2026-06-20T00:00:01.000Z",
+          },
+          202,
+        );
+      }),
+    );
+    const user = userEvent.setup();
+    render(
+      <AdminPresetController
+        initialPresets={presetListFixture("Custom")}
+        recovery={available(recoveryFixture(null))}
+      />,
+    );
+    const status = screen.getAllByRole("status")[0];
+    if (!status) throw new Error("Expected the admin operation status region.");
+    expect(status.textContent).toBe("");
+    const assign = vi.fn();
+    const navigationWindow = Object.create(window) as Window;
+    Object.defineProperty(navigationWindow, "location", { value: { assign } });
+    vi.stubGlobal("window", navigationWindow);
+
+    await user.click(screen.getByRole("button", { name: "Start Admin Run" }));
+
+    await waitFor(() => expect(status.textContent).toBe("Admin run accepted."));
+    expect(screen.getAllByRole("status")[0]).toBe(status);
+    expect(screen.getByRole("link", { name: "Watch live" }).getAttribute("href")).toBe("/watch");
+    expect(assign).not.toHaveBeenCalled();
+  });
+
+  it("shows actionable guidance when residual preset text validation rejects save", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(
+      <AdminPresetController
+        initialPresets={presetListFixture("Custom")}
+        recovery={available(recoveryFixture(null))}
+      />,
+    );
+    await user.clear(screen.getByLabelText("Name"));
+    await user.click(screen.getByRole("button", { name: "Save Preset" }));
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(
+      await screen.findByText(
+        "Check the values and try again. Use the available fields and limits for this operation.",
+      ),
+    ).toBeTruthy();
+  });
+
   it("rejects a duplicate when the visible slug is cleared ahead of React's state commit", async () => {
     const fetchMock = vi.fn((_input: RequestInfo | URL, _init?: RequestInit) => {
       throw new Error("Unexpected duplicate fetch");
@@ -417,6 +894,88 @@ describe("admin feature controllers", () => {
     ).toBe(true);
   });
 
+  it("shares a recovered runtime policy with dirty preset validation", async () => {
+    const recovered = runtimePolicyFixture(1000, 300);
+    recovered.policy.deploymentHardCaps.maxBuyers = 1000;
+    const fetchMock = vi.fn(async () => jsonResponse(recovered));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<AdminAuthenticatedSurface {...surfaceProps(null)} />);
+
+    await user.clear(screen.getByLabelText("Name"));
+    await user.type(screen.getByLabelText("Name"), "Edited locally");
+    const presetBuyerCount = () => document.querySelector<HTMLInputElement>("#preset-buyerCount");
+    expect(document.querySelector("#preset-buyerCount-help")?.textContent).not.toContain(
+      "Maximum: 1000.",
+    );
+
+    await user.click(screen.getByRole("button", { name: "Refresh Policy" }));
+    await waitFor(() =>
+      expect(document.querySelector("#preset-buyerCount-help")?.textContent).toContain(
+        "Maximum: 1000.",
+      ),
+    );
+    expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("Edited locally");
+
+    if (!presetBuyerCount()) throw new Error("Expected preset buyer-count control.");
+    await user.clear(presetBuyerCount() as HTMLInputElement);
+    await user.type(presetBuyerCount() as HTMLInputElement, "1001");
+    await user.click(screen.getByRole("button", { name: "Start Admin Run" }));
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(
+      screen.getByText("Buyer count must be at most 1000.", {
+        selector: "#preset-buyerCount-error",
+      }),
+    ).toBeTruthy();
+  });
+
+  it("clears stale preset validation when an authoritative policy changes", async () => {
+    const initial = runtimePolicyFixture(1000, 300);
+    initial.policy.deploymentHardCaps.maxBuyers = 1000;
+    const refreshed = runtimePolicyFixture(2000, 300);
+    refreshed.policy.deploymentHardCaps.maxBuyers = 2000;
+    const fetchMock = vi.fn(async () => jsonResponse(refreshed));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(
+      <AdminAuthenticatedSurface
+        {...surfaceProps(null)}
+        initialRuntimePolicy={available(initial)}
+      />,
+    );
+    const presetBuyerCount = () => document.querySelector<HTMLInputElement>("#preset-buyerCount");
+    if (!presetBuyerCount()) throw new Error("Expected preset buyer-count control.");
+
+    await user.clear(presetBuyerCount() as HTMLInputElement);
+    await user.type(presetBuyerCount() as HTMLInputElement, "1001");
+    await user.click(screen.getByRole("button", { name: "Start Admin Run" }));
+    expect(
+      screen.getByText("Buyer count must be at most 1000.", {
+        selector: "#preset-buyerCount-error",
+      }),
+    ).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: "Refresh Policy" }));
+    await waitFor(() =>
+      expect(document.querySelector("#preset-buyerCount-help")?.textContent).toContain(
+        "Maximum: 2000.",
+      ),
+    );
+    expect(presetBuyerCount()?.value).toBe("1001");
+    expect(presetBuyerCount()?.getAttribute("aria-invalid")).toBeNull();
+    expect(screen.queryByText("Buyer count must be at most 1000.")).toBeNull();
+
+    await user.clear(presetBuyerCount() as HTMLInputElement);
+    await user.type(presetBuyerCount() as HTMLInputElement, "2001");
+    await user.click(screen.getByRole("button", { name: "Start Admin Run" }));
+    expect(
+      screen.getByText("Buyer count must be at most 2000.", {
+        selector: "#preset-buyerCount-error",
+      }),
+    ).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
   it("preserves a dirty policy draft across props and adopts an explicit save response", async () => {
     const initial = available(runtimePolicyFixture(10_000, 300));
     const user = userEvent.setup();
@@ -447,6 +1006,131 @@ describe("admin feature controllers", () => {
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe(adminPublicRuntimePolicyProxyPath);
     expect(fetchMock.mock.calls[0]?.[1]?.method).toBe("PUT");
     expect((screen.getByLabelText("Max buyers") as HTMLInputElement).value).toBe("4321");
+  });
+
+  it("surfaces a newer policy failure while retaining dirty drafts and preset caps", async () => {
+    const user = userEvent.setup();
+    const initialPolicy = runtimePolicyFixture(10_000, 300);
+    initialPolicy.policy.deploymentHardCaps.maxBuyers = 1000;
+    const props = {
+      ...surfaceProps(null),
+      initialRuntimePolicy: available(initialPolicy),
+    };
+    const { rerender } = render(<AdminAuthenticatedSurface {...props} />);
+    await user.clear(screen.getByLabelText("Max buyers"));
+    await user.type(screen.getByLabelText("Max buyers"), "4321");
+    await user.clear(screen.getByLabelText("Name"));
+    await user.type(screen.getByLabelText("Name"), "Edited locally");
+
+    rerender(
+      <AdminAuthenticatedSurface
+        {...props}
+        initialRuntimePolicy={{ status: "unavailable", reason: "Latest policy read failed" }}
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByRole("alert")).toBeTruthy());
+    expect(screen.getByText("Latest policy read failed")).toBeTruthy();
+    expect((screen.getByLabelText("Max buyers") as HTMLInputElement).value).toBe("4321");
+    expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("Edited locally");
+    expect(document.querySelector("#preset-buyerCount-help")?.textContent).toContain(
+      "Maximum: 1000.",
+    );
+  });
+
+  it("blocks invalid policy saves and links every corrective control with readable labels", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(
+      <AdminRuntimePolicyController
+        initialRuntimePolicy={available(runtimePolicyFixture(10_000, 300))}
+      />,
+    );
+    await user.clear(screen.getByLabelText("Max buyers"));
+    await user.type(screen.getByLabelText("Max buyers"), "500");
+    await user.click(screen.getByRole("button", { name: "Save Public Policy" }));
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    const buyerLink = screen.getByRole("link", { name: "Buyer count" });
+    const limitLink = screen.getByRole("link", { name: "Maximum buyers" });
+    expect(buyerLink.getAttribute("href")).toBe("#runtime-policy-buyerCount");
+    expect(limitLink.getAttribute("href")).toBe("#runtime-policy-maxBuyers");
+    expect(document.querySelector(buyerLink.getAttribute("href") ?? "")).toBeTruthy();
+    expect(document.querySelector(limitLink.getAttribute("href") ?? "")).toBeTruthy();
+    expect(document.body.textContent).not.toContain("maxBuyers");
+  });
+
+  it("clears hidden policy validation when the selected traffic mode changes", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(
+      <AdminRuntimePolicyController
+        initialRuntimePolicy={available(runtimePolicyFixture(10_000, 300))}
+      />,
+    );
+    await user.clear(screen.getByLabelText("Buyer count"));
+    await user.click(screen.getByRole("button", { name: "Save Public Policy" }));
+    expect(
+      screen.getByText("Buyer count is required.", {
+        selector: "#runtime-policy-buyerCount-error",
+      }),
+    ).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: "constant-arrival-rate" }));
+    expect(screen.queryByText("Buyer count is required.")).toBeNull();
+    expect(screen.queryByText("Correct the highlighted fields.")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "buyer-spike" }));
+    expect((screen.getByLabelText("Buyer count") as HTMLInputElement).value).toBe("");
+    expect(screen.getByLabelText("Buyer count").getAttribute("aria-invalid")).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("preserves an authoritative policy after save failure and allows retry", async () => {
+    let attempts = 0;
+    const fetchMock = vi.fn(async () =>
+      attempts++ === 0
+        ? canonicalErrorResponse("Save failed", 503, "backend_unavailable")
+        : jsonResponse(runtimePolicyFixture(10_000, 400)),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(
+      <AdminRuntimePolicyController
+        initialRuntimePolicy={available(runtimePolicyFixture(10_000, 300))}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Save Public Policy" }));
+    expect(
+      await screen.findByText("The latest information is temporarily unavailable"),
+    ).toBeTruthy();
+    expect(screen.getByLabelText("Max buyers")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Save Public Policy" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect((screen.getByLabelText("Budget window seconds") as HTMLInputElement).value).toBe("400");
+  });
+
+  it("clears stale policy validation after a successful authoritative refresh", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse(runtimePolicyFixture(10_000, 400))),
+    );
+    const user = userEvent.setup();
+    render(
+      <AdminRuntimePolicyController
+        initialRuntimePolicy={available(runtimePolicyFixture(10_000, 300))}
+      />,
+    );
+    await user.clear(screen.getByLabelText("Max buyers"));
+    await user.type(screen.getByLabelText("Max buyers"), "500");
+    await user.click(screen.getByRole("button", { name: "Save Public Policy" }));
+    expect(screen.getByText("Correct the highlighted fields.")).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: "Refresh Policy" }));
+    await waitFor(() => expect(screen.queryByText("Correct the highlighted fields.")).toBeNull());
+    expect((screen.getByLabelText("Budget window seconds") as HTMLInputElement).value).toBe("400");
   });
 
   it("refreshes the runtime policy only for the canonical session-expired error", async () => {
@@ -857,11 +1541,7 @@ function available<T>(data: T): BackendRead<T> {
 function canonicalErrorResponse(
   message: string,
   status: number,
-  code:
-    | "backend_unavailable"
-    | "admin_session_required"
-    | "control_token_required"
-    | "preset_conflict" = "backend_unavailable",
+  code: ErrorPayloadCode = "backend_unavailable",
   details?: Record<string, unknown>,
 ): Response {
   return jsonResponse(
@@ -883,6 +1563,12 @@ function erpFixture(): ErpChaosStatus {
     errorRate: 0,
     forcedOutage: false,
     updatedAt: "2026-06-20T00:00:10.000Z",
+    effectiveSafetyCaps: {
+      maxLatencyMs: 5000,
+      minMaxTps: 1,
+      maxErrorRate: 1,
+      allowForcedOutage: true,
+    },
   };
 }
 

@@ -34,6 +34,7 @@ import {
   jsonObjectSchema,
   nonnegativeIntegerSchema,
   nonnegativeNumberSchema,
+  percentageSchema,
   positiveIntegerSchema,
   uuidSchema,
 } from "./primitives.js";
@@ -538,7 +539,7 @@ export const publicCustomLimitsSchema = z
     maxErpLatencyMs: nonnegativeIntegerSchema,
     minErpMaxTps: positiveIntegerSchema,
     maxErpMaxTps: positiveIntegerSchema,
-    maxErpErrorRate: z.number().min(0).max(1),
+    maxErpErrorRate: percentageSchema,
     allowForcedOutage: z.boolean(),
     allowedTrafficModes: z
       .array(z.union([z.literal("buyer-spike"), z.literal("constant-arrival-rate")]))

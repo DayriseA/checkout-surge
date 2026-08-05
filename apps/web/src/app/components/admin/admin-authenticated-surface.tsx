@@ -15,7 +15,6 @@ import {
   copyDemoPresetToCustomRequestSchema,
   type DashboardProjection,
   duplicateDemoPresetRequestSchema,
-  type ErpChaosConfig,
   type ErpChaosStatus,
   erpChaosConfigSchema,
   erpChaosStatusSchema,
@@ -27,13 +26,15 @@ import {
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  configFromDraft,
+  buildConfigFromDraft,
+  buildErpChaosFromDraft,
+  buildPolicyFromDraft,
+  buildSortOrder,
+  type DraftFieldError,
+  type DraftFormError,
   draftFromPreset,
   draftFromRuntimePolicy,
   type PresetDraft,
-  parseInteger,
-  parseNumber,
-  policyFromDraft,
   type RuntimePolicyDraft,
 } from "../../lib/admin-drafts";
 import type { BackendRead } from "../../lib/api";
@@ -65,7 +66,6 @@ import {
   buttonClassName,
   currentRunStatus,
   Fact,
-  navigateToWatch,
   panelClassName,
   Unavailable,
 } from "./admin-feature-views";
@@ -82,6 +82,15 @@ export interface AdminAuthenticatedSurfaceProps {
 export function AdminAuthenticatedSurface(props: AdminAuthenticatedSurfaceProps) {
   const recoveryController = useDashboardRecovery(props.initialRecovery);
   const recovery = recoveryController.recovery;
+  const [runtimePolicy, setRuntimePolicy] = useState(props.initialRuntimePolicy);
+
+  useEffect(() => {
+    setRuntimePolicy((current) =>
+      props.initialRuntimePolicy.status === "available" || current.status !== "available"
+        ? props.initialRuntimePolicy
+        : current,
+    );
+  }, [props.initialRuntimePolicy]);
 
   return (
     <div className="grid grid-cols-12 gap-4">
@@ -95,8 +104,16 @@ export function AdminAuthenticatedSurface(props: AdminAuthenticatedSurfaceProps)
         retryDelayMs={recoveryController.retryDelayMs}
       />
       <AdminReadinessPanel read={props.initialReadiness} />
-      <AdminRuntimePolicyController initialRuntimePolicy={props.initialRuntimePolicy} />
-      <AdminPresetController initialPresets={props.initialPresets} recovery={recovery} />
+      <AdminRuntimePolicyController
+        initialRuntimePolicy={runtimePolicy}
+        latestRuntimePolicyRead={props.initialRuntimePolicy}
+        onRuntimePolicyAvailable={setRuntimePolicy}
+      />
+      <AdminPresetController
+        initialPresets={props.initialPresets}
+        recovery={recovery}
+        runtimePolicy={runtimePolicy}
+      />
       <AdminMaintenancePanel onResetComplete={recoveryController.retryNow} />
       <AdminErpDiagnosticsController initialErpChaos={props.initialErpChaos} />
     </div>
@@ -223,11 +240,16 @@ export function AdminCurrentRunPanel({
 
 export function AdminRuntimePolicyController({
   initialRuntimePolicy,
+  latestRuntimePolicyRead = initialRuntimePolicy,
+  onRuntimePolicyAvailable,
 }: {
   initialRuntimePolicy: BackendRead<AdminPublicRuntimePolicyResponse>;
+  latestRuntimePolicyRead?: BackendRead<AdminPublicRuntimePolicyResponse>;
+  onRuntimePolicyAvailable?: (runtimePolicy: BackendRead<AdminPublicRuntimePolicyResponse>) => void;
 }) {
   const router = useRouter();
   const [runtimePolicy, setRuntimePolicy] = useState(initialRuntimePolicy);
+  const [latestRead, setLatestRead] = useState(latestRuntimePolicyRead);
   const [draft, setDraft] = useState<RuntimePolicyDraft | null>(
     initialRuntimePolicy.status === "available"
       ? draftFromRuntimePolicy(initialRuntimePolicy.data.policy)
@@ -235,14 +257,29 @@ export function AdminRuntimePolicyController({
   );
   const [isPending, setIsPending] = useState(false);
   const [notice, setNotice] = useState<AdminNotice | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, DraftFieldError>>({});
+  const [formErrors, setFormErrors] = useState<DraftFormError[]>([]);
+  const [showValidationSummary, setShowValidationSummary] = useState(false);
+  const [validationSummaryRevision, setValidationSummaryRevision] = useState(0);
   const isDraftDirtyRef = useRef(false);
 
   useEffect(() => {
-    setRuntimePolicy(initialRuntimePolicy);
+    setRuntimePolicy((current) =>
+      initialRuntimePolicy.status === "available" || current.status !== "available"
+        ? initialRuntimePolicy
+        : current,
+    );
+    if (initialRuntimePolicy.status === "available") {
+      setFieldErrors({});
+      setFormErrors([]);
+      setShowValidationSummary(false);
+    }
     if (!isDraftDirtyRef.current && initialRuntimePolicy.status === "available") {
       setDraft(draftFromRuntimePolicy(initialRuntimePolicy.data.policy));
     }
   }, [initialRuntimePolicy]);
+
+  useEffect(() => setLatestRead(latestRuntimePolicyRead), [latestRuntimePolicyRead]);
 
   async function refresh() {
     setIsPending(true);
@@ -256,10 +293,13 @@ export function AdminRuntimePolicyController({
         router.refresh();
         return;
       }
-      setRuntimePolicy(result);
       if (result.status === "available") {
+        setRuntimePolicy(result);
+        setLatestRead(result);
+        onRuntimePolicyAvailable?.(result);
         setDraft(draftFromRuntimePolicy(result.data.policy));
         isDraftDirtyRef.current = false;
+        clearValidationState();
       }
       setNotice(
         result.status === "available"
@@ -273,13 +313,21 @@ export function AdminRuntimePolicyController({
 
   async function save() {
     if (runtimePolicy.status !== "available" || !draft) return;
-    const parsed = adminPublicRuntimePolicyUpdateRequestSchema.safeParse({
-      policy: policyFromDraft(draft, runtimePolicy.data.policy),
-    });
+    const built = buildPolicyFromDraft(draft, runtimePolicy.data.policy);
+    if (!built.values) {
+      setFieldErrors(built.fieldErrors);
+      setFormErrors(built.formErrors);
+      setShowValidationSummary(true);
+      setValidationSummaryRevision((revision) => revision + 1);
+      return;
+    }
+    const parsed = adminPublicRuntimePolicyUpdateRequestSchema.safeParse({ policy: built.values });
     if (!parsed.success) {
       setNotice(adminValidationMessage());
       return;
     }
+    setFieldErrors({});
+    setFormErrors([]);
     setIsPending(true);
     setNotice(null);
     try {
@@ -296,12 +344,22 @@ export function AdminRuntimePolicyController({
         router.refresh();
         return;
       }
-      setRuntimePolicy(result);
-      if (result.status === "available") setDraft(draftFromRuntimePolicy(result.data.policy));
-      if (result.status === "available") isDraftDirtyRef.current = false;
+      if (result.status === "available") {
+        setRuntimePolicy(result);
+        setLatestRead(result);
+        onRuntimePolicyAvailable?.(result);
+        setDraft(draftFromRuntimePolicy(result.data.policy));
+        isDraftDirtyRef.current = false;
+        clearValidationState();
+      }
       setNotice(
         result.status === "available" ? "Public runtime policy saved." : adminFailureNotice(result),
       );
+      if (result.status === "unavailable") {
+        setFieldErrors(serverFieldErrors(result.details, "policy"));
+        setShowValidationSummary(true);
+        setValidationSummaryRevision((revision) => revision + 1);
+      }
     } finally {
       setIsPending(false);
     }
@@ -310,25 +368,53 @@ export function AdminRuntimePolicyController({
   return (
     <AdminRuntimePolicyView
       draft={draft}
+      fieldErrors={fieldErrors}
+      formErrors={formErrors}
       isPending={isPending}
+      latestRuntimePolicyRead={latestRead}
       notice={notice}
+      onBlurField={(field) => {
+        if (runtimePolicy.status !== "available" || !draft) return;
+        setFieldErrors((current) =>
+          replaceFieldError(
+            current,
+            field,
+            buildPolicyFromDraft(draft, runtimePolicy.data.policy).fieldErrors[field],
+          ),
+        );
+      }}
       onRefresh={() => void refresh()}
       onSave={() => void save()}
       onUpdateDraft={(next) => {
         isDraftDirtyRef.current = true;
+        if (next.mode !== undefined) clearValidationState();
+        else {
+          setFieldErrors((current) => clearChangedErrors(current, next));
+          setFormErrors([]);
+        }
         setDraft((current) => (current ? { ...current, ...next } : null));
       }}
       runtimePolicy={runtimePolicy}
+      showValidationSummary={showValidationSummary}
+      validationSummaryRevision={validationSummaryRevision}
     />
   );
+
+  function clearValidationState() {
+    setFieldErrors({});
+    setFormErrors([]);
+    setShowValidationSummary(false);
+  }
 }
 
 export function AdminPresetController({
   initialPresets,
   recovery,
+  runtimePolicy,
 }: {
   initialPresets: BackendRead<AdminPresetListResponse>;
   recovery: BackendRead<DashboardProjection>;
+  runtimePolicy?: BackendRead<AdminPublicRuntimePolicyResponse>;
 }) {
   const router = useRouter();
   const initialPreset =
@@ -343,6 +429,10 @@ export function AdminPresetController({
   );
   const [isPending, setIsPending] = useState(false);
   const [notice, setNotice] = useState<AdminNotice | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, DraftFieldError>>({});
+  const [formErrors, setFormErrors] = useState<DraftFormError[]>([]);
+  const [showValidationSummary, setShowValidationSummary] = useState(false);
+  const [validationSummaryRevision, setValidationSummaryRevision] = useState(0);
   const [syncNotice, setSyncNotice] = useState<AdminNotice | null>(null);
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [archiveError, setArchiveError] = useState<AdminNotice | null>(null);
@@ -363,9 +453,15 @@ export function AdminPresetController({
       setDraft(null);
       draftSlugRef.current = null;
       isDraftDirtyRef.current = false;
+      setFieldErrors({});
+      setFormErrors([]);
+      setShowValidationSummary(false);
       return;
     }
     const switchedPreset = draftSlugRef.current !== selectedPreset.slug;
+    setFieldErrors({});
+    setFormErrors([]);
+    setShowValidationSummary(false);
     if (!switchedPreset && isDraftDirtyRef.current) return;
     setDraft(draftFromPreset(selectedPreset));
     draftSlugRef.current = selectedPreset.slug;
@@ -373,16 +469,37 @@ export function AdminPresetController({
     if (switchedPreset) setDuplicateTargetSlug(`${selectedPreset.slug}-copy`);
   }, [selectedPreset]);
 
+  useEffect(() => {
+    if (runtimePolicy?.status !== "available") return;
+    setFieldErrors({});
+    setFormErrors([]);
+    setShowValidationSummary(false);
+  }, [runtimePolicy]);
+
   async function start() {
     if (!selectedPreset || !draft) return;
+    const built = buildConfigFromDraft(
+      draft,
+      selectedPreset,
+      runtimePolicy?.status === "available" ? runtimePolicy.data.policy : undefined,
+    );
+    if (!built.values) {
+      setFieldErrors(built.fieldErrors);
+      setFormErrors(built.formErrors);
+      setShowValidationSummary(true);
+      setValidationSummaryRevision((revision) => revision + 1);
+      return;
+    }
     const parsed = startDemoRunRequestSchema.safeParse({
       presetSlug: selectedPreset.slug,
-      configOverride: configFromDraft(draft, selectedPreset),
+      configOverride: built.values,
     });
     if (!parsed.success) {
       setNotice(adminValidationMessage());
       return;
     }
+    setFieldErrors({});
+    setFormErrors([]);
     await withPending(async () => {
       const result = await readProxyJson(adminDemoRunStartProxyPath, startDemoRunResponseSchema, {
         method: "POST",
@@ -394,26 +511,45 @@ export function AdminPresetController({
         return;
       }
       setNotice(result.status === "available" ? "Admin run accepted." : adminFailureNotice(result));
-      if (result.status === "available") navigateToWatch();
+      if (result.status === "unavailable") {
+        setFieldErrors(serverFieldErrors(result.details, "preset"));
+        setShowValidationSummary(true);
+        setValidationSummaryRevision((revision) => revision + 1);
+      }
     });
   }
 
   async function save() {
     if (!selectedPreset || !draft) return;
+    const built = buildConfigFromDraft(
+      draft,
+      selectedPreset,
+      runtimePolicy?.status === "available" ? runtimePolicy.data.policy : undefined,
+    );
+    const sortOrder = buildSortOrder(draft.sortOrder);
+    if (!built.values || sortOrder.values === undefined) {
+      setFieldErrors({ ...built.fieldErrors, ...sortOrder.fieldErrors });
+      setFormErrors([...built.formErrors, ...sortOrder.formErrors]);
+      setShowValidationSummary(true);
+      setValidationSummaryRevision((revision) => revision + 1);
+      return;
+    }
     const parsed = saveDemoPresetRequestSchema.safeParse({
       slug: selectedPreset.slug,
       display: {
         ...selectedPreset.display,
         name: draft.displayName,
         description: draft.description,
-        sortOrder: parseInteger(draft.sortOrder, selectedPreset.display.sortOrder),
+        sortOrder: sortOrder.values,
       },
-      ...configFromDraft(draft, selectedPreset),
+      ...built.values,
     });
     if (!parsed.success) {
       setNotice(adminValidationMessage());
       return;
     }
+    setFieldErrors({});
+    setFormErrors([]);
     await mutate(adminPresetSaveProxyPath, parsed.data, "Preset saved.");
   }
 
@@ -545,6 +681,9 @@ export function AdminPresetController({
         return;
       }
       if (mutation.status !== "available") {
+        setFieldErrors(serverFieldErrors(mutation.details, "preset"));
+        setShowValidationSummary(true);
+        setValidationSummaryRevision((revision) => revision + 1);
         setNotice(adminFailureNotice(mutation));
         return;
       }
@@ -563,6 +702,7 @@ export function AdminPresetController({
       setDraft(draftFromPreset(localPreset));
       draftSlugRef.current = localPreset.slug;
       isDraftDirtyRef.current = false;
+      clearValidationState();
       setNotice(successNotice);
       setSyncNotice(null);
       const refreshed = await readProxyJson(
@@ -596,9 +736,29 @@ export function AdminPresetController({
     <>
       <AdminPresetView
         draft={draft}
+        fieldErrors={fieldErrors}
+        formErrors={formErrors}
+        hardCaps={
+          runtimePolicy?.status === "available"
+            ? runtimePolicy.data.policy.deploymentHardCaps
+            : undefined
+        }
         duplicateTargetSlug={duplicateTargetSlug}
         isPending={isPending}
         notice={notice}
+        onBlurField={(field) => {
+          if (!selectedPreset || !draft) return;
+          const built = buildConfigFromDraft(
+            draft,
+            selectedPreset,
+            runtimePolicy?.status === "available" ? runtimePolicy.data.policy : undefined,
+          );
+          const error =
+            field === "sortOrder"
+              ? buildSortOrder(draft.sortOrder).fieldErrors.sortOrder
+              : built.fieldErrors[field];
+          setFieldErrors((current) => replaceFieldError(current, field, error));
+        }}
         syncNotice={syncNotice}
         onArchive={() => {
           setArchiveError(null);
@@ -615,11 +775,18 @@ export function AdminPresetController({
         onStart={() => void start()}
         onUpdateDraft={(next) => {
           isDraftDirtyRef.current = true;
+          if (next.mode !== undefined) clearValidationState();
+          else {
+            setFieldErrors((current) => clearChangedErrors(current, next));
+            setFormErrors([]);
+          }
           setDraft((current) => (current ? { ...current, ...next } : null));
         }}
         presets={presets}
         presetsRead={presetsRead}
         selectedPreset={selectedPreset}
+        showValidationSummary={showValidationSummary}
+        validationSummaryRevision={validationSummaryRevision}
         startBlocked={isRunStartBlocked(recovery)}
       />
       <ConfirmationDialog
@@ -634,6 +801,12 @@ export function AdminPresetController({
       />
     </>
   );
+
+  function clearValidationState() {
+    setFieldErrors({});
+    setFormErrors([]);
+    setShowValidationSummary(false);
+  }
 }
 
 export function AdminMaintenancePanel({
@@ -744,16 +917,33 @@ export function AdminErpDiagnosticsController({
 }) {
   const router = useRouter();
   const [erpChaos, setErpChaos] = useState(initialErpChaos);
+  const [latestErpChaosRead, setLatestErpChaosRead] = useState(initialErpChaos);
   const [draft, setDraft] = useState(() => erpDraftFromRead(initialErpChaos));
   const [isPending, setIsPending] = useState(false);
   const [notice, setNotice] = useState<AdminNotice | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, DraftFieldError>>({});
+  const [formErrors, setFormErrors] = useState<DraftFormError[]>([]);
+  const [showValidationSummary, setShowValidationSummary] = useState(false);
+  const [validationSummaryRevision, setValidationSummaryRevision] = useState(0);
   const [resetOpen, setResetOpen] = useState(false);
   const [resetError, setResetError] = useState<AdminNotice | null>(null);
   const isDraftDirtyRef = useRef(false);
 
   useEffect(() => {
-    setErpChaos(initialErpChaos);
-    if (!isDraftDirtyRef.current) setDraft(erpDraftFromRead(initialErpChaos));
+    setLatestErpChaosRead(initialErpChaos);
+    setErpChaos((current) =>
+      initialErpChaos.status === "available" || current.status !== "available"
+        ? initialErpChaos
+        : current,
+    );
+    if (initialErpChaos.status === "available") {
+      setFieldErrors({});
+      setFormErrors([]);
+      setShowValidationSummary(false);
+    }
+    if (!isDraftDirtyRef.current && initialErpChaos.status === "available") {
+      setDraft(erpDraftFromRead(initialErpChaos));
+    }
   }, [initialErpChaos]);
 
   async function submit(path: string, init: RequestInit) {
@@ -770,10 +960,12 @@ export function AdminErpDiagnosticsController({
         setResetError(adminFailureNotice(result));
         return;
       }
-      setErpChaos(result);
       if (result.status === "available") {
+        setErpChaos(result);
+        setLatestErpChaosRead(result);
         setDraft(erpDraftFromRead(result));
         isDraftDirtyRef.current = false;
+        clearValidationState();
       }
       setNotice(
         result.status === "available"
@@ -782,6 +974,11 @@ export function AdminErpDiagnosticsController({
             : "ERP diagnostics updated."
           : adminFailureNotice(result),
       );
+      if (result.status === "unavailable") {
+        setFieldErrors(serverFieldErrors(result.details, "erp"));
+        setShowValidationSummary(true);
+        setValidationSummaryRevision((revision) => revision + 1);
+      }
       if (path === adminErpChaosResetProxyPath) setResetOpen(false);
     } finally {
       setIsPending(false);
@@ -789,17 +986,22 @@ export function AdminErpDiagnosticsController({
   }
 
   function apply() {
-    const next: ErpChaosConfig = {
-      latencyMs: parseInteger(draft.latencyMs, 0),
-      maxTps: parseInteger(draft.maxTps, 1),
-      errorRate: parseNumber(draft.errorRate, 0),
-      forcedOutage: draft.forcedOutage,
-    };
-    const parsed = erpChaosConfigSchema.safeParse(next);
+    if (erpChaos.status !== "available") return;
+    const built = buildErpChaosFromDraft(draft, erpChaos.data.effectiveSafetyCaps);
+    if (!built.values) {
+      setFieldErrors(built.fieldErrors);
+      setFormErrors(built.formErrors);
+      setShowValidationSummary(true);
+      setValidationSummaryRevision((revision) => revision + 1);
+      return;
+    }
+    const parsed = erpChaosConfigSchema.safeParse(built.values);
     if (!parsed.success) {
       setNotice(adminValidationMessage());
       return;
     }
+    setFieldErrors({});
+    setFormErrors([]);
     void submit(adminErpChaosProxyPath, {
       method: "PUT",
       headers: { "content-type": "application/json" },
@@ -812,11 +1014,24 @@ export function AdminErpDiagnosticsController({
       <AdminErpDiagnosticsView
         errorRate={draft.errorRate}
         erpChaos={erpChaos}
+        fieldErrors={fieldErrors}
+        formErrors={formErrors}
         forcedOutage={draft.forcedOutage}
         isPending={isPending}
         latencyMs={draft.latencyMs}
+        latestErpChaosRead={latestErpChaosRead}
         maxTps={draft.maxTps}
         notice={notice}
+        onBlurField={(field) => {
+          if (erpChaos.status !== "available") return;
+          setFieldErrors((current) =>
+            replaceFieldError(
+              current,
+              field,
+              buildErpChaosFromDraft(draft, erpChaos.data.effectiveSafetyCaps).fieldErrors[field],
+            ),
+          );
+        }}
         onApply={apply}
         onErrorRateChange={(errorRate) => updateErpDraft({ errorRate })}
         onForcedOutageChange={(forcedOutage) => updateErpDraft({ forcedOutage })}
@@ -826,6 +1041,8 @@ export function AdminErpDiagnosticsController({
           setResetError(null);
           setResetOpen(true);
         }}
+        showValidationSummary={showValidationSummary}
+        validationSummaryRevision={validationSummaryRevision}
       />
       <ConfirmationDialog
         confirmLabel="Reset ERP controls"
@@ -842,7 +1059,15 @@ export function AdminErpDiagnosticsController({
 
   function updateErpDraft(next: Partial<ErpDraft>) {
     isDraftDirtyRef.current = true;
+    setFieldErrors((current) => clearChangedErrors(current, next));
+    setFormErrors([]);
     setDraft((current) => ({ ...current, ...next }));
+  }
+
+  function clearValidationState() {
+    setFieldErrors({});
+    setFormErrors([]);
+    setShowValidationSummary(false);
   }
 }
 
@@ -896,4 +1121,186 @@ function localPresetListRead(
 /** Maintenance receipts report counts, so they group like every other count on the product. */
 function formatMaintenanceCount(value: number): string {
   return formatCount(value) ?? "an unreported number of";
+}
+
+function clearChangedErrors(
+  current: Record<string, DraftFieldError>,
+  changed: object,
+): Record<string, DraftFieldError> {
+  const next = { ...current };
+  for (const field of Object.keys(changed)) delete next[field];
+  return next;
+}
+
+function replaceFieldError(
+  current: Record<string, DraftFieldError>,
+  field: string,
+  error: DraftFieldError | undefined,
+): Record<string, DraftFieldError> {
+  const next = { ...current };
+  if (error) next[field] = error;
+  else delete next[field];
+  return next;
+}
+
+type ServerFieldContext = "policy" | "preset" | "erp";
+
+const trafficServerFields = new Set([
+  "buyerCount",
+  "duplicateEachBuyerAttempt",
+  "durationSeconds",
+  "maxDurationSeconds",
+  "maxVus",
+  "mode",
+  "preAllocatedVus",
+  "ratePerSecond",
+  "startDelaySeconds",
+]);
+const inventoryServerFields = new Set([
+  "quantityPerCheckout",
+  "reservationHoldMinutes",
+  "startingStock",
+]);
+const erpConfigServerFields = new Set([
+  "erpErrorRate",
+  "erpForcedOutage",
+  "erpLatencyMs",
+  "erpMaxTps",
+  "erpRequestTimeoutMs",
+]);
+const backpressureServerFields = new Set([
+  "circuitBreakerFailureThreshold",
+  "circuitBreakerResetTimeoutMs",
+  "drainTimeoutSeconds",
+  "orderProcessConcurrency",
+  "pendingPersistenceRetryAfterSeconds",
+]);
+const policyLimitServerFields = new Set([
+  "allowBuyerSpike",
+  "allowConstantArrivalRate",
+  "allowForcedOutage",
+  "maxBuyers",
+  "maxErpErrorRate",
+  "maxErpLatencyMs",
+  "maxErpMaxTps",
+  "maxPreAllocatedVus",
+  "maxPublicVus",
+  "maxRequestsPerSecond",
+  "maxStartingStock",
+  "maxTotalRequests",
+  "maxTrafficDurationSeconds",
+  "maxTrafficStartDelaySeconds",
+  "minErpMaxTps",
+]);
+const erpServerFields = new Set(["errorRate", "forcedOutage", "latencyMs", "maxTps"]);
+
+export function serverFieldErrors(
+  details: Record<string, unknown> | undefined,
+  context: ServerFieldContext,
+): Record<string, DraftFieldError> {
+  const errors: Record<string, DraftFieldError> = {};
+  for (const path of serverFieldPaths(details, context)) {
+    const field = serverDraftField(path, context);
+    if (!field) continue;
+    errors[field] = {
+      code: "server_rejected",
+      message: "The service rejected this value. Review its permitted range and try again.",
+    };
+  }
+  return errors;
+}
+
+function serverFieldPaths(
+  details: Record<string, unknown> | undefined,
+  context: ServerFieldContext,
+): string[][] {
+  if (!details) return [];
+  const paths: string[][] = [];
+  if (Array.isArray(details.issues)) {
+    for (const issue of details.issues) {
+      const path =
+        issue && typeof issue === "object" ? (issue as { path?: unknown }).path : undefined;
+      if (isStringPath(path)) paths.push(path);
+    }
+  }
+  if (isStringPath(details.path)) paths.push(details.path);
+  if (context === "erp") {
+    for (const field of erpServerFields) {
+      const violation = details[field];
+      if (violation && typeof violation === "object" && !Array.isArray(violation)) {
+        paths.push([field]);
+      }
+    }
+  }
+  return paths;
+}
+
+function isStringPath(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((part) => typeof part === "string");
+}
+
+function serverDraftField(path: string[], context: ServerFieldContext): string | undefined {
+  const rawField = path.at(-1);
+  if (!rawField) return undefined;
+  if (context === "erp") {
+    return path.length === 1 && erpServerFields.has(rawField) ? rawField : undefined;
+  }
+  let field = rawField;
+  if (context === "preset" && path.includes("display") && rawField === "name") {
+    field = "displayName";
+  } else if (path.includes("erpConfig")) {
+    field =
+      rawField === "latencyMs"
+        ? "erpLatencyMs"
+        : rawField === "maxTps"
+          ? "erpMaxTps"
+          : rawField === "errorRate"
+            ? "erpErrorRate"
+            : rawField === "forcedOutage"
+              ? "erpForcedOutage"
+              : rawField === "requestTimeoutMs"
+                ? "erpRequestTimeoutMs"
+                : rawField;
+  } else if (context === "policy" && path.includes("publicRunBudget")) {
+    field =
+      rawField === "windowSeconds"
+        ? "budgetWindowSeconds"
+        : rawField === "perVisitorMaxStarts"
+          ? "perVisitorMaxStarts"
+          : rawField === "globalMaxStarts"
+            ? "globalMaxStarts"
+            : rawField;
+  } else if (context === "policy" && path.includes("publicCustomLimits")) {
+    field =
+      rawField === "maxVus"
+        ? "maxPublicVus"
+        : rawField === "allowForcedOutage"
+          ? "allowForcedOutage"
+          : rawField;
+  }
+  if (context === "preset" && path.includes("display")) {
+    return ["description", "displayName", "sortOrder"].includes(field) ? field : undefined;
+  }
+  if (context === "policy" && path.includes("publicRunBudget")) {
+    return ["budgetWindowSeconds", "globalMaxStarts", "perVisitorMaxStarts"].includes(field)
+      ? field
+      : undefined;
+  }
+  if (context === "policy" && path.includes("publicCustomLimits")) {
+    return policyLimitServerFields.has(field) ? field : undefined;
+  }
+  if (context === "policy" && !path.includes("publicCustomDefaults")) return undefined;
+  if (path.includes("trafficConfig")) {
+    return trafficServerFields.has(field) ? field : undefined;
+  }
+  if (path.includes("inventoryConfig")) {
+    return inventoryServerFields.has(field) ? field : undefined;
+  }
+  if (path.includes("erpConfig")) {
+    return erpConfigServerFields.has(field) ? field : undefined;
+  }
+  if (path.includes("backpressureConfig")) {
+    return backpressureServerFields.has(field) ? field : undefined;
+  }
+  return undefined;
 }

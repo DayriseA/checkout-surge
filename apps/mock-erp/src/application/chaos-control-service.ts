@@ -1,5 +1,6 @@
 import {
   type ErpChaosConfig,
+  type ErpChaosSafetyCaps,
   type ErpChaosStatus,
   type ErpConfirmationRequest,
   erpChaosConfigSchema,
@@ -7,13 +8,6 @@ import {
 } from "@checkout-surge/contracts";
 import type { ConfirmationDecision, ConfirmationDecisionProvider } from "./confirmation-service.js";
 import type { TpsLimiter } from "./tps-limiter.js";
-
-export interface ErpChaosSafetyCaps {
-  maxLatencyMs: number;
-  minMaxTps: number;
-  maxErrorRate: number;
-  allowForcedOutage: boolean;
-}
 
 export class ErpChaosConfigSafetyError extends Error {
   override readonly name = "ErpChaosConfigSafetyError";
@@ -47,6 +41,7 @@ export class ErpChaosConfigStore {
     return erpChaosStatusSchema.parse({
       ...this.current,
       updatedAt: this.updatedAt.toISOString(),
+      effectiveSafetyCaps: this.safetyCaps,
     });
   }
 

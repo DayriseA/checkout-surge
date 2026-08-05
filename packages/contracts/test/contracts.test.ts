@@ -45,6 +45,7 @@ import {
   emptyRequestArrivalSummary,
   erpChaosResetPath,
   erpChaosStatusPath,
+  erpChaosStatusSchema,
   erpConfirmationPath,
   erpConfirmationRequestSchema,
   erpConfirmationResponseSchema,
@@ -67,6 +68,8 @@ import {
   loadRunIdHeaderName,
   maximumAutomaticallyDerivedVUs,
   metricNameValues,
+  nonnegativeIntegerSchema,
+  nonnegativeNumberMinimum,
   orderProcessBullMqQueueName,
   orderProcessJobSchema,
   orderProcessQueueName,
@@ -75,6 +78,11 @@ import {
   orderStatusResponseSchema,
   orderStatusValues,
   type PublicRuntimePolicy,
+  percentageMaximum,
+  percentageMinimum,
+  percentageSchema,
+  positiveIntegerMinimum,
+  positiveIntegerSchema,
   publicPresetListPath,
   publicRunHistoryDetailResponseSchema,
   publicRuntimePolicyMutableSchema,
@@ -132,6 +140,19 @@ const runId = "55555555-5555-4555-8555-555555555555";
 const serverReservationTimingSummary = serverReservationTimingSummarySchema.parse({
   redisAtomicReservation: { sampleCount: 10, averageMs: 0.7, p95Ms: 1 },
   reserveOrderService: { sampleCount: 10, averageMs: 12, p95Ms: 25 },
+});
+
+describe("intrinsic numeric contract bounds", () => {
+  it("exports the same bounds enforced by the canonical primitive schemas", () => {
+    expect(positiveIntegerSchema.safeParse(positiveIntegerMinimum).success).toBe(true);
+    expect(positiveIntegerSchema.safeParse(positiveIntegerMinimum - 1).success).toBe(false);
+    expect(positiveIntegerSchema.safeParse(positiveIntegerMinimum + 0.5).success).toBe(false);
+    expect(nonnegativeIntegerSchema.safeParse(nonnegativeNumberMinimum).success).toBe(true);
+    expect(nonnegativeIntegerSchema.safeParse(nonnegativeNumberMinimum - 1).success).toBe(false);
+    expect(percentageSchema.safeParse(percentageMinimum).success).toBe(true);
+    expect(percentageSchema.safeParse(percentageMaximum).success).toBe(true);
+    expect(percentageSchema.safeParse(percentageMaximum + 0.01).success).toBe(false);
+  });
 });
 
 describe("accepted run breaker configuration", () => {
@@ -1440,6 +1461,32 @@ describe("ERP contracts", () => {
     expect(erpChaosResetPath).toBe("/chaos/reset");
     expect(erpResilienceStatusPath).toBe("/erp/status");
     expect(controlServiceTokenHeaderName).toBe("x-control-service-token");
+  });
+
+  it("requires effective public-safe caps on chaos status", () => {
+    const status = {
+      latencyMs: 0,
+      maxTps: 100,
+      errorRate: 0,
+      forcedOutage: false,
+      updatedAt: timestamp,
+      effectiveSafetyCaps: {
+        maxLatencyMs: 5000,
+        minMaxTps: 1,
+        maxErrorRate: 0.5,
+        allowForcedOutage: true,
+      },
+    };
+    expect(erpChaosStatusSchema.parse(status)).toEqual(status);
+    expect(
+      erpChaosStatusSchema.safeParse({
+        latencyMs: 0,
+        maxTps: 100,
+        errorRate: 0,
+        forcedOutage: false,
+        updatedAt: timestamp,
+      }).success,
+    ).toBe(false);
   });
 
   it("validates distinct run ERP outcomes and shared ERP protection", () => {

@@ -1,11 +1,24 @@
 "use client";
 
-import type {
-  AdminPresetListItem,
-  AdminPublicRuntimePolicyResponse,
-  ErpChaosStatus,
+import {
+  type AdminPresetListItem,
+  type AdminPublicRuntimePolicyResponse,
+  type DeploymentHardCaps,
+  type ErpChaosStatus,
+  nonnegativeNumberMinimum,
+  orderProcessConcurrencyHardCap,
+  percentageMaximum,
+  percentageMinimum,
+  positiveIntegerMinimum,
 } from "@checkout-surge/contracts";
-import type { PresetDraft, RunConfigDraft, RuntimePolicyDraft } from "../../lib/admin-drafts";
+import { useEffect, useRef } from "react";
+import type {
+  DraftFieldError,
+  DraftFormError,
+  PresetDraft,
+  RunConfigDraft,
+  RuntimePolicyDraft,
+} from "../../lib/admin-drafts";
 import type { BackendRead } from "../../lib/api";
 import type { AdminNotice } from "../../lib/presentation/admin-notice";
 import { formatCount } from "../../lib/presentation/format";
@@ -23,22 +36,35 @@ const inputClassName = "min-h-10 min-w-0 rounded-lg border border-border bg-bg p
 
 export function AdminRuntimePolicyView({
   draft,
+  fieldErrors = {},
+  formErrors = [],
   isPending,
+  latestRuntimePolicyRead,
   notice,
+  onBlurField = () => undefined,
   onRefresh,
   onSave,
   onUpdateDraft,
   runtimePolicy,
+  showValidationSummary = false,
+  validationSummaryRevision = 0,
 }: {
   draft: RuntimePolicyDraft | null;
+  fieldErrors?: Record<string, DraftFieldError>;
+  formErrors?: DraftFormError[];
   isPending: boolean;
+  latestRuntimePolicyRead?: BackendRead<AdminPublicRuntimePolicyResponse>;
   notice: AdminNotice | null;
+  onBlurField?: (field: string) => void;
   onRefresh: () => void;
   onSave: () => void;
   onUpdateDraft: (next: Partial<RuntimePolicyDraft>) => void;
   runtimePolicy: BackendRead<AdminPublicRuntimePolicyResponse>;
+  showValidationSummary?: boolean;
+  validationSummaryRevision?: number;
 }) {
   const policy = runtimePolicy.status === "available" ? runtimePolicy.data.policy : null;
+  const latestRead = latestRuntimePolicyRead ?? runtimePolicy;
   return (
     <section className={`${panelClassName} col-span-8`}>
       <PanelHeading
@@ -60,6 +86,14 @@ export function AdminRuntimePolicyView({
       />
       {policy && draft ? (
         <div className="grid gap-4">
+          {showValidationSummary ? (
+            <ValidationSummary
+              errors={fieldErrors}
+              formErrors={formErrors}
+              key={validationSummaryRevision}
+              prefix="runtime-policy"
+            />
+          ) : null}
           <div className="grid grid-cols-4 gap-3 max-[900px]:grid-cols-2 max-[560px]:grid-cols-1">
             <Checkbox
               label="Enforce public budget"
@@ -71,24 +105,46 @@ export function AdminRuntimePolicyView({
               draft={draft}
               field="budgetWindowSeconds"
               onUpdate={onUpdateDraft}
+              onBlur={onBlurField}
+              error={fieldErrors.budgetWindowSeconds}
+              prefix="runtime-policy"
             />
             <DraftInput
               label="Per-visitor starts"
               draft={draft}
               field="perVisitorMaxStarts"
               onUpdate={onUpdateDraft}
+              onBlur={onBlurField}
+              error={fieldErrors.perVisitorMaxStarts}
+              prefix="runtime-policy"
             />
             <DraftInput
               label="Global starts"
               draft={draft}
               field="globalMaxStarts"
               onUpdate={onUpdateDraft}
+              onBlur={onBlurField}
+              error={fieldErrors.globalMaxStarts}
+              prefix="runtime-policy"
             />
           </div>
           <div className="grid gap-3">
             <p className="m-0 text-xs font-bold uppercase text-muted">Public custom defaults</p>
-            <TrafficEditor draft={draft} onUpdateDraft={onUpdateDraft} />
-            <RunConfigFields draft={draft} onUpdateDraft={onUpdateDraft} />
+            <TrafficEditor
+              draft={draft}
+              errors={fieldErrors}
+              hardCaps={policy.deploymentHardCaps}
+              onBlur={onBlurField}
+              onUpdateDraft={onUpdateDraft}
+              prefix="runtime-policy"
+            />
+            <RunConfigFields
+              draft={draft}
+              errors={fieldErrors}
+              onBlur={onBlurField}
+              onUpdateDraft={onUpdateDraft}
+              prefix="runtime-policy"
+            />
           </div>
           <div className="grid gap-3">
             <p className="m-0 text-xs font-bold uppercase text-muted">Public custom limits</p>
@@ -100,22 +156,31 @@ export function AdminRuntimePolicyView({
                   draft={draft}
                   field={field}
                   onUpdate={onUpdateDraft}
+                  onBlur={onBlurField}
+                  error={fieldErrors[field as string]}
+                  prefix="runtime-policy"
                   step={step}
                 />
               ))}
               <Checkbox
                 label="Buyer spike"
+                id="runtime-policy-allowBuyerSpike"
                 checked={draft.allowBuyerSpike}
+                error={fieldErrors.allowBuyerSpike}
                 onChange={(value) => onUpdateDraft({ allowBuyerSpike: value })}
               />
               <Checkbox
                 label="Constant arrival"
+                id="runtime-policy-allowConstantArrivalRate"
                 checked={draft.allowConstantArrivalRate}
+                error={fieldErrors.allowConstantArrivalRate}
                 onChange={(value) => onUpdateDraft({ allowConstantArrivalRate: value })}
               />
               <Checkbox
                 label="Allow forced outage"
+                id="runtime-policy-allowForcedOutage"
                 checked={draft.allowForcedOutage}
+                error={fieldErrors.allowForcedOutage}
                 onChange={(value) => onUpdateDraft({ allowForcedOutage: value })}
               />
             </div>
@@ -134,6 +199,15 @@ export function AdminRuntimePolicyView({
               label="Hard max duration (seconds)"
               value={formatCap(policy.deploymentHardCaps.maxTrafficDurationSeconds)}
             />
+            <Fact
+              label="Hard max start delay (seconds)"
+              value={formatCap(policy.deploymentHardCaps.maxTrafficStartDelaySeconds)}
+            />
+            <Fact
+              label="Hard max preallocated VUs"
+              value={formatCap(policy.deploymentHardCaps.maxPreAllocatedVus)}
+            />
+            <Fact label="Hard max VUs" value={formatCap(policy.deploymentHardCaps.maxVus)} />
           </dl>
           <div className="flex flex-wrap gap-2">
             <button
@@ -153,6 +227,7 @@ export function AdminRuntimePolicyView({
               Refresh Policy
             </button>
           </div>
+          {latestRead.status === "unavailable" ? <Unavailable read={latestRead} /> : null}
         </div>
       ) : (
         <div>
@@ -200,9 +275,13 @@ const policyLimitFields: ReadonlyArray<[keyof RuntimePolicyDraft, string, string
 
 export function AdminPresetView({
   draft,
+  fieldErrors,
+  formErrors,
+  hardCaps,
   duplicateTargetSlug,
   isPending,
   notice,
+  onBlurField,
   syncNotice,
   onArchive,
   onCopyToCustom,
@@ -216,11 +295,17 @@ export function AdminPresetView({
   presetsRead,
   selectedPreset,
   startBlocked,
+  showValidationSummary,
+  validationSummaryRevision,
 }: {
   draft: PresetDraft | null;
+  fieldErrors: Record<string, DraftFieldError>;
+  formErrors: DraftFormError[];
+  hardCaps?: DeploymentHardCaps | undefined;
   duplicateTargetSlug: string;
   isPending: boolean;
   notice: AdminNotice | null;
+  onBlurField: (field: string) => void;
   syncNotice: AdminNotice | null;
   onArchive: () => void;
   onCopyToCustom: () => void;
@@ -234,6 +319,8 @@ export function AdminPresetView({
   presetsRead: BackendRead<unknown>;
   selectedPreset: AdminPresetListItem | null;
   startBlocked: boolean;
+  showValidationSummary: boolean;
+  validationSummaryRevision: number;
 }) {
   return (
     <section className={`${panelClassName} col-span-8`}>
@@ -260,6 +347,14 @@ export function AdminPresetView({
         </div>
         {selectedPreset && draft ? (
           <div className="grid gap-4">
+            {showValidationSummary ? (
+              <ValidationSummary
+                errors={fieldErrors}
+                formErrors={formErrors}
+                key={validationSummaryRevision}
+                prefix="preset"
+              />
+            ) : null}
             <dl className="m-0 grid grid-cols-4 gap-3 max-[700px]:grid-cols-2">
               <Fact label="Slug" value={selectedPreset.slug} />
               <Fact label="Visibility" value={selectedPreset.visibility} />
@@ -272,24 +367,44 @@ export function AdminPresetView({
                 draft={draft}
                 field="displayName"
                 onUpdate={onUpdateDraft}
+                onBlur={onBlurField}
                 type="text"
+                prefix="preset"
               />
               <DraftInput
                 label="Description"
                 draft={draft}
                 field="description"
                 onUpdate={onUpdateDraft}
+                onBlur={onBlurField}
                 type="text"
+                prefix="preset"
               />
               <DraftInput
                 label="Sort order"
                 draft={draft}
                 field="sortOrder"
                 onUpdate={onUpdateDraft}
+                onBlur={onBlurField}
+                error={fieldErrors.sortOrder}
+                prefix="preset"
               />
             </div>
-            <TrafficEditor draft={draft} onUpdateDraft={onUpdateDraft} />
-            <RunConfigFields draft={draft} onUpdateDraft={onUpdateDraft} />
+            <TrafficEditor
+              draft={draft}
+              errors={fieldErrors}
+              hardCaps={hardCaps}
+              onBlur={onBlurField}
+              onUpdateDraft={onUpdateDraft}
+              prefix="preset"
+            />
+            <RunConfigFields
+              draft={draft}
+              errors={fieldErrors}
+              onBlur={onBlurField}
+              onUpdateDraft={onUpdateDraft}
+              prefix="preset"
+            />
             <div className="flex flex-wrap gap-2">
               <button
                 className={primaryButtonClassName}
@@ -356,6 +471,11 @@ export function AdminPresetView({
         )}
       </div>
       <AdminNoticeView notice={notice} />
+      {notice === "Admin run accepted." ? (
+        <a className={`${buttonClassName} mt-4 inline-flex items-center`} href="/watch">
+          Watch live
+        </a>
+      ) : null}
       <AdminNoticeView notice={syncNotice} />
     </section>
   );
@@ -363,14 +483,29 @@ export function AdminPresetView({
 
 function TrafficEditor({
   draft,
+  errors,
+  hardCaps,
+  onBlur,
   onUpdateDraft,
+  prefix,
 }: {
   draft: RunConfigDraft;
+  errors: Record<string, DraftFieldError>;
+  hardCaps?: DeploymentHardCaps | undefined;
+  onBlur: (field: string) => void;
   onUpdateDraft: (next: Partial<RunConfigDraft>) => void;
+  prefix: string;
 }) {
   return (
     <div className="grid gap-3">
-      <div className="flex flex-wrap gap-2">
+      <fieldset
+        aria-describedby={errors.mode ? `${prefix}-mode-error` : undefined}
+        aria-invalid={errors.mode ? true : undefined}
+        className="m-0 flex flex-wrap gap-2 border-0 p-0"
+        id={`${prefix}-mode`}
+        tabIndex={-1}
+      >
+        <legend className="sr-only">Traffic mode</legend>
         {(["buyer-spike", "constant-arrival-rate"] as const).map((mode) => (
           <button
             className={draft.mode === mode ? primaryButtonClassName : buttonClassName}
@@ -381,7 +516,12 @@ function TrafficEditor({
             {mode}
           </button>
         ))}
-      </div>
+      </fieldset>
+      {errors.mode ? (
+        <span className="text-xs font-semibold text-danger" id={`${prefix}-mode-error`}>
+          {errors.mode.message}
+        </span>
+      ) : null}
       <div className="grid grid-cols-4 gap-3 max-[900px]:grid-cols-2 max-[560px]:grid-cols-1">
         {draft.mode === "buyer-spike" ? (
           <>
@@ -390,16 +530,26 @@ function TrafficEditor({
               draft={draft}
               field="buyerCount"
               onUpdate={onUpdateDraft}
+              onBlur={onBlur}
+              error={errors.buyerCount}
+              max={hardCaps?.maxBuyers}
+              prefix={prefix}
             />
             <DraftInput
               label="Max duration seconds"
               draft={draft}
               field="maxDurationSeconds"
               onUpdate={onUpdateDraft}
+              onBlur={onBlur}
+              error={errors.maxDurationSeconds}
+              max={hardCaps?.maxTrafficDurationSeconds}
+              prefix={prefix}
             />
             <Checkbox
               label="Duplicate attempts"
+              id={`${prefix}-duplicateEachBuyerAttempt`}
               checked={draft.duplicateEachBuyerAttempt}
+              error={errors.duplicateEachBuyerAttempt}
               onChange={(value) => onUpdateDraft({ duplicateEachBuyerAttempt: value })}
             />
           </>
@@ -410,20 +560,41 @@ function TrafficEditor({
               draft={draft}
               field="ratePerSecond"
               onUpdate={onUpdateDraft}
+              onBlur={onBlur}
+              error={errors.ratePerSecond}
+              max={hardCaps?.maxRequestsPerSecond}
+              prefix={prefix}
             />
             <DraftInput
               label="Duration seconds"
               draft={draft}
               field="durationSeconds"
               onUpdate={onUpdateDraft}
+              onBlur={onBlur}
+              error={errors.durationSeconds}
+              max={hardCaps?.maxTrafficDurationSeconds}
+              prefix={prefix}
             />
             <DraftInput
               label="Preallocated VUs"
               draft={draft}
               field="preAllocatedVus"
               onUpdate={onUpdateDraft}
+              onBlur={onBlur}
+              error={errors.preAllocatedVus}
+              max={hardCaps?.maxPreAllocatedVus}
+              prefix={prefix}
             />
-            <DraftInput label="Max VUs" draft={draft} field="maxVus" onUpdate={onUpdateDraft} />
+            <DraftInput
+              label="Max VUs"
+              draft={draft}
+              error={errors.maxVus}
+              max={hardCaps?.maxVus}
+              field="maxVus"
+              onUpdate={onUpdateDraft}
+              onBlur={onBlur}
+              prefix={prefix}
+            />
           </>
         )}
         <DraftInput
@@ -431,6 +602,10 @@ function TrafficEditor({
           draft={draft}
           field="startDelaySeconds"
           onUpdate={onUpdateDraft}
+          onBlur={onBlur}
+          error={errors.startDelaySeconds}
+          max={hardCaps?.maxTrafficStartDelaySeconds}
+          prefix={prefix}
         />
       </div>
     </div>
@@ -439,10 +614,16 @@ function TrafficEditor({
 
 function RunConfigFields({
   draft,
+  errors,
+  onBlur,
   onUpdateDraft,
+  prefix,
 }: {
   draft: RunConfigDraft;
+  errors: Record<string, DraftFieldError>;
+  onBlur: (field: string) => void;
   onUpdateDraft: (next: Partial<RunConfigDraft>) => void;
+  prefix: string;
 }) {
   return (
     <>
@@ -454,6 +635,9 @@ function RunConfigFields({
             draft={draft}
             field={field}
             onUpdate={onUpdateDraft}
+            onBlur={onBlur}
+            error={errors[field as string]}
+            prefix={prefix}
           />
         ))}
       </div>
@@ -465,12 +649,17 @@ function RunConfigFields({
             draft={draft}
             field={field}
             onUpdate={onUpdateDraft}
+            onBlur={onBlur}
+            error={errors[field as string]}
+            prefix={prefix}
             step={step}
           />
         ))}
         <Checkbox
           label="ERP forced outage"
+          id={`${prefix}-erpForcedOutage`}
           checked={draft.erpForcedOutage}
+          error={errors.erpForcedOutage}
           onChange={(value) => onUpdateDraft({ erpForcedOutage: value })}
         />
       </div>
@@ -496,33 +685,47 @@ const runConfigFields: ReadonlyArray<[keyof RunConfigDraft, string, string?]> = 
 export function AdminErpDiagnosticsView({
   errorRate,
   erpChaos,
+  fieldErrors,
+  formErrors,
   forcedOutage,
   isPending,
   latencyMs,
+  latestErpChaosRead,
   maxTps,
   notice,
+  onBlurField,
   onApply,
   onErrorRateChange,
   onForcedOutageChange,
   onLatencyMsChange,
   onMaxTpsChange,
   onReset,
+  showValidationSummary,
+  validationSummaryRevision,
 }: {
   errorRate: string;
   erpChaos: BackendRead<ErpChaosStatus>;
+  fieldErrors: Record<string, DraftFieldError>;
+  formErrors: DraftFormError[];
   forcedOutage: boolean;
   isPending: boolean;
   latencyMs: string;
+  latestErpChaosRead?: BackendRead<ErpChaosStatus>;
   maxTps: string;
   notice: AdminNotice | null;
+  onBlurField: (field: string) => void;
   onApply: () => void;
   onErrorRateChange: (value: string) => void;
   onForcedOutageChange: (value: boolean) => void;
   onLatencyMsChange: (value: string) => void;
   onMaxTpsChange: (value: string) => void;
   onReset: () => void;
+  showValidationSummary: boolean;
+  validationSummaryRevision: number;
 }) {
   const current = erpChaos.status === "available" ? erpChaos.data : null;
+  const caps = current?.effectiveSafetyCaps;
+  const latestRead = latestErpChaosRead ?? erpChaos;
   return (
     <section className={`${panelClassName} col-span-6`}>
       <PanelHeading
@@ -534,25 +737,70 @@ export function AdminErpDiagnosticsView({
           />
         }
       />
+      {showValidationSummary ? (
+        <ValidationSummary
+          errors={fieldErrors}
+          formErrors={formErrors}
+          key={validationSummaryRevision}
+          prefix="erp-chaos"
+        />
+      ) : null}
       <div className="grid grid-cols-4 gap-3 max-[700px]:grid-cols-2">
         <LabeledTextInput
+          error={fieldErrors.latencyMs}
+          help={
+            caps
+              ? `Allowed range: ${nonnegativeNumberMinimum}–${caps.maxLatencyMs} milliseconds.`
+              : undefined
+          }
+          id="erp-chaos-latencyMs"
+          inputMode="numeric"
           label="Latency ms"
+          name="latencyMs"
           onChange={onLatencyMsChange}
-          type="number"
+          onBlur={() => onBlurField("latencyMs")}
+          type="text"
           value={latencyMs}
         />
-        <LabeledTextInput label="Max TPS" onChange={onMaxTpsChange} type="number" value={maxTps} />
         <LabeledTextInput
+          error={fieldErrors.maxTps}
+          help={caps ? `Minimum: ${caps.minMaxTps} transactions per second.` : undefined}
+          id="erp-chaos-maxTps"
+          inputMode="numeric"
+          label="Max TPS"
+          name="maxTps"
+          onChange={onMaxTpsChange}
+          onBlur={() => onBlurField("maxTps")}
+          type="text"
+          value={maxTps}
+        />
+        <LabeledTextInput
+          error={fieldErrors.errorRate}
+          help={caps ? `Allowed range: ${percentageMinimum}–${caps.maxErrorRate}.` : undefined}
+          id="erp-chaos-errorRate"
+          inputMode="decimal"
           label="Error rate"
+          name="errorRate"
           onChange={onErrorRateChange}
-          step="0.01"
-          type="number"
+          onBlur={() => onBlurField("errorRate")}
+          type="text"
           value={errorRate}
         />
-        <Checkbox label="Forced outage" checked={forcedOutage} onChange={onForcedOutageChange} />
+        <Checkbox
+          label="Forced outage"
+          id="erp-chaos-forcedOutage"
+          checked={forcedOutage}
+          error={fieldErrors.forcedOutage}
+          onChange={onForcedOutageChange}
+        />
       </div>
       <div className="mt-4 flex flex-wrap gap-2">
-        <button className={buttonClassName} disabled={isPending} onClick={onApply} type="button">
+        <button
+          className={buttonClassName}
+          disabled={isPending || erpChaos.status !== "available"}
+          onClick={onApply}
+          type="button"
+        >
           Apply ERP Controls
         </button>
         <button className={buttonClassName} disabled={isPending} onClick={onReset} type="button">
@@ -560,6 +808,9 @@ export function AdminErpDiagnosticsView({
         </button>
       </div>
       {erpChaos.status === "unavailable" ? <Unavailable read={erpChaos} /> : null}
+      {erpChaos.status === "available" && latestRead.status === "unavailable" ? (
+        <Unavailable read={latestRead} />
+      ) : null}
       <AdminNoticeView notice={notice} />
     </section>
   );
@@ -567,48 +818,106 @@ export function AdminErpDiagnosticsView({
 
 function DraftInput<T extends object>({
   draft,
+  error,
   field,
   label,
+  max,
+  onBlur,
   onUpdate,
+  prefix,
   step,
   type = "number",
 }: {
   draft: T;
+  error?: DraftFieldError | undefined;
   field: keyof T;
   label: string;
+  max?: number | undefined;
+  onBlur?: ((field: string) => void) | undefined;
   onUpdate: (next: Partial<T>) => void;
+  prefix?: string | undefined;
   step?: string | undefined;
   type?: "number" | "text";
 }) {
+  const bounds = type === "number" ? intrinsicInputBounds(String(field)) : {};
   return (
     <LabeledTextInput
+      error={error}
+      help={max === undefined ? bounds.help : `${bounds.help ?? ""} Maximum: ${max}.`.trim()}
+      id={prefix ? `${prefix}-${String(field)}` : undefined}
+      inputMode={type === "number" ? (step ? "decimal" : "numeric") : undefined}
       label={label}
+      name={String(field)}
       onChange={(value) => onUpdate({ [field]: value } as Partial<T>)}
-      step={step}
-      type={type}
+      onBlur={() => onBlur?.(String(field))}
+      type="text"
       value={String(draft[field])}
     />
   );
 }
 
+function intrinsicInputBounds(field: string): {
+  help?: string;
+} {
+  if (field === "sortOrder") return { help: "Whole number." };
+  if (field.includes("ErrorRate") || field === "erpErrorRate") {
+    return {
+      help: `Allowed range: ${percentageMinimum}–${percentageMaximum}.`,
+    };
+  }
+  if (
+    field === "startingStock" ||
+    field === "startDelaySeconds" ||
+    field === "maxTrafficStartDelaySeconds" ||
+    field === "erpLatencyMs" ||
+    field === "maxErpLatencyMs"
+  ) {
+    return {
+      help: `Minimum: ${nonnegativeNumberMinimum}.`,
+    };
+  }
+  if (field === "orderProcessConcurrency") {
+    return {
+      help: `Allowed range: ${positiveIntegerMinimum}–${orderProcessConcurrencyHardCap}.`,
+    };
+  }
+  return {
+    help: `Minimum: ${positiveIntegerMinimum}.`,
+  };
+}
+
 function Checkbox({
   checked,
+  error,
+  id,
   label,
   onChange,
 }: {
   checked: boolean;
+  error?: DraftFieldError | undefined;
+  id?: string;
   label: string;
   onChange: (value: boolean) => void;
 }) {
   return (
-    <label className="flex min-h-10 items-center gap-2 text-sm font-semibold text-muted-strong">
-      <input
-        checked={checked}
-        onChange={(event) => onChange(event.target.checked)}
-        type="checkbox"
-      />
-      {label}
-    </label>
+    <div className="grid gap-1">
+      <label className="flex min-h-10 items-center gap-2 text-sm font-semibold text-muted-strong">
+        <input
+          aria-describedby={error && id ? `${id}-error` : undefined}
+          aria-invalid={error ? true : undefined}
+          checked={checked}
+          id={id}
+          onChange={(event) => onChange(event.target.checked)}
+          type="checkbox"
+        />
+        {label}
+      </label>
+      {error && id ? (
+        <span className="text-xs font-semibold text-danger" id={`${id}-error`}>
+          {error.message}
+        </span>
+      ) : null}
+    </div>
   );
 }
 
@@ -646,33 +955,139 @@ export function Unavailable({ read }: { read: BackendRead<unknown> }) {
 }
 
 function LabeledTextInput({
+  error,
+  help,
+  id,
+  inputMode,
   label,
   name,
   onChange,
-  step,
+  onBlur,
   type = "text",
   value,
 }: {
   label: string;
+  error?: DraftFieldError | undefined;
+  help?: string | undefined;
+  id?: string | undefined;
+  inputMode?: "decimal" | "numeric" | undefined;
   name?: string | undefined;
   onChange: (next: string) => void;
-  step?: string | undefined;
+  onBlur?: (() => void) | undefined;
   type?: "number" | "password" | "text";
   value: string;
 }) {
+  const controlId = id ?? name;
   return (
-    <label className="grid gap-1 text-sm font-semibold text-muted-strong">
-      <span>{label}</span>
+    <div className="grid gap-1 text-sm font-semibold text-muted-strong">
+      <label htmlFor={controlId}>{label}</label>
       <input
+        aria-describedby={
+          [
+            help && controlId ? `${controlId}-help` : "",
+            error && controlId ? `${controlId}-error` : "",
+          ]
+            .filter(Boolean)
+            .join(" ") || undefined
+        }
+        aria-invalid={error ? true : undefined}
         className={inputClassName}
+        id={controlId}
+        inputMode={inputMode}
         name={name}
         onChange={(event) => onChange(event.target.value)}
-        step={step}
+        onBlur={onBlur}
         type={type}
         value={value}
       />
-    </label>
+      {help && controlId ? (
+        <span className="text-xs font-normal text-muted" id={`${controlId}-help`}>
+          {help}
+        </span>
+      ) : null}
+      {error && controlId ? (
+        <span className="text-xs font-semibold text-danger" id={`${controlId}-error`}>
+          {error.message}
+        </span>
+      ) : null}
+    </div>
   );
+}
+
+function ValidationSummary({
+  errors,
+  formErrors,
+  prefix,
+}: {
+  errors: Record<string, DraftFieldError>;
+  formErrors: DraftFormError[];
+  prefix: string;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const entries = Object.entries(errors);
+  useEffect(() => {
+    ref.current?.focus();
+  }, []);
+  if (entries.length === 0 && formErrors.length === 0) return null;
+  return (
+    <div className="rounded border border-danger p-3 text-sm" ref={ref} tabIndex={-1}>
+      <p className="m-0 font-bold">Correct the highlighted fields.</p>
+      <ul className="mb-0 mt-2">
+        {entries.map(([field, error]) => (
+          <li key={field}>
+            <a href={`#${prefix}-${field}`}>{error.message}</a>
+          </li>
+        ))}
+        {formErrors.map((error) => (
+          <li key={`${error.message}-${error.fields.join("-")}`}>
+            {error.message}{" "}
+            {error.fields.map((field, index) => (
+              <span key={field}>
+                {index ? ", " : ""}
+                <a href={`#${prefix}-${field}`}>{fieldLabel(field)}</a>
+              </span>
+            ))}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+const fieldLabels: Record<string, string> = {
+  allowBuyerSpike: "Allow buyer spike",
+  allowConstantArrivalRate: "Allow constant arrival",
+  allowForcedOutage: "Allow forced outage",
+  buyerCount: "Buyer count",
+  duplicateEachBuyerAttempt: "Duplicate attempts",
+  durationSeconds: "Duration",
+  erpErrorRate: "ERP error rate",
+  erpForcedOutage: "ERP forced outage",
+  erpLatencyMs: "ERP latency",
+  erpMaxTps: "ERP maximum TPS",
+  maxBuyers: "Maximum buyers",
+  maxDurationSeconds: "Maximum duration",
+  maxErpErrorRate: "Maximum ERP error rate",
+  maxErpLatencyMs: "Maximum ERP latency",
+  maxErpMaxTps: "Maximum ERP TPS",
+  maxPreAllocatedVus: "Maximum preallocated VUs",
+  maxPublicVus: "Maximum public VUs",
+  maxRequestsPerSecond: "Maximum requests per second",
+  maxStartingStock: "Maximum starting stock",
+  maxTotalRequests: "Maximum total requests",
+  maxTrafficDurationSeconds: "Maximum traffic duration",
+  maxTrafficStartDelaySeconds: "Maximum start delay",
+  maxVus: "Maximum VUs",
+  minErpMaxTps: "Minimum ERP TPS",
+  mode: "Traffic mode",
+  preAllocatedVus: "Preallocated VUs",
+  ratePerSecond: "Requests per second",
+  startDelaySeconds: "Start delay",
+  startingStock: "Starting stock",
+};
+
+function fieldLabel(field: string): string {
+  return fieldLabels[field] ?? field;
 }
 
 export function currentRunStatus(
@@ -681,8 +1096,4 @@ export function currentRunStatus(
   return recovery.status === "available"
     ? (recovery.data.currentRun?.status ?? "idle")
     : "unavailable";
-}
-
-export function navigateToWatch() {
-  if (typeof window !== "undefined") window.location.assign("/watch");
 }
