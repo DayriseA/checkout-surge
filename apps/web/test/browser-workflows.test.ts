@@ -369,6 +369,7 @@ describe("public browser starts", () => {
               code: "public_run_budget_exceeded",
               message: "Public start limit reached.",
               correlationId: "public-start-limited",
+              details: { budget: "global" },
               timestamp: "2026-06-20T00:00:00.000Z",
             }),
           ),
@@ -392,14 +393,14 @@ describe("public browser starts", () => {
     });
 
     expect(start.disabled).toBe(true);
-    expect(screen.getByText("Public start limit reached for now — try again later")).toBeTruthy();
+    expect(screen.getByText("The shared demo has reached its start limit")).toBeTruthy();
     expect(screen.getAllByText("Wait 10 seconds before trying again.").length).toBeGreaterThan(0);
     expect(screen.getByText("Wait before retrying")).toBeTruthy();
 
     await act(async () => vi.advanceTimersByTimeAsync(10_000));
 
     expect(start.disabled).toBe(false);
-    expect(screen.queryByText("Public start limit reached for now — try again later")).toBeNull();
+    expect(screen.queryByText("The shared demo has reached its start limit")).toBeNull();
     expect(screen.queryByText("Wait 10 seconds before trying again.")).toBeNull();
     expect(screen.queryByText("Wait before retrying")).toBeNull();
   });
@@ -432,7 +433,69 @@ describe("public browser starts", () => {
     ).toBeTruthy();
   });
 
-  it("displays the default ERP failure ratio as a percentage and submits the contract ratio", async () => {
+  it("keeps the semantic custom form hidden until the visitor expands it", async () => {
+    const user = userEvent.setup();
+    render(createElement(PublicDemoEntry, { surface: publicDemoSurfaceFixture() }));
+
+    expect(screen.getByRole("button", { name: "Start Preview 1k" })).toBeTruthy();
+    const expander = screen.getByText("Build your own run");
+    const details = expander.closest("details") as HTMLDetailsElement;
+    expect(details.open).toBe(false);
+    await user.click(expander);
+    expect(details.open).toBe(true);
+    expect(screen.getByRole("form", { name: "Custom run builder" })).toBeTruthy();
+    expect(screen.getByRole("group", { name: "Buyers" })).toBeTruthy();
+    expect(screen.getByRole("group", { name: "Stock" })).toBeTruthy();
+    expect(screen.getByRole("group", { name: "Slow ERP" })).toBeTruthy();
+  });
+
+  it("associates native field errors and blocks invalid custom submission", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    render(createElement(PublicDemoEntry, { surface: publicDemoSurfaceFixture() }));
+    await user.click(screen.getByText("Build your own run"));
+    const buyerCount = screen.getByLabelText("Buyer count (buyers)") as HTMLInputElement;
+
+    await user.clear(buyerCount);
+    await user.click(screen.getByRole("button", { name: "Start custom run" }));
+
+    expect(buyerCount.getAttribute("aria-invalid")).toBe("true");
+    expect(buyerCount.getAttribute("aria-describedby")).toContain("custom-buyers-error");
+    expect(screen.getByText(buyerCount.validationMessage)).toBeTruthy();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("clears a mode-specific native error when the traffic control changes", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    render(createElement(PublicDemoEntry, { surface: publicDemoSurfaceFixture() }));
+    await user.click(screen.getByText("Build your own run"));
+    const buyerCount = screen.getByLabelText("Buyer count (buyers)") as HTMLInputElement;
+
+    await user.clear(buyerCount);
+    await user.click(screen.getByRole("button", { name: "Start custom run" }));
+    expect(buyerCount.getAttribute("aria-invalid")).toBe("true");
+
+    await user.click(screen.getByLabelText("Steady stream"));
+    const arrivalRate = screen.getByLabelText("Arrival rate (requests/second)") as HTMLInputElement;
+    expect(arrivalRate.getAttribute("aria-invalid")).toBeNull();
+    expect(arrivalRate.getAttribute("aria-describedby")).toBe("custom-rate-description");
+    expect(document.getElementById("custom-rate-description")?.textContent).toContain(
+      "Requests dispatched during each second.",
+    );
+    expect(screen.queryByText(buyerCount.validationMessage)).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [0, "0"],
+    [0.005, "0.5"],
+    [0.07, "7"],
+    [0.25, "25"],
+    [1, "100"],
+  ] as const)("displays ERP failure ratio %s as percentage %s and serializes it once", async (ratio, percent) => {
     const user = userEvent.setup();
     const fetchMock = vi.fn(async (input: string | URL | Request, _init?: RequestInit) =>
       String(input) === healthReadyProxyPath
@@ -443,21 +506,62 @@ describe("public browser starts", () => {
 
     const surface = publicDemoSurfaceFixture();
     if (surface.runtimePolicy.status !== "available") throw new Error("Expected runtime policy.");
-    surface.runtimePolicy.data.policy.publicCustomDefaults.erpConfig.errorRate = 0.25;
-    surface.runtimePolicy.data.policy.publicCustomLimits.maxErpErrorRate = 0.25;
+    surface.runtimePolicy.data.policy.publicCustomDefaults.erpConfig.errorRate = ratio;
+    surface.runtimePolicy.data.policy.publicCustomLimits.maxErpErrorRate = Math.max(0.25, ratio);
     render(createElement(PublicDemoEntry, { surface }));
+    await user.click(screen.getByText("Build your own run"));
 
-    const errorRate = screen.getByLabelText("Simulated ERP failure rate (%)") as HTMLInputElement;
-    expect(errorRate.value).toBe("25");
-    expect(errorRate.max).toBe("25");
+    const errorRate = screen.getByLabelText("Failure rate (percent)") as HTMLInputElement;
+    expect(errorRate.value).toBe(percent);
+    expect(errorRate.max).toBe(String(Math.max(25, Number(percent))));
 
-    await user.click(screen.getByRole("button", { name: "Start Public Custom" }));
+    await user.click(screen.getByRole("button", { name: "Start custom run" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     const [, init] = findFetchCall(fetchMock, demoRunStartProxyPath, "POST");
     expect(jsonRequestBody(init)).toMatchObject({
-      configOverride: { erpConfig: { errorRate: 0.25 } },
+      configOverride: { erpConfig: { errorRate: ratio } },
     });
+  });
+
+  it("updates planned attempts and blocks only totals above the policy boundary", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    render(createElement(PublicDemoEntry, { surface: publicDemoSurfaceFixture() }));
+    await user.click(screen.getByText("Build your own run"));
+
+    expect(screen.getByText("Planned total attempts: 1,000")).toBeTruthy();
+    await user.click(screen.getByRole("checkbox", { name: /Duplicate each buyer attempt/ }));
+    expect(screen.getByText("Planned total attempts: 2,000")).toBeTruthy();
+
+    await replaceInputValue("Buyer count (buyers)", "5001", user);
+    expect(screen.getByText("Planned total attempts: 10,002")).toBeTruthy();
+    expect(
+      screen.getByText(/Reduce the buyer count.*10,000 planned attempts or fewer/),
+    ).toBeTruthy();
+    expect(
+      (screen.getByRole("button", { name: "Start custom run" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    await replaceInputValue("Buyer count (buyers)", "5000", user);
+    expect(screen.getByText("Planned total attempts: 10,000")).toBeTruthy();
+    expect(screen.queryByText(/Reduce the buyer count/)).toBeNull();
+    expect(
+      (screen.getByRole("button", { name: "Start custom run" }) as HTMLButtonElement).disabled,
+    ).toBe(false);
+  });
+
+  it("calculates constant-arrival attempts as rate times duration", async () => {
+    const user = userEvent.setup();
+    render(createElement(PublicDemoEntry, { surface: publicDemoSurfaceFixture() }));
+    await user.click(screen.getByText("Build your own run"));
+    await user.click(screen.getByLabelText("Steady stream"));
+    await replaceInputValue("Arrival rate (requests/second)", "125", user);
+    await replaceInputValue("Traffic duration (seconds)", "20", user);
+
+    expect(screen.getByText("Planned total attempts: 2,500")).toBeTruthy();
   });
 
   it("builds bounded custom start payloads from edited public controls", async () => {
@@ -475,17 +579,32 @@ describe("public browser starts", () => {
     surface.runtimePolicy.data.policy.publicCustomDefaults.erpConfig.forcedOutage = true;
     render(createElement(PublicDemoEntry, { surface }));
     expect(screen.queryByLabelText("Forced outage")).toBeNull();
+    await user.click(screen.getByText("Build your own run"));
+    for (const protectedControl of [
+      "Worker concurrency (workers)",
+      "Retry attempts (attempts)",
+      "Initial retry backoff (milliseconds)",
+      "Drain timeout (seconds)",
+      "Persistence retry delay (seconds)",
+      "Circuit failure threshold (failures)",
+      "Circuit reset timeout (milliseconds)",
+      "Reservation hold (minutes)",
+      "ERP request timeout (milliseconds)",
+    ]) {
+      expect(screen.queryByLabelText(protectedControl)).toBeNull();
+    }
 
-    await replaceInputValue("Buyers", "321", user);
-    await replaceInputValue("Starting stock", "44", user);
-    await replaceInputValue("Simulated ERP delay per order (ms)", "125", user);
-    await replaceInputValue("Simulated ERP capacity (orders/s)", "33", user);
-    await replaceInputValue("Simulated ERP failure rate (%)", "0.2", user);
-    await user.click(screen.getByRole("button", { name: "Start Public Custom" }));
+    await replaceInputValue("Buyer count (buyers)", "321", user);
+    await replaceInputValue("Starting stock (units)", "44", user);
+    await replaceInputValue("Delay per order (milliseconds)", "125", user);
+    await replaceInputValue("Capacity (orders/second)", "33", user);
+    await replaceInputValue("Failure rate (percent)", "0.2", user);
+    await user.click(screen.getByRole("button", { name: "Start custom run" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     const [, init] = findFetchCall(fetchMock, demoRunStartProxyPath, "POST");
-    expect(jsonRequestBody(init)).toEqual({
+    const requestBody = jsonRequestBody(init);
+    expect(requestBody).toEqual({
       presetSlug: "public-custom",
       configOverride: {
         trafficConfig: {
@@ -510,7 +629,78 @@ describe("public browser starts", () => {
         },
       },
     });
+    expect(requestBody).not.toHaveProperty("configOverride.backpressureConfig");
     expect(findFetchCall(fetchMock, healthReadyProxyPath)[0]).toBe(healthReadyProxyPath);
+  });
+
+  it("presents authoritative backend custom rejection without leaking its message", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      if (String(input) === healthReadyProxyPath) return jsonResponse(readinessFixture());
+      return new Response(
+        JSON.stringify(
+          errorPayloadSchema.parse({
+            code: "invalid_run_configuration",
+            message: "Private contract violation detail.",
+            correlationId: "private-custom-rejection",
+            details: { path: ["trafficConfig", "buyerCount"] },
+            timestamp: "2026-06-20T00:00:00.000Z",
+          }),
+        ),
+        { status: 400, headers: { "content-type": "application/json" } },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(createElement(PublicDemoEntry, { surface: publicDemoSurfaceFixture() }));
+    await user.click(screen.getByText("Build your own run"));
+    await user.click(screen.getByRole("button", { name: "Start custom run" }));
+
+    const buyers = screen.getByRole("group", { name: "Buyers" });
+    expect(
+      await within(buyers).findByText(
+        "Review the Buyers settings and keep the traffic within the available limits.",
+      ),
+    ).toBeTruthy();
+    expect(buyers.getAttribute("aria-invalid")).toBe("true");
+    expect(buyers.getAttribute("aria-describedby")).toContain("custom-traffic-validation-error");
+    expect(screen.queryByText("Check the values and try again")).toBeNull();
+    expect(screen.queryByText("Private contract violation detail.")).toBeNull();
+    expect(document.body.textContent).not.toContain("private-custom-rejection");
+
+    await replaceInputValue("Buyer count (buyers)", "999", user);
+    expect(within(buyers).queryByText(/Review the Buyers settings/)).toBeNull();
+    expect(buyers.getAttribute("aria-invalid")).toBeNull();
+  });
+
+  it("uses a safe custom-form fallback for an unknown backend validation path", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      if (String(input) === healthReadyProxyPath) return jsonResponse(readinessFixture());
+      return new Response(
+        JSON.stringify(
+          errorPayloadSchema.parse({
+            code: "invalid_run_configuration",
+            message: "Private unknown-field detail.",
+            correlationId: "private-unknown-path",
+            details: { path: ["internalOnlyField"] },
+            timestamp: "2026-06-20T00:00:00.000Z",
+          }),
+        ),
+        { status: 400, headers: { "content-type": "application/json" } },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(createElement(PublicDemoEntry, { surface: publicDemoSurfaceFixture() }));
+    await user.click(screen.getByText("Build your own run"));
+    await user.click(screen.getByRole("button", { name: "Start custom run" }));
+
+    const form = screen.getByRole("form", { name: "Custom run builder" });
+    expect(
+      await within(form).findByText("Review the custom run settings and try again."),
+    ).toBeTruthy();
+    expect(form.getAttribute("aria-invalid")).toBe("true");
+    expect(form.getAttribute("aria-describedby")).toBe("custom-form-error");
+    expect(screen.queryByText("Private unknown-field detail.")).toBeNull();
   });
 });
 
@@ -552,7 +742,8 @@ describe("public recovery convergence", () => {
       name: "Start Preview 1k",
     }) as HTMLButtonElement;
     const customStart = screen.getByRole("button", {
-      name: "Start Public Custom",
+      name: "Start custom run",
+      hidden: true,
     }) as HTMLButtonElement;
     expect(curatedStart.disabled).toBe(true);
     expect(customStart.disabled).toBe(true);

@@ -49,6 +49,7 @@ export interface ErrorPresentationContext {
   /** Set only by a server-authorized protected surface that may disclose diagnostics. */
   protected?: boolean;
   cause?: "active_run_exists" | "reset_incomplete" | "slug_in_use" | "not_archivable";
+  budget?: "visitor" | "global";
   fieldErrors?: ReadonlyArray<{ field: string; message: string }>;
   readiness?: "degraded" | "unavailable";
   failedRunCategory?: "reconciliation" | "business" | "traffic" | "inventory" | "operator";
@@ -204,9 +205,13 @@ function codePresentation(
         : genericPresentation;
     case "public_run_budget_exceeded":
       return waitPresentation(
-        context.surface === "public-start"
-          ? "Public start limit reached for now — try again later"
-          : "The public run limit has been reached",
+        context.surface === "public-start" && context.budget === "visitor"
+          ? "You’ve reached your visitor start allowance"
+          : context.surface === "public-start" && context.budget === "global"
+            ? "The shared demo has reached its start limit"
+            : context.surface === "public-start"
+              ? "Public start limit reached for now — try again later"
+              : "The public run limit has been reached",
         retryAfterMs,
       );
     case "admin_login_rate_limited":
@@ -365,14 +370,21 @@ function withBoundedCause(
   context: ErrorPresentationContext,
   read: BackendRead<unknown>,
 ): ErrorPresentationContext {
-  if (context.cause || read.status !== "unavailable" || !read.details) return context;
+  if (read.status !== "unavailable" || !read.details) return context;
+  const budget = read.details.budget;
   const cause = read.details.conflictReason;
-  return cause === "active_run_exists" ||
+  const boundedCause =
+    cause === "active_run_exists" ||
     cause === "reset_incomplete" ||
     cause === "slug_in_use" ||
     cause === "not_archivable"
-    ? { ...context, cause }
-    : context;
+      ? cause
+      : undefined;
+  return {
+    ...context,
+    ...(context.cause || boundedCause === undefined ? {} : { cause: boundedCause }),
+    ...(budget === "visitor" || budget === "global" ? { budget } : {}),
+  };
 }
 
 function retryPresentation(

@@ -38,6 +38,44 @@ describe("error presentation", () => {
     expect(presentation.explanation).toContain("5 seconds");
   });
 
+  it.each([
+    ["visitor", "You’ve reached your visitor start allowance"],
+    ["global", "The shared demo has reached its start limit"],
+  ] as const)("distinguishes the %s public budget without exposing details", (budget, headline) => {
+    const presentation = mapErrorPresentation(
+      {
+        status: "unavailable",
+        reason: "Private budget message.",
+        errorCode: "public_run_budget_exceeded",
+        details: { budget, internal: "private detail" },
+        retryAfterMs: 90_000,
+      },
+      "public-start",
+    );
+
+    expect(presentation.headline).toBe(headline);
+    expect(presentation.explanation).toBe("Wait 2 minutes before trying again.");
+    expect(presentation.action).toMatchObject({ kind: "wait", retryAfterMs: 90_000 });
+    expect(JSON.stringify(presentation)).not.toContain("private");
+  });
+
+  it.each([
+    undefined,
+    "future-budget",
+  ])("uses safe generic budget copy for absent or invalid detail %s", (budget) => {
+    const presentation = mapErrorPresentation(
+      {
+        status: "unavailable",
+        errorCode: "public_run_budget_exceeded",
+        ...(budget === undefined ? {} : { details: { budget } }),
+        retryAfterMs: 1_000,
+      },
+      "public-start",
+    );
+    expect(presentation.headline).toBe("Public start limit reached for now — try again later");
+    expect(presentation.explanation).toBe("Wait 1 second before trying again.");
+  });
+
   it("fails closed for unknown or malformed reads while retaining details only for operators", () => {
     const publicPresentation = mapErrorPresentation(
       {

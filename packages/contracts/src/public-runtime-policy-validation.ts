@@ -15,15 +15,18 @@ export const directSnapshotViolationCodes = [
   "deployment_request_rate_exceeded",
   "deployment_start_delay_exceeded",
   "deployment_total_requests_exceeded",
+  "public_backpressure_override_not_allowed",
   "public_buyers_exceeded",
   "public_duration_exceeded",
   "public_erp_error_rate_exceeded",
   "public_erp_latency_exceeded",
+  "public_erp_request_timeout_override_not_allowed",
   "public_erp_tps_exceeded",
   "public_forced_outage_not_allowed",
   "public_max_vus_exceeded",
   "public_preallocated_vus_exceeded",
   "public_request_rate_exceeded",
+  "public_reservation_hold_override_not_allowed",
   "public_start_delay_exceeded",
   "public_starting_stock_exceeded",
   "public_total_requests_exceeded",
@@ -78,12 +81,59 @@ export function collectAcceptedRunConfigSnapshotViolations(
     return violations;
   }
 
+  collectPublicProtectedConfigViolations(snapshot, policy.publicCustomDefaults, violations);
   collectPublicCustomSnapshotViolations(snapshot, policy, violations, {
     totalRequests,
     requestRate,
     durationSeconds,
   });
   return violations;
+}
+
+function collectPublicProtectedConfigViolations(
+  snapshot: AcceptedRunConfigSnapshot,
+  defaults: AcceptedRunConfigSnapshot,
+  violations: PublicRuntimePolicyViolation[],
+): void {
+  const backpressure = snapshot.backpressureConfig;
+  const defaultBackpressure = defaults.backpressureConfig;
+  if (
+    backpressure.queueName !== defaultBackpressure.queueName ||
+    backpressure.physicalQueueName !== defaultBackpressure.physicalQueueName ||
+    backpressure.orderProcessConcurrency !== defaultBackpressure.orderProcessConcurrency ||
+    backpressure.retryPolicy.maxAttempts !== defaultBackpressure.retryPolicy.maxAttempts ||
+    backpressure.retryPolicy.initialBackoffMs !==
+      defaultBackpressure.retryPolicy.initialBackoffMs ||
+    backpressure.drainTimeoutSeconds !== defaultBackpressure.drainTimeoutSeconds ||
+    backpressure.pendingPersistenceRetryAfterSeconds !==
+      defaultBackpressure.pendingPersistenceRetryAfterSeconds ||
+    backpressure.circuitBreakerFailureThreshold !==
+      defaultBackpressure.circuitBreakerFailureThreshold ||
+    backpressure.circuitBreakerResetTimeoutMs !== defaultBackpressure.circuitBreakerResetTimeoutMs
+  ) {
+    violations.push({
+      code: "public_backpressure_override_not_allowed",
+      message: "Public custom backpressure configuration must match policy defaults.",
+      path: ["backpressureConfig"],
+    });
+  }
+  if (
+    snapshot.inventoryConfig.reservationHoldMinutes !==
+    defaults.inventoryConfig.reservationHoldMinutes
+  ) {
+    violations.push({
+      code: "public_reservation_hold_override_not_allowed",
+      message: "Public custom reservation hold must match policy defaults.",
+      path: ["inventoryConfig", "reservationHoldMinutes"],
+    });
+  }
+  if (snapshot.erpConfig.requestTimeoutMs !== defaults.erpConfig.requestTimeoutMs) {
+    violations.push({
+      code: "public_erp_request_timeout_override_not_allowed",
+      message: "Public custom ERP request timeout must match policy defaults.",
+      path: ["erpConfig", "requestTimeoutMs"],
+    });
+  }
 }
 
 export function collectPublicRuntimePolicyViolations(

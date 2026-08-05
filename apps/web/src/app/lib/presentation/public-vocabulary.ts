@@ -80,12 +80,6 @@ export function erpAttemptStatusLabel(status: ErpAttemptStatus): string {
   }
 }
 
-export function publicLimitsLabel(enforced: boolean | undefined): string {
-  if (enforced === true) return "Public limits apply";
-  if (enforced === false) return "Public limits not applied";
-  return "Public limits unavailable";
-}
-
 export function trafficExecutionStatusLabel(status: TrafficExecutionStatus): string {
   switch (status) {
     case "not_started":

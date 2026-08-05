@@ -2,11 +2,13 @@
 
 import {
   type AcceptedRunConfigSnapshot,
+  calculatePlannedRequests,
   type DashboardProjection,
   type DemoPresetContract,
   type DemoRunConfigOverride,
   type HealthResponse,
   healthResponseSchema,
+  type PublicRuntimePolicy,
   startDemoRunRequestSchema,
   startDemoRunResponseSchema,
 } from "@checkout-surge/contracts";
@@ -21,7 +23,6 @@ import {
 import { formatCount, formatDurationMs } from "../lib/presentation/format";
 import {
   outcomeFocusLabel,
-  publicLimitsLabel,
   publicVocabulary,
   trafficModeLabel,
 } from "../lib/presentation/public-vocabulary";
@@ -37,8 +38,6 @@ import { ConditionalCaveat } from "./transport-observation";
 const recoveryPollIntervalMs = 15_000;
 const readinessPollIntervalMs = 60_000;
 const panelClassName = "min-w-0 rounded-lg border border-border bg-surface p-4";
-const buttonClassName =
-  "min-h-10 rounded-lg border border-border bg-surface px-3.5 py-2.5 font-semibold text-muted-strong disabled:cursor-not-allowed disabled:opacity-60";
 const primaryButtonClassName =
   "min-h-10 rounded-lg border border-accent bg-accent px-3.5 py-2.5 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60";
 const inputClassName = "min-h-10 min-w-0 rounded-lg border border-border bg-bg px-3 py-2 text-ink";
@@ -58,7 +57,13 @@ interface CustomDraft {
   erpLatencyMs: string;
   erpMaxTps: string;
   erpErrorRate: string;
-  forcedOutage: boolean;
+}
+
+type CustomErrorGroup = "traffic" | "stock" | "erp" | "advanced" | "form";
+
+interface CustomFormError {
+  group: CustomErrorGroup;
+  message: string;
 }
 
 export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
@@ -86,6 +91,14 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
       ? draftFromSnapshot(surface.runtimePolicy.data.policy.publicCustomDefaults)
       : fallbackDraft(),
   );
+  const [customFormError, setCustomFormError] = useState<CustomFormError | null>(null);
+  const advancedSettingsRef = useRef<HTMLDetailsElement>(null);
+
+  useEffect(() => {
+    if (customFormError?.group === "advanced" && advancedSettingsRef.current) {
+      advancedSettingsRef.current.open = true;
+    }
+  }, [customFormError]);
 
   const {
     recovery,
@@ -230,6 +243,15 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
         : null,
     [customDraft, runtimePolicy],
   );
+  const plannedRequests = customConfig?.trafficConfig
+    ? calculatePlannedRequests(customConfig.trafficConfig)
+    : null;
+  const totalRequestsError =
+    runtimePolicy &&
+    plannedRequests !== null &&
+    plannedRequests > runtimePolicy.publicCustomLimits.maxTotalRequests
+      ? `Reduce the buyer count, rate, duration, or duplicate attempts to ${formatCount(runtimePolicy.publicCustomLimits.maxTotalRequests)} planned attempts or fewer.`
+      : null;
   const startDisabled =
     isBlocked ||
     isReadinessBlocked ||
@@ -238,8 +260,18 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
     startRetryUntil !== null ||
     surface.presets.status !== "available" ||
     recovery.status !== "available";
+  const customStartDisabled = startDisabled || totalRequestsError !== null;
 
-  async function startRun(presetSlug: string, configOverride?: DemoRunConfigOverride) {
+  function updateCustomDraft(update: (draft: CustomDraft) => CustomDraft) {
+    setCustomDraft(update);
+    setCustomFormError(null);
+  }
+
+  async function startRun(
+    presetSlug: string,
+    configOverride?: DemoRunConfigOverride,
+    isCustom = false,
+  ) {
     const parsed = startDemoRunRequestSchema.safeParse({
       presetSlug,
       ...(configOverride ? { configOverride } : {}),
@@ -247,6 +279,10 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
 
     if (!parsed.success) {
       setStatusMessage(null);
+      if (isCustom) {
+        setCustomFormError(customValidationError(parsed.error.issues.map((issue) => issue.path)));
+        return;
+      }
       setStartPresentation(
         mapErrorPresentation(
           { status: "unavailable", errorCode: "invalid_request", reason: "invalid request" },
@@ -259,6 +295,7 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
     setStartingSlug(presetSlug);
     setStatusMessage(null);
     setStartPresentation(null);
+    setCustomFormError(null);
     setStartRetryUntil(null);
 
     try {
@@ -271,6 +308,14 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
       if (result.status === "available") {
         setStatusMessage("Run accepted.");
         navigateToWatch();
+        return;
+      }
+
+      if (
+        isCustom &&
+        (result.errorCode === "invalid_request" || result.errorCode === "invalid_run_configuration")
+      ) {
+        setCustomFormError(customValidationError([customValidationPath(result.details?.path)]));
         return;
       }
 
@@ -410,142 +455,263 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
         )}
       </section>
 
-      <section className={`${panelClassName} col-span-12`}>
-        <div className="mb-4 flex items-start justify-between gap-3">
-          <div>
-            <p className="m-0 text-xs font-bold uppercase text-muted">Public custom</p>
-            <h2 className="m-0 mt-1 text-base font-bold leading-tight text-ink">
-              Build a safe custom scenario
-            </h2>
-          </div>
-          <StatusPill
-            status={{
-              label: publicLimitsLabel(runtimePolicy?.isPublicRunBudgetEnforced),
-              tone: "idle",
-            }}
-          />
-        </div>
+      <details className={`${panelClassName} col-span-12`}>
+        <summary className="cursor-pointer text-base font-bold text-ink">
+          Build your own run
+        </summary>
         {runtimePolicy && customPreset && customConfig ? (
-          <div className="grid gap-4">
-            <TrafficModeSelector
-              allowedModes={runtimePolicy.publicCustomLimits.allowedTrafficModes}
-              mode={customDraft.mode}
-              onChange={(mode) => setCustomDraft((draft) => ({ ...draft, mode }))}
-            />
-            <div className="grid grid-cols-4 gap-3 max-[900px]:grid-cols-2 max-[560px]:grid-cols-1">
-              {customDraft.mode === "buyer-spike" ? (
-                <>
-                  <LabeledInput
-                    label="Buyers"
-                    max={runtimePolicy.publicCustomLimits.maxBuyers}
-                    min={1}
-                    onChange={(buyerCount) => setCustomDraft((draft) => ({ ...draft, buyerCount }))}
-                    value={customDraft.buyerCount}
-                  />
-                  <LabeledInput
-                    label="Maximum run time (seconds)"
-                    max={runtimePolicy.publicCustomLimits.maxTrafficDurationSeconds}
-                    min={1}
-                    onChange={(maxDurationSeconds) =>
-                      setCustomDraft((draft) => ({ ...draft, maxDurationSeconds }))
-                    }
-                    value={customDraft.maxDurationSeconds}
-                  />
-                  <label className="flex min-h-10 items-center gap-2 text-sm font-semibold text-muted-strong">
-                    <input
-                      checked={customDraft.duplicateEachBuyerAttempt}
-                      onChange={(event) =>
-                        setCustomDraft((draft) => ({
-                          ...draft,
-                          duplicateEachBuyerAttempt: event.target.checked,
-                        }))
-                      }
-                      type="checkbox"
-                    />
-                    Duplicate attempts
-                  </label>
-                </>
-              ) : (
-                <>
-                  <LabeledInput
-                    label="Requests per second"
-                    max={runtimePolicy.publicCustomLimits.maxRequestsPerSecond}
-                    min={1}
-                    onChange={(ratePerSecond) =>
-                      setCustomDraft((draft) => ({ ...draft, ratePerSecond }))
-                    }
-                    value={customDraft.ratePerSecond}
-                  />
-                  <LabeledInput
-                    label="Duration seconds"
-                    max={runtimePolicy.publicCustomLimits.maxTrafficDurationSeconds}
-                    min={1}
-                    onChange={(durationSeconds) =>
-                      setCustomDraft((draft) => ({ ...draft, durationSeconds }))
-                    }
-                    value={customDraft.durationSeconds}
-                  />
-                </>
-              )}
-              <LabeledInput
-                label="Start delay seconds"
-                max={runtimePolicy.publicCustomLimits.maxTrafficStartDelaySeconds}
-                min={0}
-                onChange={(startDelaySeconds) =>
-                  setCustomDraft((draft) => ({ ...draft, startDelaySeconds }))
-                }
-                value={customDraft.startDelaySeconds}
+          <form
+            aria-describedby={customFormError?.group === "form" ? "custom-form-error" : undefined}
+            aria-invalid={customFormError?.group === "form" ? true : undefined}
+            aria-label="Custom run builder"
+            className="mt-4 grid gap-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (!customStartDisabled) void startRun(customPreset.slug, customConfig, true);
+            }}
+          >
+            <fieldset
+              aria-describedby={`custom-traffic-total${totalRequestsError ? " custom-traffic-error" : ""}${customFormError?.group === "traffic" ? " custom-traffic-validation-error" : ""}`}
+              aria-invalid={
+                totalRequestsError || customFormError?.group === "traffic" ? true : undefined
+              }
+              className="grid gap-3 rounded-lg border border-border p-3"
+            >
+              <legend className="px-1 font-bold text-ink">Buyers</legend>
+              <TrafficModeSelector
+                allowedModes={runtimePolicy.publicCustomLimits.allowedTrafficModes}
+                mode={customDraft.mode}
+                onChange={(mode) => updateCustomDraft((draft) => ({ ...draft, mode }))}
               />
+              <div className="grid grid-cols-3 gap-3 max-[900px]:grid-cols-2 max-[560px]:grid-cols-1">
+                {customDraft.mode === "buyer-spike" ? (
+                  <>
+                    <LabeledInput
+                      helper="How many distinct buyers arrive in the spike."
+                      id="custom-buyers"
+                      key="buyer-count"
+                      label="Buyer count"
+                      max={runtimePolicy.publicCustomLimits.maxBuyers}
+                      min={1}
+                      onChange={(buyerCount) =>
+                        updateCustomDraft((draft) => ({ ...draft, buyerCount }))
+                      }
+                      unit="buyers"
+                      value={customDraft.buyerCount}
+                    />
+                    <div className="grid content-start gap-1 text-sm font-semibold text-muted-strong">
+                      <span className="flex min-h-10 items-center gap-2">
+                        <input
+                          aria-describedby="custom-duplicate-description"
+                          checked={customDraft.duplicateEachBuyerAttempt}
+                          id="custom-duplicate"
+                          onChange={(event) =>
+                            updateCustomDraft((draft) => ({
+                              ...draft,
+                              duplicateEachBuyerAttempt: event.target.checked,
+                            }))
+                          }
+                          type="checkbox"
+                        />
+                        <label htmlFor="custom-duplicate">Duplicate each buyer attempt</label>
+                      </span>
+                      <span
+                        className="font-normal leading-5 text-muted"
+                        id="custom-duplicate-description"
+                      >
+                        Sends the same request twice per buyer and doubles planned attempts.
+                      </span>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <LabeledInput
+                      helper="Requests dispatched during each second."
+                      id="custom-rate"
+                      key="arrival-rate"
+                      label="Arrival rate"
+                      max={runtimePolicy.publicCustomLimits.maxRequestsPerSecond}
+                      min={1}
+                      onChange={(ratePerSecond) =>
+                        updateCustomDraft((draft) => ({ ...draft, ratePerSecond }))
+                      }
+                      unit="requests/second"
+                      value={customDraft.ratePerSecond}
+                    />
+                    <LabeledInput
+                      helper="Arrival rate × duration determines planned attempts."
+                      id="custom-duration"
+                      label="Traffic duration"
+                      max={runtimePolicy.publicCustomLimits.maxTrafficDurationSeconds}
+                      min={1}
+                      onChange={(durationSeconds) =>
+                        updateCustomDraft((draft) => ({ ...draft, durationSeconds }))
+                      }
+                      unit="seconds"
+                      value={customDraft.durationSeconds}
+                    />
+                  </>
+                )}
+              </div>
+              <p className="m-0 text-sm font-semibold text-ink" id="custom-traffic-total">
+                Planned total attempts: {formatCount(plannedRequests) ?? "—"}
+              </p>
+              {totalRequestsError ? (
+                <p className="m-0 text-sm font-semibold text-danger" id="custom-traffic-error">
+                  {totalRequestsError}
+                </p>
+              ) : null}
+              {customFormError?.group === "traffic" ? (
+                <CustomValidationError
+                  error={customFormError}
+                  id="custom-traffic-validation-error"
+                />
+              ) : null}
+            </fieldset>
+
+            <fieldset
+              aria-describedby={
+                customFormError?.group === "stock" ? "custom-stock-validation-error" : undefined
+              }
+              aria-invalid={customFormError?.group === "stock" ? true : undefined}
+              className="grid gap-3 rounded-lg border border-border p-3"
+            >
+              <legend className="px-1 font-bold text-ink">Stock</legend>
               <LabeledInput
+                helper="Units available before the run begins."
+                id="custom-stock"
                 label="Starting stock"
                 max={runtimePolicy.publicCustomLimits.maxStartingStock}
                 min={0}
                 onChange={(startingStock) =>
-                  setCustomDraft((draft) => ({ ...draft, startingStock }))
+                  updateCustomDraft((draft) => ({ ...draft, startingStock }))
                 }
+                unit="units"
                 value={customDraft.startingStock}
               />
-              <LabeledInput
-                label="Simulated ERP delay per order (ms)"
-                max={runtimePolicy.publicCustomLimits.maxErpLatencyMs}
-                min={0}
-                onChange={(erpLatencyMs) => setCustomDraft((draft) => ({ ...draft, erpLatencyMs }))}
-                value={customDraft.erpLatencyMs}
-              />
-              <LabeledInput
-                label="Simulated ERP capacity (orders/s)"
-                max={runtimePolicy.publicCustomLimits.maxErpMaxTps}
-                min={runtimePolicy.publicCustomLimits.minErpMaxTps}
-                onChange={(erpMaxTps) => setCustomDraft((draft) => ({ ...draft, erpMaxTps }))}
-                value={customDraft.erpMaxTps}
-              />
-              <LabeledInput
-                label="Simulated ERP failure rate (%)"
-                max={ratioToPercent(runtimePolicy.publicCustomLimits.maxErpErrorRate)}
-                min={0}
-                onChange={(erpErrorRate) => setCustomDraft((draft) => ({ ...draft, erpErrorRate }))}
-                step="0.01"
-                value={customDraft.erpErrorRate}
-              />
-            </div>
-            <SharedRuntimeDisclosure />
-            <button
-              className={primaryButtonClassName}
-              disabled={startDisabled}
-              onClick={() => {
-                void startRun(customPreset.slug, customConfig);
-              }}
-              type="button"
+              {customFormError?.group === "stock" ? (
+                <CustomValidationError error={customFormError} id="custom-stock-validation-error" />
+              ) : null}
+            </fieldset>
+
+            <fieldset
+              aria-describedby={
+                customFormError?.group === "erp" ? "custom-erp-validation-error" : undefined
+              }
+              aria-invalid={customFormError?.group === "erp" ? true : undefined}
+              className="grid gap-3 rounded-lg border border-border p-3"
             >
-              {startingSlug === customPreset.slug ? "Starting" : "Start Public Custom"}
+              <legend className="px-1 font-bold text-ink">Slow ERP</legend>
+              <div className="grid grid-cols-3 gap-3 max-[900px]:grid-cols-2 max-[560px]:grid-cols-1">
+                <LabeledInput
+                  helper="Added delay for each simulated ERP call."
+                  id="custom-erp-delay"
+                  label="Delay per order"
+                  max={runtimePolicy.publicCustomLimits.maxErpLatencyMs}
+                  min={0}
+                  onChange={(erpLatencyMs) =>
+                    updateCustomDraft((draft) => ({ ...draft, erpLatencyMs }))
+                  }
+                  unit="milliseconds"
+                  value={customDraft.erpLatencyMs}
+                />
+                <LabeledInput
+                  helper="Maximum simulated ERP throughput."
+                  id="custom-erp-capacity"
+                  label="Capacity"
+                  max={runtimePolicy.publicCustomLimits.maxErpMaxTps}
+                  min={runtimePolicy.publicCustomLimits.minErpMaxTps}
+                  onChange={(erpMaxTps) => updateCustomDraft((draft) => ({ ...draft, erpMaxTps }))}
+                  unit="orders/second"
+                  value={customDraft.erpMaxTps}
+                />
+                <LabeledInput
+                  helper="Enter 25 for a 25% simulated failure rate."
+                  id="custom-erp-error-rate"
+                  label="Failure rate"
+                  max={ratioToPercent(runtimePolicy.publicCustomLimits.maxErpErrorRate)}
+                  min={0}
+                  onChange={(erpErrorRate) =>
+                    updateCustomDraft((draft) => ({ ...draft, erpErrorRate }))
+                  }
+                  step="0.01"
+                  unit="percent"
+                  value={customDraft.erpErrorRate}
+                />
+              </div>
+              {customFormError?.group === "erp" ? (
+                <CustomValidationError error={customFormError} id="custom-erp-validation-error" />
+              ) : null}
+            </fieldset>
+
+            <details className="rounded-lg border border-border p-3" ref={advancedSettingsRef}>
+              <summary className="cursor-pointer font-bold text-ink">
+                Advanced protection settings
+              </summary>
+              <fieldset
+                aria-describedby={
+                  customFormError?.group === "advanced"
+                    ? "custom-advanced-validation-error"
+                    : undefined
+                }
+                aria-invalid={customFormError?.group === "advanced" ? true : undefined}
+                className="mt-3 grid gap-3"
+              >
+                <legend className="sr-only">Advanced protection settings</legend>
+                <div className="grid grid-cols-3 gap-3 max-[900px]:grid-cols-2 max-[560px]:grid-cols-1">
+                  {customDraft.mode === "buyer-spike" ? (
+                    <LabeledInput
+                      helper="Stops dispatch if the spike overruns — not the expected run duration."
+                      id="custom-safety-cutoff"
+                      label="Safety cutoff"
+                      max={runtimePolicy.publicCustomLimits.maxTrafficDurationSeconds}
+                      min={1}
+                      onChange={(maxDurationSeconds) =>
+                        updateCustomDraft((draft) => ({ ...draft, maxDurationSeconds }))
+                      }
+                      unit="seconds"
+                      value={customDraft.maxDurationSeconds}
+                    />
+                  ) : null}
+                  <LabeledInput
+                    helper="Wait before the load generator starts dispatching."
+                    id="custom-start-delay"
+                    label="Start delay"
+                    max={runtimePolicy.publicCustomLimits.maxTrafficStartDelaySeconds}
+                    min={0}
+                    onChange={(startDelaySeconds) =>
+                      updateCustomDraft((draft) => ({ ...draft, startDelaySeconds }))
+                    }
+                    unit="seconds"
+                    value={customDraft.startDelaySeconds}
+                  />
+                </div>
+                {customFormError?.group === "advanced" ? (
+                  <CustomValidationError
+                    error={customFormError}
+                    id="custom-advanced-validation-error"
+                  />
+                ) : null}
+              </fieldset>
+            </details>
+
+            {customFormError?.group === "form" ? (
+              <CustomValidationError error={customFormError} id="custom-form-error" />
+            ) : null}
+            <p className="m-0 text-sm leading-6 text-muted-strong">
+              {publicRunBudgetCopy(runtimePolicy)}
+            </p>
+            <SharedRuntimeDisclosure />
+            <button className={primaryButtonClassName} disabled={customStartDisabled} type="submit">
+              {startingSlug === customPreset.slug ? "Starting custom run" : "Start custom run"}
             </button>
-          </div>
+          </form>
         ) : surface.runtimePolicy.status === "unavailable" ? (
           <Unavailable onRetry={reloadPage} read={surface.runtimePolicy} />
         ) : (
           <p className="m-0 text-muted">Public custom is unavailable.</p>
         )}
-      </section>
+      </details>
     </div>
   );
 }
@@ -618,15 +784,16 @@ function buildCustomConfigOverride(
             quantityPerAttempt: defaults.trafficConfig.quantityPerAttempt,
           },
     inventoryConfig: {
-      ...defaults.inventoryConfig,
       startingStock: parseInteger(draft.startingStock, 0),
+      quantityPerCheckout: defaults.inventoryConfig.quantityPerCheckout,
+      reservationHoldMinutes: defaults.inventoryConfig.reservationHoldMinutes,
     },
     erpConfig: {
-      ...defaults.erpConfig,
       latencyMs: parseInteger(draft.erpLatencyMs, 0),
       maxTps: parseInteger(draft.erpMaxTps, 1),
       errorRate: percentToRatio(draft.erpErrorRate),
       forcedOutage: false,
+      requestTimeoutMs: defaults.erpConfig.requestTimeoutMs,
     },
   };
 }
@@ -648,7 +815,6 @@ function draftFromSnapshot(snapshot: AcceptedRunConfigSnapshot): CustomDraft {
     erpLatencyMs: String(snapshot.erpConfig.latencyMs),
     erpMaxTps: String(snapshot.erpConfig.maxTps),
     erpErrorRate: String(ratioToPercent(snapshot.erpConfig.errorRate)),
-    forcedOutage: false,
   };
 }
 
@@ -665,8 +831,23 @@ function fallbackDraft(): CustomDraft {
     erpLatencyMs: "100",
     erpMaxTps: "100",
     erpErrorRate: "0",
-    forcedOutage: false,
   };
+}
+
+function publicRunBudgetCopy({
+  isPublicRunBudgetEnforced,
+  publicRunBudget,
+}: Pick<PublicRuntimePolicy, "isPublicRunBudgetEnforced" | "publicRunBudget">): string {
+  if (!isPublicRunBudgetEnforced) {
+    return "Public start budgets are not enforced right now.";
+  }
+  return `Up to ${formatCount(publicRunBudget.perVisitorMaxStarts)} starts per visitor and ${formatCount(publicRunBudget.globalMaxStarts)} starts total every ${formatPolicyWindow(publicRunBudget.windowSeconds)}.`;
+}
+
+function formatPolicyWindow(seconds: number): string {
+  if (seconds % 60 !== 0) return `${seconds} second${seconds === 1 ? "" : "s"}`;
+  const minutes = seconds / 60;
+  return `${minutes} minute${minutes === 1 ? "" : "s"}`;
 }
 
 function navigateToWatch() {
@@ -692,11 +873,50 @@ function parseNumber(value: string, fallback: number): number {
 }
 
 function ratioToPercent(ratio: number): number {
-  return ratio * 100;
+  return Number((ratio * 100).toFixed(10));
 }
 
 function percentToRatio(percent: string): number {
   return parseNumber(percent, 0) / 100;
+}
+
+function customValidationPath(value: unknown): readonly string[] {
+  return Array.isArray(value) && value.every((part) => typeof part === "string") ? value : [];
+}
+
+function customValidationError(paths: ReadonlyArray<readonly unknown[]>): CustomFormError {
+  const group = paths.map(customErrorGroup).find((candidate) => candidate !== "form") ?? "form";
+  const messages: Record<CustomErrorGroup, string> = {
+    traffic: "Review the Buyers settings and keep the traffic within the available limits.",
+    stock: "Review the Stock settings and keep values within the available limits.",
+    erp: "Review the Slow ERP settings and keep values within the available limits.",
+    advanced: "Review the Advanced protection settings and keep values within supported limits.",
+    form: "Review the custom run settings and try again.",
+  };
+  return { group, message: messages[group] };
+}
+
+function customErrorGroup(path: readonly unknown[]): CustomErrorGroup {
+  const field = path.at(-1);
+  if (path.includes("backpressureConfig")) return "advanced";
+  if (path.includes("trafficConfig")) {
+    return field === "maxDurationSeconds" || field === "startDelaySeconds" ? "advanced" : "traffic";
+  }
+  if (path.includes("inventoryConfig")) {
+    return field === "reservationHoldMinutes" ? "advanced" : "stock";
+  }
+  if (path.includes("erpConfig")) {
+    return field === "requestTimeoutMs" || field === "forcedOutage" ? "advanced" : "erp";
+  }
+  return "form";
+}
+
+function CustomValidationError({ error, id }: { error: CustomFormError; id: string }) {
+  return (
+    <p className="m-0 text-sm font-semibold text-danger" id={id} role="alert">
+      {error.message}
+    </p>
+  );
 }
 
 function Fact({ label, value }: { label: string; value: string }) {
@@ -887,49 +1107,82 @@ function TrafficModeSelector({
   onChange: (mode: TrafficMode) => void;
 }) {
   return (
-    <div className="flex flex-wrap gap-2">
+    <div aria-label="Traffic pattern" className="flex flex-wrap gap-3" role="radiogroup">
       {(["buyer-spike", "constant-arrival-rate"] as const).map((trafficMode) => (
-        <button
-          className={trafficMode === mode ? primaryButtonClassName : buttonClassName}
-          disabled={!allowedModes.includes(trafficMode)}
+        <label
+          className="flex min-h-10 items-center gap-2 text-sm font-semibold text-muted-strong"
           key={trafficMode}
-          onClick={() => onChange(trafficMode)}
-          type="button"
         >
+          <input
+            checked={trafficMode === mode}
+            disabled={!allowedModes.includes(trafficMode)}
+            name="custom-traffic-mode"
+            onChange={() => onChange(trafficMode)}
+            type="radio"
+            value={trafficMode}
+          />
           {trafficModeLabel(trafficMode)}
-        </button>
+        </label>
       ))}
     </div>
   );
 }
 
 function LabeledInput({
+  helper,
+  id,
   label,
   max,
   min,
   onChange,
   step,
+  unit,
   value,
 }: {
+  helper: string;
+  id: string;
   label: string;
   max: number;
   min: number;
   onChange: (value: string) => void;
   step?: string;
+  unit: string;
   value: string;
 }) {
+  const [error, setError] = useState<string | null>(null);
+  const descriptionId = `${id}-description`;
+  const errorId = `${id}-error`;
+
   return (
-    <label className="grid gap-1 text-sm font-semibold text-muted-strong">
-      <span>{label}</span>
+    <div className="grid content-start gap-1 text-sm text-muted-strong">
+      <label className="font-semibold" htmlFor={id}>
+        {label} ({unit})
+      </label>
       <input
+        aria-describedby={`${descriptionId}${error ? ` ${errorId}` : ""}`}
+        aria-invalid={error ? true : undefined}
         className={inputClassName}
+        id={id}
         max={max}
         min={min}
-        onChange={(event) => onChange(event.target.value)}
+        onChange={(event) => {
+          setError(null);
+          onChange(event.target.value);
+        }}
+        onInvalid={(event) => setError(event.currentTarget.validationMessage)}
+        required
         step={step}
         type="number"
         value={value}
       />
-    </label>
+      <span className="font-normal leading-5 text-muted" id={descriptionId}>
+        Unit: {unit}. Minimum: {formatCount(min)}. Maximum: {formatCount(max)}. {helper}
+      </span>
+      {error ? (
+        <span className="font-semibold text-danger" id={errorId}>
+          {error}
+        </span>
+      ) : null}
+    </div>
   );
 }

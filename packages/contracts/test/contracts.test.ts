@@ -2948,6 +2948,63 @@ describe("public runtime policy contract", () => {
     ).toEqual([]);
   });
 
+  it("accepts protected public custom configuration when it matches policy defaults", () => {
+    const policy = semanticRuntimePolicy();
+
+    expect(
+      collectAcceptedRunConfigSnapshotViolations(policy.publicCustomDefaults, policy, {
+        operatorMode: "public",
+        enforcePublicCustomLimits: true,
+      }),
+    ).toEqual([]);
+  });
+
+  it.each([
+    {
+      code: "public_backpressure_override_not_allowed",
+      path: ["backpressureConfig"],
+      change: (snapshot: AcceptedRunConfigSnapshot) => {
+        snapshot.backpressureConfig.retryPolicy.maxAttempts += 1;
+      },
+    },
+    {
+      code: "public_reservation_hold_override_not_allowed",
+      path: ["inventoryConfig", "reservationHoldMinutes"],
+      change: (snapshot: AcceptedRunConfigSnapshot) => {
+        snapshot.inventoryConfig.reservationHoldMinutes += 1;
+      },
+    },
+    {
+      code: "public_erp_request_timeout_override_not_allowed",
+      path: ["erpConfig", "requestTimeoutMs"],
+      change: (snapshot: AcceptedRunConfigSnapshot) => {
+        snapshot.erpConfig.requestTimeoutMs += 1;
+      },
+    },
+  ] as const)("rejects $code for public custom without changing admin validation", (fixture) => {
+    const policy = semanticRuntimePolicy();
+    const snapshot = acceptedRunSnapshot();
+    fixture.change(snapshot);
+
+    expect(
+      collectAcceptedRunConfigSnapshotViolations(snapshot, policy, {
+        operatorMode: "public",
+        enforcePublicCustomLimits: true,
+      }),
+    ).toContainEqual(
+      expect.objectContaining({
+        code: fixture.code,
+        path: fixture.path,
+      }),
+    );
+    expect(
+      collectAcceptedRunConfigSnapshotViolations(snapshot, policy, {
+        operatorMode: "admin",
+        enforcePublicCustomLimits: false,
+      }),
+    ).toEqual([]);
+  });
+
   it("still bounds buyer-spike volume through the buyer and total request caps", () => {
     const policy = semanticRuntimePolicy();
     policy.publicCustomLimits.maxRequestsPerSecond = 5;

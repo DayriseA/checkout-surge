@@ -300,6 +300,7 @@ describe("dashboard control proxy routes", () => {
                 code: "public_run_budget_exceeded",
                 message: "Public run budget is exhausted.",
                 correlationId: "corr-budget-bff",
+                details: { budget: "global" },
                 timestamp: "2026-06-20T00:00:10.000Z",
               }),
             ),
@@ -320,7 +321,10 @@ describe("dashboard control proxy routes", () => {
 
     expect(response.status).toBe(429);
     expect(response.headers.get("retry-after")).toBe("59");
-    expect(errorPayloadSchema.parse(await response.json()).code).toBe("public_run_budget_exceeded");
+    expect(errorPayloadSchema.parse(await response.json())).toMatchObject({
+      code: "public_run_budget_exceeded",
+      details: { budget: "global" },
+    });
   });
 
   it("rotates malformed public visitor cookies before proxying demo run starts", async () => {

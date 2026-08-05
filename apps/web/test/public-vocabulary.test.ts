@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   circuitStateLabel,
   isRunEvidenceSettled,
-  publicLimitsLabel,
   publicStatusLabel,
   publicVocabulary,
   rateWindowLabel,
@@ -63,12 +62,9 @@ describe("public vocabulary", () => {
     expect(publicStatusLabel({ family: "run", status: "draining" })).toBe("Run: Finishing");
   });
 
-  it("translates modes, limits, circuit states, and measurement windows", () => {
+  it("translates modes, circuit states, and measurement windows", () => {
     expect(trafficModeLabel("buyer-spike")).toBe("Everyone at once");
     expect(trafficModeLabel("constant-arrival-rate")).toBe("Steady stream");
-    expect(publicLimitsLabel(true)).toBe("Public limits apply");
-    expect(publicLimitsLabel(false)).toBe("Public limits not applied");
-    expect(publicLimitsLabel(undefined)).toBe("Public limits unavailable");
     expect(circuitStateLabel("closed")).toBe("Protection normal");
     expect(circuitStateLabel("open")).toBe("Calls paused to protect the ERP");
     expect(circuitStateLabel("half_open")).toBe("Testing recovery");

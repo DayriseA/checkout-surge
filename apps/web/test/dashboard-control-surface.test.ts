@@ -36,14 +36,36 @@ describe("dashboard control surface", () => {
     expect(markup).toContain("Curated surge presets");
     expect(markup).toContain("Preview 1k");
     expect(markup).not.toContain("Forced outage");
-    expect(markup).toContain("Public custom");
-    expect(markup).toContain("Start Public Custom");
+    expect(markup).toContain("Build your own run");
+    expect(markup).toContain("Start custom run");
     expect(markup.match(/Starting a bounded run uses the one shared demo runtime/g)?.length).toBe(
       2,
     );
     expect(markup).toContain("other visitors can&#x27;t start until it finishes");
     expect(markup).toContain("A successful start opens the live view.");
-    expect(markup).toContain("Simulated ERP capacity (orders/s)");
+    expect(markup).toContain("Capacity (orders/second)");
+    expect(markup.indexOf("Preview 1k")).toBeLessThan(markup.indexOf("Build your own run"));
+    expect(markup).toContain("<form");
+    expect(markup).toContain("<legend");
+    expect(markup).toContain(">Buyers</legend>");
+    expect(markup).toContain(">Stock</legend>");
+    expect(markup).toContain(">Slow ERP</legend>");
+    expect(markup).toContain("Advanced protection settings");
+    expect(markup).toContain("Safety cutoff (seconds)");
+    expect(markup).toContain("Start delay (seconds)");
+    expect(markup).toContain("not the expected run duration");
+    expect(markup).toContain("Unit: percent. Minimum: 0. Maximum: 25.");
+    expect(markup).not.toContain("Worker concurrency");
+    expect(markup).not.toContain("Retry attempts");
+    expect(markup).not.toContain("Initial retry backoff");
+    expect(markup).not.toContain("Drain timeout");
+    expect(markup).not.toContain("Persistence retry delay");
+    expect(markup).not.toContain("Circuit failure threshold");
+    expect(markup).not.toContain("Circuit reset timeout");
+    expect(markup).not.toContain("Reservation hold");
+    expect(markup).not.toContain("ERP request timeout");
+    expect(markup).toContain("Planned total attempts: 1,000");
+    expect(markup).toContain("Up to 2 starts per visitor and 6 starts total every 5 minutes.");
     expect(markup).toContain(">ready<");
     expect(markup).not.toContain("database_reachable");
     expect(markup).not.toContain("Current run");
@@ -66,6 +88,26 @@ describe("dashboard control surface", () => {
     expect(markup).toContain("Preview 1k");
     expect(markup).not.toContain(">Custom<");
     expect(markup).not.toContain("Forced outage");
+  });
+
+  it("renders shared start rules from policy data without implying unenforced budgets", () => {
+    const enforced = publicSurfaceFixture(null);
+    if (enforced.runtimePolicy.status !== "available") throw new Error("Expected policy.");
+    enforced.runtimePolicy.data.policy.publicRunBudget = {
+      windowSeconds: 90,
+      perVisitorMaxStarts: 4,
+      globalMaxStarts: 12,
+    };
+    expect(renderToStaticMarkup(createElement(PublicDemoEntry, { surface: enforced }))).toContain(
+      "Up to 4 starts per visitor and 12 starts total every 90 seconds.",
+    );
+
+    enforced.runtimePolicy.data.policy.isPublicRunBudgetEnforced = false;
+    const unenforcedMarkup = renderToStaticMarkup(
+      createElement(PublicDemoEntry, { surface: enforced }),
+    );
+    expect(unenforcedMarkup).toContain("Public start budgets are not enforced right now.");
+    expect(unenforcedMarkup).not.toContain("Up to 4 starts");
   });
 
   it("renders an explicit empty state when no curated public presets are available", () => {
@@ -196,7 +238,7 @@ describe("dashboard control surface", () => {
       createElement(PublicDemoEntry, { surface: onlyCustom }),
     );
     expect(onlyCustomMarkup).toContain("No curated public presets are currently available.");
-    expect(onlyCustomMarkup).toContain("Start Public Custom");
+    expect(onlyCustomMarkup).toContain("Start custom run");
 
     const noCustom = publicSurfaceFixture(null);
     if (noCustom.presets.status !== "available") throw new Error("Expected available presets.");
@@ -204,7 +246,7 @@ describe("dashboard control surface", () => {
     const noCustomMarkup = renderToStaticMarkup(
       createElement(PublicDemoEntry, { surface: noCustom }),
     );
-    expect(noCustomMarkup).not.toContain("Start Public Custom");
+    expect(noCustomMarkup).not.toContain("Start custom run");
 
     const unavailable = publicSurfaceFixture(null);
     unavailable.presets = { status: "unavailable", reason: "Preset service offline" };
