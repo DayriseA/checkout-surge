@@ -1010,12 +1010,12 @@ describe("admin browser workflows", () => {
         initialRuntimePolicy: available(adminRuntimePolicyResponseFixture()),
       }),
     );
-    await screen.findByRole("button", { name: "Apply ERP Controls" });
+    await screen.findByRole("button", { name: "Apply ERP controls" });
     await replaceInputValue("Latency ms", "250", user);
     await replaceInputValue("Max TPS", "20", user);
     await replaceInputValue("Error rate", "0.25", user);
     await user.click(screen.getByLabelText("Forced outage"));
-    await user.click(screen.getByRole("button", { name: "Apply ERP Controls" }));
+    await user.click(screen.getByRole("button", { name: "Apply ERP controls" }));
 
     const [, init] = findFetchCall(fetchMock, adminErpChaosProxyPath, "PUT");
     expect(jsonRequestBody(init)).toEqual({
@@ -1544,7 +1544,7 @@ describe("run history browser cleanup", () => {
     );
 
     await user.click(screen.getByLabelText(`Select run ${history.summaries[0]?.runId}`));
-    await user.click(screen.getByRole("button", { name: /Delete Selected/ }));
+    await user.click(screen.getByRole("button", { name: /Delete selected/ }));
     expect(fetchMock).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Delete run summary" }));
 
@@ -1558,7 +1558,7 @@ describe("run history browser cleanup", () => {
       },
     });
 
-    await user.click(screen.getByRole("button", { name: "Delete All Run Summaries" }));
+    await user.click(screen.getByRole("button", { name: "Delete all run summaries" }));
     await replaceInputValue(/Type DELETE to confirm/, "DELETE", user);
     await user.click(screen.getByRole("button", { name: "Delete all summaries" }));
 

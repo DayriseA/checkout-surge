@@ -76,7 +76,7 @@ describe("server-decided admin presentation", () => {
     const markup = renderToStaticMarkup(await AdminPage());
     expect(markup).toContain("Protected operator surface");
     expect(markup).not.toContain("Admin console");
-    expect(markup).not.toContain("Reset Demo");
+    expect(markup).not.toContain("Reset demo");
   });
 
   it("performs operator reads and renders the authenticated Admin tree", async () => {

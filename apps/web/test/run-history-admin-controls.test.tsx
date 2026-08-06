@@ -31,7 +31,7 @@ describe("RunHistoryAdminControls", () => {
     vi.stubGlobal("fetch", fetchMock);
     renderSurface();
 
-    await user.click(screen.getByRole("button", { name: "Delete All Run Summaries" }));
+    await user.click(screen.getByRole("button", { name: "Delete all run summaries" }));
     const confirm = screen.getByRole("button", { name: "Delete all summaries" });
     expect(fetchMock).not.toHaveBeenCalled();
     expect((confirm as HTMLButtonElement).disabled).toBe(true);
@@ -49,13 +49,13 @@ describe("RunHistoryAdminControls", () => {
     vi.stubGlobal("fetch", vi.fn());
     renderSurface();
 
-    expect(screen.queryByRole("button", { name: /Delete Selected/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Delete selected/ })).toBeNull();
     await user.click(screen.getByRole("checkbox", { name: `Select run ${summaries[0]?.runId}` }));
     await user.click(screen.getByRole("checkbox", { name: `Select run ${summaries[1]?.runId}` }));
-    expect(screen.getByRole("button", { name: "Delete Selected (2)" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Delete selected (2)" })).toBeTruthy();
 
     await user.click(screen.getByRole("button", { name: "Clear" }));
-    expect(screen.queryByRole("button", { name: /Delete Selected/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Delete selected/ })).toBeNull();
   });
 
   it("selects and clears every visible run from the select-all control", async () => {
@@ -65,14 +65,14 @@ describe("RunHistoryAdminControls", () => {
     const selectAll = screen.getByRole("checkbox", { name: "Select all visible runs" });
 
     await user.click(selectAll);
-    expect(screen.getByRole("button", { name: "Delete Selected (2)" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Delete selected (2)" })).toBeTruthy();
     for (const summary of summaries) {
       const row = screen.getByRole("checkbox", { name: `Select run ${summary.runId}` });
       expect((row as HTMLInputElement).checked).toBe(true);
     }
 
     await user.click(selectAll);
-    expect(screen.queryByRole("button", { name: /Delete Selected/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Delete selected/ })).toBeNull();
   });
 
   it("reflects a partial row selection as an indeterminate select-all control", async () => {
@@ -114,7 +114,7 @@ describe("RunHistoryAdminControls", () => {
       runIds: [summaries[1]?.runId],
       visibleFilter: { runIds: summaries.map((summary) => summary.runId) },
     });
-    expect(screen.getByRole("button", { name: "Delete Selected (1)" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Delete selected (1)" })).toBeTruthy();
     expect(refresh).toHaveBeenCalledOnce();
   });
 
@@ -125,7 +125,7 @@ describe("RunHistoryAdminControls", () => {
     vi.stubGlobal("fetch", fetchMock);
     renderSurface();
     await user.click(screen.getByRole("checkbox", { name: `Select run ${summaries[0]?.runId}` }));
-    await user.click(screen.getByRole("button", { name: /Delete Selected/ }));
+    await user.click(screen.getByRole("button", { name: /Delete selected/ }));
     await user.click(screen.getByRole("button", { name: "Delete run summary" }));
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(fetchMock.mock.calls[0]?.[0]).toBe(adminRunHistoryProxyPath);
@@ -154,7 +154,7 @@ describe("RunHistoryAdminControls", () => {
     vi.stubGlobal("fetch", fetchMock);
     renderSurface();
     await user.click(screen.getByRole("checkbox", { name: `Select run ${summaries[0]?.runId}` }));
-    await user.click(screen.getByRole("button", { name: /Delete Selected/ }));
+    await user.click(screen.getByRole("button", { name: /Delete selected/ }));
 
     await user.click(screen.getByRole("button", { name: "Delete run summary" }));
     expect((await screen.findByRole("alert")).textContent).toContain(
@@ -190,14 +190,14 @@ describe("RunHistoryAdminControls", () => {
     );
     renderSurface();
     await user.click(screen.getByRole("checkbox", { name: `Select run ${summaries[0]?.runId}` }));
-    await user.click(screen.getByRole("button", { name: "Delete All Run Summaries" }));
+    await user.click(screen.getByRole("button", { name: "Delete all run summaries" }));
     await user.type(screen.getByRole("textbox"), "DELETE");
     await user.click(screen.getByRole("button", { name: "Delete all summaries" }));
     await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
     expect(refresh).toHaveBeenCalledOnce();
-    expect(screen.queryByRole("button", { name: /Delete Selected/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Delete selected/ })).toBeNull();
 
-    await user.click(screen.getByRole("button", { name: "Delete All Run Summaries" }));
+    await user.click(screen.getByRole("button", { name: "Delete all run summaries" }));
     expect((screen.getByRole("textbox") as HTMLInputElement).value).toBe("");
     expect(
       (screen.getByRole("button", { name: "Delete all summaries" }) as HTMLButtonElement).disabled,
@@ -212,7 +212,7 @@ describe("RunHistoryAdminControls", () => {
     );
     renderSurface();
     await user.click(screen.getByRole("checkbox", { name: `Select run ${summaries[0]?.runId}` }));
-    await user.click(screen.getByRole("button", { name: /Delete Selected/ }));
+    await user.click(screen.getByRole("button", { name: /Delete selected/ }));
     await user.click(screen.getByRole("button", { name: "Delete run summary" }));
 
     await waitFor(() => expect(screen.getByRole("alert")).toBeTruthy());

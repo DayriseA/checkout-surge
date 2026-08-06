@@ -128,7 +128,7 @@ export function AdminSignInView({
           disabled={isPending || retryAfterMs !== null}
           type="submit"
         >
-          {isPending ? "Signing in…" : "Sign In"}
+          {isPending ? "Signing in…" : "Sign in"}
         </button>
         {error ? (
           <p className="m-0 text-sm font-semibold text-danger" role="alert">

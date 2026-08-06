@@ -210,7 +210,7 @@ export function AdminRuntimePolicyView({
               onClick={onSave}
               type="button"
             >
-              Save Public Policy
+              Save public policy
             </button>
             <button
               className={buttonClassName}
@@ -218,7 +218,7 @@ export function AdminRuntimePolicyView({
               onClick={onRefresh}
               type="button"
             >
-              Refresh Policy
+              Refresh policy
             </button>
           </div>
           {latestRead.status === "unavailable" ? <Unavailable read={latestRead} /> : null}
@@ -232,7 +232,7 @@ export function AdminRuntimePolicyView({
             onClick={onRefresh}
             type="button"
           >
-            Refresh Policy
+            Refresh policy
           </button>
         </div>
       )}
@@ -289,6 +289,7 @@ export function AdminPresetView({
   presetsRead,
   selectedPreset,
   startBlocked,
+  startBlockedReason,
   showValidationSummary,
   validationSummaryRevision,
 }: {
@@ -313,6 +314,7 @@ export function AdminPresetView({
   presetsRead: BackendRead<unknown>;
   selectedPreset: AdminPresetListItem | null;
   startBlocked: boolean;
+  startBlockedReason?: string | undefined;
   showValidationSummary: boolean;
   validationSummaryRevision: number;
 }) {
@@ -406,7 +408,7 @@ export function AdminPresetView({
                 onClick={onStart}
                 type="button"
               >
-                Start Admin Run
+                Start admin run
               </button>
               <button
                 className={buttonClassName}
@@ -416,7 +418,7 @@ export function AdminPresetView({
                 onClick={onSave}
                 type="button"
               >
-                Save Preset
+                Save preset
               </button>
               <button
                 className={buttonClassName}
@@ -424,7 +426,7 @@ export function AdminPresetView({
                 onClick={onCopyToCustom}
                 type="button"
               >
-                Copy to Custom
+                Copy to custom
               </button>
               <button
                 className={buttonClassName}
@@ -432,9 +434,12 @@ export function AdminPresetView({
                 onClick={onArchive}
                 type="button"
               >
-                Archive Preset
+                Archive preset
               </button>
             </div>
+            {startBlockedReason ? (
+              <p className="m-0 text-sm text-muted">{startBlockedReason}</p>
+            ) : null}
             <form
               className="grid grid-cols-[minmax(160px,1fr)_auto] gap-2 max-[560px]:grid-cols-1"
               onSubmit={(event) => {
@@ -799,10 +804,10 @@ export function AdminErpDiagnosticsView({
           onClick={onApply}
           type="button"
         >
-          Apply ERP Controls
+          Apply ERP controls
         </button>
         <button className={buttonClassName} disabled={isPending} onClick={onReset} type="button">
-          Reset ERP Controls
+          Reset ERP controls
         </button>
       </div>
       {erpChaos.status === "unavailable" ? <Unavailable read={erpChaos} /> : null}

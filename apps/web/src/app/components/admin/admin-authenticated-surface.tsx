@@ -24,7 +24,7 @@ import {
   startDemoRunResponseSchema,
 } from "@checkout-surge/contracts";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   buildConfigFromDraft,
   buildErpChaosFromDraft,
@@ -55,8 +55,16 @@ import type { AdminNotice } from "../../lib/presentation/admin-notice";
 import { adminFailureNotice } from "../../lib/presentation/admin-notice";
 import { mapErrorPresentation } from "../../lib/presentation/error-presentation";
 import { formatCount, formatInstantUtc } from "../../lib/presentation/format";
+import {
+  dashboardUpdateExpected,
+  deriveFreshness,
+  type Freshness,
+  type RealtimeConnectionStatus,
+} from "../../lib/presentation/freshness";
+import { deriveFreshnessPresentationState } from "../../lib/presentation/run-presentation-state";
 import { ConfirmationDialog } from "../confirmation-dialog";
 import { ErrorNotice } from "../error-notice";
+import { useDashboardProjections } from "../realtime/use-dashboard-projections";
 import { useDashboardRecovery } from "../realtime/use-dashboard-recovery";
 import { StatusPill } from "../status-pill";
 import {
@@ -80,8 +88,31 @@ export interface AdminAuthenticatedSurfaceProps {
 }
 
 export function AdminAuthenticatedSurface(props: AdminAuthenticatedSurfaceProps) {
-  const recoveryController = useDashboardRecovery(props.initialRecovery);
+  const recoveryController = useDashboardRecovery(props.initialRecovery, {
+    preserveAvailableRecoveryOnFailure: true,
+  });
   const recovery = recoveryController.recovery;
+  const firstOpenRef = useRef(true);
+  const handleOpen = useCallback(() => {
+    if (firstOpenRef.current) {
+      firstOpenRef.current = false;
+      if (props.initialRecovery.status === "loading") return;
+    }
+    void recoveryController.refresh();
+  }, [props.initialRecovery.status, recoveryController.refresh]);
+  const realtimeStatus = useDashboardProjections({
+    onProjection: recoveryController.applyProjection,
+    onOpen: handleOpen,
+    onDisconnect: handleOpen,
+  });
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const interval = setInterval(() => setNow(new Date()), 2_000);
+    return () => clearInterval(interval);
+  }, []);
+  const freshness = deriveAdminFreshness(recovery, realtimeStatus, now);
+  const hasReadFailure = recovery.status === "unavailable" || recoveryController.hasSyncIssue;
+  const startBlocked = isRunStartBlocked(recovery, freshness, hasReadFailure);
   const [runtimePolicy, setRuntimePolicy] = useState(props.initialRuntimePolicy);
 
   useEffect(() => {
@@ -99,9 +130,12 @@ export function AdminAuthenticatedSurface(props: AdminAuthenticatedSurfaceProps)
         isRetryScheduled={recoveryController.isRetryScheduled}
         onRefresh={recoveryController.retryNow}
         recovery={recovery}
+        freshness={freshness}
+        hasSyncIssue={recoveryController.hasSyncIssue}
         retriesExhausted={recoveryController.retriesExhausted}
         retryAttempt={recoveryController.retryAttempt}
         retryDelayMs={recoveryController.retryDelayMs}
+        syncIssue={recoveryController.syncIssue}
       />
       <AdminReadinessPanel read={props.initialReadiness} />
       <AdminRuntimePolicyController
@@ -111,8 +145,15 @@ export function AdminAuthenticatedSurface(props: AdminAuthenticatedSurfaceProps)
       />
       <AdminPresetController
         initialPresets={props.initialPresets}
+        onStartComplete={recoveryController.retryNow}
         recovery={recovery}
         runtimePolicy={runtimePolicy}
+        startBlocked={startBlocked}
+        startBlockedReason={
+          isFreshnessBlockingStart(freshness, hasReadFailure)
+            ? "Status is stale — refresh before starting"
+            : undefined
+        }
       />
       <AdminMaintenancePanel onResetComplete={recoveryController.retryNow} />
       <AdminErpDiagnosticsController initialErpChaos={props.initialErpChaos} />
@@ -175,33 +216,51 @@ export function AdminCurrentRunPanel({
   isRetryScheduled,
   onRefresh,
   recovery,
+  freshness,
+  hasSyncIssue,
   retriesExhausted,
   retryAttempt,
   retryDelayMs,
+  syncIssue,
 }: {
   isPending: boolean;
   isRetryScheduled: boolean;
   onRefresh: () => Promise<void>;
   recovery: BackendRead<DashboardProjection>;
+  freshness: Freshness;
+  hasSyncIssue: boolean;
   retriesExhausted: boolean;
   retryAttempt: number;
   retryDelayMs: number | null;
+  syncIssue: BackendRead<DashboardProjection> | null;
 }) {
-  const startBlocked = isRunStartBlocked(recovery);
+  const startBlocked = isRunStartBlocked(recovery, freshness, hasSyncIssue);
   const retryWaitActive = recovery.status === "unavailable" && (recovery.retryAfterMs ?? 0) > 0;
+  const readFailed = recovery.status === "unavailable" || hasSyncIssue;
+  const presentedFreshness =
+    readFailed && freshness.state !== "disconnected"
+      ? { ...freshness, state: "stale" as const }
+      : freshness;
+  const freshnessPresentation = deriveFreshnessPresentationState(presentedFreshness);
 
   return (
     <section className={`${panelClassName} col-span-4`}>
       <div className="mb-4 flex items-start justify-between gap-3">
         <div>
-          <p className="m-0 text-xs font-bold uppercase text-muted">Recovery</p>
+          <p className="m-0 text-xs font-bold uppercase text-muted">Live status</p>
           <h2 className="m-0 mt-1 text-base font-bold leading-tight text-ink">Current run</h2>
         </div>
         <StatusPill
-          status={{
-            label: currentRunStatus(recovery),
-            tone: startBlocked ? "progress" : "idle",
-          }}
+          status={
+            presentedFreshness.state === "live" ||
+            presentedFreshness.state === "retained-fresh" ||
+            presentedFreshness.state === "not-applicable"
+              ? {
+                  label: currentRunStatus(recovery),
+                  tone: startBlocked ? "progress" : "idle",
+                }
+              : freshnessPresentation
+          }
         />
       </div>
       {recovery.status === "available" ? (
@@ -210,20 +269,27 @@ export function AdminCurrentRunPanel({
           <Fact label="Status" value={recovery.data.currentRun?.status ?? "idle"} />
           <Fact label="Traffic" value={recovery.data.currentRun?.trafficStatus ?? "Not active"} />
           <Fact
-            label="Recovered"
-            value={formatInstantUtc(recovery.data.recoveredAt) ?? "not yet available"}
+            label="Last updated"
+            value={`${formatInstantUtc(recovery.data.recoveredAt) ?? "not yet available"}${freshnessSuffix(presentedFreshness)}`}
           />
         </dl>
       ) : (
         <Unavailable read={recovery} />
       )}
+      {syncIssue ? <Unavailable read={syncIssue} /> : null}
       <button
         className={`${buttonClassName} mt-4`}
         disabled={isPending || retryWaitActive}
         onClick={() => void onRefresh()}
         type="button"
       >
-        {isPending ? "Checking Recovery" : "Retry Recovery"}
+        {isPending
+          ? readFailed
+            ? "Retrying recovery"
+            : "Refreshing status"
+          : readFailed
+            ? "Retry recovery"
+            : "Refresh status"}
       </button>
       {isRetryScheduled && retryDelayMs !== null ? (
         <p className="m-0 mt-2 text-sm text-muted">
@@ -409,12 +475,18 @@ export function AdminRuntimePolicyController({
 
 export function AdminPresetController({
   initialPresets,
+  onStartComplete,
   recovery,
   runtimePolicy,
+  startBlocked,
+  startBlockedReason,
 }: {
   initialPresets: BackendRead<AdminPresetListResponse>;
+  onStartComplete?: () => Promise<void>;
   recovery: BackendRead<DashboardProjection>;
   runtimePolicy?: BackendRead<AdminPublicRuntimePolicyResponse>;
+  startBlocked?: boolean;
+  startBlockedReason?: string | undefined;
 }) {
   const router = useRouter();
   const initialPreset =
@@ -516,6 +588,7 @@ export function AdminPresetController({
         setShowValidationSummary(true);
         setValidationSummaryRevision((revision) => revision + 1);
       }
+      await onStartComplete?.();
     });
   }
 
@@ -787,7 +860,8 @@ export function AdminPresetController({
         selectedPreset={selectedPreset}
         showValidationSummary={showValidationSummary}
         validationSummaryRevision={validationSummaryRevision}
-        startBlocked={isRunStartBlocked(recovery)}
+        startBlocked={startBlocked ?? isRunStartBlocked(recovery)}
+        startBlockedReason={startBlockedReason}
       />
       <ConfirmationDialog
         confirmLabel="Archive preset"
@@ -853,12 +927,12 @@ export function AdminMaintenancePanel({
         setNotice(
           `Reset complete: ${formatMaintenanceCount(result.data.failedRunCount)} runs failed, ${formatMaintenanceCount(result.data.cleanedJobCount)} jobs cleaned.`,
         );
-        await onResetComplete();
       } else if ("deletedRunCount" in result.data) {
         setNotice(
           `Cleanup complete: ${formatMaintenanceCount(result.data.deletedRunCount)} generated runs removed.`,
         );
       }
+      await onResetComplete();
       setIntent(null);
     } finally {
       setIsPending(false);
@@ -880,7 +954,7 @@ export function AdminMaintenancePanel({
           onClick={() => setIntent("reset")}
           type="button"
         >
-          Reset Demo
+          Reset demo
         </button>
         <button
           className={buttonClassName}
@@ -888,7 +962,7 @@ export function AdminMaintenancePanel({
           onClick={() => setIntent("cleanup")}
           type="button"
         >
-          Cleanup Runs
+          Cleanup runs
         </button>
       </div>
       <AdminNoticeView notice={notice} />
@@ -1089,10 +1163,49 @@ function erpDraftFromRead(read: BackendRead<ErpChaosStatus>): ErpDraft {
     : { latencyMs: "0", maxTps: "100", errorRate: "0", forcedOutage: false };
 }
 
-function isRunStartBlocked(recovery: BackendRead<DashboardProjection>): boolean {
+function deriveAdminFreshness(
+  recovery: BackendRead<DashboardProjection>,
+  transportStatus: RealtimeConnectionStatus,
+  now: Date,
+): Freshness {
+  const projection = recovery.status === "available" ? recovery.data : null;
+  const freshness = deriveFreshness({
+    transportStatus,
+    recoveredAt: projection?.recoveredAt ?? now.toISOString(),
+    now,
+    lifecycle: projection?.currentRun?.status ?? (projection ? "starting" : null),
+    updateExpected: projection ? dashboardUpdateExpected(projection) : false,
+  });
+  return transportStatus === "disconnected" || transportStatus === "unsupported"
+    ? { ...freshness, state: transportStatus }
+    : freshness;
+}
+
+function isFreshnessBlockingStart(freshness: Freshness, hasReadFailure: boolean): boolean {
+  return (
+    hasReadFailure ||
+    freshness.state === "stale" ||
+    freshness.state === "disconnected" ||
+    freshness.state === "unsupported"
+  );
+}
+
+function isRunStartBlocked(
+  recovery: BackendRead<DashboardProjection>,
+  freshness?: Freshness,
+  hasReadFailure = false,
+): boolean {
   if (recovery.status !== "available") return true;
+  if (freshness && isFreshnessBlockingStart(freshness, hasReadFailure)) return true;
   const status = recovery.data.currentRun?.status;
   return status === "starting" || status === "active" || status === "draining";
+}
+
+function freshnessSuffix(freshness: Freshness): string {
+  if (freshness.state === "stale") return " · stale";
+  if (freshness.state === "disconnected") return " · disconnected";
+  if (freshness.state === "unsupported") return " · live updates unsupported";
+  return "";
 }
 
 function adminValidationMessage(): string {

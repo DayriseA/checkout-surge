@@ -64,7 +64,7 @@ describe("AdminSignIn", () => {
     render(<AdminSignIn />);
 
     await user.type(screen.getByLabelText("Admin passphrase"), "admin-pass");
-    await user.click(screen.getByRole("button", { name: "Sign In" }));
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
 
     expect(
       (screen.getByRole("button", { name: "Signing in…" }) as HTMLButtonElement).disabled,
@@ -84,10 +84,10 @@ describe("AdminSignIn", () => {
     render(<AdminSignIn />);
 
     await user.type(screen.getByLabelText("Admin passphrase"), "secret-value");
-    await user.click(screen.getByRole("button", { name: "Sign In" }));
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
 
     expect(await screen.findByText("Admin sign-in failed.")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Sign In" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Sign in" })).toBeTruthy();
     expect(navigation.refresh).not.toHaveBeenCalled();
     const error = screen.getByRole("alert");
     expect(error.textContent).not.toContain("secret-value");
@@ -108,10 +108,10 @@ describe("AdminSignIn", () => {
     render(<AdminSignIn />);
 
     await user.type(screen.getByLabelText("Admin passphrase"), "admin-pass");
-    await user.click(screen.getByRole("button", { name: "Sign In" }));
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
 
     expect(await screen.findByText("Wait 7 seconds before trying again.")).toBeTruthy();
-    expect((screen.getByRole("button", { name: "Sign In" }) as HTMLButtonElement).disabled).toBe(
+    expect((screen.getByRole("button", { name: "Sign in" }) as HTMLButtonElement).disabled).toBe(
       true,
     );
     expect(screen.getByRole("status").textContent).toContain("Wait 7 seconds");
@@ -130,13 +130,13 @@ describe("AdminSignIn", () => {
       ),
     );
     const view = render(<AdminSignIn />);
-    fireEvent.click(screen.getByRole("button", { name: "Sign In" }));
+    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
     await act(async () => {
       await Promise.resolve();
       await Promise.resolve();
     });
 
-    const signInButton = () => screen.getByRole("button", { name: /Sign In|Signing in/ });
+    const signInButton = () => screen.getByRole("button", { name: /Sign in|Signing in/ });
     expect((signInButton() as HTMLButtonElement).disabled).toBe(true);
     act(() => vi.advanceTimersByTime(301_000));
     expect((signInButton() as HTMLButtonElement).disabled).toBe(false);

@@ -15,7 +15,7 @@ export function RunHistoryDeleteAllButton() {
       type="button"
     >
       <FiTrash2 aria-hidden="true" className="size-4" />
-      Delete All Run Summaries
+      Delete all run summaries
     </button>
   );
 }

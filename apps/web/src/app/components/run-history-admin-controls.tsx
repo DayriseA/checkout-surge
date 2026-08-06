@@ -81,7 +81,7 @@ export function RunHistoryAdminControls({ visibleRunIds, children }: RunHistoryA
             type="button"
           >
             <FiTrash2 aria-hidden="true" className="size-4" />
-            Delete Selected ({selectedCount})
+            Delete selected ({selectedCount})
           </button>
         </div>
       ) : null}

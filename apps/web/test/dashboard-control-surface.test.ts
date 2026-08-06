@@ -374,10 +374,10 @@ describe("dashboard control surface", () => {
     );
 
     expect(markup).toContain("Protected operator surface");
-    expect(markup).toContain("Sign In");
-    expect(markup).not.toContain("Reset Demo");
-    expect(markup).not.toContain("Start Admin Run");
-    expect(markup).not.toContain("Save Public Policy");
+    expect(markup).toContain("Sign in");
+    expect(markup).not.toContain("Reset demo");
+    expect(markup).not.toContain("Start admin run");
+    expect(markup).not.toContain("Save public policy");
   });
 
   it("presents absent admin runtime policy evidence neutrally", () => {
@@ -431,20 +431,20 @@ describe("dashboard control surface", () => {
 
     expect(markup).toContain("Inspection and starts");
     expect(markup).toContain("Public policy");
-    expect(markup).toContain("Save Public Policy");
+    expect(markup).toContain("Save public policy");
     expect(markup).toContain("Hard max buyers");
     // The fixture's hard caps are exactly 100,000. B10's criterion is about presentation, so
     // assert the grouped form actually reaches the markup rather than an ungrouped digit wall.
     expect(markup).toContain(">100,000<");
     expect(markup).not.toContain(">100000<");
-    expect(markup).toContain("Start Admin Run");
-    expect(markup).toContain("Save Preset");
-    expect(markup).toContain("Copy to Custom");
+    expect(markup).toContain("Start admin run");
+    expect(markup).toContain("Save preset");
+    expect(markup).toContain("Copy to custom");
     expect(markup).toContain('id="preset-erpForcedOutage"');
     expect(markup).toContain('id="erp-chaos-forcedOutage"');
     expect(markup).not.toContain('id="runtime-policy-erpForcedOutage"');
     expect(markup).not.toContain('id="runtime-policy-allowForcedOutage"');
-    expect(markup).toContain("Reset Demo");
+    expect(markup).toContain("Reset demo");
     expect(markup).toContain("ERP diagnostics");
     expect(markup).toContain("disabled");
   });
