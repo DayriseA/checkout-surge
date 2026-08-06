@@ -1,4 +1,5 @@
 import {
+  type AcceptedRunConfigSnapshot,
   arrivalRateSeriesLimit,
   type DashboardProjection,
   hasObservedRequestArrivals,
@@ -14,10 +15,17 @@ type UnavailableProjectionRead = Extract<
 export interface DashboardProjectionState {
   recovery: BackendRead<DashboardProjection>;
   acceptedProjection: DashboardProjection | null;
+  retainedTerminalRun: RetainedTerminalRun | null;
   latestRunStartedAt: string | null;
   syncIssue: UnavailableProjectionRead | null;
   isRefreshing: boolean;
   signalSamples: RunSignalLiveSample[];
+}
+
+export interface RetainedTerminalRun {
+  runId: string;
+  configSnapshot: AcceptedRunConfigSnapshot;
+  terminalRecap: DashboardProjection;
 }
 
 export interface RunSignalLiveSample {
@@ -102,6 +110,7 @@ export function createDashboardProjectionState(
   return {
     recovery,
     acceptedProjection,
+    retainedTerminalRun: acceptedProjection ? terminalRunFrom(acceptedProjection) : null,
     latestRunStartedAt: acceptedProjection?.currentRun?.startedAt ?? null,
     syncIssue: null,
     isRefreshing: false,
@@ -115,7 +124,7 @@ export function dashboardProjectionStateReducer(
 ): DashboardProjectionState {
   switch (action.type) {
     case "initial-read-received":
-      return createDashboardProjectionState(action.recovery);
+      return retainTerminalAcrossIdleRead(state, createDashboardProjectionState(action.recovery));
     case "refresh-started":
       return { ...state, isRefreshing: true };
     case "refresh-completed":
@@ -189,11 +198,33 @@ function acceptProjection(
     ...state,
     recovery: { status: "available", data: candidate, httpStatus: 200 },
     acceptedProjection: candidate,
+    retainedTerminalRun:
+      candidate.currentRun === null ? state.retainedTerminalRun : terminalRunFrom(candidate),
     latestRunStartedAt: candidate.currentRun?.startedAt ?? state.latestRunStartedAt,
     syncIssue: null,
     isRefreshing: false,
     signalSamples: appendSignalSample(state, candidate),
   };
+}
+
+function retainTerminalAcrossIdleRead(
+  previous: DashboardProjectionState,
+  next: DashboardProjectionState,
+): DashboardProjectionState {
+  return next.acceptedProjection?.currentRun === null && previous.retainedTerminalRun
+    ? { ...next, retainedTerminalRun: previous.retainedTerminalRun }
+    : next;
+}
+
+function terminalRunFrom(projection: DashboardProjection): RetainedTerminalRun | null {
+  const run = projection.currentRun;
+  return run && isTerminal(run.status)
+    ? {
+        runId: run.runId,
+        configSnapshot: run.configSnapshot,
+        terminalRecap: projection,
+      }
+    : null;
 }
 
 function appendSignalSample(

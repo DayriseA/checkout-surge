@@ -1059,7 +1059,9 @@ describe("watch browser recovery", () => {
     expect(unavailableMarkup).not.toContain("Sale evidence");
 
     expect(idleMarkup).toContain("No run has started");
-    expect(idleMarkup).toContain("Shared demo-runtime status is unavailable.");
+    expect(idleMarkup).toContain("Start a demo");
+    expect(idleMarkup).toContain("No completed runs yet");
+    expect(idleMarkup).toContain("Technical details");
     expect(idleMarkup.toLowerCase()).not.toContain("not yet");
     expect(idleMarkup).not.toContain("Live panels");
     expect(idleMarkup).not.toContain("in progress");
@@ -1108,8 +1110,9 @@ describe("watch browser recovery", () => {
     );
     const normalized = markup.toLowerCase();
 
-    expect(markup).toContain("Final timeline evidence was not recorded");
-    expect(markup).toContain("Retained peak 8 attempts/s");
+    expect(markup).toContain("Sale evidence");
+    expect(markup).toContain("Not recorded for this run");
+    expect(markup).not.toContain("Retained peak 8 attempts/s");
     expect(markup).toContain("Final request totals were not recorded for this run.");
     expect(markup).toContain("Shared demo-runtime status is unavailable.");
     expect(markup).not.toContain("No run has started");
@@ -1188,9 +1191,7 @@ describe("watch browser recovery", () => {
     expect(markup).not.toContain('aria-label="Run conclusion"');
     expect(markup).toContain("Peak 7 orders");
     expect(markup).toContain("Run-owned retrying orders are shown separately (3)");
-    expect(markup).toContain("Reservation and confirmation summary");
-    expect(markup).toMatch(/Queued \(awaiting first processing start\)<\/dt><dd[^>]*>7<\/dd>/);
-    expect(markup).toMatch(/Retrying<\/dt><dd[^>]*>3<\/dd>/);
+    expect(markup).not.toContain("Reservation and confirmation summary");
     expect(markup).toContain("System status across all runs and visitors");
     expect(markup).toMatch(/Depth \(all runs\)<\/dt><dd[^>]*>41<\/dd>/);
     expect(markup.match(/Retrying jobs<\/dt><dd[^>]*>29<\/dd>/g)).toHaveLength(2);

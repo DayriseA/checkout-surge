@@ -259,6 +259,11 @@ describe("dashboard projection state", () => {
     });
     let state = receive(createDashboardProjectionState(available(terminal)), idle);
     expect(state.recovery).toEqual(available(idle));
+    expect(state.retainedTerminalRun).toMatchObject({
+      runId: "11111111-1111-4111-8111-111111111111",
+      configSnapshot: previewRunConfigSnapshotFixture(),
+      terminalRecap: terminal,
+    });
 
     state = receive(
       state,
@@ -269,6 +274,34 @@ describe("dashboard projection state", () => {
       }),
     );
     expect(state.recovery).toEqual(available(idle));
+    expect(state.retainedTerminalRun?.terminalRecap).toBe(terminal);
+  });
+
+  it("clears the retained terminal recap only when a newer run starts", () => {
+    const terminal = runProjection({
+      revision: 9,
+      recoveredAt: "2026-06-20T00:00:40.000Z",
+      currentRun: completedRun(),
+    });
+    let state = receive(
+      createDashboardProjectionState(available(terminal)),
+      idleProjection({ revision: 20, recoveredAt: "2026-06-20T00:00:41.000Z" }),
+    );
+
+    const newerRun = runProjection({
+      revision: 1,
+      recoveredAt: "2026-06-20T00:01:01.000Z",
+      currentRun: activeRun({
+        runId: "22222222-2222-4222-8222-222222222222",
+        saleOfferId: "33333333-3333-4333-8333-333333333333",
+        startedAt: "2026-06-20T00:01:00.000Z",
+        trafficStartedAt: "2026-06-20T00:01:00.000Z",
+      }),
+    });
+    state = receive(state, newerRun);
+
+    expect(state.recovery).toEqual(available(newerRun));
+    expect(state.retainedTerminalRun).toBeNull();
   });
 
   it("accepts a newer authoritative idle read after the current run is reset", () => {

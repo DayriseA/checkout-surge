@@ -42,13 +42,25 @@ describe("dashboard backend API reads", () => {
     vi.unstubAllGlobals();
   });
 
-  it("makes no backend reads during the server-side watch bootstrap", () => {
-    const fetchMock = vi.fn();
+  it("reads only the latest run during the server-side watch bootstrap", async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse({
+        summaries: [],
+        page: 1,
+        pageSize: 1,
+        totalCount: 0,
+        timestamp: "2026-06-20T00:00:10.000Z",
+      }),
+    );
     vi.stubGlobal("fetch", fetchMock);
 
-    WatchPage();
+    await WatchPage();
 
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://api.internal/demo/runs/history?page=1&pageSize=1",
+      expect.objectContaining({ cache: "no-store" }),
+    );
   });
 
   it("reads paginated run history through the shared API contract", async () => {

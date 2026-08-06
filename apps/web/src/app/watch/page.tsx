@@ -1,9 +1,15 @@
 import { OperatorDashboard } from "../components/operator-dashboard";
-import { pendingDashboardRecovery } from "../lib/api";
+import { getRunHistoryPage, pendingDashboardRecovery } from "../lib/api";
 
 export const dynamic = "force-dynamic";
 
-export default function WatchPage() {
+export default async function WatchPage() {
+  const history = await getRunHistoryPage(1, 1);
+  const latestCompletedRun =
+    history.status === "available"
+      ? { status: "available" as const, data: history.data.summaries[0] ?? null }
+      : history;
+
   return (
     <>
       <header className="mb-4 grid grid-cols-[1fr_auto] items-end gap-4 max-[900px]:grid-cols-1 max-[900px]:items-start">
@@ -15,7 +21,10 @@ export default function WatchPage() {
           </p>
         </div>
       </header>
-      <OperatorDashboard initialRecovery={pendingDashboardRecovery()} />
+      <OperatorDashboard
+        initialRecovery={pendingDashboardRecovery()}
+        latestCompletedRun={latestCompletedRun}
+      />
     </>
   );
 }

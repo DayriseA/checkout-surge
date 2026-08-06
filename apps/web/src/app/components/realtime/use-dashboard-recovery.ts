@@ -159,6 +159,7 @@ export function useDashboardRecovery(
     syncIssue,
     hasSyncIssue: state.syncIssue !== null,
     signalSamples: state.signalSamples,
+    retainedTerminalRun: state.retainedTerminalRun,
     refresh,
     retryNow,
     applyProjection,

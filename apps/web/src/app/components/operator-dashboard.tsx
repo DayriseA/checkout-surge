@@ -3,21 +3,26 @@
 import {
   type DashboardProjection,
   deriveOversoldUnits,
-  deriveRunResult,
+  type RunHistoryListItem,
 } from "@checkout-surge/contracts";
-import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
+import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import type { BackendRead } from "../lib/api";
-import { dashboardUpdateExpected, deriveFreshness } from "../lib/presentation/freshness";
+import { formatInstantUtc } from "../lib/presentation/format";
+import { publicFailureExplanation } from "../lib/presentation/public-vocabulary";
 import {
+  deriveFreshnessPresentationState,
   deriveInventoryOutcomeState,
   deriveLagPresentationState,
   deriveOutcomePresentationState,
   deriveRunErpOutcomeState,
-  deriveRunPresentationState,
   deriveSharedErpProtectionState,
   deriveSharedRuntimeState,
 } from "../lib/presentation/run-presentation-state";
-import { evidenceFromDashboard } from "../lib/presentation/run-result-presentation";
+import {
+  deriveWatchComposition,
+  type WatchComposition,
+} from "../lib/presentation/watch-composition";
 import {
   ConsistencyLagPanel,
   InventoryDrainPanel,
@@ -27,15 +32,25 @@ import {
   RunOutcomesPanel,
   SystemStatusPanel,
 } from "./dashboard-panels";
+import { ErrorNotice } from "./error-notice";
 import { GoldSignals } from "./gold-signals";
 import { useDashboardProjections } from "./realtime/use-dashboard-projections";
 import { useDashboardRecovery } from "./realtime/use-dashboard-recovery";
 import { RunConclusion } from "./run-conclusion";
+import { ScenarioStrip } from "./scenario-strip";
+import { StatusPill } from "./status-pill";
+
+const actionClassName =
+  "inline-flex min-h-10 items-center rounded-lg border border-accent bg-accent px-3.5 py-2.5 font-semibold text-white";
+const secondaryActionClassName =
+  "inline-flex min-h-10 items-center rounded-lg border border-border px-3.5 py-2.5 font-semibold text-muted-strong";
 
 export function OperatorDashboard({
   initialRecovery,
+  latestCompletedRun = { status: "available", data: null },
 }: {
   initialRecovery: BackendRead<DashboardProjection>;
+  latestCompletedRun?: BackendRead<RunHistoryListItem | null>;
 }) {
   const {
     recovery,
@@ -46,6 +61,7 @@ export function OperatorDashboard({
     hasSyncIssue,
     syncIssue,
     signalSamples,
+    retainedTerminalRun,
     refresh,
     retryNow,
     applyProjection,
@@ -70,102 +86,362 @@ export function OperatorDashboard({
     const interval = setInterval(() => setNow(new Date()), 2_000);
     return () => clearInterval(interval);
   }, []);
-  const projection = recovery.status === "available" ? recovery.data : null;
-  const run = projection?.currentRun ?? null;
-  const result =
-    projection && (run?.status === "completed" || run?.status === "failed")
-      ? deriveRunResult(evidenceFromDashboard(projection))
-      : null;
-  const runPresentation = deriveRunPresentationState(recovery, projection, result);
-  const freshness = deriveFreshness({
+  const composition = deriveWatchComposition({
+    recovery,
+    retainedTerminalRun,
+    latestCompletedRun,
+    signalSamples,
     transportStatus: realtimeStatus,
-    recoveredAt: projection?.recoveredAt ?? now.toISOString(),
     now,
-    lifecycle: run?.status ?? null,
-    updateExpected: projection ? dashboardUpdateExpected(projection) : false,
   });
-  const outcome = projection?.businessOutcome ?? null;
-  // Oversell is an authoritative invariant: it compares durable reserved units with the inventory
-  // snapshot's starting stock. The derived signal timeline is a reservation-row visualization and
-  // is deliberately not an input, so a missing snapshot leaves oversell unknown rather than zero.
-  const oversellStartingStock = projection?.inventory?.allocatedStock ?? null;
-  const oversoldUnits =
-    outcome && oversellStartingStock !== null
-      ? deriveOversoldUnits({
-          reservedUnits: outcome.reservedUnits,
-          startingStock: oversellStartingStock,
-        })
-      : null;
 
   return (
     <div className="grid grid-cols-12 gap-4">
-      {result ? <RunConclusion result={result} runStatus={run?.status ?? "starting"} /> : null}
-      <RecoveryStatusPanel
-        recovery={recovery}
+      <div className="col-span-12 flex justify-end">
+        <StatusPill status={deriveFreshnessPresentationState(composition.freshness)} />
+      </div>
+      <WatchNarrative composition={composition} onRetry={() => void retryNow()} />
+      <TechnicalDetails
+        composition={composition}
+        hasSyncIssue={hasSyncIssue}
         isRefreshing={isRefreshing}
         isRetryScheduled={isRetryScheduled}
+        onRetry={() => void retryNow()}
+        realtimeStatus={realtimeStatus}
         retryAttempt={retryAttempt}
         retryDelayMs={retryDelayMs}
-        hasSyncIssue={hasSyncIssue}
         syncIssue={syncIssue}
-        presentation={runPresentation}
-        {...(projection ? { freshness } : {})}
-        realtimeStatus={realtimeStatus}
-        onRefresh={() => {
-          void retryNow();
-        }}
       />
-      {projection ? (
-        <>
-          <GoldSignals
-            acceptedReservations={outcome?.acceptedReservations ?? null}
-            arrivalSummary={projection.requestArrivalSummary}
-            liveLag={projection.consistencyLag}
-            liveSamples={signalSamples}
-            oversoldUnits={oversoldUnits}
-            retryingOrderCount={outcome?.retryingOrders ?? 0}
-            runStatus={run?.status ?? null}
-            startingStock={projection.inventory?.allocatedStock ?? null}
-            terminalSummary={projection.runSignalTimelineSummary}
-          />
-          <RequestSurgePanel recovery={recovery} freshness={freshness} />
-          <InventoryDrainPanel
-            recovery={recovery}
-            freshness={freshness}
-            presentation={deriveInventoryOutcomeState(
-              projection.inventory,
-              run,
-              outcome?.reservedUnits ?? null,
-            )}
-          />
-          <RunErpOutcomesPanel
-            recovery={recovery}
-            freshness={freshness}
-            presentation={deriveRunErpOutcomeState(projection.erp, run)}
-          />
-          <ConsistencyLagPanel
-            recovery={recovery}
-            freshness={freshness}
-            presentation={deriveLagPresentationState(
-              projection.consistencyLag?.pendingConfirmationCount ?? null,
-              projection.consistencyLag?.confirmedOrderCount ?? null,
-              run,
-            )}
-          />
-          <RunOutcomesPanel
-            recovery={recovery}
-            freshness={freshness}
-            presentation={deriveOutcomePresentationState(outcome, run, runPresentation)}
-          />
-          <SystemStatusPanel
-            recovery={recovery}
-            presentation={deriveSharedRuntimeState(projection.systemStatus)}
-            erpPresentation={deriveSharedErpProtectionState(
-              projection.systemStatus?.erpProtection ?? null,
-            )}
-          />
-        </>
-      ) : null}
     </div>
   );
+}
+
+export function WatchNarrative({
+  composition,
+  onRetry,
+}: {
+  composition: WatchComposition;
+  onRetry?: () => void;
+}) {
+  switch (composition.phase) {
+    case "checking":
+    case "unavailable":
+      return (
+        <section className="col-span-12 rounded-lg border border-border bg-surface p-6">
+          <ErrorNotice
+            context="watch-read"
+            {...(onRetry ? { onRetry } : {})}
+            read={composition.panelRecovery}
+          />
+        </section>
+      );
+    case "idle":
+      return <IdleNarrative latestCompletedRun={composition.latestCompletedRun} />;
+    case "starting":
+      return (
+        <>
+          <ScenarioStrip configSnapshot={composition.run.configSnapshot} />
+          <NarrativeMessage eyebrow="Preparing the run" title="Setting up the flash sale">
+            Preparing inventory and checkout traffic. Signal readings will appear when traffic
+            begins.
+          </NarrativeMessage>
+        </>
+      );
+    case "active":
+      return (
+        <>
+          <ScenarioStrip configSnapshot={composition.run.configSnapshot} />
+          <Signals composition={composition} />
+          <NarrativeMessage eyebrow="What is happening now" title="The surge is under way">
+            {composition.presentation.description}
+          </NarrativeMessage>
+          <RunErpOutcomesPanel
+            freshness={composition.freshness}
+            presentation={deriveRunErpOutcomeState(composition.projection.erp, composition.run)}
+            recovery={composition.panelRecovery}
+          />
+          <ConsistencyLagPanel
+            freshness={composition.freshness}
+            presentation={deriveLagPresentationState(
+              composition.projection.consistencyLag?.pendingConfirmationCount ?? null,
+              composition.projection.consistencyLag?.confirmedOrderCount ?? null,
+              composition.run,
+            )}
+            recovery={composition.panelRecovery}
+          />
+        </>
+      );
+    case "draining":
+      return (
+        <>
+          <ScenarioStrip configSnapshot={composition.run.configSnapshot} />
+          <NarrativeMessage eyebrow="Traffic finished" title="Following the drain">
+            New checkout traffic has stopped. Remaining reservations are moving through protected
+            processing to final confirmation.
+          </NarrativeMessage>
+          <RunOutcomesPanel
+            freshness={composition.freshness}
+            presentation={deriveOutcomePresentationState(
+              composition.projection.businessOutcome,
+              composition.run,
+              composition.presentation,
+            )}
+            recovery={composition.panelRecovery}
+          />
+          <RunErpOutcomesPanel
+            freshness={composition.freshness}
+            presentation={deriveRunErpOutcomeState(composition.projection.erp, composition.run)}
+            recovery={composition.panelRecovery}
+          />
+          <ConsistencyLagPanel
+            freshness={composition.freshness}
+            presentation={deriveLagPresentationState(
+              composition.projection.consistencyLag?.pendingConfirmationCount ?? null,
+              composition.projection.consistencyLag?.confirmedOrderCount ?? null,
+              composition.run,
+            )}
+            recovery={composition.panelRecovery}
+          />
+          <Signals composition={composition} />
+        </>
+      );
+    case "completed":
+    case "failed":
+      return <TerminalNarrative composition={composition} />;
+  }
+}
+
+function IdleNarrative({
+  latestCompletedRun,
+}: {
+  latestCompletedRun: BackendRead<RunHistoryListItem | null>;
+}) {
+  const latest = latestCompletedRun.status === "available" ? latestCompletedRun.data : null;
+  return (
+    <section className="col-span-12 rounded-lg border border-border bg-surface p-6">
+      <p className="m-0 text-xs font-bold uppercase text-muted">Ready when you are</p>
+      <h2 className="m-0 mt-1 text-2xl font-bold leading-tight text-ink">Start a demo</h2>
+      <p className="m-0 mt-3 max-w-[66ch] leading-6 text-muted">
+        Choose a flash-sale scenario, then return here to follow it from setup through the final
+        result.
+      </p>
+      <div className="mt-4 flex flex-wrap gap-3">
+        <Link className={actionClassName} href="/">
+          Start a demo
+        </Link>
+        {latest ? (
+          <Link className={secondaryActionClassName} href={`/run-history/${latest.runId}`}>
+            {durableResultLinkName(latest.presetName, latest.occurredAt)}
+          </Link>
+        ) : null}
+      </div>
+      {!latest ? (
+        <p className="m-0 mt-4 text-sm text-muted">
+          {latestCompletedRun.status === "available"
+            ? "No completed runs yet"
+            : "Latest completed run unavailable"}
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
+function TerminalNarrative({
+  composition,
+}: {
+  composition: Extract<WatchComposition, { phase: "completed" | "failed" }>;
+}) {
+  const failure =
+    composition.run.status === "failed"
+      ? publicFailureExplanation(composition.run.failureCategory)
+      : null;
+  const endedAt =
+    composition.run.status === "completed" || composition.run.status === "failed"
+      ? composition.run.finalizedAt
+      : composition.run.startedAt;
+
+  return (
+    <>
+      {failure ? (
+        <NarrativeMessage eyebrow="Run failed" title="The run could not complete">
+          {failure.explanation}
+        </NarrativeMessage>
+      ) : null}
+      <RunConclusion
+        result={composition.result}
+        runStatus={composition.run.status}
+        showReconciliationStatus
+      />
+      <ScenarioStrip configSnapshot={composition.run.configSnapshot} />
+      <Signals composition={composition} />
+      <section className="col-span-12 rounded-lg border border-border bg-surface p-4">
+        <p className="m-0 text-xs font-bold uppercase text-muted">Durable result</p>
+        <Link
+          className={`${secondaryActionClassName} mt-3`}
+          href={`/run-history/${composition.run.runId}`}
+        >
+          {durableResultLinkName(composition.run.presetName, endedAt)}
+        </Link>
+      </section>
+    </>
+  );
+}
+
+function Signals({
+  composition,
+}: {
+  composition: WatchComposition & {
+    phase: "active" | "draining" | "completed" | "failed";
+    projection: DashboardProjection;
+    run: NonNullable<DashboardProjection["currentRun"]>;
+    signalSamples?: Parameters<typeof GoldSignals>[0]["liveSamples"];
+  };
+}) {
+  const outcome = composition.projection.businessOutcome;
+  const startingStock = composition.projection.inventory?.allocatedStock ?? null;
+  const oversoldUnits =
+    outcome && startingStock !== null
+      ? deriveOversoldUnits({ reservedUnits: outcome.reservedUnits, startingStock })
+      : null;
+  return (
+    <GoldSignals
+      acceptedReservations={outcome?.acceptedReservations ?? null}
+      arrivalSummary={composition.projection.requestArrivalSummary}
+      liveLag={composition.projection.consistencyLag}
+      liveSamples={
+        composition.phase === "active" || composition.phase === "draining"
+          ? (composition.signalSamples ?? [])
+          : []
+      }
+      oversoldUnits={oversoldUnits}
+      retryingOrderCount={outcome?.retryingOrders ?? 0}
+      runStatus={composition.run.status}
+      startingStock={startingStock}
+      terminalSummary={composition.projection.runSignalTimelineSummary}
+    />
+  );
+}
+
+function NarrativeMessage({
+  children,
+  eyebrow,
+  title,
+}: {
+  children: ReactNode;
+  eyebrow: string;
+  title: string;
+}) {
+  return (
+    <section className="col-span-12 rounded-lg border border-border bg-surface p-4">
+      <p className="m-0 text-xs font-bold uppercase text-muted">{eyebrow}</p>
+      <h2 className="m-0 mt-1 text-xl font-bold leading-tight text-ink">{title}</h2>
+      <p className="m-0 mt-2 leading-6 text-muted-strong">{children}</p>
+    </section>
+  );
+}
+
+function TechnicalDetails({
+  composition,
+  hasSyncIssue,
+  isRefreshing,
+  isRetryScheduled,
+  onRetry,
+  realtimeStatus,
+  retryAttempt,
+  retryDelayMs,
+  syncIssue,
+}: {
+  composition: WatchComposition;
+  hasSyncIssue: boolean;
+  isRefreshing: boolean;
+  isRetryScheduled: boolean;
+  onRetry: () => void;
+  realtimeStatus: Parameters<typeof RecoveryStatusPanel>[0]["realtimeStatus"];
+  retryAttempt: number;
+  retryDelayMs: number | null;
+  syncIssue: Extract<BackendRead<DashboardProjection>, { status: "unavailable" }> | null;
+}) {
+  const projection = "projection" in composition ? composition.projection : null;
+  const run = projection?.currentRun ?? null;
+  const outcome = projection?.businessOutcome ?? null;
+
+  return (
+    <details className="col-span-12 rounded-lg border border-border bg-surface px-4 py-3">
+      <summary className="cursor-pointer font-semibold text-muted-strong">
+        Technical details
+      </summary>
+      <div className="mt-4 grid grid-cols-12 gap-4">
+        <RecoveryStatusPanel
+          freshness={composition.freshness}
+          hasSyncIssue={hasSyncIssue}
+          isRefreshing={isRefreshing}
+          isRetryScheduled={isRetryScheduled}
+          onRefresh={onRetry}
+          presentation={composition.presentation}
+          realtimeStatus={realtimeStatus}
+          recovery={composition.panelRecovery}
+          retryAttempt={retryAttempt}
+          retryDelayMs={retryDelayMs}
+          syncIssue={syncIssue}
+        />
+        {projection && run ? (
+          <>
+            <RequestSurgePanel
+              freshness={composition.freshness}
+              recovery={composition.panelRecovery}
+            />
+            <InventoryDrainPanel
+              freshness={composition.freshness}
+              presentation={deriveInventoryOutcomeState(
+                projection.inventory,
+                run,
+                outcome?.reservedUnits ?? null,
+              )}
+              recovery={composition.panelRecovery}
+            />
+            {composition.phase === "starting" ||
+            composition.phase === "completed" ||
+            composition.phase === "failed" ? (
+              <>
+                <RunErpOutcomesPanel
+                  freshness={composition.freshness}
+                  presentation={deriveRunErpOutcomeState(projection.erp, run)}
+                  recovery={composition.panelRecovery}
+                />
+                <ConsistencyLagPanel
+                  freshness={composition.freshness}
+                  presentation={deriveLagPresentationState(
+                    projection.consistencyLag?.pendingConfirmationCount ?? null,
+                    projection.consistencyLag?.confirmedOrderCount ?? null,
+                    run,
+                  )}
+                  recovery={composition.panelRecovery}
+                />
+                <RunOutcomesPanel
+                  freshness={composition.freshness}
+                  presentation={deriveOutcomePresentationState(
+                    outcome,
+                    run,
+                    composition.presentation,
+                  )}
+                  recovery={composition.panelRecovery}
+                />
+              </>
+            ) : null}
+            <SystemStatusPanel
+              erpPresentation={deriveSharedErpProtectionState(
+                projection.systemStatus?.erpProtection ?? null,
+              )}
+              presentation={deriveSharedRuntimeState(projection.systemStatus)}
+              recovery={composition.panelRecovery}
+            />
+          </>
+        ) : null}
+      </div>
+    </details>
+  );
+}
+
+function durableResultLinkName(scenario: string, time: string): string {
+  return `View the full result for ${scenario} (${formatInstantUtc(time) ?? time})`;
 }

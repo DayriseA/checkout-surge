@@ -26,6 +26,7 @@ import {
   publicVocabulary,
   trafficModeLabel,
 } from "../lib/presentation/public-vocabulary";
+import { deriveRunConfigFacts } from "../lib/presentation/run-config-presentation";
 import {
   deriveRunPresentationState,
   type PresentationState,
@@ -730,11 +731,8 @@ export function readinessBlocksRunStart(readiness: BackendRead<HealthResponse>):
 }
 
 export function derivePresetCardFacts(preset: DemoPresetContract) {
-  const traffic = preset.trafficConfig;
-  const uniqueAttempts =
-    traffic.mode === "buyer-spike"
-      ? traffic.buyerCount
-      : traffic.ratePerSecond * traffic.durationSeconds;
+  const configFacts = deriveRunConfigFacts(preset);
+  const uniqueAttempts = configFacts.uniqueAttempts;
   const expectedConfirmedOrders = Math.min(uniqueAttempts, preset.inventoryConfig.startingStock);
   const workerThroughput =
     preset.erpConfig.latencyMs === 0
@@ -744,17 +742,12 @@ export function derivePresetCardFacts(preset: DemoPresetContract) {
     1,
     Math.ceil(expectedConfirmedOrders / Math.min(preset.erpConfig.maxTps, workerThroughput)),
   );
-  const hasDuplicateAttempts = traffic.mode === "buyer-spike" && traffic.duplicateEachBuyerAttempt;
 
   return {
-    surgeLabel: traffic.mode === "buyer-spike" ? "Buyers" : "Planned unique attempts",
-    surgeValue: formatCount(uniqueAttempts) ?? "not configured",
-    hasDuplicateAttempts,
-    duplicateAttempts: hasDuplicateAttempts
-      ? "Yes — every buyer sends the same request twice"
-      : traffic.mode === "buyer-spike"
-        ? "No — one request per buyer"
-        : "No",
+    surgeLabel: configFacts.surgeLabel,
+    surgeValue: configFacts.surgeValue,
+    hasDuplicateAttempts: configFacts.hasDuplicateAttempts,
+    duplicateAttempts: configFacts.duplicateAttempts,
     expectedSoldOutCount: Math.max(0, uniqueAttempts - preset.inventoryConfig.startingStock),
     settlingCopy: `Usually about ${formatDurationMs(settlingSeconds * 1_000) ?? `${settlingSeconds}s`} on the demo host; actual time depends on the environment`,
     outcomeFocus: preset.display.outcomeFocus.map(outcomeFocusLabel).join(" · "),
