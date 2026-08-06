@@ -3,6 +3,11 @@ import type { ReactNode } from "react";
 import type { BackendRead } from "../lib/api";
 import { projectRequestSurge } from "../lib/dashboard-projection-state";
 import {
+  deriveRunErpStory,
+  deriveSharedErpStory,
+  type ErpStory,
+} from "../lib/presentation/erp-story";
+import {
   formatCount,
   formatDurationMs,
   formatInstantUtc,
@@ -42,6 +47,8 @@ export type { RealtimeConnectionStatus } from "../lib/presentation/freshness";
 const panelClassName =
   "min-w-0 rounded-lg border border-border bg-surface p-4 max-[900px]:col-span-full";
 const panelNarrowClassName = `${panelClassName} col-span-4`;
+/** Two half-width panels pair into one full row instead of orphaning a third of the grid. */
+const panelHalfClassName = `${panelClassName} col-span-6`;
 const panelWideClassName = `${panelClassName} col-span-8`;
 const panelFullClassName = `${panelClassName} col-span-12`;
 const panelHeaderClassName = "mb-4 flex items-start justify-between gap-3";
@@ -53,6 +60,8 @@ const wideFactGridClassName =
   "m-0 grid grid-cols-6 gap-3 max-[700px]:grid-cols-3 max-[480px]:grid-cols-2";
 const stackedFactGridClassName = "m-0 grid gap-3";
 const factItemClassName = "min-w-0";
+const leadSentenceClassName = "m-0 mb-1 text-base font-bold leading-6 text-ink";
+const leadDetailClassName = "m-0 mb-3 text-xs leading-5 text-muted";
 const factTermClassName = "mb-1 text-xs font-bold text-muted";
 const factValueClassName = "m-0 [overflow-wrap:anywhere] text-base font-bold text-ink";
 const smallValueClassName = "m-0 [overflow-wrap:anywhere] text-sm font-semibold text-ink";
@@ -61,6 +70,30 @@ const controlButtonClassName =
 
 /** The unit tag carried by load-generator latency samples. */
 const millisecondUnit = "ms";
+
+/**
+ * The lag producer owns this measurement; the panel only names its boundaries so a reader knows
+ * which interval the distribution below describes. It is not the checkout-response boundary.
+ */
+const lagMeasurementBoundaryCaption =
+  "Measured from the moment a reservation is secured to final simulated-ERP confirmation.";
+
+/**
+ * Both simulated-ERP surfaces carry clocks from two different producers with two different update
+ * meanings: the circuit breaker's edge-triggered state clocks, which move only when protection
+ * changes, and the API projection's poll clock, which moves on every read. Labelling them by
+ * producer keeps them from reading as one synchronized set of run timestamps.
+ */
+const protectionClockLabel = {
+  pauseBegan: "Protection pause began (reported by circuit breaker)",
+  /**
+   * Not a scheduled check: the breaker books nothing, and only an incoming call can move it out of
+   * the paused state. This is the earliest time such a call would be allowed through.
+   */
+  retryEligibleFrom: "Calls can be retried from (per circuit breaker)",
+  stateChanged: "Protection state changed (reported by circuit breaker)",
+  projected: "Projected by API at",
+} as const;
 
 function formatNumber(value: number): string {
   return formatCount(value) ?? "—";
@@ -137,6 +170,21 @@ function Fact({ label, value, small = false }: { label: string; value: string; s
       <dt className={factTermClassName}>{label}</dt>
       <dd className={small ? smallValueClassName : factValueClassName}>{value}</dd>
     </div>
+  );
+}
+
+/**
+ * The lead of both simulated-ERP surfaces: one sentence a visitor can read without knowing what a
+ * circuit breaker is, and the next action only when one exists. `caption` states a measurement
+ * window once for the facts below, so no individual count has to repeat it.
+ */
+function ErpStoryLead({ story, caption }: { story: ErpStory; caption?: string }) {
+  return (
+    <>
+      <p className={leadSentenceClassName}>{story.sentence}</p>
+      {story.nextAction ? <p className={leadDetailClassName}>{story.nextAction}</p> : null}
+      {caption ? <p className={leadDetailClassName}>{caption}</p> : null}
+    </>
   );
 }
 
@@ -570,7 +618,7 @@ export function RunErpOutcomesPanel({
   const runStatus = data?.currentRun?.status ?? null;
 
   return (
-    <section className={panelNarrowClassName}>
+    <section className={panelHalfClassName}>
       <div className={panelHeaderClassName}>
         <div>
           <p className={eyebrowClassName}>This run</p>
@@ -581,32 +629,14 @@ export function RunErpOutcomesPanel({
       {erp ? (
         <>
           <FreshnessLine freshness={freshness} />
+          <ErpStoryLead
+            caption={`Attempts, failures, and timeouts over the last ${formatWindowSeconds(erp.recentAttemptWindowSeconds)}s.`}
+            story={deriveRunErpStory(erp, runStatus)}
+          />
           <dl className={factGridClassName}>
-            <Fact
-              label="Run protection"
-              value={
-                erp.circuitReadStatus === "unavailable"
-                  ? "Protection status unavailable"
-                  : erp.circuit
-                    ? circuitStateLabel(erp.circuit.state)
-                    : // A successful read with no snapshot only proves that no protection state is
-                      // retained now; run-scoped snapshots expire, so a settled run cannot claim
-                      // that protection never engaged.
-                      runEvidenceAbsence(runStatus, {
-                        source: "durable-processing",
-                        pending: "not yet exercised",
-                        settled: "No protection state was retained for this run",
-                      })
-              }
-            />
             <Fact label="Recent attempts" value={formatNumber(erp.recentAttemptCount)} />
             <Fact label="Failures" value={formatNumber(erp.recentFailureCount)} />
             <Fact label="Timeouts" value={formatNumber(erp.recentTimeoutCount)} />
-            <Fact label="Last updated" value={formatExpectedTime(erp.observedAt)} small />
-            <Fact
-              label="Attempt window"
-              value={`${formatWindowSeconds(erp.recentAttemptWindowSeconds)}s`}
-            />
             <Fact
               label="Latest attempt"
               value={
@@ -627,6 +657,23 @@ export function RunErpOutcomesPanel({
             </summary>
             <dl className={factGridClassName}>
               <Fact
+                label="Run protection"
+                value={
+                  erp.circuitReadStatus === "unavailable"
+                    ? "Protection status unavailable"
+                    : erp.circuit
+                      ? circuitStateLabel(erp.circuit.state)
+                      : // A successful read with no snapshot only proves that no protection state is
+                        // retained now; run-scoped snapshots expire, so a settled run cannot claim
+                        // that protection never engaged.
+                        runEvidenceAbsence(runStatus, {
+                          source: "durable-processing",
+                          pending: "not yet exercised",
+                          settled: "No protection state was retained for this run",
+                        })
+                }
+              />
+              <Fact
                 label="Failures before protection pauses calls"
                 value={erp.circuit ? formatNumber(erp.circuit.failureThreshold) : "—"}
               />
@@ -639,18 +686,23 @@ export function RunErpOutcomesPanel({
                 value={erp.circuit ? formatMilliseconds(erp.circuit.resetTimeoutMs) : "—"}
               />
               <Fact
-                label="Protection pause began"
+                label={protectionClockLabel.pauseBegan}
                 value={formatScheduledTime(erp.circuit?.openedAt)}
                 small
               />
               <Fact
-                label="Next recovery check"
+                label={protectionClockLabel.retryEligibleFrom}
                 value={formatScheduledTime(erp.circuit?.nextAttemptAt)}
                 small
               />
               <Fact
-                label="Protection last changed"
+                label={protectionClockLabel.stateChanged}
                 value={formatExpectedTime(erp.circuit?.lastChangedAt)}
+                small
+              />
+              <Fact
+                label={protectionClockLabel.projected}
+                value={formatExpectedTime(erp.observedAt)}
                 small
               />
             </dl>
@@ -744,30 +796,34 @@ export function SystemStatusPanel({
               <h3 className="m-0 text-sm font-bold text-ink">Shared simulated ERP protection</h3>
               <StatusPill status={erpPresentation} />
             </div>
-            <dl className={factGridClassName}>
-              <Fact
-                label="Protection"
-                value={
-                  protection.circuit
-                    ? circuitStateLabel(protection.circuit.state)
-                    : "not yet available"
-                }
-              />
-              <Fact
-                label="Protection note"
-                value={protectionReasonLabel(protection.reason)}
-                small
-              />
-              <Fact label="Last updated" value={formatExpectedTime(protection.observedAt)} small />
-            </dl>
+            <ErpStoryLead story={deriveSharedErpStory(protection)} />
+            {/* Retry pressure earns a place in the main view only while it is real. A zero here
+                would read as a fact about the shared runtime rather than as its absence. */}
+            {protection.retryPressure.retryingJobCount > 0 ? (
+              <dl className={factGridClassName}>
+                <Fact
+                  label="Retrying jobs"
+                  value={formatNumber(protection.retryPressure.retryingJobCount)}
+                />
+              </dl>
+            ) : null}
             <details className="mt-3 rounded border border-border px-3 py-2 text-sm">
               <summary className="cursor-pointer font-semibold text-muted-strong">
                 Protection details
               </summary>
               <dl className={factGridClassName}>
                 <Fact
-                  label="Retrying jobs"
-                  value={formatNumber(protection.retryPressure.retryingJobCount)}
+                  label="Protection"
+                  value={
+                    protection.circuit
+                      ? circuitStateLabel(protection.circuit.state)
+                      : "not yet available"
+                  }
+                />
+                <Fact
+                  label="Protection note"
+                  value={protectionReasonLabel(protection.reason)}
+                  small
                 />
                 <Fact
                   label="Failures before protection pauses calls"
@@ -793,18 +849,23 @@ export function SystemStatusPanel({
                   )}
                 />
                 <Fact
-                  label="Protection pause began"
+                  label={protectionClockLabel.pauseBegan}
                   value={formatScheduledTime(protection.circuit?.openedAt)}
                   small
                 />
                 <Fact
-                  label="Next recovery check"
+                  label={protectionClockLabel.retryEligibleFrom}
                   value={formatScheduledTime(protection.circuit?.nextAttemptAt)}
                   small
                 />
                 <Fact
-                  label="Protection state since"
+                  label={protectionClockLabel.stateChanged}
                   value={formatExpectedTime(protection.circuit?.lastChangedAt)}
+                  small
+                />
+                <Fact
+                  label={protectionClockLabel.projected}
+                  value={formatExpectedTime(protection.observedAt)}
                   small
                 />
                 <Fact
@@ -842,13 +903,25 @@ export function ConsistencyLagPanel({
     pending: "not yet available",
     settled: "Not recorded for this run",
   });
+  // A distribution over zero confirmations has no reading, so it states the absence of
+  // confirmations rather than the absence of the measurement. "Yet" may only promise evidence that
+  // can still arrive, so the lifecycle decides the wording; a pre-run zero is never called settled.
+  const distributionAbsence =
+    lag?.confirmedOrderCount === 0
+      ? runEvidenceAbsence(data?.currentRun?.status ?? null, {
+          source: "durable-processing",
+          pending: "No confirmations yet",
+          settled: "No confirmations were recorded for this run",
+        })
+      : lagAbsence;
 
   return (
-    <section className={panelNarrowClassName}>
+    <section className={panelHalfClassName}>
       <div className={panelHeaderClassName}>
         <div>
           <p className={eyebrowClassName}>{publicVocabulary.consistencyLag}</p>
           <h2 className={panelTitleClassName}>Fast reservation vs final confirmation</h2>
+          <p className="m-0 mt-1 text-xs text-muted">{lagMeasurementBoundaryCaption}</p>
         </div>
         <StatusPill status={presentation} />
       </div>
@@ -858,10 +931,13 @@ export function ConsistencyLagPanel({
           <dl className={factGridClassName}>
             <Fact
               label="95% confirmed within"
-              value={formatMilliseconds(lag.p95LagMs, lagAbsence)}
+              value={formatMilliseconds(lag.p95LagMs, distributionAbsence)}
             />
-            <Fact label="Avg confirmed" value={formatMilliseconds(lag.averageLagMs, lagAbsence)} />
-            <Fact label="Max confirmed" value={formatMilliseconds(lag.maxLagMs, lagAbsence)} />
+            <Fact
+              label="Average"
+              value={formatMilliseconds(lag.averageLagMs, distributionAbsence)}
+            />
+            <Fact label="Longest" value={formatMilliseconds(lag.maxLagMs, distributionAbsence)} />
             <Fact
               label="Awaiting confirmation"
               value={formatNumber(lag.pendingConfirmationCount)}
