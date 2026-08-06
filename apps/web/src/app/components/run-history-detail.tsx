@@ -7,6 +7,7 @@ import type { ReactNode } from "react";
 import { formatCount, formatDurationMs, formatInstantUtc } from "../lib/presentation/format";
 import {
   durableCheckoutLens,
+  publicFailureExplanation,
   publicStatusLabel,
   publicVocabulary,
   simulatedErpLens,
@@ -366,6 +367,7 @@ function trafficConfigFacts(
       ["Scenario", trafficModeLabel(config.mode)],
       ["Buyer count", formatNumber(config.buyerCount)],
       ["Duplicate attempts", config.duplicateEachBuyerAttempt ? "yes" : "no"],
+      ["Configured start delay", formatDurationSeconds(config.startDelaySeconds)],
       ["Configured maximum dispatch time", formatDurationSeconds(config.maxDurationSeconds)],
       ["Quantity", formatNumber(config.quantityPerAttempt)],
     ];
@@ -374,51 +376,141 @@ function trafficConfigFacts(
   return [
     ["Scenario", trafficModeLabel(config.mode)],
     ["Configured arrival rate (per second)", formatNumber(config.ratePerSecond)],
+    ["Configured start delay", formatDurationSeconds(config.startDelaySeconds)],
     ["Configured traffic duration", formatDurationSeconds(config.durationSeconds)],
+    ...(config.k6Vus
+      ? [
+          ["Pre-allocated k6 VUs", formatNumber(config.k6Vus.preAllocatedVus)] as [
+            string,
+            ReactNode,
+          ],
+          ["Maximum k6 VUs", formatNumber(config.k6Vus.maxVus)] as [string, ReactNode],
+        ]
+      : []),
     ["Quantity", formatNumber(config.quantityPerAttempt)],
   ];
 }
 
 export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDetailResponse }) {
   const { run, summary } = detail;
-  const result = deriveRunResult(evidenceFromRunHistoryDetail(detail));
-  const runPresentation = deriveTerminalSummaryPresentation(result);
-  const overallDuration = deriveOverallRunDuration(summary);
+  const result = detail.result;
+  const config = run.configSnapshot;
+  const failure = summary.failureCategory
+    ? publicFailureExplanation(summary.failureCategory)
+    : null;
   return (
     <div className="grid gap-4">
-      <RunConclusion result={result} runStatus={summary.status} />
       <section className="rounded-lg border border-border bg-surface p-4">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <p className="m-0 text-xs font-bold uppercase text-muted">Run detail</p>
-            <h2 className="m-0 mt-1 text-2xl font-bold leading-tight text-ink">
-              {summary.presetName}
-            </h2>
-            <p className="m-0 mt-2 text-sm font-semibold text-muted-strong">{summary.runId}</p>
-          </div>
+        <h2 className="m-0 text-base font-bold leading-tight text-ink">Accepted configuration</h2>
+        <div className="mt-3 grid grid-cols-4 gap-4 max-[1100px]:grid-cols-2 max-[700px]:grid-cols-1">
+          <FactList
+            facts={[
+              ["Planned demand", formatNumber(detail.plannedAttempts)],
+              ...trafficConfigFacts(config.trafficConfig),
+            ]}
+            title="Traffic"
+          />
+          <FactList
+            facts={[
+              [publicVocabulary.startingStock, formatNumber(config.inventoryConfig.startingStock)],
+              ["Quantity per checkout", formatNumber(config.inventoryConfig.quantityPerCheckout)],
+              [
+                "Configured hold (minutes)",
+                formatNumber(config.inventoryConfig.reservationHoldMinutes),
+              ],
+            ]}
+            title="Inventory"
+          />
+          <FactList
+            facts={[
+              ["Delay per order", formatDurationMs(config.erpConfig.latencyMs) ?? "not recorded"],
+              ["Capacity (orders/s)", formatNumber(config.erpConfig.maxTps)],
+              ["Failure rate", formatPercent(config.erpConfig.errorRate)],
+              ["Forced outage", config.erpConfig.forcedOutage ? "yes" : "no"],
+              [
+                "Request timeout (configured safety limit)",
+                formatDurationMs(config.erpConfig.requestTimeoutMs) ?? "not recorded",
+              ],
+            ]}
+            title="Simulated ERP"
+          />
+          <FactList
+            facts={[
+              [
+                "Order-processing concurrency",
+                formatNumber(config.backpressureConfig.orderProcessConcurrency),
+              ],
+              [
+                "Retry attempts (configured limit)",
+                formatNumber(config.backpressureConfig.retryPolicy.maxAttempts),
+              ],
+              [
+                "Initial retry backoff",
+                formatDurationMs(config.backpressureConfig.retryPolicy.initialBackoffMs) ??
+                  "not recorded",
+              ],
+              [
+                "Drain safety limit (configured)",
+                formatDurationSeconds(config.backpressureConfig.drainTimeoutSeconds),
+              ],
+              [
+                "Pending-storage retry delay (configured)",
+                formatDurationSeconds(
+                  config.backpressureConfig.pendingPersistenceRetryAfterSeconds,
+                ),
+              ],
+              [
+                "Circuit-breaker failure threshold",
+                formatNumber(config.backpressureConfig.circuitBreakerFailureThreshold),
+              ],
+              [
+                "Circuit-breaker reset timeout",
+                formatDurationMs(config.backpressureConfig.circuitBreakerResetTimeoutMs) ??
+                  "not recorded",
+              ],
+            ]}
+            title="Backpressure"
+          />
+        </div>
+      </section>
+
+      <RunConclusion
+        result={result}
+        runStatus={summary.status}
+        showReconciliationStatus
+        showSentence={false}
+      />
+
+      <section aria-labelledby="history-gold-signals" className="grid gap-3">
+        <h2 id="history-gold-signals" className="m-0 text-base font-bold leading-tight text-ink">
+          Gold signals
+        </h2>
+        <GoldSignals
+          acceptedReservations={summary.businessOutcomeSummary.acceptedReservations}
+          arrivalSummary={summary.trafficDeliverySummary.requestArrivalSummary}
+          oversoldUnits={oversoldUnitsFromTerminalInventory(summary)}
+          runStatus={run.status}
+          terminalSummary={detail.runSignalTimelineSummary}
+        />
+      </section>
+
+      <section className="rounded-lg border border-border bg-surface p-4">
+        <h2 className="m-0 text-base font-bold leading-tight text-ink">
+          Client observation and delivery quality
+        </h2>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <span className="text-sm font-semibold text-muted-strong">Delivery quality</span>
           <StatusPill
             status={{
-              ...runPresentation,
               label: publicStatusLabel({
-                family: "run",
-                status: summary.status,
-                displayLabel: runPresentation.label,
+                family: "traffic-delivery",
+                status: summary.trafficDeliverySummary.trafficDeliveryStatus,
               }),
+              tone: trafficDeliveryStatusTone(summary.trafficDeliverySummary.trafficDeliveryStatus),
             }}
           />
         </div>
-        <div className="mt-4 grid grid-cols-4 gap-4 max-[1100px]:grid-cols-2 max-[700px]:grid-cols-1">
-          <FactList
-            title="Lifecycle"
-            facts={[
-              ["Started", formatDate(summary.startedAt)],
-              ["Overall run duration", overallDuration.text],
-              ["Traffic started", formatDate(run.trafficStartedAt)],
-              ["Traffic ended", formatDate(run.trafficEndedAt)],
-              ["Finalized", formatDate(run.finalizedAt)],
-              ["Evidence recorded", formatDate(summary.capturedAt)],
-            ]}
-          />
+        <div className="mt-3 grid grid-cols-2 gap-4 max-[900px]:grid-cols-1">
           <TransportObservationSection
             arrivalSummary={summary.trafficDeliverySummary.requestArrivalSummary}
             counts={summary.transportAttemptCounts}
@@ -426,58 +518,135 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
             httpTimingBreakdownSummary={detail.httpTimingBreakdownSummary}
             httpSummary={summary.httpSummary}
             serverReservationTimingSummary={summary.serverReservationTimingSummary}
-            startDelaySeconds={run.configSnapshot.trafficConfig.startDelaySeconds}
+            startDelaySeconds={config.trafficConfig.startDelaySeconds}
             surface="detail"
+            hideZeroExceptions
             {...(run.trafficStartedAt ? { trafficStartedAt: run.trafficStartedAt } : {})}
           />
           <FactList
-            caption={durableCheckoutLens.caption}
-            title={durableCheckoutLens.title}
-            facts={[
-              ["Total", formatNumber(detail.orders.totalCount)],
-              ["Queued", formatNumber(detail.orders.byStatus.queued)],
-              ["Processing", formatNumber(detail.orders.byStatus.processing)],
-              ["Confirmed", formatNumber(detail.orders.byStatus.confirmed)],
-              ["Failed", formatNumber(detail.orders.byStatus.failed)],
-            ]}
-          />
-          <FactList
             caption={simulatedErpLens.caption}
-            title={simulatedErpLens.title}
             facts={[
-              ["Attempts", formatNumber(detail.erpAttempts.totalCount)],
-              ["Succeeded", formatNumber(detail.erpAttempts.byStatus.succeeded)],
-              ["Failed", formatNumber(detail.erpAttempts.byStatus.failed)],
-              ["Timed out", formatNumber(detail.erpAttempts.byStatus.timedOut)],
-              ["Average latency", nullableMetricMs(detail.erpAttempts.averageLatencyMs)],
-              ["p95 latency", nullableMetricMs(detail.erpAttempts.p95LatencyMs)],
+              ["Simulated ERP call attempts", formatNumber(detail.erpAttempts.totalCount)],
+              ["Succeeded attempts", formatNumber(detail.erpAttempts.byStatus.succeeded)],
+              ...(detail.erpAttempts.byStatus.failed > 0
+                ? [
+                    ["Failed attempts", formatNumber(detail.erpAttempts.byStatus.failed)] as [
+                      string,
+                      ReactNode,
+                    ],
+                  ]
+                : []),
+              ...(detail.erpAttempts.byStatus.timedOut > 0
+                ? [
+                    ["Timed-out attempts", formatNumber(detail.erpAttempts.byStatus.timedOut)] as [
+                      string,
+                      ReactNode,
+                    ],
+                  ]
+                : []),
+              ["Simulated ERP call average", nullableMetricMs(detail.erpAttempts.averageLatencyMs)],
+              ["Simulated ERP call p95", nullableMetricMs(detail.erpAttempts.p95LatencyMs)],
+              [
+                "Reservation-to-confirmation p95",
+                nullableMetricMs(
+                  detail.runSignalTimelineSummary?.confirmationConvergence.p95LagMs ?? null,
+                ),
+              ],
             ]}
+            title={simulatedErpLens.title}
           />
         </div>
       </section>
-      <GoldSignals
-        acceptedReservations={summary.businessOutcomeSummary.acceptedReservations}
-        arrivalSummary={summary.trafficDeliverySummary.requestArrivalSummary}
-        oversoldUnits={oversoldUnitsFromTerminalInventory(summary)}
-        runStatus={run.status}
-        terminalSummary={detail.runSignalTimelineSummary}
-      />
+
       <section className="rounded-lg border border-border bg-surface p-4">
-        <h2 className="m-0 text-base font-bold leading-tight text-ink">Public activity totals</h2>
-        <div className="mt-3 grid grid-cols-2 gap-4 max-[700px]:grid-cols-1">
+        <h2 className="m-0 text-base font-bold leading-tight text-ink">
+          Lifecycle and final inventory
+        </h2>
+        <div className="mt-3 grid grid-cols-2 gap-4 max-[800px]:grid-cols-1">
           <FactList
-            title={publicVocabulary.notifications}
-            facts={[["Recorded", formatNumber(detail.notifications.totalCount)]]}
+            facts={[
+              ["Run accepted", formatDate(summary.startedAt)],
+              ["Checkout traffic started", formatDate(run.trafficStartedAt)],
+              ["Checkout traffic ended", formatDate(run.trafficEndedAt)],
+              ["Run ended", formatDate(run.finalizedAt)],
+            ]}
+            title="Lifecycle"
           />
-          <FactList title="Events" facts={[["Recorded", formatNumber(detail.events.totalCount)]]} />
+          <FactList
+            facts={[
+              ...(summary.terminalInventorySnapshot
+                ? [
+                    [
+                      publicVocabulary.startingStock,
+                      formatNumber(summary.terminalInventorySnapshot.startingStock),
+                    ] as [string, ReactNode],
+                    [
+                      "Remaining stock",
+                      formatNumber(summary.terminalInventorySnapshot.remainingStock),
+                    ] as [string, ReactNode],
+                    [
+                      "Reserved stock",
+                      formatNumber(summary.terminalInventorySnapshot.reservedStock),
+                    ] as [string, ReactNode],
+                  ]
+                : [
+                    [publicVocabulary.startingStock, "not recorded"] as [string, ReactNode],
+                    ["Remaining stock", "not recorded"] as [string, ReactNode],
+                    ["Reserved stock", "not recorded"] as [string, ReactNode],
+                  ]),
+              [
+                publicVocabulary.uniqueReservationsSecured,
+                formatNumber(summary.businessOutcomeSummary.acceptedReservations),
+              ],
+              [
+                publicVocabulary.soldOutRejectionsRecorded,
+                formatNumber(summary.businessOutcomeSummary.soldOutRejections),
+              ],
+              ["Confirmed orders", formatNumber(summary.businessOutcomeSummary.confirmedOrders)],
+              ["Failed orders", formatNumber(summary.businessOutcomeSummary.failedOrders)],
+            ]}
+            title="Final evidence"
+          />
         </div>
       </section>
-      <section className="rounded-lg border border-border bg-surface p-4">
-        <h2 className="m-0 text-base font-bold leading-tight text-ink">Run configuration</h2>
-        <div className="mt-3">
-          <FactList facts={trafficConfigFacts(run.configSnapshot.trafficConfig)} title="Traffic" />
-        </div>
-      </section>
+
+      {failure ? (
+        <section className="rounded-lg border border-warning bg-warning-soft p-4">
+          <h2 className="m-0 text-base font-bold text-ink">What happened</h2>
+          <p className="m-0 mt-2 text-sm text-muted-strong">{failure.explanation}</p>
+          <p className="m-0 mt-1 text-sm font-semibold text-muted-strong">{failure.action}</p>
+        </section>
+      ) : null}
+
+      <details className="rounded-lg border border-border bg-surface p-4">
+        <summary className="cursor-pointer font-semibold text-ink">Technical details</summary>
+        <dl className="m-0 mt-3 grid gap-2">
+          <div>
+            <dt className="text-sm text-muted">Run UUID</dt>
+            <dd className="m-0 [overflow-wrap:anywhere] text-sm font-semibold text-muted-strong">
+              <code>{summary.runId}</code>
+            </dd>
+          </div>
+          <div>
+            <dt className="text-sm text-muted">Aggregate evidence recorded</dt>
+            <dd className="m-0 text-sm font-semibold text-muted-strong">
+              {formatDate(summary.capturedAt)}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-sm text-muted">Logical queue</dt>
+            <dd className="m-0 [overflow-wrap:anywhere] text-sm font-semibold text-muted-strong">
+              <code>{config.backpressureConfig.queueName}</code>
+            </dd>
+          </div>
+          <div>
+            <dt className="text-sm text-muted">Physical queue</dt>
+            <dd className="m-0 [overflow-wrap:anywhere] text-sm font-semibold text-muted-strong">
+              <code>{config.backpressureConfig.physicalQueueName}</code>
+            </dd>
+          </div>
+        </dl>
+      </details>
     </div>
   );
 }

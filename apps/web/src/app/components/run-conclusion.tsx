@@ -79,9 +79,13 @@ function publicReconciliationReason(item: Reconciliation): string | null {
 export function RunConclusion({
   result,
   runStatus,
+  showReconciliationStatus = false,
+  showSentence = true,
 }: {
   result: RunResult;
   runStatus: DemoRunStatus;
+  showReconciliationStatus?: boolean;
+  showSentence?: boolean;
 }) {
   if (runStatus !== "completed" && runStatus !== "failed") return null;
   const hasCorrectnessFailure = result.maximumClassification === "correctness_failure";
@@ -90,10 +94,15 @@ export function RunConclusion({
       className={`col-span-12 rounded-lg border p-4 ${hasCorrectnessFailure ? "border-danger bg-danger-soft" : "border-border bg-surface"}`}
       aria-label="Run conclusion"
     >
-      <p className="m-0 text-xs font-bold uppercase text-muted">Final result</p>
-      <p className="m-0 mt-1 text-lg font-bold leading-7 text-ink">
-        {runConclusionSentence(result)}
-      </p>
+      {showSentence ? (
+        <>
+          <p className="m-0 text-xs font-bold uppercase text-muted">Final result</p>
+          <p className="m-0 mt-1 text-lg font-bold leading-7 text-ink">
+            {runConclusionSentence(result)}
+          </p>
+        </>
+      ) : null}
+      {showReconciliationStatus ? <ReconciliationStatus result={result} /> : null}
       <div className="mt-4 grid gap-2">
         {result.invariants.map((invariant) => (
           <div
@@ -143,5 +152,35 @@ export function RunConclusion({
         </div>
       </details>
     </section>
+  );
+}
+
+function ReconciliationStatus({ result }: { result: RunResult }) {
+  if (
+    result.maximumClassification !== "evidence_incomplete" &&
+    result.maximumClassification !== "warning"
+  ) {
+    return null;
+  }
+
+  const matchingReconciliations = result.reconciliations.filter(
+    (item) => item.classification === result.maximumClassification,
+  );
+  const reconciliation =
+    matchingReconciliations.find((item) => publicReconciliationReason(item) !== null) ??
+    matchingReconciliations[0];
+  const reason = reconciliation ? publicReconciliationReason(reconciliation) : null;
+  const explanation = reconciliation
+    ? `${publicPopulationLabel(reconciliation, "left")} and ${publicPopulationLabel(reconciliation, "right")} require reconciliation.${reason ? ` ${reason}` : ""}`
+    : "Some final evidence was unavailable.";
+  const incomplete = result.maximumClassification === "evidence_incomplete";
+
+  return (
+    <p
+      className="m-0 mt-3 rounded border border-warning bg-warning-soft px-3 py-2 text-sm font-semibold text-muted-strong"
+      role="status"
+    >
+      {incomplete ? "Evidence incomplete" : "Reconciliation warning"}: {explanation}
+    </p>
   );
 }

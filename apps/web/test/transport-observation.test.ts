@@ -108,7 +108,7 @@ describe("transport observation section", () => {
     expect(markup).not.toContain("≤ 1 ms");
     expect(markup).toContain("Target verdict");
     expect(markup).toMatch(/Target verdict<\/dt><dd[^>]*>fail<\/dd>/);
-    expect(markup).toContain("Reservation service p95 bound");
+    expect(markup).toContain("Reservation processing p95 bound");
     expect(markup).toContain("≤ 100ms");
     expect(markup).toContain("bounded p95 estimate");
     expect(markup).toContain("not hosted benchmark evidence");

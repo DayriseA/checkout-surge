@@ -42,7 +42,12 @@ import {
   collectPublicRuntimePolicyMutableViolations,
   collectPublicRuntimePolicyViolations,
 } from "./public-runtime-policy-validation.js";
-import { internalRunFailureReasonSchema, publicRunFailureCategorySchema } from "./run-result.js";
+import {
+  internalRunFailureReasonSchema,
+  publicRunFailureCategorySchema,
+  runResultOutcomeSchema,
+  runResultSchema,
+} from "./run-result.js";
 import { runSignalTimelineHeadlineSchema, runSignalTimelineSummarySchema } from "./run-signals.js";
 import { transportAttemptCountsSchema } from "./traffic-transport-counts.js";
 
@@ -273,6 +278,24 @@ export const runHistorySummarySchema = demoRunSummaryShapeSchema
   .strict();
 export type RunHistorySummary = z.infer<typeof runHistorySummarySchema>;
 
+export const runHistoryListItemSchema = z
+  .object({
+    runId: uuidSchema,
+    presetName: z.string().trim().min(1),
+    occurredAt: isoTimestampSchema,
+    overallDurationMs: nonnegativeNumberSchema.nullable(),
+    resultOutcome: runResultOutcomeSchema,
+    plannedAttempts: nonnegativeIntegerSchema,
+    startingStock: nonnegativeIntegerSchema,
+    uniqueReservations: nonnegativeIntegerSchema,
+    soldOutRejections: nonnegativeIntegerSchema,
+    confirmedOrders: nonnegativeIntegerSchema,
+    failedOrders: nonnegativeIntegerSchema,
+    convergenceDurationSeconds: nonnegativeNumberSchema.nullable(),
+  })
+  .strict();
+export type RunHistoryListItem = z.infer<typeof runHistoryListItemSchema>;
+
 export const runHistoryListQuerySchema = z
   .object({
     page: z.coerce.number().int().positive().default(1),
@@ -283,7 +306,7 @@ export type RunHistoryListQuery = z.infer<typeof runHistoryListQuerySchema>;
 
 export const runHistoryListResponseSchema = z
   .object({
-    summaries: z.array(runHistorySummarySchema),
+    summaries: z.array(runHistoryListItemSchema),
     page: positiveIntegerSchema,
     pageSize: positiveIntegerSchema,
     totalCount: nonnegativeIntegerSchema,
@@ -477,14 +500,6 @@ export const publicRunHistoryRunSchema = z
   .strict();
 export type PublicRunHistoryRun = z.infer<typeof publicRunHistoryRunSchema>;
 
-const orderStatusCountsSchema = z
-  .object({
-    queued: nonnegativeIntegerSchema,
-    processing: nonnegativeIntegerSchema,
-    confirmed: nonnegativeIntegerSchema,
-    failed: nonnegativeIntegerSchema,
-  })
-  .strict();
 const erpAttemptStatusCountsSchema = z
   .object({
     succeeded: nonnegativeIntegerSchema,
@@ -497,10 +512,10 @@ export const publicRunHistoryDetailResponseSchema = z
   .object({
     summary: publicRunHistorySummarySchema,
     run: publicRunHistoryRunSchema,
+    result: runResultSchema,
+    overallDurationMs: nonnegativeNumberSchema.nullable(),
+    plannedAttempts: nonnegativeIntegerSchema,
     httpTimingBreakdownSummary: httpTimingBreakdownSummarySchema,
-    orders: z
-      .object({ totalCount: nonnegativeIntegerSchema, byStatus: orderStatusCountsSchema })
-      .strict(),
     erpAttempts: z
       .object({
         totalCount: nonnegativeIntegerSchema,
@@ -509,8 +524,6 @@ export const publicRunHistoryDetailResponseSchema = z
         p95LatencyMs: nonnegativeNumberSchema.nullable(),
       })
       .strict(),
-    notifications: z.object({ totalCount: nonnegativeIntegerSchema }).strict(),
-    events: z.object({ totalCount: nonnegativeIntegerSchema }).strict(),
     runSignalTimelineSummary: runSignalTimelineSummarySchema.nullable(),
     timestamp: isoTimestampSchema,
   })

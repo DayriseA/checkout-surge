@@ -29,6 +29,7 @@ import {
   dashboardProjectionScopeId,
   demoRunOperatorModeHeaderName,
   demoRunSnapshotSchema,
+  deriveRunResult,
   emptyHttpTimingBreakdownSummary,
   emptyRequestArrivalSummary,
   emptyServerReservationTimingSummary,
@@ -55,6 +56,7 @@ import {
   queueStatusSchema,
   type RunErpOutcomeSummary,
   type RunHistoryListResponse,
+  type RunHistorySummary,
   runHistoryDetailPath,
   runHistoryListResponseSchema,
   runHistoryPath,
@@ -581,65 +583,82 @@ function trafficCompletionControllerFixture(): TrafficCompletionController {
   };
 }
 
+function runHistorySummaryFixture(): RunHistorySummary {
+  return {
+    id: "77777777-7777-4777-8777-777777777777",
+    runId: fixtureIds.run,
+    presetName: "Preview 1k",
+    status: "completed",
+    startedAt: "2026-06-20T00:00:00.000Z",
+    endedAt: "2026-06-20T00:00:10.000Z",
+    transportAttemptCounts: {
+      plannedRequests: 10,
+      startedRequests: 10,
+      completedRequests: 10,
+      interruptedRequests: 0,
+      unstartedRequests: 0,
+    },
+    httpSummary: {
+      failedRequests: 0,
+      acceptedResponses: 6,
+      soldOutResponses: 4,
+      transportFailures: 0,
+      unexpectedResponses: 0,
+      p95LatencyMs: 42,
+      failureRate: 0,
+    },
+    trafficDeliverySummary: {
+      trafficMode: null,
+      plannedBuyers: null,
+      scheduledRatePerSecond: null,
+      configuredDurationSeconds: null,
+      preAllocatedVUs: null,
+      maxVUs: null,
+      droppedIterations: 0,
+      completedIterations: null,
+      requestArrivalSummary: emptyRequestArrivalSummary,
+      trafficDeliveryStatus: "complete",
+      notes: [],
+    },
+    serverReservationTimingSummary: emptyServerReservationTimingSummary,
+    fastReservationTargetEvaluation: evaluateFastReservationTarget(
+      emptyServerReservationTimingSummary,
+      10,
+    ),
+    businessOutcomeSummary: businessOutcomeFixture(),
+    replayPossible: false,
+    terminalInventorySnapshot: {
+      saleOfferId: fixtureIds.saleOffer,
+      startingStock: 10,
+      remainingStock: 0,
+      reservedStock: 10,
+      acceptedReservations: 6,
+      soldOutRejections: 4,
+      pendingPersistenceCount: 0,
+      capturedAt: "2026-06-20T00:00:10.000Z",
+      source: "redis",
+    },
+    runSignalTimelineSummary: null,
+    capturedAt: "2026-06-20T00:00:10.000Z",
+  };
+}
+
 function runHistoryListResponseFixture(): RunHistoryListResponse {
   return {
     summaries: [
       {
-        id: "77777777-7777-4777-8777-777777777777",
         runId: fixtureIds.run,
         presetName: "Preview 1k",
-        status: "completed",
-        startedAt: "2026-06-20T00:00:00.000Z",
-        endedAt: "2026-06-20T00:00:10.000Z",
-        transportAttemptCounts: {
-          plannedRequests: 10,
-          startedRequests: 10,
-          completedRequests: 10,
-          interruptedRequests: 0,
-          unstartedRequests: 0,
-        },
-        httpSummary: {
-          failedRequests: 0,
-          acceptedResponses: 6,
-          soldOutResponses: 4,
-          transportFailures: 0,
-          unexpectedResponses: 0,
-          p95LatencyMs: 42,
-          failureRate: 0,
-        },
-        trafficDeliverySummary: {
-          trafficMode: null,
-          plannedBuyers: null,
-          scheduledRatePerSecond: null,
-          configuredDurationSeconds: null,
-          preAllocatedVUs: null,
-          maxVUs: null,
-          droppedIterations: 0,
-          completedIterations: null,
-          requestArrivalSummary: emptyRequestArrivalSummary,
-          trafficDeliveryStatus: "complete",
-          notes: [],
-        },
-        serverReservationTimingSummary: emptyServerReservationTimingSummary,
-        fastReservationTargetEvaluation: evaluateFastReservationTarget(
-          emptyServerReservationTimingSummary,
-          10,
-        ),
-        businessOutcomeSummary: businessOutcomeFixture(),
-        replayPossible: false,
-        terminalInventorySnapshot: {
-          saleOfferId: fixtureIds.saleOffer,
-          startingStock: 10,
-          remainingStock: 0,
-          reservedStock: 10,
-          acceptedReservations: 6,
-          soldOutRejections: 4,
-          pendingPersistenceCount: 0,
-          capturedAt: "2026-06-20T00:00:10.000Z",
-          source: "redis",
-        },
-        runSignalTimelineSummary: null,
-        capturedAt: "2026-06-20T00:00:10.000Z",
+        occurredAt: "2026-06-20T00:00:10.000Z",
+        overallDurationMs: 10_000,
+        resultOutcome: "completed-with-unsettled-orders",
+        plannedAttempts: 10,
+        startingStock: 10,
+        uniqueReservations: 6,
+        soldOutRejections: 4,
+        confirmedOrders: 6,
+        failedOrders: 0,
+        convergenceDurationSeconds: null,
       },
     ],
     page: 1,
@@ -650,10 +669,7 @@ function runHistoryListResponseFixture(): RunHistoryListResponse {
 }
 
 function adminRunHistoryDetailResponseFixture(): AdminRunHistoryDetailResponse {
-  const summary = runHistoryListResponseFixture().summaries[0];
-  if (!summary) {
-    throw new Error("Expected run history summary fixture.");
-  }
+  const summary = runHistorySummaryFixture();
 
   return {
     summary,
@@ -799,15 +815,37 @@ function publicRunHistoryDetailResponseFixture(): PublicRunHistoryDetailResponse
     },
     run,
     httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
-    orders: { totalCount: 1, byStatus: { queued: 0, processing: 0, confirmed: 1, failed: 0 } },
+    result: deriveRunResult({
+      runStatus: summary.status,
+      failureCategory: admin.summary.failureCategory ?? null,
+      startingStock: sanitizedInventory?.startingStock ?? null,
+      remainingStock: sanitizedInventory?.remainingStock ?? null,
+      durable: {
+        reservedUnits: summary.businessOutcomeSummary.reservedUnits,
+        uniqueReservations: summary.businessOutcomeSummary.acceptedReservations,
+        soldOutDecisions: summary.businessOutcomeSummary.soldOutRejections,
+        confirmedOrders: summary.businessOutcomeSummary.confirmedOrders,
+        failedOrders: summary.businessOutcomeSummary.failedOrders,
+        queuedOrders: summary.businessOutcomeSummary.queuedOrders,
+        processingOrders: summary.businessOutcomeSummary.processingOrders,
+        durablePendingPersistenceRecords: summary.businessOutcomeSummary.pendingPersistenceCount,
+        notificationsRecorded: summary.businessOutcomeSummary.notificationsRecorded,
+      },
+      heldReservationsAwaitingPersistence: 0,
+      replayPossible: summary.replayPossible,
+      generator: {
+        transportAttemptCounts: summary.transportAttemptCounts,
+        httpSummary: summary.httpSummary,
+      },
+    }),
+    overallDurationMs: 10_000,
+    plannedAttempts: 10,
     erpAttempts: {
       totalCount: 1,
       byStatus: { succeeded: 1, failed: 0, timedOut: 0 },
       averageLatencyMs: 42,
       p95LatencyMs: 42,
     },
-    notifications: { totalCount: 1 },
-    events: { totalCount: 1 },
     runSignalTimelineSummary: null,
     timestamp: admin.timestamp,
   };
@@ -1682,7 +1720,7 @@ describe("API gateway routes", () => {
     expect(response.statusCode).toBe(200);
     expect(payload.summary.runId).toBe(fixtureIds.run);
     expect(response.headers["cache-control"]).toBe("no-store");
-    expect(payload.orders.byStatus.confirmed).toBe(1);
+    expect(payload.result.outcome).toBe("outcome-indeterminate");
     expect(JSON.stringify(payload)).not.toContain(fixtureIds.saleOffer);
     expect(JSON.stringify(payload)).not.toContain(fixtureCorrelationId);
     const publicKeys = collectKeys(payload);
@@ -1749,8 +1787,7 @@ describe("API gateway routes", () => {
     if (!summary) throw new Error("Expected a run-history summary fixture.");
     const failedSummary = {
       ...summary,
-      status: "failed" as const,
-      failureCategory: "traffic" as const,
+      resultOutcome: "failed" as const,
     };
     const server = await trackedServer({
       persistence: new AcceptingPersistence(),
@@ -1784,7 +1821,7 @@ describe("API gateway routes", () => {
     const listPayload = runHistoryListResponseSchema.parse(listResponse.json());
     const detailPayload = publicRunHistoryDetailResponseSchema.parse(detailResponse.json());
     const adminPayload = adminRunHistoryDetailResponseSchema.parse(adminResponse.json());
-    expect(listPayload.summaries[0]?.failureCategory).toBe("traffic");
+    expect(listPayload.summaries[0]?.resultOutcome).toBe("failed");
     expect(detailPayload.summary.failureCategory).toBe("traffic");
     expect(JSON.stringify(listPayload)).not.toContain("failureReason");
     expect(JSON.stringify(detailPayload)).not.toContain("failureReason");
@@ -1802,7 +1839,7 @@ describe("API gateway routes", () => {
         detail: async () =>
           ({
             ...publicFixture,
-            orders: { ...publicFixture.orders, records: [{ orderId: "private" }] },
+            orders: { records: [{ orderId: "private" }] },
           }) as never,
         adminDetail: async () => ({ ...adminFixture, privateDiagnostics: "private" }) as never,
       },

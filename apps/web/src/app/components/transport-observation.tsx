@@ -114,6 +114,7 @@ export function TransportObservationSection({
   arrivalSummary,
   counts,
   fastReservationTargetEvaluation,
+  hideZeroExceptions = false,
   httpTimingBreakdownSummary,
   httpSummary,
   serverReservationTimingSummary,
@@ -124,6 +125,7 @@ export function TransportObservationSection({
   arrivalSummary: RequestArrivalSummary;
   counts: TransportAttemptCounts;
   fastReservationTargetEvaluation: FastReservationTargetEvaluation;
+  hideZeroExceptions?: boolean;
   httpTimingBreakdownSummary?: HttpTimingBreakdownSummary;
   httpSummary: TrafficHttpSummary;
   serverReservationTimingSummary: ServerReservationTimingSummary;
@@ -172,24 +174,30 @@ export function TransportObservationSection({
           label={transportObservationLabels.repliesRecorded}
           value={formatNumber(observation.repliesRecorded)}
         />
-        <ObservationRow
-          label={transportObservationLabels.transportFailures}
-          note={observation.transportFailures > 0 ? transportFailureNote : undefined}
-          subordinate
-          value={formatNumber(observation.transportFailures)}
-        />
-        <ObservationRow
-          label={transportObservationLabels.repliesNotRecorded}
-          note={counts.interruptedRequests > 0 ? unrecordedReplyNote : undefined}
-          subordinate
-          value={formatNumber(counts.interruptedRequests)}
-        />
-        <ObservationRow
-          label={transportObservationLabels.neverDispatched}
-          note={observation.hasUndispatchedAttempts ? undispatchedNote : undefined}
-          subordinate
-          value={formatNumber(counts.unstartedRequests)}
-        />
+        {!hideZeroExceptions || observation.transportFailures > 0 ? (
+          <ObservationRow
+            label={transportObservationLabels.transportFailures}
+            note={observation.transportFailures > 0 ? transportFailureNote : undefined}
+            subordinate
+            value={formatNumber(observation.transportFailures)}
+          />
+        ) : null}
+        {!hideZeroExceptions || counts.interruptedRequests > 0 ? (
+          <ObservationRow
+            label={transportObservationLabels.repliesNotRecorded}
+            note={counts.interruptedRequests > 0 ? unrecordedReplyNote : undefined}
+            subordinate
+            value={formatNumber(counts.interruptedRequests)}
+          />
+        ) : null}
+        {!hideZeroExceptions || counts.unstartedRequests > 0 ? (
+          <ObservationRow
+            label={transportObservationLabels.neverDispatched}
+            note={observation.hasUndispatchedAttempts ? undispatchedNote : undefined}
+            subordinate
+            value={formatNumber(counts.unstartedRequests)}
+          />
+        ) : null}
       </dl>
       <h4 className="m-0 mt-4 text-xs font-bold uppercase text-muted">Load-generator outcomes</h4>
       <dl className="m-0 mt-2 grid gap-2">
@@ -201,9 +209,14 @@ export function TransportObservationSection({
           label={publicVocabulary.soldOutRejectionsSeen}
           value={formatNumber(httpSummary.soldOutResponses)}
         />
-        <ObservationRow label="Unexpected" value={formatNumber(httpSummary.unexpectedResponses)} />
+        {!hideZeroExceptions || httpSummary.unexpectedResponses > 0 ? (
+          <ObservationRow
+            label="Unexpected"
+            value={formatNumber(httpSummary.unexpectedResponses)}
+          />
+        ) : null}
         <ObservationRow
-          label="Client HTTP p95"
+          label="Checkout response p95 (client-observed)"
           note={observation.hasUnrecordedReplies ? biasedLatencyNote : undefined}
           value={formatMilliseconds(httpSummary.p95LatencyMs)}
         />
@@ -258,7 +271,7 @@ function FastReservationEvidence({
         />
         <ObservationRow label="Target verdict" value={evaluation.verdict} />
         <ObservationRow
-          label="Reservation service p95 bound"
+          label="Reservation processing p95 bound"
           note="bounded p95 estimate; service entry → response ready"
           value={formatHistogramBoundMilliseconds(summary.reserveOrderService.p95Ms)}
         />
@@ -332,7 +345,7 @@ export function RequestArrivalEvidence({
             value={`${formatNumber(summary.peakArrivalRatePerSecond)} attempts/s`}
           />
           <ObservationRow
-            label="Dispatch duration"
+            label="Checkout dispatch duration (observed)"
             value={formatDuration(summary.dispatchDurationSeconds)}
           />
         </dl>

@@ -1,4 +1,5 @@
 import {
+  deriveRunResult,
   emptyHttpTimingBreakdownSummary,
   emptyRequestArrivalSummary,
   emptyServerReservationTimingSummary,
@@ -56,72 +57,18 @@ describe("dashboard backend API reads", () => {
       return jsonResponse({
         summaries: [
           {
-            id: "77777777-7777-4777-8777-777777777777",
             runId: "55555555-5555-4555-8555-555555555555",
             presetName: "Preview 1k",
-            status: "completed",
-            startedAt: "2026-06-20T00:00:00.000Z",
-            endedAt: "2026-06-20T00:00:10.000Z",
-            transportAttemptCounts: {
-              plannedRequests: 10,
-              startedRequests: 10,
-              completedRequests: 10,
-              interruptedRequests: 0,
-              unstartedRequests: 0,
-            },
-            httpSummary: {
-              failedRequests: 0,
-              acceptedResponses: 6,
-              soldOutResponses: 4,
-              transportFailures: 0,
-              unexpectedResponses: 0,
-              p95LatencyMs: 42,
-              failureRate: 0,
-            },
-            trafficDeliverySummary: {
-              trafficMode: null,
-              plannedBuyers: null,
-              scheduledRatePerSecond: null,
-              configuredDurationSeconds: null,
-              preAllocatedVUs: null,
-              maxVUs: null,
-              droppedIterations: 0,
-              completedIterations: null,
-              requestArrivalSummary: emptyRequestArrivalSummary,
-              trafficDeliveryStatus: "complete",
-              notes: [],
-            },
-            serverReservationTimingSummary: emptyServerReservationTimingSummary,
-            fastReservationTargetEvaluation: evaluateFastReservationTarget(
-              emptyServerReservationTimingSummary,
-              10,
-            ),
-            businessOutcomeSummary: {
-              acceptedReservations: 6,
-              reservedUnits: 6,
-              soldOutRejections: 4,
-              queuedOrders: 0,
-              processingOrders: 0,
-              retryingOrders: 0,
-              confirmedOrders: 5,
-              failedOrders: 1,
-              pendingPersistenceCount: 0,
-              notificationsRecorded: 5,
-            },
-            replayPossible: false,
-            terminalInventorySnapshot: {
-              saleOfferId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-              startingStock: 10,
-              remainingStock: 0,
-              reservedStock: 10,
-              acceptedReservations: 6,
-              soldOutRejections: 4,
-              pendingPersistenceCount: 0,
-              capturedAt: "2026-06-20T00:00:10.000Z",
-              source: "redis",
-            },
-            runSignalTimelineSummary: null,
-            capturedAt: "2026-06-20T00:00:10.000Z",
+            occurredAt: "2026-06-20T00:00:00.000Z",
+            overallDurationMs: 10_000,
+            resultOutcome: "completed-with-order-failures",
+            plannedAttempts: 10,
+            startingStock: 10,
+            uniqueReservations: 6,
+            soldOutRejections: 4,
+            confirmedOrders: 5,
+            failedOrders: 1,
+            convergenceDurationSeconds: null,
           },
         ],
         page: 2,
@@ -138,9 +85,7 @@ describe("dashboard backend API reads", () => {
       throw new Error("Expected available history.");
     }
     expect(history.data.page).toBe(2);
-    expect(history.data.summaries[0]?.trafficDeliverySummary.trafficDeliveryStatus).toBe(
-      "complete",
-    );
+    expect(history.data.summaries[0]?.resultOutcome).toBe("completed-with-order-failures");
   });
 
   it("bootstraps the public surface without a credentialless server recovery call", async () => {
@@ -269,7 +214,7 @@ describe("dashboard backend API reads", () => {
       throw new Error("Expected available detail.");
     }
     expect(detail.data.summary.runId).toBe(runId);
-    expect(detail.data.orders.byStatus.confirmed).toBe(1);
+    expect(detail.data.result.outcome).toBe("outcome-indeterminate");
   });
 });
 
@@ -444,15 +389,37 @@ function runHistoryDetailFixture() {
     },
     run,
     httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
-    orders: { totalCount: 1, byStatus: { queued: 0, processing: 0, confirmed: 1, failed: 0 } },
+    result: deriveRunResult({
+      runStatus: "completed",
+      failureCategory: null,
+      startingStock: 10,
+      remainingStock: 0,
+      durable: {
+        reservedUnits: 6,
+        uniqueReservations: 6,
+        soldOutDecisions: 4,
+        confirmedOrders: 5,
+        failedOrders: 1,
+        queuedOrders: 0,
+        processingOrders: 0,
+        durablePendingPersistenceRecords: 0,
+        notificationsRecorded: 5,
+      },
+      heldReservationsAwaitingPersistence: 0,
+      replayPossible: false,
+      generator: {
+        transportAttemptCounts: summary.transportAttemptCounts,
+        httpSummary: summary.httpSummary,
+      },
+    }),
+    overallDurationMs: 10_000,
+    plannedAttempts: 10,
     erpAttempts: {
       totalCount: 0,
       byStatus: { succeeded: 0, failed: 0, timedOut: 0 },
       averageLatencyMs: null,
       p95LatencyMs: null,
     },
-    notifications: { totalCount: 0 },
-    events: { totalCount: 0 },
     runSignalTimelineSummary: null,
     timestamp: admin.timestamp,
   };

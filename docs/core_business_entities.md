@@ -354,7 +354,7 @@ Expected event names include:
 
 Notes:
 
-- Run-scoped order events include `runId` so protected admin Run History can read a bounded event timeline directly by run, including events that are not reachable through an already-persisted order or reservation row. Anonymous detail exposes only the aggregate event count.
+- Run-scoped order events include `runId` so protected admin Run History can read a bounded event timeline directly by run, including events that are not reachable through an already-persisted order or reservation row. Anonymous detail exposes neither event rows nor event totals.
 - `payload` should remain structured JSON, not free-form log text.
 - `OrderEvent` is a business history mechanism, not a replacement for service logs.
 - API and worker persistence services construct linked event attribution from the freshly inserted or locked durable order/reservation rather than accepting those fields from an independent writer. PostgreSQL binds every non-null run/sale pair to `DemoRunSaleContext` and retains ordinary order/reservation foreign keys.
@@ -571,6 +571,8 @@ Notes:
 ### 17. DemoRunSummary
 
 `DemoRunSummary` is the immutable historical artifact exposed through Run History.
+
+The public history API does not serialize this storage artifact directly. Its list projection is a compact comparison record, while its detail projection is an aggregate-only semantic superset with the accepted run configuration, canonical derived result, reconciliation proof, signal timelines, delivery evidence, lifecycle, and sanitized final inventory. Protected admin detail retains the richer diagnostic and bounded-row representation.
 
 Primary responsibilities:
 

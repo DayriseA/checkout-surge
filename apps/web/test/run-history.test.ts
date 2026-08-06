@@ -1,26 +1,17 @@
-import type {
-  AdminRunHistoryDetailResponse,
-  DashboardProjection,
-  PublicRunHistoryDetailResponse,
-  RunHistoryListResponse,
-  RunSignalTimelineHeadline,
-} from "@checkout-surge/contracts";
 import {
-  confirmationLagBoundary,
-  dashboardProjectionSchemaName,
-  dashboardProjectionSchemaVersion,
+  type AdminRunHistoryDetailResponse,
+  deriveRunResult,
+  emptyHttpTimingBreakdownSummary,
   emptyRequestArrivalSummary,
+  emptyServerReservationTimingSummary,
   evaluateFastReservationTarget,
-  queueBacklogDefinition,
-  queueBacklogDrainDurationBoundary,
-  runSignalBucketCount,
-  type ServerReservationTimingSummary,
+  type PublicRunHistoryDetailResponse,
+  type RunHistoryListResponse,
 } from "@checkout-surge/contracts";
 import { previewRunConfigSnapshotFixture } from "@checkout-surge/contracts/testing";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { RecoveryStatusPanel, RequestSurgePanel } from "../src/app/components/dashboard-panels.js";
 import {
   AdminRunHistoryDetail,
   PublicRunHistoryDetail,
@@ -31,637 +22,560 @@ import RunHistoryDetailPage from "../src/app/run-history/[runId]/page.js";
 const getRunHistoryDetail = vi.hoisted(() => vi.fn());
 const getAdminRunHistoryDetail = vi.hoisted(() => vi.fn());
 const hasValidAdminPageSession = vi.hoisted(() => vi.fn());
-const serverReservationTimingSummary: ServerReservationTimingSummary = {
-  redisAtomicReservation: { sampleCount: 10, averageMs: 0.7, p95Ms: 1 },
-  reserveOrderService: { sampleCount: 10, averageMs: 12, p95Ms: 25 },
-};
-const httpTimingBreakdownSummary: PublicRunHistoryDetailResponse["httpTimingBreakdownSummary"] = {
-  blocked: { averageMs: 2, p95Ms: 5 },
-  connecting: { averageMs: 1, p95Ms: 4 },
-  tlsHandshaking: { averageMs: 0, p95Ms: 0 },
-  sending: { averageMs: 0.2, p95Ms: 1 },
-  waiting: { averageMs: 30, p95Ms: 42 },
-  receiving: { averageMs: 0.1, p95Ms: 0.5 },
-};
+const notFound = vi.hoisted(() =>
+  vi.fn(() => {
+    throw new Error("NEXT_NOT_FOUND");
+  }),
+);
 
+vi.mock("next/navigation", () => ({ notFound }));
 vi.mock("../src/app/lib/api.js", () => ({ getRunHistoryDetail, getAdminRunHistoryDetail }));
 vi.mock("../src/app/lib/server/admin-page-session.js", () => ({ hasValidAdminPageSession }));
 
-describe("run history surface", () => {
+describe("run history", () => {
   beforeEach(() => {
     getRunHistoryDetail.mockReset();
     getAdminRunHistoryDetail.mockReset();
     hasValidAdminPageSession.mockResolvedValue(false);
+    notFound.mockClear();
   });
 
-  it("renders traffic delivery, business outcomes, and terminal inventory snapshots", () => {
-    const markup = renderToStaticMarkup(
-      createElement(RunHistoryList, { history: runHistoryFixture() }),
-    );
+  it("renders one compact comparison row without list-only technical evidence", () => {
+    const markup = renderToStaticMarkup(createElement(RunHistoryList, { history: listFixture() }));
 
     expect(markup).toContain("Preview 1k");
-    expect(markup).toContain("55555555-5555-4555-8555-555555555555");
+    expect(markup).toContain("2026-06-20 00:00:00 UTC");
+    expect(markup).toContain(
+      '<time class="mt-1 block text-sm text-muted" dateTime="2026-06-20T00:00:00.000Z">',
+    );
+    expect(markup).not.toContain("ago");
+    expect(markup).toContain("Completed");
+    expect(markup).toContain("Planned demand / starting stock");
+    expect(markup).toContain("Unique reservations secured / sold-out rejections");
+    expect(markup).toContain("Confirmed / failed orders");
+    expect(markup).toContain("Convergence");
+    expect(markup).toContain("xl:grid-cols-");
+    expect(markup).not.toContain("lg:grid-cols-");
+    expect(markup).not.toContain("55555555-5555-4555-8555-555555555555</");
+    expect(markup).not.toContain("Traffic delivery");
+    expect(markup).not.toContain("Final inventory");
+    expect(markup).not.toContain("Page 1 ·");
+    expect(markup).toContain('aria-label="Preview 1k run report from 2026-06-20 00:00:00 UTC"');
+  });
+
+  it("handles empty, multiple-page, and out-of-range run states", () => {
+    expect(
+      renderToStaticMarkup(
+        createElement(RunHistoryList, {
+          history: { ...listFixture(), summaries: [], totalCount: 0 },
+        }),
+      ),
+    ).toContain("No runs yet");
+
+    expect(
+      renderToStaticMarkup(
+        createElement(RunHistoryList, {
+          history: { ...listFixture(), totalCount: 11 },
+        }),
+      ),
+    ).toContain("11 runs");
+
+    const outOfRange = renderToStaticMarkup(
+      createElement(RunHistoryList, {
+        history: { ...listFixture(), summaries: [], page: 3, totalCount: 11 },
+      }),
+    );
+    expect(outOfRange).toContain("Page 3 does not exist");
+    expect(outOfRange).toContain("View page 1");
+    expect(outOfRange).not.toContain("summaries");
+  });
+
+  it("links only to pagination pages within the available bounds", () => {
+    const firstPage = renderToStaticMarkup(
+      createElement(RunHistoryList, {
+        history: { ...listFixture(), totalCount: 25 },
+      }),
+    );
+    expect(firstPage).toMatch(/href="\/run-history\?page=2"[^>]*>Next<\/a>/);
+    expect(firstPage).not.toContain(">Previous</");
+
+    const secondPage = renderToStaticMarkup(
+      createElement(RunHistoryList, {
+        history: { ...listFixture(), page: 2, totalCount: 25 },
+      }),
+    );
+    expect(secondPage).toMatch(/href="\/run-history\?page=1"[^>]*>Previous<\/a>/);
+    expect(secondPage).toMatch(/href="\/run-history\?page=3"[^>]*>Next<\/a>/);
+
+    const lastPage = renderToStaticMarkup(
+      createElement(RunHistoryList, {
+        history: { ...listFixture(), page: 3, totalCount: 25 },
+      }),
+    );
+    expect(lastPage).toMatch(/href="\/run-history\?page=2"[^>]*>Previous<\/a>/);
+    expect(lastPage).not.toContain(">Next</");
+  });
+
+  it("renders the complete public report and hides clean zero-noise", () => {
+    const markup = renderToStaticMarkup(
+      createElement(PublicRunHistoryDetail, { detail: detailFixture() }),
+    );
+
+    expect(markup).toContain("Accepted configuration");
+    expect(markup).toContain("Traffic");
+    expect(markup).toContain("Inventory");
+    expect(markup).toContain("Simulated ERP");
+    expect(markup).toContain("Backpressure");
+    expect(markup).toContain("Evidence and reconciliation proof");
+    expect(markup).toContain("Gold signals");
+    expect(markup).toContain("Client observation and delivery quality");
+    expect(markup).toContain("Checkout response p95 (client-observed)");
+    expect(markup).toContain("Reservation processing p95 bound");
+    expect(markup).toContain("Simulated ERP call p95");
+    expect(markup).toContain("Reservation-to-confirmation p95");
+    expect(markup).toContain("Checkout dispatch duration (observed)");
+    expect(markup).toContain("Configured maximum dispatch time");
+    expect(markup).toMatch(/Configured start delay<\/dt><dd[^>]*>0 ms<\/dd>/);
+    expect(markup).toMatch(/Request timeout \(configured safety limit\)<\/dt><dd[^>]*>2 s<\/dd>/);
+    expect(markup).toMatch(/Retry attempts \(configured limit\)<\/dt><dd[^>]*>4<\/dd>/);
+    expect(markup).toMatch(/Initial retry backoff<\/dt><dd[^>]*>500 ms<\/dd>/);
+    expect(markup).toMatch(/Circuit-breaker failure threshold<\/dt><dd[^>]*>5<\/dd>/);
+    expect(markup).toMatch(/Circuit-breaker reset timeout<\/dt><dd[^>]*>10 s<\/dd>/);
+    expect(markup).toContain("Logical queue");
+    expect(markup).toContain("orders:process");
+    expect(markup).toContain("Physical queue");
+    expect(markup).toContain("orders-process");
     expect(markup).toContain("Traffic delivery: All planned attempts dispatched");
-    expect(markup).toContain("Request arrival");
-    expect(markup).toContain("10 attempts/s");
-    expect(markup).toContain("1-second window");
-    expect(markup).toContain("Load generator");
-    expect(markup).toContain("what the load generator observed");
-    expect(markup).toContain("Planned attempts");
-    expect(markup).toContain("Dispatched");
-    expect(markup).toContain("Replies recorded");
+    expect(markup).toContain("Lifecycle and final inventory");
+    expect(markup).toContain("Run ended");
+    expect(markup).toContain("Technical details");
+    expect(markup.match(/55555555-5555-4555-8555-555555555555/g)).toHaveLength(1);
+    expect(markup).not.toContain("Failed attempts");
+    expect(markup).not.toContain("Timed-out attempts");
+    expect(markup).not.toContain("Generator received no reply");
+    expect(markup).not.toContain("Replies not recorded");
+    expect(markup).not.toContain("Never dispatched");
+    expect(markup).not.toContain(">Unexpected<");
+    expect(markup).not.toContain("Events");
+    expect(markup).not.toContain("source");
+    expect(markup).not.toContain("saleOffer");
+    expect(markup).not.toMatch(/finalization|finalized/i);
+  });
+
+  it("promotes sanitized failure guidance and nonzero ERP failures", () => {
+    const detail = detailFixture("failed");
+    const markup = renderToStaticMarkup(createElement(PublicRunHistoryDetail, { detail }));
+
+    expect(markup).toContain("What happened");
+    expect(markup).toContain("load generator could not deliver");
+    expect(markup).toContain("Start a new run");
+    expect(markup).toContain("Failed attempts");
+    expect(markup).toContain("Traffic delivery: Delivery failed");
+    expect(markup).not.toContain("load_orchestrator_unavailable");
+
+    detail.summary.failureCategory = "reconciliation";
+    const reconciliationMarkup = renderToStaticMarkup(
+      createElement(PublicRunHistoryDetail, { detail }),
+    );
+    expect(reconciliationMarkup).toContain("did not reconcile in the final evidence");
+    expect(reconciliationMarkup).not.toMatch(/finalization|finalized/i);
+  });
+
+  it("renders nonzero delivery exceptions while keeping routine zero rows hidden", () => {
+    const detail = detailFixture("failed");
+    detail.summary.transportAttemptCounts = {
+      plannedRequests: 21,
+      startedRequests: 20,
+      completedRequests: 19,
+      interruptedRequests: 1,
+      unstartedRequests: 1,
+    };
+    detail.summary.httpSummary = {
+      ...detail.summary.httpSummary,
+      failedRequests: 3,
+      transportFailures: 2,
+      unexpectedResponses: 1,
+    };
+    const markup = renderToStaticMarkup(createElement(PublicRunHistoryDetail, { detail }));
+
+    expect(markup).toContain("Generator received no reply");
     expect(markup).toContain("Replies not recorded");
     expect(markup).toContain("Never dispatched");
-    expect(markup).not.toContain("Interrupted");
-    expect(markup).not.toContain("Unstarted");
-    expect(markup).not.toContain("Emitted");
-    // This run recorded every reply, so coverage and the survivorship caveat stay hidden.
-    expect(markup).not.toContain("recorded a reply");
-    expect(markup).not.toContain("Outcomes and latency");
-    expect(markup).toContain("Durable checkout records");
-    expect(markup).toContain("Reservation and order outcomes recorded by Checkout-Surge");
+    expect(markup).toContain(">Unexpected<");
+  });
+
+  it("renders every explicit constant-arrival configuration value", () => {
+    const detail = detailFixture();
+    detail.run.configSnapshot.trafficConfig = {
+      mode: "constant-arrival-rate",
+      ratePerSecond: 25,
+      startDelaySeconds: 3,
+      durationSeconds: 8,
+      quantityPerAttempt: 2,
+      k6Vus: { preAllocatedVus: 30, maxVus: 60 },
+    };
+    const markup = renderToStaticMarkup(createElement(PublicRunHistoryDetail, { detail }));
+
+    expect(markup).toContain("Configured arrival rate (per second)");
+    expect(markup).toContain("Configured traffic duration");
+    expect(markup).toContain("Pre-allocated k6 VUs");
+    expect(markup).toContain(">30<");
+    expect(markup).toContain("Maximum k6 VUs");
+    expect(markup).toContain(">60<");
+  });
+
+  it("keeps accepted-config demand distinct from mismatched generator evidence", () => {
+    const detail = detailFixture();
+    detail.plannedAttempts = 10;
+    detail.summary.transportAttemptCounts = {
+      plannedRequests: 99,
+      startedRequests: 20,
+      completedRequests: 20,
+      interruptedRequests: 0,
+      unstartedRequests: 79,
+    };
+    const markup = renderToStaticMarkup(createElement(PublicRunHistoryDetail, { detail }));
+
+    expect(markup).toMatch(/Planned demand<\/dt><dd[^>]*>10<\/dd>/);
+    expect(markup).toMatch(/Planned attempts<\/dt><dd[^>]*>99<\/dd>/);
+  });
+
+  it("keeps durable comparison facts visible when final inventory was not recorded", () => {
+    const detail = detailFixture();
+    const { terminalInventorySnapshot: _terminalInventorySnapshot, ...summary } = detail.summary;
+    detail.summary = summary;
+    const markup = renderToStaticMarkup(createElement(PublicRunHistoryDetail, { detail }));
+
+    expect(markup).toContain("starting stock</dt><dd");
+    expect(markup).toContain(">not recorded</dd>");
     expect(markup).toContain("Unique reservations secured");
     expect(markup).toContain("sold-out rejections recorded by Checkout-Surge");
     expect(markup).toContain("Confirmed orders");
-    expect(markup).toContain("Final inventory");
-    expect(markup).toContain("starting stock");
-    expect(markup).toContain("Inventory evidence recorded");
-    expect(markup).toContain('href="/run-history/55555555-5555-4555-8555-555555555555"');
-    expect(markup).toContain("View details");
+    expect(markup).toContain("Failed orders");
+    expect(markup).toContain(">0</dd>");
   });
 
-  it("collapses warning and degraded delivery into one public partial-delivery state", () => {
-    const history = runHistoryFixture();
-    const summary = history.summaries[0];
-    if (!summary) throw new Error("Expected a history summary fixture.");
-    const markup = renderToStaticMarkup(
-      createElement(RunHistoryList, {
-        history: {
-          ...history,
-          summaries: [
-            {
-              ...summary,
-              runId: "55555555-5555-4555-8555-555555555551",
-              trafficDeliverySummary: {
-                ...summary.trafficDeliverySummary,
-                trafficDeliveryStatus: "warning",
-              },
-            },
-            {
-              ...summary,
-              runId: "55555555-5555-4555-8555-555555555552",
-              trafficDeliverySummary: {
-                ...summary.trafficDeliverySummary,
-                trafficDeliveryStatus: "degraded",
-              },
-            },
-          ],
-          totalCount: 2,
-        },
-      }),
-    );
+  it("marks partial generator evidence visibly outside the reconciliation disclosure", () => {
+    const detail = detailFixture();
+    detail.summary.transportAttemptCounts = {
+      plannedRequests: 20,
+      startedRequests: 19,
+      completedRequests: 19,
+      interruptedRequests: 0,
+      unstartedRequests: 1,
+    };
+    detail.result = deriveRunResult({
+      ...resultEvidence(detail),
+      generator: {
+        transportAttemptCounts: detail.summary.transportAttemptCounts,
+        httpSummary: detail.summary.httpSummary,
+      },
+    });
+    const markup = renderToStaticMarkup(createElement(PublicRunHistoryDetail, { detail }));
 
-    expect(markup.match(/Traffic delivery: Partial delivery/g)).toHaveLength(2);
-    expect(markup).not.toContain("Traffic delivery: warning");
-    expect(markup).not.toContain("Traffic delivery: degraded");
-  });
-
-  it("leaves oversell unknown when no authoritative inventory snapshot was captured", () => {
-    const history = runHistoryFixture();
-    const summary = history.summaries[0];
-    if (!summary) throw new Error("Expected a history summary fixture.");
-    const { terminalInventorySnapshot: _snapshot, ...withoutSnapshot } = summary;
-    const markup = renderToStaticMarkup(
-      createElement(RunHistoryList, {
-        history: {
-          ...history,
-          summaries: [{ ...withoutSnapshot, runSignalTimelineSummary: timelineHeadlineFixture() }],
-        },
-      }),
-    );
-
-    expect(markup).toContain("oversell unknown");
-    expect(markup).not.toContain("0 oversold");
-    expect(markup).toContain("No final inventory evidence recorded.");
-  });
-
-  it("does not publish an unobserved arrival summary as a measured peak", () => {
-    const history = runHistoryFixture();
-    const summary = history.summaries[0];
-    if (!summary) throw new Error("Expected a history summary fixture.");
-    const markup = renderToStaticMarkup(
-      createElement(RunHistoryList, {
-        history: {
-          ...history,
-          summaries: [
-            {
-              ...summary,
-              trafficDeliverySummary: {
-                ...summary.trafficDeliverySummary,
-                requestArrivalSummary: emptyRequestArrivalSummary,
-              },
-              runSignalTimelineSummary: timelineHeadlineFixture(),
-            },
-          ],
-        },
-      }),
-    );
-
-    expect(markup).toContain("No checkout attempt was recorded for this run.");
-    expect(markup).toContain("Not recorded for this run");
-    expect(markup).not.toContain("0 attempts/s");
-    expect(markup).not.toContain("dispatched in 0 s");
-  });
-
-  it("renders a clear empty state before terminal summaries exist", () => {
-    const markup = renderToStaticMarkup(
-      createElement(RunHistoryList, {
-        history: {
-          summaries: [],
-          page: 1,
-          pageSize: 10,
-          totalCount: 0,
-          timestamp: "2026-06-20T00:00:10.000Z",
-        },
-      }),
-    );
-
-    expect(markup).toContain("Finished runs");
-    expect(markup).toContain("No history yet");
-    expect(markup).toContain("Finished-run evidence appears here");
-  });
-
-  it("distinguishes an out-of-range page from globally empty history", () => {
-    const markup = renderToStaticMarkup(
-      createElement(RunHistoryList, {
-        history: {
-          summaries: [],
-          page: 2,
-          pageSize: 10,
-          totalCount: 7,
-          timestamp: "2026-06-20T00:00:10.000Z",
-        },
-      }),
-    );
-
-    expect(markup).toContain("Page 2 has no summaries");
-    expect(markup).toContain("7 summaries exist");
-    expect(markup).toContain('href="/run-history"');
-    expect(markup).toContain("View latest summaries");
-    expect(markup).not.toContain("No history yet");
-  });
-
-  it("renders public-safe detail without private operational fields", () => {
-    const markup = renderToStaticMarkup(
-      createElement(PublicRunHistoryDetail, { detail: runHistoryDetailFixture() }),
-    );
-
-    expect(markup).toContain("Run detail");
-    expect(markup).toContain("Load generator");
-    expect(markup).toContain("what the load generator observed");
-    expect(markup).toContain("Durable checkout records");
-    expect(markup).toContain("p95 latency");
-    expect(markup).not.toContain("Interrupted");
-    expect(markup).not.toContain("Unstarted");
-    expect(markup).not.toContain("Emitted");
-    expect(markup).toMatch(/Planned attempts<\/dt><dd[^>]*>10<\/dd>/);
-    expect(markup).toMatch(/Dispatched<\/dt><dd[^>]*>9<\/dd>/);
-    expect(markup).toMatch(/Replies recorded<\/dt><dd[^>]*>7<\/dd>/);
     expect(markup).toMatch(
-      /Replies not recorded<span[^>]*>load generator stopped before the reply arrived<\/span><\/dt><dd[^>]*>2<\/dd>/,
+      /role="status"[^>]*>Evidence incomplete: planned checkout attempts and checkout responses completed by the load generator require reconciliation\./,
     );
-    expect(markup).toMatch(
-      /Never dispatched<span[^>]*>scenario window closed before these were sent<\/span><\/dt><dd[^>]*>1<\/dd>/,
+    expect(markup).toContain("border-warning bg-warning-soft");
+    expect(markup).toContain("Only attempts that reached a response are included");
+  });
+
+  it("shows a sanitized visible warning for unexplained population disagreement", () => {
+    const detail = detailFixture();
+    detail.summary.httpSummary = {
+      ...detail.summary.httpSummary,
+      acceptedResponses: 9,
+      soldOutResponses: 10,
+    };
+    detail.result = deriveRunResult({
+      ...resultEvidence(detail),
+      generator: {
+        transportAttemptCounts: detail.summary.transportAttemptCounts,
+        httpSummary: detail.summary.httpSummary,
+      },
+    });
+    const markup = renderToStaticMarkup(createElement(PublicRunHistoryDetail, { detail }));
+
+    expect(markup).toMatch(/role="status"[^>]*>Reconciliation warning:/);
+    expect(markup).toContain("border-warning bg-warning-soft");
+    expect(markup).toContain("accepted responses observed by the load generator");
+    expect(markup).toContain("Unique reservations secured");
+    expect(markup).not.toContain("private");
+  });
+
+  it("uses the scenario headline and authoritative result on the public route", async () => {
+    getRunHistoryDetail.mockResolvedValue({ status: "available", data: detailFixture() });
+
+    const page = await RunHistoryDetailPage({
+      params: Promise.resolve({ runId: "55555555-5555-4555-8555-555555555555" }),
+    });
+    const markup = renderToStaticMarkup(page);
+
+    expect(markup).toContain("<h1");
+    expect(markup).toContain("Preview 1k</h1>");
+    expect(markup).toContain("All 10 available units were reserved without overselling.");
+    expect(markup).toContain("Completed");
+    expect(markup).toContain("2026-06-20 00:00:00 UTC");
+    expect(markup).not.toContain("Run history detail");
+    expect(markup).not.toContain(">available<");
+    expect(getRunHistoryDetail).toHaveBeenCalledWith("55555555-5555-4555-8555-555555555555");
+    expect(getAdminRunHistoryDetail).not.toHaveBeenCalled();
+  });
+
+  it("renders the exact order-failure outcome badge and conclusion on the public route", async () => {
+    const detail = detailFixture();
+    detail.summary.businessOutcomeSummary = {
+      ...detail.summary.businessOutcomeSummary,
+      confirmedOrders: 8,
+      failedOrders: 2,
+      notificationsRecorded: 8,
+    };
+    detail.result = deriveRunResult({
+      ...resultEvidence(detail),
+      generator: {
+        transportAttemptCounts: detail.summary.transportAttemptCounts,
+        httpSummary: detail.summary.httpSummary,
+      },
+    });
+    getRunHistoryDetail.mockResolvedValue({ status: "available", data: detail });
+
+    const markup = renderToStaticMarkup(
+      await RunHistoryDetailPage({
+        params: Promise.resolve({ runId: "55555555-5555-4555-8555-555555555555" }),
+      }),
     );
-    expect(markup).toMatch(/accepted responses<\/dt><dd[^>]*>4<\/dd>/);
-    expect(markup).toMatch(/sold-out rejections seen by the load generator<\/dt><dd[^>]*>3<\/dd>/);
-    expect(markup).toMatch(/Unexpected<\/dt><dd[^>]*>0<\/dd>/);
-    expect(markup).toMatch(
-      /Client HTTP p95<span[^>]*>observed replies only<\/span><\/dt><dd[^>]*>42 ms<\/dd>/,
-    );
-    // 7 of 9 dispatched attempts recorded a reply.
-    expect(markup).toContain("78% of dispatched attempts recorded a reply");
+
+    expect(markup).toContain('aria-hidden="true">!</span>Completed with order failures</span>');
     expect(markup).toContain(
-      "Outcomes and latency above cover 7 of 10 attempts. The p95 describes replies received only. Durable checkout records are the authoritative record.",
+      "All 10 available units were reserved without overselling. Checkout-Surge recorded 10 sold-out rejections. 8 orders were confirmed, 2 failed, and 0 remain pending.",
     );
-    expect(markup).toContain("Run configuration");
-    expect(markup).toContain("Durable checkout records");
-    expect(markup).toContain("Simulated ERP calls");
-    expect(markup).toContain("Public activity totals");
-    expect(markup).toContain("Not recorded for this run");
-    expect(markup).not.toContain("Peak 0");
-    expect(markup).not.toContain("0 remaining");
-    expect(markup).not.toContain("Generator diagnostics");
-    expect(markup).not.toContain("ord_history_1");
-    expect(markup).not.toContain("corr-history-detail");
-    expect(markup).not.toContain("worker");
-    expect(markup).not.toContain("reservationToken");
-    expect(markup).not.toContain("idempotencyKey");
-    expect(markup).not.toContain("payload");
-    expect(markup).not.toContain("x-control-service-token");
   });
 
-  it("retains row detail in the admin representation", () => {
+  it("renders the exact indeterminate outcome badge and conclusion on the public route", async () => {
+    const detail = detailFixture();
+    const { terminalInventorySnapshot: _terminalInventorySnapshot, ...summary } = detail.summary;
+    detail.summary = summary;
+    detail.result = deriveRunResult({
+      ...resultEvidence(detail),
+      generator: {
+        transportAttemptCounts: detail.summary.transportAttemptCounts,
+        httpSummary: detail.summary.httpSummary,
+      },
+    });
+    getRunHistoryDetail.mockResolvedValue({ status: "available", data: detail });
+
     const markup = renderToStaticMarkup(
-      createElement(AdminRunHistoryDetail, { detail: adminRunHistoryDetailFixture() }),
+      await RunHistoryDetailPage({
+        params: Promise.resolve({ runId: "55555555-5555-4555-8555-555555555555" }),
+      }),
     );
+
+    expect(markup).toContain('aria-hidden="true">•</span>Result not fully verified</span>');
+    expect(markup).toContain(
+      "The run outcome is indeterminate because authoritative evidence is incomplete.",
+    );
+  });
+
+  it("maps malformed and confirmed-absent public runs to Next notFound", async () => {
+    await expect(
+      RunHistoryDetailPage({ params: Promise.resolve({ runId: "bad" }) }),
+    ).rejects.toThrow("NEXT_NOT_FOUND");
+    expect(getRunHistoryDetail).not.toHaveBeenCalled();
+
+    getRunHistoryDetail.mockResolvedValue({
+      status: "unavailable",
+      httpStatus: 404,
+      errorCode: "resource_not_found",
+    });
+    await expect(
+      RunHistoryDetailPage({
+        params: Promise.resolve({ runId: "55555555-5555-4555-8555-555555555555" }),
+      }),
+    ).rejects.toThrow("NEXT_NOT_FOUND");
+  });
+
+  it("maps a confirmed-absent admin run to Next notFound without a public read", async () => {
+    hasValidAdminPageSession.mockResolvedValue(true);
+    getAdminRunHistoryDetail.mockResolvedValue({
+      status: "unavailable",
+      httpStatus: 404,
+      errorCode: "resource_not_found",
+    });
+
+    await expect(
+      RunHistoryDetailPage({
+        params: Promise.resolve({ runId: "55555555-5555-4555-8555-555555555555" }),
+      }),
+    ).rejects.toThrow("NEXT_NOT_FOUND");
+    expect(getAdminRunHistoryDetail).toHaveBeenCalledWith("55555555-5555-4555-8555-555555555555");
+    expect(getRunHistoryDetail).not.toHaveBeenCalled();
+  });
+
+  it("keeps an unconfirmed backend 404 unavailable", async () => {
+    getRunHistoryDetail.mockResolvedValue({
+      status: "unavailable",
+      httpStatus: 404,
+      reason: "invalid backend error response",
+    });
+
+    const page = await RunHistoryDetailPage({
+      params: Promise.resolve({ runId: "55555555-5555-4555-8555-555555555555" }),
+    });
+    const markup = renderToStaticMarkup(page);
+
+    expect(markup).toContain("Detail unavailable");
+    expect(markup).not.toContain("Run not found");
+    expect(notFound).not.toHaveBeenCalled();
+  });
+
+  it("keeps non-404 backend failures as unavailable", async () => {
+    getRunHistoryDetail.mockResolvedValue({
+      status: "unavailable",
+      httpStatus: 503,
+      errorCode: "dependency_unavailable",
+      correlationId: "public-history-correlation",
+      reason: "private public-reader diagnostic",
+    });
+    const page = await RunHistoryDetailPage({
+      params: Promise.resolve({ runId: "55555555-5555-4555-8555-555555555555" }),
+    });
+    const markup = renderToStaticMarkup(page);
+    expect(markup).toContain("Detail unavailable");
+    expect(markup).not.toContain("public-history-correlation");
+    expect(markup).not.toContain("private public-reader diagnostic");
+    expect(markup).not.toContain("Technical details");
+    expect(notFound).not.toHaveBeenCalled();
+    expect(getAdminRunHistoryDetail).not.toHaveBeenCalled();
+  });
+
+  it("uses only the admin reader for a validated session and preserves protected diagnostics", async () => {
+    hasValidAdminPageSession.mockResolvedValue(true);
+    getAdminRunHistoryDetail.mockResolvedValue({
+      status: "unavailable",
+      httpStatus: 503,
+      errorCode: "dependency_unavailable",
+      correlationId: "admin-history-correlation",
+      reason: "protected admin-reader diagnostic",
+    });
+
+    const page = await RunHistoryDetailPage({
+      params: Promise.resolve({ runId: "55555555-5555-4555-8555-555555555555" }),
+    });
+    const markup = renderToStaticMarkup(page);
+
+    expect(getAdminRunHistoryDetail).toHaveBeenCalledWith("55555555-5555-4555-8555-555555555555");
+    expect(getRunHistoryDetail).not.toHaveBeenCalled();
+    expect(markup).toContain("Technical details");
+    expect(markup).toContain("admin-history-correlation");
+    expect(markup).toContain("protected admin-reader diagnostic");
+  });
+
+  it("renders bounded row-level diagnostics for an available admin detail", async () => {
+    hasValidAdminPageSession.mockResolvedValue(true);
+    getAdminRunHistoryDetail.mockResolvedValue({
+      status: "available",
+      data: adminDetailFixture(),
+    });
+
+    const page = await RunHistoryDetailPage({
+      params: Promise.resolve({ runId: "55555555-5555-4555-8555-555555555555" }),
+    });
+    const markup = renderToStaticMarkup(page);
+
     expect(markup).toContain("Order outcomes");
     expect(markup).toContain("ord_history_1");
     expect(markup).toContain("corr-history-detail");
+    expect(markup).toContain("ERP attempts");
     expect(markup).toContain("Event timeline");
     expect(markup).toContain("worker");
-    expect(markup).toContain("Load generator");
-    expect(markup).toContain("Replies recorded");
-    expect(markup).toContain("Replies not recorded");
-    expect(markup).toContain("Never dispatched");
-    expect(markup).toContain("Durable checkout records");
-    expect(markup).toContain("Generator diagnostics");
-    expect(markup).toContain("k6 v1.0.0");
-    expect(markup).toContain("Observed response timing");
-    expect(markup).toContain("Waiting p95");
-    expect(markup).not.toContain("Interrupted");
-    expect(markup).not.toContain("Unstarted");
-    expect(markup).not.toContain("Emitted");
-    expect(markup).not.toContain("Outcomes and latency");
-  });
-
-  it("renders malformed detail routes as public-safe not-found states without an API read", async () => {
-    const page = await RunHistoryDetailPage({
-      params: Promise.resolve({ runId: "not-a-real-run" }),
-    });
-    const markup = renderToStaticMarkup(page);
-
-    expect(markup).toContain("Run not found");
-    expect(markup).toContain("That result is no longer available");
-    expect(markup).toContain("not found");
-    expect(markup).not.toContain("Detail unavailable");
-    expect(markup).not.toContain("Invalid UUID");
-    expect(markup).not.toContain("validation");
-    expect(markup).not.toContain("runId&quot;");
-    expect(getRunHistoryDetail).not.toHaveBeenCalled();
-  });
-
-  it("preserves backend-unavailable detail rendering for valid run IDs", async () => {
-    const runId = "55555555-5555-4555-8555-555555555555";
-    getRunHistoryDetail.mockResolvedValue({
-      status: "unavailable",
-      httpStatus: 503,
-      correlationId: "public-history-correlation",
-      reason: "backend offline",
-    });
-
-    const page = await RunHistoryDetailPage({ params: Promise.resolve({ runId }) });
-    const markup = renderToStaticMarkup(page);
-
-    expect(markup).toContain("Detail unavailable");
-    expect(markup).toContain("Something didn");
-    expect(markup).not.toContain("backend offline");
-    expect(markup).not.toContain("public-history-correlation");
-    expect(markup).not.toContain("Technical details");
-    expect(markup).not.toContain("Run not found");
-    expect(getRunHistoryDetail).toHaveBeenCalledOnce();
-    expect(getRunHistoryDetail).toHaveBeenCalledWith(runId);
-    expect(getAdminRunHistoryDetail).not.toHaveBeenCalled();
-  });
-
-  it("retains detail diagnostics only for an authenticated history failure", async () => {
-    const runId = "55555555-5555-4555-8555-555555555555";
-    hasValidAdminPageSession.mockResolvedValue(true);
-    getAdminRunHistoryDetail.mockResolvedValue({
-      status: "unavailable",
-      errorCode: "backend_unavailable",
-      httpStatus: 503,
-      correlationId: "admin-history-correlation",
-      reason: "admin history backend diagnostic",
-    });
-
-    const page = await RunHistoryDetailPage({ params: Promise.resolve({ runId }) });
-    const markup = renderToStaticMarkup(page);
-
-    expect(markup).toContain("Detail unavailable");
-    expect(markup).toContain("Technical details");
-    expect(markup).toContain("admin-history-correlation");
-    expect(markup).toContain("admin history backend diagnostic");
-    expect(markup).not.toContain("Something didn");
-  });
-
-  it("keeps diagnostics behind the validated admin page session", async () => {
-    const runId = "55555555-5555-4555-8555-555555555555";
-    getRunHistoryDetail.mockResolvedValue({
-      status: "available",
-      data: runHistoryDetailFixture(),
-      httpStatus: 200,
-    });
-
-    const page = await RunHistoryDetailPage({ params: Promise.resolve({ runId }) });
-    const markup = renderToStaticMarkup(page);
-
-    expect(markup).not.toContain("Generator diagnostics");
-    expect(getRunHistoryDetail).toHaveBeenCalledWith(runId);
-    expect(getAdminRunHistoryDetail).not.toHaveBeenCalled();
-  });
-
-  it("selects admin detail only from the validated page session", async () => {
-    const runId = "55555555-5555-4555-8555-555555555555";
-    hasValidAdminPageSession.mockResolvedValue(true);
-    getAdminRunHistoryDetail.mockResolvedValue({
-      status: "available",
-      data: adminRunHistoryDetailFixture(),
-      httpStatus: 200,
-    });
-
-    const page = await RunHistoryDetailPage({ params: Promise.resolve({ runId }) });
-    const markup = renderToStaticMarkup(page);
-
-    expect(markup).toContain("ord_history_1");
-    expect(getAdminRunHistoryDetail).toHaveBeenCalledWith(runId);
-    expect(getRunHistoryDetail).not.toHaveBeenCalled();
+    expect(markup).toContain("1 total");
   });
 });
 
-describe("cross-route presentation of the same instant and duration", () => {
-  // The fixture run starts at 00:00:00Z and finalizes at 00:00:10Z on 2026-06-20.
-  const sharedInstantText = "2026-06-20 00:00:00 UTC";
-  const sharedDurationText = "10 s";
+describe("run-history cross-route time and duration presentation", () => {
+  beforeEach(() => {
+    getRunHistoryDetail.mockReset();
+    getAdminRunHistoryDetail.mockReset();
+    hasValidAdminPageSession.mockResolvedValue(false);
+    notFound.mockClear();
+  });
 
-  function watchMarkup(): string {
-    return renderToStaticMarkup(
-      createElement(RecoveryStatusPanel, {
-        recovery: { status: "available", data: watchProjectionFixture(), httpStatus: 200 },
-        realtimeStatus: "disconnected",
-        presentation: {
-          state: "ready",
-          tone: "idle",
-          label: "ready",
-          description: "Ready to start a run.",
-        },
-        freshness: { state: "disconnected", observedAt: "2026-06-20T00:00:00.000Z", final: false },
-        hasSyncIssue: true,
-        isRetryScheduled: true,
-        retryDelayMs: 10_000,
-        syncIssue: { status: "unavailable", reason: "backend offline" },
-      }),
-    );
-  }
-
-  // `traffic.latency` arrives from k6 as a raw mean in milliseconds. Watch is public summary UI,
-  // so it must not reproduce the readings B10 named. The panel renders only the latest sample, so
-  // each raw value is rendered in its own pass — otherwise the forbidden strings for the earlier
-  // samples would never reach the markup and their assertions would be inert.
-  const rawLatencySamples = [
-    { rawMs: 11_028.779, expectedText: "11 s", forbidden: ".779" },
-    { rawMs: 14_487.6, expectedText: "14.5 s", forbidden: "487.6" },
-    { rawMs: 126.683, expectedText: "127 ms", forbidden: ".683" },
-  ];
-
-  it.each(
-    rawLatencySamples,
-  )("never renders the falsely precise $rawMs ms sample on the public watch route", ({
-    rawMs,
-    expectedText,
-    forbidden,
-  }) => {
-    const projection = activeWatchProjectionFixture();
-    projection.recentMetrics = [
-      {
-        metricName: "traffic.latency",
-        value: rawMs,
-        unit: "ms",
-        timestamp: "2026-06-20T00:00:00.000Z",
-      },
+  it("keeps the same absolute UTC instant and human duration across current shapes", async () => {
+    const detail = detailFixture();
+    getRunHistoryDetail.mockResolvedValue({ status: "available", data: detail });
+    const markups = [
+      renderToStaticMarkup(createElement(RunHistoryList, { history: listFixture() })),
+      renderToStaticMarkup(
+        await RunHistoryDetailPage({
+          params: Promise.resolve({ runId: "55555555-5555-4555-8555-555555555555" }),
+        }),
+      ),
+      renderToStaticMarkup(createElement(AdminRunHistoryDetail, { detail: adminDetailFixture() })),
     ];
 
-    const markup = renderToStaticMarkup(
-      createElement(RequestSurgePanel, {
-        recovery: { status: "available", data: projection, httpStatus: 200 },
-        freshness: { state: "live", observedAt: "2026-06-20T00:00:00.000Z", final: false },
-      }),
-    );
-
-    expect(markup).toMatch(
-      new RegExp(
-        `Response latency \\(1-second window; mean\\)</dt><dd[^>]*>${expectedText.replaceAll(".", "\\.")}</dd>`,
-      ),
-    );
-    expect(markup).not.toMatch(/\d,\d{3}\.\d ms/);
-    expect(markup).not.toContain(forbidden);
-  });
-
-  it("does not render run-scoped rate evidence while Watch is idle", () => {
-    const markup = renderToStaticMarkup(
-      createElement(RequestSurgePanel, {
-        recovery: { status: "available", data: watchProjectionFixture(), httpStatus: 200 },
-        freshness: {
-          state: "not-applicable",
-          observedAt: "2026-06-20T00:00:00.000Z",
-          final: false,
-        },
-      }),
-    );
-
-    expect(markup).toContain("No run has started");
-    expect(markup).not.toContain("measurement window");
-    expect(markup).not.toContain("not yet available");
-    expect(markup).not.toContain("Final request totals appear here");
-    expect(markup).not.toContain("attempts/s");
-  });
-
-  it("renders one instant with the same dated UTC reading on Watch and both history routes", () => {
-    const watch = watchMarkup();
-    const list = renderToStaticMarkup(
-      createElement(RunHistoryList, { history: runHistoryFixture() }),
-    );
-    const publicDetail = renderToStaticMarkup(
-      createElement(PublicRunHistoryDetail, { detail: runHistoryDetailFixture() }),
-    );
-    const adminDetail = renderToStaticMarkup(
-      createElement(AdminRunHistoryDetail, { detail: adminRunHistoryDetailFixture() }),
-    );
-
-    for (const markup of [watch, list, publicDetail, adminDetail]) {
-      expect(markup).toContain(sharedInstantText);
-    }
-    // No surface may fall back to a viewer-local reading or an unlabeled clock.
-    for (const markup of [list, publicDetail, adminDetail]) {
+    for (const markup of markups) {
+      expect(markup).toContain("2026-06-20 00:00:00 UTC");
+      expect(markup).toContain('dateTime="2026-06-20T00:00:00.000Z"');
       expect(markup).not.toContain("Jun 20, 2026");
       expect(markup).not.toContain("AM UTC");
       expect(markup).not.toContain("PM UTC");
     }
-    // The exact machine-readable instant stays available for accessible or technical inspection
-    // alongside the human reading, on both history routes.
-    for (const markup of [list, publicDetail, adminDetail]) {
-      expect(markup).toContain(
-        `<time dateTime="2026-06-20T00:00:00.000Z">${sharedInstantText}</time>`,
-      );
-    }
+    expect(markups[0]).toMatch(/Duration<\/p><p[^>]*>10 s<\/p>/);
+    expect(markups[1]).toMatch(
+      /dateTime="2026-06-20T00:00:00.000Z">2026-06-20 00:00:00 UTC<\/time> · 10 s<\/p>/,
+    );
+    expect(markups[2]).toMatch(/Overall run duration<\/dt><dd[^>]*>10 s<\/dd>/);
   });
 
-  it("renders one elapsed interval with the same human reading on Watch and both history routes", () => {
-    const watch = watchMarkup();
-    const list = renderToStaticMarkup(
-      createElement(RunHistoryList, { history: runHistoryFixture() }),
+  it("renders explicit unavailable duration copy when summary start evidence is missing", async () => {
+    const history = listFixture();
+    const item = history.summaries[0];
+    if (!item) throw new Error("Expected run history list fixture.");
+    item.overallDurationMs = null;
+
+    const publicDetail = detailFixture();
+    const { startedAt: _startedAt, ...publicSummary } = publicDetail.summary;
+    publicDetail.summary = publicSummary;
+    publicDetail.overallDurationMs = null;
+    getRunHistoryDetail.mockResolvedValue({ status: "available", data: publicDetail });
+
+    const adminDetail = adminDetailFixture();
+    const { startedAt: _adminStartedAt, ...adminSummary } = adminDetail.summary;
+    adminDetail.summary = adminSummary;
+
+    const listMarkup = renderToStaticMarkup(createElement(RunHistoryList, { history }));
+    const publicMarkup = renderToStaticMarkup(
+      await RunHistoryDetailPage({
+        params: Promise.resolve({ runId: "55555555-5555-4555-8555-555555555555" }),
+      }),
     );
-    const publicDetail = renderToStaticMarkup(
-      createElement(PublicRunHistoryDetail, { detail: runHistoryDetailFixture() }),
-    );
-    const adminDetail = renderToStaticMarkup(
-      createElement(AdminRunHistoryDetail, { detail: adminRunHistoryDetailFixture() }),
-    );
-
-    expect(watch).toContain(`Retry scheduled in ${sharedDurationText}`);
-    for (const markup of [list, publicDetail, adminDetail]) {
-      expect(markup).toContain("Overall run duration");
-      expect(markup).toMatch(
-        new RegExp(`Overall run duration</dt><dd[^>]*>${sharedDurationText}</dd>`),
-      );
-    }
-  });
-
-  it("shows an explicit no-duration state instead of zero when a start boundary is missing", () => {
-    const history = runHistoryFixture();
-    const summary = history.summaries[0];
-    if (!summary) throw new Error("Expected a run history summary fixture.");
-    delete (summary as { startedAt?: string }).startedAt;
-
-    const markup = renderToStaticMarkup(createElement(RunHistoryList, { history }));
-
-    expect(markup).toMatch(/Overall run duration<\/dt><dd[^>]*>— no recorded start<\/dd>/);
-    expect(markup).not.toMatch(/Overall run duration<\/dt><dd[^>]*>0 ms<\/dd>/);
-  });
-
-  it("keeps the configured maximum dispatch time distinguishable from an observed dispatch duration", () => {
-    const markup = renderToStaticMarkup(
-      createElement(PublicRunHistoryDetail, { detail: runHistoryDetailFixture() }),
+    const adminMarkup = renderToStaticMarkup(
+      createElement(AdminRunHistoryDetail, { detail: adminDetail }),
     );
 
-    expect(markup).toContain("Configured maximum dispatch time");
-    expect(markup).toContain("Dispatch duration");
-    expect(markup).not.toContain(">Dispatch window<");
+    expect(listMarkup).toMatch(/Duration<\/p><p[^>]*>not recorded<\/p>/);
+    expect(publicMarkup).toContain("duration not recorded");
+    expect(adminMarkup).toMatch(/Overall run duration<\/dt><dd[^>]*>— no recorded start<\/dd>/);
+    expect(adminMarkup).not.toMatch(/Overall run duration<\/dt><dd[^>]*>0 ms<\/dd>/);
   });
 });
 
-function watchProjectionFixture(): DashboardProjection {
-  return {
-    schema: dashboardProjectionSchemaName,
-    version: dashboardProjectionSchemaVersion,
-    scopeId: "idle",
-    revision: 1,
-    correlationId: "corr-web-recovery",
-    scope: null,
-    currentRun: null,
-    inventory: null,
-    recentMetrics: [],
-    erp: null,
-    systemStatus: null,
-    businessOutcome: null,
-    consistencyLag: null,
-    transportAttemptCounts: null,
-    httpSummary: null,
-    requestArrivalSummary: null,
-    runSignalTimelineSummary: null,
-    recoveredAt: "2026-06-20T00:00:00.000Z",
-  };
-}
-
-function activeWatchProjectionFixture(): DashboardProjection {
-  const projection = watchProjectionFixture();
-  projection.currentRun = {
-    runId: "55555555-5555-4555-8555-555555555555",
-    presetId: "66666666-6666-4666-8666-666666666666",
-    presetName: "Active fixture",
-    operatorMode: "public",
-    status: "active",
-    trafficStatus: "active",
-    saleOfferId: "77777777-7777-4777-8777-777777777777",
-    configSnapshot: previewRunConfigSnapshotFixture(),
-    startedAt: "2026-06-20T00:00:00.000Z",
-    trafficStartedAt: "2026-06-20T00:00:00.000Z",
-  };
-  return projection;
-}
-
-function runHistoryFixture(): RunHistoryListResponse {
+function listFixture(): RunHistoryListResponse {
   return {
     summaries: [
       {
-        id: "77777777-7777-4777-8777-777777777777",
         runId: "55555555-5555-4555-8555-555555555555",
         presetName: "Preview 1k",
-        status: "completed",
-        replayPossible: false,
-        startedAt: "2026-06-20T00:00:00.000Z",
-        endedAt: "2026-06-20T00:00:10.000Z",
-        transportAttemptCounts: {
-          plannedRequests: 10,
-          startedRequests: 10,
-          completedRequests: 10,
-          interruptedRequests: 0,
-          unstartedRequests: 0,
-        },
-        httpSummary: {
-          failedRequests: 0,
-          acceptedResponses: 6,
-          soldOutResponses: 4,
-          transportFailures: 0,
-          unexpectedResponses: 0,
-          p95LatencyMs: 42,
-          failureRate: 0,
-        },
-        trafficDeliverySummary: {
-          trafficMode: null,
-          plannedBuyers: null,
-          scheduledRatePerSecond: null,
-          configuredDurationSeconds: null,
-          preAllocatedVUs: null,
-          maxVUs: null,
-          droppedIterations: 0,
-          completedIterations: null,
-          requestArrivalSummary: {
-            ...emptyRequestArrivalSummary,
-            peakArrivalRatePerSecond: 10,
-            dispatchDurationSeconds: 0.2,
-            arrivalRateSeries: [
-              {
-                windowStartedAt: "2026-06-20T00:00:00.000Z",
-                ratePerSecond: 10,
-              },
-            ],
-            arrivalWindowCountObserved: 1,
-            arrivalWindowCountRetained: 1,
-          },
-          trafficDeliveryStatus: "complete",
-          notes: [],
-        },
-        serverReservationTimingSummary,
-        fastReservationTargetEvaluation: evaluateFastReservationTarget(
-          serverReservationTimingSummary,
-          10,
-        ),
-        businessOutcomeSummary: {
-          acceptedReservations: 6,
-          reservedUnits: 6,
-          soldOutRejections: 4,
-          queuedOrders: 0,
-          processingOrders: 0,
-          retryingOrders: 0,
-          confirmedOrders: 5,
-          failedOrders: 1,
-          pendingPersistenceCount: 0,
-          notificationsRecorded: 5,
-        },
-        terminalInventorySnapshot: {
-          saleOfferId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-          startingStock: 10,
-          remainingStock: 0,
-          reservedStock: 10,
-          acceptedReservations: 6,
-          soldOutRejections: 4,
-          pendingPersistenceCount: 0,
-          capturedAt: "2026-06-20T00:00:10.000Z",
-          source: "redis",
-        },
-        runSignalTimelineSummary: null,
-        capturedAt: "2026-06-20T00:00:10.000Z",
+        occurredAt: "2026-06-20T00:00:00.000Z",
+        overallDurationMs: 10_000,
+        resultOutcome: "completed-successfully",
+        plannedAttempts: 20,
+        startingStock: 10,
+        uniqueReservations: 10,
+        soldOutRejections: 10,
+        confirmedOrders: 10,
+        failedOrders: 0,
+        convergenceDurationSeconds: 2,
       },
     ],
     page: 1,
@@ -671,149 +585,172 @@ function runHistoryFixture(): RunHistoryListResponse {
   };
 }
 
-function timelineHeadlineFixture(): RunSignalTimelineHeadline {
-  return {
-    window: {
-      anchoredAt: "2026-06-20T00:00:00.000Z",
-      endedAt: "2026-06-20T00:00:10.000Z",
-      bucketCount: runSignalBucketCount,
-      bucketWidthSeconds: 1,
-    },
-    inventoryDrain: {
-      startingStock: 10,
-      remainingStock: 0,
-      depletedAt: "2026-06-20T00:00:05.000Z",
-      timeToDepletionSeconds: 5,
-    },
-    queueBacklog: {
-      peakBacklog: 6,
-      peakAtElapsedSeconds: 3,
-      backlogDrainedAt: "2026-06-20T00:00:09.000Z",
-      drainDurationSeconds: 9,
-      drainDurationBoundary: queueBacklogDrainDurationBoundary,
-      definition: queueBacklogDefinition,
-    },
-    confirmationConvergence: {
-      confirmedOrderCount: 5,
-      failedOrderCount: 1,
-      pendingAtCaptureCount: 0,
-      averageLagMs: 2_000,
-      p95LagMs: 3_000,
-      maxLagMs: 4_000,
-      boundary: confirmationLagBoundary,
-    },
-    convergenceDurationSeconds: 9,
+function detailFixture(
+  status: "completed" | "failed" = "completed",
+): PublicRunHistoryDetailResponse {
+  const transportAttemptCounts = {
+    plannedRequests: 20,
+    startedRequests: 20,
+    completedRequests: 20,
+    interruptedRequests: 0,
+    unstartedRequests: 0,
   };
-}
-
-function runHistoryDetailFixture(): PublicRunHistoryDetailResponse {
-  const admin = adminRunHistoryDetailFixture();
-  const { id: _id, terminalInventorySnapshot, ...summary } = admin.summary;
-  const { presetId: _presetId, saleOfferId: _saleOfferId, ...run } = admin.run;
-  const sanitizedInventory = terminalInventorySnapshot
-    ? (({ saleOfferId: _inventorySaleOfferId, source: _inventorySource, ...inventory }) =>
-        inventory)(terminalInventorySnapshot)
-    : undefined;
-  const { notes: _deliveryNotes, ...publicDeliverySummary } = summary.trafficDeliverySummary;
-  const transportCounts = {
-    plannedRequests: 10,
-    startedRequests: 9,
-    completedRequests: 7,
-    interruptedRequests: 2,
-    unstartedRequests: 1,
+  const httpSummary = {
+    failedRequests: 0,
+    acceptedResponses: 10,
+    soldOutResponses: 10,
+    transportFailures: 0,
+    unexpectedResponses: 0,
+    p95LatencyMs: 42,
+    failureRate: 0,
   };
+  const businessOutcomeSummary = {
+    acceptedReservations: 10,
+    reservedUnits: 10,
+    soldOutRejections: 10,
+    queuedOrders: 0,
+    processingOrders: 0,
+    retryingOrders: 0,
+    confirmedOrders: 10,
+    failedOrders: 0,
+    pendingPersistenceCount: 0,
+    notificationsRecorded: 10,
+  };
+  const terminalInventorySnapshot = {
+    startingStock: 10,
+    remainingStock: 0,
+    reservedStock: 10,
+    acceptedReservations: 10,
+    soldOutRejections: 10,
+    pendingPersistenceCount: 0,
+    capturedAt: "2026-06-20T00:00:10.000Z",
+  };
+  const failureCategory = status === "failed" ? ("traffic" as const) : undefined;
+  const result = deriveRunResult({
+    runStatus: status,
+    failureCategory: failureCategory ?? null,
+    startingStock: 10,
+    remainingStock: 0,
+    durable: {
+      reservedUnits: 10,
+      uniqueReservations: 10,
+      soldOutDecisions: 10,
+      confirmedOrders: 10,
+      failedOrders: 0,
+      queuedOrders: 0,
+      processingOrders: 0,
+      durablePendingPersistenceRecords: 0,
+      notificationsRecorded: 10,
+    },
+    heldReservationsAwaitingPersistence: 0,
+    replayPossible: false,
+    generator: { transportAttemptCounts, httpSummary },
+  });
+  const serverTiming = emptyServerReservationTimingSummary;
   return {
     summary: {
-      ...summary,
-      transportAttemptCounts: transportCounts,
-      httpSummary: {
-        ...summary.httpSummary,
-        acceptedResponses: 4,
-        soldOutResponses: 3,
-        unexpectedResponses: 0,
-      },
+      runId: "55555555-5555-4555-8555-555555555555",
+      presetName: "Preview 1k",
+      status,
+      replayPossible: false,
+      ...(failureCategory ? { failureCategory } : {}),
+      startedAt: "2026-06-20T00:00:00.000Z",
+      endedAt: "2026-06-20T00:00:10.000Z",
+      transportAttemptCounts,
+      httpSummary,
       trafficDeliverySummary: {
-        ...publicDeliverySummary,
-        completedIterations: 7,
-        trafficDeliveryStatus: "failed",
+        trafficMode: "buyer-spike",
+        plannedBuyers: 20,
+        scheduledRatePerSecond: null,
+        configuredDurationSeconds: null,
+        preAllocatedVUs: null,
+        maxVUs: null,
+        droppedIterations: 0,
+        completedIterations: 20,
+        requestArrivalSummary: {
+          ...emptyRequestArrivalSummary,
+          firstAttemptStartedAt: "2026-06-20T00:00:01.000Z",
+          peakArrivalRatePerSecond: 20,
+          dispatchDurationSeconds: 1,
+          arrivalWindowCountObserved: 1,
+          arrivalWindowCountRetained: 1,
+          arrivalRateSeries: [{ windowStartedAt: "2026-06-20T00:00:01.000Z", ratePerSecond: 20 }],
+        },
+        trafficDeliveryStatus: status === "failed" ? "failed" : "complete",
       },
-      fastReservationTargetEvaluation: evaluateFastReservationTarget(
-        serverReservationTimingSummary,
-        7,
-      ),
-      ...(sanitizedInventory ? { terminalInventorySnapshot: sanitizedInventory } : {}),
+      serverReservationTimingSummary: serverTiming,
+      fastReservationTargetEvaluation: evaluateFastReservationTarget(serverTiming, 20),
+      businessOutcomeSummary,
+      terminalInventorySnapshot,
+      runSignalTimelineSummary: null,
+      capturedAt: "2026-06-20T00:00:10.000Z",
     },
-    run,
-    httpTimingBreakdownSummary,
-    orders: { totalCount: 1, byStatus: { queued: 0, processing: 0, confirmed: 1, failed: 0 } },
+    run: {
+      runId: "55555555-5555-4555-8555-555555555555",
+      presetName: "Preview 1k",
+      operatorMode: "public",
+      status,
+      trafficStatus: status === "failed" ? "failed" : "succeeded",
+      configSnapshot: previewRunConfigSnapshotFixture(),
+      startedAt: "2026-06-20T00:00:00.000Z",
+      trafficStartedAt: "2026-06-20T00:00:00.000Z",
+      trafficEndedAt: "2026-06-20T00:00:09.000Z",
+      finalizedAt: "2026-06-20T00:00:10.000Z",
+    },
+    result,
+    overallDurationMs: 10_000,
+    plannedAttempts: 20,
+    httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
     erpAttempts: {
-      totalCount: 1,
-      byStatus: { succeeded: 1, failed: 0, timedOut: 0 },
-      averageLatencyMs: 42,
-      p95LatencyMs: 42,
+      totalCount: status === "failed" ? 2 : 1,
+      byStatus: {
+        succeeded: 1,
+        failed: status === "failed" ? 1 : 0,
+        timedOut: 0,
+      },
+      averageLatencyMs: 20,
+      p95LatencyMs: 25,
     },
-    notifications: { totalCount: 1 },
-    events: { totalCount: 1 },
     runSignalTimelineSummary: null,
-    timestamp: admin.timestamp,
+    timestamp: "2026-06-20T00:00:10.000Z",
   };
 }
 
-function adminRunHistoryDetailFixture(): AdminRunHistoryDetailResponse {
-  const summary = runHistoryFixture().summaries[0];
-  if (!summary) {
-    throw new Error("Expected run history summary fixture.");
-  }
+function adminDetailFixture(): AdminRunHistoryDetailResponse {
+  const detail = detailFixture();
+  const inventory = detail.summary.terminalInventorySnapshot;
+  if (!inventory) throw new Error("Expected terminal inventory fixture.");
 
   return {
-    summary,
-    httpTimingBreakdownSummary,
-    loadRunDiagnosticsSummary: runDiagnosticsFixture(),
+    summary: {
+      ...detail.summary,
+      id: "66666666-6666-4666-8666-666666666666",
+      trafficDeliverySummary: {
+        ...detail.summary.trafficDeliverySummary,
+        notes: [],
+      },
+      terminalInventorySnapshot: {
+        ...inventory,
+        saleOfferId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        source: "redis",
+      },
+    },
     run: {
-      runId: summary.runId,
+      runId: detail.run.runId,
       presetId: "33333333-3333-4333-8333-333333333333",
-      presetName: summary.presetName,
+      presetName: detail.run.presetName,
       operatorMode: "public",
       status: "completed",
       trafficStatus: "succeeded",
       saleOfferId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-      configSnapshot: {
-        trafficConfig: {
-          mode: "buyer-spike",
-          buyerCount: 10,
-          duplicateEachBuyerAttempt: false,
-          startDelaySeconds: 0,
-          maxDurationSeconds: 1,
-          quantityPerAttempt: 1,
-        },
-        inventoryConfig: {
-          startingStock: 10,
-          quantityPerCheckout: 1,
-          reservationHoldMinutes: 15,
-        },
-        erpConfig: {
-          latencyMs: 10,
-          maxTps: 10,
-          errorRate: 0,
-          forcedOutage: false,
-          requestTimeoutMs: 1000,
-        },
-        backpressureConfig: {
-          queueName: "orders:process",
-          physicalQueueName: "orders-process",
-          orderProcessConcurrency: 2,
-          retryPolicy: { maxAttempts: 4, initialBackoffMs: 500 },
-          drainTimeoutSeconds: 300,
-          pendingPersistenceRetryAfterSeconds: 30,
-          circuitBreakerFailureThreshold: 5,
-          circuitBreakerResetTimeoutMs: 10_000,
-        },
-      },
+      configSnapshot: detail.run.configSnapshot,
       startedAt: "2026-06-20T00:00:00.000Z",
-      trafficStartedAt: "2026-06-20T00:00:01.000Z",
+      trafficStartedAt: "2026-06-20T00:00:00.000Z",
       trafficEndedAt: "2026-06-20T00:00:09.000Z",
       finalizedAt: "2026-06-20T00:00:10.000Z",
     },
+    httpTimingBreakdownSummary: detail.httpTimingBreakdownSummary,
+    loadRunDiagnosticsSummary: null,
     orders: {
       totalCount: 1,
       limit: 20,
@@ -852,7 +789,6 @@ function adminRunHistoryDetailFixture(): AdminRunHistoryDetailResponse {
         },
       ],
     },
-    runSignalTimelineSummary: null,
     notifications: {
       totalCount: 1,
       limit: 20,
@@ -883,46 +819,31 @@ function adminRunHistoryDetailFixture(): AdminRunHistoryDetailResponse {
         },
       ],
     },
+    runSignalTimelineSummary: null,
     timestamp: "2026-06-20T00:00:10.000Z",
   };
 }
 
-function runDiagnosticsFixture(): AdminRunHistoryDetailResponse["loadRunDiagnosticsSummary"] {
+function resultEvidence(detail: PublicRunHistoryDetailResponse) {
+  const business = detail.summary.businessOutcomeSummary;
+  const inventory = detail.summary.terminalInventorySnapshot;
   return {
-    startedAt: "2026-06-20T00:00:01.000Z",
-    completedAt: "2026-06-20T00:00:09.000Z",
-    nproc: 8,
-    ulimitNofile: 1_048_576,
-    processMaxOpenFiles: { soft: 1_048_576, hard: 1_048_576 },
-    generatorCapacity: null,
-    generatorUtilisation: null,
-    networkDiagnostics: null,
-    k6Version: "k6 v1.0.0",
-    executionPlan: {
-      trafficMode: "buyer-spike",
-      buyerCount: 10,
-      duplicateEachBuyerAttempt: false,
-      iterationsPerVu: 1,
-      plannedEmittedAttempts: 10,
-      startDelaySeconds: 0,
-      maxDurationSeconds: 1,
+    runStatus: detail.summary.status,
+    failureCategory: detail.summary.failureCategory ?? null,
+    startingStock: inventory?.startingStock ?? null,
+    remainingStock: inventory?.remainingStock ?? null,
+    durable: {
+      reservedUnits: business.reservedUnits,
+      uniqueReservations: business.acceptedReservations,
+      soldOutDecisions: business.soldOutRejections,
+      confirmedOrders: business.confirmedOrders,
+      failedOrders: business.failedOrders,
+      queuedOrders: business.queuedOrders,
+      processingOrders: business.processingOrders,
+      durablePendingPersistenceRecords: business.pendingPersistenceCount,
+      notificationsRecorded: business.notificationsRecorded,
     },
-    stderrLines: [],
-    stderrLineCountObserved: 0,
-    stderrLineCountRetained: 0,
-    stderrRetainedLineLimit: 50,
-    stderrLineTruncationLength: 500,
-    stderrLineTruncatedCount: 0,
-    terminalMetricSources: {
-      startedRequests: "summary_export",
-      completedRequests: "summary_export",
-      acceptedResponses: "summary_export",
-      soldOutResponses: "summary_export",
-      transportFailures: "summary_export",
-      unexpectedResponses: "summary_export",
-      droppedIterations: "summary_export",
-      completedIterations: "summary_export",
-    },
-    summaryExportWarnings: [],
+    heldReservationsAwaitingPersistence: inventory?.pendingPersistenceCount ?? null,
+    replayPossible: detail.summary.replayPossible,
   };
 }

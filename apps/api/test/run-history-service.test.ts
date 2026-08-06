@@ -80,33 +80,26 @@ describe("run history service", () => {
     expect(firstPage.totalCount).toBe(2);
     expect(firstPage.summaries).toHaveLength(1);
     expect(firstPage.summaries[0]).toMatchObject({
-      id: ids.newerSummary,
       runId: ids.newerRun,
       presetName: "History Failed",
-      status: "failed",
-      failureCategory: "traffic",
-      transportAttemptCounts: {
-        plannedRequests: 10,
-        startedRequests: 5,
-        unstartedRequests: 5,
-      },
-      trafficDeliverySummary: {
-        trafficDeliveryStatus: "failed",
-      },
-      businessOutcomeSummary: {
-        acceptedReservations: 3,
-        reservedUnits: 3,
-        soldOutRejections: 2,
-      },
-      terminalInventorySnapshot: {
-        saleOfferId: ids.saleOffer,
-        source: "redis",
-      },
+      occurredAt: "2026-06-20T00:00:00.000Z",
+      overallDurationMs: 9_000,
+      resultOutcome: "failed",
+      plannedAttempts: 10,
+      startingStock: 5,
+      uniqueReservations: 3,
+      soldOutRejections: 2,
+      confirmedOrders: 2,
+      failedOrders: 1,
+      convergenceDurationSeconds: null,
     });
+    expect(firstPage.summaries[0]).not.toHaveProperty("id");
+    expect(firstPage.summaries[0]).not.toHaveProperty("failureCategory");
+    expect(firstPage.summaries[0]).not.toHaveProperty("terminalInventorySnapshot");
     expect(firstPage.summaries[0]).not.toHaveProperty("reservationToken");
     expect(firstPage.summaries[0]).not.toHaveProperty("idempotencyKey");
     expect(secondPage.summaries[0]?.runId).toBe(ids.olderRun);
-    expect(firstPage.summaries[0]?.runSignalTimelineSummary).toBeNull();
+    expect(firstPage.summaries[0]?.convergenceDurationSeconds).toBeNull();
   });
 
   it("keeps list payloads headline-only and detail payloads series-bearing", async () => {
@@ -122,16 +115,182 @@ describe("run history service", () => {
     const detail = await service.detail(ids.newerRun);
     const adminDetail = await service.adminDetail(ids.newerRun);
 
-    expect(list.summaries[0]?.runSignalTimelineSummary).toMatchObject({
-      queueBacklog: { peakBacklog: 3 },
-    });
-    expect(list.summaries[0]?.runSignalTimelineSummary?.queueBacklog).not.toHaveProperty(
-      "backlogSeries",
-    );
+    expect(list.summaries[0]?.convergenceDurationSeconds).toBe(5);
+    expect(list.summaries[0]).not.toHaveProperty("runSignalTimelineSummary");
     expect(detail?.runSignalTimelineSummary?.queueBacklog.backlogSeries).toHaveLength(120);
     expect(adminDetail?.runSignalTimelineSummary?.inventoryDrain.remainingStockSeries).toHaveLength(
       120,
     );
+  });
+
+  it("keeps config-derived demand consistent across list and detail despite generator mismatch", async () => {
+    const db = requireConnection(connection).db;
+    const service = createService(connection);
+    await seedHistory(db);
+    await db
+      .update(demoRunSummaries)
+      .set({
+        transportAttemptCounts: {
+          plannedRequests: 99,
+          startedRequests: 5,
+          completedRequests: 5,
+          interruptedRequests: 0,
+          unstartedRequests: 94,
+        },
+        terminalInventorySnapshot: null,
+      })
+      .where(eq(demoRunSummaries.id, ids.newerSummary));
+
+    const [history, detail] = await Promise.all([
+      service.list({ page: 1, pageSize: 1 }),
+      service.detail(ids.newerRun),
+    ]);
+
+    expect(history.summaries[0]).toMatchObject({
+      plannedAttempts: 10,
+      startingStock: 5,
+    });
+    expect(detail).toMatchObject({
+      plannedAttempts: 10,
+      summary: { transportAttemptCounts: { plannedRequests: 99 } },
+    });
+    expect(history.summaries[0]).not.toHaveProperty("terminalInventorySnapshot");
+  });
+
+  it("assembles canonical detail results from persisted summary evidence", async () => {
+    const db = requireConnection(connection).db;
+    const service = createService(connection);
+    await seedHistory(db);
+    const completeTransport = {
+      plannedRequests: 10,
+      startedRequests: 10,
+      completedRequests: 10,
+      interruptedRequests: 0,
+      unstartedRequests: 0,
+    };
+    const completeHttp = {
+      failedRequests: 0,
+      acceptedResponses: 3,
+      soldOutResponses: 2,
+      transportFailures: 0,
+      unexpectedResponses: 0,
+      p95LatencyMs: 42,
+      failureRate: 0,
+    };
+    const cleanBusinessOutcome = {
+      acceptedReservations: 3,
+      reservedUnits: 5,
+      soldOutRejections: 2,
+      queuedOrders: 0,
+      processingOrders: 0,
+      retryingOrders: 0,
+      confirmedOrders: 3,
+      failedOrders: 0,
+      pendingPersistenceCount: 0,
+      notificationsRecorded: 3,
+    };
+    const completeTrafficDelivery = trafficDeliverySummarySchema.parse({
+      trafficMode: null,
+      plannedBuyers: null,
+      scheduledRatePerSecond: null,
+      configuredDurationSeconds: null,
+      preAllocatedVUs: null,
+      maxVUs: null,
+      droppedIterations: 0,
+      completedIterations: null,
+      requestArrivalSummary: emptyRequestArrivalSummary,
+      trafficDeliveryStatus: "complete",
+      notes: [],
+    });
+    const terminalInventory = {
+      saleOfferId: ids.saleOffer,
+      startingStock: 5,
+      remainingStock: 0,
+      reservedStock: 5,
+      acceptedReservations: 3,
+      soldOutRejections: 2,
+      pendingPersistenceCount: 0,
+      capturedAt: "2026-06-20T00:00:05.000Z",
+      source: "redis" as const,
+    };
+    const updateSummary = (values: Partial<typeof demoRunSummaries.$inferInsert>) =>
+      db.update(demoRunSummaries).set(values).where(eq(demoRunSummaries.id, ids.olderSummary));
+
+    await updateSummary({
+      businessOutcomeSummary: cleanBusinessOutcome,
+      httpSummary: completeHttp,
+      terminalInventorySnapshot: terminalInventory,
+      trafficDeliverySummary: completeTrafficDelivery,
+      transportAttemptCounts: completeTransport,
+    });
+    expect((await service.detail(ids.olderRun))?.result).toMatchObject({
+      outcome: "completed-successfully",
+      uniqueReservations: 3,
+      reservedUnits: 5,
+      confirmedOrders: 3,
+      failedOrders: 0,
+    });
+
+    await updateSummary({
+      businessOutcomeSummary: {
+        ...cleanBusinessOutcome,
+        confirmedOrders: 2,
+        failedOrders: 1,
+        notificationsRecorded: 2,
+      },
+    });
+    expect((await service.detail(ids.olderRun))?.result.outcome).toBe(
+      "completed-with-order-failures",
+    );
+
+    await updateSummary({ terminalInventorySnapshot: null });
+    expect((await service.detail(ids.olderRun))?.result).toMatchObject({
+      outcome: "outcome-indeterminate",
+      startingStock: null,
+      remainingStock: null,
+    });
+
+    await updateSummary({
+      businessOutcomeSummary: cleanBusinessOutcome,
+      terminalInventorySnapshot: terminalInventory,
+      trafficDeliverySummary: {
+        ...completeTrafficDelivery,
+        droppedIterations: 1,
+        trafficDeliveryStatus: "failed",
+      },
+      transportAttemptCounts: {
+        ...completeTransport,
+        startedRequests: 9,
+        completedRequests: 9,
+        unstartedRequests: 1,
+      },
+    });
+    expect((await service.detail(ids.olderRun))?.result).toMatchObject({
+      outcome: "completed-successfully",
+      maximumClassification: "evidence_incomplete",
+      reconciliations: expect.arrayContaining([
+        expect.objectContaining({
+          code: "partial_generator_coverage",
+          classification: "evidence_incomplete",
+        }),
+      ]),
+    });
+
+    await updateSummary({
+      httpSummary: { ...completeHttp, acceptedResponses: 4 },
+      trafficDeliverySummary: completeTrafficDelivery,
+      transportAttemptCounts: completeTransport,
+    });
+    expect((await service.detail(ids.olderRun))?.result).toMatchObject({
+      outcome: "completed-successfully",
+      maximumClassification: "warning",
+      reconciliations: expect.arrayContaining([
+        expect.objectContaining({
+          code: "accepted_responses_vs_unique_reservations",
+          classification: "warning",
+        }),
+      ]),
+    });
   });
 
   it("parses persisted server timing and derives expected replies from transport evidence", async () => {
@@ -160,7 +319,8 @@ describe("run history service", () => {
     const history = await service.list({ page: 1, pageSize: 10 });
     const detail = await service.detail(ids.newerRun);
 
-    expect(history.summaries[0]).toMatchObject({
+    expect(history.summaries[0]).not.toHaveProperty("serverReservationTimingSummary");
+    expect(detail?.summary).toMatchObject({
       serverReservationTimingSummary: {
         redisAtomicReservation: { sampleCount: 3, averageMs: 4, p95Ms: 25 },
         reserveOrderService: { sampleCount: 3, averageMs: 30, p95Ms: 100 },
@@ -313,8 +473,7 @@ describe("run history service", () => {
 
     const detail = await service.detail(ids.newerRun);
 
-    expect(selectSpy).toHaveBeenCalledTimes(6);
-    expect(selectSpy.mock.calls.filter((call) => call.at(0) === undefined)).toHaveLength(2);
+    expect(selectSpy).toHaveBeenCalledTimes(3);
 
     expect(detail).toMatchObject({
       summary: {
@@ -326,17 +485,14 @@ describe("run history service", () => {
         status: "failed",
         trafficStatus: "failed",
       },
-      orders: {
-        totalCount: 1,
-        byStatus: { queued: 0, processing: 0, confirmed: 1, failed: 0 },
-      },
       erpAttempts: {
         totalCount: 3,
         byStatus: { succeeded: 1, failed: 1, timedOut: 1 },
       },
-      notifications: { totalCount: 1 },
-      events: { totalCount: 2 },
     });
+    expect(detail).not.toHaveProperty("orders");
+    expect(detail).not.toHaveProperty("notifications");
+    expect(detail).not.toHaveProperty("events");
     expect(detail?.erpAttempts.averageLatencyMs).toBeCloseTo(50.666_666, 5);
     expect(detail?.erpAttempts.p95LatencyMs).toBeCloseTo(94.2, 3);
 
@@ -445,18 +601,15 @@ describe("run history service", () => {
 
     const detail = await service.detail(ids.newerRun);
 
-    expect(detail?.orders).toEqual({
-      totalCount: 0,
-      byStatus: { queued: 0, processing: 0, confirmed: 0, failed: 0 },
-    });
     expect(detail?.erpAttempts).toEqual({
       totalCount: 0,
       byStatus: { succeeded: 0, failed: 0, timedOut: 0 },
       averageLatencyMs: null,
       p95LatencyMs: null,
     });
-    expect(detail?.notifications.totalCount).toBe(0);
-    expect(detail?.events.totalCount).toBe(0);
+    expect(detail).not.toHaveProperty("orders");
+    expect(detail).not.toHaveProperty("notifications");
+    expect(detail).not.toHaveProperty("events");
   });
 
   it("returns null for missing or non-summary-backed runs", async () => {

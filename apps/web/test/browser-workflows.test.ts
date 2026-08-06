@@ -10,6 +10,7 @@ import {
   dashboardProjectionSchemaVersion,
   dashboardProjectionScopeId,
   demoRunSnapshotSchema,
+  deriveRunResult,
   type ErpChaosStatus,
   emptyHttpTimingBreakdownSummary,
   emptyRequestArrivalSummary,
@@ -20,6 +21,7 @@ import {
   type PublicRunHistoryDetailResponse,
   type PublicRuntimePolicy,
   type PublicRuntimePolicyResponse,
+  type RunHistoryListItem,
   type RunHistoryListResponse,
   type RunHistorySummary,
   runSignalBucketCount,
@@ -1639,7 +1641,7 @@ describe("web page smoke coverage", () => {
     }
 
     render(await RunHistoryDetailPage({ params: Promise.resolve({ runId: detailRunId }) }));
-    expect(screen.getByRole("heading", { name: "Run history detail" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Preview 1k" })).toBeTruthy();
     cleanup();
 
     const aboutMarkup = renderToStaticMarkup(createElement(AboutPage));
@@ -1957,13 +1959,32 @@ function demoRunFixture(overrides: Partial<DemoRunSnapshot> = {}): DemoRunSnapsh
 function runHistoryListFixture(): RunHistoryListResponse {
   return {
     summaries: [
-      runHistorySummaryFixture(),
-      runHistorySummaryFixture("66666666-6666-4666-8666-666666666666"),
+      runHistoryListItemFixture(),
+      runHistoryListItemFixture("66666666-6666-4666-8666-666666666666"),
     ],
     page: 1,
     pageSize: 10,
     totalCount: 2,
     timestamp: "2026-06-20T00:00:10.000Z",
+  };
+}
+
+function runHistoryListItemFixture(
+  runId = "55555555-5555-4555-8555-555555555555",
+): RunHistoryListItem {
+  return {
+    runId,
+    presetName: "Preview 1k",
+    occurredAt: "2026-06-20T00:00:00.000Z",
+    overallDurationMs: 10_000,
+    resultOutcome: "completed-with-order-failures",
+    plannedAttempts: 10,
+    startingStock: 10,
+    uniqueReservations: 6,
+    soldOutRejections: 4,
+    confirmedOrders: 5,
+    failedOrders: 1,
+    convergenceDurationSeconds: null,
   };
 }
 
@@ -2076,18 +2097,37 @@ function runHistoryDetailFixture(): PublicRunHistoryDetailResponse {
       finalizedAt: "2026-06-20T00:00:10.000Z",
     },
     httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
-    orders: {
-      totalCount: 1,
-      byStatus: { queued: 0, processing: 0, confirmed: 1, failed: 0 },
-    },
+    result: deriveRunResult({
+      runStatus: "completed",
+      failureCategory: null,
+      startingStock: 10,
+      remainingStock: 0,
+      durable: {
+        reservedUnits: 6,
+        uniqueReservations: 6,
+        soldOutDecisions: 4,
+        confirmedOrders: 5,
+        failedOrders: 1,
+        queuedOrders: 0,
+        processingOrders: 0,
+        durablePendingPersistenceRecords: 0,
+        notificationsRecorded: 5,
+      },
+      heldReservationsAwaitingPersistence: 0,
+      replayPossible: false,
+      generator: {
+        transportAttemptCounts: summary.transportAttemptCounts,
+        httpSummary: summary.httpSummary,
+      },
+    }),
+    overallDurationMs: 10_000,
+    plannedAttempts: 10,
     erpAttempts: {
       totalCount: 1,
       byStatus: { succeeded: 1, failed: 0, timedOut: 0 },
       averageLatencyMs: 42,
       p95LatencyMs: 42,
     },
-    notifications: { totalCount: 1 },
-    events: { totalCount: 1 },
     runSignalTimelineSummary: null,
     timestamp: "2026-06-20T00:00:10.000Z",
   };

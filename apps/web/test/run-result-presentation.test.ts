@@ -776,34 +776,16 @@ function detailFixture(evidence: RunResultEvidence): PublicRunHistoryDetailRespo
       finalizedAt: timestamp,
     },
     httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
-    orders: {
-      totalCount: durableOrderCount(evidence),
-      byStatus: {
-        queued: evidence.durable?.queuedOrders ?? 0,
-        processing: evidence.durable?.processingOrders ?? 0,
-        confirmed: evidence.durable?.confirmedOrders ?? 0,
-        failed: evidence.durable?.failedOrders ?? 0,
-      },
-    },
+    result: deriveRunResult(evidence),
+    overallDurationMs: 0,
+    plannedAttempts: 10,
     erpAttempts: {
       totalCount: 0,
       byStatus: { succeeded: 0, failed: 0, timedOut: 0 },
       averageLatencyMs: null,
       p95LatencyMs: null,
     },
-    notifications: { totalCount: evidence.durable?.notificationsRecorded ?? 0 },
-    events: { totalCount: 0 },
     runSignalTimelineSummary: null,
     timestamp,
   });
-}
-
-function durableOrderCount(evidence: RunResultEvidence): number {
-  const durable = evidence.durable;
-  return durable
-    ? durable.queuedOrders +
-        durable.processingOrders +
-        durable.confirmedOrders +
-        durable.failedOrders
-    : 0;
 }

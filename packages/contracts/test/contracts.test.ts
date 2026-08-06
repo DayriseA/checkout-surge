@@ -40,6 +40,7 @@ import {
   demoRunStatusValues,
   deriveLoadExecutionPlan,
   deriveRecordedReplyCount,
+  deriveRunResult,
   type ErrorPayloadCode,
   emptyHttpTimingBreakdownSummary,
   emptyRequestArrivalSummary,
@@ -103,6 +104,7 @@ import {
   runHistoryListQuerySchema,
   runHistoryListResponseSchema,
   runHistoryPath,
+  runHistorySummarySchema,
   securedReservationHoldSchema,
   serverReservationTimingSummarySchema,
   sharedErpProtectionStatusSchema,
@@ -2220,75 +2222,89 @@ describe("public runtime policy contract", () => {
   });
 
   it("validates paginated run history reads and protected deletion commands", () => {
+    const summary = runHistorySummarySchema.parse({
+      id: "77777777-7777-4777-8777-777777777777",
+      runId,
+      presetName: "Preview 1k",
+      status: "completed",
+      replayPossible: false,
+      startedAt: timestamp,
+      endedAt: timestamp,
+      transportAttemptCounts: {
+        plannedRequests: 10,
+        startedRequests: 10,
+        completedRequests: 10,
+        interruptedRequests: 0,
+        unstartedRequests: 0,
+      },
+      httpSummary: {
+        failedRequests: 0,
+        acceptedResponses: 6,
+        soldOutResponses: 4,
+        transportFailures: 0,
+        unexpectedResponses: 0,
+        p95LatencyMs: 42,
+        failureRate: 0,
+      },
+      trafficDeliverySummary: {
+        trafficMode: "buyer-spike",
+        plannedBuyers: 10,
+        scheduledRatePerSecond: null,
+        configuredDurationSeconds: null,
+        preAllocatedVUs: null,
+        maxVUs: null,
+        droppedIterations: 0,
+        completedIterations: 10,
+        requestArrivalSummary: emptyRequestArrivalSummary,
+        trafficDeliveryStatus: "complete",
+        notes: [],
+      },
+      serverReservationTimingSummary,
+      fastReservationTargetEvaluation: evaluateFastReservationTarget(
+        serverReservationTimingSummary,
+        10,
+      ),
+      businessOutcomeSummary: {
+        acceptedReservations: 6,
+        reservedUnits: 10,
+        soldOutRejections: 4,
+        queuedOrders: 0,
+        processingOrders: 0,
+        retryingOrders: 0,
+        confirmedOrders: 5,
+        failedOrders: 1,
+        pendingPersistenceCount: 0,
+        notificationsRecorded: 5,
+      },
+      terminalInventorySnapshot: {
+        saleOfferId,
+        startingStock: 10,
+        remainingStock: 0,
+        reservedStock: 10,
+        acceptedReservations: 6,
+        soldOutRejections: 4,
+        pendingPersistenceCount: 0,
+        capturedAt: timestamp,
+        source: "redis",
+      },
+      runSignalTimelineSummary: null,
+      capturedAt: timestamp,
+    });
     const history = runHistoryListResponseSchema.parse({
       summaries: [
         {
-          id: "77777777-7777-4777-8777-777777777777",
           runId,
           presetName: "Preview 1k",
-          status: "completed",
-          replayPossible: false,
-          startedAt: timestamp,
-          endedAt: timestamp,
-          transportAttemptCounts: {
-            plannedRequests: 10,
-            startedRequests: 10,
-            completedRequests: 10,
-            interruptedRequests: 0,
-            unstartedRequests: 0,
-          },
-          httpSummary: {
-            failedRequests: 0,
-            acceptedResponses: 6,
-            soldOutResponses: 4,
-            transportFailures: 0,
-            unexpectedResponses: 0,
-            p95LatencyMs: 42,
-            failureRate: 0,
-          },
-          trafficDeliverySummary: {
-            trafficMode: "buyer-spike",
-            plannedBuyers: 10,
-            scheduledRatePerSecond: null,
-            configuredDurationSeconds: null,
-            preAllocatedVUs: null,
-            maxVUs: null,
-            droppedIterations: 0,
-            completedIterations: 10,
-            requestArrivalSummary: emptyRequestArrivalSummary,
-            trafficDeliveryStatus: "complete",
-            notes: [],
-          },
-          serverReservationTimingSummary,
-          fastReservationTargetEvaluation: evaluateFastReservationTarget(
-            serverReservationTimingSummary,
-            10,
-          ),
-          businessOutcomeSummary: {
-            acceptedReservations: 6,
-            reservedUnits: 10,
-            soldOutRejections: 4,
-            queuedOrders: 0,
-            processingOrders: 0,
-            retryingOrders: 0,
-            confirmedOrders: 5,
-            failedOrders: 1,
-            pendingPersistenceCount: 0,
-            notificationsRecorded: 5,
-          },
-          terminalInventorySnapshot: {
-            saleOfferId,
-            startingStock: 10,
-            remainingStock: 0,
-            reservedStock: 10,
-            acceptedReservations: 6,
-            soldOutRejections: 4,
-            pendingPersistenceCount: 0,
-            capturedAt: timestamp,
-            source: "redis",
-          },
-          runSignalTimelineSummary: null,
-          capturedAt: timestamp,
+          occurredAt: timestamp,
+          overallDurationMs: 0,
+          resultOutcome: "completed-with-order-failures",
+          plannedAttempts: 10,
+          startingStock: 10,
+          uniqueReservations: 6,
+          soldOutRejections: 4,
+          confirmedOrders: 5,
+          failedOrders: 1,
+          convergenceDurationSeconds: null,
         },
       ],
       page: 1,
@@ -2305,11 +2321,14 @@ describe("public runtime policy contract", () => {
     expect(history.summaries[0]?.runId).toBe(runId);
     expect(history.summaries[0]).not.toHaveProperty("reservationToken");
     expect(history.summaries[0]).not.toHaveProperty("idempotencyKey");
-
-    const summary = history.summaries[0];
-    if (!summary) {
-      throw new Error("Expected run history summary fixture.");
-    }
+    const listSummary = history.summaries[0];
+    if (!listSummary) throw new Error("Expected compact run history fixture.");
+    expect(() =>
+      runHistoryListResponseSchema.parse({
+        ...history,
+        summaries: [omit(listSummary, "startingStock")],
+      }),
+    ).toThrow();
 
     expect(runHistoryDetailPathTemplate).toBe("/demo/runs/history/:runId");
     expect(runHistoryDetailPath(runId)).toBe(`/demo/runs/history/${runId}`);
@@ -2399,23 +2418,47 @@ describe("public runtime policy contract", () => {
         finalizedAt: timestamp,
       },
       httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
-      orders: {
-        totalCount: 1,
-        byStatus: { queued: 0, processing: 0, confirmed: 1, failed: 0 },
-      },
+      result: deriveRunResult({
+        runStatus: "completed",
+        failureCategory: null,
+        startingStock: 10,
+        remainingStock: 0,
+        durable: {
+          reservedUnits: 10,
+          uniqueReservations: 6,
+          soldOutDecisions: 4,
+          confirmedOrders: 5,
+          failedOrders: 1,
+          queuedOrders: 0,
+          processingOrders: 0,
+          durablePendingPersistenceRecords: 0,
+          notificationsRecorded: 5,
+        },
+        heldReservationsAwaitingPersistence: 0,
+        replayPossible: false,
+        generator: {
+          transportAttemptCounts: summary.transportAttemptCounts,
+          httpSummary: summary.httpSummary,
+        },
+      }),
+      overallDurationMs: 0,
+      plannedAttempts: 10,
       erpAttempts: {
         totalCount: 1,
         byStatus: { succeeded: 1, failed: 0, timedOut: 0 },
         averageLatencyMs: 25,
         p95LatencyMs: 25,
       },
-      notifications: { totalCount: 1 },
-      events: { totalCount: 1 },
       runSignalTimelineSummary: null,
       timestamp,
     });
     expect(detail.summary.runId).toBe(runId);
+    expect(detail.plannedAttempts).toBe(10);
     expect(detail.erpAttempts.averageLatencyMs).toBe(25);
+    const { plannedAttempts: _plannedAttempts, ...detailWithoutPlannedAttempts } = detail;
+    expect(
+      publicRunHistoryDetailResponseSchema.safeParse(detailWithoutPlannedAttempts).success,
+    ).toBe(false);
     expect(adminRunHistoryDetailPathTemplate).toBe("/admin/demo/runs/history/:runId");
     expect(adminRunHistoryDetailPath(runId)).toBe(`/admin/demo/runs/history/${runId}`);
     expect(() =>
@@ -2505,10 +2548,10 @@ describe("public runtime policy contract", () => {
     expect(() =>
       publicRunHistoryDetailResponseSchema.parse({
         ...detail,
-        orders: { ...detail.orders, records: [] },
+        orders: { totalCount: 0, records: [] },
       }),
     ).toThrow();
-    for (const privateCollection of ["orders", "erpAttempts", "notifications", "eventTimeline"]) {
+    for (const privateCollection of ["orders", "notifications", "events", "eventTimeline"]) {
       expect(() =>
         publicRunHistoryDetailResponseSchema.parse({
           ...detail,
@@ -2516,6 +2559,12 @@ describe("public runtime policy contract", () => {
         }),
       ).toThrow();
     }
+    expect(() =>
+      publicRunHistoryDetailResponseSchema.parse({
+        ...detail,
+        erpAttempts: { ...detail.erpAttempts, records: [] },
+      }),
+    ).toThrow();
     for (const [aggregate, deniedField] of [
       ["orders", "orderId"],
       ["orders", "publicOrderId"],
@@ -2529,7 +2578,7 @@ describe("public runtime policy contract", () => {
       expect(() =>
         publicRunHistoryDetailResponseSchema.parse({
           ...detail,
-          [aggregate]: { ...detail[aggregate], [deniedField]: "private-marker" },
+          [aggregate]: { [deniedField]: "private-marker" },
         }),
       ).toThrow();
     }
@@ -2548,15 +2597,12 @@ describe("public runtime policy contract", () => {
     expect(
       publicRunHistoryDetailResponseSchema.parse({
         ...detail,
-        orders: { totalCount: 0, byStatus: { queued: 0, processing: 0, confirmed: 0, failed: 0 } },
         erpAttempts: {
           totalCount: 0,
           byStatus: { succeeded: 0, failed: 0, timedOut: 0 },
           averageLatencyMs: null,
           p95LatencyMs: null,
         },
-        notifications: { totalCount: 0 },
-        events: { totalCount: 0 },
       }).erpAttempts.p95LatencyMs,
     ).toBeNull();
     expect(() =>

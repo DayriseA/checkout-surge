@@ -22,9 +22,9 @@ export default async function RunHistoryPage({ searchParams }: RunHistoryPagePro
   const page = parsePositiveInteger(resolvedSearchParams?.page, 1);
   const history = await getRunHistoryPage(page, pageSize);
   const authenticated = await hasValidAdminPageSession();
-  const summaryCount =
+  const runCount =
     history.status === "available"
-      ? `${formatCount(history.data.totalCount) ?? "an unknown number of"} summaries`
+      ? `${formatCount(history.data.totalCount) ?? "an unknown number of"} runs`
       : "unavailable";
 
   return (
@@ -39,7 +39,7 @@ export default async function RunHistoryPage({ searchParams }: RunHistoryPagePro
         </div>
         <StatusPill
           status={{
-            label: summaryCount,
+            label: runCount,
             tone: history.status === "available" ? "ok" : "danger",
           }}
         />

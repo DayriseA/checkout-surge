@@ -1,60 +1,110 @@
-import {
-  deriveRunResult,
-  type RunHistoryListResponse,
-  type RunHistorySummary,
-} from "@checkout-surge/contracts";
+import type { RunHistoryListItem, RunHistoryListResponse } from "@checkout-surge/contracts";
 import Link from "next/link";
-import type { ReactNode } from "react";
-import { formatCount, formatInstantUtc } from "../lib/presentation/format";
+import { formatCount, formatDurationMs, formatInstantUtc } from "../lib/presentation/format";
 import {
-  durableCheckoutLens,
-  publicStatusLabel,
   publicVocabulary,
-  trafficDeliveryStatusTone,
+  runResultOutcomeLabel,
+  runResultOutcomeTone,
 } from "../lib/presentation/public-vocabulary";
-import { deriveOverallRunDuration } from "../lib/presentation/run-duration";
-import { deriveTerminalSummaryPresentation } from "../lib/presentation/run-presentation-state";
-import {
-  evidenceFromRunHistorySummary,
-  oversoldUnitsFromTerminalInventory,
-} from "../lib/presentation/run-result-presentation";
-import { GoldSignalHeadlines } from "./gold-signals";
-import { RunConclusion } from "./run-conclusion";
+import { RelativeTime } from "./relative-time";
 import { RunHistoryDeleteAllButton } from "./run-history-delete-all-button";
 import { RunHistoryRowControls } from "./run-history-row-controls";
 import { StatusPill } from "./status-pill";
-import { TransportObservationSection } from "./transport-observation";
 
-interface RunHistoryListProps {
-  history: RunHistoryListResponse;
-}
-
-export function RunHistoryList({ history }: RunHistoryListProps) {
+export function RunHistoryList({ history }: { history: RunHistoryListResponse }) {
   if (history.summaries.length === 0) {
-    if (history.totalCount > 0) {
-      return <OutOfRangePageState history={history} />;
-    }
-
-    return (
+    return history.totalCount > 0 ? (
+      <OutOfRangePageState history={history} />
+    ) : (
       <section className="rounded-lg border border-border bg-surface p-4">
         <p className="m-0 text-xs font-bold uppercase text-muted">Finished runs</p>
-        <h2 className="m-0 mt-1 text-base font-bold leading-tight text-ink">No history yet</h2>
+        <h2 className="m-0 mt-1 text-base font-bold leading-tight text-ink">No runs yet</h2>
         <p className="m-0 mt-3 max-w-[66ch] text-sm leading-6 text-muted">
-          Finished-run evidence appears here after the load generator completes and final records
-          are written.
+          Finished runs appear here after their final evidence is recorded.
         </p>
       </section>
     );
   }
 
+  const hasMultiplePages = history.totalCount > history.pageSize;
   return (
-    <div className="grid gap-4">
-      <div className="grid gap-3">
-        {history.summaries.map((summary) => (
-          <RunHistorySummaryArticle key={summary.id} summary={summary} />
-        ))}
+    <div className="grid gap-3">
+      {history.summaries.map((summary) => (
+        <RunHistoryRow key={summary.runId} summary={summary} />
+      ))}
+      <div className="flex flex-wrap items-center gap-3">
+        <RunHistoryDeleteAllButton />
+        {hasMultiplePages ? <PaginationControls history={history} /> : null}
       </div>
-      <PaginationControls history={history} />
+    </div>
+  );
+}
+
+function RunHistoryRow({ summary }: { summary: RunHistoryListItem }) {
+  const reportName = `${summary.presetName} run report from ${formatInstantUtc(summary.occurredAt) ?? summary.occurredAt}`;
+  return (
+    <article className="rounded-lg border border-border bg-surface p-4">
+      <div className="grid gap-4 xl:grid-cols-[minmax(12rem,1.6fr)_repeat(6,minmax(7rem,1fr))_auto] xl:items-center">
+        <div className="min-w-0">
+          <h2 className="m-0 text-lg font-bold leading-tight text-ink">{summary.presetName}</h2>
+          <time className="mt-1 block text-sm text-muted" dateTime={summary.occurredAt}>
+            {formatInstantUtc(summary.occurredAt)}
+            <RelativeTime instant={summary.occurredAt} />
+          </time>
+        </div>
+        <Fact
+          label="Duration"
+          value={formatDurationMs(summary.overallDurationMs) ?? "not recorded"}
+        />
+        <div>
+          <p className="m-0 text-xs font-bold uppercase text-muted">Result</p>
+          <StatusPill
+            status={{
+              label: runResultOutcomeLabel(summary.resultOutcome),
+              tone: runResultOutcomeTone(summary.resultOutcome),
+            }}
+          />
+        </div>
+        <Fact
+          label="Planned demand / starting stock"
+          value={`${number(summary.plannedAttempts)} / ${number(summary.startingStock)}`}
+        />
+        <Fact
+          label={`${publicVocabulary.uniqueReservationsSecured} / sold-out rejections`}
+          value={`${number(summary.uniqueReservations)} / ${number(summary.soldOutRejections)}`}
+        />
+        <Fact
+          label="Confirmed / failed orders"
+          value={`${number(summary.confirmedOrders)} / ${number(summary.failedOrders)}`}
+        />
+        <Fact
+          label="Convergence"
+          value={
+            summary.convergenceDurationSeconds === null
+              ? "not recorded"
+              : (formatDurationMs(summary.convergenceDurationSeconds * 1_000) ?? "not recorded")
+          }
+        />
+        <div className="flex flex-wrap gap-2 xl:justify-end">
+          <Link
+            aria-label={reportName}
+            className="inline-flex min-h-10 items-center rounded-lg border border-border px-3.5 py-2.5 text-sm font-semibold text-muted-strong"
+            href={`/run-history/${summary.runId}`}
+          >
+            View report
+          </Link>
+          <RunHistoryRowControls presetName={summary.presetName} runId={summary.runId} />
+        </div>
+      </div>
+    </article>
+  );
+}
+
+function Fact({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0">
+      <p className="m-0 text-xs font-bold uppercase text-muted">{label}</p>
+      <p className="m-0 mt-1 text-sm font-semibold text-ink">{value}</p>
     </div>
   );
 }
@@ -64,245 +114,39 @@ function OutOfRangePageState({ history }: { history: RunHistoryListResponse }) {
     <section className="rounded-lg border border-border bg-surface p-4">
       <p className="m-0 text-xs font-bold uppercase text-muted">Finished runs</p>
       <h2 className="m-0 mt-1 text-base font-bold leading-tight text-ink">
-        Page {history.page} has no summaries
+        Page {history.page} does not exist
       </h2>
-      <p className="m-0 mt-3 max-w-[66ch] text-sm leading-6 text-muted">
-        {formatNumber(history.totalCount)} summaries exist, but this page is outside the available
-        range.
+      <p className="m-0 mt-3 text-sm text-muted">
+        {number(history.totalCount)} runs exist. Return to page 1 to view the latest runs.
       </p>
       <Link
         className="mt-3 inline-flex min-h-10 items-center rounded-lg border border-border px-3.5 py-2.5 text-sm font-semibold text-muted-strong"
         href="/run-history"
       >
-        View latest summaries
+        View page 1
       </Link>
     </section>
-  );
-}
-
-function RunHistorySummaryArticle({ summary }: { summary: RunHistorySummary }) {
-  const overallDuration = deriveOverallRunDuration(summary);
-  const lifecycleFacts: Array<[string, ReactNode]> = [
-    ["Started", <LifecycleInstant key="started" value={summary.startedAt} />],
-    ["Ended", <LifecycleInstant key="ended" value={summary.endedAt} />],
-    ["Overall run duration", overallDuration.text],
-    ["Evidence recorded", <LifecycleInstant key="captured" value={summary.capturedAt} />],
-    ...(summary.failureCategory
-      ? [["Failure category", summary.failureCategory] as [string, ReactNode]]
-      : []),
-  ];
-  const result = deriveRunResult(evidenceFromRunHistorySummary(summary));
-  const runPresentation = deriveTerminalSummaryPresentation(result);
-  return (
-    <article className="rounded-lg border border-border bg-surface p-4">
-      <RunConclusion result={result} runStatus={summary.status} />
-      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="m-0 text-xs font-bold uppercase text-muted">Run result</p>
-          <h2 className="m-0 mt-1 text-xl font-bold leading-tight text-ink">
-            {summary.presetName}
-          </h2>
-          <p className="m-0 mt-2 [overflow-wrap:anywhere] text-sm font-semibold text-muted-strong">
-            {summary.runId}
-          </p>
-        </div>
-        <div className="flex flex-wrap justify-end gap-2">
-          <StatusPill
-            status={{
-              ...runPresentation,
-              label: publicStatusLabel({
-                family: "run",
-                status: summary.status,
-                displayLabel: runPresentation.label,
-              }),
-            }}
-          />
-          <StatusPill
-            status={{
-              label: publicStatusLabel({
-                family: "traffic-delivery",
-                status: summary.trafficDeliverySummary.trafficDeliveryStatus,
-              }),
-              tone: trafficDeliveryStatusTone(summary.trafficDeliverySummary.trafficDeliveryStatus),
-            }}
-          />
-          <Link
-            className="inline-flex min-h-8 items-center rounded-lg border border-border px-3 text-sm font-semibold text-muted-strong"
-            href={`/run-history/${summary.runId}`}
-          >
-            View details
-          </Link>
-        </div>
-      </div>
-      <div className="grid grid-cols-3 gap-4 max-[900px]:grid-cols-1">
-        <SummarySection facts={lifecycleFacts} title="Lifecycle" />
-        <TransportObservationSection
-          arrivalSummary={summary.trafficDeliverySummary.requestArrivalSummary}
-          counts={summary.transportAttemptCounts}
-          fastReservationTargetEvaluation={summary.fastReservationTargetEvaluation}
-          httpSummary={summary.httpSummary}
-          serverReservationTimingSummary={summary.serverReservationTimingSummary}
-          surface="list"
-        />
-        <SummarySection
-          caption={durableCheckoutLens.caption}
-          facts={[
-            [
-              publicVocabulary.uniqueReservationsSecured,
-              formatNumber(summary.businessOutcomeSummary.acceptedReservations),
-            ],
-            [
-              publicVocabulary.soldOutRejectionsRecorded,
-              formatNumber(summary.businessOutcomeSummary.soldOutRejections),
-            ],
-            ["Confirmed orders", formatNumber(summary.businessOutcomeSummary.confirmedOrders)],
-            ["Failed orders", formatNumber(summary.businessOutcomeSummary.failedOrders)],
-            [
-              publicVocabulary.notifications,
-              formatNumber(summary.businessOutcomeSummary.notificationsRecorded),
-            ],
-            [
-              publicVocabulary.pendingReservations,
-              formatNumber(summary.businessOutcomeSummary.pendingPersistenceCount),
-            ],
-          ]}
-          title={durableCheckoutLens.title}
-        />
-      </div>
-      <GoldSignalHeadlines
-        arrivalSummary={summary.trafficDeliverySummary.requestArrivalSummary}
-        headline={summary.runSignalTimelineSummary}
-        oversoldUnits={oversoldUnitsFromTerminalInventory(summary)}
-      />
-      <TerminalInventorySnapshot summary={summary} />
-    </article>
-  );
-}
-
-function SummarySection({
-  caption,
-  facts,
-  title,
-}: {
-  caption?: string;
-  facts: Array<[string, ReactNode]>;
-  title: string;
-}) {
-  return (
-    <section className="min-w-0 border-t border-border pt-3">
-      <h3 className="m-0 text-sm font-bold text-ink">{title}</h3>
-      {caption ? <p className="m-0 mt-0.5 text-xs text-muted">{caption}</p> : null}
-      <dl className="m-0 mt-3 grid gap-2">
-        {facts.map(([label, value]) => (
-          <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-3" key={label}>
-            <dt className="text-sm text-muted">{label}</dt>
-            <dd className="m-0 max-w-48 [overflow-wrap:anywhere] text-right text-sm font-semibold text-muted-strong">
-              {value}
-            </dd>
-          </div>
-        ))}
-      </dl>
-    </section>
-  );
-}
-
-function TerminalInventorySnapshot({ summary }: { summary: RunHistorySummary }) {
-  const snapshot = summary.terminalInventorySnapshot;
-
-  if (!snapshot) {
-    return (
-      <section className="mt-4 border-t border-border pt-3">
-        <h3 className="m-0 text-sm font-bold text-ink">Final inventory</h3>
-        <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
-          <p className="m-0 text-sm font-semibold text-muted">
-            No final inventory evidence recorded.
-          </p>
-          <RunHistoryRowControls presetName={summary.presetName} runId={summary.runId} />
-        </div>
-      </section>
-    );
-  }
-
-  return (
-    <section className="mt-4 border-t border-border pt-3">
-      <h3 className="m-0 text-sm font-bold text-ink">Final inventory</h3>
-      <dl className="m-0 mt-3 grid grid-cols-6 gap-3 max-[900px]:grid-cols-2">
-        <Fact label={publicVocabulary.startingStock} value={formatNumber(snapshot.startingStock)} />
-        <Fact label="Remaining" value={formatNumber(snapshot.remainingStock)} />
-        <Fact label="Reserved" value={formatNumber(snapshot.reservedStock)} />
-        <Fact
-          label={publicVocabulary.uniqueReservationsSecured}
-          value={formatNumber(snapshot.acceptedReservations)}
-        />
-        <Fact
-          label={publicVocabulary.soldOutRejectionsRecorded}
-          value={formatNumber(snapshot.soldOutRejections)}
-        />
-        <Fact
-          label={publicVocabulary.pendingReservations}
-          value={formatNumber(snapshot.pendingPersistenceCount)}
-        />
-      </dl>
-      <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-        <p className="m-0 min-w-0 [overflow-wrap:anywhere] text-xs font-semibold text-muted">
-          Inventory evidence recorded <LifecycleInstant value={snapshot.capturedAt} />
-        </p>
-        <RunHistoryRowControls presetName={summary.presetName} runId={summary.runId} />
-      </div>
-    </section>
-  );
-}
-
-function Fact({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="min-w-0">
-      <dt className="text-xs font-bold uppercase text-muted">{label}</dt>
-      <dd className="m-0 mt-1 [overflow-wrap:anywhere] text-base font-bold text-ink">{value}</dd>
-    </div>
   );
 }
 
 function PaginationControls({ history }: { history: RunHistoryListResponse }) {
   const hasPrevious = history.page > 1;
   const hasNext = history.page * history.pageSize < history.totalCount;
-
   return (
-    <nav className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-surface p-4">
-      <RunHistoryDeleteAllButton />
-      <div className="ml-auto flex flex-wrap items-center gap-3">
-        <p className="m-0 text-sm font-semibold text-muted-strong">
-          Page {history.page} · {formatNumber(history.totalCount)} summaries
-        </p>
-        <div className="flex gap-2">
-          <PaginationLink disabled={!hasPrevious} page={history.page - 1}>
-            Previous
-          </PaginationLink>
-          <PaginationLink disabled={!hasNext} page={history.page + 1}>
-            Next
-          </PaginationLink>
-        </div>
-      </div>
+    <nav
+      aria-label="Run history pages"
+      className="ml-auto flex flex-wrap items-center gap-3 rounded-lg border border-border bg-surface p-3"
+    >
+      <p className="m-0 text-sm font-semibold text-muted-strong">
+        Page {history.page} · {number(history.totalCount)} runs
+      </p>
+      {hasPrevious ? <PaginationLink page={history.page - 1}>Previous</PaginationLink> : null}
+      {hasNext ? <PaginationLink page={history.page + 1}>Next</PaginationLink> : null}
     </nav>
   );
 }
 
-function PaginationLink({
-  children,
-  disabled,
-  page,
-}: {
-  children: string;
-  disabled: boolean;
-  page: number;
-}) {
-  if (disabled) {
-    return (
-      <span className="inline-flex min-h-10 items-center rounded-lg border border-border px-3.5 py-2.5 text-sm font-semibold text-muted opacity-60">
-        {children}
-      </span>
-    );
-  }
-
+function PaginationLink({ children, page }: { children: string; page: number }) {
   return (
     <Link
       className="inline-flex min-h-10 items-center rounded-lg border border-border px-3.5 py-2.5 text-sm font-semibold text-muted-strong"
@@ -313,20 +157,6 @@ function PaginationLink({
   );
 }
 
-function formatNumber(value: number): string {
-  return formatCount(value) ?? "n/a";
-}
-
-/**
- * A lifecycle instant renders the labelled UTC reading a person compares across routes and keeps
- * the exact ISO value in `dateTime` for assistive technology and technical inspection. Both parts
- * come from the same server-supplied string under a fixed zone, so hydration cannot disagree.
- */
-function LifecycleInstant({ value }: { value: string | undefined }) {
-  const text = formatInstantUtc(value);
-  if (value === undefined || text === null) {
-    return <>n/a</>;
-  }
-
-  return <time dateTime={value}>{text}</time>;
+function number(value: number): string {
+  return formatCount(value) ?? "not recorded";
 }

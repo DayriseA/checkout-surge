@@ -2,6 +2,8 @@ import type {
   DemoRunStatus,
   ErpAttemptStatus,
   ErpCircuitState,
+  PublicRunFailureCategory,
+  RunResultOutcome,
   TrafficDeliveryStatus,
   TrafficExecutionStatus,
 } from "@checkout-surge/contracts";
@@ -127,6 +129,74 @@ export function runLifecycleStatusLabel(status: DemoRunStatus): string {
       return "Completed";
     case "failed":
       return "Failed";
+  }
+}
+
+export function runResultOutcomeLabel(outcome: RunResultOutcome): string {
+  switch (outcome) {
+    case "completed-successfully":
+      return "Completed";
+    case "completed-with-order-failures":
+      return "Completed with order failures";
+    case "completed-with-unsettled-orders":
+      return "Completed with unsettled orders";
+    case "completed-with-oversell":
+      return "Oversell detected";
+    case "failed":
+      return "Failed";
+    case "outcome-indeterminate":
+      return "Result not fully verified";
+  }
+}
+
+export function runResultOutcomeTone(
+  outcome: RunResultOutcome,
+): "ok" | "warning" | "danger" | "idle" {
+  switch (outcome) {
+    case "completed-successfully":
+      return "ok";
+    case "completed-with-order-failures":
+    case "completed-with-unsettled-orders":
+      return "warning";
+    case "completed-with-oversell":
+    case "failed":
+      return "danger";
+    case "outcome-indeterminate":
+      return "idle";
+  }
+}
+
+export function publicFailureExplanation(category: PublicRunFailureCategory): {
+  explanation: string;
+  action: string;
+} {
+  switch (category) {
+    case "traffic":
+      return {
+        explanation:
+          "The load generator could not deliver the planned traffic, so this run's evidence is incomplete.",
+        action: "Start a new run to try again.",
+      };
+    case "reconciliation":
+      return {
+        explanation: "The observed checkout populations did not reconcile in the final evidence.",
+        action: "Review the evidence below, then start a new run if you need a clean comparison.",
+      };
+    case "business":
+      return {
+        explanation: "One or more accepted orders did not reach the expected durable outcome.",
+        action: "Review the order outcome totals, then start a new run to try again.",
+      };
+    case "inventory":
+      return {
+        explanation: "Final inventory evidence could not verify the run's stock outcome.",
+        action: "Start a new run to capture a complete inventory result.",
+      };
+    case "operator":
+      return {
+        explanation: "The run was stopped by an operator before a complete result was recorded.",
+        action: "Start a new run when the demo is ready.",
+      };
   }
 }
 
