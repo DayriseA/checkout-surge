@@ -26,7 +26,7 @@ import {
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  buildConfigFromDraft,
+  buildEffectiveRunConfig,
   buildErpChaosFromDraft,
   buildPolicyFromDraft,
   buildSortOrder,
@@ -34,6 +34,7 @@ import {
   type DraftFormError,
   draftFromPreset,
   draftFromRuntimePolicy,
+  isPresetDraftDirty,
   type PresetDraft,
   type RuntimePolicyDraft,
 } from "../../lib/admin-drafts";
@@ -579,6 +580,7 @@ export function AdminPresetController({
   const initialPreset =
     initialPresets.status === "available" ? initialPresets.data.presets[0] : null;
   const [presetsRead, setPresetsRead] = useState(initialPresets);
+  const [effectiveRuntimePolicy, setEffectiveRuntimePolicy] = useState(runtimePolicy);
   const [selectedSlug, setSelectedSlug] = useState(initialPreset?.slug ?? null);
   const [draft, setDraft] = useState<PresetDraft | null>(
     initialPreset ? draftFromPreset(initialPreset) : null,
@@ -595,53 +597,87 @@ export function AdminPresetController({
   const [syncNotice, setSyncNotice] = useState<AdminNotice | null>(null);
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [archiveError, setArchiveError] = useState<AdminNotice | null>(null);
-  const draftSlugRef = useRef(initialPreset?.slug ?? null);
-  const isDraftDirtyRef = useRef(false);
+  const latestInitialPresetsRef = useRef(initialPresets);
+  const latestRuntimePolicyRef = useRef(runtimePolicy);
+  const [pendingTransition, setPendingTransition] = useState<
+    | { kind: "select"; slug: string }
+    | { kind: "copy" }
+    | { kind: "duplicate"; targetSlug: string }
+    | {
+        kind: "refresh";
+        presetsRead?: BackendRead<AdminPresetListResponse>;
+        runtimePolicy?: BackendRead<AdminPublicRuntimePolicyResponse>;
+      }
+    | null
+  >(null);
   const presets = presetsRead.status === "available" ? presetsRead.data.presets : [];
   const selectedPreset = useMemo(
     () => presets.find((preset) => preset.slug === selectedSlug) ?? presets[0] ?? null,
     [presets, selectedSlug],
   );
+  const isDirty = Boolean(draft && selectedPreset && isPresetDraftDirty(draft, selectedPreset));
+  const effectiveConfig = useMemo(
+    () =>
+      selectedPreset && draft
+        ? buildEffectiveRunConfig(
+            draft,
+            selectedPreset,
+            effectiveRuntimePolicy?.status === "available"
+              ? effectiveRuntimePolicy.data.policy
+              : undefined,
+          )
+        : null,
+    [draft, effectiveRuntimePolicy, selectedPreset],
+  );
 
   useEffect(() => {
-    setPresetsRead(initialPresets);
-  }, [initialPresets]);
-
-  useEffect(() => {
-    if (!selectedPreset) {
-      setDraft(null);
-      draftSlugRef.current = null;
-      isDraftDirtyRef.current = false;
-      setFieldErrors({});
-      setFormErrors([]);
-      setShowValidationSummary(false);
+    if (initialPresets === latestInitialPresetsRef.current) return;
+    latestInitialPresetsRef.current = initialPresets;
+    if (isDirty) {
+      setPendingTransition((current) => ({
+        ...(current?.kind === "refresh" ? current : {}),
+        kind: "refresh",
+        presetsRead: initialPresets,
+      }));
       return;
     }
-    const switchedPreset = draftSlugRef.current !== selectedPreset.slug;
+    setPresetsRead(initialPresets);
+    const nextPresets =
+      initialPresets.status === "available" ? initialPresets.data.presets : [];
+    const nextPreset =
+      nextPresets.find((preset) => preset.slug === selectedSlug) ?? nextPresets[0] ?? null;
+    setSelectedSlug(nextPreset?.slug ?? null);
+    setDraft(nextPreset ? draftFromPreset(nextPreset) : null);
+    setDuplicateTargetSlug(nextPreset ? `${nextPreset.slug}-copy` : "");
     setFieldErrors({});
     setFormErrors([]);
     setShowValidationSummary(false);
-    if (!switchedPreset && isDraftDirtyRef.current) return;
-    setDraft(draftFromPreset(selectedPreset));
-    draftSlugRef.current = selectedPreset.slug;
-    isDraftDirtyRef.current = false;
-    if (switchedPreset) setDuplicateTargetSlug(`${selectedPreset.slug}-copy`);
-  }, [selectedPreset]);
+  }, [initialPresets, isDirty, selectedSlug]);
 
   useEffect(() => {
-    if (runtimePolicy?.status !== "available") return;
+    if (runtimePolicy === latestRuntimePolicyRef.current) return;
+    latestRuntimePolicyRef.current = runtimePolicy;
+    if (isDirty && runtimePolicy) {
+      setPendingTransition((current) => ({
+        ...(current?.kind === "refresh" ? current : {}),
+        kind: "refresh",
+        runtimePolicy,
+      }));
+      return;
+    }
+    setEffectiveRuntimePolicy(runtimePolicy);
+  }, [isDirty, runtimePolicy]);
+
+  useEffect(() => {
+    if (effectiveRuntimePolicy?.status !== "available") return;
     setFieldErrors({});
     setFormErrors([]);
     setShowValidationSummary(false);
-  }, [runtimePolicy]);
+  }, [effectiveRuntimePolicy]);
 
   async function start() {
-    if (!selectedPreset || !draft) return;
-    const built = buildConfigFromDraft(
-      draft,
-      selectedPreset,
-      runtimePolicy?.status === "available" ? runtimePolicy.data.policy : undefined,
-    );
+    if (!selectedPreset || !draft || !effectiveConfig) return;
+    const built = effectiveConfig;
     if (!built.values) {
       setFieldErrors(built.fieldErrors);
       setFormErrors(built.formErrors);
@@ -680,12 +716,8 @@ export function AdminPresetController({
   }
 
   async function save() {
-    if (!selectedPreset || !draft) return;
-    const built = buildConfigFromDraft(
-      draft,
-      selectedPreset,
-      runtimePolicy?.status === "available" ? runtimePolicy.data.policy : undefined,
-    );
+    if (!selectedPreset || !draft || !effectiveConfig) return;
+    const built = effectiveConfig;
     const sortOrder = buildSortOrder(draft.sortOrder);
     if (!built.values || sortOrder.values === undefined) {
       setFieldErrors({ ...built.fieldErrors, ...sortOrder.fieldErrors });
@@ -797,8 +829,6 @@ export function AdminPresetController({
       const nextAfterArchive = remainingAfterArchive[0] ?? null;
       setPresetsRead(localPresetListRead(remainingAfterArchive, archived.data.timestamp));
       setSelectedSlug(nextAfterArchive?.slug ?? null);
-      draftSlugRef.current = nextAfterArchive?.slug ?? null;
-      isDraftDirtyRef.current = false;
       setDraft(nextAfterArchive ? draftFromPreset(nextAfterArchive) : null);
       setDuplicateTargetSlug(nextAfterArchive ? `${nextAfterArchive.slug}-copy` : "");
       setNotice("Preset archived.");
@@ -818,12 +848,20 @@ export function AdminPresetController({
         setSyncNotice(adminFailureNotice(refreshed));
         return;
       }
-      setPresetsRead(refreshed);
-      const refreshedRemaining = refreshed.data.presets;
-      const nextRefreshed = refreshedRemaining[0] ?? null;
+      const refreshedRemaining = reconcileAcceptedPresetMutation(
+        refreshed.data.presets,
+        archived.data.slug,
+        null,
+      );
+      setPresetsRead({
+        ...refreshed,
+        data: { ...refreshed.data, presets: refreshedRemaining },
+      });
+      const nextRefreshed =
+        refreshedRemaining.find((preset) => preset.slug === nextAfterArchive?.slug) ??
+        refreshedRemaining[0] ??
+        null;
       setSelectedSlug(nextRefreshed?.slug ?? null);
-      draftSlugRef.current = nextRefreshed?.slug ?? null;
-      isDraftDirtyRef.current = false;
       setDraft(nextRefreshed ? draftFromPreset(nextRefreshed) : null);
       setDuplicateTargetSlug(nextRefreshed ? `${nextRefreshed.slug}-copy` : "");
     });
@@ -860,8 +898,6 @@ export function AdminPresetController({
       setPresetsRead(localPresetListRead(localPresets, mutation.data.timestamp));
       setSelectedSlug(localPreset.slug);
       setDraft(draftFromPreset(localPreset));
-      draftSlugRef.current = localPreset.slug;
-      isDraftDirtyRef.current = false;
       clearValidationState();
       setNotice(successNotice);
       setSyncNotice(null);
@@ -877,7 +913,15 @@ export function AdminPresetController({
         setSyncNotice(adminFailureNotice(refreshed));
         return;
       }
-      setPresetsRead(refreshed);
+      const refreshedPresets = reconcileAcceptedPresetMutation(
+        refreshed.data.presets,
+        localPreset.slug,
+        localPreset,
+      );
+      setPresetsRead({
+        ...refreshed,
+        data: { ...refreshed.data, presets: refreshedPresets },
+      });
     });
   }
 
@@ -896,22 +940,26 @@ export function AdminPresetController({
     <>
       <AdminPresetView
         draft={draft}
+        effectiveConfig={effectiveConfig?.values}
         fieldErrors={fieldErrors}
         formErrors={formErrors}
         hardCaps={
-          runtimePolicy?.status === "available"
-            ? runtimePolicy.data.policy.deploymentHardCaps
+          effectiveRuntimePolicy?.status === "available"
+            ? effectiveRuntimePolicy.data.policy.deploymentHardCaps
             : undefined
         }
         duplicateTargetSlug={duplicateTargetSlug}
         isPending={isPending}
+        isDirty={isDirty}
         notice={notice}
         onBlurField={(field) => {
           if (!selectedPreset || !draft) return;
-          const built = buildConfigFromDraft(
+          const built = buildEffectiveRunConfig(
             draft,
             selectedPreset,
-            runtimePolicy?.status === "available" ? runtimePolicy.data.policy : undefined,
+            effectiveRuntimePolicy?.status === "available"
+              ? effectiveRuntimePolicy.data.policy
+              : undefined,
           );
           const error =
             field === "sortOrder"
@@ -924,17 +972,23 @@ export function AdminPresetController({
           setArchiveError(null);
           setArchiveOpen(true);
         }}
-        onCopyToCustom={() => void copyToCustom()}
-        onDuplicate={(targetSlug) => void duplicate(targetSlug)}
+        onCopyToCustom={() =>
+          isDirty ? setPendingTransition({ kind: "copy" }) : void copyToCustom()
+        }
+        onDuplicate={(targetSlug) =>
+          isDirty
+            ? setPendingTransition({ kind: "duplicate", targetSlug })
+            : void duplicate(targetSlug)
+        }
         onDuplicateTargetSlugChange={setDuplicateTargetSlug}
         onSave={() => void save()}
         onSelect={(slug) => {
-          if (slug !== selectedSlug) isDraftDirtyRef.current = false;
-          setSelectedSlug(slug);
+          if (slug === selectedSlug) return;
+          if (isDirty) setPendingTransition({ kind: "select", slug });
+          else selectPreset(slug);
         }}
         onStart={() => void start()}
         onUpdateDraft={(next) => {
-          isDraftDirtyRef.current = true;
           if (next.mode !== undefined) clearValidationState();
           else {
             setFieldErrors((current) => clearChangedErrors(current, next));
@@ -952,7 +1006,7 @@ export function AdminPresetController({
       />
       <ConfirmationDialog
         confirmLabel="Archive preset"
-        description={`Archive the "${selectedPreset?.display.name ?? "selected"}" preset. It will leave the active list while historical runs are retained.`}
+        description={`Archive the "${selectedPreset?.display.name ?? "selected"}" preset. It will leave the active list while historical runs are retained.${isDirty ? " Your unsaved edits will be discarded." : ""}`}
         error={archiveError ? <AdminNoticeView notice={archiveError} /> : null}
         onCancel={() => setArchiveOpen(false)}
         onConfirm={() => void archive()}
@@ -960,13 +1014,80 @@ export function AdminPresetController({
         pending={isPending}
         title="Archive this preset?"
       />
+      <ConfirmationDialog
+        confirmLabel="Discard unsaved edits"
+        description={`${discardDescription(pendingTransition)}${
+          pendingTransition?.kind === "copy"
+            ? " Your unsaved edits will not be copied."
+            : pendingTransition?.kind === "duplicate"
+              ? " Your unsaved edits will not be duplicated."
+              : ""
+        }`}
+        onCancel={() => setPendingTransition(null)}
+        onConfirm={confirmPendingTransition}
+        open={pendingTransition !== null}
+        title="Discard unsaved edits?"
+      />
     </>
   );
+
+  function selectPreset(slug: string) {
+    const nextPreset = presets.find((preset) => preset.slug === slug);
+    if (!nextPreset) return;
+    setSelectedSlug(slug);
+    setDraft(draftFromPreset(nextPreset));
+    setDuplicateTargetSlug(`${slug}-copy`);
+    clearValidationState();
+  }
+
+  function adoptPresets(nextRead: BackendRead<AdminPresetListResponse>) {
+    setPresetsRead(nextRead);
+    const nextPresets = nextRead.status === "available" ? nextRead.data.presets : [];
+    const nextPreset =
+      nextPresets.find((preset) => preset.slug === selectedSlug) ?? nextPresets[0] ?? null;
+    setSelectedSlug(nextPreset?.slug ?? null);
+    setDraft(nextPreset ? draftFromPreset(nextPreset) : null);
+    setDuplicateTargetSlug(nextPreset ? `${nextPreset.slug}-copy` : "");
+    clearValidationState();
+  }
+
+  function confirmPendingTransition() {
+    const transition = pendingTransition;
+    setPendingTransition(null);
+    if (!transition) return;
+    if (transition.kind === "select") selectPreset(transition.slug);
+    if (transition.kind === "copy") void copyToCustom();
+    if (transition.kind === "duplicate") void duplicate(transition.targetSlug);
+    if (transition.kind === "refresh") {
+      if (transition.presetsRead) adoptPresets(transition.presetsRead);
+      else if (selectedPreset) setDraft(draftFromPreset(selectedPreset));
+      if (transition.runtimePolicy) setEffectiveRuntimePolicy(transition.runtimePolicy);
+    }
+  }
 
   function clearValidationState() {
     setFieldErrors({});
     setFormErrors([]);
     setShowValidationSummary(false);
+  }
+}
+
+function discardDescription(
+  transition:
+    | { kind: "select" | "copy" | "duplicate" | "refresh" }
+    | null,
+): string {
+  switch (transition?.kind) {
+    case "select":
+      return "Switching presets will discard your unsaved edits.";
+    case "copy":
+      return "Copying the saved preset will replace this draft.";
+    case "duplicate":
+      return "Duplicating the saved preset will replace this draft.";
+    case "refresh":
+      return "Refreshing preset or policy data will discard your unsaved edits.";
+    default:
+      return "";
   }
 }
 
@@ -1316,6 +1437,26 @@ function localPresetListRead(
     data: { presets, timestamp },
     httpStatus: 200,
   };
+}
+
+// The accepted mutation wins payload fields for this immediate reconciliation;
+// the refreshed list still owns server-computed capabilities. Later reads replace it normally.
+function reconcileAcceptedPresetMutation(
+  refreshedPresets: AdminPresetListItem[],
+  affectedSlug: string,
+  acceptedPreset: AdminPresetListItem | null,
+): AdminPresetListItem[] {
+  if (!acceptedPreset) {
+    return refreshedPresets.filter((preset) => preset.slug !== affectedSlug);
+  }
+  const refreshedPreset = refreshedPresets.find((preset) => preset.slug === affectedSlug);
+  return refreshedPreset
+    ? refreshedPresets.map((preset) =>
+        preset.slug === affectedSlug
+          ? { ...acceptedPreset, canArchive: refreshedPreset.canArchive }
+          : preset,
+      )
+    : [...refreshedPresets, acceptedPreset];
 }
 
 /** Maintenance receipts report counts, so they group like every other count on the product. */

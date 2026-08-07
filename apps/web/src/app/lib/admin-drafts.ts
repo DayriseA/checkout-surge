@@ -289,7 +289,7 @@ export function buildPolicyFromDraft(
     : { fieldErrors, formErrors };
 }
 
-export function buildConfigFromDraft(
+export function buildEffectiveRunConfig(
   draft: RunConfigDraft,
   base: RunConfigBase,
   policy?: PublicRuntimePolicy,
@@ -342,6 +342,35 @@ export function buildConfigFromDraft(
   return Object.keys(fieldErrors).length === 0 && formErrors.length === 0
     ? { values, fieldErrors: {}, formErrors: [] }
     : { fieldErrors, formErrors };
+}
+
+export function isPresetDraftDirty(draft: PresetDraft, preset: DemoPresetContract): boolean {
+  const config = buildEffectiveRunConfig(draft, preset);
+  const sortOrder = buildSortOrder(draft.sortOrder);
+  if (!config.values || sortOrder.values === undefined) return true;
+  return (
+    JSON.stringify({
+      display: {
+        name: draft.displayName,
+        description: draft.description,
+        sortOrder: sortOrder.values,
+      },
+      config: config.values,
+    }) !==
+    JSON.stringify({
+      display: {
+        name: preset.display.name,
+        description: preset.display.description,
+        sortOrder: preset.display.sortOrder,
+      },
+      config: {
+        trafficConfig: preset.trafficConfig,
+        inventoryConfig: preset.inventoryConfig,
+        erpConfig: preset.erpConfig,
+        backpressureConfig: preset.backpressureConfig,
+      },
+    })
+  );
 }
 
 export function buildErpChaosFromDraft(

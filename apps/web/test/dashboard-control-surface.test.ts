@@ -376,7 +376,7 @@ describe("dashboard control surface", () => {
     expect(markup).toContain("Protected operator surface");
     expect(markup).toContain("Sign in");
     expect(markup).not.toContain("Reset demo");
-    expect(markup).not.toContain("Start admin run");
+    expect(markup).not.toContain("Run once with these values");
     expect(markup).not.toContain("Save public policy");
   });
 
@@ -437,9 +437,9 @@ describe("dashboard control surface", () => {
     // assert the grouped form actually reaches the markup rather than an ungrouped digit wall.
     expect(markup).toContain(">100,000<");
     expect(markup).not.toContain(">100000<");
-    expect(markup).toContain("Start admin run");
+    expect(markup).toContain("Run once with these values");
     expect(markup).toContain("Save preset");
-    expect(markup).toContain("Copy to custom");
+    expect(markup).toContain("Copy saved values to custom scenario");
     expect(markup).toContain('id="preset-erpForcedOutage"');
     expect(markup).toContain('id="erp-chaos-forcedOutage"');
     expect(markup).not.toContain('id="runtime-policy-erpForcedOutage"');

@@ -29,11 +29,16 @@ import {
 } from "../src/app/components/admin/admin-authenticated-surface.js";
 import type { BackendRead } from "../src/app/lib/api.js";
 import {
+  buildEffectiveRunConfig,
+  draftFromPreset,
+} from "../src/app/lib/admin-drafts.js";
+import {
   adminDemoResetProxyPath,
   adminDemoRunStartProxyPath,
   adminErpChaosProxyPath,
   adminErpChaosResetProxyPath,
   adminMaintenanceCleanupRunsProxyPath,
+  adminPresetCopyToCustomProxyPath,
   adminPresetDuplicateProxyPath,
   adminPresetListProxyPath,
   adminPresetSaveProxyPath,
@@ -246,7 +251,7 @@ describe("admin feature controllers", () => {
     vi.stubGlobal("EventSource", InjectedEventSource);
     render(<AdminAuthenticatedSurface {...surfaceProps(null)} />);
     const source = InjectedEventSource.instances[0];
-    const start = screen.getByRole("button", { name: "Start admin run" }) as HTMLButtonElement;
+    const start = screen.getByRole("button", { name: "Run once with these values" }) as HTMLButtonElement;
     const currentRunSection = screen
       .getByRole("heading", { name: "Current run" })
       .closest("section");
@@ -393,7 +398,7 @@ describe("admin feature controllers", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<AdminAuthenticatedSurface {...surfaceProps(null)} />);
     const source = InjectedEventSource.instances[0];
-    const start = screen.getByRole("button", { name: "Start admin run" }) as HTMLButtonElement;
+    const start = screen.getByRole("button", { name: "Run once with these values" }) as HTMLButtonElement;
 
     act(() => source?.emit("error", new Event("error")));
     expect(screen.getByText("2026-06-20 00:00:10 UTC · disconnected")).toBeTruthy();
@@ -421,7 +426,7 @@ describe("admin feature controllers", () => {
 
     expect(screen.getByText("2026-06-20 00:00:10 UTC · disconnected")).toBeTruthy();
     expect(
-      (screen.getByRole("button", { name: "Start admin run" }) as HTMLButtonElement).disabled,
+      (screen.getByRole("button", { name: "Run once with these values" }) as HTMLButtonElement).disabled,
     ).toBe(true);
   });
 
@@ -431,7 +436,7 @@ describe("admin feature controllers", () => {
 
     await waitFor(() =>
       expect(
-        (screen.getByRole("button", { name: "Start admin run" }) as HTMLButtonElement).disabled,
+        (screen.getByRole("button", { name: "Run once with these values" }) as HTMLButtonElement).disabled,
       ).toBe(true),
     );
     expect(screen.getByText("2026-06-20 00:00:10 UTC · live updates unsupported")).toBeTruthy();
@@ -470,7 +475,7 @@ describe("admin feature controllers", () => {
     const user = userEvent.setup();
     render(<AdminAuthenticatedSurface {...surfaceProps(null)} />);
 
-    await user.click(screen.getByRole("button", { name: "Start admin run" }));
+    await user.click(screen.getByRole("button", { name: "Run once with these values" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect(fetchMock.mock.calls.map(([input]) => String(input))).toEqual([
@@ -499,7 +504,7 @@ describe("admin feature controllers", () => {
       false,
     );
     expect(
-      (screen.getByRole("button", { name: "Start admin run" }) as HTMLButtonElement).disabled,
+      (screen.getByRole("button", { name: "Run once with these values" }) as HTMLButtonElement).disabled,
     ).toBe(false);
     pending.resolve(jsonResponse(erpFixture()));
     await waitFor(() =>
@@ -759,13 +764,13 @@ describe("admin feature controllers", () => {
     const user = userEvent.setup();
     render(<AdminAuthenticatedSurface {...surfaceProps(runFixture())} />);
     expect(
-      (screen.getByRole("button", { name: "Start admin run" }) as HTMLButtonElement).disabled,
+      (screen.getByRole("button", { name: "Run once with these values" }) as HTMLButtonElement).disabled,
     ).toBe(true);
     await user.click(screen.getByRole("button", { name: "Reset demo" }));
     await user.click(confirmationButton("Reset demo"));
     await waitFor(() =>
       expect(
-        (screen.getByRole("button", { name: "Start admin run" }) as HTMLButtonElement).disabled,
+        (screen.getByRole("button", { name: "Run once with these values" }) as HTMLButtonElement).disabled,
       ).toBe(false),
     );
     expect(fetchMock.mock.calls.map(([input]) => String(input))).toEqual([
@@ -797,7 +802,7 @@ describe("admin feature controllers", () => {
     await user.click(confirmationButton("Reset demo"));
     await waitFor(() =>
       expect(
-        (screen.getByRole("button", { name: "Start admin run" }) as HTMLButtonElement).disabled,
+        (screen.getByRole("button", { name: "Run once with these values" }) as HTMLButtonElement).disabled,
       ).toBe(false),
     );
     expect(await screen.findByText("Something didn't work on our side")).toBeTruthy();
@@ -853,6 +858,484 @@ describe("admin feature controllers", () => {
     );
   });
 
+  it.each([
+    ["public", readOnlyPresetFixture("public", "Public preset")],
+    ["system", readOnlyPresetFixture("admin", "System preset")],
+  ])("frames a read-only %s preset as a one-off override workspace", (_kind, preset) => {
+    render(
+      <AdminPresetController
+        initialPresets={available({
+          presets: [preset],
+          timestamp: "2026-06-20T00:00:10.000Z",
+        })}
+        recovery={available(recoveryFixture(null))}
+      />,
+    );
+
+    expect(
+      screen.getByText(
+        `You're editing values for a one-off run — ${preset.display.name} itself can't be changed`,
+      ),
+    ).toBeTruthy();
+    expect((screen.getByLabelText("Name") as HTMLInputElement).disabled).toBe(true);
+    expect((screen.getByLabelText("Description") as HTMLInputElement).disabled).toBe(true);
+    expect((screen.getByLabelText("Sort order") as HTMLInputElement).disabled).toBe(true);
+    expect((screen.getByLabelText("Buyer count") as HTMLInputElement).disabled).toBe(false);
+    expect((screen.getByRole("button", { name: "Save preset" }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+    expect((screen.getByRole("button", { name: "Archive preset" }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+    expect(document.body.textContent).not.toContain("Editable: no");
+    expect(document.body.textContent).toContain(
+      preset.visibility === "public"
+        ? "Public presets cannot be saved from the admin editor."
+        : "This read-only preset cannot be saved.",
+    );
+  });
+
+  it("allows public Custom to be copied while explaining why it cannot be duplicated", () => {
+    const publicCustom = {
+      ...readOnlyPresetFixture("public", "Public Custom"),
+      slug: "public-custom",
+      isCustom: true,
+    };
+    render(
+      <AdminPresetController
+        initialPresets={available({
+          presets: [publicCustom],
+          timestamp: "2026-06-20T00:00:10.000Z",
+        })}
+        recovery={available(recoveryFixture(null))}
+      />,
+    );
+
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "Copy saved values to custom scenario",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(false);
+    expect(
+      (screen.getByRole("button", { name: "Duplicate saved preset" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+    expect(document.body.textContent).not.toContain("cannot be copied to itself");
+    expect(document.body.textContent).toContain(
+      "The public Custom scenario cannot be duplicated.",
+    );
+  });
+
+  it("keeps selection and draft when dirty switching is cancelled, then discards on confirm", async () => {
+    const first = presetFixture();
+    const second = presetWithSlug("second", "Second preset");
+    const user = userEvent.setup();
+    render(
+      <AdminPresetController
+        initialPresets={available({
+          presets: [first, second],
+          timestamp: "2026-06-20T00:00:10.000Z",
+        })}
+        recovery={available(recoveryFixture(null))}
+      />,
+    );
+    await user.clear(screen.getByLabelText("Buyer count"));
+    await user.type(screen.getByLabelText("Buyer count"), "1234");
+    expect(screen.getByText("Unsaved")).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: "Second preset" }));
+    expect(screen.getByRole("alertdialog")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect((screen.getByLabelText("Buyer count") as HTMLInputElement).value).toBe("1234");
+    expect((screen.getByRole("button", { name: "Custom" }) as HTMLButtonElement).className).toContain(
+      "bg-accent",
+    );
+
+    await user.click(screen.getByRole("button", { name: "Second preset" }));
+    await user.click(confirmationButton("Discard unsaved edits"));
+    expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("Second preset");
+    expect((screen.getByLabelText("Buyer count") as HTMLInputElement).value).toBe("1000");
+    expect(screen.getByText("Saved")).toBeTruthy();
+  });
+
+  it("keeps Unsaved after save failure and adopts the accepted response as Saved", async () => {
+    const accepted = presetFixture();
+    if (accepted.trafficConfig.mode !== "buyer-spike") {
+      throw new Error("Expected buyer-spike fixture.");
+    }
+    accepted.trafficConfig.buyerCount = 1234;
+    const staleListPreset = presetFixture();
+    const { canArchive: _canArchive, ...acceptedContract } = accepted;
+    let saveAttempts = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === adminPresetSaveProxyPath && saveAttempts++ === 0) {
+        return canonicalErrorResponse("Save failed", 503);
+      }
+      if (String(input) === adminPresetSaveProxyPath) {
+        return jsonResponse({
+          preset: acceptedContract,
+          timestamp: "2026-06-20T00:00:12.000Z",
+        });
+      }
+      return jsonResponse({
+        presets: [staleListPreset],
+        timestamp: "2026-06-20T00:00:12.000Z",
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(
+      <AdminPresetController
+        initialPresets={presetListFixture("Custom")}
+        recovery={available(recoveryFixture(null))}
+      />,
+    );
+    await user.clear(screen.getByLabelText("Buyer count"));
+    await user.type(screen.getByLabelText("Buyer count"), "1234");
+    expect(screen.getByText("Unsaved").closest('[role="status"]')).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Save preset" }));
+    expect(
+      await screen.findByText("The latest information is temporarily unavailable"),
+    ).toBeTruthy();
+    expect((screen.getByLabelText("Buyer count") as HTMLInputElement).value).toBe("1234");
+    expect(screen.getByText("Unsaved")).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: "Save preset" }));
+    await waitFor(() => expect(screen.getByText("Preset saved.")).toBeTruthy());
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    await waitFor(() =>
+      expect(screen.getByText("Saved").closest('[role="status"]')).toBeTruthy(),
+    );
+    expect((screen.getByLabelText("Buyer count") as HTMLInputElement).value).toBe("1234");
+  });
+
+  it("keeps an accepted duplicate selected when the same-pass list omits it", async () => {
+    const source = archivablePresetFixture("operator-source", "Operator source");
+    const clone = archivablePresetFixture("operator-source-copy", "Operator source Copy");
+    const { canArchive: _canArchive, ...cloneContract } = clone;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) =>
+      String(input) === adminPresetDuplicateProxyPath
+        ? jsonResponse({
+            preset: cloneContract,
+            timestamp: "2026-06-20T00:00:12.000Z",
+          })
+        : jsonResponse({
+            presets: [source],
+            timestamp: "2026-06-20T00:00:12.000Z",
+          }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(
+      <AdminPresetController
+        initialPresets={available({
+          presets: [source],
+          timestamp: "2026-06-20T00:00:10.000Z",
+        })}
+        recovery={available(recoveryFixture(null))}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Duplicate saved preset" }));
+    await waitFor(() => expect(screen.getByText("Preset duplicated.")).toBeTruthy());
+
+    expect(
+      (screen.getByRole("button", { name: "Operator source Copy" }) as HTMLButtonElement)
+        .className,
+    ).toContain("bg-accent");
+    expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe(
+      "Operator source Copy",
+    );
+    expect(screen.getByText("Saved")).toBeTruthy();
+  });
+
+  it("keeps accepted duplicate values while adopting refreshed archive capability", async () => {
+    const source = archivablePresetFixture("operator-source", "Operator source");
+    const clone = archivablePresetFixture("operator-source-copy", "Accepted clone");
+    const staleClone = {
+      ...clone,
+      display: { ...clone.display, name: "Stale clone" },
+      trafficConfig: { ...clone.trafficConfig, buyerCount: 999 },
+      canArchive: true,
+    };
+    const { canArchive: _canArchive, ...cloneContract } = clone;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) =>
+      String(input) === adminPresetDuplicateProxyPath
+        ? jsonResponse({
+            preset: cloneContract,
+            timestamp: "2026-06-20T00:00:12.000Z",
+          })
+        : jsonResponse({
+            presets: [source, staleClone],
+            timestamp: "2026-06-20T00:00:12.000Z",
+          }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(
+      <AdminPresetController
+        initialPresets={available({
+          presets: [source],
+          timestamp: "2026-06-20T00:00:10.000Z",
+        })}
+        recovery={available(recoveryFixture(null))}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Duplicate saved preset" }));
+    await waitFor(() =>
+      expect(
+        (screen.getByRole("button", { name: "Archive preset" }) as HTMLButtonElement).disabled,
+      ).toBe(false),
+    );
+
+    expect(screen.getByRole("button", { name: "Accepted clone" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Stale clone" })).toBeNull();
+    expect((screen.getByLabelText("Buyer count") as HTMLInputElement).value).toBe("1000");
+  });
+
+  it("prevents editor changes and preset switching while a save mutation is pending", async () => {
+    const pendingSave = deferred<Response>();
+    const accepted = presetFixture();
+    if (accepted.trafficConfig.mode !== "buyer-spike") {
+      throw new Error("Expected buyer-spike fixture.");
+    }
+    accepted.trafficConfig.buyerCount = 1234;
+    const { canArchive: _canArchive, ...acceptedContract } = accepted;
+    const second = presetWithSlug("second", "Second preset");
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) =>
+      String(input) === adminPresetSaveProxyPath
+        ? pendingSave.promise
+        : jsonResponse({
+            presets: [presetFixture(), second],
+            timestamp: "2026-06-20T00:00:12.000Z",
+          }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(
+      <AdminPresetController
+        initialPresets={available({
+          presets: [presetFixture(), second],
+          timestamp: "2026-06-20T00:00:10.000Z",
+        })}
+        recovery={available(recoveryFixture(null))}
+      />,
+    );
+    await user.clear(screen.getByLabelText("Buyer count"));
+    await user.type(screen.getByLabelText("Buyer count"), "1234");
+    await user.click(screen.getByRole("button", { name: "Save preset" }));
+    const secondButton = screen.getByRole("button", { name: "Second preset" });
+    const buyerCount = screen.getByLabelText("Buyer count") as HTMLInputElement;
+    const duplicateSlug = screen.getByLabelText("Duplicate slug") as HTMLInputElement;
+    await waitFor(() => expect((secondButton as HTMLButtonElement).disabled).toBe(true));
+    expect(buyerCount.matches(":disabled")).toBe(true);
+    expect(duplicateSlug.disabled).toBe(true);
+    expect(secondButton.parentElement?.textContent).toContain("A preset action is in progress.");
+    expect(
+      screen
+        .getByRole("button", { name: "Copy saved values to custom scenario" })
+        .parentElement?.textContent,
+    ).toContain("A preset action is in progress.");
+    expect(
+      screen.getByRole("button", { name: "Duplicate saved preset" }).closest("form")?.textContent,
+    ).toContain("A preset action is in progress.");
+    expect(
+      screen.getByRole("button", { name: "Run once with these values" }).parentElement
+        ?.textContent,
+    ).toContain("A preset action is in progress.");
+
+    await user.click(buyerCount);
+    await user.keyboard("{Control>}a{/Control}9999");
+    await user.click(duplicateSlug);
+    await user.keyboard("{Control>}a{/Control}changed");
+    await user.click(secondButton);
+    expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("Custom");
+    expect((screen.getByLabelText("Buyer count") as HTMLInputElement).value).toBe("1234");
+    expect((screen.getByLabelText("Duplicate slug") as HTMLInputElement).value).toBe(
+      "custom-copy",
+    );
+
+    pendingSave.resolve(
+      jsonResponse({
+        preset: acceptedContract,
+        timestamp: "2026-06-20T00:00:12.000Z",
+      }),
+    );
+    await waitFor(() => expect(screen.getByText("Preset saved.")).toBeTruthy());
+    expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("Custom");
+    expect((screen.getByLabelText("Buyer count") as HTMLInputElement).value).toBe("1234");
+    expect(screen.getByText("Saved")).toBeTruthy();
+  });
+
+  it("previews and submits the same unsaved run-once configuration without saving", async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      canonicalErrorResponse("Another run started first.", 409, "run_conflict", {
+        conflictReason: "active_run_exists",
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(
+      <AdminPresetController
+        initialPresets={presetListFixture("Custom")}
+        recovery={available(recoveryFixture(null))}
+      />,
+    );
+    await user.clear(screen.getByLabelText("Starting stock"));
+    await user.type(screen.getByLabelText("Starting stock"), "333");
+    const preset = presetFixture();
+    const expectedDraft = draftFromPreset(preset);
+    expectedDraft.startingStock = "333";
+    const expectedConfigOverride = buildEffectiveRunConfig(expectedDraft, preset).values;
+    if (!expectedConfigOverride) throw new Error("Expected valid run configuration.");
+    await user.click(screen.getByText("Effective run preview"));
+    const preview = screen.getByText("Effective run preview").closest("details");
+    if (!preview) throw new Error("Expected effective run preview.");
+    expect(within(preview).getByText("333")).toBeTruthy();
+    for (const label of [
+      "Quantity per attempt",
+      "Queue name",
+      "Physical queue name",
+      "Retry max attempts",
+      "Initial retry backoff ms",
+    ]) {
+      expect(within(preview).getByText(label)).toBeTruthy();
+    }
+    const previewGroupByPayloadKey = {
+      trafficConfig: "Traffic",
+      inventoryConfig: "Inventory",
+      erpConfig: "Per-run ERP",
+      backpressureConfig: "Worker and backpressure",
+    } as const;
+    for (const key of Object.keys(expectedConfigOverride) as Array<
+      keyof typeof previewGroupByPayloadKey
+    >) {
+      expect(
+        within(preview).getByRole("heading", { name: previewGroupByPayloadKey[key] }),
+      ).toBeTruthy();
+    }
+
+    await user.click(screen.getByRole("button", { name: "Run once with these values" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    const request = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(adminDemoRunStartProxyPath);
+    expect(request.configOverride).toEqual(expectedConfigOverride);
+    expect(fetchMock.mock.calls.some(([input]) => String(input) === adminPresetSaveProxyPath)).toBe(
+      false,
+    );
+    expect(screen.getByText("Unsaved")).toBeTruthy();
+  });
+
+  it("confirms that copy uses saved values and keeps its slug-only request", async () => {
+    const source = archivablePresetFixture("operator-copy", "Operator copy");
+    const custom = presetFixture();
+    const { canArchive: _canArchive, ...customContract } = custom;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) =>
+      String(input) === adminPresetCopyToCustomProxyPath
+        ? jsonResponse({
+            preset: customContract,
+            timestamp: "2026-06-20T00:00:12.000Z",
+          })
+        : jsonResponse({
+            presets: [source, custom],
+            timestamp: "2026-06-20T00:00:12.000Z",
+          }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(
+      <AdminPresetController
+        initialPresets={available({
+          presets: [source],
+          timestamp: "2026-06-20T00:00:10.000Z",
+        })}
+        recovery={available(recoveryFixture(null))}
+      />,
+    );
+    await user.clear(screen.getByLabelText("Buyer count"));
+    await user.type(screen.getByLabelText("Buyer count"), "1234");
+    await user.click(
+      screen.getByRole("button", { name: "Copy saved values to custom scenario" }),
+    );
+    expect(screen.getByText(/Your unsaved edits will not be copied\./)).toBeTruthy();
+    expect(fetchMock).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("Operator copy");
+    expect((screen.getByLabelText("Buyer count") as HTMLInputElement).value).toBe("1234");
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "Operator copy",
+        }) as HTMLButtonElement
+      ).className,
+    ).toContain("bg-accent");
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    await user.click(
+      screen.getByRole("button", { name: "Copy saved values to custom scenario" }),
+    );
+    await user.click(confirmationButton("Discard unsaved edits"));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(adminPresetCopyToCustomProxyPath);
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+      sourceSlug: "operator-copy",
+    });
+  });
+
+  it("cancels and confirms duplicate from a dirty draft without changing its saved-source payload", async () => {
+    const source = archivablePresetFixture("operator-duplicate", "Operator duplicate");
+    const clone = presetWithSlug("operator-duplicate-copy", "Operator duplicate Copy");
+    const { canArchive: _canArchive, ...cloneContract } = clone;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) =>
+      String(input) === adminPresetDuplicateProxyPath
+        ? jsonResponse({
+            preset: cloneContract,
+            timestamp: "2026-06-20T00:00:12.000Z",
+          })
+        : jsonResponse({
+            presets: [source, clone],
+            timestamp: "2026-06-20T00:00:12.000Z",
+          }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(
+      <AdminPresetController
+        initialPresets={available({
+          presets: [source],
+          timestamp: "2026-06-20T00:00:10.000Z",
+        })}
+        recovery={available(recoveryFixture(null))}
+      />,
+    );
+    await user.clear(screen.getByLabelText("Buyer count"));
+    await user.type(screen.getByLabelText("Buyer count"), "1234");
+    await user.click(screen.getByRole("button", { name: "Duplicate saved preset" }));
+    expect(screen.getByText(/Your unsaved edits will not be duplicated\./)).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe(
+      "Operator duplicate",
+    );
+    expect((screen.getByLabelText("Buyer count") as HTMLInputElement).value).toBe("1234");
+    expect(
+      (screen.getByRole("button", { name: "Operator duplicate" }) as HTMLButtonElement).className,
+    ).toContain("bg-accent");
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Duplicate saved preset" }));
+    await user.click(confirmationButton("Discard unsaved edits"));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(adminPresetDuplicateProxyPath);
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+      sourceSlug: "operator-duplicate",
+      targetSlug: "operator-duplicate-copy",
+      displayName: "Operator duplicate Copy",
+    });
+  });
+
   it("suppresses invalid preset save/start requests and clears selected-mode errors", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
@@ -866,7 +1349,7 @@ describe("admin feature controllers", () => {
     const buyers = screen.getByLabelText("Buyer count");
     await user.clear(buyers);
     await user.click(screen.getByRole("button", { name: "Save preset" }));
-    await user.click(screen.getByRole("button", { name: "Start admin run" }));
+    await user.click(screen.getByRole("button", { name: "Run once with these values" }));
     expect(fetchMock).not.toHaveBeenCalled();
     expect(
       screen.getByText("Buyer count is required.", {
@@ -918,7 +1401,7 @@ describe("admin feature controllers", () => {
 
     await user.clear(buyers);
     await user.type(buyers, "2.5");
-    await user.click(screen.getByRole("button", { name: "Start admin run" }));
+    await user.click(screen.getByRole("button", { name: "Run once with these values" }));
     expect((buyers as HTMLInputElement).value).toBe("2.5");
     expect(
       screen.getByText("Buyer count must be a whole number.", {
@@ -991,7 +1474,7 @@ describe("admin feature controllers", () => {
     }
     expect(document.body.textContent).toContain(message);
 
-    await user.click(screen.getByRole("button", { name: "Start admin run" }));
+    await user.click(screen.getByRole("button", { name: "Run once with these values" }));
     expect(fetchMock).not.toHaveBeenCalled();
     for (const label of links) {
       expect(screen.getByRole("link", { name: label })).toBeTruthy();
@@ -1024,7 +1507,7 @@ describe("admin feature controllers", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: "Start admin run" }));
+    await user.click(screen.getByRole("button", { name: "Run once with these values" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe(adminDemoRunStartProxyPath);
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
@@ -1054,10 +1537,10 @@ describe("admin feature controllers", () => {
     expect(document.querySelector('a[href="#preset-internal"]')).toBeNull();
     expect(document.body.textContent).not.toContain("private-detail");
     expect(
-      (screen.getByRole("button", { name: "Start admin run" }) as HTMLButtonElement).disabled,
+      (screen.getByRole("button", { name: "Run once with these values" }) as HTMLButtonElement).disabled,
     ).toBe(false);
 
-    await user.click(screen.getByRole("button", { name: "Start admin run" }));
+    await user.click(screen.getByRole("button", { name: "Run once with these values" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect(fetchMock.mock.calls[1]?.[1]?.body).toBe(fetchMock.mock.calls[0]?.[1]?.body);
   });
@@ -1079,7 +1562,7 @@ describe("admin feature controllers", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: "Start admin run" }));
+    await user.click(screen.getByRole("button", { name: "Run once with these values" }));
 
     expect(await screen.findByText("A demo run is already in progress")).toBeTruthy();
     expect(screen.queryByText("Admin run accepted.")).toBeNull();
@@ -1116,7 +1599,7 @@ describe("admin feature controllers", () => {
         recovery={available(recoveryFixture(null))}
       />,
     );
-    const status = screen.getAllByRole("status")[0];
+    const status = document.querySelector<HTMLParagraphElement>("#presets p[role='status']");
     if (!status) throw new Error("Expected the admin operation status region.");
     expect(status.textContent).toBe("");
     const assign = vi.fn();
@@ -1124,10 +1607,10 @@ describe("admin feature controllers", () => {
     Object.defineProperty(navigationWindow, "location", { value: { assign } });
     vi.stubGlobal("window", navigationWindow);
 
-    await user.click(screen.getByRole("button", { name: "Start admin run" }));
+    await user.click(screen.getByRole("button", { name: "Run once with these values" }));
 
     await waitFor(() => expect(status.textContent).toBe("Admin run accepted."));
-    expect(screen.getAllByRole("status")[0]).toBe(status);
+    expect(document.querySelector("#presets p[role='status']")).toBe(status);
     expect(screen.getByRole("link", { name: "Watch live" }).getAttribute("href")).toBe("/watch");
     expect(assign).not.toHaveBeenCalled();
   });
@@ -1169,7 +1652,7 @@ describe("admin feature controllers", () => {
     expect(duplicateSlugInput.value).toBe("custom-copy");
     duplicateSlugInput.value = "";
 
-    await user.click(screen.getByRole("button", { name: "Duplicate" }));
+    await user.click(screen.getByRole("button", { name: "Duplicate saved preset" }));
 
     expect(fetchMock).not.toHaveBeenCalled();
     expect(
@@ -1209,7 +1692,7 @@ describe("admin feature controllers", () => {
     const duplicateSlugInput = screen.getByLabelText("Duplicate slug");
     await user.clear(duplicateSlugInput);
     await user.type(duplicateSlugInput, "preview-clone");
-    await user.click(screen.getByRole("button", { name: "Duplicate" }));
+    await user.click(screen.getByRole("button", { name: "Duplicate saved preset" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe(adminPresetDuplicateProxyPath);
@@ -1241,7 +1724,7 @@ describe("admin feature controllers", () => {
 
     await user.clear(screen.getByLabelText("Duplicate slug"));
     await user.type(screen.getByLabelText("Duplicate slug"), "taken-slug");
-    await user.click(screen.getByRole("button", { name: "Duplicate" }));
+    await user.click(screen.getByRole("button", { name: "Duplicate saved preset" }));
 
     expect(await screen.findByText("That preset slug is already in use")).toBeTruthy();
     expect(screen.getByText("Choose another slug")).toBeTruthy();
@@ -1252,7 +1735,10 @@ describe("admin feature controllers", () => {
 
   it("preserves an in-progress preset draft while refreshed props update start gating", async () => {
     const user = userEvent.setup();
-    const props = surfaceProps(null);
+    const props = {
+      ...surfaceProps(null),
+      initialPresets: twoPresetListFixture("Custom"),
+    };
     const { rerender } = render(<AdminAuthenticatedSurface {...props} />);
     const name = screen.getByLabelText("Name");
     await user.clear(name);
@@ -1262,14 +1748,34 @@ describe("admin feature controllers", () => {
     rerender(
       <AdminAuthenticatedSurface
         {...props}
-        initialPresets={presetListFixture("Server updated")}
+        initialPresets={twoPresetListFixture("Server updated")}
         initialRecovery={available(recoveryFixture(runFixture()))}
       />,
     );
+    expect(await screen.findByRole("alertdialog")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("Edited locally");
+    expect((screen.getByRole("button", { name: "Custom" }) as HTMLButtonElement).className).toContain(
+      "bg-accent",
+    );
     expect(
-      (screen.getByRole("button", { name: "Start admin run" }) as HTMLButtonElement).disabled,
+      (screen.getByRole("button", { name: "Second preset" }) as HTMLButtonElement).className,
+    ).not.toContain("bg-accent");
+    expect(
+      (screen.getByRole("button", { name: "Run once with these values" }) as HTMLButtonElement).disabled,
     ).toBe(true);
+
+    rerender(
+      <AdminAuthenticatedSurface
+        {...props}
+        initialPresets={twoPresetListFixture("Server updated again")}
+        initialRecovery={available(recoveryFixture(runFixture()))}
+      />,
+    );
+    await user.click(confirmationButton("Discard unsaved edits"));
+    expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe(
+      "Server updated again",
+    );
   });
 
   it("shares a recovered runtime policy with dirty preset validation", async () => {
@@ -1288,18 +1794,27 @@ describe("admin feature controllers", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "Refresh policy" }));
+    expect(await screen.findByRole("alertdialog")).toBeTruthy();
+    expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("Edited locally");
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("Edited locally");
+    expect(document.querySelector<HTMLInputElement>("#preset-buyerCount")?.value).toBe("1000");
+
+    await user.click(screen.getByRole("button", { name: "Refresh policy" }));
+    expect(await screen.findByRole("alertdialog")).toBeTruthy();
+    await user.click(confirmationButton("Discard unsaved edits"));
     await waitFor(() =>
       expect(document.querySelector("#preset-buyerCount-help")?.textContent).toContain(
         "Maximum: 1000.",
       ),
     );
-    expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("Edited locally");
+    expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("Custom");
 
     if (!presetBuyerCount()) throw new Error("Expected preset buyer-count control.");
     await user.clear(presetBuyerCount() as HTMLInputElement);
     await user.type(presetBuyerCount() as HTMLInputElement, "1001");
-    await user.click(screen.getByRole("button", { name: "Start admin run" }));
-    expect(fetchMock).toHaveBeenCalledOnce();
+    await user.click(screen.getByRole("button", { name: "Run once with these values" }));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(
       screen.getByText("Buyer count must be at most 1000.", {
         selector: "#preset-buyerCount-error",
@@ -1326,7 +1841,7 @@ describe("admin feature controllers", () => {
 
     await user.clear(presetBuyerCount() as HTMLInputElement);
     await user.type(presetBuyerCount() as HTMLInputElement, "1001");
-    await user.click(screen.getByRole("button", { name: "Start admin run" }));
+    await user.click(screen.getByRole("button", { name: "Run once with these values" }));
     expect(
       screen.getByText("Buyer count must be at most 1000.", {
         selector: "#preset-buyerCount-error",
@@ -1334,18 +1849,20 @@ describe("admin feature controllers", () => {
     ).toBeTruthy();
 
     await user.click(screen.getByRole("button", { name: "Refresh policy" }));
+    expect(await screen.findByRole("alertdialog")).toBeTruthy();
+    await user.click(confirmationButton("Discard unsaved edits"));
     await waitFor(() =>
       expect(document.querySelector("#preset-buyerCount-help")?.textContent).toContain(
         "Maximum: 2000.",
       ),
     );
-    expect(presetBuyerCount()?.value).toBe("1001");
+    expect(presetBuyerCount()?.value).toBe("1000");
     expect(presetBuyerCount()?.getAttribute("aria-invalid")).toBeNull();
     expect(screen.queryByText("Buyer count must be at most 1000.")).toBeNull();
 
     await user.clear(presetBuyerCount() as HTMLInputElement);
     await user.type(presetBuyerCount() as HTMLInputElement, "2001");
-    await user.click(screen.getByRole("button", { name: "Start admin run" }));
+    await user.click(screen.getByRole("button", { name: "Run once with these values" }));
     expect(
       screen.getByText("Buyer count must be at most 2000.", {
         selector: "#preset-buyerCount-error",
@@ -1569,11 +2086,18 @@ describe("admin feature controllers", () => {
       />,
     );
 
+    await user.clear(screen.getByLabelText("Buyer count"));
+    await user.type(screen.getByLabelText("Buyer count"), "1234");
     await user.click(screen.getByRole("button", { name: "Archive preset" }));
     await user.click(screen.getByRole("button", { name: "Cancel" }));
 
     expect(fetchMock).not.toHaveBeenCalled();
     expect(screen.queryByText("Preset archived.")).toBeNull();
+    expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("Operator Dup");
+    expect((screen.getByLabelText("Buyer count") as HTMLInputElement).value).toBe("1234");
+    expect(
+      (screen.getByRole("button", { name: "Operator Dup" }) as HTMLButtonElement).className,
+    ).toContain("bg-accent");
   });
 
   it("closes an archive confirmation and refreshes server auth state on 401", async () => {
@@ -1657,6 +2181,9 @@ describe("admin feature controllers", () => {
     expect(
       (screen.getByRole("button", { name: "Archive preset" }) as HTMLButtonElement).disabled,
     ).toBe(true);
+    expect(document.body.textContent).toContain(
+      "The server reports this preset can't be archived right now.",
+    );
     expect(screen.getByRole("link", { name: "Refresh presets" }).getAttribute("href")).toBe(
       "/admin",
     );
@@ -1703,7 +2230,8 @@ describe("admin feature controllers", () => {
     expect(deleteAttempts).toBe(2);
   });
 
-  it("archives the selected preset after confirmation, refreshes the list, and selects a remaining preset", async () => {
+  it("keeps an accepted archive removed when the same-pass list resurrects it", async () => {
+    const archivedPreset = archivablePresetFixture("operator-dup", "Operator Dup");
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input);
       if (path === adminPresetListProxyPath && init?.method === "DELETE") {
@@ -1716,7 +2244,7 @@ describe("admin feature controllers", () => {
       }
       if (path === adminPresetListProxyPath) {
         return jsonResponse({
-          presets: [presetFixture()],
+          presets: [archivedPreset, presetFixture()],
           timestamp: "2026-06-20T00:00:12.000Z",
         });
       }
@@ -1727,14 +2255,17 @@ describe("admin feature controllers", () => {
     render(
       <AdminPresetController
         initialPresets={available<AdminPresetListResponse>({
-          presets: [archivablePresetFixture("operator-dup", "Operator Dup"), presetFixture()],
+          presets: [archivedPreset, presetFixture()],
           timestamp: "2026-06-20T00:00:10.000Z",
         })}
         recovery={available(recoveryFixture(null))}
       />,
     );
 
+    await user.clear(screen.getByLabelText("Buyer count"));
+    await user.type(screen.getByLabelText("Buyer count"), "1234");
     await user.click(screen.getByRole("button", { name: "Archive preset" }));
+    expect(screen.getByText(/Your unsaved edits will be discarded\./)).toBeTruthy();
     await user.click(confirmationButton("Archive preset"));
 
     await waitFor(() => expect(screen.getByText("Preset archived.")).toBeTruthy());
@@ -1800,7 +2331,7 @@ describe("admin feature controllers", () => {
 
     await user.clear(screen.getByLabelText("Duplicate slug"));
     await user.type(screen.getByLabelText("Duplicate slug"), "preview-clone");
-    await user.click(screen.getByRole("button", { name: "Duplicate" }));
+    await user.click(screen.getByRole("button", { name: "Duplicate saved preset" }));
 
     await waitFor(() => expect(screen.getByText("Preset duplicated.")).toBeTruthy());
     expect(screen.getByRole("button", { name: "Custom Copy" })).toBeTruthy();
@@ -1921,6 +2452,16 @@ function surfaceProps(currentRun: DashboardProjection["currentRun"]) {
 function presetListFixture(name: string): BackendRead<AdminPresetListResponse> {
   return available({
     presets: [{ ...presetFixture(), display: { ...presetFixture().display, name } }],
+    timestamp: "2026-06-20T00:00:11.000Z",
+  });
+}
+
+function twoPresetListFixture(name: string): BackendRead<AdminPresetListResponse> {
+  return available({
+    presets: [
+      { ...presetFixture(), display: { ...presetFixture().display, name } },
+      presetWithSlug("second", "Second preset"),
+    ],
     timestamp: "2026-06-20T00:00:11.000Z",
   });
 }
@@ -2108,6 +2649,22 @@ function archivablePresetFixture(slug: string, name: string): AdminPresetListIte
     isEditable: true,
     isCustom: false,
     canArchive: true,
+    display: { ...base.display, name },
+  };
+}
+
+function readOnlyPresetFixture(
+  visibility: AdminPresetListItem["visibility"],
+  name: string,
+): AdminPresetListItem {
+  const base = presetFixture();
+  return {
+    ...base,
+    slug: visibility === "public" ? "public-preset" : "system-preset",
+    visibility,
+    isEditable: false,
+    isCustom: false,
+    canArchive: false,
     display: { ...base.display, name },
   };
 }

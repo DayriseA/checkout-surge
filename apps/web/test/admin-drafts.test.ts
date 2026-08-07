@@ -6,12 +6,13 @@ import {
 } from "@checkout-surge/contracts";
 import { describe, expect, it } from "vitest";
 import {
-  buildConfigFromDraft,
+  buildEffectiveRunConfig,
   buildErpChaosFromDraft,
   buildPolicyFromDraft,
   buildSortOrder,
   draftFromPreset,
   draftFromRuntimePolicy,
+  isPresetDraftDirty,
 } from "../src/app/lib/admin-drafts.js";
 
 describe("admin drafts", () => {
@@ -20,7 +21,7 @@ describe("admin drafts", () => {
     "constant-arrival-rate",
   ] as const)("round-trips %s traffic and preserves hidden configuration", (mode) => {
     const preset = presetFixture(mode);
-    const rebuilt = buildConfigFromDraft(draftFromPreset(preset), preset).values;
+    const rebuilt = buildEffectiveRunConfig(draftFromPreset(preset), preset).values;
     expect(rebuilt).toBeDefined();
     if (!rebuilt) throw new Error("Expected valid fixture config.");
     expect(rebuilt).toEqual({
@@ -50,7 +51,7 @@ describe("admin drafts", () => {
     draft.ratePerSecond = "Infinity";
     draft.preAllocatedVus = "2.5";
     draft.buyerCount = "";
-    const invalid = buildConfigFromDraft(draft, preset);
+    const invalid = buildEffectiveRunConfig(draft, preset);
     expect(invalid.fieldErrors.buyerCount?.code).toBe("required");
     expect(invalid.fieldErrors.ratePerSecond).toBeUndefined();
     expect(draft.ratePerSecond).toBe("Infinity");
@@ -81,15 +82,15 @@ describe("admin drafts", () => {
     const preset = presetFixture("buyer-spike");
     const draft = draftFromPreset(preset);
     draft.buyerCount = "0";
-    expect(buildConfigFromDraft(draft, preset).fieldErrors.buyerCount?.code).toBe("below_min");
+    expect(buildEffectiveRunConfig(draft, preset).fieldErrors.buyerCount?.code).toBe("below_min");
 
     draft.buyerCount = "1";
     draft.startingStock = "0";
     draft.erpErrorRate = "1";
-    expect(buildConfigFromDraft(draft, preset).values).toBeDefined();
+    expect(buildEffectiveRunConfig(draft, preset).values).toBeDefined();
 
     draft.orderProcessConcurrency = "11";
-    expect(buildConfigFromDraft(draft, preset).fieldErrors.orderProcessConcurrency?.code).toBe(
+    expect(buildEffectiveRunConfig(draft, preset).fieldErrors.orderProcessConcurrency?.code).toBe(
       "above_max",
     );
 
@@ -97,7 +98,7 @@ describe("admin drafts", () => {
     draft.buyerCount = "1001";
     const policy = policyFixture();
     policy.deploymentHardCaps.maxBuyers = 1000;
-    expect(buildConfigFromDraft(draft, preset, policy).fieldErrors.buyerCount?.code).toBe(
+    expect(buildEffectiveRunConfig(draft, preset, policy).fieldErrors.buyerCount?.code).toBe(
       "above_max",
     );
 
@@ -114,7 +115,7 @@ describe("admin drafts", () => {
     const draft = draftFromPreset(preset);
     draft.preAllocatedVus = "51";
     draft.maxVus = "50";
-    expect(buildConfigFromDraft(draft, preset).formErrors).toEqual([
+    expect(buildEffectiveRunConfig(draft, preset).formErrors).toEqual([
       {
         message: "Maximum VUs must be greater than or equal to preallocated VUs.",
         fields: ["preAllocatedVus", "maxVus"],
@@ -147,7 +148,7 @@ describe("admin drafts", () => {
     const policy = policyFixture();
     policy.deploymentHardCaps.maxTotalRequests = 90_000;
     mutate(draft);
-    expect(buildConfigFromDraft(draft, preset, policy).formErrors).toContainEqual({
+    expect(buildEffectiveRunConfig(draft, preset, policy).formErrors).toContainEqual({
       message: `This configuration creates ${computedTotal} requests; the permitted maximum is 90000 requests.`,
       fields,
     });
@@ -242,7 +243,21 @@ describe("admin drafts", () => {
   it("builds contract-valid start and save payload configuration", () => {
     const preset = presetFixture("constant-arrival-rate");
     const draft = draftFromPreset(preset);
-    const configOverride = buildConfigFromDraft(draft, preset).values;
+    draft.ratePerSecond = "75";
+    draft.startingStock = "300";
+    const configOverride = buildEffectiveRunConfig(draft, preset).values;
+    expect(configOverride).toEqual({
+      trafficConfig: {
+        ...preset.trafficConfig,
+        ratePerSecond: 75,
+      },
+      inventoryConfig: {
+        ...preset.inventoryConfig,
+        startingStock: 300,
+      },
+      erpConfig: preset.erpConfig,
+      backpressureConfig: preset.backpressureConfig,
+    });
     expect(
       startDemoRunRequestSchema.safeParse({ presetSlug: preset.slug, configOverride }).success,
     ).toBe(true);
@@ -253,6 +268,20 @@ describe("admin drafts", () => {
         ...configOverride,
       }).success,
     ).toBe(true);
+  });
+
+  it("canonicalizes draft values before comparing them with the persisted preset", () => {
+    const preset = presetFixture("buyer-spike");
+    const draft = draftFromPreset(preset);
+    draft.buyerCount = "01000";
+    draft.erpErrorRate = "0.10";
+    draft.sortOrder = "010";
+    expect(isPresetDraftDirty(draft, preset)).toBe(false);
+
+    draft.startingStock = "251";
+    expect(isPresetDraftDirty(draft, preset)).toBe(true);
+    draft.startingStock = "";
+    expect(isPresetDraftDirty(draft, preset)).toBe(true);
   });
 });
 

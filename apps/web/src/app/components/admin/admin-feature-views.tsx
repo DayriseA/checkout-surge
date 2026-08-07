@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  type AcceptedRunConfigSnapshot,
   type AdminPresetListItem,
   type AdminPublicRuntimePolicyResponse,
   type DeploymentHardCaps,
@@ -281,11 +282,13 @@ const policyLimitFields: ReadonlyArray<[keyof RuntimePolicyDraft, string, string
 
 export function AdminPresetView({
   draft,
+  effectiveConfig,
   fieldErrors,
   formErrors,
   hardCaps,
   duplicateTargetSlug,
   isPending,
+  isDirty,
   notice,
   onBlurField,
   syncNotice,
@@ -306,11 +309,13 @@ export function AdminPresetView({
   validationSummaryRevision,
 }: {
   draft: PresetDraft | null;
+  effectiveConfig?: AcceptedRunConfigSnapshot | undefined;
   fieldErrors: Record<string, DraftFieldError>;
   formErrors: DraftFormError[];
   hardCaps?: DeploymentHardCaps | undefined;
   duplicateTargetSlug: string;
   isPending: boolean;
+  isDirty: boolean;
   notice: AdminNotice | null;
   onBlurField: (field: string) => void;
   syncNotice: AdminNotice | null;
@@ -330,6 +335,19 @@ export function AdminPresetView({
   showValidationSummary: boolean;
   validationSummaryRevision: number;
 }) {
+  const actionPendingReason = isPending ? "A preset action is in progress." : null;
+  const saveReason = selectedPreset
+    ? actionPendingReason ?? saveUnavailableReason(selectedPreset)
+    : null;
+  const archiveReason = selectedPreset
+    ? actionPendingReason ?? archiveUnavailableReason(selectedPreset)
+    : null;
+  const duplicateReason = selectedPreset
+    ? actionPendingReason ??
+      (selectedPreset.slug === "public-custom"
+        ? "The public Custom scenario cannot be duplicated."
+        : null)
+    : null;
   return (
     <section className={`${panelClassName} lg:col-span-2`} id="presets">
       <PanelHeading
@@ -342,6 +360,7 @@ export function AdminPresetView({
           {presets.map((preset) => (
             <button
               className={`${preset.slug === selectedPreset?.slug ? primaryButtonClassName : buttonClassName} [overflow-wrap:anywhere]`}
+              disabled={isPending}
               key={preset.slug}
               onClick={() => onSelect(preset.slug)}
               type="button"
@@ -349,10 +368,30 @@ export function AdminPresetView({
               {preset.display.name}
             </button>
           ))}
+          {actionPendingReason ? (
+            <p className="m-0 text-xs text-muted">{actionPendingReason}</p>
+          ) : null}
           {presetsRead.status === "unavailable" ? <Unavailable read={presetsRead} /> : null}
         </div>
         {selectedPreset && draft ? (
           <div className="grid gap-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="m-0 text-lg font-bold text-ink">{selectedPreset.display.name}</h3>
+              <span aria-live="polite" role="status">
+                <StatusPill
+                  status={{
+                    label: isDirty ? "Unsaved" : "Saved",
+                    tone: isDirty ? "warning" : "ok",
+                  }}
+                />
+              </span>
+            </div>
+            {!selectedPreset.isEditable ? (
+              <p className="m-0 rounded border border-warning bg-warning-soft p-3 text-sm font-semibold text-warning">
+                You're editing values for a one-off run — {selectedPreset.display.name} itself
+                can't be changed
+              </p>
+            ) : null}
             {showValidationSummary ? (
               <ValidationSummary
                 errors={fieldErrors}
@@ -364,7 +403,6 @@ export function AdminPresetView({
             <ConfigGroup title="Preset identity">
               <FieldRow label="Slug" value={selectedPreset.slug} />
               <FieldRow label="Visibility" value={selectedPreset.visibility} />
-              <FieldRow label="Editable" value={selectedPreset.isEditable ? "yes" : "no"} />
               <FieldRow label="Custom" value={selectedPreset.isCustom ? "yes" : "no"} />
             </ConfigGroup>
             <p className="m-0 [overflow-wrap:anywhere] text-sm text-muted">
@@ -379,6 +417,7 @@ export function AdminPresetView({
                 onBlur={onBlurField}
                 type="text"
                 prefix="preset"
+                disabled={isPending || !selectedPreset.isEditable}
               />
               <DraftInput
                 label="Description"
@@ -388,6 +427,7 @@ export function AdminPresetView({
                 onBlur={onBlurField}
                 type="text"
                 prefix="preset"
+                disabled={isPending || !selectedPreset.isEditable}
               />
               <DraftInput
                 label="Sort order"
@@ -397,9 +437,10 @@ export function AdminPresetView({
                 onBlur={onBlurField}
                 error={fieldErrors.sortOrder}
                 prefix="preset"
+                disabled={isPending || !selectedPreset.isEditable}
               />
             </div>
-            <ConfigFieldset legend="Traffic">
+            <ConfigFieldset disabled={isPending} legend="Traffic">
               <TrafficEditor
                 draft={draft}
                 errors={fieldErrors}
@@ -409,7 +450,7 @@ export function AdminPresetView({
                 prefix="preset"
               />
             </ConfigFieldset>
-            <ConfigFieldset legend="Inventory">
+            <ConfigFieldset disabled={isPending} legend="Inventory">
               <RunConfigInputs
                 draft={draft}
                 errors={fieldErrors}
@@ -419,7 +460,7 @@ export function AdminPresetView({
                 prefix="preset"
               />
             </ConfigFieldset>
-            <ConfigFieldset legend="Per-run ERP">
+            <ConfigFieldset disabled={isPending} legend="Per-run ERP">
               <RunConfigInputs
                 draft={draft}
                 errors={fieldErrors}
@@ -436,7 +477,7 @@ export function AdminPresetView({
                 onChange={(value) => onUpdateDraft({ erpForcedOutage: value })}
               />
             </ConfigFieldset>
-            <ConfigFieldset legend="Worker and backpressure">
+            <ConfigFieldset disabled={isPending} legend="Worker and backpressure">
               <RunConfigInputs
                 draft={draft}
                 errors={fieldErrors}
@@ -446,7 +487,7 @@ export function AdminPresetView({
                 prefix="preset"
               />
             </ConfigFieldset>
-            <ConfigFieldset legend="Circuit protection">
+            <ConfigFieldset disabled={isPending} legend="Circuit protection">
               <RunConfigInputs
                 draft={draft}
                 errors={fieldErrors}
@@ -456,41 +497,67 @@ export function AdminPresetView({
                 prefix="preset"
               />
             </ConfigFieldset>
+            {effectiveConfig ? <EffectiveRunPreview config={effectiveConfig} /> : null}
             <div className="flex flex-wrap gap-2">
-              <button
-                className={primaryButtonClassName}
-                disabled={isPending || startBlocked}
-                onClick={onStart}
-                type="button"
-              >
-                Start admin run
-              </button>
-              <button
-                className={buttonClassName}
-                disabled={
-                  isPending || !(selectedPreset.visibility === "admin" && selectedPreset.isEditable)
-                }
-                onClick={onSave}
-                type="button"
-              >
-                Save preset
-              </button>
-              <button
-                className={buttonClassName}
-                disabled={isPending || selectedPreset.slug === "public-custom"}
-                onClick={onCopyToCustom}
-                type="button"
-              >
-                Copy to custom
-              </button>
-              <button
-                className={buttonClassName}
-                disabled={isPending || !selectedPreset.canArchive}
-                onClick={onArchive}
-                type="button"
-              >
-                Archive preset
-              </button>
+              <div>
+                <button
+                  className={primaryButtonClassName}
+                  disabled={isPending || startBlocked}
+                  onClick={onStart}
+                  type="button"
+                >
+                  Run once with these values
+                </button>
+                {actionPendingReason ? (
+                  <p className="m-0 mt-1 max-w-64 text-xs text-muted">
+                    {actionPendingReason}
+                  </p>
+                ) : null}
+              </div>
+              <div>
+                <button
+                  className={buttonClassName}
+                  disabled={
+                    isPending ||
+                    !(selectedPreset.visibility === "admin" && selectedPreset.isEditable)
+                  }
+                  onClick={onSave}
+                  type="button"
+                >
+                  Save preset
+                </button>
+                {saveReason ? (
+                  <p className="m-0 mt-1 max-w-64 text-xs text-muted">{saveReason}</p>
+                ) : null}
+              </div>
+              <div>
+                <button
+                  className={buttonClassName}
+                  disabled={isPending}
+                  onClick={onCopyToCustom}
+                  type="button"
+                >
+                  Copy saved values to custom scenario
+                </button>
+                {actionPendingReason ? (
+                  <p className="m-0 mt-1 max-w-64 text-xs text-muted">
+                    {actionPendingReason}
+                  </p>
+                ) : null}
+              </div>
+              <div>
+                <button
+                  className={buttonClassName}
+                  disabled={isPending || !selectedPreset.canArchive}
+                  onClick={onArchive}
+                  type="button"
+                >
+                  Archive preset
+                </button>
+                {archiveReason ? (
+                  <p className="m-0 mt-1 max-w-64 text-xs text-muted">{archiveReason}</p>
+                ) : null}
+              </div>
             </div>
             {startBlockedReason ? (
               <p className="m-0 text-sm text-muted">{startBlockedReason}</p>
@@ -506,6 +573,7 @@ export function AdminPresetView({
               }}
             >
               <LabeledTextInput
+                disabled={isPending}
                 label="Duplicate slug"
                 name="duplicate-target-slug"
                 onChange={onDuplicateTargetSlugChange}
@@ -516,8 +584,11 @@ export function AdminPresetView({
                 disabled={isPending || selectedPreset.slug === "public-custom"}
                 type="submit"
               >
-                Duplicate
+                Duplicate saved preset
               </button>
+              {duplicateReason ? (
+                <p className="col-span-full m-0 text-xs text-muted">{duplicateReason}</p>
+              ) : null}
             </form>
           </div>
         ) : (
@@ -532,6 +603,110 @@ export function AdminPresetView({
       ) : null}
       <AdminNoticeView notice={syncNotice} />
     </section>
+  );
+}
+
+function saveUnavailableReason(preset: AdminPresetListItem): string | null {
+  if (preset.visibility !== "admin") return "Public presets cannot be saved from the admin editor.";
+  if (!preset.isEditable) return "This read-only preset cannot be saved.";
+  return null;
+}
+
+function archiveUnavailableReason(preset: AdminPresetListItem): string | null {
+  if (preset.canArchive) return null;
+  if (preset.isCustom) return "The Custom scratch scenario cannot be archived.";
+  if (preset.visibility !== "admin") return "Public presets cannot be archived.";
+  if (!preset.isEditable) return "Read-only and system presets cannot be archived.";
+  return "The server reports this preset can't be archived right now.";
+}
+
+function EffectiveRunPreview({ config }: { config: AcceptedRunConfigSnapshot }) {
+  const traffic = config.trafficConfig;
+  return (
+    <details className="rounded border border-border px-3 py-2">
+      <summary className="cursor-pointer font-semibold text-muted-strong">
+        Effective run preview
+      </summary>
+      <div className="mt-3 grid gap-3">
+        <ConfigGroup title="Traffic">
+          <FieldRow label="Mode" value={traffic.mode} />
+          {traffic.mode === "buyer-spike" ? (
+            <>
+              <FieldRow label="Buyer count" value={traffic.buyerCount} />
+              <FieldRow
+                label="Duplicate attempts"
+                value={traffic.duplicateEachBuyerAttempt ? "yes" : "no"}
+              />
+              <FieldRow label="Max duration seconds" value={traffic.maxDurationSeconds} />
+            </>
+          ) : (
+            <>
+              <FieldRow label="Requests per second" value={traffic.ratePerSecond} />
+              <FieldRow label="Duration seconds" value={traffic.durationSeconds} />
+              <FieldRow label="Preallocated VUs" value={traffic.k6Vus?.preAllocatedVus ?? "—"} />
+              <FieldRow label="Max VUs" value={traffic.k6Vus?.maxVus ?? "—"} />
+            </>
+          )}
+          <FieldRow label="Start delay seconds" value={traffic.startDelaySeconds} />
+          <FieldRow label="Quantity per attempt" value={traffic.quantityPerAttempt} />
+        </ConfigGroup>
+        <ConfigGroup title="Inventory">
+          <FieldRow label="Starting stock" value={config.inventoryConfig.startingStock} />
+          <FieldRow
+            label="Quantity per checkout"
+            value={config.inventoryConfig.quantityPerCheckout}
+          />
+          <FieldRow
+            label="Reservation hold minutes"
+            value={config.inventoryConfig.reservationHoldMinutes}
+          />
+        </ConfigGroup>
+        <ConfigGroup title="Per-run ERP">
+          <FieldRow label="Latency ms" value={config.erpConfig.latencyMs} />
+          <FieldRow label="Max TPS" value={config.erpConfig.maxTps} />
+          <FieldRow label="Error rate" value={config.erpConfig.errorRate} />
+          <FieldRow label="Forced outage" value={config.erpConfig.forcedOutage ? "yes" : "no"} />
+          <FieldRow label="Request timeout ms" value={config.erpConfig.requestTimeoutMs} />
+        </ConfigGroup>
+        <ConfigGroup title="Worker and backpressure">
+          <FieldRow label="Queue name" value={config.backpressureConfig.queueName} />
+          <FieldRow
+            label="Physical queue name"
+            value={config.backpressureConfig.physicalQueueName}
+          />
+          <FieldRow
+            label="Order process concurrency"
+            value={config.backpressureConfig.orderProcessConcurrency}
+          />
+          <FieldRow
+            label="Retry max attempts"
+            value={config.backpressureConfig.retryPolicy.maxAttempts}
+          />
+          <FieldRow
+            label="Initial retry backoff ms"
+            value={config.backpressureConfig.retryPolicy.initialBackoffMs}
+          />
+          <FieldRow
+            label="Drain timeout seconds"
+            value={config.backpressureConfig.drainTimeoutSeconds}
+          />
+          <FieldRow
+            label="Pending retry after seconds"
+            value={config.backpressureConfig.pendingPersistenceRetryAfterSeconds}
+          />
+        </ConfigGroup>
+        <ConfigGroup title="Circuit protection">
+          <FieldRow
+            label="Failure threshold"
+            value={config.backpressureConfig.circuitBreakerFailureThreshold}
+          />
+          <FieldRow
+            label="Reset timeout ms"
+            value={config.backpressureConfig.circuitBreakerResetTimeoutMs}
+          />
+        </ConfigGroup>
+      </div>
+    </details>
   );
 }
 
@@ -716,9 +891,20 @@ function RunConfigFields({
   );
 }
 
-function ConfigFieldset({ children, legend }: { children: ReactNode; legend: string }) {
+function ConfigFieldset({
+  children,
+  disabled,
+  legend,
+}: {
+  children: ReactNode;
+  disabled?: boolean | undefined;
+  legend: string;
+}) {
   return (
-    <fieldset className="m-0 grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(100%,16rem),1fr))] items-start gap-3 rounded border border-border p-3">
+    <fieldset
+      className="m-0 grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(100%,16rem),1fr))] items-start gap-3 rounded border border-border p-3"
+      disabled={disabled}
+    >
       <legend className="px-1 text-sm font-bold text-ink">{legend}</legend>
       {children}
     </fieldset>
@@ -906,6 +1092,7 @@ export function AdminErpDiagnosticsView({
 
 function DraftInput<T extends object>({
   draft,
+  disabled,
   error,
   field,
   label,
@@ -917,6 +1104,7 @@ function DraftInput<T extends object>({
   type = "number",
 }: {
   draft: T;
+  disabled?: boolean | undefined;
   error?: DraftFieldError | undefined;
   field: keyof T;
   label: string;
@@ -930,6 +1118,7 @@ function DraftInput<T extends object>({
   const bounds = type === "number" ? intrinsicInputBounds(String(field)) : {};
   return (
     <LabeledTextInput
+      disabled={disabled}
       error={error}
       help={max === undefined ? bounds.help : `${bounds.help ?? ""} Maximum: ${max}.`.trim()}
       id={prefix ? `${prefix}-${String(field)}` : undefined}
@@ -1043,6 +1232,7 @@ export function Unavailable({ read }: { read: BackendRead<unknown> }) {
 }
 
 function LabeledTextInput({
+  disabled,
   error,
   help,
   id,
@@ -1055,6 +1245,7 @@ function LabeledTextInput({
   value,
 }: {
   label: string;
+  disabled?: boolean | undefined;
   error?: DraftFieldError | undefined;
   help?: string | undefined;
   id?: string | undefined;
@@ -1080,6 +1271,7 @@ function LabeledTextInput({
         }
         aria-invalid={error ? true : undefined}
         className={inputClassName}
+        disabled={disabled}
         id={controlId}
         inputMode={inputMode}
         name={name}
