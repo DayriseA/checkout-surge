@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import http from "node:http";
 
 const projectName =
@@ -157,6 +158,18 @@ async function characterizeSoldOutIdempotencyAndRecovery() {
   );
   const historyPage = await textRequest(`${dashboardBaseUrl}/run-history/${runId}`);
   assert(historyPage.includes(runId), "browser history detail did not recover the finalized run");
+  assert(
+    (await statusRequest(`${dashboardBaseUrl}/run-history/${runId}`)) === 200,
+    "finalized browser history detail did not return HTTP 200",
+  );
+  assert(
+    (await statusRequest(`${dashboardBaseUrl}/run-history/not-a-uuid`)) === 404,
+    "malformed browser history detail did not return HTTP 404",
+  );
+  assert(
+    (await statusRequest(`${dashboardBaseUrl}/run-history/${randomUUID()}`)) === 404,
+    "absent browser history detail did not return HTTP 404",
+  );
   const sseAfter = await openAndDisconnectSse();
   assert(
     sseAfter.includes("text/event-stream"),
@@ -362,6 +375,12 @@ async function textRequest(url) {
   const body = await response.text();
   assert(response.ok, `${url} returned HTTP ${response.status}`);
   return body;
+}
+
+async function statusRequest(url) {
+  const response = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+  await response.body?.cancel();
+  return response.status;
 }
 
 function requireRunIdentity(started) {

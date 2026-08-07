@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { AdminAuthenticatedSurface } from "../components/admin/admin-authenticated-surface";
 import { AdminSignIn } from "../components/admin/admin-sign-in";
 import { pendingDashboardRecovery } from "../lib/api";
@@ -9,17 +10,19 @@ import {
   readAdminRuntimePolicy,
 } from "../lib/server/admin-reads";
 
+export const metadata: Metadata = { title: "Admin" };
 export const dynamic = "force-dynamic";
 
 export default async function AdminPage() {
   const authenticated = await hasValidAdminPageSession();
-  if (!authenticated) return <AdminSignIn />;
-  const reads = await Promise.all([
-    readAdminErpChaos(),
-    readAdminPresets(),
-    readAdminRuntimePolicy(),
-    readAdminReadiness(),
-  ]);
+  const reads = authenticated
+    ? await Promise.all([
+        readAdminErpChaos(),
+        readAdminPresets(),
+        readAdminRuntimePolicy(),
+        readAdminReadiness(),
+      ])
+    : null;
   return (
     <>
       <header className="mb-4 grid grid-cols-[1fr_auto] items-end gap-4 max-[900px]:grid-cols-1 max-[900px]:items-start">
@@ -30,13 +33,17 @@ export default async function AdminPage() {
           </p>
         </div>
       </header>
-      <AdminAuthenticatedSurface
-        initialErpChaos={reads[0]}
-        initialPresets={reads[1]}
-        initialRecovery={pendingDashboardRecovery()}
-        initialReadiness={reads[3]}
-        initialRuntimePolicy={reads[2]}
-      />
+      {reads ? (
+        <AdminAuthenticatedSurface
+          initialErpChaos={reads[0]}
+          initialPresets={reads[1]}
+          initialRecovery={pendingDashboardRecovery()}
+          initialReadiness={reads[3]}
+          initialRuntimePolicy={reads[2]}
+        />
+      ) : (
+        <AdminSignIn />
+      )}
     </>
   );
 }

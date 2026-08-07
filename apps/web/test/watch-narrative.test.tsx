@@ -94,6 +94,7 @@ describe("watch narrative", () => {
       expect(output).toContain("Frozen scenario");
       expect(output).toContain("Sale evidence");
       expect(output).toContain("View the full result for Preview 1k (2026-07-30 12:00:02 UTC)");
+      expect(output.replace(/<[^>]+>/g, "")).not.toMatch(/\b\d{2}:\d{2}:\d{2}(?! UTC)/);
     }
   });
 

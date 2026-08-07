@@ -1,4 +1,7 @@
+import type { Metadata } from "next";
 import { publicNarrative, publicVocabulary } from "../lib/presentation/public-vocabulary";
+
+export const metadata: Metadata = { title: "About" };
 
 const sectionClassName = "mt-4 rounded-lg border border-border bg-surface p-5";
 const termLinkClassName = "font-semibold text-accent underline";

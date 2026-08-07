@@ -1,6 +1,8 @@
+import type { Metadata } from "next";
 import { OperatorDashboard } from "../components/operator-dashboard";
 import { getRunHistoryPage, pendingDashboardRecovery } from "../lib/api";
 
+export const metadata: Metadata = { title: "Live watch" };
 export const dynamic = "force-dynamic";
 
 export default async function WatchPage() {

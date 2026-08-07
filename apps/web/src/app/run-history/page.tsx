@@ -1,4 +1,5 @@
 import type { RunHistoryListResponse } from "@checkout-surge/contracts";
+import type { Metadata } from "next";
 import { ErrorNotice } from "../components/error-notice";
 import { RunHistoryAdminControls } from "../components/run-history-admin-controls";
 import { RunHistoryList } from "../components/run-history-list";
@@ -7,6 +8,7 @@ import { getRunHistoryPage } from "../lib/api";
 import { formatCount } from "../lib/presentation/format";
 import { hasValidAdminPageSession } from "../lib/server/admin-page-session";
 
+export const metadata: Metadata = { title: "Run history" };
 export const dynamic = "force-dynamic";
 
 interface RunHistoryPageProps {

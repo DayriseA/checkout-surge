@@ -467,35 +467,33 @@ describe("run history", () => {
     expect(getRunHistoryDetail).not.toHaveBeenCalled();
   });
 
-  it("keeps an unconfirmed backend 404 unavailable", async () => {
-    getRunHistoryDetail.mockResolvedValue({
-      status: "unavailable",
-      httpStatus: 404,
-      reason: "invalid backend error response",
-    });
-
+  it.each([
+    ["timeout", { status: "unavailable", reason: "request timed out" }],
+    [
+      "503",
+      {
+        status: "unavailable",
+        httpStatus: 503,
+        errorCode: "dependency_unavailable",
+        correlationId: "public-history-correlation",
+        reason: "private public-reader diagnostic",
+      },
+    ],
+    [
+      "malformed response",
+      {
+        status: "unavailable",
+        httpStatus: 404,
+        reason: "invalid backend error response",
+      },
+    ],
+  ])("keeps %s reads on the unavailable branch", async (_case, read) => {
+    getRunHistoryDetail.mockResolvedValue(read);
     const page = await RunHistoryDetailPage({
       params: Promise.resolve({ runId: "55555555-5555-4555-8555-555555555555" }),
     });
     const markup = renderToStaticMarkup(page);
 
-    expect(markup).toContain("Detail unavailable");
-    expect(markup).not.toContain("Run not found");
-    expect(notFound).not.toHaveBeenCalled();
-  });
-
-  it("keeps non-404 backend failures as unavailable", async () => {
-    getRunHistoryDetail.mockResolvedValue({
-      status: "unavailable",
-      httpStatus: 503,
-      errorCode: "dependency_unavailable",
-      correlationId: "public-history-correlation",
-      reason: "private public-reader diagnostic",
-    });
-    const page = await RunHistoryDetailPage({
-      params: Promise.resolve({ runId: "55555555-5555-4555-8555-555555555555" }),
-    });
-    const markup = renderToStaticMarkup(page);
     expect(markup).toContain("Detail unavailable");
     expect(markup).not.toContain("public-history-correlation");
     expect(markup).not.toContain("private public-reader diagnostic");
@@ -908,6 +906,9 @@ describe("run-history cross-route time and duration presentation", () => {
       expect(markup).not.toContain("Jun 20, 2026");
       expect(markup).not.toContain("AM UTC");
       expect(markup).not.toContain("PM UTC");
+      const container = document.createElement("div");
+      container.innerHTML = markup;
+      expect(container.textContent).not.toMatch(/\b\d{2}:\d{2}:\d{2}(?! UTC)/);
     }
     expect(markups[0]).toMatch(/Duration<\/p><p[^>]*>10 s<\/p>/);
     expect(markups[1]).toMatch(

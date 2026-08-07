@@ -2,6 +2,7 @@ import {
   adminRunHistoryDetailHttpQuerySchema,
   runHistoryDetailParamsSchema,
 } from "@checkout-surge/contracts";
+import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ErrorNotice } from "../../components/error-notice";
@@ -18,6 +19,7 @@ import {
 import { runConclusionSentence } from "../../lib/presentation/run-result-presentation";
 import { hasValidAdminPageSession } from "../../lib/server/admin-page-session";
 
+export const metadata: Metadata = { title: "Run report" };
 export const dynamic = "force-dynamic";
 
 interface RunHistoryDetailPageProps {

@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DashboardNav } from "../src/app/components/dashboard-nav.js";
 
@@ -38,5 +39,75 @@ describe("DashboardNav", () => {
       expect(link.classList.contains("text-ink")).toBe(false);
       expect(link.classList.contains("underline")).toBe(false);
     }
+  });
+
+  it("opens by keyboard and exposes every route, Repository, and the children slot", async () => {
+    const user = userEvent.setup();
+    render(
+      <DashboardNav>
+        <button type="button">Sign out</button>
+      </DashboardNav>,
+    );
+
+    const toggle = screen.getByRole("button", { name: "Menu" });
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+
+    toggle.focus();
+    await user.keyboard("{Enter}");
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+
+    const panelId = toggle.getAttribute("aria-controls");
+    expect(panelId).toBeTruthy();
+    const panel = document.getElementById(panelId as string);
+    expect(panel).not.toBeNull();
+    expect(panel?.id).toBe(panelId);
+    const links = within(panel as HTMLElement).getAllByRole("link");
+    expect(links.map((link) => link.textContent?.trim())).toEqual([
+      "Demo",
+      "Watch",
+      "Run history",
+      "About",
+      "Admin",
+      "Repository (opens in a new tab)",
+    ]);
+    expect(within(panel as HTMLElement).getByRole("button", { name: "Sign out" })).toBeTruthy();
+  });
+
+  it("closes on Escape and returns focus to the toggle", async () => {
+    const user = userEvent.setup();
+    render(<DashboardNav>{null}</DashboardNav>);
+    const toggle = screen.getByRole("button", { name: "Menu" });
+
+    await user.click(toggle);
+    screen.getByRole("link", { name: "Watch" }).focus();
+    await user.keyboard("{Escape}");
+
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(document.activeElement).toBe(toggle);
+  });
+
+  it("closes on an outside pointer-down", async () => {
+    const user = userEvent.setup();
+    render(<DashboardNav>{null}</DashboardNav>);
+    const toggle = screen.getByRole("button", { name: "Menu" });
+
+    await user.click(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    fireEvent.pointerDown(document.body);
+
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("closes when the pathname changes", async () => {
+    const user = userEvent.setup();
+    pathname.value = "/";
+    const { rerender } = render(<DashboardNav>{null}</DashboardNav>);
+    const toggle = screen.getByRole("button", { name: "Menu" });
+    await user.click(toggle);
+
+    pathname.value = "/watch";
+    rerender(<DashboardNav>{null}</DashboardNav>);
+
+    await waitFor(() => expect(toggle.getAttribute("aria-expanded")).toBe("false"));
   });
 });

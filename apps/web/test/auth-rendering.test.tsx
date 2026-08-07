@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+
 import { createElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -61,6 +63,7 @@ describe("server-decided admin presentation", () => {
     const markup = renderToStaticMarkup(
       await RootLayout({ children: createElement("p", null, "public content") }),
     );
+    expectSkipNavigation(markup);
     expect(markup).toContain("public content");
     expect(markup).toContain('href="/admin"');
     expect(markup).not.toContain("Sign out");
@@ -71,20 +74,36 @@ describe("server-decided admin presentation", () => {
     const markup = renderToStaticMarkup(
       await RootLayout({ children: createElement("p", null, "operator content") }),
     );
+    expectSkipNavigation(markup);
     expect(markup).toContain('href="/admin"');
     expect(markup).toContain("Sign out");
   });
 
-  it("renders only the sign-in experience for an anonymous admin request", async () => {
+  it("renders one route H1 before the sign-in H2 for an anonymous admin request", async () => {
     const markup = renderToStaticMarkup(await AdminPage());
+    const document = parseMarkup(markup);
+    const h1s = document.querySelectorAll("h1");
+    const h1 = h1s.item(0);
+    const h2 = document.querySelector("h2");
+
+    expect(h1s).toHaveLength(1);
+    expect(h1?.textContent).toBe("Admin console");
+    expect(h2?.textContent).toBe("Protected operator surface");
+    if (!h1 || !h2) throw new Error("Expected the admin heading hierarchy.");
+    expect(h1.compareDocumentPosition(h2) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
     expect(markup).toContain("Protected operator surface");
-    expect(markup).not.toContain("Admin console");
     expect(markup).not.toContain("Reset demo");
   });
 
   it("performs operator reads and renders the authenticated Admin tree", async () => {
     sessionMock.mockResolvedValue(true);
     const markup = renderToStaticMarkup(await AdminPage());
+    const document = parseMarkup(markup);
+    const h1s = document.querySelectorAll("h1");
+    expect(h1s).toHaveLength(1);
+    expect(h1s[0]?.textContent).toBe("Admin console");
     expect(markup).toContain("Admin console");
     expect(markup).toContain("Authenticated console data");
     expect(markup).not.toContain("Admin passphrase");
@@ -135,3 +154,19 @@ describe("server-decided admin presentation", () => {
     expect(authenticated).toContain("history backend diagnostic");
   });
 });
+
+function expectSkipNavigation(markup: string) {
+  const document = parseMarkup(markup);
+  const skipLink = document.body.firstElementChild;
+  const main = document.querySelector("main");
+
+  expect(skipLink?.tagName).toBe("A");
+  expect(skipLink?.textContent).toBe("Skip to main content");
+  expect(skipLink?.getAttribute("href")).toBe("#main-content");
+  expect(main?.id).toBe("main-content");
+  expect(main?.getAttribute("tabindex")).toBe("-1");
+}
+
+function parseMarkup(markup: string) {
+  return new DOMParser().parseFromString(markup, "text/html");
+}

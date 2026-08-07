@@ -1,7 +1,9 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { PublicDemoEntry } from "./components/public-demo-entry";
 import { getPublicDemoSurface } from "./lib/api";
 
+export const metadata: Metadata = { title: { absolute: "Demo · Checkout-Surge" } };
 export const dynamic = "force-dynamic";
 
 export default async function DemoDashboardPage() {
