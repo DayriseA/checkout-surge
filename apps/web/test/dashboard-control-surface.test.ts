@@ -47,8 +47,13 @@ describe("dashboard control surface", () => {
     expect(markup).toContain("Capacity (orders/second)");
     expect(markup.indexOf("Preview 1k")).toBeLessThan(markup.indexOf("Build your own run"));
     expect(markup).toContain("<form");
+    expect(markup).toContain('noValidate=""');
     expect(markup).toContain("<legend");
     expect(markup).toContain(">Buyers</legend>");
+    expect(markup).toContain('id="custom-traffic-mode-buyer-spike"');
+    expect(markup).toContain('for="custom-traffic-mode-buyer-spike"');
+    expect(markup).toContain('id="custom-traffic-mode-constant-arrival-rate"');
+    expect(markup).toContain('for="custom-traffic-mode-constant-arrival-rate"');
     expect(markup).toContain(">Stock</legend>");
     expect(markup).toContain(">Slow ERP</legend>");
     expect(markup).toContain("Advanced protection settings");

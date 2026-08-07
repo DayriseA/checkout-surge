@@ -9,13 +9,20 @@ import {
   type HealthResponse,
   healthResponseSchema,
   type PublicRuntimePolicy,
+  type StartDemoRunRequest,
   startDemoRunRequestSchema,
   startDemoRunResponseSchema,
 } from "@checkout-surge/contracts";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type RefObject, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BackendRead, PublicDemoSurface } from "../lib/api";
 import { readProxyJson } from "../lib/client/proxy-json";
 import { demoRunStartProxyPath, healthReadyProxyPath } from "../lib/control-paths";
+import {
+  type CustomErrorGroup,
+  type CustomRunSummaryEntry,
+  presentCustomRunIssues,
+  presentInvalidCustomRunControls,
+} from "../lib/presentation/custom-run-issue-presentation";
 import {
   type ErrorPresentation,
   mapErrorPresentation,
@@ -60,17 +67,15 @@ interface CustomDraft {
   erpErrorRate: string;
 }
 
-type CustomErrorGroup = "traffic" | "stock" | "erp" | "advanced" | "form";
-
-interface CustomFormError {
-  group: CustomErrorGroup;
-  message: string;
-}
+type CustomSubmissionFailure =
+  | { kind: "validation"; entries: CustomRunSummaryEntry[] }
+  | { kind: "operation"; presentation: ErrorPresentation };
 
 export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
   const [startingSlug, setStartingSlug] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [startPresentation, setStartPresentation] = useState<ErrorPresentation | null>(null);
+  const [announceStartPresentation, setAnnounceStartPresentation] = useState(true);
   const [startConflictBlock, setStartConflictBlock] = useState<
     "active_run_exists" | "reset_incomplete" | null
   >(null);
@@ -92,14 +97,25 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
       ? draftFromSnapshot(surface.runtimePolicy.data.policy.publicCustomDefaults)
       : fallbackDraft(),
   );
-  const [customFormError, setCustomFormError] = useState<CustomFormError | null>(null);
+  const [customSubmissionFailure, setCustomSubmissionFailure] =
+    useState<CustomSubmissionFailure | null>(null);
+  const customValidationEntries =
+    customSubmissionFailure?.kind === "validation" ? customSubmissionFailure.entries : [];
+  const customSummaryRef = useRef<HTMLDivElement>(null);
   const advancedSettingsRef = useRef<HTMLDetailsElement>(null);
 
   useEffect(() => {
-    if (customFormError?.group === "advanced" && advancedSettingsRef.current) {
+    if (
+      customValidationEntries.some((entry) => entry.group === "advanced") &&
+      advancedSettingsRef.current
+    ) {
       advancedSettingsRef.current.open = true;
     }
-  }, [customFormError]);
+  }, [customValidationEntries]);
+
+  useEffect(() => {
+    if (customSubmissionFailure) customSummaryRef.current?.focus();
+  }, [customSubmissionFailure]);
 
   const {
     recovery,
@@ -261,29 +277,27 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
     startRetryUntil !== null ||
     surface.presets.status !== "available" ||
     recovery.status !== "available";
-  const customStartDisabled = startDisabled || totalRequestsError !== null;
+  const customStartDisabled = startDisabled;
 
   function updateCustomDraft(update: (draft: CustomDraft) => CustomDraft) {
     setCustomDraft(update);
-    setCustomFormError(null);
+    setCustomSubmissionFailure(null);
   }
 
-  async function startRun(
-    presetSlug: string,
-    configOverride?: DemoRunConfigOverride,
-    isCustom = false,
-  ) {
-    const parsed = startDemoRunRequestSchema.safeParse({
-      presetSlug,
-      ...(configOverride ? { configOverride } : {}),
-    });
+  function groupError(group: CustomErrorGroup) {
+    return customValidationEntries.find((entry) => !entry.fieldId && entry.group === group);
+  }
+
+  function fieldError(fieldId: string) {
+    return customValidationEntries.find((entry) => entry.fieldId === fieldId)?.fieldError;
+  }
+
+  async function startRun(presetSlug: string) {
+    setAnnounceStartPresentation(true);
+    const parsed = startDemoRunRequestSchema.safeParse({ presetSlug });
 
     if (!parsed.success) {
       setStatusMessage(null);
-      if (isCustom) {
-        setCustomFormError(customValidationError(parsed.error.issues.map((issue) => issue.path)));
-        return;
-      }
       setStartPresentation(
         mapErrorPresentation(
           { status: "unavailable", errorCode: "invalid_request", reason: "invalid request" },
@@ -292,18 +306,23 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
       );
       return;
     }
+    await sendStartRequest(parsed.data, false);
+  }
 
+  async function sendStartRequest(request: StartDemoRunRequest, isCustom: boolean) {
+    const presetSlug = request.presetSlug;
+    setAnnounceStartPresentation(!isCustom);
     setStartingSlug(presetSlug);
     setStatusMessage(null);
     setStartPresentation(null);
-    setCustomFormError(null);
+    setCustomSubmissionFailure(null);
     setStartRetryUntil(null);
 
     try {
       const result = await readProxyJson(demoRunStartProxyPath, startDemoRunResponseSchema, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(parsed.data),
+        body: JSON.stringify(request),
       });
 
       if (result.status === "available") {
@@ -316,12 +335,18 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
         isCustom &&
         (result.errorCode === "invalid_request" || result.errorCode === "invalid_run_configuration")
       ) {
-        setCustomFormError(customValidationError([customValidationPath(result.details?.path)]));
+        setCustomSubmissionFailure({
+          kind: "validation",
+          entries: presentCustomRunIssues([customValidationPath(result.details?.path)]),
+        });
         return;
       }
 
       const presentation = mapErrorPresentation(result, "public-start");
       setStartPresentation(presentation);
+      if (isCustom) {
+        setCustomSubmissionFailure({ kind: "operation", presentation });
+      }
       const conflictReason =
         result.status === "unavailable" &&
         (result.details?.conflictReason === "active_run_exists" ||
@@ -355,6 +380,7 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
             </h2>
           </div>
           <StartGate
+            announcePresentation={announceStartPresentation}
             isRetryScheduled={isRetryScheduled}
             onRetry={
               startConflictBlock === "reset_incomplete"
@@ -462,20 +488,62 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
         </summary>
         {runtimePolicy && customPreset && customConfig ? (
           <form
-            aria-describedby={customFormError?.group === "form" ? "custom-form-error" : undefined}
-            aria-invalid={customFormError?.group === "form" ? true : undefined}
+            aria-describedby={groupError("form") ? "custom-form-error" : undefined}
+            aria-invalid={groupError("form") ? true : undefined}
             aria-label="Custom run builder"
             className="mt-4 grid gap-4"
             onSubmit={(event) => {
               event.preventDefault();
-              if (!customStartDisabled) void startRun(customPreset.slug, customConfig, true);
+              if (customStartDisabled) return;
+
+              const form = event.currentTarget;
+              if (!form.checkValidity()) {
+                const controls = Array.from(form.elements).flatMap((element) =>
+                  element instanceof HTMLInputElement && !element.validity.valid
+                    ? [{ controlId: element.id, message: element.validationMessage }]
+                    : [],
+                );
+                setCustomSubmissionFailure({
+                  kind: "validation",
+                  entries: presentInvalidCustomRunControls(controls),
+                });
+                return;
+              }
+
+              if (totalRequestsError) {
+                setCustomSubmissionFailure({
+                  kind: "validation",
+                  entries: [
+                    {
+                      group: "traffic",
+                      key: "custom-traffic-error",
+                      message: totalRequestsError,
+                      targetId: "custom-traffic-error",
+                    },
+                  ],
+                });
+                return;
+              }
+
+              const parsed = startDemoRunRequestSchema.safeParse({
+                presetSlug: customPreset.slug,
+                configOverride: customConfig,
+              });
+              if (!parsed.success) {
+                setCustomSubmissionFailure({
+                  kind: "validation",
+                  entries: presentCustomRunIssues(parsed.error.issues.map((issue) => issue.path)),
+                });
+                return;
+              }
+
+              void sendStartRequest(parsed.data, true);
             }}
+            noValidate
           >
             <fieldset
-              aria-describedby={`custom-traffic-total${totalRequestsError ? " custom-traffic-error" : ""}${customFormError?.group === "traffic" ? " custom-traffic-validation-error" : ""}`}
-              aria-invalid={
-                totalRequestsError || customFormError?.group === "traffic" ? true : undefined
-              }
+              aria-describedby={`custom-traffic-total${totalRequestsError ? " custom-traffic-error" : ""}${groupError("traffic") ? " custom-traffic-validation-error" : ""}`}
+              aria-invalid={totalRequestsError || groupError("traffic") ? true : undefined}
               className="grid gap-3 rounded-lg border border-border p-3"
             >
               <legend className="px-1 font-bold text-ink">Buyers</legend>
@@ -497,6 +565,7 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
                       onChange={(buyerCount) =>
                         updateCustomDraft((draft) => ({ ...draft, buyerCount }))
                       }
+                      submittedError={fieldError("custom-buyers")}
                       unit="buyers"
                       value={customDraft.buyerCount}
                     />
@@ -536,6 +605,7 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
                       onChange={(ratePerSecond) =>
                         updateCustomDraft((draft) => ({ ...draft, ratePerSecond }))
                       }
+                      submittedError={fieldError("custom-rate")}
                       unit="requests/second"
                       value={customDraft.ratePerSecond}
                     />
@@ -548,6 +618,7 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
                       onChange={(durationSeconds) =>
                         updateCustomDraft((draft) => ({ ...draft, durationSeconds }))
                       }
+                      submittedError={fieldError("custom-duration")}
                       unit="seconds"
                       value={customDraft.durationSeconds}
                     />
@@ -558,23 +629,25 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
                 Planned total attempts: {formatCount(plannedRequests) ?? "—"}
               </p>
               {totalRequestsError ? (
-                <p className="m-0 text-sm font-semibold text-danger" id="custom-traffic-error">
+                <p
+                  className="m-0 text-sm font-semibold text-danger"
+                  id="custom-traffic-error"
+                  tabIndex={-1}
+                >
                   {totalRequestsError}
                 </p>
               ) : null}
-              {customFormError?.group === "traffic" ? (
+              {groupError("traffic") ? (
                 <CustomValidationError
-                  error={customFormError}
+                  error={groupError("traffic")}
                   id="custom-traffic-validation-error"
                 />
               ) : null}
             </fieldset>
 
             <fieldset
-              aria-describedby={
-                customFormError?.group === "stock" ? "custom-stock-validation-error" : undefined
-              }
-              aria-invalid={customFormError?.group === "stock" ? true : undefined}
+              aria-describedby={groupError("stock") ? "custom-stock-validation-error" : undefined}
+              aria-invalid={groupError("stock") ? true : undefined}
               className="grid gap-3 rounded-lg border border-border p-3"
             >
               <legend className="px-1 font-bold text-ink">Stock</legend>
@@ -587,19 +660,21 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
                 onChange={(startingStock) =>
                   updateCustomDraft((draft) => ({ ...draft, startingStock }))
                 }
+                submittedError={fieldError("custom-stock")}
                 unit="units"
                 value={customDraft.startingStock}
               />
-              {customFormError?.group === "stock" ? (
-                <CustomValidationError error={customFormError} id="custom-stock-validation-error" />
+              {groupError("stock") ? (
+                <CustomValidationError
+                  error={groupError("stock")}
+                  id="custom-stock-validation-error"
+                />
               ) : null}
             </fieldset>
 
             <fieldset
-              aria-describedby={
-                customFormError?.group === "erp" ? "custom-erp-validation-error" : undefined
-              }
-              aria-invalid={customFormError?.group === "erp" ? true : undefined}
+              aria-describedby={groupError("erp") ? "custom-erp-validation-error" : undefined}
+              aria-invalid={groupError("erp") ? true : undefined}
               className="grid gap-3 rounded-lg border border-border p-3"
             >
               <legend className="px-1 font-bold text-ink">Slow ERP</legend>
@@ -613,6 +688,7 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
                   onChange={(erpLatencyMs) =>
                     updateCustomDraft((draft) => ({ ...draft, erpLatencyMs }))
                   }
+                  submittedError={fieldError("custom-erp-delay")}
                   unit="milliseconds"
                   value={customDraft.erpLatencyMs}
                 />
@@ -623,6 +699,7 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
                   max={runtimePolicy.publicCustomLimits.maxErpMaxTps}
                   min={runtimePolicy.publicCustomLimits.minErpMaxTps}
                   onChange={(erpMaxTps) => updateCustomDraft((draft) => ({ ...draft, erpMaxTps }))}
+                  submittedError={fieldError("custom-erp-capacity")}
                   unit="orders/second"
                   value={customDraft.erpMaxTps}
                 />
@@ -636,12 +713,13 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
                     updateCustomDraft((draft) => ({ ...draft, erpErrorRate }))
                   }
                   step="0.01"
+                  submittedError={fieldError("custom-erp-error-rate")}
                   unit="percent"
                   value={customDraft.erpErrorRate}
                 />
               </div>
-              {customFormError?.group === "erp" ? (
-                <CustomValidationError error={customFormError} id="custom-erp-validation-error" />
+              {groupError("erp") ? (
+                <CustomValidationError error={groupError("erp")} id="custom-erp-validation-error" />
               ) : null}
             </fieldset>
 
@@ -651,11 +729,9 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
               </summary>
               <fieldset
                 aria-describedby={
-                  customFormError?.group === "advanced"
-                    ? "custom-advanced-validation-error"
-                    : undefined
+                  groupError("advanced") ? "custom-advanced-validation-error" : undefined
                 }
-                aria-invalid={customFormError?.group === "advanced" ? true : undefined}
+                aria-invalid={groupError("advanced") ? true : undefined}
                 className="mt-3 grid gap-3"
               >
                 <legend className="sr-only">Advanced protection settings</legend>
@@ -670,6 +746,7 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
                       onChange={(maxDurationSeconds) =>
                         updateCustomDraft((draft) => ({ ...draft, maxDurationSeconds }))
                       }
+                      submittedError={fieldError("custom-safety-cutoff")}
                       unit="seconds"
                       value={customDraft.maxDurationSeconds}
                     />
@@ -683,26 +760,30 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
                     onChange={(startDelaySeconds) =>
                       updateCustomDraft((draft) => ({ ...draft, startDelaySeconds }))
                     }
+                    submittedError={fieldError("custom-start-delay")}
                     unit="seconds"
                     value={customDraft.startDelaySeconds}
                   />
                 </div>
-                {customFormError?.group === "advanced" ? (
+                {groupError("advanced") ? (
                   <CustomValidationError
-                    error={customFormError}
+                    error={groupError("advanced")}
                     id="custom-advanced-validation-error"
                   />
                 ) : null}
               </fieldset>
             </details>
 
-            {customFormError?.group === "form" ? (
-              <CustomValidationError error={customFormError} id="custom-form-error" />
+            {groupError("form") ? (
+              <CustomValidationError error={groupError("form")} id="custom-form-error" />
             ) : null}
             <p className="m-0 text-sm leading-6 text-muted-strong">
               {publicRunBudgetCopy(runtimePolicy)}
             </p>
             <SharedRuntimeDisclosure />
+            {customSubmissionFailure ? (
+              <CustomErrorSummary failure={customSubmissionFailure} summaryRef={customSummaryRef} />
+            ) : null}
             <button className={primaryButtonClassName} disabled={customStartDisabled} type="submit">
               {startingSlug === customPreset.slug ? "Starting custom run" : "Start custom run"}
             </button>
@@ -877,38 +958,72 @@ function customValidationPath(value: unknown): readonly string[] {
   return Array.isArray(value) && value.every((part) => typeof part === "string") ? value : [];
 }
 
-function customValidationError(paths: ReadonlyArray<readonly unknown[]>): CustomFormError {
-  const group = paths.map(customErrorGroup).find((candidate) => candidate !== "form") ?? "form";
-  const messages: Record<CustomErrorGroup, string> = {
-    traffic: "Review the Buyers settings and keep the traffic within the available limits.",
-    stock: "Review the Stock settings and keep values within the available limits.",
-    erp: "Review the Slow ERP settings and keep values within the available limits.",
-    advanced: "Review the Advanced protection settings and keep values within supported limits.",
-    form: "Review the custom run settings and try again.",
-  };
-  return { group, message: messages[group] };
-}
-
-function customErrorGroup(path: readonly unknown[]): CustomErrorGroup {
-  const field = path.at(-1);
-  if (path.includes("backpressureConfig")) return "advanced";
-  if (path.includes("trafficConfig")) {
-    return field === "maxDurationSeconds" || field === "startDelaySeconds" ? "advanced" : "traffic";
-  }
-  if (path.includes("inventoryConfig")) {
-    return field === "reservationHoldMinutes" ? "advanced" : "stock";
-  }
-  if (path.includes("erpConfig")) {
-    return field === "requestTimeoutMs" || field === "forcedOutage" ? "advanced" : "erp";
-  }
-  return "form";
-}
-
-function CustomValidationError({ error, id }: { error: CustomFormError; id: string }) {
+function CustomValidationError({
+  error,
+  id,
+}: {
+  error: { message: string } | undefined;
+  id: string;
+}) {
+  if (!error) return null;
   return (
-    <p className="m-0 text-sm font-semibold text-danger" id={id} role="alert">
+    <p className="m-0 text-sm font-semibold text-danger" id={id} tabIndex={-1}>
       {error.message}
     </p>
+  );
+}
+
+function CustomErrorSummary({
+  failure,
+  summaryRef,
+}: {
+  failure: CustomSubmissionFailure;
+  summaryRef: RefObject<HTMLDivElement | null>;
+}) {
+  if (failure.kind === "operation") {
+    return (
+      <div
+        aria-label="Operation failure"
+        className="grid gap-1 rounded-lg border border-[#f7b4ad] bg-danger-soft p-3 text-danger"
+        ref={summaryRef}
+        role="alert"
+        tabIndex={-1}
+      >
+        <h3 className="m-0 text-base font-bold">Operation failure</h3>
+        <strong>{failure.presentation.headline}</strong>
+        {failure.presentation.explanation ? <span>{failure.presentation.explanation}</span> : null}
+      </div>
+    );
+  }
+
+  return (
+    <div
+      aria-labelledby="custom-error-summary-title"
+      className="grid gap-2 rounded-lg border border-[#f7b4ad] bg-danger-soft p-3 text-danger"
+      ref={summaryRef}
+      role="alert"
+      tabIndex={-1}
+    >
+      <h3 className="m-0 text-base font-bold" id="custom-error-summary-title">
+        Fix these settings
+      </h3>
+      <ul className="m-0 list-disc pl-5">
+        {failure.entries.map((entry) => (
+          <li key={entry.key}>
+            <a
+              className="font-semibold underline"
+              href={`#${entry.targetId}`}
+              onClick={(event) => {
+                event.preventDefault();
+                document.getElementById(entry.targetId)?.focus();
+              }}
+            >
+              {entry.message}
+            </a>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
@@ -930,9 +1045,18 @@ function SharedRuntimeDisclosure() {
   );
 }
 
-function Unavailable({ read, onRetry }: { read: BackendRead<unknown>; onRetry?: () => void }) {
+function Unavailable({
+  announce = true,
+  read,
+  onRetry,
+}: {
+  announce?: boolean;
+  read: BackendRead<unknown>;
+  onRetry?: () => void;
+}) {
   return (
     <ErrorNotice
+      announce={announce}
       className="w-full"
       context="public-start"
       {...(onRetry ? { onRetry } : {})}
@@ -942,6 +1066,7 @@ function Unavailable({ read, onRetry }: { read: BackendRead<unknown>; onRetry?: 
 }
 
 function StartGate({
+  announcePresentation,
   isRetryScheduled,
   onRetry,
   readiness,
@@ -953,6 +1078,7 @@ function StartGate({
   statusMessage,
   startRetryAfterMs,
 }: {
+  announcePresentation: boolean;
   isRetryScheduled: boolean;
   onRetry: () => void;
   readiness: BackendRead<HealthResponse>;
@@ -1001,6 +1127,7 @@ function StartGate({
       </div>
       {activeRunPresentation ? (
         <ErrorNotice
+          announce={announcePresentation}
           className="w-full"
           context="public-start"
           presentation={activeRunPresentation}
@@ -1008,12 +1135,13 @@ function StartGate({
       ) : null}
       {!activeRunPresentation && readinessBlocked ? (
         <ReadinessNotice
+          announce={announcePresentation}
           {...(readiness.status === "unavailable" && readiness.retryAfterMs ? {} : { onRetry })}
           read={readiness}
         />
       ) : null}
       {!activeRunPresentation && recoveryUnavailable ? (
-        <Unavailable onRetry={onRetry} read={recovery} />
+        <Unavailable announce={announcePresentation} onRetry={onRetry} read={recovery} />
       ) : null}
       {!activeRunPresentation &&
       (recoveryUnavailable || readinessBlocked || startRetryAfterMs !== null) ? (
@@ -1033,7 +1161,12 @@ function StartGate({
         </p>
       ) : null}
       {!activeRunPresentation && presentation ? (
-        <ErrorNotice context="public-start" onRetry={onRetry} presentation={presentation} />
+        <ErrorNotice
+          announce={announcePresentation}
+          context="public-start"
+          onRetry={onRetry}
+          presentation={presentation}
+        />
       ) : !activeRunPresentation && statusMessage ? (
         <p className="m-0 text-sm font-semibold text-muted-strong">{statusMessage}</p>
       ) : null}
@@ -1066,17 +1199,27 @@ export function readinessPresentation(readiness: BackendRead<HealthResponse>): P
 }
 
 function ReadinessNotice({
+  announce = true,
   onRetry,
   read,
 }: {
+  announce?: boolean;
   onRetry?: () => void;
   read: BackendRead<HealthResponse>;
 }) {
   if (read.status === "available" && read.data.status === "ok") return null;
   if (read.status === "loading")
-    return <ErrorNotice context="public-start" {...(onRetry ? { onRetry } : {})} read={read} />;
+    return (
+      <ErrorNotice
+        announce={announce}
+        context="public-start"
+        {...(onRetry ? { onRetry } : {})}
+        read={read}
+      />
+    );
   return (
     <ErrorNotice
+      announce={announce}
       context={{
         surface: "public-start",
         readiness:
@@ -1101,22 +1244,27 @@ function TrafficModeSelector({
 }) {
   return (
     <div aria-label="Traffic pattern" className="flex flex-wrap gap-3" role="radiogroup">
-      {(["buyer-spike", "constant-arrival-rate"] as const).map((trafficMode) => (
-        <label
-          className="flex min-h-10 items-center gap-2 text-sm font-semibold text-muted-strong"
-          key={trafficMode}
-        >
-          <input
-            checked={trafficMode === mode}
-            disabled={!allowedModes.includes(trafficMode)}
-            name="custom-traffic-mode"
-            onChange={() => onChange(trafficMode)}
-            type="radio"
-            value={trafficMode}
-          />
-          {trafficModeLabel(trafficMode)}
-        </label>
-      ))}
+      {(["buyer-spike", "constant-arrival-rate"] as const).map((trafficMode) => {
+        const id = `custom-traffic-mode-${trafficMode}`;
+        return (
+          <label
+            className="flex min-h-10 items-center gap-2 text-sm font-semibold text-muted-strong"
+            htmlFor={id}
+            key={trafficMode}
+          >
+            <input
+              checked={trafficMode === mode}
+              disabled={!allowedModes.includes(trafficMode)}
+              id={id}
+              name="custom-traffic-mode"
+              onChange={() => onChange(trafficMode)}
+              type="radio"
+              value={trafficMode}
+            />
+            {trafficModeLabel(trafficMode)}
+          </label>
+        );
+      })}
     </div>
   );
 }
@@ -1129,6 +1277,7 @@ function LabeledInput({
   min,
   onChange,
   step,
+  submittedError,
   unit,
   value,
 }: {
@@ -1139,12 +1288,14 @@ function LabeledInput({
   min: number;
   onChange: (value: string) => void;
   step?: string;
+  submittedError?: string | undefined;
   unit: string;
   value: string;
 }) {
   const [error, setError] = useState<string | null>(null);
   const descriptionId = `${id}-description`;
   const errorId = `${id}-error`;
+  const visibleError = error ?? submittedError;
 
   return (
     <div className="grid content-start gap-1 text-sm text-muted-strong">
@@ -1152,8 +1303,8 @@ function LabeledInput({
         {label} ({unit})
       </label>
       <input
-        aria-describedby={`${descriptionId}${error ? ` ${errorId}` : ""}`}
-        aria-invalid={error ? true : undefined}
+        aria-describedby={`${descriptionId}${visibleError ? ` ${errorId}` : ""}`}
+        aria-invalid={visibleError ? true : undefined}
         className={inputClassName}
         id={id}
         max={max}
@@ -1171,9 +1322,9 @@ function LabeledInput({
       <span className="font-normal leading-5 text-muted" id={descriptionId}>
         Unit: {unit}. Minimum: {formatCount(min)}. Maximum: {formatCount(max)}. {helper}
       </span>
-      {error ? (
+      {visibleError ? (
         <span className="font-semibold text-danger" id={errorId}>
-          {error}
+          {visibleError}
         </span>
       ) : null}
     </div>
