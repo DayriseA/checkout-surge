@@ -1471,6 +1471,7 @@ describe("ERP contracts", () => {
       maxTps: 100,
       errorRate: 0,
       forcedOutage: false,
+      defaultConfig: { latencyMs: 0, maxTps: 100, errorRate: 0, forcedOutage: false },
       updatedAt: timestamp,
       effectiveSafetyCaps: {
         maxLatencyMs: 5000,

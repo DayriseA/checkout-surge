@@ -74,6 +74,9 @@ export function AdminRuntimePolicyView({
           <h2 className="m-0 mt-1 text-base font-bold leading-tight text-ink">
             Public runtime policy
           </h2>
+          <p className="m-0 mt-2 text-sm text-muted">
+            Shared policy for future public starts. Already accepted runs keep their snapshots.
+          </p>
         </div>
         <StatusPill
           status={{
@@ -337,16 +340,16 @@ export function AdminPresetView({
 }) {
   const actionPendingReason = isPending ? "A preset action is in progress." : null;
   const saveReason = selectedPreset
-    ? actionPendingReason ?? saveUnavailableReason(selectedPreset)
+    ? (actionPendingReason ?? saveUnavailableReason(selectedPreset))
     : null;
   const archiveReason = selectedPreset
-    ? actionPendingReason ?? archiveUnavailableReason(selectedPreset)
+    ? (actionPendingReason ?? archiveUnavailableReason(selectedPreset))
     : null;
   const duplicateReason = selectedPreset
-    ? actionPendingReason ??
+    ? (actionPendingReason ??
       (selectedPreset.slug === "public-custom"
         ? "The public Custom scenario cannot be duplicated."
-        : null)
+        : null))
     : null;
   return (
     <section className={`${panelClassName} lg:col-span-2`} id="presets">
@@ -388,8 +391,8 @@ export function AdminPresetView({
             </div>
             {!selectedPreset.isEditable ? (
               <p className="m-0 rounded border border-warning bg-warning-soft p-3 text-sm font-semibold text-warning">
-                You're editing values for a one-off run — {selectedPreset.display.name} itself
-                can't be changed
+                You're editing values for a one-off run — {selectedPreset.display.name} itself can't
+                be changed
               </p>
             ) : null}
             {showValidationSummary ? (
@@ -405,9 +408,7 @@ export function AdminPresetView({
               <FieldRow label="Visibility" value={selectedPreset.visibility} />
               <FieldRow label="Custom" value={selectedPreset.isCustom ? "yes" : "no"} />
             </ConfigGroup>
-            <p className="m-0 [overflow-wrap:anywhere] text-sm text-muted">
-              {draft.description}
-            </p>
+            <p className="m-0 [overflow-wrap:anywhere] text-sm text-muted">{draft.description}</p>
             <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,16rem),1fr))] gap-3">
               <DraftInput
                 label="Name"
@@ -509,9 +510,7 @@ export function AdminPresetView({
                   Run once with these values
                 </button>
                 {actionPendingReason ? (
-                  <p className="m-0 mt-1 max-w-64 text-xs text-muted">
-                    {actionPendingReason}
-                  </p>
+                  <p className="m-0 mt-1 max-w-64 text-xs text-muted">{actionPendingReason}</p>
                 ) : null}
               </div>
               <div>
@@ -540,9 +539,7 @@ export function AdminPresetView({
                   Copy saved values to custom scenario
                 </button>
                 {actionPendingReason ? (
-                  <p className="m-0 mt-1 max-w-64 text-xs text-muted">
-                    {actionPendingReason}
-                  </p>
+                  <p className="m-0 mt-1 max-w-64 text-xs text-muted">{actionPendingReason}</p>
                 ) : null}
               </div>
               <div>
@@ -620,7 +617,7 @@ function archiveUnavailableReason(preset: AdminPresetListItem): string | null {
   return "The server reports this preset can't be archived right now.";
 }
 
-function EffectiveRunPreview({ config }: { config: AcceptedRunConfigSnapshot }) {
+export function EffectiveRunPreview({ config }: { config: AcceptedRunConfigSnapshot }) {
   const traffic = config.trafficConfig;
   return (
     <details className="rounded border border-border px-3 py-2">
@@ -974,6 +971,7 @@ export function AdminErpDiagnosticsView({
   onLatencyMsChange,
   onMaxTpsChange,
   onReset,
+  runErpConfig,
   showValidationSummary,
   validationSummaryRevision,
 }: {
@@ -994,6 +992,7 @@ export function AdminErpDiagnosticsView({
   onLatencyMsChange: (value: string) => void;
   onMaxTpsChange: (value: string) => void;
   onReset: () => void;
+  runErpConfig?: AcceptedRunConfigSnapshot["erpConfig"] | undefined;
   showValidationSummary: boolean;
   validationSummaryRevision: number;
 }) {
@@ -1003,14 +1002,46 @@ export function AdminErpDiagnosticsView({
   return (
     <section className={panelClassName} id="erp-fault-injection">
       <PanelHeading
-        eyebrow="Global scope"
-        title="ERP fault injection"
+        eyebrow="Global fallback scope"
+        title="ERP fault injection (global fallback)"
         status={
           <StatusPill
-            status={{ label: current?.forcedOutage ? "outage" : "ready", tone: "idle" }}
+            status={{
+              label: current
+                ? `forced outage ${current.forcedOutage ? "on" : "off"}`
+                : "forced outage unavailable",
+              tone: "idle",
+            }}
           />
         }
       />
+      <p className="m-0 mb-4 text-sm text-muted">
+        Run processing uses the frozen run snapshot. These process-local values govern non-run calls
+        and are fallback when no snapshot is supplied.
+      </p>
+      <div className="mb-4 grid grid-cols-[repeat(auto-fit,minmax(min(100%,16rem),1fr))] gap-3">
+        <ConfigGroup title="Accepted run snapshot (per-run)">
+          {runErpConfig ? (
+            <>
+              <FieldRow label="Latency ms" value={runErpConfig.latencyMs} />
+              <FieldRow label="Max TPS" value={runErpConfig.maxTps} />
+              <FieldRow label="Error rate" value={runErpConfig.errorRate} />
+              <FieldRow label="Forced outage" value={runErpConfig.forcedOutage ? "on" : "off"} />
+            </>
+          ) : (
+            <FieldRow label="Current run" value="none" />
+          )}
+        </ConfigGroup>
+        <ConfigGroup title="Configured global fallback">
+          <FieldRow label="Latency ms" value={current?.latencyMs ?? "unavailable"} />
+          <FieldRow label="Max TPS" value={current?.maxTps ?? "unavailable"} />
+          <FieldRow label="Error rate" value={current?.errorRate ?? "unavailable"} />
+          <FieldRow
+            label="Forced outage"
+            value={current ? (current.forcedOutage ? "on" : "off") : "unavailable"}
+          />
+        </ConfigGroup>
+      </div>
       {showValidationSummary ? (
         <ValidationSummary
           errors={fieldErrors}
@@ -1077,7 +1108,12 @@ export function AdminErpDiagnosticsView({
         >
           Apply ERP controls
         </button>
-        <button className={buttonClassName} disabled={isPending} onClick={onReset} type="button">
+        <button
+          className={buttonClassName}
+          disabled={isPending || erpChaos.status !== "available"}
+          onClick={onReset}
+          type="button"
+        >
           Reset ERP controls
         </button>
       </div>
@@ -1087,6 +1123,34 @@ export function AdminErpDiagnosticsView({
       ) : null}
       <AdminNoticeView notice={notice} />
     </section>
+  );
+}
+
+export function EffectiveChangeList({
+  changes,
+}: {
+  changes: ReadonlyArray<{ label: string; oldValue: ReactNode; proposedValue: ReactNode }>;
+}) {
+  return (
+    <ul className="m-0 grid list-none gap-2 p-0">
+      {changes.map((change) => (
+        <li
+          className="grid grid-cols-[minmax(8rem,1fr)_minmax(4rem,1fr)_auto_minmax(4rem,1fr)] gap-2"
+          key={change.label}
+        >
+          <span className="font-semibold text-ink">{change.label}</span>
+          <span>
+            <span className="sr-only">Old value: </span>
+            {change.oldValue}
+          </span>
+          <span aria-hidden="true">→</span>
+          <span>
+            <span className="sr-only">Proposed value: </span>
+            {change.proposedValue}
+          </span>
+        </li>
+      ))}
+    </ul>
   );
 }
 

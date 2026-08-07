@@ -23,15 +23,13 @@ import {
   AdminAuthenticatedSurface,
   AdminCurrentRunPanel,
   AdminErpDiagnosticsController,
+  AdminMaintenancePanel,
   AdminPresetController,
   AdminRuntimePolicyController,
   serverFieldErrors,
 } from "../src/app/components/admin/admin-authenticated-surface.js";
+import { buildEffectiveRunConfig, draftFromPreset } from "../src/app/lib/admin-drafts.js";
 import type { BackendRead } from "../src/app/lib/api.js";
-import {
-  buildEffectiveRunConfig,
-  draftFromPreset,
-} from "../src/app/lib/admin-drafts.js";
 import {
   adminDemoResetProxyPath,
   adminDemoRunStartProxyPath,
@@ -134,6 +132,91 @@ describe("admin feature controllers", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe(adminErpChaosResetProxyPath);
     expect(fetchMock.mock.calls[0]?.[1]?.method).toBe("POST");
+  });
+
+  it("summarizes global ERP scope and sends no apply when confirmation is cancelled", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(
+      <AdminErpDiagnosticsController
+        initialErpChaos={available(erpFixture())}
+        runErpConfig={presetFixture().erpConfig}
+        runState="active"
+      />,
+    );
+    await user.clear(screen.getByLabelText("Latency ms"));
+    await user.type(screen.getByLabelText("Latency ms"), "250");
+    await user.click(screen.getByRole("button", { name: "Apply ERP controls" }));
+
+    const dialog = screen.getByRole("alertdialog");
+    expect(within(dialog).getByText("Latency ms")).toBeTruthy();
+    expect(within(dialog).getByText("250")).toBeTruthy();
+    expect(dialog.textContent).toContain(
+      "This does not change the active run — frozen in the accepted run snapshot; affects fallback and future non-snapshot calls.",
+    );
+    expect(dialog.textContent).toContain("reset when Mock ERP restarts.");
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect((screen.getByLabelText("Latency ms") as HTMLInputElement).value).toBe("250");
+  });
+
+  it("shows run-snapshot and global ERP configuration without claiming health", () => {
+    render(<AdminAuthenticatedSurface {...surfaceProps(runFixture())} />);
+    const panel = document.querySelector("#erp-fault-injection");
+    if (!panel) throw new Error("Expected ERP fault-injection panel.");
+    expect(
+      within(panel as HTMLElement).getByRole("heading", {
+        name: "Accepted run snapshot (per-run)",
+      }),
+    ).toBeTruthy();
+    expect(
+      within(panel as HTMLElement).getByRole("heading", { name: "Configured global fallback" }),
+    ).toBeTruthy();
+    expect(panel.textContent).toContain("forced outage off");
+    expect(panel.textContent).not.toContain("ready");
+  });
+
+  it("does not invent forced-outage configuration when ERP status is unavailable", () => {
+    render(
+      <AdminErpDiagnosticsController
+        initialErpChaos={{ status: "unavailable", reason: "ERP not loaded" }}
+      />,
+    );
+
+    expect(screen.getByText("forced outage unavailable")).toBeTruthy();
+    expect(screen.queryByText("forced outage off")).toBeNull();
+  });
+
+  it("describes global ERP scope without implying a terminal run is active", async () => {
+    const user = userEvent.setup();
+    render(<AdminAuthenticatedSurface {...surfaceProps(completedRunFixture())} />);
+
+    await user.click(screen.getByRole("button", { name: "Apply ERP controls" }));
+
+    const dialog = screen.getByRole("alertdialog");
+    expect(dialog.textContent).toContain(
+      "There is no active run; these values govern fallback and future non-snapshot calls.",
+    );
+    expect(dialog.textContent).not.toContain("does not change the active run");
+  });
+
+  it("does not claim there is no active run when current-run state is unavailable", async () => {
+    const user = userEvent.setup();
+    render(
+      <AdminAuthenticatedSurface
+        {...surfaceProps(null)}
+        initialRecovery={{ status: "unavailable", reason: "Recovery unavailable" }}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Apply ERP controls" }));
+
+    const dialog = screen.getByRole("alertdialog");
+    expect(dialog.textContent).toContain(
+      "Current run state is unavailable — a currently active run keeps its frozen snapshot",
+    );
+    expect(dialog.textContent).not.toContain("There is no active run");
   });
 
   it("renders protected readiness probes in a collapsed operator block", () => {
@@ -251,7 +334,9 @@ describe("admin feature controllers", () => {
     vi.stubGlobal("EventSource", InjectedEventSource);
     render(<AdminAuthenticatedSurface {...surfaceProps(null)} />);
     const source = InjectedEventSource.instances[0];
-    const start = screen.getByRole("button", { name: "Run once with these values" }) as HTMLButtonElement;
+    const start = screen.getByRole("button", {
+      name: "Run once with these values",
+    }) as HTMLButtonElement;
     const currentRunSection = screen
       .getByRole("heading", { name: "Current run" })
       .closest("section");
@@ -398,7 +483,9 @@ describe("admin feature controllers", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<AdminAuthenticatedSurface {...surfaceProps(null)} />);
     const source = InjectedEventSource.instances[0];
-    const start = screen.getByRole("button", { name: "Run once with these values" }) as HTMLButtonElement;
+    const start = screen.getByRole("button", {
+      name: "Run once with these values",
+    }) as HTMLButtonElement;
 
     act(() => source?.emit("error", new Event("error")));
     expect(screen.getByText("2026-06-20 00:00:10 UTC · disconnected")).toBeTruthy();
@@ -426,7 +513,8 @@ describe("admin feature controllers", () => {
 
     expect(screen.getByText("2026-06-20 00:00:10 UTC · disconnected")).toBeTruthy();
     expect(
-      (screen.getByRole("button", { name: "Run once with these values" }) as HTMLButtonElement).disabled,
+      (screen.getByRole("button", { name: "Run once with these values" }) as HTMLButtonElement)
+        .disabled,
     ).toBe(true);
   });
 
@@ -436,7 +524,8 @@ describe("admin feature controllers", () => {
 
     await waitFor(() =>
       expect(
-        (screen.getByRole("button", { name: "Run once with these values" }) as HTMLButtonElement).disabled,
+        (screen.getByRole("button", { name: "Run once with these values" }) as HTMLButtonElement)
+          .disabled,
       ).toBe(true),
     );
     expect(screen.getByText("2026-06-20 00:00:10 UTC · live updates unsupported")).toBeTruthy();
@@ -476,6 +565,7 @@ describe("admin feature controllers", () => {
     render(<AdminAuthenticatedSurface {...surfaceProps(null)} />);
 
     await user.click(screen.getByRole("button", { name: "Run once with these values" }));
+    await user.click(confirmationButton("Start run"));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect(fetchMock.mock.calls.map(([input]) => String(input))).toEqual([
@@ -497,19 +587,21 @@ describe("admin feature controllers", () => {
     render(<AdminAuthenticatedSurface {...surfaceProps(null)} />);
 
     await user.click(screen.getByRole("button", { name: "Apply ERP controls" }));
+    await user.click(confirmationButton("Apply ERP controls"));
     expect(
-      (screen.getByRole("button", { name: "Apply ERP controls" }) as HTMLButtonElement).disabled,
+      (document.querySelector("#erp-fault-injection button") as HTMLButtonElement).disabled,
     ).toBe(true);
     expect((screen.getByRole("button", { name: "Reset demo" }) as HTMLButtonElement).disabled).toBe(
       false,
     );
     expect(
-      (screen.getByRole("button", { name: "Run once with these values" }) as HTMLButtonElement).disabled,
+      (screen.getByRole("button", { name: "Run once with these values" }) as HTMLButtonElement)
+        .disabled,
     ).toBe(false);
     pending.resolve(jsonResponse(erpFixture()));
     await waitFor(() =>
       expect(
-        (screen.getByRole("button", { name: "Apply ERP controls" }) as HTMLButtonElement).disabled,
+        (document.querySelector("#erp-fault-injection button") as HTMLButtonElement).disabled,
       ).toBe(false),
     );
   });
@@ -558,6 +650,7 @@ describe("admin feature controllers", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
     await user.click(screen.getByRole("button", { name: "Apply ERP controls" }));
+    await user.click(confirmationButton("Apply ERP controls"));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
       latencyMs: 250,
@@ -601,7 +694,7 @@ describe("admin feature controllers", () => {
     ).toBe(true);
     expect(
       (screen.getByRole("button", { name: "Reset ERP controls" }) as HTMLButtonElement).disabled,
-    ).toBe(false);
+    ).toBe(true);
     expect(screen.getByRole("alert")).toBeTruthy();
   });
 
@@ -620,7 +713,8 @@ describe("admin feature controllers", () => {
     expect(status.textContent).toBe("");
 
     await user.click(screen.getByRole("button", { name: "Apply ERP controls" }));
-    await waitFor(() => expect(status.textContent).toBe("ERP diagnostics updated."));
+    await user.click(confirmationButton("Apply ERP controls"));
+    await waitFor(() => expect(status.textContent).toBe("Global ERP fault injection updated."));
     expect(screen.getByRole("status")).toBe(status);
   });
 
@@ -697,6 +791,7 @@ describe("admin feature controllers", () => {
     await user.click(screen.getByLabelText("Forced outage"));
 
     await user.click(screen.getByRole("button", { name: "Apply ERP controls" }));
+    await user.click(confirmationButton("Apply ERP controls"));
     const forcedOutage = screen.getByLabelText("Forced outage");
     expect(
       await screen.findByText(
@@ -710,9 +805,9 @@ describe("admin feature controllers", () => {
     expect((forcedOutage as HTMLInputElement).checked).toBe(true);
     expect(screen.queryByText("ERP diagnostics are unavailable.")).toBeNull();
 
-    await user.click(screen.getByRole("button", { name: "Apply ERP controls" }));
+    await user.click(confirmationButton("Apply ERP controls"));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-    expect(await screen.findByText("ERP diagnostics updated.")).toBeTruthy();
+    expect(await screen.findByText("Global ERP fault injection updated.")).toBeTruthy();
     expect(screen.getByLabelText("Forced outage").getAttribute("aria-invalid")).toBeNull();
   });
 
@@ -762,21 +857,67 @@ describe("admin feature controllers", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
-    render(<AdminAuthenticatedSurface {...surfaceProps(runFixture())} />);
+    const props = surfaceProps(runFixture());
+    if (props.initialErpChaos.status !== "available") throw new Error("Expected ERP status.");
+    props.initialErpChaos = available({ ...props.initialErpChaos.data, latencyMs: 250 });
+    render(<AdminAuthenticatedSurface {...props} />);
     expect(
-      (screen.getByRole("button", { name: "Run once with these values" }) as HTMLButtonElement).disabled,
+      (screen.getByRole("button", { name: "Run once with these values" }) as HTMLButtonElement)
+        .disabled,
     ).toBe(true);
     await user.click(screen.getByRole("button", { name: "Reset demo" }));
     await user.click(confirmationButton("Reset demo"));
     await waitFor(() =>
       expect(
-        (screen.getByRole("button", { name: "Run once with these values" }) as HTMLButtonElement).disabled,
+        (screen.getByRole("button", { name: "Run once with these values" }) as HTMLButtonElement)
+          .disabled,
       ).toBe(false),
     );
     expect(fetchMock.mock.calls.map(([input]) => String(input))).toEqual([
       adminDemoResetProxyPath,
       knownRecoveryPath,
     ]);
+    expect((screen.getByLabelText("Latency ms") as HTMLInputElement).value).toBe("250");
+    const maintenance = screen
+      .getByRole("heading", { name: "Recovery and cleanup" })
+      .closest("section");
+    expect(maintenance?.textContent).toContain(
+      "1 runs failed, 1 sale offers closed, 1 queues cleaned, 2 jobs cleaned. Global ERP fault injection is not changed by this reset.",
+    );
+  });
+
+  it("clears a previous maintenance success notice when the next reset fails", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          failedRunCount: 0,
+          closedSaleOfferCount: 0,
+          cleanedQueueCount: 0,
+          cleanedJobCount: 0,
+          correlationId: "corr-reset-success",
+          resetAt: "2026-06-20T00:00:12.000Z",
+        }),
+      )
+      .mockResolvedValueOnce(canonicalErrorResponse("Reset failed.", 503));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<AdminMaintenancePanel onResetComplete={vi.fn().mockResolvedValue(undefined)} />);
+
+    await user.click(screen.getByRole("button", { name: "Reset demo" }));
+    await user.click(confirmationButton("Reset demo"));
+    expect(await screen.findByText(/Reset complete:/)).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: "Reset demo" }));
+    expect(screen.queryByText(/Reset complete:/)).toBeNull();
+    await user.click(confirmationButton("Reset demo"));
+    expect(await screen.findByRole("alert")).toBeTruthy();
+    expect(screen.queryByText(/Reset complete:/)).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await user.click(screen.getByRole("button", { name: "Cleanup runs" }));
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByText("Reset failed.")).toBeNull();
   });
 
   it("reconciles recovery even when the reset response is unavailable", async () => {
@@ -802,7 +943,8 @@ describe("admin feature controllers", () => {
     await user.click(confirmationButton("Reset demo"));
     await waitFor(() =>
       expect(
-        (screen.getByRole("button", { name: "Run once with these values" }) as HTMLButtonElement).disabled,
+        (screen.getByRole("button", { name: "Run once with these values" }) as HTMLButtonElement)
+          .disabled,
       ).toBe(false),
     );
     expect(await screen.findByText("Something didn't work on our side")).toBeTruthy();
@@ -881,12 +1023,12 @@ describe("admin feature controllers", () => {
     expect((screen.getByLabelText("Description") as HTMLInputElement).disabled).toBe(true);
     expect((screen.getByLabelText("Sort order") as HTMLInputElement).disabled).toBe(true);
     expect((screen.getByLabelText("Buyer count") as HTMLInputElement).disabled).toBe(false);
-    expect((screen.getByRole("button", { name: "Save preset" }) as HTMLButtonElement).disabled).toBe(
-      true,
-    );
-    expect((screen.getByRole("button", { name: "Archive preset" }) as HTMLButtonElement).disabled).toBe(
-      true,
-    );
+    expect(
+      (screen.getByRole("button", { name: "Save preset" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+    expect(
+      (screen.getByRole("button", { name: "Archive preset" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
     expect(document.body.textContent).not.toContain("Editable: no");
     expect(document.body.textContent).toContain(
       preset.visibility === "public"
@@ -923,9 +1065,7 @@ describe("admin feature controllers", () => {
         .disabled,
     ).toBe(true);
     expect(document.body.textContent).not.toContain("cannot be copied to itself");
-    expect(document.body.textContent).toContain(
-      "The public Custom scenario cannot be duplicated.",
-    );
+    expect(document.body.textContent).toContain("The public Custom scenario cannot be duplicated.");
   });
 
   it("keeps selection and draft when dirty switching is cancelled, then discards on confirm", async () => {
@@ -949,9 +1089,9 @@ describe("admin feature controllers", () => {
     expect(screen.getByRole("alertdialog")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect((screen.getByLabelText("Buyer count") as HTMLInputElement).value).toBe("1234");
-    expect((screen.getByRole("button", { name: "Custom" }) as HTMLButtonElement).className).toContain(
-      "bg-accent",
-    );
+    expect(
+      (screen.getByRole("button", { name: "Custom" }) as HTMLButtonElement).className,
+    ).toContain("bg-accent");
 
     await user.click(screen.getByRole("button", { name: "Second preset" }));
     await user.click(confirmationButton("Discard unsaved edits"));
@@ -1005,9 +1145,7 @@ describe("admin feature controllers", () => {
     await user.click(screen.getByRole("button", { name: "Save preset" }));
     await waitFor(() => expect(screen.getByText("Preset saved.")).toBeTruthy());
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
-    await waitFor(() =>
-      expect(screen.getByText("Saved").closest('[role="status"]')).toBeTruthy(),
-    );
+    await waitFor(() => expect(screen.getByText("Saved").closest('[role="status"]')).toBeTruthy());
     expect((screen.getByLabelText("Buyer count") as HTMLInputElement).value).toBe("1234");
   });
 
@@ -1042,12 +1180,9 @@ describe("admin feature controllers", () => {
     await waitFor(() => expect(screen.getByText("Preset duplicated.")).toBeTruthy());
 
     expect(
-      (screen.getByRole("button", { name: "Operator source Copy" }) as HTMLButtonElement)
-        .className,
+      (screen.getByRole("button", { name: "Operator source Copy" }) as HTMLButtonElement).className,
     ).toContain("bg-accent");
-    expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe(
-      "Operator source Copy",
-    );
+    expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("Operator source Copy");
     expect(screen.getByText("Saved")).toBeTruthy();
   });
 
@@ -1135,16 +1270,14 @@ describe("admin feature controllers", () => {
     expect(duplicateSlug.disabled).toBe(true);
     expect(secondButton.parentElement?.textContent).toContain("A preset action is in progress.");
     expect(
-      screen
-        .getByRole("button", { name: "Copy saved values to custom scenario" })
-        .parentElement?.textContent,
+      screen.getByRole("button", { name: "Copy saved values to custom scenario" }).parentElement
+        ?.textContent,
     ).toContain("A preset action is in progress.");
     expect(
       screen.getByRole("button", { name: "Duplicate saved preset" }).closest("form")?.textContent,
     ).toContain("A preset action is in progress.");
     expect(
-      screen.getByRole("button", { name: "Run once with these values" }).parentElement
-        ?.textContent,
+      screen.getByRole("button", { name: "Run once with these values" }).parentElement?.textContent,
     ).toContain("A preset action is in progress.");
 
     await user.click(buyerCount);
@@ -1154,9 +1287,7 @@ describe("admin feature controllers", () => {
     await user.click(secondButton);
     expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("Custom");
     expect((screen.getByLabelText("Buyer count") as HTMLInputElement).value).toBe("1234");
-    expect((screen.getByLabelText("Duplicate slug") as HTMLInputElement).value).toBe(
-      "custom-copy",
-    );
+    expect((screen.getByLabelText("Duplicate slug") as HTMLInputElement).value).toBe("custom-copy");
 
     pendingSave.resolve(
       jsonResponse({
@@ -1219,6 +1350,7 @@ describe("admin feature controllers", () => {
     }
 
     await user.click(screen.getByRole("button", { name: "Run once with these values" }));
+    await user.click(confirmationButton("Start run"));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
     const request = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe(adminDemoRunStartProxyPath);
@@ -1227,6 +1359,26 @@ describe("admin feature controllers", () => {
       false,
     );
     expect(screen.getByText("Unsaved")).toBeTruthy();
+  });
+
+  it("cancels a run start after showing B14's effective snapshot", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(
+      <AdminPresetController
+        initialPresets={presetListFixture("Custom")}
+        recovery={available(recoveryFixture(null))}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Run once with these values" }));
+    const dialog = screen.getByRole("alertdialog");
+    expect(dialog.textContent).toContain("claim the one shared demo runtime");
+    expect(within(dialog).getByText("Effective run preview")).toBeTruthy();
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("confirms that copy uses saved values and keeps its slug-only request", async () => {
@@ -1257,9 +1409,7 @@ describe("admin feature controllers", () => {
     );
     await user.clear(screen.getByLabelText("Buyer count"));
     await user.type(screen.getByLabelText("Buyer count"), "1234");
-    await user.click(
-      screen.getByRole("button", { name: "Copy saved values to custom scenario" }),
-    );
+    await user.click(screen.getByRole("button", { name: "Copy saved values to custom scenario" }));
     expect(screen.getByText(/Your unsaved edits will not be copied\./)).toBeTruthy();
     expect(fetchMock).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Cancel" }));
@@ -1274,9 +1424,7 @@ describe("admin feature controllers", () => {
     ).toContain("bg-accent");
     expect(fetchMock).not.toHaveBeenCalled();
 
-    await user.click(
-      screen.getByRole("button", { name: "Copy saved values to custom scenario" }),
-    );
+    await user.click(screen.getByRole("button", { name: "Copy saved values to custom scenario" }));
     await user.click(confirmationButton("Discard unsaved edits"));
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe(adminPresetCopyToCustomProxyPath);
@@ -1316,9 +1464,7 @@ describe("admin feature controllers", () => {
     await user.click(screen.getByRole("button", { name: "Duplicate saved preset" }));
     expect(screen.getByText(/Your unsaved edits will not be duplicated\./)).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Cancel" }));
-    expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe(
-      "Operator duplicate",
-    );
+    expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("Operator duplicate");
     expect((screen.getByLabelText("Buyer count") as HTMLInputElement).value).toBe("1234");
     expect(
       (screen.getByRole("button", { name: "Operator duplicate" }) as HTMLButtonElement).className,
@@ -1508,6 +1654,7 @@ describe("admin feature controllers", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "Run once with these values" }));
+    await user.click(confirmationButton("Start run"));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe(adminDemoRunStartProxyPath);
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
@@ -1519,7 +1666,9 @@ describe("admin feature controllers", () => {
         backpressureConfig: preset.backpressureConfig,
       },
     });
-    expect(await screen.findByText("Check the values and try again")).toBeTruthy();
+    expect((await screen.findAllByText("Check the values and try again")).length).toBeGreaterThan(
+      0,
+    );
     expect(
       screen
         .getByRole("link", {
@@ -1537,10 +1686,11 @@ describe("admin feature controllers", () => {
     expect(document.querySelector('a[href="#preset-internal"]')).toBeNull();
     expect(document.body.textContent).not.toContain("private-detail");
     expect(
-      (screen.getByRole("button", { name: "Run once with these values" }) as HTMLButtonElement).disabled,
+      (screen.getByRole("button", { name: "Run once with these values" }) as HTMLButtonElement)
+        .disabled,
     ).toBe(false);
 
-    await user.click(screen.getByRole("button", { name: "Run once with these values" }));
+    await user.click(confirmationButton("Start run"));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect(fetchMock.mock.calls[1]?.[1]?.body).toBe(fetchMock.mock.calls[0]?.[1]?.body);
   });
@@ -1563,8 +1713,11 @@ describe("admin feature controllers", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "Run once with these values" }));
+    await user.click(confirmationButton("Start run"));
 
-    expect(await screen.findByText("A demo run is already in progress")).toBeTruthy();
+    expect(
+      (await screen.findAllByText("A demo run is already in progress")).length,
+    ).toBeGreaterThan(0);
     expect(screen.queryByText("Admin run accepted.")).toBeNull();
   });
 
@@ -1608,6 +1761,7 @@ describe("admin feature controllers", () => {
     vi.stubGlobal("window", navigationWindow);
 
     await user.click(screen.getByRole("button", { name: "Run once with these values" }));
+    await user.click(confirmationButton("Start run"));
 
     await waitFor(() => expect(status.textContent).toBe("Admin run accepted."));
     expect(document.querySelector("#presets p[role='status']")).toBe(status);
@@ -1755,14 +1909,15 @@ describe("admin feature controllers", () => {
     expect(await screen.findByRole("alertdialog")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("Edited locally");
-    expect((screen.getByRole("button", { name: "Custom" }) as HTMLButtonElement).className).toContain(
-      "bg-accent",
-    );
+    expect(
+      (screen.getByRole("button", { name: "Custom" }) as HTMLButtonElement).className,
+    ).toContain("bg-accent");
     expect(
       (screen.getByRole("button", { name: "Second preset" }) as HTMLButtonElement).className,
     ).not.toContain("bg-accent");
     expect(
-      (screen.getByRole("button", { name: "Run once with these values" }) as HTMLButtonElement).disabled,
+      (screen.getByRole("button", { name: "Run once with these values" }) as HTMLButtonElement)
+        .disabled,
     ).toBe(true);
 
     rerender(
@@ -1773,9 +1928,7 @@ describe("admin feature controllers", () => {
       />,
     );
     await user.click(confirmationButton("Discard unsaved edits"));
-    expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe(
-      "Server updated again",
-    );
+    expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("Server updated again");
   });
 
   it("shares a recovered runtime policy with dirty preset validation", async () => {
@@ -1899,6 +2052,7 @@ describe("admin feature controllers", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
     await user.click(screen.getByRole("button", { name: "Save public policy" }));
+    await user.click(confirmationButton("Save public policy"));
 
     await waitFor(() =>
       expect((screen.getByLabelText("Budget window seconds") as HTMLInputElement).value).toBe(
@@ -1914,6 +2068,30 @@ describe("admin feature controllers", () => {
       },
     });
     expect((screen.getByLabelText("Max buyers") as HTMLInputElement).value).toBe("4321");
+  });
+
+  it("summarizes and cancels a future-public-policy change", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(
+      <AdminRuntimePolicyController
+        initialRuntimePolicy={available(runtimePolicyFixture(10_000, 300))}
+      />,
+    );
+    await user.clear(screen.getByLabelText("Budget window seconds"));
+    await user.type(screen.getByLabelText("Budget window seconds"), "400");
+    await user.click(screen.getByRole("button", { name: "Save public policy" }));
+
+    const dialog = screen.getByRole("alertdialog");
+    expect(dialog.textContent).toContain(
+      "governs future public starts; already accepted runs are unaffected",
+    );
+    expect(within(dialog).getByText("Public run budget")).toBeTruthy();
+    expect(dialog.textContent).toContain('"windowSeconds":300');
+    expect(dialog.textContent).toContain('"windowSeconds":400');
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("surfaces a newer policy failure while retaining dirty drafts and preset caps", async () => {
@@ -2011,11 +2189,12 @@ describe("admin feature controllers", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "Save public policy" }));
+    await user.click(confirmationButton("Save public policy"));
     expect(
-      await screen.findByText("The latest information is temporarily unavailable"),
+      (await screen.findAllByText("The latest information is temporarily unavailable")).length,
     ).toBeTruthy();
     expect(screen.getByLabelText("Max buyers")).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: "Save public policy" }));
+    await user.click(confirmationButton("Save public policy"));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect((screen.getByLabelText("Budget window seconds") as HTMLInputElement).value).toBe("400");
   });
@@ -2494,6 +2673,7 @@ function erpFixture(): ErpChaosStatus {
     maxTps: 100,
     errorRate: 0,
     forcedOutage: false,
+    defaultConfig: { latencyMs: 50, maxTps: 100, errorRate: 0, forcedOutage: false },
     updatedAt: "2026-06-20T00:00:10.000Z",
     effectiveSafetyCaps: {
       maxLatencyMs: 5000,

@@ -40,6 +40,7 @@ export class ErpChaosConfigStore {
   getStatus(): ErpChaosStatus {
     return erpChaosStatusSchema.parse({
       ...this.current,
+      defaultConfig: this.defaultConfig,
       updatedAt: this.updatedAt.toISOString(),
       effectiveSafetyCaps: this.safetyCaps,
     });

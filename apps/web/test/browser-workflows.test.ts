@@ -985,11 +985,11 @@ describe("admin browser workflows", () => {
 
       if (path === adminErpChaosProxyPath && init?.method === "PUT") {
         return jsonResponse({
+          ...erpChaosStatusFixture(),
           latencyMs: 250,
           maxTps: 20,
           errorRate: 0.25,
           forcedOutage: true,
-          updatedAt: "2026-06-20T00:00:10.000Z",
         });
       }
 
@@ -1016,6 +1016,11 @@ describe("admin browser workflows", () => {
     await replaceInputValue("Error rate", "0.25", user);
     await user.click(screen.getByLabelText("Forced outage"));
     await user.click(screen.getByRole("button", { name: "Apply ERP controls" }));
+    await user.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", {
+        name: "Apply ERP controls",
+      }),
+    );
 
     const [, init] = findFetchCall(fetchMock, adminErpChaosProxyPath, "PUT");
     expect(jsonRequestBody(init)).toEqual({
@@ -1828,6 +1833,7 @@ function erpChaosStatusFixture(): ErpChaosStatus {
     maxTps: 250,
     errorRate: 0,
     forcedOutage: false,
+    defaultConfig: { latencyMs: 80, maxTps: 250, errorRate: 0, forcedOutage: false },
     updatedAt: "2026-06-20T00:00:10.000Z",
     effectiveSafetyCaps: {
       maxLatencyMs: 5000,

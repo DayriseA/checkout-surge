@@ -596,6 +596,7 @@ function erpChaosFixture(): ErpChaosStatus {
     maxTps: 100,
     errorRate: 0,
     forcedOutage: false,
+    defaultConfig: { latencyMs: 50, maxTps: 100, errorRate: 0, forcedOutage: false },
     updatedAt: "2026-06-20T00:00:10.000Z",
     effectiveSafetyCaps: {
       maxLatencyMs: 5000,

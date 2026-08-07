@@ -310,6 +310,7 @@ describe("chaos control service", () => {
 
     expect(store.getStatus()).toEqual({
       ...defaultChaosConfig,
+      defaultConfig: defaultChaosConfig,
       updatedAt: "2026-06-22T00:00:00.000Z",
       effectiveSafetyCaps: testSafetyCaps,
     });
@@ -745,6 +746,7 @@ describe("Mock ERP HTTP service", () => {
       maxTps: 7,
       errorRate: 0.25,
       forcedOutage: false,
+      defaultConfig: { latencyMs: 15, maxTps: 7, errorRate: 0.25, forcedOutage: false },
       updatedAt: "2026-06-22T00:00:00.000Z",
       effectiveSafetyCaps: testSafetyCaps,
     });
@@ -806,6 +808,7 @@ describe("Mock ERP HTTP service", () => {
       maxTps: 5,
       errorRate: 0.5,
       forcedOutage: true,
+      defaultConfig: { latencyMs: 1, maxTps: 100, errorRate: 0, forcedOutage: false },
       updatedAt: "2026-06-22T00:00:01.000Z",
       effectiveSafetyCaps: testSafetyCaps,
     });
@@ -815,6 +818,7 @@ describe("Mock ERP HTTP service", () => {
       maxTps: 100,
       errorRate: 0,
       forcedOutage: false,
+      defaultConfig: { latencyMs: 1, maxTps: 100, errorRate: 0, forcedOutage: false },
       updatedAt: "2026-06-22T00:00:02.000Z",
       effectiveSafetyCaps: testSafetyCaps,
     });
@@ -823,6 +827,7 @@ describe("Mock ERP HTTP service", () => {
       maxTps: 100,
       errorRate: 0,
       forcedOutage: false,
+      defaultConfig: { latencyMs: 1, maxTps: 100, errorRate: 0, forcedOutage: false },
       updatedAt: "2026-06-22T00:00:03.000Z",
       effectiveSafetyCaps: testSafetyCaps,
     });

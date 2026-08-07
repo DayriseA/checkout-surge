@@ -567,6 +567,60 @@ describe("dashboard control proxy routes", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
+  it("keeps global ERP chaos unchanged across the API-owned demo reset", async () => {
+    const headers = await adminSessionHeaders({ "content-type": "application/json" });
+    const configuredChaos = erpChaosConfigPayload();
+    let chaos = { latencyMs: 0, maxTps: 100, errorRate: 0, forcedOutage: false };
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "http://mock-erp.internal/chaos" && init?.method === "PUT") {
+        chaos = JSON.parse(String(init.body));
+        return jsonResponse({ ...erpChaosStatusPayload(), ...chaos });
+      }
+      if (url === `http://api.internal${adminDemoResetPath}`) {
+        return jsonResponse({
+          failedRunCount: 0,
+          closedSaleOfferCount: 0,
+          cleanedQueueCount: 0,
+          cleanedJobCount: 0,
+          resetAt: "2026-06-20T00:00:10.000Z",
+          correlationId: "corr-reset",
+        });
+      }
+      if (url === "http://mock-erp.internal/chaos" && init?.method === "GET") {
+        return jsonResponse({ ...erpChaosStatusPayload(), ...chaos });
+      }
+      if (url === "http://mock-erp.internal/chaos/reset") {
+        chaos = { latencyMs: 0, maxTps: 100, errorRate: 0, forcedOutage: false };
+        return jsonResponse({ ...erpChaosStatusPayload(), ...chaos });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await updateErpChaos(
+      new Request("http://dashboard.local/api/admin/erp-chaos", {
+        method: "PUT",
+        headers,
+        body: JSON.stringify(configuredChaos),
+      }),
+    );
+    await resetDemo(
+      new Request("http://dashboard.local/api/admin/demo/reset", {
+        method: "POST",
+        headers,
+      }),
+    );
+    const status = await getErpChaos(new Request("http://dashboard.local/api/admin/erp-chaos"));
+
+    expect(await status.json()).toMatchObject(configuredChaos);
+    expect(fetchMock.mock.calls.map(([input]) => String(input))).toEqual([
+      "http://mock-erp.internal/chaos",
+      `http://api.internal${adminDemoResetPath}`,
+      "http://mock-erp.internal/chaos",
+    ]);
+  });
+
   it("forwards valid ERP chaos updates with the server-side control token", async () => {
     const headers = await adminSessionHeaders({ "content-type": "application/json" });
     const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
@@ -961,6 +1015,7 @@ function erpChaosConfigPayload() {
 function erpChaosStatusPayload() {
   return {
     ...erpChaosConfigPayload(),
+    defaultConfig: erpChaosConfigPayload(),
     updatedAt: "2026-06-20T00:00:10.000Z",
     effectiveSafetyCaps: {
       maxLatencyMs: 5000,

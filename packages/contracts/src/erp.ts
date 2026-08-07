@@ -82,6 +82,7 @@ export type ErpConfirmationResponse = z.infer<typeof erpConfirmationResponseSche
 
 export const erpChaosStatusSchema = erpChaosConfigSchema
   .extend({
+    defaultConfig: erpChaosConfigSchema,
     updatedAt: isoTimestampSchema,
     effectiveSafetyCaps: erpChaosSafetyCapsSchema,
   })

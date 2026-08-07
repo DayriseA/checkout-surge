@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  type AcceptedRunConfigSnapshot,
   type AdminPresetListItem,
   type AdminPresetListResponse,
   type AdminPublicRuntimePolicyResponse,
@@ -15,10 +16,14 @@ import {
   copyDemoPresetToCustomRequestSchema,
   type DashboardProjection,
   duplicateDemoPresetRequestSchema,
+  type ErpChaosConfig,
   type ErpChaosStatus,
   erpChaosConfigSchema,
   erpChaosStatusSchema,
   type HealthResponse,
+  type PublicRuntimePolicy,
+  type PublicRuntimePolicyMutable,
+  type StartDemoRunRequest,
   saveDemoPresetRequestSchema,
   startDemoRunRequestSchema,
   startDemoRunResponseSchema,
@@ -74,6 +79,8 @@ import {
   AdminRuntimePolicyView,
   buttonClassName,
   currentRunStatus,
+  EffectiveChangeList,
+  EffectiveRunPreview,
   Fact,
   panelClassName,
   Unavailable,
@@ -170,7 +177,21 @@ export function AdminAuthenticatedSurface(props: AdminAuthenticatedSurfaceProps)
               : undefined
           }
         />
-        <AdminErpDiagnosticsController initialErpChaos={props.initialErpChaos} />
+        <AdminErpDiagnosticsController
+          runState={
+            recovery.status !== "available"
+              ? "unavailable"
+              : isRunInProgress(recovery.data.currentRun?.status)
+                ? "active"
+                : "inactive"
+          }
+          initialErpChaos={props.initialErpChaos}
+          runErpConfig={
+            recovery.status === "available"
+              ? recovery.data.currentRun?.configSnapshot.erpConfig
+              : undefined
+          }
+        />
         <AdminMaintenancePanel onResetComplete={recoveryController.retryNow} />
         <AdminRuntimePolicyController
           initialRuntimePolicy={runtimePolicy}
@@ -415,6 +436,8 @@ export function AdminRuntimePolicyController({
   const [formErrors, setFormErrors] = useState<DraftFormError[]>([]);
   const [showValidationSummary, setShowValidationSummary] = useState(false);
   const [validationSummaryRevision, setValidationSummaryRevision] = useState(0);
+  const [proposedPolicy, setProposedPolicy] = useState<PublicRuntimePolicyMutable | null>(null);
+  const [saveError, setSaveError] = useState<AdminNotice | null>(null);
   const isDraftDirtyRef = useRef(false);
 
   useEffect(() => {
@@ -465,7 +488,7 @@ export function AdminRuntimePolicyController({
     }
   }
 
-  async function save() {
+  function save() {
     if (runtimePolicy.status !== "available" || !draft) return;
     const built = buildPolicyFromDraft(draft, runtimePolicy.data.policy);
     if (!built.values) {
@@ -482,6 +505,12 @@ export function AdminRuntimePolicyController({
     }
     setFieldErrors({});
     setFormErrors([]);
+    setSaveError(null);
+    setProposedPolicy(parsed.data.policy);
+  }
+
+  async function confirmSave() {
+    if (!proposedPolicy) return;
     setIsPending(true);
     setNotice(null);
     try {
@@ -491,10 +520,11 @@ export function AdminRuntimePolicyController({
         {
           method: "PUT",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify(parsed.data),
+          body: JSON.stringify({ policy: proposedPolicy }),
         },
       );
       if (isAdminSessionRequired(result)) {
+        setProposedPolicy(null);
         router.refresh();
         return;
       }
@@ -505,11 +535,12 @@ export function AdminRuntimePolicyController({
         setDraft(draftFromRuntimePolicy(result.data.policy));
         isDraftDirtyRef.current = false;
         clearValidationState();
+        setProposedPolicy(null);
+        setSaveError(null);
       }
-      setNotice(
-        result.status === "available" ? "Public runtime policy saved." : adminFailureNotice(result),
-      );
+      setNotice(result.status === "available" ? "Public runtime policy saved." : null);
       if (result.status === "unavailable") {
+        setSaveError(adminFailureNotice(result));
         setFieldErrors(serverFieldErrors(result.details, "policy"));
         setShowValidationSummary(true);
         setValidationSummaryRevision((revision) => revision + 1);
@@ -520,38 +551,59 @@ export function AdminRuntimePolicyController({
   }
 
   return (
-    <AdminRuntimePolicyView
-      draft={draft}
-      fieldErrors={fieldErrors}
-      formErrors={formErrors}
-      isPending={isPending}
-      latestRuntimePolicyRead={latestRead}
-      notice={notice}
-      onBlurField={(field) => {
-        if (runtimePolicy.status !== "available" || !draft) return;
-        setFieldErrors((current) =>
-          replaceFieldError(
-            current,
-            field,
-            buildPolicyFromDraft(draft, runtimePolicy.data.policy).fieldErrors[field],
-          ),
-        );
-      }}
-      onRefresh={() => void refresh()}
-      onSave={() => void save()}
-      onUpdateDraft={(next) => {
-        isDraftDirtyRef.current = true;
-        if (next.mode !== undefined) clearValidationState();
-        else {
-          setFieldErrors((current) => clearChangedErrors(current, next));
-          setFormErrors([]);
-        }
-        setDraft((current) => (current ? { ...current, ...next } : null));
-      }}
-      runtimePolicy={runtimePolicy}
-      showValidationSummary={showValidationSummary}
-      validationSummaryRevision={validationSummaryRevision}
-    />
+    <>
+      <AdminRuntimePolicyView
+        draft={draft}
+        fieldErrors={fieldErrors}
+        formErrors={formErrors}
+        isPending={isPending}
+        latestRuntimePolicyRead={latestRead}
+        notice={notice}
+        onBlurField={(field) => {
+          if (runtimePolicy.status !== "available" || !draft) return;
+          setFieldErrors((current) =>
+            replaceFieldError(
+              current,
+              field,
+              buildPolicyFromDraft(draft, runtimePolicy.data.policy).fieldErrors[field],
+            ),
+          );
+        }}
+        onRefresh={() => void refresh()}
+        onSave={save}
+        onUpdateDraft={(next) => {
+          isDraftDirtyRef.current = true;
+          if (next.mode !== undefined) clearValidationState();
+          else {
+            setFieldErrors((current) => clearChangedErrors(current, next));
+            setFormErrors([]);
+          }
+          setDraft((current) => (current ? { ...current, ...next } : null));
+        }}
+        runtimePolicy={runtimePolicy}
+        showValidationSummary={showValidationSummary}
+        validationSummaryRevision={validationSummaryRevision}
+      />
+      <ConfirmationDialog
+        confirmLabel="Save public policy"
+        description="This shared public policy governs future public starts; already accepted runs are unaffected."
+        error={saveError ? <AdminNoticeView notice={saveError} /> : null}
+        onCancel={() => {
+          setProposedPolicy(null);
+          setSaveError(null);
+        }}
+        onConfirm={() => void confirmSave()}
+        open={proposedPolicy !== null}
+        pending={isPending}
+        title="Save the public runtime policy?"
+      >
+        {runtimePolicy.status === "available" && proposedPolicy ? (
+          <EffectiveChangeList
+            changes={policyChangeSummary(runtimePolicy.data.policy, proposedPolicy)}
+          />
+        ) : null}
+      </ConfirmationDialog>
+    </>
   );
 
   function clearValidationState() {
@@ -597,6 +649,11 @@ export function AdminPresetController({
   const [syncNotice, setSyncNotice] = useState<AdminNotice | null>(null);
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [archiveError, setArchiveError] = useState<AdminNotice | null>(null);
+  const [startConfirmation, setStartConfirmation] = useState<{
+    request: StartDemoRunRequest;
+    config: AcceptedRunConfigSnapshot;
+  } | null>(null);
+  const [startError, setStartError] = useState<AdminNotice | null>(null);
   const latestInitialPresetsRef = useRef(initialPresets);
   const latestRuntimePolicyRef = useRef(runtimePolicy);
   const [pendingTransition, setPendingTransition] = useState<
@@ -642,8 +699,7 @@ export function AdminPresetController({
       return;
     }
     setPresetsRead(initialPresets);
-    const nextPresets =
-      initialPresets.status === "available" ? initialPresets.data.presets : [];
+    const nextPresets = initialPresets.status === "available" ? initialPresets.data.presets : [];
     const nextPreset =
       nextPresets.find((preset) => preset.slug === selectedSlug) ?? nextPresets[0] ?? null;
     setSelectedSlug(nextPreset?.slug ?? null);
@@ -675,7 +731,7 @@ export function AdminPresetController({
     setShowValidationSummary(false);
   }, [effectiveRuntimePolicy]);
 
-  async function start() {
+  function start() {
     if (!selectedPreset || !draft || !effectiveConfig) return;
     const built = effectiveConfig;
     if (!built.values) {
@@ -695,18 +751,30 @@ export function AdminPresetController({
     }
     setFieldErrors({});
     setFormErrors([]);
+    setStartError(null);
+    setStartConfirmation({ request: parsed.data, config: built.values });
+  }
+
+  async function confirmStart() {
+    if (!startConfirmation) return;
     await withPending(async () => {
       const result = await readProxyJson(adminDemoRunStartProxyPath, startDemoRunResponseSchema, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(parsed.data),
+        body: JSON.stringify(startConfirmation.request),
       });
       if (isAdminSessionRequired(result)) {
+        setStartConfirmation(null);
         router.refresh();
         return;
       }
-      setNotice(result.status === "available" ? "Admin run accepted." : adminFailureNotice(result));
+      setNotice(result.status === "available" ? "Admin run accepted." : null);
+      if (result.status === "available") {
+        setStartConfirmation(null);
+        setStartError(null);
+      }
       if (result.status === "unavailable") {
+        setStartError(adminFailureNotice(result));
         setFieldErrors(serverFieldErrors(result.details, "preset"));
         setShowValidationSummary(true);
         setValidationSummaryRevision((revision) => revision + 1);
@@ -987,7 +1055,7 @@ export function AdminPresetController({
           if (isDirty) setPendingTransition({ kind: "select", slug });
           else selectPreset(slug);
         }}
-        onStart={() => void start()}
+        onStart={start}
         onUpdateDraft={(next) => {
           if (next.mode !== undefined) clearValidationState();
           else {
@@ -1004,6 +1072,23 @@ export function AdminPresetController({
         startBlocked={startBlocked ?? isRunStartBlocked(recovery)}
         startBlockedReason={startBlockedReason}
       />
+      <ConfirmationDialog
+        confirmLabel="Start run"
+        description="Start with this effective configuration and claim the one shared demo runtime. The accepted values become a frozen per-run snapshot."
+        error={startError ? <AdminNoticeView notice={startError} /> : null}
+        onCancel={() => {
+          setStartConfirmation(null);
+          setStartError(null);
+        }}
+        onConfirm={() => void confirmStart()}
+        open={startConfirmation !== null}
+        pending={isPending}
+        title="Start this run?"
+      >
+        {startConfirmation?.config ? (
+          <EffectiveRunPreview config={startConfirmation.config} />
+        ) : null}
+      </ConfirmationDialog>
       <ConfirmationDialog
         confirmLabel="Archive preset"
         description={`Archive the "${selectedPreset?.display.name ?? "selected"}" preset. It will leave the active list while historical runs are retained.${isDirty ? " Your unsaved edits will be discarded." : ""}`}
@@ -1073,9 +1158,7 @@ export function AdminPresetController({
 }
 
 function discardDescription(
-  transition:
-    | { kind: "select" | "copy" | "duplicate" | "refresh" }
-    | null,
+  transition: { kind: "select" | "copy" | "duplicate" | "refresh" } | null,
 ): string {
   switch (transition?.kind) {
     case "select":
@@ -1102,9 +1185,16 @@ export function AdminMaintenancePanel({
   const [intent, setIntent] = useState<"reset" | "cleanup" | null>(null);
   const [error, setError] = useState<AdminNotice | null>(null);
 
+  function openIntent(next: "reset" | "cleanup") {
+    setNotice(null);
+    setError(null);
+    setIntent(next);
+  }
+
   async function run() {
     if (!intent) return;
     setIsPending(true);
+    setNotice(null);
     setError(null);
     try {
       const result =
@@ -1133,7 +1223,7 @@ export function AdminMaintenancePanel({
       }
       if (intent === "reset" && "failedRunCount" in result.data) {
         setNotice(
-          `Reset complete: ${formatMaintenanceCount(result.data.failedRunCount)} runs failed, ${formatMaintenanceCount(result.data.cleanedJobCount)} jobs cleaned.`,
+          `Reset complete: ${formatMaintenanceCount(result.data.failedRunCount)} runs failed, ${formatMaintenanceCount(result.data.closedSaleOfferCount)} sale offers closed, ${formatMaintenanceCount(result.data.cleanedQueueCount)} queues cleaned, ${formatMaintenanceCount(result.data.cleanedJobCount)} jobs cleaned. Global ERP fault injection is not changed by this reset.`,
         );
       } else if ("deletedRunCount" in result.data) {
         setNotice(
@@ -1159,7 +1249,7 @@ export function AdminMaintenancePanel({
         <button
           className={buttonClassName}
           disabled={isPending}
-          onClick={() => setIntent("reset")}
+          onClick={() => openIntent("reset")}
           type="button"
         >
           Reset demo
@@ -1167,7 +1257,7 @@ export function AdminMaintenancePanel({
         <button
           className={buttonClassName}
           disabled={isPending}
-          onClick={() => setIntent("cleanup")}
+          onClick={() => openIntent("cleanup")}
           type="button"
         >
           Cleanup runs
@@ -1178,7 +1268,7 @@ export function AdminMaintenancePanel({
         confirmLabel={intent === "reset" ? "Reset demo" : "Cleanup generated runs"}
         description={
           intent === "reset"
-            ? "Fail active demo work, clear queued jobs, and reset shared demo state. This disrupts current visitors."
+            ? "Fail active demo work, clear queued jobs, and reset API-owned shared demo state. This disrupts current visitors. Global ERP fault injection is not changed by this reset."
             : "Permanently remove generated runs older than 7 days while keeping the latest 15."
         }
         error={error ? <AdminNoticeView notice={error} /> : null}
@@ -1194,8 +1284,12 @@ export function AdminMaintenancePanel({
 
 export function AdminErpDiagnosticsController({
   initialErpChaos,
+  runErpConfig,
+  runState = "unavailable",
 }: {
   initialErpChaos: BackendRead<ErpChaosStatus>;
+  runErpConfig?: AcceptedRunConfigSnapshot["erpConfig"] | undefined;
+  runState?: "active" | "inactive" | "unavailable";
 }) {
   const router = useRouter();
   const [erpChaos, setErpChaos] = useState(initialErpChaos);
@@ -1207,8 +1301,11 @@ export function AdminErpDiagnosticsController({
   const [formErrors, setFormErrors] = useState<DraftFormError[]>([]);
   const [showValidationSummary, setShowValidationSummary] = useState(false);
   const [validationSummaryRevision, setValidationSummaryRevision] = useState(0);
-  const [resetOpen, setResetOpen] = useState(false);
-  const [resetError, setResetError] = useState<AdminNotice | null>(null);
+  const [confirmation, setConfirmation] = useState<{
+    kind: "apply" | "reset";
+    proposed: ErpChaosConfig;
+  } | null>(null);
+  const [confirmationError, setConfirmationError] = useState<AdminNotice | null>(null);
   const isDraftDirtyRef = useRef(false);
 
   useEffect(() => {
@@ -1228,40 +1325,46 @@ export function AdminErpDiagnosticsController({
     }
   }, [initialErpChaos]);
 
-  async function submit(path: string, init: RequestInit) {
+  async function submit() {
+    if (!confirmation) return;
+    const path =
+      confirmation.kind === "reset" ? adminErpChaosResetProxyPath : adminErpChaosProxyPath;
+    const init: RequestInit =
+      confirmation.kind === "reset"
+        ? { method: "POST" }
+        : {
+            method: "PUT",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(confirmation.proposed),
+          };
     setIsPending(true);
     setNotice(null);
     try {
       const result = await readProxyJson(path, erpChaosStatusSchema, init);
       if (isAdminSessionRequired(result)) {
-        setResetOpen(false);
+        setConfirmation(null);
         router.refresh();
         return;
       }
-      if (path === adminErpChaosResetProxyPath && result.status === "unavailable") {
-        setResetError(adminFailureNotice(result));
-        return;
-      }
-      if (result.status === "available") {
-        setErpChaos(result);
-        setLatestErpChaosRead(result);
-        setDraft(erpDraftFromRead(result));
-        isDraftDirtyRef.current = false;
-        clearValidationState();
-      }
-      setNotice(
-        result.status === "available"
-          ? path === adminErpChaosResetProxyPath
-            ? "ERP diagnostics reset."
-            : "ERP diagnostics updated."
-          : adminFailureNotice(result),
-      );
       if (result.status === "unavailable") {
+        setConfirmationError(adminFailureNotice(result));
         setFieldErrors(serverFieldErrors(result.details, "erp"));
         setShowValidationSummary(true);
         setValidationSummaryRevision((revision) => revision + 1);
+        return;
       }
-      if (path === adminErpChaosResetProxyPath) setResetOpen(false);
+      setErpChaos(result);
+      setLatestErpChaosRead(result);
+      setDraft(erpDraftFromRead(result));
+      isDraftDirtyRef.current = false;
+      clearValidationState();
+      setNotice(
+        path === adminErpChaosResetProxyPath
+          ? "Global ERP fault injection reset."
+          : "Global ERP fault injection updated.",
+      );
+      setConfirmation(null);
+      setConfirmationError(null);
     } finally {
       setIsPending(false);
     }
@@ -1284,11 +1387,8 @@ export function AdminErpDiagnosticsController({
     }
     setFieldErrors({});
     setFormErrors([]);
-    void submit(adminErpChaosProxyPath, {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(parsed.data),
-    });
+    setConfirmationError(null);
+    setConfirmation({ kind: "apply", proposed: parsed.data });
   }
 
   return (
@@ -1320,22 +1420,35 @@ export function AdminErpDiagnosticsController({
         onLatencyMsChange={(latencyMs) => updateErpDraft({ latencyMs })}
         onMaxTpsChange={(maxTps) => updateErpDraft({ maxTps })}
         onReset={() => {
-          setResetError(null);
-          setResetOpen(true);
+          if (erpChaos.status !== "available") return;
+          setConfirmationError(null);
+          setConfirmation({ kind: "reset", proposed: erpChaos.data.defaultConfig });
         }}
+        runErpConfig={runErpConfig}
         showValidationSummary={showValidationSummary}
         validationSummaryRevision={validationSummaryRevision}
       />
       <ConfirmationDialog
-        confirmLabel="Reset ERP controls"
-        description="Reset the shared ERP latency, throughput, error-rate, and outage controls to their defaults."
-        error={resetError ? <AdminNoticeView notice={resetError} /> : null}
-        onCancel={() => setResetOpen(false)}
-        onConfirm={() => void submit(adminErpChaosResetProxyPath, { method: "POST" })}
-        open={resetOpen}
+        confirmLabel={confirmation?.kind === "reset" ? "Reset ERP controls" : "Apply ERP controls"}
+        description={`${runState === "active" ? "This does not change the active run — frozen in the accepted run snapshot; affects fallback and future non-snapshot calls. " : runState === "inactive" ? "There is no active run; these values govern fallback and future non-snapshot calls. " : "Current run state is unavailable — a currently active run keeps its frozen snapshot; these values govern fallback and future non-snapshot calls. "}They have global/fallback scope and reset when Mock ERP restarts.`}
+        error={confirmationError ? <AdminNoticeView notice={confirmationError} /> : null}
+        onCancel={() => {
+          setConfirmation(null);
+          setConfirmationError(null);
+        }}
+        onConfirm={() => void submit()}
+        open={confirmation !== null}
         pending={isPending}
-        title="Reset ERP controls?"
-      />
+        title={
+          confirmation?.kind === "reset"
+            ? "Reset global ERP fault injection?"
+            : "Apply global ERP fault injection?"
+        }
+      >
+        {confirmation && erpChaos.status === "available" ? (
+          <EffectiveChangeList changes={erpChangeSummary(erpChaos.data, confirmation.proposed)} />
+        ) : null}
+      </ConfirmationDialog>
     </>
   );
 
@@ -1358,6 +1471,44 @@ interface ErpDraft {
   maxTps: string;
   errorRate: string;
   forcedOutage: boolean;
+}
+
+function erpChangeSummary(current: ErpChaosConfig, proposed: ErpChaosConfig) {
+  return [
+    { label: "Latency ms", oldValue: current.latencyMs, proposedValue: proposed.latencyMs },
+    { label: "Max TPS", oldValue: current.maxTps, proposedValue: proposed.maxTps },
+    { label: "Error rate", oldValue: current.errorRate, proposedValue: proposed.errorRate },
+    {
+      label: "Forced outage",
+      oldValue: current.forcedOutage ? "on" : "off",
+      proposedValue: proposed.forcedOutage ? "on" : "off",
+    },
+  ];
+}
+
+function policyChangeSummary(current: PublicRuntimePolicy, proposed: PublicRuntimePolicyMutable) {
+  return [
+    {
+      label: "Budget enforcement",
+      oldValue: current.isPublicRunBudgetEnforced ? "on" : "off",
+      proposedValue: proposed.isPublicRunBudgetEnforced ? "on" : "off",
+    },
+    {
+      label: "Public run budget",
+      oldValue: JSON.stringify(current.publicRunBudget),
+      proposedValue: JSON.stringify(proposed.publicRunBudget),
+    },
+    {
+      label: "Public custom defaults",
+      oldValue: JSON.stringify(current.publicCustomDefaults),
+      proposedValue: JSON.stringify(proposed.publicCustomDefaults),
+    },
+    {
+      label: "Public custom limits",
+      oldValue: JSON.stringify(current.publicCustomLimits),
+      proposedValue: JSON.stringify(proposed.publicCustomLimits),
+    },
+  ].filter((change) => change.oldValue !== change.proposedValue);
 }
 
 function erpDraftFromRead(read: BackendRead<ErpChaosStatus>): ErpDraft {
@@ -1405,7 +1556,12 @@ function isRunStartBlocked(
 ): boolean {
   if (recovery.status !== "available") return true;
   if (freshness && isFreshnessBlockingStart(freshness, hasReadFailure)) return true;
-  const status = recovery.data.currentRun?.status;
+  return isRunInProgress(recovery.data.currentRun?.status);
+}
+
+function isRunInProgress(
+  status: NonNullable<DashboardProjection["currentRun"]>["status"] | undefined,
+): boolean {
   return status === "starting" || status === "active" || status === "draining";
 }
 
