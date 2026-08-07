@@ -324,6 +324,7 @@ export const orders = pgTable(
       table.queuedAt.desc(),
       table.createdAt.desc(),
     ),
+    index("orders_run_id_correlation_id_idx").on(table.runId, table.correlationId),
     index("orders_correlation_id_idx").on(table.correlationId),
     index("orders_status_idx").on(table.status),
   ],
@@ -377,6 +378,7 @@ export const erpAttempts = pgTable(
       table.finishedAt.desc(),
       table.createdAt.desc(),
     ),
+    index("erp_attempts_run_id_correlation_id_idx").on(table.runId, table.correlationId),
   ],
 );
 
@@ -466,6 +468,7 @@ export const orderEvents = pgTable(
       table.occurredAt.desc(),
       table.createdAt.desc(),
     ),
+    index("order_events_run_id_correlation_id_idx").on(table.runId, table.correlationId),
     index("order_events_event_name_idx").on(table.eventName),
     index("order_events_occurred_at_idx").on(table.occurredAt),
     foreignKey({
@@ -544,6 +547,7 @@ export const simulatedNotifications = pgTable(
       table.recordedAt.desc(),
       table.createdAt.desc(),
     ),
+    index("simulated_notifications_run_id_correlation_id_idx").on(table.runId, table.correlationId),
   ],
 );
 

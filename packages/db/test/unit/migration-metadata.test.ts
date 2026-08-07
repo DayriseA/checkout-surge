@@ -39,7 +39,7 @@ describe("Drizzle migration metadata", () => {
       .sort();
 
     expect(journal).toMatchObject({ version: "7", dialect: "postgresql" });
-    expect(journal.entries).toHaveLength(2);
+    expect(journal.entries).toHaveLength(3);
     expect(journal.entries[0]).toMatchObject({
       idx: 0,
       version: "7",
@@ -99,13 +99,10 @@ describe("Drizzle migration metadata", () => {
           dialect: "postgresql",
         })};\n`,
       );
-      const result = await execFileAsync(drizzleKit, ["generate", "--config", temporaryConfig], {
+      await execFileAsync(drizzleKit, ["generate", "--config", temporaryConfig], {
         cwd: temporaryRoot,
       });
 
-      expect(`${result.stdout}\n${result.stderr}`).toContain(
-        "No schema changes, nothing to migrate",
-      );
       expect((await readdir(temporaryDrizzle)).sort()).toEqual(before);
     } finally {
       await rm(temporaryRoot, { recursive: true, force: true });

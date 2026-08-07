@@ -1,8 +1,11 @@
 import {
   type AdminDeleteRunHistoryRequest,
   type AdminDeleteRunHistoryResponse,
+  type AdminRunHistoryDetailFilter,
+  type AdminRunHistoryDetailQuery,
   type AdminRunHistoryDetailResponse,
   adminDeleteRunHistoryResponseSchema,
+  adminRunHistoryCursorSchema,
   adminRunHistoryDetailResponseSchema,
   countUnavailableLoadRunDiagnosticProbes,
   deriveLoadExecutionPlan,
@@ -48,7 +51,7 @@ import {
   orders,
   simulatedNotifications,
 } from "@checkout-surge/db";
-import { count, desc, eq, inArray, sql } from "drizzle-orm";
+import { type AnyColumn, and, count, desc, eq, inArray, type SQL, sql } from "drizzle-orm";
 import { toDemoRunSnapshot } from "./demo-run-projections.js";
 import {
   parsePersistedAcceptedRunConfigSnapshot,
@@ -64,10 +67,32 @@ import {
 
 const detailRecordLimit = 20;
 
+function filterCondition(
+  filter: AdminRunHistoryDetailFilter | undefined,
+  columns: Record<AdminRunHistoryDetailFilter["kind"], AnyColumn>,
+): SQL {
+  return filter ? eq(columns[filter.kind], filter.value) : sql`true`;
+}
+
+export function nextCursor(matchedCount: number, offset: number, returnedCount: number) {
+  const nextOffset = offset + returnedCount;
+  const cursor = `c${nextOffset}`;
+  return matchedCount > nextOffset && adminRunHistoryCursorSchema.safeParse(cursor).success
+    ? { nextCursor: cursor }
+    : {};
+}
+
+function recordsOmitted(matchedCount: number, returnedCount: number) {
+  return matchedCount > returnedCount;
+}
+
 export interface RunHistoryController {
   list(input: RunHistoryListQuery): Promise<RunHistoryListResponse>;
   detail(runId: string): Promise<PublicRunHistoryDetailResponse | null>;
-  adminDetail(runId: string): Promise<AdminRunHistoryDetailResponse | null>;
+  adminDetail(
+    runId: string,
+    query?: AdminRunHistoryDetailQuery,
+  ): Promise<AdminRunHistoryDetailResponse | null>;
   delete(
     input: AdminDeleteRunHistoryRequest,
     correlationId: string,
@@ -157,9 +182,84 @@ export class RunHistoryService implements RunHistoryController {
     });
   }
 
-  async adminDetail(runId: string): Promise<AdminRunHistoryDetailResponse | null> {
+  async adminDetail(
+    runId: string,
+    query: AdminRunHistoryDetailQuery = { limit: detailRecordLimit },
+  ): Promise<AdminRunHistoryDetailResponse | null> {
     const source = await this.readDetailSource(runId);
     if (!source) return null;
+    const offset = query.cursor ? Number(query.cursor.slice(1)) : 0;
+    const orderFilter = filterCondition(query.filter, {
+      orderId: orders.id,
+      publicOrderId: orders.publicOrderId,
+      correlationId: orders.correlationId,
+    });
+    const erpAttemptFilter = filterCondition(query.filter, {
+      orderId: erpAttempts.orderId,
+      publicOrderId: orders.publicOrderId,
+      correlationId: erpAttempts.correlationId,
+    });
+    const notificationFilter = filterCondition(query.filter, {
+      orderId: simulatedNotifications.orderId,
+      publicOrderId: orders.publicOrderId,
+      correlationId: simulatedNotifications.correlationId,
+    });
+    const eventFilter = filterCondition(query.filter, {
+      orderId: orderEvents.orderId,
+      publicOrderId: orders.publicOrderId,
+      correlationId: orderEvents.correlationId,
+    });
+    let erpAttemptCountQuery = this.options.db
+      .select({
+        totalCount: count(),
+        matchedCount: sql<number>`(count(*) filter (where ${erpAttemptFilter}))::int`,
+        warningCount: sql<number>`(count(*) filter (where ${erpAttemptFilter} and (${erpAttempts.status} in ('failed', 'timed_out') or not ${erpAttempts.terminal})))::int`,
+        succeeded: sql<number>`(count(*) filter (where ${erpAttempts.status} = 'succeeded'))::int`,
+        failed: sql<number>`(count(*) filter (where ${erpAttempts.status} = 'failed'))::int`,
+        timedOut: sql<number>`(count(*) filter (where ${erpAttempts.status} = 'timed_out'))::int`,
+        averageLatencyMs: sql<number | null>`avg(${erpAttempts.latencyMs})::double precision`,
+        p95LatencyMs: sql<
+          number | null
+        >`percentile_cont(0.95) within group (order by ${erpAttempts.latencyMs})::double precision`,
+      })
+      .from(erpAttempts)
+      .$dynamic();
+    if (query.filter?.kind === "publicOrderId") {
+      erpAttemptCountQuery = erpAttemptCountQuery.innerJoin(
+        orders,
+        eq(erpAttempts.orderId, orders.id),
+      );
+    }
+    const erpAttemptCounts = erpAttemptCountQuery.where(eq(erpAttempts.runId, runId));
+
+    let notificationCountQuery = this.options.db
+      .select({
+        totalCount: count(),
+        matchedCount: sql<number>`(count(*) filter (where ${notificationFilter}))::int`,
+      })
+      .from(simulatedNotifications)
+      .$dynamic();
+    if (query.filter?.kind === "publicOrderId") {
+      notificationCountQuery = notificationCountQuery.innerJoin(
+        orders,
+        eq(simulatedNotifications.orderId, orders.id),
+      );
+    }
+    const notificationCounts = notificationCountQuery.where(
+      eq(simulatedNotifications.runId, runId),
+    );
+
+    let eventCountQuery = this.options.db
+      .select({
+        totalCount: count(),
+        matchedCount: sql<number>`(count(*) filter (where ${eventFilter}))::int`,
+      })
+      .from(orderEvents)
+      .$dynamic();
+    if (query.filter?.kind === "publicOrderId") {
+      eventCountQuery = eventCountQuery.leftJoin(orders, eq(orderEvents.orderId, orders.id));
+    }
+    const eventCounts = eventCountQuery.where(eq(orderEvents.runId, runId));
 
     const [
       orderRows,
@@ -174,13 +274,15 @@ export class RunHistoryService implements RunHistoryController {
       this.options.db
         .select()
         .from(orders)
-        .where(eq(orders.runId, runId))
-        .orderBy(desc(orders.queuedAt), desc(orders.createdAt))
-        .limit(detailRecordLimit),
+        .where(and(eq(orders.runId, runId), orderFilter))
+        .orderBy(desc(orders.queuedAt), desc(orders.createdAt), desc(orders.id))
+        .limit(query.limit)
+        .offset(offset),
       this.options.db
         .select({
           totalCount: count(),
-          warningCount: sql<number>`(count(*) filter (where ${orders.status} = 'failed'))::int`,
+          matchedCount: sql<number>`(count(*) filter (where ${orderFilter}))::int`,
+          warningCount: sql<number>`(count(*) filter (where ${orderFilter} and ${orders.status} = 'failed'))::int`,
         })
         .from(orders)
         .where(eq(orders.runId, runId)),
@@ -202,40 +304,31 @@ export class RunHistoryService implements RunHistoryController {
         })
         .from(erpAttempts)
         .innerJoin(orders, eq(erpAttempts.orderId, orders.id))
-        .where(eq(erpAttempts.runId, runId))
-        .orderBy(desc(erpAttempts.finishedAt), desc(erpAttempts.createdAt))
-        .limit(detailRecordLimit),
-      this.options.db
-        .select({
-          totalCount: count(),
-          warningCount: sql<number>`(count(*) filter (where ${erpAttempts.status} in ('failed', 'timed_out') or not ${erpAttempts.terminal}))::int`,
-          succeeded: sql<number>`(count(*) filter (where ${erpAttempts.status} = 'succeeded'))::int`,
-          failed: sql<number>`(count(*) filter (where ${erpAttempts.status} = 'failed'))::int`,
-          timedOut: sql<number>`(count(*) filter (where ${erpAttempts.status} = 'timed_out'))::int`,
-          averageLatencyMs: sql<number | null>`avg(${erpAttempts.latencyMs})::double precision`,
-          p95LatencyMs: sql<
-            number | null
-          >`percentile_cont(0.95) within group (order by ${erpAttempts.latencyMs})::double precision`,
-        })
-        .from(erpAttempts)
-        .where(eq(erpAttempts.runId, runId)),
+        .where(and(eq(erpAttempts.runId, runId), erpAttemptFilter))
+        .orderBy(desc(erpAttempts.finishedAt), desc(erpAttempts.createdAt), desc(erpAttempts.id))
+        .limit(query.limit)
+        .offset(offset),
+      erpAttemptCounts,
       this.options.db
         .select({
           notificationId: simulatedNotifications.id,
           orderId: simulatedNotifications.orderId,
           publicOrderId: orders.publicOrderId,
+          correlationId: simulatedNotifications.correlationId,
           recordedAt: simulatedNotifications.recordedAt,
           createdAt: simulatedNotifications.createdAt,
         })
         .from(simulatedNotifications)
         .innerJoin(orders, eq(simulatedNotifications.orderId, orders.id))
-        .where(eq(simulatedNotifications.runId, runId))
-        .orderBy(desc(simulatedNotifications.recordedAt), desc(simulatedNotifications.createdAt))
-        .limit(detailRecordLimit),
-      this.options.db
-        .select({ totalCount: count() })
-        .from(simulatedNotifications)
-        .where(eq(simulatedNotifications.runId, runId)),
+        .where(and(eq(simulatedNotifications.runId, runId), notificationFilter))
+        .orderBy(
+          desc(simulatedNotifications.recordedAt),
+          desc(simulatedNotifications.createdAt),
+          desc(simulatedNotifications.id),
+        )
+        .limit(query.limit)
+        .offset(offset),
+      notificationCounts,
       this.options.db
         .select({
           eventId: orderEvents.id,
@@ -250,32 +343,35 @@ export class RunHistoryService implements RunHistoryController {
         })
         .from(orderEvents)
         .leftJoin(orders, eq(orderEvents.orderId, orders.id))
-        .where(eq(orderEvents.runId, runId))
-        .orderBy(desc(orderEvents.occurredAt), desc(orderEvents.createdAt))
-        .limit(detailRecordLimit),
-      this.options.db
-        .select({ totalCount: count() })
-        .from(orderEvents)
-        .where(eq(orderEvents.runId, runId)),
+        .where(and(eq(orderEvents.runId, runId), eventFilter))
+        .orderBy(desc(orderEvents.occurredAt), desc(orderEvents.createdAt), desc(orderEvents.id))
+        .limit(query.limit)
+        .offset(offset),
+      eventCounts,
     ]);
 
     const orderTotalCount = orderTotalRows[0]?.totalCount ?? 0;
     const erpAttemptTotalCount = erpAttemptTotalRows[0]?.totalCount ?? 0;
     const notificationTotalCount = notificationTotalRows[0]?.totalCount ?? 0;
     const eventTotalCount = eventTotalRows[0]?.totalCount ?? 0;
+    const orderMatchedCount = orderTotalRows[0]?.matchedCount ?? 0;
+    const erpAttemptMatchedCount = erpAttemptTotalRows[0]?.matchedCount ?? 0;
+    const notificationMatchedCount = notificationTotalRows[0]?.matchedCount ?? 0;
+    const eventMatchedCount = eventTotalRows[0]?.matchedCount ?? 0;
     const summary = toRunHistorySummary(source.summaryRow);
     const diagnostics = parseRunHistoryDiagnostics(
       source.summaryRow.loadRunDiagnosticsSummary,
       `run summary ${source.summaryRow.id} for demo run ${source.summaryRow.runId}`,
     );
     const truncatedCollections = [
-      orderTotalCount,
-      erpAttemptTotalCount,
-      notificationTotalCount,
-      eventTotalCount,
-    ].filter((totalCount) => totalCount > detailRecordLimit).length;
+      recordsOmitted(orderMatchedCount, orderRows.length),
+      recordsOmitted(erpAttemptMatchedCount, erpAttemptRows.length),
+      recordsOmitted(notificationMatchedCount, notificationRows.length),
+      recordsOmitted(eventMatchedCount, eventRows.length),
+    ].filter(Boolean).length;
 
     return adminRunHistoryDetailResponseSchema.parse({
+      query,
       summary,
       run: toDemoRunSnapshot(source.runRow),
       exceptionSummary: toRunHistoryExceptionSummary(summary, diagnostics, truncatedCollections),
@@ -296,16 +392,20 @@ export class RunHistoryService implements RunHistoryController {
       orders: {
         records: orderRows.map(toRunHistoryOrderOutcome),
         totalCount: orderTotalCount,
+        matchedCount: orderMatchedCount,
         warningCount: orderTotalRows[0]?.warningCount ?? 0,
-        limit: detailRecordLimit,
-        truncated: orderTotalCount > detailRecordLimit,
+        limit: query.limit,
+        truncated: recordsOmitted(orderMatchedCount, orderRows.length),
+        ...nextCursor(orderMatchedCount, offset, orderRows.length),
       },
       erpAttempts: {
         records: erpAttemptRows.map(toRunHistoryErpAttempt),
         totalCount: erpAttemptTotalCount,
+        matchedCount: erpAttemptMatchedCount,
         warningCount: erpAttemptTotalRows[0]?.warningCount ?? 0,
-        limit: detailRecordLimit,
-        truncated: erpAttemptTotalCount > detailRecordLimit,
+        limit: query.limit,
+        truncated: recordsOmitted(erpAttemptMatchedCount, erpAttemptRows.length),
+        ...nextCursor(erpAttemptMatchedCount, offset, erpAttemptRows.length),
       },
       erpAttemptSummary: {
         totalCount: erpAttemptTotalCount,
@@ -320,16 +420,20 @@ export class RunHistoryService implements RunHistoryController {
       notifications: {
         records: notificationRows.map(toRunHistoryNotification),
         totalCount: notificationTotalCount,
+        matchedCount: notificationMatchedCount,
         warningCount: 0,
-        limit: detailRecordLimit,
-        truncated: notificationTotalCount > detailRecordLimit,
+        limit: query.limit,
+        truncated: recordsOmitted(notificationMatchedCount, notificationRows.length),
+        ...nextCursor(notificationMatchedCount, offset, notificationRows.length),
       },
       eventTimeline: {
         records: eventRows.map(toRunHistoryEventTimelineEntry),
         totalCount: eventTotalCount,
+        matchedCount: eventMatchedCount,
         warningCount: 0,
-        limit: detailRecordLimit,
-        truncated: eventTotalCount > detailRecordLimit,
+        limit: query.limit,
+        truncated: recordsOmitted(eventMatchedCount, eventRows.length),
+        ...nextCursor(eventMatchedCount, offset, eventRows.length),
       },
       runSignalTimelineSummary: parseRunSignalTimelineSummary(source.summaryRow),
       timestamp: this.now().toISOString(),
@@ -719,12 +823,14 @@ function toRunHistoryNotification(row: {
   notificationId: string;
   orderId: string;
   publicOrderId: string;
+  correlationId: string;
   recordedAt: Date;
 }): RunHistoryNotification {
   return runHistoryNotificationSchema.parse({
     notificationId: row.notificationId,
     orderId: row.orderId,
     publicOrderId: row.publicOrderId,
+    correlationId: row.correlationId,
     recordedAt: row.recordedAt.toISOString(),
   });
 }

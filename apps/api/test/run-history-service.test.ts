@@ -21,7 +21,7 @@ import {
 import { requireTestDatabaseUrl, resetTestDatabase } from "@checkout-surge/db/testing";
 import { eq, inArray } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { RunHistoryService } from "../src/services/run-history-service.js";
+import { nextCursor, RunHistoryService } from "../src/services/run-history-service.js";
 
 const ids = {
   product: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
@@ -53,6 +53,11 @@ describe("run history service", () => {
 
   afterAll(async () => {
     await connection?.close();
+  });
+
+  it("does not emit a cursor beyond the accepted request ceiling", () => {
+    expect(nextCursor(1_000_100, 999_999, 100)).toEqual({});
+    expect(nextCursor(1_000_001, 999_999, 1)).toEqual({ nextCursor: "c1000000" });
   });
 
   it("returns empty public history with stable pagination metadata", async () => {
@@ -755,6 +760,125 @@ describe("run history service", () => {
       expect.objectContaining({ publicOrderId: "ord_admin_history_1" }),
     );
     expect(detail?.exceptionSummary.truncatedCollections).toBe(1);
+
+    const expandedDetail = await service.adminDetail(ids.newerRun, { limit: 100 });
+    expect(expandedDetail?.orders.records).toHaveLength(21);
+    expect(expandedDetail?.orders.truncated).toBe(false);
+    expect(expandedDetail?.exceptionSummary.truncatedCollections).toBe(0);
+  });
+
+  it("filters before the protected record limit", async () => {
+    const db = requireConnection(connection).db;
+    const service = createService(connection);
+    await seedHistory(db);
+    await seedAdminOrders(db, 21);
+
+    const detail = await service.adminDetail(ids.newerRun, {
+      filter: { kind: "publicOrderId", value: "ord_admin_history_1" },
+      limit: 20,
+    });
+
+    expect(detail?.orders).toMatchObject({
+      totalCount: 21,
+      matchedCount: 1,
+      truncated: false,
+      records: [{ publicOrderId: "ord_admin_history_1" }],
+    });
+  });
+
+  it("filters linked protected collections by correlation", async () => {
+    const db = requireConnection(connection).db;
+    const service = createService(connection);
+    await seedHistory(db);
+    await seedRunDetailRecords(db);
+
+    const detail = await service.adminDetail(ids.newerRun, {
+      filter: { kind: "correlationId", value: "corr-history-detail" },
+      limit: 20,
+    });
+
+    expect(detail?.orders).toMatchObject({ matchedCount: 1 });
+    expect(detail?.erpAttempts).toMatchObject({ matchedCount: 1 });
+    expect(detail?.notifications).toMatchObject({ matchedCount: 1 });
+    expect(detail?.eventTimeline).toMatchObject({ matchedCount: 2 });
+    expect(detail?.notifications.records[0]?.correlationId).toBe("corr-history-detail");
+  });
+
+  it("applies per-collection limits and cursors independently", async () => {
+    const db = requireConnection(connection).db;
+    const service = createService(connection);
+    await seedHistory(db);
+    await seedRunDetailRecords(db);
+
+    const detail = await service.adminDetail(ids.newerRun, {
+      filter: { kind: "correlationId", value: "corr-history-detail" },
+      limit: 1,
+    });
+
+    expect(detail?.orders).toMatchObject({ matchedCount: 1, truncated: false });
+    expect(detail?.orders.nextCursor).toBeUndefined();
+    expect(detail?.erpAttempts).toMatchObject({ matchedCount: 1, truncated: false });
+    expect(detail?.erpAttempts.nextCursor).toBeUndefined();
+    expect(detail?.notifications).toMatchObject({ matchedCount: 1, truncated: false });
+    expect(detail?.notifications.nextCursor).toBeUndefined();
+    expect(detail?.eventTimeline).toMatchObject({
+      matchedCount: 2,
+      truncated: true,
+      nextCursor: "c1",
+    });
+    expect(detail?.exceptionSummary.truncatedCollections).toBe(1);
+  });
+
+  it("returns explicit empty matches for a protected filter", async () => {
+    const db = requireConnection(connection).db;
+    const service = createService(connection);
+    await seedHistory(db);
+
+    const detail = await service.adminDetail(ids.newerRun, {
+      filter: { kind: "correlationId", value: "corr-not-in-this-run" },
+      limit: 20,
+    });
+
+    for (const collection of [
+      detail?.orders,
+      detail?.erpAttempts,
+      detail?.notifications,
+      detail?.eventTimeline,
+    ]) {
+      expect(collection).toMatchObject({ matchedCount: 0, records: [], truncated: false });
+    }
+  });
+
+  it("orders protected records deterministically and applies the opaque cursor", async () => {
+    const db = requireConnection(connection).db;
+    const service = createService(connection);
+    await seedHistory(db);
+    await seedAdminOrders(db, 2);
+    await db
+      .update(orders)
+      .set({
+        queuedAt: new Date("2026-06-20T00:00:02.000Z"),
+        processingAt: new Date("2026-06-20T00:00:02.000Z"),
+        confirmedAt: new Date("2026-06-20T00:00:02.000Z"),
+        createdAt: new Date("2026-06-20T00:00:02.000Z"),
+      })
+      .where(eq(orders.runId, ids.newerRun));
+
+    const exact = await service.adminDetail(ids.newerRun, { limit: 2 });
+    const first = await service.adminDetail(ids.newerRun, { limit: 1 });
+    const second = await service.adminDetail(ids.newerRun, { limit: 1, cursor: "c1" });
+    const empty = await service.adminDetail(ids.newerRun, { limit: 1, cursor: "c2" });
+
+    expect(exact?.orders).toMatchObject({ matchedCount: 2, truncated: false });
+    expect(exact?.orders.nextCursor).toBeUndefined();
+    expect(first?.orders.records[0]?.orderId).toBe("20000000-0000-4000-8000-000000000002");
+    expect(first?.orders).toMatchObject({ nextCursor: "c1", truncated: true });
+    expect(second?.orders.records[0]?.orderId).toBe("20000000-0000-4000-8000-000000000001");
+    expect(second?.orders).toMatchObject({ matchedCount: 2, truncated: true });
+    expect(second?.orders.nextCursor).toBeUndefined();
+    expect(empty?.orders).toMatchObject({ matchedCount: 2, records: [], truncated: true });
+    expect(empty?.orders.nextCursor).toBeUndefined();
+    expect(empty?.exceptionSummary.truncatedCollections).toBe(1);
   });
 
   it("returns explicit zero buckets and null ERP latency for empty live sets", async () => {

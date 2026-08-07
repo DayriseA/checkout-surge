@@ -15,6 +15,7 @@ import {
   trafficModeLabel,
 } from "../lib/presentation/public-vocabulary";
 import { deriveOverallRunDuration } from "../lib/presentation/run-duration";
+import { buildRunHistoryTrace } from "../lib/presentation/run-history-trace";
 import { deriveTerminalSummaryPresentation } from "../lib/presentation/run-presentation-state";
 import {
   evidenceFromRunHistoryDetail,
@@ -42,6 +43,9 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
   const failure = summary.failureCategory
     ? publicFailureExplanation(summary.failureCategory)
     : null;
+  const trace = detail.query.filter ? buildRunHistoryTrace(detail) : [];
+  const filtered = detail.query.filter !== undefined;
+  const cursorPaged = detail.query.cursor !== undefined;
 
   return (
     <div className="grid gap-4">
@@ -298,8 +302,40 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
         warningCount={detail.exceptionSummary.generatorWarnings}
       />
 
+      <RunHistoryFilter detail={detail} />
+
+      {detail.query.filter && trace.length > 0 ? (
+        <section className="rounded-lg border border-border bg-surface p-4">
+          <h2 className="m-0 text-base font-bold leading-tight text-ink">Chronological trace</h2>
+          <p className="m-0 mt-1 text-sm text-muted">
+            Related records are ordered by timestamp, source type, then identifier.
+          </p>
+          <div className="mt-3 overflow-x-auto">
+            <DenseTable
+              accessibleName="Chronological trace"
+              headers={["Time", "Source", "Order", "Activity", "Details"]}
+              rows={trace.map((entry) => ({
+                id: `${entry.source}-${entry.id}`,
+                identity: `${entry.source} ${entry.id}`,
+                cells: [
+                  formatDate(entry.timestamp),
+                  entry.source,
+                  entry.publicOrderId ?? "Run-level",
+                  entry.activity,
+                ],
+                details: entry.details.map(
+                  ([label, value]) => [label, codeValue(value)] as [string, ReactNode],
+                ),
+              }))}
+            />
+          </div>
+        </section>
+      ) : null}
+
       <section className="rounded-lg border border-border bg-surface p-4">
         <CollectionHeader
+          filtered={detail.query.filter !== undefined}
+          matchedCount={detail.orders.matchedCount}
           warningCount={detail.orders.warningCount}
           title="Order outcomes"
           totalCount={detail.orders.totalCount}
@@ -344,14 +380,28 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
               }))}
             />
           ) : (
-            <EmptyCollection label="No order outcomes were recorded for this run." />
+            <EmptyCollection
+              label={collectionEmptyLabel(
+                filtered,
+                cursorPaged,
+                detail.orders.matchedCount,
+                "order outcomes",
+                "No order outcomes were recorded for this run.",
+              )}
+            />
           )}
         </div>
       </section>
 
       <section className="grid grid-cols-3 gap-4 max-[1100px]:grid-cols-1">
         <CollectionPanel
-          emptyLabel="No ERP attempts were recorded."
+          emptyLabel={collectionEmptyLabel(
+            filtered,
+            cursorPaged,
+            detail.erpAttempts.matchedCount,
+            "ERP attempts",
+            "No ERP attempts were recorded.",
+          )}
           headers={["Order / attempt", "Status", "Latency", "Finished", "Details"]}
           records={detail.erpAttempts.records.map((attempt) => ({
             id: attempt.attemptId,
@@ -385,12 +435,20 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
             ],
           }))}
           title="ERP attempts"
+          filtered={detail.query.filter !== undefined}
+          matchedCount={detail.erpAttempts.matchedCount}
           totalCount={detail.erpAttempts.totalCount}
           truncated={detail.erpAttempts.truncated}
           warningCount={detail.erpAttempts.warningCount}
         />
         <CollectionPanel
-          emptyLabel="No simulated notifications were recorded."
+          emptyLabel={collectionEmptyLabel(
+            filtered,
+            cursorPaged,
+            detail.notifications.matchedCount,
+            "simulated notifications",
+            "No simulated notifications were recorded.",
+          )}
           headers={["Public order", "Recorded", "Details"]}
           records={detail.notifications.records.map((notification) => ({
             id: notification.notificationId,
@@ -399,15 +457,24 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
             details: [
               ["Notification", codeValue(notification.notificationId)],
               ["Internal order", codeValue(notification.orderId)],
+              ["Correlation", codeValue(notification.correlationId)],
             ],
           }))}
           title={publicVocabulary.notifications}
+          filtered={detail.query.filter !== undefined}
+          matchedCount={detail.notifications.matchedCount}
           totalCount={detail.notifications.totalCount}
           truncated={detail.notifications.truncated}
           warningCount={detail.notifications.warningCount}
         />
         <CollectionPanel
-          emptyLabel="No event timeline entries were recorded."
+          emptyLabel={collectionEmptyLabel(
+            filtered,
+            cursorPaged,
+            detail.eventTimeline.matchedCount,
+            "the event timeline",
+            "No event timeline entries were recorded.",
+          )}
           headers={["Event", "Order", "Occurred", "Details"]}
           records={detail.eventTimeline.records.map((event) => ({
             id: event.eventId,
@@ -424,6 +491,8 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
             ],
           }))}
           title="Event timeline"
+          filtered={detail.query.filter !== undefined}
+          matchedCount={detail.eventTimeline.matchedCount}
           totalCount={detail.eventTimeline.totalCount}
           truncated={detail.eventTimeline.truncated}
           warningCount={detail.eventTimeline.warningCount}
@@ -433,11 +502,96 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
   );
 }
 
+function RunHistoryFilter({ detail }: { detail: AdminRunHistoryDetailResponse }) {
+  const filter = detail.query.filter;
+  const collections = [
+    detail.orders,
+    detail.erpAttempts,
+    detail.notifications,
+    detail.eventTimeline,
+  ];
+  const matchedCount = collections.reduce(
+    (total, collection) => total + collection.matchedCount,
+    0,
+  );
+  const truncated = collections.some((collection) => collection.truncated);
+
+  return (
+    <section
+      aria-label="Search this run"
+      className="rounded-lg border border-border bg-surface p-4"
+    >
+      <h2 className="m-0 text-base font-bold leading-tight text-ink">Search this run</h2>
+      <p className="m-0 mt-1 text-sm text-muted">
+        Search the protected run dataset, including records outside the recent-record view.
+      </p>
+      <form className="mt-3 flex flex-wrap items-end gap-3" method="get">
+        <label className="grid gap-1 text-sm font-semibold text-muted-strong">
+          Identifier type
+          <select
+            className="min-h-10 rounded-lg border border-border bg-surface px-3"
+            defaultValue={filter?.kind ?? "publicOrderId"}
+            name="filterKind"
+          >
+            <option value="orderId">Internal order ID</option>
+            <option value="publicOrderId">Public order ID</option>
+            <option value="correlationId">Correlation ID</option>
+          </select>
+        </label>
+        <label className="grid min-w-[18rem] flex-1 gap-1 text-sm font-semibold text-muted-strong">
+          Identifier
+          <input
+            className="min-h-10 rounded-lg border border-border bg-surface px-3"
+            defaultValue={filter?.value ?? ""}
+            name="filterValue"
+            placeholder="Enter an exact identifier"
+            required
+            type="search"
+          />
+        </label>
+        <button
+          className="min-h-10 rounded-lg bg-accent px-4 py-2 font-semibold text-white"
+          type="submit"
+        >
+          Search
+        </button>
+        {filter ? (
+          <a
+            className="inline-flex min-h-10 items-center rounded-lg border border-border px-3.5 py-2 font-semibold text-muted-strong"
+            href={`/run-history/${encodeURIComponent(detail.summary.runId)}`}
+          >
+            Clear
+          </a>
+        ) : null}
+      </form>
+      {filter ? (
+        <p
+          className={`m-0 mt-3 text-sm font-semibold ${matchedCount === 0 ? "text-warning" : "text-muted-strong"}`}
+          role="status"
+        >
+          {matchedCount === 0
+            ? `No records matched ${filter.kind} “${filter.value}” in this run.`
+            : `${formatNumber(matchedCount)} record matches across all collections for ${filter.kind} “${filter.value}”.`}
+          {truncated ? " Some matching records are omitted from this response." : ""}
+        </p>
+      ) : (
+        <p className="m-0 mt-3 text-sm font-semibold text-muted-strong">
+          {detail.query.cursor
+            ? `Showing up to ${formatNumber(detail.query.limit)} records per collection for this page.`
+            : `Showing the newest ${formatNumber(detail.query.limit)} records per collection.`}
+        </p>
+      )}
+    </section>
+  );
+}
+
 function CollectionPanel({
   emptyLabel,
   headers,
   records,
   title,
+  filtered,
+  matchedCount,
   totalCount,
   truncated,
   warningCount,
@@ -451,6 +605,8 @@ function CollectionPanel({
     details: Array<[string, ReactNode]>;
   }>;
   title: string;
+  filtered: boolean;
+  matchedCount: number;
   totalCount: number;
   truncated: boolean;
   warningCount: number;
@@ -458,6 +614,8 @@ function CollectionPanel({
   return (
     <section className="rounded-lg border border-border bg-surface p-4">
       <CollectionHeader
+        filtered={filtered}
+        matchedCount={matchedCount}
         title={title}
         totalCount={totalCount}
         truncated={truncated}
@@ -474,12 +632,32 @@ function CollectionPanel({
   );
 }
 
+function collectionEmptyLabel(
+  filtered: boolean,
+  cursorPaged: boolean,
+  matchedCount: number,
+  collection: string,
+  defaultLabel: string,
+) {
+  if (!filtered && !cursorPaged) return defaultLabel;
+  if (!filtered) {
+    return `No records are included on this page in ${collection}; the page may be beyond the recorded set.`;
+  }
+  return matchedCount === 0
+    ? `No records matched this search in ${collection}.`
+    : `No matching records are included on this page in ${collection}.`;
+}
+
 function CollectionHeader({
+  filtered,
+  matchedCount,
   title,
   totalCount,
   truncated,
   warningCount,
 }: {
+  filtered: boolean;
+  matchedCount: number;
   title: string;
   totalCount: number;
   truncated: boolean;
@@ -492,8 +670,11 @@ function CollectionHeader({
       <p
         className={`m-0 text-xs font-bold uppercase ${needsAttention ? "text-warning" : "text-muted"}`}
       >
-        {formatNumber(totalCount)} total · {formatNumber(warningCount)} warnings
-        {truncated ? " · truncated to recent records" : " · complete"}
+        {filtered
+          ? `${formatNumber(matchedCount)} matches of ${formatNumber(totalCount)} total`
+          : `${formatNumber(totalCount)} total`}{" "}
+        · {formatNumber(warningCount)} warnings
+        {truncated ? " · records omitted" : " · complete"}
       </p>
     </div>
   );

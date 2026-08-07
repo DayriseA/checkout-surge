@@ -14,8 +14,10 @@ import {
   adminPublicRuntimePolicyPath,
   adminPublicRuntimePolicyResponseSchema,
   adminPublicRuntimePolicyUpdateRequestSchema,
+  adminRunHistoryDetailHttpQuerySchema,
   adminRunHistoryDetailPath,
   adminRunHistoryDetailPathTemplate,
+  adminRunHistoryDetailQuerySchema,
   adminRunHistoryDetailResponseSchema,
   archiveAdminPresetRequestSchema,
   archiveAdminPresetResponseSchema,
@@ -2341,6 +2343,40 @@ describe("public runtime policy contract", () => {
     expect(runHistoryDetailPathTemplate).toBe("/demo/runs/history/:runId");
     expect(runHistoryDetailPath(runId)).toBe(`/demo/runs/history/${runId}`);
     expect(runHistoryDetailParamsSchema.parse({ runId })).toEqual({ runId });
+    expect(
+      adminRunHistoryDetailHttpQuerySchema.parse({
+        filterKind: "orderId",
+        filterValue: runId,
+        limit: "10",
+        cursor: "c10",
+      }),
+    ).toEqual({
+      filter: { kind: "orderId", value: runId },
+      limit: 10,
+      cursor: "c10",
+    });
+    expect(adminRunHistoryDetailQuerySchema.parse({})).toEqual({ limit: 20 });
+    expect(() =>
+      adminRunHistoryDetailHttpQuerySchema.parse({
+        filterKind: "correlationId",
+      }),
+    ).toThrow();
+    expect(() =>
+      adminRunHistoryDetailQuerySchema.parse({
+        filter: { kind: "orderId", value: "not-a-uuid" },
+      }),
+    ).toThrow();
+    expect(
+      adminRunHistoryDetailHttpQuerySchema.safeParse({
+        filterKind: "orderId",
+        filterValue: "not-a-uuid",
+      }).success,
+    ).toBe(false);
+    expect(() => adminRunHistoryDetailHttpQuerySchema.parse({ cursor: "bad" })).toThrow();
+    expect(() =>
+      adminRunHistoryDetailHttpQuerySchema.parse({ cursor: `c${"9".repeat(400)}` }),
+    ).toThrow();
+    expect(() => adminRunHistoryDetailQuerySchema.parse({ cursor: "c1000001" })).toThrow();
     expect(adminGeneratedRunTeardownPath(runId)).toBe(`/admin/demo/runs/${runId}`);
     expect(adminGeneratedRunTeardownPathTemplate).toBe("/admin/demo/runs/:runId");
     expect(adminGeneratedRunTeardownParamsSchema.parse({ runId })).toEqual({ runId });
@@ -2471,6 +2507,7 @@ describe("public runtime policy contract", () => {
     expect(adminRunHistoryDetailPath(runId)).toBe(`/admin/demo/runs/history/${runId}`);
     expect(() =>
       adminRunHistoryDetailResponseSchema.parse({
+        query: { limit: 20 },
         summary,
         run: { ...detail.run, presetId: "33333333-3333-4333-8333-333333333333", saleOfferId },
         exceptionSummary: {
@@ -2486,6 +2523,7 @@ describe("public runtime policy contract", () => {
         loadRunDiagnosticsSummary: runnerDiagnostics(),
         orders: {
           totalCount: 1,
+          matchedCount: 1,
           warningCount: 0,
           limit: 20,
           truncated: false,
@@ -2505,6 +2543,7 @@ describe("public runtime policy contract", () => {
         },
         erpAttempts: {
           totalCount: 1,
+          matchedCount: 1,
           warningCount: 0,
           limit: 20,
           truncated: false,
@@ -2527,6 +2566,7 @@ describe("public runtime policy contract", () => {
         erpAttemptSummary: detail.erpAttempts,
         notifications: {
           totalCount: 1,
+          matchedCount: 1,
           warningCount: 0,
           limit: 20,
           truncated: false,
@@ -2535,12 +2575,14 @@ describe("public runtime policy contract", () => {
               notificationId: "99999999-9999-4999-8999-999999999993",
               orderId: "99999999-9999-4999-8999-999999999991",
               publicOrderId: "ord_history_1",
+              correlationId,
               recordedAt: timestamp,
             },
           ],
         },
         eventTimeline: {
           totalCount: 1,
+          matchedCount: 1,
           warningCount: 0,
           limit: 20,
           truncated: false,

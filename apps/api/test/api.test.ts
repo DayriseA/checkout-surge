@@ -672,6 +672,7 @@ function adminRunHistoryDetailResponseFixture(): AdminRunHistoryDetailResponse {
   const summary = runHistorySummaryFixture();
 
   return {
+    query: { limit: 20 },
     summary,
     exceptionSummary: {
       maximumClassification: "expected_population_difference",
@@ -694,6 +695,7 @@ function adminRunHistoryDetailResponseFixture(): AdminRunHistoryDetailResponse {
     }),
     orders: {
       totalCount: 1,
+      matchedCount: 1,
       warningCount: 0,
       limit: 20,
       truncated: false,
@@ -713,6 +715,7 @@ function adminRunHistoryDetailResponseFixture(): AdminRunHistoryDetailResponse {
     },
     erpAttempts: {
       totalCount: 1,
+      matchedCount: 1,
       warningCount: 0,
       limit: 20,
       truncated: false,
@@ -740,6 +743,7 @@ function adminRunHistoryDetailResponseFixture(): AdminRunHistoryDetailResponse {
     },
     notifications: {
       totalCount: 1,
+      matchedCount: 1,
       warningCount: 0,
       limit: 20,
       truncated: false,
@@ -748,12 +752,14 @@ function adminRunHistoryDetailResponseFixture(): AdminRunHistoryDetailResponse {
           notificationId: "99999999-9999-4999-8999-999999999993",
           orderId: "99999999-9999-4999-8999-999999999991",
           publicOrderId: "ord_history_1",
+          correlationId: fixtureCorrelationId,
           recordedAt: "2026-06-20T00:00:07.000Z",
         },
       ],
     },
     eventTimeline: {
       totalCount: 1,
+      matchedCount: 1,
       warningCount: 0,
       limit: 20,
       truncated: false,
@@ -797,8 +803,8 @@ function runHistoryControllerFixture(): RunHistoryController {
     }),
     detail: async (runId) =>
       runId === fixtureIds.run ? publicRunHistoryDetailResponseFixture() : null,
-    adminDetail: async (runId) =>
-      runId === fixtureIds.run ? adminRunHistoryDetailResponseFixture() : null,
+    adminDetail: async (runId, query = { limit: 20 }) =>
+      runId === fixtureIds.run ? { ...adminRunHistoryDetailResponseFixture(), query } : null,
     delete: async (_input, correlationId) => ({
       deletedSummaryCount: 1,
       deletedAt: "2026-06-20T00:00:10.000Z",
@@ -1775,14 +1781,14 @@ describe("API gateway routes", () => {
     });
     const unauthorized = await adminServer.inject({
       method: "GET",
-      url: adminRunHistoryDetailPath(fixtureIds.run),
+      url: `${adminRunHistoryDetailPath(fixtureIds.run)}?filterKind=correlationId&filterValue=${fixtureCorrelationId}`,
     });
     expect(unauthorized.statusCode).toBe(401);
     expect(unauthorized.headers["cache-control"]).toBe("no-store");
     expect(adminDetail).not.toHaveBeenCalled();
     const authorized = await adminServer.inject({
       method: "GET",
-      url: adminRunHistoryDetailPath(fixtureIds.run),
+      url: `${adminRunHistoryDetailPath(fixtureIds.run)}?filterKind=correlationId&filterValue=${fixtureCorrelationId}&limit=10`,
       headers: { [controlServiceTokenHeaderName]: "test-control-token" },
     });
     const adminPayload = adminRunHistoryDetailResponseSchema.parse(authorized.json());
@@ -1790,6 +1796,14 @@ describe("API gateway routes", () => {
     expect(authorized.headers["cache-control"]).toBe("no-store");
     expect(adminPayload.orders.records[0]?.orderId).toBe("99999999-9999-4999-8999-999999999991");
     expect(adminPayload.orders.records[0]?.correlationId).toBe(fixtureCorrelationId);
+    expect(adminPayload.query).toEqual({
+      filter: { kind: "correlationId", value: fixtureCorrelationId },
+      limit: 10,
+    });
+    expect(adminDetail).toHaveBeenCalledWith(fixtureIds.run, {
+      filter: { kind: "correlationId", value: fixtureCorrelationId },
+      limit: 10,
+    });
     const adminMissing = await adminServer.inject({
       method: "GET",
       url: adminRunHistoryDetailPath("ffffffff-ffff-4fff-8fff-ffffffffffff"),

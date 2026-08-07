@@ -322,6 +322,63 @@ export const runHistoryDetailParamsSchema = z
   })
   .strict();
 
+export const adminRunHistoryDetailFilterSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("orderId"), value: uuidSchema }).strict(),
+  z.object({ kind: z.literal("publicOrderId"), value: z.string().trim().min(1) }).strict(),
+  z.object({ kind: z.literal("correlationId"), value: correlationIdSchema }).strict(),
+]);
+export type AdminRunHistoryDetailFilter = z.infer<typeof adminRunHistoryDetailFilterSchema>;
+
+export const adminRunHistoryCursorSchema = z
+  .string()
+  .regex(/^c[1-9]\d{0,6}$/)
+  .refine((cursor) => {
+    const offset = Number(cursor.slice(1));
+    return Number.isSafeInteger(offset) && offset <= 1_000_000;
+  });
+
+export const adminRunHistoryDetailQuerySchema = z
+  .object({
+    filter: adminRunHistoryDetailFilterSchema.optional(),
+    limit: z.coerce.number().int().positive().max(100).default(20),
+    cursor: adminRunHistoryCursorSchema.optional(),
+  })
+  .strict();
+export type AdminRunHistoryDetailQuery = z.infer<typeof adminRunHistoryDetailQuerySchema>;
+
+export const adminRunHistoryDetailHttpQuerySchema = z
+  .object({
+    filterKind: z.enum(["orderId", "publicOrderId", "correlationId"]).optional(),
+    filterValue: z.string().trim().min(1).optional(),
+    limit: z.coerce.number().int().positive().max(100).default(20),
+    cursor: adminRunHistoryCursorSchema.optional(),
+  })
+  .strict()
+  .superRefine((query, context) => {
+    if ((query.filterKind === undefined) !== (query.filterValue === undefined)) {
+      context.addIssue({
+        code: "custom",
+        path: [query.filterKind === undefined ? "filterKind" : "filterValue"],
+        message: "Filter kind and value must be provided together.",
+      });
+    }
+  })
+  .transform(({ cursor, filterKind, filterValue, limit }, context) => {
+    const query = adminRunHistoryDetailQuerySchema.safeParse({
+      limit,
+      ...(cursor ? { cursor } : {}),
+      ...(filterKind && filterValue ? { filter: { kind: filterKind, value: filterValue } } : {}),
+    });
+    if (!query.success) {
+      context.addIssue({
+        code: "custom",
+        message: "Invalid protected run history query.",
+      });
+      return z.NEVER;
+    }
+    return query.data;
+  });
+
 export const runHistoryOrderOutcomeSchema = z
   .object({
     orderId: uuidSchema,
@@ -362,6 +419,7 @@ export const runHistoryNotificationSchema = z
     notificationId: uuidSchema,
     orderId: uuidSchema,
     publicOrderId: z.string().trim().min(1),
+    correlationId: correlationIdSchema,
     recordedAt: isoTimestampSchema,
   })
   .strict();
@@ -384,9 +442,11 @@ export type RunHistoryEventTimelineEntry = z.infer<typeof runHistoryEventTimelin
 const runHistoryCollectionMetadataSchema = z
   .object({
     totalCount: nonnegativeIntegerSchema,
+    matchedCount: nonnegativeIntegerSchema,
     warningCount: nonnegativeIntegerSchema,
     limit: positiveIntegerSchema,
     truncated: z.boolean(),
+    nextCursor: adminRunHistoryCursorSchema.optional(),
   })
   .strict();
 
@@ -422,6 +482,7 @@ export const runHistoryErpAttemptSummarySchema = z
 
 export const adminRunHistoryDetailResponseSchema = z
   .object({
+    query: adminRunHistoryDetailQuerySchema,
     summary: runHistorySummarySchema,
     run: demoRunSnapshotSchema,
     exceptionSummary: runHistoryExceptionSummarySchema,

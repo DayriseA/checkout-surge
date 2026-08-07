@@ -15,6 +15,13 @@
       "when": 1785770804180,
       "tag": "0001_curved_cardiac",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1786114436098,
+      "tag": "0002_grey_weapon_omega",
+      "breakpoints": true
     }
   ]
 }

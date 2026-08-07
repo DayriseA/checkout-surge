@@ -1,5 +1,6 @@
 import {
   adminDeleteRunHistoryRequestSchema,
+  adminRunHistoryDetailHttpQuerySchema,
   adminRunHistoryDetailPathTemplate,
   adminRunHistoryDetailResponseSchema,
   publicRunHistoryDetailResponseSchema,
@@ -58,7 +59,8 @@ export function registerRunHistoryRoutes(
     const unauthorized = requireControlServiceToken(request, reply, options.controlServiceToken);
     if (unauthorized) return unauthorized;
     const { runId } = runHistoryDetailParamsSchema.parse(request.params ?? {});
-    const detail = await options.runHistoryService.adminDetail(runId);
+    const query = adminRunHistoryDetailHttpQuerySchema.parse(request.query ?? {});
+    const detail = await options.runHistoryService.adminDetail(runId, query);
     if (!detail) {
       throw new ApiHttpError({
         statusCode: 404,

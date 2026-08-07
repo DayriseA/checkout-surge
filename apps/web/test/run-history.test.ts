@@ -17,6 +17,7 @@ import {
   PublicRunHistoryDetail,
 } from "../src/app/components/run-history-detail.js";
 import { RunHistoryList } from "../src/app/components/run-history-list.js";
+import { buildRunHistoryTrace } from "../src/app/lib/presentation/run-history-trace.js";
 import RunHistoryDetailPage from "../src/app/run-history/[runId]/page.js";
 
 const getRunHistoryDetail = vi.hoisted(() => vi.fn());
@@ -407,7 +408,9 @@ describe("run history", () => {
         params: Promise.resolve({ runId: "55555555-5555-4555-8555-555555555555" }),
       }),
     ).rejects.toThrow("NEXT_NOT_FOUND");
-    expect(getAdminRunHistoryDetail).toHaveBeenCalledWith("55555555-5555-4555-8555-555555555555");
+    expect(getAdminRunHistoryDetail).toHaveBeenCalledWith("55555555-5555-4555-8555-555555555555", {
+      limit: 20,
+    });
     expect(getRunHistoryDetail).not.toHaveBeenCalled();
   });
 
@@ -463,7 +466,9 @@ describe("run history", () => {
     });
     const markup = renderToStaticMarkup(page);
 
-    expect(getAdminRunHistoryDetail).toHaveBeenCalledWith("55555555-5555-4555-8555-555555555555");
+    expect(getAdminRunHistoryDetail).toHaveBeenCalledWith("55555555-5555-4555-8555-555555555555", {
+      limit: 20,
+    });
     expect(getRunHistoryDetail).not.toHaveBeenCalled();
     expect(markup).toContain("Technical details");
     expect(markup).toContain("admin-history-correlation");
@@ -528,6 +533,48 @@ describe("run history", () => {
     );
   });
 
+  it("sends the run-scoped search through the protected API reader", async () => {
+    hasValidAdminPageSession.mockResolvedValue(true);
+    getAdminRunHistoryDetail.mockResolvedValue({
+      status: "available",
+      data: adminDetailFixture(),
+    });
+
+    await RunHistoryDetailPage({
+      params: Promise.resolve({ runId: "55555555-5555-4555-8555-555555555555" }),
+      searchParams: Promise.resolve({
+        filterKind: "publicOrderId",
+        filterValue: "ord_history_1",
+        limit: "10",
+      }),
+    });
+
+    expect(getAdminRunHistoryDetail).toHaveBeenCalledWith("55555555-5555-4555-8555-555555555555", {
+      filter: { kind: "publicOrderId", value: "ord_history_1" },
+      limit: 10,
+    });
+    expect(getRunHistoryDetail).not.toHaveBeenCalled();
+  });
+
+  it("falls back to unfiltered detail and discloses invalid search parameters", async () => {
+    hasValidAdminPageSession.mockResolvedValue(true);
+    getAdminRunHistoryDetail.mockResolvedValue({
+      status: "available",
+      data: adminDetailFixture(),
+    });
+
+    const page = await RunHistoryDetailPage({
+      params: Promise.resolve({ runId: "55555555-5555-4555-8555-555555555555" }),
+      searchParams: Promise.resolve({ cursor: "bad" }),
+    });
+    const markup = renderToStaticMarkup(page);
+
+    expect(getAdminRunHistoryDetail).toHaveBeenCalledWith("55555555-5555-4555-8555-555555555555", {
+      limit: 20,
+    });
+    expect(markup).toContain("Invalid search parameters. Showing the unfiltered run detail.");
+  });
+
   it("renders exception classification and delivery tones without understating severity", () => {
     const clean = adminDetailFixture();
     clean.exceptionSummary.generatorWarnings = 0;
@@ -585,6 +632,7 @@ describe("run history", () => {
     const detail = adminDetailFixture();
     detail.orders = {
       totalCount: 25,
+      matchedCount: 25,
       warningCount: 1,
       limit: 20,
       truncated: true,
@@ -622,7 +670,140 @@ describe("run history", () => {
     expect(markup).toContain("2026-06-20 00:00:06 UTC");
     expect(markup).toContain("ord_pending");
     expect(markup).toContain("Missing terminal evidence");
-    expect(markup).toContain("25 total · 1 warnings · truncated to recent records");
+    expect(markup).toContain("25 total · 1 warnings · records omitted");
+  });
+
+  it("renders API-filtered results as a deterministic chronological trace", () => {
+    const detail = adminDetailFixture();
+    detail.query = {
+      filter: { kind: "correlationId", value: "corr-history-detail" },
+      limit: 20,
+    };
+    const timestamp = "2026-06-20T00:00:07.000Z";
+    const order = detail.orders.records[0];
+    const attempt = detail.erpAttempts.records[0];
+    const notification = detail.notifications.records[0];
+    const event = detail.eventTimeline.records[0];
+    if (!order || !attempt || !notification || !event) throw new Error("Expected trace fixtures.");
+    order.confirmedAt = timestamp;
+    attempt.finishedAt = timestamp;
+    notification.recordedAt = timestamp;
+    event.occurredAt = timestamp;
+    detail.eventTimeline.records.push({
+      ...event,
+      eventId: "99999999-9999-4999-8999-999999999990",
+    });
+    detail.eventTimeline.matchedCount = 2;
+    const earlierTimestamp = "2026-06-20T00:00:06.000Z";
+    notification.recordedAt = earlierTimestamp;
+
+    const markup = renderToStaticMarkup(createElement(AdminRunHistoryDetail, { detail }));
+    const trace = buildRunHistoryTrace(detail);
+
+    expect(markup).toContain(
+      "5 record matches across all collections for correlationId “corr-history-detail”.",
+    );
+    expect(markup).toContain("Chronological trace");
+    expect(trace.map((entry) => entry.id)).toEqual([
+      notification.notificationId,
+      order.orderId,
+      attempt.attemptId,
+      "99999999-9999-4999-8999-999999999990",
+      event.eventId,
+    ]);
+    expect(markup).toContain("<code>2026-06-20T00:00:07.000Z</code>");
+    expect(markup).toContain("<code>2026-06-20T00:00:06.000Z</code>");
+  });
+
+  it("renders an explicit no-match state for an API filter", () => {
+    const detail = adminDetailFixture();
+    detail.query = {
+      filter: { kind: "publicOrderId", value: "ord_missing" },
+      limit: 20,
+    };
+    detail.orders.matchedCount = 0;
+    detail.orders.records = [];
+    detail.erpAttempts.matchedCount = 0;
+    detail.erpAttempts.records = [];
+    detail.notifications.matchedCount = 0;
+    detail.notifications.records = [];
+    detail.eventTimeline.matchedCount = 0;
+    detail.eventTimeline.records = [];
+
+    const markup = renderToStaticMarkup(createElement(AdminRunHistoryDetail, { detail }));
+
+    expect(markup).toContain("No records matched publicOrderId “ord_missing” in this run.");
+    expect(markup).toContain("No records matched this search in order outcomes.");
+    expect(markup).toContain("No records matched this search in ERP attempts.");
+    expect(markup).toContain("No records matched this search in simulated notifications.");
+    expect(markup).toContain("No records matched this search in the event timeline.");
+    expect(markup).not.toContain("Chronological trace");
+  });
+
+  it("discloses truncation for filtered results", () => {
+    const detail = adminDetailFixture();
+    detail.query = {
+      filter: { kind: "orderId", value: "99999999-9999-4999-8999-999999999991" },
+      limit: 1,
+    };
+    detail.orders.totalCount = 2;
+    detail.orders.matchedCount = 2;
+    detail.orders.truncated = true;
+    detail.orders.nextCursor = "c1";
+
+    const markup = renderToStaticMarkup(createElement(AdminRunHistoryDetail, { detail }));
+
+    expect(markup).toContain("Some matching records are omitted from this response.");
+    expect(markup).toContain("2 matches of 2 total");
+    expect(markup).toContain("records omitted");
+  });
+
+  it("labels an empty cursor page as omitted filtered evidence", () => {
+    const detail = adminDetailFixture();
+    detail.query = {
+      filter: { kind: "publicOrderId", value: "ord_history_1" },
+      limit: 1,
+      cursor: "c100",
+    };
+    for (const collection of [
+      detail.orders,
+      detail.erpAttempts,
+      detail.notifications,
+      detail.eventTimeline,
+    ]) {
+      collection.records = [];
+      collection.truncated = true;
+    }
+
+    const markup = renderToStaticMarkup(createElement(AdminRunHistoryDetail, { detail }));
+
+    expect(markup).toContain("Some matching records are omitted from this response.");
+    expect(markup).toContain("1 matches of 1 total");
+    expect(markup).toContain("records omitted");
+    expect(markup).toContain("No matching records are included on this page in order outcomes.");
+  });
+
+  it("labels an unfiltered cursor page without claiming newest or search results", () => {
+    const detail = adminDetailFixture();
+    detail.query = { limit: 20, cursor: "c100" };
+    for (const collection of [
+      detail.orders,
+      detail.erpAttempts,
+      detail.notifications,
+      detail.eventTimeline,
+    ]) {
+      collection.records = [];
+      collection.truncated = true;
+    }
+
+    const markup = renderToStaticMarkup(createElement(AdminRunHistoryDetail, { detail }));
+
+    expect(markup).toContain("Showing up to 20 records per collection for this page.");
+    expect(markup).toContain(
+      "No records are included on this page in order outcomes; the page may be beyond the recorded set.",
+    );
+    expect(markup).not.toContain("Showing the newest");
+    expect(markup).not.toContain("No records matched this search");
   });
 
   it("includes the public failure explanation and recovery action for admins", () => {
@@ -877,6 +1058,7 @@ function adminDetailFixture(): AdminRunHistoryDetailResponse {
   if (!inventory) throw new Error("Expected terminal inventory fixture.");
 
   return {
+    query: { limit: 20 },
     summary: {
       ...detail.summary,
       id: "66666666-6666-4666-8666-666666666666",
@@ -917,6 +1099,7 @@ function adminDetailFixture(): AdminRunHistoryDetailResponse {
     loadRunDiagnosticsSummary: null,
     orders: {
       totalCount: 1,
+      matchedCount: 1,
       warningCount: 0,
       limit: 20,
       truncated: false,
@@ -936,6 +1119,7 @@ function adminDetailFixture(): AdminRunHistoryDetailResponse {
     },
     erpAttempts: {
       totalCount: 1,
+      matchedCount: 1,
       warningCount: 0,
       limit: 20,
       truncated: false,
@@ -958,6 +1142,7 @@ function adminDetailFixture(): AdminRunHistoryDetailResponse {
     erpAttemptSummary: detail.erpAttempts,
     notifications: {
       totalCount: 1,
+      matchedCount: 1,
       warningCount: 0,
       limit: 20,
       truncated: false,
@@ -966,12 +1151,14 @@ function adminDetailFixture(): AdminRunHistoryDetailResponse {
           notificationId: "99999999-9999-4999-8999-999999999993",
           orderId: "99999999-9999-4999-8999-999999999991",
           publicOrderId: "ord_history_1",
+          correlationId: "corr-history-detail",
           recordedAt: "2026-06-20T00:00:08.000Z",
         },
       ],
     },
     eventTimeline: {
       totalCount: 1,
+      matchedCount: 1,
       warningCount: 0,
       limit: 20,
       truncated: false,
