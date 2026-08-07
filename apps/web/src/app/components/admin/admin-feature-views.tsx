@@ -11,7 +11,7 @@ import {
   percentageMinimum,
   positiveIntegerMinimum,
 } from "@checkout-surge/contracts";
-import { useEffect, useRef } from "react";
+import { type ReactNode, useEffect, useRef } from "react";
 import type {
   DraftFieldError,
   DraftFormError,
@@ -22,12 +22,12 @@ import type {
 import type { BackendRead } from "../../lib/api";
 import type { AdminNotice } from "../../lib/presentation/admin-notice";
 import { formatCount } from "../../lib/presentation/format";
+import { ConfigGroup, FieldRow } from "../config-presentation";
 import { ErrorNotice } from "../error-notice";
 import { StatusPill } from "../status-pill";
 import { AdminNoticeView } from "./admin-notice";
 
-export const panelClassName =
-  "min-w-0 rounded-lg border border-border bg-surface p-4 max-[900px]:col-span-full";
+export const panelClassName = "min-w-0 self-start rounded-lg border border-border bg-surface p-4";
 export const buttonClassName =
   "min-h-10 rounded-lg border border-border bg-surface px-3.5 py-2.5 font-semibold text-muted-strong disabled:cursor-not-allowed disabled:opacity-60";
 export const primaryButtonClassName =
@@ -66,177 +66,189 @@ export function AdminRuntimePolicyView({
   const policy = runtimePolicy.status === "available" ? runtimePolicy.data.policy : null;
   const latestRead = latestRuntimePolicyRead ?? runtimePolicy;
   return (
-    <section className={`${panelClassName} col-span-8`}>
-      <PanelHeading
-        eyebrow="Public policy"
-        title="Runtime budgets and custom limits"
-        status={
-          <StatusPill
-            status={{
-              label:
-                policy && draft
-                  ? draft.isPublicRunBudgetEnforced
-                    ? "budgeted"
-                    : "open"
-                  : "not yet available",
-              tone: policy && draft ? "ok" : "idle",
-            }}
-          />
-        }
-      />
-      {policy && draft ? (
-        <div className="grid gap-4">
-          {showValidationSummary ? (
-            <ValidationSummary
-              errors={fieldErrors}
-              formErrors={formErrors}
-              key={validationSummaryRevision}
-              prefix="runtime-policy"
-            />
-          ) : null}
-          <div className="grid grid-cols-4 gap-3 max-[900px]:grid-cols-2 max-[560px]:grid-cols-1">
-            <Checkbox
-              label="Enforce public budget"
-              checked={draft.isPublicRunBudgetEnforced}
-              onChange={(value) => onUpdateDraft({ isPublicRunBudgetEnforced: value })}
-            />
-            <DraftInput
-              label="Budget window seconds"
-              draft={draft}
-              field="budgetWindowSeconds"
-              onUpdate={onUpdateDraft}
-              onBlur={onBlurField}
-              error={fieldErrors.budgetWindowSeconds}
-              prefix="runtime-policy"
-            />
-            <DraftInput
-              label="Per-visitor starts"
-              draft={draft}
-              field="perVisitorMaxStarts"
-              onUpdate={onUpdateDraft}
-              onBlur={onBlurField}
-              error={fieldErrors.perVisitorMaxStarts}
-              prefix="runtime-policy"
-            />
-            <DraftInput
-              label="Global starts"
-              draft={draft}
-              field="globalMaxStarts"
-              onUpdate={onUpdateDraft}
-              onBlur={onBlurField}
-              error={fieldErrors.globalMaxStarts}
-              prefix="runtime-policy"
-            />
-          </div>
-          <div className="grid gap-3">
-            <p className="m-0 text-xs font-bold uppercase text-muted">Public custom defaults</p>
-            <TrafficEditor
-              draft={draft}
-              errors={fieldErrors}
-              hardCaps={policy.deploymentHardCaps}
-              onBlur={onBlurField}
-              onUpdateDraft={onUpdateDraft}
-              prefix="runtime-policy"
-            />
-            <RunConfigFields
-              draft={draft}
-              errors={fieldErrors}
-              includeForcedOutage={false}
-              onBlur={onBlurField}
-              onUpdateDraft={onUpdateDraft}
-              prefix="runtime-policy"
-            />
-          </div>
-          <div className="grid gap-3">
-            <p className="m-0 text-xs font-bold uppercase text-muted">Public custom limits</p>
-            <div className="grid grid-cols-4 gap-3 max-[900px]:grid-cols-2 max-[560px]:grid-cols-1">
-              {policyLimitFields.map(([field, label, step]) => (
+    <section className={`${panelClassName} lg:col-span-2`} id="public-runtime-policy">
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="m-0 text-xs font-bold uppercase text-muted">Public policy</p>
+          <h2 className="m-0 mt-1 text-base font-bold leading-tight text-ink">
+            Public runtime policy
+          </h2>
+        </div>
+        <StatusPill
+          status={{
+            label:
+              policy && draft
+                ? draft.isPublicRunBudgetEnforced
+                  ? "budgeted"
+                  : "open"
+                : "not yet available",
+            tone: policy && draft ? "ok" : "idle",
+          }}
+        />
+      </div>
+      <details className="rounded border border-border px-3 py-2">
+        <summary className="cursor-pointer font-semibold text-muted-strong">
+          Runtime budgets, custom limits, and deployment hard caps
+        </summary>
+        <div className="mt-4">
+          {policy && draft ? (
+            <div className="grid gap-4">
+              {showValidationSummary ? (
+                <ValidationSummary
+                  errors={fieldErrors}
+                  formErrors={formErrors}
+                  key={validationSummaryRevision}
+                  prefix="runtime-policy"
+                />
+              ) : null}
+              <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,16rem),1fr))] gap-3">
+                <Checkbox
+                  label="Enforce public budget"
+                  checked={draft.isPublicRunBudgetEnforced}
+                  onChange={(value) => onUpdateDraft({ isPublicRunBudgetEnforced: value })}
+                />
                 <DraftInput
-                  key={field}
-                  label={label}
+                  label="Budget window seconds"
                   draft={draft}
-                  field={field}
+                  field="budgetWindowSeconds"
                   onUpdate={onUpdateDraft}
                   onBlur={onBlurField}
-                  error={fieldErrors[field as string]}
+                  error={fieldErrors.budgetWindowSeconds}
                   prefix="runtime-policy"
-                  step={step}
                 />
-              ))}
-              <Checkbox
-                label="Buyer spike"
-                id="runtime-policy-allowBuyerSpike"
-                checked={draft.allowBuyerSpike}
-                error={fieldErrors.allowBuyerSpike}
-                onChange={(value) => onUpdateDraft({ allowBuyerSpike: value })}
-              />
-              <Checkbox
-                label="Constant arrival"
-                id="runtime-policy-allowConstantArrivalRate"
-                checked={draft.allowConstantArrivalRate}
-                error={fieldErrors.allowConstantArrivalRate}
-                onChange={(value) => onUpdateDraft({ allowConstantArrivalRate: value })}
-              />
+                <DraftInput
+                  label="Per-visitor starts"
+                  draft={draft}
+                  field="perVisitorMaxStarts"
+                  onUpdate={onUpdateDraft}
+                  onBlur={onBlurField}
+                  error={fieldErrors.perVisitorMaxStarts}
+                  prefix="runtime-policy"
+                />
+                <DraftInput
+                  label="Global starts"
+                  draft={draft}
+                  field="globalMaxStarts"
+                  onUpdate={onUpdateDraft}
+                  onBlur={onBlurField}
+                  error={fieldErrors.globalMaxStarts}
+                  prefix="runtime-policy"
+                />
+              </div>
+              <div className="grid gap-3">
+                <p className="m-0 text-xs font-bold uppercase text-muted">Public custom defaults</p>
+                <TrafficEditor
+                  draft={draft}
+                  errors={fieldErrors}
+                  hardCaps={policy.deploymentHardCaps}
+                  onBlur={onBlurField}
+                  onUpdateDraft={onUpdateDraft}
+                  prefix="runtime-policy"
+                />
+                <RunConfigFields
+                  draft={draft}
+                  errors={fieldErrors}
+                  includeForcedOutage={false}
+                  onBlur={onBlurField}
+                  onUpdateDraft={onUpdateDraft}
+                  prefix="runtime-policy"
+                />
+              </div>
+              <div className="grid gap-3">
+                <p className="m-0 text-xs font-bold uppercase text-muted">Public custom limits</p>
+                <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,16rem),1fr))] gap-3">
+                  {policyLimitFields.map(([field, label, step]) => (
+                    <DraftInput
+                      key={field}
+                      label={label}
+                      draft={draft}
+                      field={field}
+                      onUpdate={onUpdateDraft}
+                      onBlur={onBlurField}
+                      error={fieldErrors[field as string]}
+                      prefix="runtime-policy"
+                      step={step}
+                    />
+                  ))}
+                  <Checkbox
+                    label="Buyer spike"
+                    id="runtime-policy-allowBuyerSpike"
+                    checked={draft.allowBuyerSpike}
+                    error={fieldErrors.allowBuyerSpike}
+                    onChange={(value) => onUpdateDraft({ allowBuyerSpike: value })}
+                  />
+                  <Checkbox
+                    label="Constant arrival"
+                    id="runtime-policy-allowConstantArrivalRate"
+                    checked={draft.allowConstantArrivalRate}
+                    error={fieldErrors.allowConstantArrivalRate}
+                    onChange={(value) => onUpdateDraft({ allowConstantArrivalRate: value })}
+                  />
+                </div>
+              </div>
+              <dl className="m-0 grid grid-cols-4 gap-3 max-[900px]:grid-cols-2">
+                <Fact
+                  label="Hard max buyers"
+                  value={formatCap(policy.deploymentHardCaps.maxBuyers)}
+                />
+                <Fact
+                  label="Hard max requests"
+                  value={formatCap(policy.deploymentHardCaps.maxTotalRequests)}
+                />
+                <Fact
+                  label="Hard max RPS"
+                  value={formatCap(policy.deploymentHardCaps.maxRequestsPerSecond)}
+                />
+                <Fact
+                  label="Hard max duration (seconds)"
+                  value={formatCap(policy.deploymentHardCaps.maxTrafficDurationSeconds)}
+                />
+                <Fact
+                  label="Hard max start delay (seconds)"
+                  value={formatCap(policy.deploymentHardCaps.maxTrafficStartDelaySeconds)}
+                />
+                <Fact
+                  label="Hard max preallocated VUs"
+                  value={formatCap(policy.deploymentHardCaps.maxPreAllocatedVus)}
+                />
+                <Fact label="Hard max VUs" value={formatCap(policy.deploymentHardCaps.maxVus)} />
+              </dl>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  className={primaryButtonClassName}
+                  disabled={isPending}
+                  onClick={onSave}
+                  type="button"
+                >
+                  Save public policy
+                </button>
+                <button
+                  className={buttonClassName}
+                  disabled={isPending}
+                  onClick={onRefresh}
+                  type="button"
+                >
+                  Refresh policy
+                </button>
+              </div>
+              {latestRead.status === "unavailable" ? <Unavailable read={latestRead} /> : null}
             </div>
-          </div>
-          <dl className="m-0 grid grid-cols-4 gap-3 max-[900px]:grid-cols-2">
-            <Fact label="Hard max buyers" value={formatCap(policy.deploymentHardCaps.maxBuyers)} />
-            <Fact
-              label="Hard max requests"
-              value={formatCap(policy.deploymentHardCaps.maxTotalRequests)}
-            />
-            <Fact
-              label="Hard max RPS"
-              value={formatCap(policy.deploymentHardCaps.maxRequestsPerSecond)}
-            />
-            <Fact
-              label="Hard max duration (seconds)"
-              value={formatCap(policy.deploymentHardCaps.maxTrafficDurationSeconds)}
-            />
-            <Fact
-              label="Hard max start delay (seconds)"
-              value={formatCap(policy.deploymentHardCaps.maxTrafficStartDelaySeconds)}
-            />
-            <Fact
-              label="Hard max preallocated VUs"
-              value={formatCap(policy.deploymentHardCaps.maxPreAllocatedVus)}
-            />
-            <Fact label="Hard max VUs" value={formatCap(policy.deploymentHardCaps.maxVus)} />
-          </dl>
-          <div className="flex flex-wrap gap-2">
-            <button
-              className={primaryButtonClassName}
-              disabled={isPending}
-              onClick={onSave}
-              type="button"
-            >
-              Save public policy
-            </button>
-            <button
-              className={buttonClassName}
-              disabled={isPending}
-              onClick={onRefresh}
-              type="button"
-            >
-              Refresh policy
-            </button>
-          </div>
-          {latestRead.status === "unavailable" ? <Unavailable read={latestRead} /> : null}
+          ) : (
+            <div>
+              <Unavailable read={runtimePolicy} />
+              <button
+                className={`${buttonClassName} mt-4`}
+                disabled={isPending}
+                onClick={onRefresh}
+                type="button"
+              >
+                Refresh policy
+              </button>
+            </div>
+          )}
+          <AdminNoticeView notice={notice} />
         </div>
-      ) : (
-        <div>
-          <Unavailable read={runtimePolicy} />
-          <button
-            className={`${buttonClassName} mt-4`}
-            disabled={isPending}
-            onClick={onRefresh}
-            type="button"
-          >
-            Refresh policy
-          </button>
-        </div>
-      )}
-      <AdminNoticeView notice={notice} />
+      </details>
     </section>
   );
 }
@@ -319,7 +331,7 @@ export function AdminPresetView({
   validationSummaryRevision: number;
 }) {
   return (
-    <section className={`${panelClassName} col-span-8`}>
+    <section className={`${panelClassName} lg:col-span-2`} id="presets">
       <PanelHeading
         eyebrow="Presets"
         title="Inspection and starts"
@@ -329,9 +341,7 @@ export function AdminPresetView({
         <div className="grid content-start gap-2">
           {presets.map((preset) => (
             <button
-              className={
-                preset.slug === selectedPreset?.slug ? primaryButtonClassName : buttonClassName
-              }
+              className={`${preset.slug === selectedPreset?.slug ? primaryButtonClassName : buttonClassName} [overflow-wrap:anywhere]`}
               key={preset.slug}
               onClick={() => onSelect(preset.slug)}
               type="button"
@@ -351,13 +361,16 @@ export function AdminPresetView({
                 prefix="preset"
               />
             ) : null}
-            <dl className="m-0 grid grid-cols-4 gap-3 max-[700px]:grid-cols-2">
-              <Fact label="Slug" value={selectedPreset.slug} />
-              <Fact label="Visibility" value={selectedPreset.visibility} />
-              <Fact label="Editable" value={selectedPreset.isEditable ? "yes" : "no"} />
-              <Fact label="Custom" value={selectedPreset.isCustom ? "yes" : "no"} />
-            </dl>
-            <div className="grid grid-cols-3 gap-3 max-[700px]:grid-cols-1">
+            <ConfigGroup title="Preset identity">
+              <FieldRow label="Slug" value={selectedPreset.slug} />
+              <FieldRow label="Visibility" value={selectedPreset.visibility} />
+              <FieldRow label="Editable" value={selectedPreset.isEditable ? "yes" : "no"} />
+              <FieldRow label="Custom" value={selectedPreset.isCustom ? "yes" : "no"} />
+            </ConfigGroup>
+            <p className="m-0 [overflow-wrap:anywhere] text-sm text-muted">
+              {draft.description}
+            </p>
+            <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,16rem),1fr))] gap-3">
               <DraftInput
                 label="Name"
                 draft={draft}
@@ -386,21 +399,63 @@ export function AdminPresetView({
                 prefix="preset"
               />
             </div>
-            <TrafficEditor
-              draft={draft}
-              errors={fieldErrors}
-              hardCaps={hardCaps}
-              onBlur={onBlurField}
-              onUpdateDraft={onUpdateDraft}
-              prefix="preset"
-            />
-            <RunConfigFields
-              draft={draft}
-              errors={fieldErrors}
-              onBlur={onBlurField}
-              onUpdateDraft={onUpdateDraft}
-              prefix="preset"
-            />
+            <ConfigFieldset legend="Traffic">
+              <TrafficEditor
+                draft={draft}
+                errors={fieldErrors}
+                hardCaps={hardCaps}
+                onBlur={onBlurField}
+                onUpdateDraft={onUpdateDraft}
+                prefix="preset"
+              />
+            </ConfigFieldset>
+            <ConfigFieldset legend="Inventory">
+              <RunConfigInputs
+                draft={draft}
+                errors={fieldErrors}
+                fields={runConfigFields.slice(0, 3)}
+                onBlur={onBlurField}
+                onUpdateDraft={onUpdateDraft}
+                prefix="preset"
+              />
+            </ConfigFieldset>
+            <ConfigFieldset legend="Per-run ERP">
+              <RunConfigInputs
+                draft={draft}
+                errors={fieldErrors}
+                fields={runConfigFields.slice(8)}
+                onBlur={onBlurField}
+                onUpdateDraft={onUpdateDraft}
+                prefix="preset"
+              />
+              <Checkbox
+                label="ERP forced outage"
+                id="preset-erpForcedOutage"
+                checked={draft.erpForcedOutage}
+                error={fieldErrors.erpForcedOutage}
+                onChange={(value) => onUpdateDraft({ erpForcedOutage: value })}
+              />
+            </ConfigFieldset>
+            <ConfigFieldset legend="Worker and backpressure">
+              <RunConfigInputs
+                draft={draft}
+                errors={fieldErrors}
+                fields={runConfigFields.slice(3, 6)}
+                onBlur={onBlurField}
+                onUpdateDraft={onUpdateDraft}
+                prefix="preset"
+              />
+            </ConfigFieldset>
+            <ConfigFieldset legend="Circuit protection">
+              <RunConfigInputs
+                draft={draft}
+                errors={fieldErrors}
+                fields={runConfigFields.slice(6, 8)}
+                onBlur={onBlurField}
+                onUpdateDraft={onUpdateDraft}
+                prefix="preset"
+              />
+            </ConfigFieldset>
             <div className="flex flex-wrap gap-2">
               <button
                 className={primaryButtonClassName}
@@ -496,7 +551,7 @@ function TrafficEditor({
   prefix: string;
 }) {
   return (
-    <div className="grid gap-3">
+    <div className="col-span-full grid gap-3">
       <fieldset
         aria-describedby={errors.mode ? `${prefix}-mode-error` : undefined}
         aria-invalid={errors.mode ? true : undefined}
@@ -521,7 +576,7 @@ function TrafficEditor({
           {errors.mode.message}
         </span>
       ) : null}
-      <div className="grid grid-cols-4 gap-3 max-[900px]:grid-cols-2 max-[560px]:grid-cols-1">
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,16rem),1fr))] gap-3">
         {draft.mode === "buyer-spike" ? (
           <>
             <DraftInput
@@ -628,34 +683,25 @@ function RunConfigFields({
 }) {
   return (
     <>
-      <div className="grid grid-cols-4 gap-3 max-[900px]:grid-cols-2 max-[560px]:grid-cols-1">
-        {runConfigFields.slice(0, 8).map(([field, label]) => (
-          <DraftInput
-            key={field}
-            label={label}
-            draft={draft}
-            field={field}
-            onUpdate={onUpdateDraft}
-            onBlur={onBlur}
-            error={errors[field as string]}
-            prefix={prefix}
-          />
-        ))}
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,16rem),1fr))] gap-3">
+        <RunConfigInputs
+          draft={draft}
+          errors={errors}
+          fields={runConfigFields.slice(0, 8)}
+          onBlur={onBlur}
+          onUpdateDraft={onUpdateDraft}
+          prefix={prefix}
+        />
       </div>
-      <div className="grid grid-cols-5 gap-3 max-[900px]:grid-cols-2 max-[560px]:grid-cols-1">
-        {runConfigFields.slice(8).map(([field, label, step]) => (
-          <DraftInput
-            key={field}
-            label={label}
-            draft={draft}
-            field={field}
-            onUpdate={onUpdateDraft}
-            onBlur={onBlur}
-            error={errors[field as string]}
-            prefix={prefix}
-            step={step}
-          />
-        ))}
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,16rem),1fr))] gap-3">
+        <RunConfigInputs
+          draft={draft}
+          errors={errors}
+          fields={runConfigFields.slice(8)}
+          onBlur={onBlur}
+          onUpdateDraft={onUpdateDraft}
+          prefix={prefix}
+        />
         {includeForcedOutage ? (
           <Checkbox
             label="ERP forced outage"
@@ -668,6 +714,45 @@ function RunConfigFields({
       </div>
     </>
   );
+}
+
+function ConfigFieldset({ children, legend }: { children: ReactNode; legend: string }) {
+  return (
+    <fieldset className="m-0 grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(100%,16rem),1fr))] items-start gap-3 rounded border border-border p-3">
+      <legend className="px-1 text-sm font-bold text-ink">{legend}</legend>
+      {children}
+    </fieldset>
+  );
+}
+
+function RunConfigInputs({
+  draft,
+  errors,
+  fields,
+  onBlur,
+  onUpdateDraft,
+  prefix,
+}: {
+  draft: RunConfigDraft;
+  errors: Record<string, DraftFieldError>;
+  fields: ReadonlyArray<[keyof RunConfigDraft, string, string?]>;
+  onBlur: (field: string) => void;
+  onUpdateDraft: (next: Partial<RunConfigDraft>) => void;
+  prefix: string;
+}) {
+  return fields.map(([field, label, step]) => (
+    <DraftInput
+      key={field}
+      label={label}
+      draft={draft}
+      field={field}
+      onUpdate={onUpdateDraft}
+      onBlur={onBlur}
+      error={errors[field as string]}
+      prefix={prefix}
+      step={step}
+    />
+  ));
 }
 
 const runConfigFields: ReadonlyArray<[keyof RunConfigDraft, string, string?]> = [
@@ -730,10 +815,10 @@ export function AdminErpDiagnosticsView({
   const caps = current?.effectiveSafetyCaps;
   const latestRead = latestErpChaosRead ?? erpChaos;
   return (
-    <section className={`${panelClassName} col-span-6`}>
+    <section className={panelClassName} id="erp-fault-injection">
       <PanelHeading
-        eyebrow="ERP diagnostics"
-        title="Global chaos controls"
+        eyebrow="Global scope"
+        title="ERP fault injection"
         status={
           <StatusPill
             status={{ label: current?.forcedOutage ? "outage" : "ready", tone: "idle" }}
@@ -748,7 +833,7 @@ export function AdminErpDiagnosticsView({
           prefix="erp-chaos"
         />
       ) : null}
-      <div className="grid grid-cols-4 gap-3 max-[700px]:grid-cols-2">
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,16rem),1fr))] gap-3">
         <LabeledTextInput
           error={fieldErrors.latencyMs}
           help={

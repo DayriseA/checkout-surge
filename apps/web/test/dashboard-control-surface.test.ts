@@ -445,7 +445,7 @@ describe("dashboard control surface", () => {
     expect(markup).not.toContain('id="runtime-policy-erpForcedOutage"');
     expect(markup).not.toContain('id="runtime-policy-allowForcedOutage"');
     expect(markup).toContain("Reset demo");
-    expect(markup).toContain("ERP diagnostics");
+    expect(markup).toContain("ERP fault injection");
     expect(markup).toContain("disabled");
   });
 });

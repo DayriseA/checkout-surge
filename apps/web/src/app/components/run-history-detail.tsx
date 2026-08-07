@@ -20,6 +20,7 @@ import {
   evidenceFromRunHistoryDetail,
   oversoldUnitsFromTerminalInventory,
 } from "../lib/presentation/run-result-presentation";
+import { ConfigGroup, FieldRow } from "./config-presentation";
 import { GoldSignals } from "./gold-signals";
 import { RunConclusion } from "./run-conclusion";
 import { RunDiagnostics } from "./run-diagnostics";
@@ -320,20 +321,11 @@ function FactList({
   title: string;
 }) {
   return (
-    <section className="min-w-0 border-t border-border pt-3">
-      <h3 className="m-0 text-sm font-bold text-ink">{title}</h3>
-      {caption ? <p className="m-0 mt-0.5 text-xs text-muted">{caption}</p> : null}
-      <dl className="m-0 mt-3 grid gap-2">
-        {facts.map(([label, value]) => (
-          <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-3" key={label}>
-            <dt className="text-sm text-muted">{label}</dt>
-            <dd className="m-0 max-w-48 [overflow-wrap:anywhere] text-right text-sm font-semibold text-muted-strong">
-              {value}
-            </dd>
-          </div>
-        ))}
-      </dl>
-    </section>
+    <ConfigGroup caption={caption} title={title}>
+      {facts.map(([label, value]) => (
+        <FieldRow key={label} label={label} value={value} />
+      ))}
+    </ConfigGroup>
   );
 }
 

@@ -160,6 +160,88 @@ describe("admin feature controllers", () => {
     expect(screen.getByText(/PostgreSQL readiness check failed/)).toBeTruthy();
   });
 
+  it("renders the eight admin sections in operational DOM order", () => {
+    render(<AdminAuthenticatedSurface {...surfaceProps(null)} />);
+
+    const sectionIds = [
+      "current-run",
+      "readiness",
+      "routine-actions",
+      "presets",
+      "erp-fault-injection",
+      "maintenance",
+      "public-runtime-policy",
+      "diagnostics-links",
+    ];
+    const sections = sectionIds.map((id) => document.getElementById(id));
+
+    expect(sections.every(Boolean)).toBe(true);
+    for (let index = 1; index < sections.length; index += 1) {
+      expect(sections[index - 1]?.compareDocumentPosition(sections[index] as Node)).toBe(
+        Node.DOCUMENT_POSITION_FOLLOWING,
+      );
+    }
+    expect(screen.getByRole("navigation", { name: "Admin console sections" })).toBeTruthy();
+    expect(screen.getByText(/Runtime budgets, custom limits/).closest("details")?.open).toBe(false);
+  });
+
+  it("groups preset configuration into five named fieldsets", () => {
+    render(<AdminAuthenticatedSurface {...surfaceProps(null)} />);
+
+    for (const name of [
+      "Traffic",
+      "Inventory",
+      "Per-run ERP",
+      "Worker and backpressure",
+      "Circuit protection",
+    ]) {
+      expect(screen.getByRole("group", { name })).toBeTruthy();
+    }
+  });
+
+  it("wraps a long preset description without changing its single-line editor", () => {
+    const props = surfaceProps(null);
+    if (props.initialPresets.status !== "available") throw new Error("Expected presets.");
+    const description =
+      "One-second public preview with a deliberately long operator-facing description that must remain readable.";
+    const preset = props.initialPresets.data.presets[0];
+    if (!preset) throw new Error("Expected a preset.");
+    props.initialPresets.data.presets[0] = {
+      ...preset,
+      display: { ...preset.display, description },
+    };
+
+    render(<AdminAuthenticatedSurface {...props} />);
+
+    const displayedDescription = screen.getByText(description);
+    expect(displayedDescription.tagName).toBe("P");
+    expect(displayedDescription.className).toContain("[overflow-wrap:anywhere]");
+    expect(displayedDescription.className).not.toContain("truncate");
+    expect(screen.getByLabelText("Description").tagName).toBe("INPUT");
+  });
+
+  it("keeps routine refresh disabled during the Retry-After wait", () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <AdminAuthenticatedSurface
+        {...surfaceProps(null)}
+        initialRecovery={{
+          status: "unavailable",
+          reason: "Recovery is rate limited.",
+          retryAfterMs: 120_000,
+        }}
+      />,
+    );
+
+    const refresh = screen.getByRole("button", { name: "Refresh current run" });
+    expect((refresh as HTMLButtonElement).disabled).toBe(true);
+    refresh.click();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("applies external lifecycle projections to current-run state and start gating in order", () => {
     vi.stubGlobal("EventSource", InjectedEventSource);
     render(<AdminAuthenticatedSurface {...surfaceProps(null)} />);
@@ -189,7 +271,8 @@ describe("admin feature controllers", () => {
         }),
       ),
     );
-    expect(currentRunPanel.getAllByText("active")).toHaveLength(2);
+    expect(currentRunPanel.getByText("active")).toBeTruthy();
+    expect(currentRunPanel.getByRole("status").textContent).toBe("Traffic: active");
     expect(start.disabled).toBe(true);
 
     act(() =>
@@ -745,7 +828,7 @@ describe("admin feature controllers", () => {
     expect(screen.queryByRole("button", { name: "Check again" })).toBeNull();
     expect(fetchMock).toHaveBeenCalledOnce();
 
-    await user.click(screen.getByRole("button", { name: "Refresh status" }));
+    await user.click(screen.getByRole("button", { name: "Refresh current run" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect(fetchMock.mock.calls.map(([input]) => String(input))).toEqual([
       adminPresetSaveProxyPath,

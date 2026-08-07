@@ -124,40 +124,123 @@ export function AdminAuthenticatedSurface(props: AdminAuthenticatedSurfaceProps)
   }, [props.initialRuntimePolicy]);
 
   return (
-    <div className="grid grid-cols-12 gap-4">
-      <AdminCurrentRunPanel
-        isPending={recoveryController.isRefreshing}
-        isRetryScheduled={recoveryController.isRetryScheduled}
-        onRefresh={recoveryController.retryNow}
-        recovery={recovery}
-        freshness={freshness}
-        hasSyncIssue={recoveryController.hasSyncIssue}
-        retriesExhausted={recoveryController.retriesExhausted}
-        retryAttempt={recoveryController.retryAttempt}
-        retryDelayMs={recoveryController.retryDelayMs}
-        syncIssue={recoveryController.syncIssue}
-      />
-      <AdminReadinessPanel read={props.initialReadiness} />
-      <AdminRuntimePolicyController
-        initialRuntimePolicy={runtimePolicy}
-        latestRuntimePolicyRead={props.initialRuntimePolicy}
-        onRuntimePolicyAvailable={setRuntimePolicy}
-      />
-      <AdminPresetController
-        initialPresets={props.initialPresets}
-        onStartComplete={recoveryController.retryNow}
-        recovery={recovery}
-        runtimePolicy={runtimePolicy}
-        startBlocked={startBlocked}
-        startBlockedReason={
-          isFreshnessBlockingStart(freshness, hasReadFailure)
-            ? "Status is stale — refresh before starting"
-            : undefined
-        }
-      />
-      <AdminMaintenancePanel onResetComplete={recoveryController.retryNow} />
-      <AdminErpDiagnosticsController initialErpChaos={props.initialErpChaos} />
-    </div>
+    <>
+      <nav
+        aria-label="Admin console sections"
+        className="mb-4 flex flex-wrap gap-x-4 gap-y-2 text-sm font-semibold"
+      >
+        {adminSections.map(([id, label]) => (
+          <a className="text-accent [overflow-wrap:anywhere]" href={`#${id}`} key={id}>
+            {label}
+          </a>
+        ))}
+      </nav>
+      <div className="grid items-start gap-4 lg:grid-cols-2">
+        <AdminCurrentRunPanel
+          isPending={recoveryController.isRefreshing}
+          isRetryScheduled={recoveryController.isRetryScheduled}
+          onRefresh={recoveryController.retryNow}
+          recovery={recovery}
+          freshness={freshness}
+          hasSyncIssue={recoveryController.hasSyncIssue}
+          retriesExhausted={recoveryController.retriesExhausted}
+          retryAttempt={recoveryController.retryAttempt}
+          retryDelayMs={recoveryController.retryDelayMs}
+          syncIssue={recoveryController.syncIssue}
+        />
+        <AdminReadinessPanel read={props.initialReadiness} />
+        <AdminRoutineActions
+          isRefreshDisabled={
+            recoveryController.isRefreshing ||
+            (recovery.status === "unavailable" && (recovery.retryAfterMs ?? 0) > 0)
+          }
+          isRefreshing={recoveryController.isRefreshing}
+          onRefresh={recoveryController.retryNow}
+        />
+        <AdminPresetController
+          initialPresets={props.initialPresets}
+          onStartComplete={recoveryController.retryNow}
+          recovery={recovery}
+          runtimePolicy={runtimePolicy}
+          startBlocked={startBlocked}
+          startBlockedReason={
+            isFreshnessBlockingStart(freshness, hasReadFailure)
+              ? "Status is stale — refresh before starting"
+              : undefined
+          }
+        />
+        <AdminErpDiagnosticsController initialErpChaos={props.initialErpChaos} />
+        <AdminMaintenancePanel onResetComplete={recoveryController.retryNow} />
+        <AdminRuntimePolicyController
+          initialRuntimePolicy={runtimePolicy}
+          latestRuntimePolicyRead={props.initialRuntimePolicy}
+          onRuntimePolicyAvailable={setRuntimePolicy}
+        />
+        <AdminDiagnosticsLinks />
+      </div>
+    </>
+  );
+}
+
+const adminSections = [
+  ["current-run", "Current run"],
+  ["readiness", "Readiness"],
+  ["routine-actions", "Routine actions"],
+  ["presets", "Presets"],
+  ["erp-fault-injection", "ERP fault injection"],
+  ["maintenance", "Maintenance"],
+  ["public-runtime-policy", "Public runtime policy"],
+  ["diagnostics-links", "Diagnostics"],
+] as const;
+
+function AdminRoutineActions({
+  isRefreshDisabled,
+  isRefreshing,
+  onRefresh,
+}: {
+  isRefreshDisabled: boolean;
+  isRefreshing: boolean;
+  onRefresh: () => Promise<void>;
+}) {
+  return (
+    <section className={`${panelClassName} lg:col-span-2`} id="routine-actions">
+      <h2 className="m-0 text-base font-bold leading-tight text-ink">Routine actions</h2>
+      <p className="m-0 mt-2 text-sm text-muted">
+        Review shared state before using the controls in each section.
+      </p>
+      <div className="mt-4 flex flex-wrap gap-2">
+        <button
+          className={buttonClassName}
+          disabled={isRefreshDisabled}
+          onClick={() => void onRefresh()}
+          type="button"
+        >
+          {isRefreshing ? "Refreshing current run" : "Refresh current run"}
+        </button>
+        <a className={buttonClassName} href="#presets">
+          Start from a preset
+        </a>
+        <a className={buttonClassName} href="#maintenance">
+          Reset or clean up
+        </a>
+      </div>
+    </section>
+  );
+}
+
+function AdminDiagnosticsLinks() {
+  return (
+    <section className={`${panelClassName} lg:col-span-2`} id="diagnostics-links">
+      <h2 className="m-0 text-base font-bold leading-tight text-ink">Diagnostics links</h2>
+      <div className="mt-4 flex flex-wrap gap-2">
+        <a className={buttonClassName} href="/watch">
+          Live dashboard
+        </a>
+        <a className={buttonClassName} href="/run-history">
+          Run history
+        </a>
+      </div>
+    </section>
   );
 }
 
@@ -171,7 +254,7 @@ function AdminReadinessPanel({ read }: { read: BackendRead<HealthResponse> }) {
   const checks = read.status === "available" ? read.data.checks.slice(0, 8) : [];
 
   return (
-    <section className={`${panelClassName} col-span-4`}>
+    <section className={panelClassName} id="readiness">
       <div className="mb-4 flex items-start justify-between gap-3">
         <div>
           <p className="m-0 text-xs font-bold uppercase text-muted">Readiness</p>
@@ -244,7 +327,7 @@ export function AdminCurrentRunPanel({
   const freshnessPresentation = deriveFreshnessPresentationState(presentedFreshness);
 
   return (
-    <section className={`${panelClassName} col-span-4`}>
+    <section className={panelClassName} id="current-run">
       <div className="mb-4 flex items-start justify-between gap-3">
         <div>
           <p className="m-0 text-xs font-bold uppercase text-muted">Live status</p>
@@ -264,15 +347,19 @@ export function AdminCurrentRunPanel({
         />
       </div>
       {recovery.status === "available" ? (
-        <dl className="m-0 grid gap-3">
-          <Fact label="Run" value={recovery.data.currentRun?.presetName ?? "No active run"} />
-          <Fact label="Status" value={recovery.data.currentRun?.status ?? "idle"} />
-          <Fact label="Traffic" value={recovery.data.currentRun?.trafficStatus ?? "Not active"} />
-          <Fact
-            label="Last updated"
-            value={`${formatInstantUtc(recovery.data.recoveredAt) ?? "not yet available"}${freshnessSuffix(presentedFreshness)}`}
-          />
-        </dl>
+        <>
+          <p className="m-0 mb-3 text-sm font-semibold text-muted-strong" role="status">
+            Traffic: {recovery.data.currentRun?.trafficStatus ?? "not active"}
+          </p>
+          <dl className="m-0 grid gap-3">
+            <Fact label="Run" value={recovery.data.currentRun?.presetName ?? "No active run"} />
+            <Fact label="Status" value={recovery.data.currentRun?.status ?? "idle"} />
+            <Fact
+              label="Last updated"
+              value={`${formatInstantUtc(recovery.data.recoveredAt) ?? "not yet available"}${freshnessSuffix(presentedFreshness)}`}
+            />
+          </dl>
+        </>
       ) : (
         <Unavailable read={recovery} />
       )}
@@ -940,7 +1027,7 @@ export function AdminMaintenancePanel({
   }
 
   return (
-    <section className={`${panelClassName} col-span-6`}>
+    <section className={panelClassName} id="maintenance">
       <div className="mb-4">
         <p className="m-0 text-xs font-bold uppercase text-muted">Maintenance</p>
         <h2 className="m-0 mt-1 text-base font-bold leading-tight text-ink">
