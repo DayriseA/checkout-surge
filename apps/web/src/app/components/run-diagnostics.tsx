@@ -1,14 +1,41 @@
-import type { LoadRunDiagnosticsSummary } from "@checkout-surge/contracts";
+import {
+  countUnavailableLoadRunDiagnosticProbes,
+  type LoadRunDiagnosticsSummary,
+} from "@checkout-surge/contracts";
 import type { ReactNode } from "react";
-import { formatCount } from "../lib/presentation/format";
+import { formatCount, formatInstantUtc } from "../lib/presentation/format";
 
 const unavailable = "Could not determine";
 
-export function RunDiagnostics({ summary }: { summary: LoadRunDiagnosticsSummary | null }) {
+export function RunDiagnostics({
+  summary,
+  warningCount = 0,
+}: {
+  summary: LoadRunDiagnosticsSummary | null;
+  warningCount?: number;
+}) {
+  const unavailableCount = countUnavailableLoadRunDiagnosticProbes(summary);
+  const fallbackCount = summary?.terminalMetricSources
+    ? Object.values(summary.terminalMetricSources).filter((source) => source === "point_stream")
+        .length
+    : 0;
   return (
     <details className="rounded-lg border border-border bg-surface">
       <summary className="cursor-pointer px-4 py-3">
         <h2 className="m-0 inline text-base font-bold text-ink">Generator diagnostics</h2>
+        <span
+          className={`ml-3 text-xs font-bold uppercase ${warningCount > 0 ? "text-warning" : "text-muted"}`}
+        >
+          {formatNumber(warningCount)} warnings ·{" "}
+          {formatNumber(summary?.stderrLineCountRetained ?? 0)} stderr retained ·{" "}
+          {summary &&
+          (summary.stderrLineTruncatedCount > 0 ||
+            summary.stderrLineCountObserved > summary.stderrLineCountRetained)
+            ? "truncated"
+            : "not truncated"}{" "}
+          · {formatNumber(unavailableCount)} unavailable probes · {formatNumber(fallbackCount)}{" "}
+          fallback metric sources
+        </span>
       </summary>
       {summary ? (
         <div className="grid grid-cols-3 gap-4 border-t border-border p-4 max-[1100px]:grid-cols-2 max-[700px]:grid-cols-1">
@@ -180,8 +207,18 @@ function K6Process({ summary }: { summary: LoadRunDiagnosticsSummary }) {
     <DiagnosticGroup
       title="k6 process"
       facts={[
-        ["k6 started", summary.startedAt],
-        ["k6 completed", summary.completedAt],
+        [
+          "k6 started",
+          <time dateTime={summary.startedAt} key="started" title={summary.startedAt}>
+            {formatInstantUtc(summary.startedAt)}
+          </time>,
+        ],
+        [
+          "k6 completed",
+          <time dateTime={summary.completedAt} key="completed" title={summary.completedAt}>
+            {formatInstantUtc(summary.completedAt)}
+          </time>,
+        ],
         ["k6 version", summary.k6Version ?? unavailable],
         ...planFacts,
       ]}
@@ -192,7 +229,6 @@ function K6Process({ summary }: { summary: LoadRunDiagnosticsSummary }) {
 function MetricProvenance({ summary }: { summary: LoadRunDiagnosticsSummary }) {
   const sources = summary.terminalMetricSources;
   const warnings = summary.summaryExportWarnings;
-  if (!sources && !warnings) return <UnavailableGroup title="k6 metric provenance" />;
 
   const facts: DiagnosticFact[] = sources
     ? [
@@ -205,11 +241,19 @@ function MetricProvenance({ summary }: { summary: LoadRunDiagnosticsSummary }) {
         ["k6 dropped-iteration source", metricSource(sources.droppedIterations)],
         ["k6 completed-iteration source", metricSource(sources.completedIterations)],
       ]
-    : [];
-  facts.push([
-    "k6 summary-export warnings",
-    warnings ? warnings.map(humanize).join(", ") || "None" : unavailable,
-  ]);
+    : [["k6 terminal metric sources", unavailable]];
+  if (warnings?.length) {
+    facts.push([
+      "k6 summary-export warnings",
+      <ul className="m-0 list-none p-0" key="warnings">
+        {warnings.map((warning) => (
+          <li key={warning}>
+            {warningExplanation(warning)} <code>{warning}</code>
+          </li>
+        ))}
+      </ul>,
+    ]);
+  }
 
   return <DiagnosticGroup title="k6 metric provenance" facts={facts} />;
 }
@@ -315,12 +359,31 @@ function limitValue(
   return unlimited === true ? "Unlimited" : unavailable;
 }
 
-function metricSource(value: "summary_export" | "point_stream" | null): string {
-  return value === null ? unavailable : humanize(value);
+function metricSource(value: "summary_export" | "point_stream" | null): ReactNode {
+  if (value === null) return unavailable;
+  return (
+    <>
+      {value === "summary_export" ? "k6 summary export" : "retained point-stream fallback"}{" "}
+      <code>{value}</code>
+    </>
+  );
 }
 
-function humanize(value: string): string {
-  return value.replaceAll("_", " ");
+function warningExplanation(
+  value: NonNullable<LoadRunDiagnosticsSummary["summaryExportWarnings"]>[number],
+): string {
+  switch (value) {
+    case "summary_export_missing":
+      return "The k6 summary export was not present.";
+    case "summary_export_invalid":
+      return "The k6 summary export could not be validated.";
+    case "summary_export_read_failed":
+      return "The k6 summary export could not be read.";
+    case "k6_outcome_counter_point_stream_fallback_used":
+      return "A retained point stream supplied an outcome counter.";
+    case "k6_outcome_counter_summary_export_unavailable":
+      return "A k6 outcome counter was unavailable from the summary export.";
+  }
 }
 
 function formatNumber(value: number): string {

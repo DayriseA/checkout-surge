@@ -28,7 +28,7 @@ const notFound = vi.hoisted(() =>
   }),
 );
 
-vi.mock("next/navigation", () => ({ notFound }));
+vi.mock("next/navigation", () => ({ notFound, useRouter: () => ({ refresh: vi.fn() }) }));
 vi.mock("../src/app/lib/api.js", () => ({ getRunHistoryDetail, getAdminRunHistoryDetail }));
 vi.mock("../src/app/lib/server/admin-page-session.js", () => ({ hasValidAdminPageSession }));
 
@@ -489,6 +489,161 @@ describe("run history", () => {
     expect(markup).toContain("Event timeline");
     expect(markup).toContain("worker");
     expect(markup).toContain("1 total");
+    expect(markup).toContain("Exception summary");
+    expect(markup).toContain("<table");
+    expect(markup).toContain("Technical detail");
+    expect(markup).toContain('<caption class="sr-only">Order outcomes</caption>');
+    expect(markup).toContain('<caption class="sr-only">ERP attempts</caption>');
+    expect(markup).toContain('<caption class="sr-only">simulated emails recorded</caption>');
+    expect(markup).toContain('<caption class="sr-only">Event timeline</caption>');
+    expect(markup).toContain('scope="row"');
+    expect(markup).toContain('aria-label="Technical detail for order ord_history_1"');
+    expect(markup).toContain(
+      'aria-label="Technical detail for ERP attempt 99999999-9999-4999-8999-999999999992"',
+    );
+    expect(markup).toContain(
+      'aria-label="Technical detail for notification 99999999-9999-4999-8999-999999999993"',
+    );
+    expect(markup).toContain(
+      'aria-label="Technical detail for event 99999999-9999-4999-8999-999999999994"',
+    );
+    expect(markup).toContain("Terminal inventory");
+    expect(markup).toContain("sold-out rejections recorded by Checkout-Surge");
+    expect(markup).toContain("Pending persistence");
+    expect(markup).toContain("Simulated ERP call average");
+    expect(markup).toContain("<code>orders:process</code>");
+    expect(markup).toContain("<code>orders-process</code>");
+    expect(markup).toContain("<code>accepted_responses_vs_unique_reservations</code>");
+    expect(markup).not.toContain("expected population difference");
+    expect(markup).not.toContain("Failure none");
+    expect(markup).not.toContain("Error none");
+    expect(markup).toContain("0 warnings · complete");
+    expect(markup).toMatch(/<h1[^>]*>Preview 1k<\/h1>/);
+    expect(markup.match(/<h1\b/g)).toHaveLength(1);
+    // Static markup verifies the responsive stacking contract, not browser geometry.
+    expect(markup).toContain("min-[900px]:sticky min-[900px]:top-16 min-[900px]:z-[5]");
+    expect(markup).not.toContain('aria-label="Select run 55555555-5555-4555-8555-555555555555"');
+    expect(markup).toContain(
+      'aria-label="Delete run Preview 1k (55555555-5555-4555-8555-555555555555)"',
+    );
+  });
+
+  it("renders exception classification and delivery tones without understating severity", () => {
+    const clean = adminDetailFixture();
+    clean.exceptionSummary.generatorWarnings = 0;
+    const cleanMarkup = renderToStaticMarkup(
+      createElement(AdminRunHistoryDetail, { detail: clean }),
+    );
+    expect(cleanMarkup).toContain("Clean run · no exceptions require attention.");
+    expect(cleanMarkup).toContain("text-accent");
+
+    const incomplete = adminDetailFixture();
+    incomplete.exceptionSummary.generatorWarnings = 0;
+    incomplete.exceptionSummary.maximumClassification = "evidence_incomplete";
+    const incompleteMarkup = renderToStaticMarkup(
+      createElement(AdminRunHistoryDetail, { detail: incomplete }),
+    );
+    expect(incompleteMarkup).toContain("Evidence incomplete");
+    expect(incompleteMarkup).toContain("text-warning");
+    expect(incompleteMarkup).not.toContain("Clean run");
+
+    const failed = adminDetailFixture();
+    failed.exceptionSummary.maximumClassification = "correctness_failure";
+    failed.exceptionSummary.brokenInvariants = 1;
+    const failedMarkup = renderToStaticMarkup(
+      createElement(AdminRunHistoryDetail, { detail: failed }),
+    );
+    expect(failedMarkup).toContain("Correctness failure");
+    expect(failedMarkup).toContain("border-danger bg-danger-soft");
+    expect(failedMarkup).toContain("text-danger");
+
+    const failedLifecycle = adminDetailFixture();
+    failedLifecycle.summary.status = "failed";
+    failedLifecycle.run.status = "failed";
+    failedLifecycle.exceptionSummary.maximumClassification = "expected_population_difference";
+    failedLifecycle.exceptionSummary.generatorWarnings = 0;
+    const failedLifecycleMarkup = renderToStaticMarkup(
+      createElement(AdminRunHistoryDetail, { detail: failedLifecycle }),
+    );
+    expect(failedLifecycleMarkup).toContain("Run failed");
+    expect(failedLifecycleMarkup).toContain("border-danger bg-danger-soft");
+    expect(failedLifecycleMarkup).toContain("text-danger");
+    expect(failedLifecycleMarkup).not.toContain("Clean run");
+
+    for (const status of ["warning", "degraded"] as const) {
+      const detail = adminDetailFixture();
+      detail.summary.trafficDeliverySummary.trafficDeliveryStatus = status;
+      detail.exceptionSummary.partialDelivery = 1;
+      const markup = renderToStaticMarkup(createElement(AdminRunHistoryDetail, { detail }));
+      expect(markup).toContain(`Delivery ${status}`);
+      expect(markup).toContain("bg-warning-soft text-warning");
+      expect(markup).not.toContain(`✓ Delivery ${status}`);
+    }
+  });
+
+  it("surfaces failed, pending, and truncated order evidence in the collapsed presentation", () => {
+    const detail = adminDetailFixture();
+    detail.orders = {
+      totalCount: 25,
+      warningCount: 1,
+      limit: 20,
+      truncated: true,
+      records: [
+        {
+          orderId: "99999999-9999-4999-8999-999999999995",
+          publicOrderId: "ord_failed",
+          saleOfferId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          correlationId: "corr-failed",
+          quantity: 1,
+          status: "failed",
+          queuedAt: "2026-06-20T00:00:02.000Z",
+          failedAt: "2026-06-20T00:00:06.000Z",
+          failureCode: "erp_rejected",
+        },
+        {
+          orderId: "99999999-9999-4999-8999-999999999996",
+          publicOrderId: "ord_pending",
+          saleOfferId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          correlationId: "corr-pending",
+          quantity: 1,
+          status: "queued",
+          queuedAt: "2026-06-20T00:00:09.000Z",
+        },
+      ],
+    };
+    detail.exceptionSummary.failedOrders = 1;
+    detail.exceptionSummary.pendingWork = 1;
+    detail.exceptionSummary.truncatedCollections = 1;
+
+    const markup = renderToStaticMarkup(createElement(AdminRunHistoryDetail, { detail }));
+
+    expect(markup).toContain("ord_failed");
+    expect(markup).toContain("<code>erp_rejected</code>");
+    expect(markup).toContain("2026-06-20 00:00:06 UTC");
+    expect(markup).toContain("ord_pending");
+    expect(markup).toContain("Missing terminal evidence");
+    expect(markup).toContain("25 total · 1 warnings · truncated to recent records");
+  });
+
+  it("includes the public failure explanation and recovery action for admins", () => {
+    const publicDetail = detailFixture("failed");
+    const detail = adminDetailFixture();
+    detail.summary = {
+      ...detail.summary,
+      status: "failed",
+      failureCategory: publicDetail.summary.failureCategory,
+    };
+    detail.run.status = "failed";
+    detail.run.trafficStatus = "failed";
+    detail.internalFailureReason = "traffic_failed";
+
+    const markup = renderToStaticMarkup(createElement(AdminRunHistoryDetail, { detail }));
+
+    expect(markup).toContain("What happened");
+    expect(markup).toContain(
+      "The load generator could not deliver the planned traffic, so this run&#x27;s evidence is incomplete.",
+    );
+    expect(markup).toContain("Start a new run to try again.");
   });
 });
 
@@ -735,6 +890,15 @@ function adminDetailFixture(): AdminRunHistoryDetailResponse {
         source: "redis",
       },
     },
+    exceptionSummary: {
+      maximumClassification: detail.result.maximumClassification,
+      brokenInvariants: 0,
+      failedOrders: 0,
+      pendingWork: 0,
+      partialDelivery: 0,
+      generatorWarnings: 1,
+      truncatedCollections: 0,
+    },
     run: {
       runId: detail.run.runId,
       presetId: "33333333-3333-4333-8333-333333333333",
@@ -753,6 +917,7 @@ function adminDetailFixture(): AdminRunHistoryDetailResponse {
     loadRunDiagnosticsSummary: null,
     orders: {
       totalCount: 1,
+      warningCount: 0,
       limit: 20,
       truncated: false,
       records: [
@@ -771,6 +936,7 @@ function adminDetailFixture(): AdminRunHistoryDetailResponse {
     },
     erpAttempts: {
       totalCount: 1,
+      warningCount: 0,
       limit: 20,
       truncated: false,
       records: [
@@ -789,8 +955,10 @@ function adminDetailFixture(): AdminRunHistoryDetailResponse {
         },
       ],
     },
+    erpAttemptSummary: detail.erpAttempts,
     notifications: {
       totalCount: 1,
+      warningCount: 0,
       limit: 20,
       truncated: false,
       records: [
@@ -804,6 +972,7 @@ function adminDetailFixture(): AdminRunHistoryDetailResponse {
     },
     eventTimeline: {
       totalCount: 1,
+      warningCount: 0,
       limit: 20,
       truncated: false,
       records: [

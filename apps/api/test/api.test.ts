@@ -673,6 +673,15 @@ function adminRunHistoryDetailResponseFixture(): AdminRunHistoryDetailResponse {
 
   return {
     summary,
+    exceptionSummary: {
+      maximumClassification: "expected_population_difference",
+      brokenInvariants: 0,
+      failedOrders: 0,
+      pendingWork: 0,
+      partialDelivery: 0,
+      generatorWarnings: 1,
+      truncatedCollections: 0,
+    },
     httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
     loadRunDiagnosticsSummary: null,
     run: demoRunSnapshotSchema.parse({
@@ -685,6 +694,7 @@ function adminRunHistoryDetailResponseFixture(): AdminRunHistoryDetailResponse {
     }),
     orders: {
       totalCount: 1,
+      warningCount: 0,
       limit: 20,
       truncated: false,
       records: [
@@ -703,6 +713,7 @@ function adminRunHistoryDetailResponseFixture(): AdminRunHistoryDetailResponse {
     },
     erpAttempts: {
       totalCount: 1,
+      warningCount: 0,
       limit: 20,
       truncated: false,
       records: [
@@ -721,8 +732,15 @@ function adminRunHistoryDetailResponseFixture(): AdminRunHistoryDetailResponse {
         },
       ],
     },
+    erpAttemptSummary: {
+      totalCount: 1,
+      byStatus: { succeeded: 1, failed: 0, timedOut: 0 },
+      averageLatencyMs: 42,
+      p95LatencyMs: 42,
+    },
     notifications: {
       totalCount: 1,
+      warningCount: 0,
       limit: 20,
       truncated: false,
       records: [
@@ -736,6 +754,7 @@ function adminRunHistoryDetailResponseFixture(): AdminRunHistoryDetailResponse {
     },
     eventTimeline: {
       totalCount: 1,
+      warningCount: 0,
       limit: 20,
       truncated: false,
       records: [

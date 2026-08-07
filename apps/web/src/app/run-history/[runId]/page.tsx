@@ -2,7 +2,9 @@ import { runHistoryDetailParamsSchema } from "@checkout-surge/contracts";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ErrorNotice } from "../../components/error-notice";
+import { RunHistoryAdminControls } from "../../components/run-history-admin-controls";
 import { AdminRunHistoryDetail, PublicRunHistoryDetail } from "../../components/run-history-detail";
+import { RunHistoryRowControls } from "../../components/run-history-row-controls";
 import { StatusPill } from "../../components/status-pill";
 import { getAdminRunHistoryDetail, getRunHistoryDetail } from "../../lib/api";
 import { formatDurationMs, formatInstantUtc } from "../../lib/presentation/format";
@@ -77,6 +79,35 @@ export default async function RunHistoryDetailPage({ params }: RunHistoryDetailP
     );
   }
 
+  if (adminDetail?.status === "available") {
+    return (
+      <RunHistoryAdminControls
+        showBulkControls={false}
+        showSelectionToolbar={false}
+        visibleRunIds={[adminDetail.data.summary.runId]}
+      >
+        <AdminRunHistoryDetail
+          actions={
+            <RunHistoryRowControls
+              presetName={adminDetail.data.summary.presetName}
+              runId={adminDetail.data.summary.runId}
+              showSelection={false}
+            />
+          }
+          detail={adminDetail.data}
+          navigation={
+            <Link
+              className="mb-4 inline-flex min-h-10 items-center rounded-lg border border-border px-3.5 py-2.5 text-sm font-semibold text-muted-strong"
+              href="/run-history"
+            >
+              Back to run history
+            </Link>
+          }
+        />
+      </RunHistoryAdminControls>
+    );
+  }
+
   const detail = adminDetail ??
     publicDetail ?? {
       status: "unavailable" as const,
@@ -100,26 +131,20 @@ export default async function RunHistoryDetailPage({ params }: RunHistoryDetailP
         </div>
         <StatusPill
           status={{
-            label: detail.status === "available" ? "available" : "unavailable",
-            tone: detail.status === "available" ? "ok" : "danger",
+            label: "unavailable",
+            tone: "danger",
           }}
         />
       </header>
-      {adminDetail?.status === "available" ? (
-        <AdminRunHistoryDetail detail={adminDetail.data} />
-      ) : (
-        <section className="rounded-lg border border-border bg-surface p-4">
-          <p className="m-0 text-xs font-bold uppercase text-muted">Run history detail</p>
-          <h2 className="m-0 mt-1 text-base font-bold leading-tight text-ink">
-            Detail unavailable
-          </h2>
-          <ErrorNotice
-            context={{ surface: "history-detail", protected: isAdmin }}
-            protectedDetails={isAdmin}
-            read={detail}
-          />
-        </section>
-      )}
+      <section className="rounded-lg border border-border bg-surface p-4">
+        <p className="m-0 text-xs font-bold uppercase text-muted">Run history detail</p>
+        <h2 className="m-0 mt-1 text-base font-bold leading-tight text-ink">Detail unavailable</h2>
+        <ErrorNotice
+          context={{ surface: "history-detail", protected: isAdmin }}
+          protectedDetails={isAdmin}
+          read={detail}
+        />
+      </section>
     </>
   );
 }

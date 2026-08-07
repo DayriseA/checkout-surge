@@ -293,6 +293,141 @@ describe("run history service", () => {
     });
   });
 
+  it("computes protected exception counts from authoritative run evidence", async () => {
+    const db = requireConnection(connection).db;
+    const service = createService(connection);
+    await seedHistory(db);
+    const updateSummary = (values: Partial<typeof demoRunSummaries.$inferInsert>) =>
+      db.update(demoRunSummaries).set(values).where(eq(demoRunSummaries.id, ids.olderSummary));
+    const cleanBusinessOutcome = {
+      acceptedReservations: 3,
+      reservedUnits: 5,
+      soldOutRejections: 2,
+      queuedOrders: 0,
+      processingOrders: 0,
+      retryingOrders: 0,
+      confirmedOrders: 3,
+      failedOrders: 0,
+      pendingPersistenceCount: 0,
+      notificationsRecorded: 3,
+    };
+    const cleanInventory = {
+      saleOfferId: ids.saleOffer,
+      startingStock: 5,
+      remainingStock: 0,
+      reservedStock: 5,
+      acceptedReservations: 3,
+      soldOutRejections: 2,
+      pendingPersistenceCount: 0,
+      capturedAt: "2026-06-20T00:00:05.000Z",
+      source: "redis" as const,
+    };
+    const completeDelivery = trafficDeliverySummarySchema.parse({
+      trafficMode: null,
+      plannedBuyers: null,
+      scheduledRatePerSecond: null,
+      configuredDurationSeconds: null,
+      preAllocatedVUs: null,
+      maxVUs: null,
+      droppedIterations: 0,
+      completedIterations: null,
+      requestArrivalSummary: emptyRequestArrivalSummary,
+      trafficDeliveryStatus: "complete",
+      notes: [],
+    });
+
+    await updateSummary({
+      businessOutcomeSummary: cleanBusinessOutcome,
+      terminalInventorySnapshot: cleanInventory,
+      trafficDeliverySummary: completeDelivery,
+      loadRunDiagnosticsSummary: completeRunHistoryDiagnosticsFixture(),
+    });
+    expect((await service.adminDetail(ids.olderRun))?.exceptionSummary).toEqual({
+      maximumClassification: "expected_population_difference",
+      brokenInvariants: 0,
+      failedOrders: 0,
+      pendingWork: 0,
+      partialDelivery: 0,
+      generatorWarnings: 0,
+      truncatedCollections: 0,
+    });
+
+    await updateSummary({
+      businessOutcomeSummary: {
+        ...cleanBusinessOutcome,
+        queuedOrders: 1,
+        processingOrders: 1,
+        retryingOrders: 1,
+        confirmedOrders: 0,
+        failedOrders: 1,
+        pendingPersistenceCount: 1,
+      },
+      terminalInventorySnapshot: { ...cleanInventory, pendingPersistenceCount: 1 },
+      trafficDeliverySummary: {
+        ...completeDelivery,
+        droppedIterations: 1,
+        trafficDeliveryStatus: "degraded",
+      },
+      transportAttemptCounts: {
+        plannedRequests: 20,
+        startedRequests: 19,
+        completedRequests: 19,
+        interruptedRequests: 0,
+        unstartedRequests: 1,
+      },
+      loadRunDiagnosticsSummary: {
+        ...completeRunHistoryDiagnosticsFixture(),
+        summaryExportWarnings: ["summary_export_missing"],
+      },
+    });
+    expect((await service.adminDetail(ids.olderRun))?.exceptionSummary).toMatchObject({
+      maximumClassification: "evidence_incomplete",
+      failedOrders: 1,
+      pendingWork: 3,
+      partialDelivery: 1,
+      generatorWarnings: 1,
+    });
+
+    await updateSummary({
+      businessOutcomeSummary: { ...cleanBusinessOutcome, reservedUnits: 4 },
+      terminalInventorySnapshot: {
+        ...cleanInventory,
+        remainingStock: 1,
+        reservedStock: 4,
+      },
+      trafficDeliverySummary: completeDelivery,
+      transportAttemptCounts: {
+        plannedRequests: 20,
+        startedRequests: 20,
+        completedRequests: 20,
+        interruptedRequests: 0,
+        unstartedRequests: 0,
+      },
+    });
+    expect((await service.adminDetail(ids.olderRun))?.exceptionSummary).toMatchObject({
+      maximumClassification: "warning",
+      brokenInvariants: 0,
+    });
+
+    await updateSummary({
+      businessOutcomeSummary: cleanBusinessOutcome,
+      terminalInventorySnapshot: null,
+    });
+    expect((await service.adminDetail(ids.olderRun))?.exceptionSummary).toMatchObject({
+      maximumClassification: "evidence_incomplete",
+      brokenInvariants: 0,
+    });
+
+    await updateSummary({
+      businessOutcomeSummary: cleanBusinessOutcome,
+      terminalInventorySnapshot: { ...cleanInventory, remainingStock: 1 },
+    });
+    expect((await service.adminDetail(ids.olderRun))?.exceptionSummary).toMatchObject({
+      maximumClassification: "correctness_failure",
+      brokenInvariants: 1,
+    });
+  });
+
   it("parses persisted server timing and derives expected replies from transport evidence", async () => {
     const db = requireConnection(connection).db;
     const service = createService(connection);
@@ -519,6 +654,9 @@ describe("run history service", () => {
     });
 
     const adminDetail = await service.adminDetail(ids.newerRun);
+    expect(adminDetail?.exceptionSummary.failedOrders).toBe(1);
+    expect(adminDetail?.exceptionSummary.partialDelivery).toBe(1);
+    expect(adminDetail?.exceptionSummary.generatorWarnings).toBe(17);
     expect(adminDetail?.httpTimingBreakdownSummary).toEqual(emptyHttpTimingBreakdownSummary);
     expect(adminDetail?.loadRunDiagnosticsSummary).toMatchObject({
       k6Version: "k6 v1.0.0",
@@ -539,6 +677,13 @@ describe("run history service", () => {
       terminal: false,
       httpStatus: 503,
     });
+    expect(adminDetail?.erpAttempts.warningCount).toBe(3);
+    expect(adminDetail?.erpAttemptSummary).toMatchObject({
+      totalCount: 3,
+      byStatus: { succeeded: 0, failed: 2, timedOut: 1 },
+    });
+    expect(adminDetail?.erpAttemptSummary.averageLatencyMs).toBeCloseTo(50.666_666, 5);
+    expect(adminDetail?.erpAttemptSummary.p95LatencyMs).toBeCloseTo(94.2, 3);
     expect(adminDetail?.eventTimeline.records.map((event) => event.eventName)).toEqual([
       "order.confirmed",
       "order.queued",
@@ -587,11 +732,29 @@ describe("run history service", () => {
     const service = createService(connection);
     await seedHistory(db);
     await seedAdminOrders(db, 21);
+    await db
+      .update(orders)
+      .set({
+        status: "failed",
+        confirmedAt: null,
+        failedAt: new Date("2026-06-20T00:00:01.000Z"),
+        failureCode: "erp_failed",
+      })
+      .where(eq(orders.publicOrderId, "ord_admin_history_1"));
 
     const detail = await service.adminDetail(ids.newerRun);
 
-    expect(detail?.orders).toMatchObject({ totalCount: 21, limit: 20, truncated: true });
+    expect(detail?.orders).toMatchObject({
+      totalCount: 21,
+      warningCount: 1,
+      limit: 20,
+      truncated: true,
+    });
     expect(detail?.orders.records).toHaveLength(20);
+    expect(detail?.orders.records).not.toContainEqual(
+      expect.objectContaining({ publicOrderId: "ord_admin_history_1" }),
+    );
+    expect(detail?.exceptionSummary.truncatedCollections).toBe(1);
   });
 
   it("returns explicit zero buckets and null ERP latency for empty live sets", async () => {
@@ -1036,6 +1199,39 @@ function runHistoryDiagnosticsFixture() {
       completedIterations: "summary_export" as const,
     },
     summaryExportWarnings: [],
+  };
+}
+
+function completeRunHistoryDiagnosticsFixture() {
+  return {
+    ...runHistoryDiagnosticsFixture(),
+    generatorCapacity: {
+      memTotalBytes: 1,
+      memAvailableBytes: 1,
+      swapTotalBytes: 0,
+      cgroupMemoryLimitBytes: null,
+      cgroupMemoryLimitUnlimited: true,
+      cgroupCpuQuota: null,
+      cgroupCpuQuotaUnlimited: true,
+    },
+    generatorUtilisation: {
+      peakK6RssBytes: 1,
+      peakCgroupMemoryBytes: 1,
+      minimumHostMemAvailableBytes: 1,
+      peakCpuUtilisationPercent: 1,
+      meanCpuUtilisationPercent: 1,
+      peakCgroupSwapBytes: 0,
+      finalMemoryEventsHighCount: 0,
+      finalMemoryEventsMaxCount: 0,
+      finalMemoryEventsOomKillCount: 0,
+      sampleCount: 1,
+      effectiveIntervalMs: 1,
+    },
+    networkDiagnostics: {
+      ipLocalPortRange: "1 65535",
+      tcpTwReuse: 1,
+      tcpTimestamps: 1,
+    },
   };
 }
 

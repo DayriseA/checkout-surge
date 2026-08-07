@@ -13,9 +13,16 @@ import { type DeleteIntent, useRunHistoryDeletion } from "./use-run-history-dele
 interface RunHistoryAdminControlsProps {
   visibleRunIds: string[];
   children?: ReactNode;
+  showBulkControls?: boolean;
+  showSelectionToolbar?: boolean;
 }
 
-export function RunHistoryAdminControls({ visibleRunIds, children }: RunHistoryAdminControlsProps) {
+export function RunHistoryAdminControls({
+  visibleRunIds,
+  children,
+  showBulkControls = true,
+  showSelectionToolbar = true,
+}: RunHistoryAdminControlsProps) {
   const deletion = useRunHistoryDeletion(visibleRunIds);
   const selectedCount = deletion.selectedRunIds.size;
   const allVisibleSelected =
@@ -38,28 +45,30 @@ export function RunHistoryAdminControls({ visibleRunIds, children }: RunHistoryA
 
   return (
     <RunHistoryAdminProvider value={rowAdmin}>
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-        <label className="flex items-center gap-2 text-sm font-semibold text-muted-strong">
-          <input
-            aria-label="Select all visible runs"
-            checked={allVisibleSelected}
-            className="size-4 cursor-pointer accent-danger"
-            onChange={deletion.toggleAllVisible}
-            ref={(node) => {
-              if (node) node.indeterminate = selectedCount > 0 && !allVisibleSelected;
-            }}
-            type="checkbox"
-          />
-          Select all visible ({visibleRunIds.length})
-        </label>
-        <p aria-live="polite" className="m-0 text-sm text-muted">
-          {deletion.statusMessage}
-        </p>
-      </div>
+      {showBulkControls ? (
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+          <label className="flex items-center gap-2 text-sm font-semibold text-muted-strong">
+            <input
+              aria-label="Select all visible runs"
+              checked={allVisibleSelected}
+              className="size-4 cursor-pointer accent-danger"
+              onChange={deletion.toggleAllVisible}
+              ref={(node) => {
+                if (node) node.indeterminate = selectedCount > 0 && !allVisibleSelected;
+              }}
+              type="checkbox"
+            />
+            Select all visible ({visibleRunIds.length})
+          </label>
+          <p aria-live="polite" className="m-0 text-sm text-muted">
+            {deletion.statusMessage}
+          </p>
+        </div>
+      ) : null}
 
       {children}
 
-      {selectedCount > 0 ? (
+      {showSelectionToolbar && selectedCount > 0 ? (
         <div className="fixed bottom-6 right-6 z-40 flex flex-wrap items-center gap-3 rounded-lg border border-border bg-surface px-4 py-3 shadow-xl">
           <p className="m-0 text-sm font-semibold text-muted-strong">{selectedCount} selected</p>
           <button

@@ -6,11 +6,11 @@ import { formatDiagnosticBytes, RunDiagnostics } from "../src/app/components/run
 
 describe("run diagnostics", () => {
   it("renders every populated diagnostics group and stays collapsed by default", () => {
-    const markup = render(diagnostics());
+    const markup = render(diagnostics(), 4);
 
     expect(markup).toContain("<details");
     expect(markup).not.toContain("<details open");
-    expect(markup).toMatch(/<summary[^>]*><h2[^>]*>Generator diagnostics<\/h2><\/summary>/);
+    expect(markup).toMatch(/<summary[^>]*><h2[^>]*>Generator diagnostics<\/h2>/);
     for (const label of [
       "Generator host",
       "Generator capacity",
@@ -32,6 +32,15 @@ describe("run diagnostics", () => {
       "col-span-3 min-w-0 border-t border-border pt-3 max-[1100px]:col-span-2 max-[700px]:col-span-1",
     );
     expect(markup).toContain("request failed");
+    expect(markup).toContain("2026-06-20 00:00:00 UTC");
+    expect(markup).toContain('title="2026-06-20T00:00:00.000Z"');
+    expect(markup).toContain("retained point-stream fallback");
+    expect(markup).toContain("<code>point_stream</code>");
+    expect(markup).toContain("The k6 summary export was not present.");
+    expect(markup).toContain("<code>summary_export_missing</code>");
+    expect(markup).toContain("4 warnings");
+    expect(markup).toContain("1 stderr retained");
+    expect(markup).toContain("truncated · 0 unavailable probes · 1 fallback metric sources");
   });
 
   it("distinguishes unavailable blocks, unknown values, unlimited limits, and zero", () => {
@@ -57,26 +66,54 @@ describe("run diagnostics", () => {
       terminalMetricSources: undefined,
       summaryExportWarnings: undefined,
     });
-    const markup = render(summary);
+    const markup = render(summary, 28);
 
     expect(markup).toContain("Generator host diagnostics were unavailable.");
     expect(markup).toContain("Generator utilisation diagnostics were unavailable.");
     expect(markup).toContain("Generator network diagnostics were unavailable.");
-    expect(markup).toContain("k6 metric provenance diagnostics were unavailable.");
+    expectFact(markup, "k6 terminal metric sources", "Could not determine");
     expect(markup).toContain("Could not determine");
     expect(markup).toContain("Unlimited");
     expect(markup).toMatch(/Generator host swap<\/dt><dd[^>]*><span[^>]*>0 B<\/span>/);
     expect(markup).toContain("No retained generator stderr lines.");
     expect(markup).toMatch(/k6 stderr lines observed<\/dt><dd[^>]*>0<\/dd>/);
     expect(markup).not.toContain("null");
+    expect(markup).toContain("28 unavailable probes");
+  });
+
+  it("explains unavailable metric sources with empty or populated warning arrays", () => {
+    const emptyWarnings = render(
+      diagnostics({
+        terminalMetricSources: undefined,
+        summaryExportWarnings: [],
+      }),
+    );
+
+    expect(emptyWarnings).toContain("8 unavailable probes");
+    expectFact(emptyWarnings, "k6 terminal metric sources", "Could not determine");
+
+    const populatedWarnings = render(
+      diagnostics({
+        terminalMetricSources: undefined,
+        summaryExportWarnings: ["summary_export_missing"],
+      }),
+      1,
+    );
+
+    expect(populatedWarnings).toContain("8 unavailable probes");
+    expectFact(populatedWarnings, "k6 terminal metric sources", "Could not determine");
+    expect(populatedWarnings).toContain("The k6 summary export was not present.");
+    expect(populatedWarnings).toContain("<code>summary_export_missing</code>");
   });
 
   it("renders a single unavailable message when the whole summary is absent", () => {
-    const markup = render(null);
+    const markup = render(null, 30);
 
     expect(markup).toContain("Generator diagnostics were unavailable for this run.");
     expect(markup).not.toContain("Generator capacity diagnostics were unavailable.");
     expect(markup).not.toContain("null");
+    expect(markup).toContain("30 warnings");
+    expect(markup).toContain("30 unavailable probes");
   });
 
   it("escapes retained stderr and keeps long lines inside a wrapping, scrollable block", () => {
@@ -161,8 +198,8 @@ describe("run diagnostics", () => {
   });
 });
 
-function render(summary: LoadRunDiagnosticsSummary | null): string {
-  return renderToStaticMarkup(createElement(RunDiagnostics, { summary }));
+function render(summary: LoadRunDiagnosticsSummary | null, warningCount = 0): string {
+  return renderToStaticMarkup(createElement(RunDiagnostics, { summary, warningCount }));
 }
 
 const populatedFacts = [
@@ -189,8 +226,6 @@ const populatedFacts = [
   ["Generator local TCP port range", "1024 65535"],
   ["Generator tcp_tw_reuse", "1"],
   ["Generator tcp_timestamps", "1"],
-  ["k6 started", "2026-06-20T00:00:00.000Z"],
-  ["k6 completed", "2026-06-20T00:00:10.000Z"],
   ["k6 version", "k6 v1.0.0"],
   ["k6 traffic mode", "buyer spike"],
   ["k6 buyer count", "10"],
@@ -199,15 +234,6 @@ const populatedFacts = [
   ["k6 planned emitted attempts", "10"],
   ["k6 start delay", "0s"],
   ["k6 maximum duration", "30s"],
-  ["k6 started-request source", "summary export"],
-  ["k6 completed-request source", "summary export"],
-  ["k6 accepted-response source", "summary export"],
-  ["k6 sold-out-response source", "summary export"],
-  ["k6 transport-failure source", "point stream"],
-  ["k6 unexpected-response source", "summary export"],
-  ["k6 dropped-iteration source", "summary export"],
-  ["k6 completed-iteration source", "summary export"],
-  ["k6 summary-export warnings", "summary export missing"],
   ["k6 stderr lines observed", "302"],
   ["k6 stderr lines retained", "1"],
   ["k6 stderr retained-line limit", "50"],

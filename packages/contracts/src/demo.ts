@@ -45,6 +45,7 @@ import {
 import {
   internalRunFailureReasonSchema,
   publicRunFailureCategorySchema,
+  runResultClassificationSchema,
   runResultOutcomeSchema,
   runResultSchema,
 } from "./run-result.js";
@@ -383,8 +384,39 @@ export type RunHistoryEventTimelineEntry = z.infer<typeof runHistoryEventTimelin
 const runHistoryCollectionMetadataSchema = z
   .object({
     totalCount: nonnegativeIntegerSchema,
+    warningCount: nonnegativeIntegerSchema,
     limit: positiveIntegerSchema,
     truncated: z.boolean(),
+  })
+  .strict();
+
+export const runHistoryExceptionSummarySchema = z
+  .object({
+    maximumClassification: runResultClassificationSchema.nullable(),
+    brokenInvariants: nonnegativeIntegerSchema,
+    failedOrders: nonnegativeIntegerSchema,
+    pendingWork: nonnegativeIntegerSchema,
+    partialDelivery: nonnegativeIntegerSchema,
+    generatorWarnings: nonnegativeIntegerSchema,
+    truncatedCollections: nonnegativeIntegerSchema,
+  })
+  .strict();
+export type RunHistoryExceptionSummary = z.infer<typeof runHistoryExceptionSummarySchema>;
+
+const erpAttemptStatusCountsSchema = z
+  .object({
+    succeeded: nonnegativeIntegerSchema,
+    failed: nonnegativeIntegerSchema,
+    timedOut: nonnegativeIntegerSchema,
+  })
+  .strict();
+
+export const runHistoryErpAttemptSummarySchema = z
+  .object({
+    totalCount: nonnegativeIntegerSchema,
+    byStatus: erpAttemptStatusCountsSchema,
+    averageLatencyMs: nonnegativeNumberSchema.nullable(),
+    p95LatencyMs: nonnegativeNumberSchema.nullable(),
   })
   .strict();
 
@@ -392,6 +424,7 @@ export const adminRunHistoryDetailResponseSchema = z
   .object({
     summary: runHistorySummarySchema,
     run: demoRunSnapshotSchema,
+    exceptionSummary: runHistoryExceptionSummarySchema,
     internalFailureReason: internalRunFailureReasonSchema.optional(),
     httpTimingBreakdownSummary: httpTimingBreakdownSummarySchema,
     loadRunDiagnosticsSummary: loadRunDiagnosticsSummarySchema.nullable(),
@@ -405,6 +438,7 @@ export const adminRunHistoryDetailResponseSchema = z
         records: z.array(runHistoryErpAttemptSchema),
       })
       .strict(),
+    erpAttemptSummary: runHistoryErpAttemptSummarySchema,
     notifications: runHistoryCollectionMetadataSchema
       .extend({
         records: z.array(runHistoryNotificationSchema),
@@ -500,14 +534,6 @@ export const publicRunHistoryRunSchema = z
   .strict();
 export type PublicRunHistoryRun = z.infer<typeof publicRunHistoryRunSchema>;
 
-const erpAttemptStatusCountsSchema = z
-  .object({
-    succeeded: nonnegativeIntegerSchema,
-    failed: nonnegativeIntegerSchema,
-    timedOut: nonnegativeIntegerSchema,
-  })
-  .strict();
-
 export const publicRunHistoryDetailResponseSchema = z
   .object({
     summary: publicRunHistorySummarySchema,
@@ -516,14 +542,7 @@ export const publicRunHistoryDetailResponseSchema = z
     overallDurationMs: nonnegativeNumberSchema.nullable(),
     plannedAttempts: nonnegativeIntegerSchema,
     httpTimingBreakdownSummary: httpTimingBreakdownSummarySchema,
-    erpAttempts: z
-      .object({
-        totalCount: nonnegativeIntegerSchema,
-        byStatus: erpAttemptStatusCountsSchema,
-        averageLatencyMs: nonnegativeNumberSchema.nullable(),
-        p95LatencyMs: nonnegativeNumberSchema.nullable(),
-      })
-      .strict(),
+    erpAttempts: runHistoryErpAttemptSummarySchema,
     runSignalTimelineSummary: runSignalTimelineSummarySchema.nullable(),
     timestamp: isoTimestampSchema,
   })

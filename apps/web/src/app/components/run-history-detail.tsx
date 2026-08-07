@@ -2,7 +2,7 @@ import type {
   AdminRunHistoryDetailResponse,
   PublicRunHistoryDetailResponse,
 } from "@checkout-surge/contracts";
-import { deriveRunResult } from "@checkout-surge/contracts";
+import { deriveLoadExecutionPlan, deriveRunResult } from "@checkout-surge/contracts";
 import type { ReactNode } from "react";
 import { formatCount, formatDurationMs, formatInstantUtc } from "../lib/presentation/format";
 import {
@@ -28,31 +28,36 @@ import { StatusPill } from "./status-pill";
 import { TransportObservationSection } from "./transport-observation";
 
 interface RunHistoryDetailProps {
+  actions?: ReactNode;
   detail: AdminRunHistoryDetailResponse;
+  navigation?: ReactNode;
 }
 
-export function AdminRunHistoryDetail({ detail }: RunHistoryDetailProps) {
+export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistoryDetailProps) {
   const { run, summary } = detail;
   const config = run.configSnapshot;
   const result = deriveRunResult(evidenceFromRunHistoryDetail(detail));
   const runPresentation = deriveTerminalSummaryPresentation(result);
   const overallDuration = deriveOverallRunDuration(summary);
+  const failure = summary.failureCategory
+    ? publicFailureExplanation(summary.failureCategory)
+    : null;
 
   return (
     <div className="grid gap-4">
-      <RunConclusion result={result} runStatus={summary.status} />
-      <section className="rounded-lg border border-border bg-surface p-4">
+      <header className="rounded-lg border border-border bg-surface p-4 min-[900px]:sticky min-[900px]:top-16 min-[900px]:z-[5]">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
+            {navigation}
             <p className="m-0 text-xs font-bold uppercase text-muted">Run detail</p>
-            <h2 className="m-0 mt-1 text-2xl font-bold leading-tight text-ink">
+            <h1 className="m-0 mt-1 text-2xl font-bold leading-tight text-ink">
               {summary.presetName}
-            </h2>
+            </h1>
             <p className="m-0 mt-2 [overflow-wrap:anywhere] text-sm font-semibold text-muted-strong">
               {summary.runId}
             </p>
           </div>
-          <div className="flex flex-wrap justify-end gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
             <StatusPill
               status={{
                 ...runPresentation,
@@ -66,18 +71,19 @@ export function AdminRunHistoryDetail({ detail }: RunHistoryDetailProps) {
             <StatusPill status={{ label: `operator ${run.operatorMode}`, tone: "idle" }} />
             <StatusPill
               status={{
-                label: publicStatusLabel({
-                  family: "traffic-delivery",
-                  status: summary.trafficDeliverySummary.trafficDeliveryStatus,
-                }),
+                label: adminDeliveryLabel(summary.trafficDeliverySummary.trafficDeliveryStatus),
                 tone: trafficDeliveryStatusTone(
                   summary.trafficDeliverySummary.trafficDeliveryStatus,
                 ),
               }}
             />
+            {actions}
           </div>
         </div>
-        <div className="mt-4 grid grid-cols-3 gap-4 max-[900px]:grid-cols-1">
+      </header>
+
+      <section aria-label="Run overview" className="rounded-lg border border-border bg-surface p-4">
+        <div className="mt-4 grid grid-cols-4 gap-4 max-[1100px]:grid-cols-2 max-[700px]:grid-cols-1">
           <FactList
             facts={[
               ["Started", formatDate(summary.startedAt)],
@@ -86,7 +92,9 @@ export function AdminRunHistoryDetail({ detail }: RunHistoryDetailProps) {
               ["Traffic ended", formatDate(run.trafficEndedAt)],
               ["Finalized", formatDate(run.finalizedAt)],
               ["Evidence recorded", formatDate(summary.capturedAt)],
-              ["Failure", detail.internalFailureReason ?? "none"],
+              ...(detail.internalFailureReason
+                ? [["Failure code", codeValue(detail.internalFailureReason)] as [string, ReactNode]]
+                : []),
             ]}
             title="Lifecycle"
           />
@@ -102,6 +110,35 @@ export function AdminRunHistoryDetail({ detail }: RunHistoryDetailProps) {
             {...(run.trafficStartedAt ? { trafficStartedAt: run.trafficStartedAt } : {})}
           />
           <FactList
+            caption={simulatedErpLens.caption}
+            facts={[
+              ["Simulated ERP call attempts", formatNumber(detail.erpAttemptSummary.totalCount)],
+              ["Succeeded attempts", formatNumber(detail.erpAttemptSummary.byStatus.succeeded)],
+              ...(detail.erpAttemptSummary.byStatus.failed > 0
+                ? [
+                    ["Failed attempts", formatNumber(detail.erpAttemptSummary.byStatus.failed)] as [
+                      string,
+                      ReactNode,
+                    ],
+                  ]
+                : []),
+              ...(detail.erpAttemptSummary.byStatus.timedOut > 0
+                ? [
+                    [
+                      "Timed-out attempts",
+                      formatNumber(detail.erpAttemptSummary.byStatus.timedOut),
+                    ] as [string, ReactNode],
+                  ]
+                : []),
+              [
+                "Simulated ERP call average",
+                nullableMetricMs(detail.erpAttemptSummary.averageLatencyMs),
+              ],
+              ["Simulated ERP call p95", nullableMetricMs(detail.erpAttemptSummary.p95LatencyMs)],
+            ]}
+            title={simulatedErpLens.title}
+          />
+          <FactList
             caption={durableCheckoutLens.caption}
             facts={[
               [
@@ -111,6 +148,10 @@ export function AdminRunHistoryDetail({ detail }: RunHistoryDetailProps) {
               ["Queued", formatNumber(summary.businessOutcomeSummary.queuedOrders)],
               ["Processing", formatNumber(summary.businessOutcomeSummary.processingOrders)],
               ["Retrying", formatNumber(summary.businessOutcomeSummary.retryingOrders)],
+              [
+                "Pending persistence",
+                formatNumber(summary.businessOutcomeSummary.pendingPersistenceCount),
+              ],
               ["Confirmed", formatNumber(summary.businessOutcomeSummary.confirmedOrders)],
               ["Failed", formatNumber(summary.businessOutcomeSummary.failedOrders)],
               [
@@ -120,23 +161,51 @@ export function AdminRunHistoryDetail({ detail }: RunHistoryDetailProps) {
             ]}
             title={durableCheckoutLens.title}
           />
+          <FactList
+            facts={
+              summary.terminalInventorySnapshot
+                ? [
+                    [
+                      publicVocabulary.startingStock,
+                      formatNumber(summary.terminalInventorySnapshot.startingStock),
+                    ],
+                    [
+                      "Remaining stock",
+                      formatNumber(summary.terminalInventorySnapshot.remainingStock),
+                    ],
+                    [
+                      "Reserved stock",
+                      formatNumber(summary.terminalInventorySnapshot.reservedStock),
+                    ],
+                    [
+                      publicVocabulary.soldOutRejectionsRecorded,
+                      formatNumber(summary.terminalInventorySnapshot.soldOutRejections),
+                    ],
+                    [
+                      "Held awaiting persistence",
+                      formatNumber(summary.terminalInventorySnapshot.pendingPersistenceCount),
+                    ],
+                  ]
+                : [["Terminal inventory", "not recorded"]]
+            }
+            title="Terminal inventory"
+          />
         </div>
       </section>
-
-      <GoldSignals
-        acceptedReservations={summary.businessOutcomeSummary.acceptedReservations}
-        arrivalSummary={summary.trafficDeliverySummary.requestArrivalSummary}
-        oversoldUnits={oversoldUnitsFromTerminalInventory(summary)}
-        runStatus={run.status}
-        terminalSummary={detail.runSignalTimelineSummary}
-      />
-
-      <RunDiagnostics summary={detail.loadRunDiagnosticsSummary} />
 
       <section className="rounded-lg border border-border bg-surface p-4">
         <h2 className="m-0 text-base font-bold leading-tight text-ink">Run configuration</h2>
         <div className="mt-3 grid grid-cols-4 gap-4 max-[1100px]:grid-cols-2 max-[700px]:grid-cols-1">
-          <FactList facts={trafficConfigFacts(config.trafficConfig)} title="Traffic" />
+          <FactList
+            facts={[
+              [
+                "Planned demand",
+                formatNumber(deriveLoadExecutionPlan(config.trafficConfig).plannedEmittedAttempts),
+              ],
+              ...trafficConfigFacts(config.trafficConfig),
+            ]}
+            title="Traffic"
+          />
           <FactList
             facts={[
               ["Starting stock", formatNumber(config.inventoryConfig.startingStock)],
@@ -161,12 +230,18 @@ export function AdminRunHistoryDetail({ detail }: RunHistoryDetailProps) {
               ["Simulated ERP capacity (orders/s)", formatNumber(config.erpConfig.maxTps)],
               ["Simulated ERP failure rate (%)", formatPercent(config.erpConfig.errorRate)],
               ["Simulated ERP outage", config.erpConfig.forcedOutage ? "yes" : "no"],
+              ["Request timeout", formatDurationMs(config.erpConfig.requestTimeoutMs) ?? "n/a"],
             ]}
             title="Simulated ERP"
           />
           <FactList
             facts={[
               ["Concurrency", formatNumber(config.backpressureConfig.orderProcessConcurrency)],
+              ["Retry attempts", formatNumber(config.backpressureConfig.retryPolicy.maxAttempts)],
+              [
+                "Initial retry backoff",
+                formatDurationMs(config.backpressureConfig.retryPolicy.initialBackoffMs) ?? "n/a",
+              ],
               [
                 "Configured drain timeout",
                 formatDurationSeconds(config.backpressureConfig.drainTimeoutSeconds),
@@ -177,36 +252,97 @@ export function AdminRunHistoryDetail({ detail }: RunHistoryDetailProps) {
                   config.backpressureConfig.pendingPersistenceRetryAfterSeconds,
                 ),
               ],
+              [
+                "Circuit-breaker failure threshold",
+                formatNumber(config.backpressureConfig.circuitBreakerFailureThreshold),
+              ],
+              [
+                "Circuit-breaker reset timeout",
+                formatDurationMs(config.backpressureConfig.circuitBreakerResetTimeoutMs) ?? "n/a",
+              ],
+              ["Logical queue", codeValue(config.backpressureConfig.queueName)],
+              ["Physical queue", codeValue(config.backpressureConfig.physicalQueueName)],
             ]}
             title="Order processing"
           />
         </div>
       </section>
 
+      <RunConclusion
+        result={result}
+        runStatus={summary.status}
+        showCanonicalCodes
+        showReconciliationStatus
+      />
+
+      {failure ? (
+        <section className="rounded-lg border border-warning bg-warning-soft p-4">
+          <h2 className="m-0 text-base font-bold text-ink">What happened</h2>
+          <p className="m-0 mt-2 text-sm text-muted-strong">{failure.explanation}</p>
+          <p className="m-0 mt-1 text-sm font-semibold text-muted-strong">{failure.action}</p>
+        </section>
+      ) : null}
+
+      <ExceptionSummary outcome={result.outcome} summary={detail.exceptionSummary} />
+
+      <GoldSignals
+        acceptedReservations={summary.businessOutcomeSummary.acceptedReservations}
+        arrivalSummary={summary.trafficDeliverySummary.requestArrivalSummary}
+        oversoldUnits={oversoldUnitsFromTerminalInventory(summary)}
+        runStatus={run.status}
+        terminalSummary={detail.runSignalTimelineSummary}
+      />
+
+      <RunDiagnostics
+        summary={detail.loadRunDiagnosticsSummary}
+        warningCount={detail.exceptionSummary.generatorWarnings}
+      />
+
       <section className="rounded-lg border border-border bg-surface p-4">
         <CollectionHeader
+          warningCount={detail.orders.warningCount}
           title="Order outcomes"
           totalCount={detail.orders.totalCount}
           truncated={detail.orders.truncated}
         />
-        <div className="mt-3 grid gap-3">
+        <div className="mt-3 overflow-x-auto">
           {detail.orders.records.length > 0 ? (
-            detail.orders.records.map((order) => (
-              <RecordRow
-                facts={[
-                  ["Public order", order.publicOrderId],
-                  ["Status", order.status],
-                  ["Quantity", formatNumber(order.quantity)],
+            <DenseTable
+              accessibleName="Order outcomes"
+              headers={["Public order", "Status", "Quantity", "Terminal time", "Details"]}
+              rows={detail.orders.records.map((order) => ({
+                id: order.orderId,
+                identity: `order ${order.publicOrderId}`,
+                cells: [
+                  order.publicOrderId,
+                  <span className={order.status === "failed" ? "text-danger" : ""} key="status">
+                    {order.status}
+                    {order.failureCode ? (
+                      <>
+                        {" "}
+                        · <code>{order.failureCode}</code>
+                      </>
+                    ) : null}
+                  </span>,
+                  formatNumber(order.quantity),
+                  order.confirmedAt || order.failedAt ? (
+                    formatDate(order.confirmedAt ?? order.failedAt)
+                  ) : (
+                    <span className="text-warning" key="terminal">
+                      Missing terminal evidence
+                    </span>
+                  ),
+                ],
+                details: [
+                  ["Internal order", codeValue(order.orderId)],
+                  ["Correlation", codeValue(order.correlationId)],
                   ["Queued", formatDate(order.queuedAt)],
-                  ["Confirmed", formatDate(order.confirmedAt)],
-                  ["Failed", formatDate(order.failedAt)],
-                  ["Failure code", order.failureCode ?? "none"],
-                  ["Correlation", order.correlationId],
-                ]}
-                key={order.orderId}
-                title={order.orderId}
-              />
-            ))
+                  ...(order.processingAt
+                    ? [["Processing", formatDate(order.processingAt)] as [string, ReactNode]]
+                    : []),
+                ],
+              }))}
+            />
           ) : (
             <EmptyCollection label="No order outcomes were recorded for this run." />
           )}
@@ -216,47 +352,81 @@ export function AdminRunHistoryDetail({ detail }: RunHistoryDetailProps) {
       <section className="grid grid-cols-3 gap-4 max-[1100px]:grid-cols-1">
         <CollectionPanel
           emptyLabel="No ERP attempts were recorded."
+          headers={["Order / attempt", "Status", "Latency", "Finished", "Details"]}
           records={detail.erpAttempts.records.map((attempt) => ({
             id: attempt.attemptId,
-            title: `${attempt.publicOrderId} attempt ${attempt.attemptNumber}`,
-            facts: [
-              ["Status", attempt.status],
-              ["Terminal", attempt.terminal ? "yes" : "no"],
-              ["HTTP", attempt.httpStatus ? String(attempt.httpStatus) : "n/a"],
-              ["Error", attempt.errorCode ?? "none"],
-              ["Observed latency", formatDurationMs(attempt.latencyMs) ?? "n/a"],
-              ["Finished", formatDate(attempt.finishedAt)],
+            identity: `ERP attempt ${attempt.attemptId}`,
+            cells: [
+              `${attempt.publicOrderId} / ${attempt.attemptNumber}`,
+              <span
+                className={attempt.status === "succeeded" && attempt.terminal ? "" : "text-danger"}
+                key="status"
+              >
+                {attempt.status}
+                {!attempt.terminal ? " · missing terminal evidence" : ""}
+                {attempt.errorCode ? (
+                  <>
+                    {" "}
+                    · <code>{attempt.errorCode}</code>
+                  </>
+                ) : null}
+              </span>,
+              formatDurationMs(attempt.latencyMs) ?? "not recorded",
+              formatDate(attempt.finishedAt),
+            ],
+            details: [
+              ["Attempt", codeValue(attempt.attemptId)],
+              ["Internal order", codeValue(attempt.orderId)],
+              ["Correlation", codeValue(attempt.correlationId)],
+              ["Started", formatDate(attempt.startedAt)],
+              ...(attempt.httpStatus
+                ? [["HTTP", String(attempt.httpStatus)] as [string, ReactNode]]
+                : []),
             ],
           }))}
           title="ERP attempts"
           totalCount={detail.erpAttempts.totalCount}
           truncated={detail.erpAttempts.truncated}
+          warningCount={detail.erpAttempts.warningCount}
         />
         <CollectionPanel
           emptyLabel="No simulated notifications were recorded."
+          headers={["Public order", "Recorded", "Details"]}
           records={detail.notifications.records.map((notification) => ({
             id: notification.notificationId,
-            title: notification.publicOrderId,
-            facts: [["Recorded", formatDate(notification.recordedAt)]],
+            identity: `notification ${notification.notificationId}`,
+            cells: [notification.publicOrderId, formatDate(notification.recordedAt)],
+            details: [
+              ["Notification", codeValue(notification.notificationId)],
+              ["Internal order", codeValue(notification.orderId)],
+            ],
           }))}
           title={publicVocabulary.notifications}
           totalCount={detail.notifications.totalCount}
           truncated={detail.notifications.truncated}
+          warningCount={detail.notifications.warningCount}
         />
         <CollectionPanel
           emptyLabel="No event timeline entries were recorded."
+          headers={["Event", "Order", "Occurred", "Details"]}
           records={detail.eventTimeline.records.map((event) => ({
             id: event.eventId,
-            title: event.eventName,
-            facts: [
+            identity: `event ${event.eventId}`,
+            cells: [
+              event.eventName,
+              event.publicOrderId ?? "No order",
+              formatDate(event.occurredAt),
+            ],
+            details: [
+              ["Event", codeValue(event.eventId)],
               ["Source", event.source],
-              ["Order", event.publicOrderId ?? "n/a"],
-              ["Occurred", formatDate(event.occurredAt)],
+              ["Correlation", codeValue(event.correlationId)],
             ],
           }))}
           title="Event timeline"
           totalCount={detail.eventTimeline.totalCount}
           truncated={detail.eventTimeline.truncated}
+          warningCount={detail.eventTimeline.warningCount}
         />
       </section>
     </div>
@@ -265,25 +435,37 @@ export function AdminRunHistoryDetail({ detail }: RunHistoryDetailProps) {
 
 function CollectionPanel({
   emptyLabel,
+  headers,
   records,
   title,
   totalCount,
   truncated,
+  warningCount,
 }: {
   emptyLabel: string;
-  records: Array<{ id: string; title: string; facts: Array<[string, ReactNode]> }>;
+  headers: string[];
+  records: Array<{
+    id: string;
+    identity: string;
+    cells: ReactNode[];
+    details: Array<[string, ReactNode]>;
+  }>;
   title: string;
   totalCount: number;
   truncated: boolean;
+  warningCount: number;
 }) {
   return (
     <section className="rounded-lg border border-border bg-surface p-4">
-      <CollectionHeader title={title} totalCount={totalCount} truncated={truncated} />
-      <div className="mt-3 grid gap-3">
+      <CollectionHeader
+        title={title}
+        totalCount={totalCount}
+        truncated={truncated}
+        warningCount={warningCount}
+      />
+      <div className="mt-3 overflow-x-auto">
         {records.length > 0 ? (
-          records.map((record) => (
-            <RecordRow facts={record.facts} key={record.id} title={record.title} />
-          ))
+          <DenseTable accessibleName={title} headers={headers} rows={records} />
         ) : (
           <EmptyCollection label={emptyLabel} />
         )}
@@ -296,16 +478,22 @@ function CollectionHeader({
   title,
   totalCount,
   truncated,
+  warningCount,
 }: {
   title: string;
   totalCount: number;
   truncated: boolean;
+  warningCount: number;
 }) {
+  const needsAttention = warningCount > 0 || truncated;
   return (
     <div className="flex flex-wrap items-center justify-between gap-3">
       <h2 className="m-0 text-base font-bold leading-tight text-ink">{title}</h2>
-      <p className="m-0 text-xs font-bold uppercase text-muted">
-        {formatNumber(totalCount)} total{truncated ? " · showing recent" : ""}
+      <p
+        className={`m-0 text-xs font-bold uppercase ${needsAttention ? "text-warning" : "text-muted"}`}
+      >
+        {formatNumber(totalCount)} total · {formatNumber(warningCount)} warnings
+        {truncated ? " · truncated to recent records" : " · complete"}
       </p>
     </div>
   );
@@ -329,21 +517,139 @@ function FactList({
   );
 }
 
-function RecordRow({ facts, title }: { facts: Array<[string, ReactNode]>; title: string }) {
+function DenseTable({
+  accessibleName,
+  headers,
+  rows,
+}: {
+  accessibleName: string;
+  headers: string[];
+  rows: Array<{
+    id: string;
+    identity: string;
+    cells: ReactNode[];
+    details: Array<[string, ReactNode]>;
+  }>;
+}) {
   return (
-    <article className="min-w-0 border-t border-border pt-3 first:border-t-0 first:pt-0">
-      <h3 className="m-0 [overflow-wrap:anywhere] text-sm font-bold text-ink">{title}</h3>
-      <dl className="m-0 mt-3 grid gap-2">
-        {facts.map(([label, value]) => (
-          <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-3" key={label}>
-            <dt className="text-sm text-muted">{label}</dt>
-            <dd className="m-0 max-w-48 [overflow-wrap:anywhere] text-right text-sm font-semibold text-muted-strong">
-              {value}
-            </dd>
-          </div>
+    <table className="w-full min-w-[42rem] border-collapse text-left text-sm">
+      <caption className="sr-only">{accessibleName}</caption>
+      <thead>
+        <tr className="border-b border-border text-xs uppercase text-muted">
+          {headers.map((header) => (
+            <th className="px-2 py-2 font-bold" key={header} scope="col">
+              {header}
+            </th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((row) => (
+          <tr className="border-b border-border last:border-b-0" key={row.id}>
+            {row.cells.map((cell, index) =>
+              index === 0 ? (
+                <th
+                  className="px-2 py-2 align-top font-semibold text-muted-strong"
+                  key={headers[index]}
+                  scope="row"
+                >
+                  {cell}
+                </th>
+              ) : (
+                <td
+                  className="px-2 py-2 align-top font-semibold text-muted-strong"
+                  key={headers[index]}
+                >
+                  {cell}
+                </td>
+              ),
+            )}
+            <td className="px-2 py-2 align-top">
+              <details>
+                <summary
+                  aria-label={`Technical detail for ${row.identity}`}
+                  className="cursor-pointer font-semibold text-muted-strong"
+                >
+                  Technical detail
+                </summary>
+                <dl className="mt-2 grid gap-1">
+                  {row.details.map(([label, value]) => (
+                    <div key={label}>
+                      <dt className="text-xs text-muted">{label}</dt>
+                      <dd className="m-0 [overflow-wrap:anywhere] text-xs text-muted-strong">
+                        {value}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+              </details>
+            </td>
+          </tr>
         ))}
-      </dl>
-    </article>
+      </tbody>
+    </table>
+  );
+}
+
+function ExceptionSummary({
+  outcome,
+  summary,
+}: {
+  outcome: ReturnType<typeof deriveRunResult>["outcome"];
+  summary: AdminRunHistoryDetailResponse["exceptionSummary"];
+}) {
+  const entries = [
+    ["broken invariants", summary.brokenInvariants],
+    ["failed orders", summary.failedOrders],
+    ["pending work", summary.pendingWork],
+    ["delivery exceptions", summary.partialDelivery],
+    ["generator warnings", summary.generatorWarnings],
+    ["truncated collections", summary.truncatedCollections],
+  ] as const;
+  const exceptions = entries.filter(([, count]) => count > 0);
+  const classification =
+    summary.maximumClassification === "expected_population_difference"
+      ? null
+      : summary.maximumClassification;
+  const classificationLabel =
+    outcome === "failed"
+      ? "Run failed"
+      : classification === "correctness_failure"
+        ? "Correctness failure"
+        : classification === "warning"
+          ? "Reconciliation warning"
+          : classification === "evidence_incomplete"
+            ? "Evidence incomplete"
+            : null;
+  const needsAttention = classificationLabel !== null || exceptions.length > 0;
+  const isFailure = outcome === "failed" || classification === "correctness_failure";
+  return (
+    <section
+      className={`rounded-lg border p-4 ${
+        isFailure
+          ? "border-danger bg-danger-soft"
+          : needsAttention
+            ? "border-warning bg-warning-soft"
+            : "border-border bg-surface"
+      }`}
+      aria-label="Exception summary"
+    >
+      <h2 className="m-0 text-base font-bold text-ink">Exception summary</h2>
+      <p
+        className={`m-0 mt-2 text-sm font-semibold ${
+          isFailure ? "text-danger" : needsAttention ? "text-warning" : "text-accent"
+        }`}
+      >
+        {!needsAttention
+          ? "Clean run · no exceptions require attention."
+          : [
+              classificationLabel,
+              ...exceptions.map(([label, count]) => `${formatNumber(count)} ${label}`),
+            ]
+              .filter(Boolean)
+              .join(" · ")}
+      </p>
+    </section>
   );
 }
 
@@ -679,4 +985,23 @@ function formatDate(value: string | undefined): ReactNode {
 /** Configured guards are stored in seconds but are presented under the one duration policy. */
 function formatDurationSeconds(value: number): string {
   return formatDurationMs(value * 1000) ?? "n/a";
+}
+
+function adminDeliveryLabel(
+  status: AdminRunHistoryDetailResponse["summary"]["trafficDeliverySummary"]["trafficDeliveryStatus"],
+): string {
+  switch (status) {
+    case "complete":
+      return "Delivery complete";
+    case "warning":
+      return "Delivery warning";
+    case "degraded":
+      return "Delivery degraded";
+    case "failed":
+      return "Delivery failed";
+  }
+}
+
+function codeValue(value: string): ReactNode {
+  return <code>{value}</code>;
 }

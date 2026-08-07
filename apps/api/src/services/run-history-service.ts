@@ -4,6 +4,7 @@ import {
   type AdminRunHistoryDetailResponse,
   adminDeleteRunHistoryResponseSchema,
   adminRunHistoryDetailResponseSchema,
+  countUnavailableLoadRunDiagnosticProbes,
   deriveLoadExecutionPlan,
   deriveRecordedReplyCount,
   deriveRunResult,
@@ -176,7 +177,13 @@ export class RunHistoryService implements RunHistoryController {
         .where(eq(orders.runId, runId))
         .orderBy(desc(orders.queuedAt), desc(orders.createdAt))
         .limit(detailRecordLimit),
-      this.options.db.select({ totalCount: count() }).from(orders).where(eq(orders.runId, runId)),
+      this.options.db
+        .select({
+          totalCount: count(),
+          warningCount: sql<number>`(count(*) filter (where ${orders.status} = 'failed'))::int`,
+        })
+        .from(orders)
+        .where(eq(orders.runId, runId)),
       this.options.db
         .select({
           attemptId: erpAttempts.id,
@@ -199,7 +206,17 @@ export class RunHistoryService implements RunHistoryController {
         .orderBy(desc(erpAttempts.finishedAt), desc(erpAttempts.createdAt))
         .limit(detailRecordLimit),
       this.options.db
-        .select({ totalCount: count() })
+        .select({
+          totalCount: count(),
+          warningCount: sql<number>`(count(*) filter (where ${erpAttempts.status} in ('failed', 'timed_out') or not ${erpAttempts.terminal}))::int`,
+          succeeded: sql<number>`(count(*) filter (where ${erpAttempts.status} = 'succeeded'))::int`,
+          failed: sql<number>`(count(*) filter (where ${erpAttempts.status} = 'failed'))::int`,
+          timedOut: sql<number>`(count(*) filter (where ${erpAttempts.status} = 'timed_out'))::int`,
+          averageLatencyMs: sql<number | null>`avg(${erpAttempts.latencyMs})::double precision`,
+          p95LatencyMs: sql<
+            number | null
+          >`percentile_cont(0.95) within group (order by ${erpAttempts.latencyMs})::double precision`,
+        })
         .from(erpAttempts)
         .where(eq(erpAttempts.runId, runId)),
       this.options.db
@@ -246,10 +263,22 @@ export class RunHistoryService implements RunHistoryController {
     const erpAttemptTotalCount = erpAttemptTotalRows[0]?.totalCount ?? 0;
     const notificationTotalCount = notificationTotalRows[0]?.totalCount ?? 0;
     const eventTotalCount = eventTotalRows[0]?.totalCount ?? 0;
+    const summary = toRunHistorySummary(source.summaryRow);
+    const diagnostics = parseRunHistoryDiagnostics(
+      source.summaryRow.loadRunDiagnosticsSummary,
+      `run summary ${source.summaryRow.id} for demo run ${source.summaryRow.runId}`,
+    );
+    const truncatedCollections = [
+      orderTotalCount,
+      erpAttemptTotalCount,
+      notificationTotalCount,
+      eventTotalCount,
+    ].filter((totalCount) => totalCount > detailRecordLimit).length;
 
     return adminRunHistoryDetailResponseSchema.parse({
-      summary: toRunHistorySummary(source.summaryRow),
+      summary,
       run: toDemoRunSnapshot(source.runRow),
+      exceptionSummary: toRunHistoryExceptionSummary(summary, diagnostics, truncatedCollections),
       ...(source.runRow.failureReason
         ? {
             internalFailureReason: internalRunFailureReasonSchema.parse(
@@ -263,31 +292,42 @@ export class RunHistoryService implements RunHistoryController {
         `run summary ${source.summaryRow.id} for demo run ${source.summaryRow.runId}`,
         "httpTimingBreakdownSummary",
       ),
-      loadRunDiagnosticsSummary: parseRunHistoryDiagnostics(
-        source.summaryRow.loadRunDiagnosticsSummary,
-        `run summary ${source.summaryRow.id} for demo run ${source.summaryRow.runId}`,
-      ),
+      loadRunDiagnosticsSummary: diagnostics,
       orders: {
         records: orderRows.map(toRunHistoryOrderOutcome),
         totalCount: orderTotalCount,
+        warningCount: orderTotalRows[0]?.warningCount ?? 0,
         limit: detailRecordLimit,
         truncated: orderTotalCount > detailRecordLimit,
       },
       erpAttempts: {
         records: erpAttemptRows.map(toRunHistoryErpAttempt),
         totalCount: erpAttemptTotalCount,
+        warningCount: erpAttemptTotalRows[0]?.warningCount ?? 0,
         limit: detailRecordLimit,
         truncated: erpAttemptTotalCount > detailRecordLimit,
+      },
+      erpAttemptSummary: {
+        totalCount: erpAttemptTotalCount,
+        byStatus: {
+          succeeded: erpAttemptTotalRows[0]?.succeeded ?? 0,
+          failed: erpAttemptTotalRows[0]?.failed ?? 0,
+          timedOut: erpAttemptTotalRows[0]?.timedOut ?? 0,
+        },
+        averageLatencyMs: erpAttemptTotalRows[0]?.averageLatencyMs ?? null,
+        p95LatencyMs: erpAttemptTotalRows[0]?.p95LatencyMs ?? null,
       },
       notifications: {
         records: notificationRows.map(toRunHistoryNotification),
         totalCount: notificationTotalCount,
+        warningCount: 0,
         limit: detailRecordLimit,
         truncated: notificationTotalCount > detailRecordLimit,
       },
       eventTimeline: {
         records: eventRows.map(toRunHistoryEventTimelineEntry),
         totalCount: eventTotalCount,
+        warningCount: 0,
         limit: detailRecordLimit,
         truncated: eventTotalCount > detailRecordLimit,
       },
@@ -333,6 +373,65 @@ export class RunHistoryService implements RunHistoryController {
   private now(): Date {
     return this.options.now?.() ?? new Date();
   }
+}
+
+function toRunHistoryExceptionSummary(
+  summary: RunHistorySummary,
+  diagnostics: LoadRunDiagnosticsSummary | null,
+  truncatedCollections: number,
+) {
+  const result = deriveRunResult({
+    runStatus: summary.status,
+    failureCategory: summary.failureCategory ?? null,
+    startingStock: summary.terminalInventorySnapshot?.startingStock ?? null,
+    remainingStock: summary.terminalInventorySnapshot?.remainingStock ?? null,
+    durable: {
+      reservedUnits: summary.businessOutcomeSummary.reservedUnits,
+      uniqueReservations: summary.businessOutcomeSummary.acceptedReservations,
+      soldOutDecisions: summary.businessOutcomeSummary.soldOutRejections,
+      confirmedOrders: summary.businessOutcomeSummary.confirmedOrders,
+      failedOrders: summary.businessOutcomeSummary.failedOrders,
+      queuedOrders: summary.businessOutcomeSummary.queuedOrders,
+      processingOrders: summary.businessOutcomeSummary.processingOrders,
+      durablePendingPersistenceRecords: summary.businessOutcomeSummary.pendingPersistenceCount,
+      notificationsRecorded: summary.businessOutcomeSummary.notificationsRecorded,
+    },
+    heldReservationsAwaitingPersistence:
+      summary.terminalInventorySnapshot?.pendingPersistenceCount ?? null,
+    replayPossible: summary.replayPossible,
+    generator: {
+      transportAttemptCounts: summary.transportAttemptCounts,
+      httpSummary: summary.httpSummary,
+    },
+  });
+
+  return {
+    maximumClassification: result.maximumClassification,
+    brokenInvariants: result.invariants.filter(({ status }) => status === "broken").length,
+    failedOrders: summary.businessOutcomeSummary.failedOrders,
+    pendingWork:
+      summary.businessOutcomeSummary.queuedOrders +
+      summary.businessOutcomeSummary.processingOrders +
+      summary.businessOutcomeSummary.pendingPersistenceCount,
+    partialDelivery: summary.trafficDeliverySummary.trafficDeliveryStatus === "complete" ? 0 : 1,
+    generatorWarnings: generatorWarningCount(diagnostics),
+    truncatedCollections,
+  };
+}
+
+function generatorWarningCount(summary: LoadRunDiagnosticsSummary | null): number {
+  if (!summary) return countUnavailableLoadRunDiagnosticProbes(null);
+  const sources = summary.terminalMetricSources;
+  return (
+    (summary.summaryExportWarnings?.length ?? 0) +
+    (summary.stderrLineCountObserved > 0 ? 1 : 0) +
+    (summary.stderrLineTruncatedCount > 0 ||
+    summary.stderrLineCountObserved > summary.stderrLineCountRetained
+      ? 1
+      : 0) +
+    (sources ? Object.values(sources).filter((source) => source === "point_stream").length : 0) +
+    countUnavailableLoadRunDiagnosticProbes(summary)
+  );
 }
 
 function toRunHistoryListItem(

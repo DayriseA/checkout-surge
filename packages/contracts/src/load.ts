@@ -804,6 +804,61 @@ export const loadRunDiagnosticsSummarySchema = z
   });
 export type LoadRunDiagnosticsSummary = z.infer<typeof loadRunDiagnosticsSummarySchema>;
 
+const loadRunDiagnosticProbes = [
+  (summary: LoadRunDiagnosticsSummary) => summary.nproc !== null,
+  (summary: LoadRunDiagnosticsSummary) => summary.ulimitNofile !== null,
+  // Intentionally listed twice: the UI shows soft and hard limits as two rows from this one nullable object.
+  (summary: LoadRunDiagnosticsSummary) => summary.processMaxOpenFiles !== null,
+  (summary: LoadRunDiagnosticsSummary) => summary.processMaxOpenFiles !== null,
+  (summary: LoadRunDiagnosticsSummary) => summary.generatorCapacity?.memTotalBytes != null,
+  (summary: LoadRunDiagnosticsSummary) => summary.generatorCapacity?.memAvailableBytes != null,
+  (summary: LoadRunDiagnosticsSummary) => summary.generatorCapacity?.swapTotalBytes != null,
+  (summary: LoadRunDiagnosticsSummary) =>
+    summary.generatorCapacity?.cgroupMemoryLimitBytes != null ||
+    summary.generatorCapacity?.cgroupMemoryLimitUnlimited === true,
+  (summary: LoadRunDiagnosticsSummary) =>
+    summary.generatorCapacity?.cgroupCpuQuota != null ||
+    summary.generatorCapacity?.cgroupCpuQuotaUnlimited === true,
+  (summary: LoadRunDiagnosticsSummary) => summary.generatorUtilisation?.peakK6RssBytes != null,
+  (summary: LoadRunDiagnosticsSummary) =>
+    summary.generatorUtilisation?.peakCgroupMemoryBytes != null,
+  (summary: LoadRunDiagnosticsSummary) =>
+    summary.generatorUtilisation?.minimumHostMemAvailableBytes != null,
+  (summary: LoadRunDiagnosticsSummary) =>
+    summary.generatorUtilisation?.peakCpuUtilisationPercent != null,
+  (summary: LoadRunDiagnosticsSummary) =>
+    summary.generatorUtilisation?.meanCpuUtilisationPercent != null,
+  (summary: LoadRunDiagnosticsSummary) => summary.generatorUtilisation?.peakCgroupSwapBytes != null,
+  (summary: LoadRunDiagnosticsSummary) =>
+    summary.generatorUtilisation?.finalMemoryEventsHighCount != null,
+  (summary: LoadRunDiagnosticsSummary) =>
+    summary.generatorUtilisation?.finalMemoryEventsMaxCount != null,
+  (summary: LoadRunDiagnosticsSummary) =>
+    summary.generatorUtilisation?.finalMemoryEventsOomKillCount != null,
+  (summary: LoadRunDiagnosticsSummary) => summary.networkDiagnostics?.ipLocalPortRange != null,
+  (summary: LoadRunDiagnosticsSummary) => summary.networkDiagnostics?.tcpTwReuse != null,
+  (summary: LoadRunDiagnosticsSummary) => summary.networkDiagnostics?.tcpTimestamps != null,
+  (summary: LoadRunDiagnosticsSummary) => summary.k6Version !== null,
+  (summary: LoadRunDiagnosticsSummary) => summary.terminalMetricSources?.startedRequests != null,
+  (summary: LoadRunDiagnosticsSummary) => summary.terminalMetricSources?.completedRequests != null,
+  (summary: LoadRunDiagnosticsSummary) => summary.terminalMetricSources?.acceptedResponses != null,
+  (summary: LoadRunDiagnosticsSummary) => summary.terminalMetricSources?.soldOutResponses != null,
+  (summary: LoadRunDiagnosticsSummary) => summary.terminalMetricSources?.transportFailures != null,
+  (summary: LoadRunDiagnosticsSummary) =>
+    summary.terminalMetricSources?.unexpectedResponses != null,
+  (summary: LoadRunDiagnosticsSummary) => summary.terminalMetricSources?.droppedIterations != null,
+  (summary: LoadRunDiagnosticsSummary) =>
+    summary.terminalMetricSources?.completedIterations != null,
+];
+
+export function countUnavailableLoadRunDiagnosticProbes(
+  summary: LoadRunDiagnosticsSummary | null,
+): number {
+  return summary
+    ? loadRunDiagnosticProbes.filter((isAvailable) => !isAvailable(summary)).length
+    : loadRunDiagnosticProbes.length;
+}
+
 /** Strict diagnostics emitted by a real load-orchestrator completion. */
 export const realLoadRunDiagnosticsSummarySchema = loadRunDiagnosticsSummarySchema.safeExtend({
   terminalMetricSources: terminalMetricSourcesSchema,

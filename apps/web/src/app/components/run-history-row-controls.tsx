@@ -6,21 +6,28 @@ import { useRunHistoryRowAdmin } from "./run-history-admin-context";
 interface RunHistoryRowControlsProps {
   runId: string;
   presetName: string;
+  showSelection?: boolean;
 }
 
-export function RunHistoryRowControls({ runId, presetName }: RunHistoryRowControlsProps) {
+export function RunHistoryRowControls({
+  runId,
+  presetName,
+  showSelection = true,
+}: RunHistoryRowControlsProps) {
   const admin = useRunHistoryRowAdmin();
   if (!admin) return null;
 
   return (
     <div className="flex shrink-0 items-center gap-2">
-      <input
-        aria-label={`Select run ${runId}`}
-        checked={admin.isSelected(runId)}
-        className="size-4 cursor-pointer accent-danger"
-        onChange={() => admin.toggleSelection(runId)}
-        type="checkbox"
-      />
+      {showSelection ? (
+        <input
+          aria-label={`Select run ${runId}`}
+          checked={admin.isSelected(runId)}
+          className="size-4 cursor-pointer accent-danger"
+          onChange={() => admin.toggleSelection(runId)}
+          type="checkbox"
+        />
+      ) : null}
       <button
         aria-label={`Delete run ${presetName} (${runId})`}
         className="inline-flex size-8 items-center justify-center rounded-lg border border-transparent text-muted hover:border-danger hover:bg-danger-soft hover:text-danger"

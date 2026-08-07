@@ -27,6 +27,7 @@ import {
   collectPublicRuntimePolicyMutableViolations,
   collectPublicRuntimePolicyViolations,
   controlServiceTokenHeaderName,
+  countUnavailableLoadRunDiagnosticProbes,
   dashboardLiveUpdateExpectedIntervalMs,
   dashboardProjectionDirtySignalSchema,
   dashboardProjectionSchema,
@@ -101,6 +102,7 @@ import {
   runHistoryDetailParamsSchema,
   runHistoryDetailPath,
   runHistoryDetailPathTemplate,
+  runHistoryExceptionSummarySchema,
   runHistoryListQuerySchema,
   runHistoryListResponseSchema,
   runHistoryPath,
@@ -384,6 +386,11 @@ describe("run lifecycle contracts", () => {
     ).toThrow();
   });
   it("enforces resolved execution-plan and diagnostic count invariants", () => {
+    const { terminalMetricSources: _terminalMetricSources, ...fullyUnavailableDiagnostics } =
+      loadRunDiagnosticsSummarySchema.parse(runnerDiagnostics());
+    expect(countUnavailableLoadRunDiagnosticProbes(fullyUnavailableDiagnostics)).toBe(
+      countUnavailableLoadRunDiagnosticProbes(null),
+    );
     expect(() =>
       loadExecutionPlanSchema.parse({
         ...runnerDiagnostics().executionPlan,
@@ -2466,10 +2473,20 @@ describe("public runtime policy contract", () => {
       adminRunHistoryDetailResponseSchema.parse({
         summary,
         run: { ...detail.run, presetId: "33333333-3333-4333-8333-333333333333", saleOfferId },
+        exceptionSummary: {
+          maximumClassification: detail.result.maximumClassification,
+          brokenInvariants: 0,
+          failedOrders: 0,
+          pendingWork: 0,
+          partialDelivery: 0,
+          generatorWarnings: 0,
+          truncatedCollections: 0,
+        },
         httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
         loadRunDiagnosticsSummary: runnerDiagnostics(),
         orders: {
           totalCount: 1,
+          warningCount: 0,
           limit: 20,
           truncated: false,
           records: [
@@ -2488,6 +2505,7 @@ describe("public runtime policy contract", () => {
         },
         erpAttempts: {
           totalCount: 1,
+          warningCount: 0,
           limit: 20,
           truncated: false,
           records: [
@@ -2506,8 +2524,10 @@ describe("public runtime policy contract", () => {
             },
           ],
         },
+        erpAttemptSummary: detail.erpAttempts,
         notifications: {
           totalCount: 1,
+          warningCount: 0,
           limit: 20,
           truncated: false,
           records: [
@@ -2521,6 +2541,7 @@ describe("public runtime policy contract", () => {
         },
         eventTimeline: {
           totalCount: 1,
+          warningCount: 0,
           limit: 20,
           truncated: false,
           records: [
@@ -2540,6 +2561,19 @@ describe("public runtime policy contract", () => {
         timestamp,
       }),
     ).not.toThrow();
+    const exceptionSummary = {
+      maximumClassification: "correctness_failure" as const,
+      brokenInvariants: 1,
+      failedOrders: 2,
+      pendingWork: 3,
+      partialDelivery: 1,
+      generatorWarnings: 4,
+      truncatedCollections: 2,
+    };
+    expect(runHistoryExceptionSummarySchema.parse(exceptionSummary)).toEqual(exceptionSummary);
+    expect(() =>
+      runHistoryExceptionSummarySchema.parse({ ...exceptionSummary, pendingWork: -1 }),
+    ).toThrow();
     expect(() =>
       publicRunHistoryDetailResponseSchema.parse({
         ...detail,

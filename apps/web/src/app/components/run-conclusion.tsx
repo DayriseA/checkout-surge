@@ -79,11 +79,13 @@ function publicReconciliationReason(item: Reconciliation): string | null {
 export function RunConclusion({
   result,
   runStatus,
+  showCanonicalCodes = false,
   showReconciliationStatus = false,
   showSentence = true,
 }: {
   result: RunResult;
   runStatus: DemoRunStatus;
+  showCanonicalCodes?: boolean;
   showReconciliationStatus?: boolean;
   showSentence?: boolean;
 }) {
@@ -141,7 +143,14 @@ export function RunConclusion({
                   {publicPopulationLabel(item, "left")}
                 </span>{" "}
                 ({item.leftValue ?? "unavailable"}) vs {publicPopulationLabel(item, "right")} (
-                {item.rightValue ?? "unavailable"}): {item.classification.replaceAll("_", " ")}
+                {item.rightValue ?? "unavailable"}):{" "}
+                {showCanonicalCodes ? (
+                  <>
+                    {classificationExplanation(item.classification)} <code>{item.code}</code>
+                  </>
+                ) : (
+                  item.classification.replaceAll("_", " ")
+                )}
                 {reason ? ` — ${reason}` : "."}
               </p>
             );
@@ -153,6 +162,19 @@ export function RunConclusion({
       </details>
     </section>
   );
+}
+
+function classificationExplanation(classification: Reconciliation["classification"]): string {
+  switch (classification) {
+    case "expected_population_difference":
+      return "Expected population difference.";
+    case "evidence_incomplete":
+      return "Evidence is incomplete.";
+    case "warning":
+      return "Evidence needs investigation.";
+    case "correctness_failure":
+      return "Authoritative evidence is contradictory.";
+  }
 }
 
 function ReconciliationStatus({ result }: { result: RunResult }) {
