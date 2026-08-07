@@ -166,10 +166,10 @@ export function WatchNarrative({
       return (
         <>
           <ScenarioStrip configSnapshot={composition.run.configSnapshot} />
-          <Signals composition={composition} />
           <NarrativeMessage eyebrow="What is happening now" title="The surge is under way">
             {composition.presentation.description}
           </NarrativeMessage>
+          <Signals composition={composition} />
           <RunErpOutcomesPanel
             freshness={composition.freshness}
             presentation={deriveRunErpOutcomeState(composition.projection.erp, composition.run)}
@@ -194,6 +194,7 @@ export function WatchNarrative({
             New checkout traffic has stopped. Remaining reservations are moving through protected
             processing to final confirmation.
           </NarrativeMessage>
+          <Signals composition={composition} />
           <RunOutcomesPanel
             freshness={composition.freshness}
             presentation={deriveOutcomePresentationState(
@@ -217,7 +218,6 @@ export function WatchNarrative({
             )}
             recovery={composition.panelRecovery}
           />
-          <Signals composition={composition} />
         </>
       );
     case "completed":
@@ -322,6 +322,7 @@ function Signals({
     <GoldSignals
       acceptedReservations={outcome?.acceptedReservations ?? null}
       arrivalSummary={composition.projection.requestArrivalSummary}
+      failedOrders={outcome?.failedOrders ?? null}
       liveLag={composition.projection.consistencyLag}
       liveSamples={
         composition.phase === "active" || composition.phase === "draining"
@@ -388,6 +389,7 @@ function TechnicalDetails({
       <div className="mt-4 grid grid-cols-12 gap-4">
         <RecoveryStatusPanel
           freshness={composition.freshness}
+          fullWidth={!projection || !run}
           hasSyncIssue={hasSyncIssue}
           isRefreshing={isRefreshing}
           isRetryScheduled={isRetryScheduled}

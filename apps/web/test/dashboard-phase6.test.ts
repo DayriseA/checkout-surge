@@ -766,6 +766,67 @@ describe("Phase 6 projection dashboard", () => {
     }
   });
 
+  it.each([
+    "idle",
+    "active",
+    "completed",
+  ] as const)("fills every Technical details desktop row for %s evidence", (status) => {
+    const projection = projectionFixture();
+    if (status === "idle") {
+      projection.currentRun = null;
+    } else if (status === "completed") {
+      const currentRun = projection.currentRun;
+      if (currentRun?.status !== "active") throw new Error("Expected an active run fixture.");
+      projection.currentRun = {
+        ...currentRun,
+        status,
+        trafficStatus: "succeeded",
+        trafficEndedAt: "2026-06-20T00:00:11.000Z",
+        finalizedAt: "2026-06-20T00:00:12.000Z",
+      };
+    }
+    const markup = renderToStaticMarkup(
+      createElement(OperatorDashboard, {
+        initialRecovery: available(projection),
+      }),
+    );
+    const document = new DOMParser().parseFromString(markup, "text/html");
+    const technical = [...document.querySelectorAll("details")].find(
+      (details) => details.querySelector(":scope > summary")?.textContent === "Technical details",
+    );
+    const grid = technical?.querySelector(":scope > .grid-cols-12");
+    if (!grid) throw new Error("Expected the Technical details 12-column grid.");
+    const spans = [...grid.children].map((panel) => {
+      const span = [...panel.classList]
+        .map((className) => /^col-span-(\d+)$/.exec(className)?.[1])
+        .find(Boolean);
+      if (!span) throw new Error(`Expected a desktop span on ${panel.textContent}.`);
+      return Number(span);
+    });
+
+    let rowWidth = 0;
+    for (const span of spans) {
+      rowWidth += span;
+      expect(rowWidth).toBeLessThanOrEqual(12);
+      if (rowWidth === 12) rowWidth = 0;
+    }
+    expect(rowWidth).toBe(0);
+    expect(spans).toEqual(
+      status === "idle" ? [12] : status === "active" ? [4, 8, 12, 12] : [4, 8, 12, 6, 6, 12, 12],
+    );
+    if (status === "completed") {
+      const children = [...grid.children];
+      const outcomesIndex = children.findIndex((panel) =>
+        panel.textContent?.includes("Reservation and confirmation summary"),
+      );
+      const systemIndex = children.findIndex((panel) =>
+        panel.textContent?.includes("System status across all runs and visitors"),
+      );
+      expect(outcomesIndex).toBeGreaterThan(-1);
+      expect(systemIndex).toBe(outcomesIndex + 1);
+    }
+  });
+
   /**
    * A mechanical audit of the shared fixtures, so "is this coherent?" stops being an opportunistic
    * eyeball check. `dashboardProjectionSchema` carries the cross-field refinements the wire format

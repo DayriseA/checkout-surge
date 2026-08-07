@@ -7,14 +7,13 @@ import type {
 } from "@checkout-surge/contracts";
 import { hasObservedRequestArrivals } from "@checkout-surge/contracts";
 import type { RunSignalLiveSample } from "../lib/dashboard-projection-state";
-import { formatDurationMs, formatWindowSecondsAdjective } from "../lib/presentation/format";
+import { formatWindowSecondsAdjective } from "../lib/presentation/format";
+import { liveTrafficMetricWindowSeconds } from "../lib/presentation/public-vocabulary";
 import {
-  isRunEvidenceSettled,
-  liveTrafficMetricWindowSeconds,
-  publicVocabulary,
-  rateWindowLabel,
-  runEvidenceAbsence,
-} from "../lib/presentation/public-vocabulary";
+  deriveSignalHeadlines,
+  type SignalHeadlines,
+  selectConfirmationLiveSamples,
+} from "../lib/presentation/signal-headlines";
 
 type SignalPoint = {
   elapsedSeconds: number;
@@ -27,11 +26,10 @@ type EventMarker = { elapsedSeconds: number; label: string };
 /** Axis origin and the two boundary phrases that name what the origin and the maximum are. */
 type SignalAxis = { originMs: number; startLabel: string; endLabel: string };
 
-const oversellUnknownPhrase = "oversell unknown";
-
 export function GoldSignals({
   acceptedReservations,
   arrivalSummary,
+  failedOrders = null,
   liveLag = null,
   liveSamples,
   oversoldUnits,
@@ -42,6 +40,7 @@ export function GoldSignals({
 }: {
   acceptedReservations: number | null;
   arrivalSummary: RequestArrivalSummary | null;
+  failedOrders?: number | null;
   liveLag?: ConsistencyLagSummary | null;
   liveSamples?: RunSignalLiveSample[];
   oversoldUnits: number | null;
@@ -54,17 +53,6 @@ export function GoldSignals({
   const terminalRun = runStatus === "completed" || runStatus === "failed";
   // Arrival is load-generator evidence and is already final while a draining run keeps
   // processing; the other three panels describe durable work that is still arriving.
-  const trafficSettled = runStatus !== null && isRunEvidenceSettled(runStatus, "load-generator");
-  const missingTrafficEvidence = runEvidenceAbsence(runStatus, {
-    source: "load-generator",
-    pending: "Not yet available",
-    settled: "Not recorded for this run",
-  });
-  const missingEvidence = runEvidenceAbsence(runStatus, {
-    source: "durable-processing",
-    pending: "Not yet available",
-    settled: "Not recorded for this run",
-  });
   const arrivalEvidence = observedArrivalEvidence(arrivalSummary);
   const retainedLiveSamples = liveSamples ?? [];
   const arrivalStartIndex = retainedLiveSamples.findIndex(
@@ -84,6 +72,18 @@ export function GoldSignals({
             sample.pendingOrderCount > 0,
         );
   const displayedLiveSamples = liveStartIndex < 0 ? [] : retainedLiveSamples.slice(liveStartIndex);
+  const confirmationLiveSamples = selectConfirmationLiveSamples(displayedLiveSamples);
+  const headlines = deriveSignalHeadlines({
+    acceptedReservations,
+    arrivalSummary,
+    failedOrders,
+    liveLag,
+    liveSamples: displayedLiveSamples,
+    oversoldUnits,
+    runStatus,
+    startingStock,
+    terminalSummary,
+  });
   if (!terminal && !arrivalEvidence && displayedLiveSamples.length === 0) {
     return (
       <section className="col-span-12 rounded-lg border border-border bg-surface p-4">
@@ -91,12 +91,7 @@ export function GoldSignals({
         <h2 className="m-0 mt-1 text-xl font-bold leading-tight text-ink">
           Arrival → reservation → backlog → confirmation
         </h2>
-        <dl className="m-0 mt-4 grid grid-cols-4 gap-3 max-[900px]:grid-cols-2">
-          <Headline label="Request arrival" value={missingTrafficEvidence} />
-          <Headline label="Inventory drain" value={missingEvidence} />
-          <Headline label="Processing backlog" value={missingEvidence} />
-          <Headline label="Confirmation convergence" value={missingEvidence} />
-        </dl>
+        <SignalHeadlineGrid headlines={headlines} />
       </section>
     );
   }
@@ -163,7 +158,7 @@ export function GoldSignals({
         value: sample.cumulativeConfirmedOrderCount,
         secondaryValue: sample.cumulativeSettledOrderCount,
       }))
-    : displayedLiveSamples.map((sample) => ({
+    : confirmationLiveSamples.map((sample) => ({
         elapsedSeconds: toAxisElapsed(sample.recoveredAt),
         value: sample.confirmedOrderCount,
         secondaryValue: sample.settledOrderCount,
@@ -171,15 +166,7 @@ export function GoldSignals({
   const arrivalAvailable = arrivalEvidence !== null || arrivalPoints.length > 0;
   const inventoryAvailable = terminal !== null || inventoryPoints.length > 0;
   const backlogAvailable = terminal !== null || backlogPoints.length > 0;
-  const convergenceAvailable =
-    terminal !== null ||
-    liveLag !== null ||
-    displayedLiveSamples.some(
-      (sample) =>
-        sample.confirmedOrderCount > 0 ||
-        sample.failedOrderCount > 0 ||
-        sample.pendingOrderCount > 0,
-    );
+  const convergenceAvailable = terminal !== null || confirmationLiveSamples.length > 0;
   const xMax = terminal
     ? elapsedSeconds(terminal.window.anchoredAt, terminal.window.endedAt)
     : Math.max(
@@ -188,29 +175,7 @@ export function GoldSignals({
         ...arrivalPoints.map((point) => point.elapsedSeconds),
       );
   const markers = terminal ? terminalEventMarkers(terminal, arrivalEvidence) : [];
-  const livePeakBacklog = Math.max(0, ...backlogPoints.map((point) => point.value));
-  const liveConfirmed = displayedLiveSamples.at(-1)?.confirmedOrderCount ?? 0;
-  const liveFailed = displayedLiveSamples.at(-1)?.failedOrderCount ?? 0;
-  const livePending = displayedLiveSamples.at(-1)?.pendingOrderCount ?? 0;
   const convergence = terminal?.confirmationConvergence;
-  const lag = convergence ?? liveLag;
-  const convergenceStatus = terminal
-    ? terminal.convergenceDurationSeconds === null
-      ? terminal.confirmationConvergence.pendingAtCaptureCount > 0
-        ? `Convergence incomplete · ${formatNumber(
-            terminal.confirmationConvergence.pendingAtCaptureCount,
-          )} pending`
-        : "Convergence duration unavailable"
-      : `Converged in ${formatDuration(terminal.convergenceDurationSeconds)}`
-    : terminalRun
-      ? "Final convergence evidence unavailable"
-      : `Convergence in progress · ${formatNumber(livePending)} pending`;
-  const displayedStartingStock = terminal?.inventoryDrain.startingStock ?? startingStock;
-  const acceptedReservationsText =
-    acceptedReservations === null ? missingEvidence : formatNumber(acceptedReservations);
-  const oversoldPhrase =
-    oversoldUnits === null ? oversellUnknownPhrase : `${formatNumber(oversoldUnits)} oversold`;
-
   return (
     <section className="col-span-12 rounded-lg border border-border bg-surface p-4">
       <div className="mb-4">
@@ -228,109 +193,56 @@ export function GoldSignals({
               : "Live panels show the available run updates."}
         </p>
       </div>
+      <SignalHeadlineGrid headlines={headlines} />
       <div className="grid gap-4">
         <SignalPanel
           available={arrivalAvailable}
-          ariaLabel={`Request arrival peaked at ${formatRate(
-            arrivalEvidence?.peakArrivalRatePerSecond ??
-              Math.max(0, ...arrivalPoints.map((point) => point.value)),
-          )}.`}
+          ariaLabel="Request arrival timeline"
           caption={`Checkout attempts started by the load generator in ${
             arrivalEvidence
               ? formatWindowSecondsAdjective(arrivalEvidence.peakArrivalWindowSeconds)
               : formatWindowSecondsAdjective(liveTrafficMetricWindowSeconds)
           } windows.`}
-          headline={`${arrivalEvidence ? "Peak " : trafficSettled ? "Retained peak " : "Latest available peak "}${formatRate(
-            arrivalEvidence?.peakArrivalRatePerSecond ??
-              Math.max(0, ...arrivalPoints.map((point) => point.value)),
-          )}`}
+          headline={headlines.arrival.detail}
           markers={markers}
           points={arrivalPoints}
           title="Request arrival"
-          unavailableText={missingTrafficEvidence}
           xMax={xMax}
         />
         <SignalPanel
           available={inventoryAvailable}
-          ariaLabel={`Inventory has ${formatNumber(
-            terminal?.inventoryDrain.remainingStock ?? inventoryPoints.at(-1)?.value ?? 0,
-          )} units remaining from ${
-            displayedStartingStock === null
-              ? "an unavailable starting stock"
-              : `${formatNumber(displayedStartingStock)} starting units`
-          }, with ${oversoldUnits === null ? oversellUnknownPhrase : `${formatNumber(oversoldUnits)} oversold units`}.`}
+          ariaLabel="Inventory timeline"
           area
           caption="Stock remaining after immediate reservations; oversold units exceed starting stock."
-          headline={`Start ${
-            displayedStartingStock === null ? missingEvidence : formatNumber(displayedStartingStock)
-          } · ${formatNumber(
-            terminal?.inventoryDrain.remainingStock ?? inventoryPoints.at(-1)?.value ?? 0,
-          )} remaining · ${oversoldPhrase}${
-            terminal
-              ? terminal.inventoryDrain.timeToDepletionSeconds === null
-                ? " · not depleted"
-                : ` · depleted in ${formatDuration(terminal.inventoryDrain.timeToDepletionSeconds)}`
-              : ""
-          }`}
+          headline={headlines.inventory.detail}
           markers={markers}
           points={inventoryPoints}
           title="Inventory remaining"
-          unavailableText={missingEvidence}
           xMax={xMax}
         />
         <SignalPanel
           available={backlogAvailable}
-          ariaLabel={`Processing backlog peaked at ${formatNumber(
-            terminal?.queueBacklog.peakBacklog ?? livePeakBacklog,
-          )} orders.`}
+          ariaLabel="Processing backlog timeline"
           area
           caption={`Current and final backlog counts are reserved orders awaiting their first processing start. Drain duration runs from the first queued order to final backlog zero. Run-owned retrying orders are shown separately (${formatNumber(
             retryingOrderCount,
           )}) because retries can return to processing without re-entering this backlog.`}
-          headline={`Peak ${formatNumber(
-            terminal?.queueBacklog.peakBacklog ?? livePeakBacklog,
-          )} orders${
-            terminal
-              ? terminal.queueBacklog.drainDurationSeconds === null
-                ? " · drain duration unavailable"
-                : ` · drained in ${formatDuration(terminal.queueBacklog.drainDurationSeconds)}`
-              : ""
-          }`}
+          headline={headlines.backlog.detail}
           markers={markers}
           points={backlogPoints}
           title="Processing backlog"
-          unavailableText={missingEvidence}
           xMax={xMax}
         />
         <SignalPanel
           available={convergenceAvailable}
-          ariaLabel={`Of ${acceptedReservationsText} ${publicVocabulary.uniqueReservationsSecured.toLowerCase()}, ${formatNumber(
-            convergence?.confirmedOrderCount ?? liveConfirmed,
-          )} were confirmed, ${formatNumber(
-            convergence?.failedOrderCount ?? liveFailed,
-          )} failed, and ${formatNumber(
-            convergence?.pendingAtCaptureCount ?? livePending,
-          )} remain pending. ${convergenceStatus}.`}
+          ariaLabel="Confirmation timeline"
           caption="Cumulative confirmed orders. Reservation-to-confirmation time is elapsed from reservation secured to final confirmation."
-          headline={`${formatNumber(
-            convergence?.confirmedOrderCount ?? liveConfirmed,
-          )}/${acceptedReservationsText} confirmed · ${formatNumber(
-            convergence?.failedOrderCount ?? liveFailed,
-          )} failed · ${formatNumber(convergence?.pendingAtCaptureCount ?? livePending)} pending`}
+          headline={headlines.confirmation.detail}
           markers={markers}
           points={convergencePoints}
-          secondary={Boolean((convergence?.failedOrderCount ?? liveFailed) > 0)}
+          secondary={Boolean((convergence?.failedOrderCount ?? failedOrders ?? 0) > 0)}
           title="Reservation-to-confirmation"
-          unavailableText={missingEvidence}
           xMax={xMax}
-          {...(lag
-            ? {
-                secondaryHeadline: `Lag avg ${formatMilliseconds(lag.averageLagMs, missingEvidence)}, p95 ${formatMilliseconds(
-                  lag.p95LagMs,
-                  missingEvidence,
-                )}, max ${formatMilliseconds(lag.maxLagMs, missingEvidence)} · ${convergenceStatus}`,
-              }
-            : { secondaryHeadline: `Lag ${missingEvidence} · ${convergenceStatus}` })}
         />
       </div>
       <p className="m-0 mt-4 text-xs text-muted">
@@ -341,71 +253,30 @@ export function GoldSignals({
 }
 
 export function GoldSignalHeadlines({
+  acceptedReservations,
   arrivalSummary,
   headline,
   oversoldUnits,
 }: {
+  acceptedReservations: number | null;
   arrivalSummary: RequestArrivalSummary;
   headline: RunSignalTimelineHeadline | null;
   /** Null whenever the authoritative inventory snapshot for the run is missing. */
   oversoldUnits: number | null;
 }) {
-  if (!headline) {
-    return <p className="m-0 mt-3 text-xs text-muted">Signal timeline evidence unavailable.</p>;
-  }
-  const arrival = observedArrivalEvidence(arrivalSummary);
-  const confirmation = headline.confirmationConvergence;
   return (
-    <dl className="m-0 mt-3 grid grid-cols-4 gap-3 max-[900px]:grid-cols-2">
-      <Headline
-        label="Request arrival"
-        value={
-          arrival
-            ? `Peak ${formatRate(arrival.peakArrivalRatePerSecond)} (${rateWindowLabel(
-                arrival.peakArrivalWindowSeconds,
-              )}) · dispatched in ${formatDuration(arrival.dispatchDurationSeconds)}`
-            : "Not recorded for this run"
-        }
-      />
-      <Headline
-        label="Inventory"
-        value={`Start ${formatNumber(headline.inventoryDrain.startingStock)} · ${formatNumber(
-          headline.inventoryDrain.remainingStock,
-        )} remaining · ${
-          oversoldUnits === null ? oversellUnknownPhrase : `${formatNumber(oversoldUnits)} oversold`
-        } · ${
-          headline.inventoryDrain.timeToDepletionSeconds === null
-            ? "not depleted"
-            : `depleted in ${formatDuration(headline.inventoryDrain.timeToDepletionSeconds)}`
-        }`}
-      />
-      <Headline
-        label="Processing backlog"
-        value={`Peak ${formatNumber(headline.queueBacklog.peakBacklog)} · ${
-          headline.queueBacklog.drainDurationSeconds === null
-            ? "drain duration unavailable"
-            : `drained in ${formatDuration(headline.queueBacklog.drainDurationSeconds)}`
-        } · first queued order to final backlog zero`}
-      />
-      <Headline
-        label="Confirmation"
-        value={`${formatNumber(confirmation.confirmedOrderCount)} confirmed · ${formatNumber(
-          confirmation.failedOrderCount,
-        )} failed · ${formatNumber(confirmation.pendingAtCaptureCount)} pending · lag avg ${formatMilliseconds(
-          confirmation.averageLagMs,
-          "unavailable",
-        )}, p95 ${formatMilliseconds(confirmation.p95LagMs, "unavailable")}, max ${formatMilliseconds(
-          confirmation.maxLagMs,
-          "unavailable",
-        )} · ${
-          headline.convergenceDurationSeconds === null
-            ? confirmation.pendingAtCaptureCount > 0
-              ? "convergence incomplete"
-              : "convergence duration unavailable"
-            : `converged in ${formatDuration(headline.convergenceDurationSeconds)}`
-        }`}
-      />
-    </dl>
+    <SignalHeadlineGrid
+      headlines={deriveSignalHeadlines({
+        acceptedReservations,
+        arrivalSummary,
+        failedOrders: null,
+        liveLag: null,
+        oversoldUnits,
+        runStatus: "completed",
+        startingStock: headline?.inventoryDrain.startingStock ?? null,
+        terminalSummary: headline,
+      })}
+    />
   );
 }
 
@@ -418,22 +289,18 @@ function SignalPanel({
   markers,
   points,
   secondary = false,
-  secondaryHeadline,
   title,
-  unavailableText = "Not yet available",
   xMax,
 }: {
   available?: boolean;
   ariaLabel: string;
   area?: boolean;
   caption: string;
-  headline: string;
+  headline: string | null;
   markers: EventMarker[];
   points: SignalPoint[];
   secondary?: boolean;
-  secondaryHeadline?: string;
   title: string;
-  unavailableText?: string;
   xMax: number;
 }) {
   if (!available) {
@@ -441,7 +308,6 @@ function SignalPanel({
       <article className="grid grid-cols-[minmax(13rem,0.35fr)_minmax(0,1fr)] gap-4 border-t border-border pt-3 max-[700px]:grid-cols-1">
         <div>
           <h3 className="m-0 text-sm font-bold text-ink">{title}</h3>
-          <p className="m-0 mt-1 text-base font-bold text-muted">{unavailableText}</p>
           <p className="m-0 mt-1 text-xs leading-5 text-muted">{caption}</p>
         </div>
       </article>
@@ -451,9 +317,8 @@ function SignalPanel({
     <article className="grid grid-cols-[minmax(13rem,0.35fr)_minmax(0,1fr)] gap-4 border-t border-border pt-3 max-[700px]:grid-cols-1">
       <div>
         <h3 className="m-0 text-sm font-bold text-ink">{title}</h3>
-        <p className="m-0 mt-1 text-base font-bold text-ink">{headline}</p>
-        {secondaryHeadline ? (
-          <p className="m-0 mt-1 text-xs font-semibold text-muted-strong">{secondaryHeadline}</p>
+        {headline ? (
+          <p className="m-0 mt-1 text-xs font-semibold text-muted-strong">{headline}</p>
         ) : null}
         <p className="m-0 mt-1 text-xs leading-5 text-muted">{caption}</p>
       </div>
@@ -664,20 +529,22 @@ function Headline({ label, value }: { label: string; value: string }) {
   );
 }
 
+function SignalHeadlineGrid({ headlines }: { headlines: SignalHeadlines }) {
+  return (
+    <dl
+      className="m-0 mb-4 grid grid-cols-4 gap-3 max-[900px]:grid-cols-2"
+      data-signal-headlines=""
+    >
+      <Headline label="Request arrival" value={headlines.arrival.value} />
+      <Headline label="Inventory" value={headlines.inventory.value} />
+      <Headline label="Processing backlog" value={headlines.backlog.value} />
+      <Headline label="Confirmation" value={headlines.confirmation.value} />
+    </dl>
+  );
+}
+
 function elapsedSeconds(startedAt: string, endedAt: string): number {
   return Math.max(0, (Date.parse(endedAt) - Date.parse(startedAt)) / 1_000);
-}
-
-function formatRate(value: number): string {
-  return `${formatNumber(value)} attempts/s`;
-}
-
-function formatDuration(value: number): string {
-  return formatDurationMs(value * 1_000) ?? "not yet available";
-}
-
-function formatMilliseconds(value: number | null, absent = "not yet available"): string {
-  return formatDurationMs(value) ?? absent;
 }
 
 /**

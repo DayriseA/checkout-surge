@@ -25,6 +25,7 @@ import { ConfigGroup, FieldRow } from "./config-presentation";
 import { GoldSignals } from "./gold-signals";
 import { RunConclusion } from "./run-conclusion";
 import { RunDiagnostics } from "./run-diagnostics";
+import { ScrollRegion } from "./scroll-region";
 import { StatusPill } from "./status-pill";
 import { TransportObservationSection } from "./transport-observation";
 
@@ -292,6 +293,7 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
       <GoldSignals
         acceptedReservations={summary.businessOutcomeSummary.acceptedReservations}
         arrivalSummary={summary.trafficDeliverySummary.requestArrivalSummary}
+        failedOrders={summary.businessOutcomeSummary.failedOrders}
         oversoldUnits={oversoldUnitsFromTerminalInventory(summary)}
         runStatus={run.status}
         terminalSummary={detail.runSignalTimelineSummary}
@@ -305,12 +307,12 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
       <RunHistoryFilter detail={detail} />
 
       {detail.query.filter && trace.length > 0 ? (
-        <section className="rounded-lg border border-border bg-surface p-4">
+        <section className="min-w-0 max-w-full rounded-lg border border-border bg-surface p-4">
           <h2 className="m-0 text-base font-bold leading-tight text-ink">Chronological trace</h2>
           <p className="m-0 mt-1 text-sm text-muted">
             Related records are ordered by timestamp, source type, then identifier.
           </p>
-          <div className="mt-3 overflow-x-auto">
+          <ScrollRegion accessibleName="Chronological trace">
             <DenseTable
               accessibleName="Chronological trace"
               headers={["Time", "Source", "Order", "Activity", "Details"]}
@@ -328,11 +330,11 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
                 ),
               }))}
             />
-          </div>
+          </ScrollRegion>
         </section>
       ) : null}
 
-      <section className="rounded-lg border border-border bg-surface p-4">
+      <section className="min-w-0 max-w-full rounded-lg border border-border bg-surface p-4">
         <CollectionHeader
           filtered={detail.query.filter !== undefined}
           matchedCount={detail.orders.matchedCount}
@@ -341,7 +343,7 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
           totalCount={detail.orders.totalCount}
           truncated={detail.orders.truncated}
         />
-        <div className="mt-3 overflow-x-auto">
+        <ScrollRegion accessibleName="Order outcomes">
           {detail.orders.records.length > 0 ? (
             <DenseTable
               accessibleName="Order outcomes"
@@ -390,10 +392,10 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
               )}
             />
           )}
-        </div>
+        </ScrollRegion>
       </section>
 
-      <section className="grid grid-cols-3 gap-4 max-[1100px]:grid-cols-1">
+      <section className="grid min-w-0 max-w-full grid-cols-3 gap-4 max-[1100px]:grid-cols-1">
         <CollectionPanel
           emptyLabel={collectionEmptyLabel(
             filtered,
@@ -612,7 +614,7 @@ function CollectionPanel({
   warningCount: number;
 }) {
   return (
-    <section className="rounded-lg border border-border bg-surface p-4">
+    <section className="min-w-0 max-w-full rounded-lg border border-border bg-surface p-4">
       <CollectionHeader
         filtered={filtered}
         matchedCount={matchedCount}
@@ -621,13 +623,13 @@ function CollectionPanel({
         truncated={truncated}
         warningCount={warningCount}
       />
-      <div className="mt-3 overflow-x-auto">
+      <ScrollRegion accessibleName={title}>
         {records.length > 0 ? (
           <DenseTable accessibleName={title} headers={headers} rows={records} />
         ) : (
           <EmptyCollection label={emptyLabel} />
         )}
-      </div>
+      </ScrollRegion>
     </section>
   );
 }
@@ -967,6 +969,7 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
         <GoldSignals
           acceptedReservations={summary.businessOutcomeSummary.acceptedReservations}
           arrivalSummary={summary.trafficDeliverySummary.requestArrivalSummary}
+          failedOrders={summary.businessOutcomeSummary.failedOrders}
           oversoldUnits={oversoldUnitsFromTerminalInventory(summary)}
           runStatus={run.status}
           terminalSummary={detail.runSignalTimelineSummary}

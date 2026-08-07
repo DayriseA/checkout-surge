@@ -230,6 +230,7 @@ export function RecoveryStatusPanel({
   syncIssue = null,
   presentation,
   freshness,
+  fullWidth = false,
   onRefresh,
 }: {
   recovery: BackendRead<DashboardProjection>;
@@ -242,6 +243,7 @@ export function RecoveryStatusPanel({
   syncIssue?: Extract<BackendRead<DashboardProjection>, { status: "unavailable" }> | null;
   presentation: PresentationState;
   freshness?: Freshness;
+  fullWidth?: boolean;
   onRefresh?: () => void;
 }) {
   const data = recoveryData(recovery);
@@ -252,7 +254,7 @@ export function RecoveryStatusPanel({
     (syncIssue?.retryAfterMs ?? 0) > 0;
 
   return (
-    <section className={panelNarrowClassName}>
+    <section className={fullWidth ? panelFullClassName : panelNarrowClassName}>
       <div className={panelHeaderClassName}>
         <div>
           <p className={eyebrowClassName}>Current state</p>
@@ -549,7 +551,7 @@ export function InventoryDrainPanel({
       : 0;
 
   return (
-    <section className={panelNarrowClassName}>
+    <section className={panelFullClassName}>
       <div className={panelHeaderClassName}>
         <div>
           <p className={eyebrowClassName}>Inventory drain</p>

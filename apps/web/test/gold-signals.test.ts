@@ -26,6 +26,7 @@ describe("Gold Signals", () => {
         liveSamples: [
           {
             recoveredAt: "2026-06-20T00:03:00.000Z",
+            hasBusinessOutcomeEvidence: true,
             arrivalRatePerSecond: 1,
             remainingStock: 999,
             queueBacklog: 999,
@@ -44,19 +45,19 @@ describe("Gold Signals", () => {
 
     expect(markup.match(/role="img"/g)).toHaveLength(4);
     expect(markup.match(/viewBox="0 0 640 96"/g)).toHaveLength(4);
+    expect(markup).toContain(
+      'class="m-0 mb-4 grid grid-cols-4 gap-3 max-[900px]:grid-cols-2" data-signal-headlines=""',
+    );
     expect(markup).toContain("Peak 10 attempts/s");
     expect(markup).toContain(
       "Checkout attempts started by the load generator in 1-second windows.",
     );
-    expect(markup).toContain("Start 10 · 0 remaining · 0 oversold · depleted in 5 s");
-    expect(markup).toContain("Peak 6 orders · drained in 10 s");
-    expect(markup).toContain("9/10 confirmed · 1 failed · 0 pending");
-    expect(markup).toContain(
-      "Of 10 unique reservations secured, 9 were confirmed, 1 failed, and 0 remain pending.",
-    );
-    expect(markup).toContain("Lag avg 2 s, p95 3 s, max 4 s · Converged in 118 s");
-    expect(markup).not.toContain("999 remaining");
-    expect(markup).not.toContain("Peak 999 orders");
+    expect(markup).toContain("0 of 10 left · 0 oversold");
+    expect(markup).toContain("Peak 6 · drained in 10 s");
+    expect(markup).toContain("9/10 confirmed · 0 pending · p95 3 s · Converged in 118 s");
+    expect(markup).toContain("1 failed · lag avg 2 s, max 4 s");
+    expect(markup).not.toContain("999 of 10 left");
+    expect(markup).not.toContain("Peak 999");
     expect(markup).not.toContain("999/10 confirmed");
     expect(markup).toContain(
       "All panels cover the completed run from its first checkout attempt to its final timeline boundary.",
@@ -69,6 +70,27 @@ describe("Gold Signals", () => {
     expect(markup).toContain("<title>final timeline boundary</title>");
     expect(markup).toContain('x1="0"');
     expect(markup).toContain("stroke-danger");
+    for (const name of [
+      "Request arrival timeline",
+      "Inventory timeline",
+      "Processing backlog timeline",
+      "Confirmation timeline",
+    ]) {
+      expect(markup).toContain(`aria-label="${name}"`);
+    }
+    expect(markup).not.toMatch(/aria-label="[^"]*Peak 10 attempts\/s/);
+    expect(markup).not.toMatch(/aria-label="[^"]*0 of 10 left/);
+    expect(markup).not.toMatch(/aria-label="[^"]*Peak 6/);
+    expect(markup).not.toMatch(/aria-label="[^"]*9\/10 confirmed/);
+    const visibleText = markup.replace(/<[^>]+>/g, "");
+    for (const headline of [
+      "Peak 10 attempts/s",
+      "0 of 10 left · 0 oversold",
+      "Peak 6 · drained in 10 s",
+      "9/10 confirmed · 0 pending · p95 3 s · Converged in 118 s",
+    ]) {
+      expect(visibleText.split(headline)).toHaveLength(2);
+    }
   });
 
   it("uses lifecycle-aware absence without zero claims or empty charts", () => {
@@ -88,6 +110,7 @@ describe("Gold Signals", () => {
         liveSamples: [
           {
             recoveredAt: "2026-06-20T00:00:01.000Z",
+            hasBusinessOutcomeEvidence: true,
             arrivalRatePerSecond: null,
             remainingStock: 10,
             queueBacklog: 0,
@@ -124,13 +147,53 @@ describe("Gold Signals", () => {
       }),
     );
 
-    expect(liveMarkup.match(/Not yet available/g)).toHaveLength(4);
+    expect(liveMarkup.match(/Not yet available/g)).toHaveLength(3);
+    expect(liveMarkup).toContain("0/0 confirmed · 0 pending");
     expect(historyMarkup.match(/Not recorded for this run/g)).toHaveLength(4);
     expect(failedMarkup.match(/Not recorded for this run/g)).toHaveLength(4);
     expect(`${historyMarkup}${failedMarkup}`).not.toContain("Not yet available");
     expect(`${liveMarkup}${historyMarkup}${failedMarkup}`).not.toContain('role="img"');
     expect(`${liveMarkup}${historyMarkup}${failedMarkup}`).not.toContain("Peak 0");
     expect(`${liveMarkup}${historyMarkup}${failedMarkup}`).not.toContain("0 remaining");
+  });
+
+  it("does not present zero-filled live samples as confirmation evidence", () => {
+    const markup = renderToStaticMarkup(
+      createElement(GoldSignals, {
+        acceptedReservations: null,
+        arrivalSummary: null,
+        liveLag: {
+          confirmedOrderCount: 3,
+          pendingConfirmationCount: 2,
+          averageLagMs: 200,
+          p95LagMs: 300,
+          maxLagMs: 400,
+          oldestPendingAgeSeconds: 1,
+          measuredAt: "2026-06-20T00:00:01.000Z",
+        },
+        liveSamples: [
+          {
+            recoveredAt: "2026-06-20T00:00:01.000Z",
+            hasBusinessOutcomeEvidence: false,
+            arrivalRatePerSecond: null,
+            remainingStock: 9,
+            queueBacklog: null,
+            confirmedOrderCount: 0,
+            settledOrderCount: 0,
+            failedOrderCount: 0,
+            pendingOrderCount: 0,
+          },
+        ],
+        oversoldUnits: null,
+        runStatus: "active",
+        startingStock: 10,
+        terminalSummary: null,
+      }),
+    );
+
+    expect(markup).toContain("3/Not yet available confirmed · 2 pending · p95 300 ms");
+    expect(markup.match(/role="img"/g)).toHaveLength(1);
+    expect(markup).not.toContain('aria-label="Confirmation timeline"');
   });
 
   it.each([
@@ -145,6 +208,7 @@ describe("Gold Signals", () => {
         liveSamples: [
           {
             recoveredAt: "2026-06-20T00:00:01.000Z",
+            hasBusinessOutcomeEvidence: false,
             arrivalRatePerSecond: 8,
             remainingStock: null,
             queueBacklog: null,
@@ -164,7 +228,7 @@ describe("Gold Signals", () => {
     expect(markup).toContain(
       "Final timeline evidence was not recorded; the run evidence that was recorded is shown where available.",
     );
-    expect(markup).toContain("Retained peak 8 attempts/s");
+    expect(markup).toContain("Peak 8 attempts/s");
     expect(markup).toContain("Not recorded for this run");
     expect(markup).not.toContain("Live panels");
     expect(markup).not.toContain("in progress");
@@ -256,8 +320,7 @@ describe("Gold Signals", () => {
       "All panels cover the failed run from its first checkout attempt to its final timeline boundary.",
     );
     expect(markup).not.toContain("completed run");
-    expect(markup).toContain("Start 10 · 0 remaining · oversell unknown · depleted in 5 s");
-    expect(markup).toContain("with oversell unknown.");
+    expect(markup).toContain("0 of 10 left · oversell unknown");
   });
 
   it("does not claim full coverage while the arrival panel has no evidence", () => {
@@ -277,7 +340,7 @@ describe("Gold Signals", () => {
     );
     expect(markup).not.toContain("All panels cover");
     expect(markup).toContain(
-      '<h3 class="m-0 text-sm font-bold text-ink">Request arrival</h3><p class="m-0 mt-1 text-base font-bold text-muted">Not recorded for this run</p>',
+      '<dt class="text-xs font-bold text-muted">Request arrival</dt><dd class="m-0 mt-1 font-semibold text-ink">Not recorded for this run</dd>',
     );
     expect(markup.match(/role="img"/g)).toHaveLength(3);
   });
@@ -305,6 +368,7 @@ describe("Gold Signals", () => {
       createElement(GoldSignals, {
         acceptedReservations: 7,
         arrivalSummary: null,
+        failedOrders: 0,
         liveLag: {
           confirmedOrderCount: 6,
           pendingConfirmationCount: 1,
@@ -317,6 +381,7 @@ describe("Gold Signals", () => {
         liveSamples: [
           {
             recoveredAt: "2026-06-20T00:00:01.000Z",
+            hasBusinessOutcomeEvidence: false,
             arrivalRatePerSecond: null,
             remainingStock: 10,
             queueBacklog: 0,
@@ -327,6 +392,7 @@ describe("Gold Signals", () => {
           },
           {
             recoveredAt: "2026-06-20T00:01:31.000Z",
+            hasBusinessOutcomeEvidence: false,
             arrivalRatePerSecond: null,
             remainingStock: 10,
             queueBacklog: 0,
@@ -337,6 +403,7 @@ describe("Gold Signals", () => {
           },
           {
             recoveredAt: "2026-06-20T00:02:01.000Z",
+            hasBusinessOutcomeEvidence: true,
             arrivalRatePerSecond: 12,
             remainingStock: 10,
             queueBacklog: 5,
@@ -347,13 +414,14 @@ describe("Gold Signals", () => {
           },
           {
             recoveredAt: "2026-06-20T00:02:03.000Z",
+            hasBusinessOutcomeEvidence: true,
             arrivalRatePerSecond: 2,
             remainingStock: 3,
             queueBacklog: 1,
-            confirmedOrderCount: 6,
-            settledOrderCount: 6,
+            confirmedOrderCount: 4,
+            settledOrderCount: 4,
             failedOrderCount: 0,
-            pendingOrderCount: 1,
+            pendingOrderCount: 3,
           },
         ],
         oversoldUnits: 0,
@@ -363,10 +431,9 @@ describe("Gold Signals", () => {
       }),
     );
 
-    expect(markup).toContain("Start 10 · 3 remaining · 0 oversold");
-    expect(markup).toContain(
-      "Lag avg 900 ms, p95 1.2 s, max 1.5 s · Convergence in progress · 1 pending",
-    );
+    expect(markup).toContain("3 of 10 left · 0 oversold");
+    expect(markup).toContain("6/7 confirmed · 1 pending · p95 1.2 s");
+    expect(markup).toContain("0 failed · lag avg 900 ms, max 1.5 s");
     expect(markup).toContain("Shared axis: 0s first available update · 2s latest available update");
     expect(markup).toContain(
       "Checkout attempts started by the load generator in 1-second windows.",
@@ -385,6 +452,7 @@ describe("Gold Signals", () => {
         liveSamples: [
           {
             recoveredAt: "2026-06-20T00:00:01.000Z",
+            hasBusinessOutcomeEvidence: true,
             arrivalRatePerSecond: null,
             remainingStock: 10,
             queueBacklog: 0,
@@ -395,6 +463,7 @@ describe("Gold Signals", () => {
           },
           {
             recoveredAt: "2026-06-20T00:01:01.000Z",
+            hasBusinessOutcomeEvidence: true,
             arrivalRatePerSecond: null,
             remainingStock: 7,
             queueBacklog: 0,
@@ -405,6 +474,7 @@ describe("Gold Signals", () => {
           },
           {
             recoveredAt: "2026-06-20T00:01:03.000Z",
+            hasBusinessOutcomeEvidence: true,
             arrivalRatePerSecond: null,
             remainingStock: 5,
             queueBacklog: 2,
@@ -422,10 +492,12 @@ describe("Gold Signals", () => {
     );
 
     expect(markup.match(/role="img"/g)).toHaveLength(3);
+    expect(markup).toContain('aria-label="Confirmation timeline"');
+    expect(markup).toContain("<li>2s: 2</li>");
     expect(markup).toContain("Request arrival</h3><p");
     expect(markup).toContain("Not yet available");
-    expect(markup).toContain("Start 10 · 5 remaining · 0 oversold");
-    expect(markup).toContain("Peak 2 orders");
+    expect(markup).toContain("5 of 10 left · 0 oversold");
+    expect(markup).toContain("2 waiting · peak 2");
     expect(markup).toContain("<li>0s: 7</li>");
     expect(markup).toContain("Shared axis: 0s first available update · 2s latest available update");
     expect(markup).not.toContain("60s:");
@@ -436,6 +508,7 @@ describe("Gold Signals", () => {
     const terminal = timelineFixture();
     const markup = renderToStaticMarkup(
       createElement(GoldSignalHeadlines, {
+        acceptedReservations: 10,
         arrivalSummary: {
           firstAttemptStartedAt: terminal.window.anchoredAt,
           peakArrivalRatePerSecond: 10,
@@ -452,18 +525,17 @@ describe("Gold Signals", () => {
     );
 
     expect(markup).toContain("Request arrival");
-    expect(markup).toContain("Peak 10 attempts/s (1-second window) · dispatched in 2 s");
-    expect(markup).toContain("Start 10 · 0 remaining · 0 oversold · depleted in 5 s");
+    expect(markup).toContain("Peak 10 attempts/s");
+    expect(markup).toContain("0 of 10 left · 0 oversold");
     expect(markup).toContain("Peak 6 · drained in 10 s");
-    expect(markup).toContain(
-      "9 confirmed · 1 failed · 0 pending · lag avg 2 s, p95 3 s, max 4 s · converged in 118 s",
-    );
+    expect(markup).toContain("9/10 confirmed · 0 pending · p95 3 s · Converged in 118 s");
   });
 
   it("leaves oversell unknown in history headlines without an inventory snapshot", () => {
     const terminal = timelineFixture();
     const markup = renderToStaticMarkup(
       createElement(GoldSignalHeadlines, {
+        acceptedReservations: 10,
         arrivalSummary: {
           firstAttemptStartedAt: terminal.window.anchoredAt,
           peakArrivalRatePerSecond: 10,
@@ -479,7 +551,7 @@ describe("Gold Signals", () => {
       }),
     );
 
-    expect(markup).toContain("Start 10 · 0 remaining · oversell unknown · depleted in 5 s");
+    expect(markup).toContain("0 of 10 left · oversell unknown");
     expect(markup).not.toContain("0 oversold");
   });
 
@@ -487,6 +559,7 @@ describe("Gold Signals", () => {
     const terminal = timelineFixture();
     const markup = renderToStaticMarkup(
       createElement(GoldSignalHeadlines, {
+        acceptedReservations: 10,
         arrivalSummary: emptyRequestArrivalSummary,
         headline: toRunSignalTimelineHeadline(terminal),
         oversoldUnits: 0,

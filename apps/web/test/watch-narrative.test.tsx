@@ -10,7 +10,7 @@ import { previewRunConfigSnapshotFixture } from "@checkout-surge/contracts/testi
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { WatchNarrative } from "../src/app/components/operator-dashboard.js";
+import { OperatorDashboard, WatchNarrative } from "../src/app/components/operator-dashboard.js";
 import type { BackendRead } from "../src/app/lib/api.js";
 import type { RetainedTerminalRun } from "../src/app/lib/dashboard-projection-state.js";
 import { deriveWatchComposition } from "../src/app/lib/presentation/watch-composition.js";
@@ -58,29 +58,63 @@ describe("watch narrative", () => {
     expect(output).not.toContain("Sale evidence");
   });
 
-  it("renders active signals before interpretation and ERP/consistency evidence", () => {
+  it("renders active interpretation before signals and ERP/consistency evidence", () => {
     const output = markup(available(projection(run("active"))));
 
     expect(output).toContain("The surge is under way");
     expect(output).toContain("Sale evidence");
-    expect(output.indexOf("Frozen scenario")).toBeLessThan(output.indexOf("Sale evidence"));
-    expect(output.indexOf("Sale evidence")).toBeLessThan(output.indexOf("What is happening now"));
-    expect(output.indexOf("What is happening now")).toBeLessThan(
-      output.indexOf("Simulated ERP outcomes"),
-    );
+    expect(output.indexOf("Frozen scenario")).toBeLessThan(output.indexOf("What is happening now"));
+    expect(output.indexOf("What is happening now")).toBeLessThan(output.indexOf("Sale evidence"));
+    expect(output.indexOf("Sale evidence")).toBeLessThan(output.indexOf("Simulated ERP outcomes"));
     expect(output).toContain("Fast reservation vs final confirmation");
   });
 
-  it("promotes drain work and protection before the signals recap", () => {
+  it("places draining signals before promoted outcome and protection panels", () => {
     const output = markup(available(projection(run("draining"))));
 
     expect(output).toContain("Following the drain");
     expect(output).toContain("Reservation and confirmation summary");
     expect(output).toContain("Simulated ERP outcomes");
     expect(output).toContain("Fast reservation vs final confirmation");
-    expect(output.indexOf("Reservation and confirmation summary")).toBeLessThan(
-      output.indexOf("Sale evidence"),
+    expect(output.indexOf("Sale evidence")).toBeLessThan(
+      output.indexOf("Reservation and confirmation summary"),
     );
+  });
+
+  it.each([
+    "active",
+    "draining",
+    "completed",
+    "failed",
+  ] as const)("keeps the %s run story ahead of promoted panels and technical details", (status) => {
+    const currentProjection =
+      status === "completed" || status === "failed"
+        ? terminalProjection(status)
+        : projection(run(status));
+    const output = renderToStaticMarkup(
+      createElement(OperatorDashboard, {
+        initialRecovery: available(currentProjection),
+      }),
+    );
+    const strip = output.indexOf("Frozen scenario");
+    const grid = output.indexOf('data-signal-headlines=""');
+    const technical = output.indexOf("Technical details");
+
+    expect(strip).toBeGreaterThan(-1);
+    expect(grid).toBeGreaterThan(strip);
+    expect(technical).toBeGreaterThan(grid);
+    if (status === "active" || status === "draining") {
+      const phaseLine = output.indexOf(
+        status === "active" ? "What is happening now" : "Traffic finished",
+      );
+      expect(phaseLine).toBeGreaterThan(strip);
+      expect(grid).toBeGreaterThan(phaseLine);
+      expect(output.indexOf("Simulated ERP outcomes")).toBeGreaterThan(grid);
+      expect(output.indexOf("Fast reservation vs final confirmation")).toBeGreaterThan(grid);
+    }
+    if (status === "draining") {
+      expect(output.indexOf("Reservation and confirmation summary")).toBeGreaterThan(grid);
+    }
   });
 
   it("renders completed before and after projection clearing with an exact durable handoff", () => {

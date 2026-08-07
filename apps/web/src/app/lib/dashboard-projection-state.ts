@@ -30,6 +30,7 @@ export interface RetainedTerminalRun {
 
 export interface RunSignalLiveSample {
   recoveredAt: string;
+  hasBusinessOutcomeEvidence: boolean;
   arrivalRatePerSecond: number | null;
   remainingStock: number | null;
   queueBacklog: number | null;
@@ -242,6 +243,7 @@ function toRunSignalLiveSample(projection: DashboardProjection): RunSignalLiveSa
   const pendingOrderCount = outcome ? outcome.queuedOrders + outcome.processingOrders : 0;
   return {
     recoveredAt: projection.recoveredAt,
+    hasBusinessOutcomeEvidence: outcome !== null,
     arrivalRatePerSecond:
       findLatestMetric(projection, "traffic.request_arrival_rate", "requests_per_second")?.value ??
       null,

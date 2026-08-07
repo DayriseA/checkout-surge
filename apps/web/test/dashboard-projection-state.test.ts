@@ -152,6 +152,7 @@ describe("dashboard projection state", () => {
 
     expect(state.signalSamples).toHaveLength(120);
     expect(state.signalSamples[0]?.recoveredAt).toBe("2026-06-20T00:00:03.000Z");
+    expect(state.signalSamples[0]?.hasBusinessOutcomeEvidence).toBe(false);
 
     const newerRun = activeRun({
       runId: "22222222-2222-4222-8222-222222222222",
@@ -193,6 +194,7 @@ describe("dashboard projection state", () => {
     );
 
     expect(state.signalSamples[0]?.queueBacklog).toBe(9);
+    expect(state.signalSamples[0]?.hasBusinessOutcomeEvidence).toBe(true);
   });
 
   it("accepts the C1 idle recovery overlap only after the committed projection", () => {

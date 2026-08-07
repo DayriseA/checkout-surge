@@ -11,9 +11,9 @@ import {
   type RunHistoryListResponse,
 } from "@checkout-surge/contracts";
 import { previewRunConfigSnapshotFixture } from "@checkout-surge/contracts/testing";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RunHistoryAdminControls } from "../src/app/components/run-history-admin-controls.js";
 import {
@@ -553,6 +553,29 @@ describe("run history", () => {
     expect(markup).toContain('<caption class="sr-only">simulated emails recorded</caption>');
     expect(markup).toContain('<caption class="sr-only">Event timeline</caption>');
     expect(markup).toContain('scope="row"');
+    const document = new DOMParser().parseFromString(markup, "text/html");
+
+    for (const accessibleName of [
+      "Order outcomes",
+      "ERP attempts",
+      "simulated emails recorded",
+      "Event timeline",
+    ]) {
+      const region = document.querySelector(`[role="region"][aria-label="${accessibleName}"]`);
+
+      expect(region).not.toBeNull();
+      expect([...(region?.classList ?? [])]).toEqual(
+        expect.arrayContaining(["w-full", "min-w-0", "max-w-full", "overflow-x-auto"]),
+      );
+      expect([...(region?.parentElement?.classList ?? [])]).toEqual(
+        expect.arrayContaining(["min-w-0", "max-w-full"]),
+      );
+      expect([...(region?.closest("section.rounded-lg")?.classList ?? [])]).toEqual(
+        expect.arrayContaining(["min-w-0", "max-w-full"]),
+      );
+    }
+    expect(markup).toContain("Scrolls sideways.");
+    expect(markup).toContain('scope="col"');
     expect(markup).toContain('aria-label="Technical detail for order ord_history_1"');
     expect(markup).toContain(
       'aria-label="Technical detail for ERP attempt 99999999-9999-4999-8999-999999999992"',

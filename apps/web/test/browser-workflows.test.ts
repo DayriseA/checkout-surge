@@ -1421,13 +1421,13 @@ describe("watch browser recovery", () => {
     );
 
     expect(markup).not.toContain('aria-label="Run conclusion"');
-    expect(markup).toContain("Peak 7 orders");
+    expect(markup).toContain("7 waiting · peak 7");
     expect(markup).toContain("Run-owned retrying orders are shown separately (3)");
     expect(markup).not.toContain("Reservation and confirmation summary");
     expect(markup).toContain("System status across all runs and visitors");
     expect(markup).toMatch(/Depth \(all runs\)<\/dt><dd[^>]*>41<\/dd>/);
     expect(markup.match(/Retrying jobs<\/dt><dd[^>]*>29<\/dd>/g)).toHaveLength(2);
-    expect(markup).not.toContain("Peak 41 orders");
+    expect(markup).not.toContain("41 waiting · peak 41");
     expect(markup).not.toContain("Run-owned retrying orders are shown separately (29)");
   });
 
