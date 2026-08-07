@@ -41,7 +41,6 @@ export function RunHistoryList({ history }: { history: RunHistoryListResponse })
 }
 
 function RunHistoryRow({ summary }: { summary: RunHistoryListItem }) {
-  const reportName = `${summary.presetName} run report from ${formatInstantUtc(summary.occurredAt) ?? summary.occurredAt}`;
   return (
     <article className="rounded-lg border border-border bg-surface p-4">
       <div className="grid gap-4 xl:grid-cols-[minmax(12rem,1.6fr)_repeat(6,minmax(7rem,1fr))_auto] xl:items-center">
@@ -87,11 +86,15 @@ function RunHistoryRow({ summary }: { summary: RunHistoryListItem }) {
         />
         <div className="flex flex-wrap gap-2 xl:justify-end">
           <Link
-            aria-label={reportName}
             className="inline-flex min-h-10 items-center rounded-lg border border-border px-3.5 py-2.5 text-sm font-semibold text-muted-strong"
             href={`/run-history/${summary.runId}`}
           >
-            View report
+            View report{" "}
+            <span className="sr-only">
+              {" "}
+              for {summary.presetName} run from{" "}
+              {formatInstantUtc(summary.occurredAt) ?? summary.occurredAt}
+            </span>
           </Link>
           <RunHistoryRowControls presetName={summary.presetName} runId={summary.runId} />
         </div>

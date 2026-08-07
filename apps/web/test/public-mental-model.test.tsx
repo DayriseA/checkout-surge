@@ -18,6 +18,7 @@ vi.mock("../src/app/lib/server/admin-page-session.js", () => ({
 vi.mock("../src/app/components/admin-nav.js", () => ({
   AdminSignOut: () => createElement("button", { type: "button" }, "Sign out"),
 }));
+vi.mock("next/navigation", () => ({ usePathname: () => "/" }));
 
 import AboutPage from "../src/app/about/page.js";
 import RootLayout from "../src/app/layout.js";

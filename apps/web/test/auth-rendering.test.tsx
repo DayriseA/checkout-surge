@@ -33,7 +33,10 @@ vi.mock("../src/app/components/run-history-admin-controls.js", () => ({
   RunHistoryAdminControls: ({ children }: { children: ReactNode }) =>
     createElement("section", null, "Authenticated history cleanup", children),
 }));
-vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
+vi.mock("next/navigation", () => ({
+  usePathname: () => "/",
+  useRouter: () => ({ refresh: vi.fn() }),
+}));
 
 import AdminPage from "../src/app/admin/page.js";
 import RootLayout from "../src/app/layout.js";

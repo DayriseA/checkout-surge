@@ -287,6 +287,33 @@ describe("admin feature controllers", () => {
     }
   });
 
+  it("keeps the runtime-policy and preset traffic radio groups independent", () => {
+    render(
+      <AdminAuthenticatedSurface
+        {...surfaceProps(null)}
+        initialRuntimePolicy={available(runtimePolicyFixture(10_000, 300))}
+      />,
+    );
+
+    const trafficGroups = screen.getAllByRole("group", {
+      name: "Traffic pattern",
+      hidden: true,
+    });
+    expect(trafficGroups).toHaveLength(2);
+
+    const radioNames = Object.fromEntries(
+      trafficGroups.map((group) => {
+        const radios = within(group).getAllByRole("radio", { hidden: true });
+        expect(radios.filter((radio) => (radio as HTMLInputElement).checked)).toHaveLength(1);
+        return [group.id, new Set(radios.map((radio) => (radio as HTMLInputElement).name))];
+      }),
+    );
+    expect(radioNames).toEqual({
+      "preset-mode": new Set(["preset-traffic-mode"]),
+      "runtime-policy-mode": new Set(["runtime-policy-traffic-mode"]),
+    });
+  });
+
   it("wraps a long preset description without changing its single-line editor", () => {
     const props = surfaceProps(null);
     if (props.initialPresets.status !== "available") throw new Error("Expected presets.");
@@ -1071,6 +1098,14 @@ describe("admin feature controllers", () => {
   it("keeps selection and draft when dirty switching is cancelled, then discards on confirm", async () => {
     const first = presetFixture();
     const second = presetWithSlug("second", "Second preset");
+    second.trafficConfig = {
+      mode: "constant-arrival-rate",
+      ratePerSecond: 100,
+      startDelaySeconds: 0,
+      durationSeconds: 10,
+      quantityPerAttempt: 1,
+      k6Vus: { preAllocatedVus: 10, maxVus: 20 },
+    };
     const user = userEvent.setup();
     render(
       <AdminPresetController
@@ -1081,6 +1116,15 @@ describe("admin feature controllers", () => {
         recovery={available(recoveryFixture(null))}
       />,
     );
+    const presetGroup = screen.getByRole("group", { name: "Preset selection" });
+    expect(
+      within(presetGroup)
+        .getAllByRole("button")
+        .filter((button) => button.getAttribute("aria-pressed") === "true"),
+    ).toHaveLength(1);
+    expect(
+      within(presetGroup).getByRole("button", { name: "Custom" }).getAttribute("aria-pressed"),
+    ).toBe("true");
     await user.clear(screen.getByLabelText("Buyer count"));
     await user.type(screen.getByLabelText("Buyer count"), "1234");
     expect(screen.getByText("Unsaved")).toBeTruthy();
@@ -1090,14 +1134,27 @@ describe("admin feature controllers", () => {
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect((screen.getByLabelText("Buyer count") as HTMLInputElement).value).toBe("1234");
     expect(
-      (screen.getByRole("button", { name: "Custom" }) as HTMLButtonElement).className,
-    ).toContain("bg-accent");
+      within(presetGroup).getByRole("button", { name: "Custom" }).getAttribute("aria-pressed"),
+    ).toBe("true");
+    expect(
+      within(presetGroup)
+        .getByRole("button", { name: "Second preset" })
+        .getAttribute("aria-pressed"),
+    ).toBe("false");
 
     await user.click(screen.getByRole("button", { name: "Second preset" }));
     await user.click(confirmationButton("Discard unsaved edits"));
     expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("Second preset");
-    expect((screen.getByLabelText("Buyer count") as HTMLInputElement).value).toBe("1000");
+    expect((screen.getByLabelText("Requests per second") as HTMLInputElement).value).toBe("100");
     expect(screen.getByText("Saved")).toBeTruthy();
+    expect(
+      within(presetGroup)
+        .getByRole("button", { name: "Second preset" })
+        .getAttribute("aria-pressed"),
+    ).toBe("true");
+    expect((screen.getByRole("radio", { name: "Steady stream" }) as HTMLInputElement).checked).toBe(
+      true,
+    );
   });
 
   it("keeps Unsaved after save failure and adopts the accepted response as Saved", async () => {
@@ -1317,6 +1374,11 @@ describe("admin feature controllers", () => {
     );
     await user.clear(screen.getByLabelText("Starting stock"));
     await user.type(screen.getByLabelText("Starting stock"), "333");
+    await user.click(screen.getByRole("radio", { name: "Steady stream" }));
+    expect((screen.getByRole("radio", { name: "Steady stream" }) as HTMLInputElement).checked).toBe(
+      true,
+    );
+    await user.click(screen.getByRole("radio", { name: "Everyone at once" }));
     const preset = presetFixture();
     const expectedDraft = draftFromPreset(preset);
     expectedDraft.startingStock = "333";
@@ -1355,6 +1417,7 @@ describe("admin feature controllers", () => {
     const request = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe(adminDemoRunStartProxyPath);
     expect(request.configOverride).toEqual(expectedConfigOverride);
+    expect(request.configOverride.trafficConfig.mode).toBe("buyer-spike");
     expect(fetchMock.mock.calls.some(([input]) => String(input) === adminPresetSaveProxyPath)).toBe(
       false,
     );
@@ -1503,10 +1566,10 @@ describe("admin feature controllers", () => {
       }),
     ).toBeTruthy();
 
-    await user.click(screen.getByRole("button", { name: "constant-arrival-rate" }));
+    await user.click(screen.getByRole("radio", { name: "Steady stream" }));
     expect(screen.queryByText("Buyer count is required.")).toBeNull();
     expect(screen.queryByText("Correct the highlighted fields.")).toBeNull();
-    await user.click(screen.getByRole("button", { name: "buyer-spike" }));
+    await user.click(screen.getByRole("radio", { name: "Everyone at once" }));
     expect((screen.getByLabelText("Buyer count") as HTMLInputElement).value).toBe("");
     expect(screen.getByLabelText("Buyer count").getAttribute("aria-invalid")).toBeNull();
   });
@@ -1575,7 +1638,7 @@ describe("admin feature controllers", () => {
     {
       mode: "constant arrival",
       prepare: async (user: ReturnType<typeof userEvent.setup>) => {
-        await user.click(screen.getByRole("button", { name: "constant-arrival-rate" }));
+        await user.click(screen.getByRole("radio", { name: "Steady stream" }));
         const rate = screen.getByLabelText("Requests per second");
         const duration = screen.getByLabelText("Duration seconds");
         await user.clear(rate);
@@ -2164,10 +2227,10 @@ describe("admin feature controllers", () => {
       }),
     ).toBeTruthy();
 
-    await user.click(screen.getByRole("button", { name: "constant-arrival-rate" }));
+    await user.click(screen.getByRole("radio", { name: "Steady stream" }));
     expect(screen.queryByText("Buyer count is required.")).toBeNull();
     expect(screen.queryByText("Correct the highlighted fields.")).toBeNull();
-    await user.click(screen.getByRole("button", { name: "buyer-spike" }));
+    await user.click(screen.getByRole("radio", { name: "Everyone at once" }));
     expect((screen.getByLabelText("Buyer count") as HTMLInputElement).value).toBe("");
     expect(screen.getByLabelText("Buyer count").getAttribute("aria-invalid")).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();

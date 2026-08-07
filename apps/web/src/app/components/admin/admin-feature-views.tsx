@@ -23,6 +23,7 @@ import type {
 import type { BackendRead } from "../../lib/api";
 import type { AdminNotice } from "../../lib/presentation/admin-notice";
 import { formatCount } from "../../lib/presentation/format";
+import { trafficModeLabel } from "../../lib/presentation/public-vocabulary";
 import { ConfigGroup, FieldRow } from "../config-presentation";
 import { ErrorNotice } from "../error-notice";
 import { StatusPill } from "../status-pill";
@@ -359,9 +360,15 @@ export function AdminPresetView({
         status={<StatusPill status={{ label: `${presets.length} loaded`, tone: "ok" }} />}
       />
       <div className="grid grid-cols-[minmax(180px,260px)_1fr] gap-4 max-[800px]:grid-cols-1">
-        <div className="grid content-start gap-2">
+        {/* biome-ignore lint/a11y/useSemanticElements: C04 intentionally groups pressed buttons rather than native radios because preset changes may require confirmation. */}
+        <div
+          aria-label="Preset selection"
+          className="grid content-start gap-2"
+          role="group"
+        >
           {presets.map((preset) => (
             <button
+              aria-pressed={preset.slug === selectedPreset?.slug}
               className={`${preset.slug === selectedPreset?.slug ? primaryButtonClassName : buttonClassName} [overflow-wrap:anywhere]`}
               disabled={isPending}
               key={preset.slug}
@@ -731,16 +738,21 @@ function TrafficEditor({
         id={`${prefix}-mode`}
         tabIndex={-1}
       >
-        <legend className="sr-only">Traffic mode</legend>
+        <legend className="text-sm font-semibold text-muted-strong">Traffic pattern</legend>
         {(["buyer-spike", "constant-arrival-rate"] as const).map((mode) => (
-          <button
-            className={draft.mode === mode ? primaryButtonClassName : buttonClassName}
+          <label
+            className="flex min-h-10 items-center gap-2 text-sm font-semibold text-muted-strong"
             key={mode}
-            onClick={() => onUpdateDraft({ mode })}
-            type="button"
           >
-            {mode}
-          </button>
+            <input
+              checked={draft.mode === mode}
+              name={`${prefix}-traffic-mode`}
+              onChange={() => onUpdateDraft({ mode })}
+              type="radio"
+              value={mode}
+            />
+            {trafficModeLabel(mode)}
+          </label>
         ))}
       </fieldset>
       {errors.mode ? (

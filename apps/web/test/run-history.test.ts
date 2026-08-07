@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+
 import {
   type AdminRunHistoryDetailResponse,
   deriveRunResult,
@@ -11,7 +13,9 @@ import {
 import { previewRunConfigSnapshotFixture } from "@checkout-surge/contracts/testing";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, render, screen, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { RunHistoryAdminControls } from "../src/app/components/run-history-admin-controls.js";
 import {
   AdminRunHistoryDetail,
   PublicRunHistoryDetail,
@@ -34,6 +38,8 @@ vi.mock("../src/app/lib/api.js", () => ({ getRunHistoryDetail, getAdminRunHistor
 vi.mock("../src/app/lib/server/admin-page-session.js", () => ({ hasValidAdminPageSession }));
 
 describe("run history", () => {
+  afterEach(cleanup);
+
   beforeEach(() => {
     getRunHistoryDetail.mockReset();
     getAdminRunHistoryDetail.mockReset();
@@ -61,7 +67,54 @@ describe("run history", () => {
     expect(markup).not.toContain("Traffic delivery");
     expect(markup).not.toContain("Final inventory");
     expect(markup).not.toContain("Page 1 ·");
-    expect(markup).toContain('aria-label="Preview 1k run report from 2026-06-20 00:00:00 UTC"');
+    expect(markup).toContain(
+      '<span class="sr-only"> for Preview 1k run from 2026-06-20 00:00:00 UTC</span>',
+    );
+  });
+
+  it("names detail links and keeps destructive controls outside named pagination", () => {
+    const history = listFixture();
+    const firstSummary = history.summaries[0];
+    if (!firstSummary) throw new Error("Expected a run summary fixture.");
+    history.summaries.push({
+      ...firstSummary,
+      runId: "66666666-6666-4666-8666-666666666666",
+      presetName: "Surge 5k",
+      occurredAt: "2026-06-20T00:01:00.000Z",
+    });
+    history.totalCount = 11;
+    const { rerender } = render(
+      createElement(
+        RunHistoryAdminControls,
+        { visibleRunIds: history.summaries.map(({ runId }) => runId) },
+        createElement(RunHistoryList, { history }),
+      ),
+    );
+
+    expect(
+      screen.getByRole("link", {
+        name: "View report for Preview 1k run from 2026-06-20 00:00:00 UTC",
+      }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("link", {
+        name: "View report for Surge 5k run from 2026-06-20 00:01:00 UTC",
+      }),
+    ).toBeTruthy();
+    const pagination = screen.getByRole("navigation", { name: "Run history pages" });
+    expect(
+      within(pagination).queryByRole("button", { name: "Delete all run summaries" }),
+    ).toBeNull();
+    expect(screen.getByRole("button", { name: "Delete all run summaries" })).toBeTruthy();
+
+    rerender(
+      createElement(
+        RunHistoryAdminControls,
+        { visibleRunIds: history.summaries.map(({ runId }) => runId) },
+        createElement(RunHistoryList, { history: { ...history, totalCount: 2 } }),
+      ),
+    );
+    expect(screen.queryByRole("navigation", { name: "Run history pages" })).toBeNull();
   });
 
   it("handles empty, multiple-page, and out-of-range run states", () => {

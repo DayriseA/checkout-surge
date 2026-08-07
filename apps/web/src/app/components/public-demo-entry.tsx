@@ -1243,7 +1243,8 @@ function TrafficModeSelector({
   onChange: (mode: TrafficMode) => void;
 }) {
   return (
-    <div aria-label="Traffic pattern" className="flex flex-wrap gap-3" role="radiogroup">
+    <fieldset className="m-0 flex flex-wrap gap-3 border-0 p-0">
+      <legend className="text-sm font-semibold text-muted-strong">Traffic pattern</legend>
       {(["buyer-spike", "constant-arrival-rate"] as const).map((trafficMode) => {
         const id = `custom-traffic-mode-${trafficMode}`;
         return (
@@ -1265,7 +1266,7 @@ function TrafficModeSelector({
           </label>
         );
       })}
-    </div>
+    </fieldset>
   );
 }
 

@@ -409,15 +409,26 @@ describe("public browser starts", () => {
 
   it("submits curated start requests from the public surface", async () => {
     const user = userEvent.setup();
-    const fetchMock = vi.fn(async (input: string | URL | Request, _init?: RequestInit) =>
-      String(input) === healthReadyProxyPath
-        ? jsonResponse(readinessFixture())
-        : jsonResponse({ message: "start blocked" }, 409),
-    );
+    const startRequest = deferred<Response>();
+    const fetchMock = vi.fn(async (input: string | URL | Request, _init?: RequestInit) => {
+      if (String(input) === healthReadyProxyPath) return jsonResponse(readinessFixture());
+      return startRequest.promise;
+    });
     vi.stubGlobal("fetch", fetchMock);
+    const surface = publicDemoSurfaceFixture();
+    if (surface.presets.status !== "available") throw new Error("Expected presets.");
+    const preview = demoPresetFixture("preview-1k");
+    surface.presets.data.presets.push({
+      ...preview,
+      id: "33333333-3333-4333-8333-333333333332",
+      slug: "surge-5k",
+      display: { ...preview.display, name: "Surge 5k", sortOrder: 130 },
+    });
 
-    render(createElement(PublicDemoEntry, { surface: publicDemoSurfaceFixture() }));
+    render(createElement(PublicDemoEntry, { surface }));
 
+    expect(screen.getByRole("button", { name: "Start Preview 1k" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Start Surge 5k" })).toBeTruthy();
     const previewArticle = screen.getByText("Preview 1k").closest("article");
     if (!previewArticle) {
       throw new Error("Expected Preview 1k card.");
@@ -425,14 +436,20 @@ describe("public browser starts", () => {
 
     await user.click(within(previewArticle).getByRole("button", { name: "Start Preview 1k" }));
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    expect(screen.getByRole("button", { name: "Starting Preview 1k" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Start Surge 5k" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Start" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Starting" })).toBeNull();
     const [, init] = findFetchCall(fetchMock, demoRunStartProxyPath, "POST");
     expect(init?.method).toBe("POST");
     expect(jsonRequestBody(init)).toEqual({ presetSlug: "preview-1k" });
-    expect(findFetchCall(fetchMock, healthReadyProxyPath)[0]).toBe(healthReadyProxyPath);
+    startRequest.resolve(jsonResponse({ message: "start blocked" }, 409));
     expect(
-      screen.getByText("The demo backend isn't ready yet — try again in a moment"),
+      await screen.findByText("The demo backend isn't ready yet — try again in a moment"),
     ).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(findFetchCall(fetchMock, healthReadyProxyPath)[0]).toBe(healthReadyProxyPath);
   });
 
   it("keeps the semantic custom form hidden until the visitor expands it", async () => {
@@ -520,6 +537,36 @@ describe("public browser starts", () => {
     );
     expect(screen.queryByText(buyerCount.validationMessage)).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("exposes the traffic pattern as one native radio group", async () => {
+    const user = userEvent.setup();
+    const surface = publicDemoSurfaceFixture();
+    render(createElement(PublicDemoEntry, { surface }));
+    await user.click(screen.getByText("Build your own run"));
+
+    const group = screen.getByRole("group", { name: "Traffic pattern" });
+    const spike = within(group).getByRole("radio", { name: "Everyone at once" });
+    const steady = within(group).getByRole("radio", { name: "Steady stream" });
+    expect((spike as HTMLInputElement).checked).toBe(true);
+    expect((steady as HTMLInputElement).checked).toBe(false);
+
+    await user.click(steady);
+    expect((spike as HTMLInputElement).checked).toBe(false);
+    expect((steady as HTMLInputElement).checked).toBe(true);
+
+    cleanup();
+    if (surface.runtimePolicy.status !== "available") throw new Error("Expected runtime policy.");
+    surface.runtimePolicy.data.policy.publicCustomLimits.allowedTrafficModes = ["buyer-spike"];
+    render(createElement(PublicDemoEntry, { surface }));
+    await user.click(screen.getByText("Build your own run"));
+    expect(
+      (
+        within(screen.getByRole("group", { name: "Traffic pattern" })).getByRole("radio", {
+          name: "Steady stream",
+        }) as HTMLInputElement
+      ).disabled,
+    ).toBe(true);
   });
 
   it("drops hidden traffic errors and submits only the corrected visible mode", async () => {

@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { AdminSignOut } from "./components/admin-nav";
-import { publicNarrative } from "./lib/presentation/public-vocabulary";
+import { DashboardNav } from "./components/dashboard-nav";
 import { hasValidAdminPageSession } from "./lib/server/admin-page-session";
 import "./globals.css";
 
@@ -9,14 +9,6 @@ export const metadata: Metadata = {
   title: "Checkout-Surge Dashboard",
   description: "Operational dashboard for Checkout-Surge.",
 };
-
-const dashboardNavItems = [
-  { href: "/", label: "Demo" },
-  { href: "/watch", label: "Watch" },
-  { href: "/run-history", label: "Run history" },
-  { href: "/about", label: "About" },
-  { href: "/admin", label: "Admin" },
-] as const;
 
 export const dynamic = "force-dynamic";
 
@@ -32,30 +24,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
                 <strong className="text-base text-ink">Checkout-Surge</strong>
                 <span className="text-xs font-semibold uppercase text-muted">Dashboard</span>
               </Link>
-              <nav
-                className="flex flex-wrap justify-end gap-1 max-[900px]:justify-start"
-                aria-label="Dashboard routes"
-              >
-                {dashboardNavItems.map((item) => (
-                  <Link
-                    className="rounded-lg px-2.5 py-2 text-sm font-semibold text-muted-strong hover:bg-surface-muted hover:text-ink"
-                    href={item.href}
-                    key={item.href}
-                  >
-                    {item.label}
-                  </Link>
-                ))}
-                <a
-                  className="rounded-lg px-2.5 py-2 text-sm font-semibold text-muted-strong hover:bg-surface-muted hover:text-ink"
-                  href={publicNarrative.repositoryUrl}
-                  rel="noopener noreferrer"
-                  target="_blank"
-                >
-                  Repository
-                  <span className="sr-only"> (opens in a new tab)</span>
-                </a>
-                {authenticated ? <AdminSignOut /> : null}
-              </nav>
+              <DashboardNav>{authenticated ? <AdminSignOut /> : null}</DashboardNav>
             </div>
           </header>
           <main className="mx-auto max-w-[1200px] p-6 max-[560px]:p-4">{children}</main>
