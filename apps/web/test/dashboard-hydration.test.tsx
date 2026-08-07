@@ -97,6 +97,10 @@ describe("dashboard hydration", () => {
     });
 
     expect(recoverableErrors).toHaveLength(0);
+    expect(next.querySelectorAll('[role="status"][aria-live="polite"]')).toHaveLength(1);
+    expect(next.querySelectorAll('[role="alert"]')).toHaveLength(1);
+    expect(next.querySelector('[role="status"][aria-live="polite"]')?.textContent).toBe("");
+    expect(next.querySelector('[role="alert"]')?.textContent).toBe("");
     expect(next.textContent).toContain("2026-06-20 00:00:10 UTC");
   });
 });

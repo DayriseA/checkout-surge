@@ -839,7 +839,9 @@ describe("public browser starts", () => {
     ).toBeTruthy();
     expect(within(summary).getByText("Check again before starting a run.")).toBeTruthy();
     expect(within(summary).queryByRole("link")).toBeNull();
-    expect(summary.textContent).not.toContain("Backend conflict detail must not become public copy.");
+    expect(summary.textContent).not.toContain(
+      "Backend conflict detail must not become public copy.",
+    );
     await waitFor(() =>
       expect(
         screen.getAllByText("The demo backend isn't ready yet — try again in a moment"),
@@ -1176,6 +1178,41 @@ describe("admin browser workflows", () => {
 });
 
 describe("watch browser recovery", () => {
+  it("mutates the polite region for an accepted lifecycle transition", async () => {
+    vi.stubGlobal("EventSource", FakeEventSource);
+    render(
+      createElement(OperatorDashboard, {
+        initialRecovery: available(
+          dashboardRecoveryFixture({ currentRun: demoRunFixture({ status: "active" }) }),
+        ),
+      }),
+    );
+    await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
+    const politeRegion = document.querySelector('[role="status"][aria-live="polite"]');
+    expect(politeRegion?.textContent).toBe("");
+
+    act(() => {
+      FakeEventSource.instances[0]?.emit(
+        "message",
+        new MessageEvent("message", {
+          data: JSON.stringify(
+            dashboardRecoveryFixture({
+              currentRun: demoRunFixture({ status: "draining" }),
+              recoveredAt: "2026-06-20T00:00:11.000Z",
+              revision: 2,
+            }),
+          ),
+        }),
+      );
+    });
+
+    await waitFor(() =>
+      expect(politeRegion?.textContent).toBe(
+        "Checkout attempts have finished; accepted reservations are still moving to final confirmation.",
+      ),
+    );
+  });
+
   it("keeps initial read availability separate from an available idle lifecycle", () => {
     const loadingMarkup = renderToStaticMarkup(
       createElement(OperatorDashboard, { initialRecovery: { status: "loading" } }),
