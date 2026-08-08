@@ -73,7 +73,6 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
   const [startingSlug, setStartingSlug] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [startPresentation, setStartPresentation] = useState<ErrorPresentation | null>(null);
-  const [announceStartPresentation, setAnnounceStartPresentation] = useState(true);
   const [startConflictBlock, setStartConflictBlock] = useState<
     "active_run_exists" | "reset_incomplete" | null
   >(null);
@@ -291,7 +290,6 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
   }
 
   async function startRun(presetSlug: string) {
-    setAnnounceStartPresentation(true);
     const parsed = startDemoRunRequestSchema.safeParse({ presetSlug });
 
     if (!parsed.success) {
@@ -309,7 +307,6 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
 
   async function sendStartRequest(request: StartDemoRunRequest, isCustom: boolean) {
     const presetSlug = request.presetSlug;
-    setAnnounceStartPresentation(!isCustom);
     setStartingSlug(presetSlug);
     setStatusMessage(null);
     setStartPresentation(null);
@@ -378,7 +375,6 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
             </h2>
           </div>
           <StartGate
-            announcePresentation={announceStartPresentation}
             isRetryScheduled={isRetryScheduled}
             onRetry={
               startConflictBlock === "reset_incomplete"
@@ -1046,18 +1042,9 @@ function SharedRuntimeDisclosure() {
   );
 }
 
-function Unavailable({
-  announce = true,
-  read,
-  onRetry,
-}: {
-  announce?: boolean;
-  read: BackendRead<unknown>;
-  onRetry?: () => void;
-}) {
+function Unavailable({ read, onRetry }: { read: BackendRead<unknown>; onRetry?: () => void }) {
   return (
     <ErrorNotice
-      announce={announce}
       className="w-full"
       context="public-start"
       {...(onRetry ? { onRetry } : {})}
@@ -1067,7 +1054,6 @@ function Unavailable({
 }
 
 function StartGate({
-  announcePresentation,
   isRetryScheduled,
   onRetry,
   readiness,
@@ -1079,7 +1065,6 @@ function StartGate({
   statusMessage,
   startRetryAfterMs,
 }: {
-  announcePresentation: boolean;
   isRetryScheduled: boolean;
   onRetry: () => void;
   readiness: BackendRead<HealthResponse>;
@@ -1128,7 +1113,6 @@ function StartGate({
       </div>
       {activeRunPresentation ? (
         <ErrorNotice
-          announce={announcePresentation}
           className="w-full"
           context="public-start"
           presentation={activeRunPresentation}
@@ -1136,13 +1120,12 @@ function StartGate({
       ) : null}
       {!activeRunPresentation && readinessBlocked ? (
         <ReadinessNotice
-          announce={announcePresentation}
           {...(readiness.status === "unavailable" && readiness.retryAfterMs ? {} : { onRetry })}
           read={readiness}
         />
       ) : null}
       {!activeRunPresentation && recoveryUnavailable ? (
-        <Unavailable announce={announcePresentation} onRetry={onRetry} read={recovery} />
+        <Unavailable onRetry={onRetry} read={recovery} />
       ) : null}
       {!activeRunPresentation &&
       (recoveryUnavailable || readinessBlocked || startRetryAfterMs !== null) ? (
@@ -1163,7 +1146,6 @@ function StartGate({
       ) : null}
       {!activeRunPresentation && presentation ? (
         <ErrorNotice
-          announce={announcePresentation}
           context="public-start"
           onRetry={onRetry}
           presentation={presentation}
@@ -1200,11 +1182,9 @@ export function readinessPresentation(readiness: BackendRead<HealthResponse>): P
 }
 
 function ReadinessNotice({
-  announce = true,
   onRetry,
   read,
 }: {
-  announce?: boolean;
   onRetry?: () => void;
   read: BackendRead<HealthResponse>;
 }) {
@@ -1212,7 +1192,6 @@ function ReadinessNotice({
   if (read.status === "loading")
     return (
       <ErrorNotice
-        announce={announce}
         context="public-start"
         {...(onRetry ? { onRetry } : {})}
         read={read}
@@ -1220,7 +1199,6 @@ function ReadinessNotice({
     );
   return (
     <ErrorNotice
-      announce={announce}
       context={{
         surface: "public-start",
         readiness:

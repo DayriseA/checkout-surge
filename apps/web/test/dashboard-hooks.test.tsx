@@ -9,18 +9,12 @@ import {
   errorPayloadSchema,
 } from "@checkout-surge/contracts";
 import { previewRunConfigSnapshotFixture } from "@checkout-surge/contracts/testing";
-import { act, cleanup, render, renderHook, waitFor } from "@testing-library/react";
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { type ReactNode, StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useDashboardProjections } from "../src/app/components/realtime/use-dashboard-projections.js";
 import { useDashboardRecovery } from "../src/app/components/realtime/use-dashboard-recovery.js";
-import { useWatchAnnouncements } from "../src/app/components/realtime/use-watch-announcements.js";
 import type { BackendRead } from "../src/app/lib/api.js";
-import type { RealtimeConnectionStatus } from "../src/app/lib/presentation/freshness.js";
-import {
-  deriveWatchComposition,
-  type WatchComposition,
-} from "../src/app/lib/presentation/watch-composition.js";
 
 type ActiveRun = Extract<NonNullable<DashboardProjection["currentRun"]>, { status: "active" }>;
 type DrainingRun = Extract<NonNullable<DashboardProjection["currentRun"]>, { status: "draining" }>;
@@ -28,7 +22,6 @@ type CompletedRun = Extract<
   NonNullable<DashboardProjection["currentRun"]>,
   { status: "completed" }
 >;
-type FailedRun = Extract<NonNullable<DashboardProjection["currentRun"]>, { status: "failed" }>;
 
 class InjectedEventSource {
   static instances: InjectedEventSource[] = [];
@@ -265,213 +258,6 @@ describe("useDashboardRecovery", () => {
   });
 });
 
-describe("useWatchAnnouncements", () => {
-  it("uses a five-second cadence and coalesces a burst by priority", async () => {
-    vi.useFakeTimers();
-    const active = watchComposition(runProjection());
-    const { result, rerender } = renderHook(
-      (props: WatchAnnouncementProps) =>
-        useWatchAnnouncements(props.composition, props.transportStatus, props.retriesExhausted),
-      { initialProps: watchProps(active) },
-    );
-
-    rerender(watchProps(active, "disconnected"));
-    expect(result.current.politeMessage).toContain("Live updates are interrupted.");
-
-    rerender(
-      watchProps(watchComposition(runProjection({ currentRun: drainingRun() })), "disconnected"),
-    );
-    rerender(
-      watchProps(
-        watchComposition(
-          runProjection({
-            currentRun: drainingRun(),
-            inventory: soldOutInventory(),
-          }),
-        ),
-        "disconnected",
-      ),
-    );
-    rerender(
-      watchProps(
-        watchComposition(
-          runProjection({
-            currentRun: drainingRun(),
-            inventory: soldOutInventory(),
-          }),
-        ),
-        "connected",
-      ),
-    );
-
-    await act(async () => vi.advanceTimersByTimeAsync(4_999));
-    expect(result.current.politeMessage).toContain("interrupted");
-    await act(async () => vi.advanceTimersByTimeAsync(1));
-    expect(result.current.politeMessage).toBe(
-      "Checkout attempts have finished; accepted reservations are still moving to final confirmation. All 10 units are now reserved — the sale is sold out. Live updates restored.",
-    );
-  });
-
-  it("lets a terminal message bypass the cadence and cancel a queued flush", async () => {
-    vi.useFakeTimers();
-    const active = watchComposition(runProjection());
-    const { result, rerender } = renderHook(
-      (props: WatchAnnouncementProps) =>
-        useWatchAnnouncements(props.composition, props.transportStatus, props.retriesExhausted),
-      { initialProps: watchProps(active) },
-    );
-
-    rerender(watchProps(active, "disconnected"));
-    rerender(watchProps(active, "connected"));
-    rerender(
-      watchProps(watchComposition(runProjection({ currentRun: terminalRun() })), "connected"),
-    );
-
-    expect(result.current.politeMessage).toContain("Run completed.");
-    await act(async () => vi.advanceTimersByTimeAsync(5_000));
-    expect(result.current.politeMessage).toContain("Run completed.");
-    expect(result.current.politeMessage).not.toContain("restored");
-  });
-
-  it("lets a failed terminal message bypass the cadence with public failure wording", () => {
-    vi.useFakeTimers();
-    const active = watchComposition(runProjection());
-    const { result, rerender } = renderHook(
-      (props: WatchAnnouncementProps) =>
-        useWatchAnnouncements(props.composition, props.transportStatus, props.retriesExhausted),
-      { initialProps: watchProps(active) },
-    );
-
-    rerender(watchProps(active, "disconnected"));
-    rerender(watchProps(active, "connected"));
-    rerender(watchProps(watchComposition(runProjection({ currentRun: failedRun() })), "connected"));
-
-    expect(result.current.politeMessage).toContain(
-      "Run failed. The load generator could not deliver the planned traffic, so this run's evidence is incomplete.",
-    );
-  });
-
-  it("mutates the live-region text for identical terminal results from consecutive runs", () => {
-    const firstActive = watchComposition(runProjection());
-    const rendered = render(<WatchAnnouncementRegion {...watchProps(firstActive)} />);
-    const region = rendered.container.querySelector('[role="status"]');
-    expect(region?.textContent).toBe("");
-
-    rendered.rerender(
-      <WatchAnnouncementRegion
-        {...watchProps(watchComposition(runProjection({ currentRun: terminalRun() })))}
-      />,
-    );
-    const firstTerminalText = region?.textContent;
-    expect(firstTerminalText?.replaceAll("\u2060", "")).toContain("Run completed.");
-
-    const secondRunId = "66666666-6666-4666-8666-666666666666";
-    rendered.rerender(
-      <WatchAnnouncementRegion
-        {...watchProps(watchComposition(runProjection({ currentRun: activeRun(secondRunId) })))}
-      />,
-    );
-    rendered.rerender(
-      <WatchAnnouncementRegion
-        {...watchProps(watchComposition(runProjection({ currentRun: terminalRun(secondRunId) })))}
-      />,
-    );
-
-    expect(region?.textContent).not.toBe(firstTerminalText);
-    expect(region?.textContent.replaceAll("\u2060", "")).toBe(
-      firstTerminalText?.replaceAll("\u2060", ""),
-    );
-  });
-
-  it("escalates once per retry-exhaustion episode and clears after recovery", () => {
-    const active = watchComposition(runProjection());
-    const { result, rerender } = renderHook(
-      (props: WatchAnnouncementProps) =>
-        useWatchAnnouncements(props.composition, props.transportStatus, props.retriesExhausted),
-      { initialProps: watchProps(active) },
-    );
-
-    rerender(watchProps(active, "disconnected", true));
-    expect(result.current.assertiveMessage).toContain("could not be restored automatically");
-    rerender(watchProps({ ...active }, "disconnected", true));
-    expect(result.current.assertiveMessage).toContain("could not be restored automatically");
-
-    rerender(watchProps(active, "connected", false));
-    expect(result.current.assertiveMessage).toBe("");
-    rerender(watchProps(active, "disconnected", true));
-    expect(result.current.assertiveMessage).toContain("could not be restored automatically");
-  });
-
-  it("does not escalate retry exhaustion without retained data", () => {
-    const checking = checkingComposition();
-    const { result, rerender } = renderHook(
-      (props: WatchAnnouncementProps) =>
-        useWatchAnnouncements(props.composition, props.transportStatus, props.retriesExhausted),
-      { initialProps: watchProps(checking, "connecting") },
-    );
-
-    rerender(watchProps({ ...checking }, "disconnected", true));
-    expect(result.current.assertiveMessage).toBe("");
-  });
-
-  it("keeps a same-composition new render silent", () => {
-    const active = watchComposition(runProjection());
-    const { result, rerender } = renderHook(
-      (props: WatchAnnouncementProps) =>
-        useWatchAnnouncements(props.composition, props.transportStatus, props.retriesExhausted),
-      { initialProps: watchProps(active) },
-    );
-
-    rerender(watchProps({ ...active }));
-    expect(result.current).toEqual({ politeMessage: "", assertiveMessage: "" });
-  });
-});
-
-interface WatchAnnouncementProps {
-  composition: WatchComposition;
-  retriesExhausted: boolean;
-  transportStatus: RealtimeConnectionStatus;
-}
-
-function watchProps(
-  composition: WatchComposition,
-  transportStatus: RealtimeConnectionStatus = "connected",
-  retriesExhausted = false,
-): WatchAnnouncementProps {
-  return { composition, retriesExhausted, transportStatus };
-}
-
-function watchComposition(currentProjection: DashboardProjection): WatchComposition {
-  return deriveWatchComposition({
-    recovery: available(currentProjection),
-    retainedTerminalRun: null,
-    latestCompletedRun: available(null),
-    signalSamples: [],
-    transportStatus: "connected",
-    now: new Date("2026-06-20T00:00:13.000Z"),
-  });
-}
-
-function checkingComposition(): WatchComposition {
-  return deriveWatchComposition({
-    recovery: { status: "loading" },
-    retainedTerminalRun: null,
-    latestCompletedRun: available(null),
-    signalSamples: [],
-    transportStatus: "connecting",
-    now: new Date("2026-06-20T00:00:13.000Z"),
-  });
-}
-
-function WatchAnnouncementRegion(props: WatchAnnouncementProps) {
-  const { politeMessage } = useWatchAnnouncements(
-    props.composition,
-    props.transportStatus,
-    props.retriesExhausted,
-  );
-  return <p role="status">{politeMessage}</p>;
-}
-
 function projectionFixture(overrides: Partial<DashboardProjection> = {}): DashboardProjection {
   return {
     schema: dashboardProjectionSchemaName,
@@ -537,39 +323,6 @@ function terminalRun(runId?: string): CompletedRun {
     status: "completed",
     trafficStatus: "succeeded",
     finalizedAt: "2026-06-20T00:00:12.000Z",
-  };
-}
-
-function failedRun(): FailedRun {
-  return {
-    ...drainingRun(),
-    status: "failed",
-    trafficStatus: "failed",
-    finalizedAt: "2026-06-20T00:00:12.000Z",
-    failureCategory: "traffic",
-  };
-}
-
-function soldOutInventory(): NonNullable<DashboardProjection["inventory"]> {
-  return {
-    saleOfferId: "44444444-4444-4444-8444-444444444444",
-    allocatedStock: 10,
-    remainingStock: 0,
-    reservedStock: 10,
-    pendingPersistenceCount: 0,
-    expiredReservationCount: 0,
-    oldestPendingPersistenceAgeSeconds: 0,
-    reservationThroughput: {
-      windowSeconds: 10,
-      successfulReservationCount: 10,
-      peakRatePerSecond: 1,
-      peakWindowSeconds: 1,
-      unit: "reservations_per_second",
-      measuredAt: "2026-06-20T00:00:12.000Z",
-    },
-    soldOutPressure: { rejectionCount: 0, latestObservedAt: null },
-    observedAt: "2026-06-20T00:00:12.000Z",
-    lastUpdatedAt: "2026-06-20T00:00:12.000Z",
   };
 }
 

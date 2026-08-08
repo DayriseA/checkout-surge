@@ -874,7 +874,6 @@ describe("public browser starts", () => {
       within(curatedNotice).getByText("Public start limit reached for now — try again later"),
     ).toBeTruthy();
     expect(screen.queryByRole("alert", { name: "Operation failure" })).toBeNull();
-    expect(screen.getAllByRole("alert")).toHaveLength(1);
 
     await user.click(screen.getByText("Build your own run"));
     await user.click(screen.getByRole("button", { name: "Start custom run" }));
@@ -894,7 +893,6 @@ describe("public browser starts", () => {
         screen.getAllByText("The demo backend isn't ready yet — try again in a moment"),
       ).toHaveLength(4),
     );
-    expect(screen.getAllByRole("alert")).toHaveLength(1);
   });
 });
 
@@ -1225,41 +1223,6 @@ describe("admin browser workflows", () => {
 });
 
 describe("watch browser recovery", () => {
-  it("mutates the polite region for an accepted lifecycle transition", async () => {
-    vi.stubGlobal("EventSource", FakeEventSource);
-    render(
-      createElement(OperatorDashboard, {
-        initialRecovery: available(
-          dashboardRecoveryFixture({ currentRun: demoRunFixture({ status: "active" }) }),
-        ),
-      }),
-    );
-    await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
-    const politeRegion = document.querySelector('[role="status"][aria-live="polite"]');
-    expect(politeRegion?.textContent).toBe("");
-
-    act(() => {
-      FakeEventSource.instances[0]?.emit(
-        "message",
-        new MessageEvent("message", {
-          data: JSON.stringify(
-            dashboardRecoveryFixture({
-              currentRun: demoRunFixture({ status: "draining" }),
-              recoveredAt: "2026-06-20T00:00:11.000Z",
-              revision: 2,
-            }),
-          ),
-        }),
-      );
-    });
-
-    await waitFor(() =>
-      expect(politeRegion?.textContent).toBe(
-        "Checkout attempts have finished; accepted reservations are still moving to final confirmation.",
-      ),
-    );
-  });
-
   it("keeps initial read availability separate from an available idle lifecycle", () => {
     const loadingMarkup = renderToStaticMarkup(
       createElement(OperatorDashboard, { initialRecovery: { status: "loading" } }),

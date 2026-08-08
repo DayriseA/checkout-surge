@@ -40,7 +40,6 @@ import { ErrorNotice } from "./error-notice";
 import { GoldSignals } from "./gold-signals";
 import { useDashboardProjections } from "./realtime/use-dashboard-projections";
 import { useDashboardRecovery } from "./realtime/use-dashboard-recovery";
-import { useWatchAnnouncements } from "./realtime/use-watch-announcements";
 import { RunConclusion } from "./run-conclusion";
 import { ScenarioStrip } from "./scenario-strip";
 import { StatusPill } from "./status-pill";
@@ -65,7 +64,6 @@ export function OperatorDashboard({
     syncIssue,
     signalSamples,
     retainedTerminalRun,
-    retriesExhausted,
     refresh,
     retryNow,
     applyProjection,
@@ -98,38 +96,24 @@ export function OperatorDashboard({
     transportStatus: realtimeStatus,
     now,
   });
-  const { politeMessage, assertiveMessage } = useWatchAnnouncements(
-    composition,
-    realtimeStatus,
-    retriesExhausted,
-  );
-
   return (
-    <>
-      <p aria-atomic="true" aria-live="polite" className="sr-only" role="status">
-        {politeMessage}
-      </p>
-      <p aria-atomic="true" className="sr-only" role="alert">
-        {assertiveMessage}
-      </p>
-      <div className="grid grid-cols-12 gap-4">
-        <div className="col-span-12 flex justify-end">
-          <StatusPill status={deriveFreshnessPresentationState(composition.freshness)} />
-        </div>
-        <WatchNarrative composition={composition} onRetry={() => void retryNow()} />
-        <TechnicalDetails
-          composition={composition}
-          hasSyncIssue={hasSyncIssue}
-          isRefreshing={isRefreshing}
-          isRetryScheduled={isRetryScheduled}
-          onRetry={() => void retryNow()}
-          realtimeStatus={realtimeStatus}
-          retryAttempt={retryAttempt}
-          retryDelayMs={retryDelayMs}
-          syncIssue={syncIssue}
-        />
+    <div className="grid grid-cols-12 gap-4">
+      <div className="col-span-12 flex justify-end">
+        <StatusPill status={deriveFreshnessPresentationState(composition.freshness)} />
       </div>
-    </>
+      <WatchNarrative composition={composition} onRetry={() => void retryNow()} />
+      <TechnicalDetails
+        composition={composition}
+        hasSyncIssue={hasSyncIssue}
+        isRefreshing={isRefreshing}
+        isRetryScheduled={isRetryScheduled}
+        onRetry={() => void retryNow()}
+        realtimeStatus={realtimeStatus}
+        retryAttempt={retryAttempt}
+        retryDelayMs={retryDelayMs}
+        syncIssue={syncIssue}
+      />
+    </div>
   );
 }
 

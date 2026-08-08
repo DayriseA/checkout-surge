@@ -14,7 +14,6 @@ export function ErrorNotice({
   protectedDetails = false,
   onRetry,
   className = "",
-  announce = true,
 }: {
   read?: BackendRead<unknown>;
   context: ErrorPresentationContextName | ErrorPresentationContext;
@@ -22,7 +21,6 @@ export function ErrorNotice({
   protectedDetails?: boolean;
   onRetry?: () => void;
   className?: string;
-  announce?: boolean;
 }) {
   const resolvedPresentation =
     presentation ?? mapErrorPresentation(read ?? { status: "loading" }, context);
@@ -52,9 +50,9 @@ export function ErrorNotice({
 
   return (
     <div
-      aria-live={announce ? "polite" : undefined}
+      aria-live="polite"
       className={`grid gap-1 rounded-lg border p-3 leading-6 ${toneClassName} ${className}`}
-      role={announce ? "alert" : undefined}
+      role="alert"
     >
       <strong>{resolvedPresentation.headline}</strong>
       {resolvedPresentation.explanation ? <span>{resolvedPresentation.explanation}</span> : null}

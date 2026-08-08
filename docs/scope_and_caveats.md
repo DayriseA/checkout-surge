@@ -14,11 +14,12 @@ These five exclusions are not missing deliverables or roadmap commitments:
 
 ## Current Caveats
 
-These three limitations apply to the current reference runtime:
+These four limitations apply to the current reference runtime:
 
 - **Local and 10k validation is environment-dependent and is not hosted benchmark evidence.** Local laptop, Dev Container, and Codespaces runs share host resources; the 10k characterization permits capacity-driven dropped iterations while still requiring complete accounting and business invariants. The repository has no hosted benchmark workflow or published hosted result. See [containerized load-run validation](runtime_topology.md#containerized-load-run-validation).
 - **Host-native load-orchestrator runs require a separately available k6 executable.** `K6_BINARY` defaults to `k6` on `PATH`; the reference container instead includes pinned k6 2.0.0. See [host-native startup](local_development.md#host-native-startup) and the [reference local topology](runtime_topology.md#reference-local-topology).
 - **A single API process has a finite cold-connection establishment ceiling.** The reference runtime makes the configured listen backlog real, but does not claim that one Node.js process can accept an unlimited simultaneous connection burst. See the [connection-establishment ceiling](#connection-establishment-ceiling) for the `surge-10k` boundary and its measured evidence.
+- **Published circuit-breaker snapshots are authoritative only under the single-worker topology.** Run and catalog `ErpCircuitBreaker` instances are process-local, and each scope publishes its snapshot to one shared Redis key. With multiple worker processes the displayed state would be last-writer-wins across breakers that do not share state, presenting one worker's view as the system view. This is latent under the accepted one-worker-runtime topology above; multi-worker deployment would first require moving breaker state or aggregation to an authoritative shared boundary. See [downstream outage handling](architecture.md#5-downstream-outage-partial-or-total).
 
 ### Connection-establishment ceiling
 
@@ -45,11 +46,12 @@ The load-orchestrator namespace remained unchanged at `somaxconn=4096`. The near
 
 ## Deferred Decisions
 
-These four design choices are deliberately unfrozen. A deferred decision is neither a defect nor a promise that implementation is scheduled.
+These five design choices are deliberately unfrozen. A deferred decision is neither a defect nor a promise that implementation is scheduled.
 
 - **Physical dead-letter queue topology.** Current durable recovery and dead-letter evidence does not select a production queue topology.
 - **Customer/account model.** Synthetic buyers and demo access modes do not define customer identity or tenancy semantics.
 - **Payment and reservation-release design.** This capability remains intentionally excluded; its event model, worker ownership, and reconciliation rules remain undecided.
 - **External notification-provider integration.** Simulated notification records do not select provider, retry, or delivery semantics.
+- **Ownership of per-field form-validation messages.** The native browser constraint engine remains the per-field authority, so its `validationMessage` text follows the browser locale while app-owned surrounding copy (such as the custom-run error summary heading) stays English. A mixed-language summary is therefore expected rather than a defect. Replacing it with app-owned constraint messages is a deliberate open choice, not scheduled work.
 
 See [domain decisions deferred to later tasks](core_business_entities.md#decisions-deferred-to-later-tasks).

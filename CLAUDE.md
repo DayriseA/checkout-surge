@@ -55,4 +55,5 @@ Do not run `pnpm test:composition` or `pnpm test:characterization` unless explic
 
 ### Miscellaneous
 
-Do not force character length limit per line for markdown (*.md) files.
+- Do not force character length limit per line for markdown (*.md) files.
+- Human–AI interactions may use any language (french, english, etc...), but all project artifacts (including code, comments, documentation, and other persisted content) must be written in English.
